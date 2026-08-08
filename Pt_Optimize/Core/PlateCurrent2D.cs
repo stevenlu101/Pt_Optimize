@@ -1,0 +1,266 @@
+using System;
+
+namespace PtOptimize.Core;
+
+/// <summary>
+/// 法兰平板的二维电流场。
+///
+///   ∇·(σ∇V) = 0      （等厚平板，σ 取工作温度下的常数）
+///   J = −σ∇V
+///
+/// 边界条件：
+///   舌片末端整条边  Dirichlet V = 1   （整条边压接铜排，铜电导率为铂的 6 倍，视为等电位）
+///   管孔边界        Dirichlet V = 0   （电流全部交给管壁）
+///   其余自由边      自然 Neumann      （掩膜网格上「邻居在域外则该面通量为零」自动满足）
+///
+/// 离散采用有限体积五点格式，故**电流严格守恒**：
+/// 流入舌片末端的电流必等于流出管孔的电流，这一点由 <see cref="PlateField.ConservationError"/> 检验。
+/// </summary>
+public sealed class PlateField
+{
+    public bool[,] Mask = new bool[0, 0];
+    public double[,] V = new double[0, 0];        // 归一化电位
+    public double[,] Jmag = new double[0, 0];     // A/mm²
+    public double[,] Sheet = new double[0, 0];    // 面电流 K = J·t [A/mm]
+    public double X0, Z0, H;                      // 网格原点 mm / 步长 mm
+    public int Nx, Nz;
+
+    public double CurrentInA, CurrentOutA;
+    public double ConservationError;              // |in−out| / in
+    public double JMaxAPerMm2, JMeanAPerMm2;
+    public double JMaxXMm, JMaxZMm, JMaxRMm;   // J_max 位置
+    public double TotalGenW;                      // 整片法兰的焦耳发热 W
+    public int Iterations;
+    public double Residual;
+}
+
+/// <summary>法兰平面轮廓（由 Pt_Heater.3dm 提取）</summary>
+public sealed class FlangePlate
+{
+    public double DiscRadiusMm = 60.0;      // Ø120
+    public double HoleRadiusMm = 26.0;      // Ø52（= 管外径）
+    public double TabEndXMm = -200.0;
+    public double TabEndHalfWidthMm = 40.0; // 末端宽 80
+    public double ThicknessMm = 2.0;
+    public double InsulBoundaryXMm = -200.0; // X ≥ 此值为保温段（默认全包，见 --insul 扫描）
+
+    /// <summary>孔周局部加厚：半径 ≤ ThickenRadiusMm 的区域厚度取 ThickenedMm</summary>
+    /// <summary>末端延长段：自 TabEndXMm 再伸 ExtensionMm，半宽由 40 线性张开到 ExtHalfWidthMm</summary>
+    public double ExtensionMm = 0.0;
+    public double ExtHalfWidthMm = 40.0;
+    public double TabTipXMm => TabEndXMm - ExtensionMm;
+
+    public double ThickenRadiusMm = 0.0;
+    public double ThickenedMm = 2.0;
+
+    /// <summary>该点的板厚 mm</summary>
+    public double ThicknessAt(double x, double z)
+        => ThickenRadiusMm > HoleRadiusMm && Math.Sqrt(x * x + z * z) <= ThickenRadiusMm
+           ? ThickenedMm : ThicknessMm;
+
+    /// <summary>切点：舌片直边与 Ø120 圆相切处</summary>
+    public (double X, double HalfW) Tangent()
+    {
+        // T = R(cosθ, sinθ) 在圆上，切点条件 (P − T)·T = 0：
+        //   px·R·cosθ − R²cos²θ + pz·R·sinθ − R²sin²θ = 0
+        //   ⇒ px·cosθ + pz·sinθ = R
+        // 写成 A·cos(θ − φ) = R，A = |P|，φ = atan2(pz, px)，取上切点分支 θ = φ − acos(R/A)
+        double px = TabEndXMm, pz = TabEndHalfWidthMm, R = DiscRadiusMm;
+        double amp = Math.Sqrt(px * px + pz * pz);
+        double phi = Math.Atan2(pz, px);
+        double th = phi - Math.Acos(Math.Clamp(R / amp, -1, 1));
+        return (R * Math.Cos(th), R * Math.Sin(th));
+    }
+
+    public double HalfWidth(double x)
+    {
+        var (xt, wt) = Tangent();
+        if (x > DiscRadiusMm || x < TabTipXMm) return 0;
+        if (x < TabEndXMm)                      // 延长段：线性张开
+        {
+            double ue = (TabEndXMm - x) / Math.Max(1e-9, ExtensionMm);
+            return TabEndHalfWidthMm + (ExtHalfWidthMm - TabEndHalfWidthMm) * ue;
+        }
+        if (x >= xt) return Math.Sqrt(Math.Max(0, DiscRadiusMm * DiscRadiusMm - x * x));
+        double u = (x - xt) / (TabEndXMm - xt);
+        return wt + (TabEndHalfWidthMm - wt) * u;
+    }
+
+    public bool Inside(double x, double z)
+        => Math.Abs(z) <= HalfWidth(x) && x * x + z * z >= HoleRadiusMm * HoleRadiusMm;
+}
+
+public static class PlateCurrent2D
+{
+    /// <param name="h">网格步长 mm</param>
+    /// <param name="tempField">可选温度场（与网格同形）。给出时按 σ(T)=1/ρe(T) 逐点取值；
+    /// 为空则退回全场常数 σ。铂在 700–1300 °C 间 ρe 变化 48 %，忽略它会把电流分布算偏。</param>
+    public static PlateField Solve(FlangePlate g, double totalCurrentA,
+                                   double rhoOhmM, double h = 0.5,
+                                   int maxIter = 20000, double tol = 1e-10,
+                                   double[,]? tempField = null, double tRefC = 1300,
+                                   double[,]? thickField = null)
+    {
+        double x0 = g.TabTipXMm - h, x1 = g.DiscRadiusMm + h;
+        double z1 = Math.Max(g.DiscRadiusMm, g.ExtHalfWidthMm) + h;
+        int nx = (int)Math.Round((x1 - x0) / h) + 1;
+        int nz = (int)Math.Round((2 * z1) / h) + 1;
+
+        var f = new PlateField { X0 = x0, Z0 = -z1, H = h, Nx = nx, Nz = nz };
+        var mask = new bool[nx, nz];
+        var fixedV = new bool[nx, nz];
+        var V = new double[nx, nz];
+
+        for (int i = 0; i < nx; i++)
+        {
+            double x = x0 + i * h;
+            for (int j = 0; j < nz; j++)
+            {
+                double z = -z1 + j * h;
+                mask[i, j] = g.Inside(x, z);
+                if (!mask[i, j]) continue;
+
+                // 舌片末端整条边：等电位 V = 1
+                if (x <= g.TabTipXMm + h * 1.5) { fixedV[i, j] = true; V[i, j] = 1.0; }
+                // 管孔边界：V = 0（一圈厚度 1.5h 的环带）
+                double r = Math.Sqrt(x * x + z * z);
+                if (r <= g.HoleRadiusMm + h * 1.5) { fixedV[i, j] = true; V[i, j] = 0.0; }
+            }
+        }
+
+        // 局部板厚：给定厚度场时逐点取，否则用几何规则
+        double ThickAt(int i, int j)
+            => thickField != null ? thickField[i, j]
+               : g.ThicknessAt(x0 + i * h, -z1 + j * h);
+
+        // 局部电导率 σ(T) = 1/ρe(T)，归一化到参考温度使无温度场时退化为原行为
+        double sigRef = 1.0 / Materials.PtResistivity(tRefC);
+        double SigmaAt(int i, int j)
+            => tempField == null ? 1.0
+               : (1.0 / Materials.PtResistivity(tempField[i, j])) / sigRef;
+
+        // SOR 迭代（掩膜外邻居不参与 → 自然 Neumann）
+        double omega = 2.0 / (1.0 + Math.PI / Math.Max(nx, nz));
+        int it = 0; double res = 0;
+        for (; it < maxIter; it++)
+        {
+            res = 0;
+            for (int i = 1; i < nx - 1; i++)
+                for (int j = 1; j < nz - 1; j++)
+                {
+                    if (!mask[i, j] || fixedV[i, j]) continue;
+                    // 面导度 ∝ 面处板厚（变厚度时不能再用等权平均）
+                    double xc = x0 + i * h, zc = -z1 + j * h, tc = ThickAt(i, j);
+                    double sc = SigmaAt(i, j);
+                    double sum = 0, wsum = 0;
+                    void Acc(int a2, int b2, double xf, double zf)
+                    {
+                        if (!mask[a2, b2]) return;
+                        // 面导度 ∝ t·σ，两侧取算术平均
+                        double tf2 = 0.5 * (tc + ThickAt(a2, b2));
+                        double sf = 0.5 * (sc + SigmaAt(a2, b2));
+                        double wf = tf2 * sf;
+                        sum += wf * V[a2, b2]; wsum += wf;
+                    }
+                    Acc(i - 1, j, xc - h, zc); Acc(i + 1, j, xc + h, zc);
+                    Acc(i, j - 1, xc, zc - h); Acc(i, j + 1, xc, zc + h);
+                    if (wsum <= 0) continue;
+                    double nv = sum / wsum;
+                    double d = nv - V[i, j];
+                    V[i, j] += omega * d;
+                    res = Math.Max(res, Math.Abs(d));
+                }
+            if (res < tol) break;
+        }
+        f.Iterations = it; f.Residual = res;
+
+        // 电流：J = −σ∇V。先按 σ=1、V 无量纲算「形状电流」，再整体定标到 totalCurrentA
+        double sigmaShape = 1.0;
+        double ShapeCurrentAcross(int i)      // 穿过 x = x0+i·h 这一列的通量
+        {
+            double s = 0;
+            for (int j = 0; j < nz; j++)
+                if (mask[i, j] && mask[i + 1, j])
+                {
+                    double tf2 = 0.5 * (ThickAt(i, j) + ThickAt(i + 1, j));
+                    double sf2 = 0.5 * (SigmaAt(i, j) + SigmaAt(i + 1, j));
+                    s += -(V[i + 1, j] - V[i, j]) / h * h * (tf2 / g.ThicknessMm) * sf2;
+                }
+            return s * sigmaShape;
+        }
+
+        // 在舌片直边段取一列作为流入基准（避开端部与孔）
+        int iRef = (int)Math.Round((g.TabTipXMm + 30 - x0) / h);
+        double shapeI = Math.Abs(ShapeCurrentAcross(iRef));
+        double scale = shapeI > 1e-12 ? totalCurrentA / (shapeI * g.ThicknessMm) : 0;
+
+        // 守恒检查：末端流入 vs 孔周流出
+        int iIn = (int)Math.Round((g.TabTipXMm + 5 - x0) / h);
+        f.CurrentInA = Math.Abs(ShapeCurrentAcross(iIn)) * g.ThicknessMm * scale;
+        double outSum = 0;
+        for (int i = 1; i < nx - 1; i++)
+            for (int j = 1; j < nz - 1; j++)
+            {
+                if (!mask[i, j] || !fixedV[i, j]) continue;
+                double r = Math.Sqrt(Math.Pow(x0 + i * h, 2) + Math.Pow(-z1 + j * h, 2));
+                if (r > g.HoleRadiusMm + h * 1.5) continue;   // 只统计孔边界
+                double xh = x0 + i * h, zh = -z1 + j * h, th0 = ThickAt(i, j);
+                void AccOut(int a2, int b2, double xf, double zf)
+                {
+                    if (!mask[a2, b2] || fixedV[a2, b2]) return;
+                    double tf2 = 0.5 * (th0 + ThickAt(a2, b2));
+                    double sf3 = 0.5 * (SigmaAt(i, j) + SigmaAt(a2, b2));
+                    outSum += (V[a2, b2] - V[i, j]) / h * h * (tf2 / g.ThicknessMm) * sf3;
+                }
+                AccOut(i - 1, j, xh - h, zh); AccOut(i + 1, j, xh + h, zh);
+                AccOut(i, j - 1, xh, zh - h); AccOut(i, j + 1, xh, zh + h);
+            }
+        f.CurrentOutA = Math.Abs(outSum) * g.ThicknessMm * scale;
+        f.ConservationError = f.CurrentInA > 0
+            ? Math.Abs(f.CurrentInA - f.CurrentOutA) / f.CurrentInA : 1;
+
+        // |J| 场（中心差分），单位 A/mm²
+        var J = new double[nx, nz];
+        var K = new double[nx, nz];
+        double jmax = 0, jsum = 0; int jn = 0;
+        double gen = 0;
+        double rhoOhmMm = rhoOhmM * 1e3;             // Ω·m → Ω·mm
+        for (int i = 1; i < nx - 1; i++)
+            for (int j = 1; j < nz - 1; j++)
+            {
+                if (!mask[i, j]) continue;
+                double dvx = Grad(V, mask, i, j, 1, 0, h);
+                double dvz = Grad(V, mask, i, j, 0, 1, h);
+                // 深度平均下守恒量是面电流 K = J·t，方程 ∇·(σt∇V)=0 给出 K = −σt∇V，
+                // 故 J = K/t = −σ∇V —— 与局部厚度无关，不得再乘厚度因子。
+                double tLoc = ThickAt(i, j);
+                double jm = Math.Sqrt(dvx * dvx + dvz * dvz) * scale * SigmaAt(i, j);  // A/mm²
+                J[i, j] = jm;
+                K[i, j] = jm * tLoc;
+                if (jm > jmax)
+                {
+                    jmax = jm;
+                    f.JMaxXMm = x0 + i * h; f.JMaxZMm = -z1 + j * h;
+                    f.JMaxRMm = Math.Sqrt(f.JMaxXMm * f.JMaxXMm + f.JMaxZMm * f.JMaxZMm);
+                }
+                jsum += jm; jn++;
+                // q_v = ρ·J²  [W/mm³]，体元 = h·h·t
+                gen += rhoOhmMm * jm * jm * h * h * tLoc;
+            }
+
+        f.Mask = mask; f.V = V; f.Jmag = J; f.Sheet = K;
+        f.JMaxAPerMm2 = jmax;
+        f.JMeanAPerMm2 = jn > 0 ? jsum / jn : 0;
+        f.TotalGenW = gen;
+        return f;
+    }
+
+    private static double Grad(double[,] V, bool[,] m, int i, int j, int di, int dj, double h)
+    {
+        bool a = m[i - di, j - dj], b = m[i + di, j + dj];
+        if (a && b) return (V[i + di, j + dj] - V[i - di, j - dj]) / (2 * h);
+        if (b) return (V[i + di, j + dj] - V[i, j]) / h;
+        if (a) return (V[i, j] - V[i - di, j - dj]) / h;
+        return 0;
+    }
+}

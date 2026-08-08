@@ -1,0 +1,27 @@
+# ---- .NET 构建产物 ----
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+
+# ---- NuGet ----
+*.nupkg
+packages/
+!packages/build/
+
+# ---- Office 临时锁文件 ----
+~$*
+*.tmp
+
+# ---- 本地测试结果 ----
+TestResults/
+*.trx
+*.coverage
+
+# ---- 说明 ----
+# docs/fig/*.png 与 docs/*.docx 刻意纳入版本管理：
+# 论文中的全部图表均由程序生成，一并提交以便追溯「哪一版结论配哪一版图」。
+# 源数据（*.3dm、*.xlsx）同样纳入，它们是模型的唯一事实来源。
