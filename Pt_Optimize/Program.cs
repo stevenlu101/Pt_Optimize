@@ -18,6 +18,29 @@ internal static class Program
         return double.NaN;
     }
 
+    /// <summary>
+    /// 同步进度回调。控制台没有同步上下文，<see cref="Progress{T}"/> 会把回调抛到线程池，
+    /// 与主线程的 Console.WriteLine 交错成乱序 —— CLI 一律用这个。
+    /// </summary>
+    private sealed class SyncProgress<T> : IProgress<T>
+    {
+        private readonly Action<T> _h;
+        public SyncProgress(Action<T> h) => _h = h;
+        public void Report(T value) => _h(value);
+    }
+
+    /// <summary>从当前目录与 bin 目录逐级上溯找数据文件（bin\Debug\net8.0-windows 距仓库根三层）</summary>
+    private static string Find3dm(string name)
+    {
+        foreach (var start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+            for (var d = new DirectoryInfo(start); d is not null; d = d.Parent)
+            {
+                string c = Path.Combine(d.FullName, name);
+                if (File.Exists(c)) return c;
+            }
+        return name;
+    }
+
     [STAThread]
     private static void Main(string[] args)
     {
@@ -27,8 +50,32 @@ internal static class Program
             var p = args.Length > 1 && !args[1].StartsWith("--")
                 ? System.Text.Json.JsonSerializer.Deserialize<DesignInputs>(File.ReadAllText(args[1]))!
                 : new DesignInputs();
-            var r = SegmentSolver.Solve(p);
             try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { /* WinExe 无控制台 */ }
+
+            // --cli --geom [file.3dm]   直接读 .3dm，校核代码里手抄的几何常数（需装 Rhino 8）
+            // 放在求解之前：几何校核与热解无关，不必先花时间解一遍管段
+            if (args.Contains("--geom"))
+            {
+                int gi = Array.IndexOf(args, "--geom");
+                string f3dm = gi + 1 < args.Length && !args[gi + 1].StartsWith("--")
+                              ? args[gi + 1] : Find3dm("Pt_Heater.3dm");
+                try
+                {
+                    Console.WriteLine(Geometry3dm.Report(f3dm, p, new FlangePlate()));
+                }
+                catch (FileNotFoundException ex)
+                {
+                    Console.WriteLine(ex.Message);
+                    Console.WriteLine("（量测子进程需要本机装有 Rhino 8 才能运行；主程序其余功能不受影响）");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("几何量测失败：" + ex.Message);
+                }
+                return;
+            }
+
+            var r = SegmentSolver.Solve(p);
             if (!r.Ok) { Console.WriteLine("FAIL: " + r.Message); return; }
             Console.WriteLine($"壁厚      {r.WallDesignMm:0.000} mm  (电学需 {r.WallElecMm:0.000})");
             Console.WriteLine($"损失      {r.LossPerMeterWPerM / 1000:0.00} kW/m   段功率 {r.PowerTotalW / 1000:0.00} kW");
@@ -53,14 +100,121 @@ internal static class Program
                 return;
             }
 
+            // --cli --glass   稳态验证：按真实控温点串联三段，算玻璃温降，与实测对照
+            // 这是全模型唯一一个**拿现场实测校准**的点：入口 1150 → 出口 1130，全程降 20 K。
+            // 玻璃温降由 hg、保温损失、产量三者共同决定，对不上说明底层热平衡有问题，
+            // 那么升温核算与法兰温场优化都建立在错的底子上。
+            if (args.Contains("--glass"))
+            {
+                var line = new (string Name, double TSet, double Head)[]
+                { ("HC1", 1150, 0.3), ("HC2", 1080, 0.6), ("HC3", 1050, 1.0) };
+                const double glassInC = 1150, glassOutMeasuredC = 1130;
+
+                Console.WriteLine("=== 稳态验证：玻璃温降 vs 实测 ===");
+                Console.WriteLine($"产量 {p.ThroughputTPerDay:0.0} t/day   内壁换热 hg {p.HGlass:0} W/m²K   " +
+                                  $"壁厚 {p.WallMinMm:0.000} mm   段长 {p.TubeLengthMm:0} mm");
+                Console.WriteLine();
+                Console.WriteLine($"{"段",6}{"控温",8}{"玻璃进",9}{"玻璃出",9}{"本段降",8}" +
+                                  $"{"电流",8}{"功率 W",9}{"管根",9}{"衔接温差",10}  10K 目标");
+
+                double tg = glassInC;
+                double totalPower = 0;
+                bool allOk = true;
+                foreach (var (name, tset, head) in line)
+                {
+                    var q = SegmentSolver.Clone(p);
+                    q.TSetC = tset; q.TGlassInC = tg; q.GlassHeadM = head;
+                    q.SizeWall = false;
+                    SolveResult sr;
+                    try { sr = SegmentSolver.Solve(q); }
+                    catch (Exception ex) { Console.WriteLine($"{name,6}  ✗ {ex.Message}"); allOk = false; break; }
+                    if (!sr.Ok) { Console.WriteLine($"{name,6}  ✗ {sr.Message}"); allOk = false; break; }
+
+                    double drop = tg - sr.TGlassOutC;
+                    double dRoot = tset - sr.TFlangeAC;         // 管中点设定 − 法兰衔接处
+                    totalPower += sr.PowerTotalW;
+                    Console.WriteLine($"{name,6}{tset,8:0}{tg,9:0.0}{sr.TGlassOutC,9:0.0}{drop,8:+0.0;-0.0}" +
+                                      $"{sr.CurrentA,8:0}{sr.PowerTotalW,9:0}{sr.TFlangeAC,9:0.0}" +
+                                      $"{dRoot,10:+0.0;-0.0}  {(Math.Abs(dRoot) <= 10 ? "✓" : "✗ 超")}");
+                    tg = sr.TGlassOutC;
+                }
+
+                if (allOk)
+                {
+                    double calc = glassInC - tg, meas = glassInC - glassOutMeasuredC;
+                    Console.WriteLine();
+                    Console.WriteLine($"全程玻璃温降   模型 {calc:0.0} K   实测 {meas:0.0} K   " +
+                                      $"偏差 {calc - meas:+0.0;-0.0} K");
+                    Console.WriteLine($"三段总电功率   {totalPower:0} W");
+                    Console.WriteLine();
+                    if (Math.Abs(calc - meas) <= 5)
+                        Console.WriteLine("✓ 与实测一致 —— 底层热平衡（hg / 保温损失 / 产量）可信，");
+                    else if (calc > meas)
+                        Console.WriteLine("✗ 模型降得太多 —— 散热偏大或 hg 偏大：查保温层数据、发射率、产量。");
+                    else
+                        Console.WriteLine("✗ 模型降得太少 —— 散热偏小或 hg 偏小：查保温层数据、发射率、产量。");
+                    Console.WriteLine("  「衔接温差」为控温点与法兰处管温之差，目标 ≤10 K。");
+
+                    // ── 反解 hg：实测温降是硬数据，用它标定内壁换热系数，而不是继续猜。
+                    //    hg 越大 → 玻璃向金属放热越多 → 出口越低，单调，可二分。
+                    double GlassOut(double hg)
+                    {
+                        double t = glassInC;
+                        foreach (var (_, tset, head) in line)
+                        {
+                            var q = SegmentSolver.Clone(p);
+                            q.HGlass = hg; q.TSetC = tset; q.TGlassInC = t;
+                            q.GlassHeadM = head; q.SizeWall = false;
+                            var s = SegmentSolver.Solve(q);
+                            if (!s.Ok) return double.NaN;
+                            t = s.TGlassOutC;
+                        }
+                        return t;
+                    }
+
+                    Console.WriteLine();
+                    Console.WriteLine("=== 反解内壁换热系数 hg ===");
+                    double lo = 5, hi = p.HGlass;
+                    double fLo = GlassOut(lo), fHi = GlassOut(hi);
+                    if (double.IsNaN(fLo) || double.IsNaN(fHi) ||
+                        (fLo - glassOutMeasuredC) * (fHi - glassOutMeasuredC) > 0)
+                    {
+                        Console.WriteLine($"  区间 [{lo:0},{hi:0}] 未包住实测值" +
+                                          $"（出口 {fLo:0.0} … {fHi:0.0} °C，实测 {glassOutMeasuredC:0}）—— " +
+                                          "说明偏差不只来自 hg，需同时查发射率与保温层数据。");
+                    }
+                    else
+                    {
+                        for (int k = 0; k < 40 && hi - lo > 1e-3; k++)
+                        {
+                            double mid = 0.5 * (lo + hi);
+                            if ((GlassOut(mid) - glassOutMeasuredC) * (fLo - glassOutMeasuredC) > 0)
+                            { lo = mid; fLo = GlassOut(mid); }
+                            else hi = mid;
+                        }
+                        double hgFit = 0.5 * (lo + hi);
+                        Console.WriteLine($"  能复现实测 20 K 温降的 hg = {hgFit:0.0} W/m²K" +
+                                          $"（当前设定 {p.HGlass:0}，比值 {hgFit / p.HGlass:0.00}）");
+                        Console.WriteLine($"  校核：层流 Nu≈3.66 下 k_eff = hg·D/Nu = " +
+                                          $"{hgFit * p.TubeIdMm * 1e-3 / 3.66:0.00} W/m·K");
+                        Console.WriteLine("  玻璃熔体导热约 1.0～1.5（含辐射贡献可更高）—— 据此判断该值是否合理。");
+                    }
+                }
+                return;
+            }
+
             // --cli --line   分段核算（示例三段，UI 里可编辑）
             if (args.Contains("--line"))
             {
+                // 稳态实际控温（用户提供）：控温点在每段中点，沿流向**递减** —— 供料管在受控降温。
+                // 玻璃入口 1150 → 出口 1130（全程降 20 K），故后两段金属比玻璃冷，是玻璃在加热管子。
+                // 注意：1150 同时是**工作温度上限**，强度/蠕变按它校核；升温工况亦以 1150 为目标。
+                // 水头仍为示例值 —— 待补实测。
                 var segs = new List<Segment>
                 {
                     new(){ Name="HC1", TSetC=1150, TGlassInC=1150, GlassHeadM=0.3, LengthMm=300, WallMm=1.0 },
-                    new(){ Name="HC2", TSetC=1200, TGlassInC=1200, GlassHeadM=0.6, LengthMm=300, WallMm=1.0 },
-                    new(){ Name="HC3", TSetC=1250, TGlassInC=1250, GlassHeadM=1.0, LengthMm=300, WallMm=1.0 },
+                    new(){ Name="HC2", TSetC=1080, TGlassInC=1143, GlassHeadM=0.6, LengthMm=300, WallMm=1.0 },
+                    new(){ Name="HC3", TSetC=1050, TGlassInC=1137, GlassHeadM=1.0, LengthMm=300, WallMm=1.0 },
                 };
                 var cands = new[]{ "Pt","Pt-Rh/90-10","Tanaka-ZGS-Pt","FKS16/Pt",
                                    "Tanaka-ZGS-PtRh10","FKS16/PtRh-9010" };
@@ -79,8 +233,18 @@ internal static class Program
                             $"{(double.IsNaN(r.MinWallStrengthMm) ? "不可行" : r.MinWallStrengthMm.ToString("0.000")),10}" +
                             $"{r.VonMisesMPa,8:0.000}{r.AllowMPa,8:0.000}{r.Utilization,8:0.00}" +
                             $"{r.MassG,8:0}{r.CostRelative,10:0}  {(r.Feasible ? "✓" : "✗ 强度")}");
-                    Console.WriteLine($"合计 铂重 {m:0} g   相对成本 {c:0}" + (bad > 0 ? $"   ★{bad} 段超限" : ""));
+                    Console.WriteLine($"合计 管铂重 {m:0} g   相对成本 {c:0}" + (bad > 0 ? $"   ★{bad} 段超限" : ""));
                 }
+
+                static List<Segment> Copy(List<Segment> ss) => ss.Select(s => new Segment
+                {
+                    Name = s.Name, TSetC = s.TSetC, TGlassInC = s.TGlassInC,
+                    GlassHeadM = s.GlassHeadM, LengthMm = s.LengthMm,
+                    TubeIdMm = s.TubeIdMm, WallMm = s.WallMm,
+                    GradeName = s.GradeName, TLiquidusC = s.TLiquidusC
+                }).ToList();
+
+                var segsNow = Copy(segs);          // ① 现状，留作法兰对比的基准
 
                 Dump("① 现状：全线纯铂 1.0 mm", segs);
 
@@ -104,6 +268,58 @@ internal static class Program
                 Dump("③ 按段选最省牌号 + 最小壁厚", segs);
                 Console.WriteLine();
                 Console.WriteLine("相对成本 = Σ 质量 × 牌号成本倍数（纯铂 = 1.00；Pt-10Rh = 1.39；弥散强化未含加工溢价）");
+
+                // ── 法兰：n 段 n+1 片，共用片电流 = 两侧平均 × 1.5（《鉑金電氣計算.xlsx》口径）
+                //    以上三张表只算管壁。法兰厚度由 J 定而非由强度定，不随管壁减薄同比例变薄，
+                //    是省铂率的主要稀释源，必须单列出来。
+                var plate = new FlangePlate();
+                double FlangeTotal(string title, List<Segment> ss, double tubeG)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine($"=== 法兰：{title}（{ss.Count} 段 → {LineSolver.FlangeCount(ss.Count)} 片）===");
+                    // 分钟级：逐步打进度，否则十几分钟没有任何反馈，看着像卡死
+                    string last = "";
+                    var prog = new SyncProgress<LineSolver.FlangeProgress>(fp =>
+                    {
+                        string s = fp.ToString();
+                        if (s == last) return;
+                        last = s;
+                        Console.WriteLine("  … " + s);
+                    });
+
+                    List<LineSolver.FlangeResult> fs;
+                    try { fs = LineSolver.SizeFlanges(ss, p, plate, prog); }
+                    catch (Exception ex) { Console.WriteLine("  定尺失败：" + ex.Message); return double.NaN; }
+
+                    Console.WriteLine($"{"接头",14}{"共用",6}{"电流 A",10}{"厚度 mm",10}{"铂重 g",10}  定尺依据");
+                    foreach (var f in fs)
+                        Console.WriteLine($"{f.Joint,14}{(f.Shared ? "是" : "—"),6}{f.CurrentA,10:0}" +
+                                          $"{f.ThicknessMm,10:0.000}{f.MassG,10:0}  {f.SizedBy}");
+                    double fg = fs.Sum(x => x.MassG);
+                    Console.WriteLine($"  法兰合计 {fg:0} g   管 {tubeG:0} g   " +
+                                      $"全线 {tubeG + fg:0} g   法兰占 {fg / (tubeG + fg) * 100:0}%");
+                    return fg;
+                }
+
+                double tubeNow = LineSolver.Totals(LineSolver.Solve(segsNow, p)).massG;
+                double tubeBest = LineSolver.Totals(LineSolver.Solve(segs, p)).massG;
+                double fNow = FlangeTotal("① 现状", segsNow, tubeNow);
+                double fBest = FlangeTotal("③ 最省方案", segs, tubeBest);
+
+                if (!double.IsNaN(fNow) && !double.IsNaN(fBest))
+                {
+                    double allNow = tubeNow + fNow, allBest = tubeBest + fBest;
+                    Console.WriteLine();
+                    Console.WriteLine("=== 全线合计（含法兰）===");
+                    Console.WriteLine($"{"",10}{"管 g",10}{"法兰 g",10}{"全线 g",10}{"省铂",10}");
+                    Console.WriteLine($"{"① 现状",10}{tubeNow,10:0}{fNow,10:0}{allNow,10:0}{"—",10}");
+                    Console.WriteLine($"{"③ 最省",10}{tubeBest,10:0}{fBest,10:0}{allBest,10:0}" +
+                                      $"{(allNow - allBest) / allNow * 100,9:0.0}%");
+                    Console.WriteLine();
+                    Console.WriteLine($"只看管壁省 {(tubeNow - tubeBest) / tubeNow * 100:0.0}%，" +
+                                      $"计入法兰后只剩 {(allNow - allBest) / allNow * 100:0.0}% —— " +
+                                      "法兰厚度由电流密度定，不随管壁减薄同比例变薄。");
+                }
                 return;
             }
 

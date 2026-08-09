@@ -33,7 +33,7 @@ public class DesignInputs
     public double DevitMarginK { get; set; } = 40;
 
     [Category("1 工艺"), DisplayName("产量 [t/day]")]
-    public double ThroughputTPerDay { get; set; } = 2.0;
+    public double ThroughputTPerDay { get; set; } = 1.5;   // 现场实测值
 
     [Category("1 工艺"), DisplayName("玻璃进口温度 [°C]")]
     public double TGlassInC { get; set; } = 1300;

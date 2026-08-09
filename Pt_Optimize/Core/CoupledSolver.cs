@@ -23,7 +23,9 @@ public sealed class CoupledResult
     public double OuterDelta;
     public bool Converged;
     public double JTubeAPerMm2, JFlangeMaxAPerMm2;
-    public double MassTubeG, MassFlangePairG, MassTotalG;
+    /// <summary>单片法兰质量 g。整线汇总要用它 —— n 段共 n+1 片，不是 2n 片。</summary>
+    public double MassPlateG;
+    public double MassTubeG, MassFlangePairG, MassTotalG;  // MassFlangePairG = 本段两端共 2 片
     public double FlangeThickMm;          // 定尺后的法兰厚度
     public int ThicknessIterations;
     public string Note = "";
@@ -31,16 +33,29 @@ public sealed class CoupledResult
 
 public static class CoupledSolver
 {
+    /// <summary>求解进度（本解算按分钟计，UI 需要据此显示进度）</summary>
+    public sealed class Progress
+    {
+        public int ThicknessIter, ThicknessTotal, OuterIter, OuterTotal;
+        public override string ToString()
+            => $"厚度定尺 {ThicknessIter}/{ThicknessTotal} · 外层 {OuterIter}/{OuterTotal}";
+    }
+
     public static CoupledResult Solve(DesignInputs p, FlangePlate g,
-                                      double h = 1.0, int maxOuter = 8, double tolW = 2.0)
+                                      double h = 1.0, int maxOuter = 8, double tolW = 2.0,
+                                      IProgress<Progress>? progress = null,
+                                      CancellationToken cancel = default)
     {
         var res = new CoupledResult();
 
         // ── 法兰厚度定尺外层：J ∝ 1/t（均匀缩放板厚时电流分布形状不变，K=J·t 守恒）
         //    故 t_req = t·(J_max/J_allow) 是一步精确解，只因热场随 t 变化才需迭代。
-        for (int tk = 0; tk < (p.SizeFlangeThickness ? 5 : 1); tk++)
+        int tkTotal = p.SizeFlangeThickness ? 5 : 1;
+        for (int tk = 0; tk < tkTotal; tk++)
         {
-            var probe = SolveOnce(p, g, h, maxOuter, tolW);
+            cancel.ThrowIfCancellationRequested();
+            var pr = new Progress { ThicknessIter = tk + 1, ThicknessTotal = tkTotal, OuterTotal = maxOuter };
+            var probe = SolveOnce(p, g, h, maxOuter, tolW, progress, pr, cancel);
             if (!probe.Tube.Ok || !p.SizeFlangeThickness)
             { probe.FlangeThickMm = g.ThicknessMm; probe.ThicknessIterations = tk; return probe; }
             double tNew = g.ThicknessMm * (probe.JFlangeMaxAPerMm2 / p.JAllowAPerMm2);
@@ -50,13 +65,18 @@ public static class CoupledSolver
             g.ThicknessMm = 0.5 * g.ThicknessMm + 0.5 * tNew;
             if (g.ThickenedMm < g.ThicknessMm) g.ThickenedMm = g.ThicknessMm;
         }
-        var last = SolveOnce(p, g, h, maxOuter, tolW);
+        var last = SolveOnce(p, g, h, maxOuter, tolW, progress,
+                             new Progress { ThicknessIter = tkTotal, ThicknessTotal = tkTotal, OuterTotal = maxOuter },
+                             cancel);
         last.FlangeThickMm = g.ThicknessMm; last.ThicknessIterations = 5;
         return last;
     }
 
     private static CoupledResult SolveOnce(DesignInputs p, FlangePlate g,
-                                           double h, int maxOuter, double tolW)
+                                           double h, int maxOuter, double tolW,
+                                           IProgress<Progress>? progress = null,
+                                           Progress? pr = null,
+                                           CancellationToken cancel = default)
     {
         var res = new CoupledResult();
 
@@ -74,6 +94,10 @@ public static class CoupledSolver
 
         for (; it < maxOuter; it++)
         {
+            cancel.ThrowIfCancellationRequested();
+            if (pr is not null && progress is not null)
+            { pr.OuterIter = it + 1; progress.Report(pr); }
+
             // ① 一维管段：两端各挂 D 瓦的定值抽热
             p.FlangeDrawOverrideW = D;
             var tube = SegmentSolver.Solve(p);
@@ -105,10 +129,13 @@ public static class CoupledSolver
         res.OuterIterations = it;
         res.FlangeDrawW = D;
 
-        // 质量（用真实几何，不用一维环形模型）
+        // 质量（用真实几何，不用一维环形模型）。
+        // 单段两端各一片 —— 与 Pt_Heater.3dm 的两个法兰实体一致（--geom 已校核）。
+        // 注意：整线不是「段数 × 2」，相邻段共用接头处那一片，n 段共 n+1 片，见 LineSolver。
         res.MassTubeG = aTubeMm2 * p.TubeLengthMm * Materials.PtDensity * 1e-6;
         double plateAreaMm2 = PlateArea(g);
-        res.MassFlangePairG = 2 * plateAreaMm2 * g.ThicknessMm * Materials.PtDensity * 1e-6;
+        res.MassPlateG = plateAreaMm2 * g.ThicknessMm * Materials.PtDensity * 1e-6;
+        res.MassFlangePairG = 2 * res.MassPlateG;
         res.MassTotalG = res.MassTubeG + res.MassFlangePairG;
         return res;
     }

@@ -23,6 +23,16 @@ public class InsulationLayer
     [DisplayName("k1 [W/m·K²]"), Description("导热系数温度斜率，k = k0 + k1·T̄(°C)")]
     public double K1 { get; set; } = 3.0e-4;
 
+    // ── 以下两项只在**升温**核算里用到（稳态解只需要导热系数）。
+    //    默认值是典型值，不是实测：高纯氧化铝纤维毡 ~200 kg/m³、致密氧化铝套管 ~3000 kg/m³，
+    //    两者比热在 1000 °C 附近都约 1000～1100 J/(kg·K)。
+    //    ★ 升温时间对这两个数敏感（保温层热容占比大于铂本身），有实测值请替换。
+    [DisplayName("密度 [kg/m³]"), Description("仅升温核算用。纤维毡约 200，致密氧化铝约 3000。默认为典型值，非实测")]
+    public double DensityKgM3 { get; set; } = 200.0;
+
+    [DisplayName("比热 [J/kg·K]"), Description("仅升温核算用。氧化铝类约 1000～1100。默认为典型值，非实测")]
+    public double CpJKgK { get; set; } = 1050.0;
+
     public double KAt(double tMeanC) => Math.Max(1e-4, K0 + K1 * tMeanC);
 
     public override string ToString()

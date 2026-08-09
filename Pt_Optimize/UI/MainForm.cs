@@ -27,6 +27,12 @@ public sealed class MainForm : Form
     private DesignInputs _in = new();
     private SolveResult? _res;
 
+    // 法兰定尺是分钟级的耦合解，必须给进度且可取消
+    private readonly ToolStripProgressBar _segProg = new() { Visible = false, Maximum = 1000 };
+    private readonly ToolStripLabel _segStatus = new("") { Visible = false };
+    private ToolStripButton? _flangeBtn;
+    private CancellationTokenSource? _flangeCts;
+
     public MainForm()
     {
         Text = "Pt_Optimize — 铂金直接加热单段设计与用量优化";
@@ -91,6 +97,12 @@ public sealed class MainForm : Form
         segTool.Items.Add(Btn("核算全线", (_, _) => RunLine()));
         segTool.Items.Add(Btn("为各段选最省牌号", (_, _) => AutoGrade()));
         segTool.Items.Add(Btn("按强度取最小壁厚", (_, _) => MinWalls()));
+        segTool.Items.Add(new ToolStripSeparator());
+        _flangeBtn = Btn("核算法兰（分钟级）", (_, _) => _ = RunFlangesAsync());
+        segTool.Items.Add(_flangeBtn);
+        _segProg.Size = new Size(180, 16);
+        segTool.Items.Add(_segProg);
+        segTool.Items.Add(_segStatus);
 
         var segSplit = new SplitContainer
         { Dock = DockStyle.Fill, Orientation = System.Windows.Forms.Orientation.Horizontal };
@@ -146,9 +158,85 @@ public sealed class MainForm : Form
         sb.AppendLine($"合计铂重 {mass:0} g    相对成本 {cost:0}（= Σ 质量×牌号成本倍数，纯铂同质量为基准）");
         if (bad > 0) sb.AppendLine($"★ {bad} 段强度超限 —— 加厚或换牌号");
         sb.AppendLine();
-        sb.AppendLine("注：本页只做强度与质量核算（解析，即时）。电流密度与析晶需耦合热解，");
+        sb.AppendLine($"★ 以上只是**管壁**。整线还有 {LineSolver.FlangeCount(_segs.Count)} 片法兰"
+                    + $"（{_segs.Count} 段 → n+1 片，段间共用），厚度由电流密度定，");
+        sb.AppendLine("  不随管壁减薄同比例变薄 —— 点「核算法兰」把它算进来，那才是可交付的总铂。");
+        sb.AppendLine();
+        sb.AppendLine("注：本页强度与质量核算是解析的（即时）。电流密度与析晶需耦合热解，");
         sb.AppendLine("    请用 --cli --matrix / --save 等批处理模式。");
         _segOut.Text = sb.ToString();
+    }
+
+    /// <summary>
+    /// 法兰定尺：每段一次耦合解，分钟级。放后台线程 + 进度 + 可取消，
+    /// 否则界面在整个过程里假死（Windows 会显示「无响应」，用户以为崩了）。
+    /// </summary>
+    private async Task RunFlangesAsync()
+    {
+        if (_flangeCts is not null) { _flangeCts.Cancel(); return; }   // 再点一次 = 取消
+
+        _segBind.EndEdit();
+        var segs = _segs.Select(s => new Segment
+        {
+            Name = s.Name, TSetC = s.TSetC, TGlassInC = s.TGlassInC,
+            GlassHeadM = s.GlassHeadM, LengthMm = s.LengthMm,
+            TubeIdMm = s.TubeIdMm, WallMm = s.WallMm,
+            GradeName = s.GradeName, TLiquidusC = s.TLiquidusC
+        }).ToList();
+        if (segs.Count == 0) return;
+
+        double tubeG = LineSolver.Totals(LineSolver.Solve(segs, _in)).massG;
+        var plate = new FlangePlate();
+
+        _flangeCts = new CancellationTokenSource();
+        var ct = _flangeCts.Token;
+        _segProg.Visible = _segStatus.Visible = true;
+        _segProg.Value = 0;
+        _segStatus.Text = "启动…";
+        if (_flangeBtn is not null) _flangeBtn.Text = "取消";
+
+        // Progress<T> 在构造处捕获 UI 同步上下文，回调自动回到 UI 线程
+        var prog = new Progress<LineSolver.FlangeProgress>(fp =>
+        {
+            _segProg.Value = Math.Clamp((int)(fp.Fraction * 1000), 0, _segProg.Maximum);
+            _segStatus.Text = fp.ToString();
+        });
+
+        try
+        {
+            var fs = await Task.Run(
+                () => LineSolver.SizeFlanges(segs, _in, plate, prog, ct), ct);
+
+            var sb = new StringBuilder(_segOut.Text);
+            sb.AppendLine();
+            sb.AppendLine($"=== 法兰（{segs.Count} 段 → {fs.Count} 片，段间共用）===");
+            sb.AppendLine($"{"接头",14}{"共用",6}{"电流 A",10}{"厚度 mm",10}{"铂重 g",10}  定尺依据");
+            sb.AppendLine(new string('-', 66));
+            foreach (var f in fs)
+                sb.AppendLine($"{f.Joint,14}{(f.Shared ? "是" : "—"),6}{f.CurrentA,10:0}" +
+                              $"{f.ThicknessMm,10:0.000}{f.MassG,10:0}  {f.SizedBy}");
+            double fg = fs.Sum(x => x.MassG);
+            sb.AppendLine();
+            sb.AppendLine($"法兰合计 {fg:0} g   管 {tubeG:0} g   全线 {tubeG + fg:0} g   " +
+                          $"法兰占 {fg / (tubeG + fg) * 100:0}%");
+            sb.AppendLine("共用片电流 = (I_左+I_右)/2 × 1.5（《鉑金電氣計算.xlsx》口径）；厚度 t ∝ I。");
+            _segOut.Text = sb.ToString();
+            _segStatus.Text = "完成";
+        }
+        catch (OperationCanceledException) { _segStatus.Text = "已取消"; }
+        catch (Exception ex)
+        {
+            _segStatus.Text = "失败";
+            MessageBox.Show(this, ex.Message, "法兰定尺失败",
+                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            _flangeCts.Dispose();
+            _flangeCts = null;
+            _segProg.Visible = false;
+            if (_flangeBtn is not null) _flangeBtn.Text = "核算法兰（分钟级）";
+        }
     }
 
     private void AutoGrade()
