@@ -222,6 +222,179 @@ internal static class Program
                 return;
             }
 
+            // --cli --clampfit  用实测玻璃温降反标定铜排夹持温度
+            //
+            // 动机：BusbarClampTempC 默认 −1 = 无夹冷、自由辐射端。该假设让舌片烧到 1240 °C，
+            // 而 ρ(1240 °C)≈48 比 ρ(200 °C)≈17 大 2.8 倍（用户实测电阻率表），
+            // 舌片高温把自身发热又抬高近 3 倍 —— 于是「法兰发热 651 W ×2 ≈ 管段 1373 W」，
+            // 功率几乎全耗在法兰上，只能靠那个假的辐射出口排掉。这是自洽但错误的分支。
+            // HANDOVER §4.5 早写过「关键是有没有夹冷」，而默认值恰恰落在「没有」那一侧。
+            if (args.Contains("--clampfit"))
+            {
+                var line = new (string Name, double TSet, double Head)[]
+                { ("HC1", 1150, 0.3), ("HC2", 1080, 0.6), ("HC3", 1050, 1.0) };
+                const double glassInC = 1150, glassOutMeasuredC = 1130;
+                double measDrop = glassInC - glassOutMeasuredC;
+                double[] clamps = { -1, 900, 700, 500, 300, 150, 80 };
+
+                Console.WriteLine("=== 铜排夹持温度反标定（用实测 20 K 玻璃温降定边界条件）===");
+                Console.WriteLine($"产量 {p.ThroughputTPerDay:0.0} t/day   hg {p.HGlass:0}   " +
+                                  $"壁厚 {p.WallMinMm:0.000} mm   法兰 2.0 mm（3dm 实测）");
+                Console.WriteLine("夹持「无」= BusbarClampTempC −1 = 自由辐射端 = 当前默认值");
+                Console.WriteLine();
+                Console.WriteLine($"{"夹持 °C",10}{"玻璃出",9}{"全程降",9}{"vs 实测",10}" +
+                                  $"{"抽热 W/片",11}{"最深衔接温差",14}{"总功率 W",10}  判定");
+
+                double bestErr = double.MaxValue, bestClamp = double.NaN;
+                foreach (double tc in clamps)
+                {
+                    double tg = glassInC, maxD = 0, totP = 0, drawSum = 0;
+                    bool ok = true;
+                    foreach (var (_, tset, head) in line)
+                    {
+                        var q = SegmentSolver.Clone(p);
+                        q.TSetC = tset; q.TGlassInC = tg; q.GlassHeadM = head;
+                        q.SizeWall = false; q.SizeFlangeThickness = false;
+                        q.BusbarClampTempC = tc;
+                        try
+                        {
+                            var c = CoupledSolver.Solve(q, new FlangePlate());
+                            if (!c.Tube.Ok) { ok = false; break; }
+                            tg = c.Tube.TGlassOutC;
+                            maxD = Math.Max(maxD, Math.Abs(tset - c.Tube.TFlangeAC));
+                            totP += c.Tube.PowerTotalW;
+                            drawSum += c.FlangeDrawW;
+                        }
+                        catch { ok = false; break; }
+                    }
+                    string label = tc < 0 ? "无" : tc.ToString("0");
+                    if (!ok) { Console.WriteLine($"{label,10}   ✗ 求解失败"); continue; }
+
+                    double drop = glassInC - tg, err = drop - measDrop;
+                    if (Math.Abs(err) < bestErr) { bestErr = Math.Abs(err); bestClamp = tc; }
+                    Console.WriteLine($"{label,10}{tg,9:0.0}{drop,9:0.0}{err,10:+0.0;-0.0}" +
+                        $"{drawSum / line.Length,11:0}{maxD,14:0.0}{totP,10:0}  " +
+                        $"{(Math.Abs(err) <= 3 ? "✓ 接近实测" : "")}{(maxD <= 10 ? " ✓ 达 10K 目标" : "")}");
+                }
+
+                Console.WriteLine();
+                if (!double.IsNaN(bestClamp))
+                    Console.WriteLine($"最接近实测的夹持温度：{(bestClamp < 0 ? "无夹冷" : bestClamp.ToString("0") + " °C")}" +
+                                      $"（温降偏差 {bestErr:0.0} K）");
+                Console.WriteLine("若「无夹冷」明显偏离而有夹冷的各档都接近，则默认边界条件是错的 ——");
+                Console.WriteLine("这一条会同时改变冷点深度、玻璃温降与 hg 的标定值，前面所有数值结论都要重跑。");
+                return;
+            }
+
+            // --cli --flangefit  规程二：扫法兰厚度，找能把衔接温差压到 10 K 的自给点
+            //
+            // 依据：冷点深度 |ΔT_dip| = D/√(k·A·β)，D 是法兰从管子抽走的热。
+            // 法兰自身焦耳热 ∝ J²∝1/t²，而散热与厚度基本无关 ⇒ **减薄反而让法兰更热、更自给**。
+            // 自给率 Φ→1 时 D→0，冷点随之消失。这可能是「省铂」与「≤10 K」的共同解。
+            if (args.Contains("--flangefit"))
+            {
+                // 取最不利段：金属最冷、与玻璃温差最大
+                double tset = 1050, tglass = 1130, head = 1.0, clamp = 80;
+                Console.WriteLine("=== 规程二：法兰厚度 → 衔接温差 ===");
+                Console.WriteLine($"取最不利段 HC3：控温 {tset:0} °C，玻璃 {tglass:0} °C，" +
+                                  $"水头 {head:0.0} m，铜排夹持 {clamp:0} °C");
+                Console.WriteLine("目标：控温点与法兰处管温之差 ≤ 10 K");
+                Console.WriteLine();
+                Console.WriteLine($"{"法兰厚 mm",11}{"抽热 W/片",11}{"自给率 Φ",11}{"衔接温差 K",12}" +
+                                  $"{"法兰 J",10}{"舌端 °C",10}{"两片铂重 g",12}  判定");
+
+                foreach (double ft in new[] { 3.0, 2.0, 1.5, 1.0, 0.8, 0.6, 0.5, 0.4 })
+                {
+                    var q = SegmentSolver.Clone(p);
+                    q.TSetC = tset; q.TGlassInC = tglass; q.GlassHeadM = head;
+                    q.SizeWall = false; q.SizeFlangeThickness = false;
+                    q.BusbarClampTempC = clamp;
+                    var g = new FlangePlate { ThicknessMm = ft, ThickenedMm = ft };
+                    try
+                    {
+                        var c = CoupledSolver.Solve(q, g);
+                        if (!c.Tube.Ok) { Console.WriteLine($"{ft,11:0.00}   ✗ {c.Tube.Message}"); continue; }
+                        double dRoot = Math.Abs(tset - c.Tube.TFlangeAC);
+                        string v = (dRoot <= 10 ? "✓ 达 10K" : "")
+                                 + (c.JFlangeMaxAPerMm2 > p.JAllowAPerMm2 ? "  ✗ J 越界" : "");
+                        Console.WriteLine($"{ft,11:0.00}{c.FlangeDrawW,11:0.0}{c.Flange.PhiOverall,11:0.000}" +
+                            $"{dRoot,12:0.0}{c.JFlangeMaxAPerMm2,10:0.00}{c.Flange.TTabEndMeanC,10:0.0}" +
+                            $"{c.MassFlangePairG,12:0}  {v}");
+                    }
+                    catch (Exception ex) { Console.WriteLine($"{ft,11:0.00}   ✗ {ex.Message}"); }
+                }
+                Console.WriteLine();
+                Console.WriteLine("Φ→1 表示法兰自身焦耳热足以覆盖自身散热，不再从管子抽热 ⇒ 冷点消失。");
+                Console.WriteLine("减薄使 J↑、发热 ∝J² 而散热基本不变 —— 故省铂与压冷点可能同向，需看 J 是否越界。");
+                return;
+            }
+
+            // --cli --ramp   规程一：空管升温核算（25 → 1150 °C / 3 h）
+            // 给出模型此前完全没有的**壁厚下界**：P_max = J_allow²·A·ρe·L ∝ 壁厚，
+            // 减薄的同时也在削减可用功率。稳态解只把 J 当上界，方向相反的下界一条都没有。
+            if (args.Contains("--ramp"))
+            {
+                const double fromC = 25, targetC = 1150, hours = 3.0;
+
+                Console.WriteLine("=== 规程一：空管升温 ===");
+                Console.WriteLine($"要求 {fromC:0} → {targetC:0} °C / {hours:0.#} h" +
+                                  $"（{(targetC - fromC) / hours:0} K/h），管内无玻璃");
+                Console.WriteLine($"许用电流密度 {p.JAllowAPerMm2:0.0} A/mm²   段长 {p.TubeLengthMm:0} mm   " +
+                                  $"环境 {p.TAmbC:0} °C");
+                Console.WriteLine();
+
+                // 法兰随管一起被加热：质量与散热由一次稳态耦合解给出（约 1 min）
+                Console.WriteLine("先跑一次稳态耦合解取法兰质量与散热…");
+                double mFlangePairG = 0, drawRefW = -1;
+                try
+                {
+                    var q0 = SegmentSolver.Clone(p);
+                    q0.TSetC = targetC; q0.TGlassInC = targetC;
+                    q0.SizeWall = false; q0.SizeFlangeThickness = false;
+                    var c0 = CoupledSolver.Solve(q0, new FlangePlate());
+                    if (c0.Tube.Ok) { mFlangePairG = c0.MassFlangePairG; drawRefW = c0.FlangeDrawW; }
+                }
+                catch { /* 拿不到就只算管，下面会注明 */ }
+                Console.WriteLine(drawRefW > 0
+                    ? $"  法兰两片 {mFlangePairG:0} g，参考散热 {drawRefW:0} W/片 @ {targetC:0} °C"
+                    : "  ⚠ 耦合解未成功，本次只计管本身（升温会被算得偏快）");
+                Console.WriteLine();
+
+                Console.WriteLine($"{"壁厚 mm",9}{"截面 mm²",11}{"电流 A",9}{"目标处功率 W",14}" +
+                                  $"{"目标处散热 W",14}{"用时 h",9}{"最高 °C",10}{"I_stab A",10}  判定");
+
+                foreach (double wmm in new[] { 0.30, 0.40, 0.50, 0.70, 1.00, 1.50, 2.00 })
+                {
+                    var rr = RampSolver.Solve(p, wmm, mFlangePairG, drawRefW, targetC,
+                                              fromC, targetC, hours);
+                    string verdict = rr.StabilityViolated ? "✗ 越过热稳定极限"
+                                   : rr.Reached ? "✓ 达标"
+                                   : "✗ " + rr.Note;
+                    Console.WriteLine($"{wmm,9:0.00}{rr.TubeAreaMm2,11:0.0}{rr.CurrentA,9:0}" +
+                        $"{rr.PowerAtTargetW,14:0}{rr.LossAtTargetW,14:0}" +
+                        $"{(rr.Reached ? rr.HoursToTarget.ToString("0.00") : "—"),9}" +
+                        $"{rr.TPeakC,10:0.0}{rr.IStabA,10:0}  {verdict}");
+                }
+
+                double wMin = RampSolver.MinWallForRampMm(p, mFlangePairG, drawRefW, targetC,
+                                                          fromC, targetC, hours);
+                Console.WriteLine();
+                if (double.IsNaN(wMin))
+                    Console.WriteLine("★ 在 6.0 mm 以内没有壁厚能满足升温要求 —— " +
+                                      "需提高许用电流密度、加强保温，或放宽升温时间。");
+                else
+                    Console.WriteLine($"★ 升温要求给出的**最小壁厚下界 = {wMin:0.000} mm**");
+
+                var probe = RampSolver.Solve(p, p.WallMinMm, mFlangePairG, drawRefW, targetC,
+                                             fromC, targetC, hours);
+                Console.WriteLine($"  热容分解 @现状壁厚：金属 {probe.CapMetalJPerK:0} J/K + " +
+                                  $"保温 {probe.CapInsulJPerK:0} J/K" +
+                                  $"（保温占 {probe.CapInsulJPerK / (probe.CapMetalJPerK + probe.CapInsulJPerK) * 100:0}%）");
+                Console.WriteLine("  ⚠ 保温层密度与比热目前是典型值而非实测（见 HANDOVER §6 待补数据 ⑤），");
+                Console.WriteLine("    升温时间对其敏感 —— 若保温热容占比高，这个下界的可信度就受限于那两个数。");
+                return;
+            }
+
             // --cli --line   分段核算（示例三段，UI 里可编辑）
             if (args.Contains("--line"))
             {
