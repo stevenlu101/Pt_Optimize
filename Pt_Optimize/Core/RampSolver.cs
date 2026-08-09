@@ -44,13 +44,15 @@ public static class RampSolver
     /// </summary>
     /// <param name="wallMm">管壁厚 mm</param>
     /// <param name="massFlangePairG">本段两端法兰合计质量 g（随管一起被加热）</param>
-    /// <param name="flangeDrawRefW">参考温度下单片法兰的散热 W（由稳态耦合解给出）</param>
-    /// <param name="tRefC">上述法兰散热对应的参考温度 °C</param>
+    /// <param name="flangeGenRefW">参考工况下**单片法兰自身的焦耳发热** W（稳态耦合解的 QGenW）</param>
+    /// <param name="flangeCurrentRefA">上述发热对应的电流 A —— 用来反推法兰电阻 R_f = QGen/I²</param>
+    /// <param name="tRefC">上述两值对应的参考温度 °C</param>
     /// <param name="fromC">起始温度 °C</param>
     /// <param name="targetC">目标温度 °C</param>
     /// <param name="maxHours">限时 h</param>
     public static RampResult Solve(DesignInputs p, double wallMm,
-                                   double massFlangePairG, double flangeDrawRefW, double tRefC,
+                                   double massFlangePairG, double flangeGenRefW,
+                                   double flangeCurrentRefA, double tRefC,
                                    double fromC, double targetC, double maxHours)
     {
         var res = new RampResult();
@@ -74,13 +76,24 @@ public static class RampSolver
         double LossPerM(double tC) => lossTab.Eval(tC);
 
         double lossRef = Math.Max(1e-9, LossPerM(tRefC));
-        double TotalLoss(double tC)
+
+        // ── 法兰：**既散热也发热**，两者都要算。
+        //    只算散热（早先的做法）会把升温门槛抬得过高：在 Φ≈1 的优化点上法兰本就热自给，
+        //    对管子近乎中性；而升温电流大于稳态电流，发热 ∝I² 涨得比散热快，
+        //    Φ_升温>1 时法兰实际是在**帮着**加热。
+        //    法兰电阻由参考工况反推：R_f = QGen_ref / I_ref²，随温度按 ρe(T) 缩放。
+        double rFlangeRef = flangeGenRefW > 0 && flangeCurrentRefA > 1e-9
+            ? flangeGenRefW / (flangeCurrentRefA * flangeCurrentRefA) : 0;   // Ω @ tRefC
+        double rhoRefT = Math.Max(1e-30, Materials.PtResistivity(tRefC));
+        // Φ≈1 ⇒ 参考工况下单片法兰的散热 ≈ 其自身发热
+        double flangeLossRefW = flangeGenRefW;
+
+        double NetFlangePairW(double tC, double iA)
         {
-            double q = LossPerM(tC);
-            // 法兰与管同为包覆的铂表面，散热随温度的形状相近，按比例缩放；
-            // 两端合计 2 片。flangeDrawRefW<0 表示不计法兰散热。
-            double f = flangeDrawRefW > 0 ? 2 * flangeDrawRefW * (q / lossRef) : 0;
-            return q * L + f;
+            if (rFlangeRef <= 0) return 0;
+            double gen = iA * iA * rFlangeRef * (Materials.PtResistivity(tC) / rhoRefT);
+            double loss = flangeLossRefW * (LossPerM(tC) / lossRef);
+            return 2 * (loss - gen);          // 两片；>0 表示净耗，<0 表示净帮忙
         }
 
         // ── 热容
@@ -128,7 +141,7 @@ public static class RampSolver
         {
             double R = Materials.PtResistivity(t) * L / area;   // Ω
             double pElec = current * current * R;
-            double net = pElec - TotalLoss(t);
+            double net = pElec - LossPerM(t) * L - NetFlangePairW(t, current);
             double cap = CapMetal(t) + capInsul;
 
             if (net <= 0)
@@ -154,7 +167,7 @@ public static class RampSolver
 
         double rT = Materials.PtResistivity(targetC) * L / area;
         res.PowerAtTargetW = current * current * rT;
-        res.LossAtTargetW = TotalLoss(targetC);
+        res.LossAtTargetW = LossPerM(targetC) * L + NetFlangePairW(targetC, current);
         if (res.Note.Length == 0 && !res.Reached)
             res.Note = $"限时 {maxHours:0.#} h 内只升到 {tPeak:0.0} °C";
         return res;
@@ -166,14 +179,15 @@ public static class RampSolver
     /// 但散热与壁厚无关 ⇒ 净升温能力随壁厚单调增。故可二分。
     /// </summary>
     public static double MinWallForRampMm(DesignInputs p, double massFlangePairG,
-                                          double flangeDrawRefW, double tRefC,
+                                          double flangeGenRefW, double flangeCurrentRefA, double tRefC,
                                           double fromC, double targetC, double maxHours,
                                           double loMm = 0.10, double hiMm = 6.0)
     {
         // 电流已按 min(J_allow·A, 0.9·I_stab) 取，故「能否升到」随壁厚单调 ——
         // 薄壁受限于可用功率不足，加厚只会改善，不再有上界。
         bool Ok(double wmm)
-            => Solve(p, wmm, massFlangePairG, flangeDrawRefW, tRefC, fromC, targetC, maxHours).Reached;
+            => Solve(p, wmm, massFlangePairG, flangeGenRefW, flangeCurrentRefA, tRefC,
+                     fromC, targetC, maxHours).Reached;
 
         if (!Ok(hiMm)) return double.NaN;      // 最厚也不行
         if (Ok(loMm)) return loMm;             // 最薄就行，下界不由升温决定

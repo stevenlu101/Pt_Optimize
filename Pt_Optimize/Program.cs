@@ -1,4 +1,4 @@
-using System.Linq;
+﻿using System.Linq;
 using PtOptimize.Core;
 using PtOptimize.UI;
 
@@ -491,7 +491,7 @@ internal static class Program
                 Console.WriteLine($"升温同时校核：空管 {rampFromC:0}→{rampTargetC:0} °C / {rampHours:0.#} h");
                 Console.WriteLine();
 
-                (double d, double jf, double jt, double mTube, double mFl, double gen, bool ok)
+                (double d, double jf, double jt, double mTube, double mFl, double gen, double iA, bool ok)
                 Probe(double wall, double ft)
                 {
                     var q = SegmentSolver.Clone(p);
@@ -502,11 +502,11 @@ internal static class Program
                     try
                     {
                         var c = CoupledSolver.Solve(q, g);
-                        if (!c.Tube.Ok) return (0, 0, 0, 0, 0, 0, false);
+                        if (!c.Tube.Ok) return (0, 0, 0, 0, 0, 0, 0, false);
                         return (tset - c.Tube.TFlangeAC, c.JFlangeMaxAPerMm2, c.JTubeAPerMm2,
-                                c.MassTubeG, c.MassFlangePairG, c.Flange.QGenW, true);
+                                c.MassTubeG, c.MassFlangePairG, c.Flange.QGenW, c.Tube.CurrentA, true);
                     }
-                    catch { return (0, 0, 0, 0, 0, 0, false); }
+                    catch { return (0, 0, 0, 0, 0, 0, 0, false); }
                 }
 
                 Console.WriteLine($"{"管壁 mm",9}{"法兰厚 mm",11}{"温差 K",9}{"管 J",8}{"法兰 J",9}" +
@@ -532,8 +532,9 @@ internal static class Program
                     double t2 = 0.5 * (lo + hi);
                     var r2 = Probe(wall, t2);
 
-                    // 升温用该方案的实际法兰质量与散热（Φ≈1 时法兰散热≈自身发热）
-                    var rp = RampSolver.Solve(p, wall, r2.mFl, r2.gen, tset,
+                    // 升温用该方案的实际法兰质量、自身发热与对应电流
+                    // （RampSolver 据此反推法兰电阻，升温时法兰既发热也散热）
+                    var rp = RampSolver.Solve(p, wall, r2.mFl, r2.gen, r2.iA, tset,
                                               rampFromC, rampTargetC, rampHours);
                     string v = (Math.Abs(r2.d) <= 10 ? "✓温差" : "✗温差")
                              + (r2.jf <= p.JAllowAPerMm2 && r2.jt <= p.JAllowAPerMm2 ? " ✓J" : " ✗J越界")
@@ -564,18 +565,21 @@ internal static class Program
 
                 // 法兰随管一起被加热：质量与散热由一次稳态耦合解给出（约 1 min）
                 Console.WriteLine("先跑一次稳态耦合解取法兰质量与散热…");
-                double mFlangePairG = 0, drawRefW = -1;
+                // 取法兰的**自身发热**与对应电流（不是它从管子抽的热）——
+                // 升温时法兰同样通电发热，只按散热算会把门槛抬得过高。
+                double mFlangePairG = 0, genRefW = -1, iRefA = 0;
                 try
                 {
                     var q0 = SegmentSolver.Clone(p);
                     q0.TSetC = targetC; q0.TGlassInC = targetC;
                     q0.SizeWall = false; q0.SizeFlangeThickness = false;
                     var c0 = CoupledSolver.Solve(q0, new FlangePlate());
-                    if (c0.Tube.Ok) { mFlangePairG = c0.MassFlangePairG; drawRefW = c0.FlangeDrawW; }
+                    if (c0.Tube.Ok)
+                    { mFlangePairG = c0.MassFlangePairG; genRefW = c0.Flange.QGenW; iRefA = c0.Tube.CurrentA; }
                 }
                 catch { /* 拿不到就只算管，下面会注明 */ }
-                Console.WriteLine(drawRefW > 0
-                    ? $"  法兰两片 {mFlangePairG:0} g，参考散热 {drawRefW:0} W/片 @ {targetC:0} °C"
+                Console.WriteLine(genRefW > 0
+                    ? $"  法兰两片 {mFlangePairG:0} g，自身发热 {genRefW:0} W/片 @ {targetC:0} °C / {iRefA:0} A"
                     : "  ⚠ 耦合解未成功，本次只计管本身（升温会被算得偏快）");
                 Console.WriteLine();
 
@@ -585,7 +589,7 @@ internal static class Program
 
                 foreach (double wmm in new[] { 0.30, 0.40, 0.50, 0.55, 0.60, 0.70, 1.00, 1.50, 2.00 })
                 {
-                    var rr = RampSolver.Solve(p, wmm, mFlangePairG, drawRefW, targetC,
+                    var rr = RampSolver.Solve(p, wmm, mFlangePairG, genRefW, iRefA, targetC,
                                               fromC, targetC, hours);
                     string verdict = (rr.Reached ? "✓ 达标" : "✗ " + rr.Note)
                                    + (rr.StabilityLimited ? "（电流被热稳定极限压低）" : "");
@@ -595,7 +599,7 @@ internal static class Program
                         $"{rr.TPeakC,10:0.0}{rr.IStabA,10:0}  {verdict}");
                 }
 
-                double wMin = RampSolver.MinWallForRampMm(p, mFlangePairG, drawRefW, targetC,
+                double wMin = RampSolver.MinWallForRampMm(p, mFlangePairG, genRefW, iRefA, targetC,
                                                           fromC, targetC, hours);
                 Console.WriteLine();
                 if (double.IsNaN(wMin))
@@ -604,7 +608,7 @@ internal static class Program
                 else
                     Console.WriteLine($"★ 升温要求给出的**最小壁厚下界 = {wMin:0.000} mm**");
 
-                var probe = RampSolver.Solve(p, p.WallMinMm, mFlangePairG, drawRefW, targetC,
+                var probe = RampSolver.Solve(p, p.WallMinMm, mFlangePairG, genRefW, iRefA, targetC,
                                              fromC, targetC, hours);
                 Console.WriteLine($"  热容分解 @现状壁厚：金属 {probe.CapMetalJPerK:0} J/K + " +
                                   $"保温 {probe.CapInsulJPerK:0} J/K" +
