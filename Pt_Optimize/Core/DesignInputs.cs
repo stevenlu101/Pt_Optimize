@@ -178,8 +178,10 @@ public class DesignInputs
     public double GlassCp { get; set; } = 1300;
 
     [Category("6 玻璃物性"), DisplayName("内壁换热系数 hg [W/m²K]"),
-     Description("层流 Nu≈3.7–4.7，2 t/day、ID40 下约 200–250")]
-    public double HGlass { get; set; } = 220;
+     Description("由层流 Nu≈3.66 与玻璃熔体导热 k≈0.9 W/m·K 得 hg = Nu·k/D ≈ 65（ID50）。\n" +
+                 "旧默认值 220 对应 k_eff≈2.2，远高于熔体导热，会把玻璃向管壁的放热放大约 3.4 倍，\n" +
+                 "使 --glass 的全程温降算成 67.6 K 而实测仅 20 K。改动依据见 --glass 的反解。")]
+    public double HGlass { get; set; } = 65;
 
     [Category("6 玻璃物性"), DisplayName("粘度 [Pa·s]"), Description("压降估算用")]
     public double GlassViscosity { get; set; } = 30;
