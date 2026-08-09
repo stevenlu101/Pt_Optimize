@@ -187,9 +187,11 @@ public class DesignInputs
     public double GlassViscosity { get; set; } = 30;
 
     [Category("5 法兰"), DisplayName("法兰抽热覆盖 [W]"),
-     Description("耦合求解时由二维法兰模型回灌；<0 表示用一维环形模型（已作废，仅兼容旧算例）")]
+     Description("耦合求解时由二维法兰模型回灌。**NaN = 未设定**，此时退回一维环形模型（已作废，仅兼容旧算例）。\n" +
+                 "★ 哨兵必须是 NaN 而不是负数：法兰自给率 Φ>1 时会向管子**倒灌**热量，D 为负是物理上合法的值。\n" +
+                 "  旧代码用 `>=0` 判定，导致 Φ>1 的算例静默回退到作废模型，冷点被算成与厚度无关的常数。")]
     [Browsable(false)]
-    public double FlangeDrawOverrideW { get; set; } = -1;
+    public double FlangeDrawOverrideW { get; set; } = double.NaN;
 
     [Category("2 供料管几何"), DisplayName("壁厚由程序反算"),
      Description("关闭 = 校核模式：壁厚取「最小可制造壁厚」的实测值，程序只报实际 J")]
