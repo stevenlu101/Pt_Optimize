@@ -433,7 +433,9 @@ internal static class Program
                 Console.WriteLine($"{"圆盘半径 mm",12}{"孔周环宽",10}{"法兰厚 mm",11}{"温差 K",9}" +
                                   $"{"法兰 J",9}{"Φ",8}{"自身发热 W",12}{"单段总铂 g",12}  判定");
 
-                foreach (double ro in new[] { 35.0, 42.0, 50.0, 60.0, 70.0, 80.0 })
+                // 粗扫（35/42/50/60/70/80）已定位：J 随直径缩小而**改善**（机理见 §4.2d），
+                // J=J_allow 的临界点落在 42–50 之间。此处细扫该区间求最优。
+                foreach (double ro in new[] { 44.0, 46.0, 48.0, 50.0 })
                 {
                     double lo = 0.4, hi = 3.5;
                     var fLo = Probe(ro, lo);
