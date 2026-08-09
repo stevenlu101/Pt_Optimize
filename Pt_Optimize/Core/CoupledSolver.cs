@@ -99,7 +99,7 @@ public static class CoupledSolver
             { pr.OuterIter = it + 1; progress.Report(pr); }
 
             // ① 一维管段：两端各挂 D 瓦的定值抽热
-            p.FlangeDrawOverrideW = D;
+            p.FlangeDrawOverrideW = D; p.FlangeDrawOverrideSet = true;
             var tube = SegmentSolver.Solve(p);
             if (!tube.Ok) { res.Note = tube.Message; res.Tube = tube; return res; }
             res.Tube = tube;

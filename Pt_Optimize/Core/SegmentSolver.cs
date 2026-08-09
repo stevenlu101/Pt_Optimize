@@ -234,9 +234,9 @@ public static class SegmentSolver
         // 法兰缺口对管根温度的响应 D(T_root)，查表避免在迭代内反复解法兰
         // 法兰缺口 D(T_root)：耦合模式下由二维法兰模型给出定值，
         // 否则退回一维环形模型（该模型对 Pt_Heater.3dm 的圆盘+舌片几何不成立）
-        // 哨兵是 NaN 而非负数：Φ>1 时法兰向管子倒灌，D 为负是合法值。
-        // 用 `>=0` 判定会让那些算例静默回退到作废的一维模型（踩过，见 §7）。
-        var defTab = !double.IsNaN(p.FlangeDrawOverrideW)
+        // 用显式布尔判定，不看 D 的符号：Φ>1 时法兰向管子倒灌，D 为负是合法值。
+        // 旧代码 `>=0` 会让那些算例静默回退到作废的一维模型（踩过，见 §7）。
+        var defTab = p.FlangeDrawOverrideSet
             ? new LossTable(p.TAmbC, Math.Max(p.TSetC, p.TGlassInC) + 200, 8,
                             _ => p.FlangeDrawOverrideW)
             : new LossTable(p.TAmbC, Math.Max(p.TSetC, p.TGlassInC) + 200, 28,

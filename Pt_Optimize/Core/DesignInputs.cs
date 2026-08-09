@@ -187,11 +187,22 @@ public class DesignInputs
     public double GlassViscosity { get; set; } = 30;
 
     [Category("5 法兰"), DisplayName("法兰抽热覆盖 [W]"),
-     Description("耦合求解时由二维法兰模型回灌。**NaN = 未设定**，此时退回一维环形模型（已作废，仅兼容旧算例）。\n" +
-                 "★ 哨兵必须是 NaN 而不是负数：法兰自给率 Φ>1 时会向管子**倒灌**热量，D 为负是物理上合法的值。\n" +
-                 "  旧代码用 `>=0` 判定，导致 Φ>1 的算例静默回退到作废模型，冷点被算成与厚度无关的常数。")]
+     Description("耦合求解时由二维法兰模型回灌。是否生效由 FlangeDrawOverrideSet 决定，不看本值符号。")]
     [Browsable(false)]
-    public double FlangeDrawOverrideW { get; set; } = double.NaN;
+    public double FlangeDrawOverrideW { get; set; }
+
+    /// <summary>
+    /// 上面那个覆盖值是否有效。
+    ///
+    /// ★ 不能用「负数」或「NaN」当哨兵：
+    ///   · 负数不行 —— 法兰自给率 Φ&gt;1 时自身焦耳热有余，会向管子**倒灌**热量，D 为负是合法值。
+    ///     旧代码 `FlangeDrawOverrideW >= 0` 使 Φ&gt;1 的算例静默回退到已作废的一维模型。
+    ///   · NaN 也不行 —— <see cref="SegmentSolver.Clone"/> 与算例存盘都走 JSON，
+    ///     而 JSON 规范不允许 NaN，序列化直接抛 ArgumentException。
+    /// 故用显式布尔。
+    /// </summary>
+    [Browsable(false)]
+    public bool FlangeDrawOverrideSet { get; set; }
 
     [Category("2 供料管几何"), DisplayName("壁厚由程序反算"),
      Description("关闭 = 校核模式：壁厚取「最小可制造壁厚」的实测值，程序只报实际 J")]

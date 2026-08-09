@@ -183,7 +183,8 @@ internal static class Program
                             var q = SegmentSolver.Clone(p);
                             q.HGlass = hg; q.TSetC = tset; q.TGlassInC = t;
                             q.GlassHeadM = head; q.SizeWall = false;
-                            q.FlangeDrawOverrideW = draws[k];     // ← 二维模型的抽热，不走 FlangeRadial
+                            // ← 二维模型的抽热，不走 FlangeRadial
+                            q.FlangeDrawOverrideW = draws[k]; q.FlangeDrawOverrideSet = true;
                             var s = SegmentSolver.Solve(q);
                             if (!s.Ok) return double.NaN;
                             t = s.TGlassOutC;
