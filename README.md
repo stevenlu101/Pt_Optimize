@@ -18,6 +18,7 @@ dotnet run --project Pt_Optimize
 | `--cli --thick` | 孔周局部加厚扫描（治 J 越界） |
 | `--cli --plate` | 二维法兰电流场 + 温度场（独立） |
 | `--cli --plots <dir>` | 导出连接区场图 PNG |
+| `--cli --geom` | 读 `Pt_Heater.3dm` 校核代码里的几何常数（起 `Pt_Optimize.Geom` 子进程，需装 Rhino 8） |
 
 验证：`dotnet test`（15 项）
 
@@ -79,6 +80,11 @@ dotnet run --project Pt_Optimize
 ```
 
 舌片末端截面 **160.0 mm²** ≈ 管截面 **160.2 mm²** —— 刻意配的。
+
+上述数字不再是手抄：`--cli --geom` 起 `Pt_Optimize.Geom` 子进程（net7.0-windows / x64 /
+Rhino.Inside，自带 headless Rhino 8 引擎）量测 `.3dm`，主程序拿回 JSON 与自己的常数逐项对照，
+2026-08-09 实测 11 项全部 0.00 % 吻合（含平面净面积 23 591.608 mm²）。
+主程序本身不引用 RhinoCommon，没装 Rhino 的机器照常构建与核算。
 
 ---
 

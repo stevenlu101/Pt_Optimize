@@ -1,7 +1,7 @@
 # Pt_Optimize 交接文档
 
 > 铂金直接加热系统用量优化。换机接手请从本文档开始。
-> 最后更新：2026-08-08
+> 最后更新：2026-08-09
 
 ---
 
@@ -17,12 +17,21 @@
 ```bash
 git clone <本仓库>
 cd Pt_Optimize
+dotnet restore --disable-parallel   # 见下，务必串行
 dotnet build
 dotnet test          # 应为 18/18 通过
 dotnet run --project Pt_Optimize
 ```
 
-**依赖**：.NET 8 SDK。NuGet 包 `MathNet.Numerics 5.0.0`、`ScottPlot.WinForms 5.1.59`、`xunit`。
+**依赖**：NuGet 包 `MathNet.Numerics 5.0.0`、`ScottPlot.WinForms 5.1.59`、`xunit`。
+
+**SDK 不必是 8**。目标框架虽为 `net8.0-windows`，但 SDK 9 / 10 都能编 —— 只要
+`microsoft.netcore.app.ref` 与 `microsoft.windowsdesktop.app.ref` 的 8.0.x 引用包能从 NuGet 取到
+（缓存里有就不走网）。**运行**则需要 8.0 的 `Microsoft.NETCore.App` +
+`Microsoft.WindowsDesktop.App` 共享运行时。
+2026-08-09 在只装了 SDK 9.0.315 / 10.0.100 / 10.0.102 的机器上实测：构建 0 错误、测试 18/18。
+`dotnet build` 报 6 条 NU1701（ScottPlot 依赖的 OpenTK、SkiaSharp.Views.WindowsForms 是
+.NET Framework 包）**属正常**，不是配置坏了。
 
 ### ⚠ 换机第一个坑：ScottPlot 还原
 
@@ -32,9 +41,90 @@ SkiaSharp 原生包很大（约 80 MB），网络差时**并行下载必失败**
 dotnet restore --disable-parallel
 ```
 
+**首次还原会非常久，要有心理准备**：2026-08-09 实测 **48 分钟**，
+期间 `MathNet.Numerics`、`Microsoft.CodeCoverage` 等包反复报
+`Received an unexpected EOF or 0 bytes from the transport stream`，
+但 NuGet 的重试是有效的，最终 exit 0。**中途看到 EOF 不要掐掉重来** —— 重来是从头开始，
+而继续等是接着重试。建议直接挂后台，别盯着。
+
 **不要用 `dotnet add package`** —— 它失败时会**回滚 PackageReference**，
 表面上只报个错，实际什么都没留下，之后的 `dotnet restore` 在空项目上白跑十几分钟。
 要加包就直接改 `.csproj` 再 restore：引用先落盘，restore 只管下载，失败重试是增量的。
+
+### ⚠ 换机第二个坑：CLI 直跑 .exe 没有任何输出
+
+`Pt_Optimize` 是 `WinExe`（GUI 子系统），**不挂控制台**。直接
+`Pt_Optimize.exe --cli --line` 会静默退出，一个字都不打印 —— 看起来像程序挂了，其实跑完了。
+
+正确调用是走 `dotnet` 宿主（控制台子系统）：
+
+```bash
+dotnet Pt_Optimize/bin/Debug/net8.0-windows/Pt_Optimize.dll --cli --line
+```
+
+这样输出正常且中文是 UTF-8。`dotnet run --project Pt_Optimize -- --cli --line` 也能跑，
+但**输出被重定向时中文乱码**（`Console.OutputEncoding` 设不上），只适合直接看屏幕。
+
+**PowerShell 下另有一个假失败**：给 CLI 输出接 `| Select-Object -First N` 会提前关管道，
+`$LASTEXITCODE` 变成 **255**，看着像程序崩了。判断退出码请先重定向到文件再看：
+
+```bash
+dotnet .../Pt_Optimize.dll --cli --creep > out.txt 2>&1; echo $LASTEXITCODE
+```
+
+### Rhino 8 几何接入（可选）
+
+`Pt_Heater.3dm` 是几何的唯一事实来源，但代码里那些几何常数一直是**人工抄进去**的。
+`--geom` 直接读 .3dm 跟代码逐项对照：
+
+```bash
+dotnet Pt_Optimize/bin/Debug/net8.0-windows/Pt_Optimize.dll --cli --geom
+```
+
+**架构照搬 `D:\WinForm_ISO_STR_R8` 的 harness 房规**（那边的 `probe`/`objprobe` 模板）：
+
+```
+Pt_Optimize        net8.0-windows   完全不碰 RhinoCommon，不要求本机装 Rhino
+     │  启子进程，收 JSON
+     ▼
+Pt_Optimize.Geom   net7.0-windows / x64 / Rhino.Inside   自起 headless RhinoCore，只负责「量」
+```
+
+**「量」在子进程、「判」在主程序** —— 常数在主程序里，搬到子进程就成了拿副本校副本。
+
+为什么必须隔一个进程：**Rhino 8 引擎 = .NET 7，进程内宿主必须同代**，而主程序是
+net8.0-windows。隔开后两边各自成立，主程序不必降级到已 EOL 的 net7，
+且没装 Rhino 的机器照样构建、照样跑全部核算（只是 `--geom` 用不了）。
+
+子进程的三条硬约束（改了会 `BadImageFormatException` / 加载失败）：
+
+| 项 | 值 | 为什么 |
+|---|---|---|
+| TargetFramework | `net7.0-windows` | Rhino 8 引擎 = .NET 7，进程内宿主必须同代 |
+| PlatformTarget | `x64` | RhinoCommon 8 仅 64-bit |
+| Rhino 载入 | `Rhino.Inside` 包，**不显式引 RhinoCommon** | 编译期由其依赖带出（net48 回退，NU1701 是预期噪音），运行期 Resolver 加载安装目录的原生 net7.0 RhinoCommon |
+
+入口三段式，顺序错任一步都启动失败（`Pt_Optimize.Geom/Program.cs`）：
+
+```csharp
+[STAThread] static int Main(string[] args) {       // ① 控制台默认 MTA → RhinoCore 抛 COMException
+    RhinoInside.Resolver.Initialize();             // ② 必须早于任何 RhinoCommon 类型 JIT
+    return Run(path);                              // ③ 碰 Rhino 的代码进 NoInlining 方法
+}
+[MethodImpl(MethodImplOptions.NoInlining)] static int Run(string path) {
+    using (new RhinoCore(new[]{"/NOSPLASH"}, WindowStyle.Hidden)) { ... }
+}
+```
+
+房规里对本项目也成立的几条坑：**一进程只能启一个 RhinoCore**，用完 Dispose 且
+`Environment.Exit()` 收尾（前台线程挡住进程自然退出）；**容差一律从
+`doc.ModelAbsoluteTolerance` 取**，不硬编码；**`VolumeMassProperties.Compute` 等
+失败时静默返回 null 而不抛异常，每次判空**。
+
+版本钉死在 `Rhino.Inside 8.0.7-beta`（房规用浮动 `8.*-*`）：浮动版本号每次 restore
+都要联网解析，而本机 restore 一次 48 分钟。要升级手动改 csproj 那一行。
+本机实测：该版本连同 RhinoCommon / Grasshopper 8.0.23304.9001 与 net7 引用包全部已在
+NuGet 缓存里，**首次 restore 仅 5 秒，全程离线**。
 
 ### 文档生成（可选）
 
@@ -62,6 +152,7 @@ Pt_Optimize/Core/
   FieldMap.cs          子午面场装配（供绘图）
   Segment.cs           分段定义
   LineSolver.cs        整线分段核算（解析，即时）
+  Geometry3dm.cs       ★ 驱动 Pt_Optimize.Geom 子进程 + 判定几何常数 → --geom
   FlangeRadial.cs      ⚠ 一维环形法兰模型 —— 已作废，见 §5
   FlangeOptimizer.cs   ⚠ 基于上者的扫描 —— 已作废
   FlangeThicknessDesign.cs  法兰厚度分布反设计（未完成验证）
@@ -70,6 +161,9 @@ Pt_Optimize/UI/
   MainForm.cs          主窗体（分段核算页 + 6 个图页签 + 参数 PropertyGrid）
   FieldPlots.cs        场图与剖面图（ScottPlot）
   Schematics.cs        论文示意图（图 1–5）
+
+Pt_Optimize.Geom/       ★ 几何量测子进程（net7.0-windows / x64 / Rhino.Inside，见 §1）
+  Program.cs            自起 headless RhinoCore，读 .3dm 吐 JSON —— 只量不判
 
 Pt_Optimize.Tests/
   VerificationTests.cs 15 项：MMS、解析解、能量闭合、网格收敛等
@@ -107,6 +201,7 @@ Pt_Heater.3dm             ★ 几何唯一事实来源
 | `--cli --clamp` | 夹持温度扫描 | ~10 min |
 | `--cli --thick` | 孔周加厚扫描 | ~2 min |
 | `--cli --plate` | 二维场独立求解 | ~2 min |
+| `--cli --geom [f.3dm]` | 读 .3dm 校核几何常数（起 Geom 子进程，需 Rhino 8） | ~10 s |
 | `--cli --figs <dir>` | 生成论文示意图 | 秒 |
 | `--cli --plots <dir>` | 导出连接区场图 | 秒 |
 
@@ -248,6 +343,10 @@ HC3 段（1250 °C、水头 1.0 m）在现状 1.0 mm 壁厚下**利用率 1.11�
 ## 9. 联系与出处
 
 - 几何：`Pt_Heater.3dm`（图层 `铂金管`、`法兰`）
+  —— 2026-08-09 用 `--geom` 机器校核过一次（Rhino 8.33.26188.13001）：管的内外径/壁厚/段长/铂重、
+  法兰的管孔径/圆盘径/厚度/舌片末端 X/平面净面积/单片铂重，**11 项全部 0.00 % 吻合**。
+  其中「平面净面积 23 591.608 mm²」一项同时校核了 `FlangePlate` 的 `HalfWidth`/`Tangent`
+  那套解析轮廓。**改 .3dm 或改这些常数后请重跑 `--geom`。**
 - 电阻率与设计工况：`鉑金電氣計算.xlsx`
 - 持久强度：`鉑金材料蠕變應力壽命估算.xlsx`（Tanaka、Umicore）
 - 金属价格：Umicore PMM，2026-08-06（Pt \$1731/oz、Rh \$8500/oz，Rh/Pt = 4.91）
