@@ -16,4 +16,12 @@
     <PackageReference Include="ScottPlot.WinForms" Version="5.1.59" />
   </ItemGroup>
 
+  <!--
+    本项目**刻意不引用 RhinoCommon**，也不需要本机装 Rhino。
+    几何量测交给 Pt_Optimize.Geom 子进程（net7.0-windows / x64 / Rhino.Inside），
+    本项目只解析它吐回的 JSON 并与自己的常数比对 —— 见 Core/Geometry3dm.cs。
+    这样做的理由（照 WinForm_ISO_STR_R8 房规）：Rhino 8 引擎 = .NET 7，进程内宿主必须同代，
+    而本项目是 net8.0-windows；隔进子进程后两边各自成立，且没装 Rhino 的机器照样构建与核算。
+  -->
+
 </Project>

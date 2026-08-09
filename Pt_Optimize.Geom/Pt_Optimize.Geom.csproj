@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ========================================================================
+       几何量测子进程（harness 范式，照 WinForm_ISO_STR_R8 的 probe/objprobe 模板）
+       —— 自起进程内 headless Rhino 8，读 Pt_Heater.3dm，把量到的几何按 JSON 吐到 stdout。
+          只负责「量」，不负责「判」：判定留在 Pt_Optimize 里，因为常数在那边，
+          搬过来就成了拿副本校副本。
+
+       为什么独立成一个进程而不是编进主程序（这是 ISO_STR_R8 的做法）：
+         · 主程序 Pt_Optimize 是 net8.0-windows，而 Rhino 8 引擎 = .NET 7，
+           进程内宿主必须同代 —— 隔进子进程后两边各自成立，主程序不必降级到 EOL 的 net7
+         · 主程序因此完全不碰 RhinoCommon：没装 Rhino 的机器照样构建、照样跑全部核算
+         · 避免主程序与子进程各持一个 RhinoCore 时的授权/COM 争用
+
+       关键约束（勿改，改了会 BadImageFormatException / 加载失败）：
+         · TargetFramework = net7.0-windows   Rhino 8 引擎 = .NET 7，进程内宿主必须同代
+         · PlatformTarget  = x64              RhinoCommon 8 仅 64-bit
+         · 只引 Rhino.Inside，不显式引 RhinoCommon 包：编译期由 Rhino.Inside 的依赖带出，
+           运行期 Resolver 加载**安装目录**的原生 net7.0 RhinoCommon 8.x
+       ======================================================================== -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net7.0-windows</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>Pt_Optimize.Geom</AssemblyName>
+    <RootNamespace>PtOptimize.Geom</RootNamespace>
+    <!-- 本项目引用的是 net48 回退的 RhinoCommon（运行期换成 netcore 版），NU1701 是预期噪音 -->
+    <NoWarn>$(NoWarn);NU1701</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 房规写的是 8.*-*（浮动）。这里钉死到本机已缓存的版本：浮动版本号每次 restore
+         都要联网解析，而本机 restore 一次要 48 分钟（见 HANDOVER §1）。
+         要升级时手动改这一行再 restore。 -->
+    <PackageReference Include="Rhino.Inside" Version="8.0.7-beta" />
+  </ItemGroup>
+
+</Project>
