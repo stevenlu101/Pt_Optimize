@@ -330,6 +330,73 @@ internal static class Program
                 return;
             }
 
+            // --cli --fit2d  管壁 × 法兰厚 二维：对每个管壁二分法兰厚，找衔接温差过零点
+            //
+            // 单扫法兰厚已证明在现状管壁下无解（Φ=1 处 J≈12.9 超限 29%）。标度关系：
+            //   I ∝ √t_管 ,  t*_法兰|_{Φ=1} ∝ I² ,  J|_{t*} = I/t* ∝ 1/I
+            // ⇒ **电流越低，Φ=1 点的 J 反而越高**。故减薄管壁会让法兰更难做，
+            //   要把 J 压回许用值反而要加厚管壁。本扫描验证这个反直觉的结论。
+            if (args.Contains("--fit2d"))
+            {
+                double tset = 1050, tglass = 1130, head = 1.0, clamp = 80;
+                Console.WriteLine("=== 管壁 × 法兰厚：衔接温差过零轨迹 ===");
+                Console.WriteLine($"最不利段 HC3：控温 {tset:0} °C，玻璃 {tglass:0} °C，铜排夹持 {clamp:0} °C");
+                Console.WriteLine("对每个管壁二分法兰厚度，求「控温点 − 法兰处管温」= 0 的厚度");
+                Console.WriteLine();
+
+                // 有符号温差：>0 = 冷点（法兰抽热），<0 = 热包（法兰倒灌）
+                (double d, double jf, double jt, double m, bool ok) Probe(double wall, double ft)
+                {
+                    var q = SegmentSolver.Clone(p);
+                    q.TSetC = tset; q.TGlassInC = tglass; q.GlassHeadM = head;
+                    q.WallMinMm = wall; q.SizeWall = false;
+                    q.SizeFlangeThickness = false; q.BusbarClampTempC = clamp;
+                    try
+                    {
+                        var c = CoupledSolver.Solve(q, new FlangePlate { ThicknessMm = ft, ThickenedMm = ft });
+                        if (!c.Tube.Ok) return (0, 0, 0, 0, false);
+                        return (tset - c.Tube.TFlangeAC, c.JFlangeMaxAPerMm2, c.JTubeAPerMm2,
+                                c.MassTubeG + c.MassFlangePairG, true);
+                    }
+                    catch { return (0, 0, 0, 0, false); }
+                }
+
+                Console.WriteLine($"{"管壁 mm",9}{"法兰厚 mm",11}{"温差 K",9}{"管 J",8}{"法兰 J",9}" +
+                                  $"{"单段总铂 g",12}  判定");
+
+                foreach (double wall in new[] { 0.60, 0.80, 1.00, 1.30, 1.60, 2.00 })
+                {
+                    // 温差随法兰增厚单调上升（薄→倒灌为负，厚→抽热为正），可二分
+                    double lo = 0.6, hi = 3.5;
+                    var fLo = Probe(wall, lo);
+                    var fHi = Probe(wall, hi);
+                    if (!fLo.ok || !fHi.ok || fLo.d * fHi.d > 0)
+                    {
+                        Console.WriteLine($"{wall,9:0.00}   ✗ 区间 [{lo:0.0},{hi:0.0}] 未包住零点" +
+                                          $"（温差 {fLo.d:+0.0;-0.0} … {fHi.d:+0.0;-0.0} K）");
+                        continue;
+                    }
+                    for (int k = 0; k < 9; k++)
+                    {
+                        double mid = 0.5 * (lo + hi);
+                        var f = Probe(wall, mid);
+                        if (!f.ok) break;
+                        if (f.d * fLo.d > 0) { lo = mid; fLo = f; } else hi = mid;
+                    }
+                    double t2 = 0.5 * (lo + hi);
+                    var r2 = Probe(wall, t2);
+                    string v = (Math.Abs(r2.d) <= 10 ? "✓ 温差达标" : "")
+                             + (r2.jf <= p.JAllowAPerMm2 && r2.jt <= p.JAllowAPerMm2 ? "  ✓ J 达标" : "  ✗ J 越界");
+                    Console.WriteLine($"{wall,9:0.00}{t2,11:0.000}{r2.d,9:+0.0;-0.0}{r2.jt,8:0.00}" +
+                                      $"{r2.jf,9:0.00}{r2.m,12:0}  {v}");
+                }
+                Console.WriteLine();
+                Console.WriteLine("若「J 达标」只在大管壁处出现，则 ≤10K 目标要花铂金买，不是省铂的顺风车。");
+                Console.WriteLine("温差对法兰厚的斜率约 262 K/mm ⇒ 守住 ±10K 需法兰厚公差约 ±0.04 mm，");
+                Console.WriteLine("这是实打实的制造要求，须写进交付条件。");
+                return;
+            }
+
             // --cli --ramp   规程一：空管升温核算（25 → 1150 °C / 3 h）
             // 给出模型此前完全没有的**壁厚下界**：P_max = J_allow²·A·ρe·L ∝ 壁厚，
             // 减薄的同时也在削减可用功率。稳态解只把 J 当上界，方向相反的下界一条都没有。
