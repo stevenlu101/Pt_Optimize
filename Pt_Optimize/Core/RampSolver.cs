@@ -31,7 +31,8 @@ public sealed class RampResult
     public double PowerAtTargetW;        // 目标温度处的电功率
     public double LossAtTargetW;         // 目标温度处的总散热
     public double IStabA;                // 空管热稳定极限
-    public bool StabilityViolated;       // 所需电流是否越过该极限
+    /// <summary>电流被热稳定极限压在了许用电流密度之下（厚壁时会发生，不是故障）</summary>
+    public bool StabilityLimited;
     public double CapMetalJPerK, CapInsulJPerK;   // 热容分解，便于判断谁主导
     public string Note = "";
 }
@@ -58,11 +59,6 @@ public static class RampSolver
         double area = Math.PI * (rOut * rOut - ri * ri);      // m²
         double L = p.TubeLength;
         res.TubeAreaMm2 = area * 1e6;
-
-        // ── 电流：由许用电流密度定上限。这是升温工况能供出的最大功率。
-        double current = p.JAllow * area;                      // A
-        res.CurrentA = current;
-        res.JAPerMm2 = p.JAllowAPerMm2;
 
         // ── 散热：只有保温层向环境（无玻璃）。法兰按同一温度形状缩放。
         //    发射率要按「有没有保温」取：裸管辐射的是铂表面，包了保温才是保温外表面。
@@ -112,7 +108,16 @@ public static class RampSolver
         double betaEmpty = lossTab.Slope(targetC);            // W/(m·K)
         double drhoDt = Materials.RhoRef * (Materials.AlphaFit + 2 * Materials.BetaFit * targetC);
         res.IStabA = Math.Sqrt(Math.Max(1e-9, betaEmpty * area / Math.Max(1e-30, drhoDt)));
-        res.StabilityViolated = current > res.IStabA;
+
+        // ── 电流：J_allow 是**上限而非必须值**。厚壁时 I=J_allow·A 会越过热稳定极限
+        //    （I_stab ∝ √A 而 I ∝ A，故 I/I_stab ∝ √A 随壁厚增长），
+        //    此时只是「不能用满许用电流」，不是不可行 —— 取二者较小并留 10 % 裕度。
+        double iAllow = p.JAllow * area;
+        double iCap = 0.9 * res.IStabA;
+        double current = Math.Min(iAllow, iCap);
+        res.StabilityLimited = iCap < iAllow;
+        res.CurrentA = current;
+        res.JAPerMm2 = current / area * 1e-6;
 
         // ── 积分 C(T)·dT/dt = P_elec(T) − P_loss(T)
         double t = fromC, time = 0, dt = 2.0;                  // s
@@ -165,11 +170,11 @@ public static class RampSolver
                                           double fromC, double targetC, double maxHours,
                                           double loMm = 0.10, double hiMm = 6.0)
     {
+        // 电流已按 min(J_allow·A, 0.9·I_stab) 取，故「能否升到」随壁厚单调 ——
+        // 薄壁受限于可用功率不足，加厚只会改善，不再有上界。
         bool Ok(double wmm)
-        {
-            var r = Solve(p, wmm, massFlangePairG, flangeDrawRefW, tRefC, fromC, targetC, maxHours);
-            return r.Reached && !r.StabilityViolated;
-        }
+            => Solve(p, wmm, massFlangePairG, flangeDrawRefW, tRefC, fromC, targetC, maxHours).Reached;
+
         if (!Ok(hiMm)) return double.NaN;      // 最厚也不行
         if (Ok(loMm)) return loMm;             // 最薄就行，下界不由升温决定
         for (int k = 0; k < 60 && hiMm - loMm > 1e-4; k++)

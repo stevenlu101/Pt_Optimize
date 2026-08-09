@@ -428,18 +428,18 @@ internal static class Program
                     : "  ⚠ 耦合解未成功，本次只计管本身（升温会被算得偏快）");
                 Console.WriteLine();
 
-                Console.WriteLine($"{"壁厚 mm",9}{"截面 mm²",11}{"电流 A",9}{"目标处功率 W",14}" +
-                                  $"{"目标处散热 W",14}{"用时 h",9}{"最高 °C",10}{"I_stab A",10}  判定");
+                Console.WriteLine($"{"壁厚 mm",9}{"截面 mm²",11}{"电流 A",9}{"实际 J",9}" +
+                                  $"{"目标处功率 W",14}{"目标处散热 W",14}{"用时 h",9}{"最高 °C",10}" +
+                                  $"{"I_stab A",10}  判定");
 
-                foreach (double wmm in new[] { 0.30, 0.40, 0.50, 0.70, 1.00, 1.50, 2.00 })
+                foreach (double wmm in new[] { 0.30, 0.40, 0.50, 0.55, 0.60, 0.70, 1.00, 1.50, 2.00 })
                 {
                     var rr = RampSolver.Solve(p, wmm, mFlangePairG, drawRefW, targetC,
                                               fromC, targetC, hours);
-                    string verdict = rr.StabilityViolated ? "✗ 越过热稳定极限"
-                                   : rr.Reached ? "✓ 达标"
-                                   : "✗ " + rr.Note;
+                    string verdict = (rr.Reached ? "✓ 达标" : "✗ " + rr.Note)
+                                   + (rr.StabilityLimited ? "（电流被热稳定极限压低）" : "");
                     Console.WriteLine($"{wmm,9:0.00}{rr.TubeAreaMm2,11:0.0}{rr.CurrentA,9:0}" +
-                        $"{rr.PowerAtTargetW,14:0}{rr.LossAtTargetW,14:0}" +
+                        $"{rr.JAPerMm2,9:0.00}{rr.PowerAtTargetW,14:0}{rr.LossAtTargetW,14:0}" +
                         $"{(rr.Reached ? rr.HoursToTarget.ToString("0.00") : "—"),9}" +
                         $"{rr.TPeakC,10:0.0}{rr.IStabA,10:0}  {verdict}");
                 }
