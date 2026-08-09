@@ -120,15 +120,29 @@ internal static class Program
                 double tg = glassInC;
                 double totalPower = 0;
                 bool allOk = true;
+                var draws = new double[line.Length];      // 各段法兰抽热 W（二维模型给出）
+                int si = -1;
+
                 foreach (var (name, tset, head) in line)
                 {
+                    si++;
                     var q = SegmentSolver.Clone(p);
                     q.TSetC = tset; q.TGlassInC = tg; q.GlassHeadM = head;
                     q.SizeWall = false;
+                    q.SizeFlangeThickness = false;        // 校核现状：法兰厚度就取 3dm 实测 2.0 mm
+
+                    // ★ 必须走耦合解。裸调 SegmentSolver.Solve 会让 defTab 落到已作废的
+                    //   FlangeRadial（一维环形），Φ 算成 0.037 而真值 0.72–0.82，
+                    //   法兰抽热高估约 20 倍，冷点假深到 200 K 以上。见 HANDOVER §5 / §7。
                     SolveResult sr;
-                    try { sr = SegmentSolver.Solve(q); }
+                    try
+                    {
+                        var c = CoupledSolver.Solve(q, new FlangePlate());
+                        if (!c.Tube.Ok) { Console.WriteLine($"{name,6}  ✗ {c.Tube.Message}"); allOk = false; break; }
+                        sr = c.Tube;
+                        draws[si] = c.FlangeDrawW;
+                    }
                     catch (Exception ex) { Console.WriteLine($"{name,6}  ✗ {ex.Message}"); allOk = false; break; }
-                    if (!sr.Ok) { Console.WriteLine($"{name,6}  ✗ {sr.Message}"); allOk = false; break; }
 
                     double drop = tg - sr.TGlassOutC;
                     double dRoot = tset - sr.TFlangeAC;         // 管中点设定 − 法兰衔接处
@@ -157,14 +171,19 @@ internal static class Program
 
                     // ── 反解 hg：实测温降是硬数据，用它标定内壁换热系数，而不是继续猜。
                     //    hg 越大 → 玻璃向金属放热越多 → 出口越低，单调，可二分。
+                    // 反解时复用上面二维模型给出的抽热 D（FlangeDrawOverrideW），
+                    // 而不是每次重跑耦合解（40 次二分 × 3 段 × 1 min 不可接受）。
+                    // 近似：D 主要由法兰自身热状态与管根温度决定，对 hg 只有二阶依赖。
                     double GlassOut(double hg)
                     {
                         double t = glassInC;
-                        foreach (var (_, tset, head) in line)
+                        for (int k = 0; k < line.Length; k++)
                         {
+                            var (_, tset, head) = line[k];
                             var q = SegmentSolver.Clone(p);
                             q.HGlass = hg; q.TSetC = tset; q.TGlassInC = t;
                             q.GlassHeadM = head; q.SizeWall = false;
+                            q.FlangeDrawOverrideW = draws[k];     // ← 二维模型的抽热，不走 FlangeRadial
                             var s = SegmentSolver.Solve(q);
                             if (!s.Ok) return double.NaN;
                             t = s.TGlassOutC;
