@@ -472,6 +472,82 @@ internal static class Program
                 return;
             }
 
+            // --cli --wallfit [圆盘半径]   在已优化的法兰直径下，管壁还能不能再降
+            //
+            // --discfit 把管壁钉在 1.00 mm，得到 R=42~44 时法兰 J 只有 8.5~9.0，
+            // 距许用值 10 还有余量。本扫描把这点余量拿去换管壁。
+            // 但方向不利：减薄管壁 ⇒ 电流↓ ⇒ J|_{Φ=1} ∝ 1/√t_管 ⇒ **余量被吃掉**。
+            // 同时升温下界（--ramp）是硬底。故必存在下限，扫出来。
+            if (args.Contains("--wallfit"))
+            {
+                int wi = Array.IndexOf(args, "--wallfit");
+                double ro = wi + 1 < args.Length && double.TryParse(args[wi + 1], out var rv) ? rv : 44.0;
+                double tset = 1050, tglass = 1130, head = 1.0, clamp = 80;
+                const double rampTargetC = 1150, rampFromC = 25, rampHours = 3.0;
+
+                Console.WriteLine("=== 管壁下探（法兰直径已优化）===");
+                Console.WriteLine($"最不利段 HC3：控温 {tset:0} °C，玻璃 {tglass:0} °C，铜排夹持 {clamp:0} °C");
+                Console.WriteLine($"圆盘半径固定 {ro:0.0} mm（Ø{2 * ro:0}）；对每个管壁二分法兰厚求温差 = 0");
+                Console.WriteLine($"升温同时校核：空管 {rampFromC:0}→{rampTargetC:0} °C / {rampHours:0.#} h");
+                Console.WriteLine();
+
+                (double d, double jf, double jt, double mTube, double mFl, double gen, bool ok)
+                Probe(double wall, double ft)
+                {
+                    var q = SegmentSolver.Clone(p);
+                    q.TSetC = tset; q.TGlassInC = tglass; q.GlassHeadM = head;
+                    q.WallMinMm = wall; q.SizeWall = false;
+                    q.SizeFlangeThickness = false; q.BusbarClampTempC = clamp;
+                    var g = new FlangePlate { DiscRadiusMm = ro, ThicknessMm = ft, ThickenedMm = ft };
+                    try
+                    {
+                        var c = CoupledSolver.Solve(q, g);
+                        if (!c.Tube.Ok) return (0, 0, 0, 0, 0, 0, false);
+                        return (tset - c.Tube.TFlangeAC, c.JFlangeMaxAPerMm2, c.JTubeAPerMm2,
+                                c.MassTubeG, c.MassFlangePairG, c.Flange.QGenW, true);
+                    }
+                    catch { return (0, 0, 0, 0, 0, 0, false); }
+                }
+
+                Console.WriteLine($"{"管壁 mm",9}{"法兰厚 mm",11}{"温差 K",9}{"管 J",8}{"法兰 J",9}" +
+                                  $"{"管 g",8}{"法兰 g",9}{"单段总铂 g",12}{"升温",8}  判定");
+
+                foreach (double wall in new[] { 1.00, 0.90, 0.80, 0.70, 0.60, 0.55 })
+                {
+                    double lo = 0.4, hi = 4.0;
+                    var fLo = Probe(wall, lo);
+                    var fHi = Probe(wall, hi);
+                    if (!fLo.ok || !fHi.ok)
+                    { Console.WriteLine($"{wall,9:0.00}   ✗ 端点求解失败"); continue; }
+                    if (fLo.d * fHi.d > 0)
+                    { Console.WriteLine($"{wall,9:0.00}   ✗ 温差在 [{lo:0.0},{hi:0.0}] 内不变号"); continue; }
+
+                    for (int k = 0; k < 8; k++)
+                    {
+                        double mid = 0.5 * (lo + hi);
+                        var f = Probe(wall, mid);
+                        if (!f.ok) break;
+                        if (f.d * fLo.d > 0) { lo = mid; fLo = f; } else hi = mid;
+                    }
+                    double t2 = 0.5 * (lo + hi);
+                    var r2 = Probe(wall, t2);
+
+                    // 升温用该方案的实际法兰质量与散热（Φ≈1 时法兰散热≈自身发热）
+                    var rp = RampSolver.Solve(p, wall, r2.mFl, r2.gen, tset,
+                                              rampFromC, rampTargetC, rampHours);
+                    string v = (Math.Abs(r2.d) <= 10 ? "✓温差" : "✗温差")
+                             + (r2.jf <= p.JAllowAPerMm2 && r2.jt <= p.JAllowAPerMm2 ? " ✓J" : " ✗J越界")
+                             + (rp.Reached ? "" : " ✗升不到");
+                    Console.WriteLine($"{wall,9:0.00}{t2,11:0.000}{r2.d,9:+0.0;-0.0}{r2.jt,8:0.00}" +
+                        $"{r2.jf,9:0.00}{r2.mTube,8:0}{r2.mFl,9:0}{r2.mTube + r2.mFl,12:0}" +
+                        $"{(rp.Reached ? rp.HoursToTarget.ToString("0.00") + "h" : "✗"),8}  {v}");
+                }
+                Console.WriteLine();
+                Console.WriteLine("管与法兰的质量都 ∝ 管壁（法兰厚 t* ∝ I² ∝ 管壁），故总铂近似线性下降；");
+                Console.WriteLine("下限由「法兰 J 顶到许用值」或「升温升不到」两者中先到的那个决定。");
+                return;
+            }
+
             // --cli --ramp   规程一：空管升温核算（25 → 1150 °C / 3 h）
             // 给出模型此前完全没有的**壁厚下界**：P_max = J_allow²·A·ρe·L ∝ 壁厚，
             // 减薄的同时也在削减可用功率。稳态解只把 J 当上界，方向相反的下界一条都没有。
