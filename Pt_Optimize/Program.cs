@@ -397,6 +397,79 @@ internal static class Program
                 return;
             }
 
+            // --cli --discfit  法兰圆盘直径 × 法兰厚：第三个自由度
+            //
+            // 直径同时动三件事，方向相反：
+            //   大 ⇒ 散热面积↑ ⇒ 自身散热↑ ⇒ Φ↓（温差变差）、铂重↑
+            //   大 ⇒ 孔周外导电截面↑ ⇒ 法兰 J↓（J 变好）
+            // 缩小到孔周环宽不足时 J 会爆掉 ⇒ 应存在最优。
+            // 与「厚度」那个冲突相反，缩小直径可能是省铂与压温差**同向**的方向。
+            if (args.Contains("--discfit"))
+            {
+                double tset = 1050, tglass = 1130, head = 1.0, clamp = 80, wall = 1.00;
+                Console.WriteLine("=== 法兰圆盘直径 → 温差过零点处的 J 与铂重 ===");
+                Console.WriteLine($"最不利段 HC3：控温 {tset:0} °C，玻璃 {tglass:0} °C，" +
+                                  $"铜排夹持 {clamp:0} °C，管壁固定 {wall:0.00} mm");
+                Console.WriteLine($"管孔半径固定 26.0 mm（= 管外半径）。对每个圆盘半径二分法兰厚，求温差 = 0");
+                Console.WriteLine();
+
+                (double d, double jf, double phi, double m, double gen, bool ok) Probe(double ro, double ft)
+                {
+                    var q = SegmentSolver.Clone(p);
+                    q.TSetC = tset; q.TGlassInC = tglass; q.GlassHeadM = head;
+                    q.WallMinMm = wall; q.SizeWall = false;
+                    q.SizeFlangeThickness = false; q.BusbarClampTempC = clamp;
+                    var g = new FlangePlate { DiscRadiusMm = ro, ThicknessMm = ft, ThickenedMm = ft };
+                    try
+                    {
+                        var c = CoupledSolver.Solve(q, g);
+                        if (!c.Tube.Ok) return (0, 0, 0, 0, 0, false);
+                        return (tset - c.Tube.TFlangeAC, c.JFlangeMaxAPerMm2, c.Flange.PhiOverall,
+                                c.MassTubeG + c.MassFlangePairG, c.Flange.QGenW, true);
+                    }
+                    catch { return (0, 0, 0, 0, 0, false); }
+                }
+
+                Console.WriteLine($"{"圆盘半径 mm",12}{"孔周环宽",10}{"法兰厚 mm",11}{"温差 K",9}" +
+                                  $"{"法兰 J",9}{"Φ",8}{"自身发热 W",12}{"单段总铂 g",12}  判定");
+
+                foreach (double ro in new[] { 35.0, 42.0, 50.0, 60.0, 70.0, 80.0 })
+                {
+                    double lo = 0.4, hi = 3.5;
+                    var fLo = Probe(ro, lo);
+                    var fHi = Probe(ro, hi);
+                    if (!fLo.ok || !fHi.ok)
+                    {
+                        Console.WriteLine($"{ro,12:0.0}   ✗ 端点求解失败" +
+                                          $"（薄端 {(fLo.ok ? "ok" : "fail")}，厚端 {(fHi.ok ? "ok" : "fail")}）");
+                        continue;
+                    }
+                    if (fLo.d * fHi.d > 0)
+                    {
+                        Console.WriteLine($"{ro,12:0.0}   ✗ 区间 [{lo:0.0},{hi:0.0}] 内温差不变号" +
+                                          $"（{fLo.d:+0.0;-0.0} … {fHi.d:+0.0;-0.0} K）");
+                        continue;
+                    }
+                    for (int k = 0; k < 8; k++)
+                    {
+                        double mid = 0.5 * (lo + hi);
+                        var f = Probe(ro, mid);
+                        if (!f.ok) break;
+                        if (f.d * fLo.d > 0) { lo = mid; fLo = f; } else hi = mid;
+                    }
+                    double t2 = 0.5 * (lo + hi);
+                    var r2 = Probe(ro, t2);
+                    string v = (Math.Abs(r2.d) <= 10 ? "✓ 温差" : "✗ 温差")
+                             + (r2.jf <= p.JAllowAPerMm2 ? "  ✓ J" : "  ✗ J 越界");
+                    Console.WriteLine($"{ro,12:0.0}{ro - 26.0,10:0.0}{t2,11:0.000}{r2.d,9:+0.0;-0.0}" +
+                                      $"{r2.jf,9:0.00}{r2.phi,8:0.000}{r2.gen,12:0}{r2.m,12:0}  {v}");
+                }
+                Console.WriteLine();
+                Console.WriteLine("若 J 随直径缩小而恶化、铂重却同步下降，则存在最优直径 ——");
+                Console.WriteLine("这与「厚度」那个冲突方向相反，是省铂与压温差可能同向的自由度。");
+                return;
+            }
+
             // --cli --ramp   规程一：空管升温核算（25 → 1150 °C / 3 h）
             // 给出模型此前完全没有的**壁厚下界**：P_max = J_allow²·A·ρe·L ∝ 壁厚，
             // 减薄的同时也在削减可用功率。稳态解只把 J 当上界，方向相反的下界一条都没有。
