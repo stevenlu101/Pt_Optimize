@@ -60,8 +60,17 @@ public static class LineSolver
     //  这是省铂率的主要稀释源 —— 单段耦合解里法兰占总铂 66%。
     // ────────────────────────────────────────────────────────────────
 
-    /// <summary>共用法兰的电流系数。见 <see cref="JointCurrentA"/>。</summary>
-    public const double SharedFlangeFactor = 1.5;
+    /// <summary>
+    /// 《鉑金電氣計算.xlsx》T10/T11 用的共用片电流系数。
+    /// **已被拓扑推导取代**（见 <see cref="JointCurrentA"/>），仅保留供对照。
+    /// </summary>
+    public const double WorkbookSharedFactor = 1.5;
+
+    /// <summary>
+    /// 是否沿用工作簿的 1.5 经验系数。默认 false = 用拓扑推导的算术和。
+    /// 置 true 可复现工作簿数值，用于对照差异。
+    /// </summary>
+    public static bool UseWorkbookSharedFactor = false;
 
     /// <summary>法兰定尺进度（整个过程按分钟计，UI 必须显示进度）</summary>
     public sealed class FlangeProgress
@@ -93,20 +102,39 @@ public static class LineSolver
     /// <summary>
     /// 接头 j 上那片法兰承担的电流（j ∈ [0, n]，段 j−1 与段 j 之间）。
     ///
-    /// 取自《鉑金電氣計算.xlsx》的实际算法（该表 3 段 4 片，与本函数口径一致）：
-    ///   端头片（j=0 或 j=n）：I = 相邻那一段的电流
-    ///   共用片：I = (I_左 + I_右)/2 × 1.5      ← 工作簿 T10 / T11 两格
+    /// **由相位关系推导，不再是经验系数**（2026-08-10 用户确认接法）：
     ///
-    /// **既不是取大，也不是相加。** 等电流时 = 1.5·I，是最坏情况（两路同相纯相加 2I）的 75%
-    /// —— 两段独立供电、相位未知时的设计系数。工作簿据此把共用片从 1.3 加厚到 2.0 mm
-    /// （比值 1.538 ≈ 电流比 1.5），使四片法兰的 J 都落在 6.3–6.5 A/mm²。
+    /// 每段各有独立可控矽，**三台一次侧分别接不同相对（R-S / S-T / T-R）**，
+    /// 故相邻两段的线电压相差 **120°**，阻性负载下电流也相差 120°。
+    /// 四片法兰标 R/T/R/T，故意不用 S —— 避免共用片两侧出现不同相对而成为相间短路通路。
+    ///
+    /// 关键在**符号**：共用法兰处管子是连续的，左侧管流入 I₁、右侧管流出 I₂，
+    /// 法兰注入/抽出的是**两者之差**（不是和）：
+    ///
+    ///   端头片（j=0 或 j=n）：I = 相邻那一段的电流
+    ///   共用片：**I = |I₂ − I₁| = √(I₁² + I₂² − 2I₁I₂cos120°) = √(I₁² + I₂² + I₁I₂)**
+    ///
+    /// 等电流时 = **√3·I ≈ 1.732·I**。
+    ///
+    /// 《鉑金電氣計算.xlsx》T10/T11 的 (I₁+I₂)/2 × 1.5 就是这个 √3 的近似，**低 13 %**。
+    /// 置 <see cref="UseWorkbookSharedFactor"/> = true 可复现工作簿数值作对照。
+    ///
+    /// **不是电磁感应**：铂在 1100 °C、50 Hz 的趋肤深度约 48 mm，而板厚仅 2 mm（无集肤效应）；
+    /// 回路 X/R ≈ 0.17（对有效值影响 1.5 %）；板内涡流约 0.1 A/mm²（相对工作值约 1 %）。
+    /// 三者合计不到 3 %，撑不起 1.5 —— 该系数的来源是相位矢量合成。
+    ///
+    /// ⚠ 二阶效应未计：相控触发角不同会使基波电流相对电压各自滞后不同角度，
+    ///   实际相位差偏离 120°。三段功率差别不大时影响有限，需要更准则须做波形叠加。
     /// </summary>
     public static double JointCurrentA(IList<double> segmentCurrentA, int j)
     {
         int n = segmentCurrentA.Count;
         if (j <= 0) return segmentCurrentA[0];
         if (j >= n) return segmentCurrentA[n - 1];
-        return (segmentCurrentA[j - 1] + segmentCurrentA[j]) / 2.0 * SharedFlangeFactor;
+        double il = segmentCurrentA[j - 1], ir = segmentCurrentA[j];
+        return UseWorkbookSharedFactor
+            ? (il + ir) / 2.0 * WorkbookSharedFactor       // 工作簿口径，仅供对照
+            : Math.Sqrt(il * il + ir * ir + il * ir);      // 120° 相位差下的矢量差
     }
 
     /// <summary>
