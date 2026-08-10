@@ -106,30 +106,8 @@ public static class ShellCurrent
         }
         res.Iterations = it; res.Residual = resid;
 
-        // ── 由面通量重构单元 J：把各面通量按最小二乘拟合成单元内的常向量
-        //    简化做法：J 的模 = Σ|面通量| / (2·周长厚度) 的等效值。
-        //    这里用更直接的方式：单元 i 的净通量向量 Σ_f (flux_f · n_f) / (t_i · A_i) 的模。
-        var jx = new double[n]; var jz = new double[n]; var wsum = new double[n];
-        for (int k = 0; k < m.Faces.Count; k++)
-        {
-            var f = m.Faces[k];
-            if (f.B < 0) continue;
-            double flux = g[k] * (res.V[f.A] - res.V[f.B]);        // 由 A 流向 B（归一化电位下）
-            var dir = m.Centroid[f.B] - m.Centroid[f.A];
-            double len = Math.Max(1e-12, dir.Norm);
-            double ux = dir.X / len, uz = dir.Z / len;
-            // 面通量摊回两侧单元，权重取面长
-            jx[f.A] += flux * ux; jz[f.A] += flux * uz; wsum[f.A] += m.Thickness[f.A] * f.Length;
-            jx[f.B] += flux * ux; jz[f.B] += flux * uz; wsum[f.B] += m.Thickness[f.B] * f.Length;
-        }
-
-        // 归一化电位下的总电流，用来把 J 定标到实际安培
+        // 归一化电位下的总电流，用来把面通量定标到实际安培
         double inSum = 0, outSum = 0;
-        foreach (var f in m.Faces)
-        {
-            if (f.B >= 0) continue;
-            // 边界单元的净流出 = 其所有内部面通量之和（守恒），此处用固定单元统计
-        }
         for (int i = 0; i < n; i++)
         {
             if (!isFixed[i]) continue;
@@ -140,14 +118,48 @@ public static class ShellCurrent
         res.CurrentInA = inSum; res.CurrentOutA = outSum;
         res.ConservationError = inSum > 0 ? Math.Abs(inSum - outSum) / inSum : double.NaN;
 
-        // 定标：归一化解的总电流 inSum（单位是 σ·t·L/d 的量纲），实际电流 totalCurrentA
+        // 定标：归一化解的总电流 inSum（量纲是 σ·t·L/d），实际电流 totalCurrentA
         double scale = inSum > 1e-30 ? totalCurrentA / inSum : 0;
-        double jmax = 0, jmean = 0; double aSum = 0;
+
+        // ── 由**面法向分量**最小二乘重构单元 J 向量。
+        //    面 f 上的法向电流密度  Jn_f = Q_f / (L_f · t_f)   [A/mm²]
+        //    对每个单元求 J 使 Σ_f L_f (J·n̂_f − Jn_f)² 最小 ⇒ 解 2×2 正规方程
+        //      M = Σ L_f (n̂⊗n̂) ,  b = Σ L_f Jn_f n̂ ,  J = M⁻¹b
+        //    （早先用「Σ通量·方向 / Σ(厚度·面长) ×2」的拍脑袋加权，J_mean 差 51%）
+        var mxx = new double[n]; var mxz = new double[n]; var mzz = new double[n];
+        var bx = new double[n]; var bz = new double[n];
+        for (int k = 0; k < m.Faces.Count; k++)
+        {
+            var f = m.Faces[k];
+            if (f.B < 0) continue;
+            double q = g[k] * (res.V[f.A] - res.V[f.B]) * scale;   // A→B 的实际电流 [A]
+            var dir = m.Centroid[f.B] - m.Centroid[f.A];
+            double len = Math.Max(1e-12, dir.Norm);
+            double nx = dir.X / len, nz = dir.Z / len;             // A 的外法向
+            double L = f.Length;
+
+            // 单元 A：外法向 n̂，法向分量 = +q/(L·t_A)
+            double jnA = q / Math.Max(1e-12, L * m.Thickness[f.A]);
+            mxx[f.A] += L * nx * nx; mxz[f.A] += L * nx * nz; mzz[f.A] += L * nz * nz;
+            bx[f.A] += L * jnA * nx; bz[f.A] += L * jnA * nz;
+
+            // 单元 B：外法向 −n̂，流出 B 的电流 = −q ⇒ 法向分量 = (−q)/(L·t_B)，法向取 −n̂
+            double jnB = -q / Math.Max(1e-12, L * m.Thickness[f.B]);
+            mxx[f.B] += L * nx * nx; mxz[f.B] += L * nx * nz; mzz[f.B] += L * nz * nz;
+            bx[f.B] += L * jnB * (-nx); bz[f.B] += L * jnB * (-nz);
+        }
+
+        double jmax = 0, jmean = 0, aSum = 0;
         for (int i = 0; i < n; i++)
         {
-            double mag = wsum[i] > 1e-30
-                ? Math.Sqrt(jx[i] * jx[i] + jz[i] * jz[i]) / wsum[i] * 2.0 : 0;
-            res.JMagAPerMm2[i] = mag * scale;
+            double det = mxx[i] * mzz[i] - mxz[i] * mxz[i];
+            double vx = 0, vz = 0;
+            if (Math.Abs(det) > 1e-20)
+            {
+                vx = (mzz[i] * bx[i] - mxz[i] * bz[i]) / det;
+                vz = (mxx[i] * bz[i] - mxz[i] * bx[i]) / det;
+            }
+            res.JMagAPerMm2[i] = Math.Sqrt(vx * vx + vz * vz);
             if (res.JMagAPerMm2[i] > jmax) { jmax = res.JMagAPerMm2[i]; res.JMaxCell = i; }
             jmean += res.JMagAPerMm2[i] * m.Area[i]; aSum += m.Area[i];
         }

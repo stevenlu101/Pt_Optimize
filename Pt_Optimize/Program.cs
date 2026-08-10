@@ -724,7 +724,9 @@ internal static class Program
                 Console.WriteLine($"整线：管 {tubeTotal:0} g + 法兰 {flangeTotal:0} g = {tubeTotal + flangeTotal:0} g" +
                                   $"   （现状实测 7141 g，--geom 校核）");
                 Console.WriteLine($"省铂 {(7141 - tubeTotal - flangeTotal) / 7141 * 100:+0.0;-0.0} %");
-                Console.WriteLine("⚠ 共用片电流用的 1.5 经验系数（§6 待补数据 ⑧）—— 本结论精度受限于它。");
+                Console.WriteLine(LineSolver.UseWorkbookSharedFactor
+                    ? "⚠ 共用片电流用工作簿经验系数 1.5（对照模式）"
+                    : "共用片电流 = √(I₁²+I₂²+I₁I₂)（120° 相位差矢量差，见 §4.2h 推导）");
                 return;
             }
 
@@ -1001,6 +1003,146 @@ internal static class Program
                     plot.ShowLegend();
                     fp.Plot.SavePng(Path.Combine(dir, "mesh_flange.png"), 1200, 700);
                     Console.WriteLine($"  → {dir}/mesh_flange.png   ({nx}×{nz}，掩膜内 {inMask} 格)");
+                }
+                return;
+            }
+
+            // --cli --insulfit [圆盘半径]  扫保温厚度 → Φ=1 处的 J
+            //
+            // 这是唯一**不花铂金**的杠杆。机理：J|_{Φ=1} 由「法兰要发多少热才能自给」决定，
+            // 而那取决于法兰散多少热 ⇒ 保温越厚，需要的自身发热越少，法兰可越厚，J 越低。
+            // 已知两点：纤维 10 mm（旧假设）时 J≈12.9；2.5 mm（实况）时 J≈16–24。
+            // 管与法兰按同一包覆工艺同步加厚（现场就是同一种纤维同一道工序）。
+            if (args.Contains("--insulfit"))
+            {
+                int ii = Array.IndexOf(args, "--insulfit");
+                double ro = ii + 1 < args.Length && double.TryParse(args[ii + 1], out var rv2) ? rv2 : 60.0;
+                double tset = 1050, tglass = 1130, head = 1.0, clamp = 80, wall = 1.0;
+
+                Console.WriteLine("=== 保温厚度 → Φ=1 处的电流密度（不花铂金的杠杆）===");
+                Console.WriteLine($"最不利段 HC3：控温 {tset:0} °C，玻璃 {tglass:0} °C，铜排夹持 {clamp:0} °C");
+                Console.WriteLine($"圆盘半径 {ro:0.0} mm（Ø{2 * ro:0}），管壁 {wall:0.00} mm");
+                Console.WriteLine("管与法兰保温同步加厚（同一种纤维、同一道工序）；对每档二分法兰厚求温差 = 0");
+                Console.WriteLine();
+                Console.WriteLine($"{"纤维 mm",9}{"法兰厚 mm",11}{"温差 K",9}{"法兰 J",9}{"抽热 W/片",11}" +
+                                  $"{"段功率 W",10}{"两片铂重 g",12}  判定");
+
+                foreach (double ins in new[] { 2.5, 4.0, 6.0, 8.0, 10.0, 15.0, 20.0 })
+                {
+                    (double d, double jf, double dr, double pw, double m, bool ok) Probe(double ft)
+                    {
+                        var q = SegmentSolver.Clone(p);
+                        q.TSetC = tset; q.TGlassInC = tglass; q.GlassHeadM = head;
+                        q.WallMinMm = wall; q.SizeWall = false;
+                        q.SizeFlangeThickness = false; q.BusbarClampTempC = clamp;
+                        q.Layer1.ThicknessMm = ins;          // 管的纤维
+                        q.FlangeInsulThickMm = ins;          // 法兰的纤维，同工艺
+                        try
+                        {
+                            var c = CoupledSolver.Solve(q,
+                                new FlangePlate { DiscRadiusMm = ro, ThicknessMm = ft, ThickenedMm = ft });
+                            return c.Tube.Ok
+                                ? (tset - c.Tube.TFlangeAC, c.JFlangeMaxAPerMm2, c.FlangeDrawW,
+                                   c.Tube.PowerTotalW, c.MassFlangePairG, true)
+                                : (0, 0, 0, 0, 0, false);
+                        }
+                        catch { return (0, 0, 0, 0, 0, false); }
+                    }
+
+                    double lo = 0.4, hi = 8.0;
+                    var fLo = Probe(lo); var fHi = Probe(hi);
+                    if (!fLo.ok || !fHi.ok) { Console.WriteLine($"{ins,9:0.0}   ✗ 端点求解失败"); continue; }
+                    if (fLo.d * fHi.d > 0)
+                    { Console.WriteLine($"{ins,9:0.0}   ✗ 温差在 [{lo:0.0},{hi:0.0}] 内不变号" +
+                                        $"（{fLo.d:+0.0;-0.0} … {fHi.d:+0.0;-0.0} K）"); continue; }
+                    for (int k = 0; k < 8; k++)
+                    {
+                        double mid = 0.5 * (lo + hi);
+                        var f = Probe(mid);
+                        if (!f.ok) break;
+                        if (f.d * fLo.d > 0) { lo = mid; fLo = f; } else hi = mid;
+                    }
+                    double t2 = 0.5 * (lo + hi);
+                    var r2 = Probe(t2);
+                    string v = (Math.Abs(r2.d) <= 10 ? "✓温差" : "✗温差")
+                             + (r2.jf <= p.JAllowAPerMm2 ? "  ✓J 达标" : "  ✗J 越界");
+                    Console.WriteLine($"{ins,9:0.0}{t2,11:0.000}{r2.d,9:+0.0;-0.0}{r2.jf,9:0.00}" +
+                                      $"{r2.dr,11:0.0}{r2.pw,10:0}{r2.m,12:0}  {v}");
+                }
+                Console.WriteLine();
+                Console.WriteLine("若某档同时 ✓温差 ✓J，则「≤10 K」不用多花一克铂金，只需加厚保温。");
+                Console.WriteLine("同时看段功率：保温加厚也直接省电，且降低升温所需功率。");
+                return;
+            }
+
+            // --cli --shell [file.3dm] [图层] [平面Y]   变步长壳网格上解电流场（路线 A 闭环）
+            //
+            // 不给 .3dm 时用解析几何（旧法兰），并与现有 PlateCurrent2D **做回归**：
+            // 同一物理、不同网格，J_max 与守恒误差应当在网格收敛容差内一致。
+            // 给 .3dm 时走厚度场 —— 开槽/阶梯/任意形状皆可，这是新法兰设计的评估入口。
+            if (args.Contains("--shell"))
+            {
+                int si2 = Array.IndexOf(args, "--shell");
+                string? f3dm = si2 + 1 < args.Length && !args[si2 + 1].StartsWith("--") ? args[si2 + 1] : null;
+                string layer = si2 + 2 < args.Length && !args[si2 + 2].StartsWith("--") ? args[si2 + 2] : "法兰";
+                double planeY = si2 + 3 < args.Length && double.TryParse(args[si2 + 3], out var py) ? py : double.NaN;
+
+                var g = new FlangePlate();
+                double current = 1000.0;                 // 定标电流，与 PlateCurrent2D 回归口径一致
+                ShellMesh mesh;
+
+                Console.WriteLine("=== 变步长壳网格上的电流场（路线 A）===");
+                if (f3dm is null)
+                {
+                    Console.WriteLine("几何：解析（圆盘 Ø120 + 梯形舌片，等厚 2.0 mm）—— 与 PlateCurrent2D 回归");
+                    mesh = FlangeMesher.Build(g, 0, hFine: 2.0, hCoarse: 11.0, fineRadius: 45.0);
+                }
+                else
+                {
+                    Console.WriteLine($"几何：{f3dm}  图层「{layer}」  平面 Y={(double.IsNaN(planeY) ? "自动" : planeY.ToString("0.0"))}");
+                    Console.WriteLine("提取厚度场中（逐点射线，约 1 分钟）…");
+                    var fld = Geometry3dm.MeasureThickness(f3dm, layer, planeY, 1.0);
+                    Console.WriteLine($"  厚度场 {fld.Nx}×{fld.Nz}  净面积 {fld.AreaMm2:0.0} mm²  " +
+                                      $"体积 {fld.VolumeMm3:0.0} mm³ → 单片 {fld.VolumeMm3 * Materials.PtDensity * 1e-6:0.0} g");
+                    mesh = FlangeMesher.BuildFromField(fld, g.HoleRadiusMm, 0,
+                                                       hFine: 2.0, hCoarse: 11.0, fineRadius: 50.0);
+                }
+
+                var (fi2, fb2) = mesh.FaceCounts();
+                Console.WriteLine($"网格：{mesh.CellCount} 单元，内部面 {fi2} / 边界面 {fb2}");
+                Console.WriteLine($"      净面积 {mesh.TotalArea:0.000} mm²   体积 {mesh.VolumeMm3:0.0} mm³" +
+                                  $" → 单片 {mesh.VolumeMm3 * Materials.PtDensity * 1e-6:0.0} g");
+
+                var sc = ShellCurrent.Solve(mesh, current,
+                                            Materials.PtResistivity(p.TSetC) * 1000.0, p.TSetC);
+                Console.WriteLine();
+                Console.WriteLine($"求解：{sc.Iterations} 次迭代，残差 {sc.Residual:E2}");
+                Console.WriteLine($"  电流守恒误差 {sc.ConservationError:E3}   " +
+                                  $"{(sc.ConservationError < 5e-3 ? "✓" : "✗ 偏大")}");
+                Console.WriteLine($"  J_max {sc.JMaxAPerMm2:0.000} A/mm²   J_mean {sc.JMeanAPerMm2:0.000}" +
+                                  $"   @{current:0} A");
+                if (sc.JMaxCell >= 0)
+                {
+                    var c = mesh.Centroid[sc.JMaxCell];
+                    Console.WriteLine($"  J_max 位置 (x={c.X:0.0}, z={c.Z:0.0})  r={Math.Sqrt(c.X * c.X + c.Z * c.Z):0.0} mm" +
+                                      $"  该处厚度 {mesh.Thickness[sc.JMaxCell]:0.00} mm");
+                }
+                Console.WriteLine($"  整片焦耳热 {sc.TotalGenW:0.0} W @{current:0} A");
+
+                if (f3dm is null)
+                {
+                    var old = PlateCurrent2D.Solve(g, current, Materials.PtResistivity(p.TSetC), 1.0);
+                    Console.WriteLine();
+                    Console.WriteLine("=== 与 PlateCurrent2D 回归（同一几何、同一电流）===");
+                    Console.WriteLine($"{"量",-16}{"壳网格",14}{"PlateCurrent2D",16}{"相对差",12}");
+                    void Cmp(string name, double a, double b)
+                        => Console.WriteLine($"{name,-16}{a,14:0.0000}{b,16:0.0000}" +
+                                             $"{(b != 0 ? (a - b) / b * 100 : double.NaN),11:+0.0;-0.0}%");
+                    Cmp("J_max A/mm²", sc.JMaxAPerMm2, old.JMaxAPerMm2);
+                    Cmp("J_mean A/mm²", sc.JMeanAPerMm2, old.JMeanAPerMm2);
+                    Cmp("守恒误差", sc.ConservationError, old.ConservationError);
+                    Console.WriteLine("J_max 有 ±几 % 的网格敏感性（HANDOVER §6 记为 +3.5%），");
+                    Console.WriteLine("故 J_mean 与守恒误差是更可靠的回归指标。");
                 }
                 return;
             }

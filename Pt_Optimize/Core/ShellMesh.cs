@@ -111,6 +111,34 @@ public sealed class ShellMesh
 }
 
 /// <summary>
+/// 厚度场 t(x, z) —— 由 <c>Pt_Optimize.Geom thickness</c> 从 .3dm 逐点射线量出。
+///
+/// **t = 0 表示该点无材料**，于是轮廓外、管孔、开槽三者统一用同一个判据表达；
+/// t > 0 直接给出阶梯厚度。求解器要的本来就是 t(x,z)，故不必提取轮廓环 ——
+/// 用户在 Rhino 里画什么形状，这里就照单全收，无需参数化、无需改代码。
+/// </summary>
+public sealed class ThicknessField
+{
+    public double X0, Z0, Step;
+    public int Nx, Nz;
+    public double[] T = Array.Empty<double>();
+
+    /// <summary>最近邻取值（网格步长通常 1 mm，远细于特征尺寸，无需插值）</summary>
+    public double At(double x, double z)
+    {
+        int i = (int)Math.Round((x - X0) / Step);
+        int j = (int)Math.Round((z - Z0) / Step);
+        if (i < 0 || i >= Nx || j < 0 || j >= Nz) return 0;
+        return T[i * Nz + j];
+    }
+
+    public bool HasMaterial(double x, double z) => At(x, z) > 1e-9;
+
+    public double AreaMm2 => T.Count(v => v > 1e-9) * Step * Step;
+    public double VolumeMm3 => T.Sum() * Step * Step;
+}
+
+/// <summary>
 /// 生成器①：现有法兰几何（圆盘 Ø2R + 平面梯形舌片）的**变步长**结构化四边形网格。
 ///
 /// 分级依据（不是拍脑袋）：
@@ -211,6 +239,68 @@ public static class FlangeMesher
             double r = Math.Sqrt(mid.X * mid.X + mid.Z * mid.Z);
             if (Math.Abs(r - g.HoleRadiusMm) < 3.0) return ShellMesh.TagHole;
             if (mid.X <= g.TabTipXMm + 3.0) return ShellMesh.TagTabEnd;
+            return ShellMesh.TagFree;
+        });
+        return m;
+    }
+
+    /// <summary>
+    /// 生成器②：**由厚度场直接生成**，适用于任意 Rhino 法兰形状（开槽、阶梯、非对称皆可）。
+    ///
+    /// 与生成器① 的唯一区别：材料判据从「解析轮廓」换成「厚度场 t &gt; 0」，
+    /// 单元厚度也直接取自厚度场（含阶梯）。网格分级仍按孔周加密。
+    /// </summary>
+    /// <param name="holeRadiusMm">管孔半径，用于边界标记与细化中心</param>
+    public static ShellMesh BuildFromField(ThicknessField f, double holeRadiusMm,
+                                           double yPlane = 0,
+                                           double hFine = 2.0, double hCoarse = 11.0,
+                                           double fineRadius = 50.0)
+    {
+        var m = new ShellMesh();
+        double xMin = f.X0, xMax = f.X0 + (f.Nx - 1) * f.Step;
+        double zMin = f.Z0, zMax = f.Z0 + (f.Nz - 1) * f.Step;
+        double[] xs = GradedAxis(xMin, xMax, -fineRadius, fineRadius, hFine, hCoarse);
+        double[] zs = GradedAxis(zMin, zMax, -fineRadius, fineRadius, hFine, hCoarse);
+
+        int nx = xs.Length, nz = zs.Length;
+        var nodeId = new int[nx, nz];
+        for (int i = 0; i < nx; i++)
+            for (int j = 0; j < nz; j++)
+            { nodeId[i, j] = m.Nodes.Count; m.Nodes.Add(new Vec3(xs[i], yPlane, zs[j])); }
+
+        double tabTipX = xMin;
+        for (int i = 0; i < nx - 1; i++)
+            for (int j = 0; j < nz - 1; j++)
+            {
+                double x0 = xs[i], x1 = xs[i + 1], z0 = zs[j], z1 = zs[j + 1];
+                // 子采样：既求覆盖率，也求该单元的**平均厚度**（阶梯跨越单元时才不失真）
+                int hit = 0; double tSum = 0; const int ns = 4;
+                for (int a = 0; a < ns; a++)
+                    for (int b = 0; b < ns; b++)
+                    {
+                        double sx = x0 + (a + 0.5) * (x1 - x0) / ns;
+                        double sz = z0 + (b + 0.5) * (z1 - z0) / ns;
+                        double t = f.At(sx, sz);
+                        if (t > 1e-9) { hit++; tSum += t; }
+                    }
+                if (hit < ns * ns * 0.25) continue;
+                double frac = hit / (double)(ns * ns);
+                double tAvg = tSum / hit;
+
+                double cxm = 0.5 * (x0 + x1), czm = 0.5 * (z0 + z1);
+                m.Cells.Add(new[] { nodeId[i, j], nodeId[i + 1, j], nodeId[i + 1, j + 1], nodeId[i, j + 1] });
+                m.Area.Add((x1 - x0) * (z1 - z0) * frac);
+                m.Centroid.Add(new Vec3(cxm, yPlane, czm));
+                m.Thickness.Add(tAvg);
+                m.Part.Add(0);
+            }
+
+        m.BuildFaces(mid =>
+        {
+            double r = Math.Sqrt(mid.X * mid.X + mid.Z * mid.Z);
+            // 管孔：紧贴孔半径的那一圈边界面（槽的边界半径不同，不会误判）
+            if (Math.Abs(r - holeRadiusMm) < 3.0) return ShellMesh.TagHole;
+            if (mid.X <= tabTipX + 4.0) return ShellMesh.TagTabEnd;
             return ShellMesh.TagFree;
         });
         return m;

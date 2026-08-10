@@ -80,6 +80,52 @@ public static class Geometry3dm
         return null;
     }
 
+    /// <summary>
+    /// 从 .3dm 提取某图层某平面的厚度场（调 Geom 子进程的 thickness 模式）。
+    /// t=0 表示无材料，故轮廓、管孔、开槽三者统一表达；t&gt;0 直接给出阶梯厚度。
+    /// </summary>
+    public static ThicknessField MeasureThickness(string path3dm, string layer,
+                                                  double planeY, double stepMm = 1.0)
+    {
+        string probe = FindProbe()
+            ?? throw new FileNotFoundException($"找不到 {ProbeName}.exe，先构建：dotnet build {ProbeName}");
+
+        var psi = new ProcessStartInfo(probe)
+        {
+            RedirectStandardOutput = true, RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
+            UseShellExecute = false, CreateNoWindow = true
+        };
+        psi.ArgumentList.Add("thickness");
+        psi.ArgumentList.Add(path3dm);
+        psi.ArgumentList.Add(layer);
+        psi.ArgumentList.Add(planeY.ToString("R"));
+        psi.ArgumentList.Add(stepMm.ToString("R"));
+
+        using var proc = Process.Start(psi) ?? throw new InvalidOperationException("无法启动 " + probe);
+        string stdout = proc.StandardOutput.ReadToEnd();
+        string stderr = proc.StandardError.ReadToEnd();
+        proc.WaitForExit();
+        if (proc.ExitCode != 0)
+            throw new InvalidOperationException($"{ProbeName} thickness 退出码 {proc.ExitCode}。{stderr.Trim()}");
+
+        using var doc = JsonDocument.Parse(stdout);
+        var r = doc.RootElement;
+        var f = new ThicknessField
+        {
+            X0 = r.GetProperty("x0").GetDouble(),
+            Z0 = r.GetProperty("z0").GetDouble(),
+            Step = r.GetProperty("step").GetDouble(),
+            Nx = r.GetProperty("nx").GetInt32(),
+            Nz = r.GetProperty("nz").GetInt32(),
+        };
+        var arr = r.GetProperty("thickness");
+        f.T = new double[arr.GetArrayLength()];
+        int k = 0;
+        foreach (var v in arr.EnumerateArray()) f.T[k++] = v.GetDouble();
+        return f;
+    }
+
     public static Measurement Measure(string path3dm)
     {
         string probe = FindProbe()
