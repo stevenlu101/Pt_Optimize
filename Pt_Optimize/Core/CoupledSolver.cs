@@ -133,8 +133,8 @@ public static class CoupledSolver
         // 单段两端各一片 —— 与 Pt_Heater.3dm 的两个法兰实体一致（--geom 已校核）。
         // 注意：整线不是「段数 × 2」，相邻段共用接头处那一片，n 段共 n+1 片，见 LineSolver。
         res.MassTubeG = aTubeMm2 * p.TubeLengthMm * Materials.PtDensity * 1e-6;
-        double plateAreaMm2 = PlateArea(g);
-        res.MassPlateG = plateAreaMm2 * g.ThicknessMm * Materials.PtDensity * 1e-6;
+        // 厚度可能分区（圆盘 / 舌片 / 孔周加厚），故按**体积积分**，不能用「面积 × 单一厚度」
+        res.MassPlateG = PlateVolumeMm3(g) * Materials.PtDensity * 1e-6;
         res.MassFlangePairG = 2 * res.MassPlateG;
         res.MassTotalG = res.MassTubeG + res.MassFlangePairG;
         return res;
@@ -160,6 +160,34 @@ public static class CoupledSolver
             CurrentInA = src.CurrentInA * k, CurrentOutA = src.CurrentOutA * k,
             ConservationError = src.ConservationError
         };
+    }
+
+    /// <summary>
+    /// 法兰实体体积 mm³（沿 x 数值积分「宽度 × 当地厚度」）。
+    /// 厚度分区后（圆盘/舌片各自厚度、孔周加厚）必须用它算质量，
+    /// 「PlateArea × ThicknessMm」只在全片等厚时才成立。
+    /// </summary>
+    public static double PlateVolumeMm3(FlangePlate g, int n = 20001)
+    {
+        double x0 = g.TabTipXMm, x1 = g.DiscRadiusMm, dx = (x1 - x0) / (n - 1), v = 0;
+        for (int i = 0; i < n; i++)
+        {
+            double x = x0 + i * dx, w = dx * (i == 0 || i == n - 1 ? 0.5 : 1.0);
+            double hole = Math.Abs(x) <= g.HoleRadiusMm
+                ? Math.Sqrt(g.HoleRadiusMm * g.HoleRadiusMm - x * x) : 0;
+            double half = g.HalfWidth(x);
+            if (half <= hole) continue;
+            // 沿 z 方向厚度可能变（孔周加厚是圆形区域），故按 z 再积一层，取 41 点足够
+            const int nz = 41;
+            double dz = (half - hole) / (nz - 1), s = 0;
+            for (int k = 0; k < nz; k++)
+            {
+                double z = hole + k * dz;
+                s += g.ThicknessAt(x, z) * dz * (k == 0 || k == nz - 1 ? 0.5 : 1.0);
+            }
+            v += 2 * s * w;      // 上下对称
+        }
+        return v;
     }
 
     /// <summary>法兰平面净面积（数值积分宽度分布）</summary>

@@ -19,6 +19,46 @@ internal static class Program
     }
 
     /// <summary>
+    /// 导出该算例的二维场图：法兰平面的**温度**与**电流密度**，外加铂金管的轴向温度剖面。
+    ///
+    /// 法兰场取自 PlateThermal2D / PlateCurrent2D（真二维）；
+    /// **不用** FieldMap 的子午面图，其法兰部分走已作废的一维环形模型（HANDOVER §5）。
+    /// 管子在模型里是一维（轴向），故以剖面图呈现，与法兰热图并列。
+    ///
+    /// 文件名：<tag>_T.png / <tag>_J.png / <tag>_tube.png，落在 figs/ 下。
+    /// </summary>
+    private static void SaveFields(DesignInputs p, CoupledResult c, string tag, string dir = "figs")
+    {
+        try
+        {
+            Directory.CreateDirectory(dir);
+            ApplicationConfiguration.Initialize();
+
+            void Save(string suffix, Action<ScottPlot.WinForms.FormsPlot> draw)
+            {
+                var fp = UI.FieldPlots.NewPlot();
+                draw(fp);
+                fp.Plot.SavePng(Path.Combine(dir, $"{tag}_{suffix}.png"), 1100, 620);
+            }
+
+            var th = c.Flange; var cur = c.Current;
+            if (th.T.Length > 0 && cur.Mask.Length > 0)
+                Save("T", f => UI.FieldPlots.DrawPlate(f, th.T, cur.Mask, cur.X0, cur.Z0, cur.H,
+                    $"法兰平面 温度场  [{tag}]", "温度", "°C", p.TubeIdMm * 0.5 + p.WallMinMm));
+
+            if (cur.Jmag.Length > 0)
+                Save("J", f => UI.FieldPlots.DrawPlate(f, cur.Jmag, cur.Mask, cur.X0, cur.Z0, cur.H,
+                    $"法兰平面 电流密度  [{tag}]", "J", "A/mm²", p.TubeIdMm * 0.5 + p.WallMinMm));
+
+            if (c.Tube.Ok && c.Tube.X.Length > 0)
+                Save("tube", f => UI.FieldPlots.DrawAxialProfile(f, c.Tube, p));
+
+            Console.WriteLine($"    → 场图 {dir}/{tag}_T.png, _J.png, _tube.png");
+        }
+        catch (Exception ex) { Console.WriteLine($"    ⚠ 场图导出失败：{ex.Message}"); }
+    }
+
+    /// <summary>
     /// 同步进度回调。控制台没有同步上下文，<see cref="Progress{T}"/> 会把回调抛到线程池，
     /// 与主线程的 Console.WriteLine 交错成乱序 —— CLI 一律用这个。
     /// </summary>
@@ -321,6 +361,7 @@ internal static class Program
                         Console.WriteLine($"{ft,11:0.00}{c.FlangeDrawW,11:0.0}{c.Flange.PhiOverall,11:0.000}" +
                             $"{dRoot,12:0.0}{c.JFlangeMaxAPerMm2,10:0.00}{c.Flange.TTabEndMeanC,10:0.0}" +
                             $"{c.MassFlangePairG,12:0}  {v}");
+                        SaveFields(q, c, $"flange_t{ft:0.00}");
                     }
                     catch (Exception ex) { Console.WriteLine($"{ft,11:0.00}   ✗ {ex.Message}"); }
                 }
@@ -439,7 +480,9 @@ internal static class Program
                 // 下限受孔半径 26 限制：R=32 时孔周环宽仅 6 mm，网格 h=1.0 只有 6 格，偏粗。
                 foreach (double ro in new[] { 32.0, 35.0, 38.0, 42.0, 46.0, 50.0 })
                 {
-                    double lo = 0.4, hi = 3.5;
+                    // 上界要够大：圆盘越小散热越少，回到 Φ=1 所需的法兰**越厚**。
+                    // R=32 在 3.5 mm 上界处温差仍为 −11.5 K（仍在倒灌），故放宽到 8.0。
+                    double lo = 0.4, hi = 8.0;
                     var fLo = Probe(ro, lo);
                     var fHi = Probe(ro, hi);
                     if (!fLo.ok || !fHi.ok)
@@ -467,6 +510,19 @@ internal static class Program
                              + (r2.jf <= p.JAllowAPerMm2 ? "  ✓ J" : "  ✗ J 越界");
                     Console.WriteLine($"{ro,12:0.0}{ro - 26.0,10:0.0}{t2,11:0.000}{r2.d,9:+0.0;-0.0}" +
                                       $"{r2.jf,9:0.00}{r2.phi,8:0.000}{r2.gen,12:0}{r2.m,12:0}  {v}");
+
+                    // 每个算例都出二维场图（温度 + 电流密度 + 管轴向剖面）
+                    var qs = SegmentSolver.Clone(p);
+                    qs.TSetC = tset; qs.TGlassInC = tglass; qs.GlassHeadM = head;
+                    qs.WallMinMm = wall; qs.SizeWall = false;
+                    qs.SizeFlangeThickness = false; qs.BusbarClampTempC = clamp;
+                    try
+                    {
+                        var cs = CoupledSolver.Solve(qs,
+                            new FlangePlate { DiscRadiusMm = ro, ThicknessMm = t2, ThickenedMm = t2 });
+                        if (cs.Tube.Ok) SaveFields(qs, cs, $"disc_R{ro:0}_t{t2:0.00}");
+                    }
+                    catch { Console.WriteLine("    ⚠ 场图算例求解失败"); }
                 }
                 Console.WriteLine();
                 Console.WriteLine("若 J 随直径缩小而恶化、铂重却同步下降，则存在最优直径 ——");

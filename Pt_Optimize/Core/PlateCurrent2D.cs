@@ -68,10 +68,40 @@ public sealed class FlangePlate
     public double ThickenRadiusMm = 0.0;
     public double ThickenedMm = 2.0;
 
-    /// <summary>该点的板厚 mm</summary>
+    /// <summary>
+    /// 舌片厚度 mm。NaN = 与圆盘同厚（默认，即原来的单一厚度行为）。
+    ///
+    /// 分开设厚是一个独立自由度：单位面积发热 ∝ J²·t = (K/t)²·t = K²/t，
+    /// 故**舌片加厚同时降低 J 与单位面积发热** ⇒ 舌片变凉 ⇒ 辐射损失塌下来（∝T⁴）。
+    /// 而舌片裸露、是当前最大热漏。典型用法：薄圆盘（把热发在管根附近）+ 厚舌片。
+    /// 分界取圆盘与舌片的切点，与保温分界 <see cref="InsulBoundaryXResolved"/> 一致。
+    /// </summary>
+    public double TabThicknessMm = double.NaN;
+
+    /// <summary>
+    /// 圆盘**孔边**厚度 mm。NaN = 圆盘等厚。给值时圆盘厚度自孔边到外缘线性渐变
+    /// （孔边 = 本值，外缘 = <see cref="ThicknessMm"/>），典型用法是**越靠近管子越薄**。
+    ///
+    /// 机理：单位面积发热 ∝ K²/t，孔边减薄 ⇒ 该处发热骤增，
+    /// 而那里正是管根冷点所在 —— 等于把热直接补在缺口上。
+    /// 代价：孔周 J 本就是全片峰值（HANDOVER §4.6），减薄会让它更高。
+    /// 这是「用 J 裕度换冷点」的旋钮，与 <see cref="TabThicknessMm"/> 方向相反、可同时用。
+    /// </summary>
+    public double DiscThicknessAtHoleMm = double.NaN;
+
+    /// <summary>该点的板厚 mm。优先级：孔周加厚 > 舌片厚 > 圆盘（可径向渐变）。</summary>
     public double ThicknessAt(double x, double z)
-        => ThickenRadiusMm > HoleRadiusMm && Math.Sqrt(x * x + z * z) <= ThickenRadiusMm
-           ? ThickenedMm : ThicknessMm;
+    {
+        double r = Math.Sqrt(x * x + z * z);
+        if (ThickenRadiusMm > HoleRadiusMm && r <= ThickenRadiusMm) return ThickenedMm;
+        if (!double.IsNaN(TabThicknessMm) && x < Tangent().X) return TabThicknessMm;
+        if (!double.IsNaN(DiscThicknessAtHoleMm) && DiscRadiusMm > HoleRadiusMm)
+        {
+            double u = Math.Clamp((r - HoleRadiusMm) / (DiscRadiusMm - HoleRadiusMm), 0, 1);
+            return DiscThicknessAtHoleMm + (ThicknessMm - DiscThicknessAtHoleMm) * u;
+        }
+        return ThicknessMm;
+    }
 
     /// <summary>切点：舌片直边与 Ø120 圆相切处</summary>
     public (double X, double HalfW) Tangent()

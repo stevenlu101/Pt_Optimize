@@ -71,6 +71,60 @@ public static class FieldPlots
         fp.Refresh();
     }
 
+    /// <summary>
+    /// 法兰平面（x–z）的二维场热图。
+    ///
+    /// ★ 数据必须来自 <see cref="Core.PlateThermal2D"/> / <see cref="Core.PlateCurrent2D"/>，
+    ///   **不要**用 <see cref="Core.FieldMap"/> 的子午面图去看法兰 —— 后者的法兰部分
+    ///   走的是已作废的一维环形模型（HANDOVER §5），画出来好看但不对。
+    ///
+    /// 掩膜外的格子置 NaN，ScottPlot 渲染为透明，于是轮廓即为法兰真实外形。
+    /// </summary>
+    public static void DrawPlate(FormsPlot fp, double[,] v, bool[,] mask,
+                                 double x0, double z0, double h,
+                                 string title, string label, string unit,
+                                 double tubeOuterRmm = 26.0)
+    {
+        var plot = fp.Plot;
+        plot.Clear();
+        if (v.Length == 0) { fp.Refresh(); return; }
+
+        int nx = v.GetLength(0), nz = v.GetLength(1);
+        // ScottPlot 热图第 0 行画在顶部，而 z 自下而上增大 → 翻转；同时行列转置成 [z, x]
+        var data = new double[nz, nx];
+        for (int j = 0; j < nz; j++)
+            for (int i = 0; i < nx; i++)
+                data[j, i] = mask[i, nz - 1 - j] ? v[i, nz - 1 - j] : double.NaN;
+
+        var hm = plot.Add.Heatmap(data);
+        hm.Extent = new CoordinateRect(x0, x0 + (nx - 1) * h, z0, z0 + (nz - 1) * h);
+        hm.Colormap = Ramp;
+        hm.Smooth = true;
+
+        var cb = plot.Add.ColorBar(hm);
+        cb.Label = $"{label} [{unit}]";
+        cb.LabelStyle.FontName = "Microsoft YaHei";
+
+        // 管孔一圈：电流全部由此交给管壁，是 J 峰值所在，画出来便于判读
+        int n = 181;
+        double[] cx = new double[n], cz = new double[n];
+        for (int k = 0; k < n; k++)
+        {
+            double a = 2 * Math.PI * k / (n - 1);
+            cx[k] = tubeOuterRmm * Math.Cos(a);
+            cz[k] = tubeOuterRmm * Math.Sin(a);
+        }
+        var hole = plot.Add.Scatter(cx, cz);
+        hole.Color = Colors.White; hole.LineWidth = 1.6f; hole.MarkerSize = 0;
+        hole.LegendText = "管孔（= 铂金管外壁）";
+
+        plot.Title(title);
+        plot.XLabel("x [mm]（0 = 管轴，负向为舌片）");
+        plot.YLabel("z [mm]");
+        plot.Axes.SetLimits(x0, x0 + (nx - 1) * h, z0, z0 + (nz - 1) * h);
+        fp.Refresh();
+    }
+
     private static void AddOutline(Plot plot, double[] xs, double[] rs, Color c, float w)
     {
         if (xs.Length < 2) return;
