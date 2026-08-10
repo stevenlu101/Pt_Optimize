@@ -1129,7 +1129,30 @@ internal static class Program
                 }
                 Console.WriteLine($"  整片焦耳热 {sc.TotalGenW:0.0} W @{current:0} A");
 
-                // 场图：电流密度 + 厚度分布（用户要求每次输出都给二维分布）
+                // ── 温度场：J 已知，解 ∇·(k t ∇T) + q_v·t − 2q″(T) = 0
+                //    这是判断「局部高 J 会不会真出问题」的唯一途径 ——
+                //    电场只说 J 有多高，温度场才说辐条会不会烧红、冷点消没消。
+                double iSeg = 1446;      // HC3 实际段电流（--lineopt 实算）
+                var jScaled = sc.JMagAPerMm2.Select(v => v * iSeg / current).ToArray();
+                double tRoot = 1050;     // HC3 控温点，作管孔定温
+                var th = ShellThermal.Solve(mesh, jScaled, p, tRoot, g.InsulBoundaryXResolved);
+
+                Console.WriteLine();
+                Console.WriteLine($"=== 温度场（按 HC3 实际段电流 {iSeg:0} A 定标，管根定温 {tRoot:0} °C）===");
+                Console.WriteLine($"  {th.Iterations} 次迭代，残差 {th.Residual:E2}  " +
+                                  $"{(th.Converged ? "✓ 收敛" : "✗ 未收敛")}");
+                Console.WriteLine($"  J_max（实际电流下）{sc.JMaxAPerMm2 * iSeg / current:0.00} A/mm²");
+                Console.WriteLine($"  温度 最高 {th.TMaxC:0.0} / 最低 {th.TMinC:0.0} °C");
+                Console.WriteLine($"  自身发热 {th.QGenW:0.0} W   表面散热 {th.QLossW:0.0} W   " +
+                                  $"自给率 Φ = {th.PhiOverall:0.000}");
+                Console.WriteLine($"  从管子抽热 {th.QFromTubeW:+0.0;-0.0} W/片" +
+                                  $"（>0 抽热造冷点，<0 倒灌造热点）");
+                Console.WriteLine($"  舌片末端均温 {th.TTabEndMeanC:0.0} °C");
+                double over = th.TMaxC - tRoot;
+                Console.WriteLine($"  ★ 最高温比管根高 {over:+0.0;-0.0} K" +
+                                  $"{(th.TMaxC > 1400 ? "  ✗ 局部过热（>1400 °C）" : "  ✓ 未见局部过热")}");
+
+                // 场图：电流密度 + 厚度分布 + 温度（用户要求每次输出都给二维分布）
                 try
                 {
                     Directory.CreateDirectory("figs");
@@ -1145,7 +1168,9 @@ internal static class Program
                         $"电流密度 @{current:0} A", "J", "A/mm²", g.HoleRadiusMm));
                     SaveShell("t", f2 => UI.FieldPlots.DrawShellField(f2, mesh, mesh.Thickness.ToArray(),
                         "板厚分布", "t", "mm", g.HoleRadiusMm, 1.0));
-                    Console.WriteLine($"  → figs/{tag}_J.png, {tag}_t.png");
+                    SaveShell("T", f2 => UI.FieldPlots.DrawShellField(f2, mesh, th.T,
+                        $"温度场 @{iSeg:0} A", "T", "°C", g.HoleRadiusMm, 1.0));
+                    Console.WriteLine($"  → figs/{tag}_J.png, {tag}_t.png, {tag}_T.png");
                 }
                 catch (Exception ex) { Console.WriteLine("  ⚠ 场图失败：" + ex.Message); }
 
