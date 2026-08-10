@@ -79,27 +79,43 @@ public sealed class FlangePlate
     public double TabThicknessMm = double.NaN;
 
     /// <summary>
-    /// 圆盘**孔边**厚度 mm。NaN = 圆盘等厚。给值时圆盘厚度自孔边到外缘线性渐变
-    /// （孔边 = 本值，外缘 = <see cref="ThicknessMm"/>），典型用法是**越靠近管子越薄**。
+    /// 圆盘的**阶梯**厚度分区（用户 2026-08-10：径向连续渐变加工难，改用阶梯）。
     ///
-    /// 机理：单位面积发热 ∝ K²/t，孔边减薄 ⇒ 该处发热骤增，
+    /// <see cref="DiscStepRadiiMm"/> 为各级**外**半径（自小到大），
+    /// <see cref="DiscStepThicknessMm"/> 为对应厚度，长度须一致。
+    /// r ≤ 第 k 级半径的第一个 k 生效；都不命中则取 <see cref="ThicknessMm"/>（外缘厚度）。
+    /// 空数组 = 圆盘等厚（默认）。
+    ///
+    /// 例：半径 {35, 48}、厚度 {1.0, 1.5}，外缘 2.0
+    ///   ⇒ r≤35 取 1.0；35&lt;r≤48 取 1.5；r&gt;48 取 2.0。
+    ///
+    /// 机理：单位面积发热 ∝ K²/t，孔边那一级减薄 ⇒ 该处发热骤增，
     /// 而那里正是管根冷点所在 —— 等于把热直接补在缺口上。
     /// 代价：孔周 J 本就是全片峰值（HANDOVER §4.6），减薄会让它更高。
-    /// 这是「用 J 裕度换冷点」的旋钮，与 <see cref="TabThicknessMm"/> 方向相反、可同时用。
+    /// 与 <see cref="TabThicknessMm"/>（加厚舌片压 J）方向相反、可同时用。
+    ///
+    /// 与既有的 <see cref="ThickenRadiusMm"/>/<see cref="ThickenedMm"/> 是同一类东西
+    /// （那是单级、且用于**加**厚）；本字段非空时优先级更高，两者不要混用。
     /// </summary>
-    public double DiscThicknessAtHoleMm = double.NaN;
+    public double[] DiscStepRadiiMm = Array.Empty<double>();
 
-    /// <summary>该点的板厚 mm。优先级：孔周加厚 > 舌片厚 > 圆盘（可径向渐变）。</summary>
+    /// <summary>与 <see cref="DiscStepRadiiMm"/> 一一对应的厚度 mm</summary>
+    public double[] DiscStepThicknessMm = Array.Empty<double>();
+
+    /// <summary>该点的板厚 mm。优先级：圆盘阶梯 > 孔周加厚 > 舌片厚 > 圆盘外缘厚。</summary>
     public double ThicknessAt(double x, double z)
     {
+        // 舌片先判：阶梯是按半径分的，只对圆盘有意义
+        bool onTab = !double.IsNaN(TabThicknessMm) && x < Tangent().X;
+        if (onTab) return TabThicknessMm;
+
         double r = Math.Sqrt(x * x + z * z);
+        int nStep = Math.Min(DiscStepRadiiMm.Length, DiscStepThicknessMm.Length);
+        for (int k = 0; k < nStep; k++)
+            if (r <= DiscStepRadiiMm[k]) return DiscStepThicknessMm[k];
+        if (nStep > 0) return ThicknessMm;                       // 阶梯已给，外缘取基准厚
+
         if (ThickenRadiusMm > HoleRadiusMm && r <= ThickenRadiusMm) return ThickenedMm;
-        if (!double.IsNaN(TabThicknessMm) && x < Tangent().X) return TabThicknessMm;
-        if (!double.IsNaN(DiscThicknessAtHoleMm) && DiscRadiusMm > HoleRadiusMm)
-        {
-            double u = Math.Clamp((r - HoleRadiusMm) / (DiscRadiusMm - HoleRadiusMm), 0, 1);
-            return DiscThicknessAtHoleMm + (ThicknessMm - DiscThicknessAtHoleMm) * u;
-        }
         return ThicknessMm;
     }
 
