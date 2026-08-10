@@ -161,6 +161,66 @@ public static class Geometry3dm
         return m;
     }
 
+    // ── 厚度场（任意法兰形状 → t(x,z)）
+
+    private sealed class ThicknessDto
+    {
+        public double PlaneY { get; set; }
+        public double X0 { get; set; }
+        public double Z0 { get; set; }
+        public double Step { get; set; }
+        public int Nx { get; set; }
+        public int Nz { get; set; }
+        public double[] Thickness { get; set; } = Array.Empty<double>();
+    }
+
+    /// <summary>同一 (文件, 图层, 平面, 步长) 只提一次 —— 每次提取要跑一遍 Rhino 子进程（数秒）</summary>
+    private static readonly Dictionary<string, ThicknessField> _tfCache = new();
+
+    /// <summary>
+    /// 从 .3dm 提取法兰厚度场。t = 0 表示无材料（轮廓外、管孔、开槽），
+    /// t &gt; 0 直接给出阶梯厚度 —— 任意形状照单全收，不需提轮廓。
+    /// </summary>
+    public static ThicknessField LoadThickness(string path3dm, string layer,
+                                               double planeY = double.NaN, double step = 1.0)
+    {
+        string key = $"{Path.GetFullPath(path3dm)}|{layer}|{planeY}|{step}";
+        if (_tfCache.TryGetValue(key, out var hit)) return hit;
+
+        string probe = FindProbe()
+            ?? throw new FileNotFoundException($"找不到 {ProbeName}.exe（几何量测子进程需先构建）");
+        var psi = new ProcessStartInfo(probe)
+        {
+            RedirectStandardOutput = true, RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
+            UseShellExecute = false, CreateNoWindow = true
+        };
+        psi.ArgumentList.Add("thickness");
+        psi.ArgumentList.Add(path3dm);
+        psi.ArgumentList.Add(layer);
+        psi.ArgumentList.Add(double.IsNaN(planeY) ? "NaN" : planeY.ToString("R"));
+        psi.ArgumentList.Add(step.ToString("R"));
+
+        using var proc = Process.Start(psi) ?? throw new InvalidOperationException("无法启动 " + probe);
+        string stdout = proc.StandardOutput.ReadToEnd();
+        string stderr = proc.StandardError.ReadToEnd();
+        proc.WaitForExit();
+        if (proc.ExitCode != 0)
+            throw new InvalidOperationException($"厚度场提取失败（退出码 {proc.ExitCode}）：{stderr.Trim()}");
+
+        var dto = JsonSerializer.Deserialize<ThicknessDto>(stdout,
+                      new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                  ?? throw new InvalidOperationException("厚度场 JSON 解析失败");
+
+        var f = new ThicknessField
+        {
+            X0 = dto.X0, Z0 = dto.Z0, Step = dto.Step,
+            Nx = dto.Nx, Nz = dto.Nz, T = dto.Thickness
+        };
+        _tfCache[key] = f;
+        return f;
+    }
+
     // ── 报告
 
     public static string Report(string path3dm, DesignInputs p, FlangePlate g)

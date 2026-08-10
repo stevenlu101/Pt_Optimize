@@ -52,7 +52,23 @@ public static class SegmentSolver
         return res;
     }
 
-    private static void Core(DesignInputs p, SolveResult res)
+    /// <summary>
+    /// **按给定电流求解**（跳过「二分电流使中点达设定温度」那一层）。
+    ///
+    /// 用于实测电流模式：现场钳表读到的电流是硬数据，比让模型去猜更可信，
+    /// 而且省掉外层二分后单段求解从约 1 分钟降到秒级 —— 这是整线 UI 能做到
+    /// 「改个参数马上看结果」的前提。壁厚不再反算（<c>SizeWall</c> 被忽略），
+    /// 直接取 <see cref="DesignInputs.WallMinMm"/>。
+    /// </summary>
+    public static SolveResult SolveAtCurrent(DesignInputs p, double currentA)
+    {
+        var res = new SolveResult();
+        try { Core(p, res, currentA); }
+        catch (Exception ex) { res.Ok = false; res.Message = ex.Message; }
+        return res;
+    }
+
+    private static void Core(DesignInputs p, SolveResult res, double? fixedCurrentA = null)
     {
         double ri = p.TubeId * 0.5, L = p.TubeLength, tAmb = p.TAmbC;
 
@@ -61,24 +77,36 @@ public static class SegmentSolver
         double current = 0, area = 0;
         double[] tm = Array.Empty<double>(), tg = Array.Empty<double>();
 
-        bool wallConverged = false;
-        for (int outer = 0; outer < 30; outer++)
+        if (fixedCurrentA is double ifix)
         {
+            // 电流已知：壁厚取实测值，只解一次温度场
+            wall = p.WallMinMm * 1e-3;
+            area = Math.PI * wall * (p.TubeId + wall);
+            current = ifix;
+            Profile(p, wall, area, current, out tm, out tg);
+            wallElec = wall * Math.Pow(current / area / p.JAllow, 2);
+        }
+        else
+        {
+            bool wallConverged = false;
+            for (int outer = 0; outer < 30; outer++)
+            {
+                area = Math.PI * wall * (p.TubeId + wall);
+                current = FindCurrent(p, wall, area, out tm, out tg);
+                double j = current / area;
+                wallElec = wall * (j / p.JAllow) * (j / p.JAllow);
+                double need = Math.Max(wallElec, p.WallMinMm * 1e-3);
+                if (!p.SizeWall) { wall = p.WallMinMm * 1e-3; wallConverged = true; break; }
+                if (Math.Abs(need - wall) / wall < 1e-3) { wall = need; wallConverged = true; break; }
+                wall = 0.5 * wall + 0.5 * need;
+            }
+            if (!wallConverged)
+                throw new InvalidOperationException(
+                    $"壁厚外层迭代 30 次未收敛（最后 t = {wall * 1e3:F4} mm）。" +
+                    "不返回未收敛结果——请检查输入参数。");
             area = Math.PI * wall * (p.TubeId + wall);
             current = FindCurrent(p, wall, area, out tm, out tg);
-            double j = current / area;
-            wallElec = wall * (j / p.JAllow) * (j / p.JAllow);
-            double need = Math.Max(wallElec, p.WallMinMm * 1e-3);
-            if (!p.SizeWall) { wall = p.WallMinMm * 1e-3; wallConverged = true; break; }
-            if (Math.Abs(need - wall) / wall < 1e-3) { wall = need; wallConverged = true; break; }
-            wall = 0.5 * wall + 0.5 * need;
         }
-        if (!wallConverged)
-            throw new InvalidOperationException(
-                $"壁厚外层迭代 30 次未收敛（最后 t = {wall * 1e3:F4} mm）。" +
-                "不返回未收敛结果——请检查输入参数。");
-        area = Math.PI * wall * (p.TubeId + wall);
-        current = FindCurrent(p, wall, area, out tm, out tg);
 
         res.WallDesignMm = wall * 1e3;
         res.WallElecMm = wallElec * 1e3;

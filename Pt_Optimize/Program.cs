@@ -1192,6 +1192,65 @@ internal static class Program
                 return;
             }
 
+            // --cli --run [法兰.3dm]   整线求解（LineRunner 唯一入口，CLI 与 UI 共用）
+            if (args.Contains("--run"))
+            {
+                int ri2 = Array.IndexOf(args, "--run");
+                string f3dm = ri2 + 1 < args.Length && !args[ri2 + 1].StartsWith("--")
+                              ? args[ri2 + 1] : Find3dm("Pt_Heater2.3dm");
+                bool measured = !args.Contains("--solve");   // 默认实测电流；--solve 切到反算
+
+                var lc = new LineCase
+                {
+                    Base = p,
+                    UseMeasuredCurrent = measured,
+                    FlangeFile3dm = new[] { f3dm },
+                    FlangeLayer = "法兰"
+                };
+
+                Console.WriteLine("=== 整线求解（LineRunner）===");
+                Console.WriteLine($"法兰几何 {Path.GetFileName(f3dm)}   " +
+                                  $"电流模式 {(measured ? "实测" : "由控温反算")}");
+                Console.WriteLine($"{lc.SegmentCount} 段 + {lc.FlangeCount} 片");
+                Console.WriteLine();
+
+                var prog = new SyncProgress<string>(s => Console.WriteLine("  … " + s));
+                LineResult lr;
+                try { lr = LineRunner.Run(lc, prog); }
+                catch (Exception ex) { Console.WriteLine("✗ " + ex.Message); return; }
+                if (!lr.Ok) { Console.WriteLine("✗ " + lr.Message); return; }
+
+                Console.WriteLine();
+                Console.WriteLine($"{"段",6}{"控温",7}{"电流 A",9}{"功率 W",9}{"管 J",8}" +
+                                  $"{"管根 °C",10}{"衔接温差 K",12}{"玻璃出 °C",11}{"管重 g",9}");
+                foreach (var s in lr.Segments)
+                    Console.WriteLine($"{s.Name,6}{s.SetpointC,7:0}{s.CurrentA,9:0}{s.PowerW,9:0}" +
+                        $"{s.TubeJAPerMm2,8:0.00}{s.TRootC,10:0.0}{s.RootDeltaK,12:+0.0;-0.0}" +
+                        $"{s.GlassOutC,11:0.0}{s.MassG,9:0}");
+
+                Console.WriteLine();
+                Console.WriteLine($"{"法兰",12}{"共用",6}{"电流 A",9}{"J_max",9}{"Φ",8}" +
+                                  $"{"抽热 W",9}{"最高 °C",10}{"舌端 °C",10}{"单元",7}{"铂重 g",9}");
+                foreach (var f in lr.Flanges)
+                    Console.WriteLine($"{f.Name,12}{(f.Shared ? "是" : "—"),6}{f.CurrentA,9:0}" +
+                        $"{f.JMaxAPerMm2,9:0.00}{f.Phi,8:0.000}{f.QFromTubeW,9:+0;-0}" +
+                        $"{f.TMaxC,10:0.0}{f.TTabEndC,10:0.0}{f.CellCount,7}{f.MassG,9:0}");
+
+                Console.WriteLine();
+                Console.WriteLine($"{"约束",20}{"实际",12}{"限值",12}  判定  卡在");
+                foreach (var k in lr.Checks)
+                    Console.WriteLine($"{k.Name,20}{k.Actual,12:0.000}{k.Limit,12:0.000}" +
+                                      $"  {(k.Ok ? "✓" : "✗")}   {k.Where}  [{k.Unit}]");
+
+                Console.WriteLine();
+                Console.WriteLine($"铂重：管 {lr.TubeMassG:0} + 法兰 {lr.FlangeMassG:0} = " +
+                                  $"{lr.TotalMassG:0} g   基准 {lr.BaselineMassG:0} g   " +
+                                  $"省铂 {lr.SavingPct:+0.0;-0.0} %");
+                Console.WriteLine($"玻璃温降：模型 {lr.GlassDropModelK:0.0} K   实测 {lr.GlassDropMeasuredK:0.0} K");
+                foreach (var nte in lr.Notes) Console.WriteLine("  ⚠ " + nte);
+                return;
+            }
+
             // --cli --ramp   规程一：空管升温核算（25 → 1150 °C / 3 h）
             // 给出模型此前完全没有的**壁厚下界**：P_max = J_allow²·A·ρe·L ∝ 壁厚，
             // 减薄的同时也在削减可用功率。稳态解只把 J 当上界，方向相反的下界一条都没有。
