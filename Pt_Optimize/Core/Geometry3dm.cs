@@ -164,9 +164,17 @@ public static class Geometry3dm
         var tube = m.Layer("铂金管", "管", "tube", "pipe");
         var flange = m.Layer("法兰", "flange");
 
+        // ── 口径对齐：.3dm 可能是**整线**（多段管 + n+1 片法兰），而代码常数是**单段**口径。
+        //    段数优先取管的实体数；退而用「法兰片数 − 1」（见 LineSolver.FlangeCount）。
+        int segCount = tube is { Solids: > 0 } ? tube.Solids
+                     : flange is { Solids: > 1 } ? flange.Solids - 1 : 1;
+        if (segCount < 1) segCount = 1;
+        w.AppendLine($"（.3dm 含 {segCount} 段管 + {flange?.Solids ?? 0} 片法兰；" +
+                     $"以下按**单段**口径对照，法兰片数按整线对照）");
+
         double? tubeOd = tube?.CylinderRadiiMm.Length > 0 ? tube.CylinderRadiiMm.Max() * 2 : null;
         double? tubeId = tube?.CylinderRadiiMm.Length > 0 ? tube.CylinderRadiiMm.Min() * 2 : null;
-        double? tubeLen = tube?.Box is not null ? LongestEdge(tube.Box) : null;
+        double? tubeLen = tube?.Box is not null ? LongestEdge(tube.Box) / segCount : null;
 
         Row(w, "管 外径 OD [mm]", p.TubeIdMm + 2 * p.WallMinMm, tubeOd, "DesignInputs.TubeIdMm + 2×WallMinMm");
         Row(w, "管 内径 ID [mm]", p.TubeIdMm, tubeId, "DesignInputs.TubeIdMm");
@@ -183,13 +191,23 @@ public static class Geometry3dm
         double? discDia = flange?.CylinderRadiiMm.Length > 1 ? flange.CylinderRadiiMm.Max() * 2 : null;
         double? flangeThick = flange?.PlanarThicknessMm.Length > 0 ? flange.PlanarThicknessMm.Min() : null;
 
-        // 舌片末端：法兰平面内伸出圆盘之外的那一端（唯一显著超出 −R 的坐标轴极小值）
+        // 舌片末端：法兰平面内伸出圆盘之外的那一端。
+        // ★ 必须先排除**管轴**：整线模型里多片法兰沿管轴铺开，该方向跨距最大，
+        //   若不排除会把管轴极小值（如 −600）误判成舌片末端（踩过）。
         double? tabEndX = null;
         if (flange?.Box is not null && discDia is not null)
         {
             double r = discDia.Value * 0.5;
-            foreach (double min in new[] { flange.Box.MinX, flange.Box.MinY, flange.Box.MinZ })
-                if (min < -r * 1.1 && (tabEndX is null || min < tabEndX)) tabEndX = min;
+            var ext = new[]
+            {
+                (Min: flange.Box.MinX, Span: flange.Box.MaxX - flange.Box.MinX),
+                (Min: flange.Box.MinY, Span: flange.Box.MaxY - flange.Box.MinY),
+                (Min: flange.Box.MinZ, Span: flange.Box.MaxZ - flange.Box.MinZ)
+            };
+            double axisSpan = ext.Max(e => e.Span);          // 管轴 = 跨距最大的那根
+            foreach (var e in ext)
+                if (e.Span < axisSpan - 1e-9 && e.Min < -r * 1.1
+                    && (tabEndX is null || e.Min < tabEndX)) tabEndX = e.Min;
         }
 
         // 平面净面积：单片实体体积 ÷ 板厚。README 引的 23 591.6 mm² 就是这个量
@@ -206,15 +224,21 @@ public static class Geometry3dm
         Row(w, "法兰 单片铂重 [g]", platePairCode,
             flange?.Solids > 0 ? flange.MassPerSolidG : null, "PlateArea×t×d（单片）");
 
-        // 法兰是成对的：一段管两端各一片。核算必须按对计，只算单片会漏掉一半。
-        Row(w, "法兰 片数 / 段", 2, flange?.Solids, "CoupledSolver 的 MassFlangePairG 系数 2");
-        Row(w, "法兰 成对铂重 [g]", 2 * platePairCode,
-            flange?.Solids > 0 ? flange.VolumeMm3 * Materials.PtDensity * 1e-6 : null,
-            "CoupledSolver.MassFlangePairG");
+        // 法兰按整线计数：n 段 = n+1 片（相邻段共用接头处那片）。
+        Row(w, $"法兰 片数（{segCount} 段整线）", LineSolver.FlangeCount(segCount), flange?.Solids,
+            "LineSolver.FlangeCount(n) = n+1");
+        Row(w, "法兰 成对铂重 [g]（单段）", 2 * platePairCode,
+            flange?.Solids > 0 ? 2 * flange.MassPerSolidG : null,
+            "CoupledSolver.MassFlangePairG（单段两端各一片）");
         Row(w, "单段总铂 [g]", TubeMassG(p) + 2 * platePairCode,
+            tube is { Solids: > 0 } && flange is { Solids: > 0 }
+                ? tube.MassPerSolidG + 2 * flange.MassPerSolidG : null,
+            "管 + 成对法兰 = CoupledSolver.MassTotalG");
+        Row(w, $"整线总铂 [g]（{segCount} 段）",
+            segCount * TubeMassG(p) + LineSolver.FlangeCount(segCount) * platePairCode,
             tube is not null && flange is not null
                 ? (tube.VolumeMm3 + flange.VolumeMm3) * Materials.PtDensity * 1e-6 : null,
-            "管 + 成对法兰 = CoupledSolver.MassTotalG");
+            "n×管 + (n+1)×法兰");
 
         w.AppendLine();
         w.AppendLine("偏差 >0.5% 需要查：要么 .3dm 改过而代码未同步，要么当初抄错。");
