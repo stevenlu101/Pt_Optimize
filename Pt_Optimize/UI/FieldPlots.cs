@@ -125,6 +125,55 @@ public static class FieldPlots
         fp.Refresh();
     }
 
+    /// <summary>
+    /// 壳网格上的标量场：每个单元按值着色画成小方块。
+    /// 用于变步长/任意形状网格 —— 热图需要规则网格，这里网格不规则，故逐单元填充。
+    /// </summary>
+    public static void DrawShellField(FormsPlot fp, Core.ShellMesh m, double[] value,
+                                      string title, string label, string unit,
+                                      double holeRadiusMm = 26.0, double clipPercentile = 0.995)
+    {
+        var plot = fp.Plot;
+        plot.Clear();
+        if (m.CellCount == 0) { fp.Refresh(); return; }
+
+        // 上限按分位数截断：J 在孔周有奇点，用最大值做色标会把其余全压成一色
+        var sorted = value.Where(v => !double.IsNaN(v)).OrderBy(v => v).ToArray();
+        double vMax = sorted.Length > 0 ? sorted[(int)Math.Min(sorted.Length - 1,
+                                                  Math.Floor(sorted.Length * clipPercentile))] : 1;
+        double vMin = sorted.Length > 0 ? sorted[0] : 0;
+        if (vMax <= vMin) vMax = vMin + 1;
+
+        for (int i = 0; i < m.CellCount; i++)
+        {
+            var nd = m.Cells[i];
+            double xa = m.Nodes[nd[0]].X, xb = m.Nodes[nd[2]].X;
+            double za = m.Nodes[nd[0]].Z, zb = m.Nodes[nd[2]].Z;
+            double u = Math.Clamp((value[i] - vMin) / (vMax - vMin), 0, 1);
+            var rect = plot.Add.Rectangle(Math.Min(xa, xb), Math.Max(xa, xb),
+                                          Math.Min(za, zb), Math.Max(za, zb));
+            rect.FillColor = Ramp.GetColor(u);
+            rect.LineWidth = 0;
+        }
+
+        int n = 181; var cx = new double[n]; var cz = new double[n];
+        for (int k = 0; k < n; k++)
+        {
+            double a = 2 * Math.PI * k / (n - 1);
+            cx[k] = holeRadiusMm * Math.Cos(a); cz[k] = holeRadiusMm * Math.Sin(a);
+        }
+        var hole = plot.Add.Scatter(cx, cz);
+        hole.Color = Colors.White; hole.LineWidth = 1.8f; hole.MarkerSize = 0;
+        hole.LegendText = "管孔（= 铂金管外壁）";
+
+        plot.Title($"{title}　{label} {vMin:0.00}–{vMax:0.00} {unit}（上限按 {clipPercentile:P1} 分位截断）");
+        plot.XLabel("x [mm]（0 = 管轴，负向为舌片）");
+        plot.YLabel("z [mm]");
+        plot.ShowLegend();
+        plot.Axes.AutoScale();
+        fp.Refresh();
+    }
+
     private static void AddOutline(Plot plot, double[] xs, double[] rs, Color c, float w)
     {
         if (xs.Length < 2) return;

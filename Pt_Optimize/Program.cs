@@ -1129,6 +1129,26 @@ internal static class Program
                 }
                 Console.WriteLine($"  整片焦耳热 {sc.TotalGenW:0.0} W @{current:0} A");
 
+                // 场图：电流密度 + 厚度分布（用户要求每次输出都给二维分布）
+                try
+                {
+                    Directory.CreateDirectory("figs");
+                    ApplicationConfiguration.Initialize();
+                    string tag = f3dm is null ? "shell_old" : "shell_new";
+                    void SaveShell(string suffix, Action<ScottPlot.WinForms.FormsPlot> draw)
+                    {
+                        var fp2 = UI.FieldPlots.NewPlot();
+                        draw(fp2);
+                        fp2.Plot.SavePng(Path.Combine("figs", $"{tag}_{suffix}.png"), 1300, 720);
+                    }
+                    SaveShell("J", f2 => UI.FieldPlots.DrawShellField(f2, mesh, sc.JMagAPerMm2,
+                        $"电流密度 @{current:0} A", "J", "A/mm²", g.HoleRadiusMm));
+                    SaveShell("t", f2 => UI.FieldPlots.DrawShellField(f2, mesh, mesh.Thickness.ToArray(),
+                        "板厚分布", "t", "mm", g.HoleRadiusMm, 1.0));
+                    Console.WriteLine($"  → figs/{tag}_J.png, {tag}_t.png");
+                }
+                catch (Exception ex) { Console.WriteLine("  ⚠ 场图失败：" + ex.Message); }
+
                 if (f3dm is null)
                 {
                     var old = PlateCurrent2D.Solve(g, current, Materials.PtResistivity(p.TSetC), 1.0);
