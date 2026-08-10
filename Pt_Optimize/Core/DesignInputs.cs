@@ -108,13 +108,21 @@ public class DesignInputs
      Description("氧化铝纤维/致密氧化铝约 0.4–0.6")]
     public double OuterEmissivity { get; set; } = 0.45;
 
-    [Category("4 铂表面与保温"), DisplayName("① 内层（贴铂）")]
+    // ★ 2026-08-10 按现场实况修正：纤维包覆厚度 **2–3 mm**（原设 10 mm，差 4 倍）。
+    //   保温热阻几乎全部由纤维贡献（致密氧化铝 k≈9 W/m·K，其 5 mm 只占总热阻约 1 %），
+    //   故这一项直接决定散热量级 —— 改动会连带影响电功率、法兰自给率 Φ 与升温核算。
+    [Category("4 铂表面与保温"), DisplayName("① 内层（贴铂）"),
+     Description("现场实测包覆厚度 2–3 mm，取中值 2.5。热阻几乎全在这一层")]
     public InsulationLayer Layer1 { get; set; } = new()
-    { Name = "高纯氧化铝纤维", ThicknessMm = 10, K0 = 0.04, K1 = 3.0e-4 };
+    { Name = "高纯氧化铝纤维", ThicknessMm = 2.5, K0 = 0.04, K1 = 3.0e-4 };
 
-    [Category("4 铂表面与保温"), DisplayName("② 中层")]
+    // ⚠ 实物是**半管套**（仅下半圈，见 Pt_Heater.3dm 图层「氧化铝管」，内 R26/外 R31，Z≤0）。
+    //   此处仍按整圈同心层处理 —— 因其热阻只占约 1 %，影响主要在外表面半径与发射率，
+    //   量级上可接受；若要精确需改为按包角加权的并联热阻。
+    [Category("4 铂表面与保温"), DisplayName("② 中层"),
+     Description("致密氧化铝半管套（实物仅下半圈）。热阻占比 ~1%，此处按整圈近似")]
     public InsulationLayer Layer2 { get; set; } = new()
-    { Name = "致密氧化铝套管", ThicknessMm = 5, K0 = 25.0, K1 = -0.016 };
+    { Name = "致密氧化铝半管套", ThicknessMm = 5, K0 = 25.0, K1 = -0.016 };
 
     [Category("4 铂表面与保温"), DisplayName("③ 外层（可选）")]
     public InsulationLayer Layer3 { get; set; } = new()
@@ -150,8 +158,13 @@ public class DesignInputs
      Description("法兰双面包覆高纯氧化铝纤维。降低 q″ 可线性提升自给率 φ")]
     public bool FlangeInsulated { get; set; } = true;
 
-    [Category("5 法兰"), DisplayName("法兰保温厚 [mm]"), Description("单面厚度，材料取内层①的 k(T)")]
-    public double FlangeInsulThickMm { get; set; } = 10.0;
+    // ★ 2026-08-10 随 Layer1 一并改为 2.5：用户给的「纤维包覆 2–3 mm」是针对铂管的，
+    //   此处按「同一材料同一工艺」外推到法兰。**待现场确认**（见 HANDOVER §6 待补数据 ⑦）。
+    //   留 10 mm 而管子改 2.5 mm 会物理不自洽：管子保温薄 ⇒ 电流大 ⇒ 同一电流流过裹得厚的法兰
+    //   ⇒ 法兰过热、Φ≫1 ⇒ 向管根倒灌，实测算出管根 2137 °C（超铂熔点 1768 °C）。
+    [Category("5 法兰"), DisplayName("法兰保温厚 [mm]"),
+     Description("单面厚度，材料取内层①的 k(T)。按与铂管同一包覆工艺取 2.5，待现场确认")]
+    public double FlangeInsulThickMm { get; set; } = 2.5;
 
     [Category("5 法兰"), DisplayName("法兰吹风风速 [m/s]"),
      Description("压缩空气强制冷却。0 = 仅自然对流。每吹掉一瓦都要由铂金发出来，直接折算成铂重")]

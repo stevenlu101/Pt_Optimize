@@ -42,7 +42,22 @@ public sealed class FlangePlate
     public double TabEndXMm = -200.0;
     public double TabEndHalfWidthMm = 40.0; // 末端宽 80
     public double ThicknessMm = 2.0;
-    public double InsulBoundaryXMm = -200.0; // X ≥ 此值为保温段（默认全包，见 --insul 扫描）
+    /// <summary>
+    /// 保温分界：X ≥ 此值的区域包纤维，其余裸露。
+    ///
+    /// **默认 NaN = 自动取切点，即「仅圆盘保温、舌片全裸」** —— 这是现场实况
+    /// （2026-08-10 用户确认：纤维只包铂管与法兰圆，法兰圆以外均不保温）。
+    /// 显式赋 −200 表示全包（含舌片），是 `--insul` 扫描与若干旧算例用的假设。
+    ///
+    /// 本类不参与 JSON 序列化（算例文件只序列化 <see cref="DesignInputs"/>），
+    /// 故此处用 NaN 作哨兵是安全的；<see cref="DesignInputs.FlangeDrawOverrideW"/>
+    /// 那边则不能，原因见其注释。
+    /// </summary>
+    public double InsulBoundaryXMm = double.NaN;
+
+    /// <summary>解析后的保温分界：NaN ⇒ 切点（仅圆盘保温）</summary>
+    public double InsulBoundaryXResolved
+        => double.IsNaN(InsulBoundaryXMm) ? Tangent().X : InsulBoundaryXMm;
 
     /// <summary>孔周局部加厚：半径 ≤ ThickenRadiusMm 的区域厚度取 ThickenedMm</summary>
     /// <summary>末端延长段：自 TabEndXMm 再伸 ExtensionMm，半宽由 40 线性张开到 ExtHalfWidthMm</summary>

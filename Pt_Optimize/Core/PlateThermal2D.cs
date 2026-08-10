@@ -57,7 +57,9 @@ public static class PlateThermal2D
         var insTab = new LossTable(p.TAmbC, p.TSetC + 200, 60,
             x => Insulation.PlateFlux(x, p.TAmbC, insLayers, p.OuterEmissivity, charLen) * 1e-6);
 
-        bool Insulated(int i) => (cur.X0 + i * h) >= g.InsulBoundaryXMm;
+        // 默认（NaN）解析为切点 = 仅圆盘保温、舌片裸露，见 FlangePlate.InsulBoundaryXMm
+        double insulX = g.InsulBoundaryXResolved;
+        bool Insulated(int i) => (cur.X0 + i * h) >= insulX;
 
         // 固定边界：管孔一圈
         var fix = new bool[nx, nz];
