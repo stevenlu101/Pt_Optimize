@@ -607,6 +607,404 @@ internal static class Program
                 return;
             }
 
+            // --cli --lineopt [圆盘半径]   整线口径寻优：3 段 × 4 片，逐片定尺
+            //
+            // 补 §4.2g 指出的缺口：此前所有扫描都是「单段 HC3 + 两片相同法兰」，不是整线设计。
+            //
+            // 【近似及其依据】严格解需三段联立（每片法兰被相邻两段共用、承受不同电流），
+            // 而 CoupledSolver 解的是「一段 + 两端相同法兰」。此处用两步近似：
+            //   ① 对每段单独二分法兰厚，求该段衔接温差 = 0 的厚度 t_seg（Φ≈1）
+            //   ② 每片按其实际承担电流折算：t ∝ I（定尺后 J=J_allow，而 J=K/t、K ∝ I）
+            //      共用片取相邻两段折算值的**较大者**（保守）
+            // 共用片电流用 LineSolver.JointCurrentA，即工作簿的 (I_左+I_右)/2 × 1.5。
+            // ⚠ 那个 1.5 是经验系数（§6 待补数据 ⑧），本命令的结论精度受限于它。
+            if (args.Contains("--lineopt"))
+            {
+                int li = Array.IndexOf(args, "--lineopt");
+                double ro = li + 1 < args.Length && double.TryParse(args[li + 1], out var rv) ? rv : 44.0;
+                double clamp = 80;
+                var segs = new List<Segment>
+                {
+                    new(){ Name="HC1", TSetC=1150, TGlassInC=1150, GlassHeadM=0.3, LengthMm=300, WallMm=1.0 },
+                    new(){ Name="HC2", TSetC=1080, TGlassInC=1143, GlassHeadM=0.6, LengthMm=300, WallMm=1.0 },
+                    new(){ Name="HC3", TSetC=1050, TGlassInC=1137, GlassHeadM=1.0, LengthMm=300, WallMm=1.0 },
+                };
+
+                Console.WriteLine($"=== 整线寻优（{segs.Count} 段 → {LineSolver.FlangeCount(segs.Count)} 片）===");
+                Console.WriteLine($"圆盘半径 {ro:0.0} mm（Ø{2 * ro:0}）  铜排夹持 {clamp:0} °C");
+                Console.WriteLine("每段二分法兰厚求温差 = 0，再按各片实际电流折算 t ∝ I");
+                Console.WriteLine();
+
+                var tNeed = new double[segs.Count];
+                var iSeg = new double[segs.Count];
+                var jRef = new double[segs.Count];
+
+                Console.WriteLine($"{"段",6}{"控温",7}{"电流 A",9}{"温差=0 的法兰厚",16}{"该厚度下 J",12}  判定");
+                for (int i = 0; i < segs.Count; i++)
+                {
+                    var s = segs[i];
+                    (double d, double jf, double iA, bool ok) Probe(double ft)
+                    {
+                        var q = SegmentSolver.Clone(p);
+                        q.TSetC = s.TSetC; q.TGlassInC = s.TGlassInC; q.GlassHeadM = s.GlassHeadM;
+                        q.WallMinMm = s.WallMm; q.SizeWall = false;
+                        q.SizeFlangeThickness = false; q.BusbarClampTempC = clamp;
+                        try
+                        {
+                            var c = CoupledSolver.Solve(q,
+                                new FlangePlate { DiscRadiusMm = ro, ThicknessMm = ft, ThickenedMm = ft });
+                            return c.Tube.Ok
+                                ? (s.TSetC - c.Tube.TFlangeAC, c.JFlangeMaxAPerMm2, c.Tube.CurrentA, true)
+                                : (0, 0, 0, false);
+                        }
+                        catch { return (0, 0, 0, false); }
+                    }
+
+                    double lo = 0.4, hi = 8.0;
+                    var fLo = Probe(lo); var fHi = Probe(hi);
+                    if (!fLo.ok || !fHi.ok || fLo.d * fHi.d > 0)
+                    { Console.WriteLine($"{s.Name,6}   ✗ 未包住零点或求解失败"); tNeed[i] = double.NaN; continue; }
+                    for (int k = 0; k < 8; k++)
+                    {
+                        double mid = 0.5 * (lo + hi);
+                        var f = Probe(mid);
+                        if (!f.ok) break;
+                        if (f.d * fLo.d > 0) { lo = mid; fLo = f; } else hi = mid;
+                    }
+                    double t2 = 0.5 * (lo + hi);
+                    var r2 = Probe(t2);
+                    tNeed[i] = t2; iSeg[i] = r2.iA; jRef[i] = r2.jf;
+                    Console.WriteLine($"{s.Name,6}{s.TSetC,7:0}{r2.iA,9:0}{t2,16:0.000}{r2.jf,12:0.00}" +
+                                      $"  {(r2.jf <= p.JAllowAPerMm2 ? "✓ J" : "✗ J 越界")}");
+                }
+                if (tNeed.Any(double.IsNaN)) { Console.WriteLine("\n✗ 有段无解，终止"); return; }
+
+                // ── 逐片折算
+                Console.WriteLine();
+                Console.WriteLine($"{"接头",12}{"共用",6}{"电流 A",9}{"厚度 mm",10}{"J",8}{"铂重 g",10}  依据");
+                var proto = new FlangePlate { DiscRadiusMm = ro };
+                double plateArea = CoupledSolver.PlateArea(proto);
+                double flangeTotal = 0;
+                int nF = LineSolver.FlangeCount(segs.Count);
+                for (int k = 0; k < nF; k++)
+                {
+                    int left = k - 1, right = k;               // 第 k 片位于 segs[k-1] 与 segs[k] 之间
+                    bool shared = left >= 0 && right < segs.Count;
+                    double iJoint = LineSolver.JointCurrentA(iSeg, k);
+                    // t ∝ I：取相邻两段各自折算值的较大者（保守）。
+                    // ★ 必须同时记住**是哪一段决定的**：J 的参考点要取那一段，
+                    //   取错段会让 J 偏（J ∝ I/t，两个量都要用同一段的参考值）。
+                    double t = 0; int bind = -1;
+                    if (left >= 0)
+                    {
+                        double tl = tNeed[left] * iJoint / iSeg[left];
+                        if (tl > t) { t = tl; bind = left; }
+                    }
+                    if (right < segs.Count)
+                    {
+                        double tr = tNeed[right] * iJoint / iSeg[right];
+                        if (tr > t) { t = tr; bind = right; }
+                    }
+                    string basis = bind >= 0 ? segs[bind].Name : "—";
+                    // J_joint = J_ref × (I_joint/I_ref) × (t_ref/t)
+                    double j = bind >= 0
+                        ? jRef[bind] * (iJoint / iSeg[bind]) * (tNeed[bind] / t) : 0;
+                    double m = plateArea * t * Materials.PtDensity * 1e-6;
+                    flangeTotal += m;
+                    string name = left < 0 ? "入口" : right >= segs.Count ? "出口"
+                                : $"{segs[left].Name}|{segs[right].Name}";
+                    Console.WriteLine($"{name,12}{(shared ? "是" : "—"),6}{iJoint,9:0}{t,10:0.000}" +
+                                      $"{j,8:0.00}{m,10:0}  {basis}");
+                }
+
+                double tubeTotal = segs.Sum(s =>
+                    Math.PI * (Math.Pow(s.TubeIdMm * 0.5 + s.WallMm, 2) - Math.Pow(s.TubeIdMm * 0.5, 2))
+                    * s.LengthMm * Materials.PtDensity * 1e-6);
+                Console.WriteLine();
+                Console.WriteLine($"整线：管 {tubeTotal:0} g + 法兰 {flangeTotal:0} g = {tubeTotal + flangeTotal:0} g" +
+                                  $"   （现状实测 7141 g，--geom 校核）");
+                Console.WriteLine($"省铂 {(7141 - tubeTotal - flangeTotal) / 7141 * 100:+0.0;-0.0} %");
+                Console.WriteLine("⚠ 共用片电流用的 1.5 经验系数（§6 待补数据 ⑧）—— 本结论精度受限于它。");
+                return;
+            }
+
+            // --cli --mesh [dir]   把计算网格画出来（3 段管 + 4 片法兰）
+            //
+            // 模型是**混合维度**离散，一张图说不清，故分两张：
+            //   ① 整线布置：管为一维轴向（每段 Nodes 个节点），4 片法兰为 4 个二维平面
+            //   ② 法兰平面：二维掩膜网格，步长 h，掩膜外不参与求解
+            if (args.Contains("--mesh"))
+            {
+                int mi = Array.IndexOf(args, "--mesh");
+                string dir = mi + 1 < args.Length && !args[mi + 1].StartsWith("--") ? args[mi + 1] : "figs";
+                Directory.CreateDirectory(dir);
+                ApplicationConfiguration.Initialize();
+
+                var g = new FlangePlate();
+                double h = 1.0;
+                int nSeg = 3, nFlange = LineSolver.FlangeCount(nSeg);
+                double segLen = p.TubeLengthMm;
+
+                Console.WriteLine("=== 计算网格 ===");
+                Console.WriteLine($"管：一维轴向，{nSeg} 段 × {p.Nodes} 节点，段长 {segLen:0} mm" +
+                                  $"（轴向步长 {segLen / (p.Nodes - 1):0.000} mm）");
+                Console.WriteLine($"    径向不离散 —— 铂壁 {p.WallMinMm:0.0} mm、k≈70 W/m·K，径向温差可忽略");
+                Console.WriteLine($"法兰：二维掩膜网格，{nFlange} 片，步长 h = {h:0.0} mm");
+
+                // ── ⓪a 变步长壳网格（生成器①）：孔周加密、远场放粗
+                {
+                    var sm = FlangeMesher.Build(g, 0, hFine: 2.0, hCoarse: 11.0, fineRadius: 45.0);
+                    var (fi, fb) = sm.FaceCounts();
+                    double truth = CoupledSolver.PlateArea(g);      // --geom 校核过的真值
+                    double err = (sm.TotalArea - truth) / truth * 100;
+
+                    Console.WriteLine();
+                    Console.WriteLine("=== 变步长壳网格（生成器①）===");
+                    Console.WriteLine($"  单元 {sm.CellCount}（原均匀 1 mm 掩膜网格 23636，减少 " +
+                                      $"{(1 - sm.CellCount / 23636.0) * 100:0}%）");
+                    Console.WriteLine($"  面 内部 {fi} / 边界 {fb}");
+                    Console.WriteLine($"  平面净面积 {sm.TotalArea:0.000} mm²   真值 {truth:0.000}   " +
+                                      $"偏差 {err:+0.000;-0.000} %  {(Math.Abs(err) < 0.5 ? "✓" : "✗")}");
+                    Console.WriteLine($"  体积 {sm.VolumeMm3:0.0} mm³ → 单片 " +
+                                      $"{sm.VolumeMm3 * Materials.PtDensity * 1e-6:0.0} g");
+
+                    var fp = UI.FieldPlots.NewPlot();
+                    var plot = fp.Plot;
+                    foreach (var cell in sm.Cells)
+                    {
+                        var xs2 = new double[5]; var zs2 = new double[5];
+                        for (int k = 0; k <= 4; k++)
+                        { var nd = sm.Nodes[cell[k % 4]]; xs2[k] = nd.X; zs2[k] = nd.Z; }
+                        var s = plot.Add.Scatter(xs2, zs2);
+                        s.Color = ScottPlot.Colors.SteelBlue.WithAlpha(0.55);
+                        s.LineWidth = 0.5f; s.MarkerSize = 0;
+                    }
+                    int nc = 181; var cx2 = new double[nc]; var cz2 = new double[nc];
+                    for (int k = 0; k < nc; k++)
+                    {
+                        double a = 2 * Math.PI * k / (nc - 1);
+                        cx2[k] = g.HoleRadiusMm * Math.Cos(a); cz2[k] = g.HoleRadiusMm * Math.Sin(a);
+                    }
+                    var hh = plot.Add.Scatter(cx2, cz2);
+                    hh.Color = ScottPlot.Colors.Red; hh.LineWidth = 2f; hh.MarkerSize = 0;
+                    hh.LegendText = "管孔（细化区中心）";
+
+                    plot.Title($"变步长壳网格：{sm.CellCount} 单元（孔周 2 mm / 远场 11 mm）" +
+                               $"　净面积偏差 {err:+0.00;-0.00}%");
+                    plot.XLabel("x [mm]"); plot.YLabel("z [mm]");
+                    plot.ShowLegend();
+                    plot.Axes.SetLimits(g.TabTipXMm - 5, g.DiscRadiusMm + 5,
+                                        -g.DiscRadiusMm - 5, g.DiscRadiusMm + 5);
+                    fp.Plot.SavePng(Path.Combine(dir, "mesh_graded.png"), 1400, 760);
+                    Console.WriteLine($"  → {dir}/mesh_graded.png");
+                }
+
+                // ── ⓪ 三维壳网格（管为圆柱壳，法兰为平板，装配在一起）
+                //    ScottPlot 是纯 2D 库，故自做斜投影：Y(管轴)→水平，Z→竖直，X→斜向后
+                //      u = Y + 0.433·X ,  v = Z + 0.25·X
+                //    这套网格生成代码就是将来三维壳求解器的网格生成部分，不是一次性画图。
+                {
+                    static (double u, double v) Proj(double X, double Y, double Z)
+                        => (Y + 0.433 * X, Z + 0.25 * X);
+
+                    var fp = UI.FieldPlots.NewPlot();
+                    var plot = fp.Plot;
+                    double rOut = p.TubeIdMm * 0.5 + p.WallMinMm;
+                    int nTheta = 36, nAxial = 13;           // 每段轴向 13 条环线（画图用，非求解密度）
+
+                    // 管：圆柱壳。环向线 + 轴向线
+                    for (int k = 0; k < nSeg; k++)
+                        for (int a = 0; a < nAxial; a++)
+                        {
+                            double y = k * segLen + a * segLen / (nAxial - 1);
+                            var us = new double[nTheta + 1]; var vs = new double[nTheta + 1];
+                            for (int t = 0; t <= nTheta; t++)
+                            {
+                                double th = 2 * Math.PI * t / nTheta;
+                                var q = Proj(rOut * Math.Cos(th), y, rOut * Math.Sin(th));
+                                us[t] = q.u; vs[t] = q.v;
+                            }
+                            var s = plot.Add.Scatter(us, vs);
+                            s.Color = ScottPlot.Colors.SteelBlue.WithAlpha(0.55);
+                            s.LineWidth = 0.8f; s.MarkerSize = 0;
+                            if (k == 0 && a == 0) s.LegendText = "铂金管（圆柱壳）";
+                        }
+                    for (int t = 0; t < nTheta; t += 3)
+                    {
+                        double th = 2 * Math.PI * t / nTheta;
+                        var q0 = Proj(rOut * Math.Cos(th), 0, rOut * Math.Sin(th));
+                        var q1 = Proj(rOut * Math.Cos(th), nSeg * segLen, rOut * Math.Sin(th));
+                        var s = plot.Add.Scatter(new[] { q0.u, q1.u }, new[] { q0.v, q1.v });
+                        s.Color = ScottPlot.Colors.SteelBlue.WithAlpha(0.45);
+                        s.LineWidth = 0.8f; s.MarkerSize = 0;
+                    }
+
+                    // 法兰：每片一块平板，画外轮廓 + 内部网格线
+                    for (int k = 0; k < nFlange; k++)
+                    {
+                        double y = k * segLen;
+                        // 外轮廓（上下对称，含管孔）
+                        var ub = new List<double>(); var vb = new List<double>();
+                        for (double x = g.TabTipXMm; x <= g.DiscRadiusMm; x += 2)
+                        { var q = Proj(x, y, g.HalfWidth(x)); ub.Add(q.u); vb.Add(q.v); }
+                        for (double x = g.DiscRadiusMm; x >= g.TabTipXMm; x -= 2)
+                        { var q = Proj(x, y, -g.HalfWidth(x)); ub.Add(q.u); vb.Add(q.v); }
+                        var so = plot.Add.Scatter(ub.ToArray(), vb.ToArray());
+                        so.Color = ScottPlot.Colors.Green; so.LineWidth = 1.8f; so.MarkerSize = 0;
+                        if (k == 0) so.LegendText = $"法兰（{nFlange} 片，平板壳）";
+
+                        // 内部网格线：每 12 mm 一条
+                        for (double x = Math.Ceiling(g.TabTipXMm / 12) * 12; x <= g.DiscRadiusMm; x += 12)
+                        {
+                            double hw = g.HalfWidth(x); if (hw <= 0) continue;
+                            double hole = Math.Abs(x) <= g.HoleRadiusMm
+                                ? Math.Sqrt(g.HoleRadiusMm * g.HoleRadiusMm - x * x) : 0;
+                            foreach (int sgn in new[] { 1, -1 })
+                            {
+                                var qa = Proj(x, y, sgn * hole); var qb = Proj(x, y, sgn * hw);
+                                var sl = plot.Add.Scatter(new[] { qa.u, qb.u }, new[] { qa.v, qb.v });
+                                sl.Color = ScottPlot.Colors.Green.WithAlpha(0.30);
+                                sl.LineWidth = 0.6f; sl.MarkerSize = 0;
+                            }
+                        }
+                        // 管孔
+                        var uh = new double[73]; var vh = new double[73];
+                        for (int t = 0; t <= 72; t++)
+                        {
+                            double th = 2 * Math.PI * t / 72;
+                            var q = Proj(g.HoleRadiusMm * Math.Cos(th), y, g.HoleRadiusMm * Math.Sin(th));
+                            uh[t] = q.u; vh[t] = q.v;
+                        }
+                        var sh = plot.Add.Scatter(uh, vh);
+                        sh.Color = ScottPlot.Colors.Red; sh.LineWidth = 1.4f; sh.MarkerSize = 0;
+                        if (k == 0) sh.LegendText = "管孔 = 管↔法兰 电流/热流交界";
+
+                        var lbl = plot.Add.Text(k == 0 ? "入口" : k == nFlange - 1 ? "出口" : $"共用{k}",
+                                                Proj(g.DiscRadiusMm, y, g.DiscRadiusMm + 8).u,
+                                                Proj(g.DiscRadiusMm, y, g.DiscRadiusMm + 8).v);
+                        lbl.LabelFontSize = 11; lbl.LabelFontName = "Microsoft YaHei";
+                    }
+                    for (int k = 0; k < nSeg; k++)
+                    {
+                        var q = Proj(0, k * segLen + segLen * 0.5, -rOut - 30);
+                        var t = plot.Add.Text($"HC{k + 1}", q.u, q.v);
+                        t.LabelFontSize = 12; t.LabelFontName = "Microsoft YaHei";
+                    }
+
+                    plot.Title($"三维装配壳网格：{nSeg} 段铂金管 + {nFlange} 片法兰（斜投影 Y→右 Z→上 X→斜后）");
+                    plot.XLabel("投影 u [mm]"); plot.YLabel("投影 v [mm]");
+                    plot.ShowLegend();
+                    plot.Axes.AutoScale();
+                    fp.Plot.SavePng(Path.Combine(dir, "mesh_3d.png"), 1600, 800);
+                    Console.WriteLine($"  → {dir}/mesh_3d.png");
+                }
+
+                // ── ① 整线布置
+                {
+                    var fp = UI.FieldPlots.NewPlot();
+                    var plot = fp.Plot;
+                    double rOut = p.TubeIdMm * 0.5 + p.WallMinMm, rIn = p.TubeIdMm * 0.5;
+                    double yTot = nSeg * segLen;
+
+                    // 管壁（上下两条）
+                    foreach (double rr in new[] { rOut, rIn, -rIn, -rOut })
+                    {
+                        var s = plot.Add.Scatter(new[] { 0.0, yTot }, new[] { rr, rr });
+                        s.Color = ScottPlot.Colors.Gray; s.LineWidth = 1.4f; s.MarkerSize = 0;
+                    }
+                    // 轴向节点（每段抽样画，401 个点画满会糊成一片）
+                    for (int k = 0; k < nSeg; k++)
+                    {
+                        int step = Math.Max(1, p.Nodes / 40);
+                        var xs = new List<double>(); var ys = new List<double>();
+                        for (int i = 0; i < p.Nodes; i += step)
+                        { xs.Add(k * segLen + i * segLen / (p.Nodes - 1)); ys.Add(0); }
+                        var s = plot.Add.Scatter(xs.ToArray(), ys.ToArray());
+                        s.Color = ScottPlot.Colors.SteelBlue; s.LineWidth = 0;
+                        s.MarkerSize = 4; s.MarkerShape = ScottPlot.MarkerShape.FilledCircle;
+                        if (k == 0) s.LegendText = $"管轴向节点（每段 {p.Nodes} 个，图中每 {step} 个画 1 个）";
+                    }
+                    // 法兰平面
+                    for (int k = 0; k < nFlange; k++)
+                    {
+                        double y = k * segLen;
+                        var s = plot.Add.Scatter(new[] { y, y },
+                                                 new[] { -g.DiscRadiusMm, g.DiscRadiusMm });
+                        s.Color = ScottPlot.Colors.Green; s.LineWidth = 5f; s.MarkerSize = 0;
+                        if (k == 0) s.LegendText = $"法兰平面（{nFlange} 片，二维网格）";
+                        var t = plot.Add.Text(k == 0 ? "入口" : k == nFlange - 1 ? "出口" : $"共用{k}",
+                                              y, g.DiscRadiusMm + 6);
+                        t.LabelFontSize = 11; t.LabelFontName = "Microsoft YaHei";
+                    }
+                    for (int k = 0; k < nSeg; k++)
+                    {
+                        var t = plot.Add.Text($"HC{k + 1}", k * segLen + segLen * 0.5, -g.DiscRadiusMm - 12);
+                        t.LabelFontSize = 12; t.LabelFontName = "Microsoft YaHei";
+                    }
+                    plot.Title($"整线离散布置：{nSeg} 段管（一维轴向）+ {nFlange} 片法兰（二维平面）");
+                    plot.XLabel("沿管轴 y [mm]");
+                    plot.YLabel("半径 r [mm]");
+                    plot.Axes.SetLimits(-40, nSeg * segLen + 40, -g.DiscRadiusMm - 25, g.DiscRadiusMm + 20);
+                    plot.ShowLegend();
+                    fp.Plot.SavePng(Path.Combine(dir, "mesh_line.png"), 1400, 520);
+                    Console.WriteLine($"  → {dir}/mesh_line.png");
+                }
+
+                // ── ② 法兰二维网格
+                {
+                    var f = PlateCurrent2D.Solve(g, 1000.0, Materials.PtResistivity(p.TSetC), h);
+                    int nx = f.Nx, nz = f.Nz, inMask = 0;
+                    var data = new double[nz, nx];
+                    for (int j = 0; j < nz; j++)
+                        for (int i = 0; i < nx; i++)
+                        {
+                            bool m = f.Mask[i, nz - 1 - j];
+                            data[j, i] = m ? 1.0 : double.NaN;
+                            if (j == 0) { }
+                        }
+                    foreach (var m in f.Mask) if (m) inMask++;
+
+                    var fp = UI.FieldPlots.NewPlot();
+                    var plot = fp.Plot;
+                    var hm = plot.Add.Heatmap(data);
+                    hm.Extent = new ScottPlot.CoordinateRect(f.X0, f.X0 + (nx - 1) * h,
+                                                            f.Z0, f.Z0 + (nz - 1) * h);
+                    hm.Smooth = false;                      // 关平滑才看得见格子
+                    hm.Colormap = new ScottPlot.Colormaps.Grayscale();
+
+                    // 网格线：每 10 格画一条，画满会糊
+                    for (double x = Math.Ceiling(f.X0 / 10) * 10; x <= f.X0 + (nx - 1) * h; x += 10)
+                    {
+                        var s = plot.Add.Scatter(new[] { x, x }, new[] { f.Z0, f.Z0 + (nz - 1) * h });
+                        s.Color = ScottPlot.Colors.LightBlue.WithAlpha(0.35); s.LineWidth = 0.6f; s.MarkerSize = 0;
+                    }
+                    for (double z = Math.Ceiling(f.Z0 / 10) * 10; z <= f.Z0 + (nz - 1) * h; z += 10)
+                    {
+                        var s = plot.Add.Scatter(new[] { f.X0, f.X0 + (nx - 1) * h }, new[] { z, z });
+                        s.Color = ScottPlot.Colors.LightBlue.WithAlpha(0.35); s.LineWidth = 0.6f; s.MarkerSize = 0;
+                    }
+                    // 管孔
+                    int n = 181; var cx = new double[n]; var cz = new double[n];
+                    for (int k = 0; k < n; k++)
+                    {
+                        double a = 2 * Math.PI * k / (n - 1);
+                        cx[k] = g.HoleRadiusMm * Math.Cos(a); cz[k] = g.HoleRadiusMm * Math.Sin(a);
+                    }
+                    var hole = plot.Add.Scatter(cx, cz);
+                    hole.Color = ScottPlot.Colors.Red; hole.LineWidth = 2f; hole.MarkerSize = 0;
+                    hole.LegendText = "管孔 Ø52（电流交给管壁处，J 峰值）";
+
+                    plot.Title($"法兰平面网格：{nx}×{nz} 格，步长 {h:0.0} mm，掩膜内 {inMask} 格参与求解");
+                    plot.XLabel("x [mm]（0 = 管轴，负向为舌片）");
+                    plot.YLabel("z [mm]");
+                    plot.Axes.SetLimits(f.X0, f.X0 + (nx - 1) * h, f.Z0, f.Z0 + (nz - 1) * h);
+                    plot.ShowLegend();
+                    fp.Plot.SavePng(Path.Combine(dir, "mesh_flange.png"), 1200, 700);
+                    Console.WriteLine($"  → {dir}/mesh_flange.png   ({nx}×{nz}，掩膜内 {inMask} 格)");
+                }
+                return;
+            }
+
             // --cli --ramp   规程一：空管升温核算（25 → 1150 °C / 3 h）
             // 给出模型此前完全没有的**壁厚下界**：P_max = J_allow²·A·ρe·L ∝ 壁厚，
             // 减薄的同时也在削减可用功率。稳态解只把 J 当上界，方向相反的下界一条都没有。
