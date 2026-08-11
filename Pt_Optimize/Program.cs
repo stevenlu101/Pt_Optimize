@@ -1832,26 +1832,45 @@ internal static class Program
                         {
                             DiscRadiusMm = g.DiscRadiusMm, HoleRadiusMm = g.HoleRadiusMm,
                             TabEndXMm = g.TabEndXMm, TabEndHalfWidthMm = g.TabEndHalfWidthMm,
-                            ThicknessMm = t, ThickenedMm = t, InsulBoundaryXMm = 1e9
+                            ThicknessMm = t, ThickenedMm = t,
+                            InsulBoundaryXMm = g.InsulBoundaryXMm
                         };
                         var m = FlangeMesher.Build(gg, 0, 2.0, 11.0, 45.0);
                         if (m.CellCount < 50) return (0, 0, 0, 0, 0, false);
                         var sc2 = ShellCurrent.Solve(m, iPlate,
                                       Materials.PtResistivity(tRootC) * 1e3, tRootC);
                         var q2 = SegmentSolver.Clone(q); q2.TSetC = tRootC;
-                        var th2 = ShellThermal.Solve(m, sc2.JMagAPerMm2, q2, tRootC, 1e9);
+                        var th2 = ShellThermal.Solve(m, sc2.JMagAPerMm2, q2, tRootC,
+                                                     gg.InsulBoundaryXResolved);
                         return (th2.QFromTubeW, th2.TMaxC, th2.PhiOverall, sc2.JMaxAPerMm2,
                                 m.VolumeMm3 * Materials.PtDensity * 1e-6, th2.Converged);
                     }
                     catch { return (0, 0, 0, 0, 0, false); }
                 }
 
-                foreach (double wall in new[] { 0.4, 0.6, 0.8, 1.0 })
-                    foreach (double ins in new[] { 2.5, 10.0, 20.0 })
+                // ★ 法兰保温与铜排夹持是用户明确给出的两个自由度（「法兰可完全不包」「可以空冷」），
+                //   而它们直接控制正在失败的那两条约束：
+                //     法兰保温 ↑ ⇒ 自身散热 ↓ ⇒ 同一厚度下 Φ ↑（利 C2），但局部更热（不利 C1）
+                //     铜排夹冷 ⇒ 从舌片端抽热 ⇒ 局部峰值 ↓（利 C1），但整片更凉、抽管子的热更多（不利 C2）
+                //   两者方向相反，必须一起扫，否则等于自己砍掉了解空间。
+                var flangeIns = new (string name, double thickMm, double boundaryX)[]
+                {
+                    ("全裸",       0.0, 1e9),
+                    ("仅盘包2.5", 2.5, double.NaN),   // NaN ⇒ 取切点：圆盘包、舌片裸（现场实况）
+                    ("全包2.5",   2.5, -1e9)
+                };
+                var clamps = new[] { -1.0, 300.0, 80.0 };   // -1 = 无夹冷（自由辐射端）
+
+                foreach (double wall in new[] { 0.4, 0.8 })
+                    foreach (double ins in new[] { 2.5, 20.0 })
+                    foreach (var (finsName, finsT, finsX) in flangeIns)
+                    foreach (double clampC in clamps)
                     {
                         var q = SegmentSolver.Clone(p);
                         q.Layer1.ThicknessMm = ins; q.Layer1.Enabled = true;
-                        q.WallMinMm = wall; q.FlangeInsulThickMm = 0; q.FlangeInsulated = false;
+                        q.WallMinMm = wall;
+                        q.FlangeInsulThickMm = finsT; q.FlangeInsulated = finsT > 1e-6;
+                        q.BusbarClampTempC = clampC;
 
                         double budget = DesignScreen.DrawBudgetW(q, wall, 1150, 10.0);
 
@@ -1863,10 +1882,10 @@ internal static class Program
                                        * q.TubeLength;
                         double iSeg = Math.Sqrt(lossW / (Materials.PtResistivity(1150) * q.TubeLength / aM2));
 
-                        Console.WriteLine($"── 管壁 {wall:0.0} mm / 纤维 {ins:0.0} mm：段电流 {iSeg:0} A，" +
-                                          $"C2 预算 {budget:0.0} W");
-                        Console.WriteLine($"{"形状",20}{"片",7}{"厚 mm",8}{"抽热 W",9}{"最高 °C",10}" +
-                                          $"{"Φ",8}{"J_max",8}{"铂重 g",9}  判定");
+                        string cfg = $"壁{wall:0.0}/纤维{ins:0.0}/{finsName}/夹" +
+                                     (clampC < 0 ? "无" : $"{clampC:0}");
+                        int nFeas = 0, nFailC1 = 0, nFailC2 = 0, nNoBracket = 0;
+                        var lines = new List<string>();
 
                         foreach (double rd in new[] { 34.0, 44.0, 60.0 })
                             foreach (double tabX in new[] { -50.0, -120.0, -200.0 })
@@ -1875,7 +1894,7 @@ internal static class Program
                                 {
                                     DiscRadiusMm = rd, HoleRadiusMm = 26.0,
                                     TabEndXMm = tabX, TabEndHalfWidthMm = Math.Min(40.0, rd - 4),
-                                    InsulBoundaryXMm = 1e9
+                                    InsulBoundaryXMm = finsX
                                 };
                                 if (rd >= Math.Sqrt(tabX * tabX + g.TabEndHalfWidthMm * g.TabEndHalfWidthMm))
                                     continue;
@@ -1892,13 +1911,7 @@ internal static class Program
                                     var fHi = Probe(g, hi, iPlate, tRoot, q);
                                     if (!fLo.ok || !fHi.ok) continue;
                                     double target = budget * 0.5;
-                                    if (fLo.draw > target || fHi.draw < target)
-                                    {
-                                        Console.WriteLine($"{$"Ø{2 * rd:0}/舌{-tabX:0}",20}{kind,7}" +
-                                            $"   ✗ [{lo:0.0},{hi:0.0}] 内抽热不跨 {target:0.0} W" +
-                                            $"（{fLo.draw:+0;-0} … {fHi.draw:+0;-0} W）");
-                                        continue;
-                                    }
+                                    if (fLo.draw > target || fHi.draw < target) { nNoBracket++; continue; }
                                     for (int it2 = 0; it2 < 10; it2++)
                                     {
                                         double mid = 0.5 * (lo + hi);
@@ -1910,13 +1923,26 @@ internal static class Program
                                     var r3 = Probe(g, tSol, iPlate, tRoot, q);
                                     bool okC2 = r3.draw > 0 && r3.draw <= budget;
                                     bool okC1 = r3.tmax <= tRoot + 1e-6;
-                                    string v = (okC2 ? "✓C2" : "✗C2") + (okC1 ? " ✓C1" : " ✗C1局部过热");
-                                    Console.WriteLine($"{$"Ø{2 * rd:0}/舌{-tabX:0}",20}{kind,7}{tSol,8:0.000}" +
-                                        $"{r3.draw,9:+0.0;-0.0}{r3.tmax,10:0}{r3.phi,8:0.000}" +
-                                        $"{r3.jmax,8:0.00}{r3.mass,9:0}  {v}");
+                                    if (okC1 && okC2) nFeas++;
+                                    else if (!okC1) nFailC1++;
+                                    else nFailC2++;
+                                    // 只留可行的与「最接近可行」的（局部峰值超出 ≤200 K）以免刷屏
+                                    if ((okC1 && okC2) || r3.tmax - tRoot < 200)
+                                        lines.Add($"{$"Ø{2 * rd:0}/舌{-tabX:0}",16}{kind,7}{tSol,8:0.000}" +
+                                            $"{r3.draw,9:+0.0;-0.0}{r3.tmax,10:0}{r3.phi,8:0.000}" +
+                                            $"{r3.jmax,8:0.00}{r3.mass,9:0}  " +
+                                            (okC2 ? "✓C2" : "✗C2") + (okC1 ? " ✓C1" : " ✗C1"));
                                 }
                             }
-                        Console.WriteLine();
+
+                        Console.WriteLine($"── {cfg,-30} 段电流 {iSeg:0} A  C2预算 {budget:0.0} W  " +
+                                          $"→ 可行 {nFeas} / C1挂 {nFailC1} / C2挂 {nFailC2} / 无解区间 {nNoBracket}");
+                        if (lines.Count > 0)
+                        {
+                            Console.WriteLine($"   {"形状",16}{"片",7}{"厚 mm",8}{"抽热 W",9}{"最高 °C",10}" +
+                                              $"{"Φ",8}{"J_max",8}{"铂重 g",9}");
+                            foreach (var ln in lines) Console.WriteLine("   " + ln);
+                        }
                     }
                 Console.WriteLine("读法：两条同时 ✓ 才是可行片。C1 卡住说明孔周局部过热 ——");
                 Console.WriteLine("  单侧舌片进电使电流在孔周一侧集中（J_max/J_mean ≈ 2.17），");
