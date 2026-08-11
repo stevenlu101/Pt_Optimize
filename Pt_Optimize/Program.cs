@@ -1802,6 +1802,43 @@ internal static class Program
                 return;
             }
 
+            // --cli --budget   C2 的「抽热预算」—— 先看清这条约束有多紧
+            //
+            // C2（管根温差 <10 K）经半无限翅片解可以反过来写成对法兰抽热 D 的硬预算：
+            //   |D| ≤ ΔT_max · √(k·A_管·β)
+            // 这个根号量只有 0.5 W/K 量级 ⇒ 预算只有几瓦，而现役片抽 236–394 W。
+            // 先把这条摊开，因为它决定整个优化是「调参数」还是「换思路」。
+            if (args.Contains("--budget"))
+            {
+                Console.WriteLine("=== C2 的抽热预算：管根温差 <10 K 允许法兰抽走多少热 ===");
+                Console.WriteLine("判据 |ΔT_root| = D / √(k·A_管·β)  ⇒  |D| ≤ ΔT_max·√(k·A_管·β)");
+                Console.WriteLine("（半无限翅片解，HANDOVER §6 ②；D = 法兰从管子抽走的净热）");
+                Console.WriteLine();
+
+                Console.WriteLine($"{"管壁 mm",9}{"管截面 mm²",12}{"√(kAβ) W/K",13}" +
+                                  $"{"10K 预算 W",12}{"1K 预算 W",12}");
+                foreach (double w in new[] { 0.4, 0.6, 0.8, 1.0, 1.5, 2.0, 3.0 })
+                {
+                    double b10 = DesignScreen.DrawBudgetW(p, w, 1150, 10.0);
+                    double area = Math.PI * w * (p.TubeIdMm + w);
+                    Console.WriteLine($"{w,9:0.0}{area,12:0.0}{b10 / 10,13:0.000}{b10,12:0.0}{b10 / 10,12:0.0}");
+                }
+                Console.WriteLine();
+                double bud = DesignScreen.DrawBudgetW(p, 1.0, 1150, 10.0);
+                Console.WriteLine("── 与收敛解对表（半无限翅片解是保守的，管子有限长且两端各一片）");
+                Console.WriteLine("现役（--run 收敛解，管壁 1.0）：出口片抽热 +236 W ↔ HC3 管根温差 +230.5 K");
+                Console.WriteLine($"  ⇒ 实际灵敏度 {230.5 / 236:0.00} K/W，而翅片式给 {10 / bud:0.00} K/W（保守 {(10 / bud) / (230.5 / 236):0.0} 倍）");
+                Console.WriteLine($"  ⇒ 现实口径的 10 K 预算约 {10 / (230.5 / 236):0.0} W，翅片式给 {bud:0.0} W");
+                Console.WriteLine();
+                Console.WriteLine($"★★ 无论取哪个口径：现役抽热 236–394 W 是预算的 " +
+                                  $"**{236 / (10 / (230.5 / 236)):0}–{394 / bud:0} 倍**。");
+                Console.WriteLine();
+                Console.WriteLine("★ 这条比 C1 紧得多：法兰必须做到**近乎完全热自给**（Φ 落在 1 附近很窄的带里）。");
+                Console.WriteLine("  预算 ∝ √(A_管) ∝ √(管壁) —— **管壁越薄，容差越小**，");
+                Console.WriteLine("  这就是「省铂」与「压温差」在管壁这个自由度上直接对冲的机理。");
+                return;
+            }
+
             // --cli --line   分段核算（示例三段，UI 里可编辑）
             if (args.Contains("--line"))
             {
