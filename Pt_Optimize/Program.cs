@@ -1802,6 +1802,114 @@ internal static class Program
                 return;
             }
 
+            // --cli --stepopt [--f 系数]   ★ 阶梯厚度：用户给的 X1-A，直接对着 C1 的病根
+            //
+            // 等厚板在 648 个配置里全部挂 C1（孔周局部过热），而机理是明确的：
+            //   单位面积发热 = ρe·J²·t = ρe·(K/t)²·t = **ρe·K²/t**   （K = J·t 是面电流，守恒）
+            // ⇒ **加厚一处就按倍数降低该处的单位面积发热**。孔周正是 J 峰值所在。
+            // 于是把圆盘做成阶梯：孔周一圈厚 k·t，其余（含舌片）厚 t，对 t 二分求抽热达标。
+            if (args.Contains("--stepopt"))
+            {
+                int fi5 = Array.IndexOf(args, "--f");
+                double fS = fi5 >= 0 && fi5 + 1 < args.Length && double.TryParse(args[fi5 + 1], out var fv5)
+                            ? fv5 : Math.Sqrt(3.0);
+                const double tLo = 0.4, tHi = 8.0;
+
+                Console.WriteLine("=== 阶梯厚度法兰（孔周加厚）===");
+                Console.WriteLine("机理：单位面积发热 = ρe·K²/t（K=J·t 面电流守恒）⇒ 加厚处发热按倍数下降");
+                Console.WriteLine($"共用片叠加系数 f = {fS:0.000}；孔周环厚 = k × 外缘厚，对外缘厚二分求抽热达标");
+                Console.WriteLine();
+
+                (double draw, double tmax, double phi, double jmax, double mass, bool ok)
+                Probe2(double rd, double tabX, double halfW, double tOut, double rStep, double k,
+                       double iPlate, double tRootC, DesignInputs q)
+                {
+                    try
+                    {
+                        var gg = new FlangePlate
+                        {
+                            DiscRadiusMm = rd, HoleRadiusMm = 26.0,
+                            TabEndXMm = tabX, TabEndHalfWidthMm = halfW,
+                            ThicknessMm = tOut, ThickenedMm = tOut,
+                            InsulBoundaryXMm = 1e9,
+                            DiscStepRadiiMm = k > 1.0001 ? new[] { rStep } : Array.Empty<double>(),
+                            DiscStepThicknessMm = k > 1.0001 ? new[] { tOut * k } : Array.Empty<double>()
+                        };
+                        var m = FlangeMesher.Build(gg, 0, 1.5, 9.0, 50.0);
+                        if (m.CellCount < 50) return (0, 0, 0, 0, 0, false);
+                        var sc3 = ShellCurrent.Solve(m, iPlate,
+                                      Materials.PtResistivity(tRootC) * 1e3, tRootC);
+                        var q3 = SegmentSolver.Clone(q); q3.TSetC = tRootC;
+                        var th3 = ShellThermal.Solve(m, sc3.JMagAPerMm2, q3, tRootC, 1e9);
+                        return (th3.QFromTubeW, th3.TMaxC, th3.PhiOverall, sc3.JMaxAPerMm2,
+                                m.VolumeMm3 * Materials.PtDensity * 1e-6, th3.Converged);
+                    }
+                    catch { return (0, 0, 0, 0, 0, false); }
+                }
+
+                foreach (var (wall, ins) in new[] { (0.4, 2.5), (0.8, 2.5), (0.4, 10.0) })
+                {
+                    var q = SegmentSolver.Clone(p);
+                    q.Layer1.ThicknessMm = ins; q.Layer1.Enabled = true;
+                    q.WallMinMm = wall;
+                    q.FlangeInsulThickMm = 0; q.FlangeInsulated = false;
+                    q.BusbarClampTempC = 80;          // 空冷（用户确认可行），对 C1 最有利
+
+                    double budget = DesignScreen.DrawBudgetW(q, wall, 1150, 10.0);
+                    double ri = q.TubeIdMm * 0.5e-3, w3 = wall * 1e-3, rO = ri + w3;
+                    double aM2 = Math.PI * (rO * rO - ri * ri);
+                    double lossW = Insulation.CylinderLoss(1150, q.TAmbC, rO, q.Layers,
+                                       q.OuterEmissivity, false, q.TubeLength, q.LossScale).QPerLength
+                                   * q.TubeLength;
+                    double iSeg = Math.Sqrt(lossW / (Materials.PtResistivity(1150) * q.TubeLength / aM2));
+
+                    Console.WriteLine($"── 管壁 {wall:0.0} / 纤维 {ins:0.0} / 法兰全裸 / 铜排空冷 80 °C");
+                    Console.WriteLine($"   段电流 {iSeg:0} A   C2 预算 {budget:0.0} W");
+                    Console.WriteLine($"   {"形状",14}{"片",6}{"阶梯",14}{"外缘厚",9}{"抽热 W",9}" +
+                                      $"{"最高 °C",10}{"Φ",8}{"J_max",8}{"铂重 g",9}  判定");
+
+                    foreach (var (rd, tabX, halfW) in new[]
+                    {
+                        (44.0, -50.0, 40.0), (44.0, -80.0, 40.0),
+                        (60.0, -50.0, 40.0), (60.0, -120.0, 40.0)
+                    })
+                        foreach (var (kind, iPlate) in new[] { ("端片", iSeg), ("共用", fS * iSeg) })
+                            foreach (double rStep in new[] { 32.0, 38.0 })
+                                foreach (double k in new[] { 1.0, 2.0, 3.0, 4.0 })
+                                {
+                                    if (k <= 1.0001 && rStep > 33) continue;   // 无阶梯只跑一次
+                                    if (rStep >= rd - 1) continue;
+                                    double lo = tLo, hi = tHi;
+                                    var a1 = Probe2(rd, tabX, halfW, lo, rStep, k, iPlate, 1150, q);
+                                    var b1 = Probe2(rd, tabX, halfW, hi, rStep, k, iPlate, 1150, q);
+                                    if (!a1.ok || !b1.ok) continue;
+                                    double target = budget * 0.5;
+                                    if (a1.draw > target || b1.draw < target) continue;
+                                    for (int it3 = 0; it3 < 10; it3++)
+                                    {
+                                        double mid = 0.5 * (lo + hi);
+                                        var fm = Probe2(rd, tabX, halfW, mid, rStep, k, iPlate, 1150, q);
+                                        if (!fm.ok) break;
+                                        if (fm.draw < target) lo = mid; else hi = mid;
+                                    }
+                                    double tS = 0.5 * (lo + hi);
+                                    var r4 = Probe2(rd, tabX, halfW, tS, rStep, k, iPlate, 1150, q);
+                                    bool okC2 = r4.draw > 0 && r4.draw <= budget;
+                                    bool okC1 = r4.tmax <= 1150 + 1e-6;
+                                    if (!okC1 && r4.tmax > 1600) continue;      // 差太远的不打印
+                                    string stepDesc = k <= 1.0001 ? "等厚"
+                                                    : $"r≤{rStep:0}厚{k:0}×";
+                                    Console.WriteLine($"   {$"Ø{2 * rd:0}/舌{-tabX:0}",14}{kind,6}{stepDesc,14}" +
+                                        $"{tS,9:0.000}{r4.draw,9:+0.0;-0.0}{r4.tmax,10:0}{r4.phi,8:0.000}" +
+                                        $"{r4.jmax,8:0.00}{r4.mass,9:0}  " +
+                                        (okC2 ? "✓C2" : "✗C2") + (okC1 ? " ✓C1" : " ✗C1"));
+                                }
+                    Console.WriteLine();
+                }
+                Console.WriteLine("只打印局部峰值 ≤1600 °C 的行（差太远的省略）。两条同时 ✓ 才是可行片。");
+                return;
+            }
+
             // --cli --plateopt [--f 系数]   逐片形状优化：**厚度二分放进壳解里**
             //
             // 阶段 A 的闭式对法兰是**不够的**（2026-08-11 实测）：它假设整片均温 = 管根温度，
