@@ -1528,6 +1528,178 @@ internal static class Program
                 return;
             }
 
+            // --cli --ramp2 [法兰.3dm] [--i A]   两节点升温：法兰会不会在升温期跑到管子前面
+            //
+            // 回答「烧断在升温还是稳态」。--ramp 答不了 —— 它把法兰并进管子当同一个温度，
+            // 于是「法兰比管热」在那个模型里结构性地不可能出现（见 RampTwoNode 的类注释）。
+            //
+            // 法兰的电阻由**壳电流场**给出（QGen_ref/I_ref²），秒级，不依赖稳态热解 ——
+            // 这一点很关键：稳态解目前与现实冲突（§4.2q），不能拿它当升温核算的输入。
+            if (args.Contains("--ramp2"))
+            {
+                int qi = Array.IndexOf(args, "--ramp2");
+                string f3r = qi + 1 < args.Length && !args[qi + 1].StartsWith("--")
+                             ? args[qi + 1] : Find3dm("Pt_Heater.3dm");
+                int ii2 = Array.IndexOf(args, "--i");
+                double iUser = ii2 >= 0 && ii2 + 1 < args.Length && double.TryParse(args[ii2 + 1], out var iv)
+                               ? iv : double.NaN;
+
+                const double fromC = 25, targetC = 1150, hours = 3.0;
+                double wall = p.WallMinMm;
+                double areaTubeMm2 = Math.PI * wall * (p.TubeIdMm + wall);
+                double iDesign = double.IsNaN(iUser) ? p.JAllowAPerMm2 * areaTubeMm2 : iUser;
+
+                Console.WriteLine("=== 两节点升温：管 + 法兰各一个温度节点 ===");
+                Console.WriteLine($"几何 {Path.GetFileName(f3r)}   空管 {fromC:0} → {targetC:0} °C / 限时 {hours:0.#} h");
+                Console.WriteLine($"管壁 {wall:0.00} mm（截面 {areaTubeMm2:0.0} mm²）   " +
+                                  $"设计电流 {iDesign:0} A" +
+                                  (double.IsNaN(iUser) ? $"（= J_allow {p.JAllowAPerMm2:0.0} × 截面）" : "（命令行给定）"));
+                Console.WriteLine();
+
+                // ── 法兰：厚度场 → 壳网格 → 电流场 → 参考电阻。不解温度场。
+                ShellMesh mesh;
+                try
+                {
+                    var tfield = Geometry3dm.LoadThickness(f3r, "法兰", double.NaN, 1.0);
+                    double holeR = p.TubeIdMm * 0.5 + wall;
+                    mesh = FlangeMesher.BuildFromField(tfield, holeR, 0, 2.0, 11.0, 50.0);
+                }
+                catch (Exception ex) { Console.WriteLine("✗ 读几何失败：" + ex.Message); return; }
+
+                double tRef = 1050;
+                var scr = ShellCurrent.Solve(mesh, iDesign, Materials.PtResistivity(tRef) * 1e3, tRef);
+                double qGenRef = 0;
+                for (int k = 0; k < mesh.CellCount; k++)
+                    qGenRef += Materials.PtResistivity(tRef) * 1e3 * scr.JMagAPerMm2[k] * scr.JMagAPerMm2[k]
+                             * mesh.Thickness[k] * mesh.Area[k];
+                double rFlangeRef = qGenRef / (iDesign * iDesign);
+
+                double insulX = new FlangePlate().InsulBoundaryXResolved;
+                double aIns = 0, aBare = 0;
+                for (int k = 0; k < mesh.CellCount; k++)
+                    if (mesh.Centroid[k].X >= insulX) aIns += mesh.Area[k]; else aBare += mesh.Area[k];
+
+                double massG = mesh.VolumeMm3 * Materials.PtDensity * 1e-6;
+                double holeRmm = p.TubeIdMm * 0.5 + wall;
+                double rEq = Math.Sqrt(mesh.TotalArea / Math.PI + holeRmm * holeRmm);
+                double tMeanFl = mesh.VolumeMm3 / Math.Max(1e-9, mesh.TotalArea);
+
+                Console.WriteLine($"法兰单片：{massG:0} g   净面积 {mesh.TotalArea:0} mm²" +
+                                  $"（保温 {aIns / mesh.TotalArea * 100:0} % / 裸露 {aBare / mesh.TotalArea * 100:0} %）" +
+                                  $"   均厚 {tMeanFl:0.00} mm   等效外半径 {rEq:0.0} mm");
+                Console.WriteLine($"          @{iDesign:0} A / {tRef:0} °C 时 自身发热 {qGenRef:0} W ⇒ " +
+                                  $"单片电阻 {rFlangeRef * 1e6:0.0} μΩ   J_max {scr.JMaxAPerMm2:0.00} A/mm²");
+                Console.WriteLine();
+
+                var gBase = new RampTwoNode.Inputs
+                {
+                    WallMm = wall,
+                    FlangeMassG = massG,
+                    FlangeAreaInsulMm2 = aIns, FlangeAreaBareMm2 = aBare,
+                    FlangeResistanceRefOhm = rFlangeRef, FlangeRefTempC = tRef,
+                    HoleRadiusMm = holeRmm, PlateEqOuterRadiusMm = rEq, FlangeThickMm = tMeanFl,
+                    DesignCurrentA = iDesign, FromC = fromC, TargetC = targetC, MaxHours = hours
+                };
+
+                Console.WriteLine($"{"片",8}{"控制",8}{"电流 起→终 A",18}{"法兰峰值 °C",13}" +
+                                  $"{"max(法兰−管) K",15}{"出现在 min",12}{"当时管温 °C",13}{"管到点 h",10}  判定");
+
+                var kinds = new (string name, double factor)[]
+                {
+                    ("端片", 1.0),
+                    ("共用片", Math.Sqrt(3.0))
+                };
+                var modes = new (string name, RampControl m)[]
+                {
+                    ("恒流", RampControl.ConstantCurrent),
+                    ("恒功率", RampControl.ConstantPower),
+                    ("恒压", RampControl.ConstantVoltage)
+                };
+
+                RampTwoNodeResult? probe = null;
+                foreach (var (kn, kf) in kinds)
+                    foreach (var (mn, mm) in modes)
+                    {
+                        var gi = new RampTwoNode.Inputs
+                        {
+                            WallMm = gBase.WallMm, FlangeMassG = gBase.FlangeMassG,
+                            FlangeAreaInsulMm2 = gBase.FlangeAreaInsulMm2,
+                            FlangeAreaBareMm2 = gBase.FlangeAreaBareMm2,
+                            FlangeResistanceRefOhm = gBase.FlangeResistanceRefOhm,
+                            FlangeRefTempC = gBase.FlangeRefTempC,
+                            HoleRadiusMm = gBase.HoleRadiusMm,
+                            PlateEqOuterRadiusMm = gBase.PlateEqOuterRadiusMm,
+                            FlangeThickMm = gBase.FlangeThickMm,
+                            DesignCurrentA = gBase.DesignCurrentA,
+                            FromC = fromC, TargetC = targetC, MaxHours = hours,
+                            SharedFactor = kf, Mode = mm
+                        };
+                        var rr = RampTwoNode.Solve(p, gi);
+                        probe ??= rr;
+                        string v = rr.FlangeMelts ? "★ 法兰熔化"
+                                 : rr.MaxFlangeMinusTubeK > 0 ? "✗ 法兰比管热"
+                                 : rr.TubeReached ? "✓" : "✗ 升不到";
+                        Console.WriteLine($"{kn,8}{mn,8}{$"{rr.CurrentStartA:0}→{rr.CurrentEndA:0}",18}" +
+                            $"{rr.TFlangePeakC,13:0}{rr.MaxFlangeMinusTubeK,15:+0;-0}" +
+                            $"{rr.TimeAtMaxDeltaS / 60,12:0.0}{rr.TTubeAtMaxDeltaC,13:0}" +
+                            $"{(rr.TubeReached ? rr.HoursToTarget.ToString("0.00") : "—"),10}  {v}");
+                        if (rr.Note.Length > 0) Console.WriteLine($"{"",16}  {rr.Note}");
+                    }
+
+                // ── 叠加系数的临界值：升温期「法兰反超管子」的门槛
+                //    机理是纯比值：法兰升温率 ∝ f²·I²R_f/C_f，管 ∝ I²R_t/C_t，
+                //    冷态两边的散热都≈0 ⇒ 谁快谁跑前面，与电流绝对值无关。
+                Console.WriteLine();
+                Console.WriteLine("共用片叠加系数 f 的临界值（恒流，f 从 1.0 起扫）：");
+                Console.WriteLine($"{"f",8}{"法兰峰值 °C",13}{"max(法兰−管) K",15}{"出现在 min",12}  判定");
+                double fCrit = double.NaN, fPrev = double.NaN, dPrev = double.NaN;
+                foreach (double f in new[] { 1.00, 1.10, 1.20, 1.25, 1.30, 1.40, 1.50, 1.732 })
+                {
+                    var gi = new RampTwoNode.Inputs
+                    {
+                        WallMm = gBase.WallMm, FlangeMassG = gBase.FlangeMassG,
+                        FlangeAreaInsulMm2 = gBase.FlangeAreaInsulMm2,
+                        FlangeAreaBareMm2 = gBase.FlangeAreaBareMm2,
+                        FlangeResistanceRefOhm = gBase.FlangeResistanceRefOhm,
+                        FlangeRefTempC = gBase.FlangeRefTempC,
+                        HoleRadiusMm = gBase.HoleRadiusMm,
+                        PlateEqOuterRadiusMm = gBase.PlateEqOuterRadiusMm,
+                        FlangeThickMm = gBase.FlangeThickMm,
+                        DesignCurrentA = gBase.DesignCurrentA,
+                        FromC = fromC, TargetC = targetC, MaxHours = hours,
+                        SharedFactor = f, Mode = RampControl.ConstantCurrent
+                    };
+                    var rr = RampTwoNode.Solve(p, gi);
+                    Console.WriteLine($"{f,8:0.000}{rr.TFlangePeakC,13:0}{rr.MaxFlangeMinusTubeK,15:+0;-0}" +
+                                      $"{rr.TimeAtMaxDeltaS / 60,12:0.0}  " +
+                                      (rr.MaxFlangeMinusTubeK > 0 ? "✗ 反超" : "✓"));
+                    if (double.IsNaN(fCrit) && rr.MaxFlangeMinusTubeK > 0 && !double.IsNaN(fPrev))
+                        fCrit = fPrev + (f - fPrev) * (0 - dPrev) / (rr.MaxFlangeMinusTubeK - dPrev);
+                    fPrev = f; dPrev = rr.MaxFlangeMinusTubeK;
+                }
+                if (!double.IsNaN(fCrit))
+                {
+                    Console.WriteLine();
+                    Console.WriteLine($"★ 临界叠加系数 ≈ **{fCrit:0.00}** —— 超过它，共用片在升温期就会比管子热。");
+                    Console.WriteLine($"  §4.2h 推导的 √3 = 1.732 与工作簿的 1.5 **都在临界值之上**。");
+                }
+
+                if (probe is not null)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine($"热容：管 {probe.CapTubeJPerK:0} J/K（含保温）  法兰 {probe.CapFlangeJPerK:0} J/K   " +
+                                      $"比 {probe.CapTubeJPerK / Math.Max(1e-9, probe.CapFlangeJPerK):0.0}×");
+                    Console.WriteLine($"管↔法兰 耦合导度 {probe.CouplingWPerK:0.00} W/K   ⇒ 法兰时间常数 " +
+                                      $"{probe.CapFlangeJPerK / Math.Max(1e-9, probe.CouplingWPerK) / 60:0.0} min");
+                    Console.WriteLine("  —— 这个时间常数与升温全程同量级，就是「管子当不了法兰的散热器」的量化表述。");
+                }
+                Console.WriteLine();
+                Console.WriteLine("恒压/恒功率的定值取「目标温度处跑出设计电流」，故冷启电流 = 设计电流 × R(热)/R(冷)。");
+                Console.WriteLine("⚠ 真实可控矽是逐步开触发角的，恒压那行是**上界**（最坏情形），不是实际曲线；");
+                Console.WriteLine("  要精确需要现场的升温电流曲线。恒流那行则是最温和的下界。");
+                return;
+            }
+
             // --cli --line   分段核算（示例三段，UI 里可编辑）
             if (args.Contains("--line"))
             {
