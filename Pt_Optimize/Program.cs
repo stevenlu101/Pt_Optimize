@@ -6,6 +6,25 @@ namespace PtOptimize;
 
 internal static class Program
 {
+    /// <summary>
+    /// 管根温差（控温点 − 法兰处管温）的**设计靶值** K —— HANDOVER §4.2k。
+    ///
+    /// 此前所有扫描都二分到 **0**，即 Φ = 1。那是把设计点放在悬崖边：
+    /// 温差为正 = 法兰比管冷（安全，只是有冷点）；为负 = 法兰比管热 ⇒ 热量倒灌 ⇒ **烧断**。
+    /// 二分到 0 意味着任何一点制造偏差、任何一点工况漂移都可能落到负的那一侧。
+    ///
+    /// 正确的靶是 <c>0 &lt; ΔT ≤ 10</c>，本常数取 5 K：
+    /// 温差对法兰厚的斜率约 262 K/mm ⇒ 5 K ≈ **0.02 mm** 的厚度裕度，
+    /// 而 §4.2c 已算出守住 ±10 K 需要 ±0.04 mm 公差 —— 两者同量级，5 K 是能守住的最大裕度。
+    /// </summary>
+    private const double RootDeltaTargetK = 5.0;
+
+    /// <summary>
+    /// 管根温差的判定（§4.2k，**单边**）：必须落在 (0, 10] 内。
+    /// 旧代码写 <c>Math.Abs(d) ≤ 10</c>，于是 −8 K（法兰比管热 8 K，正走向烧断）判「✓」。
+    /// </summary>
+    private static bool RootDeltaOk(double dK, double maxK = 10.0) => dK > 0 && dK <= maxK;
+
     /// <summary>在单调序列上线性插值求 y = target 对应的 x</summary>
     private static double Interp(List<double> xs, List<double> ys, double target)
     {
@@ -355,11 +374,12 @@ internal static class Program
                     {
                         var c = CoupledSolver.Solve(q, g);
                         if (!c.Tube.Ok) { Console.WriteLine($"{ft,11:0.00}   ✗ {c.Tube.Message}"); continue; }
-                        double dRoot = Math.Abs(tset - c.Tube.TFlangeAC);
-                        string v = (dRoot <= 10 ? "✓ 达 10K" : "")
-                                 + (c.JFlangeMaxAPerMm2 > p.JAllowAPerMm2 ? "  ✗ J 越界" : "");
+                        // 有符号：>0 = 法兰比管冷（安全），≤0 = 法兰比管热（倒灌，§4.2k 硬安全线）
+                        double dRoot = tset - c.Tube.TFlangeAC;
+                        string v = (RootDeltaOk(dRoot) ? "✓ 达 10K" : dRoot <= 0 ? "★ 倒灌 Φ>1" : "")
+                                 + (c.JFlangeMaxAPerMm2 > p.JAllowAPerMm2 ? "  · J 超参考值" : "");
                         Console.WriteLine($"{ft,11:0.00}{c.FlangeDrawW,11:0.0}{c.Flange.PhiOverall,11:0.000}" +
-                            $"{dRoot,12:0.0}{c.JFlangeMaxAPerMm2,10:0.00}{c.Flange.TTabEndMeanC,10:0.0}" +
+                            $"{dRoot,12:+0.0;-0.0}{c.JFlangeMaxAPerMm2,10:0.00}{c.Flange.TTabEndMeanC,10:0.0}" +
                             $"{c.MassFlangePairG,12:0}  {v}");
                         SaveFields(q, c, $"flange_t{ft:0.00}");
                     }
@@ -407,14 +427,16 @@ internal static class Program
 
                 foreach (double wall in new[] { 0.60, 0.80, 1.00, 1.30, 1.60, 2.00 })
                 {
-                    // 温差随法兰增厚单调上升（薄→倒灌为负，厚→抽热为正），可二分
+                    // 温差随法兰增厚单调上升（薄→倒灌为负，厚→抽热为正），可二分。
+                    // ★ 靶不是 0 而是 RootDeltaTargetK：二分到 0 就是把设计点放在 Φ=1 的悬崖边（§4.2k）
+                    double Dev(double d) => d - RootDeltaTargetK;
                     double lo = 0.6, hi = 3.5;
                     var fLo = Probe(wall, lo);
                     var fHi = Probe(wall, hi);
-                    if (!fLo.ok || !fHi.ok || fLo.d * fHi.d > 0)
+                    if (!fLo.ok || !fHi.ok || Dev(fLo.d) * Dev(fHi.d) > 0)
                     {
-                        Console.WriteLine($"{wall,9:0.00}   ✗ 区间 [{lo:0.0},{hi:0.0}] 未包住零点" +
-                                          $"（温差 {fLo.d:+0.0;-0.0} … {fHi.d:+0.0;-0.0} K）");
+                        Console.WriteLine($"{wall,9:0.00}   ✗ 区间 [{lo:0.0},{hi:0.0}] 未包住靶值 " +
+                                          $"{RootDeltaTargetK:0.#} K（温差 {fLo.d:+0.0;-0.0} … {fHi.d:+0.0;-0.0} K）");
                         continue;
                     }
                     for (int k = 0; k < 9; k++)
@@ -422,12 +444,12 @@ internal static class Program
                         double mid = 0.5 * (lo + hi);
                         var f = Probe(wall, mid);
                         if (!f.ok) break;
-                        if (f.d * fLo.d > 0) { lo = mid; fLo = f; } else hi = mid;
+                        if (Dev(f.d) * Dev(fLo.d) > 0) { lo = mid; fLo = f; } else hi = mid;
                     }
                     double t2 = 0.5 * (lo + hi);
                     var r2 = Probe(wall, t2);
-                    string v = (Math.Abs(r2.d) <= 10 ? "✓ 温差达标" : "")
-                             + (r2.jf <= p.JAllowAPerMm2 && r2.jt <= p.JAllowAPerMm2 ? "  ✓ J 达标" : "  ✗ J 越界");
+                    string v = (RootDeltaOk(r2.d) ? "✓ 温差达标" : r2.d <= 0 ? "★ 倒灌 Φ>1" : "✗ 温差")
+                             + (r2.jf <= p.JAllowAPerMm2 && r2.jt <= p.JAllowAPerMm2 ? "  ✓ J" : "  · J 超参考值");
                     Console.WriteLine($"{wall,9:0.00}{t2,11:0.000}{r2.d,9:+0.0;-0.0}{r2.jt,8:0.00}" +
                                       $"{r2.jf,9:0.00}{r2.m,12:0}  {v}");
                 }
@@ -482,6 +504,8 @@ internal static class Program
                 {
                     // 上界要够大：圆盘越小散热越少，回到 Φ=1 所需的法兰**越厚**。
                     // R=32 在 3.5 mm 上界处温差仍为 −11.5 K（仍在倒灌），故放宽到 8.0。
+                    // ★ 靶为 RootDeltaTargetK 而非 0 —— 见该常数的说明（§4.2k）
+                    double Dev(double d) => d - RootDeltaTargetK;
                     double lo = 0.4, hi = 8.0;
                     var fLo = Probe(ro, lo);
                     var fHi = Probe(ro, hi);
@@ -491,10 +515,10 @@ internal static class Program
                                           $"（薄端 {(fLo.ok ? "ok" : "fail")}，厚端 {(fHi.ok ? "ok" : "fail")}）");
                         continue;
                     }
-                    if (fLo.d * fHi.d > 0)
+                    if (Dev(fLo.d) * Dev(fHi.d) > 0)
                     {
-                        Console.WriteLine($"{ro,12:0.0}   ✗ 区间 [{lo:0.0},{hi:0.0}] 内温差不变号" +
-                                          $"（{fLo.d:+0.0;-0.0} … {fHi.d:+0.0;-0.0} K）");
+                        Console.WriteLine($"{ro,12:0.0}   ✗ 区间 [{lo:0.0},{hi:0.0}] 内未跨过靶值 " +
+                                          $"{RootDeltaTargetK:0.#} K（{fLo.d:+0.0;-0.0} … {fHi.d:+0.0;-0.0} K）");
                         continue;
                     }
                     for (int k = 0; k < 8; k++)
@@ -502,12 +526,12 @@ internal static class Program
                         double mid = 0.5 * (lo + hi);
                         var f = Probe(ro, mid);
                         if (!f.ok) break;
-                        if (f.d * fLo.d > 0) { lo = mid; fLo = f; } else hi = mid;
+                        if (Dev(f.d) * Dev(fLo.d) > 0) { lo = mid; fLo = f; } else hi = mid;
                     }
                     double t2 = 0.5 * (lo + hi);
                     var r2 = Probe(ro, t2);
-                    string v = (Math.Abs(r2.d) <= 10 ? "✓ 温差" : "✗ 温差")
-                             + (r2.jf <= p.JAllowAPerMm2 ? "  ✓ J" : "  ✗ J 越界");
+                    string v = (RootDeltaOk(r2.d) ? "✓ 温差" : r2.d <= 0 ? "★ 倒灌 Φ>1" : "✗ 温差")
+                             + (r2.jf <= p.JAllowAPerMm2 ? "  ✓ J" : "  · J 超参考值");
                     Console.WriteLine($"{ro,12:0.0}{ro - 26.0,10:0.0}{t2,11:0.000}{r2.d,9:+0.0;-0.0}" +
                                       $"{r2.jf,9:0.00}{r2.phi,8:0.000}{r2.gen,12:0}{r2.m,12:0}  {v}");
 
@@ -572,20 +596,22 @@ internal static class Program
 
                 foreach (double wall in new[] { 1.00, 0.90, 0.80, 0.70, 0.60, 0.55 })
                 {
+                    // ★ 靶为 RootDeltaTargetK 而非 0（§4.2k）
+                    double Dev(double d) => d - RootDeltaTargetK;
                     double lo = 0.4, hi = 4.0;
                     var fLo = Probe(wall, lo);
                     var fHi = Probe(wall, hi);
                     if (!fLo.ok || !fHi.ok)
                     { Console.WriteLine($"{wall,9:0.00}   ✗ 端点求解失败"); continue; }
-                    if (fLo.d * fHi.d > 0)
-                    { Console.WriteLine($"{wall,9:0.00}   ✗ 温差在 [{lo:0.0},{hi:0.0}] 内不变号"); continue; }
+                    if (Dev(fLo.d) * Dev(fHi.d) > 0)
+                    { Console.WriteLine($"{wall,9:0.00}   ✗ [{lo:0.0},{hi:0.0}] 内未跨过靶值 {RootDeltaTargetK:0.#} K"); continue; }
 
                     for (int k = 0; k < 8; k++)
                     {
                         double mid = 0.5 * (lo + hi);
                         var f = Probe(wall, mid);
                         if (!f.ok) break;
-                        if (f.d * fLo.d > 0) { lo = mid; fLo = f; } else hi = mid;
+                        if (Dev(f.d) * Dev(fLo.d) > 0) { lo = mid; fLo = f; } else hi = mid;
                     }
                     double t2 = 0.5 * (lo + hi);
                     var r2 = Probe(wall, t2);
@@ -594,8 +620,8 @@ internal static class Program
                     // （RampSolver 据此反推法兰电阻，升温时法兰既发热也散热）
                     var rp = RampSolver.Solve(p, wall, r2.mFl, r2.gen, r2.iA, tset,
                                               rampFromC, rampTargetC, rampHours);
-                    string v = (Math.Abs(r2.d) <= 10 ? "✓温差" : "✗温差")
-                             + (r2.jf <= p.JAllowAPerMm2 && r2.jt <= p.JAllowAPerMm2 ? " ✓J" : " ✗J越界")
+                    string v = (RootDeltaOk(r2.d) ? "✓温差" : r2.d <= 0 ? "★倒灌Φ>1" : "✗温差")
+                             + (r2.jf <= p.JAllowAPerMm2 && r2.jt <= p.JAllowAPerMm2 ? " ✓J" : " ·J超参考")
                              + (rp.Reached ? "" : " ✗升不到");
                     Console.WriteLine($"{wall,9:0.00}{t2,11:0.000}{r2.d,9:+0.0;-0.0}{r2.jt,8:0.00}" +
                         $"{r2.jf,9:0.00}{r2.mTube,8:0}{r2.mFl,9:0}{r2.mTube + r2.mFl,12:0}" +
@@ -632,14 +658,15 @@ internal static class Program
 
                 Console.WriteLine($"=== 整线寻优（{segs.Count} 段 → {LineSolver.FlangeCount(segs.Count)} 片）===");
                 Console.WriteLine($"圆盘半径 {ro:0.0} mm（Ø{2 * ro:0}）  铜排夹持 {clamp:0} °C");
-                Console.WriteLine("每段二分法兰厚求温差 = 0，再按各片实际电流折算 t ∝ I");
+                Console.WriteLine($"每段二分法兰厚求温差 = {RootDeltaTargetK:0.#} K（安全侧，§4.2k），" +
+                                  "再按各片实际电流折算 t ∝ I");
                 Console.WriteLine();
 
                 var tNeed = new double[segs.Count];
                 var iSeg = new double[segs.Count];
                 var jRef = new double[segs.Count];
 
-                Console.WriteLine($"{"段",6}{"控温",7}{"电流 A",9}{"温差=0 的法兰厚",16}{"该厚度下 J",12}  判定");
+                Console.WriteLine($"{"段",6}{"控温",7}{"电流 A",9}{"靶温差处的法兰厚",16}{"该厚度下 J",12}  判定");
                 for (int i = 0; i < segs.Count; i++)
                 {
                     var s = segs[i];
@@ -660,16 +687,18 @@ internal static class Program
                         catch { return (0, 0, 0, false); }
                     }
 
+                    // ★ 靶为 RootDeltaTargetK 而非 0（§4.2k）
+                    double Dev(double d) => d - RootDeltaTargetK;
                     double lo = 0.4, hi = 8.0;
                     var fLo = Probe(lo); var fHi = Probe(hi);
-                    if (!fLo.ok || !fHi.ok || fLo.d * fHi.d > 0)
-                    { Console.WriteLine($"{s.Name,6}   ✗ 未包住零点或求解失败"); tNeed[i] = double.NaN; continue; }
+                    if (!fLo.ok || !fHi.ok || Dev(fLo.d) * Dev(fHi.d) > 0)
+                    { Console.WriteLine($"{s.Name,6}   ✗ 未跨过靶值或求解失败"); tNeed[i] = double.NaN; continue; }
                     for (int k = 0; k < 8; k++)
                     {
                         double mid = 0.5 * (lo + hi);
                         var f = Probe(mid);
                         if (!f.ok) break;
-                        if (f.d * fLo.d > 0) { lo = mid; fLo = f; } else hi = mid;
+                        if (Dev(f.d) * Dev(fLo.d) > 0) { lo = mid; fLo = f; } else hi = mid;
                     }
                     double t2 = 0.5 * (lo + hi);
                     var r2 = Probe(t2);
@@ -1049,23 +1078,25 @@ internal static class Program
                         catch { return (0, 0, 0, 0, 0, false); }
                     }
 
+                    // ★ 靶为 RootDeltaTargetK 而非 0（§4.2k）
+                    double Dev(double d) => d - RootDeltaTargetK;
                     double lo = 0.4, hi = 8.0;
                     var fLo = Probe(lo); var fHi = Probe(hi);
                     if (!fLo.ok || !fHi.ok) { Console.WriteLine($"{ins,9:0.0}   ✗ 端点求解失败"); continue; }
-                    if (fLo.d * fHi.d > 0)
-                    { Console.WriteLine($"{ins,9:0.0}   ✗ 温差在 [{lo:0.0},{hi:0.0}] 内不变号" +
+                    if (Dev(fLo.d) * Dev(fHi.d) > 0)
+                    { Console.WriteLine($"{ins,9:0.0}   ✗ [{lo:0.0},{hi:0.0}] 内未跨过靶值 {RootDeltaTargetK:0.#} K" +
                                         $"（{fLo.d:+0.0;-0.0} … {fHi.d:+0.0;-0.0} K）"); continue; }
                     for (int k = 0; k < 8; k++)
                     {
                         double mid = 0.5 * (lo + hi);
                         var f = Probe(mid);
                         if (!f.ok) break;
-                        if (f.d * fLo.d > 0) { lo = mid; fLo = f; } else hi = mid;
+                        if (Dev(f.d) * Dev(fLo.d) > 0) { lo = mid; fLo = f; } else hi = mid;
                     }
                     double t2 = 0.5 * (lo + hi);
                     var r2 = Probe(t2);
-                    string v = (Math.Abs(r2.d) <= 10 ? "✓温差" : "✗温差")
-                             + (r2.jf <= p.JAllowAPerMm2 ? "  ✓J 达标" : "  ✗J 越界");
+                    string v = (RootDeltaOk(r2.d) ? "✓温差" : r2.d <= 0 ? "★倒灌Φ>1" : "✗温差")
+                             + (r2.jf <= p.JAllowAPerMm2 ? "  ✓J" : "  ·J 超参考值");
                     Console.WriteLine($"{ins,9:0.0}{t2,11:0.000}{r2.d,9:+0.0;-0.0}{r2.jf,9:0.00}" +
                                       $"{r2.dr,11:0.0}{r2.pw,10:0}{r2.m,12:0}  {v}");
                 }
@@ -1196,8 +1227,12 @@ internal static class Program
             if (args.Contains("--run"))
             {
                 int ri2 = Array.IndexOf(args, "--run");
+                // 默认用**现役几何** Pt_Heater.3dm（--geom 校核过 11 项 0.00 %）。
+                // 曾默认 Pt_Heater2.3dm（新开槽阶梯法兰），但那个设计已判电气不可行
+                // （辐条把导流截面掐到管子的 30 %，J≈62，见 14333a9 的提交说明）——
+                // 拿它当默认会让每次 --run 都在算一个已经否掉的方案。
                 string f3dm = ri2 + 1 < args.Length && !args[ri2 + 1].StartsWith("--")
-                              ? args[ri2 + 1] : Find3dm("Pt_Heater2.3dm");
+                              ? args[ri2 + 1] : Find3dm("Pt_Heater.3dm");
                 bool measured = !args.Contains("--solve");   // 默认实测电流；--solve 切到反算
 
                 var lc = new LineCase
@@ -1237,10 +1272,33 @@ internal static class Program
                         $"{f.TMaxC,10:0.0}{f.TTabEndC,10:0.0}{f.CellCount,7}{f.MassG,9:0}");
 
                 Console.WriteLine();
-                Console.WriteLine($"{"约束",20}{"实际",12}{"限值",12}  判定  卡在");
+                if (!lr.Converged)
+                {
+                    Console.WriteLine("╔══════════════════════════════════════════════════════════════════╗");
+                    Console.WriteLine("║ ★ 段↔法兰耦合未收敛 —— 下面每一个数都不可引用，判定表同样无效。  ║");
+                    Console.WriteLine("║   降 LineCase.CoupleRelax 或加 CoupleMaxRounds 再试；            ║");
+                    Console.WriteLine("║   若仍不收敛，才是该工况真的热失控（§4.2k 的倒灌正反馈）。       ║");
+                    Console.WriteLine("╚══════════════════════════════════════════════════════════════════╝");
+                }
+                Console.WriteLine("判据体系（HANDOVER §4.2k）：★ = 硬安全线，越界即失效；" +
+                                  "○ = 设计目标；· = 参考量，只报数不判");
+                Console.WriteLine($"{"约束",22}{"实际",12}{"限值",12}  判定  卡在");
                 foreach (var k in lr.Checks)
-                    Console.WriteLine($"{k.Name,20}{k.Actual,12:0.000}{k.Limit,12:0.000}" +
-                                      $"  {(k.Ok ? "✓" : "✗")}   {k.Where}  [{k.Unit}]");
+                {
+                    string mark = k.Kind switch
+                    {
+                        CheckKind.HardSafety => "★",
+                        CheckKind.Target => "○",
+                        _ => "·"
+                    };
+                    string verdict = k.Kind == CheckKind.Reference ? "—"
+                                   : k.Undetermined ? "?"
+                                   : k.Ok ? "✓" : "✗";
+                    string act = double.IsNaN(k.Actual) ? "达不到" : k.Actual.ToString("0.000");
+                    Console.WriteLine($"{mark + k.Name,22}{act,12}{k.Limit,12:0.000}" +
+                                      $"  {verdict}   {k.Where}  [{k.Unit}]");
+                    if (k.Note.Length > 0) Console.WriteLine($"{"",22}  {k.Note}");
+                }
 
                 Console.WriteLine();
                 Console.WriteLine($"铂重：管 {lr.TubeMassG:0} + 法兰 {lr.FlangeMassG:0} = " +
@@ -1249,6 +1307,156 @@ internal static class Program
                 Console.WriteLine($"玻璃温降：模型 {lr.GlassDropModelK:0.0} K   实测 {lr.GlassDropMeasuredK:0.0} K");
                 foreach (var nte in lr.Notes) Console.WriteLine("  ⚠ " + nte);
                 return;
+            }
+
+            // --cli --calib [法兰.3dm] [--i I1[,I2,I3]] [--scan]
+            //
+            // §4.2l 的反标定：用现场实测量反解「散热标定系数」LossScale。
+            //
+            //   ① 无参数        → 靶为**实测玻璃温降**（现场至今唯一给过的量，20 K）
+            //   ② --i 1200,…   → 靶为**实测段电流**（§4.2l 首选，一个点即可）
+            //   ③ --scan       → 不求根，只把 0.25/0.50/1.00 三档摊开，
+            //                     看每个被判定的量随标定怎么动 —— 这决定了标定能救哪些结论
+            //
+            // 闭式初值（②用）：定温下 P ≈ Q_loss ∝ scale，而 P = I²R 且温度场几乎不变（R 不变）
+            //   ⇒ I ∝ √scale ⇒ scale₀ = (I_实测 / I_模型)²。之后割线法收尾。
+            if (args.Contains("--calib"))
+            {
+                int ci = Array.IndexOf(args, "--calib");
+                string f3 = ci + 1 < args.Length && !args[ci + 1].StartsWith("--")
+                            ? args[ci + 1] : Find3dm("Pt_Heater.3dm");
+                bool scanOnly = args.Contains("--scan");
+
+                double[] iMeas = Array.Empty<double>();
+                int ii = Array.IndexOf(args, "--i");
+                if (ii >= 0 && ii + 1 < args.Length)
+                    iMeas = args[ii + 1].Split(',')
+                        .Select(s => double.TryParse(s, out var v) ? v : double.NaN)
+                        .Where(v => !double.IsNaN(v)).ToArray();
+
+                Console.WriteLine("=== 散热反标定（HANDOVER §4.2l）===");
+                Console.WriteLine($"法兰几何 {Path.GetFileName(f3)}；电流由控温点反算（不用那组假‘实测’电流）");
+                Console.WriteLine(iMeas.Length > 0
+                    ? $"标定靶：实测段电流 {string.Join(" / ", iMeas.Select(v => v.ToString("0")))} A"
+                    : "标定靶：实测玻璃温降（LineCase.GlassOutMeasuredC）");
+                Console.WriteLine();
+
+                LineCase MakeCase(double scale)
+                {
+                    var q = SegmentSolver.Clone(p);
+                    q.LossScale = scale;
+                    return new LineCase
+                    {
+                        Base = q,
+                        UseMeasuredCurrent = false,      // ★ 反算模式：控温点是硬约束，电流是输出
+                        FlangeFile3dm = new[] { f3 },
+                        FlangeLayer = "法兰",
+                        CheckRamp = false                // 标定只关心稳态，省几秒
+                    };
+                }
+
+                var seen = new List<(double s, double[] amps, double jt, double jf, double phi,
+                                     double drop, double rootMin)>();
+
+                (double[] amps, double jt, double jf, double phi, double drop, double rootMin)?
+                Eval(double scale)
+                {
+                    LineResult r;
+                    try { r = LineRunner.Run(MakeCase(scale)); }
+                    catch (Exception ex) { Console.WriteLine($"  scale={scale:0.000} ✗ {ex.Message}"); return null; }
+                    if (!r.Ok) { Console.WriteLine($"  scale={scale:0.000} ✗ {r.Message}"); return null; }
+
+                    if (!r.Converged)
+                    {
+                        // 不收敛的点不能进标定 —— 拿发散解去反解参数，得到的是噪声的拟合
+                        Console.WriteLine($"  scale={scale:0.000} ✗ 段↔法兰耦合未收敛，该点丢弃");
+                        return null;
+                    }
+                    var amps = r.Segments.Select(s => s.CurrentA).ToArray();
+                    double jt = r.Segments.Max(s => s.TubeJAPerMm2);
+                    double jf = r.Flanges.Max(f => f.JMaxAPerMm2);
+                    double phi = r.Flanges.Max(f => f.Phi);
+                    double rootMin = r.Segments.Min(s => s.RootDeltaK);
+                    var t = (amps, jt, jf, phi, r.GlassDropModelK, rootMin);
+                    seen.Add((scale, amps, jt, jf, phi, r.GlassDropModelK, rootMin));
+                    Console.WriteLine($"{scale,10:0.0000}{string.Join("/", amps.Select(a => a.ToString("0"))),18}" +
+                                      $"{jt,10:0.00}{jf,10:0.00}{phi,9:0.000}{r.GlassDropModelK,12:0.0}{rootMin,12:0.0}");
+                    return t;
+                }
+
+                Console.WriteLine($"{"LossScale",10}{"段电流 A",18}{"管 J",10}{"法兰 J",10}" +
+                                  $"{"Φ_max",9}{"玻璃温降 K",12}{"最小管根温差 K",14}");
+
+                if (scanOnly)
+                {
+                    foreach (double s in new[] { 1.00, 0.50, 0.25 }) Eval(s);
+                }
+                else if (iMeas.Length > 0)
+                {
+                    var b = Eval(1.0);
+                    if (b is null) { Console.WriteLine("基准解失败，无法标定"); return; }
+                    double Rms(double[] v) => Math.Sqrt(v.Select(x => x * x).Average());
+                    double target = Rms(iMeas);
+                    // 闭式初值 + 割线收尾（残差用对数，避免量纲敏感）
+                    double s0 = 1.0, f0 = Math.Log(Rms(b.Value.amps) / target);
+                    double s1 = Math.Pow(target / Rms(b.Value.amps), 2.0);
+                    for (int k = 0; k < 5; k++)
+                    {
+                        var e = Eval(s1);
+                        if (e is null) break;
+                        double f1 = Math.Log(Rms(e.Value.amps) / target);
+                        if (Math.Abs(f1) < 2e-3) break;              // 电流对齐到 0.2 %
+                        double ds = f1 * (s1 - s0) / Math.Max(1e-12, f1 - f0);
+                        s0 = s1; f0 = f1;
+                        s1 = Math.Clamp(s1 - ds, 0.02, 5.0);
+                    }
+                }
+                else
+                {
+                    var b = Eval(1.0);
+                    if (b is null) { Console.WriteLine("基准解失败，无法标定"); return; }
+                    double target = new LineCase().GlassInC - new LineCase().GlassOutMeasuredC;
+                    double s0 = 1.0, f0 = b.Value.drop - target;
+                    double s1 = 0.4;                                  // 起步猜「实际散热约为模型的四成」
+                    for (int k = 0; k < 6; k++)
+                    {
+                        var e = Eval(s1);
+                        if (e is null) break;
+                        double f1 = e.Value.drop - target;
+                        if (Math.Abs(f1) < 0.3) break;                // 温降对齐到 0.3 K
+                        double ds = f1 * (s1 - s0) / Math.Max(1e-12, f1 - f0);
+                        s0 = s1; f0 = f1;
+                        s1 = Math.Clamp(s1 - ds, 0.02, 5.0);
+                    }
+                }
+
+                Console.WriteLine();
+                if (seen.Count >= 2)
+                {
+                    var a0 = seen[0]; var aN = seen[^1];
+                    double rs = aN.s / a0.s;
+                    Console.WriteLine("标定的**结构性结论**（与具体靶值无关）：");
+                    Console.WriteLine($"  电流   ∝ scale^{Math.Log(Rms2(aN.amps) / Rms2(a0.amps)) / Math.Log(rs):0.00}" +
+                                      "   （理论 0.5：定温下 P≈Q_loss∝scale 而 P=I²R）");
+                    Console.WriteLine($"  管 J   ∝ scale^{Math.Log(aN.jt / a0.jt) / Math.Log(rs):0.00}" +
+                                      $"     {a0.jt:0.00} → {aN.jt:0.00}");
+                    Console.WriteLine($"  法兰 J ∝ scale^{Math.Log(aN.jf / a0.jf) / Math.Log(rs):0.00}" +
+                                      $"     {a0.jf:0.00} → {aN.jf:0.00}");
+                    Console.WriteLine($"  Φ_max  ∝ scale^{Math.Log(aN.phi / a0.phi) / Math.Log(rs):0.00}" +
+                                      $"     {a0.phi:0.000} → {aN.phi:0.000}");
+                    Console.WriteLine();
+                    Console.WriteLine("★ 若 Φ 的指数接近 0，则**标定救不了 Φ>1 的判决**：");
+                    Console.WriteLine("  法兰自身发热 ∝ I² ∝ scale，自身散热也 ∝ scale，比值不动。");
+                    Console.WriteLine("  ⇒ 标定能救的是 J 一类的量（∝√scale），Φ 那条硬安全线得另找原因");
+                    Console.WriteLine("    （舌片铜排夹的抽热？法兰保温比假设的薄？§4.2h 的 √3 偏大？）。");
+                }
+                Console.WriteLine();
+                Console.WriteLine("⚠ 标定值只有在靶是**实测**时才成立。玻璃温降那条靶同时受法兰冷点污染");
+                Console.WriteLine("  （§6 ②：冷点越深，玻璃放热越多），故它给出的 scale 是**下界性质**的估计；");
+                Console.WriteLine("  实测段电流是干净得多的靶 —— 一个点即可，见 §6 待补数据。");
+                return;
+
+                static double Rms2(double[] v) => Math.Sqrt(v.Select(x => x * x).Average());
             }
 
             // --cli --ramp   规程一：空管升温核算（25 → 1150 °C / 3 h）

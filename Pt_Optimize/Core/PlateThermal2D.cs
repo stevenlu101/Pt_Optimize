@@ -48,14 +48,15 @@ public static class PlateThermal2D
         double charLen = 0.05;   // 特征长度 m，用于自然对流关联式
         var bareTab = new LossTable(p.TAmbC, p.TSetC + 200, 60,
             x => Insulation.FlatOuterFlux(x, p.TAmbC, p.PtEmissivity, charLen,
-                                          p.FlangeAirVelocityMPerS) * 1e-6);
+                                          p.LossScale, p.FlangeAirVelocityMPerS) * 1e-6);
         var insLayers = new List<InsulationLayer>
         {
             new() { Name="法兰保温", ThicknessMm = p.FlangeInsulThickMm,
                     K0 = p.Layer1.K0, K1 = p.Layer1.K1, Enabled = p.FlangeInsulThickMm > 1e-6 }
         };
         var insTab = new LossTable(p.TAmbC, p.TSetC + 200, 60,
-            x => Insulation.PlateFlux(x, p.TAmbC, insLayers, p.OuterEmissivity, charLen) * 1e-6);
+            x => Insulation.PlateFlux(x, p.TAmbC, insLayers, p.OuterEmissivity, charLen,
+                                      p.LossScale) * 1e-6);
 
         // 默认（NaN）解析为切点 = 仅圆盘保温、舌片裸露，见 FlangePlate.InsulBoundaryXMm
         double insulX = g.InsulBoundaryXResolved;

@@ -72,7 +72,8 @@ public static class RampSolver
         // 与 SegmentSolver 一样先打成样条表，顺带拿到解析斜率供 I_stab 用。
         var lossTab = new LossTable(p.TAmbC, targetC + 200, 60,
             tC => Insulation.CylinderLoss(tC, p.TAmbC, rOut, p.Layers, eps,
-                                          p.Posture == Orientation.Vertical, L).QPerLength);
+                                          p.Posture == Orientation.Vertical, L,
+                                          p.LossScale).QPerLength);
         double LossPerM(double tC) => lossTab.Eval(tC);
 
         double lossRef = Math.Max(1e-9, LossPerM(tRefC));

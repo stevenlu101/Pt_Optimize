@@ -156,7 +156,7 @@ public static class SegmentSolver
         // ── 特征量（切线斜率 + 玻璃耦合，见理论模型 §6.2.1 与 §7.1）
         double rOut = ri + wall;
         var lossAt = Insulation.CylinderLoss(p.TSetC, tAmb, rOut, p.Layers,
-                        EffectiveEmissivity(p), p.Posture == Orientation.Vertical, L);
+                        EffectiveEmissivity(p), p.Posture == Orientation.Vertical, L, p.LossScale);
         res.OuterSurfaceTempC = lossAt.TOuterC;
         res.InsulationOuterDiaMm = lossAt.ROuter * 2000.0;
 
@@ -208,7 +208,8 @@ public static class SegmentSolver
     private static LossTable TubeLossTable(DesignInputs p, double rOut, double L)
         => new(p.TAmbC, Math.Max(p.TSetC, p.TGlassInC) + 400, 60,
                t => Insulation.CylinderLoss(t, p.TAmbC, rOut, p.Layers,
-                        EffectiveEmissivity(p), p.Posture == Orientation.Vertical, L).QPerLength);
+                        EffectiveEmissivity(p), p.Posture == Orientation.Vertical, L,
+                        p.LossScale).QPerLength);
 
     /// <summary>Brent 法搜索电流，使管中点金属温度 = 设定值。</summary>
     private static double FindCurrent(DesignInputs p, double wall, double area,

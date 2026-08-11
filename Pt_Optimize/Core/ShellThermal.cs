@@ -52,14 +52,15 @@ public static class ShellThermal
         double charLen = 0.05;
         var bareTab = new LossTable(p.TAmbC, p.TSetC + 200, 60,
             x => Insulation.FlatOuterFlux(x, p.TAmbC, p.PtEmissivity, charLen,
-                                          p.FlangeAirVelocityMPerS) * 1e-6);
+                                          p.LossScale, p.FlangeAirVelocityMPerS) * 1e-6);
         var insLayers = new List<InsulationLayer>
         {
             new() { Name = "法兰保温", ThicknessMm = p.FlangeInsulThickMm,
                     K0 = p.Layer1.K0, K1 = p.Layer1.K1, Enabled = p.FlangeInsulThickMm > 1e-6 }
         };
         var insTab = new LossTable(p.TAmbC, p.TSetC + 200, 60,
-            x => Insulation.PlateFlux(x, p.TAmbC, insLayers, p.OuterEmissivity, charLen) * 1e-6);
+            x => Insulation.PlateFlux(x, p.TAmbC, insLayers, p.OuterEmissivity, charLen,
+                                      p.LossScale) * 1e-6);
 
         var insulated = new bool[n];
         for (int i = 0; i < n; i++) insulated[i] = m.Centroid[i].X >= insulBoundaryX;

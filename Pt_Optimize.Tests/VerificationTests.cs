@@ -275,7 +275,13 @@ public class VerificationTests
     [Fact]
     public void Segment_CurrentSatisfiesSetpointAndJConstraint()
     {
-        var p = new DesignInputs();
+        // ★ 必须是**设计模式**（SizeWall = true）：下面第二条断言检的是「外层壁厚迭代
+        //   把 J 压到许用值以内」，而那层迭代只在设计模式下运行。
+        //   默认值早已改成校核模式（SizeWall = false，壁厚钉在实测 1.0 mm），
+        //   此时 J 由现实决定 —— 现默认工况算出 11.39 > 10，那是**设计结论**
+        //   （散热模型高估，见 HANDOVER §4.2l），不是求解器不自洽。
+        //   本项曾因此假失败：断言的前提没了，却被读成求解器坏了。
+        var p = new DesignInputs { SizeWall = true };
         var r = SegmentSolver.Solve(p);
         Assert.True(r.Ok, r.Message);
 
@@ -369,7 +375,7 @@ public class VerificationTests
         // 用极高的外表面换热系数逼近「外表面 = 环境温度」
         var layer = new InsulationLayer { Name = "test", ThicknessMm = thick * 1000, K0 = k, K1 = 0 };
         var res = Insulation.CylinderLoss(1000, 25, r1, new[] { layer },
-                    epsOuter: 0.9, vertical: false, verticalLength: 1);
+                    epsOuter: 0.9, vertical: false, verticalLength: 1, lossScale: 1.0);
 
         double analytic = 2 * Math.PI * k * (1000 - res.TOuterC) / Math.Log(r2 / r1);
         _o.WriteLine($"外表面温度={res.TOuterC:F3} °C，数值 q'={res.QPerLength:F4} W/m，" +
@@ -394,6 +400,38 @@ public class VerificationTests
         double atMean = layer.KAt(0.5 * (t1 + t2));
         _o.WriteLine($"积分平均={mean:F9}，均温处取值={atMean:F9}，差={Math.Abs(mean - atMean):E3}");
         Assert.True(Math.Abs(mean - atMean) < 1e-9);
+    }
+
+    [Fact]
+    public void LossScale_ScalesHeatFlowExactly_AndLeavesInterfaceTemperaturesFixed()
+    {
+        // HANDOVER §4.2l 的标定系数必须是**纯倍率**：
+        // 层导热与表面换热同倍缩放 ⇒ 稳态下各界面温度不变、热流严格 ×scale。
+        // 若只缩表面（纤维热阻主导时几乎无效）或只缩最终结果（内外能量不闭合），本项即挂。
+        var layers = new[]
+        {
+            new InsulationLayer { Name = "纤维", ThicknessMm = 2.5, K0 = 0.04, K1 = 3.0e-4 },
+            new InsulationLayer { Name = "致密", ThicknessMm = 5.0, K0 = 25.0, K1 = -0.016 }
+        };
+        double r1 = 0.026;
+
+        var b = Insulation.CylinderLoss(1150, 25, r1, layers, 0.45, false, 0.3, lossScale: 1.0);
+        foreach (double s in new[] { 0.25, 0.5, 2.0 })
+        {
+            var c = Insulation.CylinderLoss(1150, 25, r1, layers, 0.45, false, 0.3, lossScale: s);
+            double qRatio = c.QPerLength / b.QPerLength;
+            double dTOut = Math.Abs(c.TOuterC - b.TOuterC);
+            _o.WriteLine($"scale={s:0.00}: q'={c.QPerLength:F4} W/m，q 比值={qRatio:F6}，" +
+                         $"外表面温度 {c.TOuterC:F4} vs {b.TOuterC:F4} °C（差 {dTOut:E2} K）");
+            Assert.True(Math.Abs(qRatio - s) / s < 1e-4, $"scale={s} 时热流比值为 {qRatio}");
+            Assert.True(dTOut < 1e-3, $"scale={s} 时外表面温度变了 {dTOut} K");
+        }
+
+        // 平板（法兰面）同口径
+        double f1 = Insulation.PlateFlux(1050, 25, layers, 0.45, 0.05, lossScale: 1.0);
+        double f2 = Insulation.PlateFlux(1050, 25, layers, 0.45, 0.05, lossScale: 0.4);
+        _o.WriteLine($"平板：q″ {f1:F1} → {f2:F1} W/m²，比值={f2 / f1:F6}");
+        Assert.True(Math.Abs(f2 / f1 - 0.4) / 0.4 < 1e-4);
     }
 
     // =========================================================

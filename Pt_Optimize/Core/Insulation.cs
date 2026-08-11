@@ -57,11 +57,18 @@ public static class Insulation
     /// 多层圆筒径向导热 + 外表面辐射/对流，求单位长度热损失。
     /// tInnerC 为金属温度（铂壁薄且 k 高，径向温降可忽略）。
     /// </summary>
+    /// <param name="lossScale">
+    /// 散热标定系数（<see cref="DesignInputs.LossScale"/>）。**这是必填参数，不给默认值** ——
+    /// 标定与否必须由调用方显式决定：漏传就得到未标定的散热，属于「静默回退」类的坑
+    /// （HANDOVER §7 已为同类问题栽过三次）。不标定时显式传 1.0。
+    /// </param>
     public static SurfaceLossResult CylinderLoss(
         double tInnerC, double tAmbC, double rInner,
         IReadOnlyList<InsulationLayer> layers,
-        double epsOuter, bool vertical, double verticalLength)
+        double epsOuter, bool vertical, double verticalLength,
+        double lossScale)
     {
+        double sc = Math.Max(1e-6, lossScale);
         var active = new List<InsulationLayer>();
         foreach (var l in layers)
             if (l.Enabled && l.ThicknessMm > 1e-6) active.Add(l);
@@ -76,7 +83,7 @@ public static class Insulation
         // 裸露：外表面即金属表面
         if (n == 0)
         {
-            double q0 = OuterFlux(tInnerC, tAmbC, epsOuter, rOut, vertical, verticalLength)
+            double q0 = OuterFlux(tInnerC, tAmbC, epsOuter, rOut, vertical, verticalLength, sc)
                         * 2.0 * Math.PI * rOut;
             return new SurfaceLossResult
             {
@@ -100,7 +107,10 @@ public static class Insulation
             for (int i = 0; i < n; i++)
             {
                 double tMean = 0.5 * (tI[i] + tI[i + 1]);
-                rth[i] = Math.Log(r[i + 1] / r[i]) / (2.0 * Math.PI * active[i].KAt(tMean));
+                // 导热与表面散热**同倍**缩放：整条散热通道（层导热 + 表面换热）一起 ×sc，
+                // 于是各界面温度不变而热流严格 ×sc（见 DesignInputs.LossScale 的说明）。
+                // 只缩放表面则在纤维热阻主导时几乎无效，只缩放结果则内外能量不闭合。
+                rth[i] = Math.Log(r[i + 1] / r[i]) / (2.0 * Math.PI * active[i].KAt(tMean) * sc);
                 sumR += rth[i];
             }
 
@@ -110,7 +120,7 @@ public static class Insulation
             {
                 tOut = 0.5 * (lo + hi);
                 double qIn = (tInnerC - tOut) / sumR;
-                double qOut = OuterFlux(tOut, tAmbC, epsOuter, rOut, vertical, verticalLength)
+                double qOut = OuterFlux(tOut, tAmbC, epsOuter, rOut, vertical, verticalLength, sc)
                               * 2.0 * Math.PI * rOut;
                 if (qIn > qOut) lo = tOut; else hi = tOut;
             }
@@ -138,31 +148,34 @@ public static class Insulation
         };
     }
 
-    /// <summary>外表面热流密度 W/m²（辐射 + 自然对流）</summary>
+    /// <summary>外表面热流密度 W/m²（辐射 + 自然对流）。lossScale 见 <see cref="CylinderLoss"/>。</summary>
     public static double OuterFlux(double tSurfC, double tAmbC, double eps,
-                                   double rOuter, bool vertical, double verticalLength)
+                                   double rOuter, bool vertical, double verticalLength,
+                                   double lossScale)
     {
         double hr = Materials.HRad(eps, tSurfC, tAmbC);
         double hc = vertical
             ? Materials.HConvVertical(tSurfC, tAmbC, Math.Max(0.05, verticalLength))
             : Materials.HConvHorizCylinder(tSurfC, tAmbC, Math.Max(0.005, 2.0 * rOuter));
-        return (hr + hc) * (tSurfC - tAmbC);
+        return Math.Max(1e-6, lossScale) * (hr + hc) * (tSurfC - tAmbC);
     }
 
     /// <summary>
-    /// 平板（法兰盘面）多层损失，返回热流密度 W/m²。
+    /// 平板（法兰盘面）多层损失，返回热流密度 W/m²。lossScale 见 <see cref="CylinderLoss"/>。
     /// </summary>
     public static double PlateFlux(double tInnerC, double tAmbC,
                                    IReadOnlyList<InsulationLayer> layers,
-                                   double epsOuter, double charLength)
+                                   double epsOuter, double charLength,
+                                   double lossScale)
     {
+        double sc = Math.Max(1e-6, lossScale);
         double sumR = 0;
         double tPrev = tInnerC;
         var active = new List<InsulationLayer>();
         foreach (var l in layers) if (l.Enabled && l.ThicknessMm > 1e-6) active.Add(l);
 
         if (active.Count == 0)
-            return Insulation.FlatOuterFlux(tInnerC, tAmbC, epsOuter, charLength);
+            return Insulation.FlatOuterFlux(tInnerC, tAmbC, epsOuter, charLength, sc);
 
         // 迭代 k(T)
         double tOut = 0.5 * (tInnerC + tAmbC);
@@ -175,14 +188,15 @@ public static class Insulation
             {
                 double frac = (i + 0.5) / active.Count;
                 double tMean = tInnerC + (tGuessOut - tInnerC) * frac;
-                sumR += (active[i].ThicknessMm * 1e-3) / active[i].KAt(tMean);
+                // 与 CylinderLoss 同口径：层导热与表面换热同倍 ×sc
+                sumR += (active[i].ThicknessMm * 1e-3) / (active[i].KAt(tMean) * sc);
             }
             double lo = tAmbC, hi = tInnerC;
             for (int b = 0; b < 80; b++)
             {
                 tOut = 0.5 * (lo + hi);
                 double qIn = (tInnerC - tOut) / sumR;
-                double qOut = FlatOuterFlux(tOut, tAmbC, epsOuter, charLength);
+                double qOut = FlatOuterFlux(tOut, tAmbC, epsOuter, charLength, sc);
                 if (qIn > qOut) lo = tOut; else hi = tOut;
             }
             q = (tInnerC - tOut) / sumR;
@@ -192,12 +206,12 @@ public static class Insulation
     }
 
     public static double FlatOuterFlux(double tSurfC, double tAmbC, double eps, double charLength,
-                                       double airVelocity = 0)
+                                       double lossScale, double airVelocity = 0)
     {
         double hr = Materials.HRad(eps, tSurfC, tAmbC);
         double l = Math.Max(0.02, charLength);
         double hn = Materials.HConvVertical(tSurfC, tAmbC, l);
         double hf = Materials.HConvForcedPlate(tSurfC, tAmbC, l, airVelocity);
-        return (hr + Materials.HConvMixed(hn, hf)) * (tSurfC - tAmbC);
+        return Math.Max(1e-6, lossScale) * (hr + Materials.HConvMixed(hn, hf)) * (tSurfC - tAmbC);
     }
 }

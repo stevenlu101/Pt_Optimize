@@ -72,7 +72,8 @@ public static class FlangeRadial
     {
         double charLen = Math.Max(0.005, (p.FlangeRoMm - p.FlangeRiMm) * 1e-3);
         if (!p.FlangeInsulated)
-            return Insulation.FlatOuterFlux(tC, p.TAmbC, p.PtEmissivity, charLen, p.FlangeAirVelocityMPerS);
+            return Insulation.FlatOuterFlux(tC, p.TAmbC, p.PtEmissivity, charLen,
+                                            p.LossScale, p.FlangeAirVelocityMPerS);
 
         var layers = new List<InsulationLayer>
         {
@@ -80,7 +81,7 @@ public static class FlangeRadial
                     K0 = p.Layer1.K0, K1 = p.Layer1.K1,
                     Enabled = p.FlangeInsulThickMm > 1e-6 }
         };
-        return Insulation.PlateFlux(tC, p.TAmbC, layers, p.OuterEmissivity, charLen);
+        return Insulation.PlateFlux(tC, p.TAmbC, layers, p.OuterEmissivity, charLen, p.LossScale);
     }
 
     public static LossTable BuildFluxTable(DesignInputs p)
