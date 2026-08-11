@@ -1802,6 +1802,181 @@ internal static class Program
                 return;
             }
 
+            // --cli --tscan   诊断：管根温差**真的**随法兰厚度单调吗？
+            //
+            // --sweep2 的二分靠「厚度↑ ⇒ 法兰发热↓ ⇒ 抽热↑ ⇒ 管根温差↑」这个单调性。
+            // 但实跑后二分落点在 ±28…±255 K 而不是靶值 +5 K，相邻配置还正负乱跳
+            // ⇒ 前提可疑。§7 记过同类坑（「Brent 求根遇噪声」）：**先画出函数再求根**。
+            if (args.Contains("--tscan"))
+            {
+                double wallT = 0.4, tubeInsT = 2.5;
+                var pt2 = SegmentSolver.Clone(p);
+                pt2.Layer1.ThicknessMm = tubeInsT; pt2.Layer1.Enabled = true;
+                pt2.WallMinMm = wallT;
+                pt2.FlangeInsulThickMm = 0; pt2.FlangeInsulated = false;
+                pt2.BusbarClampTempC = 300;
+
+                Console.WriteLine("=== 诊断：管根温差 vs 法兰厚度（整线耦合解逐点）===");
+                Console.WriteLine($"管壁 {wallT:0.0} / 管纤维 {tubeInsT:0.0} / 法兰全裸 / 夹持 300 °C");
+                Console.WriteLine("形状 Ø60/舌50；共用片厚 = 端片厚 × √3");
+                Console.WriteLine();
+                Console.WriteLine($"{"端片t mm",10}{"HC1 ΔT",9}{"HC2 ΔT",9}{"HC3 ΔT",9}" +
+                                  $"{"最差ΔT",9}{"法兰最高°C",12}{"Φ_max",8}{"总铂g",8}  收敛");
+
+                foreach (double tE in new[] { 0.40, 0.55, 0.70, 0.85, 1.00, 1.30, 1.60, 2.00, 2.60, 3.20, 4.00 })
+                {
+                    FlangePlate MkT(double t) => new()
+                    {
+                        DiscRadiusMm = 30.0, HoleRadiusMm = 26.0,
+                        TabEndXMm = -50.0, TabEndHalfWidthMm = 20.0,
+                        ThicknessMm = t, ThickenedMm = t, InsulBoundaryXMm = 1e9
+                    };
+                    double kS = Math.Sqrt(3.0);
+                    var lcT = new LineCase
+                    {
+                        Base = pt2, WallMm = wallT, UseMeasuredCurrent = false,
+                        SetpointC = new[] { 1150.0, 1080.0, 1050.0 }, CheckRamp = false,
+                        FlangePlates = new[] { MkT(tE), MkT(tE * kS), MkT(tE * kS), MkT(tE) }
+                    };
+                    try
+                    {
+                        var rT = LineRunner.Run(lcT);
+                        if (!rT.Ok) { Console.WriteLine($"{tE,10:0.00}   ✗ {rT.Message}"); continue; }
+                        double worst = rT.Segments.OrderByDescending(s2 => Math.Abs(s2.RootDeltaK))
+                                        .First().RootDeltaK;
+                        Console.WriteLine($"{tE,10:0.00}{rT.Segments[0].RootDeltaK,9:+0.0;-0.0}" +
+                            $"{rT.Segments[1].RootDeltaK,9:+0.0;-0.0}{rT.Segments[2].RootDeltaK,9:+0.0;-0.0}" +
+                            $"{worst,9:+0.0;-0.0}{rT.Flanges.Max(f => f.TMaxC),12:0}" +
+                            $"{rT.Flanges.Max(f => f.Phi),8:0.00}{rT.TotalMassG,8:0}  " +
+                            (rT.Converged ? "✓" : "✗"));
+                    }
+                    catch (Exception ex) { Console.WriteLine($"{tE,10:0.00}   ✗ {ex.Message}"); }
+                }
+                Console.WriteLine();
+                Console.WriteLine("若 ΔT 不随 t 单调，则 --sweep2 的二分无效，其「无可行解」不作数。");
+                return;
+            }
+
+            // --cli --sweep2   把第 4 项自由度（法兰保温）扫完，厚度二分在**整线耦合解**里做
+            //
+            // 前几轮的教训都收在这里：
+            //   · 逐片解把管根钉在 1150 °C，是乐观的 ⇒ 本命令一律用 LineRunner 出数
+            //   · 法兰保温厚度此前只扫了 0 与 2.5 mm ⇒ 补到 0/2.5/5/10/20，含分区
+            //   · 厚度按 t ∝ I 在端片与共用片间分配（§4.2b），只留一个标度做二分
+            if (args.Contains("--sweep2"))
+            {
+                double wallS = 0.4;
+                double[] setp = { 1150, 1080, 1050 };
+
+                Console.WriteLine("=== 补扫法兰保温（第 4 自由度），厚度二分在整线耦合解内 ===");
+                Console.WriteLine($"管壁固定 {wallS:0.0} mm（已证撞 0.4 下界）；靶：最不利段管根温差 = +5 K");
+                Console.WriteLine("厚度按 t ∝ I 在端片/共用片间分配，只二分总标度");
+                Console.WriteLine();
+
+                var geoms = new (double rd, double tabX, double hw, string nm)[]
+                {
+                    (30.0, -50.0,  20.0, "Ø60/舌50"),
+                    (30.0, -120.0, 20.0, "Ø60/舌120"),
+                };
+                var insOpts = new (double t, double bx, string nm)[]
+                {
+                    (0.0,   1e9,          "全裸"),
+                    (5.0,  -1e9,          "全包5"),
+                    (10.0, -1e9,          "全包10"),
+                    (20.0, -1e9,          "全包20"),
+                };
+
+                Console.WriteLine($"{"管纤维",8}{"法兰保温",10}{"形状",12}{"端片t",8}{"共用t",8}" +
+                                  $"{"最差ΔT K",10}{"法兰最高°C",12}{"总铂 g",9}  判定");
+
+                var found = new List<(double mass, string desc, double dT, double tmax)>();
+
+                foreach (double tubeIns in new[] { 2.5, 10.0 })
+                    foreach (var (rd, tabX, hw, gnm) in geoms)
+                        foreach (var (fit, fbx, fnm) in insOpts)
+                        {
+                            var ps = SegmentSolver.Clone(p);
+                            ps.Layer1.ThicknessMm = tubeIns; ps.Layer1.Enabled = true;
+                            ps.WallMinMm = wallS;
+                            ps.FlangeInsulThickMm = fit; ps.FlangeInsulated = fit > 1e-6;
+                            ps.BusbarClampTempC = 300;      // 空冷（用户确认可行）
+
+                            FlangePlate MkP(double t) => new()
+                            {
+                                DiscRadiusMm = rd, HoleRadiusMm = 26.0,
+                                TabEndXMm = tabX, TabEndHalfWidthMm = hw,
+                                ThicknessMm = t, ThickenedMm = t, InsulBoundaryXMm = fbx
+                            };
+
+                            // 端片走段电流、共用片走 √3 倍 ⇒ t ∝ I 分配
+                            double kShared = Math.Sqrt(3.0);
+
+                            (double dT, double tmax, double mass, bool ok, bool conv) Run(double tEnd)
+                            {
+                                var lc2 = new LineCase
+                                {
+                                    Base = ps, WallMm = wallS, UseMeasuredCurrent = false,
+                                    SetpointC = setp, CheckRamp = false,
+                                    FlangePlates = new[] { MkP(tEnd), MkP(tEnd * kShared),
+                                                           MkP(tEnd * kShared), MkP(tEnd) }
+                                };
+                                try
+                                {
+                                    var r = LineRunner.Run(lc2);
+                                    if (!r.Ok) return (0, 0, 0, false, false);
+                                    double worst = r.Segments.Max(s => Math.Abs(s.RootDeltaK));
+                                    double signed = r.Segments.OrderByDescending(s => Math.Abs(s.RootDeltaK))
+                                                     .First().RootDeltaK;
+                                    return (signed, r.Flanges.Max(f => f.TMaxC), r.TotalMassG,
+                                            true, r.Converged);
+                                }
+                                catch { return (0, 0, 0, false, false); }
+                            }
+
+                            // 厚度↑ ⇒ 法兰发热↓ ⇒ 抽热↑ ⇒ 管根温差↑，单调，可二分到 +5 K
+                            double lo2 = 0.4, hi2 = 4.0;
+                            var rA = Run(lo2); var rB = Run(hi2);
+                            if (!rA.ok || !rB.ok) continue;
+                            if (rA.dT > 5.0 || rB.dT < 5.0)
+                            {
+                                Console.WriteLine($"{tubeIns,8:0.0}{fnm,10}{gnm,12}   ✗ 二分区间不跨 +5 K" +
+                                                  $"（{rA.dT:+0;-0} … {rB.dT:+0;-0} K）");
+                                continue;
+                            }
+                            for (int k2 = 0; k2 < 16; k2++)   // ΔT 斜率约 1300 K/mm ⇒ 要 ±0.008 mm 才落进 10 K 窗口
+                            {
+                                double mid = 0.5 * (lo2 + hi2);
+                                var rm = Run(mid);
+                                if (!rm.ok) break;
+                                if (rm.dT < 5.0) lo2 = mid; else hi2 = mid;
+                            }
+                            double tE = 0.5 * (lo2 + hi2);
+                            var rf2 = Run(tE);
+                            if (!rf2.ok) continue;
+                            bool okAll = rf2.conv && rf2.dT > 0 && rf2.dT <= 10
+                                         && rf2.tmax <= RampTwoNode.PtMeltingC - 200;
+                            string desc = $"纤维{tubeIns:0.0}/{fnm}/{gnm}/t端{tE:0.00}";
+                            Console.WriteLine($"{tubeIns,8:0.0}{fnm,10}{gnm,12}{tE,8:0.00}" +
+                                $"{tE * kShared,8:0.00}{rf2.dT,10:+0.0;-0.0}{rf2.tmax,12:0}" +
+                                $"{rf2.mass,9:0}  " + (rf2.conv ? "" : "未收敛 ") +
+                                (okAll ? "✓" : (rf2.dT > 10 || rf2.dT <= 0 ? "✗C2" : "") +
+                                                (rf2.tmax > RampTwoNode.PtMeltingC - 200 ? "✗熔点裕度" : "")));
+                            if (okAll) found.Add((rf2.mass, desc, rf2.dT, rf2.tmax));
+                        }
+
+                Console.WriteLine();
+                found.Sort((a, b) => a.mass.CompareTo(b.mass));
+                if (found.Count == 0)
+                    Console.WriteLine("✗ 本轮无可行解。");
+                else
+                {
+                    Console.WriteLine($"★ 可行解 {found.Count} 个，按总铂排序：");
+                    foreach (var (m, d, dt, tm) in found.Take(8))
+                        Console.WriteLine($"   {m,7:0} g   ΔT {dt:+0.0} K   法兰最高 {tm:0} °C   {d}");
+                }
+                return;
+            }
+
             // --cli --final   对搜索出的最优配置跑**整线耦合解**做最终复核
             //
             // --plateopt 是逐片解：管根温度固定取 1150 °C。真实的管根温度由段↔法兰耦合定，
