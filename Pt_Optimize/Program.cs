@@ -1802,6 +1802,82 @@ internal static class Program
                 return;
             }
 
+            // --cli --final   对搜索出的最优配置跑**整线耦合解**做最终复核
+            //
+            // --plateopt 是逐片解：管根温度固定取 1150 °C。真实的管根温度由段↔法兰耦合定，
+            // 且四片互相通过管子影响。最终数必须由 LineRunner 给。
+            if (args.Contains("--final"))
+            {
+                double wallF = 0.4, insF = 2.5, clampF = 300, flIns = 2.5;
+                double tEnd = 0.43, tShared = 0.90, rdF = 34.0, tabF = -50.0, hwF = 30.0;
+
+                Console.WriteLine("=== 最优配置的整线耦合复核 ===");
+                Console.WriteLine($"管壁 {wallF:0.00} mm / 管纤维 {insF:0.0} mm / 法兰全包 {flIns:0.0} mm / " +
+                                  $"铜排夹持 {clampF:0} °C");
+                Console.WriteLine($"端片 Ø{2 * rdF:0}/舌{-tabF:0} t={tEnd:0.00}   " +
+                                  $"共用片 同形状 t={tShared:0.00}");
+                Console.WriteLine();
+
+                var pf = SegmentSolver.Clone(p);
+                pf.Layer1.ThicknessMm = insF; pf.Layer1.Enabled = true;
+                pf.WallMinMm = wallF;
+                pf.FlangeInsulThickMm = flIns; pf.FlangeInsulated = true;
+                pf.BusbarClampTempC = clampF;
+
+                FlangePlate Mk(double t) => new()
+                {
+                    DiscRadiusMm = rdF, HoleRadiusMm = 26.0,
+                    TabEndXMm = tabF, TabEndHalfWidthMm = hwF,
+                    ThicknessMm = t, ThickenedMm = t,
+                    InsulBoundaryXMm = -1e9          // 全包
+                };
+
+                var lcF = new LineCase
+                {
+                    Base = pf,
+                    WallMm = wallF,
+                    UseMeasuredCurrent = false,
+                    FlangePlates = new[] { Mk(tEnd), Mk(tShared), Mk(tShared), Mk(tEnd) },
+                    SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                    CheckRamp = true
+                };
+
+                var swF = System.Diagnostics.Stopwatch.StartNew();
+                LineResult rF;
+                try { rF = LineRunner.Run(lcF, new SyncProgress<string>(s => Console.WriteLine("  … " + s))); }
+                catch (Exception ex) { Console.WriteLine("✗ " + ex.Message); return; }
+                swF.Stop();
+                if (!rF.Ok) { Console.WriteLine("✗ " + rF.Message); return; }
+
+                Console.WriteLine();
+                Console.WriteLine($"用时 {swF.Elapsed.TotalMinutes:0.0} min   " +
+                                  $"收敛 {(rF.Converged ? "✓" : "✗ 结果不可用")}");
+                Console.WriteLine();
+                Console.WriteLine($"{"段",6}{"控温",7}{"电流 A",9}{"管 J",8}{"管根 °C",10}{"衔接温差 K",12}{"管重 g",9}");
+                foreach (var s2 in rF.Segments)
+                    Console.WriteLine($"{s2.Name,6}{s2.SetpointC,7:0}{s2.CurrentA,9:0}{s2.TubeJAPerMm2,8:0.00}" +
+                        $"{s2.TRootC,10:0.0}{s2.RootDeltaK,12:+0.0;-0.0}{s2.MassG,9:0}");
+                Console.WriteLine();
+                Console.WriteLine($"{"法兰",10}{"电流 A",9}{"J_max",8}{"Φ",8}{"抽热 W",9}{"最高 °C",10}{"铂重 g",9}");
+                foreach (var f2 in rF.Flanges)
+                    Console.WriteLine($"{f2.Name,10}{f2.CurrentA,9:0}{f2.JMaxAPerMm2,8:0.00}{f2.Phi,8:0.000}" +
+                        $"{f2.QFromTubeW,9:+0;-0}{f2.TMaxC,10:0.0}{f2.MassG,9:0}");
+                Console.WriteLine();
+                foreach (var ck in rF.Checks)
+                {
+                    string mk = ck.Kind == CheckKind.HardSafety ? "★" : ck.Kind == CheckKind.Target ? "○" : "·";
+                    string vd = ck.Kind == CheckKind.Reference ? "—" : ck.Undetermined ? "?" : ck.Ok ? "✓" : "✗";
+                    string act = double.IsNaN(ck.Actual) ? "达不到" : ck.Actual.ToString("0.000");
+                    Console.WriteLine($"  {mk}{ck.Name,-20}{act,12} / {ck.Limit,-10:0.000} {vd}  {ck.Where}");
+                }
+                Console.WriteLine();
+                Console.WriteLine($"★ 整线总铂 {rF.TotalMassG:0} g（管 {rF.TubeMassG:0} + 法兰 {rF.FlangeMassG:0}）" +
+                                  $"   基准 {rF.BaselineMassG:0} g   省 {rF.SavingPct:0.0} %");
+                Console.WriteLine($"  玻璃温降 模型 {rF.GlassDropModelK:0.0} / 实测 {rF.GlassDropMeasuredK:0.0} K");
+                foreach (var nt in rF.Notes) Console.WriteLine("  " + nt);
+                return;
+            }
+
             // --cli --grade   ★ 按 t ∝ 1/r² 做多级阶梯：把 Ψ 压向 1
             //
             // §4.2y 的 Ψ 表明：等厚板（含对称进电）Ψ ∈ [2.0, 10.5]，永远 >1 ⇒ C1 无解。
