@@ -1887,7 +1887,7 @@ internal static class Program
                 };
 
                 Console.WriteLine($"{"管纤维",8}{"法兰保温",10}{"形状",12}{"端片t",8}{"共用t",8}" +
-                                  $"{"最差ΔT K",10}{"法兰最高°C",12}{"总铂 g",9}  判定");
+                                  $"{"minΔT",9}{"maxΔT",9}{"法兰最高°C",11}{"总铂 g",9}  判定");
 
                 var found = new List<(double mass, string desc, double dT, double tmax)>();
 
@@ -1911,7 +1911,12 @@ internal static class Program
                             // 端片走段电流、共用片走 √3 倍 ⇒ t ∝ I 分配
                             double kShared = Math.Sqrt(3.0);
 
-                            (double dT, double tmax, double mass, bool ok, bool conv) Run(double tEnd)
+                            // ★ 二分靶必须**连续单调**。此前用「|ΔT| 最大那段的带符号值」——
+                            //   最不利段的身份一切换该量就跳变（HC2 的 −60 跳成 HC1 的 +55），
+                            //   二分对不连续函数无效，于是 48 例全部误报「无解」。
+                            //   各段 ΔT 各自随厚度单调 ⇒ 改用 min_i(ΔT_i) 做靶，再单独检查 max_i ≤ 10。
+                            (double dTmin, double dTmax, double tmax, double mass, bool ok, bool conv)
+                            Run(double tEnd)
                             {
                                 var lc2 = new LineCase
                                 {
@@ -1923,24 +1928,23 @@ internal static class Program
                                 try
                                 {
                                     var r = LineRunner.Run(lc2);
-                                    if (!r.Ok) return (0, 0, 0, false, false);
-                                    double worst = r.Segments.Max(s => Math.Abs(s.RootDeltaK));
-                                    double signed = r.Segments.OrderByDescending(s => Math.Abs(s.RootDeltaK))
-                                                     .First().RootDeltaK;
-                                    return (signed, r.Flanges.Max(f => f.TMaxC), r.TotalMassG,
+                                    if (!r.Ok) return (0, 0, 0, 0, false, false);
+                                    return (r.Segments.Min(s => s.RootDeltaK),
+                                            r.Segments.Max(s => s.RootDeltaK),
+                                            r.Flanges.Max(f => f.TMaxC), r.TotalMassG,
                                             true, r.Converged);
                                 }
-                                catch { return (0, 0, 0, false, false); }
+                                catch { return (0, 0, 0, 0, false, false); }
                             }
 
                             // 厚度↑ ⇒ 法兰发热↓ ⇒ 抽热↑ ⇒ 管根温差↑，单调，可二分到 +5 K
                             double lo2 = 0.4, hi2 = 4.0;
                             var rA = Run(lo2); var rB = Run(hi2);
                             if (!rA.ok || !rB.ok) continue;
-                            if (rA.dT > 5.0 || rB.dT < 5.0)
+                            if (rA.dTmin > 5.0 || rB.dTmin < 5.0)
                             {
-                                Console.WriteLine($"{tubeIns,8:0.0}{fnm,10}{gnm,12}   ✗ 二分区间不跨 +5 K" +
-                                                  $"（{rA.dT:+0;-0} … {rB.dT:+0;-0} K）");
+                                Console.WriteLine($"{tubeIns,8:0.0}{fnm,10}{gnm,12}   ✗ 区间不跨 min ΔT=+5 K" +
+                                                  $"（{rA.dTmin:+0;-0} … {rB.dTmin:+0;-0} K）");
                                 continue;
                             }
                             for (int k2 = 0; k2 < 16; k2++)   // ΔT 斜率约 1300 K/mm ⇒ 要 ±0.008 mm 才落进 10 K 窗口
@@ -1948,20 +1952,20 @@ internal static class Program
                                 double mid = 0.5 * (lo2 + hi2);
                                 var rm = Run(mid);
                                 if (!rm.ok) break;
-                                if (rm.dT < 5.0) lo2 = mid; else hi2 = mid;
+                                if (rm.dTmin < 5.0) lo2 = mid; else hi2 = mid;
                             }
                             double tE = 0.5 * (lo2 + hi2);
                             var rf2 = Run(tE);
                             if (!rf2.ok) continue;
-                            bool okAll = rf2.conv && rf2.dT > 0 && rf2.dT <= 10
+                            bool okAll = rf2.conv && rf2.dTmin > 0 && rf2.dTmax <= 10
                                          && rf2.tmax <= RampTwoNode.PtMeltingC - 200;
                             string desc = $"纤维{tubeIns:0.0}/{fnm}/{gnm}/t端{tE:0.00}";
                             Console.WriteLine($"{tubeIns,8:0.0}{fnm,10}{gnm,12}{tE,8:0.00}" +
-                                $"{tE * kShared,8:0.00}{rf2.dT,10:+0.0;-0.0}{rf2.tmax,12:0}" +
+                                $"{tE * kShared,8:0.00}{rf2.dTmin,9:+0.0;-0.0}{rf2.dTmax,9:+0.0;-0.0}{rf2.tmax,11:0}" +
                                 $"{rf2.mass,9:0}  " + (rf2.conv ? "" : "未收敛 ") +
-                                (okAll ? "✓" : (rf2.dT > 10 || rf2.dT <= 0 ? "✗C2" : "") +
+                                (okAll ? "✓" : (rf2.dTmax > 10 || rf2.dTmin <= 0 ? "✗C2" : "") +
                                                 (rf2.tmax > RampTwoNode.PtMeltingC - 200 ? "✗熔点裕度" : "")));
-                            if (okAll) found.Add((rf2.mass, desc, rf2.dT, rf2.tmax));
+                            if (okAll) found.Add((rf2.mass, desc, rf2.dTmax, rf2.tmax));
                         }
 
                 Console.WriteLine();
