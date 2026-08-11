@@ -1802,6 +1802,170 @@ internal static class Program
                 return;
             }
 
+            // --cli --gate1   第一步：能不能升到目标温度（管侧）
+            //
+            // ★ 顺序很重要（用户 2026-08-11 纠正）：**升温到目标温度是第一步，
+            //   完成后才有稳态计算**。所以先过这一关，再谈稳态的 ΔT<10，最后才谈省铂。
+            //
+            // 温控功率下升温是准静态的，所以「能不能到 1150」就等于
+            // 「1150 °C 的稳态工作点存不存在、要多大电流」：
+            //     P = Q_散热(1150)，  I = √(P/R)，  J = I/A
+            // 管壁越薄 ⇒ A 小、R 大 ⇒ 电流小但 **J ∝ 1/√t 反而高**。
+            // 保温越厚 ⇒ Q_散热 小 ⇒ 电流与 J 一起降 —— 用户已确认保温无空间限制，
+            // 所以这是管侧最有力的免费杠杆。
+            if (args.Contains("--gate1"))
+            {
+                double tTarget = 1150;
+                Console.WriteLine("=== 第一步：能不能升到目标温度（管侧）===");
+                Console.WriteLine($"目标 {tTarget:0} °C，段长 {p.TubeLengthMm:0} mm，内径 {p.TubeIdMm:0} mm");
+                Console.WriteLine("温控功率下升温是准静态的 ⇒「能不能到」= 该温度的稳态工作点要多大电流");
+                Console.WriteLine("（空管口径：升温时管内无玻璃，故不含玻璃换热项）");
+                Console.WriteLine();
+
+                Console.WriteLine($"{"纤维 mm",9}{"管壁 mm",9}{"散热 W",9}{"电流 A",9}{"管 J",8}" +
+                                  $"{"I_stab A",10}{"稳定裕度",10}{"管铂 g/段",11}  判定");
+
+                foreach (double ins in new[] { 2.5, 5.0, 10.0, 20.0, 40.0 })
+                {
+                    foreach (double w in new[] { 0.4, 0.6, 0.8, 1.0 })
+                    {
+                        var q = SegmentSolver.Clone(p);
+                        q.Layer1.ThicknessMm = ins; q.Layer1.Enabled = true;
+                        q.WallMinMm = w; q.TSetC = tTarget;
+
+                        double ri = q.TubeIdMm * 0.5e-3, ww = w * 1e-3, rOut = ri + ww;
+                        double areaM2 = Math.PI * (rOut * rOut - ri * ri);
+                        double areaMm2 = areaM2 * 1e6;
+
+                        bool anyIns = false;
+                        foreach (var l in q.Layers) if (l.Enabled && l.ThicknessMm > 1e-6) anyIns = true;
+                        double eps = anyIns ? q.OuterEmissivity : q.PtEmissivity;
+
+                        var tab = new LossTable(q.TAmbC, tTarget + 300, 60,
+                            t => Insulation.CylinderLoss(t, q.TAmbC, rOut, q.Layers, eps,
+                                     q.Posture == PtOptimize.Core.Orientation.Vertical, q.TubeLength,
+                                     q.LossScale).QPerLength);
+
+                        double lossW = tab.Eval(tTarget) * q.TubeLength;
+                        double rOhm = Materials.PtResistivity(tTarget) * q.TubeLength / areaM2;
+                        double iA = Math.Sqrt(lossW / rOhm);
+                        double jA = iA / areaMm2;
+
+                        // 空管热稳定极限：β 不含玻璃项
+                        double beta = tab.Slope(tTarget);
+                        double drhoDt = Materials.RhoRef *
+                                        (Materials.AlphaFit + 2 * Materials.BetaFit * tTarget);
+                        double iStab = Math.Sqrt(Math.Max(1e-9, beta * areaM2 / drhoDt));
+                        double margin = iStab / Math.Max(1e-9, iA);
+                        double massG = areaMm2 * q.TubeLengthMm * Materials.PtDensity * 1e-6;
+
+                        string v = margin > 1.5 ? "✓" : margin > 1.0 ? "⚠ 裕度薄" : "✗ 越热稳定极限";
+                        Console.WriteLine($"{ins,9:0.0}{w,9:0.0}{lossW,9:0}{iA,9:0}{jA,8:0.00}" +
+                                          $"{iStab,10:0}{margin,10:0.00}{massG,11:0}  {v}");
+                    }
+                    Console.WriteLine();
+                }
+
+                Console.WriteLine("读法：");
+                Console.WriteLine("· **管 J ∝ 1/√管壁** —— 减薄管壁并不减少电流负担，反而抬高 J。");
+                Console.WriteLine("· **加厚保温同时降电流与 J**，且保温无空间限制 ⇒ 管侧的免费杠杆。");
+                Console.WriteLine("· 热稳定极限 I_stab = √(βA/(dρe/dT))：越过它稳态解本就不存在（§7）。");
+                Console.WriteLine("· 本表是第一步的**通过性**，省铂的取舍要等第二步（稳态 ΔT<10）一起看。");
+                return;
+            }
+
+            // --cli --gate2   第二步：稳态 ΔT<10 ⇒ 法兰必须热自给 ⇒ 法兰质量的闭式
+            //
+            // C2 的抽热预算只有 ~10 W，而法兰的发热与散热各是几百瓦 ⇒ 必须 Φ ≈ 1。
+            // 把 Φ = 1 写开：
+            //     f²I²·(ρe·ShapeR/t) = 2·A·q″     （左=自身发热，右=自身散热）
+            //   ⇒ t = f²I²·ρe·ShapeR / (2·A·q″)
+            //   ⇒ m = A·t·ρ_Pt = **f²·I²·ρe·ShapeR·ρ_Pt / (2·q″)**
+            //
+            // ★ 面积 A 约掉了 —— 自给法兰的质量**与盘面大小无关**，只由四个量定：
+            //     f²（接线相位）· I²（段电流）· ShapeR（电流路径的形状数）· 1/q″（表面散热）
+            // 这四个正好对应用户给的四个自由度，且都是乘性的。
+            if (args.Contains("--gate2"))
+            {
+                Console.WriteLine("=== 第二步：稳态 ΔT<10 ⇒ 法兰热自给 ⇒ 质量闭式 ===");
+                Console.WriteLine("Φ=1：f²I²·(ρe·ShapeR/t) = 2·A·q″  ⇒  m = f²·I²·ρe·ShapeR·ρ_Pt/(2q″)");
+                Console.WriteLine("★ 面积约掉了：自给法兰的质量与盘面大小无关，只由 f²、I²、ShapeR、1/q″ 定");
+                Console.WriteLine();
+
+                var g0 = new FlangePlate();
+                var mesh0 = FlangeMesher.Build(g0, 0, hFine: 2.0, hCoarse: 11.0, fineRadius: 45.0);
+                var sf = DesignScreen.Extract(mesh0, 1000.0, 1050.0, g0.Tangent().X);
+                // 注：这个切分是**保温分界**（切点 x）两侧，不是几何上的「圆盘 vs 舌片」——
+                // 切点在 x=−6.07，圆盘的大半落在分界的裸露侧。
+                // 几何口径：圆盘环面 π(60²−26²)=9185 mm²，舌片超出圆盘部分 = 总 − 圆盘 = 14356 mm²（61 %）。
+                double discAnnulus = Math.PI * (g0.DiscRadiusMm * g0.DiscRadiusMm
+                                              - g0.HoleRadiusMm * g0.HoleRadiusMm);
+                Console.WriteLine($"现役形状（Ø120 + 200 mm 舌片）：净面积 {sf.AreaMm2:0} mm²");
+                Console.WriteLine($"  几何切分：圆盘环面 {discAnnulus:0} / 舌片超出部分 {sf.AreaMm2 - discAnnulus:0}" +
+                                  $"（舌片占 {(sf.AreaMm2 - discAnnulus) / sf.AreaMm2 * 100:0} %）");
+                Console.WriteLine($"  保温切分（切点 x={g0.Tangent().X:0.0}）：包纤维侧 {sf.DiscAreaMm2:0} / 裸露侧 {sf.TabAreaMm2:0}");
+                Console.WriteLine($"  电阻形状数 ShapeR = {sf.ShapeR:0.000}   " +
+                                  $"J 形状数 ShapeJ = {sf.ShapeJ:0.0000} (A/mm² per A per mm)");
+                Console.WriteLine();
+
+                double tWork = 1150;
+                double rhoMm = Materials.PtResistivity(tWork) * 1e3;         // Ω·mm
+
+                double SelfSufficientMassG(double f, double iSeg, double shapeR,
+                                           double qWPerMm2, out double tMm, out double areaNeed)
+                {
+                    // m = f²I²·ρe·ShapeR·ρ_Pt/(2q″)；面积随之定 A = f²I²ρe·ShapeR/(2 q″ t)
+                    double m = f * f * iSeg * iSeg * rhoMm * shapeR * (Materials.PtDensity * 1e-6)
+                               / (2.0 * qWPerMm2);
+                    tMm = double.NaN; areaNeed = double.NaN;
+                    return m;
+                }
+
+                double qBare = DesignScreen.PlateFluxWPerM2(p, tWork, 0) * 1e-6;      // W/mm²
+                double qIns = DesignScreen.PlateFluxWPerM2(p, tWork, p.FlangeInsulThickMm) * 1e-6;
+
+                Console.WriteLine($"表面热流 q″@{tWork:0} °C：裸露 {qBare * 1e6:0} W/m²   " +
+                                  $"包 {p.FlangeInsulThickMm:0.0} mm 纤维 {qIns * 1e6:0} W/m²");
+                Console.WriteLine();
+
+                Console.WriteLine("── 单片自给质量（裸露口径）随「段电流」与「叠加系数」");
+                Console.WriteLine($"{"段电流 A",10}{"端片 f=1",12}{"共用 f=1.24",14}{"共用 f=1.5",13}{"共用 f=√3",13}   [g]");
+                foreach (double iSeg in new[] { 1655.0, 1364.0, 1100.0, 884.0, 719.0, 449.0 })
+                {
+                    double m1 = SelfSufficientMassG(1.0, iSeg, sf.ShapeR, qBare, out _, out _);
+                    double m2 = SelfSufficientMassG(1.24, iSeg, sf.ShapeR, qBare, out _, out _);
+                    double m3 = SelfSufficientMassG(1.5, iSeg, sf.ShapeR, qBare, out _, out _);
+                    double m4 = SelfSufficientMassG(Math.Sqrt(3), iSeg, sf.ShapeR, qBare, out _, out _);
+                    Console.WriteLine($"{iSeg,10:0}{m1,12:0}{m2,14:0}{m3,13:0}{m4,13:0}");
+                }
+                Console.WriteLine();
+                Console.WriteLine("（段电流一列对应 --gate1 的保温档：2.5 mm→1655 A … 40 mm→719 A@壁1.0）");
+                Console.WriteLine();
+
+                Console.WriteLine("── 四个乘性杠杆各自的倍率（相对现状 f=√3、I=1655、裸露、现役形状）");
+                double mBase = SelfSufficientMassG(Math.Sqrt(3), 1655, sf.ShapeR, qBare, out _, out _);
+                Console.WriteLine($"  基准（现状工况下的自给质量）        {mBase,8:0} g/片");
+                Console.WriteLine($"  ① 接线改同相 f √3→0.1              ×{0.1 * 0.1 / 3.0,7:0.0000}" +
+                                  $"  ⇒ {mBase * 0.01 / 3.0,8:0.0} g");
+                Console.WriteLine($"  ② 管保温 2.5→40 mm，I 1655→719 A   ×{719.0 * 719.0 / (1655.0 * 1655.0),7:0.000}" +
+                                  $"  ⇒ {mBase * 719.0 * 719.0 / (1655.0 * 1655.0),8:0} g");
+                Console.WriteLine($"  ③ 法兰包纤维（反向，变重）          ×{qBare / qIns,7:0.000}" +
+                                  $"  ⇒ {mBase * qBare / qIns,8:0} g");
+                Console.WriteLine($"  ④ ShapeR 减半（短而宽的电流路径）    ×{0.5,7:0.000}" +
+                                  $"  ⇒ {mBase * 0.5,8:0} g");
+                Console.WriteLine();
+                Console.WriteLine("★ 设计规则由此直接读出：");
+                Console.WriteLine("  · **最小化 ShapeR** = 电流路径要短而宽 ⇒ 舌片宜短、宜宽（不是加长）");
+                Console.WriteLine("  · **最大化 q″** ⇒ 法兰不包保温；空冷还能再往上抬");
+                Console.WriteLine("  · **降 I** ⇒ 管保温加厚（无空间限制，且同时省管子的铂）");
+                Console.WriteLine("  · **降 f** ⇒ 改接线相位，这一项是平方且倍率最大");
+                Console.WriteLine();
+                Console.WriteLine("⚠ 但质量不能无限降：t ≥ 0.4 mm 的下界会先咬住 ——");
+                Console.WriteLine("  t = f²I²ρe·ShapeR/(2·A·q″)，A 由形状定；t 撞到 0.4 后法兰就**过厚**，");
+                Console.WriteLine("  Φ<1 ⇒ 开始从管子抽热 ⇒ C2 破。那时要靠缩小盘面（减 A）把 t 顶回去。");
+                return;
+            }
+
             // --cli --budget   C2 的「抽热预算」—— 先看清这条约束有多紧
             //
             // C2（管根温差 <10 K）经半无限翅片解可以反过来写成对法兰抽热 D 的硬预算：
