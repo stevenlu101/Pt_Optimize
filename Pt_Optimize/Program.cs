@@ -1802,6 +1802,102 @@ internal static class Program
                 return;
             }
 
+            // --cli --solve4   ★ 四片法兰**各自独立**定厚：3 段约束 / 4 个自由度
+            //
+            // --sweep2 把四片绑成一个标度（t ∝ I），于是只能让**一段**落进 (0,10] K，
+            // 其余段落在 +45…+104 K。而用户明确说过「四片法兰允许各自独立」——
+            // 3 个段约束对 4 个厚度自由度，本来就是可解的（还余 1 维用来减重）。
+            //
+            // 解法：阻尼牛顿。段 i 的管根温差主要由它两端的片 i、i+1 决定，
+            //   片 j 的误差取相邻段误差的均值，按灵敏度 d(ΔT)/d(ln t) ≈ 800 K 走步。
+            if (args.Contains("--solve4"))
+            {
+                double wall4 = 0.4;
+                double[] setp4 = { 1150, 1080, 1050 };
+                const double target = 5.0, sens = 800.0;   // K per unit ln t（由 --tscan 斜率估）
+
+                Console.WriteLine("=== 四片法兰各自独立定厚（3 段约束 / 4 自由度）===");
+                Console.WriteLine($"管壁 {wall4:0.0} mm；靶：**每一段**管根温差 = +{target:0.#} K");
+                Console.WriteLine("阻尼牛顿：片 j 的误差取相邻段误差均值，Δln t = −ω·err/灵敏度");
+                Console.WriteLine();
+
+                var cases4 = new (double tubeIns, double flIns, double bx, string nm)[]
+                {
+                    (2.5,  0.0,  1e9,  "纤维2.5/法兰全裸"),
+                    (2.5, 20.0, -1e9,  "纤维2.5/法兰全包20"),
+                    (10.0, 5.0, -1e9,  "纤维10/法兰全包5"),
+                    (10.0,20.0, -1e9,  "纤维10/法兰全包20"),
+                };
+                var geo4 = new (double rd, double tabX, double hw, string nm)[]
+                {
+                    (30.0, -50.0, 20.0, "Ø60/舌50"),
+                    (30.0, -80.0, 20.0, "Ø60/舌80"),
+                };
+
+                foreach (var (tubeIns, flIns, bx, cnm) in cases4)
+                    foreach (var (rd, tabX, hw, gnm) in geo4)
+                    {
+                        var p4 = SegmentSolver.Clone(p);
+                        p4.Layer1.ThicknessMm = tubeIns; p4.Layer1.Enabled = true;
+                        p4.WallMinMm = wall4;
+                        p4.FlangeInsulThickMm = flIns; p4.FlangeInsulated = flIns > 1e-6;
+                        p4.BusbarClampTempC = 300;
+
+                        var t4 = new[] { 0.6, 1.0, 1.0, 0.6 };     // 初值：共用片厚些
+                        LineResult? last = null;
+                        for (int it4 = 0; it4 < 22; it4++)
+                        {
+                            var plates = t4.Select(t => new FlangePlate
+                            {
+                                DiscRadiusMm = rd, HoleRadiusMm = 26.0,
+                                TabEndXMm = tabX, TabEndHalfWidthMm = hw,
+                                ThicknessMm = t, ThickenedMm = t, InsulBoundaryXMm = bx
+                            }).ToArray();
+                            var lc4 = new LineCase
+                            {
+                                Base = p4, WallMm = wall4, UseMeasuredCurrent = false,
+                                SetpointC = setp4, CheckRamp = false, FlangePlates = plates
+                            };
+                            try { last = LineRunner.Run(lc4); } catch { last = null; break; }
+                            if (last is null || !last.Ok) break;
+
+                            var err = last.Segments.Select(s => s.RootDeltaK - target).ToArray();
+                            double worstErr = err.Max(e => Math.Abs(e));
+                            if (worstErr < 2.0) break;
+
+                            // 片 j 的误差 = 相邻段误差均值（端片只有一个邻段）
+                            for (int j4 = 0; j4 < t4.Length; j4++)
+                            {
+                                double e4 = j4 == 0 ? err[0]
+                                          : j4 >= err.Length ? err[^1]
+                                          : 0.5 * (err[j4 - 1] + err[j4]);
+                                double step = -0.6 * e4 / sens;
+                                step = Math.Clamp(step, -0.35, 0.35);
+                                t4[j4] = Math.Clamp(t4[j4] * Math.Exp(step), 0.4, 6.0);
+                            }
+                        }
+
+                        if (last is null || !last.Ok) { Console.WriteLine($"{cnm}/{gnm}  ✗ 求解失败"); continue; }
+                        var dts = last.Segments.Select(s => s.RootDeltaK).ToArray();
+                        double tmax4 = last.Flanges.Max(f => f.TMaxC);
+                        bool ok4 = last.Converged && dts.All(d => d > 0 && d <= 10)
+                                   && tmax4 <= RampTwoNode.PtMeltingC - 200;
+                        Console.WriteLine($"── {cnm} / {gnm}");
+                        Console.WriteLine($"   厚度 {string.Join(" / ", t4.Select(t => t.ToString("0.000")))} mm" +
+                                          $"   段温差 {string.Join(" / ", dts.Select(d => d.ToString("+0.0;-0.0")))} K");
+                        Console.WriteLine($"   法兰最高 {tmax4:0} °C   总铂 {last.TotalMassG:0} g" +
+                                          $"（管 {last.TubeMassG:0} + 法兰 {last.FlangeMassG:0}）" +
+                                          $"   省 {last.SavingPct:0.0} %   " +
+                                          (last.Converged ? "" : "未收敛 ") + (ok4 ? "✓ 全过" : "✗"));
+                        if (!ok4 && dts.Any(d => d > 10))
+                            Console.WriteLine($"   卡在：最大段温差 {dts.Max():0.0} K > 10");
+                        if (!ok4 && tmax4 > RampTwoNode.PtMeltingC - 200)
+                            Console.WriteLine($"   卡在：法兰局部 {tmax4:0} °C，离熔点裕度不足 200 K");
+                        Console.WriteLine();
+                    }
+                return;
+            }
+
             // --cli --tscan   诊断：管根温差**真的**随法兰厚度单调吗？
             //
             // --sweep2 的二分靠「厚度↑ ⇒ 法兰发热↓ ⇒ 抽热↑ ⇒ 管根温差↑」这个单调性。
@@ -1987,14 +2083,16 @@ internal static class Program
             // 且四片互相通过管子影响。最终数必须由 LineRunner 给。
             if (args.Contains("--final"))
             {
-                double wallF = 0.4, insF = 2.5, clampF = 300, flIns = 2.5;
-                double tEnd = 0.43, tShared = 0.90, rdF = 34.0, tabF = -50.0, hwF = 30.0;
+                // --solve4 的最优解（四片各自独立定厚）
+                double wallF = 0.4, insF = 10.0, clampF = 300, flIns = 20.0;
+                double rdF = 30.0, tabF = -50.0, hwF = 20.0;
+                double[] tPlates = { 0.516, 0.855, 0.776, 0.426 };
 
                 Console.WriteLine("=== 最优配置的整线耦合复核 ===");
                 Console.WriteLine($"管壁 {wallF:0.00} mm / 管纤维 {insF:0.0} mm / 法兰全包 {flIns:0.0} mm / " +
                                   $"铜排夹持 {clampF:0} °C");
-                Console.WriteLine($"端片 Ø{2 * rdF:0}/舌{-tabF:0} t={tEnd:0.00}   " +
-                                  $"共用片 同形状 t={tShared:0.00}");
+                Console.WriteLine($"四片 Ø{2 * rdF:0}/舌{-tabF:0}/半宽{hwF:0}，厚度各自独立 " +
+                                  string.Join(" / ", tPlates.Select(t => t.ToString("0.000"))) + " mm");
                 Console.WriteLine();
 
                 var pf = SegmentSolver.Clone(p);
@@ -2010,13 +2108,14 @@ internal static class Program
                     ThicknessMm = t, ThickenedMm = t,
                     InsulBoundaryXMm = -1e9          // 全包
                 };
+                var platesF = tPlates.Select(Mk).ToArray();
 
                 var lcF = new LineCase
                 {
                     Base = pf,
                     WallMm = wallF,
                     UseMeasuredCurrent = false,
-                    FlangePlates = new[] { Mk(tEnd), Mk(tShared), Mk(tShared), Mk(tEnd) },
+                    FlangePlates = platesF,
                     SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
                     CheckRamp = true
                 };
