@@ -1802,6 +1802,138 @@ internal static class Program
                 return;
             }
 
+            // --cli --grade   ★ 按 t ∝ 1/r² 做多级阶梯：把 Ψ 压向 1
+            //
+            // §4.2y 的 Ψ 表明：等厚板（含对称进电）Ψ ∈ [2.0, 10.5]，永远 >1 ⇒ C1 无解。
+            // 而局部单位面积发热 = ρe·K²/t，径向流 K ∝ 1/r ⇒ **令 t ∝ 1/r² 则处处相等，Ψ → 1**。
+            // 这正是用户给的「厚度可阶梯式分布」。本命令用 N 级台阶逼近该廓形并实测 Ψ。
+            if (args.Contains("--grade"))
+            {
+                Console.WriteLine("=== t ∝ 1/r² 多级阶梯：把 Ψ 压向 1 ===");
+                Console.WriteLine("局部单位面积发热 = ρe·K²/t，径向流 K ∝ 1/r ⇒ t ∝ 1/r² 使其处处相等");
+                Console.WriteLine();
+                Console.WriteLine($"{"形状",20}{"级数",6}{"厚度比",9}{"ΣR",9}{"ΣJ",10}{"Ψ",9}" +
+                                  $"{"vs 等厚",9}  判定");
+
+                foreach (var (rd, tabX, halfW) in new[]
+                {
+                    (60.0, -200.0, 20.0), (60.0, -120.0, 20.0),
+                    (44.0, -120.0, 20.0), (30.0, -120.0, 20.0)
+                })
+                {
+                    double psiFlat = double.NaN;
+                    foreach (int nStep in new[] { 1, 3, 6, 10 })
+                    {
+                        var radii = new double[nStep];
+                        var thick = new double[nStep];
+                        double r0g = 26.0;
+                        for (int k = 0; k < nStep; k++)
+                        {
+                            radii[k] = r0g + (rd - r0g) * (k + 1) / nStep;
+                            double rMid = r0g + (rd - r0g) * (k + 0.5) / nStep;
+                            // t ∝ 1/r²，以外缘厚 1.0 为基准
+                            thick[k] = Math.Pow(rd / rMid, 2.0);
+                        }
+                        var g = new FlangePlate
+                        {
+                            DiscRadiusMm = rd, HoleRadiusMm = 26.0,
+                            TabEndXMm = tabX, TabEndHalfWidthMm = halfW,
+                            ThicknessMm = 1.0, ThickenedMm = 1.0, InsulBoundaryXMm = 1e9,
+                            DiscStepRadiiMm = nStep > 1 ? radii : Array.Empty<double>(),
+                            DiscStepThicknessMm = nStep > 1 ? thick : Array.Empty<double>()
+                        };
+                        try
+                        {
+                            var m = FlangeMesher.Build(g, 0, 1.0, 6.0, 70.0);
+                            if (m.CellCount < 50) continue;
+                            var s = DesignScreen.Extract(m, 1000.0, 1050.0, g.Tangent().X);
+                            double psi = s.AreaMm2 * s.ShapeJ * s.ShapeJ / s.ShapeR;
+                            if (nStep == 1) psiFlat = psi;
+                            double ratio = nStep > 1 ? thick[0] : 1.0;
+                            Console.WriteLine($"{$"Ø{2 * rd:0}/舌{-tabX:0}/半宽{halfW:0}",20}" +
+                                $"{(nStep == 1 ? "等厚" : nStep.ToString()),6}{ratio,9:0.00}" +
+                                $"{s.ShapeR,9:0.000}{s.ShapeJ,10:0.0000}{psi,9:0.00}" +
+                                $"{(double.IsNaN(psiFlat) ? 1 : psi / psiFlat),9:0.00}" +
+                                $"  {(psi <= 1.0 ? "✓ Ψ≤1" : psi < 1.5 ? "≈" : "✗")}");
+                        }
+                        catch { }
+                    }
+                    Console.WriteLine();
+                }
+                Console.WriteLine("厚度比 = 孔周环厚 ÷ 外缘厚。级数越多越逼近连续廓形。");
+                Console.WriteLine("Ψ ≤ 1 意味着热自给的板其局部峰值也不超过设计温度 ⇒ C1 与 C2 可同时满足。");
+                return;
+            }
+
+            // --cli --psi   ★ 形状数 Ψ：把「为什么无解」化成一个与电流/厚度/保温全无关的纯几何量
+            //
+            // 热自给（C2）要求 整片发热 = 整片散热，即 ρe·J_rms²·t = 2q″。
+            // 而局部峰值处的单位面积发热是 ρe·J_max²·t。两式相除：
+            //
+            //     峰值发热 / 散热 = (J_max/J_rms)² ≡ **Ψ**
+            //
+            // 代入形状因子（J_max = ΣJ·I/t，整片发热 = I²ρe·ΣR/t）：
+            //
+            //     Ψ = A·ΣJ² / ΣR      ← **电流 I、厚度 t、保温 q″ 全部约掉了**
+            //
+            // ⇒ Ψ 是**纯形状数**。只要 Ψ>1，热自给的板其峰值处就必然发热大于散热，
+            //   靠横向导热往外泄，局部温度必然高于设计温度。**这就是 674 例全挂的根**。
+            if (args.Contains("--psi"))
+            {
+                Console.WriteLine("=== 形状数 Ψ = A·ΣJ²/ΣR = (J_max/J_rms)² ===");
+                Console.WriteLine("热自给(C2) ⇒ J_rms = J_lim ⇒ 峰值处单位面积发热是散热的 Ψ 倍");
+                Console.WriteLine("**电流、厚度、保温全部约掉** —— Ψ 只由形状决定，是 C1 能否满足的第一性判据");
+                Console.WriteLine();
+                Console.WriteLine($"{"形状",22}{"净面积 mm²",12}{"ΣR",9}{"ΣJ",10}{"Ψ",9}" +
+                                  $"{"峰值温比",10}  判定");
+
+                double tRef2 = 1150 + 273.15;
+                foreach (double rd in new[] { 30.0, 34.0, 44.0, 60.0 })
+                    foreach (double tabX in new[] { -50.0, -120.0, -200.0 })
+                        foreach (double halfW in new[] { 20.0, 40.0 })
+                        {
+                            var g = new FlangePlate
+                            {
+                                DiscRadiusMm = rd, HoleRadiusMm = 26.0,
+                                TabEndXMm = tabX, TabEndHalfWidthMm = halfW,
+                                ThicknessMm = 1.0, ThickenedMm = 1.0, InsulBoundaryXMm = 1e9
+                            };
+                            if (rd >= Math.Sqrt(tabX * tabX + halfW * halfW)) continue;
+                            try
+                            {
+                                var m = FlangeMesher.Build(g, 0, 1.5, 9.0, 50.0);
+                                if (m.CellCount < 50) continue;
+                                var s = DesignScreen.Extract(m, 1000.0, 1050.0, g.Tangent().X);
+                                double psi = s.AreaMm2 * s.ShapeJ * s.ShapeJ / s.ShapeR;
+                                // 局部平衡温度：q ∝ T⁴（辐射主导）⇒ 温比 = Ψ^(1/4)（绝对温标）
+                                double tPeak = tRef2 * Math.Pow(psi, 0.25) - 273.15;
+                                Console.WriteLine($"{$"Ø{2 * rd:0}/舌{-tabX:0}/半宽{halfW:0}",22}" +
+                                    $"{s.AreaMm2,12:0}{s.ShapeR,9:0.000}{s.ShapeJ,10:0.0000}" +
+                                    $"{psi,9:0.00}{tPeak,10:0}  {(psi <= 1.0 ? "✓" : "✗ Ψ>1")}");
+                            }
+                            catch { }
+                        }
+
+                Console.WriteLine();
+                Console.WriteLine("「峰值温比」= 辐射主导下局部平衡温度 = T_工作·Ψ^(1/4)（绝对温标），");
+                Console.WriteLine("  未计横向导热，故是**上界**；壳解实测比它低（导热把热点摊开）。");
+                Console.WriteLine();
+                Console.WriteLine("── 理论下界：即使**完全轴对称**进电，Ψ 也不会到 1");
+                Console.WriteLine("  环形板径向流：K ∝ 1/r ⇒ J ∝ 1/(r·t)。等厚时");
+                double r0 = 26, rr = 60;
+                double jrms2 = Math.Log(rr / r0) / ((rr * rr - r0 * r0) / 2);
+                double jmax2 = 1.0 / (r0 * r0);
+                Console.WriteLine($"    Ψ_轴对称 = (1/r0²)/(ln(R/r0)/((R²−r0²)/2)) = {jmax2 / jrms2:0.00}" +
+                                  $"（r0=26, R=60）");
+                Console.WriteLine("  ⇒ **对称进电只能把 Ψ 从 3–6 降到约 2.6，仍然 >1。**");
+                Console.WriteLine();
+                Console.WriteLine("── 唯一能把 Ψ 压到 1 的办法：**厚度按 t ∝ 1/r² 渐变**");
+                Console.WriteLine("  局部单位面积发热 = ρe·K²/t，而径向流 K ∝ 1/r ⇒ 令 t ∝ 1/r² 则处处相等。");
+                Console.WriteLine($"  r 从 26 到 60 ⇒ 厚度比 (60/26)² = {Math.Pow(rr / r0, 2):0.0}× —— 孔周最厚、外缘最薄。");
+                Console.WriteLine("  这正是用户给的「厚度可阶梯式分布」，用多级台阶逼近即可（--grade）。");
+                return;
+            }
+
             // --cli --stepopt [--f 系数]   ★ 阶梯厚度：用户给的 X1-A，直接对着 C1 的病根
             //
             // 等厚板在 648 个配置里全部挂 C1（孔周局部过热），而机理是明确的：
@@ -1992,7 +2124,7 @@ internal static class Program
 
                         string cfg = $"壁{wall:0.0}/纤维{ins:0.0}/{finsName}/夹" +
                                      (clampC < 0 ? "无" : $"{clampC:0}");
-                        int nFeas = 0, nFailC1 = 0, nFailC2 = 0, nNoBracket = 0;
+                        int nFeas = 0, nFeasRelaxed = 0, nFailC1 = 0, nFailC2 = 0, nNoBracket = 0;
                         var lines = new List<string>();
 
                         foreach (double rd in new[] { 34.0, 44.0, 60.0 })
@@ -2030,21 +2162,28 @@ internal static class Program
                                     double tSol = 0.5 * (lo + hi);
                                     var r3 = Probe(g, tSol, iPlate, tRoot, q);
                                     bool okC2 = r3.draw > 0 && r3.draw <= budget;
+                                    // C1 有两种读法，差别很大，一并给出：
+                                    //   严：局部峰值 ≤ 管温（本条使 674 例全挂）
+                                    //   宽：净热流方向安全（draw>0，即不倒灌，用户描述的「功率往法兰堆」没发生）
+                                    //       且局部峰值离铂熔点 1768 °C 有 200 K 裕度
                                     bool okC1 = r3.tmax <= tRoot + 1e-6;
+                                    bool okC1Relaxed = r3.draw > 0 && r3.tmax <= RampTwoNode.PtMeltingC - 200;
                                     if (okC1 && okC2) nFeas++;
                                     else if (!okC1) nFailC1++;
                                     else nFailC2++;
-                                    // 只留可行的与「最接近可行」的（局部峰值超出 ≤200 K）以免刷屏
-                                    if ((okC1 && okC2) || r3.tmax - tRoot < 200)
+                                    if (okC1Relaxed && okC2) nFeasRelaxed++;
+                                    // 留下：严判可行的、宽判可行的、以及接近的
+                                    if ((okC1 && okC2) || (okC1Relaxed && okC2) || r3.tmax - tRoot < 200)
                                         lines.Add($"{$"Ø{2 * rd:0}/舌{-tabX:0}",16}{kind,7}{tSol,8:0.000}" +
                                             $"{r3.draw,9:+0.0;-0.0}{r3.tmax,10:0}{r3.phi,8:0.000}" +
                                             $"{r3.jmax,8:0.00}{r3.mass,9:0}  " +
-                                            (okC2 ? "✓C2" : "✗C2") + (okC1 ? " ✓C1" : " ✗C1"));
+                                            (okC2 ? "✓C2" : "✗C2") + (okC1 ? " ✓C1严" : " ✗C1严")
+                                            + (okC1Relaxed ? " ✓C1宽" : " ✗C1宽"));
                                 }
                             }
 
                         Console.WriteLine($"── {cfg,-30} 段电流 {iSeg:0} A  C2预算 {budget:0.0} W  " +
-                                          $"→ 可行 {nFeas} / C1挂 {nFailC1} / C2挂 {nFailC2} / 无解区间 {nNoBracket}");
+                                          $"→ 严判可行 {nFeas} / **宽判可行 {nFeasRelaxed}** / C1挂 {nFailC1} / C2挂 {nFailC2} / 无区间 {nNoBracket}");
                         if (lines.Count > 0)
                         {
                             Console.WriteLine($"   {"形状",16}{"片",7}{"厚 mm",8}{"抽热 W",9}{"最高 °C",10}" +
