@@ -1802,6 +1802,377 @@ internal static class Program
                 return;
             }
 
+            // --cli --plateopt [--f 系数]   逐片形状优化：**厚度二分放进壳解里**
+            //
+            // 阶段 A 的闭式对法兰是**不够的**（2026-08-11 实测）：它假设整片均温 = 管根温度，
+            // 而真实温度场极不均匀（单侧舌片进电 ⇒ 孔周电流集中，J_max/J_mean = 2.17），
+            // 于是闭式选出的厚度在完整场解下给出 1000–3400 °C 的局部峰值与 38–197 K 的管根温差。
+            //
+            // 本命令对每个 (形状, 电流) 用**壳解本身**二分厚度，判据全部取自场解：
+            //   · 抽热 QFromTubeW（能量恒等式给出，§7）落在 C2 预算内且为正
+            //   · 局部最高温 TMaxC ≤ 工作温度（C1，真正管住局部的那一条）
+            if (args.Contains("--plateopt"))
+            {
+                int fi4 = Array.IndexOf(args, "--f");
+                double fSh = fi4 >= 0 && fi4 + 1 < args.Length && double.TryParse(args[fi4 + 1], out var fv4)
+                             ? fv4 : Math.Sqrt(3.0);
+                const double tMin = 0.4, tMax = 8.0;
+
+                Console.WriteLine("=== 逐片形状优化（厚度二分在壳解内做，判据全取自场解）===");
+                Console.WriteLine($"共用片叠加系数 f = {fSh:0.000}；厚度区间 [{tMin:0.0}, {tMax:0.0}] mm");
+                Console.WriteLine();
+
+                // 评估一片：给定形状与厚度，跑 FV 电流场 + FV 温度场
+                (double draw, double tmax, double phi, double jmax, double mass, bool ok)
+                Probe(FlangePlate g, double t, double iPlate, double tRootC, DesignInputs q)
+                {
+                    try
+                    {
+                        var gg = new FlangePlate
+                        {
+                            DiscRadiusMm = g.DiscRadiusMm, HoleRadiusMm = g.HoleRadiusMm,
+                            TabEndXMm = g.TabEndXMm, TabEndHalfWidthMm = g.TabEndHalfWidthMm,
+                            ThicknessMm = t, ThickenedMm = t, InsulBoundaryXMm = 1e9
+                        };
+                        var m = FlangeMesher.Build(gg, 0, 2.0, 11.0, 45.0);
+                        if (m.CellCount < 50) return (0, 0, 0, 0, 0, false);
+                        var sc2 = ShellCurrent.Solve(m, iPlate,
+                                      Materials.PtResistivity(tRootC) * 1e3, tRootC);
+                        var q2 = SegmentSolver.Clone(q); q2.TSetC = tRootC;
+                        var th2 = ShellThermal.Solve(m, sc2.JMagAPerMm2, q2, tRootC, 1e9);
+                        return (th2.QFromTubeW, th2.TMaxC, th2.PhiOverall, sc2.JMaxAPerMm2,
+                                m.VolumeMm3 * Materials.PtDensity * 1e-6, th2.Converged);
+                    }
+                    catch { return (0, 0, 0, 0, 0, false); }
+                }
+
+                foreach (double wall in new[] { 0.4, 0.6, 0.8, 1.0 })
+                    foreach (double ins in new[] { 2.5, 10.0, 20.0 })
+                    {
+                        var q = SegmentSolver.Clone(p);
+                        q.Layer1.ThicknessMm = ins; q.Layer1.Enabled = true;
+                        q.WallMinMm = wall; q.FlangeInsulThickMm = 0; q.FlangeInsulated = false;
+
+                        double budget = DesignScreen.DrawBudgetW(q, wall, 1150, 10.0);
+
+                        // 段电流（空管稳态口径）
+                        double ri = q.TubeIdMm * 0.5e-3, w2 = wall * 1e-3, rO = ri + w2;
+                        double aM2 = Math.PI * (rO * rO - ri * ri);
+                        double lossW = Insulation.CylinderLoss(1150, q.TAmbC, rO, q.Layers,
+                                           q.OuterEmissivity, false, q.TubeLength, q.LossScale).QPerLength
+                                       * q.TubeLength;
+                        double iSeg = Math.Sqrt(lossW / (Materials.PtResistivity(1150) * q.TubeLength / aM2));
+
+                        Console.WriteLine($"── 管壁 {wall:0.0} mm / 纤维 {ins:0.0} mm：段电流 {iSeg:0} A，" +
+                                          $"C2 预算 {budget:0.0} W");
+                        Console.WriteLine($"{"形状",20}{"片",7}{"厚 mm",8}{"抽热 W",9}{"最高 °C",10}" +
+                                          $"{"Φ",8}{"J_max",8}{"铂重 g",9}  判定");
+
+                        foreach (double rd in new[] { 34.0, 44.0, 60.0 })
+                            foreach (double tabX in new[] { -50.0, -120.0, -200.0 })
+                            {
+                                var g = new FlangePlate
+                                {
+                                    DiscRadiusMm = rd, HoleRadiusMm = 26.0,
+                                    TabEndXMm = tabX, TabEndHalfWidthMm = Math.Min(40.0, rd - 4),
+                                    InsulBoundaryXMm = 1e9
+                                };
+                                if (rd >= Math.Sqrt(tabX * tabX + g.TabEndHalfWidthMm * g.TabEndHalfWidthMm))
+                                    continue;
+
+                                foreach (var (kind, iPlate, tRoot) in new[]
+                                {
+                                    ("端片", iSeg, 1150.0),
+                                    ("共用", fSh * iSeg, 1150.0)
+                                })
+                                {
+                                    // 抽热随厚度单调增（越厚发热越少）⇒ 二分求 draw = budget/2
+                                    double lo = tMin, hi = tMax;
+                                    var fLo = Probe(g, lo, iPlate, tRoot, q);
+                                    var fHi = Probe(g, hi, iPlate, tRoot, q);
+                                    if (!fLo.ok || !fHi.ok) continue;
+                                    double target = budget * 0.5;
+                                    if (fLo.draw > target || fHi.draw < target)
+                                    {
+                                        Console.WriteLine($"{$"Ø{2 * rd:0}/舌{-tabX:0}",20}{kind,7}" +
+                                            $"   ✗ [{lo:0.0},{hi:0.0}] 内抽热不跨 {target:0.0} W" +
+                                            $"（{fLo.draw:+0;-0} … {fHi.draw:+0;-0} W）");
+                                        continue;
+                                    }
+                                    for (int it2 = 0; it2 < 10; it2++)
+                                    {
+                                        double mid = 0.5 * (lo + hi);
+                                        var fm = Probe(g, mid, iPlate, tRoot, q);
+                                        if (!fm.ok) break;
+                                        if (fm.draw < target) lo = mid; else hi = mid;
+                                    }
+                                    double tSol = 0.5 * (lo + hi);
+                                    var r3 = Probe(g, tSol, iPlate, tRoot, q);
+                                    bool okC2 = r3.draw > 0 && r3.draw <= budget;
+                                    bool okC1 = r3.tmax <= tRoot + 1e-6;
+                                    string v = (okC2 ? "✓C2" : "✗C2") + (okC1 ? " ✓C1" : " ✗C1局部过热");
+                                    Console.WriteLine($"{$"Ø{2 * rd:0}/舌{-tabX:0}",20}{kind,7}{tSol,8:0.000}" +
+                                        $"{r3.draw,9:+0.0;-0.0}{r3.tmax,10:0}{r3.phi,8:0.000}" +
+                                        $"{r3.jmax,8:0.00}{r3.mass,9:0}  {v}");
+                                }
+                            }
+                        Console.WriteLine();
+                    }
+                Console.WriteLine("读法：两条同时 ✓ 才是可行片。C1 卡住说明孔周局部过热 ——");
+                Console.WriteLine("  单侧舌片进电使电流在孔周一侧集中（J_max/J_mean ≈ 2.17），");
+                Console.WriteLine("  这是**形状**问题，不是厚度问题：加厚会同时把抽热推出 C2 预算。");
+                return;
+            }
+
+            // --cli --optimize [--f 系数] [--verify N]   按总纲求最小铂重
+            //
+            // 两阶段。**报告值一律取第二阶段**（完整 FV 场解 + 段↔法兰耦合解），
+            // 第一阶段只用来把候选从上万个压到几个 —— 它是搜索加速器，不是结论来源。
+            //
+            //   阶段 A（解析筛选，微秒/点）：每个**形状**跑一次壳电流场取形状因子
+            //     （R = ρe·ΣR/t，J_max = ΣJ·I/t），之后厚度与电流的扫描全是闭式；
+            //     用 §4.2v 的自给质量式与三条闭式判据排除不可行点。
+            //   阶段 B（第一性，分钟/点）：对存活的前 N 名，用 LineRunner 跑整线耦合解 ——
+            //     变步长壳网格 → 有限体积电流场 → 有限体积温度场 → 段↔法兰欠松弛耦合到收敛，
+            //     取真实的管根温差、逐片局部最高温、玻璃温降与铂重。
+            if (args.Contains("--optimize"))
+            {
+                int fi3 = Array.IndexOf(args, "--f");
+                double fShared = fi3 >= 0 && fi3 + 1 < args.Length && double.TryParse(args[fi3 + 1], out var fv3)
+                                 ? fv3 : Math.Sqrt(3.0);
+                int vi = Array.IndexOf(args, "--verify");
+                int nVerify = vi >= 0 && vi + 1 < args.Length && int.TryParse(args[vi + 1], out var nv) ? nv : 3;
+
+                double[] setpoints = { 1150, 1080, 1050 };
+                const double tMinMm = 0.4;           // 用户给的「太薄没意义」下界
+                int nSeg = setpoints.Length;
+
+                Console.WriteLine("=== 按总纲求最小铂重（HANDOVER §0.0）===");
+                Console.WriteLine($"目标 min 整线总铂重；C1 升温可达且不烧；C2 稳态管根温差 0<ΔT<10 K");
+                Console.WriteLine($"厚度下界 {tMinMm:0.0} mm（用户给定）；共用片叠加系数 f = {fShared:0.000}");
+                Console.WriteLine($"四片允许各自独立；法兰保温按「不包」（§4.2v：包纤维使自给质量涨 23 %）");
+                Console.WriteLine();
+
+                // ── 形状库：圆盘半径 × 舌片长度 × 舌片末端半宽
+                //    每个形状只解一次电流场，之后全解析
+                var shapes = new List<(string name, FlangePlate g, DesignScreen.ShapeFactors sf)>();
+                Console.WriteLine("阶段 A ①：提取形状因子（每个形状解一次壳电流场）…");
+                foreach (double rd in new[] { 30.0, 34.0, 38.0, 44.0, 50.0, 60.0 })
+                    foreach (double tabX in new[] { -50.0, -80.0, -120.0, -200.0 })
+                        foreach (double halfW in new[] { 20.0, 30.0, 40.0, 55.0 })
+                        {
+                            var g = new FlangePlate
+                            {
+                                DiscRadiusMm = rd,
+                                HoleRadiusMm = 26.0,
+                                TabEndXMm = tabX,
+                                TabEndHalfWidthMm = halfW,
+                                ThicknessMm = 1.0,
+                                ThickenedMm = 1.0,
+                                InsulBoundaryXMm = 1e9      // 全裸（不包保温）
+                            };
+                            // 切点存在的条件：R ≤ |P|，P = (|tabX|, halfW)。梯形向外张开是允许的，
+                            // 故不再要求 halfW < R（早先那条守卫把所有小圆盘都误杀了）。
+                            if (rd >= Math.Sqrt(tabX * tabX + halfW * halfW)) continue;
+                            if (rd <= 26.0 + 2.0) continue;  // 圆盘必须比管孔大出可用的一圈
+                            try
+                            {
+                                var m = FlangeMesher.Build(g, 0, 2.0, 11.0, 45.0);
+                                if (m.CellCount < 50) continue;
+                                var s = DesignScreen.Extract(m, 1000.0, 1050.0, g.Tangent().X);
+                                s.Name = $"Ø{2 * rd:0}/舌{-tabX:0}/半宽{halfW:0}";
+                                shapes.Add((s.Name, g, s));
+                            }
+                            catch { /* 该形状网格退化，跳过 */ }
+                        }
+                Console.WriteLine($"  可用形状 {shapes.Count} 个");
+                Console.WriteLine($"{"形状",22}{"净面积 mm²",12}{"ΣR",9}{"ΣJ",10}");
+                foreach (var (nm, _, s) in shapes)
+                    Console.WriteLine($"{nm,22}{s.AreaMm2,12:0}{s.ShapeR,9:0.000}{s.ShapeJ,10:0.0000}");
+                Console.WriteLine();
+
+                // ── 段电流：空管口径的稳态工作点（阶段 B 会用真实耦合解替换）
+                double SegCurrent(double wallMm, double insMm, double tSet)
+                {
+                    var q = SegmentSolver.Clone(p);
+                    q.Layer1.ThicknessMm = insMm; q.Layer1.Enabled = true;
+                    double ri = q.TubeIdMm * 0.5e-3, w = wallMm * 1e-3, rOut = ri + w;
+                    double areaM2 = Math.PI * (rOut * rOut - ri * ri);
+                    bool anyIns = false;
+                    foreach (var l in q.Layers) if (l.Enabled && l.ThicknessMm > 1e-6) anyIns = true;
+                    double eps = anyIns ? q.OuterEmissivity : q.PtEmissivity;
+                    double lossW = Insulation.CylinderLoss(tSet, q.TAmbC, rOut, q.Layers, eps,
+                                       q.Posture == PtOptimize.Core.Orientation.Vertical,
+                                       q.TubeLength, q.LossScale).QPerLength * q.TubeLength;
+                    double rOhm = Materials.PtResistivity(tSet) * q.TubeLength / areaM2;
+                    return Math.Sqrt(lossW / rOhm);
+                }
+
+                // ── 阶段 A ②：网格搜索
+                Console.WriteLine("阶段 A ②：网格搜索（管壁 × 管保温 × 逐片形状 × 厚度）…");
+                var cands = new List<(double mass, double wall, double ins, string[] shapeNames,
+                                      FlangePlate[] plates, double[] amps, string note)>();
+
+                foreach (double wall in new[] { 0.4, 0.5, 0.6, 0.8, 1.0 })
+                    foreach (double ins in new[] { 2.5, 5.0, 10.0, 20.0, 40.0, 60.0 })
+                    {
+                        var q = SegmentSolver.Clone(p);
+                        q.Layer1.ThicknessMm = ins; q.Layer1.Enabled = true;
+                        q.WallMinMm = wall;
+
+                        var amps = new double[nSeg];
+                        for (int i = 0; i < nSeg; i++) amps[i] = SegCurrent(wall, ins, setpoints[i]);
+
+                        double budget = DesignScreen.DrawBudgetW(q, wall, setpoints[0], 10.0);
+                        double areaTubeMm2 = Math.PI * wall * (q.TubeIdMm + wall);
+                        double tubeMass = areaTubeMm2 * q.TubeLengthMm * Materials.PtDensity * 1e-6 * nSeg;
+
+                        var bestPlates = new FlangePlate[nSeg + 1];
+                        var bestNames = new string[nSeg + 1];
+                        double flangeMass = 0;
+                        bool allOk = true;
+
+                        for (int j2 = 0; j2 <= nSeg; j2++)
+                        {
+                            double iJoint = j2 == 0 ? amps[0]
+                                          : j2 >= nSeg ? amps[nSeg - 1]
+                                          : fShared * 0.5 * (amps[j2 - 1] + amps[j2]);
+                            double tRoot = setpoints[Math.Min(j2, nSeg - 1)];
+                            double qFlux = DesignScreen.PlateFluxWPerM2(q, tRoot, 0) * 1e-6;  // W/mm²
+                            double rhoMm = Materials.PtResistivity(tRoot) * 1e3;
+
+                            double bestM = double.MaxValue; FlangePlate? bestG = null; string bestN = "";
+                            foreach (var (nm, g, s) in shapes)
+                            {
+                                // Φ=1 所需厚度 —— 自给点
+                                double tReq = iJoint * iJoint * rhoMm * s.ShapeR / (2.0 * s.AreaMm2 * qFlux);
+                                double loss = 2.0 * s.AreaMm2 * qFlux;
+                                // ★ 靶不是 Φ=1（那是悬崖边，§4.2k），而是抽热取预算的一半 ——
+                                //   从**安全侧**逼近：draw>0 表示法兰比管冷，方向安全。
+                                //   draw = loss·(1 − tReq/t) = budget/2  ⇒  t = tReq/(1 − budget/(2·loss))
+                                double t = tReq / Math.Max(1e-6, 1.0 - budget / (2.0 * loss));
+                                if (t < tMinMm) continue;      // 撞 0.4 下界：该形状在此电流下太大，法兰必然过厚
+                                double gen = iJoint * iJoint * rhoMm * s.ShapeR / t;
+                                double draw = loss - gen;                       // >0 = 从管子抽热
+                                if (draw <= 0 || draw > budget) continue;        // C2（单边）
+                                // C1：法兰的平衡温度 ≤ 工作温度。draw>0 ⇒ Φ<1 ⇒ 平衡点在工作温度之下，
+                                //     本条已被上面的 C2 单边判据覆盖。
+                                //
+                                // ⚠ 这里**不再**用逐点 J ≤ J_lim 当硬过滤：
+                                //   Φ=1 的含义是**面均**发热 = 散热，即 J_rms = J_lim；
+                                //   而 J_max/J_rms ≈ 2.17（孔周峰值）⇒ J_max²/J_rms² ≈ 3.7，
+                                //   **任何 Φ≤1 的形状，逐点判据都必然超 3.7 倍** —— 两者互斥。
+                                //   原因是逐点判据不含横向导热，而铂板翅片长度 ≈24 mm 与圆盘径向尺寸同量级，
+                                //   孔周热点会被周围拉住。**局部峰值一律交给阶段 B 的壳温度场解判。**
+                                double jmax = s.ShapeJ * iJoint / t;
+
+                                // ⚠ 也不用「冷启比值 f²(R_f/C_f) ≤ R_t/C_t」当硬约束：
+                                //   升温时管子是被刻意慢慢加热的，法兰会很快升到**自己的平衡点**并停住；
+                                //   对 Φ≤1 的设计那个平衡点 ≤ 工作温度，并不烧。
+                                //   照字面把「法兰 ≤ 管温」用在升温段等于禁止任何升温 —— 不是该规则的本意
+                                //   （它是稳态规则，由 C2 的 ΔT>0 覆盖）。现役件烧毁是因为 Φ=1.51。
+                                double m = s.MassG(t);
+                                if (m < bestM)
+                                {
+                                    bestM = m; bestN = $"{nm}/t{t:0.00}";
+                                    bestG = new FlangePlate
+                                    {
+                                        DiscRadiusMm = g.DiscRadiusMm, HoleRadiusMm = 26.0,
+                                        TabEndXMm = g.TabEndXMm, TabEndHalfWidthMm = g.TabEndHalfWidthMm,
+                                        ThicknessMm = t, ThickenedMm = t, InsulBoundaryXMm = 1e9
+                                    };
+                                }
+                            }
+                            if (bestG is null) { allOk = false; break; }
+                            bestPlates[j2] = bestG; bestNames[j2] = bestN; flangeMass += bestM;
+                        }
+                        if (!allOk) continue;
+                        cands.Add((tubeMass + flangeMass, wall, ins, bestNames, bestPlates, amps,
+                                   $"管 {tubeMass:0} + 法兰 {flangeMass:0}"));
+                    }
+
+                cands.Sort((a, b) => a.mass.CompareTo(b.mass));
+                Console.WriteLine($"  可行候选 {cands.Count} 个");
+                Console.WriteLine();
+                if (cands.Count == 0)
+                {
+                    Console.WriteLine("✗ 阶段 A 无可行解 —— 说明三条闭式判据在给定的形状库与下界内无交集。");
+                    Console.WriteLine("  放宽方向：更小的圆盘/更短的舌片（减 A、减 ΣR）、更低的 f、更厚的管保温。");
+                    return;
+                }
+
+                Console.WriteLine($"{"排名",5}{"总铂 g",10}{"管壁",7}{"纤维",7}{"入口片",26}{"共用片1",26}");
+                for (int k = 0; k < Math.Min(10, cands.Count); k++)
+                {
+                    var c2 = cands[k];
+                    Console.WriteLine($"{k + 1,5}{c2.mass,10:0}{c2.wall,7:0.0}{c2.ins,7:0.0}" +
+                                      $"{c2.shapeNames[0],26}{c2.shapeNames[1],26}");
+                }
+                Console.WriteLine();
+
+                // ── 阶段 B：第一性复核
+                Console.WriteLine($"阶段 B：对前 {nVerify} 名跑完整耦合解（FV 电流场 + FV 温度场 + 段↔法兰迭代）");
+                Console.WriteLine("        —— 报告值以此为准，阶段 A 只是筛选");
+                Console.WriteLine();
+
+                for (int k = 0; k < Math.Min(nVerify, cands.Count); k++)
+                {
+                    var c2 = cands[k];
+                    Console.WriteLine($"───── 候选 #{k + 1}：管壁 {c2.wall:0.0} mm，纤维 {c2.ins:0.0} mm，" +
+                                      $"阶段 A 估 {c2.mass:0} g");
+
+                    var baseP = SegmentSolver.Clone(p);
+                    baseP.Layer1.ThicknessMm = c2.ins; baseP.Layer1.Enabled = true;
+                    baseP.WallMinMm = c2.wall;
+                    baseP.FlangeInsulThickMm = 0; baseP.FlangeInsulated = false;
+
+                    var lc = new LineCase
+                    {
+                        Base = baseP,
+                        WallMm = c2.wall,
+                        UseMeasuredCurrent = false,        // 由控温反算 —— 第一性
+                        FlangePlates = c2.plates,
+                        SetpointC = setpoints,
+                        CheckRamp = true
+                    };
+
+                    LineResult lr;
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    try { lr = LineRunner.Run(lc, new SyncProgress<string>(_ => { })); }
+                    catch (Exception ex) { Console.WriteLine($"  ✗ 求解异常：{ex.Message}"); continue; }
+                    sw.Stop();
+                    if (!lr.Ok) { Console.WriteLine($"  ✗ {lr.Message}"); continue; }
+                    Console.WriteLine($"  用时 {sw.Elapsed.TotalMinutes:0.0} min   " +
+                                      $"收敛 {(lr.Converged ? "✓" : "✗ —— 本候选的数不可用")}");
+                    if (!lr.Converged) { foreach (var nt in lr.Notes) Console.WriteLine("    " + nt); continue; }
+
+                    Console.WriteLine($"  {"段",6}{"电流 A",9}{"管 J",8}{"管根 °C",10}{"衔接温差 K",12}{"管重 g",9}");
+                    foreach (var s2 in lr.Segments)
+                        Console.WriteLine($"  {s2.Name,6}{s2.CurrentA,9:0}{s2.TubeJAPerMm2,8:0.00}" +
+                            $"{s2.TRootC,10:0.0}{s2.RootDeltaK,12:+0.0;-0.0}{s2.MassG,9:0}");
+                    Console.WriteLine($"  {"法兰",10}{"电流 A",9}{"J_max",8}{"Φ",8}{"抽热 W",9}" +
+                                      $"{"最高 °C",10}{"铂重 g",9}");
+                    foreach (var f2 in lr.Flanges)
+                        Console.WriteLine($"  {f2.Name,10}{f2.CurrentA,9:0}{f2.JMaxAPerMm2,8:0.00}" +
+                            $"{f2.Phi,8:0.000}{f2.QFromTubeW,9:+0;-0}{f2.TMaxC,10:0.0}{f2.MassG,9:0}");
+                    Console.WriteLine($"  判据：");
+                    foreach (var ck in lr.Checks)
+                    {
+                        string mark = ck.Kind == CheckKind.HardSafety ? "★"
+                                    : ck.Kind == CheckKind.Target ? "○" : "·";
+                        string vd = ck.Kind == CheckKind.Reference ? "—"
+                                  : ck.Undetermined ? "?" : ck.Ok ? "✓" : "✗";
+                        string act = double.IsNaN(ck.Actual) ? "达不到" : ck.Actual.ToString("0.000");
+                        Console.WriteLine($"    {mark}{ck.Name,-20}{act,12} / {ck.Limit,-10:0.000} {vd}  {ck.Where}");
+                    }
+                    Console.WriteLine($"  ★ 整线总铂 {lr.TotalMassG:0} g（管 {lr.TubeMassG:0} + 法兰 {lr.FlangeMassG:0}）" +
+                                      $"   基准 {lr.BaselineMassG:0} g   省 {lr.SavingPct:0.0} %");
+                    Console.WriteLine($"    玻璃温降 模型 {lr.GlassDropModelK:0.0} / 实测 {lr.GlassDropMeasuredK:0.0} K");
+                    Console.WriteLine();
+                }
+                return;
+            }
+
             // --cli --gate1   第一步：能不能升到目标温度（管侧）
             //
             // ★ 顺序很重要（用户 2026-08-11 纠正）：**升温到目标温度是第一步，

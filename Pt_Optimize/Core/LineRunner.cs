@@ -37,6 +37,16 @@ public sealed class LineCase
     /// </summary>
     public double[] MeasuredCurrentA = { 1655, 1510, 1446 };
 
+    /// <summary>
+    /// **解析几何**的法兰（长度 = 段数+1）。非空时**优先于** <see cref="FlangeFile3dm"/>。
+    ///
+    /// 用途：参数化搜索阶段用它遍历形状（圆盘半径、舌片长宽、阶梯厚度分布），
+    /// 定下来之后再由 Rhino 出 .3dm 走 <see cref="FlangeFile3dm"/> 复核。
+    /// 两条路进的是**同一个** ShellMesh → ShellCurrent → ShellThermal，
+    /// 差别只在厚度场是解析给的还是量出来的（§4.2j 已做过两者的回归）。
+    /// </summary>
+    public FlangePlate[] FlangePlates = Array.Empty<FlangePlate>();
+
     // ── 法兰（每片一个 .3dm，长度 = 段数+1；可重复同一文件）
     public string[] FlangeFile3dm = Array.Empty<string>();
     public string FlangeLayer = "法兰";
@@ -217,8 +227,8 @@ public static class LineRunner
         if (n < 1) { res.Ok = false; res.Message = "段数不能为 0"; return res; }
         if (c.UseMeasuredCurrent && c.MeasuredCurrentA.Length < n)
         { res.Ok = false; res.Message = $"实测电流只给了 {c.MeasuredCurrentA.Length} 个，需要 {n} 个"; return res; }
-        if (c.FlangeFile3dm.Length == 0)
-        { res.Ok = false; res.Message = "未指定法兰 .3dm"; return res; }
+        if (c.FlangeFile3dm.Length == 0 && c.FlangePlates.Length == 0)
+        { res.Ok = false; res.Message = "未指定法兰几何（.3dm 或解析 FlangePlate 二选一）"; return res; }
 
         // 各段两端的法兰抽热 W（由壳温度场回灌）。首轮未知，置 0；
         // ★ 必须显式回灌：不设 FlangeDrawOverrideSet 时 SegmentSolver 会**静默回退到
@@ -284,14 +294,28 @@ public static class LineRunner
         for (int j = 0; j < nf; j++)
         {
             cancel.ThrowIfCancellationRequested();
-            string file = c.FlangeFile3dm[Math.Min(j, c.FlangeFile3dm.Length - 1)];
+            bool analytic = c.FlangePlates.Length > 0;
+            var plate = analytic ? c.FlangePlates[Math.Min(j, c.FlangePlates.Length - 1)] : null;
+            string file = analytic ? "" : c.FlangeFile3dm[Math.Min(j, c.FlangeFile3dm.Length - 1)];
             double planeY = j < c.FlangePlaneY.Length ? c.FlangePlaneY[j] : double.NaN;
-            progress?.Report($"法兰 {j + 1}/{nf}：提厚度场 + 建网格 + 解场…");
+            progress?.Report(analytic
+                ? $"法兰 {j + 1}/{nf}：解析几何 + 建网格 + 解场…"
+                : $"法兰 {j + 1}/{nf}：提厚度场 + 建网格 + 解场…");
 
-            var tf = Geometry3dm.LoadThickness(file, c.FlangeLayer, planeY, c.ThicknessStepMm);
             double holeR = c.TubeIdMm * 0.5 + c.WallMm;
-            var mesh = FlangeMesher.BuildFromField(tf, holeR, 0,
+            ShellMesh mesh;
+            if (analytic)
+            {
+                // 管孔必须跟着管外径走，否则法兰与管子对不上
+                plate!.HoleRadiusMm = holeR;
+                mesh = FlangeMesher.Build(plate, 0, c.MeshFineMm, c.MeshCoarseMm, c.MeshFineRadiusMm);
+            }
+            else
+            {
+                var tf = Geometry3dm.LoadThickness(file, c.FlangeLayer, planeY, c.ThicknessStepMm);
+                mesh = FlangeMesher.BuildFromField(tf, holeR, 0,
                             c.MeshFineMm, c.MeshCoarseMm, c.MeshFineRadiusMm);
+            }
 
             double iJoint = LineSolver.JointCurrentA(amps, j);
             var sc = ShellCurrent.Solve(mesh, iJoint,
@@ -305,8 +329,10 @@ public static class LineRunner
 
             var p2 = SegmentSolver.Clone(c.Base);
             p2.TSetC = c.SetpointC[Math.Min(j, n - 1)];
-            // 保温分界：默认「仅圆盘保温、舌片裸露」（现场实况），取切点
-            double insulX = new FlangePlate().InsulBoundaryXResolved;
+            // 保温分界：解析几何用该片自己的分界（可为「全裸」= +∞ 之外），
+            // .3dm 路径沿用现场实况「仅圆盘保温、舌片裸露」的切点。
+            double insulX = analytic ? plate!.InsulBoundaryXResolved
+                                     : new FlangePlate().InsulBoundaryXResolved;
             var th = ShellThermal.Solve(mesh, sc.JMagAPerMm2, p2, tRoot, insulX);
 
             flanges[j] = new FlangeOut
@@ -323,7 +349,9 @@ public static class LineRunner
                 AreaMm2 = mesh.TotalArea, VolumeMm3 = mesh.VolumeMm3,
                 CellCount = mesh.CellCount,
                 Mesh = mesh, JField = sc.JMagAPerMm2, TField = th.T,
-                Source = System.IO.Path.GetFileName(file)
+                Source = analytic
+                    ? $"解析 Ø{2 * plate!.DiscRadiusMm:0}/舌{-plate.TabEndXMm:0}/t{plate.ThicknessMm:0.00}"
+                    : System.IO.Path.GetFileName(file)
             };
             if (sc.ConservationError > 1e-3)
                 res.Notes.Add($"{flanges[j].Name}：电流守恒误差 {sc.ConservationError:E2}，偏大");
