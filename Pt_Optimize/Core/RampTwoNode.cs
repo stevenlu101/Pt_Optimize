@@ -105,6 +105,46 @@ public static class RampTwoNode
         public double MaxCurrentA = 0;
     }
 
+    /// <summary>
+    /// **准静态升温电流**：温控功率下，管温在 tubeTempC 处、按 rateKPerH 爬坡时所需的段电流。
+    ///
+    ///   I²·R_管(T) = Q_散热(T) + C_管(T)·(dT/dt)
+    ///
+    /// 慢升温下第二项很小（20 °C/h 时约 1 W，而散热是千瓦级），所以电流几乎就是
+    /// 「维持该温度的稳态电流」—— 这正是准静态的含义。
+    ///
+    /// **适用条件**：法兰热时间常数（约 11 min）≪ 升温全程。20 °C/h 全程 56 h，比值 300，
+    /// 完全成立；若要算 3 h 快升温，本式与配套的逐点稳态壳解都**不成立**，须做真瞬态。
+    /// </summary>
+    public static double QuasiStaticCurrentA(DesignInputs p, double wallMm,
+                                             double tubeTempC, double rateKPerH)
+    {
+        double ri = p.TubeIdMm * 0.5e-3, w = wallMm * 1e-3, rOut = ri + w;
+        double area = Math.PI * (rOut * rOut - ri * ri);
+        double L = p.TubeLength;
+
+        bool insulated = false;
+        foreach (var lay in p.Layers) if (lay.Enabled && lay.ThicknessMm > 1e-6) insulated = true;
+        double eps = insulated ? p.OuterEmissivity : p.PtEmissivity;
+
+        double lossW = Insulation.CylinderLoss(tubeTempC, p.TAmbC, rOut, p.Layers, eps,
+                           p.Posture == Orientation.Vertical, L, p.LossScale).QPerLength * L;
+
+        double capMetal = Materials.PtDensity * area * L * Materials.PtCp(tubeTempC);
+        double capInsul = 0, r = rOut;
+        foreach (var lay in p.Layers)
+        {
+            if (!lay.Enabled || lay.ThicknessMm <= 1e-6) continue;
+            double rNext = r + lay.ThicknessMm * 1e-3;
+            capInsul += Math.PI * (rNext * rNext - r * r) * L * lay.DensityKgM3 * lay.CpJKgK * 0.5;
+            r = rNext;
+        }
+
+        double need = lossW + (capMetal + capInsul) * (rateKPerH / 3600.0);
+        double rTube = Materials.PtResistivity(tubeTempC) * L / area;
+        return need <= 0 ? 0 : Math.Sqrt(need / rTube);
+    }
+
     public static RampTwoNodeResult Solve(DesignInputs p, Inputs g)
     {
         var res = new RampTwoNodeResult { Mode = g.Mode };

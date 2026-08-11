@@ -1701,6 +1701,107 @@ internal static class Program
                 return;
             }
 
+            // --cli --jlimit   「不烧断」的电流密度上限 —— 从能量平衡推出，不是经验值
+            //
+            // 一块通电的铂板，单位面积的发热是 ρe·J²·t，散热是两面各一份 q″(T)。
+            // 稳态温度由二者相等定：
+            //
+            //     ρe(T)·J²·t = 2·q″(T)     ⇒     J_lim(T, t) = √( 2 q″(T) / (ρe(T)·t) )
+            //
+            // 同一个式子取不同的 T 就是不同的判据：
+            //   T = 工作温度  → 「法兰不比管热」（用户的硬规则，§4.2k）
+            //   T = 1768 °C   → 物理熔断上限
+            //
+            // ★ 注意 J_lim ∝ 1/√t 而实际 J = K/t ∝ 1/t（深度平均下面电流守恒），
+            //   故加厚使 J_实际/J_lim ∝ 1/√t —— 加厚有用，但**收敛得很慢**。
+            if (args.Contains("--jlimit"))
+            {
+                Console.WriteLine("=== 「不烧断」的电流密度上限（由能量平衡推出）===");
+                Console.WriteLine("判据：ρe(T)·J²·t = 2·q″(T)  ⇒  J_lim = √(2q″/(ρe·t))");
+                Console.WriteLine("  发热 ∝ 板厚（体积项），散热与板厚无关（表面项）⇒ 越厚，允许的 J 越低");
+                Console.WriteLine();
+
+                double charLen = 0.05;
+                var insLayers = new List<InsulationLayer>
+                {
+                    new() { Name = "法兰保温", ThicknessMm = p.FlangeInsulThickMm,
+                            K0 = p.Layer1.K0, K1 = p.Layer1.K1,
+                            Enabled = p.FlangeInsulThickMm > 1e-6 }
+                };
+
+                // q″ 单面 W/m²；bare = 裸铂表面，ins = 包 p.FlangeInsulThickMm 的纤维
+                double QBare(double tC) => Insulation.FlatOuterFlux(tC, p.TAmbC, p.PtEmissivity,
+                                                charLen, p.LossScale, p.FlangeAirVelocityMPerS);
+                double QIns(double tC) => Insulation.PlateFlux(tC, p.TAmbC, insLayers,
+                                                p.OuterEmissivity, charLen, p.LossScale);
+
+                double JLim(double tC, double tMm, bool bare)
+                {
+                    double q = bare ? QBare(tC) : QIns(tC);
+                    double rho = Materials.PtResistivity(tC);          // Ω·m
+                    return Math.Sqrt(2.0 * q / (rho * tMm * 1e-3)) * 1e-6;   // A/mm²
+                }
+
+                foreach (double tC in new[] { 1050.0, 1150.0, RampTwoNode.PtMeltingC })
+                {
+                    string what = tC >= RampTwoNode.PtMeltingC - 1
+                        ? "熔断上限（板自身升到铂熔点）"
+                        : $"「法兰不比管热」（管温 {tC:0} °C）";
+                    Console.WriteLine($"── T = {tC:0} °C：{what}");
+                    Console.WriteLine($"    单面散热 q″：裸露 {QBare(tC) / 1000:0.0} kW/m²   " +
+                                      $"包 {p.FlangeInsulThickMm:0.0} mm 纤维 {QIns(tC) / 1000:0.0} kW/m²");
+                    Console.WriteLine($"{"板厚 mm",9}{"J_lim 裸露",13}{"J_lim 保温",13}   [A/mm²]");
+                    foreach (double t in new[] { 0.5, 1.0, 1.5, 2.0, 3.0, 4.0 })
+                        Console.WriteLine($"{t,9:0.0}{JLim(tC, t, true),13:0.00}{JLim(tC, t, false),13:0.00}");
+                    Console.WriteLine();
+                }
+
+                // ── 对照现役件
+                double jWork = JLim(1150, 2.0, true);
+                Console.WriteLine("── 对照现役件（2.0 mm，圆盘裸露口径）");
+                Console.WriteLine($"    工作温度判据给出 J_lim = {jWork:0.00} A/mm²");
+                Console.WriteLine($"    ★ 这正是代码里一直用的经验值 J_allow = {p.JAllowAPerMm2:0.0} ——");
+                Console.WriteLine("      §4.2i 记的「J_allow=10 的物理依据待定」到此可以划掉：");
+                Console.WriteLine("      它就是 2 mm 裸铂板在工作温度下的自热平衡点。");
+                Console.WriteLine();
+                Console.WriteLine($"    实测场：端片 J_max 14.53 / 共用片 23.97 A/mm²（--run 收敛解）");
+                Console.WriteLine($"    ⇒ 端片超 {14.53 / jWork:0.00}×，共用片超 {23.97 / jWork:0.00}×，" +
+                                  $"共用片同时超过熔断上限 {JLim(RampTwoNode.PtMeltingC, 2.0, true):0.00}");
+                Console.WriteLine();
+
+                // ── 加厚能不能救：J_实际 ∝ 1/t，J_lim ∝ 1/√t
+                Console.WriteLine("── 只靠加厚共用片能不能压回来（J_实际 ∝ 1/t，J_lim ∝ 1/√t）");
+                Console.WriteLine($"{"板厚 mm",9}{"J_实际",10}{"J_lim",10}{"利用率",10}{"单片 g",10}");
+                double area2 = 23541.0;      // 现役片净面积 mm²（--geom 校核）
+                foreach (double t in new[] { 2.0, 3.0, 4.0, 6.0, 8.0, 12.0 })
+                {
+                    double jAct = 23.97 * (2.0 / t);
+                    double jL = JLim(1150, t, true);
+                    Console.WriteLine($"{t,9:0.0}{jAct,10:0.00}{jL,10:0.00}{jAct / jL,10:0.00}" +
+                                      $"{area2 * t * Materials.PtDensity * 1e-6,10:0}");
+                }
+                Console.WriteLine();
+                Console.WriteLine("★ 加厚是**收敛很慢**的路：利用率只按 1/√t 下降，");
+                Console.WriteLine("  把共用片压到 1.0 需要约 12 mm、单片约 6 kg —— 与省铂的目标正相反。");
+                Console.WriteLine("  真正的杠杆是降电流（改接线相位）或扩散热面积，不是加厚。");
+                Console.WriteLine();
+
+                // ── 冷启的比值判据：J 判不了这一条
+                Console.WriteLine("── 另一条 J 判不了的约束：冷启时「谁升得快」");
+                Console.WriteLine("    冷态两边散热都≈0，于是比的是升温率：");
+                Console.WriteLine("      dT_法兰/dt ÷ dT_管/dt = f²·(R_法兰/C_法兰) ÷ (R_管/C_管)");
+                Console.WriteLine("    电流在里面**约掉了** ⇒ 这一条与 J 的绝对值无关，只与叠加系数 f 有关。");
+                Console.WriteLine($"    现役几何：R_法兰 413 μΩ / C_法兰 144 J·K⁻¹，R_管 832 μΩ / C_管 189 J·K⁻¹");
+                Console.WriteLine($"    ⇒ f ≤ √((832/189)×(144/413)) = {Math.Sqrt((832.0 / 189.0) * (144.0 / 413.0)):0.000}"
+                                  + "（--ramp2 实扫得 1.20–1.25，吻合）");
+                Console.WriteLine();
+                Console.WriteLine("⚠ 上面的 J_lim 是**逐点**判据，没有计横向导热。铂板的翅片长度");
+                Console.WriteLine("  √(k·t/(2·dq″/dT)) ≈ 24 mm（2 mm 板、1150 °C），与圆盘径向尺寸 34 mm 同量级 ——");
+                Console.WriteLine("  ⇒ 小于 24 mm 的局部热点会被周围拉住，逐点判据对它**偏保守**；");
+                Console.WriteLine("    严格判定仍要壳解。J_lim 的用途是定尺寸时的快速筛选。");
+                return;
+            }
+
             // --cli --line   分段核算（示例三段，UI 里可编辑）
             if (args.Contains("--line"))
             {
