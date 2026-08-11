@@ -1543,6 +1543,10 @@ internal static class Program
                 int ii2 = Array.IndexOf(args, "--i");
                 double iUser = ii2 >= 0 && ii2 + 1 < args.Length && double.TryParse(args[ii2 + 1], out var iv)
                                ? iv : double.NaN;
+                // 现场实际升温速率（用户 2026-08-11：以温度控制功率，20 °C/h）
+                int rti = Array.IndexOf(args, "--rate");
+                double rateKPerH = rti >= 0 && rti + 1 < args.Length && double.TryParse(args[rti + 1], out var rv2)
+                                   ? rv2 : 20.0;
 
                 const double fromC = 25, targetC = 1150, hours = 3.0;
                 double wall = p.WallMinMm;
@@ -1591,14 +1595,21 @@ internal static class Program
                                   $"单片电阻 {rFlangeRef * 1e6:0.0} μΩ   J_max {scr.JMaxAPerMm2:0.00} A/mm²");
                 Console.WriteLine();
 
-                var gBase = new RampTwoNode.Inputs
+                // 温控模式要跑完整条 20 K/h 的斜坡（1125 K ÷ 20 ≈ 56 h），限时按速率给，
+                // 另外三种是顶电流的快升温，仍用 3 h。
+                double rampHoursTemp = (targetC - fromC) / Math.Max(0.1, rateKPerH) * 1.4;
+
+                RampTwoNode.Inputs Make(double factor, RampControl mode) => new()
                 {
                     WallMm = wall,
                     FlangeMassG = massG,
                     FlangeAreaInsulMm2 = aIns, FlangeAreaBareMm2 = aBare,
                     FlangeResistanceRefOhm = rFlangeRef, FlangeRefTempC = tRef,
                     HoleRadiusMm = holeRmm, PlateEqOuterRadiusMm = rEq, FlangeThickMm = tMeanFl,
-                    DesignCurrentA = iDesign, FromC = fromC, TargetC = targetC, MaxHours = hours
+                    DesignCurrentA = iDesign, FromC = fromC, TargetC = targetC,
+                    MaxHours = mode == RampControl.TemperatureRamp ? rampHoursTemp : hours,
+                    RampRateKPerH = rateKPerH, MaxCurrentA = iDesign,
+                    SharedFactor = factor, Mode = mode
                 };
 
                 Console.WriteLine($"{"片",8}{"控制",8}{"电流 起→终 A",18}{"法兰峰值 °C",13}" +
@@ -1611,31 +1622,20 @@ internal static class Program
                 };
                 var modes = new (string name, RampControl m)[]
                 {
+                    ("温控", RampControl.TemperatureRamp),   // 现场实际方式
                     ("恒流", RampControl.ConstantCurrent),
                     ("恒功率", RampControl.ConstantPower),
                     ("恒压", RampControl.ConstantVoltage)
                 };
 
                 RampTwoNodeResult? probe = null;
+                RampTwoNodeResult? sharedTemp = null;
                 foreach (var (kn, kf) in kinds)
                     foreach (var (mn, mm) in modes)
                     {
-                        var gi = new RampTwoNode.Inputs
-                        {
-                            WallMm = gBase.WallMm, FlangeMassG = gBase.FlangeMassG,
-                            FlangeAreaInsulMm2 = gBase.FlangeAreaInsulMm2,
-                            FlangeAreaBareMm2 = gBase.FlangeAreaBareMm2,
-                            FlangeResistanceRefOhm = gBase.FlangeResistanceRefOhm,
-                            FlangeRefTempC = gBase.FlangeRefTempC,
-                            HoleRadiusMm = gBase.HoleRadiusMm,
-                            PlateEqOuterRadiusMm = gBase.PlateEqOuterRadiusMm,
-                            FlangeThickMm = gBase.FlangeThickMm,
-                            DesignCurrentA = gBase.DesignCurrentA,
-                            FromC = fromC, TargetC = targetC, MaxHours = hours,
-                            SharedFactor = kf, Mode = mm
-                        };
-                        var rr = RampTwoNode.Solve(p, gi);
+                        var rr = RampTwoNode.Solve(p, Make(kf, mm));
                         probe ??= rr;
+                        if (kf > 1.5 && mm == RampControl.TemperatureRamp) sharedTemp = rr;
                         string v = rr.FlangeMelts ? "★ 法兰熔化"
                                  : rr.MaxFlangeMinusTubeK > 0 ? "✗ 法兰比管热"
                                  : rr.TubeReached ? "✓" : "✗ 升不到";
@@ -1646,30 +1646,31 @@ internal static class Program
                         if (rr.Note.Length > 0) Console.WriteLine($"{"",16}  {rr.Note}");
                     }
 
+                // ── 温控 + 共用片：沿斜坡逐点看「法兰比管热多少」，判断危险窗口在哪一段
+                if (sharedTemp is not null && sharedTemp.Trace.Count > 2)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine($"温控 {rateKPerH:0.#} K/h、共用片 f=√3 沿程（法兰−管 的演化）：");
+                    Console.WriteLine($"{"管温 °C",10}{"法兰 °C",11}{"差 K",9}{"电流 A",10}{"已用 h",9}");
+                    double nextT = 100;
+                    foreach (var (t, tt, tf, ia) in sharedTemp.Trace)
+                    {
+                        if (tt < nextT) continue;
+                        Console.WriteLine($"{tt,10:0}{tf,11:0}{tf - tt,9:+0;-0}{ia,10:0}{t / 3600,9:0.0}");
+                        nextT += 100;
+                    }
+                }
+
                 // ── 叠加系数的临界值：升温期「法兰反超管子」的门槛
                 //    机理是纯比值：法兰升温率 ∝ f²·I²R_f/C_f，管 ∝ I²R_t/C_t，
                 //    冷态两边的散热都≈0 ⇒ 谁快谁跑前面，与电流绝对值无关。
                 Console.WriteLine();
-                Console.WriteLine("共用片叠加系数 f 的临界值（恒流，f 从 1.0 起扫）：");
+                Console.WriteLine($"共用片叠加系数 f 的临界值（**温控 {rateKPerH:0.#} K/h**，即现场实际方式）：");
                 Console.WriteLine($"{"f",8}{"法兰峰值 °C",13}{"max(法兰−管) K",15}{"出现在 min",12}  判定");
                 double fCrit = double.NaN, fPrev = double.NaN, dPrev = double.NaN;
                 foreach (double f in new[] { 1.00, 1.10, 1.20, 1.25, 1.30, 1.40, 1.50, 1.732 })
                 {
-                    var gi = new RampTwoNode.Inputs
-                    {
-                        WallMm = gBase.WallMm, FlangeMassG = gBase.FlangeMassG,
-                        FlangeAreaInsulMm2 = gBase.FlangeAreaInsulMm2,
-                        FlangeAreaBareMm2 = gBase.FlangeAreaBareMm2,
-                        FlangeResistanceRefOhm = gBase.FlangeResistanceRefOhm,
-                        FlangeRefTempC = gBase.FlangeRefTempC,
-                        HoleRadiusMm = gBase.HoleRadiusMm,
-                        PlateEqOuterRadiusMm = gBase.PlateEqOuterRadiusMm,
-                        FlangeThickMm = gBase.FlangeThickMm,
-                        DesignCurrentA = gBase.DesignCurrentA,
-                        FromC = fromC, TargetC = targetC, MaxHours = hours,
-                        SharedFactor = f, Mode = RampControl.ConstantCurrent
-                    };
-                    var rr = RampTwoNode.Solve(p, gi);
+                    var rr = RampTwoNode.Solve(p, Make(f, RampControl.TemperatureRamp));
                     Console.WriteLine($"{f,8:0.000}{rr.TFlangePeakC,13:0}{rr.MaxFlangeMinusTubeK,15:+0;-0}" +
                                       $"{rr.TimeAtMaxDeltaS / 60,12:0.0}  " +
                                       (rr.MaxFlangeMinusTubeK > 0 ? "✗ 反超" : "✓"));

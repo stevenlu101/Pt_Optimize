@@ -11,7 +11,13 @@ public enum RampControl
     /// <summary>恒压：I = V/R(T)，冷态 ρe 只有热态的 1/4.4 ⇒ 冷启电流约 2 倍、发热约 4 倍，危险在**开头**</summary>
     ConstantVoltage,
     /// <summary>恒功率：I = √(P/R(T))，介于两者之间</summary>
-    ConstantPower
+    ConstantPower,
+    /// <summary>
+    /// **以温度控制功率**（现场实际方式，用户 2026-08-11 确认）：功率是被调量，
+    /// 按「管温跟住设定升温速率」实时反解 —— 冷态时散热几乎为零，所需功率因此极小，
+    /// 电流只有几十安，与前三种把电流一上来就顶满是**完全不同的工况**。
+    /// </summary>
+    TemperatureRamp
 }
 
 public sealed class RampTwoNodeResult
@@ -31,6 +37,8 @@ public sealed class RampTwoNodeResult
 
     public double CurrentStartA, CurrentEndA, PeakCurrentA;
     public double CapTubeJPerK, CapFlangeJPerK, CouplingWPerK;
+    /// <summary>温控模式：电流是否被上限截住过（截住 ⇒ 跟不上设定速率）</summary>
+    public bool CurrentClipped;
 
     /// <summary>采样轨迹（供绘图/核对），列：时间 s、管温、法兰温、电流</summary>
     public List<(double t, double tt, double tf, double i)> Trace = new();
@@ -90,6 +98,11 @@ public static class RampTwoNode
         /// <summary>设计（额定）电流 A —— 恒压/恒功率模式下用它在**目标温度**处定 V 或 P</summary>
         public double DesignCurrentA;
         public double FromC = 25, TargetC = 1150, MaxHours = 3.0;
+
+        /// <summary>温控模式的设定升温速率 K/h（现场值 20）</summary>
+        public double RampRateKPerH = 20.0;
+        /// <summary>温控模式的电流上限 A（二次侧能力）。≤0 表示用 DesignCurrentA</summary>
+        public double MaxCurrentA = 0;
     }
 
     public static RampTwoNodeResult Solve(DesignInputs p, Inputs g)
@@ -178,16 +191,29 @@ public static class RampTwoNode
         double vRef = g.DesignCurrentA * rAtTarget;
         double pRef = g.DesignCurrentA * g.DesignCurrentA * rAtTarget;
 
-        double CurrentAt(double tt, double tf) => g.Mode switch
+        // 温控模式：功率是被调量 —— 由「管子要跟住设定速率」的能量平衡反解电流
+        //   C_管·(dT/dt)_设定 = I²R_管 − Q_散热(T_管) − G·(T_管 − T_法兰)
+        // 冷态 Q_散热≈0 且 C·rate 极小 ⇒ 电流只有几十安，与顶满电流是两个世界。
+        double iMax = g.MaxCurrentA > 0 ? g.MaxCurrentA : g.DesignCurrentA;
+        double rateKPerS = g.RampRateKPerH / 3600.0;
+
+        double CurrentAt(double tt, double tf, double qLossTubeW, double qCoupleW)
         {
-            RampControl.ConstantCurrent => g.DesignCurrentA,
-            RampControl.ConstantVoltage => vRef / Math.Max(1e-12, RCircuit(tt, tf)),
-            _ => Math.Sqrt(pRef / Math.Max(1e-12, RCircuit(tt, tf)))
-        };
+            switch (g.Mode)
+            {
+                case RampControl.ConstantCurrent: return g.DesignCurrentA;
+                case RampControl.ConstantVoltage: return vRef / Math.Max(1e-12, RCircuit(tt, tf));
+                case RampControl.ConstantPower: return Math.Sqrt(pRef / Math.Max(1e-12, RCircuit(tt, tf)));
+                default:
+                    double need = CapTube(tt) * rateKPerS + qLossTubeW + qCoupleW;
+                    double i = need <= 0 ? 0 : Math.Sqrt(need / Math.Max(1e-12, RTube(tt)));
+                    return Math.Min(i, iMax);
+            }
+        }
 
         // ── 积分（显式，步长自适应到「每步温升 ≤ 1 K」）
         double tTube = g.FromC, tFl = g.FromC, time = 0, maxSec = g.MaxHours * 3600.0;
-        res.CurrentStartA = CurrentAt(tTube, tFl);
+        res.CurrentStartA = CurrentAt(tTube, tFl, tubeLoss.Eval(tTube) * L, 0);
         res.PeakCurrentA = res.CurrentStartA;
         res.CapTubeJPerK = CapTube(0.5 * (g.FromC + g.TargetC));
         res.CapFlangeJPerK = CapFlange(0.5 * (g.FromC + g.TargetC));
@@ -197,21 +223,23 @@ public static class RampTwoNode
         int guard = 0;
         while (time < maxSec && guard++ < 4_000_000)
         {
-            double i = CurrentAt(tTube, tFl);
+            double qTube = tubeLoss.Eval(tTube) * L;
+            double qc = GCouple(0.5 * (tTube + tFl)) * (tTube - tFl);   // >0 = 管子加热法兰
+
+            double i = CurrentAt(tTube, tFl, qTube, qc);
+            if (g.Mode == RampControl.TemperatureRamp && i >= iMax - 1e-9) res.CurrentClipped = true;
             double iFl = g.SharedFactor * i;
             res.PeakCurrentA = Math.Max(res.PeakCurrentA, i);
 
             double pTube = i * i * RTube(tTube);
             double pFl = iFl * iFl * RFlange(tFl);
-            double qTube = tubeLoss.Eval(tTube) * L;
             double qFl = FlangeLossW(tFl);
-            double qc = GCouple(0.5 * (tTube + tFl)) * (tTube - tFl);   // >0 = 管子加热法兰
 
             double dTt = (pTube - qTube - qc) / CapTube(tTube);
             double dTf = (pFl - qFl + qc) / CapFlange(tFl);
 
             if (time >= nextSample)
-            { res.Trace.Add((time, tTube, tFl, i)); nextSample = time + 5.0; }
+            { res.Trace.Add((time, tTube, tFl, i)); nextSample = time + Math.Max(5.0, maxSec / 500.0); }
 
             double delta = tFl - tTube;
             if (delta > res.MaxFlangeMinusTubeK)
@@ -239,13 +267,17 @@ public static class RampTwoNode
                 break;
             }
 
+            // 步长自适应到「每步温升 ≤ 0.5 K」。温控模式全程数十小时，上限放宽到 60 s，
+            // 否则光积分就要几百万步（而那时温度变化率本来就只有 20 K/h）。
             double rate = Math.Max(Math.Abs(dTt), Math.Abs(dTf));
-            double dt = Math.Clamp(1.0 / Math.Max(1e-9, rate), 0.002, 2.0);
+            double dtMax = g.Mode == RampControl.TemperatureRamp ? 60.0 : 2.0;
+            double dt = Math.Clamp(0.5 / Math.Max(1e-9, rate), 0.002, dtMax);
             tTube += dTt * dt; tFl += dTf * dt; time += dt;
         }
 
         res.TTubeEndC = tTube;
-        res.CurrentEndA = CurrentAt(tTube, tFl);
+        res.CurrentEndA = CurrentAt(tTube, tFl, tubeLoss.Eval(tTube) * L,
+                                    GCouple(0.5 * (tTube + tFl)) * (tTube - tFl));
         res.Trace.Add((time, tTube, tFl, res.CurrentEndA));
         if (res.Note.Length == 0 && !res.TubeReached)
             res.Note = $"限时 {g.MaxHours:0.#} h 内管只升到 {tTube:0.0} °C";
