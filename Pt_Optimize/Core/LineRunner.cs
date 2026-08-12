@@ -55,6 +55,18 @@ public sealed class LineCase
     /// <summary>厚度场提取步长 mm（1.0 足够分辨槽与阶梯）</summary>
     public double ThicknessStepMm = 1.0;
 
+    /// <summary>
+    /// 每片的**厚度整体标度**（长度 = 片数，缺省全 1）。仅 .3dm 路径生效。
+    ///
+    /// 为什么需要它：.3dm 给的是**固定**厚度，而 C2（管根温差 &lt;10 K）要求
+    /// 法兰厚度精确到 ±0.008 mm（ΔT 对厚度斜率约 1300 K/mm，§4.2w）——
+    /// 不可能靠画图碰运气碰到。于是把厚度整体缩放当成自由度：
+    /// 自动定厚求出的是「这张图纸的厚度要整体 ×k」，工程师照 k 改一版图即可。
+    ///
+    /// t=0 的格（轮廓外、管孔、开槽）乘任何数仍是 0，**槽与轮廓不受影响**。
+    /// </summary>
+    public double[] ThicknessScale = Array.Empty<double>();
+
     // ── 网格
     public double MeshFineMm = 2.0, MeshCoarseMm = 11.0, MeshFineRadiusMm = 50.0;
 
@@ -313,6 +325,21 @@ public static class LineRunner
             else
             {
                 var tf = Geometry3dm.LoadThickness(file, c.FlangeLayer, planeY, c.ThicknessStepMm);
+                // 厚度标度：.3dm 的**形状**固定，但整体厚度可按比例缩放。
+                // 这让「自动定厚」在 .3dm 模式下同样可用 —— 求出的不是绝对厚度，
+                // 而是「你这张图纸的厚度要整体 ×k」，工程师照着改一版图即可。
+                // t=0（无材料：轮廓外、管孔、开槽）乘任何数仍是 0，故槽与轮廓不受影响。
+                double k = j < c.ThicknessScale.Length ? c.ThicknessScale[j] : 1.0;
+                if (Math.Abs(k - 1.0) > 1e-9)
+                {
+                    var scaled = new double[tf.T.Length];
+                    for (int q = 0; q < tf.T.Length; q++) scaled[q] = tf.T[q] * k;
+                    tf = new ThicknessField
+                    {
+                        X0 = tf.X0, Z0 = tf.Z0, Step = tf.Step,
+                        Nx = tf.Nx, Nz = tf.Nz, T = scaled
+                    };
+                }
                 mesh = FlangeMesher.BuildFromField(tf, holeR, 0,
                             c.MeshFineMm, c.MeshCoarseMm, c.MeshFineRadiusMm);
             }

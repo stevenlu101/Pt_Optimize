@@ -106,6 +106,7 @@ public sealed class MainForm : Form
         _tabs.TabPages.Insert(0, segPage);
 
         // ★ 整线设计页：工程师的主工作面，放在最前
+        _tabs.TabPages.Insert(0, new AnalysisPage(_in));
         _tabs.TabPages.Insert(0, new LineDesignPage(_in));
 
         var right = new SplitContainer

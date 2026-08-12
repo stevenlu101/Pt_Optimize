@@ -29,6 +29,13 @@ public sealed class LineDesignPage : TabPage
         Num(0.516m, 0.10m, 8.0m, 0.02m, 3), Num(0.855m, 0.10m, 8.0m, 0.02m, 3),
         Num(0.776m, 0.10m, 8.0m, 0.02m, 3), Num(0.426m, 0.10m, 8.0m, 0.02m, 3),
     };
+    private readonly RadioButton _srcAnalytic = new()
+    { Text = "解析形状（圆盘 + 梯形舌片，程序生成）", AutoSize = true };
+    private readonly RadioButton _src3dm = new()
+    { Text = "Rhino .3dm 文件（任意形状：阶梯厚度、开槽、异形轮廓）", AutoSize = true };
+    private readonly TextBox[] _file3dm = { new(), new(), new(), new() };
+    private readonly Control[] _row3dm = new Control[4];
+    private readonly TextBox _layer3dm = new() { Text = "法兰", Width = 96 };
     private readonly DataGridView _segGrid = new();
     private readonly RichTextBox _out = new();
     private readonly ToolStripProgressBar _prog = new() { Visible = false, Maximum = 1000 };
@@ -109,13 +116,34 @@ public sealed class LineDesignPage : TabPage
         Row("壁厚 mm", _wall, "工艺下界 0.4 mm（用户给定）。管 J ∝ 1/√壁厚 —— 减薄不减电流负担");
         Row("纤维保温 mm", _tubeIns, "无空间限制。加厚同时降电流与 J，是管侧的免费杠杆");
 
-        Head("法兰形状（四片同形状，厚度各自独立）");
+        Head("法兰几何来源");
+        _srcAnalytic.Checked = true;
+        _srcAnalytic.CheckedChanged += (_, _) => SyncGeomSource();
+        input.Controls.Add(_srcAnalytic); input.SetColumnSpan(_srcAnalytic, 2);
+        input.Controls.Add(_src3dm); input.SetColumnSpan(_src3dm, 2);
+
+        // .3dm 模式：每片一个文件（可重复同一文件），厚度由图纸决定，
+        // 「自动定厚」求的是厚度**整体标度 k**，即「这张图要整体 ×k」。
+        var names = new[] { "入口", "HC1|HC2", "HC2|HC3", "出口" };
+        for (int i = 0; i < 4; i++)
+        {
+            int idx = i;
+            var pnl = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0), WrapContents = false };
+            _file3dm[idx].Width = 150; _file3dm[idx].ReadOnly = true;
+            var b = new Button { Text = "…", Width = 30, Height = 22 };
+            b.Click += (_, _) => PickFile(idx);
+            pnl.Controls.Add(_file3dm[idx]); pnl.Controls.Add(b);
+            _row3dm[idx] = pnl;
+            Row(names[idx] + " .3dm", pnl);
+        }
+        Row("图层名", _layer3dm, "厚度场从该图层提取。t=0 表示无材料 ⇒ 开槽、孔、轮廓一次拿全");
+
+        Head("法兰形状（解析模式；四片同形状，厚度各自独立）");
         Row("圆盘直径 mm", _discD);
         Row("舌片长度 mm", _tabLen, "省铂宜短；但舌片越长形状数 Ψ 越小、局部越不易过热");
         Row("舌端半宽 mm", _tabW);
 
-        Head("法兰厚度 mm（可点「自动定厚」求解）");
-        var names = new[] { "入口", "HC1|HC2", "HC2|HC3", "出口" };
+        Head("法兰厚度 mm / 厚度标度（可点「自动定厚」求解）");
         for (int i = 0; i < 4; i++) Row(names[i], _tPlate[i]);
 
         Head("保温与夹持");
@@ -158,6 +186,7 @@ public sealed class LineDesignPage : TabPage
 
         Controls.Add(main);
         Controls.Add(tool);
+        SyncGeomSource();
         HandleCreated += (_, _) => BeginInvoke(() =>
         {
             main.SplitterDistance = 300;
@@ -170,6 +199,33 @@ public sealed class LineDesignPage : TabPage
     /// 对象初始化器按书写顺序赋值，而 NumericUpDown 的默认上限是 100 ——
     /// 先写 Value = 300 会当场抛 ArgumentOutOfRangeException，程序启动即崩。
     /// </summary>
+    /// <summary>
+    /// 两种几何来源互斥：解析模式下厚度输入框是**绝对厚度 mm**；
+    /// .3dm 模式下同一组框改作**厚度标度 k**（图纸厚度整体 ×k），故默认值切到 1。
+    /// </summary>
+    private void SyncGeomSource()
+    {
+        bool an = _srcAnalytic.Checked;
+        _discD.Enabled = _tabLen.Enabled = _tabW.Enabled = an;
+        foreach (var r in _row3dm) if (r is not null) r.Enabled = !an;
+        _layer3dm.Enabled = !an;
+        for (int i = 0; i < _tPlate.Length; i++)
+        {
+            _tPlate[i].DecimalPlaces = an ? 3 : 3;
+            if (!an && _tPlate[i].Value > 3m) _tPlate[i].Value = 1.0m;   // 标度从 1 起
+        }
+    }
+
+    private void PickFile(int idx)
+    {
+        using var dlg = new OpenFileDialog { Filter = "Rhino 3D 模型 (*.3dm)|*.3dm" };
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        _file3dm[idx].Text = dlg.FileName;
+        // 空着的后续片默认沿用同一文件 —— 四片常常同形状，省得点四次
+        for (int k = idx + 1; k < _file3dm.Length; k++)
+            if (string.IsNullOrWhiteSpace(_file3dm[k].Text)) _file3dm[k].Text = dlg.FileName;
+    }
+
     private static NumericUpDown Num(decimal v, decimal lo, decimal hi, decimal inc, int dec)
     {
         var n = new NumericUpDown { Width = 96, DecimalPlaces = dec, Increment = inc };
@@ -211,7 +267,7 @@ public sealed class LineDesignPage : TabPage
         p.BusbarClampTempC = (double)_clamp.Value;
 
         var rows = _segs.Where(s => !string.IsNullOrWhiteSpace(s.名称)).ToList();
-        return new LineCase
+        var lc = new LineCase
         {
             Base = p,
             WallMm = (double)_wall.Value,
@@ -219,8 +275,19 @@ public sealed class LineDesignPage : TabPage
             SetpointC = rows.Select(s => s.控温C).ToArray(),
             HeadM = rows.Select(s => s.水头m).ToArray(),
             CheckRamp = true,
-            FlangePlates = _tPlate.Select(n => MakePlate((double)n.Value)).ToArray()
         };
+        if (_srcAnalytic.Checked)
+            lc.FlangePlates = _tPlate.Select(n => MakePlate((double)n.Value)).ToArray();
+        else
+        {
+            var files = _file3dm.Select(f => f.Text.Trim()).ToArray();
+            if (files.Any(string.IsNullOrEmpty))
+                throw new InvalidOperationException("四片法兰的 .3dm 都要指定（可重复同一文件）");
+            lc.FlangeFile3dm = files;
+            lc.FlangeLayer = _layer3dm.Text.Trim();
+            lc.ThicknessScale = _tPlate.Select(n => (double)n.Value).ToArray();
+        }
+        return lc;
     }
 
     private async Task RunAsync(bool autoSize)
@@ -241,8 +308,9 @@ public sealed class LineDesignPage : TabPage
             if (autoSize)
             {
                 var init = _tPlate.Select(n => (double)n.Value).ToArray();
-                var r = await Task.Run(() => FlangeAutoSizer.Solve(
-                    lc, MakePlate, init, new FlangeAutoSizer.Options(), prog, ct), ct);
+                Func<double, FlangePlate>? mk = _srcAnalytic.Checked ? MakePlate : null;
+                var r = await Task.Run(() => FlangeAutoSizer.SolveAuto(
+                    lc, mk, init, new FlangeAutoSizer.Options(), prog, ct), ct);
                 for (int i = 0; i < _tPlate.Length && i < r.ThicknessMm.Length; i++)
                     _tPlate[i].Value = (decimal)Math.Clamp(r.ThicknessMm[i], 0.1, 8.0);
                 _last = r.Line;

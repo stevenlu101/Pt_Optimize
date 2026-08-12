@@ -54,10 +54,63 @@ public static class FlangeAutoSizer
     }
 
     /// <summary>
-    /// 迭代求解四片厚度。<paramref name="makePlate"/> 把厚度变成几何 ——
-    /// 由调用方提供，于是本类不关心形状（圆盘/舌片/阶梯都行）。
+    /// **自动求解**：迭代次数与阻尼由本方法自行调整，不需要调用方猜。
+    ///
+    /// 策略：先按默认阻尼跑；若耗尽轮次仍未达标，则判断是**振荡**还是**爬得太慢**——
+    ///   · 误差不再单调下降（振荡）⇒ 阻尼减半，重来
+    ///   · 误差仍在稳定下降（只是没走完）⇒ 轮次翻倍，接着跑
+    /// 最多升级 <paramref name="maxEscalations"/> 次。这样「二分/迭代次数不够就误报无解」
+    /// 那类错误（§7）在界面上不可能再发生 —— 不收敛只会是真的无解。
     /// </summary>
-    public static Result Solve(LineCase baseCase, Func<double, FlangePlate> makePlate,
+    public static Result SolveAuto(LineCase baseCase, Func<double, FlangePlate>? makePlate,
+                                   double[] initialThicknessMm, Options? opt = null,
+                                   IProgress<string>? progress = null,
+                                   CancellationToken cancel = default,
+                                   int maxEscalations = 4)
+    {
+        opt ??= new Options();
+        var cur = new Options
+        {
+            TargetK = opt.TargetK, TolK = opt.TolK, MaxIterations = opt.MaxIterations,
+            SensitivityK = opt.SensitivityK, Damping = opt.Damping,
+            MinThickMm = opt.MinThickMm, MaxThickMm = opt.MaxThickMm, MaxLogStep = opt.MaxLogStep
+        };
+        var start = (double[])initialThicknessMm.Clone();
+        Result last = new();
+
+        for (int esc = 0; esc <= maxEscalations; esc++)
+        {
+            last = Solve(baseCase, makePlate, start, cur, progress, cancel);
+            if (last.Converged) return last;
+
+            // 判断失败模式：末段误差是否还在下降
+            var h = last.History;
+            bool stillDescending = h.Count >= 3 && h[^1] < h[^3] * 0.9;
+            if (esc == maxEscalations) break;
+
+            start = last.ThicknessMm;                 // 从当前点继续，不从头来
+            if (stillDescending)
+            {
+                cur.MaxIterations *= 2;
+                progress?.Report($"未达标但仍在收敛 ⇒ 轮次加倍到 {cur.MaxIterations}，继续…");
+            }
+            else
+            {
+                cur.Damping *= 0.5;
+                cur.MaxIterations = (int)(cur.MaxIterations * 1.5);
+                progress?.Report($"出现振荡 ⇒ 阻尼降到 {cur.Damping:0.000}、轮次 {cur.MaxIterations}，重试…");
+            }
+        }
+        last.Message = "自动升级 " + maxEscalations + " 次后仍未达标：" + last.Message;
+        return last;
+    }
+
+    /// <summary>
+    /// 单次迭代求解（固定轮次与阻尼）。一般用 <see cref="SolveAuto"/>。
+    /// <paramref name="makePlate"/> 把厚度变成几何 —— 由调用方提供，
+    /// 于是本类不关心形状（解析圆盘/舌片、阶梯、乃至 .3dm 的厚度标度都行）。
+    /// </summary>
+    public static Result Solve(LineCase baseCase, Func<double, FlangePlate>? makePlate,
                                double[] initialThicknessMm, Options? opt = null,
                                IProgress<string>? progress = null,
                                CancellationToken cancel = default)
@@ -71,7 +124,13 @@ public static class FlangeAutoSizer
             cancel.ThrowIfCancellationRequested();
 
             var lc = CloneCase(baseCase);
-            lc.FlangePlates = t.Select(makePlate).ToArray();
+            if (makePlate is not null)
+                lc.FlangePlates = t.Select(makePlate).ToArray();      // 解析几何：t 就是厚度
+            else
+            {
+                lc.FlangeFile3dm = baseCase.FlangeFile3dm;            // .3dm：t 是厚度**标度**
+                lc.ThicknessScale = (double[])t.Clone();
+            }
 
             LineResult lr;
             try { lr = LineRunner.Run(lc, null, cancel); }
@@ -124,6 +183,7 @@ public static class FlangeAutoSizer
         GradeName = c.GradeName, SetpointC = c.SetpointC, HeadM = c.HeadM,
         UseMeasuredCurrent = c.UseMeasuredCurrent, MeasuredCurrentA = c.MeasuredCurrentA,
         FlangeLayer = c.FlangeLayer, FlangePlaneY = c.FlangePlaneY,
+        FlangeFile3dm = c.FlangeFile3dm, ThicknessScale = c.ThicknessScale,
         ThicknessStepMm = c.ThicknessStepMm,
         MeshFineMm = c.MeshFineMm, MeshCoarseMm = c.MeshCoarseMm,
         MeshFineRadiusMm = c.MeshFineRadiusMm,
