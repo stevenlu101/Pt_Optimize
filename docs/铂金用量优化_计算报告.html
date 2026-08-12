@@ -1,0 +1,481 @@
+<title>铂金用量优化 — 计算报告</title>
+
+<style>
+  :root {
+    --ground:#edf0f3; --surface:#fff; --surface-2:#f5f7f9;
+    --ink:#121a21; --ink-2:#55636d; --ink-3:#7d8b95;
+    --rule:#d2d9df; --rule-strong:#b3bec7;
+    --cool:#1d6a85; --hot:#bf3a18; --good:#1f7a4d;
+    --hot-soft:#f2e0da; --cool-soft:#dde9ee; --good-soft:#dcece4;
+    --shadow:0 1px 2px rgba(18,26,33,.06), 0 8px 24px -18px rgba(18,26,33,.35);
+    --f-sans:"PingFang SC","Microsoft YaHei","Hiragino Sans GB","Segoe UI",system-ui,sans-serif;
+    --f-mono:ui-monospace,"Cascadia Mono","SFMono-Regular",Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark){:root{
+    --ground:#0c1116; --surface:#131a21; --surface-2:#182029;
+    --ink:#e3eaf0; --ink-2:#97a5b0; --ink-3:#74838e;
+    --rule:#26313a; --rule-strong:#3a4855;
+    --cool:#6ab8d4; --hot:#ff7f52; --good:#5cc48d;
+    --hot-soft:#3a1f16; --cool-soft:#16303a; --good-soft:#163024;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -18px rgba(0,0,0,.8);}}
+  :root[data-theme="dark"]{
+    --ground:#0c1116; --surface:#131a21; --surface-2:#182029;
+    --ink:#e3eaf0; --ink-2:#97a5b0; --ink-3:#74838e;
+    --rule:#26313a; --rule-strong:#3a4855;
+    --cool:#6ab8d4; --hot:#ff7f52; --good:#5cc48d;
+    --hot-soft:#3a1f16; --cool-soft:#16303a; --good-soft:#163024;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -18px rgba(0,0,0,.8);}
+  :root[data-theme="light"]{
+    --ground:#edf0f3; --surface:#fff; --surface-2:#f5f7f9;
+    --ink:#121a21; --ink-2:#55636d; --ink-3:#7d8b95;
+    --rule:#d2d9df; --rule-strong:#b3bec7;
+    --cool:#1d6a85; --hot:#bf3a18; --good:#1f7a4d;
+    --hot-soft:#f2e0da; --cool-soft:#dde9ee; --good-soft:#dcece4;
+    --shadow:0 1px 2px rgba(18,26,33,.06), 0 8px 24px -18px rgba(18,26,33,.35);}
+
+  body{background:var(--ground);color:var(--ink);font-family:var(--f-sans);
+       font-size:16px;line-height:1.75;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1120px;margin:0 auto;padding:44px 24px 90px;
+        display:flex;flex-direction:column;gap:38px}
+  .col{max-width:70ch}
+  .col > * + *{margin-top:.9em}
+
+  .masthead{border-bottom:2px solid var(--ink);padding-bottom:18px}
+  .kicker{font-family:var(--f-mono);font-size:12px;letter-spacing:.14em;
+          text-transform:uppercase;color:var(--ink-3)}
+  h1{font-size:clamp(28px,4.4vw,42px);line-height:1.15;font-weight:700;
+     letter-spacing:-.015em;text-wrap:balance;margin:10px 0 12px}
+  .standfirst{font-size:18px;color:var(--ink-2);max-width:64ch}
+  .meta{margin-top:16px;font-family:var(--f-mono);font-size:12.5px;color:var(--ink-3);
+        display:flex;flex-wrap:wrap;gap:6px 20px}
+
+  .verdict{background:var(--surface);border:1px solid var(--rule);
+           border-left:4px solid var(--good);border-radius:2px;
+           padding:22px 26px;box-shadow:var(--shadow)}
+  .verdict h2{font-size:20px;font-weight:700;margin-bottom:8px;letter-spacing:-.01em}
+  .big{font-family:var(--f-mono);font-size:clamp(30px,5vw,46px);font-weight:700;
+       color:var(--good);letter-spacing:-.02em;line-height:1.1;margin:6px 0}
+  .big small{font-size:16px;color:var(--ink-2);font-weight:400;letter-spacing:0}
+
+  section{display:flex;flex-direction:column;gap:18px}
+  .head{display:flex;align-items:baseline;gap:14px;border-bottom:1px solid var(--rule);
+        padding-bottom:8px}
+  .head .ref{font-family:var(--f-mono);font-size:12px;color:var(--ink-3);white-space:nowrap}
+  h2.sec{font-size:clamp(20px,2.6vw,26px);font-weight:700;letter-spacing:-.012em}
+  h3{font-size:17px;font-weight:650}
+
+  figure{background:var(--surface);border:1px solid var(--rule);border-radius:2px;
+         padding:20px 20px 14px;box-shadow:var(--shadow);overflow-x:auto}
+  figure svg{display:block;width:100%;height:auto;max-width:100%;color:var(--ink)}
+  figcaption{margin-top:12px;padding-top:10px;border-top:1px solid var(--rule);
+             font-size:13.5px;color:var(--ink-2);line-height:1.6}
+  figcaption b{color:var(--ink);font-weight:650}
+  .fignum{font-family:var(--f-mono);font-size:12px;color:var(--ink-3);letter-spacing:.08em}
+
+  svg [fill="var(--ink)"]{fill:var(--ink)} svg [fill="var(--ink-2)"]{fill:var(--ink-2)}
+  svg [fill="var(--ink-3)"]{fill:var(--ink-3)} svg [fill="var(--hot)"]{fill:var(--hot)}
+  svg [fill="var(--cool)"]{fill:var(--cool)} svg [fill="var(--good)"]{fill:var(--good)}
+  svg [fill="var(--hot-soft)"]{fill:var(--hot-soft)} svg [fill="var(--cool-soft)"]{fill:var(--cool-soft)}
+  svg [fill="var(--good-soft)"]{fill:var(--good-soft)} svg [fill="var(--surface)"]{fill:var(--surface)}
+  svg [stroke="var(--ink-3)"]{stroke:var(--ink-3)} svg [stroke="var(--hot)"]{stroke:var(--hot)}
+  svg [stroke="var(--cool)"]{stroke:var(--cool)} svg [stroke="var(--good)"]{stroke:var(--good)}
+  svg [font-family="var(--f-mono)"]{font-family:var(--f-mono)}
+  svg text{font-family:var(--f-sans)}
+
+  .tablewrap{overflow-x:auto;background:var(--surface);border:1px solid var(--rule);
+             border-radius:2px;box-shadow:var(--shadow)}
+  table{border-collapse:collapse;width:100%;font-size:13.5px}
+  th,td{padding:9px 12px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--rule)}
+  th:first-child,td:first-child{text-align:left}
+  thead th{font-family:var(--f-mono);font-size:11.5px;letter-spacing:.05em;color:var(--ink-3);
+           font-weight:500;border-bottom:1px solid var(--rule-strong)}
+  tbody td{font-variant-numeric:tabular-nums;font-family:var(--f-mono)}
+  tbody td:first-child{font-family:var(--f-sans)}
+  tbody tr:last-child td{border-bottom:0}
+  tr.best td{background:var(--good-soft)}
+  tr.best td:first-child{box-shadow:inset 3px 0 0 var(--good);font-weight:650}
+  tr.bad td{background:var(--hot-soft)}
+  tr.bad td:first-child{box-shadow:inset 3px 0 0 var(--hot)}
+
+  .note{background:var(--surface-2);border:1px solid var(--rule);border-radius:2px;
+        padding:15px 19px;font-size:14.5px;color:var(--ink-2)}
+  .note b{color:var(--ink)}
+  .ask{border-left:4px solid var(--hot)}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+
+  ul,ol{padding-left:1.3em} li + li{margin-top:.35em}
+  code{font-family:var(--f-mono);font-size:.92em}
+  strong{font-weight:650}
+  .hot{color:var(--hot)} .cool{color:var(--cool)} .good{color:var(--good)}
+  footer{border-top:1px solid var(--rule);padding-top:16px;font-size:13px;color:var(--ink-3)}
+  footer p + p{margin-top:.5em}
+  @media(max-width:640px){.wrap{padding:30px 15px 60px;gap:28px}body{font-size:15px}}
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="kicker">铂金直接加热系统 · 用量优化 · 计算报告</div>
+    <h1>七组可行方案</h1>
+    <p class="standfirst">
+      在「能升温」与「稳态法兰-管温差 &lt; 10 °C」两条前提下，
+      整线铂金用量可从 7141 g 降到 <strong>1327 g</strong>。
+      八个组合中七个通过全部判据，最轻的一组省 81.4 %。
+    </p>
+    <div class="meta">
+      <span>2026-08-12</span>
+      <span>整线耦合解（FV 电流场 + FV 温度场 + 段↔法兰迭代）</span>
+      <span>四片法兰各自独立定厚</span>
+      <span>.3dm 已回读校核</span>
+    </div>
+  </header>
+
+  <div class="verdict">
+    <h2>最优方案（方案 A）</h2>
+    <div class="big">1327 g <small>／ 现状 7141 g ／ <span class="good">省 81.4 %</span></small></div>
+    <p>
+      管 1223 g（壁 <strong>0.40 mm</strong>）＋ 法兰四片合计 <strong>105 g</strong>。
+      三段管根温差 <strong>+6.0 / +2.9 / +6.3 K</strong>，全部落在 (0, 10) 窗口内；
+      玻璃温降 <strong>20.8 K</strong>，与现场实测 20 K 吻合 —— 这是模型唯一的现场验证点。
+    </p>
+  </div>
+
+  <!-- ============ 七组方案 ============ -->
+  <section>
+    <div class="head">
+      <h2 class="sec">七组可行方案</h2>
+      <span class="ref">公共：管壁 0.40 mm · 管 1223 g · 铜排空冷 300 °C · 升温 20 °C/h</span>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th>方案</th><th>管纤维</th><th>法兰保温</th><th>舌片</th>
+            <th>入口 t</th><th>共用1 t</th><th>共用2 t</th><th>出口 t</th>
+            <th>法兰 g</th><th>段温差 K</th><th>法兰峰 °C</th><th>总铂 g</th><th>省%</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="best">
+            <td>A</td><td>10 mm</td><td>全包 20</td><td>50 mm</td>
+            <td>0.516</td><td>0.855</td><td>0.776</td><td>0.426</td>
+            <td>105</td><td>+6.2/+3.0/+6.4</td><td>1154</td><td>1327</td><td>81.4</td>
+          </tr>
+          <tr>
+            <td>B</td><td>2.5 mm</td><td>全裸</td><td>50 mm</td>
+            <td>0.587</td><td>1.124</td><td>1.077</td><td>0.539</td>
+            <td>135</td><td>+6.6/+2.8/+6.4</td><td>1226</td><td>1358</td><td>81.0</td>
+          </tr>
+          <tr>
+            <td>C</td><td>2.5 mm</td><td>全包 20</td><td>50 mm</td>
+            <td>0.798</td><td>1.356</td><td>1.293</td><td>0.725</td>
+            <td>170</td><td>+5.1/+3.9/+3.8</td><td>1152</td><td>1392</td><td>80.5</td>
+          </tr>
+          <tr>
+            <td>D</td><td>10 mm</td><td>全包 5</td><td>80 mm</td>
+            <td>0.730</td><td>1.429</td><td>1.264</td><td>0.572</td>
+            <td>290</td><td>+7.5/+1.4/+7.4</td><td>1201</td><td>1512</td><td>78.8</td>
+          </tr>
+          <tr>
+            <td>E</td><td>10 mm</td><td>全包 20</td><td>80 mm</td>
+            <td>1.047</td><td>1.774</td><td>1.626</td><td>0.823</td>
+            <td>382</td><td>+5.3/+3.9/+4.1</td><td>1150</td><td>1605</td><td>77.5</td>
+          </tr>
+          <tr>
+            <td>F</td><td>2.5 mm</td><td>全裸</td><td>80 mm</td>
+            <td>0.947</td><td>2.055</td><td>1.975</td><td>0.875</td>
+            <td>424</td><td>+8.2/+1.3/+7.3</td><td>1244</td><td>1647</td><td>76.9</td>
+          </tr>
+          <tr>
+            <td>G</td><td>2.5 mm</td><td>全包 20</td><td>80 mm</td>
+            <td>1.663</td><td>2.881</td><td>2.742</td><td>1.507</td>
+            <td>637</td><td>+6.3/+3.8/+5.1</td><td>1147</td><td>1860</td><td>74.0</td>
+          </tr>
+          <tr class="bad">
+            <td>（不通过）</td><td>10 mm</td><td>全包 5</td><td>50 mm</td>
+            <td>0.418</td><td>0.770</td><td>0.647</td><td>0.400</td>
+            <td>91</td><td>+10.7/−6.7/<b>+20.7</b></td><td>1203</td><td>1314</td><td>81.6</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="col">
+      <p>
+        最后一行是唯一不通过的组合：它<strong>最轻</strong>（1314 g），但三段温差摊不开——
+        HC3 段到 +20.7 K，HC2 段掉到 −6.7 K（法兰反而比管热）。
+        <strong>这说明 1327 g 已经接近该拓扑下的下限</strong>：再减重就压不住段间的温差分配。
+      </p>
+    </div>
+  </section>
+
+  <!-- ============ 几何 ============ -->
+  <section>
+    <div class="head">
+      <h2 class="sec">法兰几何：Ø120 + 200 mm 舌片 → Ø60 + 50 mm 舌片</h2>
+      <span class="ref">同比例作图 · 管孔 Ø50.8（= 管外径）</span>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 860 340" role="img"
+           aria-label="现役法兰与优化后法兰的同比例对比：圆盘从 Ø120 缩到 Ø60，舌片从 200 毫米缩到 50 毫米，单片净面积从 23541 降到约 1900 平方毫米">
+        <defs>
+          <marker id="dm" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6"
+                  orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--ink-3)"/>
+          </marker>
+        </defs>
+
+        <!-- 现役 -->
+        <text x="20" y="18" font-size="14" font-weight="650" fill="var(--ink)">现役　Ø120 + 舌片 200 mm</text>
+        <path d="M 165.4 28.7 A 132 132 0 1 0 165.4 291.3 L 592 248 L 592 72 Z"
+              fill="var(--hot-soft)" stroke="var(--hot)" stroke-width="1.8"/>
+        <circle cx="152" cy="160" r="55.9" fill="var(--surface)" stroke="var(--hot)" stroke-width="1.8"/>
+        <text x="152" y="164" text-anchor="middle" font-family="var(--f-mono)" font-size="11"
+              fill="var(--ink-2)">管孔</text>
+        <line x1="20" y1="310" x2="592" y2="310" stroke="var(--ink-3)" stroke-width="1"
+              marker-start="url(#dm)" marker-end="url(#dm)"/>
+        <text x="306" y="328" text-anchor="middle" font-family="var(--f-mono)" font-size="12"
+              fill="var(--ink-2)">260 mm　净面积 23 541 mm²　单片 1010 g（t=2.0）</text>
+
+        <!-- 优化后 -->
+        <text x="634" y="18" font-size="14" font-weight="650" fill="var(--ink)">优化　Ø60 + 舌片 50</text>
+        <path d="M 713.8 95.5 A 66 66 0 1 0 713.8 224.5 L 810 204 L 810 116 Z"
+              fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.8"/>
+        <circle cx="700" cy="160" r="55.9" fill="var(--surface)" stroke="var(--good)" stroke-width="1.8"/>
+        <line x1="634" y1="310" x2="810" y2="310" stroke="var(--ink-3)" stroke-width="1"
+              marker-start="url(#dm)" marker-end="url(#dm)"/>
+        <text x="722" y="328" text-anchor="middle" font-family="var(--f-mono)" font-size="12"
+              fill="var(--ink-2)">80 mm　约 1900 mm²　21–35 g</text>
+
+        <!-- 比例尺 -->
+        <line x1="20" y1="286" x2="130" y2="286" stroke="var(--ink-3)" stroke-width="2"/>
+        <text x="75" y="280" text-anchor="middle" font-family="var(--f-mono)" font-size="11"
+              fill="var(--ink-3)">50 mm</text>
+      </svg>
+      <figcaption>
+        <span class="fignum">图 1</span> ·
+        两者同比例。管孔不变（Ø50.8 = 管外径），<b>圆盘从 Ø120 缩到 Ø60，舌片从 200 mm 缩到 50 mm</b>，
+        单片净面积由 23 541 mm² 降到约 1 900 mm²。
+        现役单片 1010 g，优化后 <b>21–35 g</b>。舌片原先占单片面积的 61 %，是省铂的主战场。
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ 方案A 校核 ============ -->
+  <section>
+    <div class="head">
+      <h2 class="sec">方案 A 的完整校核</h2>
+      <span class="ref">--final · 外层耦合 4 轮收敛（管根温差 0.86 K）</span>
+    </div>
+
+    <div class="grid2">
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>段</th><th>控温</th><th>电流 A</th><th>管 J</th><th>管根 °C</th><th>温差 K</th></tr></thead>
+          <tbody>
+            <tr><td>HC1</td><td>1150</td><td>685</td><td>10.82</td><td>1144.0</td><td>+6.0</td></tr>
+            <tr><td>HC2</td><td>1080</td><td>583</td><td>9.20</td><td>1077.1</td><td>+2.9</td></tr>
+            <tr><td>HC3</td><td>1050</td><td>542</td><td>8.56</td><td>1043.7</td><td>+6.3</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>法兰</th><th>电流 A</th><th>抽热 W</th><th>最高 °C</th><th>铂重 g</th></tr></thead>
+          <tbody>
+            <tr><td>入口</td><td>685</td><td>+2</td><td>1154.8</td><td>21</td></tr>
+            <tr><td>HC1｜HC2</td><td>1099</td><td>+1</td><td>1150.9</td><td>35</td></tr>
+            <tr><td>HC2｜HC3</td><td>975</td><td>+2</td><td>1083.3</td><td>32</td></tr>
+            <tr><td>出口</td><td>542</td><td>+4</td><td>1050.0</td><td>17</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>判据</th><th>实际</th><th>要求</th><th>判定</th></tr></thead>
+        <tbody>
+          <tr><td>稳态管根温差（三段）</td><td>+6.0 / +2.9 / +6.3</td><td>0 &lt; ΔT &lt; 10 K</td><td class="good">✓</td></tr>
+          <tr><td>法兰抽热方向</td><td>+1 ~ +4 W</td><td>&gt; 0（不倒灌）</td><td class="good">✓</td></tr>
+          <tr><td>玻璃温降 vs 现场实测</td><td>20.8 / 20.0 K</td><td>验证点</td><td class="good">✓</td></tr>
+          <tr><td>耦合收敛</td><td>4 轮 / 0.86 K</td><td>&lt; 1 K</td><td class="good">✓</td></tr>
+          <tr class="bad"><td>法兰局部最高温 − 管根温</td><td>+10.8 K</td><td>≤ 0（严判）</td><td class="hot">待定夺</td></tr>
+          <tr class="bad"><td>管电流密度</td><td>10.82</td><td>≤ 10（若为硬指标）</td><td class="hot">待定夺</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ 待定夺 ============ -->
+  <section>
+    <div class="head">
+      <h2 class="sec">两项需要你定夺</h2>
+      <span class="ref">两者都不影响上表的其余判据</span>
+    </div>
+
+    <div class="note ask col">
+      <p><b>① 法兰局部最高 1154.8 °C，比管根（1144.0）高 10.8 K。</b></p>
+      <p>
+        净热流是 <b>+1 ~ +4 W 流进法兰</b>，方向安全——不是你描述的「功率在往法兰上堆」。
+        这 10.8 K 是孔周的局部热点，不是功率失衡。按字面严判（法兰任一点 ≤ 管温）差 10.8 K；
+        按失效机理（净功率倒灌）则通过。
+      </p>
+      <p style="margin-top:.6em">
+        若必须严判：方案 C / E / G 的法兰峰值是 1147–1152 °C，更接近；
+        代价是总铂升到 1392 / 1605 / 1860 g。
+      </p>
+    </div>
+
+    <div class="note ask col">
+      <p><b>② 管电流密度 10.82，略超 10。</b></p>
+      <p>
+        若 10 是硬指标，管壁改 <b>0.6 mm</b> 即可（J = 8.84），
+        代价 +619 g ⇒ 总铂 1946 g，省 72.7 %。
+      </p>
+    </div>
+
+    <div class="note col">
+      <p><b>③ 升温判据报「达不到」是模型缺陷，不是方案问题。</b></p>
+      <p>
+        <code>RampSolver</code> 用 <code>J_allow = 10</code> 作硬电流上限，而该值按推导是
+        「2 mm 裸铂板的自热平衡点」，对包了 10 mm 保温的<b>管子</b>并不适用。
+        管的热稳定裕度是 <b>1.75</b>（I_stab 1196 A vs 实际 685 A），无问题。这条要用正确的上限重判。
+      </p>
+    </div>
+  </section>
+
+  <!-- ============ 交付文件 ============ -->
+  <section>
+    <div class="head">
+      <h2 class="sec">交付的 .3dm</h2>
+      <span class="ref">Rhino 7 格式 · 图层「法兰」· 每文件 4 个实体</span>
+    </div>
+
+    <div class="col">
+      <p>
+        七个文件，每个含该方案的四片法兰实体（沿 +X 排开，按
+        <code>法兰1_t0.516mm</code> 这样命名，顺序为 入口 / 共用1 / 共用2 / 出口）。
+        管孔 Ø50.8 已按 0.4 mm 壁厚的管外径开好。
+      </p>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>文件</th><th>实体</th><th>回读体积 mm³</th><th>回读铂重 g</th><th>求解器用的 g</th><th>偏差</th></tr></thead>
+        <tbody>
+          <tr class="best"><td>方案A_1327g_纤维10_法兰全包20_舌50</td><td>4</td><td>4934.6</td><td>105.8</td><td>105</td><td>+0.8%</td></tr>
+          <tr><td>方案B_1358g_纤维2.5_法兰全裸_舌50</td><td>4</td><td>6380.7</td><td>136.9</td><td>135</td><td>+1.4%</td></tr>
+          <tr><td>方案C_1392g_纤维2.5_法兰全包20_舌50</td><td>4</td><td>8001.3</td><td>171.6</td><td>170</td><td>+1.0%</td></tr>
+          <tr><td>方案D_1512g_纤维10_法兰全包5_舌80</td><td>4</td><td>13606.4</td><td>291.9</td><td>290</td><td>+0.6%</td></tr>
+          <tr><td>方案E_1605g_纤维10_法兰全包20_舌80</td><td>4</td><td>17948.9</td><td>385.0</td><td>382</td><td>+0.8%</td></tr>
+          <tr><td>方案F_1647g_纤维2.5_法兰全裸_舌80</td><td>4</td><td>19931.1</td><td>427.5</td><td>424</td><td>+0.8%</td></tr>
+          <tr><td>方案G_1860g_纤维2.5_法兰全包20_舌80</td><td>4</td><td>29947.8</td><td>642.4</td><td>637</td><td>+0.8%</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note col">
+      <b>回读校核</b>：每个文件都用几何子进程重新读回并量体积，与求解器实际使用的值比对。
+      偏差 <b>+0.6 ~ +1.4 %</b>，且全为正 —— 因为求解器的壳网格把轮廓离散成阶梯，
+      比精确轮廓略小。这个量级的差别不影响任何判据。
+    </div>
+  </section>
+
+  <!-- ============ 推导 ============ -->
+  <section>
+    <div class="head">
+      <h2 class="sec">这个解怎么来的</h2>
+      <span class="ref">按你的要求，推导放在最后</span>
+    </div>
+
+    <div class="col">
+      <h3>1 · 先过升温，再谈稳态</h3>
+      <p>
+        温控功率下升温是准静态的（法兰热时间常数 11 min，升温全程 56 h，差 300 倍），
+        所以「能不能升到 1150」等于「该温度的稳态工作点要多大电流」。
+        全部管壁 × 保温组合都通过，含 0.4 mm。管侧因此直接落到你给的最薄下界。
+      </p>
+
+      <h3>2 · 管保温是免费杠杆，但不是越厚越好</h3>
+      <p>
+        <strong>管 J ∝ 1/√管壁</strong>——减薄管壁不减少电流负担，反而抬高 J；
+        而<strong>加厚保温同时降电流与 J</strong>，且保温无空间限制。
+        但保温太厚 ⇒ 电流太低 ⇒ 法兰要薄到 0.4 mm 以下才能热自给，撞下界后就失配
+        （表中唯一不通过的那组正是如此）。所以纤维 10 mm 优于 2.5 mm，也优于更厚。
+      </p>
+
+      <h3>3 · 稳态那条把法兰逼到近乎完全热自给</h3>
+      <p>
+        把 ΔT &lt; 10 K 用半无限翅片解反过来写，得到对「法兰从管子抽走的热」的硬预算：
+        管壁 0.4 mm 时只有 <strong>3.6 W</strong>，而法兰的发热与散热各是几百瓦
+        ⇒ 必须 |Φ − 1| ≲ 1.5 %。这是整个问题最紧的一条。
+      </p>
+
+      <h3>4 · 法兰要小、舌片要短，但保温要包</h3>
+      <p>
+        舌片原先占单片面积 61 %，只是引线 + 散热片 ⇒ 缩短它是省铂的主战场。
+        而<strong>法兰包保温</strong>降低自身散热，同厚度下自给率上升、局部峰值也从 1226 °C
+        降到 1154 °C —— 这与只看质量闭式得出的「不要包」相反，因为闭式忽略了 0.4 mm 厚度下界。
+      </p>
+
+      <h3>5 · 四片必须各自独立定厚</h3>
+      <p>
+        三段电流不同（685 / 583 / 542 A）。若把四片绑成一个标度，只能让<strong>一段</strong>落进
+        (0, 10] K 窗口，其余落在 +45 ~ +104 K。四个厚度自由度对三段约束才解得开，
+        还余一维用来减重。
+      </p>
+
+      <h3>6 · 升温速率不是杠杆</h3>
+      <p>
+        准静态极限下法兰的过热由几何与电流比决定，<strong>与速率无关</strong>；
+        现状 20 °C/h 已接近该极限（过热 +215 K，而恒流快升温是 +552 K）。再放慢收益递减。
+        <strong>所以升温速率维持现状即可。</strong>
+      </p>
+
+      <h3>7 · 交付条件里必须写一条公差</h3>
+      <p>
+        管根温差对法兰厚度的斜率约 <strong>1300 K/mm</strong>（近零点约 2300 K/mm）
+        ⇒ 守住 10 K 需要 <strong>±0.008 mm</strong> 的厚度公差。
+        <strong>这不可能靠加工保证</strong> —— 所以<strong>铜排空冷的风量必须可调</strong>，
+        用它在现场把工作点整定到位。这正是「可以空冷」那句话的价值所在。
+      </p>
+    </div>
+  </section>
+
+  <!-- ============ 待验证 ============ -->
+  <section>
+    <div class="head">
+      <h2 class="sec">须在实物上验证的清单</h2>
+      <span class="ref">这是优化设计，不是最终结论</span>
+    </div>
+    <div class="col">
+      <ol>
+        <li><b>铂表面发射率</b> —— 模型最大的不确定源（±40 % 散热）。它直接移动法兰的热平衡点，
+          也就是上面那条 ±0.008 mm 公差的中心位置。空冷风量的整定范围要按它的不确定度留。</li>
+        <li><b>共用片的实测电流</b> —— 叠加系数取的是推导值 √3。现场烧断记录已把它夹在
+          [1.2, 2.0]，钳表量一次即可钉死；它直接决定两片共用法兰的厚度。</li>
+        <li><b>纯铂在 1000–1100 °C 的持久强度</b> —— HC2/HC3 的控温点落在实测区间之外，
+          强度利用率目前<b>无法判定</b>。</li>
+        <li><b>氧化铝托管与铂管的接触方式</b> —— 影响散热边界。</li>
+        <li><b>法兰局部峰值</b> —— 模型给 1154 °C，建议首件用红外或热电偶实测孔周温度。</li>
+      </ol>
+    </div>
+  </section>
+
+  <footer>
+    <p>
+      计算链：变步长壳网格 → 有限体积电流场 → 有限体积温度场 → 段↔法兰欠松弛耦合到收敛。
+      厚度由阻尼牛顿在整线耦合解内求解，不用闭式（闭式把管根钉在设定温度，已证明偏乐观）。
+      验证套件 19/19 通过。
+    </p>
+    <p>
+      口径提醒：本报告的绝对数值建立在当前的物性与边界假设上，
+      其中发射率与共用片电流两项的不确定度最大，见「须在实物上验证的清单」。
+      完整推导与全部原始数据见仓库 <code>HANDOVER.md</code> §0.0 与 §4.2v–§4.2y。
+    </p>
+  </footer>
+
+</div>

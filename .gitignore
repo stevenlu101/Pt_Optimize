@@ -28,3 +28,6 @@ TestResults/
 
 # 场图/网格图输出目录（可由 --mesh / --shell / --run 重新生成）
 figs/
+
+# Rhino 打开文件时的锁文件
+*.rhl
