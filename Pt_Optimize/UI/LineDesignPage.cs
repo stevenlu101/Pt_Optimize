@@ -55,6 +55,9 @@ public sealed class LineDesignPage : TabPage
     };
     private CancellationTokenSource? _cts;
     private LineResult? _last;
+    /// <summary>「分析几何变数」解析出的各级原始厚度，逐级定厚要用</summary>
+    private double[][]? _levels;
+    private double[][]? _levelScale;
     private readonly DesignInputs _base;
 
     /// <summary>段的可编辑行。★ 控温点默认 1150/1080/1050 —— 沿流向**递减**，
@@ -289,6 +292,8 @@ public sealed class LineDesignPage : TabPage
             lc.FlangeFile3dm = files;
             lc.FlangeLayer = _layer3dm.Text.Trim();
             lc.ThicknessScale = _tPlate.Select(n => (double)n.Value).ToArray();
+            if (_levels is not null) lc.LevelThicknessMm = _levels;
+            if (_levelScale is not null) lc.LevelScale = _levelScale;
         }
         return lc;
     }
@@ -311,9 +316,21 @@ public sealed class LineDesignPage : TabPage
             if (autoSize)
             {
                 var init = _tPlate.Select(n => (double)n.Value).ToArray();
-                Func<double, FlangePlate>? mk = _srcAnalytic.Checked ? MakePlate : null;
-                var r = await Task.Run(() => FlangeAutoSizer.SolveAuto(
-                    lc, mk, init, new FlangeAutoSizer.Options(), prog, ct), ct);
+                FlangeAutoSizer.Result r;
+                if (!_srcAnalytic.Checked && _levels is { Length: > 0 } && _levels[0].Length > 1)
+                {
+                    // 逐级定厚：外层调每片整体厚度（管根温差），内层调各级比例（局部过热）
+                    var lvl = _levels;
+                    r = await Task.Run(() => FlangeAutoSizer.SolveByLevel(
+                        lc, lvl, new FlangeAutoSizer.Options(), prog, ct), ct);
+                    _levelScale = r.LevelScale;
+                }
+                else
+                {
+                    Func<double, FlangePlate>? mk = _srcAnalytic.Checked ? MakePlate : null;
+                    r = await Task.Run(() => FlangeAutoSizer.SolveAuto(
+                        lc, mk, init, new FlangeAutoSizer.Options(), prog, ct), ct);
+                }
                 for (int i = 0; i < _tPlate.Length && i < r.ThicknessMm.Length; i++)
                     _tPlate[i].Value = (decimal)Math.Clamp(r.ThicknessMm[i], 0.1, 8.0);
                 _last = r.Line;
@@ -442,7 +459,9 @@ public sealed class LineDesignPage : TabPage
                 double k = (double)_tPlate[i].Value;
                 string dst = Path.Combine(fb.SelectedPath,
                     $"{Path.GetFileNameWithoutExtension(src)}_{names[i]}_x{k:0.0000}.3dm");
-                string log = Geometry3dm.ScalePlate3dm(src, dst, _layer3dm.Text.Trim(), new[] { k });
+                var ks = _levelScale is not null && i < _levelScale.Length && _levelScale[i].Length > 0
+                       ? _levelScale[i] : new[] { k };
+                string log = Geometry3dm.ScalePlate3dm(src, dst, _layer3dm.Text.Trim(), ks);
                 sb.AppendLine($"— {names[i]}：厚度 ×{k:0.0000} → {Path.GetFileName(dst)}");
                 foreach (var ln in log.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
                     if (ln.Trim().StartsWith("实体")) sb.AppendLine("    " + ln.Trim());
@@ -480,7 +499,12 @@ public sealed class LineDesignPage : TabPage
             _status.Text = "提取厚度场并解析…";
             var f = Geometry3dm.LoadThickness(src, _layer3dm.Text.Trim(), double.NaN, 0.5);
             var sh = PlateShapeAnalyzer.Analyze(f);
+            // 四片先按同一张图的分级；各片可各自选不同 .3dm 时逐片解析亦可
+            var lv = sh.Levels.Select(l => l.ThicknessMm).ToArray();
+            _levels = Enumerable.Range(0, 4).Select(_ => (double[])lv.Clone()).ToArray();
             _out.Text = PlateShapeAnalyzer.Format(sh) + Environment.NewLine
+                      + $"→ 已记下 {lv.Length} 级厚度，「自动定厚」将让优化器自行决定各级比例。"
+                      + Environment.NewLine
                       + "来源：" + src + Environment.NewLine + Environment.NewLine + _out.Text;
             _status.Text = "已解析";
         }

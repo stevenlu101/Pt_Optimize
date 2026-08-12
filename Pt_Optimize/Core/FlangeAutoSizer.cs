@@ -51,6 +51,8 @@ public static class FlangeAutoSizer
         public string Message = "";
         /// <summary>每轮的最大误差，供界面画收敛曲线或诊断振荡</summary>
         public readonly List<double> History = new();
+        /// <summary>逐级定厚的结果：`[片][级]` 的厚度倍数（仅 SolveByLevel 填）</summary>
+        public double[][]? LevelScale;
     }
 
     /// <summary>
@@ -176,6 +178,102 @@ public static class FlangeAutoSizer
         return res;
     }
 
+    /// <summary>
+    /// **逐级定厚**（.3dm 专用）—— 让优化器自己决定各级厚度的比例。
+    ///
+    /// 两条约束由两组自由度分别负责，互不干扰，所以可以分层：
+    ///
+    /// | 层 | 自由度 | 管的约束 | 机理 |
+    /// |---|---|---|---|
+    /// | 外层 | 每片一个**整体**倍数 | C2 管根温差 | 整片发热总量 ⇒ 从管子抽多少热 |
+    /// | 内层 | 每片各级的**相对**比例 | C1 局部过热 | 单位面积发热 = ρe·K²/t ⇒ 加厚哪一级，哪一级就变凉 |
+    ///
+    /// 内层调完后把各级比例**归一化**（几何平均拉回 1），于是整片的平均厚度不变，
+    /// 外层看到的热平衡几乎不动 —— 这就是两层能解耦的原因。
+    ///
+    /// 内层的靶：让各级的局部峰值温度**齐平**（都压到管根温度附近）。
+    /// 哪一级更热就加厚哪一级，热量被摊到其余级去。
+    /// </summary>
+    public static Result SolveByLevel(LineCase baseCase, double[][] levelThicknessMm,
+                                      Options? opt = null, IProgress<string>? progress = null,
+                                      CancellationToken cancel = default, int outerRounds = 6)
+    {
+        opt ??= new Options();
+        int nf = levelThicknessMm.Length;
+        var scale = new double[nf][];
+        for (int j = 0; j < nf; j++)
+        {
+            scale[j] = new double[levelThicknessMm[j].Length];
+            for (int m = 0; m < scale[j].Length; m++) scale[j][m] = 1.0;
+        }
+
+        Result last = new();
+        for (int round = 0; round < outerRounds; round++)
+        {
+            cancel.ThrowIfCancellationRequested();
+
+            // ── 外层：在**当前各级比例**下，求每片的整体倍数，使管根温差达标
+            var overall = new double[nf];
+            for (int j = 0; j < nf; j++) overall[j] = 1.0;
+            var lcBase = CloneCase(baseCase);
+            lcBase.LevelThicknessMm = levelThicknessMm;
+            lcBase.LevelScale = scale;
+
+            progress?.Report($"第 {round + 1}/{outerRounds} 轮 · 外层：调整每片整体厚度…");
+            last = SolveAuto(lcBase, null, overall, opt, progress, cancel);
+            if (last.Line is null) return last;
+
+            // 把外层求出的整体倍数并进各级比例
+            for (int j = 0; j < nf; j++)
+            {
+                double kj = j < last.ThicknessMm.Length ? last.ThicknessMm[j] : 1.0;
+                for (int m = 0; m < scale[j].Length; m++) scale[j][m] *= kj;
+            }
+
+            // ── 内层：按各级峰值温度重新分配比例（总平均厚度不变）
+            var lr = last.Line;
+            double worstOver = 0;
+            for (int j = 0; j < nf && j < lr.Flanges.Length; j++)
+            {
+                var f = lr.Flanges[j];
+                if (f.LevelTMaxC.Length != scale[j].Length) continue;
+                double baseT = f.TRootC;
+                var adj = new double[scale[j].Length];
+                double logSum = 0; int cnt = 0;
+                for (int m = 0; m < adj.Length; m++)
+                {
+                    double tm = f.LevelTMaxC[m];
+                    double e = double.IsNaN(tm) ? 0 : tm - baseT;      // >0 = 该级比管根热
+                    worstOver = Math.Max(worstOver, e);
+                    // 越热越加厚：Δln t = +ω·e/S
+                    double st = Math.Clamp(opt.Damping * e / opt.SensitivityK, -0.30, 0.30);
+                    adj[m] = Math.Exp(st);
+                    logSum += Math.Log(adj[m]); cnt++;
+                }
+                // 归一化：几何平均拉回 1 ⇒ 只改**比例**，不改整片平均厚度
+                double norm = cnt > 0 ? Math.Exp(logSum / cnt) : 1.0;
+                for (int m = 0; m < adj.Length; m++)
+                    scale[j][m] = Math.Clamp(scale[j][m] * adj[m] / norm,
+                                             opt.MinThickMm / Math.Max(1e-6, levelThicknessMm[j][m]),
+                                             opt.MaxThickMm / Math.Max(1e-6, levelThicknessMm[j][m]));
+            }
+            progress?.Report($"第 {round + 1} 轮 · 内层：各级峰值最高超管根 {worstOver:0.0} K");
+            if (last.Converged && worstOver < 15) break;
+        }
+
+        // 汇报最终的各级厚度
+        var sb = new System.Text.StringBuilder(last.Message);
+        for (int j = 0; j < nf; j++)
+        {
+            sb.Append($"　片{j + 1} 各级厚度 ");
+            sb.Append(string.Join("/", Enumerable.Range(0, scale[j].Length)
+                        .Select(m => (levelThicknessMm[j][m] * scale[j][m]).ToString("0.000"))));
+        }
+        last.Message = sb.ToString();
+        last.LevelScale = scale;
+        return last;
+    }
+
     /// <summary>浅拷贝算例，只换法兰几何 —— 不能直接改传入的 LineCase（界面还在用它）</summary>
     private static LineCase CloneCase(LineCase c) => new()
     {
@@ -184,6 +282,7 @@ public static class FlangeAutoSizer
         UseMeasuredCurrent = c.UseMeasuredCurrent, MeasuredCurrentA = c.MeasuredCurrentA,
         FlangeLayer = c.FlangeLayer, FlangePlaneY = c.FlangePlaneY,
         FlangeFile3dm = c.FlangeFile3dm, ThicknessScale = c.ThicknessScale,
+        LevelScale = c.LevelScale, LevelThicknessMm = c.LevelThicknessMm,
         ThicknessStepMm = c.ThicknessStepMm,
         MeshFineMm = c.MeshFineMm, MeshCoarseMm = c.MeshCoarseMm,
         MeshFineRadiusMm = c.MeshFineRadiusMm,

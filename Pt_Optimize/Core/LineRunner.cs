@@ -67,6 +67,22 @@ public sealed class LineCase
     /// </summary>
     public double[] ThicknessScale = Array.Empty<double>();
 
+    /// <summary>
+    /// **逐级厚度标度**：`LevelScale[片][级]`。非空时**优先于** <see cref="ThicknessScale"/>。
+    ///
+    /// 为什么要分级：整体缩放只有 1 个自由度，只能调整片的热平衡（管根温差 C2），
+    /// 动不了**局部过热**（C1）—— 后者取决于厚度在半径方向上怎么分配。
+    /// 单位面积发热 = ρe·K²/t（K = J·t 是面电流，守恒），
+    /// 所以**把某一级加厚，就按比例压低该级的单位面积发热**。
+    /// 孔周那一级正是峰值所在，让优化器自己决定各级比例，才谈得上同时满足两条约束。
+    ///
+    /// 归级方式：把格子的原始厚度与 <see cref="LevelThicknessMm"/> 逐一比较，取最近的那一级。
+    /// </summary>
+    public double[][] LevelScale = Array.Empty<double[]>();
+
+    /// <summary>`LevelThicknessMm[片][级]` = 该片各级的**原始**厚度 mm（由 PlateShapeAnalyzer 给出）</summary>
+    public double[][] LevelThicknessMm = Array.Empty<double[]>();
+
     // ── 网格
     public double MeshFineMm = 2.0, MeshCoarseMm = 11.0, MeshFineRadiusMm = 50.0;
 
@@ -121,6 +137,13 @@ public sealed class FlangeOut
     public ShellMesh? Mesh;
     public double[] JField = Array.Empty<double>();
     public double[] TField = Array.Empty<double>();
+    /// <summary>
+    /// 各级的**局部最高温** °C（与 LineCase.LevelThicknessMm 同序）。
+    /// 逐级定厚要靠它：知道是**哪一级**在过热，才知道该加厚哪一级。
+    /// </summary>
+    public double[] LevelTMaxC = Array.Empty<double>();
+    /// <summary>各级的当前厚度 mm（已含标度），供界面与报告显示</summary>
+    public double[] LevelThickMm = Array.Empty<double>();
     public string Source = "";        // 用了哪个 .3dm
 }
 
@@ -329,11 +352,28 @@ public static class LineRunner
                 // 这让「自动定厚」在 .3dm 模式下同样可用 —— 求出的不是绝对厚度，
                 // 而是「你这张图纸的厚度要整体 ×k」，工程师照着改一版图即可。
                 // t=0（无材料：轮廓外、管孔、开槽）乘任何数仍是 0，故槽与轮廓不受影响。
+                double[]? lvS = j < c.LevelScale.Length ? c.LevelScale[j] : null;
+                double[]? lvT = j < c.LevelThicknessMm.Length ? c.LevelThicknessMm[j] : null;
+                bool perLevel = lvS is { Length: > 0 } && lvT is { Length: > 0 };
                 double k = j < c.ThicknessScale.Length ? c.ThicknessScale[j] : 1.0;
-                if (Math.Abs(k - 1.0) > 1e-9)
+
+                if (perLevel || Math.Abs(k - 1.0) > 1e-9)
                 {
                     var scaled = new double[tf.T.Length];
-                    for (int q = 0; q < tf.T.Length; q++) scaled[q] = tf.T[q] * k;
+                    for (int q = 0; q < tf.T.Length; q++)
+                    {
+                        double t0 = tf.T[q];
+                        if (t0 <= 1e-6) { scaled[q] = 0; continue; }   // 无材料乘任何数仍是无材料
+                        double kk = k;
+                        if (perLevel)
+                        {
+                            int best = 0;
+                            for (int m = 1; m < lvT!.Length; m++)
+                                if (Math.Abs(t0 - lvT[m]) < Math.Abs(t0 - lvT[best])) best = m;
+                            kk = lvS![Math.Min(best, lvS.Length - 1)];
+                        }
+                        scaled[q] = t0 * kk;
+                    }
                     tf = new ThicknessField
                     {
                         X0 = tf.X0, Z0 = tf.Z0, Step = tf.Step,
@@ -362,8 +402,31 @@ public static class LineRunner
                                      : new FlangePlate().InsulBoundaryXResolved;
             var th = ShellThermal.Solve(mesh, sc.JMagAPerMm2, p2, tRoot, insulX);
 
+            // 逐级峰值温度：按单元厚度归级，取该级内的最高温
+            double[] lvTmax = Array.Empty<double>(), lvTh = Array.Empty<double>();
+            if (j < c.LevelThicknessMm.Length && c.LevelThicknessMm[j] is { Length: > 0 } lvRef)
+            {
+                int L = lvRef.Length;
+                lvTmax = new double[L]; lvTh = new double[L];
+                var kk = j < c.LevelScale.Length && c.LevelScale[j] is { Length: > 0 } ks ? ks : null;
+                for (int m = 0; m < L; m++)
+                {
+                    lvTmax[m] = double.NaN;
+                    lvTh[m] = lvRef[m] * (kk is null ? 1.0 : kk[Math.Min(m, kk.Length - 1)]);
+                }
+                for (int q = 0; q < mesh.CellCount; q++)
+                {
+                    double tq = mesh.Thickness[q];
+                    int best = 0;
+                    for (int m = 1; m < L; m++)
+                        if (Math.Abs(tq - lvTh[m]) < Math.Abs(tq - lvTh[best])) best = m;
+                    if (double.IsNaN(lvTmax[best]) || th.T[q] > lvTmax[best]) lvTmax[best] = th.T[q];
+                }
+            }
+
             flanges[j] = new FlangeOut
             {
+                LevelTMaxC = lvTmax, LevelThickMm = lvTh,
                 Name = j == 0 ? "入口" : j >= n ? "出口" : $"{segs[j - 1].Name}|{segs[j].Name}",
                 Shared = j > 0 && j < n,
                 CurrentA = iJoint,
