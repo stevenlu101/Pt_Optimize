@@ -40,6 +40,19 @@ public static class FlangeAutoSizer
         public double MinThickMm = 0.4, MaxThickMm = 6.0;
         /// <summary>单步对数位移上限，防止首轮从很差的初值一步跳飞</summary>
         public double MaxLogStep = 0.35;
+
+        // ── 搜索期降精度（收敛后会自动做一次全精度复核）
+        //
+        // 单次全精度整线耦合解在 .3dm 路径上实测 **69 s**（3005 单元、耦合到 1 K）。
+        // 逐级优化要几百次调用 ⇒ 几个小时，不可用。
+        // 搜索期只需要**梯度方向对**，不需要每一步都精确，故粗网格 + 松耦合；
+        // 最终解再用调用方原本的精度复核一遍 —— 报告值一律取那一次。
+        /// <summary>搜索期的细网格步长 mm（原值 2.0）。0 = 不降精度</summary>
+        public double SearchMeshFineMm = 4.0;
+        public double SearchMeshCoarseMm = 16.0;
+        /// <summary>搜索期的段↔法兰耦合轮数与容差</summary>
+        public int SearchCoupleRounds = 5;
+        public double SearchCoupleTolK = 4.0;
     }
 
     public sealed class Result
@@ -126,6 +139,13 @@ public static class FlangeAutoSizer
             cancel.ThrowIfCancellationRequested();
 
             var lc = CloneCase(baseCase);
+            if (opt.SearchMeshFineMm > 0)
+            {
+                lc.MeshFineMm = opt.SearchMeshFineMm;
+                lc.MeshCoarseMm = opt.SearchMeshCoarseMm;
+                lc.CoupleMaxRounds = opt.SearchCoupleRounds;
+                lc.CoupleTolK = opt.SearchCoupleTolK;
+            }
             if (makePlate is not null)
                 lc.FlangePlates = t.Select(makePlate).ToArray();      // 解析几何：t 就是厚度
             else
@@ -278,6 +298,20 @@ public static class FlangeAutoSizer
             progress?.Report($"第 {round + 1} 轮 · 内层：各级峰值最高超管根 {worstOver:0.0} K");
             if (last.Converged && worstOver < 15) break;
         }
+
+        // ── 全精度复核：搜索期是粗网格 + 松耦合，最终解必须用原精度重跑一次。
+        //    **报告值一律取这一次** —— 搜索期的数只用来找方向。
+        progress?.Report("全精度复核最终解…");
+        var lcFinal = CloneCase(baseCase);
+        lcFinal.LevelThicknessMm = levelThicknessMm;
+        lcFinal.LevelScale = scale;
+        try
+        {
+            var verify = LineRunner.Run(lcFinal, progress, cancel);
+            if (verify.Ok) { last.Line = verify; last.Converged = verify.Converged; }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch { /* 复核失败就保留搜索期的结果，并在下面注明 */ }
 
         // 汇报最终的各级厚度
         var sb = new System.Text.StringBuilder(last.Message);

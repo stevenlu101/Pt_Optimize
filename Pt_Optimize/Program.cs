@@ -2797,6 +2797,49 @@ internal static class Program
                 return;
             }
 
+            // --cli --timeone <file.3dm>   量一次整线耦合解在 .3dm 路径上要多久
+            if (args.Contains("--timeone"))
+            {
+                int ti2 = Array.IndexOf(args, "--timeone");
+                string tf2 = ti2 + 1 < args.Length && !args[ti2 + 1].StartsWith("--")
+                             ? args[ti2 + 1] : Find3dm("Pt_Heater.3dm");
+                var pt3 = SegmentSolver.Clone(p);
+                pt3.Layer1.ThicknessMm = 10; pt3.Layer1.Enabled = true;
+                pt3.WallMinMm = 0.4; pt3.FlangeInsulThickMm = 20; pt3.FlangeInsulated = true;
+                pt3.BusbarClampTempC = 300;
+                var lc3 = new LineCase
+                {
+                    Base = pt3, WallMm = 0.4, UseMeasuredCurrent = false, CheckRamp = false,
+                    SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                    FlangeFile3dm = Enumerable.Repeat(tf2, 4).ToArray(), FlangeLayer = "法兰"
+                };
+                for (int rep = 0; rep < 2; rep++)
+                {
+                    var sw3 = System.Diagnostics.Stopwatch.StartNew();
+                    var r3 = LineRunner.Run(lc3);
+                    sw3.Stop();
+                    Console.WriteLine($"第 {rep + 1} 次：{sw3.Elapsed.TotalSeconds:0.0} s　" +
+                        (r3.Ok ? (r3.Converged ? "收敛" : "未收敛") : "失败 " + r3.Message) +
+                        (r3.Ok ? $"　单元数 {r3.Flanges[0].CellCount}　总铂 {r3.TotalMassG:0} g" : ""));
+                }
+                Console.WriteLine("第 2 次明显更快 ⇒ 瓶颈在厚度场提取（已缓存）；否则瓶颈在网格/场解。");
+                Console.WriteLine();
+                Console.WriteLine("── 搜索期精度（粗网格 + 松耦合）");
+                lc3.MeshFineMm = 4.0; lc3.MeshCoarseMm = 16.0;
+                lc3.CoupleMaxRounds = 5; lc3.CoupleTolK = 4.0;
+                for (int rep = 0; rep < 2; rep++)
+                {
+                    var sw4 = System.Diagnostics.Stopwatch.StartNew();
+                    var r4 = LineRunner.Run(lc3);
+                    sw4.Stop();
+                    Console.WriteLine($"第 {rep + 1} 次：{sw4.Elapsed.TotalSeconds:0.0} s　" +
+                        (r4.Ok ? $"单元数 {r4.Flanges[0].CellCount}　总铂 {r4.TotalMassG:0} g　" +
+                                 $"最差段温差 {r4.Segments.Max(x => Math.Abs(x.RootDeltaK)):0.0} K"
+                               : "失败"));
+                }
+                return;
+            }
+
             // --cli --leveltest <file.3dm> [图层]   逐级定厚试算：全放开 vs 锁外圈
             //
             // 「外圈厚度不动、只调内圈」到底管不管用，用同一张图跑两遍对比。
