@@ -2797,6 +2797,28 @@ internal static class Program
                 return;
             }
 
+            // --cli --shapevars <file.3dm> [图层]   从 .3dm 反推法兰的几何变数
+            //
+            // 「你给形状，能不能分析出有哪些几何变数」的实现。厚度场里已含全部信息
+            // （t=0 表示无材料），故轮廓、孔、槽、阶梯一次全部读出。
+            // 有了参数，任意形状才谈得上进优化。
+            if (args.Contains("--shapevars"))
+            {
+                int svi = Array.IndexOf(args, "--shapevars");
+                string svf = svi + 1 < args.Length && !args[svi + 1].StartsWith("--")
+                             ? args[svi + 1] : Find3dm("Pt_Heater.3dm");
+                string svl = svi + 2 < args.Length && !args[svi + 2].StartsWith("--")
+                             ? args[svi + 2] : "法兰";
+                Console.WriteLine($"读取 {Path.GetFileName(svf)}　图层「{svl}」…");
+                try
+                {
+                    var fld = Geometry3dm.LoadThickness(svf, svl, double.NaN, 0.5);
+                    Console.WriteLine(PlateShapeAnalyzer.Format(PlateShapeAnalyzer.Analyze(fld)));
+                }
+                catch (Exception ex) { Console.WriteLine("✗ " + ex.Message); }
+                return;
+            }
+
             // --cli --gate1   第一步：能不能升到目标温度（管侧）
             //
             // ★ 顺序很重要（用户 2026-08-11 纠正）：**升温到目标温度是第一步，

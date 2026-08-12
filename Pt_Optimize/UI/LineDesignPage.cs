@@ -80,9 +80,11 @@ public sealed class LineDesignPage : TabPage
         _btnRun = Btn("核算整线", (_, _) => _ = RunAsync(false));
         _btnAuto = Btn("自动定厚", (_, _) => _ = RunAsync(true));
         _btnExport = Btn("导出 .3dm", (_, _) => Export());
+        var btnAnalyze = Btn("分析几何变数", (_, _) => AnalyzeShape());
         tool.Items.Add(_btnRun);
         tool.Items.Add(_btnAuto);
         tool.Items.Add(new ToolStripSeparator());
+        tool.Items.Add(btnAnalyze);
         tool.Items.Add(_btnExport);
         tool.Items.Add(new ToolStripSeparator());
         _prog.Size = new Size(160, 16);
@@ -455,6 +457,37 @@ public sealed class LineDesignPage : TabPage
         {
             MessageBox.Show(this, ex.Message + Environment.NewLine + Environment.NewLine + "需本机安装 Rhino 8。",
                             "导出失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally { Cursor = Cursors.Default; }
+    }
+
+    /// <summary>
+    /// 读入口片的 .3dm，把它反推成一组几何变数（各级半径与厚度、槽数与角宽、舌片尺寸）。
+    /// 这是「任意形状也能优化」的前提 —— 先有参数，才谈得上让优化器去动它们。
+    /// </summary>
+    private void AnalyzeShape()
+    {
+        string src = _file3dm[0].Text.Trim();
+        if (_srcAnalytic.Checked || string.IsNullOrEmpty(src))
+        {
+            MessageBox.Show(this, "请先切到「Rhino .3dm 文件」并选好入口片的图纸。",
+                            "分析几何变数", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        try
+        {
+            Cursor = Cursors.WaitCursor;
+            _status.Text = "提取厚度场并解析…";
+            var f = Geometry3dm.LoadThickness(src, _layer3dm.Text.Trim(), double.NaN, 0.5);
+            var sh = PlateShapeAnalyzer.Analyze(f);
+            _out.Text = PlateShapeAnalyzer.Format(sh) + Environment.NewLine
+                      + "来源：" + src + Environment.NewLine + Environment.NewLine + _out.Text;
+            _status.Text = "已解析";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "解析失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            _status.Text = "失败";
         }
         finally { Cursor = Cursors.Default; }
     }

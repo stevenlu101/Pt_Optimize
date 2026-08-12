@@ -446,10 +446,14 @@ internal static class GeomProbe
             if (discR >= amp) { Console.Error.WriteLine("盘半径过大，切点不存在"); return 4; }
             double phi = Math.Atan2(tabHW, tabX);
             double th = phi - Math.Acos(discR / amp);
-            var tp = new Point3d(discR * Math.Cos(th), discR * Math.Sin(th), 0);   // 上切点
-            var tn = new Point3d(tp.X, -tp.Y, 0);                                   // 下切点
-            var e1 = new Point3d(tabX, tabHW, 0);
-            var e2 = new Point3d(tabX, -tabHW, 0);
+            // ★ 板面在 **XZ 平面**、厚度沿 **Y** —— 必须与 thickness 模式的读取约定一致，
+            //   也与 Pt_Heater.3dm 和 Core 的 FlangePlate(x, z) 一致。
+            //   （2026-08-12 修正：早先画在 XY 面、沿 Z 拉伸，与读取端差 90°，
+            //     导致自己写出的 .3dm 再读回来量到 0 材料，round-trip 不成立。）
+            var tp = new Point3d(discR * Math.Cos(th), 0, discR * Math.Sin(th));   // 上切点
+            var tn = new Point3d(tp.X, 0, -tp.Z);                                   // 下切点
+            var e1 = new Point3d(tabX, 0, tabHW);
+            var e2 = new Point3d(tabX, 0, -tabHW);
 
             double spacing = 2.5 * discR + Math.Abs(tabX);
             int made = 0;
@@ -457,7 +461,7 @@ internal static class GeomProbe
             {
                 double t = thicks[i];
                 // 保留的盘弧：从下切点经 +X 侧到上切点（劣弧在舌片一侧被直边取代）
-                var arc = new Arc(tn, new Point3d(discR, 0, 0), tp);
+                var arc = new Arc(tn, new Point3d(discR, 0, 0), tp);   // 经 +X 侧
                 if (!arc.IsValid) { Console.Error.WriteLine("圆弧无效"); return 5; }
 
                 var poly = new PolyCurve();
@@ -468,13 +472,13 @@ internal static class GeomProbe
                 poly.MakeClosed(tol);
                 if (!poly.IsClosed) { Console.Error.WriteLine("轮廓未闭合"); return 6; }
 
-                var hole = new Circle(Point3d.Origin, holeR).ToNurbsCurve();
+                var hole = new Circle(Plane.WorldZX, Point3d.Origin, holeR).ToNurbsCurve();
                 var faces = Brep.CreatePlanarBreps(new Curve[] { poly, hole }, tol);
                 if (faces == null || faces.Length == 0)
                 { Console.Error.WriteLine("平面片创建失败"); return 7; }
 
                 var solid = faces[0].Faces[0].CreateExtrusion(
-                                new LineCurve(Point3d.Origin, new Point3d(0, 0, t)), true);
+                                new LineCurve(Point3d.Origin, new Point3d(0, t, 0)), true);
                 if (solid == null) { Console.Error.WriteLine("拉伸失败"); return 8; }
 
                 var xf = Transform.Translation(i * spacing, 0, 0);
