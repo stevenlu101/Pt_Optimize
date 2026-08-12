@@ -171,7 +171,6 @@ public static class LineSolver
             p.TubeIdMm = s.TubeIdMm; p.TubeLengthMm = s.LengthMm;
             p.WallMinMm = s.WallMm; p.GradeName = s.GradeName;
             p.TLiquidusC = s.TLiquidusC;
-            p.SizeFlangeThickness = true;
 
             // CoupledSolver 会就地改写 ThicknessMm，每段必须给一份独立的板
             var g = ClonePlate(proto);

@@ -141,33 +141,17 @@ public class DesignInputs
     { Name = "外加保温", ThicknessMm = 0, K0 = 0.05, K1 = 2.5e-4, Enabled = false };
 
     // ---------- 5 法兰 ----------
-    [Category("5 法兰"), DisplayName("法兰内半径 ri [mm]"), Description("= 管外半径")]
-    public double FlangeRiMm { get; set; } = 26.0;  // = 管外半径
-
-    [Category("5 法兰"), DisplayName("法兰外半径 ro [mm]"),
-     Description("散热面积 ∝ (ro²−ri²)，是二次项，最敏感")]
-    public double FlangeRoMm { get; set; } = 50.0;
-
-    [Category("5 法兰"), DisplayName("剖面形状"),
-     Description("等厚=长方形剖面；梯形=线性渐变；理想=1/r² 渐变(φ 处处为1)；理想截断=受 t_min 限制的可制造版")]
-    public FlangeShape FlangeShapeMode { get; set; } = FlangeShape.Rectangular;
-
-    [Category("5 法兰"), DisplayName("法兰厚度 tf [mm]"),
-     Description("等厚模式用。自身发热 ∝ 1/tf —— 越厚越冷，且越费铂")]
-    public double FlangeThickMm { get; set; } = 3.0;
-
-    [Category("5 法兰"), DisplayName("梯形 内缘厚 [mm]"), Description("梯形模式：r_i 处厚度")]
-    public double FlangeThickInnerMm { get; set; } = 0.8;
-
-    [Category("5 法兰"), DisplayName("梯形 外缘厚 [mm]"), Description("梯形模式：r_o 处厚度")]
-    public double FlangeThickOuterMm { get; set; } = 0.4;
-
-    [Category("5 法兰"), DisplayName("最小可制造厚 [mm]"),
-     Description("理想渐变的截断下限，同时决定可用外径上限 r_o,max = √(C/t_min)")]
-    public double FlangeThickMinMm { get; set; } = 0.4;
+    //
+    // ★ 2026-08-12 大清理：法兰的**几何**（盘径、厚度、剖面形状、渐变）已全部移到
+    //   FlangePlate / .3dm 那条路上（壳网格 → FV 电流场 → FV 温度场）。
+    //   原先挂在这里的 FlangeRiMm / FlangeRoMm / FlangeShapeMode / FlangeThickMm /
+    //   FlangeThickInnerMm / FlangeThickOuterMm / FlangeThickMinMm / SizeFlangeThickness /
+    //   BusbarConductanceWPerK **只服务于已作废的一维环形模型 FlangeRadial**，
+    //   随该模型一并删除（HANDOVER §5、§7）。
+    //   本节现在只留**与几何无关的物理边界**：保温、吹风、夹持。
 
     [Category("5 法兰"), DisplayName("法兰有保温"),
-     Description("法兰双面包覆高纯氧化铝纤维。降低 q″ 可线性提升自给率 φ")]
+     Description("法兰双面包覆高纯氧化铝纤维。降低 q″ 会降低自给所需的厚度")]
     public bool FlangeInsulated { get; set; } = true;
 
     // ★ 2026-08-10 随 Layer1 一并改为 2.5：用户给的「纤维包覆 2–3 mm」是针对铂管的，
@@ -182,18 +166,11 @@ public class DesignInputs
      Description("压缩空气强制冷却。0 = 仅自然对流。每吹掉一瓦都要由铂金发出来，直接折算成铂重")]
     public double FlangeAirVelocityMPerS { get; set; } = 0.0;
 
-    [Category("5 法兰"), DisplayName("铜排夹水冷温度 [°C]"),
-     Description("舌片末端整条边的强制温度。<0 = 无水冷（自由辐射端）。" +
-                 "水冷后舌片成为真正的电流引线，其焦耳热可能倒灌回管根（理论模型 §8.11）")]
+    [Category("5 法兰"), DisplayName("铜排夹持温度 [°C]"),
+     Description("舌片末端整条边的强制温度。<0 = 无夹冷（自由辐射端）。" +
+                 "空冷即可，不需要水冷 —— 400 °C 与 80 °C 的差别仅约 10 W。" +
+                 "★ 这一项是现场把法兰自给率整定到位的**唯一可调旋钮**（HANDOVER §4.2v）")]
     public double BusbarClampTempC { get; set; } = -1;
-
-    [Category("5 法兰"), DisplayName("法兰厚度自动定尺"),
-     Description("按 J_法兰 ≤ 许用值反算最小厚度。J ∝ 1/t，故 t_req = t·(J_max/J_allow) 一步精确")]
-    public bool SizeFlangeThickness { get; set; } = false;
-
-    [Category("5 法兰"), DisplayName("铜排/舌片导热 [W/K]"),
-     Description("从法兰导向外部结构的附加导热通道。纯辐射法兰填 0")]
-    public double BusbarConductanceWPerK { get; set; } = 0.0;
 
     // ---------- 6 玻璃物性 ----------
     [Category("6 玻璃物性"), DisplayName("密度 [kg/m³]")]

@@ -10,18 +10,13 @@ public sealed class MainForm : Form
     private readonly RichTextBox _out = new();
     private readonly TabControl _tabs = new() { Dock = DockStyle.Fill };
     private readonly ScottPlot.WinForms.FormsPlot _pAxial = FieldPlots.NewPlot();
-    private readonly ScottPlot.WinForms.FormsPlot _pTemp = FieldPlots.NewPlot();
-    private readonly ScottPlot.WinForms.FormsPlot _pJ = FieldPlots.NewPlot();
-    private readonly ScottPlot.WinForms.FormsPlot _pQv = FieldPlots.NewPlot();
-    private readonly ScottPlot.WinForms.FormsPlot _pFlange = FieldPlots.NewPlot();
-    private readonly ScottPlot.WinForms.FormsPlot _pThick = FieldPlots.NewPlot();
     private readonly DataGridView _segGrid = new();
     private readonly BindingSource _segBind = new();
     private readonly List<Segment> _segs = new()
     {
         new Segment { Name = "HC1", TSetC = 1150, TGlassInC = 1150, GlassHeadM = 0.3, LengthMm = 300 },
-        new Segment { Name = "HC2", TSetC = 1200, TGlassInC = 1200, GlassHeadM = 0.6, LengthMm = 300 },
-        new Segment { Name = "HC3", TSetC = 1250, TGlassInC = 1250, GlassHeadM = 1.0, LengthMm = 300 },
+        new Segment { Name = "HC2", TSetC = 1080, TGlassInC = 1140, GlassHeadM = 0.6, LengthMm = 300 },
+        new Segment { Name = "HC3", TSetC = 1050, TGlassInC = 1130, GlassHeadM = 1.0, LengthMm = 300 },
     };
     private readonly RichTextBox _segOut = new();
     private DesignInputs _in = new();
@@ -35,7 +30,7 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "Pt_Optimize — 铂金直接加热单段设计与用量优化";
+        Text = "Pt_Optimize — 铂金直接加热 整线设计与用量优化";
         Width = 1400; Height = 900;
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Microsoft YaHei UI", 9f);
@@ -44,7 +39,6 @@ public sealed class MainForm : Form
         tool.Items.Add(Btn("计算 (F5)", (_, _) => Run()));
         tool.Items.Add(new ToolStripSeparator());
         tool.Items.Add(Btn("扫描：保温厚度", (_, _) => Sweep("insul", 0, 50, 11, "内层保温厚度 [mm]")));
-        tool.Items.Add(Btn("扫描：法兰外径", (_, _) => Sweep("flangeRo", _in.FlangeRiMm + 4, 70, 11, "法兰外径 ro [mm]")));
         tool.Items.Add(Btn("扫描：法兰厚度", (_, _) => Sweep("flangeTf", 0.4, 5, 11, "法兰厚度 tf [mm]")));
         tool.Items.Add(Btn("扫描：铂发射率", (_, _) => Sweep("eps", 0.10, 0.30, 9, "铂表面发射率 ε")));
         tool.Items.Add(new ToolStripSeparator());
@@ -63,14 +57,12 @@ public sealed class MainForm : Form
         _out.WordWrap = false;
         _out.BackColor = Color.FromArgb(252, 252, 250);
 
+        // ★ 2026-08-12：删掉「温度场/电流密度场/体积发热场」（走 FieldMap 的子午面图，
+        //   其法兰部分是已作废的一维环形模型）与「法兰温度剖面/厚度·自给率」（同源）。
+        //   法兰的真实二维场改看「整线设计」页，那里直接画壳解的 T/J。
         foreach (var (title, ctrl) in new (string, Control)[]
         {
-            ("温度场（连接区）", _pTemp),
-            ("电流密度场", _pJ),
-            ("体积发热场", _pQv),
             ("轴向剖面", _pAxial),
-            ("法兰温度剖面", _pFlange),
-            ("法兰厚度 / 自给率", _pThick),
         })
         {
             var page = new TabPage(title) { Padding = new Padding(2) };
@@ -112,6 +104,9 @@ public sealed class MainForm : Form
         segPage.Controls.Add(segSplit);
         segPage.Controls.Add(segTool);
         _tabs.TabPages.Insert(0, segPage);
+
+        // ★ 整线设计页：工程师的主工作面，放在最前
+        _tabs.TabPages.Insert(0, new LineDesignPage(_in));
 
         var right = new SplitContainer
         { Dock = DockStyle.Fill, Orientation = System.Windows.Forms.Orientation.Horizontal };
@@ -279,16 +274,7 @@ public sealed class MainForm : Form
 
         // 视野取 5 倍热衰减长度，覆盖法兰冷效应的全部影响范围
         double xView = Math.Min(_in.TubeLengthMm * 0.5, Math.Max(30.0, 6.0 * _res.DecayLengthMm));
-
-        FieldPlots.DrawField(_pTemp,
-            FieldMap.Build(_in, _res, FieldMap.Quantity.Temperature, xView), _in, _res, true);
-        FieldPlots.DrawField(_pJ,
-            FieldMap.Build(_in, _res, FieldMap.Quantity.CurrentDensity, xView), _in, _res, false);
-        FieldPlots.DrawField(_pQv,
-            FieldMap.Build(_in, _res, FieldMap.Quantity.VolumetricHeat, xView), _in, _res, false);
         FieldPlots.DrawAxialProfile(_pAxial, _res, _in);
-        FieldPlots.DrawFlangeProfile(_pFlange, _res, _in);
-        FieldPlots.DrawThicknessProfile(_pThick, _res, _in);
     }
 
     private static string Report(DesignInputs p, SolveResult r)
@@ -302,7 +288,6 @@ public sealed class MainForm : Form
             (r.WallLimitedByMinimum ? $"   ← 受最小壁厚限制 (电学仅需 {r.WallElecMm:0.000})"
                                     : "   ← 受电流密度限制"));
         L("供料管铂重", $"{r.MassTubeKg:0.000} kg   ({r.MassTubeKg / p.TubeLength:0.000} kg/m)");
-        L("两端法兰铂重", $"{r.MassFlangePairKg:0.000} kg");
         L("合计", $"{r.MassTotalKg:0.000} kg");
         L("比功率", $"{r.PowerDensityWPerKg:0} W/kg   (m = P / 该值)");
 
@@ -331,23 +316,9 @@ public sealed class MainForm : Form
             ? "  ★ 析晶风险：最冷点低于 T_liq + 裕度，位置在法兰"
             : "  ✓ 全程高于析晶安全线");
 
-        H("法兰自给率  Φ");
-        L("自身发热 P_gen", $"{r.FlangeA.PGenW:0} W");
-        L("自身散热 P_loss", $"{r.FlangeA.PLossW:0} W");
-        L("剖面 / 铂重", $"{p.FlangeShapeMode} / {r.MassFlangePairKg * 1000:0} g（一对）");
-        L("理想渐变铂重", $"{r.FlangeA.IdealMassKg * 2000:0} g（闭式，一对）");
-        L("法兰温度 内→外", $"{r.FlangeA.T[0]:0.0} → {r.FlangeA.T[^1]:0.0} °C");
-        L("局部 φ 内→外", $"{r.FlangeA.Phi[0]:0.00} → {r.FlangeA.Phi[^1]:0.00}");
-        L("理想厚度 内→外", $"{r.FlangeA.ThickIdeal[0] * 1000:0.000} → {r.FlangeA.ThickIdeal[^1] * 1000:0.000} mm");
-        L("可用外径上限", $"r_o,max = {r.FlangeA.ROMaxMm:0.0} mm" +
-            (r.FlangeA.ROMaxMm < p.FlangeRiMm ? "  ★ 小于 r_i，任何厚度都无法自给" : ""));
-        L("自给所需 q″", $"{r.FlangeA.QFluxRequired / 1000:0.0} kW/m²  (当前 " +
-            $"{FlangeRadial.FlangeFlux(p, p.TSetC) / 1000:0.0})");
-        L("Φ = gen/loss", $"{r.FlangePhi:0.000}   " +
-            (r.FlangePhi >= 1 ? "✓ 自给有余" : r.FlangePhi > 0.6 ? "⚠ 偏冷" : "★ 严重热汇"));
-        L("需管根供给的缺口", $"{r.FlangeDeficitW:0} W");
-        L("无管根导热时浮动温度", $"{r.FlangeFloatTempC:0} °C");
-        L("散热面积", $"{r.FlangeAreaCm2:0} cm²  = 额外 {r.FlangeEquivTubeMm:0} mm 管长");
+        // ★ 2026-08-12：原「法兰自给率 Φ」一段走的是已作废的一维环形模型（§5），
+        //   连同 FlangeRadial 一并删除。法兰的 Φ / 抽热 / 局部最高温请看「整线设计」页，
+        //   那里是二维壳解的真值。
 
         H("流动");
         L("流速 / 停留时间", $"{r.VelocityMmPerS:0.0} mm/s  /  {r.ResidenceS:0} s");

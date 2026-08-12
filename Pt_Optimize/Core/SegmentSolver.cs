@@ -24,10 +24,9 @@ public sealed class SolveResult
     public double DevitMarginMinK;
     public bool DevitRisk;
 
-    // 法兰（径向解，A = 上游端，B = 下游端）
-    public FlangeRadialResult FlangeA = new(), FlangeB = new();
-    public double FlangePhi, FlangeDeficitW, FlangeFloatTempC;
-    public double FlangeAreaCm2, FlangeEquivTubeMm;
+    // ★ 2026-08-12：法兰的一维环形解（FlangeA/B、FlangePhi、FlangeDeficitW、
+    //   FlangeFloatTempC、FlangeAreaCm2、FlangeEquivTubeMm）随 FlangeRadial 一并删除。
+    //   法兰的真值一律由 ShellCurrent + ShellThermal 给出，见 LineRunner.FlangeOut。
 
     // 特征量
     public double DecayLengthMm, TauMetalS, TauWithGlassS, StabilityRatio, TcrPerK, BetaWPerMK;
@@ -137,21 +136,11 @@ public static class SegmentSolver
         res.LossPerMeterWPerM = res.PowerTotalW / L;
         res.PowerDensityWPerKg = rho * Math.Pow(current / area, 2) / Materials.PtDensity;
 
-        // ── 法兰径向解（两端）
-        var fluxTab = FlangeRadial.BuildFluxTable(p);
-        res.FlangeA = FlangeRadial.Solve(p, current, tm[0], fluxTab);
-        res.FlangeB = FlangeRadial.Solve(p, current, tm[n - 1], fluxTab);
-        res.FlangePhi = res.FlangeA.PhiOverall;
-        res.FlangeDeficitW = res.FlangeA.QRootW;
-        res.FlangeFloatTempC = FlangeRadial.FloatTemp(p, current, fluxTab);
-
-        double fri = p.FlangeRiMm * 1e-3, fro = p.FlangeRoMm * 1e-3;
-        double faceArea = 2.0 * Math.PI * (fro * fro - fri * fri);
-        res.FlangeAreaCm2 = faceArea * 1e4;
-        res.FlangeEquivTubeMm = faceArea / (Math.PI * (p.TubeId + 2 * wall)) * 1000.0;
+        // 法兰质量不再由本求解器给出 —— 它取决于 .3dm/FlangePlate 的真实几何，
+        // 由 LineRunner 按壳网格体积算（见 FlangeOut.MassG）。这里只报管本身。
         res.MassTubeKg = Materials.PtDensity * area * L;
-        res.MassFlangePairKg = res.FlangeA.MassKg + res.FlangeB.MassKg;
-        res.MassTotalKg = res.MassTubeKg + res.MassFlangePairKg;
+        res.MassFlangePairKg = 0;
+        res.MassTotalKg = res.MassTubeKg;
 
         // ── 特征量（切线斜率 + 玻璃耦合，见理论模型 §6.2.1 与 §7.1）
         double rOut = ri + wall;
@@ -259,17 +248,18 @@ public static class SegmentSolver
         double pi = Math.PI * p.TubeId, hg = p.HGlass, mcp = p.MassFlow * p.GlassCp;
 
         var lossTab = TubeLossTable(p, rOut, L);
-        var fluxTab = FlangeRadial.BuildFluxTable(p);
-        // 法兰缺口对管根温度的响应 D(T_root)，查表避免在迭代内反复解法兰
-        // 法兰缺口 D(T_root)：耦合模式下由二维法兰模型给出定值，
-        // 否则退回一维环形模型（该模型对 Pt_Heater.3dm 的圆盘+舌片几何不成立）
-        // 用显式布尔判定，不看 D 的符号：Φ>1 时法兰向管子倒灌，D 为负是合法值。
-        // 旧代码 `>=0` 会让那些算例静默回退到作废的一维模型（踩过，见 §7）。
-        var defTab = p.FlangeDrawOverrideSet
-            ? new LossTable(p.TAmbC, Math.Max(p.TSetC, p.TGlassInC) + 200, 8,
-                            _ => p.FlangeDrawOverrideW)
-            : new LossTable(p.TAmbC, Math.Max(p.TSetC, p.TGlassInC) + 200, 28,
-                            t => FlangeRadial.Solve(p, current, t, fluxTab).QRootW);
+
+        // 法兰从管根抽走的热 D。**只有两种情况**：
+        //   · FlangeDrawOverrideSet = true  → 由二维壳解回灌的真值（LineRunner/CoupledSolver 走这条）
+        //   · false                          → **视为 0**（裸管、无法兰的算例）
+        //
+        // ★ 2026-08-12：此前 false 分支会**静默回退到一维环形法兰模型 FlangeRadial**，
+        //   而该模型对「圆盘 + 平面梯形舌片」几何根本不成立（Φ 算成 0.037 而真值 0.72–0.82）。
+        //   这个静默回退坑过三次（§7），现已连同 FlangeRadial 一起删除 ——
+        //   **不存在的代码路径不会再被误走**。
+        //   D 为负是合法值（Φ>1 时法兰向管子倒灌），故用显式布尔而非看符号。
+        var defTab = new LossTable(p.TAmbC, Math.Max(p.TSetC, p.TGlassInC) + 200, 8,
+                                   _ => p.FlangeDrawOverrideSet ? p.FlangeDrawOverrideW : 0.0);
 
         tm = new double[n]; tg = new double[n];
         for (int i = 0; i < n; i++) { tm[i] = p.TSetC; tg[i] = p.TGlassInC; }
@@ -326,8 +316,6 @@ public static class SegmentSolver
             switch (what)
             {
                 case "insul": q.Layer1.ThicknessMm = v; q.Layer1.Enabled = v > 1e-6; break;
-                case "flangeRo": q.FlangeRoMm = v; break;
-                case "flangeTf": q.FlangeThickMm = v; q.FlangeThickInnerMm = v; break;
                 case "flangeInsul": q.FlangeInsulThickMm = v; q.FlangeInsulated = v > 1e-6; break;
                 case "eps": q.PtEmissivity = v; break;
                 case "J": q.JAllowAPerMm2 = v; break;
@@ -340,10 +328,8 @@ public static class SegmentSolver
                 LossPerM = r.LossPerMeterWPerM,
                 WallMm = r.WallDesignMm,
                 MassKg = r.MassTotalKg,
-                FlangeMassKg = r.MassFlangePairKg,
                 TMin = r.TMinC,
                 Margin = r.DevitMarginMinK,
-                Phi = r.FlangePhi,
                 IA = r.CurrentA
             });
         }

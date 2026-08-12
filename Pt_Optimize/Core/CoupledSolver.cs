@@ -50,13 +50,14 @@ public static class CoupledSolver
 
         // ── 法兰厚度定尺外层：J ∝ 1/t（均匀缩放板厚时电流分布形状不变，K=J·t 守恒）
         //    故 t_req = t·(J_max/J_allow) 是一步精确解，只因热场随 t 变化才需迭代。
-        int tkTotal = p.SizeFlangeThickness ? 5 : 1;
+        // 法兰厚度不再由本类反算 —— 它由 FlangeAutoSizer 按管根温差定（HANDOVER §4.2w）。
+        const int tkTotal = 1;
         for (int tk = 0; tk < tkTotal; tk++)
         {
             cancel.ThrowIfCancellationRequested();
             var pr = new Progress { ThicknessIter = tk + 1, ThicknessTotal = tkTotal, OuterTotal = maxOuter };
             var probe = SolveOnce(p, g, h, maxOuter, tolW, progress, pr, cancel);
-            if (!probe.Tube.Ok || !p.SizeFlangeThickness)
+            if (!probe.Tube.Ok)
             { probe.FlangeThickMm = g.ThicknessMm; probe.ThicknessIterations = tk; return probe; }
             double tNew = g.ThicknessMm * (probe.JFlangeMaxAPerMm2 / p.JAllowAPerMm2);
             tNew = Math.Max(0.3, tNew);

@@ -163,110 +163,9 @@ public class VerificationTests
     private static DesignInputs BaseCase() => new()
     {
         TSetC = 1300,
-        FlangeRiMm = 20,
-        FlangeRoMm = 50,
-        FlangeThickMm = 3.0,
-        FlangeThickMinMm = 0.4,
         FlangeInsulated = false,
-        BusbarConductanceWPerK = 0,
         HGlass = 0                    // 隔离玻璃回灌，纯考察法兰本体
     };
-
-    [Fact]
-    public void IdealTaper_MakesLocalSourceVanishIdentically()
-    {
-        // 核心检验：t_ideal(r) = C/r² 应使局部源项 S(r, T_set) 恒为零。
-        // 若推导有误，此项不会为零 —— 与温度场解法无关，无法被数值参数掩盖。
-        var p = BaseCase();
-        p.FlangeShapeMode = FlangeShape.IdealTaper;
-        const double I = 1885.0;
-
-        double c = FlangeRadial.IdealCoefficient(p, I, p.TSetC);
-        double q = FlangeRadial.FlangeFlux(p, p.TSetC);
-        double rho = Materials.PtResistivity(p.TSetC);
-
-        double worst = 0;
-        for (double r = 0.020; r <= 0.050 + 1e-12; r += 0.002)
-        {
-            double tf = FlangeRadial.Thickness(p, r, c);
-            double gen = rho * I * I / (4 * Math.PI * Math.PI * r * tf);   // 每弧度
-            double loss = 2 * r * q;
-            double rel = Math.Abs(gen - loss) / gen;
-            worst = Math.Max(worst, rel);
-            _o.WriteLine($"r={r * 1000,5:F1} mm  t={tf * 1000,7:F4} mm  " +
-                         $"发热={gen,10:F3}  散热={loss,10:F3}  相对差={rel:E2}");
-        }
-        Assert.True(worst < 1e-12, $"理想渐变下局部源项未消失，最差 {worst:E3}");
-    }
-
-    [Fact]
-    public void RectangularFlange_PhiScalesAsInverseRSquared()
-    {
-        // 等厚圆盘的局部自给率必须严格正比于 1/r²（理论模型 §8.12）
-        var p = BaseCase();
-        p.FlangeShapeMode = FlangeShape.Rectangular;
-        var res = FlangeRadial.Solve(p, 1885.0, 1300.0);
-
-        double refv = res.Phi[0] * res.R[0] * res.R[0];
-        double worst = 0;
-        for (int i = 0; i < res.R.Length; i++)
-        {
-            double v = res.Phi[i] * res.R[i] * res.R[i];
-            worst = Math.Max(worst, Math.Abs(v - refv) / refv);
-        }
-        _o.WriteLine($"φ·r² 常数性：最大偏差 {worst:E3}；" +
-                     $"φ 内={res.Phi[0]:F4} 外={res.Phi[^1]:F4}，" +
-                     $"比值={res.Phi[0] / res.Phi[^1]:F3}（应为 (ro/ri)²={Math.Pow(50.0 / 20, 2):F3}）");
-        Assert.True(worst < 1e-12);
-        Assert.InRange(res.Phi[0] / res.Phi[^1], 6.25 * 0.999, 6.25 * 1.001);
-    }
-
-    [Fact]
-    public void IdealTaperMass_ClosedFormMatchesNumericIntegration()
-    {
-        // m = d·ρe·I²·ln(ro/ri)/(4π·q″)  必须等于 ∫2πr·t_ideal(r)·d_Pt dr
-        var p = BaseCase();
-        p.FlangeShapeMode = FlangeShape.IdealTaper;
-        const double I = 1885.0;
-
-        double c = FlangeRadial.IdealCoefficient(p, I, p.TSetC);
-        double ri = 0.020, ro = 0.050;
-        const int N = 200001;
-        double dr = (ro - ri) / (N - 1), num = 0;
-        for (int i = 0; i < N; i++)
-        {
-            double r = ri + i * dr, w = (i == 0 || i == N - 1) ? dr * 0.5 : dr;
-            num += Materials.PtDensity * 2 * Math.PI * r * (c / (r * r)) * w;
-        }
-
-        double closed = Materials.PtDensity * Materials.PtResistivity(p.TSetC) * I * I
-                        * Math.Log(ro / ri) / (4 * Math.PI * FlangeRadial.FlangeFlux(p, p.TSetC));
-
-        _o.WriteLine($"数值积分 = {num * 1000:F4} g，闭式 = {closed * 1000:F4} g，" +
-                     $"相对差 = {Math.Abs(num - closed) / closed:E3}");
-        Assert.True(Math.Abs(num - closed) / closed < 1e-6);
-    }
-
-    [Fact]
-    public void IdealTaper_YieldsFlatterFieldThanRectangular()
-    {
-        // 物理结论检验：同外径下，理想渐变的温度落差必须显著小于等厚
-        const double I = 1885.0, tRoot = 1300.0;
-
-        var rect = BaseCase(); rect.FlangeShapeMode = FlangeShape.Rectangular;
-        var taper = BaseCase(); taper.FlangeShapeMode = FlangeShape.IdealTaper;
-
-        var a = FlangeRadial.Solve(rect, I, tRoot);
-        var b = FlangeRadial.Solve(taper, I, tRoot);
-
-        double dropRect = a.T[0] - a.TMinC, dropTaper = b.T[0] - b.TMinC;
-        _o.WriteLine($"等厚  : Φ={a.PhiOverall:F4}  温降={dropRect:F1} K  管根抽热={a.QRootW:F0} W  铂重={a.MassKg * 1000:F0} g");
-        _o.WriteLine($"理想渐变: Φ={b.PhiOverall:F4}  温降={dropTaper:F1} K  管根抽热={b.QRootW:F0} W  铂重={b.MassKg * 1000:F0} g");
-
-        Assert.True(dropTaper < dropRect, "渐变未改善温度均匀性");
-        Assert.True(b.MassKg < a.MassKg, "渐变未减少铂用量");
-        Assert.True(Math.Abs(b.QRootW) < Math.Abs(a.QRootW), "渐变未减少管根抽热");
-    }
 
     // =========================================================
     // 4. 整段求解器：自洽性
@@ -334,7 +233,7 @@ public class VerificationTests
             vals[i] = r.TMinC;
             _o.WriteLine($"n={grids[i],4}  T_min={vals[i]:F4}  T端={r.TMetal[0]:F2}/{r.TMetal[^1]:F2}  " +
                          $"T中={r.TMetal[r.TMetal.Length / 2]:F2}  I={r.CurrentA:F1} A  " +
-                         $"壁厚={r.WallDesignMm:F4}  法兰抽热={r.FlangeDeficitW:F1} W  Φ={r.FlangePhi:F4}");
+                         $"壁厚={r.WallDesignMm:F4}");
         }
         // 标准网格收敛判据（GCI）：观测阶 + Richardson 外推误差，
         // 而不是对最细网格差值随手定一个绝对阈值。

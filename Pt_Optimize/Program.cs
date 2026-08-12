@@ -142,10 +142,7 @@ internal static class Program
             Console.WriteLine($"铂重      管 {r.MassTubeKg:0.000} + 法兰 {r.MassFlangePairKg:0.000} = {r.MassTotalKg:0.000} kg");
             Console.WriteLine($"温度      中 {p.TSetC:0} / 最冷 {r.TMinC:0.0} / 法兰 {r.TFlangeAC:0.0} °C");
             Console.WriteLine($"析晶裕度  {r.DevitMarginMinK:+0.0;-0.0} K  {(r.DevitRisk ? "★风险" : "✓")}");
-            Console.WriteLine($"法兰 Φ    {r.FlangePhi:0.000}  缺口 {r.FlangeDeficitW:0} W  浮温 {r.FlangeFloatTempC:0} °C");
             Console.WriteLine($"ℓt={r.DecayLengthMm:0.0}mm  τ={r.TauMetalS:0}s  稳定裕度 {r.StabilityRatio:0.0}×");
-            Console.WriteLine($"法兰 剖面={p.FlangeShapeMode} 铂重={r.MassFlangePairKg * 1000:0}g " +
-                              $"理想渐变={r.FlangeA.IdealMassKg * 2000:0}g r_o,max={r.FlangeA.ROMaxMm:0.0}mm");
 
             // --cli --figs <dir>   生成论文示意图
             if (args.Contains("--figs"))
@@ -188,7 +185,7 @@ internal static class Program
                     var q = SegmentSolver.Clone(p);
                     q.TSetC = tset; q.TGlassInC = tg; q.GlassHeadM = head;
                     q.SizeWall = false;
-                    q.SizeFlangeThickness = false;        // 校核现状：法兰厚度就取 3dm 实测 2.0 mm
+        // 校核现状：法兰厚度就取 3dm 实测 2.0 mm
 
                     // ★ 必须走耦合解。裸调 SegmentSolver.Solve 会让 defTab 落到已作废的
                     //   FlangeRadial（一维环形），Φ 算成 0.037 而真值 0.72–0.82，
@@ -314,7 +311,7 @@ internal static class Program
                     {
                         var q = SegmentSolver.Clone(p);
                         q.TSetC = tset; q.TGlassInC = tg; q.GlassHeadM = head;
-                        q.SizeWall = false; q.SizeFlangeThickness = false;
+                        q.SizeWall = false;
                         q.BusbarClampTempC = tc;
                         try
                         {
@@ -367,7 +364,7 @@ internal static class Program
                 {
                     var q = SegmentSolver.Clone(p);
                     q.TSetC = tset; q.TGlassInC = tglass; q.GlassHeadM = head;
-                    q.SizeWall = false; q.SizeFlangeThickness = false;
+                    q.SizeWall = false;
                     q.BusbarClampTempC = clamp;
                     var g = new FlangePlate { ThicknessMm = ft, ThickenedMm = ft };
                     try
@@ -411,7 +408,7 @@ internal static class Program
                     var q = SegmentSolver.Clone(p);
                     q.TSetC = tset; q.TGlassInC = tglass; q.GlassHeadM = head;
                     q.WallMinMm = wall; q.SizeWall = false;
-                    q.SizeFlangeThickness = false; q.BusbarClampTempC = clamp;
+ q.BusbarClampTempC = clamp;
                     try
                     {
                         var c = CoupledSolver.Solve(q, new FlangePlate { ThicknessMm = ft, ThickenedMm = ft });
@@ -481,7 +478,7 @@ internal static class Program
                     var q = SegmentSolver.Clone(p);
                     q.TSetC = tset; q.TGlassInC = tglass; q.GlassHeadM = head;
                     q.WallMinMm = wall; q.SizeWall = false;
-                    q.SizeFlangeThickness = false; q.BusbarClampTempC = clamp;
+ q.BusbarClampTempC = clamp;
                     var g = new FlangePlate { DiscRadiusMm = ro, ThicknessMm = ft, ThickenedMm = ft };
                     try
                     {
@@ -539,7 +536,7 @@ internal static class Program
                     var qs = SegmentSolver.Clone(p);
                     qs.TSetC = tset; qs.TGlassInC = tglass; qs.GlassHeadM = head;
                     qs.WallMinMm = wall; qs.SizeWall = false;
-                    qs.SizeFlangeThickness = false; qs.BusbarClampTempC = clamp;
+ qs.BusbarClampTempC = clamp;
                     try
                     {
                         var cs = CoupledSolver.Solve(qs,
@@ -579,7 +576,7 @@ internal static class Program
                     var q = SegmentSolver.Clone(p);
                     q.TSetC = tset; q.TGlassInC = tglass; q.GlassHeadM = head;
                     q.WallMinMm = wall; q.SizeWall = false;
-                    q.SizeFlangeThickness = false; q.BusbarClampTempC = clamp;
+ q.BusbarClampTempC = clamp;
                     var g = new FlangePlate { DiscRadiusMm = ro, ThicknessMm = ft, ThickenedMm = ft };
                     try
                     {
@@ -675,7 +672,7 @@ internal static class Program
                         var q = SegmentSolver.Clone(p);
                         q.TSetC = s.TSetC; q.TGlassInC = s.TGlassInC; q.GlassHeadM = s.GlassHeadM;
                         q.WallMinMm = s.WallMm; q.SizeWall = false;
-                        q.SizeFlangeThickness = false; q.BusbarClampTempC = clamp;
+ q.BusbarClampTempC = clamp;
                         try
                         {
                             var c = CoupledSolver.Solve(q,
@@ -1063,7 +1060,7 @@ internal static class Program
                         var q = SegmentSolver.Clone(p);
                         q.TSetC = tset; q.TGlassInC = tglass; q.GlassHeadM = head;
                         q.WallMinMm = wall; q.SizeWall = false;
-                        q.SizeFlangeThickness = false; q.BusbarClampTempC = clamp;
+ q.BusbarClampTempC = clamp;
                         q.Layer1.ThicknessMm = ins;          // 管的纤维
                         q.FlangeInsulThickMm = ins;          // 法兰的纤维，同工艺
                         try
@@ -1482,7 +1479,7 @@ internal static class Program
                 {
                     var q0 = SegmentSolver.Clone(p);
                     q0.TSetC = targetC; q0.TGlassInC = targetC;
-                    q0.SizeWall = false; q0.SizeFlangeThickness = false;
+                    q0.SizeWall = false;
                     var c0 = CoupledSolver.Solve(q0, new FlangePlate());
                     if (c0.Tube.Ok)
                     { mFlangePairG = c0.MassFlangePairG; genRefW = c0.Flange.QGenW; iRefA = c0.Tube.CurrentA; }
@@ -3212,7 +3209,7 @@ internal static class Program
                 var gg2 = new FlangePlate { InsulBoundaryXMm = -200.0, ThicknessMm = 2.0 };
                 var pp2 = SegmentSolver.Clone(p);
                 pp2.FlangeAirVelocityMPerS = 0; pp2.BusbarClampTempC = 250;
-                pp2.SizeWall = false; pp2.WallMinMm = 0.6; pp2.SizeFlangeThickness = false;
+                pp2.SizeWall = false; pp2.WallMinMm = 0.6;
                 var cc = CoupledSolver.Solve(pp2, gg2);
                 if (!cc.Tube.Ok) { Console.WriteLine("✗ " + cc.Tube.Message); return; }
                 var fl2 = cc.Flange; var cur2 = cc.Current;
@@ -3350,7 +3347,7 @@ internal static class Program
                     pp.FlangeAirVelocityMPerS = 0;
                     pp.BusbarClampTempC = tc;
                     pp.SizeWall = false; pp.WallMinMm = 0.6;
-                    pp.SizeFlangeThickness = true;
+
                     var gg = new FlangePlate { InsulBoundaryXMm = -200.0, ThicknessMm = 2.0,
                                                ThickenRadiusMm = 40.0, ThickenedMm = 3.0 };
                     CoupledResult c;
@@ -3366,41 +3363,6 @@ internal static class Program
                     Console.WriteLine($"{(tc < 0 ? "无" : tc.ToString("0")),9}{tb.CurrentA,7:0}" +
                         $"{c.FlangeDrawW,8:+0;-0}{tb.DevitMarginMinK,10:+0;-0}" +
                         $"{c.FlangeThickMm,8:0.00}{mTot,8:0}  {note}");
-                }
-                return;
-            }
-
-            // --cli --tdesign  法兰厚度分布反设计
-            if (args.Contains("--tdesign"))
-            {
-                Console.WriteLine();
-                Console.WriteLine("=== 法兰厚度分布反设计（J 处处 = 许用值）===");
-                var pp = SegmentSolver.Clone(p);
-                pp.FlangeAirVelocityMPerS = 0;
-                pp.BusbarClampTempC = 250;
-                pp.SizeWall = false; pp.WallMinMm = 0.6;
-                pp.SizeFlangeThickness = true;
-                var gg = new FlangePlate { InsulBoundaryXMm = -200.0, ThicknessMm = 2.0 };
-                var c0 = CoupledSolver.Solve(pp, gg);
-                if (!c0.Tube.Ok) { Console.WriteLine("✗ " + c0.Tube.Message); return; }
-                double I = c0.Tube.CurrentA;
-                Console.WriteLine($"工作点：I = {I:0} A，管壁 {c0.Tube.WallDesignMm:0.000} mm，" +
-                                  $"均匀法兰厚 {c0.FlangeThickMm:0.00} mm");
-                Console.WriteLine();
-                Console.WriteLine($"{"t_min",8}{"迭代",6}{"收敛",9}{"t 范围",16}{"t 均值",8}" +
-                                  $"{"J_max",8}{"触底面积",10}{"变厚度铂",10}{"均匀铂",9}{"省",7}");
-                Console.WriteLine($"{"mm",8}{"",6}{"mm",9}{"mm",16}{"mm",8}{"A/mm²",8}{"%",10}{"g/片",10}{"g/片",9}{"%",7}");
-                Console.WriteLine(new string('-', 96));
-                foreach (double tmin in new[] { 0.5, 0.6, 0.8 })
-                {
-                    var gd = new FlangePlate { InsulBoundaryXMm = -200.0, ThicknessMm = 2.0 };
-                    var d = FlangeThicknessDesign.Solve(gd, pp, I, tmin,
-                                                        tempField: null, h: 1.0);
-                    Console.WriteLine($"{tmin,8:0.0}{d.Iterations,6}{d.Delta,9:E1}" +
-                        $"{$"{d.TMinMm:0.00} – {d.TMaxMm:0.00}",16}{d.TMeanMm,8:0.00}" +
-                        $"{d.JMaxAPerMm2,8:0.00}{d.AreaAtFloorPct,10:0.0}" +
-                        $"{d.MassG,10:0}{d.MassUniformG,9:0}" +
-                        $"{(d.MassUniformG - d.MassG) / d.MassUniformG * 100,7:0.0}");
                 }
                 return;
             }
@@ -3430,7 +3392,7 @@ internal static class Program
                     pp.FlangeAirVelocityMPerS = 0;
                     pp.BusbarClampTempC = 80;
                     pp.SizeWall = false; pp.WallMinMm = w;
-                    pp.SizeFlangeThickness = true;
+
                     var gg = new FlangePlate { InsulBoundaryXMm = -200.0, ThicknessMm = 2.0,
                                                ThickenRadiusMm = 40.0, ThickenedMm = 3.0 };
                     CoupledResult c;
@@ -3490,7 +3452,7 @@ internal static class Program
                     pp.SizeWall = sizeWall;
                     pp.WallMinMm = wallMin;
                     pp.BusbarClampTempC = clamp;
-                    pp.SizeFlangeThickness = true;
+
                     var gg = new FlangePlate { InsulBoundaryXMm = insulX, ThicknessMm = thick,
                                                ThickenRadiusMm = 40.0, ThickenedMm = 3.0 };
                     CoupledResult c;
@@ -3685,17 +3647,6 @@ internal static class Program
                 return;
             }
 
-            // --cli --opt   法兰联合扫描（保温厚度 × 外径 × 剖面）
-            if (args.Contains("--opt"))
-            {
-                var rows = FlangeOptimizer.Scan(p,
-                    insulMm: new[] { 0, 5, 10, 15, 20, 30.0 },
-                    roMm: new[] { 25, 30, 35, 40, 50.0 },
-                    shapes: new[] { FlangeShape.Rectangular, FlangeShape.IdealClipped });
-                Console.WriteLine(FlangeOptimizer.Format(rows, p));
-                return;
-            }
-
             // --cli [case.json] --plots <目录>   导出场图 PNG
             int pi = Array.IndexOf(args, "--plots");
             if (pi >= 0 && pi + 1 < args.Length)
@@ -3713,15 +3664,7 @@ internal static class Program
                     Console.WriteLine($"  → {name}");
                 }
 
-                Save("field_T.png", f => UI.FieldPlots.DrawField(f,
-                    FieldMap.Build(p, r, FieldMap.Quantity.Temperature, xView), p, r, true));
-                Save("field_J.png", f => UI.FieldPlots.DrawField(f,
-                    FieldMap.Build(p, r, FieldMap.Quantity.CurrentDensity, xView), p, r, false));
-                Save("field_qv.png", f => UI.FieldPlots.DrawField(f,
-                    FieldMap.Build(p, r, FieldMap.Quantity.VolumetricHeat, xView), p, r, false));
                 Save("profile_axial.png", f => UI.FieldPlots.DrawAxialProfile(f, r, p));
-                Save("profile_flange.png", f => UI.FieldPlots.DrawFlangeProfile(f, r, p));
-                Save("profile_thickness.png", f => UI.FieldPlots.DrawThicknessProfile(f, r, p));
             }
             return;
         }

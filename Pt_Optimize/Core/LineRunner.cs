@@ -250,7 +250,7 @@ public static class LineRunner
             p.SupportSpanMm = c.SegLengthMm; p.GradeName = c.GradeName;
             p.TSetC = c.SetpointC[i]; p.TGlassInC = tg;
             p.GlassHeadM = i < c.HeadM.Length ? c.HeadM[i] : 0;
-            p.SizeWall = false; p.SizeFlangeThickness = false;
+            p.SizeWall = false;
             p.FlangeDrawOverrideW = drawW[i]; p.FlangeDrawOverrideSet = true;
 
             SolveResult sr;
