@@ -194,10 +194,22 @@ public static class FlangeAutoSizer
     /// 内层的靶：让各级的局部峰值温度**齐平**（都压到管根温度附近）。
     /// 哪一级更热就加厚哪一级，热量被摊到其余级去。
     /// </summary>
+    /// <param name="levelLocked">
+    /// `[片][级]` 为 true 的级**完全不动**（厚度锁死）。典型用法：
+    /// 「外圈厚度不动、只调内圈」—— 把外圈那级锁上，优化器只在其余级上找解。
+    /// 全为 null = 各级都可动（优化器自行决定比例）。
+    ///
+    /// ⚠ 锁级会同时削掉外层的调节能力：整片热平衡只能靠**未锁的级**去凑，
+    /// 若未锁的级面积占比很小，可能怎么调都够不到目标 —— 那时返回未收敛，
+    /// 并在 Message 里说明是被锁死限制的，而不是物理上无解。
+    /// </param>
     public static Result SolveByLevel(LineCase baseCase, double[][] levelThicknessMm,
                                       Options? opt = null, IProgress<string>? progress = null,
-                                      CancellationToken cancel = default, int outerRounds = 6)
+                                      CancellationToken cancel = default, int outerRounds = 6,
+                                      bool[][]? levelLocked = null)
     {
+        bool Locked(int j, int m) => levelLocked is not null && j < levelLocked.Length
+                                     && m < levelLocked[j].Length && levelLocked[j][m];
         opt ??= new Options();
         int nf = levelThicknessMm.Length;
         var scale = new double[nf][];
@@ -223,11 +235,12 @@ public static class FlangeAutoSizer
             last = SolveAuto(lcBase, null, overall, opt, progress, cancel);
             if (last.Line is null) return last;
 
-            // 把外层求出的整体倍数并进各级比例
+            // 把外层求出的整体倍数并进各级比例 —— **锁住的级不并**
             for (int j = 0; j < nf; j++)
             {
                 double kj = j < last.ThicknessMm.Length ? last.ThicknessMm[j] : 1.0;
-                for (int m = 0; m < scale[j].Length; m++) scale[j][m] *= kj;
+                for (int m = 0; m < scale[j].Length; m++)
+                    if (!Locked(j, m)) scale[j][m] *= kj;
             }
 
             // ── 内层：按各级峰值温度重新分配比例（总平均厚度不变）
@@ -242,6 +255,7 @@ public static class FlangeAutoSizer
                 double logSum = 0; int cnt = 0;
                 for (int m = 0; m < adj.Length; m++)
                 {
+                    if (Locked(j, m)) { adj[m] = 1.0; continue; }      // 锁死：一步都不走
                     double tm = f.LevelTMaxC[m];
                     double e = double.IsNaN(tm) ? 0 : tm - baseT;      // >0 = 该级比管根热
                     worstOver = Math.Max(worstOver, e);
@@ -251,11 +265,15 @@ public static class FlangeAutoSizer
                     logSum += Math.Log(adj[m]); cnt++;
                 }
                 // 归一化：几何平均拉回 1 ⇒ 只改**比例**，不改整片平均厚度
+                // 归一化只摊在**未锁**的级上（锁住的级不参与，也不该被 norm 拉动）
                 double norm = cnt > 0 ? Math.Exp(logSum / cnt) : 1.0;
                 for (int m = 0; m < adj.Length; m++)
+                {
+                    if (Locked(j, m)) continue;
                     scale[j][m] = Math.Clamp(scale[j][m] * adj[m] / norm,
                                              opt.MinThickMm / Math.Max(1e-6, levelThicknessMm[j][m]),
                                              opt.MaxThickMm / Math.Max(1e-6, levelThicknessMm[j][m]));
+                }
             }
             progress?.Report($"第 {round + 1} 轮 · 内层：各级峰值最高超管根 {worstOver:0.0} K");
             if (last.Converged && worstOver < 15) break;
@@ -263,6 +281,9 @@ public static class FlangeAutoSizer
 
         // 汇报最终的各级厚度
         var sb = new System.Text.StringBuilder(last.Message);
+        if (levelLocked is not null && !last.Converged)
+            sb.Append("　⚠ 有级被锁死，整片热平衡只能靠未锁的级去凑 —— " +
+                      "未收敛可能是锁的限制，不一定是物理无解。可试着解锁一级再跑。");
         for (int j = 0; j < nf; j++)
         {
             sb.Append($"　片{j + 1} 各级厚度 ");

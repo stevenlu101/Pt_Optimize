@@ -2797,6 +2797,79 @@ internal static class Program
                 return;
             }
 
+            // --cli --leveltest <file.3dm> [图层]   逐级定厚试算：全放开 vs 锁外圈
+            //
+            // 「外圈厚度不动、只调内圈」到底管不管用，用同一张图跑两遍对比。
+            if (args.Contains("--leveltest"))
+            {
+                int lti = Array.IndexOf(args, "--leveltest");
+                string ltf = lti + 1 < args.Length && !args[lti + 1].StartsWith("--")
+                             ? args[lti + 1] : Find3dm("Pt_Heater.3dm");
+                string ltl = lti + 2 < args.Length && !args[lti + 2].StartsWith("--")
+                             ? args[lti + 2] : "法兰";
+
+                Console.WriteLine("=== 逐级定厚试算 ===");
+                var fld = Geometry3dm.LoadThickness(ltf, ltl, double.NaN, 0.5);
+                var shp = PlateShapeAnalyzer.Analyze(fld);
+                Console.WriteLine(PlateShapeAnalyzer.Format(shp));
+                int L = shp.Levels.Count;
+                if (L < 2) { Console.WriteLine("只有一级，无从逐级调。"); return; }
+
+                var lvT = Enumerable.Range(0, 4)
+                            .Select(_ => shp.Levels.Select(x => x.ThicknessMm).ToArray()).ToArray();
+
+                var pf = SegmentSolver.Clone(p);
+                pf.Layer1.ThicknessMm = 10; pf.Layer1.Enabled = true;
+                pf.WallMinMm = 0.4;
+                pf.FlangeInsulThickMm = 20; pf.FlangeInsulated = true;
+                pf.BusbarClampTempC = 300;
+
+                var lc = new LineCase
+                {
+                    Base = pf, WallMm = 0.4, UseMeasuredCurrent = false, CheckRamp = false,
+                    SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                    FlangeFile3dm = Enumerable.Repeat(ltf, 4).ToArray(),
+                    FlangeLayer = ltl
+                };
+
+                // 外圈 = 半径最大那一级
+                int outer = 0;
+                for (int m = 1; m < L; m++)
+                    if (shp.Levels[m].ROuterMm > shp.Levels[outer].ROuterMm) outer = m;
+
+                foreach (var (tag, mask) in new (string, bool[][]?)[]
+                {
+                    ("全放开（优化器自定各级比例）", null),
+                    ($"锁第{outer + 1}级（外圈 t={shp.Levels[outer].ThicknessMm:0.00}）不动",
+                     Enumerable.Range(0, 4).Select(_ =>
+                        Enumerable.Range(0, L).Select(m => m == outer).ToArray()).ToArray()),
+                })
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("── " + tag);
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    var rr2 = FlangeAutoSizer.SolveByLevel(lc, lvT, new FlangeAutoSizer.Options(),
+                                new SyncProgress<string>(_ => { }), default, 5, mask);
+                    sw.Stop();
+                    Console.WriteLine($"   用时 {sw.Elapsed.TotalMinutes:0.0} min　" +
+                                      (rr2.Converged ? "✓ 收敛" : "✗ 未收敛"));
+                    if (rr2.Line is { } lr && lr.Ok)
+                    {
+                        Console.WriteLine($"   段温差 " + string.Join(" / ",
+                            lr.Segments.Select(x => x.RootDeltaK.ToString("+0.0;-0.0"))) + " K");
+                        Console.WriteLine($"   法兰最高 {lr.Flanges.Max(f2 => f2.TMaxC):0} °C　" +
+                                          $"总铂 {lr.TotalMassG:0} g　省 {lr.SavingPct:0.0} %");
+                        var f0 = lr.Flanges[1];
+                        if (f0.LevelThickMm.Length > 0)
+                            Console.WriteLine("   共用片各级 厚度/峰值：" + string.Join("　",
+                                Enumerable.Range(0, f0.LevelThickMm.Length).Select(m =>
+                                    $"{f0.LevelThickMm[m]:0.000}mm/{f0.LevelTMaxC[m]:0}°C")));
+                    }
+                    Console.WriteLine("   " + rr2.Message);
+                }
+                return;
+            }
+
             // --cli --shapevars <file.3dm> [图层]   从 .3dm 反推法兰的几何变数
             //
             // 「你给形状，能不能分析出有哪些几何变数」的实现。厚度场里已含全部信息

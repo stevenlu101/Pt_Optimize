@@ -58,6 +58,10 @@ public sealed class LineDesignPage : TabPage
     /// <summary>「分析几何变数」解析出的各级原始厚度，逐级定厚要用</summary>
     private double[][]? _levels;
     private double[][]? _levelScale;
+    /// <summary>各级的「锁定」勾选框（解析几何变数后动态生成）</summary>
+    private readonly List<CheckBox> _lockBoxes = new();
+    private readonly FlowLayoutPanel _lockPanel = new()
+    { AutoSize = true, WrapContents = false, FlowDirection = FlowDirection.TopDown, Margin = new Padding(0) };
     private readonly DesignInputs _base;
 
     /// <summary>段的可编辑行。★ 控温点默认 1150/1080/1050 —— 沿流向**递减**，
@@ -143,6 +147,9 @@ public sealed class LineDesignPage : TabPage
             Row(names[idx] + " .3dm", pnl);
         }
         Row("图层名", _layer3dm, "厚度场从该图层提取。t=0 表示无材料 ⇒ 开槽、孔、轮廓一次拿全");
+        Row("锁定的级", _lockPanel,
+            "勾上的级厚度锁死，优化器只调其余级。典型用法：外圈勾上 = 外圈不动、只调内圈。" +
+            "先点「分析几何变数」才会列出各级。");
 
         Head("法兰形状（解析模式；四片同形状，厚度各自独立）");
         Row("圆盘直径 mm", _discD);
@@ -321,8 +328,9 @@ public sealed class LineDesignPage : TabPage
                 {
                     // 逐级定厚：外层调每片整体厚度（管根温差），内层调各级比例（局部过热）
                     var lvl = _levels;
+                    var lockMask = LockedMask();
                     r = await Task.Run(() => FlangeAutoSizer.SolveByLevel(
-                        lc, lvl, new FlangeAutoSizer.Options(), prog, ct), ct);
+                        lc, lvl, new FlangeAutoSizer.Options(), prog, ct, 6, lockMask), ct);
                     _levelScale = r.LevelScale;
                 }
                 else
@@ -502,6 +510,8 @@ public sealed class LineDesignPage : TabPage
             // 四片先按同一张图的分级；各片可各自选不同 .3dm 时逐片解析亦可
             var lv = sh.Levels.Select(l => l.ThicknessMm).ToArray();
             _levels = Enumerable.Range(0, 4).Select(_ => (double[])lv.Clone()).ToArray();
+            _levelScale = null;
+            BuildLockBoxes(sh);
             _out.Text = PlateShapeAnalyzer.Format(sh) + Environment.NewLine
                       + $"→ 已记下 {lv.Length} 级厚度，「自动定厚」将让优化器自行决定各级比例。"
                       + Environment.NewLine
@@ -514,5 +524,34 @@ public sealed class LineDesignPage : TabPage
             _status.Text = "失败";
         }
         finally { Cursor = Cursors.Default; }
+    }
+
+    /// <summary>按解析出的分级列出「锁定」勾选框。半径大的在上，便于对应「外圈」。</summary>
+    private void BuildLockBoxes(PlateShapeAnalyzer.Shape sh)
+    {
+        _lockPanel.Controls.Clear();
+        _lockBoxes.Clear();
+        for (int m = 0; m < sh.Levels.Count; m++)
+        {
+            var l = sh.Levels[m];
+            var cb = new CheckBox
+            {
+                AutoSize = true,
+                Text = $"第{m + 1}级  t={l.ThicknessMm:0.00}  R{l.RInnerMm:0}–{l.ROuterMm:0}",
+                Tag = m
+            };
+            _lockBoxes.Add(cb);
+            _lockPanel.Controls.Add(cb);
+        }
+        if (sh.Levels.Count == 0)
+            _lockPanel.Controls.Add(new Label { AutoSize = true, Text = "（未解析到分级）" });
+    }
+
+    /// <summary>把勾选状态摊成 [片][级] 的锁定表；四片共用同一套勾选。</summary>
+    private bool[][]? LockedMask()
+    {
+        if (_lockBoxes.Count == 0 || !_lockBoxes.Any(c => c.Checked)) return null;
+        var one = _lockBoxes.Select(c => c.Checked).ToArray();
+        return Enumerable.Range(0, 4).Select(_ => (bool[])one.Clone()).ToArray();
     }
 }

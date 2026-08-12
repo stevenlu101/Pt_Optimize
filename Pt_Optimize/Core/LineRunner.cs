@@ -364,13 +364,18 @@ public static class LineRunner
                     {
                         double t0 = tf.T[q];
                         if (t0 <= 1e-6) { scaled[q] = 0; continue; }   // 无材料乘任何数仍是无材料
+                        // ★ 两个标度**相乘**，不是互相覆盖：
+                        //   ThicknessScale = 整片一个数（外层用它调热平衡 → 管根温差）
+                        //   LevelScale     = 各级一个数（内层用它调比例 → 局部过热）
+                        //   早先写成「有 LevelScale 就忽略 ThicknessScale」，
+                        //   于是两层优化里外层那步完全不起作用。
                         double kk = k;
                         if (perLevel)
                         {
                             int best = 0;
                             for (int m = 1; m < lvT!.Length; m++)
                                 if (Math.Abs(t0 - lvT[m]) < Math.Abs(t0 - lvT[best])) best = m;
-                            kk = lvS![Math.Min(best, lvS.Length - 1)];
+                            kk *= lvS![Math.Min(best, lvS.Length - 1)];
                         }
                         scaled[q] = t0 * kk;
                     }

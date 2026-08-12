@@ -81,6 +81,41 @@ internal static class GeomProbe
             finally { Console.Out.Flush(); Environment.Exit(Environment.ExitCode); }
         }
 
+        // steps 模式：写一个**阶梯厚度 + 开槽**的法兰，各级为**独立实体**
+        //   Geom.exe steps <out.3dm> <孔R> <r1,r2,..> <t1,t2,..> <舌端X> <舌端半宽> <舌厚> [槽数] [槽角宽] [槽r内,槽r外]
+        // 用来复现「R60/t3 -> R46/t2 -> R36/t1 + 四槽」这类图纸，供逐级定厚验证。
+        if (args.Length > 0 && args[0] == "steps")
+        {
+            if (args.Length < 8)
+            {
+                Console.Error.WriteLine("用法：Geom.exe steps <out.3dm> <孔R> <r1,r2,..> <t1,t2,..> <舌端X> <舌端半宽> <舌厚> [槽数] [槽角宽] [槽r内,槽r外]");
+                return 64;
+            }
+            string sOut = args[1];
+            double.TryParse(args[2], out double sHole);
+            var sR = args[3].Split(',').Select(v => double.Parse(v, CultureInfo.InvariantCulture)).ToArray();
+            var sT = args[4].Split(',').Select(v => double.Parse(v, CultureInfo.InvariantCulture)).ToArray();
+            double.TryParse(args[5], out double sTabX);
+            double.TryParse(args[6], out double sTabHW);
+            double.TryParse(args[7], out double sTabT);
+            int sN = args.Length > 8 && int.TryParse(args[8], out var nn) ? nn : 0;
+            double sDeg = args.Length > 9 && double.TryParse(args[9], out var dd) ? dd : 20;
+            double sSlotIn = sHole, sSlotOut = sR.Length > 0 ? sR[0] : sHole;
+            if (args.Length > 10)
+            {
+                var pr = args[10].Split(',');
+                if (pr.Length == 2) { double.TryParse(pr[0], out sSlotIn); double.TryParse(pr[1], out sSlotOut); }
+            }
+            if (sR.Length != sT.Length || sR.Length == 0)
+            { Console.Error.WriteLine("半径与厚度数量不一致"); return 64; }
+
+            try { RhinoInside.Resolver.Initialize(); }
+            catch (Exception e) { Console.Error.WriteLine("Resolver 失败：" + e.Message); return 1; }
+            try { return RunSteps(sOut, sHole, sR, sT, sTabX, sTabHW, sTabT, sN, sDeg, sSlotIn, sSlotOut); }
+            catch (Exception e) { Console.Error.WriteLine(e.GetType().Name + ": " + e.Message); return 2; }
+            finally { Console.Out.Flush(); Environment.Exit(Environment.ExitCode); }
+        }
+
         // scale 模式：把用户画的法兰**按厚度方向整体缩放** k 倍，另存新 .3dm
         //   Pt_Optimize.Geom.exe scale <in.3dm> <out.3dm> <图层名> <k> [平面Y]
         //
@@ -294,18 +329,60 @@ internal static class GeomProbe
             }
             if (breps.Count == 0) { Console.Error.WriteLine("图层无实体：" + layerName); return 4; }
 
-            int pick = 0;
+            // ★ 一片法兰可能由**多个独立实体**拼成（阶梯厚度常这么画：每级一个环）。
+            //   早先只量 breps[pick] 一个实体，于是阶梯件里**厚度不同的那几级被整个漏掉**
+            //   （实测：R36/t1 那级完全没读到，因为射线只对着 t=3 那个实体的中面）。
+            //   现按 XZ 投影的包围盒重叠做并查集分组：同一片的各级归一组，
+            //   而文件里并排放的多片仍各自成组。
+            var parent = Enumerable.Range(0, boxes.Count).ToArray();
+            int Find(int a) { while (parent[a] != a) { parent[a] = parent[parent[a]]; a = parent[a]; } return a; }
+            void Union(int a, int b) { int ra = Find(a), rb = Find(b); if (ra != rb) parent[rb] = ra; }
+            for (int i = 0; i < boxes.Count; i++)
+                for (int j = i + 1; j < boxes.Count; j++)
+                {
+                    bool ox = boxes[i].Min.X <= boxes[j].Max.X && boxes[j].Min.X <= boxes[i].Max.X;
+                    bool oz = boxes[i].Min.Z <= boxes[j].Max.Z && boxes[j].Min.Z <= boxes[i].Max.Z;
+                    if (ox && oz) Union(i, j);
+                }
+            var groups = new Dictionary<int, List<int>>();
+            for (int i = 0; i < boxes.Count; i++)
+            {
+                int r = Find(i);
+                if (!groups.TryGetValue(r, out var lst)) groups[r] = lst = new List<int>();
+                lst.Add(i);
+            }
+
+            // 选组：给了 yPlane 就选中面最接近的那组，否则选实体最多（其次体积最大）的那组
+            List<int> sel = groups.Values.First();
             if (!double.IsNaN(yPlane))
             {
                 double best = double.MaxValue;
-                for (int i = 0; i < boxes.Count; i++)
+                foreach (var g in groups.Values)
                 {
-                    double c = 0.5 * (boxes[i].Min.Y + boxes[i].Max.Y);
-                    if (Math.Abs(c - yPlane) < best) { best = Math.Abs(c - yPlane); pick = i; }
+                    var gb = BoundingBox.Empty;
+                    foreach (var i in g) gb.Union(boxes[i]);
+                    double c = 0.5 * (gb.Min.Y + gb.Max.Y);
+                    if (Math.Abs(c - yPlane) < best) { best = Math.Abs(c - yPlane); sel = g; }
                 }
             }
-            var brep = breps[pick];
-            var bb = boxes[pick];
+            else
+            {
+                double bestVol = -1;
+                foreach (var g in groups.Values)
+                {
+                    var gb = BoundingBox.Empty;
+                    foreach (var i in g) gb.Union(boxes[i]);
+                    double v = gb.Volume;
+                    if (g.Count > sel.Count || (g.Count == sel.Count && v > bestVol))
+                    { sel = g; bestVol = v; }
+                }
+            }
+
+            var parts = sel.Select(i => breps[i]).ToList();
+            var bb = BoundingBox.Empty;
+            foreach (var i in sel) bb.Union(boxes[i]);
+            Console.Error.WriteLine($"[thickness] 图层实体 {breps.Count} 个，分 {groups.Count} 组，" +
+                                    $"本次量 {parts.Count} 个（同一片的各级）");
             double yLo = bb.Min.Y - 10, yHi = bb.Max.Y + 10;
 
             double x0 = Math.Floor(bb.Min.X / step) * step - step;
@@ -323,13 +400,16 @@ internal static class GeomProbe
                 for (int j = 0; j < nz; j++)
                 {
                     double z = z0 + j * step;
-                    var lc = new LineCurve(new Line(new Point3d(x, yLo, z), new Point3d(x, yHi, z)));
-                    if (!Rhino.Geometry.Intersect.Intersection.CurveBrep(
-                            lc, brep, tol, out Curve[] _, out Point3d[] pts) || pts == null || pts.Length < 2)
-                        continue;
-                    var ys = pts.Select(q => q.Y).OrderBy(v => v).ToArray();
+                    var ray = new LineCurve(new Line(new Point3d(x, yLo, z), new Point3d(x, yHi, z)));
                     double sum = 0;
-                    for (int k = 0; k + 1 < ys.Length; k += 2) sum += ys[k + 1] - ys[k];
+                    foreach (var bp in parts)
+                    {
+                        if (!Rhino.Geometry.Intersect.Intersection.CurveBrep(
+                                ray, bp, tol, out Curve[] _, out Point3d[] pts)
+                            || pts == null || pts.Length < 2) continue;
+                        var ys = pts.Select(q => q.Y).OrderBy(v => v).ToArray();
+                        for (int k = 0; k + 1 < ys.Length; k += 2) sum += ys[k + 1] - ys[k];
+                    }
                     if (sum > tol) { t[i * nz + j] = sum; solidPts++; }
                 }
             }
@@ -571,6 +651,109 @@ internal static class GeomProbe
             Directory.CreateDirectory(dir);
             if (!doc.SaveAs(outPath)) { Console.Error.WriteLine("保存失败：" + outPath); return 6; }
             Console.WriteLine("已写出 " + outPath);
+            return 0;
+        }
+    }
+
+
+    /// <summary>
+    /// 阶梯法兰：各级为**独立实体**的同心环 + 一片舌片，可选径向开槽。
+    /// 板面在 XZ、厚度沿 Y，与 thickness 读取端一致。
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int RunSteps(string outPath, double holeR, double[] rs, double[] ts,
+                                double tabX, double tabHW, double tabT,
+                                int slotN, double slotDeg, double slotRin, double slotRout)
+    {
+        using (new RhinoCore(new[] { "/NOSPLASH" }, WindowStyle.Hidden))
+        {
+            var doc = RhinoDoc.CreateHeadless(null);
+            double tol = doc.ModelAbsoluteTolerance;
+            int layer = doc.Layers.Add("法兰", System.Drawing.Color.Green);
+            var pl = Plane.WorldZX;              // 法向 = +Y
+
+            Brep? MakeRing(double rin, double rout, double t)
+            {
+                var co = new Circle(pl, Point3d.Origin, rout).ToNurbsCurve();
+                var ci = new Circle(pl, Point3d.Origin, rin).ToNurbsCurve();
+                var fs = Brep.CreatePlanarBreps(new Curve[] { co, ci }, tol);
+                if (fs == null || fs.Length == 0) return null;
+                return fs[0].Faces[0].CreateExtrusion(
+                    new LineCurve(Point3d.Origin, new Point3d(0, t, 0)), true);
+            }
+
+            int made = 0;
+            for (int i = 0; i < rs.Length; i++)
+            {
+                double rin = i == 0 ? holeR : rs[i - 1];
+                var ring = MakeRing(rin, rs[i], ts[i]);
+                if (ring == null) { Console.Error.WriteLine("环创建失败 级" + (i + 1)); return 5; }
+
+                if (slotN > 0 && i == 0)
+                {
+                    for (int k = 0; k < slotN; k++)
+                    {
+                        double a0 = 2 * Math.PI * k / slotN - slotDeg * Math.PI / 360;
+                        double a1 = a0 + slotDeg * Math.PI / 180;
+                        var pts = new List<Point3d>();
+                        for (int q = 0; q <= 8; q++)
+                        {
+                            double aa = a0 + (a1 - a0) * q / 8.0;
+                            pts.Add(new Point3d(slotRout * Math.Cos(aa), 0, slotRout * Math.Sin(aa)));
+                        }
+                        for (int q = 8; q >= 0; q--)
+                        {
+                            double aa = a0 + (a1 - a0) * q / 8.0;
+                            pts.Add(new Point3d(slotRin * Math.Cos(aa), 0, slotRin * Math.Sin(aa)));
+                        }
+                        pts.Add(pts[0]);
+                        var wedge = new PolylineCurve(pts);
+                        var wf = Brep.CreatePlanarBreps(new Curve[] { wedge }, tol);
+                        if (wf == null || wf.Length == 0) continue;
+                        var cut = wf[0].Faces[0].CreateExtrusion(
+                            new LineCurve(new Point3d(0, -1, 0), new Point3d(0, ts[i] + 1, 0)), true);
+                        if (cut == null) continue;
+                        var diff = Brep.CreateBooleanDifference(new[] { ring }, new[] { cut }, tol);
+                        if (diff != null && diff.Length > 0) ring = diff[0];
+                    }
+                }
+
+                var att = new Rhino.DocObjects.ObjectAttributes { LayerIndex = layer };
+                att.Name = "级" + (i + 1);
+                if (doc.Objects.AddBrep(ring, att) != Guid.Empty) made++;
+            }
+
+            double rout2 = rs[rs.Length - 1];
+            double amp = Math.Sqrt(tabX * tabX + tabHW * tabHW);
+            if (rout2 < amp)
+            {
+                double phi = Math.Atan2(tabHW, tabX);
+                double th = phi - Math.Acos(rout2 / amp);
+                var tp = new Point3d(rout2 * Math.Cos(th), 0, rout2 * Math.Sin(th));
+                var tn = new Point3d(tp.X, 0, -tp.Z);
+                var poly = new PolyCurve();
+                poly.Append(new ArcCurve(new Arc(tp, new Point3d(-rout2, 0, 0), tn)));
+                poly.Append(new LineCurve(tn, new Point3d(tabX, 0, -tabHW)));
+                poly.Append(new LineCurve(new Point3d(tabX, 0, -tabHW), new Point3d(tabX, 0, tabHW)));
+                poly.Append(new LineCurve(new Point3d(tabX, 0, tabHW), tp));
+                poly.MakeClosed(tol);
+                var tf2 = Brep.CreatePlanarBreps(new Curve[] { poly }, tol);
+                if (tf2 != null && tf2.Length > 0)
+                {
+                    var tab = tf2[0].Faces[0].CreateExtrusion(
+                        new LineCurve(Point3d.Origin, new Point3d(0, tabT, 0)), true);
+                    if (tab != null)
+                    {
+                        var att2 = new Rhino.DocObjects.ObjectAttributes { LayerIndex = layer };
+                        att2.Name = "舌片";
+                        if (doc.Objects.AddBrep(tab, att2) != Guid.Empty) made++;
+                    }
+                }
+            }
+
+            if (!doc.WriteFile(outPath, new Rhino.FileIO.FileWriteOptions { FileVersion = 7 }))
+            { Console.Error.WriteLine("写文件失败：" + outPath); return 9; }
+            Console.WriteLine("实体数 " + made + " -> " + outPath);
             return 0;
         }
     }
