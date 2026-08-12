@@ -51,10 +51,42 @@ internal static class GeomProbe
             finally { Console.Out.Flush(); Environment.Exit(Environment.ExitCode); }
         }
 
+        // plate 模式：把优化搜出来的**解析法兰**写成 .3dm（与 thickness 模式反向）
+        //   Pt_Optimize.Geom.exe plate <out.3dm> <盘半径> <孔半径> <舌端X> <舌端半宽> <厚度1[,厚度2,…]>
+        // 每个厚度出一个实体，沿 +X 依次排开、各自独立成体，图层统一为「法兰」。
+        // 轮廓 = 盘圆弧（切点之外那段）+ 舌片两条直边 + 舌端直边，中心挖孔，再拉伸。
+        if (args.Length > 0 && args[0] == "plate")
+        {
+            if (args.Length < 7)
+            {
+                Console.Error.WriteLine("用法：Pt_Optimize.Geom.exe plate <out.3dm> " +
+                                        "<盘半径> <孔半径> <舌端X> <舌端半宽> <厚度[,厚度…]>");
+                return 64;
+            }
+            string outPath = args[1];
+            if (!double.TryParse(args[2], out double discR) ||
+                !double.TryParse(args[3], out double holeR) ||
+                !double.TryParse(args[4], out double tabX) ||
+                !double.TryParse(args[5], out double tabHW))
+            { Console.Error.WriteLine("参数解析失败"); return 64; }
+            var thicks = new List<double>();
+            foreach (var s in args[6].Split(','))
+                if (double.TryParse(s, out double tv)) thicks.Add(tv);
+            if (thicks.Count == 0) { Console.Error.WriteLine("厚度列表为空"); return 64; }
+
+            try { RhinoInside.Resolver.Initialize(); }
+            catch (Exception e) { Console.Error.WriteLine("Resolver 失败：" + e.Message); return 1; }
+            try { return RunPlate(outPath, discR, holeR, tabX, tabHW, thicks); }
+            catch (Exception e) { Console.Error.WriteLine(e.GetType().Name + ": " + e.Message); return 2; }
+            finally { Console.Out.Flush(); Environment.Exit(Environment.ExitCode); }
+        }
+
         if (args.Length < 1)
         {
             Console.Error.WriteLine("用法：Pt_Optimize.Geom.exe <file.3dm>");
             Console.Error.WriteLine("      Pt_Optimize.Geom.exe thickness <file.3dm> <图层名> [平面Y] [步长]");
+            Console.Error.WriteLine("      Pt_Optimize.Geom.exe plate <out.3dm> <盘半径> <孔半径> " +
+                                    "<舌端X> <舌端半宽> <厚度[,厚度…]>");
             return 64;
         }
         string path = args[0];
@@ -349,4 +381,82 @@ internal static class GeomProbe
                 : null
         };
     }
+
+    /// <summary>
+    /// 把解析法兰写成 .3dm。轮廓与 Pt_Optimize 里的 FlangePlate 完全一致：
+    ///   · 圆盘半径 R，管孔半径 r0
+    ///   · 舌片两条直边与圆盘**相切**，切点由 R/|P| 定（P = 舌端点）
+    ///   · 舌端一条直边，半宽 tabHW
+    /// 每个厚度出一个独立实体，沿 +X 排开，避免叠在一起。
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int RunPlate(string outPath, double discR, double holeR,
+                                double tabX, double tabHW, List<double> thicks)
+    {
+        using (new RhinoCore(new[] { "/NOSPLASH" }, WindowStyle.Hidden))
+        {
+            var doc = RhinoDoc.CreateHeadless(null);
+            if (doc == null) { Console.Error.WriteLine("CreateHeadless 返回 null"); return 3; }
+            doc.ModelUnitSystem = UnitSystem.Millimeters;
+            double tol = doc.ModelAbsoluteTolerance;
+
+            int layer = doc.Layers.Add("法兰", System.Drawing.Color.Gold);
+            if (layer < 0) layer = 0;
+
+            // 切点：|P|·cos(θ−φ) = R，取上支
+            double amp = Math.Sqrt(tabX * tabX + tabHW * tabHW);
+            if (discR >= amp) { Console.Error.WriteLine("盘半径过大，切点不存在"); return 4; }
+            double phi = Math.Atan2(tabHW, tabX);
+            double th = phi - Math.Acos(discR / amp);
+            var tp = new Point3d(discR * Math.Cos(th), discR * Math.Sin(th), 0);   // 上切点
+            var tn = new Point3d(tp.X, -tp.Y, 0);                                   // 下切点
+            var e1 = new Point3d(tabX, tabHW, 0);
+            var e2 = new Point3d(tabX, -tabHW, 0);
+
+            double spacing = 2.5 * discR + Math.Abs(tabX);
+            int made = 0;
+            for (int i = 0; i < thicks.Count; i++)
+            {
+                double t = thicks[i];
+                // 保留的盘弧：从下切点经 +X 侧到上切点（劣弧在舌片一侧被直边取代）
+                var arc = new Arc(tn, new Point3d(discR, 0, 0), tp);
+                if (!arc.IsValid) { Console.Error.WriteLine("圆弧无效"); return 5; }
+
+                var poly = new PolyCurve();
+                poly.Append(new ArcCurve(arc));                 // 下切点 → +X → 上切点
+                poly.Append(new LineCurve(tp, e1));             // 上切点 → 舌端上角
+                poly.Append(new LineCurve(e1, e2));             // 舌端边
+                poly.Append(new LineCurve(e2, tn));             // 舌端下角 → 下切点
+                poly.MakeClosed(tol);
+                if (!poly.IsClosed) { Console.Error.WriteLine("轮廓未闭合"); return 6; }
+
+                var hole = new Circle(Point3d.Origin, holeR).ToNurbsCurve();
+                var faces = Brep.CreatePlanarBreps(new Curve[] { poly, hole }, tol);
+                if (faces == null || faces.Length == 0)
+                { Console.Error.WriteLine("平面片创建失败"); return 7; }
+
+                var solid = faces[0].Faces[0].CreateExtrusion(
+                                new LineCurve(Point3d.Origin, new Point3d(0, 0, t)), true);
+                if (solid == null) { Console.Error.WriteLine("拉伸失败"); return 8; }
+
+                var xf = Transform.Translation(i * spacing, 0, 0);
+                solid.Transform(xf);
+
+                var att = new Rhino.DocObjects.ObjectAttributes { LayerIndex = layer };
+                att.Name = $"法兰{i + 1}_t{t:0.000}mm";
+                if (doc.Objects.AddBrep(solid, att) != Guid.Empty) made++;
+            }
+
+            if (!doc.WriteFile(outPath, new Rhino.FileIO.FileWriteOptions { FileVersion = 7 }))
+            { Console.Error.WriteLine("写文件失败：" + outPath); return 9; }
+
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                file = outPath, solids = made, discR, holeR, tabX, tabHW,
+                thickness = thicks
+            }));
+            return 0;
+        }
+    }
+
 }
