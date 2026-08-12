@@ -122,6 +122,43 @@ public static class Geometry3dm
     }
 
     /// <summary>
+    /// 把用户画的法兰**按厚度方向缩放**后另存（调 Geom 子进程的 scale 模式）。
+    ///
+    /// 这是「自动定厚」在 .3dm 模式下的落地口：求出倍数后**直接出改好厚度的图**，
+    /// 工程师不必回 Rhino 逐级手算。轮廓、孔、槽、各级半径全部不动。
+    /// </summary>
+    /// <param name="scale">一个值 = 整片统一缩放；多个值 = 逐级独立
+    /// （需各级在 .3dm 里是独立实体，否则子进程会明确报出来并退回统一缩放）</param>
+    public static string ScalePlate3dm(string inPath, string outPath, string layer,
+                                       IReadOnlyList<double> scale, double planeY = double.NaN)
+    {
+        string probe = FindProbe()
+            ?? throw new FileNotFoundException($"找不到 {ProbeName}.exe。先构建 {ProbeName}（需本机装 Rhino 8）。");
+        if (scale.Count == 0) throw new ArgumentException("缩放倍数为空", nameof(scale));
+
+        var psi = new ProcessStartInfo(probe)
+        {
+            RedirectStandardOutput = true, RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
+            UseShellExecute = false, CreateNoWindow = true
+        };
+        psi.ArgumentList.Add("scale");
+        psi.ArgumentList.Add(inPath);
+        psi.ArgumentList.Add(outPath);
+        psi.ArgumentList.Add(layer);
+        psi.ArgumentList.Add(string.Join(",", scale.Select(v => v.ToString("R"))));
+        if (!double.IsNaN(planeY)) psi.ArgumentList.Add(planeY.ToString("R"));
+
+        using var proc = Process.Start(psi) ?? throw new InvalidOperationException("无法启动 " + probe);
+        string stdout = proc.StandardOutput.ReadToEnd();
+        string stderr = proc.StandardError.ReadToEnd();
+        proc.WaitForExit();
+        if (proc.ExitCode != 0)
+            throw new InvalidOperationException($"{ProbeName} scale 退出码 {proc.ExitCode}。{stderr.Trim()}");
+        return stdout;
+    }
+
+    /// <summary>
     /// 从 .3dm 提取某图层某平面的厚度场（调 Geom 子进程的 thickness 模式）。
     /// t=0 表示无材料，故轮廓、管孔、开槽三者统一表达；t&gt;0 直接给出阶梯厚度。
     /// </summary>

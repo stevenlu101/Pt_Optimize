@@ -81,12 +81,50 @@ internal static class GeomProbe
             finally { Console.Out.Flush(); Environment.Exit(Environment.ExitCode); }
         }
 
+        // scale 模式：把用户画的法兰**按厚度方向整体缩放** k 倍，另存新 .3dm
+        //   Pt_Optimize.Geom.exe scale <in.3dm> <out.3dm> <图层名> <k> [平面Y]
+        //
+        // 为什么需要它：稳态温差对法兰厚度极敏感（约 1300 K/mm），10 K 的窗口只有
+        // 0.008 mm 宽 —— 画图与加工都不可能一次画准。于是让程序算出倍数 k，
+        // 再由本模式**直接出改好厚度的图**，工程师不必回 Rhino 手算每一级。
+        //
+        // 用**沿板法向的非均匀缩放**实现：轮廓、孔、槽、各级阶梯的半径全部不动，
+        // 只有厚度乘 k，且各级之间的比例（如 3:2:1）完整保留。
+        if (args.Length > 0 && args[0] == "scale")
+        {
+            if (args.Length < 5)
+            {
+                Console.Error.WriteLine("用法：Pt_Optimize.Geom.exe scale <in.3dm> <out.3dm> <图层名> <k> [平面Y]");
+                return 64;
+            }
+            string inP = args[1], outP = args[2], lay = args[3];
+            double kScale = 1.0;
+            if (!args[4].Contains(',') && (!double.TryParse(args[4], out kScale) || kScale <= 0))
+            { Console.Error.WriteLine("缩放倍数 k 必须为正数"); return 64; }
+            double planeYs = args.Length > 5 && double.TryParse(args[5], out var pys) ? pys : double.NaN;
+            // k 可以给一个（整片统一）或多个逗号分隔（逐级独立，需各级为独立实体）
+            double[]? kList = null;
+            if (args[4].Contains(','))
+            {
+                kList = args[4].Split(',').Select(x => double.TryParse(x, out var v) ? v : 1.0).ToArray();
+                kScale = kList[0];
+            }
+            if (!File.Exists(inP)) { Console.Error.WriteLine("找不到文件：" + inP); return 66; }
+
+            try { RhinoInside.Resolver.Initialize(); }
+            catch (Exception e) { Console.Error.WriteLine("Resolver 失败：" + e.Message); return 1; }
+            try { return RunScale(inP, outP, lay, kScale, planeYs, kList); }
+            catch (Exception e) { Console.Error.WriteLine(e.GetType().Name + ": " + e.Message); return 2; }
+            finally { Console.Out.Flush(); Environment.Exit(Environment.ExitCode); }
+        }
+
         if (args.Length < 1)
         {
             Console.Error.WriteLine("用法：Pt_Optimize.Geom.exe <file.3dm>");
             Console.Error.WriteLine("      Pt_Optimize.Geom.exe thickness <file.3dm> <图层名> [平面Y] [步长]");
             Console.Error.WriteLine("      Pt_Optimize.Geom.exe plate <out.3dm> <盘半径> <孔半径> " +
                                     "<舌端X> <舌端半宽> <厚度[,厚度…]>");
+            Console.Error.WriteLine("      Pt_Optimize.Geom.exe scale <in.3dm> <out.3dm> <图层名> <k> [平面Y]");
             return 64;
         }
         string path = args[0];
@@ -455,6 +493,80 @@ internal static class GeomProbe
                 file = outPath, solids = made, discR, holeR, tabX, tabHW,
                 thickness = thicks
             }));
+            return 0;
+        }
+    }
+
+
+    /// <summary>
+    /// 按**厚度方向**缩放法兰并另存。轮廓、孔、槽、各级半径全部不动，只有厚度乘 k。
+    ///
+    /// 两种用法：
+    ///   · 给**一个** k  → 整片统一缩放，各级之间的比例（如 3:2:1）完整保留
+    ///   · 给**多个** k  → 按实体在该图层里的顺序逐个缩放，可实现「外圈不动、只调内圈」
+    ///     （前提是各级在 .3dm 里是**独立实体**；若整片是一个实体，只能统一缩放，
+    ///      本函数会明确报出来，不会假装做到了）
+    ///
+    /// 缩放基准取每个实体自身在法向上的**最小坐标**（贴着安装面那一侧），
+    /// 于是加厚是往外长，安装面位置不变。
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int RunScale(string inPath, string outPath, string layer,
+                                double kUniform, double planeY, double[]? kPer = null)
+    {
+        using (new RhinoCore(new[] { "/NOSPLASH" }, WindowStyle.Hidden))
+        {
+            var doc = RhinoDoc.OpenHeadless(inPath);
+            if (doc == null) { Console.Error.WriteLine("OpenHeadless 返回 null：" + inPath); return 3; }
+
+            int li = doc.Layers.FindByFullPath(layer, -1);
+            if (li < 0)
+            {
+                for (int i = 0; i < doc.Layers.Count; i++)
+                    if (doc.Layers[i].Name.Contains(layer, StringComparison.OrdinalIgnoreCase)) { li = i; break; }
+            }
+            if (li < 0)
+            {
+                Console.Error.WriteLine($"找不到图层「{layer}」。现有图层：" +
+                    string.Join("、", Enumerable.Range(0, doc.Layers.Count).Select(i => doc.Layers[i].Name)));
+                return 4;
+            }
+
+            var objs = doc.Objects.FindByLayer(doc.Layers[li])?
+                          .Where(o => o.Geometry is Brep || o.Geometry is Extrusion).ToList()
+                       ?? new List<Rhino.DocObjects.RhinoObject>();
+            if (objs.Count == 0) { Console.Error.WriteLine("该图层没有实体"); return 5; }
+
+            Console.WriteLine($"图层「{doc.Layers[li].Name}」实体数 {objs.Count}");
+            if (kPer is { Length: > 1 } && objs.Count == 1)
+                Console.WriteLine("⚠ 该图层只有 1 个实体 —— 各级不是独立实体，无法逐级缩放，" +
+                                  "本次按第一个 k 统一缩放。要逐级调，请在 Rhino 里把各级拆成独立实体。");
+
+            for (int i = 0; i < objs.Count; i++)
+            {
+                double k = kPer is { Length: > 0 }
+                         ? kPer[Math.Min(i, kPer.Length - 1)]
+                         : kUniform;
+                var geo = objs[i].Geometry.Duplicate();
+                var bb = geo.GetBoundingBox(true);
+                // 板面在 XZ，厚度沿 Y（与 thickness 模式的射线方向一致）
+                double y0 = double.IsNaN(planeY) ? bb.Min.Y : planeY;
+                double before = bb.Max.Y - bb.Min.Y;
+
+                var xf = Transform.Scale(new Plane(new Point3d(0, y0, 0), Vector3d.YAxis),
+                                         1.0, 1.0, k);      // 平面法向 = Y，故第三个分量是厚度方向
+                geo.Transform(xf);
+                var bb2 = geo.GetBoundingBox(true);
+                Console.WriteLine($"  实体 {i + 1}：厚度 {before:0.000} → {bb2.Max.Y - bb2.Min.Y:0.000} mm" +
+                                  $"（×{k:0.0000}）");
+
+                doc.Objects.Replace(objs[i].Id, geo as Brep ?? ((Extrusion)geo).ToBrep());
+            }
+
+            string dir = Path.GetDirectoryName(Path.GetFullPath(outPath)) ?? ".";
+            Directory.CreateDirectory(dir);
+            if (!doc.SaveAs(outPath)) { Console.Error.WriteLine("保存失败：" + outPath); return 6; }
+            Console.WriteLine("已写出 " + outPath);
             return 0;
         }
     }

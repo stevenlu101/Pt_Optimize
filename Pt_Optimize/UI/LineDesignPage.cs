@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.IO;
 using System.Text;
 using PtOptimize.Core;
 
@@ -387,8 +388,15 @@ public sealed class LineDesignPage : TabPage
         }
     }
 
+    /// <summary>
+    /// 导出最终图纸。**两种来源分别走不同的路，但结果都是「拿去就能用的最终厚度」**：
+    ///   · 解析模式 → 按当前四片厚度直接生成 .3dm
+    ///   · .3dm 模式 → 把你原来的图按求出的标度**缩放另存**，
+    ///     轮廓/孔/槽/各级半径不动，只有厚度乘 k —— 不需要你回 Rhino 手算每一级
+    /// </summary>
     private void Export()
     {
+        if (!_srcAnalytic.Checked) { ExportScaled(); return; }
         using var dlg = new SaveFileDialog
         {
             Filter = "Rhino 3D 模型 (*.3dm)|*.3dm",
@@ -409,6 +417,43 @@ public sealed class LineDesignPage : TabPage
         catch (Exception ex)
         {
             MessageBox.Show(this, ex.Message + "\n\n导出需本机安装 Rhino 8。",
+                            "导出失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally { Cursor = Cursors.Default; }
+    }
+
+    /// <summary>.3dm 模式的导出：逐片按各自的标度缩放另存，文件名带上倍数便于追溯。</summary>
+    private void ExportScaled()
+    {
+        using var fb = new FolderBrowserDialog { Description = "选择输出目录（四片各出一个 .3dm）" };
+        if (fb.ShowDialog(this) != DialogResult.OK) return;
+
+        var names = new[] { "入口", "共用1", "共用2", "出口" };
+        var sb = new StringBuilder("【导出最终图纸】厚度已按自动定厚的结果改好，可直接用" + Environment.NewLine);
+        try
+        {
+            Cursor = Cursors.WaitCursor;
+            for (int i = 0; i < 4; i++)
+            {
+                string src = _file3dm[i].Text.Trim();
+                if (string.IsNullOrEmpty(src)) continue;
+                double k = (double)_tPlate[i].Value;
+                string dst = Path.Combine(fb.SelectedPath,
+                    $"{Path.GetFileNameWithoutExtension(src)}_{names[i]}_x{k:0.0000}.3dm");
+                string log = Geometry3dm.ScalePlate3dm(src, dst, _layer3dm.Text.Trim(), new[] { k });
+                sb.AppendLine($"— {names[i]}：厚度 ×{k:0.0000} → {Path.GetFileName(dst)}");
+                foreach (var ln in log.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                    if (ln.Trim().StartsWith("实体")) sb.AppendLine("    " + ln.Trim());
+            }
+            sb.AppendLine();
+            sb.AppendLine("轮廓、管孔、开槽、各级阶梯半径**全部未动**，只有厚度按倍数改变；");
+            sb.AppendLine("各级之间的比例（如 3:2:1）完整保留。");
+            _out.Text = sb + Environment.NewLine + _out.Text;
+            _status.Text = "已导出最终图纸";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message + Environment.NewLine + Environment.NewLine + "需本机安装 Rhino 8。",
                             "导出失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally { Cursor = Cursors.Default; }
