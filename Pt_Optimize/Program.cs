@@ -3035,6 +3035,74 @@ internal static class Program
                 return;
             }
 
+            // --cli --freeend   ★ 端片改自由端（不夹冷）：能否解开「自给 vs 电流密度」的死结
+            //
+            // 我一路默认四片都夹冷 300 °C —— **那是我加的假设，不是用户给的条件**。
+            // 现役铜排没有水冷（BusbarClampTempC = −1，自由辐射端）。
+            // 自由端的两个效果，第二个才是主要的：
+            //   ① Q_夹持 归零
+            //   ② **舌片能跑到高温 ⇒ ρe 上升 ⇒ 同样电流下发热大幅增加**
+            if (args.Contains("--freeend"))
+            {
+                double wallF4 = 0.4, insF4 = 10.0, holeF4 = wallF4 + 25.0;
+                double discF4 = 30.0, tabLF = 90.0, hwF4 = 30.0, ttF4 = 0.8;
+
+                Console.WriteLine("=== 端片自由端 vs 夹冷：完整耦合解对照 ===");
+                Console.WriteLine($"几何 盘Ø{2 * discF4:0}／舌 {tabLF:0}×{2 * hwF4:0}×{ttF4:0.00}／圆盘包20、舌片裸露");
+                Console.WriteLine("四片厚度固定 0.4 mm（工艺下界），只改夹持条件，看能量账怎么变");
+                Console.WriteLine();
+                Console.WriteLine($"{"夹持条件",14}{"片",10}{"发热W",8}{"表面散热",10}" +
+                                  $"{"管孔流入",10}{"铜排带走",10}{"舌端°C",9}{"残差",8}");
+
+                foreach (var (tag, clampT) in new[]
+                {
+                    ("夹冷 300 °C", 300.0),
+                    ("夹冷 600 °C", 600.0),
+                    ("**自由端**", -1.0),
+                })
+                {
+                    var pF4 = SegmentSolver.Clone(p);
+                    pF4.Layer1.ThicknessMm = insF4; pF4.Layer1.Enabled = true;
+                    pF4.WallMinMm = wallF4;
+                    pF4.FlangeInsulThickMm = 20; pF4.FlangeInsulated = true;
+                    pF4.BusbarClampTempC = clampT; pF4.BusbarClampLengthMm = 40;
+
+                    FlangePlate MkF4(double td) => new()
+                    {
+                        DiscRadiusMm = discF4, HoleRadiusMm = holeF4,
+                        TabEndXMm = -tabLF, TabEndHalfWidthMm = hwF4,
+                        ThicknessMm = td, ThickenedMm = td, TabThicknessMm = ttF4,
+                        InsulBoundaryXMm = double.NaN
+                    };
+                    var lcF4 = new LineCase
+                    {
+                        Base = pF4, WallMm = wallF4, UseMeasuredCurrent = false, CheckRamp = false,
+                        SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                        FlangePlates = new[] { MkF4(0.4), MkF4(0.4), MkF4(0.4), MkF4(0.4) }
+                    };
+                    LineResult rF4;
+                    try { rF4 = LineRunner.Run(lcF4); }
+                    catch (Exception ex) { Console.WriteLine($"{tag,14}  异常 {ex.Message}"); continue; }
+                    if (!rF4.Ok) { Console.WriteLine($"{tag,14}  {rF4.Message}"); continue; }
+
+                    bool first = true;
+                    foreach (var f12 in rF4.Flanges)
+                    {
+                        Console.WriteLine($"{(first ? tag : ""),14}{f12.Name,10}{f12.QGenW,8:0}" +
+                            $"{f12.QLossW,10:0}{f12.QFromTubeW,10:+0;-0}{f12.QClampW,10:0}" +
+                            $"{f12.TTabEndC,9:0}{f12.EnergyResidualW,8:+0.0;-0.0}");
+                        first = false;
+                    }
+                    Console.WriteLine($"{"",14}管根温差 " + string.Join(" / ",
+                        rF4.Segments.Select(x => x.RootDeltaK.ToString("+0.0;-0.0"))) + " K" +
+                        (rF4.Converged ? "　✓" : "　⚠未收敛"));
+                    Console.WriteLine();
+                }
+                Console.WriteLine("★ 关键看两件事：① 端片发热是否升到能盖住自己的散热；");
+                Console.WriteLine("  ② 管根温差是否从 +200K 量级掉下来。若掉下来，说明「必须夹冷」是我的错误假设。");
+                return;
+            }
+
             // --cli --canwork   ★ 闭式可行性图：这片法兰在给定电流下**有没有可能**自给
             //
             // 目的：**搜索前先判有没有解**。本轮已在注定失败的搜索上烧掉数小时，

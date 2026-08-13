@@ -83,6 +83,17 @@ public sealed class LineCase
     /// <summary>`LevelThicknessMm[片][级]` = 该片各级的**原始**厚度 mm（由 PlateShapeAnalyzer 给出）</summary>
     public double[][] LevelThicknessMm = Array.Empty<double[]>();
 
+    /// <summary>
+    /// **逐片铜排夹持温度** °C（长度 = 片数；空 = 全部用 <see cref="DesignInputs.BusbarClampTempC"/>）。
+    /// &lt;0 表示该片自由端（不夹冷）。
+    ///
+    /// 为什么必须逐片：共用片走 √3 倍电流、发热 ∝I² 是端片的 2.6 倍
+    /// （实测自由端下 490 W vs 156 W）。共用片**需要**夹冷把多余的热带走，
+    /// 端片则相反 —— 它连自己的散热都不够，再夹冷就只能从管子抽（§4.3c）。
+    /// 四片用同一个夹持温度，等于用一把尺子量两个完全不同的东西。
+    /// </summary>
+    public double[] ClampTempC = Array.Empty<double>();
+
     // ── 网格
     public double MeshFineMm = 2.0, MeshCoarseMm = 11.0, MeshFineRadiusMm = 50.0;
 
@@ -413,6 +424,7 @@ public static class LineRunner
 
             var p2 = SegmentSolver.Clone(c.Base);
             p2.TSetC = c.SetpointC[Math.Min(j, n - 1)];
+            if (j < c.ClampTempC.Length) p2.BusbarClampTempC = c.ClampTempC[j];
             // 保温分界：解析几何用该片自己的分界（可为「全裸」= +∞ 之外），
             // .3dm 路径沿用现场实况「仅圆盘保温、舌片裸露」的切点。
             double insulX = analytic ? plate!.InsulBoundaryXResolved
