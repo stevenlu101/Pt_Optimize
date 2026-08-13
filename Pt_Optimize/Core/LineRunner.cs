@@ -130,6 +130,14 @@ public sealed class FlangeOut
     public double CurrentA, MassG, JMaxAPerMm2, Phi, QFromTubeW, TMaxC, TMinC, TTabEndC;
     /// <summary>自身焦耳热与自身散热 W —— Φ = QGen/QLoss 的两个分子分母，判 §4.2k 时要看得见</summary>
     public double QGenW, QLossW;
+    /// <summary>
+    /// 从舌片末端流进铜排夹的热 W —— **铜排冷却要按这个数选型**。
+    ///
+    /// 由能量恒等式取：Q_夹持 = Q_发热 + Q_从管吸热 − Q_表面散热。
+    /// 不逐面累加（§7：阶梯状边界会漏配对，实测偏小 14 %）。
+    /// 夹持温度 &lt; 0（无夹冷）时为 0。
+    /// </summary>
+    public double QClampW;
     /// <summary>本片贴着的管根温度 °C（管孔定温边界）。TMaxC − TRootC &gt; 0 即「法兰比管热」</summary>
     public double TRootC;
     public double AreaMm2, VolumeMm3;
@@ -343,7 +351,8 @@ public static class LineRunner
             {
                 // 管孔必须跟着管外径走，否则法兰与管子对不上
                 plate!.HoleRadiusMm = holeR;
-                mesh = FlangeMesher.Build(plate, 0, c.MeshFineMm, c.MeshCoarseMm, c.MeshFineRadiusMm);
+                mesh = FlangeMesher.Build(plate, 0, c.MeshFineMm, c.MeshCoarseMm, c.MeshFineRadiusMm,
+                                          c.Base.BusbarClampLengthMm);
             }
             else
             {
@@ -386,7 +395,8 @@ public static class LineRunner
                     };
                 }
                 mesh = FlangeMesher.BuildFromField(tf, holeR, 0,
-                            c.MeshFineMm, c.MeshCoarseMm, c.MeshFineRadiusMm);
+                            c.MeshFineMm, c.MeshCoarseMm, c.MeshFineRadiusMm,
+                            c.Base.BusbarClampLengthMm);
             }
 
             double iJoint = LineSolver.JointCurrentA(amps, j);
@@ -439,7 +449,9 @@ public static class LineRunner
                 JMaxAPerMm2 = sc.JMaxAPerMm2,
                 Phi = th.PhiOverall,
                 QFromTubeW = th.QFromTubeW,
-                QGenW = th.QGenW, QLossW = th.QLossW, TRootC = tRoot,
+                QGenW = th.QGenW, QLossW = th.QLossW,
+                QClampW = p2.BusbarClampTempC >= 0
+                        ? Math.Max(0, th.QGenW + th.QFromTubeW - th.QLossW) : 0, TRootC = tRoot,
                 TMaxC = th.TMaxC, TMinC = th.TMinC, TTabEndC = th.TTabEndMeanC,
                 AreaMm2 = mesh.TotalArea, VolumeMm3 = mesh.VolumeMm3,
                 CellCount = mesh.CellCount,

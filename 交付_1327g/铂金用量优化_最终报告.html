@@ -149,47 +149,71 @@ n 段对应 <b>n+1 片</b>——相邻两段共用接头处那一片，故 3 段
 <h3>2.2 法兰（四片，形状相同、厚度各自独立）</h3>
 
 <figure>
-<svg viewBox="0 0 720 300" role="img" aria-label="法兰几何：Ø60 圆盘、Ø50.8 管孔、50 mm 梯形舌片，标注主要尺寸">
+<svg viewBox="0 0 900 330" role="img"
+     aria-label="法兰几何俯视图：Ø60 圆盘与 Ø50.8 管孔构成 4.6 mm 宽环，左侧接 50 mm 梯形舌片，舌端半宽 20 mm">
   <defs>
     <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
       <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
     </marker>
+    <marker id="ar2" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7"
+            orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+    </marker>
   </defs>
-  <g fill="none" stroke="currentColor" stroke-width="1.6">
-    <!-- 盘 R30 中心 (520,150)，比例 3 px/mm -->
-    <path d="M 538 60 A 90 90 0 1 0 538 240 L 370 210 L 370 90 Z"
-          fill="var(--cool)" fill-opacity=".16"/>
-    <circle cx="520" cy="150" r="76" fill="var(--paper)"/>
+
+  <!-- 比例 3 px/mm，盘心 (520,160)。舌片直边与 R30 圆相切于 (−6.285, ±29.334) mm。
+       保留的盘弧是经 +x 侧的优弧（204°），故 large-arc=1、sweep=1。
+       用 evenodd 把管孔挖掉，避免用底色圆去盖（那样会连舌片一起盖住）。 -->
+  <path d="M 501.1 72 A 90 90 0 1 1 501.1 248 L 370 220 L 370 100 Z
+           M 596.2 160 A 76.2 76.2 0 1 0 443.8 160 A 76.2 76.2 0 1 0 596.2 160 Z"
+        fill-rule="evenodd" fill="var(--cool)" fill-opacity=".22"
+        stroke="currentColor" stroke-width="1.7"/>
+
+  <g stroke="currentColor" stroke-width="1" opacity=".45">
+    <line x1="520" y1="40" x2="520" y2="285" stroke-dasharray="6 4"/>
+    <line x1="350" y1="160" x2="660" y2="160" stroke-dasharray="6 4"/>
   </g>
-  <g stroke="currentColor" stroke-width="1" opacity=".55">
-    <line x1="520" y1="30" x2="520" y2="270" stroke-dasharray="5 4"/>
-    <line x1="340" y1="150" x2="640" y2="150" stroke-dasharray="5 4"/>
+
+  <!-- 尺寸引出 -->
+  <g stroke="currentColor" stroke-width="1.2" marker-end="url(#ar)" opacity=".9">
+    <line x1="700" y1="78" x2="596" y2="128"/>
+    <line x1="700" y1="196" x2="574" y2="178"/>
+    <line x1="330" y1="100" x2="366" y2="100"/>
+    <line x1="612" y1="248" x2="588" y2="214"/>
   </g>
-  <g stroke="currentColor" stroke-width="1.2" marker-end="url(#ar)" opacity=".85">
-    <line x1="640" y1="86" x2="600" y2="112"/>
-    <line x1="640" y1="150" x2="586" y2="150"/>
-    <line x1="370" y1="266" x2="370" y2="222"/>
-    <line x1="520" y1="266" x2="520" y2="222"/>
+  <!-- 舌片长：从舌端到盘心的水平尺寸线 -->
+  <g stroke="currentColor" stroke-width="1.2" opacity=".9">
+    <line x1="370" y1="232" x2="370" y2="292"/>
+    <line x1="520" y1="252" x2="520" y2="292"/>
+    <line x1="370" y1="284" x2="520" y2="284" marker-start="url(#ar2)" marker-end="url(#ar)"/>
   </g>
-  <line x1="370" y1="258" x2="520" y2="258" stroke="currentColor" stroke-width="1.2" opacity=".85"/>
+
   <g fill="currentColor" font-size="13" font-family="ui-monospace,Consolas,monospace">
-    <text x="646" y="84">Ø60（盘外径）</text>
-    <text x="646" y="154">Ø50.8（管孔）</text>
-    <text x="392" y="285">舌片长 50</text>
-    <text x="330" y="96" text-anchor="end">舌端</text>
-    <text x="330" y="112" text-anchor="end">半宽 20</text>
-    <text x="60" y="40" font-size="14">厚度四片各不同：</text>
-    <text x="60" y="66">入口　　　　0.516 mm　21 g</text>
-    <text x="60" y="90">共用 HC1|HC2　0.855 mm　35 g</text>
-    <text x="60" y="114">共用 HC2|HC3　0.776 mm　32 g</text>
-    <text x="60" y="138">出口　　　　0.426 mm　17 g</text>
-    <text x="60" y="170" font-size="14">合计 105 g（现状 4027 g）</text>
-    <text x="60" y="200" opacity=".7">管孔 Ø50.8 = 管外径，</text>
-    <text x="60" y="220" opacity=".7">由管壁 0.4 mm 决定，非自由量</text>
+    <text x="702" y="76">Ø60　盘外径</text>
+    <text x="702" y="200">Ø50.8　管孔</text>
+    <text x="702" y="218" font-size="11" opacity=".7">= 管外径，非自由量</text>
+    <text x="326" y="104" text-anchor="end">舌端半宽 20</text>
+    <text x="616" y="262" font-size="11" opacity=".8">环宽仅 4.6 mm</text>
+    <text x="445" y="307">舌片长 50</text>
+  </g>
+
+  <g fill="currentColor" font-size="13" font-family="ui-monospace,Consolas,monospace">
+    <text x="40" y="46" font-size="14" font-weight="700">四片形状相同，仅厚度不同</text>
+    <text x="40" y="76">入口　　　　　0.516 mm　21 g</text>
+    <text x="40" y="100">共用 HC1|HC2　0.855 mm　35 g</text>
+    <text x="40" y="124">共用 HC2|HC3　0.776 mm　32 g</text>
+    <text x="40" y="148">出口　　　　　0.426 mm　17 g</text>
+    <text x="40" y="180" font-size="14" font-weight="700">合计 105 g</text>
+    <text x="40" y="204" opacity=".75">（现状 4027 g）</text>
+    <text x="40" y="244" opacity=".75">单片净面积 1906 mm²</text>
+    <text x="40" y="264" opacity=".75">现状 23 561 mm²</text>
   </g>
 </svg>
-<figcaption>图 1　法兰几何。四片形状完全相同（Ø60 圆盘 + Ø50.8 管孔 + 50 mm 梯形舌片，
-末端半宽 20 mm），<b>仅厚度不同</b>。现状为 Ø120 + 200 mm 舌片。</figcaption>
+<figcaption>图 1　法兰几何（俯视，比例 3 px/mm）。四片形状完全相同——Ø60 圆盘 + Ø50.8 管孔 +
+50 mm 梯形舌片（末端半宽 20 mm），<b>仅厚度不同</b>。舌片两条直边与圆盘<b>相切</b>于
+x = −6.3 mm 处。现状为 Ø120 + 200 mm 舌片。<br>
+注意<b>圆盘环宽只有 4.6 mm</b>（R25.4→R30）——这正是「三级阶梯厚度拿不到收益」的原因：
+径向没有布置梯度的空间（见 5.5）。</figcaption>
 </figure>
 
 <div class="scroll"><table>

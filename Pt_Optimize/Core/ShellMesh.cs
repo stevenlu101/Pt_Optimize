@@ -186,9 +186,11 @@ public static class FlangeMesher
     /// <param name="hFine">孔周细网格尺寸 mm</param>
     /// <param name="hCoarse">远场粗网格尺寸 mm</param>
     /// <param name="fineRadius">细化半径 mm（自管轴起算）</param>
+    /// <param name="clampLenMm">铜排压接长度 mm（沿舌片方向的定温边界深度）。
+    /// 早先硬编码 3 mm —— 那是**数值边界不是设计值**，见 DesignInputs.BusbarClampLengthMm</param>
     public static ShellMesh Build(FlangePlate g, double yPlane = 0,
                                   double hFine = 2.0, double hCoarse = 11.0,
-                                  double fineRadius = 45.0)
+                                  double fineRadius = 45.0, double clampLenMm = 3.0)
     {
         var m = new ShellMesh();
         double[] xs = GradedAxis(g.TabTipXMm, g.DiscRadiusMm, -fineRadius, fineRadius, hFine, hCoarse);
@@ -238,7 +240,7 @@ public static class FlangeMesher
         {
             double r = Math.Sqrt(mid.X * mid.X + mid.Z * mid.Z);
             if (Math.Abs(r - g.HoleRadiusMm) < 3.0) return ShellMesh.TagHole;
-            if (mid.X <= g.TabTipXMm + 3.0) return ShellMesh.TagTabEnd;
+            if (mid.X <= g.TabTipXMm + clampLenMm) return ShellMesh.TagTabEnd;
             return ShellMesh.TagFree;
         });
         return m;
@@ -254,7 +256,7 @@ public static class FlangeMesher
     public static ShellMesh BuildFromField(ThicknessField f, double holeRadiusMm,
                                            double yPlane = 0,
                                            double hFine = 2.0, double hCoarse = 11.0,
-                                           double fineRadius = 50.0)
+                                           double fineRadius = 50.0, double clampLenMm = 4.0)
     {
         var m = new ShellMesh();
         double xMin = f.X0, xMax = f.X0 + (f.Nx - 1) * f.Step;
@@ -300,7 +302,7 @@ public static class FlangeMesher
             double r = Math.Sqrt(mid.X * mid.X + mid.Z * mid.Z);
             // 管孔：紧贴孔半径的那一圈边界面（槽的边界半径不同，不会误判）
             if (Math.Abs(r - holeRadiusMm) < 3.0) return ShellMesh.TagHole;
-            if (mid.X <= tabTipX + 4.0) return ShellMesh.TagTabEnd;
+            if (mid.X <= tabTipX + clampLenMm) return ShellMesh.TagTabEnd;
             return ShellMesh.TagFree;
         });
         return m;

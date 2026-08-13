@@ -172,6 +172,14 @@ public class DesignInputs
                  "★ 这一项是现场把法兰自给率整定到位的**唯一可调旋钮**（HANDOVER §4.2v）")]
     public double BusbarClampTempC { get; set; } = -1;
 
+    [Category("5 法兰"), DisplayName("铜排压接长度 [mm]"),
+     Description("沿舌片方向的压接长度，即定温边界的深度。\n" +
+                 "★ 早先在网格里硬编码为 3 mm —— 那是**数值边界，不是设计值**：\n" +
+                 "  3 mm × 舌宽 40 mm = 120 mm² 接触面，共用片 1099 A ⇒ 界面电流密度约 9 A/mm²，\n" +
+                 "  而铜排压接通常按 ≤1 A/mm² 量级设计，差一个数量级 —— 现场做不出来。\n" +
+                 "加长它会把定温边界推向圆盘、缩短导热路径 ⇒ 铜排带走的热增加，**必须重算**。")]
+    public double BusbarClampLengthMm { get; set; } = 3.0;
+
     // ---------- 6 玻璃物性 ----------
     [Category("6 玻璃物性"), DisplayName("密度 [kg/m³]")]
     public double GlassDensity { get; set; } = 2500;
