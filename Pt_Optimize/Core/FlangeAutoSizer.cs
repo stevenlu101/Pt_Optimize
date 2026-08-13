@@ -43,14 +43,29 @@ public static class FlangeAutoSizer
 
         // ── 搜索期降精度（收敛后会自动做一次全精度复核）
         //
-        // 单次全精度整线耦合解在 .3dm 路径上实测 **69 s**（3005 单元、耦合到 1 K）。
-        // 逐级优化要几百次调用 ⇒ 几个小时，不可用。
-        // 搜索期只需要**梯度方向对**，不需要每一步都精确，故粗网格 + 松耦合；
-        // 最终解再用调用方原本的精度复核一遍 —— 报告值一律取那一次。
-        /// <summary>搜索期的细网格步长 mm（原值 2.0）。0 = 不降精度</summary>
-        public double SearchMeshFineMm = 4.0;
+        // ★★ 2026-08-13 血的教训：**孔周网格一格都不能放粗**。
+        //
+        // 早先把 MeshFineMm 从 2.0 放到 4.0「提速 5.6 倍」，实测对照（--fidelity）：
+        //
+        //   设置          单元数   HC1/HC2/HC3 管根温差 K      用时
+        //   全精度          243    −204 / −295 / −142         34.6 s
+        //   只粗网格         68    **+24 / −14 / +26**        26.5 s   ← 符号都翻了
+        //   只松耦合        243    −192 / −277 / −138         20.3 s   ← 只差 10–18 K
+        //
+        // 管根温差正是由**孔周**的热流决定的，而 MeshFineMm 控制的就是孔周分辨率 ——
+        // 放粗它等于把被优化的那个量本身解坏。而且这笔买卖极不划算：
+        // 用 300 K 的误差只换了 8 秒（法兰本来就小，全精度也才 243 单元）。
+        //
+        // ⇒ 现在**只放粗远场**（MeshCoarseMm）与**放松耦合容差**，孔周一动不动。
+        //   实测 20.3 s vs 34.6 s，1.7 倍，诚实的提速。
+        /// <summary>
+        /// 搜索期的**细**网格步长 mm。★ 默认 0 = **不动**，因为它控制孔周分辨率。
+        /// 除非你已用 --fidelity 验证过该形状上放粗无害，否则不要设。
+        /// </summary>
+        public double SearchMeshFineMm = 0;
+        /// <summary>搜索期的**远场**网格步长 mm（原值 11.0）。远场放粗是安全的</summary>
         public double SearchMeshCoarseMm = 16.0;
-        /// <summary>搜索期的段↔法兰耦合轮数与容差</summary>
+        /// <summary>搜索期的段↔法兰耦合轮数与容差（实测只影响 10–18 K，可放松）</summary>
         public int SearchCoupleRounds = 5;
         public double SearchCoupleTolK = 4.0;
     }
@@ -195,13 +210,11 @@ public static class FlangeAutoSizer
             cancel.ThrowIfCancellationRequested();
 
             var lc = CloneCase(baseCase);
-            if (opt.SearchMeshFineMm > 0)
-            {
-                lc.MeshFineMm = opt.SearchMeshFineMm;
-                lc.MeshCoarseMm = opt.SearchMeshCoarseMm;
-                lc.CoupleMaxRounds = opt.SearchCoupleRounds;
-                lc.CoupleTolK = opt.SearchCoupleTolK;
-            }
+            // 孔周（MeshFineMm）只在显式设了才动 —— 默认不动，见 Options 里的对照表
+            if (opt.SearchMeshFineMm > 0) lc.MeshFineMm = opt.SearchMeshFineMm;
+            if (opt.SearchMeshCoarseMm > 0) lc.MeshCoarseMm = opt.SearchMeshCoarseMm;
+            if (opt.SearchCoupleRounds > 0) lc.CoupleMaxRounds = opt.SearchCoupleRounds;
+            if (opt.SearchCoupleTolK > 0) lc.CoupleTolK = opt.SearchCoupleTolK;
             if (makePlate is not null)
                 lc.FlangePlates = t.Select(makePlate).ToArray();      // 解析几何：t 就是厚度
             else

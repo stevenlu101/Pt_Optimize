@@ -2840,6 +2840,68 @@ internal static class Program
                 return;
             }
 
+            // --cli --fidelity   同一组厚度，粗网格 vs 细网格，看管根温差差多少
+            //
+            // 「搜索期用粗网格提速」这个策略成不成立，取决于粗网格算出的**管根温差**
+            // 是否与细网格一致（只需方向一致即可，不必数值相同）。实测发现差 280 K，
+            // 故必须查清是网格还是耦合容差造成的 —— 这条命令把两个因素拆开。
+            if (args.Contains("--fidelity"))
+            {
+                double wallF2 = 0.4, insF2 = 10.0, holeF2 = wallF2 + 25.0;
+                var th4 = new[] { 0.400, 0.631, 0.527, 0.400 };
+
+                var pF2 = SegmentSolver.Clone(p);
+                pF2.Layer1.ThicknessMm = insF2; pF2.Layer1.Enabled = true;
+                pF2.WallMinMm = wallF2;
+                pF2.FlangeInsulThickMm = 20; pF2.FlangeInsulated = true;
+                pF2.BusbarClampTempC = 300;
+
+                FlangePlate MkF(double t) => new()
+                {
+                    DiscRadiusMm = 30, HoleRadiusMm = holeF2,
+                    TabEndXMm = -50, TabEndHalfWidthMm = 20,
+                    ThicknessMm = t, ThickenedMm = t, InsulBoundaryXMm = -1e9
+                };
+
+                Console.WriteLine("=== 精度对照：同一组厚度，只改网格与耦合容差 ===");
+                Console.WriteLine($"形状 Ø60／舌50×20　厚度 {string.Join("/", th4.Select(x => x.ToString("0.000")))} mm");
+                Console.WriteLine();
+                Console.WriteLine($"{"网格 细/粗",14}{"耦合轮/容差",14}{"单元数",8}" +
+                                  $"{"HC1 ΔT",10}{"HC2 ΔT",10}{"HC3 ΔT",10}{"法兰最高",10}{"总铂 g",9}{"用时 s",9}");
+
+                foreach (var (mf, mc, cr, ctol, tag) in new[]
+                {
+                    (2.0, 11.0, 15, 1.0, "全精度"),
+                    (4.0, 16.0, 15, 1.0, "只粗网格"),
+                    (2.0, 11.0,  5, 4.0, "只松耦合"),
+                    (4.0, 16.0,  5, 4.0, "搜索期设置"),
+                })
+                {
+                    var lcF2 = new LineCase
+                    {
+                        Base = pF2, WallMm = wallF2, UseMeasuredCurrent = false, CheckRamp = false,
+                        SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                        FlangePlates = th4.Select(MkF).ToArray(),
+                        MeshFineMm = mf, MeshCoarseMm = mc,
+                        CoupleMaxRounds = cr, CoupleTolK = ctol
+                    };
+                    var swF = System.Diagnostics.Stopwatch.StartNew();
+                    var rF = LineRunner.Run(lcF2);
+                    swF.Stop();
+                    if (!rF.Ok) { Console.WriteLine($"{tag,14}  失败"); continue; }
+                    Console.WriteLine($"{$"{mf:0.0}/{mc:0.0}",14}{$"{cr}/{ctol:0.0}",14}" +
+                        $"{rF.Flanges[0].CellCount,8}" +
+                        $"{rF.Segments[0].RootDeltaK,10:+0.0;-0.0}{rF.Segments[1].RootDeltaK,10:+0.0;-0.0}" +
+                        $"{rF.Segments[2].RootDeltaK,10:+0.0;-0.0}{rF.Flanges.Max(f2 => f2.TMaxC),10:0}" +
+                        $"{rF.TotalMassG,9:0}{swF.Elapsed.TotalSeconds,9:0.0}　{tag}" +
+                        (rF.Converged ? "" : " ⚠未收敛"));
+                }
+                Console.WriteLine();
+                Console.WriteLine("若「只粗网格」那行就偏得厉害 ⇒ 网格是主因，搜索期不能降网格；");
+                Console.WriteLine("若「只松耦合」那行偏得厉害 ⇒ 是耦合没跑够，收紧容差即可。");
+                return;
+            }
+
             // --cli --gradetest   ★ 分级到底有没有用：扫「梯度比 γ」
             //
             // 用户问得对：等厚的最优（1327 g）早算过了，重算等厚没有新信息。
