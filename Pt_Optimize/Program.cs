@@ -3035,6 +3035,100 @@ internal static class Program
                 return;
             }
 
+            // --cli --canwork   ★ 闭式可行性图：这片法兰在给定电流下**有没有可能**自给
+            //
+            // 目的：**搜索前先判有没有解**。本轮已在注定失败的搜索上烧掉数小时，
+            // 而这个判断只要一秒 —— 全部闭式，不解场。
+            //
+            // 一片法兰不从管子抽热的条件（§4.3a 的能量对账口径）：
+            //     自身发热  ≥  表面散热 + 铜排带走
+            //     I²·ρe·ΣR/t  ≥  2·A·q″  +  Q_clamp
+            // 其中 Q_clamp 由夹持温度与舌片截面定，与厚度弱相关。
+            // 把它整理成对**厚度**的不等式，看有没有落在 [0.4, 6] 内的解。
+            if (args.Contains("--canwork"))
+            {
+                double wallC2 = 0.4, insC2 = 10.0, holeC2 = wallC2 + 25.0;
+                var pC2 = SegmentSolver.Clone(p);
+                pC2.Layer1.ThicknessMm = insC2; pC2.Layer1.Enabled = true;
+                pC2.WallMinMm = wallC2;
+                pC2.FlangeInsulThickMm = 20; pC2.FlangeInsulated = true;
+
+                // ★★ 标定系数：闭式用工作温度的 ρe 算整片发热，而夹持把大部分板拖冷
+                //   （90mm 舌片有 40mm 按在 300°C），实际 ρe 只有工作温度的约 1/3。
+                //   实测对照（Ø72/舌90×60×0.8/压接40/夹300）：
+                //     闭式发热 323 W  vs  完整解 106 W  ⇒ 高估 3.0 倍
+                //   故乘 0.33。**该系数随夹持长度/温度/舌长变化，配置大改后必须重标。**
+                //   ⇒ 闭式只作**必要条件**：说不行就一定不行；说行还必须完整解复核。
+                const double genCalib = 0.33;
+
+                Console.WriteLine("=== 闭式可行性：法兰能否自给（不抽管子的热）===");
+                Console.WriteLine($"⚠ 发热按实测标定系数 {genCalib:0.00} 折算（闭式假设整片在工作温度，");
+                Console.WriteLine("  而夹持把板拖冷 ⇒ ρe 只有工作温度的约 1/3）。**本判据只作必要条件。**");
+                Console.WriteLine("条件：I²·ρe·ΣR/t ≥ 2·A·q″ + Q_夹持");
+                Console.WriteLine("⇒ t ≤ I²·ρe·ΣR / (2·A·q″ + Q_夹持)　**上界**；再与工艺下界 0.4 比");
+                Console.WriteLine("（t 越小发热越多 ⇒ 自给要求的是厚度**上界**）");
+                Console.WriteLine();
+
+                double tWork2 = 1150;
+                double rhoMm2 = Materials.PtResistivity(tWork2) * 1e3;
+                double kMm = Materials.PtThermalK(tWork2) * 1e-3;
+
+                // 端片可行边界搜索：窄舌 + 舌片保温是两个方向
+                foreach (var (nm, disc, tabL5, hw4, ttab) in new[]
+                {
+                    ("窄舌 半宽15", 30.0, 90.0, 15.0, 0.8),
+                    ("窄舌 半宽10", 30.0, 90.0, 10.0, 0.8),
+                    ("窄舌长 15×130", 30.0, 130.0, 15.0, 0.8),
+                    ("极窄 半宽8", 30.0, 90.0, 8.0, 0.8),
+                    ("窄薄 15×0.5", 30.0, 90.0, 15.0, 0.5),
+                })
+                {
+                    var g5 = new FlangePlate
+                    {
+                        DiscRadiusMm = disc, HoleRadiusMm = holeC2,
+                        TabEndXMm = -tabL5, TabEndHalfWidthMm = hw4,
+                        ThicknessMm = 1.0, ThickenedMm = 1.0,
+                        TabThicknessMm = ttab, InsulBoundaryXMm = double.NaN
+                    };
+                    ShellMesh m5;
+                    try { m5 = FlangeMesher.Build(g5, 0, 2.0, 11.0, 45.0, 40.0); }
+                    catch { Console.WriteLine($"{nm,10}  网格失败"); continue; }
+                    var sf5 = DesignScreen.Extract(m5, 1000.0, 1050.0, g5.Tangent().X);
+                    double area = sf5.AreaMm2;
+                    double qIns = DesignScreen.PlateFluxWPerM2(pC2, tWork2, 20.0) * 1e-6;   // 圆盘包
+                    double qBare = DesignScreen.PlateFluxWPerM2(pC2, 800, 0) * 1e-6;         // 舌片裸
+                    double qTabIns = DesignScreen.PlateFluxWPerM2(pC2, 800, 10.0) * 1e-6;    // 舌片包10mm
+                    double aDisc = Math.PI * (disc * disc - holeC2 * holeC2);
+                    double aTab = Math.Max(0, area - aDisc);
+                    double lossW = 2 * (aDisc * qIns + aTab * qBare);
+                    double lossWIns = 2 * (aDisc * qIns + aTab * qTabIns);   // 舌片也包保温
+
+                    Console.WriteLine($"── {nm}：盘Ø{2 * disc:0}／舌{tabL5:0}×{2 * hw4:0}×{ttab:0.00}" +
+                                      $"　净面积 {area:0} mm²　ΣR={sf5.ShapeR:0.000}　表面散热 {lossW:0} W");
+                    Console.WriteLine($"   {"夹持°C",8}{"Q_夹持W",10}{"端片687A: t上界",18}" +
+                                      $"{"共用1105A: t上界",18}{"端片(舌包10)",16}  判定（对下界 0.4）");
+                    foreach (double ct2 in new[] { 300.0, 500.0, 700.0, 900.0 })
+                    {
+                        // 铜排带走：舌片截面沿有效长导到夹持温度
+                        double effL2 = tabL5 - 40;
+                        double qClamp = kMm * (2 * hw4 * ttab) / Math.Max(1, effL2) * (tWork2 - ct2);
+                        double tEnd = genCalib * 687.0 * 687.0 * rhoMm2 * sf5.ShapeR / (lossW + qClamp);
+                        double tSh = genCalib * 1105.0 * 1105.0 * rhoMm2 * sf5.ShapeR / (lossW + qClamp);
+                        double tEndIns = genCalib * 687.0 * 687.0 * rhoMm2 * sf5.ShapeR / (lossWIns + qClamp);
+                        Console.WriteLine($"   {ct2,8:0}{qClamp,10:0}{tEnd,18:0.000}{tSh,18:0.000}" +
+                            $"{tEndIns,16:0.000}  " +
+                            (tEnd >= 0.4 ? "✓ 端片裸露即可"
+                             : tEndIns >= 0.4 ? "◐ 端片需包舌片保温"
+                             : "✗ 端片无解"));
+                    }
+                    Console.WriteLine();
+                }
+                Console.WriteLine("★ 读法：t 上界 < 0.4 ⇒ 即使做到工艺最薄也发不出足够的热 ⇒ **注定抽管子的热**。");
+                Console.WriteLine("  t 上界 ≥ 0.4 ⇒ **可能**可行，仍须完整解复核（闭式是必要条件不是充分条件）。");
+                Console.WriteLine("  这一步只要一秒，**必须在动辄几小时的搜索之前跑**。");
+                return;
+            }
+
             // --cli --balance   ★ 能量对账：法兰的四项收支，用**独立算出**的量核对
             //
             // 之前铜排那一项是用恒等式反推的，所以「平衡」是循环论证。现在四项全独立：
