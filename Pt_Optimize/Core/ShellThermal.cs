@@ -23,6 +23,16 @@ public sealed class ShellThermalResult
     public double QGenW;          // 整片焦耳热
     public double QLossW;         // 整片表面散热
     public double QFromTubeW;     // 由管孔流入法兰的净热（>0 = 从管子抽热）
+    /// <summary>
+    /// 由舌片末端流进铜排的净热 W（>0 = 铜排在带走热）。**与管孔那一项同法直接算**，
+    /// 不用能量恒等式反推 —— 否则「对账」就成了循环论证，验证不了任何东西。
+    /// </summary>
+    public double QToClampW;
+    /// <summary>
+    /// 能量闭合残差 W：Σ(发热−散热) + 管孔净流入 − 铜排带走。
+    /// 应接近 0；显著非零说明场解没收敛或边界处理有漏。
+    /// </summary>
+    public double EnergyResidualW;
     public double PhiOverall;     // 自给率 = 自身发热 / 自身散热
     public double TTabEndMeanC;   // 舌片末端平均温度（铜排压接点）
     public int Iterations;
@@ -40,8 +50,16 @@ public static class ShellThermal
     /// <param name="jMagAPerMm2">各单元电流密度，来自 <see cref="ShellCurrent"/></param>
     /// <param name="tRootC">管根温度 °C（管孔处定温）</param>
     /// <param name="insulBoundaryX">保温分界 x：≥ 此值包纤维，其余裸露</param>
+    /// <param name="symmetricInsul">
+    /// 双舌片时置 true：改判 |x| ≤ |分界| 为保温区（两侧舌片都裸露）。
+    /// ★ 为什么分区而不是全包：舌片离冷源远（约 45 mm），横向导热只有约 34 W/(m²·K)，
+    ///   **表面散热是它抵抗局部热失稳的主要恢复力**；包保温会把允许电流密度
+    ///   从 24.6 砍到 15.0 A/mm²（实算）。圆盘则不同 —— 它紧贴管子，
+    ///   横向导热约 2400，表面项只占 1 %，包保温无害且能降低自给所需厚度。
+    /// </param>
     public static ShellThermalResult Solve(ShellMesh m, double[] jMagAPerMm2, DesignInputs p,
                                            double tRootC, double insulBoundaryX,
+                                           bool symmetricInsul = false,
                                            int maxIter = 60000, double tol = 1e-4)
     {
         int n = m.CellCount;
@@ -63,7 +81,10 @@ public static class ShellThermal
                                       p.LossScale) * 1e-6);
 
         var insulated = new bool[n];
-        for (int i = 0; i < n; i++) insulated[i] = m.Centroid[i].X >= insulBoundaryX;
+        for (int i = 0; i < n; i++)
+            insulated[i] = symmetricInsul
+                         ? Math.Abs(m.Centroid[i].X) <= Math.Abs(insulBoundaryX)
+                         : m.Centroid[i].X >= insulBoundaryX;
 
         // ── 定温边界
         var isFixed = new bool[n];
@@ -159,6 +180,28 @@ public static class ShellThermal
             foreach (var (c, k) in nbr[i]) q += gcond[k] * (res.T[i] - res.T[c]);
         }
         res.QFromTubeW = q;
+
+        // 铜排带走的热：与管孔同法，对定温的舌端单元累加邻面导度×温差
+        // （>0 表示热从法兰流进铜排 ⇒ 取负号，因为下式算的是「流出定温单元」）
+        double qc = 0;
+        for (int i = 0; i < n; i++)
+        {
+            if (!tabCell[i]) continue;
+            foreach (var (c, k) in nbr[i]) qc += gcond[k] * (res.T[c] - res.T[i]);
+        }
+        res.QToClampW = qc;
+
+        // 能量闭合：自由单元的净产热 + 管孔流入 = 铜排带走
+        // （定温单元自身的产热与散热由各自的边界吸收，故只累加自由单元）
+        double genFree = 0, lossFree = 0;
+        for (int i = 0; i < n; i++)
+        {
+            if (holeCell[i] || tabCell[i]) continue;
+            double t = m.Thickness[i], A = m.Area[i], ti = res.T[i];
+            genFree += Materials.PtResistivity(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t * A;
+            lossFree += 2 * (insulated[i] ? insTab : bareTab).Eval(ti) * A;
+        }
+        res.EnergyResidualW = genFree - lossFree + res.QFromTubeW - res.QToClampW;
 
         var tabT = Enumerable.Range(0, n).Where(i => tabCell[i]).Select(i => res.T[i]).ToArray();
         res.TTabEndMeanC = tabT.Length > 0 ? tabT.Average() : double.NaN;

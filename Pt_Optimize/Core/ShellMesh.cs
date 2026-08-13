@@ -240,7 +240,10 @@ public static class FlangeMesher
         {
             double r = Math.Sqrt(mid.X * mid.X + mid.Z * mid.Z);
             if (Math.Abs(r - g.HoleRadiusMm) < 3.0) return ShellMesh.TagHole;
-            if (mid.X <= g.TabTipXMm + clampLenMm) return ShellMesh.TagTabEnd;
+            // 双舌片：两端都是压接边
+            if (g.TwoTabs
+                ? Math.Abs(mid.X) >= Math.Abs(g.TabTipXMm) - clampLenMm
+                : mid.X <= g.TabTipXMm + clampLenMm) return ShellMesh.TagTabEnd;
             return ShellMesh.TagFree;
         });
         return m;

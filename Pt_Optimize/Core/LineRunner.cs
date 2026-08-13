@@ -138,6 +138,8 @@ public sealed class FlangeOut
     /// 夹持温度 &lt; 0（无夹冷）时为 0。
     /// </summary>
     public double QClampW;
+    /// <summary>能量闭合残差 W —— 应接近 0，显著非零说明场解有问题</summary>
+    public double EnergyResidualW;
     /// <summary>本片贴着的管根温度 °C（管孔定温边界）。TMaxC − TRootC &gt; 0 即「法兰比管热」</summary>
     public double TRootC;
     public double AreaMm2, VolumeMm3;
@@ -415,7 +417,8 @@ public static class LineRunner
             // .3dm 路径沿用现场实况「仅圆盘保温、舌片裸露」的切点。
             double insulX = analytic ? plate!.InsulBoundaryXResolved
                                      : new FlangePlate().InsulBoundaryXResolved;
-            var th = ShellThermal.Solve(mesh, sc.JMagAPerMm2, p2, tRoot, insulX);
+            var th = ShellThermal.Solve(mesh, sc.JMagAPerMm2, p2, tRoot, insulX,
+                                        symmetricInsul: analytic && plate!.TwoTabs);
 
             // 逐级峰值温度：按单元厚度归级，取该级内的最高温
             double[] lvTmax = Array.Empty<double>(), lvTh = Array.Empty<double>();
@@ -450,8 +453,9 @@ public static class LineRunner
                 Phi = th.PhiOverall,
                 QFromTubeW = th.QFromTubeW,
                 QGenW = th.QGenW, QLossW = th.QLossW,
-                QClampW = p2.BusbarClampTempC >= 0
-                        ? Math.Max(0, th.QGenW + th.QFromTubeW - th.QLossW) : 0, TRootC = tRoot,
+                // ★ 改用壳解的**直接通量**，不再用恒等式反推 —— 否则对账是循环论证
+                QClampW = th.QToClampW,
+                EnergyResidualW = th.EnergyResidualW, TRootC = tRoot,
                 TMaxC = th.TMaxC, TMinC = th.TMinC, TTabEndC = th.TTabEndMeanC,
                 AreaMm2 = mesh.TotalArea, VolumeMm3 = mesh.VolumeMm3,
                 CellCount = mesh.CellCount,

@@ -55,6 +55,23 @@ public sealed class FlangePlate
     /// </summary>
     public double InsulBoundaryXMm = double.NaN;
 
+    /// <summary>
+    /// **双舌片对称进电**（两片舌相隔 180°）。
+    ///
+    /// 单舌片的代价在本项目里逐条暴露出来：
+    ///   · 舌片是全片最窄的电流通道 —— 实测 J = 32.1 A/mm²，比孔周还紧
+    ///   · 压接界面电流密度 9 A/mm²（3 mm 压接），远超压接接头的 ≤1 常规
+    ///   · 铜排被散热需求定到 40×21.8 mm
+    ///   · 电流从单侧进来绕过管孔，在靠舌片那侧堆成峰值（J_max/J_rms = 2.17）
+    ///
+    /// 双舌片把每舌电流减半 ⇒ 舌片 J 减半、每舌铜排热减半、压接长可减半，
+    /// 且电流场对称。代价是多一片舌的铂重。
+    ///
+    /// 求解器无需改动：电流场的边界是「舌端 V=1、管孔 V=0」再按总电流定标，
+    /// 两个舌端同为 V=1 时会**自然对称分流**。
+    /// </summary>
+    public bool TwoTabs = false;
+
     /// <summary>解析后的保温分界：NaN ⇒ 切点（仅圆盘保温）</summary>
     public double InsulBoundaryXResolved
         => double.IsNaN(InsulBoundaryXMm) ? Tangent().X : InsulBoundaryXMm;
@@ -106,7 +123,8 @@ public sealed class FlangePlate
     public double ThicknessAt(double x, double z)
     {
         // 舌片先判：阶梯是按半径分的，只对圆盘有意义
-        bool onTab = !double.IsNaN(TabThicknessMm) && x < Tangent().X;
+        bool onTab = !double.IsNaN(TabThicknessMm) &&
+                     (TwoTabs ? Math.Abs(x) > Math.Abs(Tangent().X) : x < Tangent().X);
         if (onTab) return TabThicknessMm;
 
         double r = Math.Sqrt(x * x + z * z);
@@ -134,6 +152,13 @@ public sealed class FlangePlate
     }
 
     public double HalfWidth(double x)
+    {
+        // 双舌片：整形关于 z 轴对称 ⇒ 用 −|x| 代入单舌片的公式
+        if (TwoTabs) return HalfWidthSingle(-Math.Abs(x));
+        return HalfWidthSingle(x);
+    }
+
+    private double HalfWidthSingle(double x)
     {
         var (xt, wt) = Tangent();
         if (x > DiscRadiusMm || x < TabTipXMm) return 0;

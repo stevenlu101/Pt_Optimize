@@ -3035,6 +3035,302 @@ internal static class Program
                 return;
             }
 
+            // --cli --balance   ★ 能量对账：法兰的四项收支，用**独立算出**的量核对
+            //
+            // 之前铜排那一项是用恒等式反推的，所以「平衡」是循环论证。现在四项全独立：
+            //   发热 = Σ ρe·J²·t·A（体积分）　　散热 = Σ 2q″(T)·A（面积分）
+            //   管孔 = Σ 导度×温差（孔单元）　　铜排 = Σ 导度×温差（舌端单元）
+            // 闭合式：自由单元的(发热−散热) + 管孔净流入 − 铜排带走 = 0
+            if (args.Contains("--balance"))
+            {
+                double wallB2 = 0.4, insB2 = 10.0, holeB2 = wallB2 + 25.0;
+                double discB2 = 36.0, tabLB2 = 90.0, hwB2 = 30.0, ttB2 = 0.8;
+
+                var pB2 = SegmentSolver.Clone(p);
+                pB2.Layer1.ThicknessMm = insB2; pB2.Layer1.Enabled = true;
+                pB2.WallMinMm = wallB2;
+                pB2.FlangeInsulThickMm = 20; pB2.FlangeInsulated = true;
+                pB2.BusbarClampTempC = 300; pB2.BusbarClampLengthMm = 40;
+
+                FlangePlate MkB2(double td) => new()
+                {
+                    DiscRadiusMm = discB2, HoleRadiusMm = holeB2,
+                    TabEndXMm = -tabLB2, TabEndHalfWidthMm = hwB2,
+                    ThicknessMm = td, ThickenedMm = td, TabThicknessMm = ttB2,
+                    InsulBoundaryXMm = double.NaN
+                };
+
+                Console.WriteLine("=== 法兰能量对账 ===");
+                Console.WriteLine($"几何 盘Ø{2 * discB2:0}／舌 {tabLB2:0}×{2 * hwB2:0}×{ttB2:0.0}／" +
+                                  $"压接 40／夹持 300 °C／圆盘包 20、舌片裸露");
+                Console.WriteLine("闭合式：自由单元(发热−散热) + 管孔净流入 − 铜排带走 = 0");
+                Console.WriteLine();
+
+                var lcB2 = new LineCase
+                {
+                    Base = pB2, WallMm = wallB2, UseMeasuredCurrent = false, CheckRamp = false,
+                    SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                    FlangePlates = new[] { MkB2(0.4), MkB2(0.4), MkB2(0.4), MkB2(0.4) }
+                };
+                var rB2 = LineRunner.Run(lcB2);
+                if (!rB2.Ok) { Console.WriteLine("✗ " + rB2.Message); return; }
+
+                Console.WriteLine($"{"片",10}{"电流A",8}{"发热W",9}{"表面散热",10}" +
+                                  $"{"管孔流入",10}{"铜排带走",10}{"残差W",9}{"残差/发热",10}");
+                foreach (var f11 in rB2.Flanges)
+                    Console.WriteLine($"{f11.Name,10}{f11.CurrentA,8:0}{f11.QGenW,9:0}{f11.QLossW,10:0}" +
+                        $"{f11.QFromTubeW,10:+0;-0}{f11.QClampW,10:0}{f11.EnergyResidualW,9:+0.0;-0.0}" +
+                        $"{f11.EnergyResidualW / Math.Max(1e-9, f11.QGenW) * 100,9:0.0}%");
+
+                Console.WriteLine();
+                Console.WriteLine("读法：");
+                Console.WriteLine("· **残差 ≈ 0** ⇒ 场解的能量账是自洽的，四项可信；");
+                Console.WriteLine("  残差显著 ⇒ 场解没收敛或边界处理有漏，任何结论都不能用。");
+                Console.WriteLine("· 「管孔流入」为正 = 法兰在从管子抽热 ⇒ 管根变冷 ⇒ 管根温差为正。");
+                Console.WriteLine("· 若「铜排带走」远大于「发热−散热」，缺口就只能由管子补 —— 那正是管根塌的原因。");
+                Console.WriteLine();
+                Console.WriteLine($"管根温差 " + string.Join(" / ",
+                    rB2.Segments.Select(x => x.RootDeltaK.ToString("+0.0;-0.0"))) + " K" +
+                    (rB2.Converged ? "　耦合收敛 ✓" : "　⚠ 未收敛"));
+                return;
+            }
+
+            // --cli --jmap   ★ 电流密度全景：三处（管/圆盘/舌片）× 两工况（升温空管/稳态有玻璃）
+            //
+            // 用户 2026-08-14：「升温 20°C/HR（空管）与稳态（有玻璃液），
+            // 舌、圆盘法兰与管的 J 是不一样的」——对，而且**限值也不一样**：
+            //   管   ：控温维持温度，限值是热稳定极限
+            //   圆盘 ：孔周峰值，但紧贴管子 ⇒ 横向导热撑着，限值宽松
+            //   舌片 ：离冷源远 ⇒ 表面散热是主要恢复力，限值最严
+            // 两工况的差别：升温空管无玻璃负荷也无玻璃帮忙；
+            //   稳态下 HC2/HC3 的玻璃比管热，反而在加热管子 ⇒ 电流更小。
+            if (args.Contains("--jmap"))
+            {
+                double wallJ = 0.4, insJ = 10.0, holeJ = wallJ + 25.0;
+                double discJ = 30.0, tabLJ = 90.0, hwJ = 30.0, ttJ = 1.5;
+                double tDiscJ = 0.855;
+                double fJ = Math.Sqrt(3.0);
+
+                var pJ = SegmentSolver.Clone(p);
+                pJ.Layer1.ThicknessMm = insJ; pJ.Layer1.Enabled = true;
+                pJ.WallMinMm = wallJ;
+                pJ.FlangeInsulThickMm = 20; pJ.FlangeInsulated = true;
+                pJ.BusbarClampTempC = 300; pJ.BusbarClampLengthMm = 40;
+
+                var gJ = new FlangePlate
+                {
+                    DiscRadiusMm = discJ, HoleRadiusMm = holeJ,
+                    TabEndXMm = -tabLJ, TabEndHalfWidthMm = hwJ,
+                    ThicknessMm = tDiscJ, ThickenedMm = tDiscJ,
+                    TabThicknessMm = ttJ, InsulBoundaryXMm = double.NaN
+                };
+                var mJ = FlangeMesher.Build(gJ, 0, 2.0, 11.0, 45.0, 40.0);
+                var sfJ = DesignScreen.Extract(mJ, 1000.0, 1050.0, gJ.Tangent().X);
+                double areaTubeJ = Math.PI * wallJ * (pJ.TubeIdMm + wallJ);
+
+                Console.WriteLine("=== 电流密度全景：三处 × 两工况 ===");
+                Console.WriteLine($"几何：盘 Ø{2 * discJ:0}／盘厚 {tDiscJ:0.000}／舌 {tabLJ:0}×{2 * hwJ:0}×{ttJ:0.0}" +
+                                  $"／管壁 {wallJ:0.0}（截面 {areaTubeJ:0.0} mm²）");
+                Console.WriteLine($"保温：管纤维 {insJ:0}／圆盘包 20／**舌片裸露**");
+                Console.WriteLine();
+
+                Console.WriteLine("── 工况一：升温（空管，20 °C/h，温控功率）");
+                Console.WriteLine($"{"管温°C",8}{"段电流A",9}{"管J",7}" +
+                                  $"{"盘J_max",9}{"盘J_stab",10}{"盘裕度",8}" +
+                                  $"{"舌J",7}{"舌J_stab",10}{"舌裕度",8}  判定");
+                foreach (double tC in new[] { 100.0, 300.0, 600.0, 900.0, 1150.0 })
+                {
+                    double iSeg = RampTwoNode.QuasiStaticCurrentA(pJ, wallJ, tC, 20.0);
+                    double iPlate = fJ * iSeg;                       // 共用片
+                    double jTube = iSeg / areaTubeJ;
+                    double jDisc = sfJ.ShapeJ * iPlate / tDiscJ;
+                    double jTab = iPlate / (2 * hwJ * ttJ);
+                    // 圆盘热点：紧贴管孔，横向长度取环宽
+                    var sd = LocalStability.Check(pJ, tC, jDisc, tDiscJ, 20.0, discJ - holeJ);
+                    // 舌片中段：裸露，横向长度取到冷源的一半
+                    var st2 = LocalStability.Check(pJ, tC, jTab, ttJ, 0.0, (tabLJ - 40) / 2);
+                    Console.WriteLine($"{tC,8:0}{iSeg,9:0}{jTube,7:0.00}" +
+                        $"{jDisc,9:0.00}{sd.JStab,10:0.00}{sd.Margin,8:0.00}" +
+                        $"{jTab,7:0.00}{st2.JStab,10:0.00}{st2.Margin,8:0.00}  " +
+                        (sd.Stable && st2.Stable ? "✓" :
+                         (!sd.Stable ? "✗盘" : "") + (!st2.Stable ? "✗舌" : "")));
+                }
+
+                Console.WriteLine();
+                Console.WriteLine("── 工况二：稳态（有玻璃）—— 由整线耦合解给出真实段电流");
+                var lcJ = new LineCase
+                {
+                    Base = pJ, WallMm = wallJ, UseMeasuredCurrent = false, CheckRamp = false,
+                    SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                    FlangePlates = new[] { gJ, gJ, gJ, gJ }
+                };
+                try
+                {
+                    var rJ = LineRunner.Run(lcJ);
+                    if (rJ.Ok)
+                    {
+                        Console.WriteLine($"{"段/片",10}{"电流A",9}{"管J",7}" +
+                                          $"{"盘J_max",9}{"盘J_stab",10}{"盘裕度",8}" +
+                                          $"{"舌J",7}{"舌J_stab",10}{"舌裕度",8}  判定");
+                        for (int i2 = 0; i2 < rJ.Segments.Length; i2++)
+                        {
+                            var sg = rJ.Segments[i2];
+                            Console.WriteLine($"{sg.Name + " 管",10}{sg.CurrentA,9:0}{sg.TubeJAPerMm2,7:0.00}" +
+                                              $"{"—",9}{"—",10}{"—",8}{"—",7}{"—",10}{"—",8}");
+                        }
+                        foreach (var f10 in rJ.Flanges)
+                        {
+                            double jTab2b = f10.CurrentA / (2 * hwJ * ttJ);
+                            var sdb = LocalStability.Check(pJ, f10.TRootC, f10.JMaxAPerMm2,
+                                          tDiscJ, 20.0, discJ - holeJ);
+                            var stb = LocalStability.Check(pJ, 800, jTab2b, ttJ, 0.0, (tabLJ - 40) / 2);
+                            Console.WriteLine($"{f10.Name,10}{f10.CurrentA,9:0}{"—",7}" +
+                                $"{f10.JMaxAPerMm2,9:0.00}{sdb.JStab,10:0.00}{sdb.Margin,8:0.00}" +
+                                $"{jTab2b,7:0.00}{stb.JStab,10:0.00}{stb.Margin,8:0.00}  " +
+                                (sdb.Stable && stb.Stable ? "✓" :
+                                 (!sdb.Stable ? "✗盘" : "") + (!stb.Stable ? "✗舌" : "")));
+                        }
+                        Console.WriteLine($"  管根温差 " + string.Join(" / ",
+                            rJ.Segments.Select(x => x.RootDeltaK.ToString("+0.0;-0.0"))) + " K" +
+                            (rJ.Converged ? "　收敛 ✓" : "　⚠ 未收敛"));
+                    }
+                    else Console.WriteLine("  稳态求解失败：" + rJ.Message);
+                }
+                catch (Exception ex) { Console.WriteLine("  稳态异常：" + ex.Message); }
+
+                Console.WriteLine();
+                Console.WriteLine("★ 两工况必须都过。升温期的特点：温度低 ⇒ 表面散热按 T⁴ 塌下去，");
+                Console.WriteLine("  而 TCR 升高（冷态是热态的 6.5 倍）⇒ **舌片这种靠表面散热的部位在冷态最脆弱**。");
+                Console.WriteLine("  圆盘则不同：它靠横向导热到管子，那一项与温度关系不大。");
+                return;
+            }
+
+            // --cli --design   ★★★ 最终搜索：完整约束集下求最轻可行方案
+            //
+            // 取代此前一串临时扫描。约束全部来自计算或现场实务，不再有「我随手写的值」：
+            //
+            //   ① 管根温差 0 < ΔT < 10 K                  业主给的核心约束
+            //   ② 法兰局部最高温 ≤ 管根温度                业主原始规则，不放宽
+            //   ③ 压接长 ≥ 40 mm                          **现场实务下界（C 型夹也做不到更短）**
+            //   ④ 压接界面电流密度 ≤ 1 A/mm²（双面夹）      压接接头常规
+            //   ⑤ 有效导热长（舌长 − 压接长）≥ 45 mm       实测：低于此管根温差急剧恶化
+            //   ⑥ 圆盘环宽 ≥ 10 mm                        可焊、可搬运
+            //   ⑦ 所有厚度 ≥ 0.4 mm                       业主给的工艺下界
+            //
+            // ③ 与 ⑤ 合起来 ⇒ **舌长 ≥ 85 mm**。此前那版 50 mm 舌片方案由此判死。
+            // 同时对比单舌片与**双舌片对称进电**。
+            if (args.Contains("--design"))
+            {
+                const double clampMin = 40.0, effMin = 45.0, ringMin = 10.0, tMin2 = 0.4;
+                double wallD = 0.4, insD = 10.0, holeD = wallD + 25.0;
+
+                Console.WriteLine("=== 最终搜索：完整约束集下求最轻可行方案 ===");
+                Console.WriteLine($"压接 ≥{clampMin:0} mm（现场实务）｜有效导热长 ≥{effMin:0} mm｜" +
+                                  $"环宽 ≥{ringMin:0} mm｜厚度 ≥{tMin2:0.0} mm");
+                Console.WriteLine($"⇒ 舌长 ≥ {clampMin + effMin:0} mm");
+                Console.WriteLine("管壁 0.4／管纤维 10／**仅圆盘保温 20、舌片裸露**／夹持 300 °C；盘厚每格自动定厚");
+                Console.WriteLine("★ 舌片裸露是算出来的：包保温会把舌片允许 J 从 24.6 砍到 15.0 A/mm²");
+                Console.WriteLine();
+                Console.WriteLine($"{"舌数",5}{"盘Ø",6}{"环宽",6}{"舌长",6}{"舌半宽",7}{"舌厚",6}" +
+                                  $"{"每舌A",7}{"J_舌",7}{"界面J",7}" +
+                                  $"{"盘厚 mm",20}{"ΔT范围",13}{"盘局部",8}{"舌J_stab",9}{"总铂g",8}  判定");
+
+                var best = (m: double.MaxValue, d: "");
+                foreach (int nTab in new[] { 1, 2 })
+                    foreach (double disc in new[] { 36.0, 44.0 })
+                    {
+                        double ring = disc - holeD;
+                        if (ring < ringMin) continue;
+                        foreach (double tabL4 in new[] { 90.0, 130.0 })
+                            foreach (double hw3 in new[] { 30.0 })
+                                foreach (double tt3 in new[] { 0.8, 1.5, 2.5 })
+                                {
+                                    if (tabL4 - clampMin < effMin) continue;
+                                    if (disc >= Math.Sqrt(tabL4 * tabL4 + hw3 * hw3)) continue;
+                                    double iTab = 1099.0 / nTab;
+                                    double jTab2 = iTab / (2 * hw3 * tt3);
+                                    double jFace4 = iTab / (2 * clampMin * 2 * hw3);
+                                    if (jFace4 > 1.0) continue;
+
+                                    var pD = SegmentSolver.Clone(p);
+                                    pD.Layer1.ThicknessMm = insD; pD.Layer1.Enabled = true;
+                                    pD.WallMinMm = wallD;
+                                    pD.FlangeInsulThickMm = 20; pD.FlangeInsulated = true;
+                                    pD.BusbarClampTempC = 300;
+                                    pD.BusbarClampLengthMm = clampMin;
+
+                                    FlangePlate MkD(double td) => new()
+                                    {
+                                        DiscRadiusMm = disc, HoleRadiusMm = holeD,
+                                        TabEndXMm = -tabL4, TabEndHalfWidthMm = hw3,
+                                        ThicknessMm = td, ThickenedMm = td,
+                                        TabThicknessMm = tt3,
+                                        // ★ 仅圆盘保温、舌片裸露（NaN = 自动取切点）。
+                                        //   早先「全包 20mm」对圆盘无害、对舌片有害：
+                                        //   舌片离冷源远，表面散热是它抗局部热失稳的主要恢复力。
+                                        InsulBoundaryXMm = double.NaN,
+                                        TwoTabs = nTab == 2
+                                    };
+                                    var lcD = new LineCase
+                                    {
+                                        Base = pD, WallMm = wallD, UseMeasuredCurrent = false,
+                                        CheckRamp = false, SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                                        FlangePlates = new[] { MkD(0.8), MkD(1.2), MkD(1.1), MkD(0.7) }
+                                    };
+                                    var rD = FlangeAutoSizer.SolveAuto(lcD, MkD,
+                                                 new[] { 0.8, 1.2, 1.1, 0.7 },
+                                                 new FlangeAutoSizer.Options { MinThickMm = tMin2 },
+                                                 new SyncProgress<string>(_ => { }), default);
+                                    if (rD.Line is not { Ok: true } lr5)
+                                    {
+                                        // ★ 一定要打印原因。早先写成静默 continue，
+                                        //   结果整张表零行输出，查不出是被过滤还是求解挂了。
+                                        Console.WriteLine($"{nTab,5}{2 * disc,6:0}{ring,6:0.0}{tabL4,6:0}" +
+                                            $"{hw3,7:0}{tt3,6:0.0}   ✗ 求解失败：" +
+                                            (rD.Line is null ? rD.Message : rD.Line.Message));
+                                        continue;
+                                    }
+
+                                    double dmin = lr5.Segments.Min(x => x.RootDeltaK);
+                                    double dmax = lr5.Segments.Max(x => x.RootDeltaK);
+                                    double exc = lr5.Flanges.Max(f9 => f9.TMaxC - f9.TRootC);
+
+                                    // ★ 舌片局部热失稳：中段离两端冷源最远，是最脆弱处。
+                                    //   恢复力 = 表面散热(裸露) + 横向导热到冷源
+                                    double tTabC = 800;                       // 舌片中段典型温度
+                                    var stTab = LocalStability.Check(pD, tTabC, jTab2, tt3,
+                                                    insulThickMm: 0,          // 舌片裸露
+                                                    lateralLenMm: (tabL4 - clampMin) / 2);
+                                    bool tabOk = stTab.Stable;
+
+                                    bool ok = rD.Converged && lr5.Converged
+                                              && dmin > 0 && dmax <= 10 && exc <= 0 && tabOk;
+                                    Console.WriteLine($"{nTab,5}{2 * disc,6:0}{ring,6:0.0}{tabL4,6:0}" +
+                                        $"{hw3,7:0}{tt3,6:0.0}{iTab,7:0}{jTab2,7:0.0}{jFace4,7:0.00}" +
+                                        $"{string.Join("/", rD.ThicknessMm.Select(x => x.ToString("0.00"))),20}" +
+                                        $"{$"{dmin:+0.0;-0.0}~{dmax:+0.0;-0.0}",13}{exc,10:+0.0;-0.0}" +
+                                        $"{stTab.JStab,7:0.0}{lr5.TotalMassG,8:0}  " +
+                                        (ok ? "✓" : (dmin <= 0 || dmax > 10 ? "✗ΔT" : "") +
+                                                    (exc > 0 ? "✗盘局部" : "") +
+                                                    (!tabOk ? $"✗舌失稳(裕{stTab.Margin:0.00})" : "")));
+                                    if (ok && lr5.TotalMassG < best.m)
+                                        best = (lr5.TotalMassG,
+                                            $"{nTab} 舌／Ø{2 * disc:0}（环宽 {ring:0.0}）／舌 {tabL4:0}×{2 * hw3:0}×{tt3:0.0}／" +
+                                            $"压接 {clampMin:0}／盘厚 " +
+                                            string.Join("/", rD.ThicknessMm.Select(x => x.ToString("0.00"))));
+                                }
+                    }
+                Console.WriteLine();
+                if (best.m < double.MaxValue)
+                {
+                    Console.WriteLine($"★ 完整约束下最轻：{best.m:0} g　{best.d}");
+                    Console.WriteLine($"  相对现状 7141 g 省 {(7141 - best.m) / 7141 * 100:0.0} %");
+                }
+                else
+                    Console.WriteLine("✗ 本轮无全过方案 —— 需放开盘径/舌长/厚度范围，或松某条约束。");
+                return;
+            }
+
             // --cli --feasible   ★★ 先可行、再最轻（用户 2026-08-13：「该加重就加重，
             //                        优化到烧断或不能施工就没意义」）
             //

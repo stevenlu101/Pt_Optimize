@@ -251,6 +251,7 @@ public static class FlangeAutoSizer
             }
 
             // 片 j 的误差 = 相邻段误差均值（端片只有一个邻段）
+            int pinned = 0;
             for (int j = 0; j < t.Length; j++)
             {
                 double e = j == 0 ? err[0]
@@ -258,7 +259,25 @@ public static class FlangeAutoSizer
                          : 0.5 * (err[j - 1] + err[j]);
                 double step = Math.Clamp(-opt.Damping * e / opt.SensitivityK,
                                          -opt.MaxLogStep, opt.MaxLogStep);
-                t[j] = Math.Clamp(t[j] * Math.Exp(step), opt.MinThickMm, opt.MaxThickMm);
+                double want = t[j] * Math.Exp(step);
+                double next = Math.Clamp(want, opt.MinThickMm, opt.MaxThickMm);
+                // 想往界外走、且已经贴着那个界 ⇒ 这一片被钉死了
+                if ((want < opt.MinThickMm && t[j] <= opt.MinThickMm * 1.001) ||
+                    (want > opt.MaxThickMm && t[j] >= opt.MaxThickMm * 0.999)) pinned++;
+                t[j] = next;
+            }
+
+            // ★ 全部变量都顶在边界且还想继续往界外走 ⇒ 再迭代也不会动，立即停。
+            //   早先没有这条：某算例四片全钉在 0.4 mm 下界，求解器仍跑满
+            //   25 轮 × 自动升级 4 次 = 125 次整线耦合解（每次 15 轮耦合 × 7 个场解，
+            //   合计约一万三千次场解），**一格算了一个多小时才吐出一个必然失败的结果**。
+            if (pinned == t.Length)
+            {
+                res.Message = $"{it + 1} 轮后全部厚度顶在" +
+                              (err.Average() > 0 ? $"下界 {opt.MinThickMm:0.00}" : $"上界 {opt.MaxThickMm:0.00}") +
+                              $" mm 仍不达标（最大偏差 {worst:0.0} K）—— 该几何在此工况下无解，" +
+                              "不是迭代不够。";
+                return res;
             }
         }
 
