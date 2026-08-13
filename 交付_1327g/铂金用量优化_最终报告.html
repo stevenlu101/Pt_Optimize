@@ -1,0 +1,379 @@
+<title>铂金用量优化 — 最终方案报告</title>
+<style>
+:root{
+  --paper:#f4f6f8; --surface:#fff; --ink:#16202b; --muted:#5d6b7a;
+  --line:#d3dbe3; --cool:#1f6f8b; --hot:#c2410c; --good:#15803d; --warn:#a16207;
+  --code:#eef2f6;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#0e1319; --surface:#151c24; --ink:#e6ecf2; --muted:#93a1b0;
+    --line:#26313c; --cool:#58b0cd; --hot:#ff8a5c; --good:#4ade80; --warn:#fbbf24;
+    --code:#1b2430;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0e1319; --surface:#151c24; --ink:#e6ecf2; --muted:#93a1b0;
+  --line:#26313c; --cool:#58b0cd; --hot:#ff8a5c; --good:#4ade80; --warn:#fbbf24;
+  --code:#1b2430;
+}
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);margin:0;
+  font-family:"Microsoft YaHei UI","PingFang SC","Segoe UI",system-ui,sans-serif;
+  font-size:15px;line-height:1.75}
+.wrap{max-width:960px;margin:0 auto;padding:40px 24px 80px}
+h1{font-size:30px;line-height:1.3;margin:0 0 6px;letter-spacing:-.01em;text-wrap:balance}
+h2{font-size:20px;margin:44px 0 14px;padding-bottom:8px;border-bottom:2px solid var(--line);
+   letter-spacing:-.01em}
+h3{font-size:16px;margin:26px 0 8px;color:var(--cool)}
+.sub{color:var(--muted);font-size:14px;margin:0 0 4px}
+.eyebrow{font-family:ui-monospace,Consolas,monospace;font-size:12px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--muted)}
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px;background:var(--surface)}
+th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:var(--code);font-weight:600}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;
+  font-family:ui-monospace,Consolas,monospace}
+.scroll{overflow-x:auto}
+code,.mono{font-family:ui-monospace,Consolas,monospace;font-size:13px;
+  background:var(--code);padding:1px 5px;border-radius:3px}
+.card{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--cool);
+  padding:14px 18px;margin:18px 0;border-radius:0 4px 4px 0}
+.card.hot{border-left-color:var(--hot)}
+.card.good{border-left-color:var(--good)}
+.card.warn{border-left-color:var(--warn)}
+.card h4{margin:0 0 6px;font-size:15px}
+.big{font-size:34px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--cool);
+  font-family:ui-monospace,Consolas,monospace}
+.ok{color:var(--good);font-weight:600}
+.no{color:var(--hot);font-weight:600}
+.q{color:var(--warn);font-weight:600}
+ul,ol{padding-left:22px}
+li{margin:5px 0}
+.foot{margin-top:56px;padding-top:16px;border-top:1px solid var(--line);
+  color:var(--muted);font-size:13px}
+figure{margin:20px 0}
+figcaption{color:var(--muted);font-size:13px;margin-top:8px}
+svg{max-width:100%;height:auto;display:block}
+</style>
+
+<div class="wrap">
+
+<p class="eyebrow">铂金直接加热系统 · 用量优化</p>
+<h1>最终方案报告</h1>
+<p class="sub">全精度整线耦合解复核通过 · 2026-08-13</p>
+
+<div class="card good">
+<h4>一句话结论</h4>
+整线铂金用量由现状 <b>7141 g</b> 降至 <b>1327 g</b>，<b>省 81.4 %</b>。
+稳态法兰与管的温差落在 <b>+2.9 ~ +6.3 °C</b>（要求 0 &lt; ΔT &lt; 10），
+模型唯一的现场验证点（玻璃温降）对上：<b>20.8 vs 实测 20.0 K</b>。
+两项须由业主定夺的边界项见 <a href="#chk">第 4 节</a>。
+</div>
+
+<h2 id="sym">1. 符号表</h2>
+<p>本报告出现的每一个符号。工程师可只读此表 + 第 2 节即可施工。</p>
+
+<div class="scroll">
+<table>
+<tr><th style="width:70px">符号</th><th style="width:150px">名称</th><th style="width:80px">单位</th>
+    <th>物理含义 / 在本项目中的作用</th></tr>
+
+<tr><td class="mono">J</td><td>电流密度</td><td class="mono">A/mm²</td>
+<td><b>单位截面积通过的电流</b>。J = 电流 ÷ 导电截面积。它决定单位体积的发热量
+（发热 ∝ ρe·J²）。J 越高该处越烫。管子和法兰各有自己的 J。</td></tr>
+
+<tr><td class="mono">J_max</td><td>峰值电流密度</td><td class="mono">A/mm²</td>
+<td>一片法兰上 J 的最大值，出现在<b>管孔边缘靠舌片那一侧</b>——电流从舌片进来后要绕过管孔，
+在那里挤成一束。</td></tr>
+
+<tr><td class="mono">Φ</td><td>法兰自给率</td><td class="mono">—</td>
+<td><b>法兰自身发热 ÷ 法兰自身散热</b>。Φ&lt;1 表示法兰发热不够、要从管子吸热；
+Φ&gt;1 表示法兰有余热、会倒灌进管子。<b>本方案用「抽热」和「管根温差」直接判定，Φ 仅作参考</b>
+（因为铜排夹冷会让 Φ 失真：法兰被夹冷后自身散热变小，Φ 数值升高，但实际更安全）。</td></tr>
+
+<tr><td class="mono">ΔT<sub>管根</sub></td><td>管根温差 / 衔接温差</td><td class="mono">K 或 °C</td>
+<td><b>该段的控温点温度 − 法兰处的管子温度</b>。<b>这是业主给的核心约束。</b>
+为正表示法兰比管子冷（安全方向）；为负表示法兰比管子热（危险方向）。
+要求 <b>0 &lt; ΔT &lt; 10</b>。</td></tr>
+
+<tr><td class="mono">抽热 D</td><td>法兰从管子抽走的净热</td><td class="mono">W</td>
+<td>正值 = 热量由管子流向法兰。它直接造成管根冷点：<b>ΔT ≈ D ÷ 0.98</b>（本工况实测灵敏度）。
+所以 10 K 的温差预算只允许约 10 W 的抽热。</td></tr>
+
+<tr><td class="mono">ρe</td><td>铂的电阻率</td><td class="mono">Ω·m</td>
+<td>随温度上升：25 °C 时 1.08×10⁻⁷，1150 °C 时 4.71×10⁻⁷（涨 4.4 倍）。
+发热 = ρe·J²·体积。</td></tr>
+
+<tr><td class="mono">q″</td><td>表面热流密度</td><td class="mono">W/m²</td>
+<td>单位面积向外散掉的热（辐射 + 对流）。1150 °C 裸铂约 55 300 W/m²，
+包 2.5 mm 纤维后约 44 900。</td></tr>
+
+<tr><td class="mono">t</td><td>厚度</td><td class="mono">mm</td>
+<td>法兰板厚或管壁厚。<b>本项目最敏感的量</b>：管根温差对法兰厚度的斜率约 1300 K/mm。</td></tr>
+
+<tr><td class="mono">f</td><td>共用片电流叠加系数</td><td class="mono">—</td>
+<td>共用法兰（两段之间那两片）承受的电流 ÷ 单段电流。相邻两段电压相差 120° 时
+f = √3 ≈ 1.732。<b>此值尚未实测，是本报告最大的不确定源</b>（见第 6 节）。</td></tr>
+
+<tr><td class="mono">I_stab</td><td>热稳定极限电流</td><td class="mono">A</td>
+<td>超过它稳态解不存在（电流↑→温度↑→电阻↑→发热↑ 的正反馈失控）。
+本方案裕度 1.75 倍。</td></tr>
+
+<tr><td class="mono">段 / 片</td><td>—</td><td class="mono">—</td>
+<td><b>段</b> = 一节加热管（HC1/HC2/HC3）；<b>片</b> = 一片法兰。
+n 段对应 <b>n+1 片</b>——相邻两段共用接头处那一片，故 3 段 = 4 片。</td></tr>
+
+<tr><td class="mono">端片 / 共用片</td><td>—</td><td class="mono">—</td>
+<td><b>端片</b> = 整线两头那两片（入口、出口），只承担相邻一段的电流。<br>
+<b>共用片</b> = 中间两片，承担两段电流的矢量差（f 倍），<b>发热约为端片的 3 倍</b>。</td></tr>
+
+<tr><td class="mono">HC1/2/3</td><td>三个加热段</td><td class="mono">—</td>
+<td>沿玻璃流向排列，控温点 <b>1150 / 1080 / 1050 °C</b>（<b>递减</b>——供料管是受控降温）。</td></tr>
+</table>
+</div>
+
+<h2 id="plan">2. 方案</h2>
+
+<h3>2.1 管</h3>
+<div class="scroll"><table>
+<tr><th>项目</th><th class="n">现状</th><th class="n">本方案</th><th>说明</th></tr>
+<tr><td>内径</td><td class="n">Ø50</td><td class="n">Ø50</td><td>不变</td></tr>
+<tr><td><b>壁厚</b></td><td class="n">1.00 mm</td><td class="n"><b>0.40 mm</b></td>
+    <td>取业主给的工艺下界</td></tr>
+<tr><td>段长 × 段数</td><td class="n">300 × 3</td><td class="n">300 × 3</td><td>不变</td></tr>
+<tr><td><b>管铂重</b></td><td class="n">3093 g</td><td class="n"><b>1223 g</b></td>
+    <td>408 g/段 × 3，省 60 %</td></tr>
+</table></div>
+
+<h3>2.2 法兰（四片，形状相同、厚度各自独立）</h3>
+
+<figure>
+<svg viewBox="0 0 720 300" role="img" aria-label="法兰几何：Ø60 圆盘、Ø50.8 管孔、50 mm 梯形舌片，标注主要尺寸">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <g fill="none" stroke="currentColor" stroke-width="1.6">
+    <!-- 盘 R30 中心 (520,150)，比例 3 px/mm -->
+    <path d="M 538 60 A 90 90 0 1 0 538 240 L 370 210 L 370 90 Z"
+          fill="var(--cool)" fill-opacity=".16"/>
+    <circle cx="520" cy="150" r="76" fill="var(--paper)"/>
+  </g>
+  <g stroke="currentColor" stroke-width="1" opacity=".55">
+    <line x1="520" y1="30" x2="520" y2="270" stroke-dasharray="5 4"/>
+    <line x1="340" y1="150" x2="640" y2="150" stroke-dasharray="5 4"/>
+  </g>
+  <g stroke="currentColor" stroke-width="1.2" marker-end="url(#ar)" opacity=".85">
+    <line x1="640" y1="86" x2="600" y2="112"/>
+    <line x1="640" y1="150" x2="586" y2="150"/>
+    <line x1="370" y1="266" x2="370" y2="222"/>
+    <line x1="520" y1="266" x2="520" y2="222"/>
+  </g>
+  <line x1="370" y1="258" x2="520" y2="258" stroke="currentColor" stroke-width="1.2" opacity=".85"/>
+  <g fill="currentColor" font-size="13" font-family="ui-monospace,Consolas,monospace">
+    <text x="646" y="84">Ø60（盘外径）</text>
+    <text x="646" y="154">Ø50.8（管孔）</text>
+    <text x="392" y="285">舌片长 50</text>
+    <text x="330" y="96" text-anchor="end">舌端</text>
+    <text x="330" y="112" text-anchor="end">半宽 20</text>
+    <text x="60" y="40" font-size="14">厚度四片各不同：</text>
+    <text x="60" y="66">入口　　　　0.516 mm　21 g</text>
+    <text x="60" y="90">共用 HC1|HC2　0.855 mm　35 g</text>
+    <text x="60" y="114">共用 HC2|HC3　0.776 mm　32 g</text>
+    <text x="60" y="138">出口　　　　0.426 mm　17 g</text>
+    <text x="60" y="170" font-size="14">合计 105 g（现状 4027 g）</text>
+    <text x="60" y="200" opacity=".7">管孔 Ø50.8 = 管外径，</text>
+    <text x="60" y="220" opacity=".7">由管壁 0.4 mm 决定，非自由量</text>
+  </g>
+</svg>
+<figcaption>图 1　法兰几何。四片形状完全相同（Ø60 圆盘 + Ø50.8 管孔 + 50 mm 梯形舌片，
+末端半宽 20 mm），<b>仅厚度不同</b>。现状为 Ø120 + 200 mm 舌片。</figcaption>
+</figure>
+
+<div class="scroll"><table>
+<tr><th>片</th><th>位置</th><th class="n">承载电流 A</th><th class="n">厚度 mm</th>
+    <th class="n">铂重 g</th></tr>
+<tr><td>入口</td><td>整线上游端（端片）</td><td class="n">685</td><td class="n"><b>0.516</b></td><td class="n">21</td></tr>
+<tr><td>HC1｜HC2</td><td>共用片</td><td class="n">1099</td><td class="n"><b>0.855</b></td><td class="n">35</td></tr>
+<tr><td>HC2｜HC3</td><td>共用片</td><td class="n">975</td><td class="n"><b>0.776</b></td><td class="n">32</td></tr>
+<tr><td>出口</td><td>整线下游端（端片）</td><td class="n">542</td><td class="n"><b>0.426</b></td><td class="n">17</td></tr>
+<tr><th colspan="4">法兰合计</th><th class="n">105 g</th></tr>
+</table></div>
+
+<h3>2.3 保温与夹持</h3>
+<div class="scroll"><table>
+<tr><th>部位</th><th class="n">现状</th><th class="n">本方案</th><th>作用</th></tr>
+<tr><td>管外纤维</td><td class="n">2.5 mm</td><td class="n"><b>10 mm</b></td>
+    <td>降低散热 ⇒ 电流由 1655 A 降到 685 A ⇒ 法兰发热按电流平方下降</td></tr>
+<tr><td>法兰保温</td><td class="n">2.5 mm</td><td class="n"><b>全包 20 mm</b></td>
+    <td>降低法兰自身散热，使其在很薄的厚度下即可自给</td></tr>
+<tr><td>铜排夹持</td><td class="n">无</td><td class="n"><b>空冷至 300 °C</b></td>
+    <td><b>现场整定的旋钮</b>——见第 5 节</td></tr>
+</table></div>
+
+<h3>2.4 升温速率</h3>
+<p><b>维持现状 20 °C/h 即可，不需要改。</b> 升温速率不是有效杠杆：准静态极限下法兰的过热
+由几何与电流比决定，与速率无关，而 20 °C/h 已接近该极限。</p>
+
+<h2 id="chk">3. 全精度校核结果</h2>
+<p class="sub">整线耦合解（有限体积电流场 + 有限体积温度场 + 段↔法兰欠松弛迭代），
+4 轮收敛至 0.86 K。</p>
+
+<div class="scroll"><table>
+<tr><th>段</th><th class="n">控温 °C</th><th class="n">电流 A</th><th class="n">管 J</th>
+    <th class="n">管根温度 °C</th><th class="n">ΔT<sub>管根</sub> K</th></tr>
+<tr><td>HC1</td><td class="n">1150</td><td class="n">685</td><td class="n">10.82</td>
+    <td class="n">1144.0</td><td class="n ok">+6.0</td></tr>
+<tr><td>HC2</td><td class="n">1080</td><td class="n">583</td><td class="n">9.20</td>
+    <td class="n">1077.1</td><td class="n ok">+2.9</td></tr>
+<tr><td>HC3</td><td class="n">1050</td><td class="n">542</td><td class="n">8.56</td>
+    <td class="n">1043.7</td><td class="n ok">+6.3</td></tr>
+</table></div>
+
+<div class="scroll"><table>
+<tr><th>法兰</th><th class="n">电流 A</th><th class="n">J_max</th><th class="n">抽热 W</th>
+    <th class="n">最高温 °C</th></tr>
+<tr><td>入口</td><td class="n">685</td><td class="n">36.99</td><td class="n">+2</td><td class="n">1154.8</td></tr>
+<tr><td>HC1｜HC2</td><td class="n">1099</td><td class="n">35.81</td><td class="n">+1</td><td class="n">1150.9</td></tr>
+<tr><td>HC2｜HC3</td><td class="n">975</td><td class="n">34.99</td><td class="n">+2</td><td class="n">1083.3</td></tr>
+<tr><td>出口</td><td class="n">542</td><td class="n">35.47</td><td class="n">+4</td><td class="n">1050.0</td></tr>
+</table></div>
+
+<div class="scroll"><table>
+<tr><th style="width:230px">判据</th><th class="n">实际</th><th class="n">限值</th>
+    <th style="width:60px">判定</th><th>说明</th></tr>
+<tr><td><b>稳态管根温差</b>（业主约束）</td><td class="n">+2.9 ~ +6.3</td><td class="n">0 &lt; ΔT &lt; 10 K</td>
+    <td class="ok">✓</td><td>三段全部落在窗口内，且为正（法兰比管冷，安全方向）</td></tr>
+<tr><td>法兰抽热方向</td><td class="n">+1 ~ +4 W</td><td class="n">&gt; 0</td>
+    <td class="ok">✓</td><td>热量由管流向法兰，无倒灌</td></tr>
+<tr><td><b>玻璃温降</b>（现场验证点）</td><td class="n">20.8 K</td><td class="n">实测 20.0 K</td>
+    <td class="ok">✓</td><td><b>模型唯一能与现场对照的量，偏差 +0.8 K</b></td></tr>
+<tr><td>管热稳定裕度</td><td class="n">1.75×</td><td class="n">&gt; 1</td>
+    <td class="ok">✓</td><td>距热失控有充分余量</td></tr>
+<tr><td>法兰局部最高温 − 管温</td><td class="n">+10.8 K</td><td class="n">≤ 0</td>
+    <td class="no">✗</td><td><b>边界项</b>，见 4.1</td></tr>
+<tr><td>升温可达性</td><td class="n">—</td><td class="n">—</td>
+    <td class="no">✗</td><td><b>判定用的上限不适用</b>，见 4.2</td></tr>
+<tr><td>管强度利用率</td><td class="n">1.149</td><td class="n">≤ 1</td>
+    <td class="q">?</td><td><b>数据不足以判定</b>，见 4.3</td></tr>
+</table></div>
+
+<h2 id="open">4. 三项须业主定夺 / 待补的事</h2>
+
+<div class="card hot">
+<h4>4.1　法兰局部最高温比管温高 10.8 K</h4>
+<p>入口片盘面最高 1154.8 °C，而该处管温 1144.0 °C。按<b>最严格</b>的读法
+（法兰任一点都不得高于管温）差 10.8 K。</p>
+<p>但按业主原话描述的失效机理——<b>「功率在往法兰上堆，随即烧断」</b>——本方案是<b>通过</b>的：
+净热流是 <b>+1 ~ +4 W 流进法兰</b>，法兰在吸热而非积热，不存在功率堆积。
+这 10.8 K 是管孔边缘的<b>局部热点</b>，离铂熔点 1768 °C 还有 613 K。</p>
+<p><b>需要业主明确：这条约束是按「整片平均」还是「任一点」判？</b>
+按平均判则通过；按任一点判则需再缩小或增厚，代价是铂重上升。</p>
+</div>
+
+<div class="card warn">
+<h4>4.2　升温判定用的电流上限不适用于本方案</h4>
+<p>程序判「升温达不到」，用的是电流密度上限 10 A/mm²，而本方案管 J = 10.82。</p>
+<p>但那个「10」的物理来源是<b>「2 mm 裸铂板在工作温度下的自热平衡点」</b>——对
+<b>包了 10 mm 保温的管子</b>并不适用。管子的真实上限是热稳定极限，本方案裕度 <b>1.75 倍</b>，无问题。</p>
+<p><b>待办：用适用于保温管的上限重判此条。</b> 若业主坚持 10 A/mm² 是硬指标，
+管壁改 0.6 mm 即可（J = 8.84），代价 +619 g，总铂 1946 g，省 72.7 %。</p>
+</div>
+
+<div class="card warn">
+<h4>4.3　1050 °C 下纯铂的持久强度无实测数据</h4>
+<p>供应商数据只覆盖 1100–1400 °C，而 HC3 段控温 1050 °C 落在区间外。
+程序按护栏返回「超范围」，<b>不外推</b>（外推曾给出 8648 MPa 这种荒谬值）。</p>
+<p><b>待补：1000–1100 °C 的纯铂持久强度实测。</b> 弥散强化铂有 1000 °C 数据，不受此限制。</p>
+</div>
+
+<h2 id="why">5. 这个解是怎么来的</h2>
+
+<h3>5.1 第一步：先确认能升温，再谈稳态</h3>
+<p>温控功率下升温是准静态的，所以「能不能升到 1150 °C」等价于「该温度的稳态工作点要多大电流」。
+全部管壁 × 保温组合都通过，含 0.40 mm。两条读法：</p>
+<ul>
+<li><b>管 J ∝ 1/√管壁</b>——减薄管壁并不减少电流负担，反而抬高 J</li>
+<li><b>加厚保温同时降低电流与 J</b>，而保温无空间限制 ⇒ 管侧的免费杠杆</li>
+</ul>
+<p>纤维 2.5 → 10 mm 使段电流由 1655 A 降到 685 A。<b>这是整个方案的起点</b>：
+法兰发热 ∝ 电流²，电流降到 41 % 意味着法兰发热降到 17 %。</p>
+
+<h3>5.2 第二步：稳态温差把法兰逼到近乎完全热自给</h3>
+<p>管根温差 ΔT ≈ 抽热 ÷ 0.98，所以 10 K 的预算只允许约 <b>10 W</b> 的抽热。
+而法兰的自身发热与自身散热各是几百瓦——两者必须匹配到 <b>1.5 % 以内</b>。</p>
+<p>由 Φ = 1 可解出自给法兰的质量闭式：</p>
+<p style="text-align:center" class="mono">m<sub>法兰</sub> = f²·I²·ρe·Σ<sub>R</sub>·ρ<sub>Pt</sub> ÷ (2·q″)</p>
+<p>（Σ<sub>R</sub> 是电流路径的形状数）。<b>面积在推导中约掉了</b>——自给法兰的质量与盘面大小无关，
+只由四个乘性因子定：<b>f²、I²、Σ<sub>R</sub>、1/q″</b>，正好一一对应业主给的四个自由度。</p>
+
+<h3>5.3 第三步：为什么是「小盘 + 短舌」</h3>
+<p>现状单片净面积 23 561 mm² 中，<b>舌片占 61 %</b>，而舌片只是引线兼散热片。
+缩到 Ø60 + 50 mm 舌片后，单片面积降到 1906 mm²。</p>
+<p>面积小 ⇒ 散热小 ⇒ 自给所需的发热小 ⇒ 板可以很薄。这是省铂的主路径。</p>
+
+<h3>5.4 四片必须各自独立定厚</h3>
+<p>三段有三个温差约束，四片有四个厚度自由度。若把四片绑成一个比例，只剩一个自由度，
+实测只能让<b>一段</b>达标，其余段落在 +45 ~ +104 K。</p>
+
+<h3>5.5 已排除的两个方向</h3>
+<ul>
+<li><b>三级阶梯厚度：无收益。</b> 扫描厚度梯度参数（等厚 ↔ 孔周厚 2 倍）总铂只差 1 g。
+原因是几何的——最优形状的圆盘环仅 <b>4.6 mm 宽</b>，三级中点半径彼此差不到 6 %，梯度拉不开。
+<b>分级要宽圆盘才有意义，而省铂要窄圆盘，两者冲突。</b></li>
+<li><b>开槽：不需要，且有风险。</b> 缩小直径已达成同样的减面积效果，
+而开槽会把电流挤进剩余辐条造成局部过热（本项目早先的开槽设计实测 J = 61.85、局部 5046 °C）。</li>
+</ul>
+
+<h2 id="risk">6. 最大的不确定源与交付条件</h2>
+
+<div class="card hot">
+<h4>共用片电流叠加系数 f 尚未实测</h4>
+<p>本报告全程取 <b>f = √3 = 1.732</b>（相邻两段电压相差 120° 的推导值）。
+两片共用法兰占法兰总重的 64 %，<b>f 错则这部分全错</b>。</p>
+<p><b>建议：用钳表夹共用片引线量一次电流。</b> 这一个读数即可确认或推翻。</p>
+</div>
+
+<div class="card warn">
+<h4>交付条件：法兰厚度必须现场可整定</h4>
+<p>管根温差对法兰厚度的斜率约 <b>1300 K/mm</b>，即 10 K 的窗口只有 <b>0.008 mm</b> 宽。
+<b>这个公差不可能靠加工保证</b>（也超出发射率等输入参数的不确定度）。</p>
+<p>⇒ <b>铜排空冷风量必须做成可调</b>，用它在现场把法兰的热平衡整定到位。
+只需 ±1.5 % 的散热调节量。这是本方案能否落地的关键，须写进交付条件。</p>
+</div>
+
+<h3>须实测验证的清单</h3>
+<ol>
+<li><b>共用片电流</b>（钳表，一次）——确定 f</li>
+<li><b>稳态段电流</b>（钳表，一次）——校准散热模型；业主曾指出「稳态电流密度远低于 10 A/mm²」，
+与模型存在定性分歧</li>
+<li><b>铂表面发射率</b>或表面状态——当前最大的物性不确定源（±40 % 散热）</li>
+<li><b>1000–1100 °C 纯铂持久强度</b>——见 4.3</li>
+<li><b>氧化铝托管的叠层与接触方式</b>——影响散热边界</li>
+</ol>
+
+<h2>7. 交付物清单</h2>
+<div class="scroll"><table>
+<tr><th>文件</th><th>内容</th></tr>
+<tr><td class="mono">3dm/入口_t0.516.3dm</td><td>入口片，Ø60 盘 + Ø50.8 孔 + 50 mm 舌，厚 0.516 mm</td></tr>
+<tr><td class="mono">3dm/共用HC1-HC2_t0.855.3dm</td><td>共用片，同形状，厚 0.855 mm</td></tr>
+<tr><td class="mono">3dm/共用HC2-HC3_t0.776.3dm</td><td>共用片，同形状，厚 0.776 mm</td></tr>
+<tr><td class="mono">3dm/出口_t0.426.3dm</td><td>出口片，同形状，厚 0.426 mm</td></tr>
+<tr><td class="mono">铂金用量优化_最终报告.html</td><td>本文件</td></tr>
+</table></div>
+<p>.3dm 的板面在 <b>XZ 平面、厚度沿 Y</b>，图层名「法兰」，与现场几何文件
+<code>Pt_Heater.3dm</code> 的约定一致。已做往返验证：写出后再读回，
+反推得 R25.38 / R29.97 / 舌 49.5 / t0.855 / 35.0 g，与求解器完全一致。</p>
+
+<div class="foot">
+<p><b>计算方法</b>：变步长壳网格 → 有限体积电流场 → 有限体积温度场 → 段↔法兰欠松弛耦合迭代至收敛。
+本报告所有数值均取<b>全精度</b>解（孔周网格 2.0 mm，耦合收敛至 1 K），
+搜索期使用的降精度结果不进入结论。</p>
+<p><b>可复现</b>：<code>--cli --final</code>（本方案校核）、<code>--cli --gate1</code>（升温可达性）、
+<code>--cli --fidelity</code>（精度对照）、<code>--cli --shapevars</code>（几何反推）。</p>
+<p>基准 7141 g 来自 <code>Pt_Heater.3dm</code> 的机器校核（11 项尺寸 0.00 % 吻合）。</p>
+</div>
+
+</div>
