@@ -2840,6 +2840,166 @@ internal static class Program
                 return;
             }
 
+            // --cli --gradetest   ★ 分级到底有没有用：扫「梯度比 γ」
+            //
+            // 用户问得对：等厚的最优（1327 g）早算过了，重算等厚没有新信息。
+            // 真问题是**三级厚度各自不同能不能更轻**。
+            //
+            // 把厚度分布用一个参数 γ 表示：t(r) ∝ (r/r_out)^(−γ)
+            //   γ = 0   等厚（现有最优就是这一档）
+            //   γ > 0   孔周厚、外缘薄（补偿 J 在孔周的峰值）
+            //   γ < 0   反过来
+            // 每个 γ 各自做自动定厚（整体标度由 C2 定），再比总铂。
+            // **若最小值出现在 γ≠0，分级就是有用的；若就在 γ=0，分级白搭。**
+            if (args.Contains("--gradetest"))
+            {
+                double wallG = 0.4, insG = 10.0, holeG = wallG + 25.0;
+                double discG = 30.0, tabLG = 50.0, tabWG = 20.0;   // 现有最优的形状
+                int nLv = 3;
+
+                var pG = SegmentSolver.Clone(p);
+                pG.Layer1.ThicknessMm = insG; pG.Layer1.Enabled = true;
+                pG.WallMinMm = wallG;
+                pG.FlangeInsulThickMm = 20; pG.FlangeInsulated = true;
+                pG.BusbarClampTempC = 300;
+
+                Console.WriteLine("=== 分级有没有用：扫梯度比 γ ===");
+                Console.WriteLine($"形状固定为现有最优 Ø{2 * discG:0}／舌{tabLG:0}×{tabWG:0}，孔 R{holeG:0.0}");
+                Console.WriteLine($"圆盘在 R{holeG:0.0}–{discG:0} 之间分 {nLv} 级，厚度 t ∝ (r/r_out)^(−γ)");
+                Console.WriteLine("γ=0 即等厚（= 已知的 1327 g 那档）");
+                Console.WriteLine();
+                Console.WriteLine($"{"γ",7}{"各级厚度比",22}{"四片基准厚 mm",26}" +
+                                  $"{"minΔT",8}{"maxΔT",8}{"法兰最高",10}{"总铂 g",9}  判定");
+
+                foreach (double g in new[] { -0.5, 0.0, 0.5, 1.0, 1.5, 2.0 })
+                {
+                    // 各级中点半径 → 相对厚度（归一化到几何平均 1，保证 γ 只改分布不改总量）
+                    var rmid = new double[nLv];
+                    var rad = new double[nLv];
+                    for (int m = 0; m < nLv; m++)
+                    {
+                        double a = holeG + (discG - holeG) * m / nLv;
+                        double b = holeG + (discG - holeG) * (m + 1) / nLv;
+                        rmid[m] = 0.5 * (a + b); rad[m] = b;
+                    }
+                    var rel = rmid.Select(r => Math.Pow(r / discG, -g)).ToArray();
+                    double gm = Math.Exp(rel.Select(v => Math.Log(v)).Average());
+                    for (int m = 0; m < nLv; m++) rel[m] /= gm;
+
+                    FlangePlate MkG(double t) => new()
+                    {
+                        DiscRadiusMm = discG, HoleRadiusMm = holeG,
+                        TabEndXMm = -tabLG, TabEndHalfWidthMm = tabWG,
+                        ThicknessMm = t, ThickenedMm = t, InsulBoundaryXMm = -1e9,
+                        DiscStepRadiiMm = rad.Take(nLv - 1).ToArray(),
+                        DiscStepThicknessMm = rel.Take(nLv - 1).Select(v => v * t).ToArray()
+                    };
+                    var lcG = new LineCase
+                    {
+                        Base = pG, WallMm = wallG, UseMeasuredCurrent = false, CheckRamp = false,
+                        SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                        FlangePlates = new[] { MkG(0.5), MkG(0.9), MkG(0.8), MkG(0.45) }
+                    };
+                    var rG = FlangeAutoSizer.SolveAuto(lcG, MkG, new[] { 0.5, 0.9, 0.8, 0.45 },
+                                new FlangeAutoSizer.Options(),
+                                new SyncProgress<string>(_ => { }), default);
+                    if (rG.Line is not { Ok: true } lr) { Console.WriteLine($"{g,7:0.0}   求解失败"); continue; }
+                    double dmin = lr.Segments.Min(x => x.RootDeltaK);
+                    double dmax = lr.Segments.Max(x => x.RootDeltaK);
+                    double tmax = lr.Flanges.Max(f2 => f2.TMaxC);
+                    bool ok = rG.Converged && lr.Converged && dmin > 0 && dmax <= 10
+                              && tmax <= RampTwoNode.PtMeltingC - 200;
+                    Console.WriteLine($"{g,7:0.0}{string.Join(":", rel.Select(v => v.ToString("0.00"))),22}" +
+                        $"{string.Join("/", rG.ThicknessMm.Select(v => v.ToString("0.000"))),26}" +
+                        $"{dmin,8:+0.0;-0.0}{dmax,8:+0.0;-0.0}{tmax,10:0}{lr.TotalMassG,9:0}  " +
+                        (ok ? "✓" : "✗"));
+                }
+                Console.WriteLine();
+                Console.WriteLine("读法：最小总铂若出现在 γ≠0，分级有用；若就在 γ=0，分级白搭。");
+                Console.WriteLine("（γ>0 = 孔周厚外缘薄，用来补偿 J 在孔周的峰值）");
+                return;
+            }
+
+            // --cli --stepsearch   ★ 三级阶梯法兰的几何搜索（用户「走 2：缩小法兰」）
+            //
+            // 自由度：三级半径 R1<R2<R3、三级厚度 t1..t3、舌片长度与末端半宽。
+            // 走**解析几何**（FlangePlate 的 DiscStepRadii/DiscStepThickness），
+            // 不经 Rhino，故单点远快于 .3dm 路径；选出的形状再由 Geom steps 出图复核。
+            //
+            // 判据同总纲：0 < 管根温差 < 10 K（C2）、法兰局部不超管温太多（C1）、总铂最小。
+            if (args.Contains("--stepsearch"))
+            {
+                double wallS = 0.4, insS = 10.0;
+                var setpS = new[] { 1150.0, 1080.0, 1050.0 };
+                double holeR = wallS + 25.0;
+
+                var pS = SegmentSolver.Clone(p);
+                pS.Layer1.ThicknessMm = insS; pS.Layer1.Enabled = true;
+                pS.WallMinMm = wallS;
+                pS.FlangeInsulThickMm = 20; pS.FlangeInsulated = true;
+                pS.BusbarClampTempC = 300;
+
+                Console.WriteLine("=== 三级阶梯法兰 几何搜索（缩小法兰）===");
+                Console.WriteLine($"管壁 {wallS:0.0} / 管纤维 {insS:0.0} / 法兰全包 20 / 夹持 300 °C　孔 R{holeR:0.0}");
+                Console.WriteLine("三级厚度由「自动定厚」在每个形状上自行决定（全放开，不锁级）");
+                Console.WriteLine();
+                Console.WriteLine($"{"R1/R2/R3",14}{"舌长",7}{"舌半宽",8}{"厚度 t1/t2/t3",20}" +
+                                  $"{"minΔT",8}{"maxΔT",8}{"法兰最高",10}{"总铂 g",9}  判定");
+
+                var best = (mass: double.MaxValue, desc: "", th: Array.Empty<double>());
+                foreach (double r3 in new[] { 34.0, 40.0, 48.0 })
+                    foreach (double tabL in new[] { 60.0, 100.0 })
+                        foreach (double tabW in new[] { 15.0, 25.0 })
+                        {
+                            double r1 = holeR + (r3 - holeR) / 3.0;
+                            double r2 = holeR + (r3 - holeR) * 2.0 / 3.0;
+                            if (r3 >= Math.Sqrt(tabL * tabL + tabW * tabW)) continue;
+
+                            // 三级厚度：以一个基准 t 乘固定比例，由自动定厚求基准
+                            FlangePlate MkS(double t) => new()
+                            {
+                                DiscRadiusMm = r3, HoleRadiusMm = holeR,
+                                TabEndXMm = -tabL, TabEndHalfWidthMm = tabW,
+                                ThicknessMm = t, ThickenedMm = t, InsulBoundaryXMm = -1e9,
+                                DiscStepRadiiMm = new[] { r1, r2 },
+                                DiscStepThicknessMm = new[] { t, t }   // 起点等厚，比例由内层调
+                            };
+                            var lcS = new LineCase
+                            {
+                                Base = pS, WallMm = wallS, UseMeasuredCurrent = false, CheckRamp = false,
+                                SetpointC = setpS,
+                                FlangePlates = new[] { MkS(0.6), MkS(0.8), MkS(0.8), MkS(0.6) }
+                            };
+                            var rS = FlangeAutoSizer.SolveAuto(lcS, MkS, new[] { 0.6, 0.8, 0.8, 0.6 },
+                                        new FlangeAutoSizer.Options(),
+                                        new SyncProgress<string>(_ => { }), default);
+                            if (rS.Line is not { Ok: true } lr) continue;
+                            double dmin = lr.Segments.Min(x => x.RootDeltaK);
+                            double dmax = lr.Segments.Max(x => x.RootDeltaK);
+                            double tmax = lr.Flanges.Max(f2 => f2.TMaxC);
+                            bool ok = rS.Converged && lr.Converged && dmin > 0 && dmax <= 10
+                                      && tmax <= RampTwoNode.PtMeltingC - 200;
+                            Console.WriteLine($"{$"{r1:0}/{r2:0}/{r3:0}",14}{tabL,7:0}{tabW,8:0}" +
+                                $"{string.Join("/", rS.ThicknessMm.Select(x => x.ToString("0.00"))),20}" +
+                                $"{dmin,8:+0.0;-0.0}{dmax,8:+0.0;-0.0}{tmax,10:0}{lr.TotalMassG,9:0}  " +
+                                (ok ? "✓" : (dmax > 10 || dmin <= 0 ? "✗C2" : "") +
+                                            (tmax > RampTwoNode.PtMeltingC - 200 ? "✗熔点" : "")));
+                            if (ok && lr.TotalMassG < best.mass)
+                                best = (lr.TotalMassG, $"R{r1:0}/{r2:0}/{r3:0}　舌{tabL:0}×{tabW:0}",
+                                        rS.ThicknessMm);
+                        }
+
+                Console.WriteLine();
+                if (best.mass < double.MaxValue)
+                {
+                    Console.WriteLine($"★ 最优：{best.desc}　厚度 " +
+                        string.Join("/", best.th.Select(x => x.ToString("0.000"))) +
+                        $" mm　整线总铂 {best.mass:0} g（现状 7141 g，省 {(7141 - best.mass) / 7141 * 100:0.0} %）");
+                }
+                else Console.WriteLine("✗ 本轮形状库内无可行解 —— 需继续缩小或改电流。");
+                return;
+            }
+
             // --cli --leveltest <file.3dm> [图层]   逐级定厚试算：全放开 vs 锁外圈
             //
             // 「外圈厚度不动、只调内圈」到底管不管用，用同一张图跑两遍对比。

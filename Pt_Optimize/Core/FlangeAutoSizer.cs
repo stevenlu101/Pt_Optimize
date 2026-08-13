@@ -81,7 +81,8 @@ public static class FlangeAutoSizer
                                    double[] initialThicknessMm, Options? opt = null,
                                    IProgress<string>? progress = null,
                                    CancellationToken cancel = default,
-                                   int maxEscalations = 4)
+                                   int maxEscalations = 4,
+                                   bool verify = true)
     {
         opt ??= new Options();
         var cur = new Options
@@ -96,12 +97,16 @@ public static class FlangeAutoSizer
         for (int esc = 0; esc <= maxEscalations; esc++)
         {
             last = Solve(baseCase, makePlate, start, cur, progress, cancel);
-            if (last.Converged) return last;
+            if (last.Converged) break;
 
             // 判断失败模式：末段误差是否还在下降
             var h = last.History;
             bool stillDescending = h.Count >= 3 && h[^1] < h[^3] * 0.9;
-            if (esc == maxEscalations) break;
+            if (esc == maxEscalations)
+            {
+                last.Message = "自动升级 " + maxEscalations + " 次后仍未达标：" + last.Message;
+                break;
+            }
 
             start = last.ThicknessMm;                 // 从当前点继续，不从头来
             if (stillDescending)
@@ -116,8 +121,59 @@ public static class FlangeAutoSizer
                 progress?.Report($"出现振荡 ⇒ 阻尼降到 {cur.Damping:0.000}、轮次 {cur.MaxIterations}，重试…");
             }
         }
-        last.Message = "自动升级 " + maxEscalations + " 次后仍未达标：" + last.Message;
+
+        // 逐级定厚在**外层**统一复核，故内层调用传 verify:false，免得每轮都跑全精度
+        if (verify) Verify(baseCase, makePlate, last, opt, progress, cancel);
         return last;
+    }
+
+    /// <summary>
+    /// **全精度复核** —— 迭代跑在搜索精度（粗网格 + 松耦合）上，
+    /// 结论必须用调用方原本的精度重算一次。
+    ///
+    /// ★ 为什么非做不可：搜索精度只保证**梯度方向**对，不保证数值。
+    ///   不复核就把粗网格的数当结论，等于用「够用来找路的精度」去判可行性 ——
+    ///   §7 记过同类教训（放宽判据后不回头验证）。
+    ///
+    /// 复核后**重新判定**是否达标：以全精度下的实际管根温差为准，
+    /// 而不是沿用搜索期的判定。两者不一致时明说，不掩盖。
+    /// </summary>
+    private static void Verify(LineCase baseCase, Func<double, FlangePlate>? makePlate,
+                               Result res, Options opt,
+                               IProgress<string>? progress, CancellationToken cancel)
+    {
+        if (res.ThicknessMm.Length == 0) return;
+        progress?.Report("全精度复核最终解…");
+
+        var lc = CloneCase(baseCase);            // 不套搜索期的降精度设置
+        if (makePlate is not null)
+            lc.FlangePlates = res.ThicknessMm.Select(makePlate).ToArray();
+        else
+        {
+            lc.FlangeFile3dm = baseCase.FlangeFile3dm;
+            lc.ThicknessScale = (double[])res.ThicknessMm.Clone();
+        }
+
+        try
+        {
+            var v = LineRunner.Run(lc, progress, cancel);
+            if (!v.Ok) { res.Message += "　⚠ 全精度复核失败：" + v.Message; return; }
+
+            res.Line = v;
+            double worst = v.Segments.Length == 0 ? 0
+                         : v.Segments.Max(s => Math.Abs(s.RootDeltaK - opt.TargetK));
+            bool searchSaidOk = res.Converged;
+            res.Converged = worst < opt.TolK && v.Converged;
+
+            res.Message += $"　【全精度复核】管根温差偏离目标 {worst:0.0} K";
+            if (!v.Converged) res.Message += "；⚠ 段↔法兰耦合未收敛，数值不可引用";
+            if (searchSaidOk && !res.Converged)
+                res.Message += "；⚠ 搜索精度下判为达标，全精度下**不达标** —— 以本次为准";
+            else if (!searchSaidOk && res.Converged)
+                res.Message += "；搜索精度下未达标，全精度下达标";
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) { res.Message += "　⚠ 全精度复核异常：" + ex.Message; }
     }
 
     /// <summary>
@@ -223,10 +279,15 @@ public static class FlangeAutoSizer
     /// 若未锁的级面积占比很小，可能怎么调都够不到目标 —— 那时返回未收敛，
     /// 并在 Message 里说明是被锁死限制的，而不是物理上无解。
     /// </param>
+    /// <param name="makePlateByLevel">
+    /// 解析几何的逐级构造器：给一组各级厚度，返回 FlangePlate（用 DiscStepRadii/Thickness）。
+    /// 传了它就走**解析路径**（不经 Rhino，快一个量级）；为 null 则走 .3dm + 厚度标度。
+    /// </param>
     public static Result SolveByLevel(LineCase baseCase, double[][] levelThicknessMm,
                                       Options? opt = null, IProgress<string>? progress = null,
                                       CancellationToken cancel = default, int outerRounds = 6,
-                                      bool[][]? levelLocked = null)
+                                      bool[][]? levelLocked = null,
+                                      Func<double[], FlangePlate>? makePlateByLevel = null)
     {
         bool Locked(int j, int m) => levelLocked is not null && j < levelLocked.Length
                                      && m < levelLocked[j].Length && levelLocked[j][m];
@@ -252,7 +313,21 @@ public static class FlangeAutoSizer
             lcBase.LevelScale = scale;
 
             progress?.Report($"第 {round + 1}/{outerRounds} 轮 · 外层：调整每片整体厚度…");
-            last = SolveAuto(lcBase, null, overall, opt, progress, cancel);
+            Func<double, FlangePlate>? mk = null;
+            if (makePlateByLevel is not null)
+            {
+                // 解析路径：外层的标量 k 乘在**当前各级比例**上，构造该片几何
+                var snap = scale.Select(a => (double[])a.Clone()).ToArray();
+                int callIdx = 0;
+                mk = k =>
+                {
+                    var lv = snap[Math.Min(callIdx++ % Math.Max(1, snap.Length), snap.Length - 1)];
+                    var th = new double[lv.Length];
+                    for (int m = 0; m < lv.Length; m++) th[m] = levelThicknessMm[0][m] * lv[m] * k;
+                    return makePlateByLevel(th);
+                };
+            }
+            last = SolveAuto(lcBase, mk, overall, opt, progress, cancel, 4, verify: false);
             if (last.Line is null) return last;
 
             // 把外层求出的整体倍数并进各级比例 —— **锁住的级不并**
@@ -305,10 +380,35 @@ public static class FlangeAutoSizer
         var lcFinal = CloneCase(baseCase);
         lcFinal.LevelThicknessMm = levelThicknessMm;
         lcFinal.LevelScale = scale;
+        if (makePlateByLevel is not null)
+            lcFinal.FlangePlates = Enumerable.Range(0, nf).Select(j =>
+            {
+                var th = new double[scale[j].Length];
+                for (int m = 0; m < th.Length; m++) th[m] = levelThicknessMm[j][m] * scale[j][m];
+                return makePlateByLevel(th);
+            }).ToArray();
         try
         {
             var verify = LineRunner.Run(lcFinal, progress, cancel);
-            if (verify.Ok) { last.Line = verify; last.Converged = verify.Converged; }
+            // ★ 以全精度的实际温差**重新判定**是否达标，不沿用搜索期的判定。
+            //   这里有两个不同的「收敛」，早先把后者覆盖了前者，
+            //   于是输出同时出现「✓ 收敛」与「166 轮未收敛」，自相矛盾且会让人
+            //   把不可行方案读成可行：
+            //     · Result.Converged      = **定厚**是否达标（管根温差进没进窗口）← 判方案可行性靠它
+            //     · LineResult.Converged  = **段↔法兰耦合**是否收敛（数值是否可信）
+            //   两者都要满足才算数，但含义不同，不能互相覆盖。
+            if (verify.Ok)
+            {
+                last.Line = verify;
+                double worst = verify.Segments.Length == 0 ? 0
+                             : verify.Segments.Max(x => Math.Abs(x.RootDeltaK - opt.TargetK));
+                bool searchSaidOk = last.Converged;
+                last.Converged = worst < opt.TolK && verify.Converged;
+                last.Message += $"　【全精度复核】管根温差偏离目标 {worst:0.0} K";
+                if (!verify.Converged) last.Message += "；⚠ 段↔法兰耦合未收敛，数值不可引用";
+                if (searchSaidOk && !last.Converged)
+                    last.Message += "；⚠ 搜索精度下判为达标，全精度下**不达标** —— 以本次为准";
+            }
         }
         catch (OperationCanceledException) { throw; }
         catch { /* 复核失败就保留搜索期的结果，并在下面注明 */ }
