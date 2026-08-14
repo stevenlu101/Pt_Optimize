@@ -72,6 +72,32 @@ public sealed class FlangePlate
     /// </summary>
     public bool TwoTabs = false;
 
+    /// <summary>
+    /// **等宽（矩形）舌片**：自与圆盘的交界起就保持 <see cref="TabEndHalfWidthMm"/> 不变，
+    /// 不再从切点的半宽（≈盘半径）线性收到末端。
+    ///
+    /// 为什么要它：梯形舌片在**两条约束上同时吃亏**——
+    ///   · 导热漏 Q = k·A̅·ΔT/ℓ 用的是**平均**截面（梯形的平均截面大）
+    ///   · 局部失稳 J = I/A_min 用的是**最窄**截面（梯形的末端截面小）
+    ///   实测这一项就吃掉约 1.25 倍裕度，再加上收口处的角点电流集中约 1.39 倍，
+    ///   两者相乘 1.7 倍 —— 而闭式给的总裕度只有约 2 倍（§4.3e）。
+    ///   等宽舌片把这两项一起去掉，且根部不再有那一大片又宽又不发热的料。
+    ///
+    /// 交界位置：x = −√(R² − w²)（半宽 w 的直边与圆的交点），w ≥ R 时退化为 −0。
+    /// </summary>
+    public bool TabParallel = false;
+
+    /// <summary>
+    /// **舌片自己的保温厚度** mm。NaN = 舌片裸露（现场实况，也是默认）。
+    ///
+    /// 与 <see cref="InsulBoundaryXMm"/> 的关系：那个只决定「哪一段算圆盘、哪一段算舌片」，
+    /// 本字段决定舌片那一段**包多厚**。此前两者是同一个二值开关（要么裸、要么按圆盘的
+    /// <see cref="DesignInputs.FlangeInsulThickMm"/> 全包），中间没有档位 ——
+    /// 而端片的热平衡零点恰好落在中间（裸露时净抽热、全包时净倒灌）。
+    /// 详见 <see cref="ShellThermal"/>.Solve 的同名参数。
+    /// </summary>
+    public double TabInsulThickMm = double.NaN;
+
     /// <summary>解析后的保温分界：NaN ⇒ 切点（仅圆盘保温）</summary>
     public double InsulBoundaryXResolved
         => double.IsNaN(InsulBoundaryXMm) ? Tangent().X : InsulBoundaryXMm;
@@ -137,9 +163,14 @@ public sealed class FlangePlate
         return ThicknessMm;
     }
 
-    /// <summary>切点：舌片直边与 Ø120 圆相切处</summary>
+    /// <summary>切点：舌片直边与 Ø120 圆相切处（等宽舌片时是直边与圆的**交点**）</summary>
     public (double X, double HalfW) Tangent()
     {
+        if (TabParallel)
+        {
+            double w = Math.Min(TabEndHalfWidthMm, DiscRadiusMm);
+            return (-Math.Sqrt(Math.Max(0, DiscRadiusMm * DiscRadiusMm - w * w)), w);
+        }
         // T = R(cosθ, sinθ) 在圆上，切点条件 (P − T)·T = 0：
         //   px·R·cosθ − R²cos²θ + pz·R·sinθ − R²sin²θ = 0
         //   ⇒ px·cosθ + pz·sinθ = R
@@ -168,6 +199,7 @@ public sealed class FlangePlate
             return TabEndHalfWidthMm + (ExtHalfWidthMm - TabEndHalfWidthMm) * ue;
         }
         if (x >= xt) return Math.Sqrt(Math.Max(0, DiscRadiusMm * DiscRadiusMm - x * x));
+        if (TabParallel) return TabEndHalfWidthMm;      // 等宽：交界之后不再收口
         double u = (x - xt) / (TabEndXMm - xt);
         return wt + (TabEndHalfWidthMm - wt) * u;
     }

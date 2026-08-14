@@ -3459,6 +3459,656 @@ internal static class Program
                 return;
             }
 
+            // --cli --endplate   ★★ 端片可行性图：**分区**能量账（圆盘 / 舌片）+ 四条杠杆各扫一遍
+            //
+            // 为什么要这条：§4.3b–4.3d 一路卡在端片，但手上只有「整片发热 106 < 散热 138」
+            // 这一个数 —— 它指不出该动圆盘还是舌片，而两者的杠杆方向相反：
+            //   · 圆盘亏 ⇒ 缩盘径 / 加厚保温（圆盘紧贴管子，包保温无害，§4.3a）
+            //   · 舌片亏 ⇒ **窄舌 + 等比加厚**：J = I/(w·t) 不变 ⇒ 发热上限不变，
+            //     而裸露散热 ∝ w ⇒ 直接减半。§4.3b 的闭式判据把两区的散热并进一个 ΣR，
+            //     得出「窄舌反而更差」，那个结论**只在圆盘主导散热时成立**，必须实测分区来判。
+            //
+            // 单片解、定管根温度 ⇒ 一格约 1 s（整线解 20 s），故可以真的扫。
+            // 电流场与 LineRunner 同口径（按控温点的均匀 ρe 解一次，不与温度场迭代），
+            // 保证这里的数与 --balance / --perplate 可直接对比。
+            if (args.Contains("--endplate"))
+            {
+                double wallE9 = 0.4, insE9 = 10.0, holeE9 = wallE9 + 25.0;
+                double tRootE9 = 1150.0;                 // HC1 控温点 = 入口端片的管根温度
+                double iEndE9 = 687.0, iShareE9 = 1105.0; // §4.3a 实算：端片 / 共用片电流
+
+                var pE9 = SegmentSolver.Clone(p);
+                pE9.Layer1.ThicknessMm = insE9; pE9.Layer1.Enabled = true;
+                pE9.WallMinMm = wallE9;
+                pE9.FlangeInsulThickMm = 20; pE9.FlangeInsulated = true;
+                pE9.BusbarClampLengthMm = 40;
+
+                // 一次单片解：返回分区账 + 两区的 J 峰值 + 舌片局部稳定裕度
+                (ShellThermalResult Th, double JTab, double JDisc, double MassG, double JStabTab)
+                    SolveOneE9(FlangePlate g, double iA, double clampC)
+                {
+                    var mesh = FlangeMesher.Build(g, 0, 2.0, 11.0, 45.0, pE9.BusbarClampLengthMm);
+                    var sc = ShellCurrent.Solve(mesh, iA,
+                                Materials.PtResistivity(tRootE9) * 1e3, tRootE9);
+                    var p2 = SegmentSolver.Clone(pE9);
+                    p2.TSetC = tRootE9;
+                    p2.BusbarClampTempC = clampC;
+                    double xt = g.Tangent().X;
+                    var th = ShellThermal.Solve(mesh, sc.JMagAPerMm2, p2, tRootE9,
+                                                g.InsulBoundaryXResolved, symmetricInsul: g.TwoTabs,
+                                                tabBoundaryX: xt,
+                                                tabInsulThickMm: g.TabInsulThickMm);
+                    // 舌片上「J 最高的那个单元」才是判局部失稳的点，且要用它自己的温度与厚度
+                    double jT = 0, jD = 0, tAtJ = 0, thickAtJ = g.TabThicknessMm;
+                    for (int i = 0; i < mesh.CellCount; i++)
+                    {
+                        bool onTab = g.TwoTabs ? Math.Abs(mesh.Centroid[i].X) > Math.Abs(xt)
+                                               : mesh.Centroid[i].X < xt;
+                        if (onTab)
+                        {
+                            if (sc.JMagAPerMm2[i] > jT)
+                            { jT = sc.JMagAPerMm2[i]; tAtJ = th.T[i]; thickAtJ = mesh.Thickness[i]; }
+                        }
+                        else jD = Math.Max(jD, sc.JMagAPerMm2[i]);
+                    }
+                    double latMm = LocalStability.TabHalfSpanMm(
+                                       -g.TabEndXMm, pE9.BusbarClampLengthMm, xt);
+                    double insulAtTab = double.IsNaN(g.TabInsulThickMm) ? 0 : g.TabInsulThickMm;
+                    double jStab = LocalStability.Check(p2, tAtJ, jT, thickAtJ, insulAtTab, latMm).JStab;
+                    return (th, jT, jD, mesh.VolumeMm3 * Materials.PtDensity * 1e-6, jStab);
+                }
+
+                static string SgnE9(double v, string f = "0") => (v >= 0 ? "+" : "−") + Math.Abs(v).ToString(f);
+
+                void HeadE9() => Console.WriteLine(
+                    $"{"配置",-24}{"I A",6}{"盘发热",8}{"盘散热",8}{"舌发热",8}{"舌散热",8}" +
+                    $"{"铜排",7}{"抽管",8}{"残差",7}{"舌温",6}{"峰温",6}{"J舌",6}{"J稳",6}{"克",6}  判定");
+
+                void RowE9(string nm, FlangePlate g, double iA, double clampC)
+                {
+                    ShellThermalResult th; double jT, jD, mg, jStab;
+                    try { (th, jT, jD, mg, jStab) = SolveOneE9(g, iA, clampC); }
+                    catch (Exception ex) { Console.WriteLine($"{nm,-24}  异常 {ex.Message}"); return; }
+                    // ★ 先判物性：越过熔点的「解」根本不存在，能量账闭合得再好也没用。
+                    //   拟合到 3392 °C 才反号 ⇒ 求解器不会自己拒绝，必须在这里拦。
+                    string verdict;
+                    if (th.OverMelt) verdict = $"✗✗ 已熔（>{Materials.PtMeltC:0}）";
+                    else
+                    {
+                        // C2 是 |管根温差| ≤ 10 K，对应「抽管」要落在 0 附近的一条窄带里，
+                        // 不是越负越好 —— 负得太多是倒灌，管根变热点（§4.3c 的 HC2 −88 K）。
+                        verdict = Math.Abs(th.QFromTubeW) < 15 ? "✓ 近平衡"
+                                : th.QFromTubeW >= 15 ? "✗ 抽管"
+                                : "✗ 倒灌";
+                        if (!double.IsNaN(jStab) && jT > jStab) verdict += "／局部失稳";
+                        if (th.OverFitRange) verdict += "／⚠外推";
+                    }
+                    Console.WriteLine(
+                        $"{nm,-24}{iA,6:0}{th.QGenDiscW,8:0}{th.QLossDiscW,8:0}" +
+                        $"{th.QGenTabW,8:0}{th.QLossTabW,8:0}{th.QToClampW,7:0}" +
+                        $"{SgnE9(th.QFromTubeW),8}{SgnE9(th.EnergyResidualW, "0.0"),7}" +
+                        $"{th.TTabMeanC,6:0}{th.TMaxC,6:0}{jT,6:0.0}{(double.IsNaN(jStab) ? -1 : jStab),6:0.0}" +
+                        $"{mg,6:0}  {verdict}");
+                }
+
+                FlangePlate MkE9(double disc, double tabL, double halfW, double tTab,
+                                 double tDisc, double tabInsul = double.NaN) => new()
+                {
+                    DiscRadiusMm = disc, HoleRadiusMm = holeE9,
+                    TabEndXMm = -tabL, TabEndHalfWidthMm = halfW,
+                    ThicknessMm = tDisc, ThickenedMm = tDisc, TabThicknessMm = tTab,
+                    InsulBoundaryXMm = double.NaN, TabInsulThickMm = tabInsul
+                };
+
+                Console.WriteLine("=== 端片可行性图：分区能量账 ===");
+                Console.WriteLine($"定管根 {tRootE9:0} °C；圆盘包 20 mm；压接 40 mm；单位 W");
+                Console.WriteLine("闭合式（自由单元）：(发热−散热)盘 + (发热−散热)舌 + 抽管 − 铜排 = 残差 ≈ 0");
+                Console.WriteLine("★「抽管」是目标列：>0 法兰抽管子的热（管根塌），<0 法兰倒灌（管根成热点）。");
+                Console.WriteLine("  C2 要的是 |管根温差| ≤10 K ⇒ **这一列要落在 0 附近，不是越负越好**。");
+                Console.WriteLine("「J稳」= 舌片 J 峰值那一点的局部失稳上限（LocalStability，按该点温度与厚度实算）。");
+                Console.WriteLine();
+
+                Console.WriteLine("── ① 基线复现（对齐 §4.3a / §4.3d）");
+                Console.WriteLine("   注：本命令把管根**钉在控温点**，而整线解里管根已被抽冷 ⇒ 这里的散热与抽热偏大，");
+                Console.WriteLine("   是「管根不许塌」前提下的必要条件，比整线解严格。");
+                HeadE9();
+                RowE9("§4.3a 端片 夹300", MkE9(36, 90, 30, 0.8, 0.4), iEndE9, 300);
+                RowE9("§4.3a 共用 夹300", MkE9(36, 90, 30, 0.8, 0.4), iShareE9, 300);
+                RowE9("§4.3c 端片 自由端", MkE9(36, 90, 30, 0.8, 0.4), iEndE9, -1);
+                RowE9("§4.3d 端片 舌50自由", MkE9(30, 50, 30, 0.8, 0.4), iEndE9, -1);
+                Console.WriteLine();
+
+                Console.WriteLine("── ② 舌片末端宽度（末端截面固定 27.5 mm²；注意舌片是**梯形**，");
+                Console.WriteLine("   自切点的半宽约 29 mm 收到末端半宽 ⇒ 末端收窄并不能把整条舌都变窄）");
+                HeadE9();
+                foreach (double fw in new[] { 60.0, 40.0, 30.0, 20.0, 16.0, 12.0 })
+                    RowE9($"舌90末{fw:0}×{27.5 / fw:0.00} 自由", MkE9(30, 90, fw / 2, 27.5 / fw, 0.4), iEndE9, -1);
+                Console.WriteLine();
+
+                Console.WriteLine("── ③ 舌片长度（压接 40 mm 是定长 ⇒ 短舌几乎整条被压接吃掉）");
+                HeadE9();
+                foreach (double tl in new[] { 50.0, 70.0, 90.0, 130.0, 180.0 })
+                    RowE9($"舌{tl:0}末20×1.38 自由", MkE9(30, tl, 10, 1.375, 0.4), iEndE9, -1);
+                Console.WriteLine();
+
+                Console.WriteLine("── ④ 圆盘半径（盘的**远侧**是电流死区：只散热不发热）");
+                HeadE9();
+                foreach (double dr in new[] { 40.0, 36.0, 32.0, 30.0, 28.0 })
+                    RowE9($"盘Ø{2 * dr:0} 舌90末20×1.38", MkE9(dr, 90, 10, 1.375, 0.4), iEndE9, -1);
+                Console.WriteLine();
+
+                Console.WriteLine("── ⑤ 电流（= 管壁杠杆：I ∝ √壁厚 ⇒ 发热 ∝ 壁厚，代价是管子的铂重）");
+                HeadE9();
+                foreach (double ia in new[] { 500.0, 687.0, 900.0, 1105.0, 1400.0 })
+                    RowE9($"I={ia:0} 舌90末20×1.38", MkE9(30, 90, 10, 1.375, 0.4), ia, -1);
+                Console.WriteLine();
+
+                Console.WriteLine("── ⑥ ★ 舌片保温厚度：**新自由度**（总纲④，此前只有裸/全包两档）");
+                Console.WriteLine("   裸露时净抽热、全包时净倒灌 ⇒ 中间必有零点。找那个厚度。");
+                HeadE9();
+                foreach (double ti in new[] { double.NaN, 0.5, 1.0, 2.0, 3.0, 5.0, 8.0, 20.0 })
+                    RowE9($"舌90末60×0.46 包{(double.IsNaN(ti) ? "裸" : ti.ToString("0.0"))}",
+                          MkE9(30, 90, 30, 0.46, 0.4, ti), iEndE9, -1);
+                Console.WriteLine();
+                foreach (double ti in new[] { double.NaN, 1.0, 2.0, 3.0, 5.0, 8.0, 20.0 })
+                    RowE9($"舌90末20×1.38 包{(double.IsNaN(ti) ? "裸" : ti.ToString("0.0"))}",
+                          MkE9(30, 90, 10, 1.375, 0.4, ti), iEndE9, -1);
+                Console.WriteLine();
+
+                Console.WriteLine("── ⑦ 共用片（I=1105）在同一张图上：它的零点必然在**更薄的保温**上");
+                HeadE9();
+                foreach (double ti in new[] { double.NaN, 0.5, 1.0, 2.0, 3.0 })
+                    RowE9($"共用 舌90末60×0.46 包{(double.IsNaN(ti) ? "裸" : ti.ToString("0.0"))}",
+                          MkE9(30, 90, 30, 0.46, 0.4, ti), iShareE9, -1);
+                Console.WriteLine();
+
+                // ── ⑧ 两个旋钮对两条约束：舌厚调稳定性、舌保温调热平衡
+                //
+                // 从 ②–⑦ 读出来的机理（都是实算，不是推的）：
+                //   · 自给（抽管→0）由**裸露散热**定 ⇒ 旋钮是舌片保温厚度，且它穿过 0；
+                //   · 局部稳定 J_stab = √[(2dq″/dT + k·t/L²)/(ρe·t·TCR)]，实测 ∝ 1/√t
+                //     （末60×0.46 的 J稳 44.9 vs 末20×1.38 的 23.1，厚度 3× ⇒ 比 1.94 ≈ √3）
+                //     而 J ∝ 1/t ⇒ **裕度 J_stab/J ∝ √t**，旋钮是舌片厚度。
+                // 两个旋钮各自主导一条约束 ⇒ 这是个 2×2 方程组，不是一维死路。
+                Console.WriteLine("── ⑧ ★★ 二维：舌片厚度 × 舌片保温（两个旋钮对两条约束）");
+                Console.WriteLine("   厚度调稳定裕度（J_stab/J ∝ √t），保温调热平衡（抽管穿零）。找同时过的格。");
+                HeadE9();
+                foreach (double tt in new[] { 0.8, 1.2, 1.6, 2.2, 3.0 })
+                {
+                    foreach (double ti in new[] { 2.0, 4.0, 6.0, 9.0, 14.0 })
+                        RowE9($"末20×{tt:0.0} 包{ti:0}", MkE9(30, 90, 10, tt, 0.4, ti), iEndE9, -1);
+                    Console.WriteLine();
+                }
+
+                Console.WriteLine("★ 读法：⑥⑦ 若「抽管」随保温厚度**穿过 0**，则端片不再是死路 ——");
+                Console.WriteLine("  「端片能不能自给」从是非题变成解方程，且这个自由度**不花铂**（只是纤维）。");
+                Console.WriteLine("  ⑧ 找「✓ 近平衡」且不带「局部失稳」「外推」「已熔」的格 —— 那才是候选。");
+                Console.WriteLine("  ⚠ 本节全部用**自由端**（铜排不导热），那是物理上不成立的极限，");
+                Console.WriteLine("     真实接头温度须用 --busbar2 的热导边界重算。");
+                Console.WriteLine("  本命令是**单片定管根**的必要条件筛，候选须走 LineRunner 整线复核。");
+                return;
+            }
+
+            // --cli --weldmin   ★★★★ 焊接变形定的工艺下界（用户 2026-08-14：「这应该是第一步」）
+            //
+            // 见 WeldDistortion 的类注释：屈曲那一半能算（且 E 与 ρ 都约掉，只剩热学量与
+            // 三个工艺系数），烧穿那一半算不出、必须现场给。先在钢上验公式，再用于铂。
+            if (args.Contains("--weldmin"))
+            {
+                Console.WriteLine("=== 焊接变形定的最小厚度 ===");
+                Console.WriteLine();
+                Console.WriteLine("t_min = 12(1−ν²)·C·β·α·(c̄ΔT_m + L_f)·b / (k_b·π²·c̄·η_melt)");
+                Console.WriteLine("  ★ E 与 ρ 在推导中约掉 ⇒ 只剩热学物性与三个工艺系数");
+                Console.WriteLine("  ★ **正比于无支撑宽度 b** ⇒ 它给的是 t/b 的下限，不是「一个厚度」");
+                Console.WriteLine($"  系数：C={WeldDistortion.TendonC}（收缩力，钢上标定）　" +
+                                  $"β={WeldDistortion.BeadWidthRatio}（焊道宽/板厚）　" +
+                                  $"η_melt={WeldDistortion.MeltEfficiency}　k_b={WeldDistortion.PlateBucklingK}");
+                Console.WriteLine();
+
+                // ── ① 先在钢上验证：公式必须先复现车间常识
+                double sSteel = WeldDistortion.Slope(12e-6, 600, 270e3, 1480, 0.30);
+                double sPt = WeldDistortion.ForPt(1.0).SlopePerB;
+                Console.WriteLine("── ① 可信度锚点：同一套公式代入低碳钢");
+                Console.WriteLine($"   钢  t_min/b = {sSteel:0.0000}  ⇒ 宽 300 mm 板需 {sSteel * 300:0.00} mm，" +
+                                  "宽 1000 mm 需 " + (sSteel * 1000).ToString("0.0") + " mm");
+                Console.WriteLine("   车间常识：薄钢板约 2–3 mm 以下、大面积焊后必鼓曲 ⇒ **量级对上**");
+                Console.WriteLine($"   铂  t_min/b = {sPt:0.0000}（与钢接近：铂 α 小但比热也小，两者抵消）");
+                Console.WriteLine();
+
+                // ── ② 本装配的每一条焊缝。k_b 是最大不确定源（简支 4.0 vs 一边自由 0.43，
+                //     差 9.3 倍），故不给单值，给区间；安全系数按用户指示加在结果上。
+                double sf = p.WeldSafetyFactor;
+                double sPtFree = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB;
+                Console.WriteLine($"── ② 本装配各焊缝（b = 无支撑宽度；已乘安全系数 {sf:0.0}）");
+                Console.WriteLine("   两列分别是板边**简支**(k_b=4.0) 与**一边自由**(k_b=0.43) 两种极端；");
+                Console.WriteLine("   法兰盘内边焊在管上、外边自由 ⇒ 以**右列**为准。");
+                Console.WriteLine($"{"焊缝",-20}{"b 取法",-24}{"b mm",7}{"简支 t_min",11}{"自由边 t_min",13}  说明");
+
+                void WRow(string nm, string how, double b, string note)
+                    => Console.WriteLine($"{nm,-20}{how,-24}{b,7:0.0}{sPt * b * sf,11:0.00}" +
+                                         $"{sPtFree * b * sf,13:0.00}  {note}");
+
+                // 用户 2026-08-14：**焊接处是铂金管与圆盘法兰的内孔** —— 全装配只此一条环缝。
+                // 它连接两个厚度不同的件，两边各有各的失效方式：
+                //   · 管侧：圆筒，曲率把屈曲半波长压在 2.4√(Rt) 内 ⇒ 结构上不会鼓曲
+                //   · 盘侧：内边被焊住、外边自由的**环**，环缝的周向收缩把环往里箍 ⇒ 起皱/翘锥
+                // 故下表只算这一条，两侧分开列。
+                double tubeR = 25.0;
+                Console.WriteLine("   （全装配只有这一条焊缝：管 Ø52 外壁 ↔ 圆盘内孔）");
+                double shellRatio = WeldDistortion.PtShellBucklingRatio();
+                Console.WriteLine($"   管侧（圆筒）：走另一条判据 —— 轴压屈曲，推导中 **t 与 R 同时约掉**，");
+                Console.WriteLine($"     只剩「实际收缩力/临界值 = {shellRatio:0.0000}」" +
+                                  (shellRatio < 1
+                                   ? $" < 1 ⇒ **任何壁厚都不会被环缝压屈**（差 {1 / shellRatio:0} 倍）"
+                                   : " ≥ 1 ⇒ 任何壁厚都会屈曲"));
+                Console.WriteLine("     ⇒ 管壁下界不可能由变形定，只能由烧穿定。");
+                Console.WriteLine();
+                foreach (var (nm, ro) in new[] { ("盘侧 Ø120", 60.0), ("盘侧 Ø72", 36.0),
+                                                 ("盘侧 Ø60", 30.0), ("盘侧 Ø56", 28.0) })
+                    WRow(nm, "环宽 = 外半径−孔半径", ro - 26.0, "外边自由 ⇒ 看右列");
+                Console.WriteLine();
+                Console.WriteLine("   ★ 舌片与圆盘是**同一张板切出来的**，中间没有焊缝 ⇒ 舌片厚度完全不受本判据约束，");
+                Console.WriteLine("     它只由电流密度与局部热稳定定（--leadbound）。这一条把两个自由度彻底解耦。");
+                Console.WriteLine();
+
+                // ★ 现役实物是唯一能把 k_b 夹住的实测锚点。
+                //   注意它只给**上界**：Ø120×2.0 焊得出来 ⇒ 真实 slope ≤ 2.0/34，
+                //   但它可能离极限还很远，所以给不出下界。即便如此也已经有用 ——
+                //   它直接排除掉「一边自由的长板」那个取法。
+                double bNow = 60.0 - 26.0, tNow = 2.0;
+                double slopeField = tNow / bNow;
+                double slopeUse = Math.Min(sPtFree, slopeField);
+                Console.WriteLine("── ②′ 用现役实物把系数夹住（**唯一的实测锚点**）");
+                Console.WriteLine($"   现役法兰 Ø120 × {tNow:0.0} mm、环宽 b={bNow:0} mm，现场焊得出来、不鼓曲");
+                Console.WriteLine($"     ⇒ 真实 t_min/b **≤ {slopeField:0.0000}**（只是上界：实物可能离极限还远）");
+                Console.WriteLine($"   理论两端：简支 k_b=4.0 给 {sPt:0.0000}　一边自由 k_b=0.43 给 {sPtFree:0.0000}");
+                Console.WriteLine(sPtFree > slopeField
+                    ? $"   ⇒ ✗ 自由边那个取法 ({sPtFree:0.0000}) **被实物否掉**（它预言现役件会鼓曲，而没有）。\n" +
+                      $"     环形件不是「一边自由的长板」：环是闭合的，周向收缩被自身的箍效应扛住。\n" +
+                      $"   ⇒ 取实测上界 {slopeField:0.0000} 作设计斜率（仍比简支理论保守 {slopeField / sPt:0.0} 倍）"
+                    : $"   ⇒ 理论与实物不矛盾，取较保守者 {slopeUse:0.0000}");
+                Console.WriteLine();
+                Console.WriteLine($"── ②″ 按夹住后的斜率 {slopeUse:0.0000}／mm，各盘径的屈曲下界（含安全系数 {sf:0.0}）");
+                Console.WriteLine($"{"圆盘",-14}{"环宽 b mm",12}{"屈曲下界 mm",14}  与烧穿下界比");
+                foreach (var (nm, ro) in new[] { ("Ø120", 60.0), ("Ø72", 36.0), ("Ø60", 30.0), ("Ø56", 28.0) })
+                {
+                    double bb = ro - 26.0, tb = slopeUse * bb * sf;
+                    Console.WriteLine($"{nm,-14}{bb,12:0.0}{tb,14:0.00}  " +
+                        (tb > 0.5 ? "★ 屈曲控制（比手工 TIG 的 0.5 还严）" : "烧穿控制"));
+                }
+                Console.WriteLine();
+
+                // ── ③ 另一条下界：烧穿
+                Console.WriteLine("── ③ 另一条下界：烧穿 / 熔池失控（**算不出，必须现场给**）");
+                Console.WriteLine($"   熔池毛细宽度 √(2γ/ρg) = {WeldDistortion.CapillaryWidthMm():0.0} mm" +
+                                  "  ⇒ 对 1 mm 级铂板不是限制，掉熔池不是这里的机理");
+                Console.WriteLine("   真正的烧穿下界取决于焊接方法与热输入控制精度，差一个量级：");
+                Console.WriteLine("     手工 TIG   约 0.5 mm 以下显著变难（电弧力与热输入波动）");
+                Console.WriteLine("     自动 TIG   约 0.3 mm");
+                Console.WriteLine("     激光 / 电阻缝焊  约 0.1 mm 量级");
+                Console.WriteLine("   ⚠ 这三个数是**行业常规，不是本项目实测**，须向焊接方确认。");
+                Console.WriteLine();
+
+                // ── ④ 结论：两条下界取大，且**必须按盘径分别给** —— 屈曲下界正比于环宽
+                Console.WriteLine("── ④ 结论：焊接下界 = max(屈曲, 烧穿)，且**随圆盘直径变**");
+                Console.WriteLine();
+                Console.WriteLine($"{"件",-16}{"屈曲",10}{"烧穿(手工TIG)",15}{"取大 ⇒ 下界",14}  控制机理");
+                double tBurn = 0.5;
+                Console.WriteLine($"{"管（圆筒侧）",-16}{"不屈曲",10}{tBurn,15:0.00}" +
+                                  $"{tBurn,14:0.00}  轴压比值 {shellRatio:0.000}≪1 ⇒ 烧穿控制");
+                foreach (var (nm, ro) in new[] { ("圆盘 Ø120", 60.0), ("圆盘 Ø72", 36.0), ("圆盘 Ø60", 30.0) })
+                {
+                    double tb = slopeUse * (ro - 26.0) * sf;
+                    Console.WriteLine($"{nm,-16}{tb,10:0.00}{tBurn,15:0.00}{Math.Max(tb, tBurn),14:0.00}  " +
+                                      (tb > tBurn ? "★ 屈曲控制" : "烧穿控制"));
+                }
+                Console.WriteLine($"{"舌片",-16}{"—",10}{"—",15}{"不受限",14}  与盘同板切出、无焊缝");
+                Console.WriteLine();
+                Console.WriteLine("★ 三条可执行的结论：");
+                Console.WriteLine("  ① **缩小圆盘直径同时放松焊接下界** —— 环宽小了，屈曲下界跟着线性下来。");
+                Console.WriteLine("     这与省铂、与端片热平衡（缩盘减少死区散热）**三者同向**，是本问题里少有的。");
+                Console.WriteLine("  ② 圆盘缩到 Ø60 后屈曲下界降到 0.5 以下 ⇒ **下界改由焊接方法决定**：");
+                Console.WriteLine("     手工 TIG 约 0.5　自动 TIG 约 0.3　激光/电阻缝焊约 0.1（差一个量级）");
+                Console.WriteLine("  ③ **舌片不受任何焊接下界约束**（同板切出），它只由 --leadbound 的两条电热约束定。");
+                Console.WriteLine();
+                Console.WriteLine($"程序当前取 WeldMinThicknessMm = {p.WeldMinThicknessMm:0.00} mm（手工 TIG 常规）。");
+                Console.WriteLine("⚠ 待现场确认两件事，它们直接决定省铂上限（§6 待补①）：");
+                Console.WriteLine("   · 用哪种焊接方法？（这一条比材料牌号更值钱）");
+                Console.WriteLine("   · 现役 Ø120×2.0 是不是接近工艺极限？若它其实很宽裕，上面的斜率还能再放。");
+                return;
+            }
+
+            // --cli --leadbound   ★★★★ 引线可行性的闭式判据：TCR·ΔT < 4
+            //
+            // 本轮把「端片能不能自给」一路逼到只剩两条约束，两条都只作用在**舌片**上，
+            // 且舌片必须包保温（否则裸露散热把它拖成净抽热）。包了保温的舌片就是一根
+            // 「两端定温、通电、绝热」的杆，于是两条约束都能写成闭式：
+            //
+            //   ① 局部热失稳（上界）：J ≤ J_stab = (1/L)·√(k/(ρe·TCR))，L = 自由段/2
+            //      发热 P = I²ρe·ℓ/A = I·J·ρe·ℓ，代入 J=J_stab、L=ℓ/2：
+            //        **P_max = 2·I·√(ρe·k/TCR)**      ← ℓ 与 A 全部约掉
+            //
+            //   ② 引线导热漏（下界）：**注意这里有个因子 2，我第一版漏了**。
+            //      带分布发热 p 的杆，两端定温（热端 T_h = 管根、冷端 T_c = 压接）：
+            //        T′(0) = −ΔT/ℓ + pℓ/(2kA)  ⇒ 从热端流进杆的热 = k·A·ΔT/ℓ − P/2
+            //      令它 =0（不抽管）得 **P = 2·k·A·ΔT/ℓ = 2Q**，不是 P = Q ——
+            //      发的热有一半往热端走、一半往冷端走，所以要盖住漏热得发两倍。
+            //      仍有 P·Q = I²·ρe·k·ΔT（**与几何无关**，ℓ/A 在两式里正好抵消）：
+            //        **P_min = I·√(2·ρe·k·ΔT)**
+            //      （ρe·k = 洛伦兹数×T̄ 即维德曼–弗兰兹，故也等于 I·√(2L₀T̄ΔT)）
+            //
+            //   ⇒ 可行 ⟺ P_max ≥ P_min ⟺ **√(2/(TCR·ΔT)) ≥ 1 ⟺ TCR·ΔT ≤ 2**
+            //
+            // 这个比值**既不含几何、也不含电流**：舌片怎么改形状、电流多大，都不改变它。
+            // 它一次性回答了 §4.3b 的「端片是不是结构性死路」—— 只要 TCR·ΔT < 4 就不是。
+            if (args.Contains("--leadbound"))
+            {
+                Console.WriteLine("=== 引线（舌片）可行性的闭式判据 ===");
+                Console.WriteLine();
+                Console.WriteLine("包保温的舌片 = 一根「两端定温、通电、绝热」的杆。两条约束各给一个发热界：");
+                Console.WriteLine("  局部稳定上界  P_max = 2·I·√(ρe·k/TCR)      ← 舌长与截面全部约掉");
+                Console.WriteLine("  导热漏下界    P_min = I·√(2·ρe·k·ΔT)       ← 同样与几何无关");
+                Console.WriteLine("    （因子 2：发的热一半往热端一半往冷端，零抽管要 P = 2·kAΔT/ℓ）");
+                Console.WriteLine("  ⇒ 裕度 = P_max/P_min = **√(2/(TCR·ΔT))**，既不含几何也不含电流");
+                Console.WriteLine("  ⇒ **可行 ⟺ TCR·ΔT ≤ 2**");
+                Console.WriteLine();
+                Console.WriteLine($"{"舌片温度°C",11}{"ρe Ω·m",12}{"k W/mK",9}{"TCR 1/K",11}" +
+                                  $"{"夹持°C",8}{"ΔT K",7}{"TCR·ΔT",9}{"裕度",7}  判定");
+                foreach (double tTab in new[] { 900.0, 1000.0, 1100.0, 1150.0, 1250.0, 1400.0 })
+                    foreach (double tc in new[] { 25.0, 300.0, 600.0 })
+                    {
+                        double rho = Materials.PtResistivity(tTab);
+                        double kk = Materials.PtThermalK(tTab);
+                        double tcr = Materials.PtTcr(tTab);
+                        double dT = tTab - tc;
+                        if (dT <= 0) continue;
+                        double prod = tcr * dT;
+                        double marg = Math.Sqrt(2.0 / prod);
+                        Console.WriteLine($"{tTab,11:0}{rho,12:E3}{kk,9:0.0}{tcr,11:E3}" +
+                            $"{tc,8:0}{dT,7:0}{prod,9:0.000}{marg,7:0.00}  " +
+                            (marg >= 1.0 ? "✓ 可行" : "✗ 无解"));
+                    }
+                Console.WriteLine();
+                Console.WriteLine("★ 结论：纯铂在 900–1400 °C、夹持 25–600 °C 的**整个范围内** TCR·ΔT ≈ 0.21–0.62，");
+                Console.WriteLine("  裕度 1.8–3.1 ⇒ **端片不是结构性死路**。§4.3b 的「两条约束没有交集」被推翻，");
+                Console.WriteLine("  那个结论来自「舌片只能裸露或全包」的二值假设，以及漏掉压接端锚点的 J_stab。");
+                Console.WriteLine("  ⚠ 但裕度只有约 2 倍，而下面三项实际损耗要吃掉它的大部分：");
+                Console.WriteLine("    · 梯形舌片：导热按平均截面、J 按最窄截面 ⇒ 两头吃亏，实测约 1.25 倍");
+                Console.WriteLine("    · 角点电流集中：J 峰值/名义约 1.39 倍");
+                Console.WriteLine("    · 圆盘远侧电流死区：只散热不发热");
+                Console.WriteLine("  ⇒ **必须把舌片改成等宽（矩形）**，否则闭式的裕度落不到实处。");
+                Console.WriteLine();
+                Console.WriteLine("── 由闭式反推的设计点（P = P_min 时，裕度自动 = 上面那一列）");
+                Console.WriteLine("   A/ℓ = I·√(ρe/(2k·ΔT))　⇒ 截面随自由段长线性走，质量 ∝ ℓ² ⇒ **短舌更省铂**");
+                Console.WriteLine("   末列「裕度」应与上表同一温度那一行一致 —— 不一致就是这里算错了。");
+                Console.WriteLine($"{"电流A",7}{"舌温°C",8}{"夹持°C",8}{"P_min W",9}{"A/ℓ mm²/mm",13}" +
+                                  $"{"自由段40时 A",13}{"J A/mm²",10}{"J_stab",9}{"裕度",7}");
+                foreach (double ia in new[] { 687.0, 1105.0 })
+                    foreach (double tc in new[] { 25.0, 300.0 })
+                    {
+                        double tTab = 1150.0;
+                        double rho = Materials.PtResistivity(tTab), kk = Materials.PtThermalK(tTab);
+                        double tcr = Materials.PtTcr(tTab), dT = tTab - tc;
+                        double pMin = ia * Math.Sqrt(2 * rho * kk * dT);
+                        // P = 2kAΔT/ℓ 与 P = I²ρeℓ/A 联立 ⇒ A = I·ℓ·√(ρe/(2kΔT))
+                        // （因子 2 在**分母**：要发两倍的热，就得让截面更小、电阻更大）
+                        double aOverL = ia * Math.Sqrt(rho / (2 * kk * dT)) * 1e3;   // m→mm²/mm
+                        double lFree = 40.0, aMm2 = aOverL * lFree;
+                        double j = ia / aMm2;
+                        double jStab = 1e-6 / (lFree * 0.5 * 1e-3) * Math.Sqrt(kk / (rho * tcr));
+                        Console.WriteLine($"{ia,7:0}{tTab,8:0}{tc,8:0}{pMin,9:0}{aOverL,13:0.000}" +
+                            $"{aMm2,13:0.0}{j,10:0.00}{jStab,9:0.00}{jStab / j,7:0.00}");
+                    }
+                Console.WriteLine();
+                Console.WriteLine("★ 用法：这是**必要且充分**的一次性判断（在「舌片包保温、两端定温」这个理想化下）。");
+                Console.WriteLine("  实际还要加上圆盘散热与压接段不发热两项修正 ⇒ 仍须 --endsolve 数值复核。");
+                return;
+            }
+
+            // --cli --endsolve   ★★★ 端片定解：对每个(舌长,舌厚)反解「使抽管=0」的舌片保温厚度
+            //
+            // 为什么这么组织（三条都是本轮实算逼出来的）：
+            //  ① **压接段在电学上是等位体，整段不发热**（ShellCurrent 把 TagTabEnd 全钉 V=1，
+            //     物理上对：铜排比铂导电 25 倍、厚 10 倍，那 40 mm 就是被短接的）。
+            //     ⇒ 舌片真正发热的长度 = 舌长 − 压接长。90 mm 舌片扣掉 40 只剩 43 ——
+            //     这正是闭式下界要 106 W 而实算只有 65 W 的全部原因，**不是模型错**。
+            //     ⇒ 舌长是第一杠杆，而此前一路在**缩短**它省铂（§4.3d 甚至缩到 50）。
+            //  ② 舌片保温厚度是让「抽管」穿零的连续旋钮（--endplate ⑥），故把它反解掉，
+            //     剩下 (舌长, 舌厚) 两个真正花铂的量做 Pareto。
+            //  ③ 夹持回到 300 °C 定温 —— 但**必须补上此前一直缺的那一步**：
+            //     由 QClamp 反推所需铜排热导 G，再由维德曼–弗兰兹算它的电学代价，
+            //     确认这根铜排做得出来。定温边界只有配上这一步才不是「假设结论」。
+            if (args.Contains("--endsolve"))
+            {
+                const double Lorenz = 2.44e-8;
+                double holeS9 = 0.6 + 25.0, discS9 = 30.0, halfWS9 = 20.0;
+                double wallS9 = 0.6;                        // = 焊接工艺下界（用户 2026-08-14）
+                double tRootS9 = 1150.0, clampS9 = 300.0, sinkS9 = 25.0, clampLenS9 = 40.0;
+
+                var pS9 = SegmentSolver.Clone(p);
+                pS9.Layer1.ThicknessMm = 10.0; pS9.Layer1.Enabled = true;
+                pS9.WallMinMm = wallS9;
+                pS9.FlangeInsulThickMm = 20; pS9.FlangeInsulated = true;
+                pS9.BusbarClampLengthMm = clampLenS9;
+                pS9.BusbarClampTempC = clampS9;
+
+                // 圆盘厚度取焊接下界（Ø60 环宽 4 mm ⇒ 屈曲 0.47，烧穿 0.5 ⇒ 取 0.5，见 --weldmin）；
+                // 舌片与圆盘同板切出、**无焊缝** ⇒ 舌厚不受此约束，是自由变量。
+                double tDiscS9 = 0.5;
+                FlangePlate MkS9(double tabL, double tTab, double ins, double halfW) => new()
+                {
+                    DiscRadiusMm = discS9, HoleRadiusMm = holeS9,
+                    TabEndXMm = -tabL, TabEndHalfWidthMm = halfW,
+                    ThicknessMm = tDiscS9, ThickenedMm = tDiscS9, TabThicknessMm = tTab,
+                    InsulBoundaryXMm = double.NaN, TabInsulThickMm = ins,
+                    TabParallel = true          // 梯形在两条约束上同时吃亏，见 FlangePlate.TabParallel
+                };
+
+                (ShellThermalResult Th, double JTab, double JStab, double MassG)
+                    RunS9(double tabL, double tTab, double ins, double iA, double halfW)
+                {
+                    var g = MkS9(tabL, tTab, ins, halfW);
+                    var mesh = FlangeMesher.Build(g, 0, 2.0, 11.0, 45.0, clampLenS9);
+                    var sc = ShellCurrent.Solve(mesh, iA,
+                                Materials.PtResistivity(tRootS9) * 1e3, tRootS9);
+                    var p2 = SegmentSolver.Clone(pS9);
+                    p2.TSetC = tRootS9;
+                    double xt = g.Tangent().X;
+                    var th = ShellThermal.Solve(mesh, sc.JMagAPerMm2, p2, tRootS9,
+                                g.InsulBoundaryXResolved, tabBoundaryX: xt,
+                                tabInsulThickMm: g.TabInsulThickMm);
+                    double jT = 0, tAtJ = 0, thAtJ = tTab;
+                    for (int i = 0; i < mesh.CellCount; i++)
+                        if (mesh.Centroid[i].X < xt && sc.JMagAPerMm2[i] > jT)
+                        { jT = sc.JMagAPerMm2[i]; tAtJ = th.T[i]; thAtJ = mesh.Thickness[i]; }
+                    double lat = LocalStability.TabHalfSpanMm(tabL, clampLenS9, xt);
+                    double js = LocalStability.Check(p2, tAtJ, jT, thAtJ,
+                                    double.IsNaN(ins) ? 0 : ins, lat).JStab;
+                    return (th, jT, js, mesh.VolumeMm3 * Materials.PtDensity * 1e-6);
+                }
+
+                void ScanS9(string title, double iA)
+                {
+                    Console.WriteLine(title);
+                    Console.WriteLine($"{"舌长",6}{"末宽",6}{"舌厚",6}{"截面",7}{"保温*",7}{"抽管",7}" +
+                                      $"{"盘净",6}{"舌净",6}{"J舌",6}{"J稳",6}" +
+                                      $"{"裕度",6}{"峰温",6}{"铜排W",7}{"需G",7}{"铜排I²R",8}" +
+                                      $"{"克/片",7}  判定");
+                    // 闭式（--leadbound）：A/ℓ = I·√(ρe/(2kΔT))、质量 ∝ ℓ² ⇒ **短舌更省铂**。
+                    // 端片 687 A / 夹 300 时 A/ℓ = 1.25 mm²/mm ⇒ 自由段 40 时截面 50 mm²。
+                    // 网格就铺在这个设计点周围；舌片已改**等宽**，梯形的两项损失被去掉。
+                    foreach (double tabL in new[] { 90.0, 105.0, 120.0 })
+                        foreach (double halfW in new[] { 15.0, 20.0, 25.0 })
+                            foreach (double tTab in new[] { 0.9, 1.3, 1.8 })
+                            {
+                                // 「抽管」随保温厚度单调下降（--endplate ⑥ 实测）⇒ 二分反解零点。
+                                // 下界取 1.0 而不是 0：包 0 mm 走外覆材料 ε=0.45，比裸铂 0.18 还散热，
+                                // 那一段非单调（实测 裸 +73 → 包1.0 +100）。
+                                double lo = 1.0, hi = 30.0;
+                                double fLo, fHi;
+                                try
+                                {
+                                    fLo = RunS9(tabL, tTab, lo, iA, halfW).Th.QFromTubeW;
+                                    fHi = RunS9(tabL, tTab, hi, iA, halfW).Th.QFromTubeW;
+                                }
+                                catch (Exception ex)
+                                { Console.WriteLine($"{tabL,6:0}{halfW * 2,6:0}{tTab,6:0.0}  异常 {ex.Message}"); continue; }
+
+                                string flag = "";
+                                double ins;
+                                if (fLo < 0) { ins = lo; flag = "（裸区即倒灌）"; }
+                                else if (fHi > 0) { ins = hi; flag = "（包满仍抽管）"; }
+                                else
+                                {
+                                    for (int k = 0; k < 12; k++)
+                                    {
+                                        double mid = 0.5 * (lo + hi);
+                                        if (RunS9(tabL, tTab, mid, iA, halfW).Th.QFromTubeW > 0) lo = mid;
+                                        else hi = mid;
+                                    }
+                                    ins = 0.5 * (lo + hi);
+                                }
+
+                                var (th, jT, js, mg) = RunS9(tabL, tTab, ins, iA, halfW);
+                                double gReq = th.QToClampW / Math.Max(1e-9, clampS9 - sinkS9);
+                                double rBus = BusbarSizing.CuRho(150) * BusbarSizing.CuK / Math.Max(1e-9, gReq);
+                                double margin = jT > 1e-9 && !double.IsNaN(js) ? js / jT : double.NaN;
+
+                                string v = th.OverMelt ? "✗✗ 已熔"
+                                         : flag != "" ? "✗ " + flag
+                                         : Math.Abs(th.QFromTubeW) > 15 ? "✗ 未收敛到零点"
+                                         : double.IsNaN(margin) ? "? J稳超范围"
+                                         : margin < 1.0 ? $"✗ 局部失稳 {margin:0.00}"
+                                         : th.OverFitRange ? "⚠ 外推"
+                                         : $"✓ 可行 裕度{margin:0.00}";
+                                Console.WriteLine(
+                                    $"{tabL,6:0}{halfW * 2,6:0}{tTab,6:0.0}{halfW * 2 * tTab,7:0.0}{ins,7:0.0}" +
+                                    $"{(th.QFromTubeW >= 0 ? "+" : "−") + Math.Abs(th.QFromTubeW).ToString("0"),7}" +
+                                    $"{th.QGenDiscW - th.QLossDiscW,6:+0;−0}{th.QGenTabW - th.QLossTabW,6:+0;−0}" +
+                                    $"{jT,6:0.0}{(double.IsNaN(js) ? -1 : js),6:0.0}" +
+                                    $"{(double.IsNaN(margin) ? -1 : margin),6:0.00}{th.TMaxC,6:0}" +
+                                    $"{th.QToClampW,7:0}{gReq,7:0.00}{iA * iA * rBus,8:0}" +
+                                    $"{mg,7:0}  {v}");
+                            }
+                    Console.WriteLine();
+                }
+
+                Console.WriteLine("=== 端片定解：反解「抽管=0」的舌片保温厚度，(舌长,舌厚) 做 Pareto ===");
+                Console.WriteLine($"盘Ø{2 * discS9:0}／舌末宽 {2 * halfWS9:0}／盘厚 0.4／圆盘包 20／" +
+                                  $"压接 {clampLenS9:0} mm 夹 {clampS9:0} °C／定管根 {tRootS9:0} °C");
+                Console.WriteLine("★ 压接段是等位体不发热 ⇒ **有效发热长度 = 舌长 − 压接长**");
+                Console.WriteLine("「需G」= 该方案要求铜排的热导 W/K；「铜排I²R」是同一根铜排由 WF 定死的电学代价。");
+                Console.WriteLine();
+                ScanS9($"── 端片（I = {687:0} A，单段电流）", 687.0);
+                ScanS9($"── 共用片（I = {1105:0} A，√3 倍）", 1105.0);
+
+                Console.WriteLine("★ 读法：");
+                Console.WriteLine("· 「✓ 可行」= 抽管≈0、局部稳定裕度>1、峰温在拟合区内。");
+                Console.WriteLine("· 同为可行时取**克/片**最小的；再看「铜排I²R」是不是做得出来的铜排。");
+                Console.WriteLine("· 「包满仍抽管」= 该(舌长,舌厚)发热不够，只能再加长舌片。");
+                return;
+            }
+
+            // --cli --busbar2   ★★ 铜排热导边界 + 维德曼–弗兰兹下界
+            //
+            // 起因：--endplate ⑧ 找到了第一个两条约束同时过的格（末20×2.2 包14），
+            // 但它用的是**自由端**——假设铜排完全不导热。而铜排必须导 687 A，
+            // 金属的导电与导热被维德曼–弗兰兹定律锁在一起，**电流引线必然是热漏**。
+            //
+            // 对一根两端温差 ΔT、电阻 R、载流 I 的导体：
+            //     焦耳热  P = I²R            导热漏  Q = L·T̄·ΔT/R      （L = 2.44e-8 W·Ω/K²）
+            //   ⇒ **P·Q = L·T̄·ΔT·I²  与几何无关**（L/A 在两式里正好抵消）
+            //   ⇒ 要「自己发的热盖住自己漏的热」即 P ≥ Q，代入得
+            //     **P ≥ I·√(L·T̄·ΔT)**，对应引线压降 **ΔV ≥ √(L·T̄·ΔT)**。
+            // 这是一条**不含任何几何量**的下界：舌片再怎么改形状都逃不掉，
+            // 只能靠改 I、改 ΔT（接头温度）或认下这份发热。
+            if (args.Contains("--busbar2"))
+            {
+                const double Lorenz = 2.44e-8;          // W·Ω/K²
+                double wallB9 = 0.4, holeB9 = wallB9 + 25.0;
+                double tRootB9 = 1150.0;
+                double iEndB9 = 687.0, iShareB9 = 1105.0;
+
+                var pB9 = SegmentSolver.Clone(p);
+                pB9.Layer1.ThicknessMm = 10.0; pB9.Layer1.Enabled = true;
+                pB9.WallMinMm = wallB9;
+                pB9.FlangeInsulThickMm = 20; pB9.FlangeInsulated = true;
+                pB9.BusbarClampLengthMm = 40;
+                pB9.BusbarSinkTempC = 25;
+
+                Console.WriteLine("=== 铜排：热导边界与维德曼–弗兰兹下界 ===");
+                Console.WriteLine();
+                Console.WriteLine("── ① 闭式下界：引线必然的热漏（**与几何无关**）");
+                Console.WriteLine("   P·Q = L·T̄·ΔT·I²  ⇒  自给要求 P ≥ I·√(L·T̄·ΔT)，压降 ΔV ≥ √(L·T̄·ΔT)");
+                Console.WriteLine($"{"接头°C",8}{"T̄ K",8}{"ΔT K",8}{"端片P_min W",14}{"共用P_min W",14}{"ΔV_min V",12}");
+                foreach (double tj in new[] { 25.0, 100.0, 200.0, 400.0, 700.0, 1000.0 })
+                {
+                    double tBar = ((tRootB9 + 273.15) + (tj + 273.15)) / 2;
+                    double dT = tRootB9 - tj;
+                    double dv = Math.Sqrt(Lorenz * tBar * dT);
+                    Console.WriteLine($"{tj,8:0}{tBar,8:0}{dT,8:0}{iEndB9 * dv,14:0}{iShareB9 * dv,14:0}{dv,12:0.000}");
+                }
+                Console.WriteLine();
+                Console.WriteLine("★ 读法：接头越冷，引线必须发的热越多。接头 100 °C 时端片至少要发 ~110 W，");
+                Console.WriteLine("  而 --endplate 实算端片舌片发热只有 46–185 W ⇒ **这条下界就在工作点上**，不是余量。");
+                Console.WriteLine("  唯一能大幅松动它的是把接头做热（ΔT 小），代价是铜排本身耐不耐。");
+                Console.WriteLine();
+
+                Console.WriteLine("── ② 铜排热导 G 与它的电学代价（同一根铜排，两条性质由 WF 绑定）");
+                Console.WriteLine($"{"G W/K",9}{"L/A m⁻¹",12}{"R_bus Ω",12}{"端片I²R W",12}" +
+                                  $"{"压降 V",10}{"漏热@ΔT1050 W",16}  备注");
+                foreach (double g in new[] { 0.005, 0.01, 0.02, 0.05, 0.1, 0.3, 1.1 })
+                {
+                    double loa = BusbarSizing.CuK / g;                 // L/A  [1/m]
+                    double rBus = BusbarSizing.CuRho(100) * loa;
+                    double pj = iEndB9 * iEndB9 * rBus;
+                    Console.WriteLine($"{g,9:0.000}{loa,12:0}{rBus,12:E2}{pj,12:0}" +
+                        $"{iEndB9 * rBus,10:0.000}{g * 1050,16:0}  " +
+                        (Math.Abs(g - 1.1) < 1e-9 ? "§4.3a 选型的 40×21.8/300mm" :
+                         pj > 300 ? "铜排自身发热过大" : "可做（细长铜排/热断）"));
+                }
+                Console.WriteLine();
+
+                Console.WriteLine("── ③ 数值：把 --endplate ⑧ 的候选放到真实热导边界上");
+                Console.WriteLine("   候选 盘Ø60／舌90末20×2.2／舌包 14 mm／圆盘包 20 mm");
+                Console.WriteLine($"{"G W/K",9}{"接头°C",9}{"铜排带走W",11}{"舌发热",8}{"舌散热",8}" +
+                                  $"{"抽管",8}{"残差",7}{"峰温",7}  判定");
+                foreach (double g in new[] { -1.0, 0.005, 0.01, 0.02, 0.05, 0.1, 0.3, 1.1 })
+                {
+                    var gB9 = new FlangePlate
+                    {
+                        DiscRadiusMm = 30, HoleRadiusMm = holeB9,
+                        TabEndXMm = -90, TabEndHalfWidthMm = 10,
+                        ThicknessMm = 0.4, ThickenedMm = 0.4, TabThicknessMm = 2.2,
+                        InsulBoundaryXMm = double.NaN, TabInsulThickMm = 14.0
+                    };
+                    var mB9 = FlangeMesher.Build(gB9, 0, 2.0, 11.0, 45.0, pB9.BusbarClampLengthMm);
+                    var scB9 = ShellCurrent.Solve(mB9, iEndB9,
+                                    Materials.PtResistivity(tRootB9) * 1e3, tRootB9);
+                    var p2B9 = SegmentSolver.Clone(pB9);
+                    p2B9.TSetC = tRootB9;
+                    p2B9.BusbarClampTempC = -1;
+                    p2B9.BusbarConductanceWPerK = g;
+                    var thB9 = ShellThermal.Solve(mB9, scB9.JMagAPerMm2, p2B9, tRootB9,
+                                    gB9.InsulBoundaryXResolved, tabBoundaryX: gB9.Tangent().X,
+                                    tabInsulThickMm: gB9.TabInsulThickMm);
+                    string vB9 = thB9.OverMelt ? "✗✗ 已熔"
+                               : Math.Abs(thB9.QFromTubeW) < 15 ? "✓ 近平衡"
+                               : thB9.QFromTubeW >= 15 ? "✗ 抽管" : "✗ 倒灌";
+                    if (!thB9.OverMelt && thB9.TTabEndMeanC > 1085) vB9 += "／接头>铜熔点";
+                    else if (!thB9.OverMelt && thB9.TTabEndMeanC > 400) vB9 += "／接头过热";
+                    Console.WriteLine($"{(g < 0 ? "自由端" : g.ToString("0.000")),9}{thB9.TTabEndMeanC,9:0}" +
+                        $"{thB9.QToClampW,11:0}{thB9.QGenTabW,8:0}{thB9.QLossTabW,8:0}" +
+                        $"{(thB9.QFromTubeW >= 0 ? "+" : "−") + Math.Abs(thB9.QFromTubeW).ToString("0"),8}" +
+                        $"{(thB9.EnergyResidualW >= 0 ? "+" : "−") + Math.Abs(thB9.EnergyResidualW).ToString("0.0"),7}" +
+                        $"{thB9.TMaxC,7:0}  {vB9}");
+                }
+                Console.WriteLine();
+                Console.WriteLine("★ 这一节要回答的是：**存不存在一个 G，让接头温度铜受得了、同时抽管≈0**。");
+                Console.WriteLine("  若两者的 G 区间不相交，则舌片必须加长/加厚以提供更多串联热阻 —— 那是要花铂的。");
+                return;
+            }
+
             // --cli --balance   ★ 能量对账：法兰的四项收支，用**独立算出**的量核对
             //
             // 之前铜排那一项是用恒等式反推的，所以「平衡」是循环论证。现在四项全独立：

@@ -35,9 +35,28 @@ public sealed class ShellThermalResult
     public double EnergyResidualW;
     public double PhiOverall;     // 自给率 = 自身发热 / 自身散热
     public double TTabEndMeanC;   // 舌片末端平均温度（铜排压接点）
+
+    /// <summary>
+    /// ★ 分区能量账（圆盘 / 舌片），按 <c>x &lt; 分界</c> 判为舌片（双舌用 |x| &gt; |分界|）。
+    ///
+    /// 为什么必须分区：整片只给一个「发热 &lt; 散热」的结论，指不出**哪一段**亏，
+    /// 而两段的杠杆完全相反 —— 圆盘亏要缩盘径/包保温，舌片亏要窄舌加厚（J 不变、散热减半）。
+    /// §4.3b 曾据闭式断言「窄舌反而更差」，那是把圆盘与舌片的散热混在一个 ΣR 里算的结果；
+    /// 只有把两区分开量，才知道该动谁。全部**只统计自由单元**，口径与
+    /// <see cref="EnergyResidualW"/> 一致（孔单元/舌端单元是定温边界，其收支归边界）。
+    /// </summary>
+    public double QGenDiscW, QLossDiscW, QGenTabW, QLossTabW;
+    public double AreaDiscMm2, AreaTabMm2;
+    /// <summary>面积加权平均温度 °C</summary>
+    public double TDiscMeanC, TTabMeanC;
     public int Iterations;
     public double Residual;
     public bool Converged;
+
+    /// <summary>场里有金属越过铂熔点 ⇒ **该解不存在**，不管能量账闭合得多好。</summary>
+    public bool OverMelt => TMaxC > Materials.PtMeltC;
+    /// <summary>场里有金属越过电阻率拟合覆盖区（1500 °C）⇒ 数值是外推的，不可引用。</summary>
+    public bool OverFitRange => TMaxC > Materials.PtFitMaxC;
 }
 
 public static class ShellThermal
@@ -57,10 +76,27 @@ public static class ShellThermal
     ///   从 24.6 砍到 15.0 A/mm²（实算）。圆盘则不同 —— 它紧贴管子，
     ///   横向导热约 2400，表面项只占 1 %，包保温无害且能降低自给所需厚度。
     /// </param>
+    /// <param name="tabBoundaryX">
+    /// 圆盘/舌片的**几何**分界 x（用于分区能量账）。NaN = 取 <paramref name="insulBoundaryX"/>。
+    /// 两者通常是同一个切点，但保温分界可以被单独挪（如「舌片也包保温」），
+    /// 那时分区仍应按几何切点，否则分区账会跟着保温方案一起变，失去可比性。
+    /// </param>
+    /// <param name="tabInsulThickMm">
+    /// ★ **舌片自己的保温厚度** mm。NaN 或 &lt;0.05 = 舌片裸露（原行为）。
+    ///
+    /// 为什么要把它从圆盘的 <see cref="DesignInputs.FlangeInsulThickMm"/> 里分出来：
+    /// 总纲的自由度 ④ 明写「保温条件：管与法兰**分别**；哪些部位要保温、保多厚」，
+    /// 而此前程序只有「以切点为界：圆盘包 / 舌片裸」这**一个二值开关**。
+    /// 舌片裸露是全片最大的热漏（实测占端片散热的 90 % 以上），
+    /// 它一裸就把端片推成净抽热、一全包又过冲成净倒灌 —— 中间必然存在一个零点。
+    /// 给它一个连续厚度，「端片能不能自给」才从一道是非题变成一个可解的方程。
+    /// </param>
     public static ShellThermalResult Solve(ShellMesh m, double[] jMagAPerMm2, DesignInputs p,
                                            double tRootC, double insulBoundaryX,
                                            bool symmetricInsul = false,
-                                           int maxIter = 60000, double tol = 1e-4)
+                                           int maxIter = 60000, double tol = 1e-4,
+                                           double tabBoundaryX = double.NaN,
+                                           double tabInsulThickMm = double.NaN)
     {
         int n = m.CellCount;
         var res = new ShellThermalResult { T = new double[n] };
@@ -80,11 +116,35 @@ public static class ShellThermal
             x => Insulation.PlateFlux(x, p.TAmbC, insLayers, p.OuterEmissivity, charLen,
                                       p.LossScale) * 1e-6);
 
+        // 舌片自己的保温（见参数注释）。厚度 0 也不等于裸露 —— 裸露是铂表面 ε=0.18，
+        // 而「包了 0 mm」在 PlateFlux 里走的是外覆材料 ε=0.45，两者差 2.5 倍。
+        bool tabInsul = !double.IsNaN(tabInsulThickMm) && tabInsulThickMm >= 0.05;
+        var tabInsLayers = new List<InsulationLayer>
+        {
+            new() { Name = "舌片保温", ThicknessMm = tabInsul ? tabInsulThickMm : 0,
+                    K0 = p.Layer1.K0, K1 = p.Layer1.K1, Enabled = tabInsul }
+        };
+        var tabInsTab = tabInsul
+            ? new LossTable(p.TAmbC, p.TSetC + 200, 60,
+                x => Insulation.PlateFlux(x, p.TAmbC, tabInsLayers, p.OuterEmissivity, charLen,
+                                          p.LossScale) * 1e-6)
+            : bareTab;
+
         var insulated = new bool[n];
+        var lossFor = new LossTable[n];
         for (int i = 0; i < n; i++)
+        {
             insulated[i] = symmetricInsul
                          ? Math.Abs(m.Centroid[i].X) <= Math.Abs(insulBoundaryX)
                          : m.Centroid[i].X >= insulBoundaryX;
+            lossFor[i] = insulated[i] ? insTab : tabInsTab;
+        }
+
+        // ── 舌端边界的三种模式（见 DesignInputs.BusbarConductanceWPerK 的注释）
+        //   ① 热导（G ≥ 0）：q = G·(T − T_冷端)，**物理上唯一自洽的一种**，接头温度是输出
+        //   ② 定温（G < 0 且 ClampTempC ≥ 0）：假设铜排能把接触点按住
+        //   ③ 自由（都不给）：假设铜排完全不导热
+        bool busG = p.BusbarConductanceWPerK >= 0;
 
         // ── 定温边界
         var isFixed = new bool[n];
@@ -97,10 +157,18 @@ public static class ShellThermal
             else if (f.Tag == ShellMesh.TagTabEnd)
             {
                 tabCell[f.A] = true;
-                if (p.BusbarClampTempC >= 0) { isFixed[f.A] = true; res.T[f.A] = p.BusbarClampTempC; }
+                if (!busG && p.BusbarClampTempC >= 0) { isFixed[f.A] = true; res.T[f.A] = p.BusbarClampTempC; }
             }
         }
         for (int i = 0; i < n; i++) if (!isFixed[i]) res.T[i] = tRootC;
+
+        // 总热导按舌端单元面积分摊
+        double tabAreaTot = 0;
+        for (int i = 0; i < n; i++) if (tabCell[i]) tabAreaTot += m.Area[i];
+        var gBus = new double[n];
+        if (busG && tabAreaTot > 1e-9)
+            for (int i = 0; i < n; i++)
+                if (tabCell[i]) gBus[i] = p.BusbarConductanceWPerK * m.Area[i] / tabAreaTot;
 
         // ── 面导度 G = k·t·L/d（k 取两侧调和平均；k 随 T 变化不大，用当前 T 更新）
         int nf = m.Faces.Count;
@@ -144,13 +212,13 @@ public static class ShellThermal
                 double ti = res.T[i], t = m.Thickness[i], A = m.Area[i];
                 // 焦耳热 W：ρe[Ω·mm]·J²[A²/mm⁴]·t[mm]·A[mm²]
                 double qv = Materials.PtResistivity(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t;
-                var tab = insulated[i] ? insTab : bareTab;
+                var tab = lossFor[i];
                 double qs = tab.Eval(ti);                     // W/mm²，单面
                 double slope = Math.Max(0, tab.Slope(ti));    // 线性化散热，稳定迭代
 
-                // (Σg + 2·slope·A)·T = ΣgT + (qv − 2(qs − slope·ti))·A
-                double denom = sumG + 2 * slope * A;
-                double rhs = sumGT + (qv - 2 * (qs - slope * ti)) * A;
+                // (Σg + 2·slope·A + G_铜排)·T = ΣgT + (qv − 2(qs − slope·ti))·A + G_铜排·T_冷端
+                double denom = sumG + 2 * slope * A + gBus[i];
+                double rhs = sumGT + (qv - 2 * (qs - slope * ti)) * A + gBus[i] * p.BusbarSinkTempC;
                 double tNew = rhs / denom;
                 double d = tNew - ti;
                 res.T[i] = ti + relax * d;
@@ -167,7 +235,7 @@ public static class ShellThermal
         {
             double t = m.Thickness[i], A = m.Area[i], ti = res.T[i];
             gen += Materials.PtResistivity(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t * A;
-            loss += 2 * (insulated[i] ? insTab : bareTab).Eval(ti) * A;
+            loss += 2 * lossFor[i].Eval(ti) * A;
         }
         res.QGenW = gen; res.QLossW = loss;
         res.PhiOverall = loss > 1e-12 ? gen / loss : double.NaN;
@@ -181,27 +249,60 @@ public static class ShellThermal
         }
         res.QFromTubeW = q;
 
-        // 铜排带走的热：与管孔同法，对定温的舌端单元累加邻面导度×温差
+        // 铜排带走的热：与管孔同法，对**定温的**舌端单元累加邻面导度×温差
         // （>0 表示热从法兰流进铜排 ⇒ 取负号，因为下式算的是「流出定温单元」）
+        //
+        // ★ 自由端（BusbarClampTempC < 0）时这一项恒等于 0：那时舌端单元不是边界，
+        //   它自己发热、自己散热。此前不分情况一律把舌端单元排除在收支之外，
+        //   再把「流进它们的净热」记到「铜排带走」名下 —— 残差照样闭合（因为稳态下
+        //   那个净流入正等于它们的散热减发热），但**账目是错的**：
+        //   90 mm 舌片有 40 mm 压接段，自由端时那 44 % 的发热与散热被整段抹掉，
+        //   还被贴上「铜排」的标签。§4.3c/§4.3d 的自由端数就是这么读出来的。
+        bool clamped = !busG && p.BusbarClampTempC >= 0;
         double qc = 0;
-        for (int i = 0; i < n; i++)
-        {
-            if (!tabCell[i]) continue;
-            foreach (var (c, k) in nbr[i]) qc += gcond[k] * (res.T[c] - res.T[i]);
-        }
+        if (clamped)
+            for (int i = 0; i < n; i++)
+            {
+                if (!tabCell[i]) continue;
+                foreach (var (c, k) in nbr[i]) qc += gcond[k] * (res.T[c] - res.T[i]);
+            }
+        else if (busG)
+            for (int i = 0; i < n; i++)
+                if (tabCell[i]) qc += gBus[i] * (res.T[i] - p.BusbarSinkTempC);
         res.QToClampW = qc;
 
         // 能量闭合：自由单元的净产热 + 管孔流入 = 铜排带走
         // （定温单元自身的产热与散热由各自的边界吸收，故只累加自由单元）
+        bool Excluded(int i) => holeCell[i] || (tabCell[i] && clamped);
         double genFree = 0, lossFree = 0;
         for (int i = 0; i < n; i++)
         {
-            if (holeCell[i] || tabCell[i]) continue;
+            if (Excluded(i)) continue;
             double t = m.Thickness[i], A = m.Area[i], ti = res.T[i];
             genFree += Materials.PtResistivity(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t * A;
-            lossFree += 2 * (insulated[i] ? insTab : bareTab).Eval(ti) * A;
+            lossFree += 2 * lossFor[i].Eval(ti) * A;
         }
         res.EnergyResidualW = genFree - lossFree + res.QFromTubeW - res.QToClampW;
+
+        // ── 分区账：圆盘 vs 舌片（口径同上，只统计自由单元）
+        double xb = double.IsNaN(tabBoundaryX) ? insulBoundaryX : tabBoundaryX;
+        double gD = 0, lD = 0, aD = 0, tD = 0, gT = 0, lT = 0, aT = 0, tT = 0;
+        for (int i = 0; i < n; i++)
+        {
+            if (Excluded(i)) continue;
+            double t = m.Thickness[i], A = m.Area[i], ti = res.T[i];
+            double g = Materials.PtResistivity(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t * A;
+            double l = 2 * lossFor[i].Eval(ti) * A;
+            bool onTab = symmetricInsul
+                       ? Math.Abs(m.Centroid[i].X) > Math.Abs(xb)
+                       : m.Centroid[i].X < xb;
+            if (onTab) { gT += g; lT += l; aT += A; tT += ti * A; }
+            else { gD += g; lD += l; aD += A; tD += ti * A; }
+        }
+        res.QGenDiscW = gD; res.QLossDiscW = lD; res.AreaDiscMm2 = aD;
+        res.QGenTabW = gT; res.QLossTabW = lT; res.AreaTabMm2 = aT;
+        res.TDiscMeanC = aD > 1e-9 ? tD / aD : double.NaN;
+        res.TTabMeanC = aT > 1e-9 ? tT / aT : double.NaN;
 
         var tabT = Enumerable.Range(0, n).Where(i => tabCell[i]).Select(i => res.T[i]).ToArray();
         res.TTabEndMeanC = tabT.Length > 0 ? tabT.Average() : double.NaN;

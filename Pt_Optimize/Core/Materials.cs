@@ -19,6 +19,17 @@ public static class Materials
     public const double AlphaFit = 0.0039678411655333;      // 鉑金電氣計算.xlsx 全精度
     public const double BetaFit = -5.849309909955442e-07;   // 同上
 
+    /// <summary>
+    /// 纯铂熔点 °C。**任何算例只要有一处金属温度越过它，那个「解」就不存在** ——
+    /// 求解器不会自己拒绝：上面的二次拟合要到 3392 °C 才反号，
+    /// 所以它会心平气和地给出 2981 °C 的舌片温度和一份闭合的能量账。
+    /// 实测教训：舌片包 20 mm 保温的算例正是这样一路「可行」到 2981 °C 的。
+    /// </summary>
+    public const double PtMeltC = 1768.2;
+
+    /// <summary>电阻率拟合的实测覆盖上界 °C（鉑金電氣計算.xlsx 拟合区间 0–1500）。超出即外推。</summary>
+    public const double PtFitMaxC = 1500.0;
+
     public static double PtResistivity(double tC)
         => RhoRef * (1.0 + AlphaFit * tC + BetaFit * tC * tC);
 
@@ -35,6 +46,22 @@ public static class Materials
 
     /// <summary>铂比热 J/(kg·K)。133 @0°C -> ~151 @1300°C</summary>
     public static double PtCp(double tC) => 133.0 + 0.0135 * tC;
+
+    // ---------------- 铂：焊接变形判据用的物性（文献值，非本项目实测） ----------------
+    //
+    // 只服务于 WeldDistortion。它们不进热/电求解链，故与上面的实测拟合分开放，
+    // 免得被误当成同等可信的量。
+
+    /// <summary>线膨胀系数 1/K（室温 8.8e-6，到熔点均值约 1.0e-5，取均值）</summary>
+    public const double PtAlphaExp = 1.0e-5;
+    /// <summary>杨氏模量 Pa（室温 168 GPa）</summary>
+    public const double PtYoungPa = 168e9;
+    /// <summary>泊松比</summary>
+    public const double PtPoisson = 0.39;
+    /// <summary>熔化潜热 J/kg</summary>
+    public const double PtLatentFusion = 113e3;
+    /// <summary>0 °C→熔点的平均比热 J/(kg·K)</summary>
+    public const double PtCpMeanToMelt = 145.0;
 
     // ---------------- 空气（自然对流用） ----------------
 

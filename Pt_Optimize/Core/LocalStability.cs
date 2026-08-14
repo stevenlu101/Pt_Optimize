@@ -42,6 +42,20 @@ public static class LocalStability
     public const double FitMaxC = 1400;
 
     /// <summary>
+    /// 舌片上最不利点到**最近**定温锚点的距离 mm —— 即 J_stab 公式里的 L。
+    ///
+    /// 舌片两端各有一个定温锚点：一端是管孔（经圆盘导过去），另一端是铜排压接段
+    /// （压接段被铜短接成等位体、又被夹到设定温度，热学上就是个定温边界）。
+    /// 最不利点在两者正中 ⇒ L = 自由段长/2，自由段 = 舌长 − 压接长 − |切点x|。
+    ///
+    /// ★ 早先按「到管孔的距离」写成 |xt| + (舌长−|xt|)/2，**把压接那个锚点漏了**：
+    ///   130 mm 舌片下 L 被高估 68.5/41.5 ≈ 1.65 倍 ⇒ J_stab 被低估同样倍数
+    ///   ⇒ 整张 (舌长,舌厚) 扫描表被误判成「全部局部失稳」。
+    /// </summary>
+    public static double TabHalfSpanMm(double tabLenMm, double clampLenMm, double tangentXMm)
+        => Math.Max(1.0, (tabLenMm - clampLenMm - Math.Abs(tangentXMm)) * 0.5);
+
+    /// <summary>
     /// 判一个点。<paramref name="lateralLenMm"/> 是热点到定温边界（管孔）的距离；
     /// 传 NaN 表示不计横向导热（保守）。
     /// </summary>

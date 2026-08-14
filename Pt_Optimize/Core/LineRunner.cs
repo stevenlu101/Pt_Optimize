@@ -151,6 +151,11 @@ public sealed class FlangeOut
     public double QClampW;
     /// <summary>能量闭合残差 W —— 应接近 0，显著非零说明场解有问题</summary>
     public double EnergyResidualW;
+    /// <summary>
+    /// ★ 分区能量账（圆盘 / 舌片，以切点为界）—— 见 <see cref="ShellThermalResult.QGenDiscW"/>。
+    /// 整片一个「发热 &lt; 散热」指不出该动哪一段，而两段的杠杆方向相反。
+    /// </summary>
+    public double QGenDiscW, QLossDiscW, QGenTabW, QLossTabW, TDiscMeanC, TTabMeanC;
     /// <summary>本片贴着的管根温度 °C（管孔定温边界）。TMaxC − TRootC &gt; 0 即「法兰比管热」</summary>
     public double TRootC;
     public double AreaMm2, VolumeMm3;
@@ -430,7 +435,10 @@ public static class LineRunner
             double insulX = analytic ? plate!.InsulBoundaryXResolved
                                      : new FlangePlate().InsulBoundaryXResolved;
             var th = ShellThermal.Solve(mesh, sc.JMagAPerMm2, p2, tRoot, insulX,
-                                        symmetricInsul: analytic && plate!.TwoTabs);
+                                        symmetricInsul: analytic && plate!.TwoTabs,
+                                        tabBoundaryX: analytic ? plate!.Tangent().X : double.NaN,
+                                        tabInsulThickMm: analytic ? plate!.TabInsulThickMm
+                                                                  : double.NaN);
 
             // 逐级峰值温度：按单元厚度归级，取该级内的最高温
             double[] lvTmax = Array.Empty<double>(), lvTh = Array.Empty<double>();
@@ -468,6 +476,9 @@ public static class LineRunner
                 // ★ 改用壳解的**直接通量**，不再用恒等式反推 —— 否则对账是循环论证
                 QClampW = th.QToClampW,
                 EnergyResidualW = th.EnergyResidualW, TRootC = tRoot,
+                QGenDiscW = th.QGenDiscW, QLossDiscW = th.QLossDiscW,
+                QGenTabW = th.QGenTabW, QLossTabW = th.QLossTabW,
+                TDiscMeanC = th.TDiscMeanC, TTabMeanC = th.TTabMeanC,
                 TMaxC = th.TMaxC, TMinC = th.TMinC, TTabEndC = th.TTabEndMeanC,
                 AreaMm2 = mesh.TotalArea, VolumeMm3 = mesh.VolumeMm3,
                 CellCount = mesh.CellCount,
@@ -478,6 +489,13 @@ public static class LineRunner
             };
             if (sc.ConservationError > 1e-3)
                 res.Notes.Add($"{flanges[j].Name}：电流守恒误差 {sc.ConservationError:E2}，偏大");
+            // ★ 熔点护栏：拟合到 3392 °C 才反号，求解器会给出 2900 °C 的「可行解」并闭合能量账
+            if (th.OverMelt)
+                res.Notes.Add($"✗ {flanges[j].Name}：峰值 {th.TMaxC:0} °C 已越过铂熔点 " +
+                              $"{Materials.PtMeltC:0} —— **该解不存在**");
+            else if (th.OverFitRange)
+                res.Notes.Add($"⚠ {flanges[j].Name}：峰值 {th.TMaxC:0} °C 超出电阻率拟合区 " +
+                              $"{Materials.PtFitMaxC:0} °C，数值系外推");
             if (!th.Converged)
                 res.Notes.Add($"{flanges[j].Name}：温度场未收敛（残差 {th.Residual:E2}）");
         }
