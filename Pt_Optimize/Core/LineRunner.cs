@@ -735,8 +735,17 @@ public static class LineRunner
         var hottest = flanges.OrderByDescending(f => f.TMaxC - f.TRootC).First();
         checks.Add(new ConstraintOut
         {
-            Name = "② 法兰最高温 − 管温", Unit = "K", Kind = CheckKind.HardSafety,
-            Actual = hottest.TMaxC - hottest.TRootC, Limit = 0, Ok = hottest.TMaxC <= hottest.TRootC + 1e-6,
+            // ★ 用户 2026-08-15 拍板：判据 ② 取「**B + C 并列**」——
+            //   B = ②′ 管孔净流入须为正（热流方向本身，直接量）
+            //   C = ②″ 圆盘区不得高于管温（贴着管子那一圈，仍用温度）
+            //   本条（**整片**逐点，含舌片）**降为参考量**：
+            //   · 舌片中段离管子 50 mm，中间隔着通电+包保温+远端被 450 °C 铜排拽住的一长条铂，
+            //     它比管热不代表有热流进管 —— §4.2m 早写过「拿它跟管根比是在比两个不相干的位置」。
+            //   · 且它与 C2 **数学上互斥**：管孔一圈净流量≈0 ⇒ ∮q dθ=0 ⇒ q 必然有正有负
+            //     ⇒ 必然存在比管热的点。要整圈都比管冷需冷点深 32 K，而 C2 只许 10 K。
+            //   ⚠ 降级**不等于**放松对舌片的要求：舌片仍由**熔点**与**局部热失稳 J≤J_stab** 管着。
+            Name = "· ② 法兰最高温 − 管温（整片，含舌片）", Unit = "K", Kind = CheckKind.Reference,
+            Actual = hottest.TMaxC - hottest.TRootC, Limit = 0, Ok = true,
             Where = hottest.Name,
             Note = $"法兰 {hottest.TMaxC:0.0} °C vs 管根 {hottest.TRootC:0.0} °C；" +
                    $"Φ={hottest.Phi:0.000}（发热 {hottest.QGenW:0} / 表面散热 {hottest.QLossW:0} W）；" +
@@ -767,14 +776,24 @@ public static class LineRunner
                        $"管孔净流入 {hottestDisc.QFromTubeW:+0;-0} W"
             });
 
-        // ── ②′ 同一条安全线的管侧视角：管根温差必须为**正**（法兰比管冷）
-        var coldest = segs.OrderBy(s => s.RootDeltaK).First();
+        // ── ②′ 同一条安全线的管侧视角：**热不能往管子里灌**
+        //
+        // ⚠ 口径已改（2026-08-15）：原来判「管根温差（控温点 − 管根）须为正」，
+        //   那是拿温差当「热流方向」的代理量 —— 而接上段间导热后，共用法兰处的管温
+        //   由**两侧控温点**决定（实测基线本身就比本段控温点高 63 K，HC2 端被 HC1 拉起来），
+        //   代理量整个被控温点梯度污染，判出 −63 K「法兰在加热管子」，其实法兰只加了几 K。
+        //
+        // 而「热往哪边流」有**直接量**：管孔净流入 QFromTubeW（>0 = 从管子抽热 = 安全）。
+        // 直接量就在手里，没有任何理由再用代理量。
+        var worstFlux = flanges.OrderBy(f => f.QFromTubeW).First();
         checks.Add(new ConstraintOut
         {
-            Name = "②′管根温差 须为正", Unit = "K", Kind = CheckKind.HardSafety,
-            Actual = coldest.RootDeltaK, Limit = 0, LessIsBetter = false,
-            Ok = coldest.RootDeltaK > 0, Where = coldest.Name,
-            Note = coldest.RootDeltaK <= 0 ? "管根比控温点还热 ⇒ 法兰在加热管子" : ""
+            Name = "②′管孔净流入 须为正", Unit = "W", Kind = CheckKind.HardSafety,
+            Actual = worstFlux.QFromTubeW, Limit = 0, LessIsBetter = false,
+            Ok = worstFlux.QFromTubeW > 0, Where = worstFlux.Name,
+            Note = worstFlux.QFromTubeW <= 0
+                 ? "★ 热正在往管子里灌 —— 这是烧断的过程"
+                 : "法兰在从管子抽热，方向安全"
         });
 
         // ── ③ **法兰造成的增量温降** ≤ 上限

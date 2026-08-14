@@ -274,6 +274,33 @@ pandoc docs/Pt_理论模型.md -o docs/Pt_理论模型_v4.0.docx --toc --toc-dep
 
 ---
 
+## 1.9 ★★★★ 已清理的命令与「易误判」清单（2026-08-15）
+
+> 用户 2026-08-15：「把废弃、无用或是错误的计算代码清干净」「**过时的容易造成误判的也清掉**」。
+> 后一条标准更严：**能跑、看着有理有据、但结论是错的**，那种最危险。
+
+### 已删除（会给出自信的错误答案）
+
+| 命令 | 删除原因 | 替代 |
+|---|---|---|
+| `--clampscan` | **方法错**：在**几何固定**下扫压接温度。给出的「300 °C 最优」已被「每档重新定尺寸」的扫描推翻（实际 450 更好）。单变量扫耦合系统 = 沿一条不该走的直线看山 | `--final2` 的外层扫描（每档重新定尺寸） |
+| `--discfit` `--wallfit` `--insulfit` `--lineopt` `--fit2d` `--clampfit` `--flangefit` | LineRunner 之前的老入口，**各自拼 CoupledSolver、两套默认边界**。输出看着能与整线结果比，其实不可比（§7 记过这个坑） | `--final2` / `--run` |
+| `--flare` | §5 已判作废（析晶裕度 −26 K、铂重涨到 4341 g） | — |
+| `--glass` | Φ 与析晶两行走的是**已删除**的旧一维环形模型口径 | `--run` / `--final2` |
+
+### 保留但必须挡住误读
+
+| 命令 | 陷阱 |
+|---|---|
+| `--collar` `--taper` | **单片筛偏乐观约 3 K**（定管根、定电流，看不见耦合）。本轮两次差点据此定案，都靠回整线复核拦住。**只能排序，不能判过/不过** |
+
+### ⚠ 判据定义散在三处 —— 今天连错三次的根源
+
+`LineRunner.Judge`、定尺寸器的控制律、汇总表的判定逻辑，**同一件事写了三遍**。
+2026-08-15 改判据口径时改了三次，每次都漏一处，产生「判据表说过、汇总表说不过」这种
+自相矛盾且**不报错**的输出。
+⇒ **正确修法：Judge 是唯一来源，另两处只读它的结果。**
+
 ## 2. 代码地图
 
 ```
@@ -287,13 +314,19 @@ Pt_Optimize/Core/
   PlateCurrent2D.cs    ★ 二维法兰电流场（变厚度 + σ(T)）
   PlateThermal2D.cs    ★ 二维法兰温度场
   CoupledSolver.cs     ★ 管段 ↔ 法兰 耦合迭代
-  FieldMap.cs          子午面场装配（供绘图）
+  WeldDistortion.cs    ★ 焊接屈曲/烧穿下界（§4.3f）
+  DesignScreen.cs      单片快筛（★ 偏乐观约 3 K，只能排序不能判过/不过）
+  FlangeAutoSizer.cs   自动定厚
+  PlateShapeAnalyzer.cs .3dm 厚度分级
+  ShellMesh/ShellCurrent/ShellThermal.cs  ★ 壳网格 → 电流场 → 温度场（法兰主链）
+  BusbarSizing.cs      ★ 铜排定尺寸（风冷鳍片）
+  LocalStability.cs / FlangeStability.cs  局部与整片热稳定
   Segment.cs           分段定义
   LineSolver.cs        整线分段核算（解析，即时）
   Geometry3dm.cs       ★ 驱动 Pt_Optimize.Geom 子进程 + 判定几何常数 → --geom
-  FlangeRadial.cs      ⚠ 一维环形法兰模型 —— 已作废，见 §5
-  FlangeOptimizer.cs   ⚠ 基于上者的扫描 —— 已作废
-  FlangeThicknessDesign.cs  法兰厚度分布反设计（未完成验证）
+  ⚠ FlangeRadial.cs / FlangeOptimizer.cs / FlangeThicknessDesign.cs / FieldMap.cs
+    —— **这四个文件早已删除**，本地图一直没更新（2026-08-15 修正）。
+       照着找会以为代码丢了。相关结论见 §5。
 
 Pt_Optimize/UI/
   MainForm.cs          主窗体（分段核算页 + 6 个图页签 + 参数 PropertyGrid）
@@ -2611,7 +2644,7 @@ $$P_{max} = J_{allow}^2 \cdot A \cdot \rho_e \cdot L \;\propto\; A \;\propto\; \
    $J$ 与析晶需耦合热解（每段约 30 s）。做完后 §4 的 915 g 才是可交付设计值。
 2. **法兰孔周贴体网格加密** —— 现 $J_{max}$ 有 +3.5 % 网格敏感性，是下界。
 3. **强制对流按实际喷嘴标定** —— 现用平板关联式，射流冲击的真实 h 更高。
-4. `FlangeThicknessDesign.cs` 的厚度分布反设计尚未验证。
+4. ~~`FlangeThicknessDesign.cs` 的厚度分布反设计~~ —— 该文件已删除，条目作废。
 
 ---
 
