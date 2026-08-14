@@ -3035,6 +3035,268 @@ internal static class Program
                 return;
             }
 
+            // --cli --auto2   ★ 逐片夹持 + 自动定厚 同时放开
+            //
+            // --perplate 固定厚度 0.4 只扫夹持，三段 ΔT 落在 +33/−88/+106，一个旋钮压不平。
+            // 本命令把厚度也交给自动定厚，逐片夹持取 §4.3c 的结论：
+            //   端片自由端（它连自己散热都不够，再夹冷只能抽管子）
+            //   共用片夹冷（它发热远超自身散热，多余的要带走）
+            if (args.Contains("--auto2"))
+            {
+                double wallA2 = 0.4, insA2 = 10.0, holeA2 = wallA2 + 25.0;
+
+                Console.WriteLine("=== 逐片夹持 + 自动定厚 ===");
+                Console.WriteLine("端片自由端；共用片夹冷（扫）；四片厚度由自动定厚求");
+                Console.WriteLine();
+                Console.WriteLine($"{"盘Ø",6}{"舌长",6}{"舌半宽",7}{"舌厚",6}{"共用夹持",9}" +
+                                  $"{"四片厚度 mm",24}{"ΔT范围",15}{"总铂g",8}  判定");
+
+                foreach (var (disc2, tabL6, hw6, tt6) in new[]
+                {
+                    (30.0, 90.0, 30.0, 0.8),
+                    (30.0, 90.0, 20.0, 0.8),
+                    (30.0, 90.0, 20.0, 1.5),
+                    (36.0, 90.0, 20.0, 0.8),
+                })
+                    foreach (double ctS2 in new[] { 300.0, 600.0 })
+                    {
+                        var pA2 = SegmentSolver.Clone(p);
+                        pA2.Layer1.ThicknessMm = insA2; pA2.Layer1.Enabled = true;
+                        pA2.WallMinMm = wallA2;
+                        pA2.FlangeInsulThickMm = 20; pA2.FlangeInsulated = true;
+                        pA2.BusbarClampLengthMm = 40;
+
+                        FlangePlate MkA2(double td) => new()
+                        {
+                            DiscRadiusMm = disc2, HoleRadiusMm = holeA2,
+                            TabEndXMm = -tabL6, TabEndHalfWidthMm = hw6,
+                            ThicknessMm = td, ThickenedMm = td, TabThicknessMm = tt6,
+                            InsulBoundaryXMm = double.NaN
+                        };
+                        var lcA2 = new LineCase
+                        {
+                            Base = pA2, WallMm = wallA2, UseMeasuredCurrent = false, CheckRamp = false,
+                            SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                            FlangePlates = new[] { MkA2(0.5), MkA2(0.5), MkA2(0.5), MkA2(0.5) },
+                            ClampTempC = new[] { -1.0, ctS2, ctS2, -1.0 }
+                        };
+                        var rA2 = FlangeAutoSizer.SolveAuto(lcA2, MkA2,
+                                      new[] { 0.5, 0.5, 0.5, 0.5 }, new FlangeAutoSizer.Options(),
+                                      new SyncProgress<string>(_ => { }), default);
+                        if (rA2.Line is not { Ok: true } lr6)
+                        { Console.WriteLine($"{2 * disc2,6:0}{tabL6,6:0}{hw6,7:0}{tt6,6:0.0}{ctS2,9:0}" +
+                                            $"   ✗ {rA2.Message}"); continue; }
+                        double dmin2 = lr6.Segments.Min(x => x.RootDeltaK);
+                        double dmax2 = lr6.Segments.Max(x => x.RootDeltaK);
+                        bool ok2 = rA2.Converged && lr6.Converged && dmin2 > 0 && dmax2 <= 10;
+                        Console.WriteLine($"{2 * disc2,6:0}{tabL6,6:0}{hw6,7:0}{tt6,6:0.0}{ctS2,9:0}" +
+                            $"{string.Join("/", rA2.ThicknessMm.Select(x => x.ToString("0.00"))),24}" +
+                            $"{$"{dmin2:+0.0;-0.0}~{dmax2:+0.0;-0.0}",15}{lr6.TotalMassG,8:0}  " +
+                            (ok2 ? "✓ 全过" : dmin2 <= 0 ? "✗倒灌" : $"✗最大{dmax2:0}K"));
+                    }
+                Console.WriteLine();
+                Console.WriteLine("★ 若仍无解且厚度顶在下界 ⇒ 面积太大，须回到几何（缩盘/窄舌）或电流（改接线）。");
+                return;
+            }
+
+            // --cli --perplate   ★ 逐片夹持温度独立：端片自由端 + 共用片夹冷
+            //
+            // §4.3c：共用片自由端时发热 490 W 远超自身散热 ⇒ 往管子灌（ΔT 变负）；
+            //        端片自由端时发热 156 W 仍不够自己散热 ⇒ 仍抽管子（ΔT 正）。
+            // 两者需要相反的处置 ⇒ 夹持温度必须逐片给。
+            if (args.Contains("--perplate"))
+            {
+                double wallP = 0.4, insP = 10.0, holeP = wallP + 25.0;
+                double discP = 30.0, tabLP = 90.0, hwP = 30.0, ttP = 0.8;
+
+                Console.WriteLine("=== 逐片夹持温度：端片自由端 + 共用片夹冷 ===");
+                Console.WriteLine($"几何 盘Ø{2 * discP:0}／舌 {tabLP:0}×{2 * hwP:0}×{ttP:0.00}／厚度全 0.4 mm");
+                Console.WriteLine("端片固定自由端（−1）；只扫共用片的夹持温度");
+                Console.WriteLine();
+                Console.WriteLine($"{"共用片夹持",12}{"HC1 ΔT",10}{"HC2 ΔT",10}{"HC3 ΔT",10}" +
+                                  $"{"共用发热",10}{"共用铜排",10}{"端片ΔT贡献",12}  评价");
+
+                foreach (double ctS in new[] { 200.0, 400.0, 600.0, 800.0, -1.0 })
+                {
+                    var pP = SegmentSolver.Clone(p);
+                    pP.Layer1.ThicknessMm = insP; pP.Layer1.Enabled = true;
+                    pP.WallMinMm = wallP;
+                    pP.FlangeInsulThickMm = 20; pP.FlangeInsulated = true;
+                    pP.BusbarClampLengthMm = 40;
+
+                    FlangePlate MkP(double td) => new()
+                    {
+                        DiscRadiusMm = discP, HoleRadiusMm = holeP,
+                        TabEndXMm = -tabLP, TabEndHalfWidthMm = hwP,
+                        ThicknessMm = td, ThickenedMm = td, TabThicknessMm = ttP,
+                        InsulBoundaryXMm = double.NaN
+                    };
+                    var lcP = new LineCase
+                    {
+                        Base = pP, WallMm = wallP, UseMeasuredCurrent = false, CheckRamp = false,
+                        SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                        FlangePlates = new[] { MkP(0.4), MkP(0.4), MkP(0.4), MkP(0.4) },
+                        ClampTempC = new[] { -1.0, ctS, ctS, -1.0 }   // 端片自由、共用夹冷
+                    };
+                    LineResult rP;
+                    try { rP = LineRunner.Run(lcP); }
+                    catch (Exception ex) { Console.WriteLine($"{ctS,12:0}  异常 {ex.Message}"); continue; }
+                    if (!rP.Ok) { Console.WriteLine($"{ctS,12:0}  {rP.Message}"); continue; }
+
+                    double dmin = rP.Segments.Min(x => x.RootDeltaK);
+                    double dmax = rP.Segments.Max(x => x.RootDeltaK);
+                    Console.WriteLine($"{(ctS < 0 ? "自由端" : ctS.ToString("0")),12}" +
+                        $"{rP.Segments[0].RootDeltaK,10:+0.0;-0.0}{rP.Segments[1].RootDeltaK,10:+0.0;-0.0}" +
+                        $"{rP.Segments[2].RootDeltaK,10:+0.0;-0.0}" +
+                        $"{rP.Flanges[1].QGenW,10:0}{rP.Flanges[1].QClampW,10:0}" +
+                        $"{rP.Flanges[0].QFromTubeW,12:+0;-0}  " +
+                        (dmin > 0 && dmax <= 10 ? "✓ 全过" :
+                         dmin <= 0 ? "✗ 有段倒灌" : $"✗ 最大 {dmax:0} K"));
+                }
+                Console.WriteLine();
+                Console.WriteLine("★ 找「三段都为正且都 ≤10」的那一档。若找不到，说明厚度也要跟着调 ——");
+                Console.WriteLine("  但厚度已顶在 0.4 下界，那就要回到几何（缩面积）或电流（改接线）。");
+                return;
+            }
+
+            // --cli --meshcost   ★ 细网格半径的等价性验证：长舌片能不能交给粗网格
+            //
+            // 实测 --asym 单格 10 min（预估 1.5 min，超 6.7 倍），排查是舌片 90mm 使单元数暴涨。
+            // fineRadius 控制「多大半径内用细网格」。孔周必须细（§2.5 的教训），
+            // 但**长舌片属于远场**，粗一点应无害 —— 必须先验证，不能直接改。
+            if (args.Contains("--meshcost"))
+            {
+                var pM = SegmentSolver.Clone(p);
+                pM.Layer1.ThicknessMm = 10; pM.Layer1.Enabled = true;
+                pM.WallMinMm = 0.4;
+                pM.FlangeInsulThickMm = 20; pM.FlangeInsulated = true;
+                pM.BusbarClampLengthMm = 40;
+
+                Console.WriteLine("=== 细网格半径的等价性验证 ===");
+                Console.WriteLine("孔 R25.4／盘 Ø60／共用舌 90×60×0.8；只改 fineRadius");
+                Console.WriteLine($"{"fineR",8}{"单元数",8}{"HC1 ΔT",10}{"HC2 ΔT",10}{"HC3 ΔT",10}" +
+                                  $"{"总铂g",8}{"用时s",8}");
+                foreach (double fr in new[] { 45.0, 35.0, 30.0 })
+                {
+                    FlangePlate MkM(double td, double tabLen) => new()
+                    {
+                        DiscRadiusMm = 30, HoleRadiusMm = 25.4,
+                        TabEndXMm = -tabLen, TabEndHalfWidthMm = 30,
+                        ThicknessMm = td, ThickenedMm = td, TabThicknessMm = 0.8,
+                        InsulBoundaryXMm = double.NaN
+                    };
+                    var lcM = new LineCase
+                    {
+                        Base = pM, WallMm = 0.4, UseMeasuredCurrent = false, CheckRamp = false,
+                        SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                        ClampTempC = new[] { -1.0, 300.0, 300.0, -1.0 },
+                        MeshFineRadiusMm = fr,
+                        FlangePlates = new[] { MkM(0.4, 50), MkM(0.4, 90), MkM(0.4, 90), MkM(0.4, 50) }
+                    };
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    LineResult rM;
+                    try { rM = LineRunner.Run(lcM); } catch (Exception ex)
+                    { Console.WriteLine($"{fr,8:0}  异常 {ex.Message}"); continue; }
+                    sw.Stop();
+                    if (!rM.Ok) { Console.WriteLine($"{fr,8:0}  {rM.Message}"); continue; }
+                    Console.WriteLine($"{fr,8:0}{rM.Flanges[1].CellCount,8}" +
+                        $"{rM.Segments[0].RootDeltaK,10:+0.0;-0.0}{rM.Segments[1].RootDeltaK,10:+0.0;-0.0}" +
+                        $"{rM.Segments[2].RootDeltaK,10:+0.0;-0.0}{rM.TotalMassG,8:0}" +
+                        $"{sw.Elapsed.TotalSeconds,8:0.0}");
+                }
+                Console.WriteLine();
+                Console.WriteLine("★ 若 ΔT 三段都基本不变而用时大降 ⇒ 长舌片可以交给粗网格，提速是安全的。");
+                Console.WriteLine("  若 ΔT 变了 ⇒ 舌片也参与决定管根温差，不能粗 —— 那就只能减格数。");
+                return;
+            }
+
+            // --cli --asym   ★★ 端片与共用片**形状也不同**：端片短舌自由端、共用片长舌夹冷
+            //
+            // 依据（§4.3c 的数据）：
+            //   · 共用片夹持只影响 HC2；HC1/HC3 由端片决定，而端片已自由端+0.4mm，调无可调
+            //   · 端片账：发热 156 W < 散热 237 W，差 81 W 只能从管子补
+            //   · **端片自由端 ⇒ 不需要 45 mm「有效导热长」**（那条来自限制流向冷夹持的热，
+            //     没有冷源就不存在）⇒ 舌片只留压接需要的长度 ⇒ 面积小 ⇒ 散热小
+            if (args.Contains("--asym"))
+            {
+                double wallA2 = 0.4, insA2 = 10.0, holeA2 = wallA2 + 25.0;
+
+                Console.WriteLine("=== 端片/共用片 形状与夹持都独立 ===");
+                Console.WriteLine("端片：短舌（只留压接长）+ 自由端　共用片：长舌 + 夹冷");
+                Console.WriteLine("四片厚度由自动定厚求；管壁 0.4／管纤维 10／圆盘包 20、舌片裸露");
+                Console.WriteLine();
+                Console.WriteLine($"{"端片舌长",9}{"共用舌长",9}{"共用夹持",9}" +
+                                  $"{"四片厚度 mm",24}{"ΔT范围",15}{"总铂g",8}  判定");
+
+                foreach (double endTab in new[] { 50.0, 60.0 })
+                    foreach (double shTab in new[] { 90.0, 130.0 })
+                        foreach (double shClamp in new[] { 300.0, 600.0 })
+                        {
+                            var pA2 = SegmentSolver.Clone(p);
+                            pA2.Layer1.ThicknessMm = insA2; pA2.Layer1.Enabled = true;
+                            pA2.WallMinMm = wallA2;
+                            pA2.FlangeInsulThickMm = 20; pA2.FlangeInsulated = true;
+                            pA2.BusbarClampLengthMm = 40;
+
+                            FlangePlate MkA2(double td, double tabLen) => new()
+                            {
+                                DiscRadiusMm = 30, HoleRadiusMm = holeA2,
+                                TabEndXMm = -tabLen, TabEndHalfWidthMm = 30,
+                                ThicknessMm = td, ThickenedMm = td, TabThicknessMm = 0.8,
+                                InsulBoundaryXMm = double.NaN
+                            };
+                            // 四片：端片用 endTab，共用片用 shTab
+                            Func<double[], FlangePlate[]> mk4 = t => new[]
+                            {
+                                MkA2(t[0], endTab), MkA2(t[1], shTab),
+                                MkA2(t[2], shTab), MkA2(t[3], endTab)
+                            };
+
+                            var lcA2 = new LineCase
+                            {
+                                Base = pA2, WallMm = wallA2, UseMeasuredCurrent = false,
+                                CheckRamp = false, SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                                ClampTempC = new[] { -1.0, shClamp, shClamp, -1.0 },
+                                FlangePlates = mk4(new[] { 0.4, 0.8, 0.8, 0.4 })
+                            };
+
+                            // 手工阻尼牛顿（因为 makePlate 要按片给不同舌长，SolveAuto 的单参签名不够）
+                            var t4 = new[] { 0.5, 0.9, 0.8, 0.5 };
+                            LineResult? best = null;
+                            for (int it = 0; it < 30; it++)
+                            {
+                                lcA2.FlangePlates = mk4(t4);
+                                LineResult rA;
+                                try { rA = LineRunner.Run(lcA2); } catch { break; }
+                                if (!rA.Ok) break;
+                                best = rA;
+                                var er = rA.Segments.Select(x => x.RootDeltaK - 5.0).ToArray();
+                                if (er.Max(Math.Abs) < 2.0) break;
+                                int pin = 0;
+                                for (int j = 0; j < 4; j++)
+                                {
+                                    double e = j == 0 ? er[0] : j >= 3 ? er[2] : 0.5 * (er[j - 1] + er[j]);
+                                    double want = t4[j] * Math.Exp(Math.Clamp(-0.6 * e / 800, -0.35, 0.35));
+                                    double nx = Math.Clamp(want, 0.4, 6.0);
+                                    if ((want < 0.4 && t4[j] <= 0.4001) || (want > 6 && t4[j] >= 5.999)) pin++;
+                                    t4[j] = nx;
+                                }
+                                if (pin == 4) break;
+                            }
+                            if (best is null) { Console.WriteLine($"{endTab,9:0}{shTab,9:0}{shClamp,9:0}  求解失败"); continue; }
+                            double dmin = best.Segments.Min(x => x.RootDeltaK);
+                            double dmax = best.Segments.Max(x => x.RootDeltaK);
+                            bool ok = best.Converged && dmin > 0 && dmax <= 10;
+                            Console.WriteLine($"{endTab,9:0}{shTab,9:0}{shClamp,9:0}" +
+                                $"{string.Join("/", t4.Select(x => x.ToString("0.00"))),24}" +
+                                $"{$"{dmin:+0.0;-0.0}~{dmax:+0.0;-0.0}",15}{best.TotalMassG,8:0}  " +
+                                (ok ? "✓" : dmin <= 0 ? "✗倒灌" : $"✗最大{dmax:0}K"));
+                        }
+                Console.WriteLine();
+                Console.WriteLine("★ 端片短舌是这一步的关键：自由端没有冷源，就不需要长舌去拉开导热路径。");
+                return;
+            }
+
             // --cli --freeend   ★ 端片改自由端（不夹冷）：能否解开「自给 vs 电流密度」的死结
             //
             // 我一路默认四片都夹冷 300 °C —— **那是我加的假设，不是用户给的条件**。
