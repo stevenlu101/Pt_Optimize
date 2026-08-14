@@ -112,6 +112,28 @@ public sealed class FlangePlate
     public double ThickenedMm = 2.0;
 
     /// <summary>
+    /// **管↔圆盘内孔的角焊缝焊脚** mm（用户 2026-08-14 附图：两面各一道角焊缝）。
+    ///
+    /// 焊后孔边不是齐平的，两面各堆出一个焊角 ⇒ 该处**截面积增加**。
+    /// 按用户附图，焊角剖面是**凹圆弧**（不是三角形）——自熔小角焊缝被表面张力拉成凹面：
+    ///     h(d) = a − √(a² − (d−a)²),  d = r − r_孔 ∈ [0, a],  a = 焊脚
+    ///     t_eff(r) = t_盘 + 2·h(d)      （两面各一道）
+    /// 孔边加 2a，到 d = a 处收回原厚。
+    ///
+    /// ★ 凹面比三角形少很多料：单道面积 a²(1−π/4) = 0.215a²，
+    ///   而三角形是 0.5a² ⇒ **只有 43 %**。按三角形建模会把焊缝的好处高估 2.3 倍。
+    ///
+    /// 为什么它值得建模：孔周正是全片**电流密度峰值**所在（§4.6：J_max/J_rms = 2.17），
+    /// 而面电流守恒 K = J·t ⇒ **增厚直接按比例压低该处的 J 与单位面积发热**。
+    /// 也就是说焊缝在电学上是**有利**的，此前把孔边按等厚处理是偏保守的一侧。
+    ///
+    /// ⚠ 焊脚只有 0.5–1 mm 量级，比孔周网格（2 mm）还细 ⇒ 本项在网格上是**抹平**的，
+    /// 只反映「截面增加了多少」，不反映焊趾处的真实局部场。要看真实峰值须另加密。
+    /// 0 = 不计焊缝（旧行为）。
+    /// </summary>
+    public double WeldFilletLegMm = 0.0;
+
+    /// <summary>
     /// 舌片厚度 mm。NaN = 与圆盘同厚（默认，即原来的单一厚度行为）。
     ///
     /// 分开设厚是一个独立自由度：单位面积发热 ∝ J²·t = (K/t)²·t = K²/t，
@@ -154,13 +176,24 @@ public sealed class FlangePlate
         if (onTab) return TabThicknessMm;
 
         double r = Math.Sqrt(x * x + z * z);
+
+        // 角焊缝：两面各堆一个**凹圆弧**焊角（见 WeldFilletLegMm）。
+        // 与下面各种「厚度分区」是**叠加**关系，不是覆盖 —— 焊缝是焊上去的额外金属。
+        double weld = 0.0;
+        if (WeldFilletLegMm > 1e-9)
+        {
+            double a = WeldFilletLegMm, d = r - HoleRadiusMm;
+            if (d >= 0 && d < a)
+                weld = 2.0 * (a - Math.Sqrt(Math.Max(0, a * a - (d - a) * (d - a))));
+        }
+
         int nStep = Math.Min(DiscStepRadiiMm.Length, DiscStepThicknessMm.Length);
         for (int k = 0; k < nStep; k++)
-            if (r <= DiscStepRadiiMm[k]) return DiscStepThicknessMm[k];
-        if (nStep > 0) return ThicknessMm;                       // 阶梯已给，外缘取基准厚
+            if (r <= DiscStepRadiiMm[k]) return DiscStepThicknessMm[k] + weld;
+        if (nStep > 0) return ThicknessMm + weld;                // 阶梯已给，外缘取基准厚
 
-        if (ThickenRadiusMm > HoleRadiusMm && r <= ThickenRadiusMm) return ThickenedMm;
-        return ThicknessMm;
+        if (ThickenRadiusMm > HoleRadiusMm && r <= ThickenRadiusMm) return ThickenedMm + weld;
+        return ThicknessMm + weld;
     }
 
     /// <summary>切点：舌片直边与 Ø120 圆相切处（等宽舌片时是直边与圆的**交点**）</summary>

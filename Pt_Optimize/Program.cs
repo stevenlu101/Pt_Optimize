@@ -3649,6 +3649,152 @@ internal static class Program
                 return;
             }
 
+            // --cli --linefinal   ★★★★ 整线自洽复核：把 --endsolve 的候选放进 LineRunner
+            //
+            // 为什么必须再跑一遍整线：--endsolve 是**单片、定管根、定电流**的筛子，
+            // 其中电流 687/1105 是按**壁厚 0.4** 算出来的旧数。改成焊接下界 0.6 后
+            // I ∝ √壁厚 ⇒ 电流涨约 22 %、法兰发热涨约 50 %，单片筛的结论会整体漂移。
+            // 只有 LineRunner 才同时解：逐段电流、段↔法兰耦合、管根温差 C2、升温规程。
+            //
+            // 外层再套一个**逐片调舌片保温**的定点迭代：保温是不花铂的连续旋钮（§4.3e），
+            // 让它去顶 C2，铂重就只由(舌长,末宽,舌厚)决定 —— 这正是想要的解耦。
+            if (args.Contains("--linefinal"))
+            {
+                double wallF9 = p.WeldMinThicknessMm;      // 焊接下界（用户 2026-08-14）
+                double tDiscF9 = 0.5, discF9 = 30.0, holeF9 = wallF9 + 25.0;
+                double clampLenF9 = 40.0, clampF9 = 300.0;
+                double targetF9 = 5.0;                     // 管根温差目标 K（C2 上限 10）
+
+                var pF9 = SegmentSolver.Clone(p);
+                pF9.Layer1.ThicknessMm = 10.0; pF9.Layer1.Enabled = true;
+                pF9.WallMinMm = wallF9;
+                pF9.FlangeInsulThickMm = 20; pF9.FlangeInsulated = true;
+                pF9.BusbarClampLengthMm = clampLenF9;
+                pF9.BusbarClampTempC = clampF9;
+
+                // --endsolve 选出的最轻可行候选（端片 / 共用片）
+                var geoF9 = new[]
+                {
+                    (nm: "入口端片",  tabL: 90.0,  halfW: 15.0, tTab: 0.9, ins: 1.9),
+                    (nm: "HC1|HC2", tabL: 90.0,  halfW: 15.0, tTab: 1.8, ins: 25.7),
+                    (nm: "HC2|HC3", tabL: 90.0,  halfW: 15.0, tTab: 1.8, ins: 25.7),
+                    (nm: "出口端片",  tabL: 90.0,  halfW: 15.0, tTab: 0.9, ins: 1.9),
+                };
+                var insF9 = geoF9.Select(g => g.ins).ToArray();
+                var tabF9 = geoF9.Select(g => g.tTab).ToArray();
+                const double insLoF9 = 0.5, insHiF9 = 30.0;
+
+                LineCase MakeF9(double[] ins, double[] tab)
+                {
+                    var plates = new FlangePlate[4];
+                    for (int j = 0; j < 4; j++)
+                        plates[j] = new FlangePlate
+                        {
+                            DiscRadiusMm = discF9, HoleRadiusMm = holeF9,
+                            TabEndXMm = -geoF9[j].tabL, TabEndHalfWidthMm = geoF9[j].halfW,
+                            ThicknessMm = tDiscF9, ThickenedMm = tDiscF9,
+                            TabThicknessMm = tab[j],
+                            InsulBoundaryXMm = double.NaN, TabInsulThickMm = ins[j],
+                            TabParallel = true,
+                            // 角焊缝：焊脚取较薄件的厚度（常规做法），管↔盘两面各一道。
+                            // 它在孔周增厚 ⇒ 压低该处 J 与单位面积发热（用户 2026-08-14 附图）。
+                            WeldFilletLegMm = Math.Max(tDiscF9, wallF9)
+                        };
+                    return new LineCase
+                    {
+                        Base = SegmentSolver.Clone(pF9), WallMm = wallF9,
+                        UseMeasuredCurrent = false, CheckRamp = false,
+                        SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                        FlangePlates = plates,
+                        ClampTempC = new[] { clampF9, clampF9, clampF9, clampF9 }
+                    };
+                }
+
+                Console.WriteLine("=== 整线自洽复核（--endsolve 候选 → LineRunner）===");
+                Console.WriteLine($"管壁 {wallF9:0.0}（焊接下界）／盘Ø{2 * discF9:0}×{tDiscF9:0.0}／" +
+                                  $"等宽舌片／压接 {clampLenF9:0} 夹 {clampF9:0} °C／圆盘包 20");
+                Console.WriteLine("外层**双旋钮**定点迭代顶管根温差 C2：");
+                Console.WriteLine("  · 首选**舌片保温厚度** —— 不花铂，所以先用它");
+                Console.WriteLine("  · 保温顶到边界还不够时，才动**舌片厚度**（发热 ∝ 1/t，这一项要花铂）");
+                Console.WriteLine();
+                Console.WriteLine($"{"轮",4}{"保温 入/共1/共2/出",22}{"舌厚 入/共1/共2/出",22}" +
+                                  $"{"HC1 ΔT",9}{"HC2 ΔT",9}{"HC3 ΔT",9}  状态");
+
+                LineResult? last = null;
+                for (int round = 0; round < 24; round++)
+                {
+                    LineResult rF9;
+                    try { rF9 = LineRunner.Run(MakeF9(insF9, tabF9)); }
+                    catch (Exception ex) { Console.WriteLine($"{round,4}  异常 {ex.Message}"); break; }
+                    if (!rF9.Ok) { Console.WriteLine($"{round,4}  ✗ {rF9.Message}"); break; }
+                    last = rF9;
+
+                    var dt = rF9.Segments.Select(s => s.RootDeltaK).ToArray();
+                    Console.WriteLine($"{round,4}" +
+                        $"{string.Join("/", insF9.Select(v => v.ToString("0.0"))),22}" +
+                        $"{string.Join("/", tabF9.Select(v => v.ToString("0.00"))),22}" +
+                        $"{dt[0],9:+0.0;−0.0}{dt[1],9:+0.0;−0.0}{dt[2],9:+0.0;−0.0}  " +
+                        (rF9.Converged ? "耦合✓" : "耦合⚠"));
+
+                    if (dt.All(d => d > 0 && d <= 10.0)) { Console.WriteLine("   ⇒ C2 全过，停"); break; }
+
+                    // 片 j 影响段 j−1 与 j。误差 e>0 = 管根偏冷 = 法兰在抽热 ⇒ 要**减**法兰的净吸热。
+                    var nIns = (double[])insF9.Clone();
+                    var nTab = (double[])tabF9.Clone();
+                    bool moved = false;
+                    for (int j = 0; j < 4; j++)
+                    {
+                        double e = 0; int c = 0;
+                        if (j - 1 >= 0 && j - 1 < dt.Length) { e += dt[j - 1] - targetF9; c++; }
+                        if (j < dt.Length) { e += dt[j] - targetF9; c++; }
+                        if (c == 0) continue;
+                        e /= c;
+                        if (Math.Abs(e) < 1.0) continue;
+
+                        // ① 先动保温（不花铂）：抽热 ⇒ 加保温；倒灌 ⇒ 减保温
+                        double want = Math.Clamp(insF9[j] + 0.06 * e, insLoF9, insHiF9);
+                        if (Math.Abs(want - insF9[j]) > 1e-9) { nIns[j] = want; moved = true; continue; }
+
+                        // ② 保温已顶到边界仍不够 ⇒ 动舌厚。发热 ∝ 1/t：
+                        //    倒灌(e<0, 发热过多) ⇒ 加厚；抽热(e>0, 发热不足) ⇒ 减薄。
+                        double step = Math.Clamp(0.004 * Math.Abs(e), 0.01, 0.15);
+                        double t2 = e < 0 ? tabF9[j] * (1 + step) : tabF9[j] * (1 - step);
+                        nTab[j] = Math.Clamp(t2, 0.3, 4.0);
+                        if (Math.Abs(nTab[j] - tabF9[j]) > 1e-9) moved = true;
+                    }
+                    if (!moved) { Console.WriteLine("   ⇒ 两个旋钮都到位或都顶死，停"); break; }
+                    insF9 = nIns; tabF9 = nTab;
+                }
+
+                if (last != null)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("── 逐片明细");
+                    Console.WriteLine($"{"片",10}{"电流A",8}{"舌厚",7}{"舌保温",8}{"盘净W",8}{"舌净W",8}" +
+                                      $"{"铜排W",8}{"抽管W",8}{"残差",7}{"峰温",7}{"克",7}");
+                    for (int j = 0; j < last.Flanges.Length; j++)
+                    {
+                        var f = last.Flanges[j];
+                        Console.WriteLine($"{f.Name,10}{f.CurrentA,8:0}{tabF9[j],7:0.00}{insF9[j],8:0.0}" +
+                            $"{f.QGenDiscW - f.QLossDiscW,8:+0;−0}{f.QGenTabW - f.QLossTabW,8:+0;−0}" +
+                            $"{f.QClampW,8:0}{f.QFromTubeW,8:+0;−0}{f.EnergyResidualW,7:+0.0;−0.0}" +
+                            $"{f.TMaxC,7:0}{f.MassG,7:0}");
+                    }
+                    Console.WriteLine();
+                    Console.WriteLine($"{"段",10}{"控温°C",9}{"电流A",8}{"管根ΔT K",11}{"管 J",8}{"克",8}");
+                    foreach (var s in last.Segments)
+                        Console.WriteLine($"{s.Name,10}{s.SetpointC,9:0}{s.CurrentA,8:0}" +
+                            $"{s.RootDeltaK,11:+0.0;−0.0}{s.TubeJAPerMm2,8:0.00}{s.MassG,8:0}");
+                    Console.WriteLine();
+                    double mFl = last.Flanges.Sum(f => f.MassG), mSeg = last.Segments.Sum(s => s.MassG);
+                    Console.WriteLine($"铂重：管 {mSeg:0} + 法兰 {mFl:0} = **{mSeg + mFl:0} g**" +
+                                      $"　（现状基准 {last.BaselineMassG:0} g ⇒ 省 " +
+                                      $"{(1 - (mSeg + mFl) / last.BaselineMassG) * 100:0.0} %）");
+                    foreach (var n in last.Notes) Console.WriteLine("  " + n);
+                }
+                return;
+            }
+
             // --cli --weldmin   ★★★★ 焊接变形定的工艺下界（用户 2026-08-14：「这应该是第一步」）
             //
             // 见 WeldDistortion 的类注释：屈曲那一半能算（且 E 与 ρ 都约掉，只剩热学量与
