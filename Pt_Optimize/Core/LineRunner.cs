@@ -103,7 +103,19 @@ public sealed class LineCase
     // ── 判据（HANDOVER §4.2k 的判据体系）
     /// <summary>规程一：空管升温。关掉可省几秒，但那是**决定最小截面**的那条，默认开。</summary>
     public bool CheckRamp = true;
-    public double RampFromC = 25, RampTargetC = 1150, RampHours = 3.0;
+    public double RampFromC = 25, RampTargetC = 1150;
+
+    /// <summary>
+    /// 升温限时 h。**2026-08-14 由 3.0 改为 72.0** —— 3 h 是 §6 旧笔记里的假设，
+    /// 而用户给的边界条件是「升温时间上限 **≤ 3 天**」（≈ 现状 20 °C/h：
+    /// 25→1150 °C 需 56 h）。
+    ///
+    /// ⚠ 这个数不是无关紧要的显示项：`RampSolver.Reached` 的语义是
+    /// **「限时内到不到」**，不是「渐近能不能到」。用 3 h 去判会把
+    /// 「升得慢」误报成「升不到」—— 我据此写过一条「管壁 0.30 是硬物理墙」的结论，
+    /// 是错的（见 §4.3i 的更正）。改限时后必须重跑所有带 CheckRamp 的算例。
+    /// </summary>
+    public double RampHours = 72.0;
     /// <summary>管根温差目标上限 K（③）。下限恒为 0：温差必须为正，即法兰比管冷。</summary>
     public double RootDeltaMaxK = 10.0;
 

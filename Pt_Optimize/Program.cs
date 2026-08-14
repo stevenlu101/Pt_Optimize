@@ -3846,49 +3846,751 @@ internal static class Program
                 return;
             }
 
+            // --cli --weldvalue   ★★★★ 「换一种焊接方法值多少铂」——用户 2026-08-14 答「目前手工焊接」
+            //
+            // 为什么这条现在最值钱：定案方案 2204 g 里**管子占 1841 g（84 %）**，
+            // 而管壁的下界**唯一**由焊接方法定（--weldmin ③：管侧圆筒不会屈曲，只可能烧穿）。
+            // 圆盘那一侧反而不受影响 —— 它的屈曲下界 0.55 mm 已被电热约束（1.0–2.0 mm）盖住。
+            // ⇒ 整条「焊接方法 → 省铂」的传导路径只有一条：**管壁**。
+            //
+            // 不能只按 m ∝ 壁厚 换算，因为薄壁会同时动三样：
+            //   ① I ∝ √壁厚 ⇒ 法兰发热 ∝ I² ∝ 壁厚 ⇒ 法兰要跟着重新定尺寸（否则倒灌或抽热）
+            //   ② 管 J ∝ 1/√壁厚 ⇒ 会去顶热稳定极限
+            //   ③ 可用功率 ∝ 截面 ⇒ 升温时间变长，可能顶穿「≤3 天」
+            // 所以每一档都得把整线重解一遍。
+            if (args.Contains("--weldvalue"))
+            {
+                double discW9 = 30.0, clampLenW9 = 40.0, clampW9 = 300.0, targetW9 = 5.0;
+
+                // 各档焊接方法对应的管壁烧穿下界（--weldmin ③；行业常规值，非本项目实测）
+                var methods = new[]
+                {
+                    (nm: "手工 TIG（保守）", wall: 0.60),
+                    (nm: "手工 TIG",        wall: 0.50),
+                    (nm: "自动 TIG",        wall: 0.30),
+                    (nm: "激光/电阻缝焊",    wall: 0.15),
+                };
+
+                Console.WriteLine("=== 焊接方法值多少铂 ===");
+                Console.WriteLine("用户 2026-08-14：**目前是手工焊接** ⇒ 当前档位是第 1–2 行。");
+                Console.WriteLine($"盘Ø{2 * discW9:0}／等宽舌片／盘舌等厚／压接 {clampLenW9:0} 夹 {clampW9:0} °C／圆盘包 20");
+                Console.WriteLine("每一档都重新跑「保温+舌厚」双旋钮定点迭代顶 C2，再全判据复核。");
+                Console.WriteLine();
+
+                // 起点 = 0.6 档的收敛解（--linefinal 实算）；逐档按 t_tab ∝ 壁厚 外推
+                double[] insW9 = { 16.5, 0.9, 1.1, 2.9 };
+                double[] tabW9 = { 1.37, 2.02, 1.80, 1.04 };
+                double[] halfW9 = { 15.0, 15.0, 15.0, 15.0 };
+                double[] tabLW9 = { 90.0, 90.0, 90.0, 90.0 };
+                const double insLoW9 = 0.5, insHiW9 = 30.0;
+                double prevWall = 0.60;
+
+                var rows = new List<(string nm, double wall, double mSeg, double mFl,
+                                     double dtMin, double dtMax, double tubeJ, bool ok, string why)>();
+
+                foreach (var meth in methods)
+                {
+                    double wallW9 = meth.wall, holeW9 = wallW9 + 25.0;
+
+                    // 法兰发热 ∝ I² ∝ 壁厚，而发热 ∝ 1/t_tab ⇒ 等发热要求 t_tab ∝ 壁厚
+                    double sc = wallW9 / prevWall;
+                    for (int j = 0; j < 4; j++) tabW9[j] = Math.Clamp(tabW9[j] * sc, 0.3, 4.0);
+                    prevWall = wallW9;
+
+                    var pW9 = SegmentSolver.Clone(p);
+                    pW9.Layer1.ThicknessMm = 10.0; pW9.Layer1.Enabled = true;
+                    pW9.WallMinMm = wallW9;
+                    pW9.FlangeInsulThickMm = 20; pW9.FlangeInsulated = true;
+                    pW9.BusbarClampLengthMm = clampLenW9;
+                    pW9.BusbarClampTempC = clampW9;
+
+                    // 圆盘厚度：等厚随舌片走，但不得低于**屈曲**下界（与焊接方法无关，
+                    // 只随环宽变；Ø60 环宽 4 mm ⇒ 0.0693×4×2 = 0.55）。
+                    double discFloor = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                                       * (discW9 - 26.0) * p.WeldSafetyFactor;
+
+                    LineCase MakeW9(double[] ins, double[] tab)
+                    {
+                        var plates = new FlangePlate[4];
+                        for (int j = 0; j < 4; j++)
+                        {
+                            double tDisc = Math.Max(tab[j], discFloor);
+                            plates[j] = new FlangePlate
+                            {
+                                DiscRadiusMm = discW9, HoleRadiusMm = holeW9,
+                                TabEndXMm = -tabLW9[j], TabEndHalfWidthMm = halfW9[j],
+                                ThicknessMm = tDisc, ThickenedMm = tDisc,
+                                TabThicknessMm = double.NaN,       // 等厚（同板切出）
+                                InsulBoundaryXMm = double.NaN, TabInsulThickMm = ins[j],
+                                TabParallel = true, TabFilletMm = 3.0,
+                                WeldFilletLegMm = Math.Max(tDisc, wallW9)
+                            };
+                        }
+                        return new LineCase
+                        {
+                            Base = SegmentSolver.Clone(pW9), WallMm = wallW9,
+                            UseMeasuredCurrent = false, CheckRamp = false,
+                            SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                            FlangePlates = plates,
+                            ClampTempC = new[] { clampW9, clampW9, clampW9, clampW9 }
+                        };
+                    }
+
+                    Console.WriteLine($"── {meth.nm}：管壁 {wallW9:0.00} mm　（圆盘屈曲下界 {discFloor:0.00}）");
+
+                    LineResult? lastW9 = null;
+                    for (int round = 0; round < 18; round++)
+                    {
+                        LineResult rW9;
+                        try { rW9 = LineRunner.Run(MakeW9(insW9, tabW9)); }
+                        catch (Exception ex) { Console.WriteLine($"   异常 {ex.Message}"); break; }
+                        if (!rW9.Ok) { Console.WriteLine($"   ✗ {rW9.Message}"); break; }
+                        lastW9 = rW9;
+
+                        var dt = rW9.Segments.Select(s => s.RootDeltaK).ToArray();
+                        if (dt.All(d => d > 0 && d <= 10.0)) break;
+
+                        var nIns = (double[])insW9.Clone();
+                        var nTab = (double[])tabW9.Clone();
+                        bool moved = false;
+                        for (int j = 0; j < 4; j++)
+                        {
+                            double e = 0; int c = 0;
+                            if (j - 1 >= 0 && j - 1 < dt.Length) { e += dt[j - 1] - targetW9; c++; }
+                            if (j < dt.Length) { e += dt[j] - targetW9; c++; }
+                            if (c == 0) continue;
+                            e /= c;
+                            if (Math.Abs(e) < 1.0) continue;
+
+                            double want = Math.Clamp(insW9[j] + 0.06 * e, insLoW9, insHiW9);
+                            if (Math.Abs(want - insW9[j]) > 1e-9) { nIns[j] = want; moved = true; continue; }
+
+                            double step = Math.Clamp(0.004 * Math.Abs(e), 0.01, 0.15);
+                            double t2 = e < 0 ? tabW9[j] * (1 + step) : tabW9[j] * (1 - step);
+                            nTab[j] = Math.Clamp(t2, 0.3, 4.0);
+                            if (Math.Abs(nTab[j] - tabW9[j]) > 1e-9) moved = true;
+                        }
+                        if (!moved) break;
+                        insW9 = nIns; tabW9 = nTab;
+                    }
+
+                    if (lastW9 == null) { Console.WriteLine("   ✗ 无解，跳过"); Console.WriteLine(); continue; }
+
+                    // 全判据复核（含升温规程）——薄壁最可能栽在这一步
+                    var lcW9 = MakeW9(insW9, tabW9); lcW9.CheckRamp = true;
+                    string why = "";
+                    bool allOk = true;
+                    try
+                    {
+                        var rc = LineRunner.Run(lcW9);
+                        if (rc.Ok)
+                        {
+                            lastW9 = rc;
+                            foreach (var ck in rc.Checks.Where(x => !x.Ok))
+                            { allOk = false; why += (why.Length > 0 ? "；" : "") + $"{ck.Name} {ck.Actual:0.00}>{ck.Limit:0.00}"; }
+                        }
+                        else { allOk = false; why = rc.Message; }
+                    }
+                    catch (Exception ex) { allOk = false; why = ex.Message; }
+
+                    var dtF = lastW9.Segments.Select(s => s.RootDeltaK).ToArray();
+                    if (!(dtF.All(d => d > 0 && d <= 10.0))) { allOk = false; why = (why.Length > 0 ? why + "；" : "") + "C2 未过"; }
+
+                    double mSegW = lastW9.Segments.Sum(s => s.MassG);
+                    double mFlW = lastW9.Flanges.Sum(f => f.MassG);
+                    double tubeJW = lastW9.Segments.Max(s => s.TubeJAPerMm2);
+
+                    Console.WriteLine($"   舌厚 {string.Join("/", tabW9.Select(v => v.ToString("0.00")))}" +
+                                      $"　保温 {string.Join("/", insW9.Select(v => v.ToString("0.0")))}");
+                    Console.WriteLine($"   管根ΔT {string.Join(" / ", dtF.Select(v => v.ToString("+0.0;−0.0")))} K" +
+                                      $"　管 J_max {tubeJW:0.00}　管 {mSegW:0} + 法兰 {mFlW:0} = **{mSegW + mFlW:0} g**" +
+                                      (allOk ? "　✓" : $"　✗ {why}"));
+                    Console.WriteLine();
+
+                    rows.Add((meth.nm, wallW9, mSegW, mFlW, dtF.Min(), dtF.Max(), tubeJW, allOk, why));
+                }
+
+                Console.WriteLine("── 汇总：焊接方法 → 整线铂重");
+                Console.WriteLine($"{"焊接方法",-18}{"管壁",7}{"管 g",8}{"法兰 g",8}{"合计 g",9}{"省 %",8}{"管J",7}  判据");
+                double baseM = 7141.0;
+                foreach (var rw in rows)
+                    Console.WriteLine($"{rw.nm,-18}{rw.wall,7:0.00}{rw.mSeg,8:0}{rw.mFl,8:0}{rw.mSeg + rw.mFl,9:0}" +
+                        $"{(1 - (rw.mSeg + rw.mFl) / baseM) * 100,8:0.0}{rw.tubeJ,7:0.00}  " +
+                        (rw.ok ? "✓ 全过" : "✗ " + rw.why));
+                Console.WriteLine();
+                Console.WriteLine("★ 读法：只有标 ✓ 的行可交付。管 J 顶到热稳定极限、或升温超 3 天，");
+                Console.WriteLine("  都会在这里现形 —— 那时再薄的焊接能力也换不成铂。");
+                return;
+            }
+
+            // --cli --collar   ★★★★ 判据 ② 的对策：管孔加厚环
+            //
+            // --hotspot 量明白了：② 不是整片过热，是**舌片根部紧贴管孔那一格**的局部尖峰
+            //（x=−28.3, r=28.3, J=25.9, 超管根 +2.32 K），往外 2 mm 就掉到 −6.4 K。
+            // 而圆盘 θ≤135° 处 J=0（电学死区）⇒ 与「绕流」无关，双舌片救不了（§4.3j 实算已证）。
+            //
+            // 面电流守恒 K=J·t ⇒ 局部加厚**同时**压低该处的 J 与单位面积发热（∝K²/t），
+            // 这是唯一直接作用在尖峰上的自由度。现有焊脚只加厚到 r≈27.4 就用完，
+            // 峰值恰好落在它外面一格 —— 把环延出去即可。
+            //
+            // 先用**单片筛**扫网格（秒级，定管根定电流），再把优胜者送整线复核。
+            if (args.Contains("--collar"))
+            {
+                double wallC9 = p.WeldMinThicknessMm, discC9 = 30.0;
+                double clampLenC9 = 40.0, clampC9 = 300.0;
+                double[] tabC9 = { 1.37, 2.02, 1.80, 1.04 }, insC9 = { 18.7, 1.6, 1.4, 3.9 };
+                double discFloorC9 = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                                     * (discC9 - 26.0) * p.WeldSafetyFactor;
+
+                var pC9 = SegmentSolver.Clone(p);
+                pC9.Layer1.ThicknessMm = 10.0; pC9.Layer1.Enabled = true;
+                pC9.WallMinMm = wallC9;
+                pC9.FlangeInsulThickMm = 20; pC9.FlangeInsulated = true;
+                pC9.BusbarClampLengthMm = clampLenC9; pC9.BusbarClampTempC = clampC9;
+
+                FlangePlate MkC9(int j, double collarR, double collarT)
+                {
+                    double td = Math.Max(tabC9[j], discFloorC9);
+                    return new FlangePlate
+                    {
+                        DiscRadiusMm = discC9, HoleRadiusMm = wallC9 + 25.0,
+                        TabEndXMm = -90.0, TabEndHalfWidthMm = 15.0,
+                        ThicknessMm = td,
+                        // 等厚板（TabThicknessMm=NaN）⇒ 加厚环按**半径**生效，
+                        // 会同时覆盖圆盘与舌片根部 —— 尖峰正在那里，这是要的行为。
+                        ThickenRadiusMm = collarR, ThickenedMm = collarT > 0 ? collarT : td,
+                        TabThicknessMm = double.NaN,
+                        InsulBoundaryXMm = double.NaN, TabInsulThickMm = insC9[j],
+                        TabParallel = true, TabFilletMm = 3.0,
+                        WeldFilletLegMm = Math.Max(td, wallC9)
+                    };
+                }
+
+                Console.WriteLine("=== 判据 ② 的对策：管孔加厚环 ===");
+                Console.WriteLine("先跑一次基线整线，取 ② 最差那片的真实电流与管根温度。");
+                var lcBase = new LineCase
+                {
+                    Base = SegmentSolver.Clone(pC9), WallMm = wallC9,
+                    UseMeasuredCurrent = false, CheckRamp = false,
+                    SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                    FlangePlates = new[] { MkC9(0, 0, 0), MkC9(1, 0, 0), MkC9(2, 0, 0), MkC9(3, 0, 0) },
+                    ClampTempC = new[] { clampC9, clampC9, clampC9, clampC9 }
+                };
+                var rBase = LineRunner.Run(lcBase);
+                if (!rBase.Ok) { Console.WriteLine("✗ " + rBase.Message); return; }
+                int jw2 = 0;
+                for (int j = 1; j < rBase.Flanges.Length; j++)
+                    if (rBase.Flanges[j].TMaxC - rBase.Flanges[j].TRootC
+                        > rBase.Flanges[jw2].TMaxC - rBase.Flanges[jw2].TRootC) jw2 = j;
+                var fB = rBase.Flanges[jw2];
+                Console.WriteLine($"⇒ {fB.Name}：I={fB.CurrentA:0} A，管根 {fB.TRootC:0.0} °C，" +
+                                  $"基线 ② = {fB.TMaxC - fB.TRootC:+0.00;−0.00} K");
+                Console.WriteLine();
+
+                double tBase = Math.Max(tabC9[jw2], discFloorC9);
+                Console.WriteLine($"── 单片筛（定管根 {fB.TRootC:0.0} °C、定电流 {fB.CurrentA:0} A）");
+                Console.WriteLine($"基板厚 {tBase:0.00} mm；加厚环 = 半径 ≤ R 处取厚 t（与焊脚叠加）");
+                Console.WriteLine($"{"环R mm",9}{"环厚 mm",10}{"T峰−管根 K",13}{"J峰",8}{"增重 g/片",11}  ");
+
+                (double R, double T, double dm, double peak)? best = null;
+                foreach (double cr in new[] { 0.0, 30.0, 33.0, 36.0, 40.0 })
+                    foreach (double ct in cr <= 0 ? new[] { 0.0 }
+                                          : new[] { tBase * 1.3, tBase * 1.6, tBase * 2.0 })
+                    {
+                        var g = MkC9(jw2, cr, ct);
+                        ShellMesh mm2;
+                        try { mm2 = FlangeMesher.Build(g, 0, 2.0, 11.0, 45.0, clampLenC9); }
+                        catch (Exception ex) { Console.WriteLine($"{cr,9:0}{ct,10:0.00}  网格失败 {ex.Message}"); continue; }
+                        var sc2 = ShellCurrent.Solve(mm2, fB.CurrentA,
+                                      Materials.PtResistivity(fB.TRootC) * 1e3, fB.TRootC);
+                        var th2 = ShellThermal.Solve(mm2, sc2.JMagAPerMm2, pC9, fB.TRootC,
+                                      g.InsulBoundaryXResolved, tabBoundaryX: g.Tangent().X,
+                                      tabInsulThickMm: g.TabInsulThickMm);
+                        double tPk = th2.T.Max(), jPk = sc2.JMagAPerMm2.Max();
+                        // 增重：环内多出来的那层（环面积 × 增厚），铂 21.45 g/cm³
+                        double dm = cr <= 0 ? 0
+                            : Math.PI * (cr * cr - g.HoleRadiusMm * g.HoleRadiusMm)
+                              * Math.Max(0, ct - tBase) * 1e-3 * 21.45;
+                        Console.WriteLine($"{(cr <= 0 ? "无" : cr.ToString("0")),9}" +
+                            $"{(cr <= 0 ? "—" : ct.ToString("0.00")),10}" +
+                            $"{tPk - fB.TRootC,13:+0.00;−0.00}{jPk,8:0.0}{dm,11:0.0}");
+                        if (best == null || tPk < best.Value.peak) best = (cr, tPk - fB.TRootC, dm, tPk);
+                    }
+
+                Console.WriteLine();
+                if (best == null) { Console.WriteLine("✗ 无可用结果"); return; }
+                Console.WriteLine("★ 单片筛只说明「尖峰能不能压下去」。加厚会同时降低整片发热 ⇒");
+                Console.WriteLine("  C2（管根温差）会跟着漂，必须回整线用双旋钮重新收敛。");
+                Console.WriteLine();
+
+                // 把最优环送整线复核（含升温）
+                double bR = best.Value.R;
+                double bT = bR <= 0 ? 0 : tBase * 2.0;
+                Console.WriteLine($"── 整线复核：四片同装 R={bR:0} / 厚 {bT:0.00} 的加厚环");
+                double[] ins2 = (double[])insC9.Clone(), tab2 = (double[])tabC9.Clone();
+                LineResult? lastC = null;
+                for (int round = 0; round < 16; round++)
+                {
+                    var plates = new FlangePlate[4];
+                    for (int j = 0; j < 4; j++)
+                    {
+                        double td = Math.Max(tab2[j], discFloorC9);
+                        plates[j] = MkC9(j, bR, bR <= 0 ? 0 : Math.Max(bT, td * 1.05));
+                        plates[j].ThicknessMm = td;
+                        plates[j].TabInsulThickMm = ins2[j];
+                    }
+                    var lc = new LineCase
+                    {
+                        Base = SegmentSolver.Clone(pC9), WallMm = wallC9,
+                        UseMeasuredCurrent = false, CheckRamp = false,
+                        SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                        FlangePlates = plates,
+                        ClampTempC = new[] { clampC9, clampC9, clampC9, clampC9 }
+                    };
+                    LineResult rr2;
+                    try { rr2 = LineRunner.Run(lc); }
+                    catch (Exception ex) { Console.WriteLine($"   异常 {ex.Message}"); break; }
+                    if (!rr2.Ok) { Console.WriteLine($"   ✗ {rr2.Message}"); break; }
+                    lastC = rr2;
+                    var dt = rr2.Segments.Select(s => s.RootDeltaK).ToArray();
+                    if (dt.All(d => d > 0 && d <= 10.0)) break;
+
+                    bool moved = false;
+                    for (int j = 0; j < 4; j++)
+                    {
+                        double e = 0; int c = 0;
+                        if (j - 1 >= 0 && j - 1 < dt.Length) { e += dt[j - 1] - 5.0; c++; }
+                        if (j < dt.Length) { e += dt[j] - 5.0; c++; }
+                        if (c == 0) continue;
+                        e /= c;
+                        if (Math.Abs(e) < 1.0) continue;
+                        double want = Math.Clamp(ins2[j] + 0.06 * e, 0.5, 30.0);
+                        if (Math.Abs(want - ins2[j]) > 1e-9) { ins2[j] = want; moved = true; continue; }
+                        double step = Math.Clamp(0.004 * Math.Abs(e), 0.01, 0.15);
+                        double t2v = e < 0 ? tab2[j] * (1 + step) : tab2[j] * (1 - step);
+                        double nv = Math.Clamp(t2v, 0.3, 4.0);
+                        if (Math.Abs(nv - tab2[j]) > 1e-9) { tab2[j] = nv; moved = true; }
+                    }
+                    if (!moved) break;
+                }
+                if (lastC != null)
+                {
+                    Console.WriteLine($"   舌厚 {string.Join("/", tab2.Select(v => v.ToString("0.00")))}" +
+                                      $"　保温 {string.Join("/", ins2.Select(v => v.ToString("0.0")))}");
+                    Console.WriteLine($"   管根ΔT {string.Join(" / ", lastC.Segments.Select(s => s.RootDeltaK.ToString("+0.0;−0.0")))} K" +
+                        $"　合计 **{lastC.Segments.Sum(s => s.MassG) + lastC.Flanges.Sum(f => f.MassG):0} g**");
+                    foreach (var ck in lastC.Checks.Where(x => x.Kind == CheckKind.HardSafety))
+                        Console.WriteLine($"   {(ck.Ok ? "✓" : "✗")} {ck.Name,-22}{ck.Actual,9:+0.00;−0.00} / {ck.Limit,6:0.00}  {ck.Where}");
+                }
+                return;
+            }
+
+            // --cli --busbarplan   ★★★★ 铜排的长宽高 + 在舌片上的位置（用户 2026-08-14：
+            //   「铜排尺寸(长宽高)与排布(分布在舌的位置)必须同时给出」）
+            //
+            // 此前只给了「截面 873 mm²」——那不是可施工的信息：截面不等于长宽高，
+            // 而且没说夹在舌片的哪一段。本条把四片各自的**完整铜排**一次给全，
+            // 且**位置与热平衡是耦合的**：压接段占掉舌片的一截，剩下的自由段长度
+            // 决定引线漏热（§4.3e 的 ΔT/ℓ），所以位置不能事后再定。
+            //
+            // 铜排按**风冷散热片**定尺寸，不是「导到某个恒温冷端」——现场没有冷端（§4.5）。
+            if (args.Contains("--busbarplan"))
+            {
+                double wallB9 = p.WeldMinThicknessMm, discB9 = 30.0;
+                double clampLenB9 = 40.0, clampB9 = 300.0;
+                double tabLB9 = 90.0, halfWB9 = 15.0;
+                double[] tabB9 = { 1.37, 2.02, 1.80, 1.04 }, insB9 = { 18.7, 1.6, 1.4, 3.9 };
+                double discFloorB9 = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                                     * (discB9 - 26.0) * p.WeldSafetyFactor;
+
+                var pB9 = SegmentSolver.Clone(p);
+                pB9.Layer1.ThicknessMm = 10.0; pB9.Layer1.Enabled = true;
+                pB9.WallMinMm = wallB9;
+                pB9.FlangeInsulThickMm = 20; pB9.FlangeInsulated = true;
+                pB9.BusbarClampLengthMm = clampLenB9; pB9.BusbarClampTempC = clampB9;
+
+                FlangePlate MkB9(int j)
+                {
+                    double td = Math.Max(tabB9[j], discFloorB9);
+                    return new FlangePlate
+                    {
+                        DiscRadiusMm = discB9, HoleRadiusMm = wallB9 + 25.0,
+                        TabEndXMm = -tabLB9, TabEndHalfWidthMm = halfWB9,
+                        ThicknessMm = td, ThickenedMm = td, TabThicknessMm = double.NaN,
+                        InsulBoundaryXMm = double.NaN, TabInsulThickMm = insB9[j],
+                        TabParallel = true, TabFilletMm = 3.0,
+                        WeldFilletLegMm = Math.Max(td, wallB9)
+                    };
+                }
+                var lcB9 = new LineCase
+                {
+                    Base = SegmentSolver.Clone(pB9), WallMm = wallB9,
+                    UseMeasuredCurrent = false, CheckRamp = false,
+                    SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                    FlangePlates = new[] { MkB9(0), MkB9(1), MkB9(2), MkB9(3) },
+                    ClampTempC = new[] { clampB9, clampB9, clampB9, clampB9 }
+                };
+
+                Console.WriteLine("=== 铜排：长宽高 + 在舌片上的位置 ===");
+                Console.WriteLine("先跑一次定案整线，取每片**真实**的电流与铜排带走的热，再据此定尺寸。");
+                var rB9 = LineRunner.Run(lcB9);
+                if (!rB9.Ok) { Console.WriteLine("✗ " + rB9.Message); return; }
+
+                double xTangent = MkB9(0).Tangent().X;
+                Console.WriteLine();
+                Console.WriteLine("── ① 排布（四片相同，由几何定）");
+                Console.WriteLine($"舌片：自圆盘切点 x={xTangent:0.0} 伸到末端 x=−{tabLB9:0}，等宽 {2 * halfWB9:0} mm");
+                Console.WriteLine($"压接段：**自舌片末端往回 {clampLenB9:0} mm**，即 x ∈ [−{tabLB9:0}, −{tabLB9 - clampLenB9:0}]");
+                Console.WriteLine($"自由段：x ∈ [{xTangent:0.0}, −{tabLB9 - clampLenB9:0}]，长 {(-(tabLB9 - clampLenB9)) - xTangent:0.0} mm（取绝对值 {Math.Abs(-(tabLB9 - clampLenB9) - xTangent):0.0}）");
+                Console.WriteLine("★ 两面夹（上下各一块铜排）⇒ 接触面积翻倍，压接界面 J 减半。");
+                Console.WriteLine("★ 压接段**必须在末端**：它是 300 °C 的冷边界，越靠近圆盘，");
+                Console.WriteLine("  自由段越短 ⇒ 引线漏热 ∝ 1/ℓ 越大 ⇒ 直接把管根抽冷（§4.3e）。");
+                Console.WriteLine();
+
+                Console.WriteLine("── ② 尺寸（风冷散热片模型：热从压接端进，沿程对流+辐射散掉）");
+                Console.WriteLine($"环境 {p.TAmbC:0} °C／压接端 {clampB9:0} °C／铜排等宽舌片 {2 * halfWB9:0} mm／");
+                Console.WriteLine("表面取氧化铜 ε=0.7（★ 抛光铜仅 0.05，**差 14 倍**，务必按实际表面取）");
+                Console.WriteLine();
+                Console.WriteLine("每片两块铜排（上下夹）。压接块宽度被舌片锁死，散热段可 flare 到更宽更薄。");
+                Console.WriteLine($"{"片",10}{"电流A",8}{"带走W",8}{"压接块 宽×长×厚",20}" +
+                                  $"{"散热段 宽×厚×长",22}{"铜排J",8}{"压接J",8}{"铜 kg",8}  判定");
+
+                for (int j = 0; j < rB9.Flanges.Length; j++)
+                {
+                    var f = rB9.Flanges[j];
+                    var fin = BusbarSizing.SizeAirCooledFin(
+                        currentA: f.CurrentA, qFromPtW: f.QClampW,
+                        tabWidthMm: 2 * halfWB9, clampLenMm: clampLenB9,
+                        clampTempC: clampB9, tAmbC: p.TAmbC,
+                        jBusAllow: 3.0, jContactAllow: 1.0,
+                        emissivity: 0.7, doubleSided: true);
+                    string clampDim = $"{fin.ClampWidthMm:0}×{fin.ClampLenMm:0}×{fin.ClampThickMm:0.0}";
+                    string finDim = $"{fin.FinWidthMm:0}×{fin.FinThickMm:0.0}×{fin.FinLengthMm:0}";
+                    Console.WriteLine($"{f.Name,10}{f.CurrentA,8:0}{f.QClampW,8:0}{clampDim,20}" +
+                        $"{finDim,22}{fin.JBusAPerMm2,8:0.00}{fin.JContactAPerMm2,8:0.00}" +
+                        $"{fin.CopperKg,8:0.00}  " + (fin.Ok ? "✓" : "✗ ") + fin.Note);
+                }
+                Console.WriteLine();
+                Console.WriteLine("读法：");
+                Console.WriteLine("· **散热段越薄越省铜**：V ∝ Q·t（推导见 BusbarSizing.SizeAirCooledFin 注释）");
+                Console.WriteLine("  ⇒ 厚度取到**载流刚好卡住**（3 A/mm²）为止，宽度再按散热需求定。");
+                Console.WriteLine("· **长度**由「散得完」定：取 L = 3/m，m = √(hP/(kA))，再长几乎无增益（tanh3=0.995）。");
+                Console.WriteLine("· 压接界面 J 若超 1.0，加长压接段或改多点压接；**不要靠加压紧力硬扛**。");
+                Console.WriteLine("· 这套长度若在现场排不下，等价做法是**加风**（h 从 8 提到 30 可把长度砍一半），");
+                Console.WriteLine("  但 §4.5 已算过：夹持温度 400 vs 80 °C 只差 10 W / 18 K ⇒ 不需要水冷。");
+                return;
+            }
+
+            // --cli --wallfloor   ★★★ 管壁的**物理**下界在哪：把「升温墙」钉死
+            //
+            // --weldvalue 发现壁厚 0.30 时空管**给无限长时间也升不到目标**
+            // （判据①返回 Reached=false，是渐近线在目标之下，不是超时），而 0.50 过。
+            // ⇒ 真正的管壁下界落在 (0.30, 0.50)，**由物理定不由焊接定**。这条就是去钉它。
+            //
+            // 机理：可用功率 P = I²·ρe·L/A，而电流上界被热稳定极限压住
+            //   I_stab = √(βA/(dρe/dT)) ⇒ P_max ∝ A ∝ 壁厚，
+            // 而热损失基本不随壁厚变 ⇒ 壁薄到某处，P_max 追不上损失，温度停在半路。
+            //
+            // 这里只解一次整线（不跑 C2 定点迭代）：判据①主要由管本身定，
+            // 法兰细节是二阶量。**是筛子不是定案**，过了的壁厚仍要回 --weldvalue 复核。
+            if (args.Contains("--wallfloor"))
+            {
+                double discL9 = 30.0;
+                double discFloorL9 = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                                     * (discL9 - 26.0) * p.WeldSafetyFactor;
+
+                Console.WriteLine("=== 管壁的物理下界：升温墙在哪 ===");
+                Console.WriteLine($"判据①「空管升到目标」，限时 = 用户给的 **≤3 天（{new LineCase().RampHours:0} h）**。");
+                Console.WriteLine("⚠ 2026-08-14 更正：此前限时写死 3 h，把「升得慢」误报成「升不到」，");
+                Console.WriteLine("  据此得出的「管壁 0.30 是硬物理墙」是错的（见 §4.3i）。");
+                Console.WriteLine("⚠ 本表是筛子：只解一次整线，不跑 C2 定点迭代。");
+                Console.WriteLine();
+                // ★★ 两档并排：J_allow=10 是**占位值**（§4.2i 已把它降为参考量，基准存疑），
+                //    真正的物理上限是空管热稳定极限 I_stab。若「墙」只在占位值下出现，
+                //    那它就不是物理墙 —— 这一列是用来分辨这件事的。
+                Console.WriteLine($"{"管壁",7}{"段电流A",10}{"管J",8}{"升温(J≤10)",13}" +
+                                  $"{"升温(仅热稳定)",16}{"管 g",8}  说明");
+
+                foreach (double wl in new[] { 0.60, 0.50, 0.45, 0.40, 0.35, 0.30, 0.25, 0.20, 0.15 })
+                {
+                    var pL9 = SegmentSolver.Clone(p);
+                    pL9.Layer1.ThicknessMm = 10.0; pL9.Layer1.Enabled = true;
+                    pL9.WallMinMm = wl;
+                    pL9.FlangeInsulThickMm = 20; pL9.FlangeInsulated = true;
+                    pL9.BusbarClampLengthMm = 40; pL9.BusbarClampTempC = 300;
+
+                    // 法兰按 0.6 档收敛解、舌厚 ∝ 壁厚外推（发热 ∝ 壁厚/t ⇒ 等发热要 t ∝ 壁厚）
+                    double scl = wl / 0.60;
+                    double[] tabL = { 1.37 * scl, 2.02 * scl, 1.80 * scl, 1.04 * scl };
+                    double[] insL = { 16.5, 0.9, 1.1, 2.9 };
+                    var platesL = new FlangePlate[4];
+                    for (int j = 0; j < 4; j++)
+                    {
+                        double tD = Math.Max(tabL[j], discFloorL9);
+                        platesL[j] = new FlangePlate
+                        {
+                            DiscRadiusMm = discL9, HoleRadiusMm = wl + 25.0,
+                            TabEndXMm = -90.0, TabEndHalfWidthMm = 15.0,
+                            ThicknessMm = tD, ThickenedMm = tD, TabThicknessMm = double.NaN,
+                            InsulBoundaryXMm = double.NaN, TabInsulThickMm = insL[j],
+                            TabParallel = true, TabFilletMm = 3.0,
+                            WeldFilletLegMm = Math.Max(tD, wl)
+                        };
+                    }
+                    var lcL9 = new LineCase
+                    {
+                        Base = pL9, WallMm = wl, UseMeasuredCurrent = false, CheckRamp = true,
+                        SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                        FlangePlates = platesL,
+                        ClampTempC = new[] { 300.0, 300.0, 300.0, 300.0 }
+                    };
+
+                    string Ramp(double jAllow)
+                    {
+                        var pv = SegmentSolver.Clone(pL9);
+                        pv.JAllowAPerMm2 = jAllow;
+                        var lcv = new LineCase
+                        {
+                            Base = pv, WallMm = wl, UseMeasuredCurrent = false, CheckRamp = true,
+                            SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                            FlangePlates = platesL,
+                            ClampTempC = new[] { 300.0, 300.0, 300.0, 300.0 }
+                        };
+                        try
+                        {
+                            var rv = LineRunner.Run(lcv);
+                            if (!rv.Ok) return "解失败";
+                            var ck = rv.Checks.FirstOrDefault(x => x.Name.StartsWith("① 升温"));
+                            return ck == null ? "—"
+                                 : double.IsNaN(ck.Actual) ? "✗ 到不了" : $"{ck.Actual:0.0} h";
+                        }
+                        catch { return "异常"; }
+                    }
+
+                    LineResult rL9;
+                    try { rL9 = LineRunner.Run(lcL9); }
+                    catch (Exception ex) { Console.WriteLine($"{wl,7:0.00}  异常 {ex.Message}"); continue; }
+                    if (!rL9.Ok) { Console.WriteLine($"{wl,7:0.00}  ✗ {rL9.Message}"); continue; }
+
+                    var ramp = rL9.Checks.FirstOrDefault(x => x.Name.StartsWith("① 升温"));
+                    string txt = ramp == null ? "—"
+                        : double.IsNaN(ramp.Actual) ? "✗ 到不了" : $"{ramp.Actual:0.0} h";
+                    Console.WriteLine($"{wl,7:0.00}{rL9.Segments.Max(s => s.CurrentA),10:0}" +
+                        $"{rL9.Segments.Max(s => s.TubeJAPerMm2),8:0.00}{txt,13}" +
+                        $"{Ramp(1000.0),16}{rL9.Segments.Sum(s => s.MassG),8:0}  " + (ramp?.Note ?? ""));
+                }
+                Console.WriteLine();
+                Console.WriteLine("★ 两列若在同一档翻脸 ⇒ 那是**物理墙**（热稳定极限），管壁下界成立。");
+                Console.WriteLine("  若只有左列翻脸而右列还过 ⇒ 墙是 J_allow=10 这个**占位值**造的，");
+                Console.WriteLine("  不是物理 ⇒ 得先把 J 的真实限值定下来（§6 待补），才谈得上管壁下界。");
+                return;
+            }
+
+            // --cli --twotab   ★★★★ 双舌片：判据 ② 唯一还没试过的结构性杠杆
+            //
+            // 定案方案唯一不过的就是 ②（法兰最高温 − 管温 = +2.85 K）与 ②″（圆盘区 +1.67）。
+            // 两者是**同一个成因**：电流从单侧舌片进来、绕过管孔，在靠舌片那一侧堆成峰值
+            // （§4.6 实测 J_max/J_rms = 2.17），而单位面积发热 ∝ J² ⇒ 那一点局部过热。
+            // 调保温、调厚度都改不了这个**分布**问题 —— 它们只改总量。
+            //
+            // 双舌片（180° 对置）直接消掉不对称：两个舌端同为 V=1，电流自然对称分流。
+            // ★ 关键是它**几乎不花铂、也不动能量账**：每舌走 I/2，取半宽 ⇒ 总截面不变，
+            //   总发热 = 2·(I/2)·J·ρe·ℓ = I·J·ρe·ℓ 不变，总散热面积也不变。
+            //   变的只有**峰值**：局部 J 减半 ⇒ 局部发热降到 1/4。
+            // 附带好处：压接界面 J 减半（§4.3a 记的 9.2 A/mm² 那条也跟着缓解）。
+            // 代价：每片要两根铜排。
+            if (args.Contains("--twotab"))
+            {
+                double wallT9 = p.WeldMinThicknessMm, holeT9 = wallT9 + 25.0;
+                double discT9 = 30.0, clampLenT9 = 40.0, clampT9 = 300.0, targetT9 = 5.0;
+                double discFloorT9 = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                                     * (discT9 - 26.0) * p.WeldSafetyFactor;
+
+                Console.WriteLine("=== 单舌片 vs 双舌片：能不能把判据 ② 救回来 ===");
+                Console.WriteLine($"管壁 {wallT9:0.0}／盘Ø{2 * discT9:0}／盘舌等厚／压接 {clampLenT9:0} 夹 {clampT9:0} °C");
+                Console.WriteLine("★ 双舌片取**半宽减半**（15→7.5）⇒ 总截面、总发热、总散热面积都不变，");
+                Console.WriteLine("  只有峰值变：每舌走 I/2 ⇒ 局部 J 减半 ⇒ 局部发热降到 1/4。");
+                Console.WriteLine();
+
+                var pT9 = SegmentSolver.Clone(p);
+                pT9.Layer1.ThicknessMm = 10.0; pT9.Layer1.Enabled = true;
+                pT9.WallMinMm = wallT9;
+                pT9.FlangeInsulThickMm = 20; pT9.FlangeInsulated = true;
+                pT9.BusbarClampLengthMm = clampLenT9;
+                pT9.BusbarClampTempC = clampT9;
+
+                foreach (var (nm2, two, halfW) in new[]
+                         { ("单舌片 半宽15", false, 15.0), ("双舌片 各半宽7.5", true, 7.5) })
+                {
+                    double[] insT9 = { 16.5, 0.9, 1.1, 2.9 };
+                    double[] tabT9 = { 1.37, 2.02, 1.80, 1.04 };
+
+                    LineCase MakeT9(double[] ins, double[] tab)
+                    {
+                        var plates = new FlangePlate[4];
+                        for (int j = 0; j < 4; j++)
+                        {
+                            double tDisc = Math.Max(tab[j], discFloorT9);
+                            plates[j] = new FlangePlate
+                            {
+                                DiscRadiusMm = discT9, HoleRadiusMm = holeT9,
+                                TabEndXMm = -90.0, TabEndHalfWidthMm = halfW,
+                                ThicknessMm = tDisc, ThickenedMm = tDisc,
+                                TabThicknessMm = double.NaN,
+                                InsulBoundaryXMm = double.NaN, TabInsulThickMm = ins[j],
+                                TabParallel = true, TabFilletMm = 3.0, TwoTabs = two,
+                                WeldFilletLegMm = Math.Max(tDisc, wallT9)
+                            };
+                        }
+                        return new LineCase
+                        {
+                            Base = SegmentSolver.Clone(pT9), WallMm = wallT9,
+                            UseMeasuredCurrent = false, CheckRamp = false,
+                            SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                            FlangePlates = plates,
+                            ClampTempC = new[] { clampT9, clampT9, clampT9, clampT9 }
+                        };
+                    }
+
+                    Console.WriteLine($"── {nm2}");
+                    LineResult? lastT9 = null;
+                    for (int round = 0; round < 20; round++)
+                    {
+                        LineResult rT9;
+                        try { rT9 = LineRunner.Run(MakeT9(insT9, tabT9)); }
+                        catch (Exception ex) { Console.WriteLine($"   异常 {ex.Message}"); break; }
+                        if (!rT9.Ok) { Console.WriteLine($"   ✗ {rT9.Message}"); break; }
+                        lastT9 = rT9;
+
+                        var dt = rT9.Segments.Select(s => s.RootDeltaK).ToArray();
+                        if (dt.All(d => d > 0 && d <= 10.0)) break;
+
+                        var nIns = (double[])insT9.Clone();
+                        var nTab = (double[])tabT9.Clone();
+                        bool moved = false;
+                        for (int j = 0; j < 4; j++)
+                        {
+                            double e = 0; int c = 0;
+                            if (j - 1 >= 0 && j - 1 < dt.Length) { e += dt[j - 1] - targetT9; c++; }
+                            if (j < dt.Length) { e += dt[j] - targetT9; c++; }
+                            if (c == 0) continue;
+                            e /= c;
+                            if (Math.Abs(e) < 1.0) continue;
+
+                            double want = Math.Clamp(insT9[j] + 0.06 * e, 0.5, 30.0);
+                            if (Math.Abs(want - insT9[j]) > 1e-9) { nIns[j] = want; moved = true; continue; }
+
+                            double step = Math.Clamp(0.004 * Math.Abs(e), 0.01, 0.15);
+                            double t2 = e < 0 ? tabT9[j] * (1 + step) : tabT9[j] * (1 - step);
+                            nTab[j] = Math.Clamp(t2, 0.3, 4.0);
+                            if (Math.Abs(nTab[j] - tabT9[j]) > 1e-9) moved = true;
+                        }
+                        if (!moved) break;
+                        insT9 = nIns; tabT9 = nTab;
+                    }
+                    if (lastT9 == null) { Console.WriteLine("   ✗ 无解"); Console.WriteLine(); continue; }
+
+                    var lcT9b = MakeT9(insT9, tabT9); lcT9b.CheckRamp = true;
+                    try
+                    {
+                        var rc = LineRunner.Run(lcT9b);
+                        if (rc.Ok) lastT9 = rc;
+                    }
+                    catch { /* 保留迭代末解 */ }
+
+                    var dtF = lastT9.Segments.Select(s => s.RootDeltaK).ToArray();
+                    double mT = lastT9.Segments.Sum(s => s.MassG) + lastT9.Flanges.Sum(f => f.MassG);
+                    Console.WriteLine($"   舌厚 {string.Join("/", tabT9.Select(v => v.ToString("0.00")))}" +
+                                      $"　保温 {string.Join("/", insT9.Select(v => v.ToString("0.0")))}");
+                    Console.WriteLine($"   管根ΔT {string.Join(" / ", dtF.Select(v => v.ToString("+0.0;−0.0")))} K" +
+                                      $"　合计 **{mT:0} g**");
+                    foreach (var ck in lastT9.Checks.Where(x => x.Kind == CheckKind.HardSafety))
+                        Console.WriteLine($"   {(ck.Ok ? "✓" : "✗")} {ck.Name,-22}{ck.Actual,9:+0.00;−0.00} / {ck.Limit,6:0.00}  {ck.Where}");
+                    Console.WriteLine($"   法兰 J_max {lastT9.Flanges.Max(f => f.JMaxAPerMm2):0.0} A/mm²" +
+                                      $"　舌端温 {string.Join("/", lastT9.Flanges.Select(f => f.TTabEndC.ToString("0")))} °C");
+                    Console.WriteLine();
+                }
+
+                Console.WriteLine("★ 若双舌片把 ② 与 ②″ 同时压到 ≤0 而铂重基本不变，");
+                Console.WriteLine("  它就是本方案的最后一块拼图 —— 代价只是每片两根铜排。");
+                return;
+            }
+
             // --cli --hotspot   ★ 直接量「峰值在哪」——两次靠猜都猜错之后加的
             //
             // 先猜峰值在包保温的舌片上 → 加 ②″ 分区判据，结果分区值一模一样，猜错；
             // 再猜是等宽舌片与圆盘的凹尖角 → 加过渡圆角，结果**逐位相同**（圆角只改
             // 0.25 mm 的轮廓，落在 2 mm 网格之下），又猜错。
             // ⇒ 不再猜：把 J_max / T_max 的**坐标、半径、厚度、所属区**直接打出来。
+            // 2026-08-14 第三次猜错：以为双舌片能靠对称消掉峰值，实算 ② 反而从 +2.85 涨到 +9.24。
+            // ⇒ 本条改成量**定案方案本身**（盘舌等厚 1.80、管壁 0.6），并新增**沿管孔一圈的角向剖面**
+            //   ——「电流从单侧绕过管孔」这个说法到底成不成立，只有角向剖面能证伪。
             if (args.Contains("--hotspot"))
             {
-                double wallH = 0.6, holeH = wallH + 25.0;
+                double wallH = p.WeldMinThicknessMm, holeH = wallH + 25.0;
+                double discH = 30.0;
                 var pH = SegmentSolver.Clone(p);
                 pH.Layer1.ThicknessMm = 10.0; pH.Layer1.Enabled = true;
                 pH.WallMinMm = wallH;
                 pH.FlangeInsulThickMm = 20; pH.FlangeInsulated = true;
                 pH.BusbarClampLengthMm = 40; pH.BusbarClampTempC = 300;
-                pH.TSetC = 1080;
 
-                var gH = new FlangePlate
+                // 先跑一次定案整线，拿**真实**的逐片电流与管根温度（别再手填）
+                double[] tabH = { 1.37, 2.02, 1.80, 1.04 }, insH = { 18.7, 1.6, 1.4, 3.9 };
+                double discFloorH = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                                    * (discH - 26.0) * p.WeldSafetyFactor;
+                FlangePlate MkH(int j) => new()
                 {
-                    DiscRadiusMm = 30, HoleRadiusMm = holeH,
-                    TabEndXMm = -90, TabEndHalfWidthMm = 15,
-                    ThicknessMm = 0.5, ThickenedMm = 0.5, TabThicknessMm = 2.02,
-                    InsulBoundaryXMm = double.NaN, TabInsulThickMm = 1.0,
+                    DiscRadiusMm = discH, HoleRadiusMm = holeH,
+                    TabEndXMm = -90.0, TabEndHalfWidthMm = 15.0,
+                    ThicknessMm = Math.Max(tabH[j], discFloorH),
+                    ThickenedMm = Math.Max(tabH[j], discFloorH),
+                    TabThicknessMm = double.NaN,
+                    InsulBoundaryXMm = double.NaN, TabInsulThickMm = insH[j],
                     TabParallel = true, TabFilletMm = 3.0,
-                    WeldFilletLegMm = 0.6
+                    WeldFilletLegMm = Math.Max(Math.Max(tabH[j], discFloorH), wallH)
                 };
+                var lcH = new LineCase
+                {
+                    Base = SegmentSolver.Clone(pH), WallMm = wallH,
+                    UseMeasuredCurrent = false, CheckRamp = false,
+                    SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                    FlangePlates = new[] { MkH(0), MkH(1), MkH(2), MkH(3) },
+                    ClampTempC = new[] { 300.0, 300.0, 300.0, 300.0 }
+                };
+                var rH = LineRunner.Run(lcH);
+                if (!rH.Ok) { Console.WriteLine("✗ " + rH.Message); return; }
+
+                // 取 ② 最差的那一片来解剖
+                int jw = 0;
+                for (int j = 1; j < rH.Flanges.Length; j++)
+                    if (rH.Flanges[j].TMaxC - rH.Flanges[j].TRootC
+                        > rH.Flanges[jw].TMaxC - rH.Flanges[jw].TRootC) jw = j;
+                var fw = rH.Flanges[jw];
+
+                var gH = MkH(jw);
                 var mH = FlangeMesher.Build(gH, 0, 2.0, 11.0, 45.0, 40.0);
-                var scH = ShellCurrent.Solve(mH, 1354.0, Materials.PtResistivity(1080) * 1e3, 1080);
                 double xtH = gH.Tangent().X;
-                var thH = ShellThermal.Solve(mH, scH.JMagAPerMm2, pH, 1079.1,
+                var scH = ShellCurrent.Solve(mH, fw.CurrentA,
+                              Materials.PtResistivity(fw.TRootC) * 1e3, fw.TRootC);
+                var thH = ShellThermal.Solve(mH, scH.JMagAPerMm2, pH, fw.TRootC,
                               gH.InsulBoundaryXResolved, tabBoundaryX: xtH,
                               tabInsulThickMm: gH.TabInsulThickMm);
 
-                Console.WriteLine("=== 峰值位置实测（HC1|HC2 片，I=1354 A，管根 1079.1 °C）===");
-                Console.WriteLine($"几何：盘Ø60×0.5／等宽舌 90×末宽30×2.02／交界圆角 3.0／" +
-                                  $"焊脚 0.6／切点 x={xtH:0.00}");
+                Console.WriteLine($"=== 峰值位置实测（② 最差的片：{fw.Name}）===");
+                Console.WriteLine($"I={fw.CurrentA:0} A　管根 {fw.TRootC:0.0} °C　" +
+                                  $"盘Ø{2 * discH:0}／等宽舌 90×30／**盘舌等厚 {gH.ThicknessMm:0.00}**／" +
+                                  $"舌保温 {insH[jw]:0.0}／焊脚 {gH.WeldFilletLegMm:0.00}／切点 x={xtH:0.00}");
+                Console.WriteLine($"整线判定 ② = {fw.TMaxC - fw.TRootC:+0.00;−0.00} K");
                 Console.WriteLine();
 
                 void Report(string what, int idx)
                 {
                     var c0 = mH.Centroid[idx];
                     double r0 = Math.Sqrt(c0.X * c0.X + c0.Z * c0.Z);
-                    Console.WriteLine($"{what}：x={c0.X,8:0.00}  z={c0.Z,8:0.00}  r={r0,8:0.00}" +
-                        $"  厚={mH.Thickness[idx],6:0.000}  J={scH.JMagAPerMm2[idx],7:0.0}" +
+                    double ang = Math.Atan2(c0.Z, c0.X) * 180 / Math.PI;
+                    Console.WriteLine($"{what}：x={c0.X,8:0.00}  z={c0.Z,8:0.00}  r={r0,7:0.00}" +
+                        $"  θ={ang,7:0}°  厚={mH.Thickness[idx],6:0.000}  J={scH.JMagAPerMm2[idx],7:0.0}" +
                         $"  T={thH.T[idx],7:0.0}  区={(c0.X < xtH ? "舌片" : "圆盘")}" +
                         $"  {(Math.Abs(r0 - gH.HoleRadiusMm) < 3 ? "★贴管孔" : "")}");
                 }
@@ -3900,11 +4602,34 @@ internal static class Program
                 }
                 Report("J 峰值", iJ);
                 Report("T 峰值", iT);
+                Console.WriteLine($"管根定温 {fw.TRootC:0.0} °C ⇒ T 峰值超出 " +
+                                  $"{thH.T[iT] - fw.TRootC:+0.00;−0.00} K");
                 Console.WriteLine();
 
-                // 沿 z=0 与 z=±舌宽 打剖面，看厚度台阶与颈部
+                // ★ 新增：沿管孔一圈（r ≈ 孔半径+2）的角向剖面。
+                //   θ=180° 是舌片方向，θ=0° 是背对舌片那一侧。
+                //   「电流从单侧绕过管孔堆成峰值」若成立，J 必须在 180° 附近显著高于 0°。
+                Console.WriteLine("── 沿管孔一圈的角向剖面（θ=180° 朝舌片，θ=0° 背对舌片）");
+                Console.WriteLine($"{"θ°",7}{"x",8}{"z",8}{"厚度",8}{"J",8}{"T",9}{"T−管根",9}");
+                for (double th = 0; th <= 180; th += 15)
+                {
+                    double rq = gH.HoleRadiusMm + 2.0;
+                    double xq = rq * Math.Cos(th * Math.PI / 180), zq = rq * Math.Sin(th * Math.PI / 180);
+                    int best = -1; double bd = 1e9;
+                    for (int i = 0; i < mH.CellCount; i++)
+                    {
+                        double d = Math.Abs(mH.Centroid[i].X - xq) + Math.Abs(mH.Centroid[i].Z - zq);
+                        if (d < bd) { bd = d; best = i; }
+                    }
+                    if (best < 0 || bd > 5) continue;
+                    Console.WriteLine($"{th,7:0}{mH.Centroid[best].X,8:0.0}{mH.Centroid[best].Z,8:0.0}" +
+                        $"{mH.Thickness[best],8:0.000}{scH.JMagAPerMm2[best],8:0.0}" +
+                        $"{thH.T[best],9:0.0}{thH.T[best] - fw.TRootC,9:+0.00;−0.00}");
+                }
+                Console.WriteLine();
+
                 Console.WriteLine("── 沿舌片中线 (z≈0) 的厚度与 J 剖面");
-                Console.WriteLine($"{"x mm",8}{"半宽",8}{"厚度",8}{"J",8}{"T",8}");
+                Console.WriteLine($"{"x mm",8}{"半宽",8}{"厚度",8}{"J",8}{"T",9}{"T−管根",9}");
                 for (double xq = 30; xq >= -90; xq -= 4)
                 {
                     int best = -1; double bd = 1e9;
@@ -3915,12 +4640,16 @@ internal static class Program
                     }
                     if (best < 0 || bd > 6) continue;
                     Console.WriteLine($"{mH.Centroid[best].X,8:0.0}{gH.HalfWidth(mH.Centroid[best].X),8:0.0}" +
-                        $"{mH.Thickness[best],8:0.000}{scH.JMagAPerMm2[best],8:0.0}{thH.T[best],8:0.0}");
+                        $"{mH.Thickness[best],8:0.000}{scH.JMagAPerMm2[best],8:0.0}" +
+                        $"{thH.T[best],9:0.0}{thH.T[best] - fw.TRootC,9:+0.00;−0.00}");
                 }
                 Console.WriteLine();
-                Console.WriteLine("★ 看两件事：① J 峰值到底贴不贴管孔；");
-                Console.WriteLine("  ② 厚度在切点处有没有 4 倍台阶（盘 0.5 → 舌 2.02）——");
-                Console.WriteLine("     若有，则**电流最窄的那个颈正好落在最薄的那一格**，那才是真元凶。");
+                Console.WriteLine("★ 判读：");
+                Console.WriteLine("  · 角向剖面若 180° 与 0° 的 J 差不多 ⇒ **「单侧绕流」这个说法不成立**，");
+                Console.WriteLine("    双舌片救不了 ② 就有了解释（实算正是如此）。");
+                Console.WriteLine("  · T 峰值若落在舌片中段而不是管孔附近 ⇒ 是**一维杆的分布发热**问题：");
+                Console.WriteLine("    两端定温、中间发热的杆必然中间最热，与绕流无关 ⇒ 对策是改**沿程发热分布**，");
+                Console.WriteLine("    即沿舌片渐变厚度或分段保温，而不是改平面形状。");
                 return;
             }
 
@@ -3986,22 +4715,18 @@ internal static class Program
                 Console.WriteLine("     它只由电流密度与局部热稳定定（--leadbound）。这一条把两个自由度彻底解耦。");
                 Console.WriteLine();
 
-                // ★ 现役实物是唯一能把 k_b 夹住的实测锚点。
-                //   注意它只给**上界**：Ø120×2.0 焊得出来 ⇒ 真实 slope ≤ 2.0/34，
-                //   但它可能离极限还很远，所以给不出下界。即便如此也已经有用 ——
-                //   它直接排除掉「一边自由的长板」那个取法。
-                double bNow = 60.0 - 26.0, tNow = 2.0;
-                double slopeField = tNow / bNow;
-                double slopeUse = Math.Min(sPtFree, slopeField);
-                Console.WriteLine("── ②′ 用现役实物把系数夹住（**唯一的实测锚点**）");
-                Console.WriteLine($"   现役法兰 Ø120 × {tNow:0.0} mm、环宽 b={bNow:0} mm，现场焊得出来、不鼓曲");
-                Console.WriteLine($"     ⇒ 真实 t_min/b **≤ {slopeField:0.0000}**（只是上界：实物可能离极限还远）");
-                Console.WriteLine($"   理论两端：简支 k_b=4.0 给 {sPt:0.0000}　一边自由 k_b=0.43 给 {sPtFree:0.0000}");
-                Console.WriteLine(sPtFree > slopeField
-                    ? $"   ⇒ ✗ 自由边那个取法 ({sPtFree:0.0000}) **被实物否掉**（它预言现役件会鼓曲，而没有）。\n" +
-                      $"     环形件不是「一边自由的长板」：环是闭合的，周向收缩被自身的箍效应扛住。\n" +
-                      $"   ⇒ 取实测上界 {slopeField:0.0000} 作设计斜率（仍比简支理论保守 {slopeField / sPt:0.0} 倍）"
-                    : $"   ⇒ 理论与实物不矛盾，取较保守者 {slopeUse:0.0000}");
+                // ⚠⚠ 此处曾用「现役 Ø120×2.0 焊得出来」反查，把 k_b 夹到 0.0588 并据此
+                //    否掉最保守的取法。**用户 2026-08-14 澄清：那组尺寸是随手给的一组，
+                //    不是被现场验证过的产品** ⇒ 该反查不成立，已撤回。
+                //    公式本身仍然有效（钢上验证过，见 ①），**只是边界系数 k_b 现在无锚点**，
+                //    只能取保守端。这一段留着是为了记住：**别再拿那组尺寸当实测。**
+                double slopeUse = sPtFree;
+                Console.WriteLine("── ②′ 关于 k_b 的锚点：**没有**（2026-08-14 撤回）");
+                Console.WriteLine("   曾用「现役 Ø120×2.0 焊得出来」反查得 t_min/b ≤ 0.0588，据此否掉自由边取法。");
+                Console.WriteLine("   用户澄清那是**随手给的一组尺寸、不是验证过的产品** ⇒ 该证据撤回。");
+                Console.WriteLine($"   ⇒ 只剩理论两端：简支 k_b=4.0 给 {sPt:0.0000}，一边自由 k_b=0.43 给 {sPtFree:0.0000}；");
+                Console.WriteLine($"     法兰是「内边焊在管上、外边自由」⇒ **取保守端 {slopeUse:0.0000}**。");
+                Console.WriteLine("   要把它收窄，只能靠**试焊一片**：焊一片已知环宽的板，看它鼓不鼓。");
                 Console.WriteLine();
                 Console.WriteLine($"── ②″ 按夹住后的斜率 {slopeUse:0.0000}／mm，各盘径的屈曲下界（含安全系数 {sf:0.0}）");
                 Console.WriteLine($"{"圆盘",-14}{"环宽 b mm",12}{"屈曲下界 mm",14}  与烧穿下界比");
@@ -4042,14 +4767,19 @@ internal static class Program
                 Console.WriteLine("★ 三条可执行的结论：");
                 Console.WriteLine("  ① **缩小圆盘直径同时放松焊接下界** —— 环宽小了，屈曲下界跟着线性下来。");
                 Console.WriteLine("     这与省铂、与端片热平衡（缩盘减少死区散热）**三者同向**，是本问题里少有的。");
-                Console.WriteLine("  ② 圆盘缩到 Ø60 后屈曲下界降到 0.5 以下 ⇒ **下界改由焊接方法决定**：");
-                Console.WriteLine("     手工 TIG 约 0.5　自动 TIG 约 0.3　激光/电阻缝焊约 0.1（差一个量级）");
+                Console.WriteLine("  ② **圆盘的下界与焊接方法无关** —— Ø60 的屈曲下界 0.55 已高于手工 TIG 的烧穿 0.5。");
+                Console.WriteLine("     在手工 TIG 档（管壁 0.6）圆盘实际厚度被电热约束顶到 1.0–2.0 mm，");
+                Console.WriteLine("     两条焊接下界对圆盘**都不起作用**；管壁再薄下去圆盘才会被 0.55 顶住。");
+                Console.WriteLine("     ⇒ 焊接方法只经**管壁**一条路影响铂重（管侧不屈曲，只可能烧穿）。");
+                Console.WriteLine("     ⚠ 但 `--weldvalue` 实算表明**这条路也走不通**：管壁 0.30 时空管升不到温，");
+                Console.WriteLine("       真正的管壁下界是**升温能力**（落在 0.30–0.50），不是焊接 ⇒ 见 --wallfloor。");
                 Console.WriteLine("  ③ **舌片不受任何焊接下界约束**（同板切出），它只由 --leadbound 的两条电热约束定。");
                 Console.WriteLine();
-                Console.WriteLine($"程序当前取 WeldMinThicknessMm = {p.WeldMinThicknessMm:0.00} mm（手工 TIG 常规）。");
-                Console.WriteLine("⚠ 待现场确认两件事，它们直接决定省铂上限（§6 待补①）：");
-                Console.WriteLine("   · 用哪种焊接方法？（这一条比材料牌号更值钱）");
-                Console.WriteLine("   · 现役 Ø120×2.0 是不是接近工艺极限？若它其实很宽裕，上面的斜率还能再放。");
+                Console.WriteLine($"程序当前取 WeldMinThicknessMm = {p.WeldMinThicknessMm:0.00} mm。");
+                Console.WriteLine("用户 2026-08-14 已答：**目前是手工焊接** ⇒ 管壁烧穿下界约 0.5，程序取 0.6 留一档余量。");
+                Console.WriteLine("⚠ 仍待现场确认（§6 待补①）：");
+                Console.WriteLine("   · 手工 TIG 在**铂**上的实际烧穿下界（0.5 是行业常规值，非本项目实测）；");
+                Console.WriteLine("   · 若愿意换自动 TIG 或激光焊，省铂幅度见 `--weldvalue`。");
                 return;
             }
 
