@@ -88,6 +88,21 @@ public sealed class FlangePlate
     public bool TabParallel = false;
 
     /// <summary>
+    /// 等宽舌片与圆盘交界处的**过渡圆角半径** mm（仅 <see cref="TabParallel"/> 时有意义）。
+    ///
+    /// 为什么必须有：等宽舌片是直边切进圆盘，交界是一个**凹尖角**——
+    /// 梯形舌片是相切过渡，本来没有这个角。实算它同时闯了两个祸，而且是同一个祸：
+    ///   · 判据② 圆盘区最高温比管根高 6.6 K（热点就在这个角上）
+    ///   · J_max 冲到 62.8 A/mm²（梯形时没有）
+    /// 尖角处的场是**奇异**的：网格越细数值越大，所以那个 62.8 本身也不能当设计值。
+    ///
+    /// 几何：一段与圆盘圆外切、又与直边相切的圆弧。圆心 (x_c, w+r)，
+    /// x_c = −√((R+r)²−(w+r)²)；与圆盘圆的切点在圆心与原点的连线上。
+    /// 0 = 不倒角（尖角，仅供对照）。
+    /// </summary>
+    public double TabFilletMm = 0.0;
+
+    /// <summary>
     /// **舌片自己的保温厚度** mm。NaN = 舌片裸露（现场实况，也是默认）。
     ///
     /// 与 <see cref="InsulBoundaryXMm"/> 的关系：那个只决定「哪一段算圆盘、哪一段算舌片」，
@@ -231,8 +246,22 @@ public sealed class FlangePlate
             double ue = (TabEndXMm - x) / Math.Max(1e-9, ExtensionMm);
             return TabEndHalfWidthMm + (ExtHalfWidthMm - TabEndHalfWidthMm) * ue;
         }
+        if (TabParallel)
+        {
+            double w = TabEndHalfWidthMm, R = DiscRadiusMm, rf = TabFilletMm;
+            if (rf > 1e-9 && w < R)
+            {
+                double zc = w + rf;
+                double xc = -Math.Sqrt(Math.Max(0, (R + rf) * (R + rf) - zc * zc));
+                double xTan = xc * R / (R + rf);        // 与圆盘圆的切点，在圆心–原点连线上
+                if (x > xTan) return Math.Sqrt(Math.Max(0, R * R - x * x));
+                if (x >= xc) return zc - Math.Sqrt(Math.Max(0, rf * rf - (x - xc) * (x - xc)));
+                return w;
+            }
+            if (x >= xt) return Math.Sqrt(Math.Max(0, R * R - x * x));
+            return w;                                    // 等宽无倒角：交界之后不再收口
+        }
         if (x >= xt) return Math.Sqrt(Math.Max(0, DiscRadiusMm * DiscRadiusMm - x * x));
-        if (TabParallel) return TabEndHalfWidthMm;      // 等宽：交界之后不再收口
         double u = (x - xt) / (TabEndXMm - xt);
         return wt + (TabEndHalfWidthMm - wt) * u;
     }

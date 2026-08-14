@@ -3661,7 +3661,21 @@ internal static class Program
             if (args.Contains("--linefinal"))
             {
                 double wallF9 = p.WeldMinThicknessMm;      // 焊接下界（用户 2026-08-14）
-                double tDiscF9 = 0.5, discF9 = 30.0, holeF9 = wallF9 + 25.0;
+                double discF9 = 30.0, holeF9 = wallF9 + 25.0;
+
+                // ★★ 盘与舌**等厚**（`--uniform`，默认开）。
+                //
+                // 理由是可制造性：舌片与圆盘是**同一张板切出来的**（所以它们之间没有焊缝，
+                // §4.3f 正是据此把舌厚从焊接下界里解放出来）—— 既然同板，就不可能一个 0.5
+                // 一个 2.02，那需要机加工或拼板另焊。
+                // 而且实测（`--hotspot`）表明阶梯本身就是祸根：
+                //   J 峰值 62.9 落在**贴着管孔的 0.5 mm 圆盘上**（r=26.3），
+                //   T 峰值落在**贴着管孔的舌片根部**（厚 2.02）——
+                //   电流必须从管孔挤向舌片，而那段颈正好是全片最薄处。
+                // 等厚把这个颈的截面直接放大 3–4 倍。代价是圆盘变重（约 +25 g/片）。
+                //
+                // 传 `--stepped` 回到阶梯板（可比较两者的铂重差）。
+                bool uniformF9 = !args.Contains("--stepped");
                 double clampLenF9 = 40.0, clampF9 = 300.0;
                 double targetF9 = 5.0;                     // 管根温差目标 K（C2 上限 10）
 
@@ -3673,12 +3687,14 @@ internal static class Program
                 pF9.BusbarClampTempC = clampF9;
 
                 // --endsolve 选出的最轻可行候选（端片 / 共用片）
+                // 起点 = 上一次自动定尺寸的收敛解（2026-08-14 实算），这样重跑只需几轮。
+                // 想从 --endsolve 的单片候选重新走一遍，把 ins/tTab 换回 1.9/25.7、0.9/1.8 即可。
                 var geoF9 = new[]
                 {
-                    (nm: "入口端片",  tabL: 90.0,  halfW: 15.0, tTab: 0.9, ins: 1.9),
-                    (nm: "HC1|HC2", tabL: 90.0,  halfW: 15.0, tTab: 1.8, ins: 25.7),
-                    (nm: "HC2|HC3", tabL: 90.0,  halfW: 15.0, tTab: 1.8, ins: 25.7),
-                    (nm: "出口端片",  tabL: 90.0,  halfW: 15.0, tTab: 0.9, ins: 1.9),
+                    (nm: "入口端片",  tabL: 90.0,  halfW: 15.0, tTab: 1.37, ins: 16.5),
+                    (nm: "HC1|HC2", tabL: 90.0,  halfW: 15.0, tTab: 2.02, ins: 0.9),
+                    (nm: "HC2|HC3", tabL: 90.0,  halfW: 15.0, tTab: 1.80, ins: 1.1),
+                    (nm: "出口端片",  tabL: 90.0,  halfW: 15.0, tTab: 1.04, ins: 2.9),
                 };
                 var insF9 = geoF9.Select(g => g.ins).ToArray();
                 var tabF9 = geoF9.Select(g => g.tTab).ToArray();
@@ -3688,18 +3704,25 @@ internal static class Program
                 {
                     var plates = new FlangePlate[4];
                     for (int j = 0; j < 4; j++)
+                    {
+                        // 等厚：圆盘随舌片走（但不得低于焊接下界）；阶梯：圆盘钉在下界
+                        double tDisc = uniformF9 ? Math.Max(tab[j], p.WeldMinThicknessMm) : 0.5;
                         plates[j] = new FlangePlate
                         {
                             DiscRadiusMm = discF9, HoleRadiusMm = holeF9,
                             TabEndXMm = -geoF9[j].tabL, TabEndHalfWidthMm = geoF9[j].halfW,
-                            ThicknessMm = tDiscF9, ThickenedMm = tDiscF9,
-                            TabThicknessMm = tab[j],
+                            ThicknessMm = tDisc, ThickenedMm = tDisc,
+                            TabThicknessMm = uniformF9 ? double.NaN : tab[j],
                             InsulBoundaryXMm = double.NaN, TabInsulThickMm = ins[j],
                             TabParallel = true,
+                            // 等宽舌片与圆盘的交界必须倒角：尖角同时抬高该处温度与 J，
+                            // 且尖角处的场是网格相关的奇异解（见 FlangePlate.TabFilletMm）。
+                            TabFilletMm = 3.0,
                             // 角焊缝：焊脚取较薄件的厚度（常规做法），管↔盘两面各一道。
                             // 它在孔周增厚 ⇒ 压低该处 J 与单位面积发热（用户 2026-08-14 附图）。
-                            WeldFilletLegMm = Math.Max(tDiscF9, wallF9)
+                            WeldFilletLegMm = Math.Max(tDisc, wallF9)
                         };
+                    }
                     return new LineCase
                     {
                         Base = SegmentSolver.Clone(pF9), WallMm = wallF9,
@@ -3711,8 +3734,11 @@ internal static class Program
                 }
 
                 Console.WriteLine("=== 整线自洽复核（--endsolve 候选 → LineRunner）===");
-                Console.WriteLine($"管壁 {wallF9:0.0}（焊接下界）／盘Ø{2 * discF9:0}×{tDiscF9:0.0}／" +
-                                  $"等宽舌片／压接 {clampLenF9:0} 夹 {clampF9:0} °C／圆盘包 20");
+                Console.WriteLine($"管壁 {wallF9:0.0}（焊接下界）／盘Ø{2 * discF9:0}／等宽舌片／" +
+                                  $"压接 {clampLenF9:0} 夹 {clampF9:0} °C／圆盘包 20");
+                Console.WriteLine(uniformF9
+                    ? "★ **盘舌等厚**（同板切出，唯一可制造的形式）；传 --stepped 可看阶梯板对比"
+                    : "★ 阶梯板：盘钉在焊接下界 0.5、舌片单独设厚 ⇒ 需机加工或拼板另焊");
                 Console.WriteLine("外层**双旋钮**定点迭代顶管根温差 C2：");
                 Console.WriteLine("  · 首选**舌片保温厚度** —— 不花铂，所以先用它");
                 Console.WriteLine("  · 保温顶到边界还不够时，才动**舌片厚度**（发热 ∝ 1/t，这一项要花铂）");
@@ -3766,6 +3792,31 @@ internal static class Program
                     insF9 = nIns; tabF9 = nTab;
                 }
 
+                // ★ 收敛后必须再跑一次**带全部判据**的（迭代期关掉升温判据只是为了快）。
+                //   用户的硬约束①是「能达成升温功能且升温途中不损坏」，而现场唯一被证实的
+                //   失效模式正在升温期（§4.2r）—— 稳态过了不等于能开机。
+                if (last != null)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("── 收敛后全判据复核（含升温规程）");
+                    var lcChk = MakeF9(insF9, tabF9);
+                    lcChk.CheckRamp = true;
+                    try
+                    {
+                        var rChk = LineRunner.Run(lcChk);
+                        if (rChk.Ok)
+                        {
+                            last = rChk;
+                            Console.WriteLine($"{"判据",-24}{"实际",10}{"限值",10}{"位置",10}  结论");
+                            foreach (var ck in rChk.Checks)
+                                Console.WriteLine($"{ck.Name,-24}{ck.Actual,10:0.00}{ck.Limit,10:0.00}" +
+                                    $"{ck.Where,10}  {(ck.Ok ? "✓" : "✗")}　{ck.Note}");
+                        }
+                        else Console.WriteLine("  ✗ " + rChk.Message);
+                    }
+                    catch (Exception ex) { Console.WriteLine("  异常 " + ex.Message); }
+                }
+
                 if (last != null)
                 {
                     Console.WriteLine();
@@ -3792,6 +3843,84 @@ internal static class Program
                                       $"{(1 - (mSeg + mFl) / last.BaselineMassG) * 100:0.0} %）");
                     foreach (var n in last.Notes) Console.WriteLine("  " + n);
                 }
+                return;
+            }
+
+            // --cli --hotspot   ★ 直接量「峰值在哪」——两次靠猜都猜错之后加的
+            //
+            // 先猜峰值在包保温的舌片上 → 加 ②″ 分区判据，结果分区值一模一样，猜错；
+            // 再猜是等宽舌片与圆盘的凹尖角 → 加过渡圆角，结果**逐位相同**（圆角只改
+            // 0.25 mm 的轮廓，落在 2 mm 网格之下），又猜错。
+            // ⇒ 不再猜：把 J_max / T_max 的**坐标、半径、厚度、所属区**直接打出来。
+            if (args.Contains("--hotspot"))
+            {
+                double wallH = 0.6, holeH = wallH + 25.0;
+                var pH = SegmentSolver.Clone(p);
+                pH.Layer1.ThicknessMm = 10.0; pH.Layer1.Enabled = true;
+                pH.WallMinMm = wallH;
+                pH.FlangeInsulThickMm = 20; pH.FlangeInsulated = true;
+                pH.BusbarClampLengthMm = 40; pH.BusbarClampTempC = 300;
+                pH.TSetC = 1080;
+
+                var gH = new FlangePlate
+                {
+                    DiscRadiusMm = 30, HoleRadiusMm = holeH,
+                    TabEndXMm = -90, TabEndHalfWidthMm = 15,
+                    ThicknessMm = 0.5, ThickenedMm = 0.5, TabThicknessMm = 2.02,
+                    InsulBoundaryXMm = double.NaN, TabInsulThickMm = 1.0,
+                    TabParallel = true, TabFilletMm = 3.0,
+                    WeldFilletLegMm = 0.6
+                };
+                var mH = FlangeMesher.Build(gH, 0, 2.0, 11.0, 45.0, 40.0);
+                var scH = ShellCurrent.Solve(mH, 1354.0, Materials.PtResistivity(1080) * 1e3, 1080);
+                double xtH = gH.Tangent().X;
+                var thH = ShellThermal.Solve(mH, scH.JMagAPerMm2, pH, 1079.1,
+                              gH.InsulBoundaryXResolved, tabBoundaryX: xtH,
+                              tabInsulThickMm: gH.TabInsulThickMm);
+
+                Console.WriteLine("=== 峰值位置实测（HC1|HC2 片，I=1354 A，管根 1079.1 °C）===");
+                Console.WriteLine($"几何：盘Ø60×0.5／等宽舌 90×末宽30×2.02／交界圆角 3.0／" +
+                                  $"焊脚 0.6／切点 x={xtH:0.00}");
+                Console.WriteLine();
+
+                void Report(string what, int idx)
+                {
+                    var c0 = mH.Centroid[idx];
+                    double r0 = Math.Sqrt(c0.X * c0.X + c0.Z * c0.Z);
+                    Console.WriteLine($"{what}：x={c0.X,8:0.00}  z={c0.Z,8:0.00}  r={r0,8:0.00}" +
+                        $"  厚={mH.Thickness[idx],6:0.000}  J={scH.JMagAPerMm2[idx],7:0.0}" +
+                        $"  T={thH.T[idx],7:0.0}  区={(c0.X < xtH ? "舌片" : "圆盘")}" +
+                        $"  {(Math.Abs(r0 - gH.HoleRadiusMm) < 3 ? "★贴管孔" : "")}");
+                }
+                int iJ = 0, iT = 0;
+                for (int i = 1; i < mH.CellCount; i++)
+                {
+                    if (scH.JMagAPerMm2[i] > scH.JMagAPerMm2[iJ]) iJ = i;
+                    if (thH.T[i] > thH.T[iT]) iT = i;
+                }
+                Report("J 峰值", iJ);
+                Report("T 峰值", iT);
+                Console.WriteLine();
+
+                // 沿 z=0 与 z=±舌宽 打剖面，看厚度台阶与颈部
+                Console.WriteLine("── 沿舌片中线 (z≈0) 的厚度与 J 剖面");
+                Console.WriteLine($"{"x mm",8}{"半宽",8}{"厚度",8}{"J",8}{"T",8}");
+                for (double xq = 30; xq >= -90; xq -= 4)
+                {
+                    int best = -1; double bd = 1e9;
+                    for (int i = 0; i < mH.CellCount; i++)
+                    {
+                        double d = Math.Abs(mH.Centroid[i].X - xq) + Math.Abs(mH.Centroid[i].Z) * 0.5;
+                        if (d < bd) { bd = d; best = i; }
+                    }
+                    if (best < 0 || bd > 6) continue;
+                    Console.WriteLine($"{mH.Centroid[best].X,8:0.0}{gH.HalfWidth(mH.Centroid[best].X),8:0.0}" +
+                        $"{mH.Thickness[best],8:0.000}{scH.JMagAPerMm2[best],8:0.0}{thH.T[best],8:0.0}");
+                }
+                Console.WriteLine();
+                Console.WriteLine("★ 看两件事：① J 峰值到底贴不贴管孔；");
+                Console.WriteLine("  ② 厚度在切点处有没有 4 倍台阶（盘 0.5 → 舌 2.02）——");
+                Console.WriteLine("     若有，则**电流最窄的那个颈正好落在最薄的那一格**，那才是真元凶。");
                 return;
             }
 
@@ -4038,8 +4167,9 @@ internal static class Program
                 pS9.BusbarClampLengthMm = clampLenS9;
                 pS9.BusbarClampTempC = clampS9;
 
-                // 圆盘厚度取焊接下界（Ø60 环宽 4 mm ⇒ 屈曲 0.47，烧穿 0.5 ⇒ 取 0.5，见 --weldmin）；
-                // 舌片与圆盘同板切出、**无焊缝** ⇒ 舌厚不受此约束，是自由变量。
+                // 圆盘厚度取焊接下界（Ø60 环宽 4 mm ⇒ 屈曲 0.47，烧穿 0.5 ⇒ 取 0.5，见 --weldmin）。
+                // ⚠ 这一节仍按「盘薄舌厚」的阶梯板筛选，那意味着要机加工或拼板；
+                //   若按「同板切出」则盘舌必须等厚 —— 见 --linefinal 的等厚方案对比。
                 double tDiscS9 = 0.5;
                 FlangePlate MkS9(double tabL, double tTab, double ins, double halfW) => new()
                 {

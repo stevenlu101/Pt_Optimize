@@ -156,6 +156,8 @@ public sealed class FlangeOut
     /// 整片一个「发热 &lt; 散热」指不出该动哪一段，而两段的杠杆方向相反。
     /// </summary>
     public double QGenDiscW, QLossDiscW, QGenTabW, QLossTabW, TDiscMeanC, TTabMeanC;
+    /// <summary>分区峰值温度 —— 判据②要用 <see cref="TDiscMaxC"/>，见 ShellThermalResult 同名注释</summary>
+    public double TDiscMaxC, TTabMaxC;
     /// <summary>本片贴着的管根温度 °C（管孔定温边界）。TMaxC − TRootC &gt; 0 即「法兰比管热」</summary>
     public double TRootC;
     public double AreaMm2, VolumeMm3;
@@ -479,6 +481,7 @@ public static class LineRunner
                 QGenDiscW = th.QGenDiscW, QLossDiscW = th.QLossDiscW,
                 QGenTabW = th.QGenTabW, QLossTabW = th.QLossTabW,
                 TDiscMeanC = th.TDiscMeanC, TTabMeanC = th.TTabMeanC,
+                TDiscMaxC = th.TDiscMaxC, TTabMaxC = th.TTabMaxC,
                 TMaxC = th.TMaxC, TMinC = th.TMinC, TTabEndC = th.TTabEndMeanC,
                 AreaMm2 = mesh.TotalArea, VolumeMm3 = mesh.VolumeMm3,
                 CellCount = mesh.CellCount,
@@ -598,6 +601,27 @@ public static class LineRunner
                    (hottest.TMaxC > 1768 ? $" ★已超铂熔点 1768 °C" : "")
         });
 
+        // ── ②″ 同一条安全线，但**只看贴着管子那一段**（圆盘区）。
+        //
+        // 为什么要单列而不是把 ② 改掉：② 取的是**整片**最高温。舌片包保温之后
+        // （§4.3e 的新自由度）峰值就落到舌片上 —— 离管子几十毫米、中间还隔着圆盘，
+        // 拿它跟管根比是在比两个不相干的位置。真正决定「热往不往管里灌」的是圆盘区。
+        // **但 ② 不能因此删掉**：舌片跑多热本身仍要盯（熔点、局部失稳），
+        // 而且一旦哪天圆盘重新成为峰值所在，② 与 ②″ 会自动重合。两条都报，谁不过都要交代。
+        var hottestDisc = flanges.Where(f => !double.IsNaN(f.TDiscMaxC))
+                                 .OrderByDescending(f => f.TDiscMaxC - f.TRootC).FirstOrDefault();
+        if (hottestDisc is not null)
+            checks.Add(new ConstraintOut
+            {
+                Name = "②″圆盘区最高温 − 管温", Unit = "K", Kind = CheckKind.HardSafety,
+                Actual = hottestDisc.TDiscMaxC - hottestDisc.TRootC, Limit = 0,
+                Ok = hottestDisc.TDiscMaxC <= hottestDisc.TRootC + 1e-6,
+                Where = hottestDisc.Name,
+                Note = $"圆盘区 {hottestDisc.TDiscMaxC:0.0} vs 管根 {hottestDisc.TRootC:0.0} °C；" +
+                       $"舌片区峰值 {hottestDisc.TTabMaxC:0.0} °C（另由熔点与局部失稳管）；" +
+                       $"管孔净流入 {hottestDisc.QFromTubeW:+0;-0} W"
+            });
+
         // ── ②′ 同一条安全线的管侧视角：管根温差必须为**正**（法兰比管冷）
         var coldest = segs.OrderBy(s => s.RootDeltaK).First();
         checks.Add(new ConstraintOut
@@ -637,11 +661,16 @@ public static class LineRunner
         }
         checks.Add(new ConstraintOut
         {
-            Name = "④ 管强度利用率", Unit = "—", Kind = CheckKind.Target,
-            Actual = utilMax, Limit = 1.0, Ok = utilMax <= 1.0 && !undetermined,
+            Name = "④ 管强度利用率", Unit = "—", Kind = CheckKind.Reference,
+            Actual = utilMax, Limit = 1.0, Ok = true,
             Where = undetermined ? undetNote : utilWhere,
             Undetermined = undetermined,
-            Note = "法兰不承重（氧化铝管托底，§4.2d），故不校核舌片"
+            // ★ 2026-08-14 用户：「蠕变、铂金加热蒸发也都不必考虑」「都留有膨胀考量」
+            //   ⇒ 持久强度不再是约束，本项降为**参考量**，不再因它判不可行。
+            //   同时也就不再需要「落在实测区间之外 ⇒ 无法判定」那条护栏去卡整个方案。
+            //   注意：熔点与局部热失稳**不属于**被划掉的那三条，仍然是硬判据。
+            Note = "参考（用户 2026-08-14：蠕变不必考虑，本项降级）；" +
+                   "法兰不承重（氧化铝管托底，§4.2d），故不校核舌片"
         });
 
         // ── 参考量：Φ（②的佐证，夹冷时会失真，见 ② 的说明）

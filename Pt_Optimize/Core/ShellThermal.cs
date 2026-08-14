@@ -49,6 +49,14 @@ public sealed class ShellThermalResult
     public double AreaDiscMm2, AreaTabMm2;
     /// <summary>面积加权平均温度 °C</summary>
     public double TDiscMeanC, TTabMeanC;
+    /// <summary>
+    /// 分区**峰值**温度 °C。判据②「法兰温度 ≤ 管温」要看的是 <see cref="TDiscMaxC"/>：
+    /// 那是**贴着管子那一段**的温度，它才决定热往不往管里灌。
+    /// 整片的 <see cref="TMaxC"/> 在新方案里落在**包了保温的舌片**上（离管子几十毫米、
+    /// 中间隔着圆盘），拿它去跟管根比是在比两个不相干的位置。
+    /// 两个都留着、都报出来，不要用一个替换另一个。
+    /// </summary>
+    public double TDiscMaxC, TTabMaxC;
     public int Iterations;
     public double Residual;
     public bool Converged;
@@ -287,6 +295,7 @@ public static class ShellThermal
         // ── 分区账：圆盘 vs 舌片（口径同上，只统计自由单元）
         double xb = double.IsNaN(tabBoundaryX) ? insulBoundaryX : tabBoundaryX;
         double gD = 0, lD = 0, aD = 0, tD = 0, gT = 0, lT = 0, aT = 0, tT = 0;
+        double tDMax = double.NegativeInfinity, tTMax = double.NegativeInfinity;
         for (int i = 0; i < n; i++)
         {
             if (Excluded(i)) continue;
@@ -296,13 +305,15 @@ public static class ShellThermal
             bool onTab = symmetricInsul
                        ? Math.Abs(m.Centroid[i].X) > Math.Abs(xb)
                        : m.Centroid[i].X < xb;
-            if (onTab) { gT += g; lT += l; aT += A; tT += ti * A; }
-            else { gD += g; lD += l; aD += A; tD += ti * A; }
+            if (onTab) { gT += g; lT += l; aT += A; tT += ti * A; tTMax = Math.Max(tTMax, ti); }
+            else { gD += g; lD += l; aD += A; tD += ti * A; tDMax = Math.Max(tDMax, ti); }
         }
         res.QGenDiscW = gD; res.QLossDiscW = lD; res.AreaDiscMm2 = aD;
         res.QGenTabW = gT; res.QLossTabW = lT; res.AreaTabMm2 = aT;
         res.TDiscMeanC = aD > 1e-9 ? tD / aD : double.NaN;
         res.TTabMeanC = aT > 1e-9 ? tT / aT : double.NaN;
+        res.TDiscMaxC = double.IsNegativeInfinity(tDMax) ? double.NaN : tDMax;
+        res.TTabMaxC = double.IsNegativeInfinity(tTMax) ? double.NaN : tTMax;
 
         var tabT = Enumerable.Range(0, n).Where(i => tabCell[i]).Select(i => res.T[i]).ToArray();
         res.TTabEndMeanC = tabT.Length > 0 ? tabT.Average() : double.NaN;
