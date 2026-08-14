@@ -4232,10 +4232,29 @@ internal static class Program
                 // 前沿实测（每档都重新定过尺寸）：300 → ② +6.85（且 C2 顶到 +10.5）；
                 //   **450 → ② +2.93（最好）**；600 → ② +6.33。
                 // ⇒ `--clampscan` 那个「300 最优」是错的，因为它在**几何固定**下扫。
-                // 定案取 450，下面打完整判据表与逐片明细。整条前沿要重看时把三档放回来。
-                foreach (double clampSweep in new[] { 450.0 })
+                // 压接温度定在 450，改扫**舌片半宽** —— 找那差着的 2.93 K。
+                //
+                // 为什么是宽度：尖峰由局部 J 定，而 J = I/(宽×厚)。
+                // 加宽直接压 J，且**不像减薄那样牺牲发热**（发热 ∝ I·J·ρe·ℓ，
+                // 加宽降 J 会降发热，但可由 C2 那个旋钮把厚度调回来补）。
+                // 此前只扫过**窄**舌（§4.3b 的 30/16 mm），一次都没往宽里试过 ——
+                // 因为那时的目标是「自给」，宽舌片散热面积大；
+                // 但现在包了保温，面积的代价小了很多，取舍已经变了。
+                // ★★ 半宽扫描（15/20/25）实测：② 反而单调变坏 +2.93 → +3.59 → +5.48。
+                //   看收敛值就明白：半宽 25 时舌厚被削到 0.82、保温全顶到上限 80。
+                //   **加宽降 J ⇒ 发热 ∝ I·J·ρe 跟着降 ⇒ 只能削薄+猛加保温补 C2 ⇒ ② 更坏。**
+                //
+                // ⇒ 把这一串失败归纳成一句：**C2 与 ② 通过 J 本身直接对立** ——
+                //     P = I·J·ρe·ℓ，C2 要总发热够（要 J 高），② 要局部 J 低。
+                //   凡是降 J 的动作（加宽、加厚、大环）都会被 C2 反推回来。
+                //   式子里只剩 **ℓ（舌片长度）** 能在不动 J 的前提下加发热。
+                //   ⇒ 本轮改扫舌长。（曾试过 130，但那次被单向棘轮 bug 污染，结论作废。）
+                double halfWF2 = 15.0;
+                double lenScaleF2 = 1.0;
+                foreach (double lenSweep in new[] { 90.0, 130.0, 170.0 })
                 {
-                clampF2 = clampSweep;
+                lenScaleF2 = lenSweep;
+                clampF2 = 450.0;
                 // 管孔加厚环：**绝对厚度，不是倍率**。
                 // 第一版写成 ThickenedMm = 板厚 × 1.3，结果舌片被 C2 逼薄时环也跟着薄
                 // （舌 1.61 ⇒ 环只有 2.09），压不住尖峰 —— 实测 HC2|HC3 保温已顶到下界 0.3、
@@ -4293,7 +4312,7 @@ internal static class Program
                         plates[j] = new FlangePlate
                         {
                             DiscRadiusMm = discF2, HoleRadiusMm = wallF2 + 25.0,
-                            TabEndXMm = -tabLenF2[j], TabEndHalfWidthMm = 15.0,
+                            TabEndXMm = -lenScaleF2, TabEndHalfWidthMm = halfWF2,
                             ThicknessMm = td,
                             // 各级不得薄于板身（板被 C2 逼厚时，台阶不能反而成了减薄区）
                             DiscStepRadiiMm = stepRF2,
@@ -4318,8 +4337,7 @@ internal static class Program
                 Console.WriteLine($"管壁 {wallF2:0.0}／盘Ø{2 * discF2:0}／管孔两级渐变环 " +
                                   $"r≤{stepRF2[0]:0}→{stepTF2[0]:0.0}，r≤{stepRF2[1]:0}→{stepTF2[1]:0.0}／" +
                                   $"压接 {clampLenF2:0} 夹 {clampF2:0} °C");
-                Console.WriteLine($"舌长 逐片 {string.Join("/", tabLenF2.Select(v => v.ToString("0")))} mm" +
-                                  "（端片加长：发热 ∝ 长度，而包了保温的损失几乎不随长度涨）");
+                Console.WriteLine($"**舌长 {lenScaleF2:0} mm**（本轮扫的就是它）　舌片半宽 {halfWF2:0}");
                 Console.WriteLine("分派：舌厚→C2（发热∝1/t）　舌保温→②（保温厚⇒舌片热⇒峰值高）");
                 // 闭式（§4.3l）：把舌片当杆，Q_根 = kAΔT/ℓ − pℓ/2，T′(0) = −ΔT/ℓ + pℓ/(2kA)。
                 // C2 要 Q_根>0 ⇔ T′(0)<0；② 要杆内无处高于管根 ⇔ 峰值不在内部 ⇔ T′(0)≤0。
@@ -4459,7 +4477,7 @@ internal static class Program
                                   $"　② max {e2B[wj]:+0.00;−0.00} K（{bestF2.Flanges[wj].Name}）" +
                                   $"　合计 {mAll:0} g");
                 Console.WriteLine();
-                frontRows.Add((clampF2, dtB.Min(), dtB.Max(), e2B[wj], mAll, bestF2.Flanges[wj].Name));
+                frontRows.Add((lenScaleF2, dtB.Min(), dtB.Max(), e2B[wj], mAll, bestF2.Flanges[wj].Name));
 
                 // ── 完整判据表 + 逐片明细（交付件）
                 Console.WriteLine("   ── 全判据复核（含升温规程）");
@@ -4496,8 +4514,8 @@ internal static class Program
                 Console.WriteLine();
                 }   // ← 压接温度外层循环结束
 
-                Console.WriteLine("── ②–C2 前沿（每档压接温度都**重新定过尺寸**）");
-                Console.WriteLine($"{"压接°C",8}{"C2 min",9}{"C2 max",9}{"② max",9}{"合计 g",9}  判定");
+                Console.WriteLine("── ②–C2 前沿（每档都**重新定过尺寸**；压接 450 °C、半宽 15，扫舌长）");
+                Console.WriteLine($"{"舌长mm",8}{"C2 min",9}{"C2 max",9}{"② max",9}{"合计 g",9}  判定");
                 foreach (var fr in frontRows)
                     Console.WriteLine($"{fr.clamp,8:0}{fr.c2min,9:+0.0;−0.0}{fr.c2max,9:+0.0;−0.0}" +
                         $"{fr.e2max,9:+0.00;−0.00}{fr.mass,9:0}  " +
