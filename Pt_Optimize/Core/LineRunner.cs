@@ -266,6 +266,44 @@ public sealed class LineResult
     /// <summary>段↔法兰外层耦合是否收敛。**为 false 时表内所有数值一律不可引用。**</summary>
     public bool Converged;
     public string Message = "";
+
+    // ────────────────────────────────────────────────────────────────
+    // ★★★★ 判据的**唯一来源**（2026-08-15）
+    //
+    // 此前判据定义散在三处：`Judge`、定尺寸器的控制律、汇总表的判定逻辑 ——
+    // 同一件事写三遍。改口径时改了三次、每次都漏一处，产生
+    // 「判据表说过、汇总表说不过」这种自相矛盾且**不报错**的输出（连错四次）。
+    // ⇒ 现在 Judge 出结果，**其余一律只读下面这几个访问器**，不得自行重算。
+    // ────────────────────────────────────────────────────────────────
+
+    /// <summary>判据名前缀常量 —— 引用判据只准用它们，不准写字符串字面量</summary>
+    public static class Key
+    {
+        public const string Ramp = "① 升温";
+        public const string NetFlux = "②′管孔净流入";      // B：热流方向本身
+        public const string DiscTemp = "②″圆盘区最高温";     // C：贴管子那一圈
+        public const string FlangeDip = "③ 法兰增量温降";    // 法兰挖的坑
+    }
+
+    public ConstraintOut? Find(string keyPrefix)
+        => Checks.FirstOrDefault(c => c.Name.StartsWith(keyPrefix, StringComparison.Ordinal));
+
+    /// <summary>某条判据的实测值（找不到则 NaN）</summary>
+    public double ValueOf(string keyPrefix) => Find(keyPrefix)?.Actual ?? double.NaN;
+
+    /// <summary>全部**硬安全线**是否通过</summary>
+    public bool HardOk => Checks.Where(c => c.Kind == CheckKind.HardSafety)
+                                .All(c => c.Ok || c.Undetermined);
+
+    /// <summary>硬安全线 + 设计目标是否全部通过 —— **可交付的唯一判定**</summary>
+    public bool AllOk => Converged && Checks
+        .Where(c => c.Kind is CheckKind.HardSafety or CheckKind.Target)
+        .All(c => c.Ok || c.Undetermined);
+
+    /// <summary>没过的判据名（供报告直接引用，不要另行拼装）</summary>
+    public string[] Failed => Checks
+        .Where(c => c.Kind is CheckKind.HardSafety or CheckKind.Target && !c.Ok && !c.Undetermined)
+        .Select(c => $"{c.Name} {c.Actual:0.0}/{c.Limit:0.0}").ToArray();
 }
 
 /// <summary>
@@ -802,6 +840,11 @@ public static class LineRunner
         //     = 1150 与 1080 的中间，偏离本段控温点 34 K），**与法兰设计无关**。
         //     让法兰去背控温点梯度的锅，等于给优化器一个它够不着的靶子。
         //   现在判的是「有法兰 vs 无法兰」的同位置之差 —— 那才是法兰的责任。
+        // ⚠⚠ 判据只能「过 / 不过 / **无法判定**」，**绝不允许消失**。
+        //   原来写成 `if (dips.Length > 0) checks.Add(...)` —— 基线算失败时这条
+        //   整个不出现，于是 AllOk 少判一条还报「全过」。实测阶梯就这么虚报过一次：
+        //   增量降 max 是 +32（上限 10）却判「✓ 全过」。
+        //   **判据消失比判据不过危险得多**：不过会被看见，消失不会。
         var dips = segs.Where(s => !double.IsNaN(s.FlangeDipK)).ToArray();
         if (dips.Length > 0)
         {
@@ -815,6 +858,18 @@ public static class LineRunner
                        $"vs {deepest.TRootAC:0.0}/{deepest.TRootBC:0.0} °C）；控温点梯度不算在内"
             });
         }
+        else
+        {
+            checks.Add(new ConstraintOut
+            {
+                Name = "③ 法兰增量温降 ≤ 上限", Unit = "K", Kind = CheckKind.Target,
+                Actual = double.NaN, Limit = c.RootDeltaMaxK, Ok = false,
+                Undetermined = true, Where = "—",
+                Note = "★ **无法判定**：无法兰基线没算出来（LineCase.BaselineRootC 为空且基线子解失败）。" +
+                       "不要把它读成通过。"
+            });
+        }
+
         // 旧口径降为参考量：它反映的是控温点梯度，读的时候别当成法兰的问题
         var deepestAbs = segs.OrderByDescending(s => s.RootDeltaK).First();
         checks.Add(new ConstraintOut

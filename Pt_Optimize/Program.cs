@@ -3118,7 +3118,7 @@ internal static class Program
                         nTab[j] = Math.Clamp(t2, 0.3, 4.0);
                         if (Math.Abs(nTab[j] - tabF9[j]) > 1e-9) moved = true;
                     }
-                    if (!moved) { Console.WriteLine("   ⇒ 两个旋钮都到位或都顶死，停"); break; }
+                    if (!moved) { Console.WriteLine("   ⇒ 舌厚已到位或顶死，停"); break; }
                     insF9 = nIns; tabF9 = nTab;
                 }
 
@@ -3823,14 +3823,19 @@ internal static class Program
                     //   后者在共用法兰处由两侧控温点决定，法兰够不着 —— 拿它当靶，
                     //   优化器会一直去追一个不可能的目标（实测阶梯 5 档全「C2 未过」，
                     //   就是这么来的：判据表已改口径，而定尺寸器还读旧量）。
+                    // ★★★ 判据一律**只读 Judge 的结果**（LineResult.Key/ValueOf/AllOk）。
+                    //   此前这里自行重算「dt / e2max / bad」，与 Judge 是两套定义 ——
+                    //   改口径时改了 Judge 没改这里，导致优化器在调 A、判据在判 B（连错四次）。
+                    //   现在：**控制靶 = 硬判据 B（管孔净流入）本身**。
+                    double fluxNow = rr.ValueOf(LineResult.Key.NetFlux);   // 最差那片的净流入 W
                     var dt = rr.Segments.Select(s => double.IsNaN(s.FlangeDipK)
                                                    ? s.RootDeltaK : s.FlangeDipK).ToArray();
-                    var e2 = rr.Flanges.Select(f => f.TMaxC - f.TRootC).ToArray();
-                    double e2max = e2.Max();
 
-                    // 违反度：C2 超界 + ② 超 0，两者同权重相加
-                    double bad = dt.Sum(d => Math.Max(0, d - 10.0) + Math.Max(0, -d))
-                               + Math.Max(0, e2max);
+                    // 违反度 = 各条硬判据/目标的超标量之和，**由 Judge 给**，不自行定义
+                    double bad = rr.Checks
+                        .Where(ck => ck.Kind is CheckKind.HardSafety or CheckKind.Target
+                                     && !ck.Ok && !ck.Undetermined)
+                        .Sum(ck => Math.Abs(ck.Actual - ck.Limit));
                     if (bad < bestBad)
                     {
                         bestBad = bad; bestF2 = rr;
@@ -3839,83 +3844,42 @@ internal static class Program
 
                     Console.WriteLine($"{round,4}{string.Join("/", tabF2.Select(v => v.ToString("0.00"))),22}" +
                         $"{string.Join("/", insF2v.Select(v => v.ToString("0.0"))),22}" +
-                        $"{string.Join(" / ", dt.Select(v => v.ToString("+0.0;−0.0"))),26}" +
-                        $"{string.Join("/", e2.Select(v => v.ToString("+0.0;−0.0"))),30}" +
-                        $"{string.Join("/", rr.Flanges.Select(f => f.TRootC.ToString("0"))),26}");
+                        $"{string.Join("/", rr.Flanges.Select(f => f.QFromTubeW.ToString("+0;−0"))),24}" +
+                        $"{rr.ValueOf(LineResult.Key.DiscTemp),9:+0.0;−0.0}" +
+                        $"{dt.Max(),9:+0.0;−0.0}{bad,10:0.0}");
 
-                    if (dt.All(d => d > 0 && d <= 10.0))
-                    { Console.WriteLine($"   ⇒ C2 全过（② = {e2max:+0.00;−0.00}，由外层压接温度扫）"); break; }
+                    if (rr.AllOk) { Console.WriteLine("   ⇒ ★ **全判据通过**"); break; }
 
+                    // ── 控制律：**每片一个旋钮（舌厚），靶 = 该片的管孔净流入**
+                    //
+                    // 为什么只留一个旋钮：C2、②、②′ 读的是**同一根轴**（§4.3l 闭式
+                    // Q_根>0 ⇔ T′(0)<0 ⇔ 无内部峰）。我为「保温←②」写过五版控制律，
+                    // 全被实测否掉（方向反、单向棘轮、乘法碾到下界、增益过冲……），
+                    // 根因就是拿两个旋钮去追同一根轴上的两个投影，必然互相拉扯。
+                    // ⇒ 保温冻结在给定值，只用舌厚，靶取**硬判据 B 本身**（净流入）。
+                    //
+                    // 方向（实测，不是推的）：舌片加厚 ⇒ 电阻降 ⇒ 发热少 ⇒ 少往管里灌
+                    //   ⇒ 净流入变大（更安全）。故 dFlux/dTab > 0。
+                    // 斜率仍**在线量**：硬编码常数在本项目上错过两次（1300 K/mm 是别的构型的）。
+                    const double fluxTarget = 8.0;      // W，留一点裕度而非压在 0 上
                     bool moved = false;
                     for (int j = 0; j < 4; j++)
                     {
-                        // ★★ 旋钮分派已按**实测**改过两次，记下来免得再绕：
-                        //
-                        // ① 「保温 → ②」**是错的**。实测（本命令逐片输出）：入口片保温从
-                        //    18.7 减到 15.1，它的 ② 反而从 +0.0 涨到 +0.8 —— 方向不对。
-                        //    ⇒ 保温**冻结**在无环收敛值，不再参与迭代。
-                        // ② 「② 由管孔环控」才是对的（§4.3k/§4.3l）：环消掉二维局部尖峰，
-                        //    之后 ② 退化成 Q_根>0，与 C2 同向 ⇒ 交给外层调环，不在这个内层。
-                        // ③ 舌厚 → C2，但**斜率不能硬编码**：§4.2w 那个 1300 K/mm 是别的
-                        //    构型下量的；本构型实测只有约 107 K/mm（1.37→1.34 使 C2 从
-                        //    +24.1 到 +20.9）。硬编码 1300 ⇒ 每轮只挪 0.01 mm，30 轮走不到。
-                        //    ⇒ 改**割线法在线量斜率**，首轮用保守默认值起步。
+                        double fj = rr.Flanges[j].QFromTubeW;
+                        double e = fluxTarget - fj;                    // >0 ⇒ 需要更多净流入 ⇒ 加厚
+                        if (Math.Abs(e) < 2.0) continue;
 
-                        double e = 0; int c = 0;
-                        // ★ C2 的**靶**是自由度，不是常数。原来钉在 +5（取「离悬崖远一点」），
-                        //   而 C2 的上限是 10 —— 等于一直在「抽热尽量少」那一侧收敛。
-                        //   字面 ② 要的恰恰相反：**抽热尽量多**（整圈都吸热才不会有放热象限）。
-                        //   配合薄管保温（β 大 ⇒ 同样 D 冷点更浅），靶顶到 9 才是那条组合拳。
-                        if (j - 1 >= 0 && j - 1 < dt.Length) { e += dt[j - 1] - c2TargetF2; c++; }
-                        if (j < dt.Length) { e += dt[j] - c2TargetF2; c++; }
-                        if (c == 0) continue;
-                        e /= c;
-                        if (Math.Abs(e) < 0.8) continue;
-
-                        // ── ① 保温优先补 C2（**它不花铂**），顶死才动舌厚
-                        //
-                        // ★★ 内层**只解 C2**，不再试图同时控 ②。
-                        //   我为「保温 ← ②」写过五版控制律，每一版都被实测否掉：
-                        //   方向反、单向棘轮、乘法碾到下界、共用片上「② 只降一点点而 C2 崩掉」……
-                        //   根因是这两条约束读的是**同一个量的两侧**（§4.3l 闭式），
-                        //   用两个旋钮分别去追，等于在一根轴上互相拉扯。
-                        //   ⇒ 内层解良定的那一条（C2），**② 只记录不控制**；
-                        //     整条 ②–C2 前沿由外层扫**压接温度**画出来。
-                        //
-                        // ⚠ 这也顺带修掉 `--clampscan` 的方法错误：它在**几何固定**下扫压接温度，
-                        //   而几何本该跟着重新定尺寸 —— 单变量扫耦合系统，和前面几次是同一个错。
-                        // ⚠ 增益也必须割线，不能拍固定值。拍 0.35 mm/K 时实测：
-                        //   共用片保温 1.6→8.2（+6.6 mm）把 C2 甩了 55 K，而当轮只需要 19 K
-                        //   ⇒ 过冲 3 倍，C2 在 +43 与 −43 之间来回。（保温上限从 30 放到 80 之后
-                        //   更明显 —— 上限原先在无意中当了限幅器。）
-                        double sIns = slopeInsC2[j];              // dC2误差/d保温，物理上为负
-                        if (!double.IsNaN(prevIns[j]) && Math.Abs(insF2v[j] - prevIns[j]) > 1e-6)
-                        {
-                            double s2 = (e - prevE2[j]) / (insF2v[j] - prevIns[j]);
-                            if (s2 < -0.5 && s2 > -100) sIns = 0.5 * sIns + 0.5 * s2;
-                        }
-                        slopeInsC2[j] = sIns;
-                        prevIns[j] = insF2v[j]; prevE2[j] = e;
-
-                        double insWant = insF2v[j] - e / sIns;
-                        double insNew = Math.Clamp(insWant, insLo, insHi);
-                        bool insSaturated = Math.Abs(insNew - insWant) > 1e-9;
-                        if (Math.Abs(insNew - insF2v[j]) > 1e-9) { insF2v[j] = insNew; moved = true; }
-
-                        if (!insSaturated) continue;    // 保温还够用，先不动铂
-
-                        // ── ③ 舌厚（割线，在线量斜率）
-                        double slope = slopeEst[j];
+                        double slope = slopeEst[j];                    // dFlux/dTab，W per mm，正
                         if (!double.IsNaN(prevTab[j]) && Math.Abs(tabF2[j] - prevTab[j]) > 1e-6)
                         {
-                            double s = (e - prevErr[j]) / (tabF2[j] - prevTab[j]);
-                            if (s > 20 && s < 5000) slope = 0.5 * slope + 0.5 * s;
+                            double sMeas = (fj - prevErr[j]) / (tabF2[j] - prevTab[j]);
+                            if (sMeas > 5 && sMeas < 5000) slope = 0.5 * slope + 0.5 * sMeas;
                         }
                         slopeEst[j] = slope;
-                        prevTab[j] = tabF2[j]; prevErr[j] = e;
+                        prevTab[j] = tabF2[j]; prevErr[j] = fj;
 
-                        double dTab = Math.Clamp(-e / slope, -0.06, 0.06);
-                        double nt = Math.Clamp(tabF2[j] + dTab, 0.3, 4.0);
+                        double dTab = Math.Clamp(e / slope, -0.15, 0.15);
+                        double nt = Math.Clamp(tabF2[j] + dTab, 0.3, 6.0);
                         if (Math.Abs(nt - tabF2[j]) > 1e-9) { tabF2[j] = nt; moved = true; }
                     }
                     if (!moved) { Console.WriteLine("   ⇒ 两个旋钮都到位或都顶死，停"); break; }
@@ -3943,8 +3907,12 @@ internal static class Program
                                   $"　合计 {mAll:0} g");
                 Console.WriteLine();
                 double glassDrop = bestF2.Segments[0].GlassInC - bestF2.Segments[^1].GlassOutC;
+                // 判定与失败原因**全部取自 Judge**（LineResult.AllOk / Failed）
+                string verdict = bestF2.AllOk
+                    ? "✓ **全过**"
+                    : "✗ " + string.Join("；", bestF2.Failed);
                 frontRows.Add((wallF2, dtB.Min(), dtB.Max(), e2B[wj], mAll,
-                    $"净流入min {fluxMin:+0;−0} W／{bestF2.Flanges[wj].Name}" +
+                    verdict + $"　净流入min {fluxMin:+0;−0} W" +
                     $"／管J {bestF2.Segments.Max(s => s.TubeJAPerMm2):0.0}／玻璃降 {glassDrop:0.0}"));
 
                 // ── 完整判据表 + 逐片明细（交付件）
@@ -3986,17 +3954,11 @@ internal static class Program
                 Console.WriteLine("★ 目标不是「最轻」，是「**最薄的那个全过档**」——");
                 Console.WriteLine("  能造能用是先决条件，省铂只在可行域内部执行（用户 2026-08-15）。");
                 Console.WriteLine($"{"管壁mm",9}{"增量降min",10}{"增量降max",10}{"②″圆盘",9}{"合计 g",9}  B／管J／玻璃降");
+                // ★ 判定**只读 Judge**：fr.where 里存的是 LineResult.Failed 的原文，
+                //   汇总表不再自行拼判定条件（那正是连错四次的第三处）。
                 foreach (var fr in frontRows)
-                {
-                    bool okC2 = fr.c2min > 0 && fr.c2max <= 10;      // ③ 增量温降
-                    bool okC = fr.e2max <= 0;                        // C = ②″ 圆盘区
-                    bool okB = fr.where.Contains("净流入min +");      // B = 净流入为正
                     Console.WriteLine($"{fr.clamp,9:0.00}{fr.c2min,9:+0.0;−0.0}{fr.c2max,9:+0.0;−0.0}" +
-                        $"{fr.e2max,9:+0.00;−0.00}{fr.mass,9:0}  " +
-                        (okC2 && okC && okB ? "✓ **全过**"
-                         : $"✗ {(okB ? "" : "B ")}{(okC ? "" : "C ")}{(okC2 ? "" : "③ ")}未过") +
-                        "　" + fr.where);
-                }
+                        $"{fr.e2max,9:+0.00;−0.00}{fr.mass,9:0}  {fr.where}");
                 Console.WriteLine();
                 Console.WriteLine("★ 若所有档位都是「C2 过、② 差一点」，那说明在本构型下两条约束的可行带为空，");
                 Console.WriteLine("  差额就是还需要另外找的那部分 —— 而不是再调这两个旋钮能补上的。");
