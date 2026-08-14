@@ -4189,7 +4189,14 @@ internal static class Program
             if (args.Contains("--final2"))
             {
                 double wallF2 = p.WeldMinThicknessMm, discF2 = 30.0;
-                double clampLenF2 = 40.0, clampF2 = 300.0;
+                double clampLenF2 = 40.0;
+                // 外层扫压接温度：几何**跟着重新定尺寸**，这才是它真正的影响
+                double clampF2 = 300.0;
+                var frontRows = new List<(double clamp, double c2min, double c2max,
+                                          double e2max, double mass, string where)>();
+                foreach (double clampSweep in new[] { 300.0, 450.0, 600.0 })
+                {
+                clampF2 = clampSweep;
                 // 管孔加厚环：**绝对厚度，不是倍率**。
                 // 第一版写成 ThickenedMm = 板厚 × 1.3，结果舌片被 C2 逼薄时环也跟着薄
                 // （舌 1.61 ⇒ 环只有 2.09），压不住尖峰 —— 实测 HC2|HC3 保温已顶到下界 0.3、
@@ -4233,7 +4240,10 @@ internal static class Program
                 // ⚠ 加长端片舌片试过一次（130/90/90/130），结果被下面那个**单向棘轮** bug 污染，
                 //   不能据此判断加长本身的好坏。控制器修好后要单独重试。先回到 90 隔离变量。
                 double[] tabLenF2 = { 90.0, 90.0, 90.0, 90.0 };
-                const double insLo = 0.3, insHi = 30.0;
+                // ⚠ insHi 曾拍成 30 mm，实测入口片与出口片双双顶死在它上面 ——
+                //   而总纲明写「**管外纤维没有空间限制；法兰可以完全不包，全依计算需求**」。
+                //   又一次「默认值伪装成需求」（第六次，见 §4.3h/§4.3i）。放到 80。
+                const double insLo = 0.3, insHi = 80.0;
 
                 LineCase MakeF2(double[] tab, double[] ins, bool ramp)
                 {
@@ -4290,11 +4300,12 @@ internal static class Program
                 double[] bestTab = (double[])tabF2.Clone(), bestIns = (double[])insF2v.Clone();
                 // 割线法的状态：上一轮的舌厚与 C2 误差，以及当前斜率估计（K per mm）
                 var prevTab = new double[4]; var prevErr = new double[4]; var slopeEst = new double[4];
-                var insCeil = new double[4];    // ② 设的保温上限（棘轮，只降不升）
+                var prevIns = new double[4]; var prevE2 = new double[4];
+                var slopeInsC2 = new double[4];  // dC2误差/d保温 K/mm（负）
                 for (int j = 0; j < 4; j++)
                 {
                     prevTab[j] = double.NaN; prevErr[j] = 0; slopeEst[j] = 150.0;
-                    insCeil[j] = insHi;
+                    prevIns[j] = double.NaN; prevE2[j] = 0; slopeInsC2[j] = -8.0;
                 }
 
                 for (int round = 0; round < 30; round++)
@@ -4323,8 +4334,8 @@ internal static class Program
                         $"{string.Join("/", e2.Select(v => v.ToString("+0.0;−0.0"))),30}" +
                         $"{string.Join("/", rr.Flanges.Select(f => f.TRootC.ToString("0"))),26}");
 
-                    if (dt.All(d => d > 0 && d <= 10.0) && e2max <= 0)
-                    { Console.WriteLine("   ⇒ **两条同时过，停**"); break; }
+                    if (dt.All(d => d > 0 && d <= 10.0))
+                    { Console.WriteLine($"   ⇒ C2 全过（② = {e2max:+0.00;−0.00}，由外层压接温度扫）"); break; }
 
                     bool moved = false;
                     for (int j = 0; j < 4; j++)
@@ -4348,24 +4359,33 @@ internal static class Program
                         e /= c;
                         if (Math.Abs(e) < 0.8) continue;
 
-                        // ── ① 先用 ② 更新保温**上限**（双向；单向棘轮是个陷阱）
+                        // ── ① 保温优先补 C2（**它不花铂**），顶死才动舌厚
                         //
-                        // 上一版写成「只要 ② > −0.5 就把上限压 15 %、且只降不升」。
-                        // 结果早期某片 ② 偶然为正，上限就被永久压到下界 0.3 ——
-                        // 端片 130 mm 的舌片于是全裸，② 冲到 **+29.7**（实测）。
-                        // ⇒ 上限必须能回升：② 有富余就把它放回去。
-                        if (e2[j] > 0.0)
-                            insCeil[j] = Math.Max(insLo, Math.Min(insCeil[j], insF2v[j]) * 0.90);
-                        else if (e2[j] < -2.0)
-                            insCeil[j] = Math.Min(insHi, Math.Max(insCeil[j], insF2v[j]) * 1.15);
+                        // ★★ 内层**只解 C2**，不再试图同时控 ②。
+                        //   我为「保温 ← ②」写过五版控制律，每一版都被实测否掉：
+                        //   方向反、单向棘轮、乘法碾到下界、共用片上「② 只降一点点而 C2 崩掉」……
+                        //   根因是这两条约束读的是**同一个量的两侧**（§4.3l 闭式），
+                        //   用两个旋钮分别去追，等于在一根轴上互相拉扯。
+                        //   ⇒ 内层解良定的那一条（C2），**② 只记录不控制**；
+                        //     整条 ②–C2 前沿由外层扫**压接温度**画出来。
+                        //
+                        // ⚠ 这也顺带修掉 `--clampscan` 的方法错误：它在**几何固定**下扫压接温度，
+                        //   而几何本该跟着重新定尺寸 —— 单变量扫耦合系统，和前面几次是同一个错。
+                        // ⚠ 增益也必须割线，不能拍固定值。拍 0.35 mm/K 时实测：
+                        //   共用片保温 1.6→8.2（+6.6 mm）把 C2 甩了 55 K，而当轮只需要 19 K
+                        //   ⇒ 过冲 3 倍，C2 在 +43 与 −43 之间来回。（保温上限从 30 放到 80 之后
+                        //   更明显 —— 上限原先在无意中当了限幅器。）
+                        double sIns = slopeInsC2[j];              // dC2误差/d保温，物理上为负
+                        if (!double.IsNaN(prevIns[j]) && Math.Abs(insF2v[j] - prevIns[j]) > 1e-6)
+                        {
+                            double s2 = (e - prevE2[j]) / (insF2v[j] - prevIns[j]);
+                            if (s2 < -0.5 && s2 > -100) sIns = 0.5 * sIns + 0.5 * s2;
+                        }
+                        slopeInsC2[j] = sIns;
+                        prevIns[j] = insF2v[j]; prevE2[j] = e;
 
-                        // ── ② 保温优先补 C2（**它不花铂**），只在上限/下限顶死时才动舌厚
-                        //
-                        // 这个次序此前是对的，错的是上面那个上限。实测 round 0：
-                        // ② 已基本满足（max +1.5）而 C2 差 +36 —— 该做的是**加保温**，
-                        // 不是削薄舌片。削薄既费不着、又把局部 J 抬上去破坏 ②。
-                        double insWant = insF2v[j] + 0.35 * e;
-                        double insNew = Math.Clamp(insWant, insLo, Math.Max(insLo, insCeil[j]));
+                        double insWant = insF2v[j] - e / sIns;
+                        double insNew = Math.Clamp(insWant, insLo, insHi);
                         bool insSaturated = Math.Abs(insNew - insWant) > 1e-9;
                         if (Math.Abs(insNew - insF2v[j]) > 1e-9) { insF2v[j] = insNew; moved = true; }
 
@@ -4388,33 +4408,32 @@ internal static class Program
                     if (!moved) { Console.WriteLine("   ⇒ 两个旋钮都到位或都顶死，停"); break; }
                 }
 
-                if (bestF2 == null) { Console.WriteLine("✗ 无解"); return; }
+                if (bestF2 == null) { Console.WriteLine("   ✗ 该压接温度下无解"); Console.WriteLine(); continue; }
 
-                Console.WriteLine();
-                Console.WriteLine("── 最优轮全判据复核（含升温规程）");
-                var lcC = MakeF2(bestTab, bestIns, true);
-                try
-                {
-                    var rc2 = LineRunner.Run(lcC);
-                    if (rc2.Ok)
-                    {
-                        bestF2 = rc2;
-                        Console.WriteLine($"{"判据",-24}{"实际",10}{"限值",10}{"位置",10}  结论");
-                        foreach (var ck in rc2.Checks)
-                            Console.WriteLine($"{ck.Name,-24}{ck.Actual,10:0.00}{ck.Limit,10:0.00}" +
-                                $"{ck.Where,10}  {(ck.Ok ? "✓" : "✗")}　{ck.Note}");
-                    }
-                    else Console.WriteLine("  ✗ " + rc2.Message);
-                }
-                catch (Exception ex) { Console.WriteLine("  异常 " + ex.Message); }
-
-                Console.WriteLine();
-                Console.WriteLine($"舌厚 {string.Join("/", bestTab.Select(v => v.ToString("0.00")))}" +
+                Console.WriteLine($"   舌厚 {string.Join("/", bestTab.Select(v => v.ToString("0.00")))}" +
                                   $"　舌保温 {string.Join("/", bestIns.Select(v => v.ToString("0.0")))}");
-                double mS2 = bestF2.Segments.Sum(s => s.MassG), mF2v = bestF2.Flanges.Sum(f => f.MassG);
-                Console.WriteLine($"铂重：管 {mS2:0} + 法兰 {mF2v:0} = **{mS2 + mF2v:0} g**" +
-                                  $"　（基准 {bestF2.BaselineMassG:0} ⇒ 省 " +
-                                  $"{(1 - (mS2 + mF2v) / bestF2.BaselineMassG) * 100:0.0} %）");
+                var dtB = bestF2.Segments.Select(s => s.RootDeltaK).ToArray();
+                var e2B = bestF2.Flanges.Select(f => f.TMaxC - f.TRootC).ToArray();
+                int wj = 0; for (int q = 1; q < e2B.Length; q++) if (e2B[q] > e2B[wj]) wj = q;
+                double mAll = bestF2.Segments.Sum(s => s.MassG) + bestF2.Flanges.Sum(f => f.MassG);
+                Console.WriteLine($"   C2 {string.Join(" / ", dtB.Select(v => v.ToString("+0.0;−0.0")))} K" +
+                                  $"　② max {e2B[wj]:+0.00;−0.00} K（{bestF2.Flanges[wj].Name}）" +
+                                  $"　合计 {mAll:0} g");
+                Console.WriteLine();
+                frontRows.Add((clampF2, dtB.Min(), dtB.Max(), e2B[wj], mAll, bestF2.Flanges[wj].Name));
+                }   // ← 压接温度外层循环结束
+
+                Console.WriteLine("── ②–C2 前沿（每档压接温度都**重新定过尺寸**）");
+                Console.WriteLine($"{"压接°C",8}{"C2 min",9}{"C2 max",9}{"② max",9}{"合计 g",9}  判定");
+                foreach (var fr in frontRows)
+                    Console.WriteLine($"{fr.clamp,8:0}{fr.c2min,9:+0.0;−0.0}{fr.c2max,9:+0.0;−0.0}" +
+                        $"{fr.e2max,9:+0.00;−0.00}{fr.mass,9:0}  " +
+                        (fr.c2min > 0 && fr.c2max <= 10 && fr.e2max <= 0 ? "✓ 两条都过"
+                         : fr.c2min > 0 && fr.c2max <= 10 ? $"C2 过，② 差 {fr.e2max:0.00}（{fr.where}）"
+                         : "C2 未过"));
+                Console.WriteLine();
+                Console.WriteLine("★ 若所有档位都是「C2 过、② 差一点」，那说明在本构型下两条约束的可行带为空，");
+                Console.WriteLine("  差额就是还需要另外找的那部分 —— 而不是再调这两个旋钮能补上的。");
                 return;
             }
 
