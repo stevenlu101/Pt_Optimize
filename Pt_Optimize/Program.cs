@@ -4132,6 +4132,116 @@ internal static class Program
                 return;
             }
 
+            // --cli --uniform   ★★★★★ 换目标：整根管的**轴向温度均匀度**
+            //
+            // 用户 2026-08-14 更正了我一条错话：我说过渡段「没有玻璃、高几度低几度无所谓」——
+            // **错**，管子从头到尾都走玻璃，过渡段当然也走。低几度就可能析晶。
+            // 用户：「先不考虑析晶，仅量把温度做均匀即可」。
+            //
+            // ⇒ 评价指标从「管根温差 C2」换成**整线管温的 max−min**。
+            //   C2 只判法兰那一个点，看不见全貌；而玻璃感受到的是整条剖面。
+            //   剖面 (X/TMetal/TGlass) 一直在 SegmentOut 里，只是从没被打印过。
+            //
+            // 同时把**最低管温**一并报出来：将来要重新纳入析晶，直接拿它和液相线比即可。
+            if (args.Contains("--uniform"))
+            {
+                double wallU = p.WeldMinThicknessMm, discU = 30.0;
+                double tubeInsU = 5.0, clampU = 450.0, clampLenU = 40.0;   // combo 扫描的最优档
+                double[] tabU = { 1.68, 2.71, 2.59, 1.39 }, insU = { 3.6, 0.5, 0.4, 3.3 };
+                double[] stepRU = { 30.0, 36.0 }, stepTU = { 2.4, 1.7 };
+                double discFloorU = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                                    * (discU - 26.0) * p.WeldSafetyFactor;
+
+                var pU = SegmentSolver.Clone(p);
+                pU.Layer1.ThicknessMm = tubeInsU; pU.Layer1.Enabled = true;
+                pU.WallMinMm = wallU;
+                pU.FlangeInsulThickMm = 20; pU.FlangeInsulated = true;
+                pU.BusbarClampLengthMm = clampLenU; pU.BusbarClampTempC = clampU;
+
+                var platesU = new FlangePlate[4];
+                for (int j = 0; j < 4; j++)
+                {
+                    double td = Math.Max(tabU[j], discFloorU);
+                    platesU[j] = new FlangePlate
+                    {
+                        DiscRadiusMm = discU, HoleRadiusMm = wallU + 25.0,
+                        TabEndXMm = -90.0, TabEndHalfWidthMm = 15.0,
+                        ThicknessMm = td,
+                        DiscStepRadiiMm = stepRU,
+                        DiscStepThicknessMm = stepTU.Select(v => Math.Max(v, td)).ToArray(),
+                        TabThicknessMm = double.NaN,
+                        InsulBoundaryXMm = double.NaN, TabInsulThickMm = insU[j],
+                        TabParallel = true, TabFilletMm = 3.0,
+                        WeldFilletLegMm = Math.Max(td, wallU)
+                    };
+                }
+                var lcU = new LineCase
+                {
+                    Base = pU, WallMm = wallU, UseMeasuredCurrent = false, CheckRamp = false,
+                    SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                    FlangePlates = platesU,
+                    ClampTempC = new[] { clampU, clampU, clampU, clampU }
+                };
+
+                Console.WriteLine("=== 整线轴向温度均匀度 ===");
+                Console.WriteLine($"管壁 {wallU:0.0}／管保温 {tubeInsU:0}／盘Ø{2 * discU:0}／压接 {clampU:0} °C");
+                var rU = LineRunner.Run(lcU);
+                if (!rU.Ok) { Console.WriteLine("✗ " + rU.Message); return; }
+                Console.WriteLine();
+
+                Console.WriteLine($"{"段",8}{"控温°C",9}{"管温min",10}{"管温max",10}{"段内落差",10}" +
+                                  $"{"玻璃入",9}{"玻璃出",9}{"管根ΔT",9}");
+                double gMin = double.MaxValue, gMax = double.MinValue;
+                double mMin = double.MaxValue, mMax = double.MinValue;
+                foreach (var s in rU.Segments)
+                {
+                    if (s.TMetal.Length == 0) { Console.WriteLine($"{s.Name,8}  无剖面"); continue; }
+                    double lo = s.TMetal.Min(), hi = s.TMetal.Max();
+                    mMin = Math.Min(mMin, lo); mMax = Math.Max(mMax, hi);
+                    gMin = Math.Min(gMin, s.TGlass.Length > 0 ? s.TGlass.Min() : double.MaxValue);
+                    gMax = Math.Max(gMax, s.TGlass.Length > 0 ? s.TGlass.Max() : double.MinValue);
+                    Console.WriteLine($"{s.Name,8}{s.SetpointC,9:0}{lo,10:0.0}{hi,10:0.0}{hi - lo,10:0.0}" +
+                                      $"{s.GlassInC,9:0.0}{s.GlassOutC,9:0.0}{s.RootDeltaK,9:+0.0;−0.0}");
+                }
+                Console.WriteLine();
+                // ⚠ 「整线 max−min」**不是**均匀度指标：三段控温点本来就是 1150/1080/1050，
+                //   116 K 里绝大部分是**设计要的梯度**。真正的不均匀是**段内落差**。
+                double worstSpan = rU.Segments.Where(s => s.TMetal.Length > 0)
+                                              .Max(s => s.TMetal.Max() - s.TMetal.Min());
+                Console.WriteLine($"★ **段内落差最大 {worstSpan:0.0} K** ← 这才是不均匀度");
+                Console.WriteLine($"   （整线 {mMin:0.0}…{mMax:0.0} °C 的 {mMax - mMin:0.0} K 里，" +
+                                  "绝大部分是控温点本身的梯度，不是缺陷）");
+                Console.WriteLine($"   整线玻璃温 {gMin:0.0} … {gMax:0.0} °C");
+                Console.WriteLine();
+                Console.WriteLine($"⚠ 最低管温 {mMin:0.0} °C　vs 液相线 {p.TLiquidusC:0} °C" +
+                                  $"　⇒ **析晶裕度 {mMin - p.TLiquidusC:+0.0;−0.0} K**");
+                Console.WriteLine("   用户 2026-08-14 说先不考虑析晶，但这个数得记着：");
+                Console.WriteLine($"   **HC3 的控温点 {rU.Segments[^1].SetpointC:0} °C 本身就等于液相线 {p.TLiquidusC:0} °C**");
+                Console.WriteLine("   ⇒ 只要末段有任何冷点，它就在液相线以下。这是**给定工况自带的矛盾**，");
+                Console.WriteLine("     不是本方案引入的 —— 要么抬高末段控温点，要么接受局部低于液相线。");
+                Console.WriteLine();
+
+                // 轴向剖面：每段沿长度采样，法兰在两端（x=0 与 x=L）
+                Console.WriteLine("── 轴向剖面（每段 300 mm，两端即法兰所在）");
+                Console.WriteLine($"{"段",8}{"x mm",8}{"管温°C",10}{"玻璃°C",10}{"距控温点",10}");
+                foreach (var s in rU.Segments)
+                {
+                    if (s.TMetal.Length == 0) continue;
+                    int n = s.TMetal.Length;
+                    foreach (double frac in new[] { 0.0, 0.02, 0.05, 0.10, 0.25, 0.5, 0.75, 0.90, 0.95, 0.98, 1.0 })
+                    {
+                        int i = Math.Clamp((int)Math.Round(frac * (n - 1)), 0, n - 1);
+                        Console.WriteLine($"{s.Name,8}{s.X[i],9:0.0}{s.TMetal[i],10:0.0}" +
+                            $"{(s.TGlass.Length > i ? s.TGlass[i] : double.NaN),10:0.0}" +
+                            $"{s.TMetal[i] - s.SetpointC,10:+0.0;−0.0}");
+                    }
+                    Console.WriteLine();
+                }
+                Console.WriteLine("★ 读法：坑集中在两端（法兰处）⇒ 补热要补在端部；");
+                Console.WriteLine("  若中段也塌，那是整段功率不足，属另一回事。");
+                return;
+            }
+
             // --cli --clampscan   ★★★★ 压接温度：当前构型下唯一还没试过的自由度
             //
             // 为什么它可能同时救两条（先写下推理，再由实算判 —— 本项目手推已错三次）：
@@ -4249,11 +4359,28 @@ internal static class Program
                 //   凡是降 J 的动作（加宽、加厚、大环）都会被 C2 反推回来。
                 //   式子里只剩 **ℓ（舌片长度）** 能在不动 J 的前提下加发热。
                 //   ⇒ 本轮改扫舌长。（曾试过 130，但那次被单向棘轮 bug 污染，结论作废。）
+                // ★★★★ 用户 2026-08-14 问「保温可以降吗？」—— 指到了我一直没动的那一条。
+                //
+                // 管根冷点深度（§6②）：|ΔT_dip| = D / √(k·A·β)，
+                //   D = 法兰抽走的热，**β = 管自身的横向散热系数，在分母**。
+                // ⇒ **管保温越薄，同样的抽热造成的冷点越浅。**
+                // 这正好绕开死结：字面 ② 要求抽热 D 大（整圈都吸热），
+                // 而 C2 限的是冷点深度 ΔT —— 降管保温可以让 D 大而 ΔT 不大。
+                //
+                // ⚠ `Layer1.ThicknessMm = 10` 是我从头钉死没动过的，而总纲里保温本就是
+                //   四个自由度之一（「管与法兰分别；哪些部位要保温、保多厚」）。
+                //   第八次「默认值当成给定条件」。
+                // ⚠ 代价要一起看：管保温薄 ⇒ 散热大 ⇒ 电流大 ⇒ 管 J 升；
+                //   且**玻璃温降会变** —— 那是全模型唯一拿现场实测（20 K）校准过的点。
                 double halfWF2 = 15.0;
-                double lenScaleF2 = 1.0;
-                foreach (double lenSweep in new[] { 90.0, 130.0, 170.0 })
+                double lenScaleF2 = 90.0;
+                // 实测（靶=+5）：管保温 2/5/10/20 给 ② +2.83/+3.83/+2.93/+3.30 —— 方向对、幅度不够。
+                // 因为靶钉在 +5，等于没去用薄保温换来的那份 D。本轮**两个一起动**。
+                double tubeInsF2 = 10.0, c2TargetF2 = 9.0;
+                foreach (var (insSweep, tgt) in new[]
+                         { (2.0, 9.0), (3.0, 9.0), (5.0, 9.0), (10.0, 9.0) })
                 {
-                lenScaleF2 = lenSweep;
+                tubeInsF2 = insSweep; c2TargetF2 = tgt;
                 clampF2 = 450.0;
                 // 管孔加厚环：**绝对厚度，不是倍率**。
                 // 第一版写成 ThickenedMm = 板厚 × 1.3，结果舌片被 C2 逼薄时环也跟着薄
@@ -4273,7 +4400,7 @@ internal static class Program
                                      * (discF2 - 26.0) * p.WeldSafetyFactor;
 
                 var pF2b = SegmentSolver.Clone(p);
-                pF2b.Layer1.ThicknessMm = 10.0; pF2b.Layer1.Enabled = true;
+                pF2b.Layer1.ThicknessMm = tubeInsF2; pF2b.Layer1.Enabled = true;
                 pF2b.WallMinMm = wallF2;
                 pF2b.FlangeInsulThickMm = 20; pF2b.FlangeInsulated = true;
                 pF2b.BusbarClampLengthMm = clampLenF2; pF2b.BusbarClampTempC = clampF2;
@@ -4337,7 +4464,8 @@ internal static class Program
                 Console.WriteLine($"管壁 {wallF2:0.0}／盘Ø{2 * discF2:0}／管孔两级渐变环 " +
                                   $"r≤{stepRF2[0]:0}→{stepTF2[0]:0.0}，r≤{stepRF2[1]:0}→{stepTF2[1]:0.0}／" +
                                   $"压接 {clampLenF2:0} 夹 {clampF2:0} °C");
-                Console.WriteLine($"**舌长 {lenScaleF2:0} mm**（本轮扫的就是它）　舌片半宽 {halfWF2:0}");
+                Console.WriteLine($"**管保温 {tubeInsF2:0} mm ＋ C2 靶 +{c2TargetF2:0}**（组合拳）　" +
+                                  $"舌长 {lenScaleF2:0}／半宽 {halfWF2:0}");
                 Console.WriteLine("分派：舌厚→C2（发热∝1/t）　舌保温→②（保温厚⇒舌片热⇒峰值高）");
                 // 闭式（§4.3l）：把舌片当杆，Q_根 = kAΔT/ℓ − pℓ/2，T′(0) = −ΔT/ℓ + pℓ/(2kA)。
                 // C2 要 Q_根>0 ⇔ T′(0)<0；② 要杆内无处高于管根 ⇔ 峰值不在内部 ⇔ T′(0)≤0。
@@ -4410,8 +4538,12 @@ internal static class Program
                         //    ⇒ 改**割线法在线量斜率**，首轮用保守默认值起步。
 
                         double e = 0; int c = 0;
-                        if (j - 1 >= 0 && j - 1 < dt.Length) { e += dt[j - 1] - 5.0; c++; }
-                        if (j < dt.Length) { e += dt[j] - 5.0; c++; }
+                        // ★ C2 的**靶**是自由度，不是常数。原来钉在 +5（取「离悬崖远一点」），
+                        //   而 C2 的上限是 10 —— 等于一直在「抽热尽量少」那一侧收敛。
+                        //   字面 ② 要的恰恰相反：**抽热尽量多**（整圈都吸热才不会有放热象限）。
+                        //   配合薄管保温（β 大 ⇒ 同样 D 冷点更浅），靶顶到 9 才是那条组合拳。
+                        if (j - 1 >= 0 && j - 1 < dt.Length) { e += dt[j - 1] - c2TargetF2; c++; }
+                        if (j < dt.Length) { e += dt[j] - c2TargetF2; c++; }
                         if (c == 0) continue;
                         e /= c;
                         if (Math.Abs(e) < 0.8) continue;
@@ -4477,7 +4609,10 @@ internal static class Program
                                   $"　② max {e2B[wj]:+0.00;−0.00} K（{bestF2.Flanges[wj].Name}）" +
                                   $"　合计 {mAll:0} g");
                 Console.WriteLine();
-                frontRows.Add((lenScaleF2, dtB.Min(), dtB.Max(), e2B[wj], mAll, bestF2.Flanges[wj].Name));
+                double glassDrop = bestF2.Segments[0].GlassInC - bestF2.Segments[^1].GlassOutC;
+                frontRows.Add((tubeInsF2, dtB.Min(), dtB.Max(), e2B[wj], mAll,
+                    $"{bestF2.Flanges[wj].Name}／管J {bestF2.Segments.Max(s => s.TubeJAPerMm2):0.0}" +
+                    $"／玻璃降 {glassDrop:0.0}（实测 20）"));
 
                 // ── 完整判据表 + 逐片明细（交付件）
                 Console.WriteLine("   ── 全判据复核（含升温规程）");
@@ -4514,8 +4649,9 @@ internal static class Program
                 Console.WriteLine();
                 }   // ← 压接温度外层循环结束
 
-                Console.WriteLine("── ②–C2 前沿（每档都**重新定过尺寸**；压接 450 °C、半宽 15，扫舌长）");
-                Console.WriteLine($"{"舌长mm",8}{"C2 min",9}{"C2 max",9}{"② max",9}{"合计 g",9}  判定");
+                Console.WriteLine("── ②–C2 前沿（每档都**重新定过尺寸**；压接 450 °C，扫**管保温**）");
+                Console.WriteLine("★ 机理：|ΔT_dip| = D/√(kAβ)，管保温薄 ⇒ β 大 ⇒ 同样抽热下冷点更浅");
+                Console.WriteLine($"{"管保温mm",9}{"C2 min",9}{"C2 max",9}{"② max",9}{"合计 g",9}  位置／管J／玻璃降");
                 foreach (var fr in frontRows)
                     Console.WriteLine($"{fr.clamp,8:0}{fr.c2min,9:+0.0;−0.0}{fr.c2max,9:+0.0;−0.0}" +
                         $"{fr.e2max,9:+0.00;−0.00}{fr.mass,9:0}  " +
@@ -5043,28 +5179,38 @@ internal static class Program
                 pH.FlangeInsulThickMm = 20; pH.FlangeInsulated = true;
                 pH.BusbarClampLengthMm = 40; pH.BusbarClampTempC = 300;
 
-                // 先跑一次定案整线，拿**真实**的逐片电流与管根温度（别再手填）
-                double[] tabH = { 1.37, 2.02, 1.80, 1.04 }, insH = { 18.7, 1.6, 1.4, 3.9 };
+                // ★ 必须对着**当前**定案构型量，不是旧的。
+                //   本轮已经因此白做过两次：一次拿 300 °C/基板 1.23 那版的峰值位置去设计
+                //   450 °C 那版；一次拿入口片当靶而整线上最差的是 HC2|HC3。
+                //   下面这组 = `--final2` 压接 450 档的收敛解（舌长 90、半宽 15、两级渐变环）。
+                double[] tabH = { 1.37, 2.08, 1.86, 1.04 }, insH = { 18.2, 0.8, 0.9, 7.5 };
+                double[] stepRH = { 30.0, 36.0 }, stepTH = { 2.4, 1.7 };
                 double discFloorH = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
                                     * (discH - 26.0) * p.WeldSafetyFactor;
-                FlangePlate MkH(int j) => new()
+                pH.BusbarClampTempC = 450;
+                FlangePlate MkH(int j)
                 {
-                    DiscRadiusMm = discH, HoleRadiusMm = holeH,
-                    TabEndXMm = -90.0, TabEndHalfWidthMm = 15.0,
-                    ThicknessMm = Math.Max(tabH[j], discFloorH),
-                    ThickenedMm = Math.Max(tabH[j], discFloorH),
-                    TabThicknessMm = double.NaN,
-                    InsulBoundaryXMm = double.NaN, TabInsulThickMm = insH[j],
-                    TabParallel = true, TabFilletMm = 3.0,
-                    WeldFilletLegMm = Math.Max(Math.Max(tabH[j], discFloorH), wallH)
-                };
+                    double td = Math.Max(tabH[j], discFloorH);
+                    return new FlangePlate
+                    {
+                        DiscRadiusMm = discH, HoleRadiusMm = holeH,
+                        TabEndXMm = -90.0, TabEndHalfWidthMm = 15.0,
+                        ThicknessMm = td,
+                        DiscStepRadiiMm = stepRH,
+                        DiscStepThicknessMm = stepTH.Select(v => Math.Max(v, td)).ToArray(),
+                        TabThicknessMm = double.NaN,
+                        InsulBoundaryXMm = double.NaN, TabInsulThickMm = insH[j],
+                        TabParallel = true, TabFilletMm = 3.0,
+                        WeldFilletLegMm = Math.Max(td, wallH)
+                    };
+                }
                 var lcH = new LineCase
                 {
                     Base = SegmentSolver.Clone(pH), WallMm = wallH,
                     UseMeasuredCurrent = false, CheckRamp = false,
                     SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
                     FlangePlates = new[] { MkH(0), MkH(1), MkH(2), MkH(3) },
-                    ClampTempC = new[] { 300.0, 300.0, 300.0, 300.0 }
+                    ClampTempC = new[] { 450.0, 450.0, 450.0, 450.0 }
                 };
                 var rH = LineRunner.Run(lcH);
                 if (!rH.Ok) { Console.WriteLine("✗ " + rH.Message); return; }
