@@ -4045,9 +4045,20 @@ internal static class Program
                 pT.FlangeInsulThickMm = 20; pT.FlangeInsulated = true;
                 pT.BusbarClampLengthMm = clampLenT; pT.BusbarClampTempC = 300;
 
-                // 取 --final2 收敛解里 ② 最差的入口片作靶（tab 1.23、保温 9.8）
-                double tBaseT = 1.23, insT = 9.8, iT2 = 843.0, tRootT = 1143.1;
                 double holeT = wallT + 25.0;
+                // ⚠ 此前只拿**入口片**当靶（I=843），可整线上 ② 最差的是 **HC2|HC3（I=1201）**——
+                //   给错的片做优化，白做。台阶强度必须**逐片**定：局部发热 ∝ J²∝I²，
+                //   共用片走 √3 倍电流，尖峰强度是端片的约 2.6 倍。
+                //   下面四片各扫各的（电流与管根温度取 --final2 定案档 450 °C 的收敛值）。
+                var targetsT = new[]
+                {
+                    (nm: "入口端片",  I: 843.0,  tRoot: 1143.1, tBase: 1.37, ins: 18.2),
+                    (nm: "HC1|HC2", I: 1354.0, tRoot: 1143.1, tBase: 2.08, ins: 0.8),
+                    (nm: "HC2|HC3", I: 1201.0, tRoot: 1078.6, tBase: 1.86, ins: 0.9),
+                    (nm: "出口端片",  I: 669.0,  tRoot: 1045.0, tBase: 1.04, ins: 7.5),
+                };
+                double tBaseT = targetsT[0].tBase, insT = targetsT[0].ins;
+                double iT2 = targetsT[0].I, tRootT = targetsT[0].tRoot;
 
                 Console.WriteLine("=== 加厚形状：压平尖峰 vs 保住发热 ===");
                 Console.WriteLine($"靶：入口片　I={iT2:0} A　管根 {tRootT:0.0} °C　基板 {tBaseT:0.00}　舌保温 {insT:0.0}");
@@ -4055,7 +4066,7 @@ internal static class Program
                 Console.WriteLine();
                 Console.WriteLine($"{"形状",-26}{"T峰−管根 K",13}{"发热 W",10}{"J峰",8}{"增重 g/片",11}");
 
-                void Row(string nm, double[] radii, double[] th)
+                (double peak, double gen, double dm) Row(string nm, double[] radii, double[] th)
                 {
                     var g = new FlangePlate
                     {
@@ -4069,7 +4080,7 @@ internal static class Program
                     };
                     ShellMesh m;
                     try { m = FlangeMesher.Build(g, 0, 2.0, 11.0, 45.0, clampLenT); }
-                    catch (Exception ex) { Console.WriteLine($"{nm,-26}网格失败 {ex.Message}"); return; }
+                    catch (Exception ex) { Console.WriteLine($"{nm,-26}网格失败 {ex.Message}"); return (1e9, -1, 0); }
                     var sc = ShellCurrent.Solve(m, iT2, Materials.PtResistivity(tRootT) * 1e3, tRootT);
                     var th2 = ShellThermal.Solve(m, sc.JMagAPerMm2, pT, tRootT,
                                   g.InsulBoundaryXResolved, tabBoundaryX: g.Tangent().X,
@@ -4080,17 +4091,41 @@ internal static class Program
                         dm += Math.Max(0, m.Thickness[i] - tBaseT) * m.Area[i];
                     Console.WriteLine($"{nm,-26}{th2.T.Max() - tRootT,13:+0.00;−0.00}{th2.QGenW,10:0}" +
                                       $"{sc.JMagAPerMm2.Max(),8:0.0}{dm * 1e-3 * 21.45,11:0.0}");
+                    return (th2.T.Max() - tRootT, th2.QGenW, dm * 1e-3 * 21.45);
                 }
 
-                Row("无加厚（基准）", Array.Empty<double>(), Array.Empty<double>());
-                Row("单级 r≤30 → 2.0", new[] { 30.0 }, new[] { 2.0 });
-                Row("单级 r≤30 → 3.0", new[] { 30.0 }, new[] { 3.0 });
-                Row("单级 r≤33 → 3.0", new[] { 33.0 }, new[] { 3.0 });
-                Row("两级 30→3.0, 36→2.0", new[] { 30.0, 36.0 }, new[] { 3.0, 2.0 });
-                Row("两级 30→3.0, 40→1.8", new[] { 30.0, 40.0 }, new[] { 3.0, 1.8 });
-                Row("两级 30→2.4, 36→1.7", new[] { 30.0, 36.0 }, new[] { 2.4, 1.7 });
-                Row("三级 28→3.5,32→2.5,38→1.8",
-                    new[] { 28.0, 32.0, 38.0 }, new[] { 3.5, 2.5, 1.8 });
+                // ★ 用户 2026-08-14 确认工艺：**机加工台阶**（不是另焊加强环）。
+                //   ⇒ 管孔那条唯一的焊缝不受影响，且厚度剖面是**自由函数** ——
+                //     两级、三级、四级对机加工代价相同，没有理由只试我随手列的那几组。
+                //   最优剖面的形状由「发热 = I·J·ρe」定：**在温度不越限的前提下让 J 尽量高**，
+                //   即厚度只在需要的地方加、加到刚好，其余一律留薄。所以下面按
+                //   「起始厚度 × 衰减快慢」张成一族剖面来扫，而不是拍几个特例。
+                // 逐片扫同一族剖面，各自挑「峰值 ≤ 0 且发热最大」的那一组
+                foreach (var tg in targetsT)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine($"── {tg.nm}　I={tg.I:0} A　管根 {tg.tRoot:0.0} °C　" +
+                                      $"基板 {tg.tBase:0.00}　舌保温 {tg.ins:0.0}");
+                    Console.WriteLine($"{"形状",-26}{"T峰−管根 K",13}{"发热 W",10}{"J峰",8}{"增重 g/片",11}");
+                    tBaseT = tg.tBase; insT = tg.ins; iT2 = tg.I; tRootT = tg.tRoot;
+
+                    Row("无加厚（基准）", Array.Empty<double>(), Array.Empty<double>());
+                    string bestNm = ""; double bestGen = -1, bestPk = 0, bestDm = 0;
+                    foreach (double t0 in new[] { 2.0, 2.4, 3.0, 3.6, 4.2, 5.0 })
+                        foreach (double decay in new[] { 0.55, 0.70, 0.85 })
+                        {
+                            var rr2 = new[] { 29.0, 32.0, 35.0, 38.0 };
+                            var tt = new double[4];
+                            for (int q = 0; q < 4; q++)
+                                tt[q] = Math.Max(tBaseT, t0 * Math.Pow(decay, q));
+                            var res = Row($"四级 起{t0:0.0} 衰减{decay:0.00}", rr2, tt);
+                            if (res.peak <= 0 && res.gen > bestGen)
+                            { bestGen = res.gen; bestNm = $"起{t0:0.0} 衰减{decay:0.00}"; bestPk = res.peak; bestDm = res.dm; }
+                        }
+                    Console.WriteLine(bestGen < 0
+                        ? "   ⇒ ✗ 本片无任何剖面能把峰值压到 ≤0"
+                        : $"   ⇒ ★ 最优 {bestNm}：峰 {bestPk:+0.00;−0.00}　发热 {bestGen:0} W　+{bestDm:0.0} g");
+                }
                 Console.WriteLine();
                 Console.WriteLine("★ 选「T峰−管根 ≤ 0 且发热最大」的那一行；发热掉得多的，C2 会在整线上还回来。");
                 Console.WriteLine("⚠ 单片筛偏乐观约 0.8 K（§4.3l），只可用来排序，过/不过仍以整线为准。");
@@ -4194,7 +4229,11 @@ internal static class Program
                 double clampF2 = 300.0;
                 var frontRows = new List<(double clamp, double c2min, double c2max,
                                           double e2max, double mass, string where)>();
-                foreach (double clampSweep in new[] { 300.0, 450.0, 600.0 })
+                // 前沿实测（每档都重新定过尺寸）：300 → ② +6.85（且 C2 顶到 +10.5）；
+                //   **450 → ② +2.93（最好）**；600 → ② +6.33。
+                // ⇒ `--clampscan` 那个「300 最优」是错的，因为它在**几何固定**下扫。
+                // 定案取 450，下面打完整判据表与逐片明细。整条前沿要重看时把三档放回来。
+                foreach (double clampSweep in new[] { 450.0 })
                 {
                 clampF2 = clampSweep;
                 // 管孔加厚环：**绝对厚度，不是倍率**。
@@ -4421,6 +4460,40 @@ internal static class Program
                                   $"　合计 {mAll:0} g");
                 Console.WriteLine();
                 frontRows.Add((clampF2, dtB.Min(), dtB.Max(), e2B[wj], mAll, bestF2.Flanges[wj].Name));
+
+                // ── 完整判据表 + 逐片明细（交付件）
+                Console.WriteLine("   ── 全判据复核（含升温规程）");
+                try
+                {
+                    var rFull = LineRunner.Run(MakeF2(bestTab, bestIns, true));
+                    if (rFull.Ok)
+                    {
+                        bestF2 = rFull;
+                        Console.WriteLine($"   {"判据",-24}{"实际",10}{"限值",10}{"位置",10}  ");
+                        foreach (var ck in rFull.Checks)
+                            Console.WriteLine($"   {ck.Name,-24}{ck.Actual,10:0.00}{ck.Limit,10:0.00}" +
+                                $"{ck.Where,10}  {(ck.Ok ? "✓" : "✗")}");
+                        Console.WriteLine();
+                        Console.WriteLine($"   {"片",10}{"电流A",8}{"板厚",7}{"舌保温",8}{"铜排W",8}" +
+                                          $"{"抽管W",8}{"②K",8}{"②″K",8}{"峰温",7}{"克",7}");
+                        for (int q = 0; q < rFull.Flanges.Length; q++)
+                        {
+                            var f = rFull.Flanges[q];
+                            Console.WriteLine($"   {f.Name,10}{f.CurrentA,8:0}{bestTab[q],7:0.00}" +
+                                $"{bestIns[q],8:0.0}{f.QClampW,8:0}{f.QFromTubeW,8:+0;−0}" +
+                                $"{f.TMaxC - f.TRootC,8:+0.00;−0.00}" +
+                                $"{(double.IsNaN(f.TDiscMaxC) ? 0 : f.TDiscMaxC - f.TRootC),8:+0.00;−0.00}" +
+                                $"{f.TMaxC,7:0}{f.MassG,7:0}");
+                        }
+                        Console.WriteLine();
+                        Console.WriteLine($"   {"段",10}{"控温°C",9}{"电流A",8}{"管根ΔT",10}{"管J",8}{"克",8}");
+                        foreach (var s in rFull.Segments)
+                            Console.WriteLine($"   {s.Name,10}{s.SetpointC,9:0}{s.CurrentA,8:0}" +
+                                $"{s.RootDeltaK,10:+0.0;−0.0}{s.TubeJAPerMm2,8:0.00}{s.MassG,8:0}");
+                    }
+                }
+                catch (Exception ex) { Console.WriteLine("   异常 " + ex.Message); }
+                Console.WriteLine();
                 }   // ← 压接温度外层循环结束
 
                 Console.WriteLine("── ②–C2 前沿（每档压接温度都**重新定过尺寸**）");
@@ -4614,7 +4687,7 @@ internal static class Program
             if (args.Contains("--busbarplan"))
             {
                 double wallB9 = p.WeldMinThicknessMm, discB9 = 30.0;
-                double clampLenB9 = 40.0, clampB9 = 300.0;
+                double clampLenB9 = 40.0, clampB9 = 450.0;   // 定案值（--final2 前沿：450 优于 300）
                 double tabLB9 = 90.0, halfWB9 = 15.0;
                 double[] tabB9 = { 1.37, 2.02, 1.80, 1.04 }, insB9 = { 18.7, 1.6, 1.4, 3.9 };
                 double discFloorB9 = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
