@@ -300,8 +300,13 @@ public static class SegmentSolver
                      ? (p.FlangeDrawOverrideSet ? p.FlangeDrawOverrideW : 0.0) : p.FlangeDrawLeftW;
         double drawR = double.IsNaN(p.FlangeDrawRightW)
                      ? (p.FlangeDrawOverrideSet ? p.FlangeDrawOverrideW : 0.0) : p.FlangeDrawRightW;
-        var defTabL = new LossTable(p.TAmbC, Math.Max(p.TSetC, p.TGlassInC) + 200, 8, _ => drawL);
-        var defTabR = new LossTable(p.TAmbC, Math.Max(p.TSetC, p.TGlassInC) + 200, 8, _ => drawR);
+        // ★★ 段间轴向导热（见 DesignInputs.NeighbourTempLeftC）。
+        //    管子是连续的，段只是人为切分 ⇒ 端部通量要加 G·(T − T_邻)，
+        //    G = kA/Δx 取一个节距的导度 = **连续性极限**（G 越大两端温度被拉得越紧）。
+        //    不加这一项时实测同一位置断层 69 K，漏掉的热流 ~21 W 比法兰抽热还大。
+        double gNb = kPt * area / Math.Max(1e-9, dx);
+        double tNbL = p.NeighbourTempLeftC, tNbR = p.NeighbourTempRightC;
+        bool hasL = !double.IsNaN(tNbL), hasR = !double.IsNaN(tNbR);
 
         tm = new double[n]; tg = new double[n];
         for (int i = 0; i < n; i++) { tm[i] = p.TSetC; tg[i] = p.TGlassInC; }
@@ -330,8 +335,12 @@ public static class SegmentSolver
                 return current * current * drho / area - TabAt(x).Slope(T) - hg * pi;
             }
 
-            var bcL = Bvp1D.Boundary.WithFlux(defTabL.Eval, defTabL.Slope);
-            var bcR = Bvp1D.Boundary.WithFlux(defTabR.Eval, defTabR.Slope);
+            var bcL = Bvp1D.Boundary.WithFlux(
+                          T => drawL + (hasL ? gNb * (T - tNbL) : 0.0),
+                          _ => hasL ? gNb : 0.0);
+            var bcR = Bvp1D.Boundary.WithFlux(
+                          T => drawR + (hasR ? gNb * (T - tNbR) : 0.0),
+                          _ => hasR ? gNb : 0.0);
             var tn = Bvp1D.Solve(0, L, KOf, Src, DSrc, bcL, bcR, init: tm, opt: opt);
 
             double err = 0;

@@ -4374,7 +4374,22 @@ internal static class Program
             //   所以这不是两个独立的一维搜索，能不能同时满足是本轮真正要回答的问题。
             if (args.Contains("--final2"))
             {
-                double wallF2 = p.WeldMinThicknessMm, discF2 = 30.0;
+                // ★★★★★ 用户 2026-08-15 纠正方法：
+                //   「**能造能用是先决条件**，优化铂金是在这个条件下才执行的 ——
+                //     用最少的铂达到能造能用的直接加热系统」
+                //
+                // 我此前是反着做的：先取最省铂的构型（管壁 = 焊接下界 0.6、盘 Ø60、舌 90），
+                // 再想办法把它修到可行 ⇒ 每次都停在判据边界外差 2–3 K，
+                // 因为一直坐在可行域**外沿**往里够。
+                // **焊接下界是下界，不是设计值** —— 我把下界当成了目标。
+                //
+                // 物理上这个错很明显：法兰发热 ∝ I² ∝ 壁厚 ⇒ **厚壁让法兰更容易自给**。
+                // 从最薄处起步，等于挑了最难可行的点。
+                //
+                // ⇒ 改成**从宽到窄的阶梯**：先找到确实全过的那一档，再往下削到某条约束咬住。
+                //   报告里给出的是「最薄的那个**全过**档位」，不是「最轻但差一点」的档位。
+                double discF2 = 30.0;
+                double wallF2 = 1.0;
                 double clampLenF2 = 40.0;
                 // 外层扫压接温度：几何**跟着重新定尺寸**，这才是它真正的影响
                 double clampF2 = 300.0;
@@ -4417,11 +4432,12 @@ internal static class Program
                 double lenScaleF2 = 90.0;
                 // 实测（靶=+5）：管保温 2/5/10/20 给 ② +2.83/+3.83/+2.93/+3.30 —— 方向对、幅度不够。
                 // 因为靶钉在 +5，等于没去用薄保温换来的那份 D。本轮**两个一起动**。
-                double tubeInsF2 = 10.0, c2TargetF2 = 9.0;
-                foreach (var (insSweep, tgt) in new[]
-                         { (2.0, 9.0), (3.0, 9.0), (5.0, 9.0), (10.0, 9.0) })
+                double tubeInsF2 = 5.0, c2TargetF2 = 5.0;
+                // ★ 可行性优先：从**宽裕**往**紧**走，管壁 1.5 → 0.6（0.6 = 手工 TIG 焊接下界）。
+                //   要的是「最薄的那个**全过**档」，不是「最轻但差一点」的档。
+                foreach (double wallSweep in new[] { 1.5, 1.2, 1.0, 0.8, 0.6 })
                 {
-                tubeInsF2 = insSweep; c2TargetF2 = tgt;
+                wallF2 = wallSweep;
                 clampF2 = 450.0;
                 // 管孔加厚环：**绝对厚度，不是倍率**。
                 // 第一版写成 ThickenedMm = 板厚 × 1.3，结果舌片被 C2 逼薄时环也跟着薄
@@ -4471,6 +4487,8 @@ internal static class Program
                 //   又一次「默认值伪装成需求」（第六次，见 §4.3h/§4.3i）。放到 80。
                 const double insLo = 0.3, insHi = 80.0;
 
+                // 管壁一变基线就得重算 ⇒ 每档进来先清空（本档内各轮复用）
+                double[][] baseCacheF2 = Array.Empty<double[]>();
                 LineCase MakeF2(double[] tab, double[] ins, bool ramp)
                 {
                     var plates = new FlangePlate[4];
@@ -4497,7 +4515,9 @@ internal static class Program
                         UseMeasuredCurrent = false, CheckRamp = ramp,
                         SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
                         FlangePlates = plates,
-                        ClampTempC = new[] { clampF2, clampF2, clampF2, clampF2 }
+                        ClampTempC = new[] { clampF2, clampF2, clampF2, clampF2 },
+                        // 无法兰基线缓存：只随管壁/管保温变，本档内各轮复用（否则慢 5 倍）
+                        BaselineRootC = baseCacheF2
                     };
                 }
 
@@ -4505,8 +4525,8 @@ internal static class Program
                 Console.WriteLine($"管壁 {wallF2:0.0}／盘Ø{2 * discF2:0}／管孔两级渐变环 " +
                                   $"r≤{stepRF2[0]:0}→{stepTF2[0]:0.0}，r≤{stepRF2[1]:0}→{stepTF2[1]:0.0}／" +
                                   $"压接 {clampLenF2:0} 夹 {clampF2:0} °C");
-                Console.WriteLine($"**管保温 {tubeInsF2:0} mm ＋ C2 靶 +{c2TargetF2:0}**（组合拳）　" +
-                                  $"舌长 {lenScaleF2:0}／半宽 {halfWF2:0}");
+                Console.WriteLine($"**管壁 {wallF2:0.0} mm**（可行性阶梯，从宽到窄）　" +
+                                  $"管保温 {tubeInsF2:0}／舌长 {lenScaleF2:0}／半宽 {halfWF2:0}");
                 Console.WriteLine("分派：舌厚→C2（发热∝1/t）　舌保温→②（保温厚⇒舌片热⇒峰值高）");
                 // 闭式（§4.3l）：把舌片当杆，Q_根 = kAΔT/ℓ − pℓ/2，T′(0) = −ΔT/ℓ + pℓ/(2kA)。
                 // C2 要 Q_根>0 ⇔ T′(0)<0；② 要杆内无处高于管根 ⇔ 峰值不在内部 ⇔ T′(0)≤0。
@@ -4537,9 +4557,11 @@ internal static class Program
                 for (int round = 0; round < 30; round++)
                 {
                     LineResult rr;
-                    try { rr = LineRunner.Run(MakeF2(tabF2, insF2v, false)); }
+                    var lcRound = MakeF2(tabF2, insF2v, false);
+                    try { rr = LineRunner.Run(lcRound); }
                     catch (Exception ex) { Console.WriteLine($"{round,4}  异常 {ex.Message}"); break; }
                     if (!rr.Ok) { Console.WriteLine($"{round,4}  ✗ {rr.Message}"); break; }
+                    baseCacheF2 = lcRound.BaselineRootC;   // 首轮算完就缓存住
 
                     var dt = rr.Segments.Select(s => s.RootDeltaK).ToArray();
                     var e2 = rr.Flanges.Select(f => f.TMaxC - f.TRootC).ToArray();
@@ -4651,7 +4673,7 @@ internal static class Program
                                   $"　合计 {mAll:0} g");
                 Console.WriteLine();
                 double glassDrop = bestF2.Segments[0].GlassInC - bestF2.Segments[^1].GlassOutC;
-                frontRows.Add((tubeInsF2, dtB.Min(), dtB.Max(), e2B[wj], mAll,
+                frontRows.Add((wallF2, dtB.Min(), dtB.Max(), e2B[wj], mAll,
                     $"{bestF2.Flanges[wj].Name}／管J {bestF2.Segments.Max(s => s.TubeJAPerMm2):0.0}" +
                     $"／玻璃降 {glassDrop:0.0}（实测 20）"));
 
@@ -4690,9 +4712,10 @@ internal static class Program
                 Console.WriteLine();
                 }   // ← 压接温度外层循环结束
 
-                Console.WriteLine("── ②–C2 前沿（每档都**重新定过尺寸**；压接 450 °C，扫**管保温**）");
-                Console.WriteLine("★ 机理：|ΔT_dip| = D/√(kAβ)，管保温薄 ⇒ β 大 ⇒ 同样抽热下冷点更浅");
-                Console.WriteLine($"{"管保温mm",9}{"C2 min",9}{"C2 max",9}{"② max",9}{"合计 g",9}  位置／管J／玻璃降");
+                Console.WriteLine("── **可行性阶梯**：管壁从宽到窄，每档都重新定过尺寸");
+                Console.WriteLine("★ 目标不是「最轻」，是「**最薄的那个全过档**」——");
+                Console.WriteLine("  能造能用是先决条件，省铂只在可行域内部执行（用户 2026-08-15）。");
+                Console.WriteLine($"{"管壁mm",9}{"C2 min",9}{"C2 max",9}{"② max",9}{"合计 g",9}  位置／管J／玻璃降");
                 foreach (var fr in frontRows)
                     Console.WriteLine($"{fr.clamp,8:0}{fr.c2min,9:+0.0;−0.0}{fr.c2max,9:+0.0;−0.0}" +
                         $"{fr.e2max,9:+0.00;−0.00}{fr.mass,9:0}  " +

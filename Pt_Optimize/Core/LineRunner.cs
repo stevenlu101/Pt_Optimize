@@ -126,6 +126,15 @@ public sealed class LineCase
     /// <summary>收敛判据：相邻两轮管根温度变化 K</summary>
     public double CoupleTolK = 1.0;
 
+    /// <summary>
+    /// **无法兰基线**的两端管温缓存 `[段][0=左,1=右]`（空 = 由 LineRunner 自己算）。
+    ///
+    /// 基线只依赖**管几何 / 保温 / 控温点**，与法兰几何无关 ⇒ 外层搜索里
+    /// 只需在「管壁或管保温变了」时重算一次。不缓存的话每次整线解要多跑 4 次基线，
+    /// 阶梯搜索直接慢 5 倍。
+    /// </summary>
+    public double[][] BaselineRootC = Array.Empty<double[]>();
+
     /// <summary>其余物性、保温、电气、环境沿用 DesignInputs</summary>
     public DesignInputs Base = new();
 
@@ -156,6 +165,21 @@ public sealed class SegmentOut
     public double TRootAC, TRootBC;
     /// <summary>两端各自的管根温差 K（控温点 − 该端温度）</summary>
     public double RootDeltaAK, RootDeltaBK;
+
+    /// <summary>
+    /// **无法兰基线**下两端的管温 °C（同几何、同保温、同段间耦合，仅把法兰抽热置零）。
+    ///
+    /// ⚠⚠ 为什么必须有它（2026-08-14/15）：原来的 C2 判「管根温度偏离**本段控温点** ≤10 K」，
+    /// 可共用法兰处的管温是由**两侧控温点**定的 —— 接上段间导热后实测 HC1|HC2 接头停在
+    /// **1116 °C**（1150 与 1080 的中间），偏离本段控温点 34 K，**与法兰设计无关**。
+    /// 用那个靶子做优化，等于让法兰去背控温点梯度的锅：我为此调了几小时法兰几何。
+    ///
+    /// ⇒ C2 的正确口径是**法兰造成的增量**：`基线温度 − 实际温度`。
+    ///   控温点梯度是设计要的，不是缺陷；法兰挖的坑才是法兰的责任。
+    /// </summary>
+    public double BaseTRootAC = double.NaN, BaseTRootBC = double.NaN;
+    /// <summary>法兰造成的**增量**温降 K（正 = 法兰把该端拉冷了）。两端取较差者。</summary>
+    public double FlangeDipK = double.NaN;
     public double[] X = Array.Empty<double>();
     public double[] TMetal = Array.Empty<double>();
     public double[] TGlass = Array.Empty<double>();
@@ -260,8 +284,42 @@ public static class LineRunner
     public static LineResult Run(LineCase c, IProgress<string>? progress = null,
                                  CancellationToken cancel = default)
     {
+        // ── ★ 先算**无法兰基线**：同几何、同保温、同段间耦合，只把法兰抽热置零。
+        //   C2 要判的是「法兰挖了多深的坑」，不是「偏离本段控温点多少」——
+        //   后者在共用法兰处由两侧控温点决定，法兰管不着（见 SegmentOut.BaseTRootAC）。
+        //   基线只依赖管几何/保温/控温点，与法兰热解无关 ⇒ 每个构型算一次即可。
+        var baseline = new (double A, double B)[c.SegmentCount];
+        if (c.BaselineRootC.Length >= c.SegmentCount)
+        {
+            for (int i = 0; i < c.SegmentCount; i++)
+                baseline[i] = (c.BaselineRootC[i][0], c.BaselineRootC[i][1]);
+        }
+        else
+        {
+            var zero = new double[c.SegmentCount];
+            var zeroLR = new (double L, double R)[c.SegmentCount];
+            (double L, double R)[]? bnb = null;
+            LineResult? br = null;
+            for (int k = 0; k < 4; k++)          // 段间耦合无法兰反馈，3–4 轮足够
+            {
+                br = RunOnce(c, null, cancel, zero, zeroLR, bnb);
+                if (!br.Ok) break;
+                bnb = new (double L, double R)[c.SegmentCount];
+                for (int i = 0; i < c.SegmentCount; i++)
+                    bnb[i] = (i == 0 ? double.NaN : br.Segments[i - 1].TRootBC,
+                              i == c.SegmentCount - 1 ? double.NaN : br.Segments[i + 1].TRootAC);
+            }
+            for (int i = 0; i < c.SegmentCount; i++)
+                baseline[i] = br is { Ok: true }
+                            ? (br.Segments[i].TRootAC, br.Segments[i].TRootBC)
+                            : (double.NaN, double.NaN);
+            // 回写缓存：同一 LineCase 再被调用时不必重算（外层搜索靠这个提速 5 倍）
+            c.BaselineRootC = baseline.Select(b => new[] { b.A, b.B }).ToArray();
+        }
+
         var res = RunOnce(c, progress, cancel, null);
         if (!res.Ok) return res;
+        ApplyBaseline(res, baseline);
 
         // ── 外层耦合：段 ↔ 法兰。首轮段解用抽热 0，拿到壳温度场后回灌重解。
         //
@@ -273,6 +331,7 @@ public static class LineRunner
         double omega = c.CoupleRelax;
         double[]? draws = null;
         (double L, double R)[]? drawsLR = null;
+        (double L, double R)[]? nbT = null;      // 段间端温（欠松弛，同上）
         double delta = double.NaN;
         for (int outer = 0; outer < c.CoupleMaxRounds; outer++)
         {
@@ -295,10 +354,27 @@ public static class LineRunner
                               (1 - omega) * drawsLR[i].R + omega * targetLR[i].R);
             }
 
-            progress?.Report($"外层耦合 {outer + 1}/{c.CoupleMaxRounds}（ω={omega:0.00}）：回灌法兰抽热…");
+            // ── 段间端温：段 i 的左邻是段 i−1 的**右**端，右邻是段 i+1 的**左**端。
+            //    整线两头没有邻段 ⇒ NaN（退化为纯法兰抽热边界）。
+            var nbNew = new (double L, double R)[c.SegmentCount];
+            for (int i = 0; i < c.SegmentCount; i++)
+                nbNew[i] = (i == 0 ? double.NaN : res.Segments[i - 1].TRootBC,
+                            i == c.SegmentCount - 1 ? double.NaN : res.Segments[i + 1].TRootAC);
+            nbT ??= nbNew;
+            for (int i = 0; i < c.SegmentCount; i++)      // 与抽热同样欠松弛
+                nbT[i] = (double.IsNaN(nbNew[i].L) ? double.NaN
+                            : (double.IsNaN(nbT[i].L) ? nbNew[i].L
+                               : (1 - omega) * nbT[i].L + omega * nbNew[i].L),
+                          double.IsNaN(nbNew[i].R) ? double.NaN
+                            : (double.IsNaN(nbT[i].R) ? nbNew[i].R
+                               : (1 - omega) * nbT[i].R + omega * nbNew[i].R));
+
+            progress?.Report($"外层耦合 {outer + 1}/{c.CoupleMaxRounds}（ω={omega:0.00}）：回灌法兰抽热 + 段间端温…");
             var next = RunOnce(c, progress, cancel, (double[])draws.Clone(),
-                               ((double L, double R)[])drawsLR.Clone());
+                               ((double L, double R)[])drawsLR.Clone(),
+                               ((double L, double R)[])nbT.Clone());
             if (!next.Ok) return next;
+            ApplyBaseline(next, baseline);
             delta = Enumerable.Range(0, c.SegmentCount)
                 .Max(i => Math.Abs(next.Segments[i].TRootC - res.Segments[i].TRootC));
             res = next;
@@ -318,9 +394,23 @@ public static class LineRunner
         return res;
     }
 
+    /// <summary>把无法兰基线写进结果，并算出**法兰造成的增量温降**（两端取较差者）。</summary>
+    private static void ApplyBaseline(LineResult r, (double A, double B)[] baseline)
+    {
+        for (int i = 0; i < r.Segments.Length && i < baseline.Length; i++)
+        {
+            var s = r.Segments[i];
+            s.BaseTRootAC = baseline[i].A; s.BaseTRootBC = baseline[i].B;
+            double dA = baseline[i].A - s.TRootAC, dB = baseline[i].B - s.TRootBC;
+            s.FlangeDipK = double.IsNaN(dA) || double.IsNaN(dB)
+                         ? double.NaN : Math.Max(dA, dB);
+        }
+    }
+
     private static LineResult RunOnce(LineCase c, IProgress<string>? progress,
                                       CancellationToken cancel, double[]? drawIn,
-                                      (double L, double R)[]? drawLR = null)
+                                      (double L, double R)[]? drawLR = null,
+                                      (double L, double R)[]? nbT = null)
     {
         var res = new LineResult { BaselineMassG = c.BaselineMassG };
         int n = c.SegmentCount, nf = c.FlangeCount;
@@ -355,6 +445,10 @@ public static class LineRunner
             // 两端各挂各的（原来取平均是 bug，见 DesignInputs.FlangeDrawLeftW）
             if (drawLR is not null)
             { p.FlangeDrawLeftW = drawLR[i].L; p.FlangeDrawRightW = drawLR[i].R; }
+            // 段间轴向导热：把相邻段的端温传进去（见 DesignInputs.NeighbourTempLeftC）。
+            // 首轮 nbT 为 null ⇒ 退化成原来的「各解各的」，由外层迭代逐步接上。
+            if (nbT is not null)
+            { p.NeighbourTempLeftC = nbT[i].L; p.NeighbourTempRightC = nbT[i].R; }
 
             SolveResult sr;
             if (c.UseMeasuredCurrent)
@@ -683,14 +777,32 @@ public static class LineRunner
             Note = coldest.RootDeltaK <= 0 ? "管根比控温点还热 ⇒ 法兰在加热管子" : ""
         });
 
-        // ── ③ 目标：温差从安全侧逼近 10 K
-        var deepest = segs.OrderByDescending(s => s.RootDeltaK).First();
+        // ── ③ **法兰造成的增量温降** ≤ 上限
+        //   ⚠ 口径已改（2026-08-15）：原来判「偏离本段控温点」，但接上段间导热后，
+        //     共用法兰处的管温由**两侧控温点**决定（实测 HC1|HC2 接头停在 1116 °C
+        //     = 1150 与 1080 的中间，偏离本段控温点 34 K），**与法兰设计无关**。
+        //     让法兰去背控温点梯度的锅，等于给优化器一个它够不着的靶子。
+        //   现在判的是「有法兰 vs 无法兰」的同位置之差 —— 那才是法兰的责任。
+        var dips = segs.Where(s => !double.IsNaN(s.FlangeDipK)).ToArray();
+        if (dips.Length > 0)
+        {
+            var deepest = dips.OrderByDescending(s => s.FlangeDipK).First();
+            checks.Add(new ConstraintOut
+            {
+                Name = "③ 法兰增量温降 ≤ 上限", Unit = "K", Kind = CheckKind.Target,
+                Actual = deepest.FlangeDipK, Limit = c.RootDeltaMaxK,
+                Ok = deepest.FlangeDipK <= c.RootDeltaMaxK, Where = deepest.Name,
+                Note = $"= 无法兰基线 − 实际（{deepest.BaseTRootAC:0.0}/{deepest.BaseTRootBC:0.0} " +
+                       $"vs {deepest.TRootAC:0.0}/{deepest.TRootBC:0.0} °C）；控温点梯度不算在内"
+            });
+        }
+        // 旧口径降为参考量：它反映的是控温点梯度，读的时候别当成法兰的问题
+        var deepestAbs = segs.OrderByDescending(s => s.RootDeltaK).First();
         checks.Add(new ConstraintOut
         {
-            Name = "③ 管根温差 ≤ 上限", Unit = "K", Kind = CheckKind.Target,
-            Actual = deepest.RootDeltaK, Limit = c.RootDeltaMaxK,
-            Ok = deepest.RootDeltaK <= c.RootDeltaMaxK, Where = deepest.Name,
-            Note = "冷点越深，玻璃向管壁放的热越多（§6 ②）"
+            Name = "· 偏离本段控温点", Unit = "K", Kind = CheckKind.Reference, Ok = true,
+            Actual = deepestAbs.RootDeltaK, Limit = c.RootDeltaMaxK, Where = deepestAbs.Name,
+            Note = "参考：共用法兰处主要由**两侧控温点之差**决定，不是法兰造成的"
         });
 
         // ── ④ 强度利用率（管）。法兰不承重 —— 铂管由氧化铝管托底（§4.2d，用户确认），

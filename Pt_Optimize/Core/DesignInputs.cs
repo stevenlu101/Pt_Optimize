@@ -288,6 +288,23 @@ public class DesignInputs
     [Browsable(false)] public double FlangeDrawLeftW { get; set; } = double.NaN;
     [Browsable(false)] public double FlangeDrawRightW { get; set; } = double.NaN;
 
+    /// <summary>
+    /// **相邻段端部温度** °C（NaN = 该端无邻段，如整线的进出口）。
+    ///
+    /// ⚠⚠ 2026-08-14 发现的结构性缺陷：每段管**各解各的**，两端只挂「法兰抽热」，
+    /// **段与段之间的轴向导热根本没接上**。实测同一物理位置 HC1 侧 1141.6 °C、
+    /// HC2 侧 1072.5 °C —— **断层 69 K**，而管子是连续的铂管，这不可能。
+    ///
+    /// 漏掉的热流量级：q = kAΔT/ℓ ≈ 72×9.5e-5×69/0.022 ≈ **21 W**，
+    /// 而法兰抽热 D 实测只有 2–9 W —— **漏掉的比要算的还大**。
+    /// 而 C2、冷点深度、判据 ② 全部由 D 决定。
+    ///
+    /// 修法：端部通量加一项 G·(T − T_邻)，G = kA/Δx（一个节距的导度 = 连续性极限）。
+    /// `Bvp1D.Boundary.WithFlux` 收的正是端温的函数，故不需要重构求解器。
+    /// </summary>
+    [Browsable(false)] public double NeighbourTempLeftC { get; set; } = double.NaN;
+    [Browsable(false)] public double NeighbourTempRightC { get; set; } = double.NaN;
+
     [Category("2 供料管几何"), DisplayName("壁厚由程序反算"),
      Description("关闭 = 校核模式：壁厚取「最小可制造壁厚」的实测值，程序只报实际 J")]
     public bool SizeWall { get; set; } = false;
