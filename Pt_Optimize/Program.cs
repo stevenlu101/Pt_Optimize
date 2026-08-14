@@ -4023,6 +4023,80 @@ internal static class Program
                 return;
             }
 
+            // --cli --taper   ★★★★ 加厚形状的取舍：压平尖峰 vs 保住发热
+            //
+            // 到这一步，② 的残余（+1.9）与 C2 的余量（HC3 +9.5，上限 10）**同时见底**，
+            // 而 --clampscan 证明压接温度只会让两者一起变坏。剩下的只有加厚的**形状**。
+            //
+            // 关键权衡此前一直没被量出来：单片筛只报了 T 峰值，**没报发热**。
+            // 于是「R=33 比 R=30 好」看着成立，实算却把 C2 从 +24 炸到 +66 ——
+            // 因为多伸的那 3 mm 正好落在舌片高 J 区，按 K²/t 把发热砍掉一大块。
+            // ⇒ 本条**同时报 T 峰值与整片发热**，让取舍看得见：
+            //    要的是「峰值 ≤ 管根」且「发热尽可能大」的那一个。
+            //
+            // 台阶形状用 DiscStepRadiiMm/DiscStepThicknessMm（按半径分级，等厚板上
+            // 对圆盘与舌片根部同时生效），可表达单级环、两级渐变环。
+            if (args.Contains("--taper"))
+            {
+                double wallT = p.WeldMinThicknessMm, discT = 30.0, clampLenT = 40.0;
+                var pT = SegmentSolver.Clone(p);
+                pT.Layer1.ThicknessMm = 10.0; pT.Layer1.Enabled = true;
+                pT.WallMinMm = wallT;
+                pT.FlangeInsulThickMm = 20; pT.FlangeInsulated = true;
+                pT.BusbarClampLengthMm = clampLenT; pT.BusbarClampTempC = 300;
+
+                // 取 --final2 收敛解里 ② 最差的入口片作靶（tab 1.23、保温 9.8）
+                double tBaseT = 1.23, insT = 9.8, iT2 = 843.0, tRootT = 1143.1;
+                double holeT = wallT + 25.0;
+
+                Console.WriteLine("=== 加厚形状：压平尖峰 vs 保住发热 ===");
+                Console.WriteLine($"靶：入口片　I={iT2:0} A　管根 {tRootT:0.0} °C　基板 {tBaseT:0.00}　舌保温 {insT:0.0}");
+                Console.WriteLine("★ 同时报**发热** —— 只压峰值不看发热，就是 R=33 那次把 C2 炸掉的原因。");
+                Console.WriteLine();
+                Console.WriteLine($"{"形状",-26}{"T峰−管根 K",13}{"发热 W",10}{"J峰",8}{"增重 g/片",11}");
+
+                void Row(string nm, double[] radii, double[] th)
+                {
+                    var g = new FlangePlate
+                    {
+                        DiscRadiusMm = discT, HoleRadiusMm = holeT,
+                        TabEndXMm = -90.0, TabEndHalfWidthMm = 15.0,
+                        ThicknessMm = tBaseT, TabThicknessMm = double.NaN,
+                        DiscStepRadiiMm = radii, DiscStepThicknessMm = th,
+                        InsulBoundaryXMm = double.NaN, TabInsulThickMm = insT,
+                        TabParallel = true, TabFilletMm = 3.0,
+                        WeldFilletLegMm = Math.Max(tBaseT, wallT)
+                    };
+                    ShellMesh m;
+                    try { m = FlangeMesher.Build(g, 0, 2.0, 11.0, 45.0, clampLenT); }
+                    catch (Exception ex) { Console.WriteLine($"{nm,-26}网格失败 {ex.Message}"); return; }
+                    var sc = ShellCurrent.Solve(m, iT2, Materials.PtResistivity(tRootT) * 1e3, tRootT);
+                    var th2 = ShellThermal.Solve(m, sc.JMagAPerMm2, pT, tRootT,
+                                  g.InsulBoundaryXResolved, tabBoundaryX: g.Tangent().X,
+                                  tabInsulThickMm: g.TabInsulThickMm);
+                    // 增重：逐格 (实际厚 − 基板厚) × 面积
+                    double dm = 0;
+                    for (int i = 0; i < m.CellCount; i++)
+                        dm += Math.Max(0, m.Thickness[i] - tBaseT) * m.Area[i];
+                    Console.WriteLine($"{nm,-26}{th2.T.Max() - tRootT,13:+0.00;−0.00}{th2.QGenW,10:0}" +
+                                      $"{sc.JMagAPerMm2.Max(),8:0.0}{dm * 1e-3 * 21.45,11:0.0}");
+                }
+
+                Row("无加厚（基准）", Array.Empty<double>(), Array.Empty<double>());
+                Row("单级 r≤30 → 2.0", new[] { 30.0 }, new[] { 2.0 });
+                Row("单级 r≤30 → 3.0", new[] { 30.0 }, new[] { 3.0 });
+                Row("单级 r≤33 → 3.0", new[] { 33.0 }, new[] { 3.0 });
+                Row("两级 30→3.0, 36→2.0", new[] { 30.0, 36.0 }, new[] { 3.0, 2.0 });
+                Row("两级 30→3.0, 40→1.8", new[] { 30.0, 40.0 }, new[] { 3.0, 1.8 });
+                Row("两级 30→2.4, 36→1.7", new[] { 30.0, 36.0 }, new[] { 2.4, 1.7 });
+                Row("三级 28→3.5,32→2.5,38→1.8",
+                    new[] { 28.0, 32.0, 38.0 }, new[] { 3.5, 2.5, 1.8 });
+                Console.WriteLine();
+                Console.WriteLine("★ 选「T峰−管根 ≤ 0 且发热最大」的那一行；发热掉得多的，C2 会在整线上还回来。");
+                Console.WriteLine("⚠ 单片筛偏乐观约 0.8 K（§4.3l），只可用来排序，过/不过仍以整线为准。");
+                return;
+            }
+
             // --cli --clampscan   ★★★★ 压接温度：当前构型下唯一还没试过的自由度
             //
             // 为什么它可能同时救两条（先写下推理，再由实算判 —— 本项目手推已错三次）：
@@ -4121,10 +4195,15 @@ internal static class Program
                 // （舌 1.61 ⇒ 环只有 2.09），压不住尖峰 —— 实测 HC2|HC3 保温已顶到下界 0.3、
                 // ② 仍有 +5.4，没旋钮可用了。环的作用是把**局部 J** 压下去，
                 // 它该由尖峰的强度定，与舌片被 C2 调到多厚无关。
-                // 半径取 30 = 圆盘外缘：尖峰实测在 **r=28.3**（§4.3k），R=30 已经盖住它。
-                // 取 R=33 会伸进舌片的高 J 区，把那一段的发热按 K²/t 砍掉四成 ——
-                // 实测 C2 因此从 +24 炸到 +66。**环只要盖住尖峰，不要多伸一毫米。**
-                double collarRF2 = 30.0, collarTF2 = 3.0;
+                // ★ 管孔加厚做成**两级渐变**，不是单级环。`--taper` 单片筛（**同时报发热**）：
+                //     无加厚          峰 +13.05　发热 225 W　+2.1 g
+                //     单级 r≤30→3.0   峰  +1.51　发热 203 W　+28.8 g
+                //     单级 r≤33→3.0   峰  +0.00　发热 185 W　+34.5 g
+                //   **两级 30→2.4,36→1.7  峰 +0.00　发热 192 W　+22.1 g** ← 三项全优
+                //   机理：高 J 区沿舌片延伸约 20 mm（§4.3k 的中线剖面），
+                //   渐变在整段上都降 J；单级台阶只能在一个半径带上猛加厚，
+                //   多出来的厚度按 K²/t 白白砍掉发热 —— 那正是 R=33 把 C2 炸到 +66 的原因。
+                double[] stepRF2 = { 30.0, 36.0 }, stepTF2 = { 2.4, 1.7 };
                 double discFloorF2 = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
                                      * (discF2 - 26.0) * p.WeldSafetyFactor;
 
@@ -4140,6 +4219,20 @@ internal static class Program
                 // 装上管孔环后 ② 应从 +2.85 直接降约 2.3 K，只需在此附近做小幅牛顿修正。
                 double[] tabF2 = { 1.37, 2.02, 1.80, 1.04 };
                 double[] insF2v = { 18.7, 1.6, 1.4, 3.9 };
+
+                // ★ **端片舌片加长**（总纲允许的自由度：「舌片长度如有需要可加长」）。
+                //
+                // 为什么只加端片：端片走单段电流（843/669 A），共用片走 √3 倍（1354/1201），
+                // 发热 ∝ I² ⇒ 端片只有共用片的四成，而散热面积与铜排负荷一样（§4.3b）。
+                // 定尺寸器为了给端片凑够发热，只能把它的舌片越削越薄 —— 实测入口片被削到
+                // 1.09 mm 时 ② 冲到 +8.3。**薄是手段不是目的，真正要的是「总发热」。**
+                //
+                // 包了保温的舌片：发热 ∝ 长度（电阻 ∝ ℓ），而表面损失几乎不随长度涨（有保温），
+                // 且自由段越长、压接端抽走的越少（∝ 1/ℓ_free）。⇒ 加长同时给出三样：
+                // 更多发热、更少铜排失热、以及**可以把舌片留厚**（局部 J 低 ⇒ ② 好）。
+                // ⚠ 加长端片舌片试过一次（130/90/90/130），结果被下面那个**单向棘轮** bug 污染，
+                //   不能据此判断加长本身的好坏。控制器修好后要单独重试。先回到 90 隔离变量。
+                double[] tabLenF2 = { 90.0, 90.0, 90.0, 90.0 };
                 const double insLo = 0.3, insHi = 30.0;
 
                 LineCase MakeF2(double[] tab, double[] ins, bool ramp)
@@ -4151,9 +4244,11 @@ internal static class Program
                         plates[j] = new FlangePlate
                         {
                             DiscRadiusMm = discF2, HoleRadiusMm = wallF2 + 25.0,
-                            TabEndXMm = -90.0, TabEndHalfWidthMm = 15.0,
-                            ThicknessMm = td, ThickenRadiusMm = collarRF2,
-                            ThickenedMm = Math.Max(collarTF2, td),   // 环不得薄于板身
+                            TabEndXMm = -tabLenF2[j], TabEndHalfWidthMm = 15.0,
+                            ThicknessMm = td,
+                            // 各级不得薄于板身（板被 C2 逼厚时，台阶不能反而成了减薄区）
+                            DiscStepRadiiMm = stepRF2,
+                            DiscStepThicknessMm = stepTF2.Select(v => Math.Max(v, td)).ToArray(),
                             TabThicknessMm = double.NaN,
                             InsulBoundaryXMm = double.NaN, TabInsulThickMm = ins[j],
                             TabParallel = true, TabFilletMm = 3.0,
@@ -4171,8 +4266,11 @@ internal static class Program
                 }
 
                 Console.WriteLine("=== 双约束自动定尺寸：C2 与判据 ② 同时顶 ===");
-                Console.WriteLine($"管壁 {wallF2:0.0}／盘Ø{2 * discF2:0}／盘舌等厚／管孔环 R={collarRF2:0} 厚 {collarTF2:0.0}（绝对）／" +
+                Console.WriteLine($"管壁 {wallF2:0.0}／盘Ø{2 * discF2:0}／管孔两级渐变环 " +
+                                  $"r≤{stepRF2[0]:0}→{stepTF2[0]:0.0}，r≤{stepRF2[1]:0}→{stepTF2[1]:0.0}／" +
                                   $"压接 {clampLenF2:0} 夹 {clampF2:0} °C");
+                Console.WriteLine($"舌长 逐片 {string.Join("/", tabLenF2.Select(v => v.ToString("0")))} mm" +
+                                  "（端片加长：发热 ∝ 长度，而包了保温的损失几乎不随长度涨）");
                 Console.WriteLine("分派：舌厚→C2（发热∝1/t）　舌保温→②（保温厚⇒舌片热⇒峰值高）");
                 // 闭式（§4.3l）：把舌片当杆，Q_根 = kAΔT/ℓ − pℓ/2，T′(0) = −ΔT/ℓ + pℓ/(2kA)。
                 // C2 要 Q_根>0 ⇔ T′(0)<0；② 要杆内无处高于管根 ⇔ 峰值不在内部 ⇔ T′(0)≤0。
@@ -4250,32 +4348,42 @@ internal static class Program
                         e /= c;
                         if (Math.Abs(e) < 0.8) continue;
 
+                        // ── ① 先用 ② 更新保温**上限**（双向；单向棘轮是个陷阱）
+                        //
+                        // 上一版写成「只要 ② > −0.5 就把上限压 15 %、且只降不升」。
+                        // 结果早期某片 ② 偶然为正，上限就被永久压到下界 0.3 ——
+                        // 端片 130 mm 的舌片于是全裸，② 冲到 **+29.7**（实测）。
+                        // ⇒ 上限必须能回升：② 有富余就把它放回去。
+                        if (e2[j] > 0.0)
+                            insCeil[j] = Math.Max(insLo, Math.Min(insCeil[j], insF2v[j]) * 0.90);
+                        else if (e2[j] < -2.0)
+                            insCeil[j] = Math.Min(insHi, Math.Max(insCeil[j], insF2v[j]) * 1.15);
+
+                        // ── ② 保温优先补 C2（**它不花铂**），只在上限/下限顶死时才动舌厚
+                        //
+                        // 这个次序此前是对的，错的是上面那个上限。实测 round 0：
+                        // ② 已基本满足（max +1.5）而 C2 差 +36 —— 该做的是**加保温**，
+                        // 不是削薄舌片。削薄既费不着、又把局部 J 抬上去破坏 ②。
+                        double insWant = insF2v[j] + 0.35 * e;
+                        double insNew = Math.Clamp(insWant, insLo, Math.Max(insLo, insCeil[j]));
+                        bool insSaturated = Math.Abs(insNew - insWant) > 1e-9;
+                        if (Math.Abs(insNew - insF2v[j]) > 1e-9) { insF2v[j] = insNew; moved = true; }
+
+                        if (!insSaturated) continue;    // 保温还够用，先不动铂
+
+                        // ── ③ 舌厚（割线，在线量斜率）
                         double slope = slopeEst[j];
                         if (!double.IsNaN(prevTab[j]) && Math.Abs(tabF2[j] - prevTab[j]) > 1e-6)
                         {
                             double s = (e - prevErr[j]) / (tabF2[j] - prevTab[j]);
-                            // 只接受符号正确、量级合理的割线斜率（噪声大时宁可用上一轮的）
                             if (s > 20 && s < 5000) slope = 0.5 * slope + 0.5 * s;
                         }
                         slopeEst[j] = slope;
                         prevTab[j] = tabF2[j]; prevErr[j] = e;
 
-                        double dTab = Math.Clamp(-e / slope, -0.08, 0.08);
+                        double dTab = Math.Clamp(-e / slope, -0.06, 0.06);
                         double nt = Math.Clamp(tabF2[j] + dTab, 0.3, 4.0);
                         if (Math.Abs(nt - tabF2[j]) > 1e-9) { tabF2[j] = nt; moved = true; }
-
-                        // ── 保温：**由 C2 驱动（它不花铂，该优先用），但受 ② 设的上限管着**
-                        //
-                        // 前一版把保温直接绑给 ②，目标 −1.0 K。结果环把 ② 压到 +0.0 之后，
-                        // 它为了追 −1.0 **继续减保温**，白白把 C2 的预算烧掉（实测 C2 因此
-                        // 一路涨到 +66）。② 是**单侧**约束：过了就别再动它。
-                        //
-                        // 改成棘轮式上限：只要 ② 还高于 −0.5，就把该片的保温上限往下压一档；
-                        // 在上限之下，保温交给 C2 自由使用。上限只降不升 —— 避免来回抖。
-                        if (e2[j] > -0.5) insCeil[j] = Math.Min(insCeil[j], insF2v[j] * 0.85);
-
-                        double target = Math.Clamp(insF2v[j] + 0.35 * e, insLo, Math.Max(insLo, insCeil[j]));
-                        if (Math.Abs(target - insF2v[j]) > 1e-9) { insF2v[j] = target; moved = true; }
                     }
                     if (!moved) { Console.WriteLine("   ⇒ 两个旋钮都到位或都顶死，停"); break; }
                 }
