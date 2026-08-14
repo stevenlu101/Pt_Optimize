@@ -101,6 +101,25 @@ public class DesignInputs
                  "因为 k_b 已按最不利取，本系数只覆盖前三项 ⇒ 2.0 足够。")]
     public double WeldSafetyFactor { get; set; } = 2.0;
 
+    [Category("4 保温"), DisplayName("端部额外保温厚度 mm"),
+     Description("管**两端各一段**在基础保温之外再加的纤维厚度 mm（0 = 轴向均匀）。\n\n" +
+                 "为什么需要它（用户 2026-08-14：「仅量把温度做均匀即可」）：\n" +
+                 "冷坑只出现在每段两端各约 30 mm（= 热扩散长度 ℓt≈22 mm 的量级），\n" +
+                 "中间 240 mm 是平的（±1.4 K）。补偿只需补在端部，不必动整段。\n\n" +
+                 "机理：管子按同一电流均匀自发热，稳态下 q_joule = β·(T_set − T_amb)。\n" +
+                 "端部局部加厚保温 ⇒ 该处 β 变小而发热不变 ⇒ **净剩余热量填坑**。\n" +
+                 "⚠ 注意与「整体加厚保温」区分：整体加厚会让 ℓt 变长、坑反而更深\n" +
+                 "  (ΔT = D/√(kAβ))。局部与整体方向相反，别混。\n\n" +
+                 "为什么不用「管壁局部减薄」那条更直接的路：用户 2026-08-14 答\n" +
+                 "「理论上可以，但就不能用拉管、只能用焊接，不建议没有好处」——\n" +
+                 "等于在热区加一条通电的纵向焊缝，为填 17 K 的坑不值得。")]
+    public double EndInsulExtraMm { get; set; } = 0.0;
+
+    [Category("4 保温"), DisplayName("端部额外保温的长度 mm"),
+     Description("自管两端各算起的长度 mm，在这一段内叠加「端部额外保温厚度」。\n" +
+                 "取值参考：冷坑的衰减长度 ℓt ≈ 22 mm，实测剖面在 30 mm 处已恢复到 −0.5 K。")]
+    public double EndInsulLengthMm { get; set; } = 30.0;
+
     [Category("2 供料管几何"), DisplayName("安装姿态")]
     public Orientation Posture { get; set; } = Orientation.Horizontal;
 
@@ -254,6 +273,20 @@ public class DesignInputs
     /// </summary>
     [Browsable(false)]
     public bool FlangeDrawOverrideSet { get; set; }
+
+    /// <summary>
+    /// 管**左/右端各自**的法兰抽热 W。NaN = 两端都用 <see cref="FlangeDrawOverrideW"/>。
+    ///
+    /// ⚠ 2026-08-14 修的一个 bug：`LineRunner` 原本写
+    /// `target[i] = 0.5*(a+b)` —— 把一段两端**两片不同法兰**的抽热取平均后挂到两端，
+    /// 注释还写着「SegmentSolver 两端挂同一个值，取均值」。
+    /// 但 `Bvp1D.Solve` 本来就收独立的 bcL/bcR，这个平均纯属没必要。
+    ///
+    /// 实测影响：入口片抽 +5 W、HC1|HC2 抽 +2 W，被抹成两端各 3.5 W ——
+    /// 而管根温差 C2 与判据 ② 正是由这个量定的，两端不对称时会一头偏冷一头偏热。
+    /// </summary>
+    [Browsable(false)] public double FlangeDrawLeftW { get; set; } = double.NaN;
+    [Browsable(false)] public double FlangeDrawRightW { get; set; } = double.NaN;
 
     [Category("2 供料管几何"), DisplayName("壁厚由程序反算"),
      Description("关闭 = 校核模式：壁厚取「最小可制造壁厚」的实测值，程序只报实际 J")]

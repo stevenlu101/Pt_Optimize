@@ -4239,6 +4239,47 @@ internal static class Program
                 }
                 Console.WriteLine("★ 读法：坑集中在两端（法兰处）⇒ 补热要补在端部；");
                 Console.WriteLine("  若中段也塌，那是整段功率不足，属另一回事。");
+                Console.WriteLine();
+
+                // ── 端部额外保温扫描：**方向交给模型定，我不预设**
+                //   （管壁局部减薄那条更直接的路已被用户否掉：只能焊管，得不偿失）
+                Console.WriteLine("── 端部额外保温扫描（**按 exp(−x/ℓt) 渐变**，作用长度 60 mm）");
+                Console.WriteLine("⚠ 方向不预设：局部加保温与整体加保温对冷坑的作用**方向相反**，由实算判。");
+                Console.WriteLine($"{"额外mm",8}{"段内落差max",13}{"最低管温",10}{"析晶裕度",10}" +
+                                  $"{"C2 三段",26}{"② max",8}");
+                // 粗扫（0/5/10/20/40）结论：**方向对，灵敏度极高** ——
+                //   冷坑真没了（最低管温 1034→1049.8、析晶裕度 −16→−0.2），
+                //   但 5 mm 时端部已从冷坑变成**热包**，段内落差反涨到 63 K。
+                //   ⇒ 最优在 0–5 之间且很窄，改细扫。
+                foreach (double ex in new[] { 0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0 })
+                {
+                    var pE = SegmentSolver.Clone(pU);
+                    // 作用长度放到 60 mm：渐变后厚度自己会衰减到零，长一点只是让尾巴更完整
+                    pE.EndInsulExtraMm = ex; pE.EndInsulLengthMm = 60.0;
+                    var lcE = new LineCase
+                    {
+                        Base = pE, WallMm = wallU, UseMeasuredCurrent = false, CheckRamp = false,
+                        SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                        FlangePlates = platesU,
+                        ClampTempC = new[] { clampU, clampU, clampU, clampU }
+                    };
+                    LineResult rE;
+                    try { rE = LineRunner.Run(lcE); }
+                    catch (Exception ex2) { Console.WriteLine($"{ex,8:0}  异常 {ex2.Message}"); continue; }
+                    if (!rE.Ok) { Console.WriteLine($"{ex,8:0}  ✗ {rE.Message}"); continue; }
+
+                    double span = rE.Segments.Where(s => s.TMetal.Length > 0)
+                                             .Max(s => s.TMetal.Max() - s.TMetal.Min());
+                    double lo2 = rE.Segments.Where(s => s.TMetal.Length > 0).Min(s => s.TMetal.Min());
+                    double hi2 = rE.Segments.Where(s => s.TMetal.Length > 0).Max(s => s.TMetal.Max());
+                    double e2m = rE.Flanges.Max(f => f.TMaxC - f.TRootC);
+                    Console.WriteLine($"{ex,8:0.00}{span,13:0.0}{lo2,10:0.0}{lo2 - p.TLiquidusC,10:+0.0;−0.0}" +
+                        $"{string.Join(" / ", rE.Segments.Select(s => s.RootDeltaK.ToString("+0.0;−0.0"))),26}" +
+                        $"{e2m,8:+0.00;−0.00}  最高 {hi2:0.0}");
+                }
+                Console.WriteLine();
+                Console.WriteLine("★ 看「段内落差」这一列往哪边走。若单调下降 ⇒ 端部加保温能填坑，");
+                Console.WriteLine("  且它**不花铂**；若反而上升，说明整体那条 ΔT=D/√(kAβ) 的直觉在局部也成立。");
                 return;
             }
 

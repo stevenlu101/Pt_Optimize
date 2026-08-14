@@ -140,7 +140,22 @@ public sealed class SegmentOut
 {
     public string Name = "";
     public double SetpointC, CurrentA, PowerW, TubeJAPerMm2;
+    /// <summary>
+    /// 管根温度 °C 与温差 K。
+    ///
+    /// ⚠⚠ 2026-08-14 修的一个**贯穿全项目**的 bug：这两个量原本只取
+    /// <c>SolveResult.TFlangeAC</c>（= tm[0]，**左端**）。而每段有**两片**法兰，
+    /// 右端的 <c>TFlangeBC</c> 算了却从未被用过。
+    /// 实测 HC3 两端是 1040.2 / 1034.0 °C，判据只报了对应 1040.2 的 +9.8 ——
+    /// **另一端差 16 K，从来没被检查过**；且最后一片法兰（出口端片）拿到的还是
+    /// HC3 的**左端**温度，完全是另一头。
+    /// ⇒ 现在 <see cref="RootDeltaK"/> 取**两端中较差的那个**，两端值另存。
+    /// </summary>
     public double TRootC, RootDeltaK, GlassInC, GlassOutC, MassG;
+    /// <summary>左端（A）与右端（B）的管根温度 °C —— 两片不同的法兰各贴一端</summary>
+    public double TRootAC, TRootBC;
+    /// <summary>两端各自的管根温差 K（控温点 − 该端温度）</summary>
+    public double RootDeltaAK, RootDeltaBK;
     public double[] X = Array.Empty<double>();
     public double[] TMetal = Array.Empty<double>();
     public double[] TGlass = Array.Empty<double>();
@@ -257,23 +272,32 @@ public static class LineRunner
         //   欠松弛不改变不动点，只改变到达方式：**若加了松弛仍发散，那才是物理上的热失控**。
         double omega = c.CoupleRelax;
         double[]? draws = null;
+        (double L, double R)[]? drawsLR = null;
         double delta = double.NaN;
         for (int outer = 0; outer < c.CoupleMaxRounds; outer++)
         {
             cancel.ThrowIfCancellationRequested();
             var target = new double[c.SegmentCount];
+            var targetLR = new (double L, double R)[c.SegmentCount];
             for (int i = 0; i < c.SegmentCount; i++)
             {
                 // 段 i 的两端分别是法兰 i 与 i+1，各贡献自己的抽热
                 double a = res.Flanges[i].QFromTubeW, b = res.Flanges[i + 1].QFromTubeW;
-                target[i] = 0.5 * (a + b);     // SegmentSolver 两端挂同一个值，取均值
+                target[i] = 0.5 * (a + b);           // 仅作兼容/汇报用
+                targetLR[i] = (a, b);                // ★ 两端各自回灌（原来取平均是 bug）
             }
             draws ??= new double[c.SegmentCount];
+            drawsLR ??= new (double, double)[c.SegmentCount];
             for (int i = 0; i < c.SegmentCount; i++)
+            {
                 draws[i] = (1 - omega) * draws[i] + omega * target[i];
+                drawsLR[i] = ((1 - omega) * drawsLR[i].L + omega * targetLR[i].L,
+                              (1 - omega) * drawsLR[i].R + omega * targetLR[i].R);
+            }
 
             progress?.Report($"外层耦合 {outer + 1}/{c.CoupleMaxRounds}（ω={omega:0.00}）：回灌法兰抽热…");
-            var next = RunOnce(c, progress, cancel, (double[])draws.Clone());
+            var next = RunOnce(c, progress, cancel, (double[])draws.Clone(),
+                               ((double L, double R)[])drawsLR.Clone());
             if (!next.Ok) return next;
             delta = Enumerable.Range(0, c.SegmentCount)
                 .Max(i => Math.Abs(next.Segments[i].TRootC - res.Segments[i].TRootC));
@@ -295,7 +319,8 @@ public static class LineRunner
     }
 
     private static LineResult RunOnce(LineCase c, IProgress<string>? progress,
-                                      CancellationToken cancel, double[]? drawIn)
+                                      CancellationToken cancel, double[]? drawIn,
+                                      (double L, double R)[]? drawLR = null)
     {
         var res = new LineResult { BaselineMassG = c.BaselineMassG };
         int n = c.SegmentCount, nf = c.FlangeCount;
@@ -327,6 +352,9 @@ public static class LineRunner
             p.GlassHeadM = i < c.HeadM.Length ? c.HeadM[i] : 0;
             p.SizeWall = false;
             p.FlangeDrawOverrideW = drawW[i]; p.FlangeDrawOverrideSet = true;
+            // 两端各挂各的（原来取平均是 bug，见 DesignInputs.FlangeDrawLeftW）
+            if (drawLR is not null)
+            { p.FlangeDrawLeftW = drawLR[i].L; p.FlangeDrawRightW = drawLR[i].R; }
 
             SolveResult sr;
             if (c.UseMeasuredCurrent)
@@ -351,8 +379,15 @@ public static class LineRunner
                 CurrentA = sr.CurrentA,
                 PowerW = sr.PowerTotalW,
                 TubeJAPerMm2 = sr.CurrentA / area,
-                TRootC = sr.TFlangeAC,
-                RootDeltaK = c.SetpointC[i] - sr.TFlangeAC,
+                // 两端各算，判据取**较差**的那个（偏离控温点最多的）
+                TRootAC = sr.TFlangeAC, TRootBC = sr.TFlangeBC,
+                RootDeltaAK = c.SetpointC[i] - sr.TFlangeAC,
+                RootDeltaBK = c.SetpointC[i] - sr.TFlangeBC,
+                TRootC = Math.Abs(c.SetpointC[i] - sr.TFlangeAC)
+                       >= Math.Abs(c.SetpointC[i] - sr.TFlangeBC) ? sr.TFlangeAC : sr.TFlangeBC,
+                RootDeltaK = Math.Abs(c.SetpointC[i] - sr.TFlangeAC)
+                           >= Math.Abs(c.SetpointC[i] - sr.TFlangeBC)
+                           ? c.SetpointC[i] - sr.TFlangeAC : c.SetpointC[i] - sr.TFlangeBC,
                 GlassInC = tg,
                 GlassOutC = sr.TGlassOutC,
                 MassG = area * c.SegLengthMm * Materials.PtDensity * 1e-6,
@@ -437,9 +472,13 @@ public static class LineRunner
                         c.SetpointC[Math.Min(j, n - 1)]);
 
             // 管根温度取相邻段中较高者（保守：抽热更大）
-            double tRoot = j == 0 ? segs[0].TRootC
-                         : j >= n ? segs[n - 1].TRootC
-                         : Math.Max(segs[j - 1].TRootC, segs[j].TRootC);
+            // ⚠ 每片法兰贴的是**具体哪一端**，不能笼统取 TRootC（那原本恒是左端）：
+            //   片 0     → 段 0 的**左**端
+            //   片 j（内）→ 段 j−1 的**右**端 与 段 j 的**左**端（两者相邻，取较热者：保守）
+            //   片 n     → 段 n−1 的**右**端   ← 原来错取成左端
+            double tRoot = j == 0 ? segs[0].TRootAC
+                         : j >= n ? segs[n - 1].TRootBC
+                         : Math.Max(segs[j - 1].TRootBC, segs[j].TRootAC);
 
             var p2 = SegmentSolver.Clone(c.Base);
             p2.TSetC = c.SetpointC[Math.Min(j, n - 1)];

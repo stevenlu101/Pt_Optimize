@@ -249,6 +249,43 @@ public static class SegmentSolver
 
         var lossTab = TubeLossTable(p, rOut, L);
 
+        // ── 端部额外保温（轴向不均匀）。Src/DSrc 本来就带 x，所以只需按 x 选表。
+        //    实测冷坑只在两端各约 30 mm（ℓt≈22 mm），中段 ±1.4 K ⇒ 只在端部换表。
+        //    机理：管按同一电流均匀自发热，稳态下 q_joule = β(T_set − T_amb)；
+        //    端部把 β 压小而发热不变 ⇒ **净剩余热量填坑**。
+        //    ⚠ 与「整体加厚保温」方向相反：整体加厚使 ℓt 变长、坑更深（ΔT=D/√(kAβ)）。
+        // ★★ 补偿必须**渐变**，不能是台阶。
+        //   第一版做成「端部 30 mm 统一加厚」，实测：冷坑确实被填（最低管温 1034→1049.5），
+        //   但那 30 mm 变成了**热包**（最高 1150→1192.7），段内落差只从 17.4 降到 14.8。
+        //   原因很简单：**坑是 exp(−x/ℓt) 形状的，用台阶去补必然过补一段、欠补一段。**
+        //   ⇒ 把额外厚度按同样的指数形状分级（这里用 6 个子区间离散）。
+        const int nz = 6;
+        var endTabs = new LossTable[nz];
+        double endLen = 0;
+        if (p.EndInsulExtraMm > 1e-6 && p.EndInsulLengthMm > 1e-6)
+        {
+            endLen = p.EndInsulLengthMm * 1e-3;
+            // 热扩散长度：ℓt = √(kA/β)，坑按 exp(−x/ℓt) 衰减 ⇒ 补偿同形
+            double betaU = lossTab.Slope(p.TSetC) + p.HGlass * Math.PI * p.TubeId;
+            double lt = Math.Sqrt(Math.Max(1e-12, kPt * area / Math.Max(1e-12, betaU)));
+            for (int z = 0; z < nz; z++)
+            {
+                double xm = (z + 0.5) / nz * endLen;              // 子区间中点距端部
+                var pz = Clone(p);
+                pz.Layer1.ThicknessMm += p.EndInsulExtraMm * Math.Exp(-xm / lt);
+                pz.Layer1.Enabled = true;
+                endTabs[z] = TubeLossTable(pz, rOut, L);
+            }
+        }
+        LossTable TabAt(double x)
+        {
+            if (endLen <= 0) return lossTab;
+            double d = Math.Min(x, L - x);                        // 到最近端部的距离
+            if (d >= endLen) return lossTab;
+            int z = Math.Clamp((int)(d / endLen * nz), 0, nz - 1);
+            return endTabs[z];
+        }
+
         // 法兰从管根抽走的热 D。**只有两种情况**：
         //   · FlangeDrawOverrideSet = true  → 由二维壳解回灌的真值（LineRunner/CoupledSolver 走这条）
         //   · false                          → **视为 0**（裸管、无法兰的算例）
@@ -258,8 +295,13 @@ public static class SegmentSolver
         //   这个静默回退坑过三次（§7），现已连同 FlangeRadial 一起删除 ——
         //   **不存在的代码路径不会再被误走**。
         //   D 为负是合法值（Φ>1 时法兰向管子倒灌），故用显式布尔而非看符号。
-        var defTab = new LossTable(p.TAmbC, Math.Max(p.TSetC, p.TGlassInC) + 200, 8,
-                                   _ => p.FlangeDrawOverrideSet ? p.FlangeDrawOverrideW : 0.0);
+        // 两端**各自**的抽热（见 DesignInputs.FlangeDrawLeftW 的注释：原来取平均是个 bug）
+        double drawL = double.IsNaN(p.FlangeDrawLeftW)
+                     ? (p.FlangeDrawOverrideSet ? p.FlangeDrawOverrideW : 0.0) : p.FlangeDrawLeftW;
+        double drawR = double.IsNaN(p.FlangeDrawRightW)
+                     ? (p.FlangeDrawOverrideSet ? p.FlangeDrawOverrideW : 0.0) : p.FlangeDrawRightW;
+        var defTabL = new LossTable(p.TAmbC, Math.Max(p.TSetC, p.TGlassInC) + 200, 8, _ => drawL);
+        var defTabR = new LossTable(p.TAmbC, Math.Max(p.TSetC, p.TGlassInC) + 200, 8, _ => drawR);
 
         tm = new double[n]; tg = new double[n];
         for (int i = 0; i < n; i++) { tm[i] = p.TSetC; tg[i] = p.TGlassInC; }
@@ -279,17 +321,17 @@ public static class SegmentSolver
             {
                 int i = Math.Clamp((int)Math.Round(x / dx), 0, n - 1);
                 return current * current * Materials.PtResistivity(T) / area
-                       - lossTab.Eval(T) - hg * pi * (T - tgLocal[i]);
+                       - TabAt(x).Eval(T) - hg * pi * (T - tgLocal[i]);
             }
             double DSrc(double x, double T)
             {
                 double drho = Materials.RhoRef *
                     (Materials.AlphaFit + 2 * Materials.BetaFit * T);
-                return current * current * drho / area - lossTab.Slope(T) - hg * pi;
+                return current * current * drho / area - TabAt(x).Slope(T) - hg * pi;
             }
 
-            var bcL = Bvp1D.Boundary.WithFlux(defTab.Eval, defTab.Slope);
-            var bcR = Bvp1D.Boundary.WithFlux(defTab.Eval, defTab.Slope);
+            var bcL = Bvp1D.Boundary.WithFlux(defTabL.Eval, defTabL.Slope);
+            var bcR = Bvp1D.Boundary.WithFlux(defTabR.Eval, defTabR.Slope);
             var tn = Bvp1D.Solve(0, L, KOf, Src, DSrc, bcL, bcR, init: tm, opt: opt);
 
             double err = 0;
@@ -336,7 +378,18 @@ public static class SegmentSolver
         return rows;
     }
 
+    /// <summary>
+    /// ⚠ 必须允许 NaN/Infinity：本类型里用 NaN 当「未设定」哨兵
+    /// （<see cref="DesignInputs.FlangeDrawLeftW"/> 等）。默认的 JsonSerializer
+    /// 遇到 NaN 直接抛 ArgumentException，且报错信息完全看不出是哪个字段 ——
+    /// 2026-08-14 加两端抽热字段时踩过一次。
+    /// </summary>
+    private static readonly System.Text.Json.JsonSerializerOptions CloneOpts = new()
+    {
+        NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals
+    };
+
     public static DesignInputs Clone(DesignInputs p)
         => System.Text.Json.JsonSerializer.Deserialize<DesignInputs>(
-               System.Text.Json.JsonSerializer.Serialize(p))!;
+               System.Text.Json.JsonSerializer.Serialize(p, CloneOpts), CloneOpts)!;
 }
