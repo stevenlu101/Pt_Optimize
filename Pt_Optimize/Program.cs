@@ -4754,13 +4754,18 @@ internal static class Program
                     //   （2026-08-12 出过这个事故），Y 跨度会变成盘直径，一眼露馅。
                     var pnames = new[] { "入口", "共用1", "共用2", "出口" };
                     var want = new Dictionary<string, double>();
+                    // 压接段是**画在板面上的参考线**，不是一块料（第一版把它拉伸成实体，
+                    // 与舌片同位同厚 ⇒ 两块料占同一处空间，用户实测发现）。
+                    // ⇒ 它的判据不能再是「Y 跨度 = 板厚」（那会一直判 0.000 ✗），
+                    //   改判「Y 跨度 = 0 且贴在板面上」——线一旦被误画成体，这条同样会露馅。
+                    var wantCurveY = new Dictionary<string, double>();
                     for (int j = 0; j < 4; j++)
                     {
                         double tj = fd.TabThickMm[j];
                         want[$"{pnames[j]}-板身"] = tj;
                         want[$"{pnames[j]}-环外级"] = tj * fd.RingMulOuter(j);
                         want[$"{pnames[j]}-环内级"] = tj * fd.RingMul[j];
-                        want[$"{pnames[j]}-压接段"] = tj;
+                        wantCurveY[$"{pnames[j]}-压接段"] = j * 300.0 + tj / 2;
                     }
 
                     try
@@ -4779,6 +4784,16 @@ internal static class Program
                                     Console.WriteLine($"   ✗ 铂管 段长量得 {tY:0.000}，期望 300"); }
                                 continue;
                             }
+                            if (wantCurveY.TryGetValue(ly, out double yw))
+                            {
+                                double yc = e.GetProperty("y0").GetDouble();
+                                bool okC = Math.Abs(tY) <= 1e-6 && Math.Abs(yc - yw) <= 0.005;
+                                if (okC) okN++;
+                                else { badN++; bad++;
+                                    Console.WriteLine($"   ✗ {ly,-12} 应为板面上的线：量得 Y 跨度 {tY:0.000}（应 0）、"
+                                                    + $"位置 {yc:0.000}（应 {yw:0.000}）"); }
+                                continue;
+                            }
                             if (!want.TryGetValue(ly, out double tw)) continue;
                             bool ok = Math.Abs(tY - tw) <= 0.005;
                             if (ok) okN++;
@@ -4786,6 +4801,80 @@ internal static class Program
                                 Console.WriteLine($"   ✗ {ly,-12} 量得 {tY,7:0.000} mm　期望 {tw,7:0.000}"); }
                         }
                         Console.WriteLine($"   round-trip：{okN} 项吻合" + (badN > 0 ? $"，{badN} 项不吻合" : "，全部吻合"));
+
+                        // ★ 角焊缝另立一条对账。理由：它是**回转体**，包围盒的 Y 跨度是焊脚高
+                        //   而不是板厚，上面那条判据管不到它；而形状恰恰是这里最容易出错的地方
+                        //   —— 上一版用 12 段同心带逼近圆弧，体积只差 0.7%、对账一路通过，
+                        //   但 Rhino 里看到的是一圈阶梯（用户实测发现）。
+                        //   ⇒ 子进程里用两条互不相干的路算同一个量：回转体的实测体积 vs
+                        //      与 FE 同一被积函数的解析积分。差超 0.5% 即判不吻合。
+                        if (jd.RootElement.TryGetProperty("weldCheck", out var wc))
+                            foreach (var e in wc.EnumerateArray())
+                            {
+                                double dr = e.GetProperty("drawnMm3").GetDouble();
+                                double ex2 = e.GetProperty("exactMm3").GetDouble();
+                                double rel = e.GetProperty("relErr").GetDouble() * 100.0;
+                                bool okW = Math.Abs(rel) <= 0.5;
+                                if (!okW) bad++;
+                                Console.WriteLine(
+                                    $"   {(okW ? "✓" : "✗")} 角焊缝 {e.GetProperty("plate").GetString(),-6}"
+                                    + $" 焊脚 {e.GetProperty("a").GetDouble(),5:0.00} mm　"
+                                    + $"回转体 {dr,8:0.0} mm³　解析 {ex2,8:0.0} mm³　差 {rel,6:0.000} %");
+                            }
+
+                        // ════════════════════════════════════════════════════════
+                        // ★ 质量对账 —— 本文件真正的验收判据
+                        //
+                        // 教训（2026-08-16）：原来只验「包围盒沿 Y = 板厚」，一路报「19 项全吻合」，
+                        // 而用户在 Rhino 里打开发现法兰只有计算值的 43%。那个量分辨不出
+                        // 孔有没有挖、焊角在不在、环有没有多长出去 —— **校验量选错比不校验更危险**，
+                        // 它发的是虚假的通过证，让人（包括我）停止怀疑。
+                        // 质量是唯一把所有几何细节都卷进去的标量 ⇒ 逐件比，不吻合就不许当交付件。
+                        //
+                        // 两边的口径差异必须知道：3DM 是**精确**几何，FE 是**格子离散**
+                        // （边界单元用有效面积、厚度取形心采样）⇒ 残差就是 FE 自己的离散误差。
+                        // ════════════════════════════════════════════════════════
+                        double rho = Materials.PtDensity * 1e-6;          // g/mm³
+                        double discFloorM = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                                            * (fd.DiscRadiusMm - 26.0) * p.WeldSafetyFactor;
+                        var vol3d = new double[4]; double volTube3d = 0;
+                        foreach (var e in rt.EnumerateArray())
+                        {
+                            if (e.GetProperty("vol").ValueKind == System.Text.Json.JsonValueKind.Null) continue;
+                            double v = e.GetProperty("vol").GetDouble();
+                            string ly = e.GetProperty("layer").GetString() ?? "";
+                            if (ly == "铂管") { volTube3d += v; continue; }
+                            for (int j = 0; j < 4; j++)
+                                if (ly.StartsWith(pnames[j] + "-", StringComparison.Ordinal)) vol3d[j] += v;
+                        }
+
+                        double tubeArea = Math.PI * (Math.Pow(25.0 + fd.WallMm, 2) - 25.0 * 25.0);
+                        double feTube = tubeArea * 300.0 * 3 * rho;
+                        Console.WriteLine("   ── 质量对账（ρ = 21.45 g/cm³）");
+                        Console.WriteLine($"      {"件",-8}{"3DM",10}{"计算模型",12}{"差",9}");
+                        double s3 = volTube3d * rho, sf = feTube;
+                        Console.WriteLine($"      {"铂管",-7}{volTube3d * rho,9:0.0}g{feTube,11:0.0}g"
+                                        + $"{(volTube3d * rho - feTube) / feTube * 100,8:+0.00;−0.00}%");
+                        for (int j = 0; j < 4; j++)
+                        {
+                            var pl = fd.Plate(j, discFloorM);
+                            pl.HoleRadiusMm = fd.HoleRadiusMm;
+                            // ⚠ 与 LineRunner 同一套网格参数；不同就是在对另一个网格的账
+                            var msh = FlangeMesher.Build(pl, 0, 2.0, 11.0, 50.0, fd.ClampLengthMm);
+                            double feG = msh.VolumeMm3 * rho, g3 = vol3d[j] * rho;
+                            double rp = (g3 - feG) / feG * 100.0;
+                            bool okM = Math.Abs(rp) <= 2.0;
+                            if (!okM) bad++;
+                            s3 += g3; sf += feG;
+                            Console.WriteLine($"      {pnames[j],-7}{g3,9:0.0}g{feG,11:0.0}g{rp,8:+0.00;−0.00}%"
+                                            + (okM ? "" : "  ✗ 超 2%")
+                                            + (Math.Abs(pl.ThicknessMm - fd.TabThickMm[j]) > 1e-9
+                                               ? $"  ⚠ FE 用 {pl.ThicknessMm:0.000}（焊接下界抬高），3DM 画 {fd.TabThickMm[j]:0.000}"
+                                               : ""));
+                        }
+                        Console.WriteLine($"      {"合计",-6}{s3,9:0.0}g{sf,11:0.0}g"
+                                        + $"{(s3 - sf) / sf * 100,8:+0.00;−0.00}%"
+                                        + $"　（FinalDesign 记 {fd.TotalMassG:0} g）");
                     }
                     catch (Exception ex)
                     { bad++; Console.WriteLine("   ✗ 回显解析失败：" + ex.Message); }

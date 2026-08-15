@@ -324,7 +324,17 @@ public sealed class ManualPage : TabPage
         double xEnd = Math.Max(R, r2) + 8;      // 越过盘缘，进入舌片
         double x0 = 25.0 - 1.0, x1 = xEnd;      // 左端留出管壁
 
-        double tMax = Math.Max(ti, Math.Max(to, t));
+        // 角焊缝：与 Core/PlateCurrent2D.ThicknessAt 同一式子，也与 3DM 里那圈回转体同一式子。
+        //   hw(d) = a − √(a²−(d−a)²)，d = r − 孔R，焊脚 a = max(板厚, 壁厚)
+        //   隐式写作 (d−a)² + (hw−a)² = a² ⇒ 半径 a 的**凹圆弧**，贴管壁处切线竖直。
+        // ⚠ 这张剖面此前没画它。而管孔边正是它最厚的地方（环内级厚 + 2a），
+        //   图上却只有 ti —— 图与所交付的件、与 FE 实际算的厚度**三者不一致**。
+        double aw = Math.Max(t, wall);
+        double Zone(double r) => r <= r1 ? ti : r <= r2 ? to : t;
+        double Hw(double d) => (d < 0 || d >= aw) ? 0
+                             : aw - Math.Sqrt(Math.Max(0, aw * aw - (d - aw) * (d - aw)));
+
+        double tMax = Math.Max(ti + 2 * aw, Math.Max(ti, Math.Max(to, t)));
         // ⚠ 比例必须**按宽度定**，不能按厚度定。
         //   按厚度定时 s=200/2.62=76 px/mm ⇒ 原生宽度 1206 px，
         //   而显示宽度限死 620 ⇒ 整张被压到 51 %，11 px 的字缩成 5.6 px 看不清。
@@ -358,6 +368,30 @@ public sealed class ManualPage : TabPage
         Band(h, r1, ti, "var(--ring1)", "环内级");
         Band(r1, r2, to, "var(--ring2)", "环外级");
         Band(r2, xEnd, t, "var(--pt)", "板身（舌片）");
+
+        // 两面各一条焊肉。采样画（不用 SVG 的 A 指令：屏幕 y 向下，
+        // 大弧/扫掠两个标志位很容易写反，而采样不会）。
+        // 台阶边界 r1 落在焊脚范围内时（如管壁 0.8 的共用片 a=3.40 > 环宽 3.0），
+        // 焊肉会**跨级**，底边跟着台阶掉一格 —— 采样自然带出这个台阶。
+        {
+            var rs = new List<double>();
+            const int N = 48;
+            for (int k = 0; k <= N; k++) rs.Add(h + aw * k / (double)N);
+            if (r1 > h && r1 < h + aw) { rs.Add(r1 - 1e-6); rs.Add(r1 + 1e-6); }
+            rs.Sort();
+            foreach (int sg in new[] { 1, -1 })
+            {
+                var pts = new StringBuilder();
+                foreach (double r in rs)                                  // 外轮廓 = 板面 + 焊肉
+                    pts.Append($"{PX(r)},{mid - sg * (Zone(r) / 2 + Hw(r - h)) * s:0.0} ");
+                for (int k = rs.Count - 1; k >= 0; k--)                   // 回到板面
+                    pts.Append($"{PX(rs[k])},{mid - sg * Zone(rs[k]) / 2 * s:0.0} ");
+                sb.Append($"<polygon points=\"{pts}\" fill=\"var(--weld)\" " +
+                          "stroke=\"var(--ink)\" stroke-width=\"0.9\"/>");
+            }
+            sb.Append($"<text x=\"{PX(h + aw + 0.4)}\" y=\"{mid - (ti / 2 + aw * 0.72) * s:0.0}\" " +
+                      $"class=\"lbl hot\">角焊缝 焊脚 a={aw:0.00}（凹圆弧 R{aw:0.00}）</text>");
+        }
 
         // 中面
         sb.Append($"<line x1=\"0\" y1=\"{mid:0.0}\" x2=\"{W:0}\" y2=\"{mid:0.0}\" " +
@@ -450,10 +484,10 @@ public sealed class ManualPage : TabPage
 <title>Pt_Optimize 使用说明</title><style>
 :root{--bg:#F4F6F7;--card:#FFF;--ink:#12171A;--ink2:#3D4B53;--muted:#68767E;
 --rule:#D2DADE;--pt:#E8D9A8;--ring1:#E9A159;--ring2:#F0C79A;--tube:#C9D3D8;
---clamp:#2C7A8C;--ok:#2C6B58;--hot:#C2570F;--dim:#9AA7AE;--ptDark:#C9B276;--ring1d:#C07A32;--ring2d:#CFA57A;--tubeDark:#9FAEB5;--tubeTop:#DCE4E8}
+--clamp:#2C7A8C;--ok:#2C6B58;--hot:#C2570F;--dim:#9AA7AE;--ptDark:#C9B276;--ring1d:#C07A32;--ring2d:#CFA57A;--tubeDark:#9FAEB5;--tubeTop:#DCE4E8;--weld:#B9452F}
 @media(prefers-color-scheme:dark){:root{--bg:#0E1216;--card:#161C21;--ink:#E7EEF1;
 --ink2:#B3C0C7;--muted:#7E8D95;--rule:#28333A;--pt:#6B5C33;--ring1:#A6702F;--ring2:#7A5A38;
---tube:#33424A;--clamp:#4FA8BC;--ok:#6FC0A4;--hot:#F0904A;--dim:#5C6A72;--ptDark:#514429;--ring1d:#7E5423;--ring2d:#5C442A;--tubeDark:#26323A;--tubeTop:#44565F}}
+--tube:#33424A;--clamp:#4FA8BC;--ok:#6FC0A4;--hot:#F0904A;--dim:#5C6A72;--ptDark:#514429;--ring1d:#7E5423;--ring2d:#5C442A;--tubeDark:#26323A;--tubeTop:#44565F;--weld:#D9694F}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);
 font-family:'Microsoft YaHei UI','Segoe UI',system-ui,sans-serif;font-size:15px;line-height:1.7}
@@ -531,7 +565,13 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   $"<b>注意板身那一带在盘缘<i>右边</i></b>：环外级外半径 {fd.RingRadiiMm[1]:0.0} mm " +
                   $"已经越过盘缘 {fd.DiscRadiusMm:0.0} mm ⇒ 圆盘上从孔到缘全被两级环占满，" +
                   $"板厚 {fd.TabThickMm[0]:0.00} mm 只出现在舌片上。这就是环倍率为何是个强旋钮：" +
-                  $"它动的不是「孔边一圈」，是整个圆盘。</div></div>");
+                  $"它动的不是「孔边一圈」，是整个圆盘。<br>" +
+                  $"<b>管孔边那两坨深色是角焊缝</b>：焊脚 a = max(板厚, 壁厚) = " +
+                  $"{Math.Max(fd.TabThickMm[0], fd.WallMm):0.00} mm 的<b>凹圆弧</b>，两面各一条。" +
+                  $"它是<b>叠加</b>在分区厚度上的额外金属 ⇒ 孔边真实厚度 " +
+                  $"{fd.TabThickMm[0] * fd.RingMul[0] + 2 * Math.Max(fd.TabThickMm[0], fd.WallMm):0.00} mm，" +
+                  $"是环内级的 {(fd.TabThickMm[0] * fd.RingMul[0] + 2 * Math.Max(fd.TabThickMm[0], fd.WallMm)) / (fd.TabThickMm[0] * fd.RingMul[0]):0.0} 倍。" +
+                  $"这一段 FE 一直算着、交付 3DM 里也画着，只是这张图之前漏了。</div></div>");
 
         sb.Append("<h3>四片各不相同</h3><table><tr><th>片</th><th>板厚 mm</th>" +
                   "<th>环内级</th><th>环外级</th><th>舌片保温 mm</th></tr>");

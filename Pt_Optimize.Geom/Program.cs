@@ -541,7 +541,7 @@ internal static class GeomProbe
     //    （2026-08-12 曾把板画在 XY 面、沿 Z 拉伸，与读取端差 90 度，
     //      导致自己写出的 .3dm 再读回来量到 0 材料 —— round-trip 是硬性验收项）
     //
-    //  分层：铂管 / 法兰-板身 / 法兰-环外级 / 法兰-环内级 / 压接段（参考）
+    //  分层：铂管 / 法兰-板身 / 法兰-环外级 / 法兰-环内级 / 法兰-角焊缝 / 压接段（参考）
     //  各级为独立实体（沿用 steps 模式的做法）：headless 下布尔并集不稳，
     //  而加工上本来就是「板身 + 两级台阶」，分开更贴近工艺。
     // ========================================================================
@@ -673,15 +673,60 @@ internal static class GeomProbe
                 return acc.ToArray();
             }
 
-            // 角焊缝：与 Core/PlateCurrent2D.ThicknessAt 同一式子
-            //   weld(d) = 2(a − √(a²−(d−a)²))，d = r − 孔R，0 ≤ d < a
-            // FE 里它是**叠加**在分区厚度上的额外金属；3DM 里此前完全没画，
-            // 实测每片因此少约 34 g。用 N 段同心带逼近（与 FE 的离散口径一致）。
-            double Weld(double r, double a2)
+            // ── 角焊缝：与 Core/PlateCurrent2D.ThicknessAt 同一式子
+            //   weld(d) = 2(a − √(a²−(d−a)²))，d = r − 孔R，0 ≤ d < a，a = max(板厚, 壁厚)
+            //   半边 hw(d) = a − √(a²−(d−a)²)。写成隐式就看得清它**是什么**：
+            //       (d − a)² + (hw − a)² = a²
+            //   ⇒ 板面之上是一段**半径 a 的圆弧**，圆心 (孔R+a, 板面+a)；
+            //     d=0 处切线竖直（贴管壁），d=a 处切线水平（贴板面）—— 标准凹角焊缝。
+            //
+            // ⚠ 上一版拿 12 段同心带逼近这段弧：体积对得上（差 0.7%），但**形状是错的** ——
+            //   Rhino 里看到的是一圈阶梯，不是焊缝（2026-08-16 用户实测发现）。
+            //   体积对账通过 ≠ 几何正确：对账只约束一个标量，形状有无穷多自由度。
+            //   ⇒ 改成把这段弧**绕 Y 轴回转**。既是真圆弧，体积也从近似变成精确。
+            // ⚠ 边界必须写 `d < 0`，**不能**写 `d <= 0`：d=0（正贴管壁）处 hw = a，
+            //   那是整条弧的**最高点**。写成 d<=0 会把它压到 0，弧退化成一条浅拱：
+            //   实测焊缝高度只剩 0.283 而不是 2.11（= a(1−√3/2)，三点定弧的中点值），
+            //   体积随之只有 43%。与 Core/PlateCurrent2D 的 `d >= 0 && d < a` 逐字对齐。
+            double Hw(double d, double a2) =>
+                (a2 <= 1e-9 || d < 0 || d >= a2) ? 0
+                : a2 - Math.Sqrt(Math.Max(0, a2 * a2 - (d - a2) * (d - a2)));
+
+            // 一段焊肉：d∈[d0,d1]、坐在 yBase 这个板面上、sg=+1 上面 / −1 下面。
+            // 剖面 = 底边(贴板面) + 右竖边 + 圆弧 + 左竖边(贴管壁)，整圈绕 Y 轴回转。
+            Brep WeldBead(double d0, double d1, double a2, double yBase, int sg)
             {
-                double d = r - holeR;
-                if (a2 <= 1e-9 || d < 0 || d >= a2) return 0;
-                return 2.0 * (a2 - Math.Sqrt(Math.Max(0, a2 * a2 - (d - a2) * (d - a2))));
+                if (a2 <= 1e-9 || d1 <= d0 + 1e-9) return null;
+                Point3d Top(double d) => new(holeR + d, yBase + sg * Hw(d, a2), 0);
+                Point3d Bot(double d) => new(holeR + d, yBase, 0);
+
+                var arc = new Arc(Top(d1), Top((d0 + d1) / 2), Top(d0));
+                if (!arc.IsValid) { Console.Error.WriteLine("焊缝圆弧无效"); return null; }
+
+                // ⚠ 不要把整条闭合 PolyCurve 交给 RevSurface.Create：它只回转出**一张**
+                //   带拐点的面，Brep.CreateFromRevSurface 得到的壳不闭合，
+                //   VolumeMassProperties 于是给 0（第一版实测四片全是 0 mm³）。
+                //   ⇒ 逐段回转成面，再 JoinBreps 缝成闭合体。
+                var segs = new List<Curve> { new LineCurve(Bot(d0), Bot(d1)) };
+                if (Hw(d1, a2) > 1e-9) segs.Add(new LineCurve(Bot(d1), Top(d1)));
+                segs.Add(new ArcCurve(arc));
+                if (Hw(d0, a2) > 1e-9) segs.Add(new LineCurve(Top(d0), Bot(d0)));
+
+                var axis = new Line(Point3d.Origin, new Point3d(0, 1, 0));
+                var faces = new List<Brep>();
+                foreach (var sc in segs)
+                {
+                    var rev = RevSurface.Create(sc, axis);
+                    // 剖面最内也在 r=孔R，**不碰转轴** ⇒ 整圈回转自身即闭合，无需封盖
+                    var fb = rev == null ? null : Brep.CreateFromRevSurface(rev, false, false);
+                    if (fb != null) faces.Add(fb);
+                }
+                var joined = Brep.JoinBreps(faces, tol);
+                var b = joined?.FirstOrDefault(x => x.IsSolid) ?? joined?.FirstOrDefault();
+                if (b == null) { Console.Error.WriteLine("焊缝缝合失败"); return null; }
+                if (!b.IsSolid)
+                { Console.Error.WriteLine($"焊缝非闭合体（面 {faces.Count}，缝出 {joined.Length}）"); return null; }
+                return b;
             }
             int made = 0;
             void Add(Brep b, int layer, string nm)
@@ -693,6 +738,7 @@ internal static class GeomProbe
 
             var body = BodyOutline();
             if (!body.IsClosed) { Console.Error.WriteLine("板身轮廓未闭合"); return 6; }
+            var weldChk = new List<object>();
 
             for (int j = 0; j < plates.Length; j++)
             {
@@ -714,20 +760,59 @@ internal static class GeomProbe
                 Add(Solid(RegionMinus(ClipToBody(Circ(ringR[1]), body), Circ(ringR[0])), ring[1], y0, pn + "环外级"),
                     lyRingO, pn + "_环外级_r" + ringR[0].ToString("0.0") + "-" + ringR[1].ToString("0.0")
                        + "_t" + ring[1].ToString("0.00"));
-                // 环内级：焊角落在这一带内 ⇒ 拆成 N 段同心带，各带厚度 = 基厚 + 焊角
+                Add(Solid(RegionMinus(ClipToBody(Circ(ringR[0]), body), Circ(holeR)), ring[0], y0, pn + "环内级"),
+                    lyRingI, pn + "_环内级_r" + holeR.ToString("0.0") + "-" + ringR[0].ToString("0.0")
+                       + "_t" + ring[0].ToString("0.00"));
+
+                // 角焊缝：焊脚 a 可能**跨过台阶边界**（a 最大 3.40，而环内级只有 3 mm 宽），
+                // 故按分区切段，每段坐在**自己那一级的板面**上 —— 否则跨界那一小片焊肉会
+                // 悬在半空（FE 里焊缝是叠加在**当地**分区厚度之上的，不是叠在同一个面上）。
                 double aw = Math.Max(t, wall);
-                const int NW = 12;
-                double rw0 = holeR, rw1 = Math.Min(ringR[0], holeR + aw);
-                for (int k = 0; k < NW; k++)
+                int lyWeld = Ly(pn + "-角焊缝", System.Drawing.Color.Crimson);
+                if (holeR + aw > discR + 1e-9)
+                    Console.Error.WriteLine($"焊脚越出盘缘：{pn} 孔R+a={holeR + aw:0.00} > 盘R={discR:0.00}");
+                var zoneR = new[] { ringR[0], ringR[1], double.PositiveInfinity };
+                var zoneT = new[] { ring[0], ring[1], t };
+                double dPrev = 0, weldDrawn = 0;
+                for (int k = 0; k < zoneR.Length && dPrev < aw - 1e-9; k++)
                 {
-                    double ra = rw0 + (rw1 - rw0) * k / NW, rb = rw0 + (rw1 - rw0) * (k + 1) / NW;
-                    double th = ring[0] + Weld((ra + rb) / 2, aw);
-                    Add(Solid(RegionMinus(ClipToBody(Circ(rb), body), Circ(ra)), th, y0, pn + "环内级带"),
-                        lyRingI, pn + $"_环内级_r{ra:0.00}-{rb:0.00}_t{th:0.00}");
+                    double dNext = Math.Min(aw, zoneR[k] - holeR);
+                    if (dNext <= dPrev + 1e-9) continue;
+                    foreach (int sg in new[] { +1, -1 })
+                    {
+                        var bead = WeldBead(dPrev, dNext, aw, y0 + sg * zoneT[k] / 2, sg);
+                        var bmp = bead == null ? null : VolumeMassProperties.Compute(bead);
+                        if (bmp != null) weldDrawn += bmp.Volume;
+                        Add(bead, lyWeld,
+                            pn + $"_角焊缝_a{aw:0.00}_r{holeR + dPrev:0.00}-{holeR + dNext:0.00}_"
+                               + (sg > 0 ? "上" : "下"));
+                    }
+                    dPrev = dNext;
                 }
-                if (ringR[0] > rw1 + 1e-9)
-                    Add(Solid(RegionMinus(ClipToBody(Circ(ringR[0]), body), Circ(rw1)), ring[0], y0, pn + "环内级外段"),
-                        lyRingI, pn + $"_环内级_r{rw1:0.00}-{ringR[0]:0.00}_t{ring[0]:0.00}");
+
+                // ★ 交叉核对：回转体的体积 vs **解析积分**（与 FE 同一被积函数），
+                //   两条互不相干的路算同一个量。上一版正是缺这一步，才让「阶梯」蒙混过去。
+                //   换元 d − a = −a·cosθ（θ:0→π/2）去掉 d=0 处的竖直切线，被积函数才光滑。
+                double weldExact = 0;
+                {
+                    const int N = 4000;
+                    for (int k = 0; k < N; k++)
+                    {
+                        double th2 = Math.PI / 2 * (k + 0.5) / N;
+                        double dd = aw * (1 - Math.Cos(th2));
+                        weldExact += 2 * aw * (1 - Math.Sin(th2))          // weld(d) = 2·hw
+                                   * 2 * Math.PI * (holeR + dd)            // 环周长
+                                   * aw * Math.Sin(th2) * (Math.PI / 2 / N); // dd/dθ·dθ
+                    }
+                }
+                weldChk.Add(new
+                {
+                    plate = pn,
+                    a = Math.Round(aw, 3),
+                    drawnMm3 = Math.Round(weldDrawn, 3),
+                    exactMm3 = Math.Round(weldExact, 3),
+                    relErr = Math.Round((weldDrawn - weldExact) / Math.Max(1e-9, weldExact), 5)
+                });
 
                 // 压接段（参考几何，非铂件）：自舌端往回 clampLen
                 var cl = new PolyCurve();
@@ -765,7 +850,8 @@ internal static class GeomProbe
             // ── round-trip：**从磁盘读回**，逐实体量包围盒
             //
             // 为什么是包围盒的 Y 向跨度：本模式一律「板面在 XZ、沿 Y 拉伸」，
-            // 故 Y 跨度就是板厚。若哪天又把板画到 XY 面沿 Z 拉伸（2026-08-12 出过），
+            // 故 Y 跨度就是板厚（**角焊缝除外** —— 它是回转体，Y 跨度是焊脚高 a）。
+            // 若哪天又把板画到 XY 面沿 Z 拉伸（2026-08-12 出过），
             // Y 跨度会变成**盘直径**而不是板厚 —— 一眼就露馅，不必等下游量厚度。
             //
             // ⚠ 必须**读回文件**而不是量内存里的 doc：要验的正是「写出去再读回来」这一段。
@@ -812,6 +898,7 @@ internal static class GeomProbe
                 file = outPath, name, solids = made,
                 wall, tubeId, segLen, segCount, discR, holeR, tabX, tabHW, filletR,
                 ringR, plateCount = plates.Length,
+                weldCheck = weldChk,
                 roundTrip = rt
             }));
             return 0;
