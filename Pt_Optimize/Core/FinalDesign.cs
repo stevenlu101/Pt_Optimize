@@ -20,7 +20,9 @@ public static class FinalDesign
 {
     /// <summary>本组数值出自哪一次运行 —— 报告里要能追溯到源头</summary>
     public const string Provenance =
-        "--final2 可行性阶梯（靶：舌厚→③=8K，环倍率→②″=−0.02K；舌保温冻结）";
+        "--final2 可行性阶梯 D6（舌厚→③=8K／环倍率→②″=−0.02K／舌保温抗饱和接力）；
+" +
+        "        管壁 1.4 mm 是**最薄的全过档**，合计 5245 g（1.2 档 ②″ 差 +0.08，两旋钮均饱和）";
 
     // ── 管
     public static double WallMm = 1.4;
@@ -32,14 +34,14 @@ public static class FinalDesign
     public static double TabLengthMm = 90.0;
     public static double TabHalfWidthMm = 15.0;
     public static double TabFilletMm = 3.0;
-    public static double[] TabThickMm = { 2.85, 4.76, 4.46, 2.40 };
+    public static double[] TabThickMm = { 2.84, 4.75, 4.51, 2.43 };
     public static double[] TabInsulMm = { 18.7, 1.6, 1.4, 3.9 };
 
     // ── 管孔渐变环：**相对量**（绝对值写法已两次造成安静失败，见 §1.8 ⑥⑦）
     /// <summary>环宽 mm，相对管孔外扩；两级台阶在 孔+w 与 孔+2w</summary>
     public static double RingWidthMm = 3.0;
     /// <summary>内圈厚度倍率（相对板厚）；外圈取 1 + 0.4(μ−1)</summary>
-    public static double[] RingMul = { 1.30, 1.30, 1.30, 1.30 };
+    public static double[] RingMul = { 1.34, 1.22, 1.22, 1.18 };
 
     // ── 压接
     public static double ClampLengthMm = 40.0;
