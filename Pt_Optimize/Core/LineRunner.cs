@@ -291,19 +291,30 @@ public sealed class LineResult
     /// <summary>某条判据的实测值（找不到则 NaN）</summary>
     public double ValueOf(string keyPrefix) => Find(keyPrefix)?.Actual ?? double.NaN;
 
-    /// <summary>全部**硬安全线**是否通过</summary>
+    /// <summary>全部**硬安全线**是否通过（**无法判定 ≠ 通过**）</summary>
     public bool HardOk => Checks.Where(c => c.Kind == CheckKind.HardSafety)
-                                .All(c => c.Ok || c.Undetermined);
+                                .All(c => c.Ok && !c.Undetermined);
 
-    /// <summary>硬安全线 + 设计目标是否全部通过 —— **可交付的唯一判定**</summary>
+    /// <summary>
+    /// 硬安全线 + 设计目标是否全部通过 —— **可交付的唯一判定**。
+    ///
+    /// ⚠⚠ 「**无法判定**」一律**不算通过**。
+    /// 原来写成 `c.Ok || c.Undetermined`，于是基线算不出来时 ③ 是 NaN/Undetermined，
+    /// 却被计入通过 —— 实测阶梯据此报出「管壁 1.5 ✓ 全过」，而同一行的
+    /// 增量降 max 是 +32（上限 10）。**判不了被当成判过了。**
+    /// 这是「安静地给出可信外观的错误结果」家族的第五个成员
+    /// （前四：两端抽热取平均、C2 只判左端、段间无导热、判据整条消失）。
+    /// </summary>
     public bool AllOk => Converged && Checks
         .Where(c => c.Kind is CheckKind.HardSafety or CheckKind.Target)
-        .All(c => c.Ok || c.Undetermined);
+        .All(c => c.Ok && !c.Undetermined);
 
-    /// <summary>没过的判据名（供报告直接引用，不要另行拼装）</summary>
+    /// <summary>没过的判据（含**无法判定**，标注区分）。供报告直接引用，不要另行拼装。</summary>
     public string[] Failed => Checks
-        .Where(c => c.Kind is CheckKind.HardSafety or CheckKind.Target && !c.Ok && !c.Undetermined)
-        .Select(c => $"{c.Name} {c.Actual:0.0}/{c.Limit:0.0}").ToArray();
+        .Where(c => c.Kind is CheckKind.HardSafety or CheckKind.Target && (!c.Ok || c.Undetermined))
+        .Select(c => c.Undetermined
+                   ? $"{c.Name} **无法判定**"
+                   : $"{c.Name} {c.Actual:0.0}/{c.Limit:0.0}").ToArray();
 }
 
 /// <summary>
@@ -327,6 +338,7 @@ public static class LineRunner
         //   后者在共用法兰处由两侧控温点决定，法兰管不着（见 SegmentOut.BaseTRootAC）。
         //   基线只依赖管几何/保温/控温点，与法兰热解无关 ⇒ 每个构型算一次即可。
         var baseline = new (double A, double B)[c.SegmentCount];
+        string baseFailMsg = "";
         if (c.BaselineRootC.Length >= c.SegmentCount)
         {
             for (int i = 0; i < c.SegmentCount; i++)
@@ -351,6 +363,10 @@ public static class LineRunner
                 baseline[i] = br is { Ok: true }
                             ? (br.Segments[i].TRootAC, br.Segments[i].TRootBC)
                             : (double.NaN, double.NaN);
+            // ★ 基线算不出来时必须**说出原因**：否则 ③ 只会显示 NaN，
+            //   而查不到是哪一步挂了（这条判据一度因此被当成「通过」）。
+            if (br is not { Ok: true })
+                baseFailMsg = br?.Message ?? "基线子解未返回结果";
             // 回写缓存：同一 LineCase 再被调用时不必重算（外层搜索靠这个提速 5 倍）
             c.BaselineRootC = baseline.Select(b => new[] { b.A, b.B }).ToArray();
         }
@@ -358,6 +374,7 @@ public static class LineRunner
         var res = RunOnce(c, progress, cancel, null);
         if (!res.Ok) return res;
         ApplyBaseline(res, baseline);
+        if (baseFailMsg.Length > 0) res.Notes.Add("★ 无法兰基线失败 ⇒ 判据③无法判定：" + baseFailMsg);
 
         // ── 外层耦合：段 ↔ 法兰。首轮段解用抽热 0，拿到壳温度场后回灌重解。
         //
