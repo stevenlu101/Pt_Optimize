@@ -178,43 +178,74 @@ public sealed class ManualPage : TabPage
         return sb.ToString();
     }
 
-    /// <summary>径向剖面：三级厚度。厚度方向放大，否则看不见。</summary>
+    /// <summary>
+    /// 径向剖面（自管孔向外，到盘缘为止）。
+    ///
+    /// ⚠ 这里踩过两个坑，都写在代码里免得再犯：
+    ///   ① 曾按「孔 &lt; 环内 &lt; 环外 &lt; 盘缘」的顺序画三带 —— 而实际
+    ///      **环外级半径 (孔+6) 大于盘半径**，第三带宽度是负的，画不出来。
+    ///      现在按真实半径裁剪：**画不出「板身」这一带本身就是结论** ——
+    ///      板身在圆盘上确实不存在，只存在于舌片上。
+    ///   ② 曾把厚度方向放大 6×。径向跨度只有几毫米、板厚也是几毫米，本是同一量级，
+    ///      放大之后厚度变成径向跨度的两倍，整张图撑爆。**1:1 就看得清。**
+    ///      那个「不放大就看不见」的假设来自想象中的「大盘薄板」，这个设计不是。
+    /// </summary>
     private static string SvgSection(FinalDesign fd, int plate)
     {
-        double h = fd.HoleRadiusMm, r1 = fd.RingRadiiMm[0], r2 = fd.RingRadiiMm[1],
-               R = fd.DiscRadiusMm;
+        double h = fd.HoleRadiusMm, R = fd.DiscRadiusMm, wall = fd.WallMm;
+        double r1 = fd.RingRadiiMm[0], r2 = fd.RingRadiiMm[1];
         double t = fd.TabThickMm[plate];
         double ti = t * fd.RingMul[plate], to = t * fd.RingMulOuter(plate);
-        const double MAG = 6.0;                       // 厚度放大倍数
-        double x0 = h - 2, x1 = R + 2;
-        double s = 620.0 / (x1 - x0);
-        double half = ti / 2 * MAG * s;
-        double H = 2 * half + 74;
-        double mid = H / 2 + 6;
+
+        // ⚠ 切到盘缘就停的版本读不懂：标题写「板厚 1.82」而图里只有 2.22 / 1.98，
+        //   因为板身那一带在圆盘上根本不存在（环外级半径已越过盘缘）。
+        //   ⇒ **把刀切长一点，切到舌片上**，三个厚度全都出现，读者才对得上号。
+        double xEnd = Math.Max(R, r2) + 8;      // 越过盘缘，进入舌片
+        double x0 = 25.0 - 1.0, x1 = xEnd;      // 左端留出管壁
+
+        double tMax = Math.Max(ti, Math.Max(to, t));
+        double s = 200.0 / tMax;                // 1:1，按最厚一带定比例
+        double W = (x1 - x0) * s, H = tMax * s + 96;
+        double mid = (H - 34) / 2 + 10;
         string PX(double x) => ((x - x0) * s).ToString("0.0");
-        string PY(double dt) => (mid - dt * MAG * s).ToString("0.0");
 
         var sb = new StringBuilder();
-        sb.Append($"<svg viewBox=\"0 0 620 {H:0}\" width=\"100%\" style=\"max-width:620px\">");
-        void Band(double a, double b, double th, string col)
-            => sb.Append($"<rect x=\"{PX(a)}\" y=\"{PY(th / 2)}\" width=\"{(b - a) * s:0.0}\" " +
-                         $"height=\"{th * MAG * s:0.0}\" fill=\"{col}\" stroke=\"var(--ink)\" stroke-width=\"0.8\"/>");
-        Band(h, r1, ti, "var(--ring1)");
-        Band(r1, r2, to, "var(--ring2)");
-        Band(r2, R, t, "var(--pt)");
+        sb.Append($"<svg viewBox=\"0 0 {W:0} {H:0}\" width=\"100%\" style=\"max-width:620px\">");
+
+        // 铂管壁：沿管轴（垂直于本剖面）延伸 ⇒ 画成一段竖直块，示意焊接位置
+        sb.Append($"<rect x=\"{PX(25.0)}\" y=\"{mid - tMax / 2 * s - 26:0.0}\" " +
+                  $"width=\"{wall * s:0.0}\" height=\"{tMax * s + 52:0.0}\" " +
+                  "fill=\"var(--tube)\" stroke=\"var(--ink)\" stroke-width=\"0.9\"/>");
+        sb.Append($"<text x=\"{PX(25.0 + wall / 2)}\" y=\"{mid - tMax / 2 * s - 32:0.0}\" " +
+                  $"text-anchor=\"middle\" class=\"lbl dim\">铂管壁 {wall:0.0}</text>");
+
+        void Band(double a2, double b2, double th, string col, string lab)
+        {
+            if (b2 - a2 <= 1e-9) return;
+            sb.Append($"<rect x=\"{PX(a2)}\" y=\"{mid - th / 2 * s:0.0}\" width=\"{(b2 - a2) * s:0.0}\" " +
+                      $"height=\"{th * s:0.0}\" fill=\"{col}\" stroke=\"var(--ink)\" stroke-width=\"0.9\"/>");
+            sb.Append($"<text x=\"{PX((a2 + b2) / 2)}\" y=\"{mid - th / 2 * s - 7:0.0}\" " +
+                      $"text-anchor=\"middle\" class=\"lbl\">{lab}</text>");
+            sb.Append($"<text x=\"{PX((a2 + b2) / 2)}\" y=\"{mid + th / 2 * s + 14:0.0}\" " +
+                      $"text-anchor=\"middle\" class=\"lbl\">{th:0.00} mm</text>");
+        }
+        Band(h, r1, ti, "var(--ring1)", "环内级");
+        Band(r1, r2, to, "var(--ring2)", "环外级");
+        Band(r2, xEnd, t, "var(--pt)", "板身（舌片）");
+
         // 中面
-        sb.Append($"<line x1=\"0\" y1=\"{PY(0)}\" x2=\"620\" y2=\"{PY(0)}\" " +
+        sb.Append($"<line x1=\"0\" y1=\"{mid:0.0}\" x2=\"{W:0}\" y2=\"{mid:0.0}\" " +
                   "stroke=\"var(--dim)\" stroke-width=\"0.8\" stroke-dasharray=\"6 4\"/>");
-        string T(double x, double y, string txt, string cls = "lbl") =>
-            $"<text x=\"{PX(x)}\" y=\"{y:0.0}\" text-anchor=\"middle\" class=\"{cls}\">{txt}</text>";
-        sb.Append(T((h + r1) / 2, mid - ti / 2 * MAG * s - 7, $"{ti:0.00}"));
-        sb.Append(T((r1 + r2) / 2, mid - to / 2 * MAG * s - 7, $"{to:0.00}"));
-        sb.Append(T((r2 + R) / 2, mid - t / 2 * MAG * s - 7, $"{t:0.00} mm"));
-        sb.Append(T(h, H - 8, $"r={h:0.0}", "lbl dim"));
-        sb.Append(T(r1, H - 8, $"{r1:0.0}", "lbl dim"));
-        sb.Append(T(r2, H - 8, $"{r2:0.0}", "lbl dim"));
-        sb.Append(T(R, H - 8, $"{R:0.0}", "lbl dim"));
-        sb.Append($"<text x=\"612\" y=\"14\" text-anchor=\"end\" class=\"lbl dim\">厚度方向放大 {MAG:0}×</text>");
+        // 盘缘：越过它就不再是圆盘、是舌片
+        sb.Append($"<line x1=\"{PX(R)}\" y1=\"{mid - tMax / 2 * s - 24:0.0}\" x2=\"{PX(R)}\" " +
+                  $"y2=\"{mid + tMax / 2 * s + 24:0.0}\" stroke=\"var(--clamp)\" " +
+                  "stroke-width=\"1.4\" stroke-dasharray=\"4 3\"/>");
+        sb.Append($"<text x=\"{PX(R)}\" y=\"{mid + tMax / 2 * s + 38:0.0}\" text-anchor=\"middle\" " +
+                  $"class=\"lbl clamp\">盘缘 r={R:0.0}　→ 右边是舌片</text>");
+        // 半径刻度
+        foreach (var (rv, lab) in new[] { (h, $"管孔 r={h:0.0}"), (r1, $"{r1:0.0}"), (r2, $"{r2:0.0}") })
+            sb.Append($"<text x=\"{PX(rv)}\" y=\"{H - 8:0.0}\" text-anchor=\"middle\" class=\"lbl dim\">{lab}</text>");
+        sb.Append($"<text x=\"{W - 4:0}\" y=\"14\" text-anchor=\"end\" class=\"lbl dim\">1:1（未放大）　横轴 = 半径 mm</text>");
         sb.Append("</svg>");
         return sb.ToString();
     }
@@ -352,14 +383,20 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   $"半径与厚度都是<b>相对量</b>（相对管孔 / 相对板厚）——" +
                   $"写成绝对值时板一变厚环就静默消失，整条优化曾因此停在离最优 28 % 的地方。<br><br>" +
                   $"<b>注意盘缘那条虚线</b>：环外级的外半径 {fd.RingRadiiMm[1]:0.0} mm <b>大于盘半径 {fd.DiscRadiusMm:0.0} mm</b>，" +
-                  $"而盘孔环带只有 {fd.DiscRadiusMm - fd.HoleRadiusMm:0.1} mm 宽 —— " +
+                  $"而盘孔环带只有 {fd.DiscRadiusMm - fd.HoleRadiusMm:0.0} mm 宽 —— " +
                   $"<b>两级环几乎覆盖了整个圆盘</b>，「板身」在盘上几乎不存在、只存在于舌片。" +
                   $"这就是环倍率为何一直是个强旋钮：它动的不是「孔边一圈」，是整个圆盘。</div></div>");
 
         sb.Append($"<h3>径向剖面（入口片，板厚 {fd.TabThickMm[0]:0.00} mm）</h3>");
         sb.Append($"<div class=\"fig\">{SvgSection(fd, 0)}" +
-                  $"<div class=\"cap\">三级厚度，关于中面对称。环内级 = 板厚 × {fd.RingMul[0]:0.00}，" +
-                  $"环外级 = 板厚 × {fd.RingMulOuter(0):0.000}（过渡回板身）。</div></div>");
+                  $"<div class=\"cap\">自管孔向外到盘缘，<b>1:1，未放大</b>。关于中面对称。<br>" +
+                  $"环内级 = 板厚 × {fd.RingMul[0]:0.00}，环外级 = 板厚 × {fd.RingMulOuter(0):0.000}。<br>" +
+                  $"横轴是<b>半径</b>：从管壁往外切一刀。三个厚度依次是环内级 {fd.TabThickMm[0] * fd.RingMul[0]:0.00}、" +
+                  $"环外级 {fd.TabThickMm[0] * fd.RingMulOuter(0):0.00}、板身 {fd.TabThickMm[0]:0.00} mm。<br>" +
+                  $"<b>注意板身那一带在盘缘<i>右边</i></b>：环外级外半径 {fd.RingRadiiMm[1]:0.0} mm " +
+                  $"已经越过盘缘 {fd.DiscRadiusMm:0.0} mm ⇒ 圆盘上从孔到缘全被两级环占满，" +
+                  $"板厚 {fd.TabThickMm[0]:0.00} mm 只出现在舌片上。这就是环倍率为何是个强旋钮：" +
+                  $"它动的不是「孔边一圈」，是整个圆盘。</div></div>");
 
         sb.Append("<h3>四片各不相同</h3><table><tr><th>片</th><th>板厚 mm</th>" +
                   "<th>环内级</th><th>环外级</th><th>舌片保温 mm</th></tr>");
