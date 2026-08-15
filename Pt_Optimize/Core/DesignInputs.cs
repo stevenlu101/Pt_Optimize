@@ -128,6 +128,30 @@ public class DesignInputs
      Description("纯铂连续 8–10，短时极限 15。按 RMS 计")]
     public double JAllowAPerMm2 { get; set; } = 10.0;
 
+    /// <summary>
+    /// ★★★★★ **管子**的许用电流密度 A/mm²（与法兰分开）。
+    ///
+    /// 来源（用户 2026-08-15，现场）：
+    ///   · **一般上限 15**
+    ///   · **管壁 0.6 mm 时「不敢给到 15，12 应该是极限」**
+    /// ⇒ 全档统一取 **12**：薄壁那档最紧，厚壁本来 J 就更低、不受影响；
+    ///   这样不必发明一条随壁厚插值的规则。
+    ///
+    /// ⚠ 为什么要与 <see cref="JAllowAPerMm2"/> 分开：
+    ///   后者同时被**法兰**用（自动定厚、J_max 判据），而法兰 J 实测约 34，
+    ///   且 §4.2j 已证「高 J 不等于局部过热」—— 用户给的 15/12 只针对管子。
+    ///   混用会把一个有据的数按到一个无据的地方去。
+    ///
+    /// ★ 这个数原先是 10（占位值，注释自明「物理依据待定」§4.2i），却同时
+    ///   在稳态判据里当**参考量**、在 <c>RampSolver</c> 里当**硬上限** ——
+    ///   同一个无据的数两处待遇相反，是它把管壁 0.6 判成不可行的
+    ///   （升温电流上限 954 A &lt; 稳态所需 1045 A ⇒ 永远到不了控温点）。
+    ///   现在有来源了 ⇒ **管 J 判据同步从「参考」升为「硬判据」。**
+    /// </summary>
+    [Category("3 电气"), DisplayName("管许用电流密度 [A/mm²]"),
+     Description("用户 2026-08-15 现场：一般上限 15；管壁 0.6 时 12 是极限。全档取 12")]
+    public double TubeJAllowAPerMm2 { get; set; } = 12.0;
+
     [Category("3 电气"), DisplayName("二次电源型式")]
     public SupplyMode Supply { get; set; } = SupplyMode.AcPhase;
 
@@ -319,6 +343,7 @@ public class DesignInputs
     [Browsable(false)] public double TubeLength => TubeLengthMm * 1e-3;
     [Browsable(false)] public double Wall => WallMm * 1e-3;
     [Browsable(false)] public double JAllow => JAllowAPerMm2 * 1e6;   // A/m²
+    [Browsable(false)] public double TubeJAllow => TubeJAllowAPerMm2 * 1e6;   // A/m²
     [Browsable(false)] public double GlassRho => GlassResistivityOhmCm * 1e-2;  // Ω·m
     [Browsable(false)] public double MassFlow => ThroughputTPerDay * 1000.0 / 86400.0; // kg/s
 

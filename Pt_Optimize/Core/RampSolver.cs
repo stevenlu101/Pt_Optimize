@@ -126,7 +126,9 @@ public static class RampSolver
         // ── 电流：J_allow 是**上限而非必须值**。厚壁时 I=J_allow·A 会越过热稳定极限
         //    （I_stab ∝ √A 而 I ∝ A，故 I/I_stab ∝ √A 随壁厚增长），
         //    此时只是「不能用满许用电流」，不是不可行 —— 取二者较小并留 10 % 裕度。
-        double iAllow = p.JAllow * area;
+        // ★ 升温电流的上限用**管子**的许用 J（用户给的现场数），不是法兰那个占位值。
+        //   原来用 p.JAllow=10 ⇒ 管壁 0.6 的升温上限 954 A < 稳态所需 1045 A ⇒ 判成不可行。
+        double iAllow = p.TubeJAllow * area;
         double iCap = 0.9 * res.IStabA;
         double current = Math.Min(iAllow, iCap);
         res.StabilityLimited = iCap < iAllow;

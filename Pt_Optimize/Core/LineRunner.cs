@@ -1144,11 +1144,16 @@ public static class LineRunner
         var worstJt = segs.OrderByDescending(s => s.TubeJAPerMm2).First();
         checks.Add(new ConstraintOut
         {
-            Name = "· 管 J", Unit = "A/mm²", Kind = CheckKind.Reference, Ok = true,
-            Actual = worstJt.TubeJAPerMm2, Limit = c.Base.JAllowAPerMm2, Where = worstJt.Name,
-            Note = c.Base.LossScale == 1.0
-                ? "参考：散热未标定，本值系统性偏高（§4.2l）"
-                : $"参考：散热已按 LossScale={c.Base.LossScale:0.000} 标定"
+            // ★ 2026-08-15：**从「参考」升为硬判据** —— 限值有来源了
+            //   （用户现场：一般上限 15；管壁 0.6 时 12 是极限 ⇒ 全档取 12）。
+            //   原来它是参考量，只因为限值 10 是个「物理依据待定」的占位值。
+            Name = "管 J", Unit = "A/mm²", Kind = CheckKind.HardSafety,
+            Actual = worstJt.TubeJAPerMm2, Limit = c.Base.TubeJAllowAPerMm2, Where = worstJt.Name,
+            Ok = worstJt.TubeJAPerMm2 <= c.Base.TubeJAllowAPerMm2,
+            Note = "限值来源：用户 2026-08-15 现场（一般 15；管壁 0.6 时 12 是极限）。" +
+                   (c.Base.LossScale == 1.0
+                ? "⚠ 散热未标定，本值系统性偏高（§4.2l）⇒ 判定偏保守"
+                : $"散热已按 LossScale={c.Base.LossScale:0.000} 标定")
         });
 
         // ── 现场验证点：玻璃温降。这是全模型唯一一个拿实测校准的量，必须始终露出来。
