@@ -438,13 +438,25 @@ public static class LineRunner
         //   现役几何上实测三轮后管根温差还有 204 K，输出的每个数都不可信 ——
         //   而那正是曾被读成「模型判现役设备烧断」的那批数。
         //   欠松弛不改变不动点，只改变到达方式：**若加了松弛仍发散，那才是物理上的热失控**。
+        // ★★★★★ 自适应欠松弛（2026-08-15）。
+        //
+        // 依据（实测，非推测）：去掉度量假象后残差是干净的几何慢模式，
+        //   0.888 → 0.355 用 55 轮 ⇒ r ≈ 0.984（ω=0.35）
+        //   ⇒ 裸 Picard 增益 g = 1 − (1−r)/ω ≈ **0.954**
+        // ⚠ 这本身是个**物理结论**：段↔法兰热耦合的环路增益 0.95，
+        //   离热失控（g=1）只差 5 %。ω=0.35 不是保守，是把 0.954 拖成 0.984。
+        //
+        // ⇒ ω 自适应：连续几轮单调下降且比值 >0.9（典型慢模式）就放大 ω；
+        //   残差一反弹就减半退回。**自限**，且最坏情形退化回原来的 0.35。
         double omega = c.CoupleRelax;
+        double omegaMax = 1.8, omegaMin = 0.15;
         // ★ 残差轨迹：判「收敛到精度地板」还是「极限环」要靠它。
         //   单看最终 delta 分不清 —— 前者单调衰减后压平，后者上下摆。
         //   这两种病的处置完全相反（前者收紧内层容差，后者降 ω 或找非光滑环节）。
         var deltaTrace = new List<double>();
+        var jumpReports = new List<string>();
         double[]? prevDraws = null; (double L, double R)[]? prevLR = null;
-        double rEst = 0.0; int ratioOk = 0, extrapolations = 0;
+        double rEst = 0.0; int ratioOk = 0, omegaBoosts = 0, omegaCuts = 0;
         double[]? draws = null;
         (double L, double R)[]? drawsLR = null;
         (double L, double R)[]? nbT = null;      // 段间端温（欠松弛，同上）
@@ -496,47 +508,74 @@ public static class LineRunner
             // ⚠ 不直接把 ω 调大：那个「会发散」的构型可能还会回来（薄壁 + 高压接温度）。
             //   改成**保留 ω，另加外推**：只有当残差连续 3 轮单调下降且比值稳定在
             //   (0.6, 0.999) 时才外推一步，外推倍数封顶 —— 不满足就退回原来的行为。
-            if (draws is not null && prevDraws is not null && ratioOk >= 3)
-            {
-                double kExt = Math.Min(rEst / (1 - rEst), 20.0);
-                for (int i = 0; i < draws.Length; i++)
-                    draws[i] += kExt * (draws[i] - prevDraws[i]);
-                for (int i = 0; i < drawsLR!.Length; i++)
-                    drawsLR[i] = (drawsLR[i].L + kExt * (drawsLR[i].L - prevLR![i].L),
-                                  drawsLR[i].R + kExt * (drawsLR[i].R - prevLR[i].R));
-                extrapolations++;
-                ratioOk = 0;   // 外推一步后重新观察，避免连推失稳
-            }
-            prevDraws = (double[])draws!.Clone();
-            prevLR = ((double L, double R)[])drawsLR!.Clone();
+            // （曾在此加 Aitken Δ² 外推，实测**无效且制造毛刺**：残差被推下去又被拉回、
+            //   并出现 0.970 / 1.116 的反弹 ⇒ 慢模式不在抽热向量上。已移除，改用自适应 ω。）
 
             progress?.Report($"外层耦合 {outer + 1}/{c.CoupleMaxRounds}（ω={omega:0.00}）：回灌法兰抽热 + 段间端温…");
             var next = RunOnce(c, progress, cancel, (double[])draws.Clone(),
                                ((double L, double R)[])drawsLR.Clone(),
                                ((double L, double R)[])nbT.Clone(), baseline);
             if (!next.Ok) return next;
-            delta = Enumerable.Range(0, c.SegmentCount)
-                .Max(i => Math.Abs(next.Segments[i].TRootC - res.Segments[i].TRootC));
+            // ★★★★★ 收敛度量必须**无分支**（2026-08-15）。
+            //
+            // 原来用 `TRootC` 这一个标量 —— 它在两端之间会**切换报哪一端**。
+            // 实测（跳变捕捉）：轮 6 与轮 15 各出现 −21.4 K / −51.8 K 的「残差跳变」，
+            // 而同一轮里 **电流没变、抽热没变、两端管根各自只动了 0.1–0.9 K**：
+            //     seg3 两端 1061.1/1039.8 → 1060.2/1039.7，而 TRootC 报 1061.1 → 1039.7
+            // ⇒ 跳的只有标量本身，物理场一直光滑。**那两次跳变是度量的假象。**
+            //
+            // 这是「代理量不是原量」在本项目的第三次发作
+            //（前两次：拿段内最大偏差当管根、拿 B 当 ③ 的控制靶）。
+            // ⇒ 对**两端各自**判，不再经过任何会切换分支的标量。
+            delta = 0;
+            for (int i = 0; i < c.SegmentCount; i++)
+            {
+                double da = Math.Abs(next.Segments[i].TRootAC - res.Segments[i].TRootAC);
+                double db = Math.Abs(next.Segments[i].TRootBC - res.Segments[i].TRootBC);
+                if (!double.IsNaN(da)) delta = Math.Max(delta, da);
+                if (!double.IsNaN(db)) delta = Math.Max(delta, db);
+            }
             deltaTrace.Add(delta);
+            // ★ 跳变捕捉：残差突然放大 5 倍以上 = 有离散量在翻。
+            //   把当轮与上一轮的**全部状态**并排打出来，让它自己说是什么翻了 ——
+            //   继续猜「大概是 XX 开关」已经错过太多次（§1.8）。
+            if (deltaTrace.Count >= 2 && delta > 5 * deltaTrace[^2] && delta > 1.0)
+                jumpReports.Add(
+                    $"轮{outer + 1} 残差 {deltaTrace[^2]:0.00}→{delta:0.00}｜" +
+                    $"管根 {string.Join(",", res.Segments.Select(sg => sg.TRootC.ToString("0.0")))}" +
+                    $" → {string.Join(",", next.Segments.Select(sg => sg.TRootC.ToString("0.0")))}｜" +
+                    $"电流 {string.Join(",", res.Segments.Select(sg => sg.CurrentA.ToString("0")))}" +
+                    $" → {string.Join(",", next.Segments.Select(sg => sg.CurrentA.ToString("0")))}｜" +
+                    $"抽热 {string.Join(",", res.Flanges.Select(f => f.QFromTubeW.ToString("+0;−0")))}" +
+                    $" → {string.Join(",", next.Flanges.Select(f => f.QFromTubeW.ToString("+0;−0")))}｜" +
+                    $"两端管根 {string.Join(",", res.Segments.Select(sg => $"{sg.TRootAC:0.0}/{sg.TRootBC:0.0}"))}" +
+                    $" → {string.Join(",", next.Segments.Select(sg => $"{sg.TRootAC:0.0}/{sg.TRootBC:0.0}"))}");
             // 残差比值：只在**单调下降且比值稳定**时才认为是几何慢模式
             if (deltaTrace.Count >= 2)
             {
                 double dPrev = deltaTrace[^2];
                 double r = dPrev > 1e-12 ? delta / dPrev : 0.0;
-                if (r > 0.6 && r < 0.999) { rEst = 0.5 * rEst + 0.5 * r; ratioOk++; }
+                if (r > 0.9 && r < 0.999) { rEst = 0.5 * rEst + 0.5 * r; ratioOk++; }
                 else ratioOk = 0;
+                if (r > 1.0) { omega = Math.Max(omegaMin, 0.5 * omega); ratioOk = 0; omegaCuts++; }
+                else if (ratioOk >= 4)
+                {
+                    omega = Math.Min(omegaMax, 1.5 * omega); ratioOk = 0; omegaBoosts++;
+                }
             }
             res = next;
             if (delta < c.CoupleTolK)
             {
-                res.Notes.Add($"外层耦合 {outer + 1} 轮收敛（管根温差 {delta:0.00} K，ω={omega:0.00}，Aitken 外推 {extrapolations} 次）");
+                res.Notes.Add($"外层耦合 {outer + 1} 轮收敛（管根温差 {delta:0.00} K，ω={omega:0.00}，ω 末值 {omega:0.00}／放大 {omegaBoosts} 次／回退 {omegaCuts} 次）");
                 res.Converged = true;
                 break;
             }
         }
         if (!res.Converged)
         {
-            res.Notes.Add($"★ Aitken 外推 {extrapolations} 次，末端比值估计 r={rEst:0.000}");
+            res.Notes.Add($"★ ω 末值 {omega:0.00}（放大 {omegaBoosts} 次／回退 {omegaCuts} 次），末端比值 r={rEst:0.000}" +
+                          $"　⇒ 裸 Picard 增益 g≈{1 - (1 - rEst) / Math.Max(1e-9, omega):0.000}（g→1 即热失控）");
+            foreach (var jr in jumpReports) res.Notes.Add("★ 跳变 " + jr);
             res.Notes.Add("★ 残差轨迹 " + string.Join(" ", deltaTrace.Select(v => v.ToString("0.000"))));
             res.Notes.Add($"★ 外层耦合 {c.CoupleMaxRounds} 轮未收敛（管根温差仍 {delta:0.0} K，ω={omega:0.00}）——" +
                           "本次结果的每个数都不可用：要么再降 ω / 加轮数，要么该工况确实热失控");
