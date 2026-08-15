@@ -41,7 +41,7 @@ public sealed class LineDesignPage : TabPage
     private readonly RichTextBox _out = new();
     private readonly ToolStripProgressBar _prog = new() { Visible = false, Maximum = 1000 };
     private readonly ToolStripLabel _status = new("");
-    private readonly ToolStripButton _btnRun, _btnAuto, _btnExport, _btnLoadCase, _btn3dm;
+    private readonly ToolStripButton _btnRun, _btnAuto, _btnExport, _btnLoadCase, _btn3dm, _btnRepro;
     private readonly ToolStripComboBox _caseBox =
         new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 150 };
     private readonly TabControl _plots = new() { Dock = DockStyle.Fill };
@@ -98,16 +98,27 @@ public sealed class LineDesignPage : TabPage
         _btnLoadCase = Btn("载入定案", (_, _) => LoadFinalDesign());
         _btn3dm = Btn("导出定案 3DM", (_, _) => ExportFinal3dm());
         var btnAnalyze = Btn("分析几何变数", (_, _) => AnalyzeShape());
+
+        // ★★★ 复现定案：**界面上唯一能跑出定案数字的按钮**（2026-08-16 用户提出）。
+        //
+        // 在此之前界面根本没有这条路：本页控件表达不了「管孔两级渐变环」与
+        // 「逐片舌保温」，所以「载入定案 → 核算整线」跑的是一个**缺两项的构型**，
+        // 数字对不上，而它照样出一张漂亮的判据表 —— §1.8「安静失败」的形状。
+        // ⇒ 本按钮**完全绕过页面控件**，直接用 FinalDesign.BuildCase 造算例。
+        _btnRepro = Btn("▶ 复现定案", (_, _) => _ = ReproduceAsync());
+        _btnRepro.Font = new Font(_btnRepro.Font, FontStyle.Bold);
+
+        tool.Items.Add(new ToolStripLabel("定案档"));
+        tool.Items.Add(_caseBox);
+        tool.Items.Add(_btnRepro);
+        tool.Items.Add(_btn3dm);
+        tool.Items.Add(_btnLoadCase);
+        tool.Items.Add(new ToolStripSeparator());
         tool.Items.Add(_btnRun);
         tool.Items.Add(_btnAuto);
         tool.Items.Add(new ToolStripSeparator());
         tool.Items.Add(btnAnalyze);
         tool.Items.Add(_btnExport);
-        tool.Items.Add(new ToolStripSeparator());
-        tool.Items.Add(new ToolStripLabel("定案档"));
-        tool.Items.Add(_caseBox);
-        tool.Items.Add(_btnLoadCase);
-        tool.Items.Add(_btn3dm);
         tool.Items.Add(new ToolStripSeparator());
         _prog.Size = new Size(160, 16);
         tool.Items.Add(_prog);
@@ -263,6 +274,78 @@ public sealed class LineDesignPage : TabPage
         n.Minimum = lo; n.Maximum = hi;
         n.Value = Math.Clamp(v, lo, hi);
         return n;
+    }
+
+    /// <summary>
+    /// ▶ 复现定案：按选中档的**完整几何**解一次，出判据表。
+    ///
+    /// 与「核算整线」的区别，一句话：
+    ///   · 核算整线 —— 读**页面上的控件**（可以随便改，用来试）
+    ///   · 复现定案 —— 读 <see cref="FinalDesign"/>，**完全不看页面**（用来复现交付数字）
+    /// 页面控件表达不了渐变环与逐片舌保温，所以只有这条路能对上定案值。
+    /// </summary>
+    private async Task ReproduceAsync()
+    {
+        if (_cts is not null) { _cts.Cancel(); return; }
+        int i = _caseBox.SelectedIndex;
+        if (i < 0 || i >= FinalDesign.All.Length) return;
+        var fd = FinalDesign.All[i];
+
+        _cts = new CancellationTokenSource();
+        var ct = _cts.Token;
+        _btnRepro.Text = "取消"; _btnRun.Enabled = _btnAuto.Enabled = false;
+        _prog.Visible = true; _prog.Style = ProgressBarStyle.Marquee;
+        _status.Text = "复现中…（分钟级）";
+        var prog = new Progress<string>(s => _status.Text = s);
+
+        try
+        {
+            // ★ checkRamp: true —— ① 也要判。少判一条就不是「全判据通过」。
+            var lc = fd.BuildCase(_base, checkRamp: true);
+            var r = await Task.Run(() => LineRunner.Run(lc, prog, ct), ct);
+            _last = r;
+            Show(r);
+
+            // 与 FinalDesign 记录值对账：不一致要**当场说出来**，不能等人自己发现
+            var sb = new StringBuilder();
+            sb.AppendLine();
+            sb.AppendLine("── 复现对账（本次实算 vs FinalDesign 记录值）");
+            if (r.Ok)
+            {
+                double mt = r.TubeMassG, mf = r.FlangeMassG, all = r.TotalMassG;
+                void Line(string nm, double got, double want)
+                {
+                    double d = want > 0 ? (got - want) / want * 100 : 0;
+                    sb.AppendLine($"   {nm,-8}{got,9:0.0} g　记录 {want,7:0} g　" +
+                                  $"差 {d,6:+0.0;−0.0} %" + (Math.Abs(d) <= 1.0 ? "" : "　⚠"));
+                }
+                Line("管", mt, fd.TubeMassG);
+                Line("法兰", mf, fd.FlangeMassG);
+                Line("合计", all, fd.TotalMassG);
+                sb.AppendLine($"   全判据：{(r.AllOk ? "✓ 全过" : "✗ 有不过的")}　" +
+                              $"（记录：{fd.Binding}）");
+            }
+            sb.AppendLine();
+            sb.AppendLine("本次用的是 " + fd.Describe());
+            sb.AppendLine("出处：" + fd.Provenance);
+            sb.AppendLine("⚠ 这条路**完全不读页面上的控件** —— 页面表达不了渐变环与逐片舌保温。");
+            sb.AppendLine("   想改参数试验请用「核算整线」；那条路读页面，数字不会等于定案值。");
+            _out.Text += sb.ToString();
+            _status.Text = "完成";
+        }
+        catch (OperationCanceledException) { _status.Text = "已取消"; }
+        catch (Exception ex)
+        {
+            _status.Text = "失败";
+            MessageBox.Show(this, ex.Message, "复现失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            _cts?.Dispose(); _cts = null;
+            _prog.Visible = false;
+            _btnRepro.Text = "▶ 复现定案";
+            _btnRun.Enabled = _btnAuto.Enabled = true;
+        }
     }
 
     /// <summary>

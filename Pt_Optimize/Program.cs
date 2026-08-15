@@ -4910,21 +4910,12 @@ internal static class Program
                 double discFloorB9 = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
                                      * (discB9 - 26.0) * p.WeldSafetyFactor;
 
-                var pB9 = SegmentSolver.Clone(p);
-                pB9.Layer1.ThicknessMm = FD9.TubeInsulMm; pB9.Layer1.Enabled = true;
-                pB9.WallMinMm = wallB9;
-                pB9.FlangeInsulThickMm = 20; pB9.FlangeInsulated = true;
-                pB9.BusbarClampLengthMm = clampLenB9; pB9.BusbarClampTempC = clampB9;
-
+                // ★ 算例构造收敛到 FinalDesign.BuildCase（唯一入口）。
+                //   此处原来手抄了一份；`--hotspot` 抄了第二份且已开始漂
+                //   （夹持温度写死 450、网格细化半径 45 而非默认 50）。
                 FlangePlate MkB9(int j) => FD9.Plate(j, discFloorB9);
-                var lcB9 = new LineCase
-                {
-                    Base = SegmentSolver.Clone(pB9), WallMm = wallB9,
-                    UseMeasuredCurrent = false, CheckRamp = false,
-                    SetpointC = FD9.SetpointC,
-                    FlangePlates = new[] { MkB9(0), MkB9(1), MkB9(2), MkB9(3) },
-                    ClampTempC = new[] { clampB9, clampB9, clampB9, clampB9 }
-                };
+                var lcB9 = FD9.BuildCase(p, checkRamp: false);
+                var pB9 = lcB9.Base;
 
                 Console.WriteLine("=== 铜排：长宽高 + 在舌片上的位置 ===");
                 Console.WriteLine("几何取自 **FinalDesign**（定案唯一来源）：");
@@ -5237,11 +5228,11 @@ internal static class Program
                 var FDH = FinalDesign.Select(args);
                 double wallH = FDH.WallMm, holeH = FDH.HoleRadiusMm;
                 double discH = FDH.DiscRadiusMm;
-                var pH = SegmentSolver.Clone(p);
-                pH.Layer1.ThicknessMm = FDH.TubeInsulMm; pH.Layer1.Enabled = true;
-                pH.WallMinMm = wallH;
-                pH.FlangeInsulThickMm = 20; pH.FlangeInsulated = true;
-                pH.BusbarClampLengthMm = 40; pH.BusbarClampTempC = 300;
+                // ★ 算例构造走 FinalDesign.BuildCase（唯一入口）。
+                //   原来这里手抄一份，且已经漂了两处：夹持温度先写 300 再改写 450
+                //   （而定案值在 FinalDesign.ClampTempC），压接长度写死 40。
+                var lcH = FDH.BuildCase(p, checkRamp: false);
+                var pH = lcH.Base;
 
                 // ★ 必须对着**当前**定案构型量，不是旧的。
                 //   本轮已经因此白做过两次：一次拿 300 °C/基板 1.23 那版的峰值位置去设计
@@ -5254,17 +5245,7 @@ internal static class Program
                 //   当时圆角只改 0.25 mm 轮廓，远小于 2 mm 网格 —— **不是圆角无效**。
                 double discFloorH = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
                                     * (discH - 26.0) * p.WeldSafetyFactor;
-                pH.BusbarClampTempC = FDH.ClampTempC;
-                pH.BusbarClampLengthMm = FDH.ClampLengthMm;
                 FlangePlate MkH(int j) => FDH.Plate(j, discFloorH);
-                var lcH = new LineCase
-                {
-                    Base = SegmentSolver.Clone(pH), WallMm = wallH,
-                    UseMeasuredCurrent = false, CheckRamp = false,
-                    SetpointC = FDH.SetpointC,
-                    FlangePlates = new[] { MkH(0), MkH(1), MkH(2), MkH(3) },
-                    ClampTempC = new[] { 450.0, 450.0, 450.0, 450.0 }
-                };
                 var rH = LineRunner.Run(lcH);
                 if (!rH.Ok) { Console.WriteLine("✗ " + rH.Message); return; }
 
@@ -5280,7 +5261,11 @@ internal static class Program
                 var fw = rH.Flanges[jw];
 
                 var gH = MkH(jw);
-                var mH = FlangeMesher.Build(gH, 0, 2.0, 11.0, 45.0, 40.0);
+                // ⚠ 解剖用的网格必须**与求解时同一套参数**，否则量的是另一个离散上的峰。
+                //   原来这里写 45.0 / 40.0，而 LineCase 的默认细化半径是 50.0、
+                //   压接长度取自 FinalDesign —— 一直在解剖一个与解不同的网格。
+                var mH = FlangeMesher.Build(gH, 0, lcH.MeshFineMm, lcH.MeshCoarseMm,
+                                            lcH.MeshFineRadiusMm, FDH.ClampLengthMm);
                 double xtH = gH.Tangent().X;
                 var scH = ShellCurrent.Solve(mH, fw.CurrentA,
                               Materials.PtResistivity(fw.TRootC) * 1e3, fw.TRootC);

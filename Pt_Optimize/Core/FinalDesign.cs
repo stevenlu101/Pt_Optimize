@@ -58,6 +58,23 @@ public sealed class FinalDesign
     /// <summary>外层耦合的**剩余误差估计** K（不是步长，见 §1.85）</summary>
     public double ResidualK;
 
+    /// <summary>
+    /// 五条判据的**复核实测值**（2026-08-16 由 <see cref="BuildCase"/> + `LineRunner.Run`
+    /// 重跑得到，checkRamp=true，两档均收敛且全过）。
+    ///
+    /// ⚠ 为什么放在这里而不是各处硬编码：说明书页此前自己抄了一份，而那一份是
+    ///   **定案当天（08-15）那次运行**的数 —— 收敛度量与 ②″ 限值都是在那之后才改的。
+    ///   复核发现 ②′ 与 ③ 两项与实算对不上，**且两档之间的大小关系是反的**
+    ///   （抄的说 0.8 档 ③ 更小，实算是 0.8 档 ③ 更大）。
+    ///   判定结论没变（两档仍全过、铂重不变），但「哪一档在 ③ 上更宽裕」这句话说反了。
+    ///   ⇒ 收敛到本处。要更新就点界面上的「▶ 复现定案」重跑一遍照抄。
+    /// </summary>
+    public double RampH, DiscOverK, HoleFluxW, FlangeDipK, TubeJ;
+
+    /// <summary>某条判据的裕度 %（(限−实)/限）。方向性判据（限 0）不适用，返回 NaN。</summary>
+    public static double Margin(double actual, double limit) =>
+        System.Math.Abs(limit) < 1e-9 ? double.NaN : (limit - actual) / System.Math.Abs(limit) * 100.0;
+
     public double HoleRadiusMm => WallMm + 25.0;
     public double[] RingRadiiMm =>
         new[] { HoleRadiusMm + RingWidthMm, HoleRadiusMm + 2 * RingWidthMm };
@@ -82,6 +99,48 @@ public sealed class FinalDesign
         };
     }
 
+    /// <summary>
+    /// ★★★★★ 由本定案档**造出可直接求解的整线算例** —— 复现定案数字的唯一入口。
+    ///
+    /// 为什么必须在这里：此前 `--busbarplan`、`--hotspot` 各手抄一份构造代码，
+    /// 界面上则**根本没有**能复现的路径（页面控件表达不了渐变环与逐片舌保温）。
+    /// 三份手抄已经开始漂：`--hotspot` 把夹持温度写成常量 450 而不是 <see cref="ClampTempC"/>，
+    /// 网格细化半径写 45 而 <c>LineCase</c> 的默认是 50 —— 都还没出事，
+    /// 但形状与 §1.8「同一个数存两处然后悄悄漂开」完全一样。
+    /// ⇒ 构造收敛到这一处；调用方只准传「基准工艺参数」与「要不要判升温」。
+    ///
+    /// ⚠ 这里**不设任何几何默认值**：几何全部读本实例的字段。
+    ///   若某天新增一个几何自由度，加在字段上，本方法自动带上，不会漏。
+    /// </summary>
+    /// <param name="baseInputs">基准工艺参数（材料、散热、力学等），几何会被本档覆盖</param>
+    /// <param name="checkRamp">是否连 ① 升温一起判。判它更慢，但**少判一条就不是全判据**</param>
+    public LineCase BuildCase(DesignInputs baseInputs, bool checkRamp = true)
+    {
+        var p = SegmentSolver.Clone(baseInputs);
+        p.WallMinMm = WallMm;
+        p.Layer1.ThicknessMm = TubeInsulMm;
+        p.Layer1.Enabled = TubeInsulMm > 1e-6;
+        p.FlangeInsulThickMm = 20; p.FlangeInsulated = true;
+        p.BusbarClampLengthMm = ClampLengthMm;
+        p.BusbarClampTempC = ClampTempC;
+
+        // 圆盘的焊接屈曲下界：板厚不得低于它（`Plate` 里取大）
+        double discFloor = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                           * (DiscRadiusMm - 26.0) * baseInputs.WeldSafetyFactor;
+
+        return new LineCase
+        {
+            Base = p,
+            WallMm = WallMm,
+            UseMeasuredCurrent = false,      // 由控温反算 —— 第一性
+            CheckRamp = checkRamp,
+            SetpointC = SetpointC,
+            FlangePlates = new[] { Plate(0, discFloor), Plate(1, discFloor),
+                                   Plate(2, discFloor), Plate(3, discFloor) },
+            ClampTempC = new[] { ClampTempC, ClampTempC, ClampTempC, ClampTempC }
+        };
+    }
+
     public string Describe() =>
         $"[{Name}] 管壁 {WallMm:0.0}／管保温 {TubeInsulMm:0}／盘Ø{2 * DiscRadiusMm:0}／" +
         $"舌 {TabLengthMm:0}×{2 * TabHalfWidthMm:0}／板厚 {string.Join("/", TabThickMm)}／" +
@@ -99,24 +158,26 @@ public sealed class FinalDesign
     public static readonly FinalDesign W08 = new()
     {
         Name = "管壁 0.8 · 留余量",
-        Provenance = "--final2 可行性阶梯 D7（2026-08-15）",
-        Binding = "无 —— 每条判据都有裕度：管 J 21 %／③ 46 %／②″ 81 %／壁厚高于焊接下界 33 %",
+        Provenance = "尺寸出自 --final2 可行性阶梯 D7（2026-08-15）；判据值 2026-08-16 复核重跑",
+        Binding = "无 —— 每条判据都有裕度：②″ 80 %／管 J 21 %／③ 38 %／壁厚高于焊接下界 33 %",
         WallMm = 0.8,
         TabThickMm = new[] { 2.11, 3.40, 3.18, 1.76 },
         RingMul = new[] { 1.24, 1.24, 1.24, 1.24 },
         TotalMassG = 3117, TubeMassG = 2466, FlangeMassG = 652, ResidualK = 0.65,
+        RampH = 0.057, DiscOverK = 0.981, HoleFluxW = 1.669, FlangeDipK = 6.184, TubeJ = 9.506,
     };
 
     /// <summary>底档：可行域的底。焊接烧穿下界与管 J 12 **在同一点咬住**。</summary>
     public static readonly FinalDesign W06 = new()
     {
         Name = "管壁 0.6 · 底档",
-        Provenance = "--final2 可行性阶梯 D7（2026-08-15）",
+        Provenance = "尺寸出自 --final2 可行性阶梯 D7（2026-08-15）；判据值 2026-08-16 复核重跑",
         Binding = "焊接烧穿下界 0.6 mm（余量 0）＋ 管 J 10.96/12（余量 9 %）—— 两条同点咬住",
         WallMm = 0.6,
         TabThickMm = new[] { 1.82, 2.91, 2.71, 1.49 },
         RingMul = new[] { 1.22, 1.22, 1.22, 1.22 },
         TotalMassG = 2398, TubeMassG = 1842, FlangeMassG = 557, ResidualK = 0.75,
+        RampH = 0.079, DiscOverK = 1.121, HoleFluxW = 1.912, FlangeDipK = 5.297, TubeJ = 10.961,
     };
 
     public static readonly FinalDesign[] All = { W08, W06 };

@@ -558,20 +558,22 @@ public sealed class ManualPage : TabPage
     /// </summary>
     public static string BuildHtml(FinalDesign fd)
     {
-        // 两档的判据实测值（出自 --final2 D7；与 FinalDesign 同一次运行）
-        var crit = fd.WallMm < 0.7
-            ? new (string n, string k, double a, double l, string u)[]
-              { ("① 升温 空管到目标", "硬判据", 0.08, 72, "h"),
-                ("②″ 圆盘区最高温 − 管温", "硬判据", 1.17, 5.00, "K"),
-                ("②′ 管孔净流入 须为正", "硬判据", 1.63, 0, "W"),
-                ("③ 法兰增量温降", "目标", 6.29, 10.00, "K"),
-                ("管 J 电流密度", "硬判据", 10.96, 12.00, "A/mm²") }
-            : new (string n, string k, double a, double l, string u)[]
-              { ("① 升温 空管到目标", "硬判据", 0.06, 72, "h"),
-                ("②″ 圆盘区最高温 − 管温", "硬判据", 0.96, 5.00, "K"),
-                ("②′ 管孔净流入 须为正", "硬判据", 1.79, 0, "W"),
-                ("③ 法兰增量温降", "目标", 5.38, 10.00, "K"),
-                ("管 J 电流密度", "硬判据", 9.51, 12.00, "A/mm²") };
+        // ★ 判据值**只从 FinalDesign 取**，本页不再自己抄一份。
+        //
+        // 这里原来硬编码了两档各五个数，抄的是定案当天（08-15）那次运行 ——
+        // 而收敛度量与 ②″ 限值都是在那之后才改的。08-16 用「▶ 复现定案」重跑发现
+        // ②′ 与 ③ 两项对不上，**且两档之间的大小关系是反的**：
+        // 抄的说 0.8 档 ③ 更小（5.38 < 6.29），实算是 0.8 档 ③ 更大（6.18 > 5.30）。
+        // 判定结论没变（两档仍全过），但「哪一档在 ③ 上更宽裕」这句话说反了。
+        // ⇒ 又一次「同一个数存两处然后悄悄漂开」。收敛到一处才不会再犯。
+        var crit = new (string n, string k, double a, double l, string u)[]
+        {
+            ("① 升温 空管到目标",      "硬判据", fd.RampH,      72,    "h"),
+            ("②″ 圆盘区最高温 − 管温", "硬判据", fd.DiscOverK,  5.00,  "K"),
+            ("②′ 管孔净流入 须为正",   "硬判据", fd.HoleFluxW,  0,     "W"),
+            ("③ 法兰增量温降",         "目标",   fd.FlangeDipK, 10.00, "K"),
+            ("管 J 电流密度",          "硬判据", fd.TubeJ,      12.00, "A/mm²"),
+        };
 
         var sb = new StringBuilder();
         sb.Append(@"<!doctype html><html lang=""zh""><head><meta charset=""utf-8"">
@@ -742,7 +744,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         sb.Append("<h2>5. 判据表怎么读</h2>");
         sb.Append("<table><tr><th>判据</th><th>类别</th><th>实际</th><th>限值</th><th>裕度</th></tr>");
         foreach (var (n, k, a, l, u) in crit)
-            sb.Append($"<tr><td>{n}</td><td>{k}</td><td class=\"n\">{a:0.00} {u}</td>" +
+            sb.Append($"<tr><td>{n}</td><td>{k}</td><td class=\"n\">{a:0.000} {u}</td>" +
                       $"<td class=\"n\">{(Math.Abs(l) < 1e-9 ? "> 0" : l.ToString("0.00"))}</td>" +
                       $"<td>{Bar(a, l)}</td></tr>");
         sb.Append("</table>");
