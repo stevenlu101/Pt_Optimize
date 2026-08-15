@@ -20,9 +20,8 @@ public static class FinalDesign
 {
     /// <summary>本组数值出自哪一次运行 —— 报告里要能追溯到源头</summary>
     public const string Provenance =
-        "--final2 可行性阶梯 D6（舌厚→③=8K／环倍率→②″=−0.02K／舌保温抗饱和接力）；
-" +
-        "        管壁 1.4 mm 是**最薄的全过档**，合计 5245 g（1.2 档 ②″ 差 +0.08，两旋钮均饱和）";
+        "--final2 可行性阶梯 D6（舌厚→③=8K／环倍率→②″=−0.02K／舌保温抗饱和接力）；" +
+        "管壁 1.4 mm 是**最薄的全过档**，合计 5245 g（1.2 档 ②″ 差 +0.08，两旋钮均饱和）";
 
     // ── 管
     public static double WallMm = 1.4;

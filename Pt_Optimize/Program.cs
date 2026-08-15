@@ -3699,14 +3699,25 @@ internal static class Program
                 // 常数环 1.30 已把可行域从 2.0 拉到 1.4（7265 → 5252 g）。
                 // 环倍率受控之后再往下走，直到**另一条判据先咬住**或撞上焊接下界 0.6 mm
                 //（0.6 = 手工 TIG 烧穿下界，§4.2；那是**工艺硬底**，不是判据）。
-                // ★★ 盘径扫描（2026-08-15 加）：这是链条指出的、唯一还没动过的大杠杆。
-                //   峰 B 在 r≈27–28、J≈5–7，本质是**电流从 30 mm 宽的舌片挤进 3.8 mm 宽的环**。
-                //   盘径大 ⇒ 截面大 ⇒ 该处 J 降 ⇒ 直接作用在峰 B 上。
-                //   ⚠ 不免费：焊接变形下界 ∝ (R − 26)，盘越大板厚下界越高（已建模）。
-                foreach (double discSweep in new[] { 30.0, 36.0, 42.0 })
+                // ★★★ 舌根圆角扫描（2026-08-15）：**峰 B 的真身是舌根，不是孔边。**
+                //
+                // 六档的峰位坐标全是 x=−24.3、z=±12.5…14.1，而切点 x=−√(30²−15²)=−25.98、
+                // 舌片半宽 15 ⇒ 峰就落在**舌片直边与圆盘圆弧的交接凹角**上，往里 1.7 mm。
+                // 它不是「管孔外那一圈」—— r≈27.4 只是那个角点碰巧的半径。
+                // （渐变环按半径生效、恰好盖到了这个角，所以有效；但那是**间接命中**。）
+                //
+                // 对症旋钮是 `TabFilletMm`：凹角电流拥塞的教科书解法。
+                // PlateCurrent2D 的注释里早就写着「**尖角处的场是奇异的：网格越细数值越大**」——
+                // 这个圆角本就是为消掉该奇异点而设的，却从头冻结在 3.0 mm（第六个没量过的默认值）。
+                // 代价极小：圆角填的是凹角那一小块，r=10 每片约 +2.4 g
+                //（对比盘径 Ø60→Ø84 要 +494 g，差两个数量级）⇒ **先扫它**。
+                double filletF2 = 3.0;
+                // R14 在管壁 1.2 拿到全过且**质量几乎不变**（4563→4559 g）⇒ 圆角是免费的。
+                // 继续往薄里走，并试更大的圆角看还有没有余量。
+                foreach (double filletSweep in new[] { 14.0, 20.0 })
                 {
-                discF2 = discSweep;
-                foreach (double wallSweep in new[] { 1.2 })
+                filletF2 = filletSweep;
+                foreach (double wallSweep in new[] { 1.0, 0.8, 0.6 })
                 {
                 wallF2 = wallSweep;
                 clampF2 = 450.0;
@@ -3763,8 +3774,10 @@ internal static class Program
                 //   那个旧构型的收敛值）。现在的收敛值是 3.3–5.5，而每轮限幅 ±0.15 mm ⇒
                 //   **光爬坡就烧掉 20 多轮**，一次跑半小时里大半在走直线。
                 //   起点不影响解（每片是一维割线、关系单调），只影响轮数 ⇒ 用本档的实测收敛值起步。
-                double[] tabF2 = wallF2 >= 1.9 ? new[] { 3.48, 5.50, 5.18, 2.99 }
-                                               : new[] { 3.30, 5.21, 4.91, 2.83 };
+                // 起点按管壁线性内插到实测收敛值附近（壁 1.2 收敛于 2.62/4.53/4.27/2.22），
+                // 只为省掉纯爬坡的轮次；解与起点无关（每片是一维割线、关系单调）。
+                double kStart = Math.Clamp(0.55 + 0.375 * wallF2, 0.4, 1.3);
+                double[] tabF2 = new[] { 2.62, 4.53, 4.27, 2.22 }.Select(v => v * kStart).ToArray();
                 double[] insF2v = { 18.7, 1.6, 1.4, 3.9 };
 
                 // ★ **端片舌片加长**（总纲允许的自由度：「舌片长度如有需要可加长」）。
@@ -3806,7 +3819,7 @@ internal static class Program
                                                           td * (1 + (ringMul[j] - 1) * 0.4) },
                             TabThicknessMm = double.NaN,
                             InsulBoundaryXMm = double.NaN, TabInsulThickMm = ins[j],
-                            TabParallel = true, TabFilletMm = 3.0,
+                            TabParallel = true, TabFilletMm = filletF2,
                             WeldFilletLegMm = Math.Max(td, wallF2)
                         };
                     }
@@ -3845,8 +3858,10 @@ internal static class Program
                 //   在同向漂。**逐片打出 ② 与管根温度**，才能判断旋钮到底有没有作用在它上面。
                 // ⚠ 保温这一列是**冻结的**（`--knob2` 已证它对 C 无效），打它没有信息量。
                 //   换成**环倍率** —— 那是本轮新加的第二个旋钮，必须看得见它在动。
+                // ⚠ 表头必须和实际打出来的列一一对应。「净流入」那一列早被换成了环倍率／保温，
+                //   表头却还留着 —— 那是**会让人（我）读错列**的输出，属于易误判，必须清掉。
                 Console.WriteLine($"{"轮",4}{"舌厚→③",22}{"环倍率→②″",22}{"舌保温",22}" +
-                                  $"{"净流入 逐片",22}{"②″max",9}{"③max",9}{"违反度",10}");
+                                  $"{"②″max",9}{"③max",9}{"违反度",10}");
 
                 LineResult? bestF2 = null; double bestBad = double.MaxValue;
                 double[] bestTab = (double[])tabF2.Clone(), bestIns = (double[])insF2v.Clone();
@@ -4074,7 +4089,7 @@ internal static class Program
                 string verdict = bestF2.AllOk
                     ? "✓ **全过**"
                     : "✗ " + string.Join("；", bestF2.Failed);
-                frontRows.Add((wallF2 + 1000 * discF2, dtB.Min(), dtB.Max(), e2B[wj], mAll,
+                frontRows.Add((wallF2 + 1000 * filletF2, dtB.Min(), dtB.Max(), e2B[wj], mAll,
                     verdict + $"　净流入min {fluxMin:+0;−0} W" +
                     $"／管J {bestF2.Segments.Max(s => s.TubeJAPerMm2):0.0}／玻璃降 {glassDrop:0.0}"));
 
@@ -4135,16 +4150,16 @@ internal static class Program
                 catch (Exception ex) { Console.WriteLine("   异常 " + ex.Message); }
                 Console.WriteLine();
                 }   // ← 管壁循环结束
-                }   // ← 盘径循环结束
+                }   // ← 舌根圆角循环结束
 
-                Console.WriteLine("── **可行性阶梯**：盘径 × 管壁，每档都重新定过尺寸");
+                Console.WriteLine("── **可行性阶梯**：舌根圆角 × 管壁，每档都重新定过尺寸");
                 Console.WriteLine("★ 目标不是「最轻」，是「**最薄的那个全过档**」——");
                 Console.WriteLine("  能造能用是先决条件，省铂只在可行域内部执行（用户 2026-08-15）。");
-                Console.WriteLine($"{"盘Ø/壁",11}{"增量降min",10}{"增量降max",10}{"②″圆盘",9}{"合计 g",9}  B／管J／玻璃降");
+                Console.WriteLine($"{"圆角/壁",11}{"增量降min",10}{"增量降max",10}{"②″圆盘",9}{"合计 g",9}  B／管J／玻璃降");
                 // ★ 判定**只读 Judge**：fr.where 里存的是 LineResult.Failed 的原文，
                 //   汇总表不再自行拼判定条件（那正是连错四次的第三处）。
                 foreach (var fr in frontRows)
-                    Console.WriteLine($"{$"Ø{2 * (int)(fr.clamp / 1000):0}/{fr.clamp % 1000:0.0}",11}{fr.c2min,9:+0.0;−0.0}{fr.c2max,9:+0.0;−0.0}" +
+                    Console.WriteLine($"{$"R{(int)(fr.clamp / 1000):0}/{fr.clamp % 1000:0.0}",11}{fr.c2min,9:+0.0;−0.0}{fr.c2max,9:+0.0;−0.0}" +
                         $"{fr.e2max,9:+0.00;−0.00}{fr.mass,9:0}  {fr.where}");
                 Console.WriteLine();
                 Console.WriteLine("★ 若所有档位都是「C2 过、② 差一点」，那说明在本构型下两条约束的可行带为空，");
@@ -4991,10 +5006,12 @@ internal static class Program
             //   ——「电流从单侧绕过管孔」这个说法到底成不成立，只有角向剖面能证伪。
             if (args.Contains("--hotspot"))
             {
-                double wallH = 1.5, holeH = wallH + 25.0;   // 阶梯里最接近可行的那一档
-                double discH = 30.0;
+                // ★ 几何**只从 FinalDesign 取**（定案唯一来源）。此前这里钉着管壁 1.5、
+                //   管保温 10、无环的旧构型，跑出来的峰位是**另一个设计**的峰位。
+                double wallH = FinalDesign.WallMm, holeH = FinalDesign.HoleRadiusMm;
+                double discH = FinalDesign.DiscRadiusMm;
                 var pH = SegmentSolver.Clone(p);
-                pH.Layer1.ThicknessMm = 10.0; pH.Layer1.Enabled = true;
+                pH.Layer1.ThicknessMm = FinalDesign.TubeInsulMm; pH.Layer1.Enabled = true;
                 pH.WallMinMm = wallH;
                 pH.FlangeInsulThickMm = 20; pH.FlangeInsulated = true;
                 pH.BusbarClampLengthMm = 40; pH.BusbarClampTempC = 300;
@@ -5003,35 +5020,21 @@ internal static class Program
                 //   本轮已经因此白做过两次：一次拿 300 °C/基板 1.23 那版的峰值位置去设计
                 //   450 °C 那版；一次拿入口片当靶而整线上最差的是 HC2|HC3。
                 //   下面这组 = `--final2` 压接 450 档的收敛解（舌长 90、半宽 15、两级渐变环）。
-                // ★ 对着**当前**定案构型量（--final2 靶=2W、管壁 1.5 档的收敛解）。
-                //   本轮已因「对着旧构型量」白做过两次，务必核对来源：
-                //   ladderT2.txt 第 1 档 → 舌厚 2.99/4.72/4.44/2.55、舌保温 18.7/1.6/1.4/3.9
-                double[] tabH = { 2.99, 4.72, 4.44, 2.55 }, insH = { 18.7, 1.6, 1.4, 3.9 };
-                double[] stepRH = { 30.0, 36.0 }, stepTH = { 2.4, 1.7 };
+                // ⚠⚠ **网格 2 mm，而峰落在一个几何奇异的凹角上**（本文件上方注释：
+                //   「尖角处的场是奇异的：网格越细数值越大」）。
+                //   ⇒ 0.1 K 量级的 ②″ 差别**落在数值分辨率之内**，不能当锐利边界读。
+                //   本轮那次「加圆角逐位相同」的否定结论，真因也是分辨率：
+                //   当时圆角只改 0.25 mm 轮廓，远小于 2 mm 网格 —— **不是圆角无效**。
                 double discFloorH = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
                                     * (discH - 26.0) * p.WeldSafetyFactor;
-                pH.BusbarClampTempC = 450;
-                FlangePlate MkH(int j)
-                {
-                    double td = Math.Max(tabH[j], discFloorH);
-                    return new FlangePlate
-                    {
-                        DiscRadiusMm = discH, HoleRadiusMm = holeH,
-                        TabEndXMm = -90.0, TabEndHalfWidthMm = 15.0,
-                        ThicknessMm = td,
-                        DiscStepRadiiMm = stepRH,
-                        DiscStepThicknessMm = stepTH.Select(v => Math.Max(v, td)).ToArray(),
-                        TabThicknessMm = double.NaN,
-                        InsulBoundaryXMm = double.NaN, TabInsulThickMm = insH[j],
-                        TabParallel = true, TabFilletMm = 3.0,
-                        WeldFilletLegMm = Math.Max(td, wallH)
-                    };
-                }
+                pH.BusbarClampTempC = FinalDesign.ClampTempC;
+                pH.BusbarClampLengthMm = FinalDesign.ClampLengthMm;
+                FlangePlate MkH(int j) => FinalDesign.Plate(j, discFloorH);
                 var lcH = new LineCase
                 {
                     Base = SegmentSolver.Clone(pH), WallMm = wallH,
                     UseMeasuredCurrent = false, CheckRamp = false,
-                    SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                    SetpointC = FinalDesign.SetpointC,
                     FlangePlates = new[] { MkH(0), MkH(1), MkH(2), MkH(3) },
                     ClampTempC = new[] { 450.0, 450.0, 450.0, 450.0 }
                 };
@@ -5061,7 +5064,9 @@ internal static class Program
                 Console.WriteLine($"=== 峰值位置实测（**②″圆盘区**最差的片：{fw.Name}）===");
                 Console.WriteLine($"I={fw.CurrentA:0} A　管根 {fw.TRootC:0.0} °C　" +
                                   $"盘Ø{2 * discH:0}／等宽舌 90×30／**盘舌等厚 {gH.ThicknessMm:0.00}**／" +
-                                  $"舌保温 {insH[jw]:0.0}／焊脚 {gH.WeldFilletLegMm:0.00}／切点 x={xtH:0.00}");
+                                  $"舌保温 {gH.TabInsulThickMm:0.0}／焊脚 {gH.WeldFilletLegMm:0.00}／切点 x={xtH:0.00}");
+                Console.WriteLine("  几何取自 FinalDesign：" + FinalDesign.Describe());
+                Console.WriteLine("  ⚠ 网格 2 mm，凹角处场是奇异的 ⇒ **0.1 K 量级的差别不可当锐利边界读**。");
                 Console.WriteLine($"整线判定 ② = {fw.TMaxC - fw.TRootC:+0.00;−0.00} K");
                 Console.WriteLine();
 
