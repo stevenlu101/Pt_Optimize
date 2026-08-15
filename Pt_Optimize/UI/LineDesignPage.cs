@@ -41,7 +41,9 @@ public sealed class LineDesignPage : TabPage
     private readonly RichTextBox _out = new();
     private readonly ToolStripProgressBar _prog = new() { Visible = false, Maximum = 1000 };
     private readonly ToolStripLabel _status = new("");
-    private readonly ToolStripButton _btnRun, _btnAuto, _btnExport;
+    private readonly ToolStripButton _btnRun, _btnAuto, _btnExport, _btnLoadCase, _btn3dm;
+    private readonly ToolStripComboBox _caseBox =
+        new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 150 };
     private readonly TabControl _plots = new() { Dock = DockStyle.Fill };
     private readonly ScottPlot.WinForms.FormsPlot _pT = FieldPlots.NewPlot();
     private readonly ScottPlot.WinForms.FormsPlot _pJ = FieldPlots.NewPlot();
@@ -87,12 +89,25 @@ public sealed class LineDesignPage : TabPage
         _btnRun = Btn("核算整线", (_, _) => _ = RunAsync(false));
         _btnAuto = Btn("自动定厚", (_, _) => _ = RunAsync(true));
         _btnExport = Btn("导出 .3dm", (_, _) => Export());
+
+        // ★ 定案档：直接从 Core/FinalDesign 取，**不在 UI 里再抄一份数**。
+        //   两档都全判据通过，差别只在裕度与铂重（见各档的 Binding 说明）。
+        foreach (var fd in FinalDesign.All) _caseBox.Items.Add(fd.Name);
+        _caseBox.SelectedIndex = System.Array.IndexOf(FinalDesign.All, FinalDesign.Current);
+        if (_caseBox.SelectedIndex < 0) _caseBox.SelectedIndex = 0;
+        _btnLoadCase = Btn("载入定案", (_, _) => LoadFinalDesign());
+        _btn3dm = Btn("导出定案 3DM", (_, _) => ExportFinal3dm());
         var btnAnalyze = Btn("分析几何变数", (_, _) => AnalyzeShape());
         tool.Items.Add(_btnRun);
         tool.Items.Add(_btnAuto);
         tool.Items.Add(new ToolStripSeparator());
         tool.Items.Add(btnAnalyze);
         tool.Items.Add(_btnExport);
+        tool.Items.Add(new ToolStripSeparator());
+        tool.Items.Add(new ToolStripLabel("定案档"));
+        tool.Items.Add(_caseBox);
+        tool.Items.Add(_btnLoadCase);
+        tool.Items.Add(_btn3dm);
         tool.Items.Add(new ToolStripSeparator());
         _prog.Size = new Size(160, 16);
         tool.Items.Add(_prog);
@@ -123,7 +138,10 @@ public sealed class LineDesignPage : TabPage
         }
 
         Head("管");
-        Row("壁厚 mm", _wall, "工艺下界 0.4 mm（用户给定）。管 J ∝ 1/√壁厚 —— 减薄不减电流负担");
+        Row("壁厚 mm", _wall,
+            "工艺下界 0.6 mm = **手工 TIG 烧穿下界**（自动 TIG 0.3、激光 0.1，差一个量级）。\n" +
+            "另一条独立的界是管 J ≤ 12 A/mm²（现场给定：一般上限 15，壁 0.6 时 12 是极限）。\n" +
+            "定案两档正是被这两条同点咬住（0.6）与全都留有余量（0.8）。");
         Row("纤维保温 mm", _tubeIns, "无空间限制。加厚同时降电流与 J，是管侧的免费杠杆");
 
         Head("法兰几何来源");
@@ -245,6 +263,82 @@ public sealed class LineDesignPage : TabPage
         n.Minimum = lo; n.Maximum = hi;
         n.Value = Math.Clamp(v, lo, hi);
         return n;
+    }
+
+    /// <summary>
+    /// 把选中的定案档灌进各控件。**值只从 <see cref="FinalDesign"/> 取**——
+    /// UI 里再抄一份，就是「同一个数存两处然后悄悄漂开」（HANDOVER §1.8 最常见的失效）。
+    /// </summary>
+    private void LoadFinalDesign()
+    {
+        int i = _caseBox.SelectedIndex;
+        if (i < 0 || i >= FinalDesign.All.Length) return;
+        var fd = FinalDesign.All[i];
+
+        decimal C(double v, NumericUpDown n) =>
+            Math.Clamp((decimal)v, n.Minimum, n.Maximum);
+
+        _wall.Value = C(fd.WallMm, _wall);
+        _tubeIns.Value = C(fd.TubeInsulMm, _tubeIns);
+        _discD.Value = C(2 * fd.DiscRadiusMm, _discD);
+        _tabLen.Value = C(fd.TabLengthMm, _tabLen);
+        _tabW.Value = C(fd.TabHalfWidthMm, _tabW);
+        _clamp.Value = C(fd.ClampTempC, _clamp);
+        for (int j = 0; j < 4 && j < _tPlate.Length; j++)
+            _tPlate[j].Value = C(fd.TabThickMm[j], _tPlate[j]);
+
+        // 分段控温点：只改控温点，水头保持页面上原有的值（那是工艺量，不属于定案几何）
+        string[] segNames = { "HC1", "HC2", "HC3" };
+        for (int k = 0; k < fd.SetpointC.Length; k++)
+        {
+            if (k < _segs.Count) { _segs[k].名称 = segNames[k]; _segs[k].控温C = fd.SetpointC[k]; }
+            else _segs.Add(new SegRow { 名称 = segNames[k], 控温C = fd.SetpointC[k] });
+        }
+        _segGrid.Refresh();
+
+        _out.Text =
+            "已载入定案档：" + fd.Describe() + "\r\n" +
+            "咬住它的：" + fd.Binding + "\r\n" +
+            "出处：" + fd.Provenance + "\r\n" +
+            $"外层耦合剩余误差估计 {fd.ResidualK:0.00} K（不是步长；见 HANDOVER §1.85）\r\n\r\n" +
+            "⚠ 有两项本页控件表达不了，已在内核里按定案值生效、但界面上看不到：\r\n" +
+            $"   · 管孔两级渐变环：r ≤ 孔+{fd.RingWidthMm:0} → 板厚×{fd.RingMul[0]:0.00}，" +
+            $"r ≤ 孔+{2 * fd.RingWidthMm:0} → 板厚×{fd.RingMulOuter(0):0.000}\r\n" +
+            $"   · 逐片舌保温：{string.Join(" / ", fd.TabInsulMm)} mm（四片差 12 倍，不能同规格）\r\n" +
+            "   ⇒ 想复现定案数，请用「导出定案 3DM」或命令行 --busbarplan --wall " +
+            $"{fd.WallMm:0.0}；本页的「核算整线」走的是页面上这些参数。";
+    }
+
+    /// <summary>导出选中定案档的整机 3DM（子进程渲染 + 写完从磁盘回读自校）。</summary>
+    private void ExportFinal3dm()
+    {
+        int i = _caseBox.SelectedIndex;
+        if (i < 0 || i >= FinalDesign.All.Length) return;
+        var fd = FinalDesign.All[i];
+
+        using var dlg = new SaveFileDialog
+        {
+            Filter = "Rhino 3DM|*.3dm",
+            FileName = $"定案_管壁{fd.WallMm:0.0}mm.3dm"
+        };
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+        try
+        {
+            Cursor = Cursors.WaitCursor;
+            string echo = Geometry3dm.WriteFinal3dm(fd, dlg.FileName);
+            _out.Text = "已写出 " + dlg.FileName + "\r\n\r\n" + echo + "\r\n\r\n" +
+                "图层按**片**分（入口／共用1／共用2／出口 各有 板身/环外级/环内级/压接段），" +
+                "另加「铂管」层三段。\r\n" +
+                "回显里的 roundTrip 段是**从磁盘读回**量的包围盒：tY = 沿 Y 的跨度 = 板厚。" +
+                "若某天板被画到 XY 面沿 Z 拉伸（2026-08-12 出过），tY 会变成盘直径 —— 一眼露馅。";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "导出 3DM 失败",
+                            MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally { Cursor = Cursors.Default; }
     }
 
     private static ToolStripButton Btn(string t, EventHandler h)
@@ -387,13 +481,33 @@ public sealed class LineDesignPage : TabPage
             sb.AppendLine($"{f.Name,10}{f.CurrentA,9:0}{f.JMaxAPerMm2,8:0.00}{f.Phi,8:0.000}" +
                           $"{f.QFromTubeW,9:+0;-0}{f.TMaxC,10:0.0}{f.MassG,9:0}");
         sb.AppendLine();
+        // ★ 收敛情况必须**跟判据一起看**：判据是在解上判的，解没收敛判据就没意义。
+        //   剩余误差是「距不动点」的估计，不是「相邻两轮变化」——后者曾把没收敛的解报成收敛（§1.85）。
+        foreach (var nt in r.Notes)
+            if (nt.Contains("耦合") || nt.Contains("基线")) sb.AppendLine("  ⓘ " + nt);
+        if (!r.Converged) sb.AppendLine("  ⚠ **未收敛 ⇒ 下面每个数都不可引用**");
+        sb.AppendLine();
+
         sb.AppendLine("判据　★=硬安全线，越界即失效　○=设计目标　·=参考量，只报数不判");
+        sb.AppendLine("　　　裕度 = 离限值还有多远。**贴着限值判过与不过是本项目最常见的错**，");
+        sb.AppendLine("　　　判之前先看它是否大于数值噪声与现场可分辨的尺度。");
         foreach (var c in r.Checks)
         {
             string mk = c.Kind == CheckKind.HardSafety ? "★" : c.Kind == CheckKind.Target ? "○" : "·";
             string vd = c.Kind == CheckKind.Reference ? "—" : c.Undetermined ? "?" : c.Ok ? "✓" : "✗";
             string act = double.IsNaN(c.Actual) ? "达不到" : c.Actual.ToString("0.000");
-            sb.AppendLine($"  {mk} {c.Name,-18}{act,12} / {c.Limit,-10:0.000} {vd}  {c.Where}");
+            // 裕度：单边上限判据用 (限−实)/限；方向性判据（限=0）只报差值本身
+            string mg = "—";
+            if (c.Kind != CheckKind.Reference && !double.IsNaN(c.Actual))
+            {
+                if (Math.Abs(c.Limit) > 1e-9)
+                {
+                    double pct = (c.Limit - c.Actual) / Math.Abs(c.Limit) * 100.0;
+                    mg = pct >= 0 ? $"{pct,5:0}%" : $"超{-pct,4:0}%";
+                }
+                else mg = $"{c.Actual - c.Limit,+6:+0.00;−0.00}";
+            }
+            sb.AppendLine($"  {mk} {c.Name,-18}{act,12} / {c.Limit,-10:0.000} {mg,7} {vd}  {c.Where}");
             if (!string.IsNullOrEmpty(c.Note)) sb.AppendLine($"      {c.Note}");
         }
         sb.AppendLine();
