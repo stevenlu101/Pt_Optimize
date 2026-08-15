@@ -3841,9 +3841,9 @@ internal static class Program
                                   $"压接 {clampLenF2:0} 夹 {clampF2:0} °C");
                 Console.WriteLine($"**管壁 {wallF2:0.0} mm**（可行性阶梯，从宽到窄）　" +
                                   $"管保温 {tubeInsF2:0}／舌长 {lenScaleF2:0}／半宽 {halfWF2:0}");
-                Console.WriteLine("分派（D6）：**舌厚 → ③（靶 8 K）**　**环倍率 → ②″（靶 −0.02 K）**　" +
+                Console.WriteLine("分派（D7）：**舌厚 → B 净流入（靶 2 W）**　**环倍率 → ②″（靶 −0.02 K）**　" +
                                   "**舌保温 → ②″ 的抗饱和接力**（仅当环顶到 2.5）");
-                Console.WriteLine("  依据：∂③/∂板厚 149、∂②″/∂环 −1.4/单位、保温无直接作用（串级等效 −0.011 K/mm 且 >20mm 饱和）");
+                Console.WriteLine("  依据：∂③/∂板厚 **+149**（板越厚 ③ 越大 ⇒ ③ 不能当靶，否则花铂把判据推向限值）、保温无直接作用（串级等效 −0.011 K/mm 且 >20mm 饱和）");
                 Console.WriteLine("  ⇒ 新旋钮**接力**不**替换**：环未饱和时本控制律退化为已验证的 D3。B 只做符号判据。");
                 // 闭式（§4.3l）：把舌片当杆，Q_根 = kAΔT/ℓ − pℓ/2，T′(0) = −ΔT/ℓ + pℓ/(2kA)。
                 // C2 要 Q_根>0 ⇔ T′(0)<0；② 要杆内无处高于管根 ⇔ 峰值不在内部 ⇔ T′(0)≤0。
@@ -3874,7 +3874,7 @@ internal static class Program
                 var prevIns = new double[4]; var prev2 = new double[4]; var slope2Est = new double[4];
                 for (int j = 0; j < 4; j++)
                 {
-                    prevTab[j] = double.NaN; prevErr[j] = 0; slopeEst[j] = 150.0;
+                    prevTab[j] = double.NaN; prevErr[j] = 0; slopeEst[j] = 150.0;   // dB/d板厚 W/mm
                     prevIns[j] = double.NaN; prev2[j] = 0; slope2Est[j] = -0.011;
                 }
 
@@ -3974,8 +3974,7 @@ internal static class Program
                     //     舌保温 → ③ （吸收板厚带给 ③ 的扰动；不花一克铂）
                     //     环倍率 → 固定 1.30（已验证的「让尖峰退回盘缘地板」的翻转点）
                     //   三角系统不打架：先定 ②″，再让保温去追 ③。
-                    const double dipTarget = 8.0;      // K，上限 10 留 2 K 余量
-                    const double insLoF2 = 0.3, insHiF2 = 80.0;   // 用户：管外纤维无空间限制
+                                        const double insLoF2 = 0.3, insHiF2 = 80.0;   // 用户：管外纤维无空间限制
                     bool moved = false;
                     for (int j = 0; j < 4; j++)
                     {
@@ -4042,22 +4041,37 @@ internal static class Program
                         }
 
                         // ══ 内环（快）：**板厚 → ③（靶 8 K）**，149 K/mm，是 ③ 的强驱动 ══
-                        double dipJ = double.NegativeInfinity;
-                        if (j - 1 >= 0 && j - 1 < dt.Length) dipJ = Math.Max(dipJ, dt[j - 1]);
-                        if (j < dt.Length) dipJ = Math.Max(dipJ, dt[j]);
-                        if (double.IsNegativeInfinity(dipJ) || double.IsNaN(dipJ)) continue;
+                        // ★★★★★ 靶改回 **B（管孔净流入）**（2026-08-15，用户揭示 ③ 的 10 K 后）。
+                        //
+                        // 用户：「10 K 也是贴着热偶误差来的」⇒ ③ 的限值是**测量地板**，不是失效阈值。
+                        //   ⇒ 「设计到 ③=10」无意义（9.5 与 10.5 现场分不出，与 0.05 K 之争同型）。
+                        //   ⇒ 更要命：∂③/∂板厚 = **+149 K/mm（正号）** ⇒ 靶设在 ③=8 时，
+                        //     某档 ③ 只有 5.6，控制器会**主动加厚板去把 ③ 推到 8**
+                        //     —— **花铂金把一条判据推向它的限值**，方向完全反了。
+                        //
+                        // 省铂的方向是**削薄**，而削薄让 ③ 变小（更安全）⇒ ③ 不该当靶，它会自己变好。
+                        // 薄端真正会先咬住的是：削薄 ⇒ 发热 ∝K²/t 增 ⇒ 法兰变热 ⇒ 抽热减少
+                        //   ⇒ **B → 0 ⇒ 热往管里灌**。而 B>0 正是总纲 C2 的下半条。
+                        //
+                        // ⚠ 这是**回到最早那版的靶**（fluxTarget=2.0）。当时改掉它是对的：
+                        //   C 卡死时 ③ 才是咬住的那条，B 只是它的代理。**C 一解除，前提就变了** ——
+                        //   B 自己就是总纲里的判据，不再是谁的代理。
+                        //   ⇒ 结论随前提变，不是反复。
+                        //
+                        // ⚠ 靶值 2.0 W 的**裕度来源尚未定**（见 §1.83「同类隐患」）：
+                        //   它是对一条方向性判据（>0）的裕度，须由 B 的数值噪声定。**待补。**
+                        const double fluxTargetF2 = 2.0;
+                        double e = fluxTargetF2 - fj;     // >0 ⇒ 抽热不够 ⇒ 加厚；<0 ⇒ 有余量 ⇒ 削薄
+                        if (Math.Abs(e) < 0.4) continue;
 
-                        double e = dipTarget - dipJ;      // <0 ⇒ ③ 太大 ⇒ 削薄；>0 ⇒ 有余量 ⇒ 加厚
-                        if (Math.Abs(e) < 0.5) continue;
-
-                        double slope = slopeEst[j];       // d③/d板厚，K per mm，**正**
+                        double slope = slopeEst[j];       // dB/d板厚，W per mm，**正**
                         if (!double.IsNaN(prevTab[j]) && Math.Abs(tabF2[j] - prevTab[j]) > 1e-6)
                         {
-                            double sMeas = (dipJ - prevErr[j]) / (tabF2[j] - prevTab[j]);
+                            double sMeas = (fj - prevErr[j]) / (tabF2[j] - prevTab[j]);
                             if (sMeas > 1 && sMeas < 5000) slope = 0.5 * slope + 0.5 * sMeas;
                         }
                         slopeEst[j] = slope;
-                        prevTab[j] = tabF2[j]; prevErr[j] = dipJ;
+                        prevTab[j] = tabF2[j]; prevErr[j] = fj;
 
                         double dTab = Math.Clamp(e / slope, -0.15, 0.15);
                         double nt = Math.Clamp(tabF2[j] + dTab, 0.3, 6.0);
