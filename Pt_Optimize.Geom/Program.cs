@@ -55,6 +55,27 @@ internal static class GeomProbe
         //   Pt_Optimize.Geom.exe plate <out.3dm> <盘半径> <孔半径> <舌端X> <舌端半宽> <厚度1[,厚度2,…]>
         // 每个厚度出一个实体，沿 +X 依次排开、各自独立成体，图层统一为「法兰」。
         // 轮廓 = 盘圆弧（切点之外那段）+ 舌片两条直边 + 舌端直边，中心挖孔，再拉伸。
+        // final 模式：按**主程序导出的 JSON 规格**渲染定案整机几何
+        //   Pt_Optimize.Geom.exe final <spec.json> <out.3dm>
+        //
+        // 几何定义**不在这里**。规格由 Pt_Optimize 从 Core/FinalDesign 导出，
+        // 本进程只负责渲染 —— 否则定案值就在两个项目里各存一份，
+        // 而「同一个数抄两处然后悄悄漂开」正是本项目最常见的失效（HANDOVER 1.8）。
+        if (args.Length > 0 && args[0] == "final")
+        {
+            if (args.Length < 3)
+            { Console.Error.WriteLine("用法：Pt_Optimize.Geom.exe final <spec.json> <out.3dm>"); return 64; }
+            string specPath = args[1], outFinal = args[2];
+            if (!File.Exists(specPath))
+            { Console.Error.WriteLine("规格文件不存在：" + specPath); return 64; }
+            string specJson = File.ReadAllText(specPath, Encoding.UTF8);
+            try { RhinoInside.Resolver.Initialize(); }
+            catch (Exception e) { Console.Error.WriteLine("Resolver 失败：" + e.Message); return 1; }
+            try { return RunFinal(specJson, outFinal); }
+            catch (Exception e) { Console.Error.WriteLine(e.GetType().Name + ": " + e.Message); return 2; }
+            finally { Console.Out.Flush(); Environment.Exit(Environment.ExitCode); }
+        }
+
         if (args.Length > 0 && args[0] == "plate")
         {
             if (args.Length < 7)
@@ -507,6 +528,223 @@ internal static class GeomProbe
     ///   · 舌端一条直边，半宽 tabHW
     /// 每个厚度出一个独立实体，沿 +X 排开，避免叠在一起。
     /// </summary>
+    // （RunPlate 的 [MethodImpl(NoInlining)] 在它自己的定义前，见文件末尾；
+    //   下面先插入 final 模式的实现。）
+
+    // ========================================================================
+    //  final：渲染定案整机几何
+    //
+    //  约定（与 thickness 模式的读取端、Pt_Heater.3dm、Core.FlangePlate 一致）：
+    //    · 板面在 XZ 平面，厚度沿 Y；管轴 = Y
+    //    · 板体关于自身中面对称（正负 t/2）—— 模型里焊角与加厚都是「两面各堆一半」
+    //      （ShellThermal 的 weld 项写作 2*(...) 就是这个意思）
+    //    （2026-08-12 曾把板画在 XY 面、沿 Z 拉伸，与读取端差 90 度，
+    //      导致自己写出的 .3dm 再读回来量到 0 材料 —— round-trip 是硬性验收项）
+    //
+    //  分层：铂管 / 法兰-板身 / 法兰-环外级 / 法兰-环内级 / 压接段（参考）
+    //  各级为独立实体（沿用 steps 模式的做法）：headless 下布尔并集不稳，
+    //  而加工上本来就是「板身 + 两级台阶」，分开更贴近工艺。
+    // ========================================================================
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int RunFinal(string specJson, string outPath)
+    {
+        using (var jd = JsonDocument.Parse(specJson))
+        using (new RhinoCore(new[] { "/NOSPLASH" }, WindowStyle.Hidden))
+        {
+            var R = jd.RootElement;
+            double D(string k) => R.GetProperty(k).GetDouble();
+            string name = R.GetProperty("name").GetString() ?? "";
+            double wall = D("wallMm"), tubeId = D("tubeIdMm"),
+                   segLen = D("segLenMm"), discR = D("discR"), holeR = D("holeR"),
+                   tabX = D("tabX"), tabHW = D("tabHW"), filletR = D("filletR"),
+                   clampLen = D("clampLenMm");
+            int segCount = R.GetProperty("segCount").GetInt32();
+            var ringR = R.GetProperty("ringR").EnumerateArray().Select(e => e.GetDouble()).ToArray();
+            var plates = R.GetProperty("plates").EnumerateArray().ToArray();
+
+            var doc = RhinoDoc.CreateHeadless(null);
+            if (doc == null) { Console.Error.WriteLine("CreateHeadless 返回 null"); return 3; }
+            doc.ModelUnitSystem = UnitSystem.Millimeters;
+            double tol = doc.ModelAbsoluteTolerance;
+
+            // 图层按**片**分，不按类型分。
+            //   理由一：交付件要能单独调出某一片。
+            //   理由二（更硬）：厚度探针沿 Y 打射线，而四片正是沿 Y 排成一列 ——
+            //   同层会被一次穿透、厚度**加起来**（实测 10.450 = 2.11+3.40+3.18+1.76）。
+            //   按片分层之后，round-trip 才量得到单片的真实厚度。
+            int lyTube = doc.Layers.Add("铂管", System.Drawing.Color.Silver);
+            if (lyTube < 0) lyTube = 0;
+            int Ly(string nm, System.Drawing.Color c)
+            { int k = doc.Layers.Add(nm, c); return k < 0 ? 0 : k; }
+
+            // 板身轮廓：盘弧 + 舌根圆角 + 舌片直边
+            //   圆角圆心 (xc, +-(w+r))，|中心| = R + r 故与盘圆外切；
+            //   且中心 z = w + r 故与舌片直边 z = +-w 相切。凹角被这段弧填掉。
+            Curve BodyOutline()
+            {
+                double w = tabHW, fr = Math.Max(0, filletR);
+                var poly = new PolyCurve();
+                if (fr > 1e-9 && (discR + fr) > (w + fr))
+                {
+                    double xc = -Math.Sqrt((discR + fr) * (discR + fr) - (w + fr) * (w + fr));
+                    double k = discR / (discR + fr);
+                    var tUp = new Point3d(xc * k, 0, (w + fr) * k);
+                    var tDn = new Point3d(tUp.X, 0, -tUp.Z);
+                    var fUp = new Point3d(xc, 0, w);
+                    var fDn = new Point3d(xc, 0, -w);
+                    var e1 = new Point3d(tabX, 0, w);
+                    var e2 = new Point3d(tabX, 0, -w);
+                    var cUp = new Point3d(xc, 0, w + fr);
+                    var cDn = new Point3d(xc, 0, -(w + fr));
+                    Point3d FilletMid(Point3d a, Point3d b, Point3d c)
+                    {
+                        var m = new Point3d((a.X + b.X) / 2, 0, (a.Z + b.Z) / 2);
+                        var v = m - c; v.Unitize();
+                        return c + v * fr;
+                    }
+                    poly.Append(new ArcCurve(new Arc(tDn, new Point3d(discR, 0, 0), tUp)));
+                    poly.Append(new ArcCurve(new Arc(tUp, FilletMid(tUp, fUp, cUp), fUp)));
+                    poly.Append(new LineCurve(fUp, e1));
+                    poly.Append(new LineCurve(e1, e2));
+                    poly.Append(new LineCurve(e2, fDn));
+                    poly.Append(new ArcCurve(new Arc(fDn, FilletMid(fDn, tDn, cDn), tDn)));
+                }
+                else
+                {
+                    double amp = Math.Sqrt(tabX * tabX + w * w);
+                    double phi = Math.Atan2(w, tabX);
+                    double th = phi - Math.Acos(discR / amp);
+                    var tp = new Point3d(discR * Math.Cos(th), 0, discR * Math.Sin(th));
+                    var tn = new Point3d(tp.X, 0, -tp.Z);
+                    poly.Append(new ArcCurve(new Arc(tn, new Point3d(discR, 0, 0), tp)));
+                    poly.Append(new LineCurve(tp, new Point3d(tabX, 0, w)));
+                    poly.Append(new LineCurve(new Point3d(tabX, 0, w), new Point3d(tabX, 0, -w)));
+                    poly.Append(new LineCurve(new Point3d(tabX, 0, -w), tn));
+                }
+                poly.MakeClosed(tol);
+                return poly;
+            }
+
+            Curve Circ(double r) => new Circle(Plane.WorldZX, Point3d.Origin, r).ToNurbsCurve();
+
+            // 关于中面对称地拉伸：从 -t/2 拉到 +t/2，再整体平移到 y0
+            Brep Extrude(Curve outer, Curve inner, double t, double y0)
+            {
+                var crvs = inner == null ? new Curve[] { outer } : new Curve[] { outer, inner };
+                var faces = Brep.CreatePlanarBreps(crvs, tol);
+                if (faces == null || faces.Length == 0) return null;
+                var solid = faces[0].Faces[0].CreateExtrusion(
+                    new LineCurve(Point3d.Origin, new Point3d(0, t, 0)), true);
+                if (solid == null) return null;
+                solid.Transform(Transform.Translation(0, y0 - t / 2, 0));
+                return solid;
+            }
+
+            int made = 0;
+            void Add(Brep b, int layer, string nm)
+            {
+                if (b == null) { Console.Error.WriteLine("实体创建失败：" + nm); return; }
+                var att = new Rhino.DocObjects.ObjectAttributes { LayerIndex = layer, Name = nm };
+                if (doc.Objects.AddBrep(b, att) != Guid.Empty) made++;
+            }
+
+            var body = BodyOutline();
+            if (!body.IsClosed) { Console.Error.WriteLine("板身轮廓未闭合"); return 6; }
+
+            for (int j = 0; j < plates.Length; j++)
+            {
+                var P = plates[j];
+                string pn = P.GetProperty("name").GetString() ?? ("片" + (j + 1));
+                double t = P.GetProperty("t").GetDouble();
+                var ring = P.GetProperty("ring").EnumerateArray().Select(e => e.GetDouble()).ToArray();
+                double y0 = j * segLen;
+
+                // 板身挖到环的外边界，内侧由两级环补齐，避免面重合
+                int lyBody  = Ly(pn + "-板身",   System.Drawing.Color.Gold);
+                int lyRingO = Ly(pn + "-环外级", System.Drawing.Color.Orange);
+                int lyRingI = Ly(pn + "-环内级", System.Drawing.Color.OrangeRed);
+                int lyClamp = Ly(pn + "-压接段", System.Drawing.Color.DarkCyan);
+                Add(Extrude(body, Circ(ringR[1]), t, y0), lyBody, pn + "_板身_t" + t.ToString("0.00"));
+                Add(Extrude(Circ(ringR[1]), Circ(ringR[0]), ring[1], y0), lyRingO,
+                    pn + "_环外级_r" + ringR[0].ToString("0.0") + "-" + ringR[1].ToString("0.0")
+                       + "_t" + ring[1].ToString("0.00"));
+                Add(Extrude(Circ(ringR[0]), Circ(holeR), ring[0], y0), lyRingI,
+                    pn + "_环内级_r" + holeR.ToString("0.0") + "-" + ringR[0].ToString("0.0")
+                       + "_t" + ring[0].ToString("0.00"));
+
+                // 压接段（参考几何，非铂件）：自舌端往回 clampLen
+                var cl = new PolyCurve();
+                var a1 = new Point3d(tabX, 0, tabHW);
+                var a2 = new Point3d(tabX + clampLen, 0, tabHW);
+                var a3 = new Point3d(tabX + clampLen, 0, -tabHW);
+                var a4 = new Point3d(tabX, 0, -tabHW);
+                cl.Append(new LineCurve(a1, a2));
+                cl.Append(new LineCurve(a2, a3));
+                cl.Append(new LineCurve(a3, a4));
+                cl.Append(new LineCurve(a4, a1));
+                cl.MakeClosed(tol);
+                Add(Extrude(cl, null, t, y0), lyClamp, pn + "_压接段" + clampLen.ToString("0") + "mm");
+            }
+
+            double ri = tubeId / 2.0, ro = ri + wall;
+            for (int i = 0; i < segCount; i++)
+            {
+                var faces = Brep.CreatePlanarBreps(new Curve[] { Circ(ro), Circ(ri) }, tol);
+                if (faces == null || faces.Length == 0)
+                { Console.Error.WriteLine("管截面创建失败"); return 7; }
+                var solid = faces[0].Faces[0].CreateExtrusion(
+                    new LineCurve(Point3d.Origin, new Point3d(0, segLen, 0)), true);
+                solid.Transform(Transform.Translation(0, i * segLen, 0));
+                Add(solid, lyTube, "管段" + (i + 1) + "_D" + tubeId.ToString("0") + "x"
+                    + wall.ToString("0.00") + "_L" + segLen.ToString("0"));
+            }
+
+            if (!doc.WriteFile(outPath, new Rhino.FileIO.FileWriteOptions { FileVersion = 7 }))
+            { Console.Error.WriteLine("写文件失败：" + outPath); return 9; }
+
+            // ── round-trip：**从磁盘读回**，逐实体量包围盒
+            //
+            // 为什么是包围盒的 Y 向跨度：本模式一律「板面在 XZ、沿 Y 拉伸」，
+            // 故 Y 跨度就是板厚。若哪天又把板画到 XY 面沿 Z 拉伸（2026-08-12 出过），
+            // Y 跨度会变成**盘直径**而不是板厚 —— 一眼就露馅，不必等下游量厚度。
+            //
+            // ⚠ 必须**读回文件**而不是量内存里的 doc：要验的正是「写出去再读回来」这一段。
+            var rt = new List<object>();
+            using (var f3 = Rhino.FileIO.File3dm.Read(outPath))
+            {
+                if (f3 == null) { Console.Error.WriteLine("回读失败：" + outPath); return 10; }
+                foreach (var ob in f3.Objects)
+                {
+                    var g = ob.Geometry;
+                    if (g == null) continue;
+                    var bb = g.GetBoundingBox(true);
+                    if (!bb.IsValid) continue;
+                    // File3dmLayerTable 不支持 [] 索引（照 WinFormRhino8App 的做法按 Index 找）
+                    var lyObj = f3.AllLayers.FirstOrDefault(l => l.Index == ob.Attributes.LayerIndex);
+                    string ly = lyObj?.Name ?? "?";
+                    rt.Add(new
+                    {
+                        layer = ly,
+                        obj = ob.Attributes.Name ?? "",
+                        tY = Math.Round(bb.Max.Y - bb.Min.Y, 4),   // 沿 Y = 厚度（管段则是段长）
+                        y0 = Math.Round((bb.Max.Y + bb.Min.Y) / 2, 4),
+                        dX = Math.Round(bb.Max.X - bb.Min.X, 3),
+                        dZ = Math.Round(bb.Max.Z - bb.Min.Z, 3)
+                    });
+                }
+            }
+
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                file = outPath, name, solids = made,
+                wall, tubeId, segLen, segCount, discR, holeR, tabX, tabHW, filletR,
+                ringR, plateCount = plates.Length,
+                roundTrip = rt
+            }));
+            return 0;
+        }
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static int RunPlate(string outPath, double discR, double holeR,
                                 double tabX, double tabHW, List<double> thicks)

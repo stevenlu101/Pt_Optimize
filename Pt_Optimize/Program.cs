@@ -4691,6 +4691,89 @@ internal static class Program
                 return;
             }
 
+            // --cli --make3dm   ★★★★★ 出定案 3DM（两档各一个），并做 round-trip 校验
+            //
+            // 为什么必须 round-trip：Geom 子进程的注释里记着一次事故 ——
+            //   板画在 XY 面、沿 Z 拉伸，与读取端的「XZ 面、厚度沿 Y」差 90°，
+            //   **自己写出的 .3dm 再读回来量到 0 材料**。文件能打开、图看着对，数是错的。
+            // ⇒ 写完立刻按读取端的口径量回来，与 FinalDesign 逐项比对，不吻合就报错。
+            if (args.Contains("--make3dm"))
+            {
+                string outDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "deliverable");
+                int oi = Array.IndexOf(args, "--out");
+                if (oi >= 0 && oi + 1 < args.Length) outDir = args[oi + 1];
+                outDir = Path.GetFullPath(outDir);
+                Directory.CreateDirectory(outDir);
+
+                Console.WriteLine("=== 定案 3DM 生成 + round-trip 校验 ===");
+                Console.WriteLine("几何只来自 Core/FinalDesign；子进程只渲染，不持有任何定案值。");
+                Console.WriteLine();
+
+                int bad = 0;
+                foreach (var fd in FinalDesign.All)
+                {
+                    string f3 = Path.Combine(outDir, $"定案_管壁{fd.WallMm:0.0}mm.3dm");
+                    Console.WriteLine($"── {fd.Name}");
+                    Console.WriteLine("   " + fd.Describe());
+                    string echo;
+                    try { echo = Geometry3dm.WriteFinal3dm(fd, f3); }
+                    catch (Exception ex) { Console.WriteLine("   ✗ 写文件失败：" + ex.Message); bad++; continue; }
+                    Console.WriteLine("   写出 " + echo);
+
+                    // ── round-trip：解析子进程回显里的 roundTrip 段
+                    //
+                    // ⚠ 第一版是逐图层再启一次 Rhino 去量厚度：24 次 × 每次 15–20 s，
+                    //   跑了 55 分钟没完，还留下一个 490 MB 的孤儿子进程。
+                    //   ⇒ 校验放进**写文件那一个进程**里做（它写完立刻从磁盘读回）。
+                    // 判据：沿 Y 的包围盒跨度 = 板厚。若板被画到 XY 面沿 Z 拉伸
+                    //   （2026-08-12 出过这个事故），Y 跨度会变成盘直径，一眼露馅。
+                    var pnames = new[] { "入口", "共用1", "共用2", "出口" };
+                    var want = new Dictionary<string, double>();
+                    for (int j = 0; j < 4; j++)
+                    {
+                        double tj = fd.TabThickMm[j];
+                        want[$"{pnames[j]}-板身"] = tj;
+                        want[$"{pnames[j]}-环外级"] = tj * fd.RingMulOuter(j);
+                        want[$"{pnames[j]}-环内级"] = tj * fd.RingMul[j];
+                        want[$"{pnames[j]}-压接段"] = tj;
+                    }
+
+                    try
+                    {
+                        using var jd = System.Text.Json.JsonDocument.Parse(echo);
+                        var rt = jd.RootElement.GetProperty("roundTrip");
+                        int okN = 0, badN = 0;
+                        foreach (var e in rt.EnumerateArray())
+                        {
+                            string ly = e.GetProperty("layer").GetString() ?? "";
+                            double tY = e.GetProperty("tY").GetDouble();
+                            if (ly == "铂管")
+                            {
+                                bool okT = Math.Abs(tY - 300.0) <= 0.01;   // 管沿 Y 拉伸 300
+                                if (okT) okN++; else { badN++; bad++;
+                                    Console.WriteLine($"   ✗ 铂管 段长量得 {tY:0.000}，期望 300"); }
+                                continue;
+                            }
+                            if (!want.TryGetValue(ly, out double tw)) continue;
+                            bool ok = Math.Abs(tY - tw) <= 0.005;
+                            if (ok) okN++;
+                            else { badN++; bad++;
+                                Console.WriteLine($"   ✗ {ly,-12} 量得 {tY,7:0.000} mm　期望 {tw,7:0.000}"); }
+                        }
+                        Console.WriteLine($"   round-trip：{okN} 项吻合" + (badN > 0 ? $"，{badN} 项不吻合" : "，全部吻合"));
+                    }
+                    catch (Exception ex)
+                    { bad++; Console.WriteLine("   ✗ 回显解析失败：" + ex.Message); }
+
+                    Console.WriteLine();
+                }
+
+                Console.WriteLine(bad == 0
+                    ? "★ 两档全部写出且 round-trip 逐项吻合（±0.02 mm）"
+                    : $"✗ 有 {bad} 项不吻合 —— **不要把这些 3DM 当交付件**，先查方位约定（XZ 面／厚度沿 Y）");
+                return;
+            }
+
             // --cli --busbarplan   ★★★★ 铜排的长宽高 + 在舌片上的位置（用户 2026-08-14：
             //   「铜排尺寸(长宽高)与排布(分布在舌的位置)必须同时给出」）
             //

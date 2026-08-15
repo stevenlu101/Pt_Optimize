@@ -129,6 +129,65 @@ public static class Geometry3dm
     /// </summary>
     /// <param name="scale">一个值 = 整片统一缩放；多个值 = 逐级独立
     /// （需各级在 .3dm 里是独立实体，否则子进程会明确报出来并退回统一缩放）</param>
+    /// <summary>
+    /// 把**定案构型**（<see cref="FinalDesign"/>）整机写成 .3dm：
+    /// 三段铂管 + 四片法兰（板身 / 环外级 / 环内级）+ 压接段参考几何。
+    ///
+    /// ★ 几何定义只在 <see cref="FinalDesign"/>。这里把它序列化成规格 JSON 交给子进程渲染，
+    ///   子进程**不持有任何定案值** —— 否则同一个数就在两个项目里各存一份，
+    ///   而「抄两处然后悄悄漂开」是本项目最常见的失效（HANDOVER §1.8）。
+    /// </summary>
+    /// <returns>子进程 stdout（JSON 回显，用于与规格逐项比对）</returns>
+    public static string WriteFinal3dm(FinalDesign fd, string outPath,
+                                       double tubeIdMm = 50.0, double segLenMm = 300.0,
+                                       int segCount = 3)
+    {
+        string probe = FindProbe()
+            ?? throw new FileNotFoundException($"找不到 {ProbeName}.exe。先构建 {ProbeName}（需本机装 Rhino 8）。");
+
+        string R(double v) => v.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+        var names = new[] { "入口", "共用1", "共用2", "出口" };
+        var sb = new StringBuilder();
+        sb.Append('{');
+        sb.Append($"\"name\":\"{fd.Name}\",");
+        sb.Append($"\"wallMm\":{R(fd.WallMm)},\"tubeIdMm\":{R(tubeIdMm)},");
+        sb.Append($"\"segLenMm\":{R(segLenMm)},\"segCount\":{segCount},");
+        sb.Append($"\"discR\":{R(fd.DiscRadiusMm)},\"holeR\":{R(fd.HoleRadiusMm)},");
+        sb.Append($"\"tabX\":{R(-fd.TabLengthMm)},\"tabHW\":{R(fd.TabHalfWidthMm)},");
+        sb.Append($"\"filletR\":{R(fd.TabFilletMm)},\"clampLenMm\":{R(fd.ClampLengthMm)},");
+        sb.Append($"\"ringR\":[{R(fd.RingRadiiMm[0])},{R(fd.RingRadiiMm[1])}],");
+        sb.Append("\"plates\":[");
+        for (int j = 0; j < 4; j++)
+        {
+            double t = fd.TabThickMm[j];
+            if (j > 0) sb.Append(',');
+            sb.Append($"{{\"name\":\"{names[j]}\",\"t\":{R(t)},");
+            sb.Append($"\"ring\":[{R(t * fd.RingMul[j])},{R(t * fd.RingMulOuter(j))}]}}");
+        }
+        sb.Append("]}");
+
+        string spec = Path.Combine(Path.GetDirectoryName(outPath) ?? ".",
+                                   Path.GetFileNameWithoutExtension(outPath) + ".spec.json");
+        File.WriteAllText(spec, sb.ToString(), new UTF8Encoding(false));
+
+        var psi = new ProcessStartInfo(probe)
+        {
+            RedirectStandardOutput = true, RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
+            UseShellExecute = false, CreateNoWindow = true
+        };
+        psi.ArgumentList.Add("final");
+        psi.ArgumentList.Add(spec);
+        psi.ArgumentList.Add(outPath);
+
+        using var proc = Process.Start(psi) ?? throw new InvalidOperationException("无法启动 " + probe);
+        string so = proc.StandardOutput.ReadToEnd(), se = proc.StandardError.ReadToEnd();
+        proc.WaitForExit();
+        if (proc.ExitCode != 0)
+            throw new InvalidOperationException($"{ProbeName} final 退出码 {proc.ExitCode}：{se}{so}");
+        return so.Trim();
+    }
+
     public static string ScalePlate3dm(string inPath, string outPath, string layer,
                                        IReadOnlyList<double> scale, double planeY = double.NaN)
     {
