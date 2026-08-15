@@ -108,6 +108,7 @@ public sealed class MainForm : Form
         // ★ 整线设计页：工程师的主工作面，放在最前
         _tabs.TabPages.Insert(0, new AnalysisPage(_in));
         _tabs.TabPages.Insert(0, new LineDesignPage(_in));
+        _tabs.TabPages.Add(new ManualPage());   // 使用说明（图文，按定案档实时生成）
 
         var right = new SplitContainer
         { Dock = DockStyle.Fill, Orientation = System.Windows.Forms.Orientation.Horizontal };
@@ -129,7 +130,20 @@ public sealed class MainForm : Form
             RunLine();
         };
         KeyPreview = true;
-        KeyDown += (_, e) => { if (e.KeyCode == Keys.F5) Run(); };
+        KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.F5) Run();
+            // F1 = 帮助：跳到「使用说明」页（图文，按定案档实时生成）
+            else if (e.KeyCode == Keys.F1) ShowHelp();
+        };
+    }
+
+    /// <summary>F1／「帮助」：切到使用说明页。说明书不做成单独的导出命令，
+    /// 就放在程序里 —— 图是按当前定案档实时画的，导出来的静态副本会和定案值漂开。</summary>
+    private void ShowHelp()
+    {
+        foreach (TabPage t in _tabs.TabPages)
+            if (t is ManualPage) { _tabs.SelectedTab = t; return; }
     }
 
     private void RunLine()

@@ -4691,6 +4691,31 @@ internal static class Program
                 return;
             }
 
+            // --cli --help   命令速查。**图文说明书在 APP 内**（「使用说明」页 / F1），
+            //   那里的图是按 FinalDesign 实时生成的，不会与定案值漂开。
+            if (args.Contains("--help") || args.Contains("-h") || args.Contains("/?"))
+            {
+                Console.WriteLine("Pt_Optimize —— 铂金直接加热整线设计与用量优化");
+                Console.WriteLine();
+                Console.WriteLine("  图文使用说明在 APP 里：不带 --cli 启动，切到「使用说明」页，或按 F1。");
+                Console.WriteLine("  纯文字版：docs/APP使用说明书.md");
+                Console.WriteLine();
+                Console.WriteLine("常用命令（前面都要加 --cli）");
+                Console.WriteLine($"  {"--final2",-34}可行性阶梯：管壁从宽到窄逐档定尺寸，报最薄的全过档");
+                Console.WriteLine($"  {"--busbarplan [--wall 0.6]",-34}铜排尺寸与位置（**自检整线是否全过**）");
+                Console.WriteLine($"  {"--make3dm [--out 目录]",-34}两档定案 3DM + round-trip 校验");
+                Console.WriteLine($"  {"--hotspot [--wall 0.6]",-34}峰值位置实测（坐标、局部 J、局部厚度）");
+                Console.WriteLine($"  {"--knob2 / --ring / --tins",-34}三个旋钮的斜率实测（只测不调）");
+                Console.WriteLine($"  {"--geom [file.3dm]",-34}读 3dm 量几何并与常数比对");
+                Console.WriteLine();
+                Console.WriteLine("定案档（几何的唯一来源 = Core/FinalDesign）");
+                foreach (var fd in FinalDesign.All)
+                    Console.WriteLine($"  --wall {fd.WallMm:0.0}   {fd.Name}　{fd.TotalMassG:0} g　咬住它的：{fd.Binding}");
+                Console.WriteLine();
+                Console.WriteLine("  ⚠ --wall 给了不认识的值会**抛异常**，不会静默回退到默认档。");
+                return;
+            }
+
             // --cli --make3dm   ★★★★★ 出定案 3DM（两档各一个），并做 round-trip 校验
             //
             // 为什么必须 round-trip：Geom 子进程的注释里记着一次事故 ——
