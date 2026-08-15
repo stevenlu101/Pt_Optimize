@@ -3714,10 +3714,10 @@ internal static class Program
                 double filletF2 = 3.0;
                 // R14 在管壁 1.2 拿到全过且**质量几乎不变**（4563→4559 g）⇒ 圆角是免费的。
                 // 继续往薄里走，并试更大的圆角看还有没有余量。
-                foreach (double filletSweep in new[] { 14.0, 20.0 })
+                foreach (double filletSweep in new[] { 3.0 })
                 {
                 filletF2 = filletSweep;
-                foreach (double wallSweep in new[] { 1.0, 0.8, 0.6 })
+                foreach (double wallSweep in new[] { 1.4, 1.2, 1.0, 0.8, 0.6 })
                 {
                 wallF2 = wallSweep;
                 clampF2 = 450.0;
@@ -3995,7 +3995,11 @@ internal static class Program
                         bool bBad = fj <= 0.5;   // B≤0：热往管里灌，与 ②″ 同向（都要更厚的板）
                         if (!double.IsNaN(e2j))
                         {
-                            const double c2Target = -0.02, c2Dead = 0.010;
+                            // ★ C 的限值已由 0 改为 5 K（现场控温精度，用户 2026-08-15）
+                            // ⇒ 靶不再是「贴着 −0.04 的地板」，而是**留 2 K 裕度**的 +3.0。
+                            //   ②″ 大 = 盘相对管更热 = 板更薄 = **更省铂** ⇒ 应该主动用掉这份裕度，
+                            //   而不是像原来那样把它压到地板（那是在为一个 14 mW 的判据白花铂）。
+                            const double c2Target = 3.0, c2Dead = 0.30;
                             const double ringHi = 2.5;
                             double ee = e2j - c2Target;      // >0 ⇒ 盘太热
                             if (bBad || Math.Abs(ee) > c2Dead)

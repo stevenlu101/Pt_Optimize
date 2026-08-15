@@ -119,10 +119,36 @@ public sealed class LineCase
     /// <summary>管根温差目标上限 K（③）。下限恒为 0：温差必须为正，即法兰比管冷。</summary>
     public double RootDeltaMaxK = 10.0;
 
+    /// <summary>
+    /// 判据 ②″（圆盘区最高温 − 管温）的上限 K。
+    ///
+    /// ★★★★★ 2026-08-15：由 **0 改成 5.0**，来源是用户给的两个现场数：
+    ///   · **控温精度 ±5 K** —— 闭环把温度**稳住**的能力
+    ///   · **铂热偶 1000 °C 以上测量误差 ±10 K** —— **知道**它是多少度的能力
+    /// 两者不是一回事。限制「这个差别是否可分辨」的是较大的那个（±10 K），
+    /// 但这里取**较保守的 5 K**；若实测 ②″ 离限值很远，5 与 10 之争即为空。
+    /// （IEC 60584 S/R 型 Class 1 在 1100 °C 附近容差约 ±1 K，但那是新偶出厂容差；
+    ///   加上漂移、不均质、安装与冷端，现场 1000 °C 以上 ±10 K 是实况 —— 以现场数为准。）
+    ///
+    /// 为什么原来的 0 不是工程判据（实测量化）：
+    ///   · 峰值那一格（约 2×2 mm、厚约 4 mm）到管孔的导热通道 G = kA/L ≈ 0.29 W/K
+    ///     ⇒ 0.05 K 的局部超温只对应 **0.014 W** 的倒流，
+    ///     而该片净抽热 +4 W、该段加热功率约 3 kW ⇒ **占 0.35 % / 5 ppm**。
+    ///   · 它却判掉了 686 g 铂（管壁 1.4 vs 1.2）与是否要加大舌根圆角。
+    ///     **用任何仪器都测不出的 14 mW，决定了约 700 g 铂金。**
+    ///   · 结构上也没有裕度：限值 0，而物理地板是 −0.04（盘缘 J=0 的峰，
+    ///     在八档保温 × 五档倍率下恒定）⇒ **可行带宽只有 0.04 K**，比数值噪声还窄。
+    ///
+    /// 失效模式（共用法兰升温烧断）的真实物理是**局部热失稳**，
+    /// 项目里已有闭式判据 `TCR·ΔT ≤ 2`（§4.3e），它允许的局部温升是几十上百 K。
+    /// ⇒ 逐点 ≤ 0 是一个比物理严三个数量级的代理，现按现场可分辨的尺度取 5 K。
+    /// </summary>
+    public double DiscOverTempMaxK = 5.0;
+
     // ── 段↔法兰外层耦合的数值参数（见 LineRunner.Run 里为什么必须欠松弛）
     /// <summary>欠松弛因子。1.0 = 裸 Picard，在法兰倒灌的正反馈下会发散。</summary>
     public double CoupleRelax = 0.35;
-    public int CoupleMaxRounds = 60;
+    public int CoupleMaxRounds = 200;
     /// <summary>
     /// 收敛判据：相邻两轮管根温度变化 K。
     ///
@@ -137,10 +163,12 @@ public sealed class LineCase
     /// 但这仍与被判的裕度（0.00…0.08 K）**同量级** ——
     /// ⇒ 可行性阶梯上那些「差 0.08 K」的精细区分，有一部分是在读收敛残差。
     ///
-    /// 代价：外层轮数上升（容差 1.0 时约 5 轮）。轮数上限同步从 15 提到 60，
-    /// 否则收紧容差只会把「已收敛」变成「未收敛」—— 那正是「修一个坏另一个」。
+    /// ★★ 2026-08-15 再修：语义已改成「**距不动点的估计** Δ∞ ≈ δ·r/(1−r)」，
+    /// 不再是「相邻两轮变化 δ」。故这里取 1.0 K —— 它现在的含义是
+    /// 「解距真解不超过 1 K」，对着 ③ 的 10 K 限值是十分之一，够用。
+    /// 轮数上限同步提到 200：g≈0.96 下从 δ~0.9 走到 Δ∞<1 需要上百轮。
     /// </summary>
-    public double CoupleTolK = 0.02;
+    public double CoupleTolK = 1.0;
 
     /// <summary>
     /// **无法兰基线**的两端管温缓存 `[段][0=左,1=右]`（空 = 由 LineRunner 自己算）。
@@ -564,9 +592,17 @@ public static class LineRunner
                 }
             }
             res = next;
-            if (delta < c.CoupleTolK)
+            // ★★★★★ 收敛判据改成**距不动点的估计**，不是「这一步走了多远」（2026-08-15）。
+            //
+            // δ 只说明本轮迈了多大一步；环路增益 g≈0.96 时，剩余误差是
+            //     Δ∞ ≈ δ·r/(1−r)  ≈ 25 δ
+            // 实测就是这么被骗的：δ=1.36 时判「5 轮收敛」，而真实剩余误差约 34 K。
+            // r 估不出来（未进入几何段）时退回用 δ 本身 —— 但那只发生在快模式阶段，
+            // 此时 δ 本身很大，不会误判为收敛。
+            double remain = (rEst > 0.5 && rEst < 0.999) ? delta * rEst / (1 - rEst) : delta;
+            if (remain < c.CoupleTolK)
             {
-                res.Notes.Add($"外层耦合 {outer + 1} 轮收敛（管根温差 {delta:0.00} K，ω={omega:0.00}，ω 末值 {omega:0.00}／放大 {omegaBoosts} 次／回退 {omegaCuts} 次）");
+                res.Notes.Add($"外层耦合 {outer + 1} 轮收敛（剩余误差估计 {remain:0.00} K，步长 {delta:0.00} K，ω={omega:0.00}，ω 末值 {omega:0.00}／放大 {omegaBoosts} 次／回退 {omegaCuts} 次）");
                 res.Converged = true;
                 break;
             }
@@ -577,7 +613,7 @@ public static class LineRunner
                           $"　⇒ 裸 Picard 增益 g≈{1 - (1 - rEst) / Math.Max(1e-9, omega):0.000}（g→1 即热失控）");
             foreach (var jr in jumpReports) res.Notes.Add("★ 跳变 " + jr);
             res.Notes.Add("★ 残差轨迹 " + string.Join(" ", deltaTrace.Select(v => v.ToString("0.000"))));
-            res.Notes.Add($"★ 外层耦合 {c.CoupleMaxRounds} 轮未收敛（管根温差仍 {delta:0.0} K，ω={omega:0.00}）——" +
+            res.Notes.Add($"★ 外层耦合 {c.CoupleMaxRounds} 轮未收敛（**剩余误差估计 {(rEst > 0.5 && rEst < 0.999 ? delta * rEst / (1 - rEst) : delta):0.0} K**，步长 {delta:0.0} K，ω={omega:0.00}）——" +
                           "本次结果的每个数都不可用：要么再降 ω / 加轮数，要么该工况确实热失控");
             res.Message = "段↔法兰耦合未收敛";
         }
@@ -971,13 +1007,14 @@ public static class LineRunner
             checks.Add(new ConstraintOut
             {
                 Name = "②″圆盘区最高温 − 管温", Unit = "K", Kind = CheckKind.HardSafety,
-                Actual = hottestDisc.TDiscMaxC - hottestDisc.TRootC, Limit = 0,
-                Ok = hottestDisc.TDiscMaxC <= hottestDisc.TRootC + 1e-6,
+                Actual = hottestDisc.TDiscMaxC - hottestDisc.TRootC, Limit = c.DiscOverTempMaxK,
+                Ok = hottestDisc.TDiscMaxC - hottestDisc.TRootC <= c.DiscOverTempMaxK + 1e-6,
                 Where = hottestDisc.Name,
                 // ★ 判据必须自带**病灶位置**：只报差值时，「盘峰贴在管孔上」与
                 //   「轮毂上被自身发热顶起一个尖峰」给出同一个数，却要用相反的旋钮去治。
                 //   r≈管外径 且 J≈0 ⇒ 病在管侧；r 更大且 J 不为零 ⇒ 病在法兰侧。
-                Note = $"圆盘区 {hottestDisc.TDiscMaxC:0.0} vs 管根 {hottestDisc.TRootC:0.0} °C；" +
+                Note = $"限值 = 现场控温精度 ±5 K（用户 2026-08-15）；原限值 0 判的是 14 mW 倒流（占段功率 5 ppm）。" +
+                       $"圆盘区 {hottestDisc.TDiscMaxC:0.0} vs 管根 {hottestDisc.TRootC:0.0} °C；" +
                        $"峰位 r={hottestDisc.DiscMaxRMm:0.0} mm（x={hottestDisc.DiscMaxXMm:+0.0;−0.0}, " +
                        $"z={hottestDisc.DiscMaxZMm:+0.0;−0.0}）J={hottestDisc.DiscMaxJAPerMm2:0.00} " +
                        $"t={hottestDisc.DiscMaxThickMm:0.00} mm；" +
