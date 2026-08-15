@@ -21,10 +21,13 @@ public static class FinalDesign
     /// <summary>本组数值出自哪一次运行 —— 报告里要能追溯到源头</summary>
     public const string Provenance =
         "--final2 可行性阶梯 D6（舌厚→③=8K／环倍率→②″=−0.02K／舌保温抗饱和接力）；" +
-        "**管壁 1.2 mm + 舌根圆角 R14** 是当前最薄的全过档，合计 4559 g。";
+        "两档均全判据通过，业主未定，本文件**暂取保守的 0.8 mm**：" +
+        "0.6 mm = 2398 g（可行域的底：焊接下界与管 J 12 同点咬住，余量 0% / 9%）；" +
+        "0.8 mm = 3117 g（+719 g，换来管 J 余量 21%、壁厚高于焊接下界 33%）。" +
+        "切到 0.6 只需改三行：WallMm=0.6、TabThickMm={1.82,2.91,2.71,1.49}、RingMul 全 1.22。";
 
     // ── 管
-    public static double WallMm = 1.2;
+    public static double WallMm = 0.8;
     public static double TubeInsulMm = 5.0;
     public static readonly double[] SetpointC = { 1150.0, 1080.0, 1050.0 };
 
@@ -32,15 +35,15 @@ public static class FinalDesign
     public static double DiscRadiusMm = 30.0;
     public static double TabLengthMm = 90.0;
     public static double TabHalfWidthMm = 15.0;
-    public static double TabFilletMm = 14.0;   // ★ 不是默认值：R3/6/10 均不过，R14 才全过（且质量几乎不变）
-    public static double[] TabThickMm = { 2.59, 4.51, 4.33, 2.25 };
+    public static double TabFilletMm = 3.0;    // C 限值改 5 K 后 ②″ 只有 +1.17/5 ⇒ 不再需要大圆角
+    public static double[] TabThickMm = { 2.11, 3.40, 3.18, 1.76 };
     public static double[] TabInsulMm = { 18.7, 1.6, 1.4, 3.9 };
 
     // ── 管孔渐变环：**相对量**（绝对值写法已两次造成安静失败，见 §1.8 ⑥⑦）
     /// <summary>环宽 mm，相对管孔外扩；两级台阶在 孔+w 与 孔+2w</summary>
     public static double RingWidthMm = 3.0;
     /// <summary>内圈厚度倍率（相对板厚）；外圈取 1 + 0.4(μ−1)</summary>
-    public static double[] RingMul = { 1.57, 1.10, 1.11, 1.08 };
+    public static double[] RingMul = { 1.24, 1.24, 1.24, 1.24 };
 
     // ── 压接
     public static double ClampLengthMm = 40.0;

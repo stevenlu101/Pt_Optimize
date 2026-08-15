@@ -1,0 +1,170 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>铂管直接加热 · 管壁 0.6</title><style>
+:root{--ground:#EEF1F3;--surface:#FFFFFF;--surface2:#F6F8F9;--ink:#12171A;--ink2:#3D4B53;
+--muted:#68767E;--rule:#D2DADE;--rule2:#E3E9EC;--hot:#C2570F;--hot-bg:#FBEEE3;
+--ok:#2C6B58;--ok-bg:#E6F0EC;--warn:#8A6A12;--warn-bg:#F7F0DC;}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+--ground:#0D1114;--surface:#141A1E;--surface2:#181F24;--ink:#E7EEF1;--ink2:#B3C0C7;
+--muted:#7E8D95;--rule:#28333A;--rule2:#1F282E;--hot:#F0904A;--hot-bg:#2A1A0E;
+--ok:#6FC0A4;--ok-bg:#10231D;--warn:#D8B860;--warn-bg:#231D0E;}}
+:root[data-theme="dark"]{--ground:#0D1114;--surface:#141A1E;--surface2:#181F24;--ink:#E7EEF1;
+--ink2:#B3C0C7;--muted:#7E8D95;--rule:#28333A;--rule2:#1F282E;--hot:#F0904A;--hot-bg:#2A1A0E;
+--ok:#6FC0A4;--ok-bg:#10231D;--warn:#D8B860;--warn-bg:#231D0E;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);
+font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+font-size:16px;line-height:1.65;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1080px;margin:0 auto;padding:0 28px 96px}
+.prose{max-width:66ch}
+h1,h2,h3{font-family:Georgia,"Songti SC","SimSun",serif;font-weight:600;text-wrap:balance;letter-spacing:-.01em}
+h2{font-size:1.45rem;margin:0 0 .2rem}h3{font-size:1.05rem;margin:0 0 .5rem}
+.mono{font-family:ui-monospace,Consolas,Menlo,monospace;font-variant-numeric:tabular-nums}
+.eyebrow{font-family:ui-monospace,Consolas,Menlo,monospace;font-size:.72rem;letter-spacing:.14em;
+text-transform:uppercase;color:var(--muted)}
+.mast{border-bottom:1px solid var(--rule);padding:56px 0 34px;margin-bottom:44px}
+.mast h1{font-size:2.4rem;line-height:1.15;margin:.35rem 0 .6rem}
+.lede{color:var(--ink2);max-width:60ch;margin:0}
+.figs{display:flex;flex-wrap:wrap;gap:0;margin-top:34px;border:1px solid var(--rule);
+border-radius:3px;overflow:hidden;background:var(--surface)}
+.fig{flex:1 1 150px;padding:18px 20px;border-right:1px solid var(--rule2)}
+.fig:last-child{border-right:none}
+.fig .v{font-family:ui-monospace,Consolas,Menlo,monospace;font-variant-numeric:tabular-nums;
+font-size:1.55rem;line-height:1.1;letter-spacing:-.02em}
+.fig .k{font-size:.75rem;color:var(--muted);margin-top:5px}
+.fig.hot .v{color:var(--hot)}
+section{margin-top:52px}
+.sechead{display:flex;align-items:baseline;gap:14px;border-bottom:1px solid var(--rule);
+padding-bottom:10px;margin-bottom:22px}
+.tw{overflow-x:auto;border:1px solid var(--rule);border-radius:3px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:.875rem}
+th,td{padding:9px 14px;text-align:left;border-bottom:1px solid var(--rule2);white-space:nowrap}
+th{font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+font-weight:600;background:var(--surface2)}
+tbody tr:last-child td{border-bottom:none}
+td.n{font-family:ui-monospace,Consolas,Menlo,monospace;font-variant-numeric:tabular-nums}
+tr.sum td{background:var(--surface2);font-weight:600}
+.bar{position:relative;width:104px;height:7px;border-radius:1px;background:var(--rule2);
+display:inline-block;vertical-align:middle}
+.bar i{position:absolute;left:0;top:0;bottom:0;border-radius:1px;background:var(--ok)}
+.bar.tight i{background:var(--hot)}
+.pct{font-size:.78rem;color:var(--muted);margin-left:9px}
+.tag{display:inline-block;font-size:.72rem;padding:2px 8px;border-radius:2px;
+font-family:ui-monospace,Consolas,Menlo,monospace}
+.tag.ok{background:var(--ok-bg);color:var(--ok)}
+.tag.hot{background:var(--hot-bg);color:var(--hot)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px}
+.card{border:1px solid var(--rule);border-radius:3px;padding:18px 20px;background:var(--surface)}
+.card h3{margin-bottom:.35rem}.card p{margin:0;font-size:.9rem;color:var(--ink2)}
+.note{border-left:2px solid var(--hot);padding:2px 0 2px 16px;margin:22px 0;color:var(--ink2);
+font-size:.93rem;max-width:64ch}
+ul{padding-left:1.15rem;max-width:66ch}li{margin:.35rem 0;color:var(--ink2)}
+li strong{color:var(--ink)}p{max-width:66ch}
+.foot{margin-top:60px;padding-top:20px;border-top:1px solid var(--rule);font-size:.82rem;color:var(--muted)}
+@media(max-width:640px){.wrap{padding:0 18px 64px}.mast h1{font-size:1.8rem}}
+</style></head><body><div class="wrap">
+
+<header class="mast">
+  <div class="eyebrow">铂金直接加热系统 · 定案 · 管壁 0.6 mm</div>
+  <h1>用 2398 克铂做一条能造能用的加热线</h1>
+  <p class="lede">三段 Ø50 铂管 + 四片法兰，全判据通过。这是<b>可行域的底</b>——焊接烧穿下界与现场电流密度极限在同一点咬住。</p>
+  <div class="figs">
+    <div class="fig"><div class="v">2398 g</div><div class="k">铂金合计（管 1842 + 法兰 557）</div></div>
+    <div class="fig hot"><div class="v">0.6 mm</div><div class="k">管壁 · 焊接下界 0.6</div></div>
+    <div class="fig hot"><div class="v">10.96</div><div class="k">管 J 峰值 A/mm² · 现场极限 12</div></div>
+    <div class="fig"><div class="v">0.08 h</div><div class="k">空管升温到 1150 °C（限 72 h）</div></div>
+  </div>
+</header>
+
+<section>
+  <div class="sechead"><span class="eyebrow">判据</span><h2>全判据复核</h2></div>
+  <p class="prose">硬判据与目标全部通过。裕度条画的是「离限值还有多远」——它比「过」这个字有用，
+  因为本项目大部分错误都出在<strong>贴着限值判过与不过</strong>。</p>
+  <div class="tw"><table>
+    <thead><tr><th>判据</th><th>类别</th><th>实际</th><th>限值</th><th>裕度</th><th>位置</th></tr></thead>
+    <tbody><tr><td>① 升温 空管到目标</td><td><span class="tag ok">硬判据</span></td><td class="n">0.08 h</td><td class="n">72</td><td><span class="bar"><i style="width:99%"></i></span><span class="pct">100 %</span></td><td>HC2</td></tr><tr><td>②″ 圆盘区最高温 − 管温</td><td><span class="tag ok">硬判据</span></td><td class="n">+1.17 K</td><td class="n">5.00</td><td><span class="bar"><i style="width:77%"></i></span><span class="pct">77 %</span></td><td>入口</td></tr><tr><td>②′ 管孔净流入 须为正</td><td><span class="tag ok">硬判据</span></td><td class="n">+1.63 W</td><td class="n">> 0</td><td><span class="bar"><i style="width:60%"></i></span><span class="pct">方向安全</span></td><td>入口</td></tr><tr><td>③ 法兰增量温降</td><td><span class="tag ok">目标</span></td><td class="n">6.29 K</td><td class="n">10.00</td><td><span class="bar"><i style="width:37%"></i></span><span class="pct">37 %</span></td><td>HC3</td></tr><tr><td>管 J（电流密度）</td><td><span class="tag ok">硬判据</span></td><td class="n">10.96</td><td class="n">12.00</td><td><span class="bar tight"><i style="width:9%"></i></span><span class="pct">9 %</span></td><td>HC1</td></tr><tr><td>管壁 ≥ 焊接烧穿下界</td><td><span class="tag hot">工艺硬底</span></td><td class="n">0.60 mm</td><td class="n">0.60</td><td><span class="bar tight"><i style="width:2%"></i></span><span class="pct">0 %</span></td><td>全线</td></tr></tbody></table></div>
+  <div class="note"><strong>底档。</strong>阶梯到底了。管壁再薄，既焊不出来（手工 TIG 烧穿 0.6 mm），电流密度也过线（10.96 / 12）。这两条同点咬住不是巧合——它们都随壁厚同向变紧。</div>
+</section>
+
+<section>
+  <div class="sechead"><span class="eyebrow">交付 01</span><h2>铂管</h2></div>
+  <div class="tw"><table>
+    <thead><tr><th>段</th><th>控温点</th><th>长度</th><th>内径</th><th>壁厚</th><th>保温</th><th>电流</th><th>管 J</th><th>铂重</th></tr></thead>
+    <tbody><tr><td>HC1 入口段</td><td class="n">1150 °C</td><td class="n">300 mm</td><td class="n">Ø50</td><td class="n">0.60 mm</td><td class="n">5 mm</td><td class="n">1045 A</td><td class="n">10.96</td><td class="n">614 g</td></tr><tr><td>HC2 中段</td><td class="n">1080 °C</td><td class="n">300 mm</td><td class="n">Ø50</td><td class="n">0.60 mm</td><td class="n">5 mm</td><td class="n">928 A</td><td class="n">9.73</td><td class="n">614 g</td></tr><tr><td>HC3 出口段</td><td class="n">1050 °C</td><td class="n">300 mm</td><td class="n">Ø50</td><td class="n">0.60 mm</td><td class="n">5 mm</td><td class="n">882 A</td><td class="n">9.25</td><td class="n">614 g</td></tr>
+    <tr class="sum"><td>合计</td><td></td><td class="n">900 mm</td><td></td><td></td><td></td><td></td><td></td><td class="n">1842 g</td></tr>
+    </tbody></table></div>
+  <p style="margin-top:14px;font-size:.9rem;color:var(--ink2)">管保温 5 mm 是<strong>扫描验证过的</strong>，不是默认值：
+  1 / 2 / 3 / 5 / 8 / 12 mm 全扫过，5 mm 恰在拐点上——再薄，法兰会反过来比管热（热往管里灌）；再厚，法兰抽热过大把管根抽冷。</p>
+</section>
+
+<section>
+  <div class="sechead"><span class="eyebrow">交付 02</span><h2>四片法兰</h2></div>
+  <p class="prose">盘 Ø60、等宽舌片 90 × 30 mm、舌根过渡圆角 R3、盘舌等厚。
+  管孔外做<strong>两级渐变加厚环</strong>压制电流拥塞：台阶半径 r ≤ 28.6 与 r ≤ 31.6 mm（管孔 25.6 mm 外扩 3 / 6），
+  厚度为板厚的 × 1.22 与 × 1.088。</p>
+  <div class="tw"><table>
+    <thead><tr><th>片</th><th>电流</th><th>板厚</th><th>环 r ≤ 28.6</th><th>环 r ≤ 31.6</th><th>舌片保温</th><th>铜排带走</th><th>铂重</th></tr></thead>
+    <tbody><tr><td>入口端片</td><td class="n">1045 A</td><td class="n">1.82 mm</td><td class="n">2.22 mm</td><td class="n">1.98 mm</td><td class="n">18.7 mm</td><td class="n">197 W</td><td class="n">112 g</td></tr><tr><td>共用片 HC1｜HC2</td><td class="n">1710 A</td><td class="n">2.91 mm</td><td class="n">3.55 mm</td><td class="n">3.17 mm</td><td class="n">1.6 mm</td><td class="n">290 W</td><td class="n">184 g</td></tr><tr><td>共用片 HC2｜HC3</td><td class="n">1568 A</td><td class="n">2.71 mm</td><td class="n">3.31 mm</td><td class="n">2.95 mm</td><td class="n">1.4 mm</td><td class="n">249 W</td><td class="n">170 g</td></tr><tr><td>出口端片</td><td class="n">882 A</td><td class="n">1.49 mm</td><td class="n">1.82 mm</td><td class="n">1.62 mm</td><td class="n">3.9 mm</td><td class="n">135 W</td><td class="n">91 g</td></tr>
+    <tr class="sum"><td>合计</td><td></td><td></td><td></td><td></td><td></td><td class="n">871 W</td><td class="n">557 g</td></tr>
+    </tbody></table></div>
+  <div class="cards" style="margin-top:18px">
+    <div class="card"><h3>渐变环是<em>相对</em>量</h3><p>台阶半径相对管孔、厚度相对板厚。写成绝对值会在板厚一变时静默失效——这个坑踩过，
+    代价是整条优化停在离最优 28 % 的地方，而全程没有任何报错。</p></div>
+    <div class="card"><h3>共用片走 √3 倍电流</h3><p>两侧段电流相位差 120°，共用片承担 1710 A / 1568 A，
+    发热 ∝ I² ⇒ 它比端片厚得多、保温薄得多，是四片里最紧的两片。</p></div>
+    <div class="card"><h3>舌片保温差 12 倍</h3><p>18.7 / 1.6 / 1.4 / 3.9 mm。端片要靠保温保住发热，
+    共用片本身发热过剩、几乎要裸露散热。<strong>四片不能同规格。</strong></p></div>
+  </div>
+</section>
+
+<section>
+  <div class="sechead"><span class="eyebrow">交付 03</span><h2>铜排：尺寸与位置</h2></div>
+  <p class="prose">每片上下各夹一块（接触面积翻倍，压接界面电流密度减半）。压接段<strong>必须在舌片末端</strong>——
+  它是 450 °C 的冷边界，越靠近圆盘，自由段越短、引线漏热 ∝ 1/ℓ 越大，直接把管根抽冷。</p>
+  <div class="tw"><table>
+    <thead><tr><th>片</th><th>压接块 宽×长×厚 mm</th><th>散热段 宽×厚×长 mm</th><th>铜排 J</th><th>压接界面 J</th><th>铜重（每片两块）</th></tr></thead>
+    <tbody><tr><td>入口端片</td><td class="n">30 × 40 × 11.6</td><td class="n">59 × 6.0 × 733</td><td class="n">3.00</td><td class="n">0.44</td><td class="n">2.54 kg</td></tr><tr><td>共用片 HC1｜HC2</td><td class="n">30 × 40 × 19.0</td><td class="n">83 × 6.9 × 788</td><td class="n">3.00</td><td class="n">0.71</td><td class="n">4.43 kg</td></tr><tr><td>共用片 HC2｜HC3</td><td class="n">30 × 40 × 17.4</td><td class="n">69 × 7.5 × 825</td><td class="n">3.00</td><td class="n">0.65</td><td class="n">4.24 kg</td></tr><tr><td>出口端片</td><td class="n">30 × 40 × 9.8</td><td class="n">37 × 7.9 × 845</td><td class="n">3.00</td><td class="n">0.37</td><td class="n">2.44 kg</td></tr></tbody></table></div>
+  <ul style="margin-top:16px">
+    <li><strong>位置</strong>：舌片自圆盘切点 x = −26.0 伸到末端 x = −90 mm，等宽 30 mm；压接段 x ∈ [−90, −50]，即自末端往回 40 mm。</li>
+    <li><strong>表面</strong>：按氧化铜 ε = 0.7 取。抛光铜只有 0.05，<strong>差 14 倍</strong>——散热段长度直接翻几倍，务必按实际表面核。</li>
+    <li><strong>排不下时</strong>：加风（h 从 8 提到 30）可把长度砍一半。不需要水冷——夹持温度 400 与 80 °C 只差 10 W / 18 K。</li>
+  </ul>
+</section>
+
+<section>
+  <div class="sechead"><span class="eyebrow">交付 04</span><h2>升温规程</h2></div>
+  <div class="cards">
+    <div class="card"><h3>0.08 h</h3><p>空管 25 → 1150 °C，限值 72 h（业主给的 ≤ 3 天）。裕度极大。</p></div>
+    <div class="card"><h3>电流上限 12 A/mm²</h3><p>升温电流取 min（J 上限 × 截面，0.9 × 热稳定极限）。
+    这个 12 是现场给的：一般上限 15，管壁 0.6 时 12 是极限。</p></div>
+    <div class="card"><h3>共用片是烧断风险点</h3><p>现场失效都发生在升温阶段、卡在共用片。
+    本方案四片的管孔净流入全为正（法兰在从管子抽热），方向安全。</p></div>
+  </div>
+</section>
+
+<section>
+  <div class="sechead"><span class="eyebrow">保留</span><h2>必须一起交代的</h2></div>
+  <ul>
+    <li><strong>省了多少，不能只报一个百分比。</strong>常被引用的 7141 g 出自随手给的 Ø120 × 2.0 构型，
+    <strong>从未证明它满足本项判据</strong>。真正的成果是可行域被打开，不是那个比值。</li>
+    <li><strong>数值不确定度：管根温度 ± 0.75 K。</strong>本档报「10 轮收敛，剩余误差 0.75 K」，
+    放大倍数是实测的 2.5。折算到 ③ 同量级（限值 10），到 ②″ 约 ±0.01 K（限值 5）——都远小于裕度。</li>
+    <li><strong>网格 2 mm，而 ②″ 的峰落在几何奇异的凹角上</strong>（舌片直边与圆盘圆弧的交接处）。
+    该处场随网格加密而增大。现在 ②″ 裕度充足，这个误差吃不掉它；若将来收紧限值，必须先做局部加密。</li>
+    <li><strong>④ 管强度利用率「无法判定」。</strong>实际 0.84，但 HC3 的 1050 °C 落在铂持久强度实测区间
+    [1100, 1400] °C 之外。蠕变已按业主指示不计，此项为参考。</li>
+    <li><strong>法兰 J_max = 34.1 A/mm²，其限值 10 仍无依据。</strong>已另行验证「高 J 不等于局部过热」，
+    故列为参考量；但这个数本身还欠一个来源。</li>
+    <li><strong>玻璃温降 20.67 K vs 现场实测 20 K。</strong>偏差 +0.67 K。
+    这是全模型唯一一个拿现场数据校准过的量。</li>
+    <li><strong>另一档</strong>：0.8 mm 档 为 3117 g，管 J 裕度 21 %、壁厚高于焊接下界 33 %。两档的全部判据都通过，差别只在裕度与铂重，取舍由业主定。</li>
+  </ul>
+</section>
+
+<div class="foot">
+  几何取自 <span class="mono">FinalDesign</span>（定案唯一来源）· 判据取自 <span class="mono">LineRunner.Judge</span>（判据唯一来源）·
+  由 <span class="mono">--final2</span> 可行性阶梯定尺寸，<span class="mono">--busbarplan</span> 配铜排，两者均自检整线是否全判据通过。
+  两档由同一脚本生成，口径一致。
+</div>
+
+</div></body></html>
