@@ -339,7 +339,14 @@ public static class LineRunner
         //   基线只依赖管几何/保温/控温点，与法兰热解无关 ⇒ 每个构型算一次即可。
         var baseline = new (double A, double B)[c.SegmentCount];
         string baseFailMsg = "";
-        if (c.BaselineRootC.Length >= c.SegmentCount)
+        // ⚠ 缓存必须校验**内容**，不能只看长度：失败时写进去的是 (NaN,NaN)，
+        //   长度照样够 ⇒ 会把一次失败永久固化。含 NaN 一律重算。
+        bool cacheOk = c.BaselineRootC.Length >= c.SegmentCount;
+        for (int i = 0; cacheOk && i < c.SegmentCount; i++)
+            if (c.BaselineRootC[i].Length < 2 ||
+                double.IsNaN(c.BaselineRootC[i][0]) || double.IsNaN(c.BaselineRootC[i][1]))
+                cacheOk = false;
+        if (cacheOk)
         {
             for (int i = 0; i < c.SegmentCount; i++)
                 baseline[i] = (c.BaselineRootC[i][0], c.BaselineRootC[i][1]);
@@ -371,9 +378,8 @@ public static class LineRunner
             c.BaselineRootC = baseline.Select(b => new[] { b.A, b.B }).ToArray();
         }
 
-        var res = RunOnce(c, progress, cancel, null);
+        var res = RunOnce(c, progress, cancel, null, null, null, baseline);
         if (!res.Ok) return res;
-        ApplyBaseline(res, baseline);
         if (baseFailMsg.Length > 0) res.Notes.Add("★ 无法兰基线失败 ⇒ 判据③无法判定：" + baseFailMsg);
 
         // ── 外层耦合：段 ↔ 法兰。首轮段解用抽热 0，拿到壳温度场后回灌重解。
@@ -427,9 +433,8 @@ public static class LineRunner
             progress?.Report($"外层耦合 {outer + 1}/{c.CoupleMaxRounds}（ω={omega:0.00}）：回灌法兰抽热 + 段间端温…");
             var next = RunOnce(c, progress, cancel, (double[])draws.Clone(),
                                ((double L, double R)[])drawsLR.Clone(),
-                               ((double L, double R)[])nbT.Clone());
+                               ((double L, double R)[])nbT.Clone(), baseline);
             if (!next.Ok) return next;
-            ApplyBaseline(next, baseline);
             delta = Enumerable.Range(0, c.SegmentCount)
                 .Max(i => Math.Abs(next.Segments[i].TRootC - res.Segments[i].TRootC));
             res = next;
@@ -465,7 +470,8 @@ public static class LineRunner
     private static LineResult RunOnce(LineCase c, IProgress<string>? progress,
                                       CancellationToken cancel, double[]? drawIn,
                                       (double L, double R)[]? drawLR = null,
-                                      (double L, double R)[]? nbT = null)
+                                      (double L, double R)[]? nbT = null,
+                                      (double A, double B)[]? baseline = null)
     {
         var res = new LineResult { BaselineMassG = c.BaselineMassG };
         int n = c.SegmentCount, nf = c.FlangeCount;
@@ -711,6 +717,15 @@ public static class LineRunner
         res.SavingPct = c.BaselineMassG > 0
             ? (c.BaselineMassG - res.TotalMassG) / c.BaselineMassG * 100 : 0;
 
+        // ★★ 次序：**数据必须在评判之前完整**。
+        //   ③ 的输入是 SegmentOut.FlangeDipK，而它唯一的来源是 ApplyBaseline。
+        //   原来 ApplyBaseline 在 Run() 里、RunOnce **返回之后**才调用 ——
+        //   于是 Judge 评的是一个还没被填的字段，③ **永远**是 NaN/无法判定，
+        //   与基线算得出算不出毫无关系（实测：基线子解 Ok=true，是次序错）。
+        //   ⇒ 基线传进来，在 Judge 之前填好。
+        //   不选「Judge 之后重评一次」：判据评两遍会产生「以哪遍为准」的歧义，
+        //   而**同一件事有多个来源**正是本项目连错四次的结构性根源。
+        if (baseline is not null) ApplyBaseline(res, baseline);
         res.Checks = Judge(c, res, segs, flanges, segParams);
         return res;
     }

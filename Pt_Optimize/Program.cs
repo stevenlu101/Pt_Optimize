@@ -3923,6 +3923,7 @@ internal static class Program
                     if (rFull.Ok)
                     {
                         bestF2 = rFull;
+                        foreach (var nt in rFull.Notes) Console.WriteLine("   NOTE " + nt);
                         Console.WriteLine($"   {"判据",-24}{"实际",10}{"限值",10}{"位置",10}  ");
                         foreach (var ck in rFull.Checks)
                             Console.WriteLine($"   {ck.Name,-24}{ck.Actual,10:0.00}{ck.Limit,10:0.00}" +
