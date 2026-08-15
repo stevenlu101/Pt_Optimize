@@ -116,6 +116,96 @@ public sealed class ManualPage : TabPage
     //  SVG：全部按 FinalDesign 的实际尺寸画，标注也取自它
     // ════════════════════════════════════════════════════════════════════
 
+    /// <summary>
+    /// 界面地图：主窗口分几块、五个页签各是什么。
+    ///
+    /// ⚠ 这张图是**手写的示意**，不像其余几张那样由 FinalDesign 生成 ——
+    ///   它画的是界面结构，而界面结构在代码里（MainForm 的 SplitContainer 与 TabPages）。
+    ///   ⇒ 改了页签或工具条，**必须回来改这里**。图与界面漂开时没有任何东西会报错。
+    ///   （已知同源：MainForm.cs 的 TabPages 顺序、LineDesignPage/AnalysisPage 的工具条。）
+    /// </summary>
+    private static string SvgUi()
+    {
+        var sb = new StringBuilder();
+        sb.Append("<svg viewBox=\"0 0 620 376\" width=\"100%\" style=\"max-width:620px\">");
+
+        string Box(double x, double y, double w, double h, string fill) =>
+            $"<rect x=\"{x:0.#}\" y=\"{y:0.#}\" width=\"{w:0.#}\" height=\"{h:0.#}\" rx=\"3\" " +
+            $"fill=\"{fill}\" stroke=\"var(--rule)\" stroke-width=\"1\"/>";
+        string Txt(double x, double y, string t, string cls = "lbl", string an = "start") =>
+            $"<text x=\"{x:0.#}\" y=\"{y:0.#}\" text-anchor=\"{an}\" class=\"{cls}\">{t}</text>";
+        string Badge(double x, double y, string n) =>
+            $"<circle cx=\"{x:0.#}\" cy=\"{y:0.#}\" r=\"10\" fill=\"var(--clamp)\"/>" +
+            $"<text x=\"{x:0.#}\" y=\"{y + 4.5:0.#}\" text-anchor=\"middle\" " +
+            $"style=\"font:bold 12px sans-serif;fill:#FFF\">{n}</text>";
+
+        sb.Append(Box(10, 10, 600, 356, "var(--bg)"));
+        // 标题栏
+        sb.Append(Box(10, 10, 600, 24, "var(--card)"));
+        sb.Append(Txt(20, 26, "Pt_Optimize — 铂金直接加热 整线设计与用量优化", "lbl dim"));
+        // 主工具条
+        sb.Append(Box(10, 34, 600, 27, "var(--card)"));
+        double bx = 18;
+        foreach (var s in new[] { "计算 (F5)", "│", "扫描：保温厚度", "扫描：法兰厚度",
+                                  "扫描：铂发射率", "│", "保存", "读取", "导出 CSV" })
+        { sb.Append(Txt(bx, 52, s, "lbl")); bx += s == "│" ? 12 : s.Length * 12.4 + 12; }
+        sb.Append(Badge(596, 47, "④"));
+
+        // 左：参数表
+        sb.Append(Box(15, 66, 194, 294, "var(--card)"));
+        sb.Append(Txt(25, 86, "参数表", "lbl"));
+        sb.Append(Txt(25, 103, "DesignInputs，分类折叠", "lbl dim"));
+        for (int i = 0; i < 7; i++)
+        {
+            sb.Append($"<line x1=\"25\" y1=\"{122 + i * 22}\" x2=\"110\" y2=\"{122 + i * 22}\" " +
+                      "stroke=\"var(--rule)\" stroke-width=\"6\" stroke-linecap=\"round\"/>");
+            sb.Append($"<line x1=\"124\" y1=\"{122 + i * 22}\" x2=\"196\" y2=\"{122 + i * 22}\" " +
+                      "stroke=\"var(--dim)\" stroke-width=\"6\" stroke-linecap=\"round\" stroke-opacity=\"0.45\"/>");
+        }
+        sb.Append(Badge(28, 296, "①"));
+
+        // 右上：报告
+        sb.Append(Box(215, 66, 380, 122, "var(--card)"));
+        sb.Append(Txt(227, 86, "报告（单段解，随「计算 (F5)」刷新）", "lbl"));
+        for (int i = 0; i < 5; i++)
+            sb.Append($"<line x1=\"227\" y1=\"{104 + i * 16}\" x2=\"{300 + (i * 61) % 250}\" " +
+                      $"y2=\"{104 + i * 16}\" stroke=\"var(--rule)\" stroke-width=\"5\" stroke-linecap=\"round\"/>");
+        sb.Append(Badge(578, 175, "②"));
+
+        // 右下：页签区
+        sb.Append(Box(215, 194, 380, 166, "var(--card)"));
+        double tx = 219;
+        foreach (var (t, on) in new (string, bool)[]
+                 { ("整线设计", true), ("分析", false), ("分段核算", false),
+                   ("轴向剖面", false), ("使用说明", false) })
+        {
+            double w = t.Length * 13.2 + 14;
+            sb.Append($"<rect x=\"{tx:0.#}\" y=\"198\" width=\"{w:0.#}\" height=\"23\" rx=\"3\" " +
+                      $"fill=\"{(on ? "var(--clamp)" : "var(--bg)")}\" stroke=\"var(--rule)\"/>");
+            sb.Append($"<text x=\"{tx + w / 2:0.#}\" y=\"214\" text-anchor=\"middle\" class=\"lbl\"" +
+                      (on ? " style=\"fill:#FFF\"" : "") + $">{t}</text>");
+            tx += w + 4;
+        }
+        sb.Append(Badge(578, 210, "③"));
+        // 页签内部：自己的工具条 + 输出 + 图
+        sb.Append(Box(222, 228, 366, 24, "var(--bg)"));
+        bx = 230;
+        // ⚠ 这条内工具条只画得下几个 —— 全表在图下方。
+        //   按 11.6 px/字 排完必须落在面板右边界 588 之内，加项前先算一遍：
+        //   多出去的不会被裁掉，会直接画到 viewBox 外，图上看不见但确实丢了。
+        foreach (var s in new[] { "核算整线", "自动定厚", "│",
+                                  "定案档▾", "载入定案", "导出定案 3DM", "…" })
+        { sb.Append(Txt(bx, 245, s, "lbl dim")); bx += s == "│" ? 10 : s.Length * 11.6 + 10; }
+        sb.Append(Box(222, 258, 366, 46, "var(--bg)"));
+        sb.Append(Txt(232, 275, "判据表 + 收敛信息（文本）", "lbl dim"));
+        sb.Append(Box(222, 310, 366, 44, "var(--bg)"));
+        sb.Append(Txt(232, 327, "法兰温度场 / 法兰电流密度场 / 管轴向剖面", "lbl dim"));
+        sb.Append(Badge(578, 332, "⑤"));
+
+        sb.Append("</svg>");
+        return sb.ToString();
+    }
+
     /// <summary>法兰平面图（板面 = XZ 平面，与 3DM 的方位约定一致）。</summary>
     private static string SvgPlate(FinalDesign fd)
     {
@@ -355,15 +445,18 @@ public sealed class ManualPage : TabPage
         sb.Append($"<text x=\"{PX(25.0 + wall / 2)}\" y=\"{mid - tMax / 2 * s - 32:0.0}\" " +
                   $"text-anchor=\"middle\" class=\"lbl dim\">铂管壁 {wall:0.0}</text>");
 
+        // ⚠ 标注**攒着最后画**。焊肉横跨环内级那一带，若边画边标，
+        //   后画的焊肉会把「环内级 / 2.62 mm」两行字盖掉一半（实测过）。
+        var lbl = new StringBuilder();
         void Band(double a2, double b2, double th, string col, string lab)
         {
             if (b2 - a2 <= 1e-9) return;
             sb.Append($"<rect x=\"{PX(a2)}\" y=\"{mid - th / 2 * s:0.0}\" width=\"{(b2 - a2) * s:0.0}\" " +
                       $"height=\"{th * s:0.0}\" fill=\"{col}\" stroke=\"var(--ink)\" stroke-width=\"0.9\"/>");
-            sb.Append($"<text x=\"{PX((a2 + b2) / 2)}\" y=\"{mid - th / 2 * s - 7:0.0}\" " +
-                      $"text-anchor=\"middle\" class=\"lbl\">{lab}</text>");
-            sb.Append($"<text x=\"{PX((a2 + b2) / 2)}\" y=\"{mid + th / 2 * s + 14:0.0}\" " +
-                      $"text-anchor=\"middle\" class=\"lbl\">{th:0.00} mm</text>");
+            lbl.Append($"<text x=\"{PX((a2 + b2) / 2)}\" y=\"{mid - th / 2 * s - 7:0.0}\" " +
+                       $"text-anchor=\"middle\" class=\"lbl\">{lab}</text>");
+            lbl.Append($"<text x=\"{PX((a2 + b2) / 2)}\" y=\"{mid + th / 2 * s + 14:0.0}\" " +
+                       $"text-anchor=\"middle\" class=\"lbl\">{th:0.00} mm</text>");
         }
         Band(h, r1, ti, "var(--ring1)", "环内级");
         Band(r1, r2, to, "var(--ring2)", "环外级");
@@ -406,6 +499,7 @@ public sealed class ManualPage : TabPage
         foreach (var (rv, lab) in new[] { (h, $"管孔 r={h:0.0}"), (r1, $"{r1:0.0}"), (r2, $"{r2:0.0}") })
             sb.Append($"<text x=\"{PX(rv)}\" y=\"{H - 8:0.0}\" text-anchor=\"middle\" class=\"lbl dim\">{lab}</text>");
         sb.Append($"<text x=\"{W - 4:0}\" y=\"14\" text-anchor=\"end\" class=\"lbl dim\">1:1（未放大）　横轴 = 半径 mm</text>");
+        sb.Append(lbl);            // ← 分区标注最后画，见上面 Band 处的说明
         sb.Append("</svg>");
         return sb.ToString();
     }
@@ -510,6 +604,8 @@ th,td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--rule)}
 th{font-size:.76rem;color:var(--muted);background:var(--bg)}
 tr:last-child td{border-bottom:none}
 td.n{font-family:Consolas,monospace}
+/* 首列是短标签的表：不让「分段核算」被折成「分段核／算」 */
+table.nw td:first-child,table.nw th:first-child{white-space:nowrap}
 .bar{display:inline-block;width:86px;height:7px;background:var(--rule);position:relative;
 border-radius:1px;vertical-align:middle}
 .bar i{position:absolute;left:0;top:0;bottom:0;background:var(--ok);border-radius:1px}
@@ -530,12 +626,71 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "换档，图跟着变。图片一旦静态化就成了「同一个数存两处」——" +
                   "定案值一改，图还留在旧构型上，而它看起来完全正常。</div>");
 
-        sb.Append("<h2>1. 整线布置</h2>");
+        // ════════════════════════════════════════════════════════════════
+        //  操作说明（用户 2026-08-16：「APP 程式的操作说明放入 APP 内」）
+        //  原来这部分只在 docs\APP使用说明书.md 里，程序里反而没有 ——
+        //  说明书离开了它说明的那个东西，就是最容易漂开的一种「两处」。
+        // ════════════════════════════════════════════════════════════════
+        sb.Append("<h2>1. 上手：三件最常做的事</h2>");
+        sb.Append("<table><tr><th>你想做什么</th><th>怎么做</th><th>看哪里</th></tr>" +
+                  "<tr><td><b>看定案档长什么样、用多少铂</b></td>" +
+                  "<td>「整线设计」页 → 选<b>定案档 ▾</b> → 点<b>载入定案</b> → 点<b>核算整线</b></td>" +
+                  "<td>下方判据表（先看<b>裕度</b>列）</td></tr>" +
+                  "<tr><td><b>出图纸交给加工</b></td>" +
+                  "<td>「整线设计」页 → 选定案档 → 点<b>导出定案 3DM</b></td>" +
+                  "<td>输出框里的 round-trip 与质量对账</td></tr>" +
+                  "<tr><td><b>改个参数试试</b></td>" +
+                  "<td>改左侧参数表或本页控件 → <b>核算整线</b>（分钟级，可取消）</td>" +
+                  "<td>判据表 + 三张场图</td></tr></table>");
+        sb.Append("<div class=\"note\"><b>「核算整线」走的是页面上的参数，不是定案档。</b>" +
+                  "「载入定案」有两项控件表达不了 —— <b>管孔两级渐变环</b>与<b>逐片舌保温</b>，" +
+                  "载入后输出框会把它们列出来。要<b>复现定案数</b>，用「导出定案 3DM」" +
+                  "或命令行 <code>--cli --busbarplan --wall 0.6</code>。</div>");
+
+        sb.Append("<h2>2. 界面在哪、按钮做什么</h2>");
+        sb.Append($"<div class=\"fig\">{SvgUi()}" +
+                  "<div class=\"cap\">窗口分三块：左边参数表、右上报告、右下页签区。" +
+                  "顶上那条是<b>主工具条</b>（只管左边那张参数表）；" +
+                  "<b>每个页签有自己的工具条</b>，两者互不相干 —— 这是最常见的误按。</div></div>");
+
+        sb.Append("<table><tr><th></th><th>是什么</th><th>要点</th></tr>" +
+                  "<tr><td>①</td><td><b>参数表</b>（左侧，分类折叠）</td>" +
+                  "<td>单段模型的全部输入。选中某项时下方有说明。" +
+                  "改这里只影响「计算 (F5)」那条链</td></tr>" +
+                  "<tr><td>②</td><td><b>报告</b>（右上）</td>" +
+                  "<td>单段解：铂用量／热平衡／电气／温度分布／流动。<b>不含法兰</b></td></tr>" +
+                  "<tr><td>③</td><td><b>五个页签</b></td>" +
+                  "<td>整线设计（主力）／分析／分段核算／轴向剖面／使用说明（本页，<b>F1</b> 直达）</td></tr>" +
+                  "<tr><td>④</td><td><b>主工具条</b></td>" +
+                  "<td>计算 (F5)、三个扫描、保存／读取方案、导出 CSV</td></tr>" +
+                  "<tr><td>⑤</td><td><b>页签自己的工具条</b></td>" +
+                  "<td>整线设计页的按钮在这里，见下表</td></tr></table>");
+
+        sb.Append("<h3>「整线设计」页的工具条（主力页）</h3>");
+        sb.Append("<table class=\"nw\"><tr><th>按钮</th><th>做什么</th><th>耗时</th></tr>" +
+                  "<tr><td><b>核算整线</b></td><td>按页面参数解一次耦合场，出判据表</td><td>分钟级，可取消</td></tr>" +
+                  "<tr><td><b>自动定厚</b></td><td>让优化器调四片法兰厚度</td><td>更久，可取消</td></tr>" +
+                  "<tr><td>分析几何变数</td><td>报各几何量对判据的斜率（只测不调）</td><td>分钟级</td></tr>" +
+                  "<tr><td>导出 .3dm</td><td>只导法兰板（旧功能，非定案构型）</td><td>秒级</td></tr>" +
+                  "<tr><td><b>定案档 ▾ + 载入定案</b></td><td>把 <code>FinalDesign</code> 的某一档灌进各控件</td><td>即时</td></tr>" +
+                  "<tr><td><b>导出定案 3DM</b></td><td>整机几何 + 自校（见 §7）</td><td>十几秒</td></tr></table>");
+
+        sb.Append("<h3>其余四个页签</h3>");
+        sb.Append("<table class=\"nw\"><tr><th>页签</th><th>用途</th></tr>" +
+                  "<tr><td><b>分析</b></td><td>① 升温可达性、② 厚度灵敏度 —— 两个独立的专项核算</td></tr>" +
+                  "<tr><td><b>分段核算</b></td><td>逐段填温度／水头／牌号／壁厚，出强度与铂重（<b>解析、即时</b>）。" +
+                  "「核算法兰」把法兰算进来才是可交付的总铂</td></tr>" +
+                  "<tr><td><b>轴向剖面</b></td><td>单段解的温度沿轴分布（随 F5 刷新）</td></tr>" +
+                  "<tr><td><b>使用说明</b></td><td>本页。工具条上可切定案档，图跟着重画</td></tr></table>");
+        sb.Append("<div class=\"note\"><b>「分段核算」页是解析的，「整线设计」页是耦合数值解。</b>" +
+                  "两者数不一样很正常 —— 前者不解温度场。<b>可交付的数以「整线设计」页为准。</b></div>");
+
+        sb.Append("<h2>3. 整线布置</h2>");
         sb.Append($"<div class=\"fig\">{SvgLine(fd)}" +
                   "<div class=\"cap\">三段铂管串联，四片法兰兼作电极。中间两片是<b>共用片</b>——" +
                   "两侧段电流相位差 120°，它承担 √3 倍电流，发热 ∝ I² ⇒ 现场失效都卡在这两片。</div></div>");
 
-        sb.Append("<h2>2. 法兰几何</h2>");
+        sb.Append("<h2>4. 法兰几何</h2>");
         sb.Append($"<div class=\"fig\">{SvgPlate(fd)}" +
                   $"<div class=\"cap\">板面在 XZ 平面、厚度沿 Y（与 3DM 的方位约定一致）。" +
                   $"<b>舌根圆角 R{fd.TabFilletMm:0}</b> 不是装饰：峰值电流拥塞就发生在这个凹角上" +
@@ -584,7 +739,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         sb.Append("</table><p style=\"font-size:.88rem\">舌片保温四片差 <b>12 倍</b>：" +
                   "端片要靠保温保住发热，共用片本身发热过剩、几乎要裸露散热。<b>不能同规格。</b></p>");
 
-        sb.Append("<h2>3. 判据表怎么读</h2>");
+        sb.Append("<h2>5. 判据表怎么读</h2>");
         sb.Append("<table><tr><th>判据</th><th>类别</th><th>实际</th><th>限值</th><th>裕度</th></tr>");
         foreach (var (n, k, a, l, u) in crit)
             sb.Append($"<tr><td>{n}</td><td>{k}</td><td class=\"n\">{a:0.00} {u}</td>" +
@@ -597,7 +752,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "占段功率 5 ppm，现场任何仪器都测不出来。<br>" +
                   "看到 ✓ 先问两句：这个裕度比<b>数值噪声</b>大吗？比<b>现场能分辨的尺度</b>大吗？</div>");
 
-        sb.Append("<h3>限值的出处（每条都必须有）</h3><table>" +
+        sb.Append("<h3>限值的出处（每条都必须有）</h3><table class=\"nw\">" +
                   "<tr><th>判据</th><th>限值</th><th>出处</th></tr>" +
                   "<tr><td>① 升温</td><td class=\"n\">72 h</td><td>业主「≤ 3 天」</td></tr>" +
                   "<tr><td>②′ 管孔净流入</td><td class=\"n\">&gt; 0</td><td>总纲 C2「为负即法兰比管热」——方向性判据</td></tr>" +
@@ -611,27 +766,77 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "但有两条推论成立：<b>不该把设计点摆在 10 上</b>（摆在测量地板上的判定分不出真假）；" +
                   "<b>不该拿它当控制靶</b>（∂③/∂板厚 = +149 K/mm 是正号，会让优化器加厚板把判据推向限值）。</div>");
 
-        sb.Append("<h2>4. 收敛信息</h2>");
+        sb.Append("<h2>6. 收敛信息</h2>");
         sb.Append($"<p>本档外层耦合<b>剩余误差估计 {fd.ResidualK:0.00} K</b> —— 这是「距不动点」的估计 " +
                   "<code>δ·r/(1−r)</code>，<b>不是</b>「相邻两轮变化 δ」。<br>" +
                   "曾经用 δ 当收敛判据：δ=1.36 时报「5 轮收敛」，而真实剩余误差约 34 K。" +
                   "界面在判据表上方打这一行；<b>未收敛时会打「下面每个数都不可引用」——那是字面意思。</b></p>");
 
-        sb.Append("<h2>5. 三条铁律</h2><ol>" +
+        sb.Append("<h2>7. 定案 3DM</h2>");
+        sb.Append("<p>「导出定案 3DM」或命令行 <code>--cli --make3dm</code>。" +
+                  "内容：三段铂管 + 四片法兰（板身 / 环外级 / 环内级 / <b>角焊缝</b>）+ 压接段参考线。<br>" +
+                  "<b>图层按片分，不按类型分</b> —— 交付件要能单独调出某一片；" +
+                  "更硬的理由是厚度探针沿 Y 打射线，而四片正是沿 Y 排成一列，" +
+                  "同层会被一次穿透、厚度<b>加起来</b>（实测量得 10.450 = 2.11+3.40+3.18+1.76）。</p>");
+        sb.Append("<h3>写完立刻自校，三条都过才算交付件</h3><table>" +
+                  "<tr><th>校验</th><th>判据</th><th>它防的是什么</th></tr>" +
+                  "<tr><td>round-trip 方位</td><td>从磁盘读回，沿 Y 的跨度 = 板厚</td>" +
+                  "<td>板被画到 XY 面沿 Z 拉伸（2026-08-12 出过：自己写的 .3dm 再读回来量到 <b>0 材料</b>）</td></tr>" +
+                  "<tr><td>角焊缝体积</td><td>回转体实测 vs 解析积分，差 ≤ 0.5 %</td>" +
+                  "<td>焊缝形状画错（曾用 12 段同心带拟合圆弧，成了一圈<b>阶梯</b>）</td></tr>" +
+                  "<tr><td><b>质量对账</b></td><td>逐件 3DM 体积×ρ vs FE 网格体积×ρ，差 ≤ 2 %</td>" +
+                  "<td>孔没挖、焊角没画、环多长出去 —— <b>一切几何细节</b></td></tr></table>");
+        sb.Append("<div class=\"note\"><b>校验量选错，比不校验更危险。</b>" +
+                  "原来只验「包围盒沿 Y = 板厚」，一路报「19 项全吻合」，" +
+                  "而实际法兰只有计算值的 <b>43 %</b>（用户在 Rhino 里打开才发现）。" +
+                  "那个量分辨不出孔有没有挖、焊角在不在 —— 它发的是<b>虚假的通过证</b>。<br>" +
+                  "质量是唯一把所有几何细节都卷进去的标量。现在它是自动判据，不是我手算的。</div>");
+
+        sb.Append("<h2>8. 三条铁律</h2><ol>" +
                   "<li><b>判据只有一个来源</b>：<code>LineRunner.Judge</code>。界面/命令行/报告只读结果，不得自己重算。</li>" +
                   "<li><b>几何只有一个来源</b>：<code>FinalDesign</code>。曾经辅助命令各钉着几代前的几何，跑得出漂亮的数——但那是另一个设计的数。</li>" +
                   "<li><b>判据不允许消失</b>：只能过/不过/无法判定，<b>无法判定一律不算通过</b>。</li></ol>");
 
-        sb.Append("<h2>6. 常用命令行</h2><table><tr><th>命令</th><th>用途</th></tr>" +
+        sb.Append("<h2>9. 已知坑（不看这节会重犯）</h2>");
+        sb.Append("<table class=\"nw\"><tr><th>坑</th><th>形状</th><th>怎么发现的</th></tr>" +
+                  "<tr><td><b>代理量当原量</b></td><td>拿邻近的量顶替判据／靶／收敛度量</td>" +
+                  "<td>一天犯三次：拿段内最大偏差当管根、拿 B 当 ③ 的靶、拿会切换分支的标量当收敛度量</td></tr>" +
+                  "<tr><td><b>默认值当需求</b></td><td>冻结的占位值被当成给定条件</td>" +
+                  "<td>已十次。<b>每个冻结值都要扫一遍</b>，哪怕最后证明它是对的</td></tr>" +
+                  "<tr><td><b>参数写绝对值</b></td><td>依赖项一动，对策静默失效或被悄悄重画</td>" +
+                  "<td>渐变环写绝对半径 ⇒ 板一变厚环就消失，整条可行性阶梯从来没有环</td></tr>" +
+                  "<tr><td><b>修一个漏一个</b></td><td>新旋钮写在旧旋钮的 <code>continue</code> 之后</td>" +
+                  "<td>优化器报「都到位」停机，实际差 0.01 K</td></tr>" +
+                  "<tr><td><b>容差粗于判据分辨率</b></td><td>判据在读求解器的残差</td>" +
+                  "<td>容差 1.0 K 而 ②″ 在 0.01 K 上判过不过</td></tr>" +
+                  "<tr><td><b>校验量选错</b></td><td>校验通过，但它管不到出错的那一维</td>" +
+                  "<td>包围盒验不了材料，报「全吻合」而法兰差 57 %</td></tr></table>");
+        sb.Append("<div class=\"note\"><b>共同点：不报错、输出格式正常、数值看着合理 —— 但结论是错的。</b><br>" +
+                  "唯一可靠的抓法是<b>交叉核对</b>：任何「通过」的结论，用另一个独立的数验一遍。</div>");
+
+        sb.Append("<h2>10. 常用命令行</h2><table><tr><th>命令</th><th>用途</th></tr>" +
                   "<tr><td class=\"n\">--cli --final2</td><td>可行性阶梯：管壁从宽到窄逐档定尺寸</td></tr>" +
                   "<tr><td class=\"n\">--cli --busbarplan --wall 0.6</td><td>铜排尺寸与位置（自检整线是否全过）</td></tr>" +
                   "<tr><td class=\"n\">--cli --make3dm</td><td>两档定案 3DM + round-trip 校验</td></tr>" +
                   "<tr><td class=\"n\">--cli --hotspot --wall 0.6</td><td>峰值位置实测（坐标、局部 J、局部厚度）</td></tr>" +
                   "</table><p style=\"font-size:.88rem\"><code>--wall</code> 给了不认识的值会<b>抛异常</b>，不会静默回退。</p>");
 
+        sb.Append("<h2>11. 现场还需确认的数</h2>");
+        sb.Append("<table class=\"nw\"><tr><th>量</th><th>现状</th><th>一旦不同，影响多大</th></tr>" +
+                  "<tr><td>法兰 J 的许用值</td><td><b>无依据</b>（现取 10，已降为参考量）</td>" +
+                  "<td>法兰 J 实测 34。这条一旦成为硬判据，结论大幅改变</td></tr>" +
+                  "<tr><td>③ 的物理依据</td><td>只知刻度来自热偶误差 ±10 K</td>" +
+                  "<td>决定能否把设计点从 10 K 往外放</td></tr>" +
+                  "<tr><td>铜排表面状态</td><td>按氧化铜 ε = 0.7 算</td>" +
+                  "<td>抛光铜只有 0.05，<b>差 14 倍</b>，散热段长度直接翻几倍</td></tr>" +
+                  "<tr><td>焊接方法</td><td>按手工 TIG（下界 0.6 mm）</td>" +
+                  "<td>自动 TIG 可到 0.3、激光 0.1，<b>差一个量级</b>；0.6 档正被它咬住</td></tr></table>");
+
         sb.Append("<p style=\"margin-top:40px;font-size:.82rem;color:var(--muted)\">" +
-                  "完整版（含已知坑五类、现场待确认的四个数）见 <code>docs\\APP使用说明书.md</code>，" +
-                  "工具条上有「打开 Markdown 版」。</p>");
+                  "本页即完整说明书，<b>不再需要去仓库读文档</b>（F1 随时回到这里）。" +
+                  "<code>docs\\APP使用说明书.md</code> 只留「怎么启动、怎么构建」这类程序内没法讲的事，" +
+                  "工具条上的「打开 Markdown 版」打开的就是它。<br>" +
+                  "两处都写全 = 同一份内容存两份，迟早漂开 —— 本项目最常见的失效。</p>");
         sb.Append("</div></body></html>");
         return sb.ToString();
     }
