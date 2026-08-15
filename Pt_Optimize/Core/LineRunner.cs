@@ -357,14 +357,34 @@ public static class LineRunner
             var zeroLR = new (double L, double R)[c.SegmentCount];
             (double L, double R)[]? bnb = null;
             LineResult? br = null;
-            for (int k = 0; k < 4; k++)          // 段间耦合无法兰反馈，3–4 轮足够
+            // ⚠ 基线的段间耦合必须与主解**同样处理**：欠松弛 + 收敛判据。
+            //   原来只跑 4 轮、且端温直接赋值（**裸 Picard**）—— 而主解那边的注释
+            //   早写明「裸 Picard 会发散，必须欠松弛」。两边收敛程度不同，
+            //   就会差出一个**与法兰无关的系统性偏移**：实测 ③ 恒为 31.5±0.4 K，
+            //   而净流入从 +1 W 到 +7 W（差 7 倍）它纹丝不动 ——
+            //   **不随因变量变，就不是那个因造成的**。
+            double wBase = c.CoupleRelax;
+            for (int k = 0; k < 30; k++)
             {
                 br = RunOnce(c, null, cancel, zero, zeroLR, bnb);
                 if (!br.Ok) break;
-                bnb = new (double L, double R)[c.SegmentCount];
+                var nb2 = new (double L, double R)[c.SegmentCount];
                 for (int i = 0; i < c.SegmentCount; i++)
-                    bnb[i] = (i == 0 ? double.NaN : br.Segments[i - 1].TRootBC,
+                    nb2[i] = (i == 0 ? double.NaN : br.Segments[i - 1].TRootBC,
                               i == c.SegmentCount - 1 ? double.NaN : br.Segments[i + 1].TRootAC);
+                if (bnb is null) { bnb = nb2; continue; }
+                double dmax = 0;
+                for (int i = 0; i < c.SegmentCount; i++)
+                {
+                    double nl = double.IsNaN(nb2[i].L) ? double.NaN
+                              : (1 - wBase) * bnb[i].L + wBase * nb2[i].L;
+                    double nr = double.IsNaN(nb2[i].R) ? double.NaN
+                              : (1 - wBase) * bnb[i].R + wBase * nb2[i].R;
+                    if (!double.IsNaN(nl)) dmax = Math.Max(dmax, Math.Abs(nl - bnb[i].L));
+                    if (!double.IsNaN(nr)) dmax = Math.Max(dmax, Math.Abs(nr - bnb[i].R));
+                    bnb[i] = (nl, nr);
+                }
+                if (dmax < c.CoupleTolK) break;
             }
             for (int i = 0; i < c.SegmentCount; i++)
                 baseline[i] = br is { Ok: true }

@@ -3861,13 +3861,17 @@ internal static class Program
                     // 方向（实测，不是推的）：舌片加厚 ⇒ 电阻降 ⇒ 发热少 ⇒ 少往管里灌
                     //   ⇒ 净流入变大（更安全）。故 dFlux/dTab > 0。
                     // 斜率仍**在线量**：硬编码常数在本项目上错过两次（1300 K/mm 是别的构型的）。
-                    const double fluxTarget = 8.0;      // W，留一点裕度而非压在 0 上
+                    // ★ 靶由**已验证的关系式反解**，不是拍的：
+                    //   ③ = D/√(kAβ) 已被壁厚标度验证（√(1.5/0.6)=1.58 vs 19.1/11.5=1.66，吻合 5%）。
+                    //   实测 D≈7 W ⇒ ③=19.1（管壁 0.6）⇒ 要 ③≤10 需 D ≤ 7×10/19.1 ≈ 3.7 W。
+                    //   而 B 只要求 D>0 ⇒ **可行窗口 0 < D ≲ 4 W**，原来的靶 8 W 本身就在窗口外。
+                    const double fluxTarget = 2.0;      // W
                     bool moved = false;
                     for (int j = 0; j < 4; j++)
                     {
                         double fj = rr.Flanges[j].QFromTubeW;
                         double e = fluxTarget - fj;                    // >0 ⇒ 需要更多净流入 ⇒ 加厚
-                        if (Math.Abs(e) < 2.0) continue;
+                        if (Math.Abs(e) < 0.5) continue;   // 窗口只有几瓦，死区要跟着收窄
 
                         double slope = slopeEst[j];                    // dFlux/dTab，W per mm，正
                         if (!double.IsNaN(prevTab[j]) && Math.Abs(tabF2[j] - prevTab[j]) > 1e-6)
@@ -4473,7 +4477,7 @@ internal static class Program
             //   ——「电流从单侧绕过管孔」这个说法到底成不成立，只有角向剖面能证伪。
             if (args.Contains("--hotspot"))
             {
-                double wallH = p.WeldMinThicknessMm, holeH = wallH + 25.0;
+                double wallH = 1.5, holeH = wallH + 25.0;   // 阶梯里最接近可行的那一档
                 double discH = 30.0;
                 var pH = SegmentSolver.Clone(p);
                 pH.Layer1.ThicknessMm = 10.0; pH.Layer1.Enabled = true;
@@ -4485,7 +4489,10 @@ internal static class Program
                 //   本轮已经因此白做过两次：一次拿 300 °C/基板 1.23 那版的峰值位置去设计
                 //   450 °C 那版；一次拿入口片当靶而整线上最差的是 HC2|HC3。
                 //   下面这组 = `--final2` 压接 450 档的收敛解（舌长 90、半宽 15、两级渐变环）。
-                double[] tabH = { 1.37, 2.08, 1.86, 1.04 }, insH = { 18.2, 0.8, 0.9, 7.5 };
+                // ★ 对着**当前**定案构型量（--final2 靶=2W、管壁 1.5 档的收敛解）。
+                //   本轮已因「对着旧构型量」白做过两次，务必核对来源：
+                //   ladderT2.txt 第 1 档 → 舌厚 2.99/4.72/4.44/2.55、舌保温 18.7/1.6/1.4/3.9
+                double[] tabH = { 2.99, 4.72, 4.44, 2.55 }, insH = { 18.7, 1.6, 1.4, 3.9 };
                 double[] stepRH = { 30.0, 36.0 }, stepTH = { 2.4, 1.7 };
                 double discFloorH = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
                                     * (discH - 26.0) * p.WeldSafetyFactor;
@@ -4518,10 +4525,14 @@ internal static class Program
                 if (!rH.Ok) { Console.WriteLine("✗ " + rH.Message); return; }
 
                 // 取 ② 最差的那一片来解剖
+                // ⚠ 按**当前没过的那条判据**挑片，不是按整片 ②。
+                //   ②″（圆盘区）与 ②（整片含舌片）的最差片不是同一个 ——
+                //   按 ② 挑出来的入口片 ②=+0.00 本来就干净，量它等于白量。
+                double Metric(FlangeOut f) => double.IsNaN(f.TDiscMaxC)
+                                            ? f.TMaxC - f.TRootC : f.TDiscMaxC - f.TRootC;
                 int jw = 0;
                 for (int j = 1; j < rH.Flanges.Length; j++)
-                    if (rH.Flanges[j].TMaxC - rH.Flanges[j].TRootC
-                        > rH.Flanges[jw].TMaxC - rH.Flanges[jw].TRootC) jw = j;
+                    if (Metric(rH.Flanges[j]) > Metric(rH.Flanges[jw])) jw = j;
                 var fw = rH.Flanges[jw];
 
                 var gH = MkH(jw);
@@ -4533,7 +4544,7 @@ internal static class Program
                               gH.InsulBoundaryXResolved, tabBoundaryX: xtH,
                               tabInsulThickMm: gH.TabInsulThickMm);
 
-                Console.WriteLine($"=== 峰值位置实测（② 最差的片：{fw.Name}）===");
+                Console.WriteLine($"=== 峰值位置实测（**②″圆盘区**最差的片：{fw.Name}）===");
                 Console.WriteLine($"I={fw.CurrentA:0} A　管根 {fw.TRootC:0.0} °C　" +
                                   $"盘Ø{2 * discH:0}／等宽舌 90×30／**盘舌等厚 {gH.ThicknessMm:0.00}**／" +
                                   $"舌保温 {insH[jw]:0.0}／焊脚 {gH.WeldFilletLegMm:0.00}／切点 x={xtH:0.00}");
