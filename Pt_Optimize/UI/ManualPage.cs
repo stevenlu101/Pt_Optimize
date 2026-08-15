@@ -190,6 +190,127 @@ public sealed class ManualPage : TabPage
     ///      放大之后厚度变成径向跨度的两倍，整张图撑爆。**1:1 就看得清。**
     ///      那个「不放大就看不见」的假设来自想象中的「大盘薄板」，这个设计不是。
     /// </summary>
+
+    /// <summary>
+    /// 轴测 3D 示意：管 + 一片法兰（两级环 + 板身 + 舌片）。
+    ///
+    /// 用**斜轴测**（不是透视）：屏幕 X = x + kx·z，屏幕 Y = −(y + ky·z)。
+    ///   · 板面在 XZ、厚度沿 y（与 3DM、FE 的方位约定一致）
+    ///   · 管轴 = y ⇒ 管从盘面**垂直穿出**，这一点平面剖面图表达不了，正是它难懂的原因
+    /// 圆按 θ 采样成路径，不用 SVG 的 ellipse —— 旋转椭圆的参数容易写错，采样不会。
+    ///
+    /// ⚠ 厚度方向**放大**（真实板厚只有 2 mm 上下，盘径 60，1:1 会薄成一条线）。
+    ///   放大倍数标在图上，且**三级厚度用同一个倍数**，比例关系仍然真实。
+    /// </summary>
+    // ⚠ 格式串只许用 0/# 作占位符。写 "0.1" 时 .NET 把 1 当**字面量**、
+    //   小数点被吃掉：0.8 打成 "11"、31.6 打成 "321"。这个错今天犯了三次。
+    private static string SvgIso(FinalDesign fd, int plate)
+    {
+        double h = fd.HoleRadiusMm, R = fd.DiscRadiusMm, wall = fd.WallMm;
+        double r1 = fd.RingRadiiMm[0], r2 = fd.RingRadiiMm[1];
+        double t = fd.TabThickMm[plate];
+        double ti = t * fd.RingMul[plate], to = t * fd.RingMulOuter(plate);
+        double L = fd.TabLengthMm, w = fd.TabHalfWidthMm;
+        double ri = h - wall;                       // 管内半径
+
+        const double KX = 0.52, KY = 0.30;          // z 轴的投影方向
+        const double MAG = 5.0;                     // **只放大板厚**，见下
+        const double TUBE = 40;                     // 管子露出的长度（真实尺寸，不放大）
+        const double S = 3.4;                       // 总缩放 px/mm
+
+        // ⚠ 放大倍数**不能写进投影**：y 既是板厚方向、也是**管子的轴向**。
+        //   第一版在 P() 里对 y 统一乘 MAG，结果管长 40 mm 被当成板厚放大 5 倍 = 200 mm，
+        //   直接顶出画布、糊成一整块矩形。
+        //   ⇒ 投影用真实 y；只把**板厚**在传入前乘 MAG。
+        ti *= MAG; to *= MAG; t *= MAG;
+
+        double OX = 330, OY = 230;
+        string P(double x, double y, double z) =>
+            $"{OX + (x + KX * z) * S:0.0},{OY - (y + KY * z) * S:0.0}";
+
+        // 圆采样（默认整圈；给 a0/a1 则只画一段）
+        string Arc(double r, double y, double a0 = 0, double a1 = 2 * Math.PI, int n = 72)
+        {
+            var b = new StringBuilder();
+            for (int i = 0; i <= n; i++)
+            {
+                double a = a0 + (a1 - a0) * i / n;
+                b.Append(i == 0 ? "M " : "L ");
+                b.Append(P(r * Math.Cos(a), y, r * Math.Sin(a)));
+                b.Append(' ');
+            }
+            return b.ToString();
+        }
+        // 环形顶面：外圈正向 + 内圈反向（even-odd 挖空）
+        string TopRing(double rOut, double rIn, double y, string fill) =>
+            $"<path d=\"{Arc(rOut, y)}Z {Arc(rIn, y)}Z\" fill-rule=\"evenodd\" fill=\"{fill}\" " +
+            "stroke=\"var(--ink)\" stroke-width=\"0.7\"/>";
+        // 侧壁：只画近侧半圈（本投影下 z<0 为近侧 ⇒ θ∈[π,2π]）
+        string Wall(double r, double yLo, double yHi, string fill)
+        {
+            var b = new StringBuilder("<path d=\"");
+            b.Append(Arc(r, yHi, Math.PI, 2 * Math.PI, 48));
+            for (int i = 48; i >= 0; i--)
+            {
+                double a = Math.PI + Math.PI * i / 48;
+                b.Append("L ").Append(P(r * Math.Cos(a), yLo, r * Math.Sin(a))).Append(' ');
+            }
+            b.Append($"Z\" fill=\"{fill}\" stroke=\"var(--ink)\" stroke-width=\"0.7\"/>");
+            return b.ToString();
+        }
+
+        var sb = new StringBuilder();
+        sb.Append($"<svg viewBox=\"0 0 620 {OY + 200:0}\" width=\"100%\" style=\"max-width:620px\">");
+
+        // ① 管：下半段（在盘后面）
+        sb.Append(Wall(h, -TUBE, -ti / 2, "var(--tubeDark)"));
+
+        // ② 舌片（板身）：一块厚 t 的板，从盘缘伸到 x=−L
+        //    先画顶面，再画近侧长边侧壁，形成板的厚度感
+        string TabTop = $"M {P(-L, t / 2, w)} L {P(0, t / 2, w)} L {P(0, t / 2, -w)} L {P(-L, t / 2, -w)} Z";
+        string TabSide = $"M {P(-L, t / 2, -w)} L {P(0, t / 2, -w)} L {P(0, -t / 2, -w)} L {P(-L, -t / 2, -w)} Z";
+        string TabEnd = $"M {P(-L, t / 2, w)} L {P(-L, t / 2, -w)} L {P(-L, -t / 2, -w)} L {P(-L, -t / 2, w)} Z";
+        sb.Append($"<path d=\"{TabSide}\" fill=\"var(--ptDark)\" stroke=\"var(--ink)\" stroke-width=\"0.7\"/>");
+        sb.Append($"<path d=\"{TabEnd}\" fill=\"var(--ptDark)\" stroke=\"var(--ink)\" stroke-width=\"0.7\"/>");
+        sb.Append($"<path d=\"{TabTop}\" fill=\"var(--pt)\" stroke=\"var(--ink)\" stroke-width=\"0.7\"/>");
+
+        // ③ 盘：板身 → 环外级 → 环内级，由外向内、由薄到厚
+        sb.Append(Wall(R, -t / 2, t / 2, "var(--ptDark)"));
+        sb.Append(TopRing(R, r2, t / 2, "var(--pt)"));
+        sb.Append(Wall(r2, -to / 2, to / 2, "var(--ring2d)"));
+        sb.Append(TopRing(r2, r1, to / 2, "var(--ring2)"));
+        sb.Append(Wall(r1, -ti / 2, ti / 2, "var(--ring1d)"));
+        sb.Append(TopRing(r1, h, ti / 2, "var(--ring1)"));
+
+        // ④ 管：上半段（在盘前面）+ 管口
+        sb.Append(Wall(h, ti / 2, TUBE, "var(--tube)"));
+        sb.Append(TopRing(h, ri, TUBE, "var(--tubeTop)"));
+
+        // ── 引线标注
+        void Lead(double x, double y, double z, double dx, double dy, string txt, string anchor = "start")
+        {
+            string a = P(x, y, z);
+            var parts = a.Split(',');
+            double ax = double.Parse(parts[0]), ay = double.Parse(parts[1]);
+            sb.Append($"<line x1=\"{ax:0.0}\" y1=\"{ay:0.0}\" x2=\"{ax + dx:0.0}\" y2=\"{ay + dy:0.0}\" " +
+                      "stroke=\"var(--dim)\" stroke-width=\"0.9\"/>");
+            sb.Append($"<circle cx=\"{ax:0.0}\" cy=\"{ay:0.0}\" r=\"2\" fill=\"var(--dim)\"/>");
+            sb.Append($"<text x=\"{ax + dx + (anchor == "end" ? -4 : 4):0.0}\" y=\"{ay + dy + 4:0.0}\" " +
+                      $"text-anchor=\"{anchor}\" class=\"lbl\">{txt}</text>");
+        }
+        Lead(0, TUBE, -h, -60, -18, $"铂管 Ø{2 * (h - wall):0} 壁 {wall:0.0}", "end");
+        Lead((h + r1) / 2, ti / 2, 0, 24, -62, $"环内级 {ti / MAG:0.00}");
+        Lead((r1 + r2) / 2, to / 2, 0, 58, -38, $"环外级 {to / MAG:0.00}");
+        Lead((r2 + R) / 2, t / 2, 0, 86, -12, $"板身 {t / MAG:0.00}");
+        Lead(-L * 0.6, t / 2, 0, -10, 62, $"舌片 {L:0}×{2 * w:0}（接铜排）", "end");
+        Lead(0, -t / 2, h, 60, 40, $"盘 Ø{2 * R:0}");
+
+        sb.Append($"<text x=\"612\" y=\"18\" text-anchor=\"end\" class=\"lbl dim\">" +
+                  $"轴测示意　厚度方向放大 {MAG:0}×（三级同倍数，比例关系真实）</text>");
+        sb.Append("</svg>");
+        return sb.ToString();
+    }
+
     private static string SvgSection(FinalDesign fd, int plate)
     {
         double h = fd.HoleRadiusMm, R = fd.DiscRadiusMm, wall = fd.WallMm;
@@ -329,10 +450,10 @@ public sealed class ManualPage : TabPage
 <title>Pt_Optimize 使用说明</title><style>
 :root{--bg:#F4F6F7;--card:#FFF;--ink:#12171A;--ink2:#3D4B53;--muted:#68767E;
 --rule:#D2DADE;--pt:#E8D9A8;--ring1:#E9A159;--ring2:#F0C79A;--tube:#C9D3D8;
---clamp:#2C7A8C;--ok:#2C6B58;--hot:#C2570F;--dim:#9AA7AE}
+--clamp:#2C7A8C;--ok:#2C6B58;--hot:#C2570F;--dim:#9AA7AE;--ptDark:#C9B276;--ring1d:#C07A32;--ring2d:#CFA57A;--tubeDark:#9FAEB5;--tubeTop:#DCE4E8}
 @media(prefers-color-scheme:dark){:root{--bg:#0E1216;--card:#161C21;--ink:#E7EEF1;
 --ink2:#B3C0C7;--muted:#7E8D95;--rule:#28333A;--pt:#6B5C33;--ring1:#A6702F;--ring2:#7A5A38;
---tube:#33424A;--clamp:#4FA8BC;--ok:#6FC0A4;--hot:#F0904A;--dim:#5C6A72}}
+--tube:#33424A;--clamp:#4FA8BC;--ok:#6FC0A4;--hot:#F0904A;--dim:#5C6A72;--ptDark:#514429;--ring1d:#7E5423;--ring2d:#5C442A;--tubeDark:#26323A;--tubeTop:#44565F}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);
 font-family:'Microsoft YaHei UI','Segoe UI',system-ui,sans-serif;font-size:15px;line-height:1.7}
@@ -391,6 +512,15 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   $"而盘孔环带只有 {fd.DiscRadiusMm - fd.HoleRadiusMm:0.0} mm 宽 —— " +
                   $"<b>两级环几乎覆盖了整个圆盘</b>，「板身」在盘上几乎不存在、只存在于舌片。" +
                   $"这就是环倍率为何一直是个强旋钮：它动的不是「孔边一圈」，是整个圆盘。</div></div>");
+
+        sb.Append($"<h3>立体示意（入口片）</h3>");
+        sb.Append($"<div class=\"fig\">{SvgIso(fd, 0)}" +
+                  $"<div class=\"cap\"><b>管从盘面垂直穿出</b>——这一点平面图表达不了，也是剖面图难懂的原因。" +
+                  $"盘上从管孔往外是<b>两级台阶</b>：环内级 {fd.TabThickMm[0] * fd.RingMul[0]:0.00} → " +
+                  $"环外级 {fd.TabThickMm[0] * fd.RingMulOuter(0):0.00} → 板身 {fd.TabThickMm[0]:0.00} mm，" +
+                  $"越靠近管孔越厚。舌片伸出去接铜排。<br>" +
+                  $"厚度方向放大了（真实板厚 2 mm 上下、盘径 {2 * fd.DiscRadiusMm:0}，1:1 会薄成一条线），" +
+                  $"但<b>三级用同一个倍数</b>，谁比谁厚多少是真实的。</div></div>");
 
         sb.Append($"<h3>径向剖面（入口片，板厚 {fd.TabThickMm[0]:0.00} mm）</h3>");
         sb.Append($"<div class=\"fig\">{SvgSection(fd, 0)}" +
