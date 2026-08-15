@@ -597,12 +597,18 @@ public static class LineRunner
             // δ 只说明本轮迈了多大一步；环路增益 g≈0.96 时，剩余误差是
             //     Δ∞ ≈ δ·r/(1−r)  ≈ 25 δ
             // 实测就是这么被骗的：δ=1.36 时判「5 轮收敛」，而真实剩余误差约 34 K。
-            // r 估不出来（未进入几何段）时退回用 δ 本身 —— 但那只发生在快模式阶段，
-            // 此时 δ 本身很大，不会误判为收敛。
-            double remain = (rEst > 0.5 && rEst < 0.999) ? delta * rEst / (1 - rEst) : delta;
+            // ⚠⚠ 第一版在这里写「r 估不出来时退回用 δ 本身」，理由是
+            //   「那只发生在快模式阶段，δ 本身很大，不会误判为收敛」——**这个理由是错的**：
+            //   容差放到 1.0 之后，快模式窗口里的 δ=0.90 就够小了，于是它在**第 6 轮**
+            //   宣布收敛 —— 和被修掉的那个假收敛**同一个位置**。（今天第四次「修一个漏一个」。）
+            // ⇒ **没量到 r 时，按已知最坏放大取**，而不是当作没有放大。
+            //   实测 g≈0.96 ⇒ 放大 1/(1−g) ≈ 25。这迫使迭代真的走进慢模式、把 r 量出来。
+            const double ampWorst = 25.0;
+            double amp = (rEst > 0.5 && rEst < 0.999) ? rEst / (1 - rEst) : ampWorst;
+            double remain = delta * amp;
             if (remain < c.CoupleTolK)
             {
-                res.Notes.Add($"外层耦合 {outer + 1} 轮收敛（剩余误差估计 {remain:0.00} K，步长 {delta:0.00} K，ω={omega:0.00}，ω 末值 {omega:0.00}／放大 {omegaBoosts} 次／回退 {omegaCuts} 次）");
+                res.Notes.Add($"外层耦合 {outer + 1} 轮收敛（剩余误差估计 {remain:0.00} K = 步长 {delta:0.00} × 放大 {amp:0.0}，ω={omega:0.00}，ω 末值 {omega:0.00}／放大 {omegaBoosts} 次／回退 {omegaCuts} 次）");
                 res.Converged = true;
                 break;
             }
@@ -613,7 +619,7 @@ public static class LineRunner
                           $"　⇒ 裸 Picard 增益 g≈{1 - (1 - rEst) / Math.Max(1e-9, omega):0.000}（g→1 即热失控）");
             foreach (var jr in jumpReports) res.Notes.Add("★ 跳变 " + jr);
             res.Notes.Add("★ 残差轨迹 " + string.Join(" ", deltaTrace.Select(v => v.ToString("0.000"))));
-            res.Notes.Add($"★ 外层耦合 {c.CoupleMaxRounds} 轮未收敛（**剩余误差估计 {(rEst > 0.5 && rEst < 0.999 ? delta * rEst / (1 - rEst) : delta):0.0} K**，步长 {delta:0.0} K，ω={omega:0.00}）——" +
+            res.Notes.Add($"★ 外层耦合 {c.CoupleMaxRounds} 轮未收敛（**剩余误差估计 {delta * (rEst > 0.5 && rEst < 0.999 ? rEst / (1 - rEst) : 25.0):0.0} K**，步长 {delta:0.0} K，ω={omega:0.00}）——" +
                           "本次结果的每个数都不可用：要么再降 ω / 加轮数，要么该工况确实热失控");
             res.Message = "段↔法兰耦合未收敛";
         }
