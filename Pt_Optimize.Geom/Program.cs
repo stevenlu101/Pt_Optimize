@@ -628,18 +628,61 @@ internal static class GeomProbe
             Curve Circ(double r) => new Circle(Plane.WorldZX, Point3d.Origin, r).ToNurbsCurve();
 
             // 关于中面对称地拉伸：从 -t/2 拉到 +t/2，再整体平移到 y0
-            Brep Extrude(Curve outer, Curve inner, double t, double y0)
+            // ── 造实体：一律用**曲线布尔**得到区域，再拉伸。
+            //
+            // ⚠ 不再依赖 CreatePlanarBreps 自己猜嵌套：它在内圈越出外轮廓时会判错，
+            //   而我上一版为此加的「面积校验」假设内圈完全落在外轮廓内 ——
+            //   板身的内圈是 r=31.8 的圆、越过盘缘，于是**把正确的件当错的挡掉了**，
+            //   板身整块没写进文件（实测法兰只有计算值的 43%）。
+            //   ⇒ 校验不能建立在一个比被验对象还窄的假设上。
+            Brep Solid(Curve[] region, double t, double y0, string what)
             {
-                var crvs = inner == null ? new Curve[] { outer } : new Curve[] { outer, inner };
-                var faces = Brep.CreatePlanarBreps(crvs, tol);
-                if (faces == null || faces.Length == 0) return null;
-                var solid = faces[0].Faces[0].CreateExtrusion(
-                    new LineCurve(Point3d.Origin, new Point3d(0, t, 0)), true);
-                if (solid == null) return null;
-                solid.Transform(Transform.Translation(0, y0 - t / 2, 0));
-                return solid;
+                var faces = Brep.CreatePlanarBreps(region, tol);
+                if (faces == null || faces.Length == 0)
+                { Console.Error.WriteLine("平面片创建失败：" + what); return null; }
+                Brep merged = null;
+                foreach (var f in faces)
+                {
+                    var sol = f.Faces[0].CreateExtrusion(
+                        new LineCurve(Point3d.Origin, new Point3d(0, t, 0)), true);
+                    if (sol == null) continue;
+                    sol.Transform(Transform.Translation(0, y0 - t / 2, 0));
+                    merged = merged == null ? sol : Brep.CreateBooleanUnion(
+                        new[] { merged, sol }, tol)?.FirstOrDefault() ?? merged;
+                }
+                if (merged == null) Console.Error.WriteLine("拉伸失败：" + what);
+                return merged;
             }
 
+            // 把闭合曲线裁到板身轮廓内（环按半径生效，会越过盘缘伸到轮廓外的空处）
+            Curve[] ClipToBody(Curve c, Curve bodyOutline)
+            {
+                var r = Curve.CreateBooleanIntersection(c, bodyOutline, tol);
+                return (r == null || r.Length == 0) ? new[] { c } : r;
+            }
+            // 区域 = 外圈（已裁）减内圈
+            Curve[] RegionMinus(Curve[] outer, Curve inner)
+            {
+                var acc = new List<Curve>();
+                foreach (var o in outer)
+                {
+                    var d = Curve.CreateBooleanDifference(o, inner, tol);
+                    if (d != null && d.Length > 0) acc.AddRange(d);
+                    else acc.Add(o);
+                }
+                return acc.ToArray();
+            }
+
+            // 角焊缝：与 Core/PlateCurrent2D.ThicknessAt 同一式子
+            //   weld(d) = 2(a − √(a²−(d−a)²))，d = r − 孔R，0 ≤ d < a
+            // FE 里它是**叠加**在分区厚度上的额外金属；3DM 里此前完全没画，
+            // 实测每片因此少约 34 g。用 N 段同心带逼近（与 FE 的离散口径一致）。
+            double Weld(double r, double a2)
+            {
+                double d = r - holeR;
+                if (a2 <= 1e-9 || d < 0 || d >= a2) return 0;
+                return 2.0 * (a2 - Math.Sqrt(Math.Max(0, a2 * a2 - (d - a2) * (d - a2))));
+            }
             int made = 0;
             void Add(Brep b, int layer, string nm)
             {
@@ -664,13 +707,27 @@ internal static class GeomProbe
                 int lyRingO = Ly(pn + "-环外级", System.Drawing.Color.Orange);
                 int lyRingI = Ly(pn + "-环内级", System.Drawing.Color.OrangeRed);
                 int lyClamp = Ly(pn + "-压接段", System.Drawing.Color.DarkCyan);
-                Add(Extrude(body, Circ(ringR[1]), t, y0), lyBody, pn + "_板身_t" + t.ToString("0.00"));
-                Add(Extrude(Circ(ringR[1]), Circ(ringR[0]), ring[1], y0), lyRingO,
-                    pn + "_环外级_r" + ringR[0].ToString("0.0") + "-" + ringR[1].ToString("0.0")
+                // 板身 = 轮廓 − 环外边界（环外边界可能越过盘缘，故用曲线布尔差）
+                Add(Solid(RegionMinus(new[] { body }, Circ(ringR[1])), t, y0, pn + "板身"),
+                    lyBody, pn + "_板身_t" + t.ToString("0.00"));
+                // 环：外圈**裁到轮廓内**，否则盘缘之外会凭空长出一整圈料
+                Add(Solid(RegionMinus(ClipToBody(Circ(ringR[1]), body), Circ(ringR[0])), ring[1], y0, pn + "环外级"),
+                    lyRingO, pn + "_环外级_r" + ringR[0].ToString("0.0") + "-" + ringR[1].ToString("0.0")
                        + "_t" + ring[1].ToString("0.00"));
-                Add(Extrude(Circ(ringR[0]), Circ(holeR), ring[0], y0), lyRingI,
-                    pn + "_环内级_r" + holeR.ToString("0.0") + "-" + ringR[0].ToString("0.0")
-                       + "_t" + ring[0].ToString("0.00"));
+                // 环内级：焊角落在这一带内 ⇒ 拆成 N 段同心带，各带厚度 = 基厚 + 焊角
+                double aw = Math.Max(t, wall);
+                const int NW = 12;
+                double rw0 = holeR, rw1 = Math.Min(ringR[0], holeR + aw);
+                for (int k = 0; k < NW; k++)
+                {
+                    double ra = rw0 + (rw1 - rw0) * k / NW, rb = rw0 + (rw1 - rw0) * (k + 1) / NW;
+                    double th = ring[0] + Weld((ra + rb) / 2, aw);
+                    Add(Solid(RegionMinus(ClipToBody(Circ(rb), body), Circ(ra)), th, y0, pn + "环内级带"),
+                        lyRingI, pn + $"_环内级_r{ra:0.00}-{rb:0.00}_t{th:0.00}");
+                }
+                if (ringR[0] > rw1 + 1e-9)
+                    Add(Solid(RegionMinus(ClipToBody(Circ(ringR[0]), body), Circ(rw1)), ring[0], y0, pn + "环内级外段"),
+                        lyRingI, pn + $"_环内级_r{rw1:0.00}-{ringR[0]:0.00}_t{ring[0]:0.00}");
 
                 // 压接段（参考几何，非铂件）：自舌端往回 clampLen
                 var cl = new PolyCurve();
@@ -683,18 +740,21 @@ internal static class GeomProbe
                 cl.Append(new LineCurve(a3, a4));
                 cl.Append(new LineCurve(a4, a1));
                 cl.MakeClosed(tol);
-                Add(Extrude(cl, null, t, y0), lyClamp, pn + "_压接段" + clampLen.ToString("0") + "mm");
+                // ⚠ 压接段只是**标出铜排夹在哪**，不是一块料。
+                //   第一版把它拉伸成实体，与舌片同位同厚 ⇒ 两块料占同一处空间（用户实测发现）。
+                //   ⇒ 改成画在板面上的**闭合曲线**，不增加任何体积。
+                cl.Translate(new Vector3d(0, y0 + t / 2, 0));
+                var attC = new Rhino.DocObjects.ObjectAttributes { LayerIndex = lyClamp };
+                attC.Name = pn + "_压接段" + clampLen.ToString("0") + "mm_参考线";
+                if (doc.Objects.AddCurve(cl, attC) != Guid.Empty) made++;
             }
 
             double ri = tubeId / 2.0, ro = ri + wall;
             for (int i = 0; i < segCount; i++)
             {
-                var faces = Brep.CreatePlanarBreps(new Curve[] { Circ(ro), Circ(ri) }, tol);
-                if (faces == null || faces.Length == 0)
-                { Console.Error.WriteLine("管截面创建失败"); return 7; }
-                var solid = faces[0].Faces[0].CreateExtrusion(
-                    new LineCurve(Point3d.Origin, new Point3d(0, segLen, 0)), true);
-                solid.Transform(Transform.Translation(0, i * segLen, 0));
+                var solid = Solid(RegionMinus(new[] { Circ(ro) }, Circ(ri)), segLen,
+                                  i * segLen + segLen / 2, "管段" + (i + 1));
+                if (solid == null) { Console.Error.WriteLine("管截面创建失败"); return 7; }
                 Add(solid, lyTube, "管段" + (i + 1) + "_D" + tubeId.ToString("0") + "x"
                     + wall.ToString("0.00") + "_L" + segLen.ToString("0"));
             }
@@ -722,6 +782,17 @@ internal static class GeomProbe
                     // File3dmLayerTable 不支持 [] 索引（照 WinFormRhino8App 的做法按 Index 找）
                     var lyObj = f3.AllLayers.FirstOrDefault(l => l.Index == ob.Attributes.LayerIndex);
                     string ly = lyObj?.Name ?? "?";
+                    // ★ 必须报**体积**。原来只报包围盒，而包围盒**分辨不出中间有没有挖孔** ——
+                    //   实心圆盘与圆环的厚度、外廓完全一样，校验会一路报「全吻合」而放过它。
+                    //   （2026-08-16 用户在 Rhino 里打开才发现板身盖住了管口。）
+                    double vol = double.NaN; bool solid = false;
+                    var brep = g as Brep ?? (g as Extrusion)?.ToBrep();
+                    if (brep != null)
+                    {
+                        solid = brep.IsSolid;
+                        var mp = VolumeMassProperties.Compute(brep);
+                        if (mp != null) vol = mp.Volume;
+                    }
                     rt.Add(new
                     {
                         layer = ly,
@@ -729,7 +800,9 @@ internal static class GeomProbe
                         tY = Math.Round(bb.Max.Y - bb.Min.Y, 4),   // 沿 Y = 厚度（管段则是段长）
                         y0 = Math.Round((bb.Max.Y + bb.Min.Y) / 2, 4),
                         dX = Math.Round(bb.Max.X - bb.Min.X, 3),
-                        dZ = Math.Round(bb.Max.Z - bb.Min.Z, 3)
+                        dZ = Math.Round(bb.Max.Z - bb.Min.Z, 3),
+                        vol = double.IsNaN(vol) ? (object)null : Math.Round(vol, 2),
+                        solid
                     });
                 }
             }
