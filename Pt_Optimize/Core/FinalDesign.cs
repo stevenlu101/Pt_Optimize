@@ -1,7 +1,7 @@
 namespace PtOptimize.Core;
 
 /// <summary>
-/// ★★★★★ **定案几何的唯一来源**（2026-08-15 建立）。
+/// ★★★★★ **定案几何的唯一来源**（2026-08-15 建立，08-16 改为双档）。
 ///
 /// 为什么要有这个文件：定案值此前是**各命令各手抄一份**。
 /// `--final2` 往前推进之后，`--hotspot` 与 `--busbarplan` 还钉着几代之前的几何
@@ -13,58 +13,68 @@ namespace PtOptimize.Core;
 ///   任何辅助命令要「对着定案构型量」，就从这里取，不许再抄。
 ///   `--final2` 是**唯一**有权更新这里的地方（它是定尺寸器）。
 ///
+/// ★★ 2026-08-16 改为**双档**：<see cref="W08"/> 与 <see cref="W06"/> 都全判据通过，
+///   差别只在裕度与铂重，取舍属于业主。原来「改三行切档」的做法本身就是
+///   手抄的另一种形式 —— 两档并存、由 <see cref="Current"/> 指定，才是单一来源。
+///
 /// ⚠ 改这里之前先想清楚：下面每个数都是某一轮实测收敛的结果，
 ///   不是可以随手调的参数。改了就要重跑 `--final2` 复核全判据。
 /// </summary>
-public static class FinalDesign
+public sealed class FinalDesign
 {
+    // ── 标识与出处
+    public string Name = "";
     /// <summary>本组数值出自哪一次运行 —— 报告里要能追溯到源头</summary>
-    public const string Provenance =
-        "--final2 可行性阶梯 D6（舌厚→③=8K／环倍率→②″=−0.02K／舌保温抗饱和接力）；" +
-        "两档均全判据通过，业主未定，本文件**暂取保守的 0.8 mm**：" +
-        "0.6 mm = 2398 g（可行域的底：焊接下界与管 J 12 同点咬住，余量 0% / 9%）；" +
-        "0.8 mm = 3117 g（+719 g，换来管 J 余量 21%、壁厚高于焊接下界 33%）。" +
-        "切到 0.6 只需改三行：WallMm=0.6、TabThickMm={1.82,2.91,2.71,1.49}、RingMul 全 1.22。";
+    public string Provenance = "";
+    /// <summary>本档被哪条约束咬住（说明是「贴着谁」，不是「过没过」）</summary>
+    public string Binding = "";
 
     // ── 管
-    public static double WallMm = 0.8;
-    public static double TubeInsulMm = 5.0;
-    public static readonly double[] SetpointC = { 1150.0, 1080.0, 1050.0 };
+    public double WallMm;
+    public double TubeInsulMm = 5.0;
+    public double[] SetpointC = { 1150.0, 1080.0, 1050.0 };
 
     // ── 法兰（四片：入口 / 共用1 / 共用2 / 出口）
-    public static double DiscRadiusMm = 30.0;
-    public static double TabLengthMm = 90.0;
-    public static double TabHalfWidthMm = 15.0;
-    public static double TabFilletMm = 3.0;    // C 限值改 5 K 后 ②″ 只有 +1.17/5 ⇒ 不再需要大圆角
-    public static double[] TabThickMm = { 2.11, 3.40, 3.18, 1.76 };
-    public static double[] TabInsulMm = { 18.7, 1.6, 1.4, 3.9 };
+    public double DiscRadiusMm = 30.0;
+    public double TabLengthMm = 90.0;
+    public double TabHalfWidthMm = 15.0;
+    /// <summary>舌根过渡圆角 R。⚠ 网格 2 mm，小于它的圆角在场里看不出来（§1.8 的分辨率坑）</summary>
+    public double TabFilletMm = 3.0;
+    public double[] TabThickMm = new double[4];
+    public double[] TabInsulMm = { 18.7, 1.6, 1.4, 3.9 };
 
     // ── 管孔渐变环：**相对量**（绝对值写法已两次造成安静失败，见 §1.8 ⑥⑦）
     /// <summary>环宽 mm，相对管孔外扩；两级台阶在 孔+w 与 孔+2w</summary>
-    public static double RingWidthMm = 3.0;
+    public double RingWidthMm = 3.0;
     /// <summary>内圈厚度倍率（相对板厚）；外圈取 1 + 0.4(μ−1)</summary>
-    public static double[] RingMul = { 1.24, 1.24, 1.24, 1.24 };
+    public double[] RingMul = new double[4];
 
     // ── 压接
-    public static double ClampLengthMm = 40.0;
-    public static double ClampTempC = 450.0;
+    public double ClampLengthMm = 40.0;
+    public double ClampTempC = 450.0;
 
-    public static double HoleRadiusMm => WallMm + 25.0;
-    public static double[] RingRadiiMm =>
+    // ── 实测结果（供报告与 UI 直接引用，避免再去翻日志）
+    public double TotalMassG, TubeMassG, FlangeMassG;
+    /// <summary>外层耦合的**剩余误差估计** K（不是步长，见 §1.85）</summary>
+    public double ResidualK;
+
+    public double HoleRadiusMm => WallMm + 25.0;
+    public double[] RingRadiiMm =>
         new[] { HoleRadiusMm + RingWidthMm, HoleRadiusMm + 2 * RingWidthMm };
+    /// <summary>外圈倍率（内圈的 40 % 过渡回板身）</summary>
+    public double RingMulOuter(int j) => 1 + (RingMul[j] - 1) * 0.4;
 
     /// <summary>按本定案构型造第 j 片（0=入口, 1=共用1, 2=共用2, 3=出口）。</summary>
-    public static FlangePlate Plate(int j, double discFloorMm)
+    public FlangePlate Plate(int j, double discFloorMm)
     {
         double td = System.Math.Max(TabThickMm[j], discFloorMm);
-        double mu = RingMul[j];
         return new FlangePlate
         {
             DiscRadiusMm = DiscRadiusMm, HoleRadiusMm = HoleRadiusMm,
             TabEndXMm = -TabLengthMm, TabEndHalfWidthMm = TabHalfWidthMm,
             ThicknessMm = td,
             DiscStepRadiiMm = RingRadiiMm,
-            DiscStepThicknessMm = new[] { td * mu, td * (1 + (mu - 1) * 0.4) },
+            DiscStepThicknessMm = new[] { td * RingMul[j], td * RingMulOuter(j) },
             TabThicknessMm = double.NaN,
             InsulBoundaryXMm = double.NaN, TabInsulThickMm = TabInsulMm[j],
             TabParallel = true, TabFilletMm = TabFilletMm,
@@ -72,10 +82,67 @@ public static class FinalDesign
         };
     }
 
-    public static string Describe() =>
-        $"管壁 {WallMm:0.0}／管保温 {TubeInsulMm:0}／盘Ø{2 * DiscRadiusMm:0}／" +
+    public string Describe() =>
+        $"[{Name}] 管壁 {WallMm:0.0}／管保温 {TubeInsulMm:0}／盘Ø{2 * DiscRadiusMm:0}／" +
         $"舌 {TabLengthMm:0}×{2 * TabHalfWidthMm:0}／板厚 {string.Join("/", TabThickMm)}／" +
         $"舌保温 {string.Join("/", TabInsulMm)}／" +
         $"环 r≤孔+{RingWidthMm:0}→×{string.Join("/", RingMul)}／舌根圆角 R{TabFilletMm:0}／" +
-        $"压接 {ClampLengthMm:0} 夹 {ClampTempC:0} °C　【{Provenance}】";
+        $"压接 {ClampLengthMm:0} 夹 {ClampTempC:0} °C　合计 {TotalMassG:0} g";
+
+    // ════════════════════════════════════════════════════════════════════
+    // 两个定案档。**都全判据通过**，差别只在裕度与铂重。
+    // 出处：`--final2` 可行性阶梯 D7（舌厚→B 净流入靶 2 W／环倍率→②″／舌保温抗饱和接力）；
+    //       ②″ 限值 5 K（现场控温精度）、管 J 限值 12（现场：一般 15，管壁 0.6 时 12 是极限）。
+    // ════════════════════════════════════════════════════════════════════
+
+    /// <summary>留余量档：没有任何判据贴限值。</summary>
+    public static readonly FinalDesign W08 = new()
+    {
+        Name = "管壁 0.8 · 留余量",
+        Provenance = "--final2 可行性阶梯 D7（2026-08-15）",
+        Binding = "无 —— 每条判据都有裕度：管 J 21 %／③ 46 %／②″ 81 %／壁厚高于焊接下界 33 %",
+        WallMm = 0.8,
+        TabThickMm = new[] { 2.11, 3.40, 3.18, 1.76 },
+        RingMul = new[] { 1.24, 1.24, 1.24, 1.24 },
+        TotalMassG = 3117, TubeMassG = 2466, FlangeMassG = 652, ResidualK = 0.65,
+    };
+
+    /// <summary>底档：可行域的底。焊接烧穿下界与管 J 12 **在同一点咬住**。</summary>
+    public static readonly FinalDesign W06 = new()
+    {
+        Name = "管壁 0.6 · 底档",
+        Provenance = "--final2 可行性阶梯 D7（2026-08-15）",
+        Binding = "焊接烧穿下界 0.6 mm（余量 0）＋ 管 J 10.96/12（余量 9 %）—— 两条同点咬住",
+        WallMm = 0.6,
+        TabThickMm = new[] { 1.82, 2.91, 2.71, 1.49 },
+        RingMul = new[] { 1.22, 1.22, 1.22, 1.22 },
+        TotalMassG = 2398, TubeMassG = 1842, FlangeMassG = 557, ResidualK = 0.75,
+    };
+
+    public static readonly FinalDesign[] All = { W08, W06 };
+
+    /// <summary>
+    /// 当前生效的档。**默认取保守的 0.8** —— 业主尚未在两档间拍板，
+    /// 而 0.6 把壁厚压在焊接下界上、管 J 只剩 9 %，这两条都属于现场判断，不属于计算。
+    /// </summary>
+    public static FinalDesign Current = W08;
+
+    /// <summary>按管壁取档（命令行 `--wall 0.6`）。找不到返回 null —— **不要静默回退**。</summary>
+    public static FinalDesign? ByWall(double wallMm)
+    {
+        foreach (var d in All)
+            if (System.Math.Abs(d.WallMm - wallMm) < 1e-6) return d;
+        return null;
+    }
+
+    /// <summary>解析 `--wall &lt;mm&gt;`，缺省用 <see cref="Current"/>；给了但不认识就抛，不静默。</summary>
+    public static FinalDesign Select(string[] args)
+    {
+        int i = System.Array.IndexOf(args, "--wall");
+        if (i < 0 || i + 1 >= args.Length) return Current;
+        if (!double.TryParse(args[i + 1], out double w))
+            throw new System.ArgumentException($"--wall 的值解析不了：{args[i + 1]}");
+        return ByWall(w) ?? throw new System.ArgumentException(
+            $"没有管壁 {w:0.0} mm 的定案档。现有：{string.Join("、", System.Linq.Enumerable.Select(All, d => d.WallMm.ToString("0.0")))}");
+    }
 }

@@ -4706,31 +4706,33 @@ internal static class Program
                 //   此前这里钉着几代之前的几何（管壁 0.6、舌厚 {1.37,2.02,1.80,1.04}、
                 //   管保温 10 mm、无管孔环），照样跑得出漂亮的铜排尺寸 ——
                 //   但那是**另一个设计**的电流。安静失败，§1.8 家族。
-                double wallB9 = FinalDesign.WallMm, discB9 = FinalDesign.DiscRadiusMm;
-                double clampLenB9 = FinalDesign.ClampLengthMm, clampB9 = FinalDesign.ClampTempC;
-                double tabLB9 = FinalDesign.TabLengthMm, halfWB9 = FinalDesign.TabHalfWidthMm;
+                var FD9 = FinalDesign.Select(args);   // `--wall 0.6` 可切档，缺省用 Current
+                double wallB9 = FD9.WallMm, discB9 = FD9.DiscRadiusMm;
+                double clampLenB9 = FD9.ClampLengthMm, clampB9 = FD9.ClampTempC;
+                double tabLB9 = FD9.TabLengthMm, halfWB9 = FD9.TabHalfWidthMm;
                 double discFloorB9 = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
                                      * (discB9 - 26.0) * p.WeldSafetyFactor;
 
                 var pB9 = SegmentSolver.Clone(p);
-                pB9.Layer1.ThicknessMm = FinalDesign.TubeInsulMm; pB9.Layer1.Enabled = true;
+                pB9.Layer1.ThicknessMm = FD9.TubeInsulMm; pB9.Layer1.Enabled = true;
                 pB9.WallMinMm = wallB9;
                 pB9.FlangeInsulThickMm = 20; pB9.FlangeInsulated = true;
                 pB9.BusbarClampLengthMm = clampLenB9; pB9.BusbarClampTempC = clampB9;
 
-                FlangePlate MkB9(int j) => FinalDesign.Plate(j, discFloorB9);
+                FlangePlate MkB9(int j) => FD9.Plate(j, discFloorB9);
                 var lcB9 = new LineCase
                 {
                     Base = SegmentSolver.Clone(pB9), WallMm = wallB9,
                     UseMeasuredCurrent = false, CheckRamp = false,
-                    SetpointC = FinalDesign.SetpointC,
+                    SetpointC = FD9.SetpointC,
                     FlangePlates = new[] { MkB9(0), MkB9(1), MkB9(2), MkB9(3) },
                     ClampTempC = new[] { clampB9, clampB9, clampB9, clampB9 }
                 };
 
                 Console.WriteLine("=== 铜排：长宽高 + 在舌片上的位置 ===");
                 Console.WriteLine("几何取自 **FinalDesign**（定案唯一来源）：");
-                Console.WriteLine("  " + FinalDesign.Describe());
+                Console.WriteLine("  " + FD9.Describe());
+                Console.WriteLine("  咬住它的：" + FD9.Binding);
                 Console.WriteLine("先跑一次定案整线，取每片**真实**的电流与铜排带走的热，再据此定尺寸。");
                 // ★ 交叉核对：铜排是照着「可行方案」配的，那这一跑本身必须仍然全过。
                 //   不打这一句的话，几何一旦漂移，铜排会安静地配给一个不可行的方案。
@@ -5035,10 +5037,11 @@ internal static class Program
             {
                 // ★ 几何**只从 FinalDesign 取**（定案唯一来源）。此前这里钉着管壁 1.5、
                 //   管保温 10、无环的旧构型，跑出来的峰位是**另一个设计**的峰位。
-                double wallH = FinalDesign.WallMm, holeH = FinalDesign.HoleRadiusMm;
-                double discH = FinalDesign.DiscRadiusMm;
+                var FDH = FinalDesign.Select(args);
+                double wallH = FDH.WallMm, holeH = FDH.HoleRadiusMm;
+                double discH = FDH.DiscRadiusMm;
                 var pH = SegmentSolver.Clone(p);
-                pH.Layer1.ThicknessMm = FinalDesign.TubeInsulMm; pH.Layer1.Enabled = true;
+                pH.Layer1.ThicknessMm = FDH.TubeInsulMm; pH.Layer1.Enabled = true;
                 pH.WallMinMm = wallH;
                 pH.FlangeInsulThickMm = 20; pH.FlangeInsulated = true;
                 pH.BusbarClampLengthMm = 40; pH.BusbarClampTempC = 300;
@@ -5054,14 +5057,14 @@ internal static class Program
                 //   当时圆角只改 0.25 mm 轮廓，远小于 2 mm 网格 —— **不是圆角无效**。
                 double discFloorH = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
                                     * (discH - 26.0) * p.WeldSafetyFactor;
-                pH.BusbarClampTempC = FinalDesign.ClampTempC;
-                pH.BusbarClampLengthMm = FinalDesign.ClampLengthMm;
-                FlangePlate MkH(int j) => FinalDesign.Plate(j, discFloorH);
+                pH.BusbarClampTempC = FDH.ClampTempC;
+                pH.BusbarClampLengthMm = FDH.ClampLengthMm;
+                FlangePlate MkH(int j) => FDH.Plate(j, discFloorH);
                 var lcH = new LineCase
                 {
                     Base = SegmentSolver.Clone(pH), WallMm = wallH,
                     UseMeasuredCurrent = false, CheckRamp = false,
-                    SetpointC = FinalDesign.SetpointC,
+                    SetpointC = FDH.SetpointC,
                     FlangePlates = new[] { MkH(0), MkH(1), MkH(2), MkH(3) },
                     ClampTempC = new[] { 450.0, 450.0, 450.0, 450.0 }
                 };
@@ -5092,7 +5095,7 @@ internal static class Program
                 Console.WriteLine($"I={fw.CurrentA:0} A　管根 {fw.TRootC:0.0} °C　" +
                                   $"盘Ø{2 * discH:0}／等宽舌 90×30／**盘舌等厚 {gH.ThicknessMm:0.00}**／" +
                                   $"舌保温 {gH.TabInsulThickMm:0.0}／焊脚 {gH.WeldFilletLegMm:0.00}／切点 x={xtH:0.00}");
-                Console.WriteLine("  几何取自 FinalDesign：" + FinalDesign.Describe());
+                Console.WriteLine("  几何取自 FinalDesign：" + FDH.Describe());
                 Console.WriteLine("  ⚠ 网格 2 mm，凹角处场是奇异的 ⇒ **0.1 K 量级的差别不可当锐利边界读**。");
                 Console.WriteLine($"整线判定 ② = {fw.TMaxC - fw.TRootC:+0.00;−0.00} K");
                 Console.WriteLine();
