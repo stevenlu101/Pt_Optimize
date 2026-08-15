@@ -204,13 +204,18 @@ public sealed class ManualPage : TabPage
         double x0 = 25.0 - 1.0, x1 = xEnd;      // 左端留出管壁
 
         double tMax = Math.Max(ti, Math.Max(to, t));
-        double s = 200.0 / tMax;                // 1:1，按最厚一带定比例
-        double W = (x1 - x0) * s, H = tMax * s + 96;
+        // ⚠ 比例必须**按宽度定**，不能按厚度定。
+        //   按厚度定时 s=200/2.62=76 px/mm ⇒ 原生宽度 1206 px，
+        //   而显示宽度限死 620 ⇒ 整张被压到 51 %，11 px 的字缩成 5.6 px 看不清。
+        //   另外两张图本来就是按宽度定的，所以只有这张糊 —— 统一过来。
+        const double VIEW_W = 620.0;
+        double s = VIEW_W / (x1 - x0);          // 1:1（两方向同比例），且原生尺寸=显示尺寸
+        double W = VIEW_W, H = tMax * s + 96;
         double mid = (H - 34) / 2 + 10;
         string PX(double x) => ((x - x0) * s).ToString("0.0");
 
         var sb = new StringBuilder();
-        sb.Append($"<svg viewBox=\"0 0 {W:0} {H:0}\" width=\"100%\" style=\"max-width:620px\">");
+        sb.Append($"<svg viewBox=\"0 0 {W:0} {H:0}\" width=\"100%\" style=\"max-width:{VIEW_W:0}px\">");
 
         // 铂管壁：沿管轴（垂直于本剖面）延伸 ⇒ 画成一段竖直块，示意焊接位置
         sb.Append($"<rect x=\"{PX(25.0)}\" y=\"{mid - tMax / 2 * s - 26:0.0}\" " +
@@ -340,10 +345,10 @@ p,li{color:var(--ink2)}
 .fig{background:var(--card);border:1px solid var(--rule);border-radius:4px;
 padding:14px;margin:14px 0;text-align:center}
 .cap{font-size:.82rem;color:var(--muted);margin-top:8px;text-align:left}
-text.lbl{font:11px 'Microsoft YaHei UI',sans-serif;fill:var(--ink)}
-text.dim{fill:var(--muted);font-size:10px}
+text.lbl{font:13px 'Microsoft YaHei UI',sans-serif;fill:var(--ink)}
+text.dim{fill:var(--muted);font-size:11.5px}
 text.clamp{fill:var(--clamp)}
-text.onTube{fill:var(--ink);font-size:10px}
+text.onTube{fill:var(--ink);font-size:11.5px}
 table{border-collapse:collapse;width:100%;font-size:.88rem;background:var(--card);
 border:1px solid var(--rule);border-radius:4px;overflow:hidden}
 th,td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--rule)}
