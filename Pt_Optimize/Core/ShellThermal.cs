@@ -57,6 +57,16 @@ public sealed class ShellThermalResult
     /// 两个都留着、都报出来，不要用一个替换另一个。
     /// </summary>
     public double TDiscMaxC, TTabMaxC;
+    /// <summary>
+    /// ★ 圆盘区峰值**落在哪** —— 判据 ②″ 只给一个差值，分不清病灶：
+    /// 峰在**管孔上**（r≈管外径）意味着「盘峰 = 管根」的恒等式在噪声上下摆，
+    /// 治它要动管侧（抽热 D、管截面）；峰在**轮毂/舌根**（r 较大、J 不为零）
+    /// 才是法兰自身发热顶起来的局部尖峰，治它要动法兰几何。
+    /// 两者要用完全不同的旋钮，只看差值必然误诊。
+    /// </summary>
+    public double DiscMaxXMm = double.NaN, DiscMaxZMm = double.NaN,
+                  DiscMaxRMm = double.NaN, DiscMaxJAPerMm2 = double.NaN,
+                  DiscMaxThickMm = double.NaN;
     public int Iterations;
     public double Residual;
     public bool Converged;
@@ -296,6 +306,7 @@ public static class ShellThermal
         double xb = double.IsNaN(tabBoundaryX) ? insulBoundaryX : tabBoundaryX;
         double gD = 0, lD = 0, aD = 0, tD = 0, gT = 0, lT = 0, aT = 0, tT = 0;
         double tDMax = double.NegativeInfinity, tTMax = double.NegativeInfinity;
+        int iDMax = -1;
         for (int i = 0; i < n; i++)
         {
             if (Excluded(i)) continue;
@@ -306,7 +317,20 @@ public static class ShellThermal
                        ? Math.Abs(m.Centroid[i].X) > Math.Abs(xb)
                        : m.Centroid[i].X < xb;
             if (onTab) { gT += g; lT += l; aT += A; tT += ti * A; tTMax = Math.Max(tTMax, ti); }
-            else { gD += g; lD += l; aD += A; tD += ti * A; tDMax = Math.Max(tDMax, ti); }
+            else
+            {
+                gD += g; lD += l; aD += A; tD += ti * A;
+                if (ti > tDMax) { tDMax = ti; iDMax = i; }
+            }
+        }
+        if (iDMax >= 0)
+        {
+            var cD = m.Centroid[iDMax];
+            // 板面在 X–Z 平面（Vec3(cx, yPlane, cz)）⇒ 半径由 X、Z 定，与 Y 无关
+            res.DiscMaxXMm = cD.X; res.DiscMaxZMm = cD.Z;
+            res.DiscMaxRMm = Math.Sqrt(cD.X * cD.X + cD.Z * cD.Z);
+            res.DiscMaxJAPerMm2 = jMagAPerMm2[iDMax];
+            res.DiscMaxThickMm = m.Thickness[iDMax];
         }
         res.QGenDiscW = gD; res.QLossDiscW = lD; res.AreaDiscMm2 = aD;
         res.QGenTabW = gT; res.QLossTabW = lT; res.AreaTabMm2 = aT;

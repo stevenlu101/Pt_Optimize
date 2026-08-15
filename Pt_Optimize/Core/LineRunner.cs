@@ -209,6 +209,10 @@ public sealed class FlangeOut
     public double QGenDiscW, QLossDiscW, QGenTabW, QLossTabW, TDiscMeanC, TTabMeanC;
     /// <summary>分区峰值温度 —— 判据②要用 <see cref="TDiscMaxC"/>，见 ShellThermalResult 同名注释</summary>
     public double TDiscMaxC, TTabMaxC;
+    /// <summary>圆盘峰值的**位置与局部电流**，见 ShellThermalResult 同名注释（判据 ②″ 的病灶定位）</summary>
+    public double DiscMaxXMm = double.NaN, DiscMaxZMm = double.NaN,
+                  DiscMaxRMm = double.NaN, DiscMaxJAPerMm2 = double.NaN,
+                  DiscMaxThickMm = double.NaN;
     /// <summary>本片贴着的管根温度 °C（管孔定温边界）。TMaxC − TRootC &gt; 0 即「法兰比管热」</summary>
     public double TRootC;
     public double AreaMm2, VolumeMm3;
@@ -708,6 +712,9 @@ public static class LineRunner
                 QGenTabW = th.QGenTabW, QLossTabW = th.QLossTabW,
                 TDiscMeanC = th.TDiscMeanC, TTabMeanC = th.TTabMeanC,
                 TDiscMaxC = th.TDiscMaxC, TTabMaxC = th.TTabMaxC,
+                DiscMaxXMm = th.DiscMaxXMm, DiscMaxZMm = th.DiscMaxZMm,
+                DiscMaxRMm = th.DiscMaxRMm, DiscMaxJAPerMm2 = th.DiscMaxJAPerMm2,
+                DiscMaxThickMm = th.DiscMaxThickMm,
                 TMaxC = th.TMaxC, TMinC = th.TMinC, TTabEndC = th.TTabEndMeanC,
                 AreaMm2 = mesh.TotalArea, VolumeMm3 = mesh.VolumeMm3,
                 CellCount = mesh.CellCount,
@@ -861,7 +868,13 @@ public static class LineRunner
                 Actual = hottestDisc.TDiscMaxC - hottestDisc.TRootC, Limit = 0,
                 Ok = hottestDisc.TDiscMaxC <= hottestDisc.TRootC + 1e-6,
                 Where = hottestDisc.Name,
+                // ★ 判据必须自带**病灶位置**：只报差值时，「盘峰贴在管孔上」与
+                //   「轮毂上被自身发热顶起一个尖峰」给出同一个数，却要用相反的旋钮去治。
+                //   r≈管外径 且 J≈0 ⇒ 病在管侧；r 更大且 J 不为零 ⇒ 病在法兰侧。
                 Note = $"圆盘区 {hottestDisc.TDiscMaxC:0.0} vs 管根 {hottestDisc.TRootC:0.0} °C；" +
+                       $"峰位 r={hottestDisc.DiscMaxRMm:0.0} mm（x={hottestDisc.DiscMaxXMm:+0.0;−0.0}, " +
+                       $"z={hottestDisc.DiscMaxZMm:+0.0;−0.0}）J={hottestDisc.DiscMaxJAPerMm2:0.00} " +
+                       $"t={hottestDisc.DiscMaxThickMm:0.00} mm；" +
                        $"舌片区峰值 {hottestDisc.TTabMaxC:0.0} °C（另由熔点与局部失稳管）；" +
                        $"管孔净流入 {hottestDisc.QFromTubeW:+0;-0} W"
             });

@@ -3691,7 +3691,15 @@ internal static class Program
                 double tubeInsF2 = 5.0, c2TargetF2 = 5.0;
                 // ★ 可行性优先：从**宽裕**往**紧**走，管壁 1.5 → 0.6（0.6 = 手工 TIG 焊接下界）。
                 //   要的是「最薄的那个**全过**档」，不是「最轻但差一点」的档。
-                foreach (double wallSweep in new[] { 1.5, 1.2, 1.0, 0.8, 0.6 })
+                // ★ C（②″圆盘区）在阶梯上**管壁越厚越接近**：1.5 档只差 0.28 K
+                //   ⇒ 往厚走一两档很可能直接进可行域，先拿到「第一个确实可行的点」，
+                //     再从它往下削（用户 2026-08-15：可行性优先，省铂在可行域内部执行）。
+                // 环装上之后，卡住的那条（C）预期解除 ⇒ 阶梯要能继续往下走，
+                // 一直走到**另一条判据先咬住**为止。多备几档，谁先咬住由实测说了算。
+                // 常数环 1.30 已把可行域从 2.0 拉到 1.4（7265 → 5252 g）。
+                // 环倍率受控之后再往下走，直到**另一条判据先咬住**或撞上焊接下界 0.6 mm
+                //（0.6 = 手工 TIG 烧穿下界，§4.2；那是**工艺硬底**，不是判据）。
+                foreach (double wallSweep in new[] { 1.6, 1.4, 1.2, 1.0, 0.8, 0.6 })
                 {
                 wallF2 = wallSweep;
                 clampF2 = 450.0;
@@ -3708,7 +3716,29 @@ internal static class Program
                 //   机理：高 J 区沿舌片延伸约 20 mm（§4.3k 的中线剖面），
                 //   渐变在整段上都降 J；单级台阶只能在一个半径带上猛加厚，
                 //   多出来的厚度按 K²/t 白白砍掉发热 —— 那正是 R=33 把 C2 炸到 +66 的原因。
-                double[] stepRF2 = { 30.0, 36.0 }, stepTF2 = { 2.4, 1.7 };
+                // ★★★ 管孔渐变环：**相对板厚的倍率 + 相对管孔的半径**（对策 D1，2026-08-15）
+                //
+                // 旧写法 `stepR={30,36}, stepT={2.4,1.7}` + `Max(台阶, 板厚)` 有两个安静失败
+                // （HANDOVER §1.8 bug ⑥⑦）：板厚一超过 2.4 环就自动消失（整条阶梯都没环），
+                // 管壁一变管孔就挪而环不挪（两档比的不是同一个设计）。
+                //
+                // 依据（`--ring` 实测，管壁 1.8、板厚锁死）：
+                //   倍率 1.00（关） ②″ +0.24　峰 r=28.1 **J=5.40**   ← 管孔外带电尖峰
+                //   倍率 1.15      ②″ +0.03　峰 r=28.1  J=4.75      ← J 被压下去，值同步降
+                //   倍率 1.30      ②″ −0.03　峰 **r=31.6 J=0.00**   ← 尖峰被压到「盘缘地板」以下
+                // ⇒ 1.30 是翻转点，代价 +59 g（四片）。取 1.30/环宽 3 mm。
+                //
+                // ★★ 但倍率**不能是常数**（实测：常数 1.30 在管壁 1.8 上只把 ②″ 压到 +0.06，
+                //    因为控制器为顶 B 把板削薄了，环跟着薄 ⇒ 环处发热 ∝ I²/t_环 回升，
+                //    而与它竞争的「盘缘地板」钉在 −0.04 不动）。⇒ **倍率是第二个受控旋钮**。
+                //
+                // 为什么这次两个旋钮不会像当年「板厚 + 保温」那样互相拉扯：
+                //   板厚作用在**整片**（总发热、对管导热），环只作用在 **r ∈ [孔, 孔+6]** 那一圈。
+                //   作用**位置**不同，才是真正的两根轴；当年两个都是全局旋钮，必然共线。
+                double ringWidF2 = 3.0;
+                double[] ringMulF2 = { 1.30, 1.30, 1.30, 1.30 };
+                double holeRF2 = wallF2 + 25.0;
+                double[] stepRF2 = { holeRF2 + ringWidF2, holeRF2 + 2 * ringWidF2 };
                 double discFloorF2 = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
                                      * (discF2 - 26.0) * p.WeldSafetyFactor;
 
@@ -3722,7 +3752,12 @@ internal static class Program
                 // （实测 18.7→3.3 把管根温差从 +9.9 推到 +51.8），从远处起步会先甩出可行域，
                 // 再被两个相冲的旋钮来回推 —— 第一版从 ins=8 起步就是这么振荡的。
                 // 装上管孔环后 ② 应从 +2.85 直接降约 2.3 K，只需在此附近做小幅牛顿修正。
-                double[] tabF2 = { 1.37, 2.02, 1.80, 1.04 };
+                // ⚠ 起点曾钉死在 {1.37,2.02,1.80,1.04}（那是**没装管孔环、管保温 10 mm**
+                //   那个旧构型的收敛值）。现在的收敛值是 3.3–5.5，而每轮限幅 ±0.15 mm ⇒
+                //   **光爬坡就烧掉 20 多轮**，一次跑半小时里大半在走直线。
+                //   起点不影响解（每片是一维割线、关系单调），只影响轮数 ⇒ 用本档的实测收敛值起步。
+                double[] tabF2 = wallF2 >= 1.9 ? new[] { 3.48, 5.50, 5.18, 2.99 }
+                                               : new[] { 3.30, 5.21, 4.91, 2.83 };
                 double[] insF2v = { 18.7, 1.6, 1.4, 3.9 };
 
                 // ★ **端片舌片加长**（总纲允许的自由度：「舌片长度如有需要可加长」）。
@@ -3745,7 +3780,9 @@ internal static class Program
 
                 // 管壁一变基线就得重算 ⇒ 每档进来先清空（本档内各轮复用）
                 double[][] baseCacheF2 = Array.Empty<double[]>();
-                LineCase MakeF2(double[] tab, double[] ins, bool ramp)
+                // ⚠ 环倍率必须**显式传参**，不能靠闭包读 ringMulF2 ——
+                //   否则「最优档」重算时会用**最后一轮**的环去配**最优轮**的板厚（安静的不一致，§1.8 家族）。
+                LineCase MakeF2(double[] tab, double[] ins, double[] ringMul, bool ramp)
                 {
                     var plates = new FlangePlate[4];
                     for (int j = 0; j < 4; j++)
@@ -3753,12 +3790,13 @@ internal static class Program
                         double td = Math.Max(tab[j], discFloorF2);
                         plates[j] = new FlangePlate
                         {
-                            DiscRadiusMm = discF2, HoleRadiusMm = wallF2 + 25.0,
+                            DiscRadiusMm = discF2, HoleRadiusMm = holeRF2,
                             TabEndXMm = -lenScaleF2, TabEndHalfWidthMm = halfWF2,
                             ThicknessMm = td,
-                            // 各级不得薄于板身（板被 C2 逼厚时，台阶不能反而成了减薄区）
+                            // 内圈满倍率、外圈过渡回板身；**永远厚于板身**，故不需要 Max 兜底
                             DiscStepRadiiMm = stepRF2,
-                            DiscStepThicknessMm = stepTF2.Select(v => Math.Max(v, td)).ToArray(),
+                            DiscStepThicknessMm = new[] { td * ringMul[j],
+                                                          td * (1 + (ringMul[j] - 1) * 0.4) },
                             TabThicknessMm = double.NaN,
                             InsulBoundaryXMm = double.NaN, TabInsulThickMm = ins[j],
                             TabParallel = true, TabFilletMm = 3.0,
@@ -3778,12 +3816,14 @@ internal static class Program
                 }
 
                 Console.WriteLine("=== 双约束自动定尺寸：C2 与判据 ② 同时顶 ===");
-                Console.WriteLine($"管壁 {wallF2:0.0}／盘Ø{2 * discF2:0}／管孔两级渐变环 " +
-                                  $"r≤{stepRF2[0]:0}→{stepTF2[0]:0.0}，r≤{stepRF2[1]:0}→{stepTF2[1]:0.0}／" +
+                Console.WriteLine($"管壁 {wallF2:0.0}／盘Ø{2 * discF2:0}／管孔两级渐变环（相对量，倍率受控）" +
+                                  $"r≤孔+{ringWidF2:0}→板厚×μ，r≤孔+{2 * ringWidF2:0}→板厚×(1+0.4(μ−1))／" +
                                   $"压接 {clampLenF2:0} 夹 {clampF2:0} °C");
                 Console.WriteLine($"**管壁 {wallF2:0.0} mm**（可行性阶梯，从宽到窄）　" +
                                   $"管保温 {tubeInsF2:0}／舌长 {lenScaleF2:0}／半宽 {halfWF2:0}");
-                Console.WriteLine("分派：舌厚→C2（发热∝1/t）　舌保温→②（保温厚⇒舌片热⇒峰值高）");
+                Console.WriteLine("分派（2026-08-15 定）：**舌厚 → ③ 增量温降（靶 8 K）**　" +
+                                  "**环倍率 → ②″ 圆盘峰（靶 −0.02 K）**　舌保温冻结（已证对 ②″ 无效）");
+                Console.WriteLine("  B（管孔净流入）退回**符号判据**：>0 即可，不再当靶 —— 它只是 ③ 的代理量。");
                 // 闭式（§4.3l）：把舌片当杆，Q_根 = kAΔT/ℓ − pℓ/2，T′(0) = −ΔT/ℓ + pℓ/(2kA)。
                 // C2 要 Q_根>0 ⇔ T′(0)<0；② 要杆内无处高于管根 ⇔ 峰值不在内部 ⇔ T′(0)≤0。
                 // **同一个不等式** ⇒ 两条不是对立的，中间那条带非空。
@@ -3795,11 +3835,14 @@ internal static class Program
                 // ⚠ 只打 ②max 会让人（我）在盲调：实测保温从 18.7 减到 8.0、② 反而从
                 //   +0.80 涨到 +1.19，光看 max 完全看不出是哪片、也看不出 T_max 与 T_root
                 //   在同向漂。**逐片打出 ② 与管根温度**，才能判断旋钮到底有没有作用在它上面。
-                Console.WriteLine($"{"轮",4}{"舌厚",22}{"保温",22}{"C2 三段 K",26}" +
-                                  $"{"② 逐片（入/共1/共2/出）",30}{"管根°C 逐片",26}");
+                // ⚠ 保温这一列是**冻结的**（`--knob2` 已证它对 C 无效），打它没有信息量。
+                //   换成**环倍率** —— 那是本轮新加的第二个旋钮，必须看得见它在动。
+                Console.WriteLine($"{"轮",4}{"舌厚",22}{"环倍率",22}" +
+                                  $"{"净流入 逐片（入/共1/共2/出）",30}{"②″max",9}{"③max",9}{"违反度",10}");
 
                 LineResult? bestF2 = null; double bestBad = double.MaxValue;
                 double[] bestTab = (double[])tabF2.Clone(), bestIns = (double[])insF2v.Clone();
+                double[] bestRing = (double[])ringMulF2.Clone();
                 // 割线法的状态：上一轮的舌厚与 C2 误差，以及当前斜率估计（K per mm）
                 var prevTab = new double[4]; var prevErr = new double[4]; var slopeEst = new double[4];
                 var prevIns = new double[4]; var prevE2 = new double[4];
@@ -3813,7 +3856,7 @@ internal static class Program
                 for (int round = 0; round < 30; round++)
                 {
                     LineResult rr;
-                    var lcRound = MakeF2(tabF2, insF2v, false);
+                    var lcRound = MakeF2(tabF2, insF2v, ringMulF2, false);
                     try { rr = LineRunner.Run(lcRound); }
                     catch (Exception ex) { Console.WriteLine($"{round,4}  异常 {ex.Message}"); break; }
                     if (!rr.Ok) { Console.WriteLine($"{round,4}  ✗ {rr.Message}"); break; }
@@ -3840,10 +3883,11 @@ internal static class Program
                     {
                         bestBad = bad; bestF2 = rr;
                         bestTab = (double[])tabF2.Clone(); bestIns = (double[])insF2v.Clone();
+                        bestRing = (double[])ringMulF2.Clone();
                     }
 
                     Console.WriteLine($"{round,4}{string.Join("/", tabF2.Select(v => v.ToString("0.00"))),22}" +
-                        $"{string.Join("/", insF2v.Select(v => v.ToString("0.0"))),22}" +
+                        $"{string.Join("/", ringMulF2.Select(v => v.ToString("0.00"))),22}" +
                         $"{string.Join("/", rr.Flanges.Select(f => f.QFromTubeW.ToString("+0;−0"))),24}" +
                         $"{rr.ValueOf(LineResult.Key.DiscTemp),9:+0.0;−0.0}" +
                         $"{dt.Max(),9:+0.0;−0.0}{bad,10:0.0}");
@@ -3865,22 +3909,86 @@ internal static class Program
                     //   ③ = D/√(kAβ) 已被壁厚标度验证（√(1.5/0.6)=1.58 vs 19.1/11.5=1.66，吻合 5%）。
                     //   实测 D≈7 W ⇒ ③=19.1（管壁 0.6）⇒ 要 ③≤10 需 D ≤ 7×10/19.1 ≈ 3.7 W。
                     //   而 B 只要求 D>0 ⇒ **可行窗口 0 < D ≲ 4 W**，原来的靶 8 W 本身就在窗口外。
-                    const double fluxTarget = 2.0;      // W
+                    // ★★★★★ 对策 D2（2026-08-15）：靶从「B = 2 W」改成「**③ = 8 K**」。
+                    //
+                    // 病症：环倍率一路推到 1.63，②″ 却停在 +0.1 不动。
+                    // 病因**不是**环失效，是两个旋钮经由 B 耦合：
+                    //   环加厚 ⇒ 对管导热 ↑ ⇒ B ↑ ⇒ 板厚旋钮为把 B 压回 2 W 而削薄
+                    //   ⇒ 环处发热 ∝ I²/t 回升 ⇒ 把环刚压下去的那点又顶回来。
+                    // 而同一轮的原始量说：**B = +4/+17/+15/+4 时 ③ 只有 6.5，远低于上限 10。**
+                    //   ⇒ 控制器在**白削薄**。
+                    //
+                    // 根因：`fluxTarget = 2.0 W` 是我当初为保护 ③ 用 ③=D/√(kAβ) **反解**出来的代理靶。
+                    //   但 ③ 现在是被 Judge **直接判**的量 —— 保护它就直接盯它。
+                    //   **B 是符号判据（>0），不是有靶值的量。**
+                    //   （拿代理量当靶，与「拿段内最大偏差当管根」是同一个毛病的第二次发作。）
+                    //
+                    // 依据（已有数据，非推测）：板越厚 ②″ 越好、③ 越大 ——
+                    //   壁 1.6：板 3.30 → ②″ −0.0／③ 44.2；板 3.05 → ②″ +0.1／③ 6.5
+                    //   壁 1.2：板 2.70 → ②″ −0.0／③ 20.1；板 2.60 → ②″ +0.6／③ 5.5
+                    //   ⇒ 真正的可行窗口夹在两者之间，而旧靶从来没让优化器进去过。
+                    const double dipTarget = 8.0;      // K，上限 10 留 2 K 余量
                     bool moved = false;
                     for (int j = 0; j < 4; j++)
                     {
                         double fj = rr.Flanges[j].QFromTubeW;
-                        double e = fluxTarget - fj;                    // >0 ⇒ 需要更多净流入 ⇒ 加厚
-                        if (Math.Abs(e) < 0.5) continue;   // 窗口只有几瓦，死区要跟着收窄
 
-                        double slope = slopeEst[j];                    // dFlux/dTab，W per mm，正
+                        // ══ 旋钮 2：**环倍率 → C（②″）** ══
+                        //
+                        // ⚠ 这一段必须放在旋钮 1 **之前**，而且两个旋钮**各判各的 continue**。
+                        //   第一版把它写在旋钮 1 的死区 `continue` 后面 ⇒ ③ 一进死区，
+                        //   整个环旋钮被跳过、`moved=false`、优化器报「两个旋钮都到位」停机 ——
+                        //   实际停在 ②″ = +0.01（差 0.01 K）。**又一个「修一个让别的悄悄跳过」**
+                        //   （§1.8 家族；这是我今天第二次犯同一个形状的错）。
+                        //
+                        // 靶不是「≤0」而是「贴着地板」：盘缘那个 J=0 的峰值恒为 −0.04
+                        // （八档保温 × 五档倍率全同），环再厚也压不到它下面，只是白加铂。
+                        // ⇒ 靶取 −0.02：高于它就加环（尖峰还露头），低于它就削环（环加多了）。
+                        double e2j = rr.Flanges[j].TDiscMaxC - rr.Flanges[j].TRootC;
+                        if (!double.IsNaN(e2j))
+                        {
+                            const double c2Target = -0.02, c2Dead = 0.010;
+                            double ee = e2j - c2Target;
+                            if (Math.Abs(ee) > c2Dead)
+                            {
+                                // 斜率来自 `--ring` 实测（管壁 1.8、板厚锁死）：
+                                //   倍率 1.00→+0.24，1.15→+0.03 ⇒ d②″/d倍率 ≈ −1.4 K/单位
+                                // 峰跳到地板之后会饱和，所以只用它做**方向与量级**，步长限幅。
+                                // ⚠ 削环（ee<0）要比加环慢：加环是**解除判据违反**，削环只是省铂，
+                                //   两者代价不对称，宁可慢一点省，也不要把刚压住的尖峰放回来。
+                                double dMul = Math.Clamp(ee / 1.4, -0.02, 0.10);
+                                double nm = Math.Clamp(ringMulF2[j] + dMul, 1.0, 2.5);
+                                if (Math.Abs(nm - ringMulF2[j]) > 1e-9) { ringMulF2[j] = nm; moved = true; }
+                            }
+                        }
+
+                        // ══ 旋钮 1：**板厚 → ③（靶 8 K）**，附 B>0 的方向性守卫 ══
+                        // 该片相邻两段的增量温降取大者（端片只有一段）
+                        double dipJ = double.NegativeInfinity;
+                        if (j - 1 >= 0 && j - 1 < dt.Length) dipJ = Math.Max(dipJ, dt[j - 1]);
+                        if (j < dt.Length) dipJ = Math.Max(dipJ, dt[j]);
+                        if (double.IsNegativeInfinity(dipJ) || double.IsNaN(dipJ)) continue;
+
+                        // B ≤ 0 是**方向性失效**（热在往管里灌），压倒一切：直接加厚
+                        if (fj <= 0.5)
+                        {
+                            double nb = Math.Clamp(tabF2[j] + 0.06, 0.3, 6.0);
+                            if (Math.Abs(nb - tabF2[j]) > 1e-9) { tabF2[j] = nb; moved = true; }
+                            prevTab[j] = double.NaN;   // 斜率状态作废，下轮重新量
+                            continue;
+                        }
+
+                        double e = dipTarget - dipJ;      // <0 ⇒ ③ 太大 ⇒ 削薄；>0 ⇒ 还有余量 ⇒ 加厚
+                        if (Math.Abs(e) < 0.5) continue;
+
+                        double slope = slopeEst[j];       // d③/dTab，K per mm，**正**（板厚 ⇒ 抽热多 ⇒ ③ 大）
                         if (!double.IsNaN(prevTab[j]) && Math.Abs(tabF2[j] - prevTab[j]) > 1e-6)
                         {
-                            double sMeas = (fj - prevErr[j]) / (tabF2[j] - prevTab[j]);
-                            if (sMeas > 5 && sMeas < 5000) slope = 0.5 * slope + 0.5 * sMeas;
+                            double sMeas = (dipJ - prevErr[j]) / (tabF2[j] - prevTab[j]);
+                            if (sMeas > 1 && sMeas < 5000) slope = 0.5 * slope + 0.5 * sMeas;
                         }
                         slopeEst[j] = slope;
-                        prevTab[j] = tabF2[j]; prevErr[j] = fj;
+                        prevTab[j] = tabF2[j]; prevErr[j] = dipJ;
 
                         double dTab = Math.Clamp(e / slope, -0.15, 0.15);
                         double nt = Math.Clamp(tabF2[j] + dTab, 0.3, 6.0);
@@ -3892,7 +4000,8 @@ internal static class Program
                 if (bestF2 == null) { Console.WriteLine("   ✗ 该压接温度下无解"); Console.WriteLine(); continue; }
 
                 Console.WriteLine($"   舌厚 {string.Join("/", bestTab.Select(v => v.ToString("0.00")))}" +
-                                  $"　舌保温 {string.Join("/", bestIns.Select(v => v.ToString("0.0")))}");
+                                  $"　舌保温 {string.Join("/", bestIns.Select(v => v.ToString("0.0")))}" +
+                                  $"　环倍率 {string.Join("/", bestRing.Select(v => v.ToString("0.00")))}");
                 var dtB = bestF2.Segments.Select(s => double.IsNaN(s.FlangeDipK)
                                                     ? s.RootDeltaK : s.FlangeDipK).ToArray();
                 // ★ 判定按用户 2026-08-15 拍板的 **B + C**：
@@ -3923,26 +4032,48 @@ internal static class Program
                 Console.WriteLine("   ── 全判据复核（含升温规程）");
                 try
                 {
-                    var rFull = LineRunner.Run(MakeF2(bestTab, bestIns, true));
+                    var rFull = LineRunner.Run(MakeF2(bestTab, bestIns, bestRing, true));
                     if (rFull.Ok)
                     {
                         bestF2 = rFull;
                         foreach (var nt in rFull.Notes) Console.WriteLine("   NOTE " + nt);
-                        Console.WriteLine($"   {"判据",-24}{"实际",10}{"限值",10}{"位置",10}  ");
+                        // ⚠ 「参考量」的 `·` 前缀是**手写在 Name 里**的，漏一个就把参考量
+                        //   伪装成硬判据（④ 就漏了）。⇒ 直接打 `Kind`，不靠手写符号。
+                        Console.WriteLine($"   {"判据",-24}{"实际",10}{"限值",10}{"类别",8}{"位置",10}  ");
                         foreach (var ck in rFull.Checks)
+                        {
+                            string kind = ck.Kind switch
+                            {
+                                CheckKind.HardSafety => "硬判据",
+                                CheckKind.Target => "目标",
+                                _ => "参考"
+                            };
                             Console.WriteLine($"   {ck.Name,-24}{ck.Actual,10:0.00}{ck.Limit,10:0.00}" +
-                                $"{ck.Where,10}  {(ck.Ok ? "✓" : "✗")}");
+                                $"{kind,8}{ck.Where,10}  " +
+                                $"{(ck.Undetermined ? "无法判定" : ck.Ok ? "✓" : "✗")}");
+                            // Judge 已经把病灶信息写进 Note（②″ 带峰位与局部 J）。
+                            // 以前不打，等于每次诊断都得重跑一遍才能拿到 —— 直接打出来。
+                            if (!string.IsNullOrWhiteSpace(ck.Note))
+                                Console.WriteLine($"       └ {ck.Note}");
+                        }
                         Console.WriteLine();
+                        // ★ ②″ 是个**差**（T_盘峰 − T_管根）。只打差值时无法分辨
+                        //   「盘变热了」还是「管根变冷了」—— 而两者要用完全不同的旋钮去治：
+                        //   前者归法兰几何，后者归抽热 D 与管截面（③ = D/√(kAβ)）。
+                        //   ⇒ **两侧的绝对温度都打出来**，让差值可被拆开。
                         Console.WriteLine($"   {"片",10}{"电流A",8}{"板厚",7}{"舌保温",8}{"铜排W",8}" +
-                                          $"{"抽管W",8}{"②K",8}{"②″K",8}{"峰温",7}{"克",7}");
+                                          $"{"抽管W",8}{"盘峰°C",9}{"管根°C",9}{"②″K",8}" +
+                                          $"{"峰位r",7}{"峰位J",7}{"②K",8}{"克",7}");
                         for (int q = 0; q < rFull.Flanges.Length; q++)
                         {
                             var f = rFull.Flanges[q];
                             Console.WriteLine($"   {f.Name,10}{f.CurrentA,8:0}{bestTab[q],7:0.00}" +
                                 $"{bestIns[q],8:0.0}{f.QClampW,8:0}{f.QFromTubeW,8:+0;−0}" +
-                                $"{f.TMaxC - f.TRootC,8:+0.00;−0.00}" +
+                                $"{(double.IsNaN(f.TDiscMaxC) ? f.TMaxC : f.TDiscMaxC),9:0.00}" +
+                                $"{f.TRootC,9:0.00}" +
                                 $"{(double.IsNaN(f.TDiscMaxC) ? 0 : f.TDiscMaxC - f.TRootC),8:+0.00;−0.00}" +
-                                $"{f.TMaxC,7:0}{f.MassG,7:0}");
+                                $"{f.DiscMaxRMm,7:0.0}{f.DiscMaxJAPerMm2,7:0.00}" +
+                                $"{f.TMaxC - f.TRootC,8:+0.00;−0.00}{f.MassG,7:0}");
                         }
                         Console.WriteLine();
                         Console.WriteLine($"   {"段",10}{"控温°C",9}{"电流A",8}{"管根ΔT",10}{"管J",8}{"克",8}");
@@ -3967,6 +4098,233 @@ internal static class Program
                 Console.WriteLine();
                 Console.WriteLine("★ 若所有档位都是「C2 过、② 差一点」，那说明在本构型下两条约束的可行带为空，");
                 Console.WriteLine("  差额就是还需要另外找的那部分 —— 而不是再调这两个旋钮能补上的。");
+                return;
+            }
+
+            // --cli --knob2   ★★★★★ 第二个旋钮存不存在：实测 ∂②″/∂舌保温
+            //
+            // 为什么要问这个（依据，不是猜）：
+            //   `--final2` 的控制器只有**一个**旋钮（板厚），靶是硬判据 B（管孔净流入）。
+            //   它每档都能把 B 顶到 +2 W，然后 C（②″）是多少就是多少 —— 没人管。
+            //   实测两档：B = 1.65 / 1.61 W 几乎相同，而 C = −0.04 / +0.25 差 0.29 K。
+            //   ⇒ **B 不唯一决定 C** ⇒ C 至少还有第二个输入 ⇒ 一个旋钮必然管不住两条判据。
+            //
+            // ⚠ 我曾归纳「C2、②、②′ 是同一根轴，只能留一个旋钮」，并据此砍掉了保温这个旋钮。
+            //   上面那两行数把它证伪了。但**当时的失败是真的**（五版控制律全崩），
+            //   所以这里不直接装控制器，先只做一件事：**量斜率**。
+            //   量到符号稳定、斜率有意义，才谈控制律 —— 否则就是第六版。
+            //
+            // 舌保温为什么是头号候选：① 它在阶梯里是**硬编码冻结**的 {18.7,1.6,1.4,3.9}，
+            // 那是很久以前另一个构型的收敛值；② 它**不花一克铂**；
+            // ③ 机理清楚：保温薄 ⇒ 舌片凉 ⇒ 经轮毂传到圆盘的热少 ⇒ 盘峰降。
+            //
+            // 本命令**只测不调**：板厚锁死在该档的收敛值，只扫保温倍率。
+            if (args.Contains("--knob2"))
+            {
+                double discK2 = 30.0, clampLenK2 = 40.0, clampK2 = 450.0, tubeInsK2 = 5.0;
+                double[] stepRK2 = { 30.0, 36.0 }, stepTK2 = { 2.4, 1.7 };
+                double[] insBaseK2 = { 18.7, 1.6, 1.4, 3.9 };
+                // 两档各自的收敛板厚（`--final2` 实测值），**不要混用**
+                var casesK2 = new (double wall, double[] tab)[]
+                {
+                    (2.0, new[] { 3.48, 5.50, 5.18, 2.99 }),
+                    (1.8, new[] { 3.30, 5.21, 4.91, 2.83 }),
+                };
+                double[] multK2 = { 0.05, 0.25, 0.5, 1.0, 2.0, 4.0 };
+
+                Console.WriteLine("=== 第二个旋钮：舌保温 → ②″ 的斜率实测 ===");
+                Console.WriteLine("板厚锁死在各档 --final2 的收敛值，只扫保温倍率。**只测不调。**");
+                Console.WriteLine("判据一律只读 Judge（ValueOf/AllOk/Failed），本命令不自行重算任何判据。");
+                Console.WriteLine();
+
+                foreach (var (wallK2, tabK2) in casesK2)
+                {
+                    double discFloorK2 = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                                         * (discK2 - 26.0) * p.WeldSafetyFactor;
+                    var pK2 = SegmentSolver.Clone(p);
+                    pK2.Layer1.ThicknessMm = tubeInsK2; pK2.Layer1.Enabled = true;
+                    pK2.WallMinMm = wallK2;
+                    pK2.FlangeInsulThickMm = 20; pK2.FlangeInsulated = true;
+                    pK2.BusbarClampLengthMm = clampLenK2; pK2.BusbarClampTempC = clampK2;
+
+                    // 无法兰基线只随管壁/管保温变 ⇒ 本档内各倍率复用（否则慢 5 倍）
+                    double[][] baseCacheK2 = Array.Empty<double[]>();
+                    LineCase MakeK2(double[] ins)
+                    {
+                        var plates = new FlangePlate[4];
+                        for (int j = 0; j < 4; j++)
+                        {
+                            double td = Math.Max(tabK2[j], discFloorK2);
+                            plates[j] = new FlangePlate
+                            {
+                                DiscRadiusMm = discK2, HoleRadiusMm = wallK2 + 25.0,
+                                TabEndXMm = -90.0, TabEndHalfWidthMm = 15.0,
+                                ThicknessMm = td,
+                                DiscStepRadiiMm = stepRK2,
+                                DiscStepThicknessMm = stepTK2.Select(v => Math.Max(v, td)).ToArray(),
+                                TabThicknessMm = double.NaN,
+                                InsulBoundaryXMm = double.NaN, TabInsulThickMm = ins[j],
+                                TabParallel = true, TabFilletMm = 3.0,
+                                WeldFilletLegMm = Math.Max(td, wallK2)
+                            };
+                        }
+                        return new LineCase
+                        {
+                            Base = SegmentSolver.Clone(pK2), WallMm = wallK2,
+                            UseMeasuredCurrent = false, CheckRamp = false,
+                            SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                            FlangePlates = plates,
+                            ClampTempC = new[] { clampK2, clampK2, clampK2, clampK2 },
+                            BaselineRootC = baseCacheK2
+                        };
+                    }
+
+                    Console.WriteLine($"── 管壁 {wallK2:0.0} mm　板厚 {string.Join("/", tabK2.Select(v => v.ToString("0.00")))}");
+                    Console.WriteLine($"{"倍率",6}{"保温mm",22}{"②″max",9}{"位置",10}" +
+                                      $"{"峰位r",7}{"峰位J",7}{"B min W",9}{"③max",8}{"判定",8}");
+                    foreach (double mK2 in multK2)
+                    {
+                        var ins = insBaseK2.Select(v => Math.Clamp(v * mK2, 0.1, 80.0)).ToArray();
+                        LineResult rk;
+                        // ⚠ 基线缓存要从 **LineCase** 读回（`Run` 把算好的基线写回它），
+                        //   不是从 LineResult ——`--final2` 里就是这么做的，别另发明一套。
+                        var lcK2 = MakeK2(ins);
+                        try { rk = LineRunner.Run(lcK2); }
+                        catch (Exception ex) { Console.WriteLine($"{mK2,6:0.00}  异常 {ex.Message}"); continue; }
+                        if (!rk.Ok) { Console.WriteLine($"{mK2,6:0.00}  ✗ {rk.Message}"); continue; }
+                        baseCacheK2 = lcK2.BaselineRootC;
+
+                        var ckC = rk.Find(LineResult.Key.DiscTemp);
+                        var worst = rk.Flanges.Where(f => !double.IsNaN(f.TDiscMaxC))
+                                              .OrderByDescending(f => f.TDiscMaxC - f.TRootC).First();
+                        Console.WriteLine($"{mK2,6:0.00}{string.Join("/", ins.Select(v => v.ToString("0.0"))),22}" +
+                            $"{rk.ValueOf(LineResult.Key.DiscTemp),9:+0.00;−0.00}{ckC?.Where ?? "?",10}" +
+                            $"{worst.DiscMaxRMm,7:0.0}{worst.DiscMaxJAPerMm2,7:0.00}" +
+                            $"{rk.ValueOf(LineResult.Key.NetFlux),9:+0.00;−0.00}" +
+                            $"{rk.ValueOf(LineResult.Key.FlangeDip),8:+0.0;−0.0}" +
+                            $"{(rk.AllOk ? "  ✓全过" : "  ✗"),8}");
+                        if (!rk.AllOk) Console.WriteLine($"        └ {string.Join("；", rk.Failed)}");
+                    }
+                    Console.WriteLine();
+                }
+                Console.WriteLine("★ 判读：符号稳定且斜率不为零 ⇒ 第二个旋钮**存在**，可以为 C 单独建控制律；");
+                Console.WriteLine("  若 ②″ 对保温几乎不动 ⇒ 病灶不在舌片→轮毂那条传热路上，要另找。");
+                return;
+            }
+
+            // --cli --ring   ★★★★★ 对策 D1：让管孔渐变环**真的生效**，并量它对 C 的作用
+            //
+            // 依据链（每一环都有实测，不是推的）：
+            //   1. `--final2` 逐片表：②″ 的峰位 **r=28.1 mm，J=5.40 A/mm²** ——
+            //      管孔外约 1.3 mm 的**带电环**，不是盘缘（盘缘 J=0，值恒为 −0.04）。
+            //   2. `--knob2` 八档保温扫描：峰会在两处**跳位置** ——
+            //      低保温时停在盘缘 r=31.6/J=0（值 −0.04，**地板**），
+            //      高保温时跳到 r=28.1/J=5.40（值 +0.04…+0.74，**真尖峰**）。
+            //      管壁 2.0 时尖峰一直低于地板 ⇒ 看不见 ⇒ 才误以为「管壁必须 2.0」。
+            //   3. `--taper` 单片筛实测：这个环把峰值从 **+13.05 压到 +0.00**。
+            //   4. 而它在整条可行性阶梯上**从未生效**（HANDOVER §1.8 bug ⑥）：
+            //      `DiscStepThicknessMm = Max(2.4, 板厚)`，收敛板厚 2.83–5.21 全大于 2.4
+            //      ⇒ 台阶被拉回板厚 ⇒ **等厚板，没有环**。
+            //
+            // ⇒ 环的厚度必须写成**板厚的倍率**，半径必须**相对管孔**定位。
+            //   写绝对值时：板一厚环就消失（⑥），管壁一变孔就挪而环不挪（⑦）。
+            //   「第一版写成 ThickenedMm = 板厚 × 1.3」曾被否掉，理由是「舌片被 C2 逼薄时环也跟着薄」——
+            //   那个理由在**当时**成立（板 1.0 mm），现在板是 3–5 mm，情形正好反过来。
+            //   ⇒ 旧结论作废，但作废的依据要写清楚：不是它当时错，是前提变了。
+            //
+            // 本命令**只测不调**：管壁、板厚全锁死，只扫环的倍率与宽度。
+            if (args.Contains("--ring"))
+            {
+                double discR9 = 30.0, clampLen9 = 40.0, clamp9 = 450.0, tubeIns9 = 5.0;
+                double[] ins9 = { 18.7, 1.6, 1.4, 3.9 };
+                var cases9 = new (double wall, double[] tab)[]
+                {
+                    (1.8, new[] { 3.30, 5.21, 4.91, 2.83 }),
+                };
+                // 一级倍率 × 一级宽度（相对管孔的外扩量 mm）。1.00 = 环关闭（对照组）
+                double[] mul9 = { 1.00, 1.15, 1.30, 1.50, 1.75 };
+                double[] wid9 = { 3.0, 6.0 };
+
+                Console.WriteLine("=== 对策 D1：管孔渐变环（相对板厚的倍率 + 相对管孔的半径）===");
+                Console.WriteLine("管壁与板厚全锁死，只扫环。倍率 1.00 = 环关闭（对照组）。");
+                Console.WriteLine("★ 要看的不是 ②″ 变小，是**峰位是否从 r≈28/J≈5.4 退回 r≈30/J=0**（即尖峰被压到地板以下）。");
+                Console.WriteLine();
+
+                foreach (var (wall9, tab9) in cases9)
+                {
+                    double discFloor9 = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                                        * (discR9 - 26.0) * p.WeldSafetyFactor;
+                    double holeR9 = wall9 + 25.0;
+                    var p9 = SegmentSolver.Clone(p);
+                    p9.Layer1.ThicknessMm = tubeIns9; p9.Layer1.Enabled = true;
+                    p9.WallMinMm = wall9;
+                    p9.FlangeInsulThickMm = 20; p9.FlangeInsulated = true;
+                    p9.BusbarClampLengthMm = clampLen9; p9.BusbarClampTempC = clamp9;
+
+                    double[][] baseCache9 = Array.Empty<double[]>();
+                    LineCase Make9(double mul, double wid)
+                    {
+                        var plates = new FlangePlate[4];
+                        for (int j = 0; j < 4; j++)
+                        {
+                            double td = Math.Max(tab9[j], discFloor9);
+                            plates[j] = new FlangePlate
+                            {
+                                DiscRadiusMm = discR9, HoleRadiusMm = holeR9,
+                                TabEndXMm = -90.0, TabEndHalfWidthMm = 15.0,
+                                ThicknessMm = td,
+                                // ★ 相对定位、相对定厚 —— 两级：内圈满倍率，外圈过渡到板厚
+                                DiscStepRadiiMm = new[] { holeR9 + wid, holeR9 + 2 * wid },
+                                DiscStepThicknessMm = new[] { td * mul, td * (1 + (mul - 1) * 0.4) },
+                                TabThicknessMm = double.NaN,
+                                InsulBoundaryXMm = double.NaN, TabInsulThickMm = ins9[j],
+                                TabParallel = true, TabFilletMm = 3.0,
+                                WeldFilletLegMm = Math.Max(td, wall9)
+                            };
+                        }
+                        return new LineCase
+                        {
+                            Base = SegmentSolver.Clone(p9), WallMm = wall9,
+                            UseMeasuredCurrent = false, CheckRamp = false,
+                            SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                            FlangePlates = plates,
+                            ClampTempC = new[] { clamp9, clamp9, clamp9, clamp9 },
+                            BaselineRootC = baseCache9
+                        };
+                    }
+
+                    Console.WriteLine($"── 管壁 {wall9:0.0} mm　板厚 {string.Join("/", tab9.Select(v => v.ToString("0.00")))}" +
+                                      $"　管孔 r={holeR9:0.0} mm");
+                    Console.WriteLine($"{"倍率",6}{"环宽",6}{"②″max",9}{"位置",10}{"峰位r",7}{"峰位J",7}" +
+                                      $"{"B min",8}{"③max",7}{"法兰g",8}{"合计g",8}{"判定",8}");
+                    foreach (double wid in wid9)
+                        foreach (double mul in mul9)
+                        {
+                            // 环关闭这一档只跑一次（与环宽无关）
+                            if (mul == 1.00 && wid != wid9[0]) continue;
+                            LineResult r9;
+                            var lc9 = Make9(mul, wid);
+                            try { r9 = LineRunner.Run(lc9); }
+                            catch (Exception ex) { Console.WriteLine($"{mul,6:0.00}{wid,6:0.0}  异常 {ex.Message}"); continue; }
+                            if (!r9.Ok) { Console.WriteLine($"{mul,6:0.00}{wid,6:0.0}  ✗ {r9.Message}"); continue; }
+                            baseCache9 = lc9.BaselineRootC;
+
+                            var ck9 = r9.Find(LineResult.Key.DiscTemp);
+                            var w9 = r9.Flanges.Where(f => !double.IsNaN(f.TDiscMaxC))
+                                               .OrderByDescending(f => f.TDiscMaxC - f.TRootC).First();
+                            double mF = r9.Flanges.Sum(f => f.MassG);
+                            double mT = r9.Segments.Sum(s => s.MassG);
+                            Console.WriteLine($"{mul,6:0.00}{wid,6:0.0}" +
+                                $"{r9.ValueOf(LineResult.Key.DiscTemp),9:+0.00;−0.00}{ck9?.Where ?? "?",10}" +
+                                $"{w9.DiscMaxRMm,7:0.0}{w9.DiscMaxJAPerMm2,7:0.00}" +
+                                $"{r9.ValueOf(LineResult.Key.NetFlux),8:+0.00;−0.00}" +
+                                $"{r9.ValueOf(LineResult.Key.FlangeDip),7:+0.0;−0.0}" +
+                                $"{mF,8:0}{mF + mT,8:0}{(r9.AllOk ? "  ✓全过" : "  ✗"),8}");
+                            if (!r9.AllOk) Console.WriteLine($"        └ {string.Join("；", r9.Failed)}");
+                        }
+                    Console.WriteLine();
+                }
+                Console.WriteLine("★ 对照基准：管壁 2.0 全过时合计 7265 g。本表任何 ✓ 行若合计 < 7265 即为净省。");
                 return;
             }
 
@@ -4146,45 +4504,44 @@ internal static class Program
             // 铜排按**风冷散热片**定尺寸，不是「导到某个恒温冷端」——现场没有冷端（§4.5）。
             if (args.Contains("--busbarplan"))
             {
-                double wallB9 = p.WeldMinThicknessMm, discB9 = 30.0;
-                double clampLenB9 = 40.0, clampB9 = 450.0;   // 定案值（--final2 前沿：450 优于 300）
-                double tabLB9 = 90.0, halfWB9 = 15.0;
-                double[] tabB9 = { 1.37, 2.02, 1.80, 1.04 }, insB9 = { 18.7, 1.6, 1.4, 3.9 };
+                // ★ 几何**只从 FinalDesign 取**，不再本地手抄。
+                //   此前这里钉着几代之前的几何（管壁 0.6、舌厚 {1.37,2.02,1.80,1.04}、
+                //   管保温 10 mm、无管孔环），照样跑得出漂亮的铜排尺寸 ——
+                //   但那是**另一个设计**的电流。安静失败，§1.8 家族。
+                double wallB9 = FinalDesign.WallMm, discB9 = FinalDesign.DiscRadiusMm;
+                double clampLenB9 = FinalDesign.ClampLengthMm, clampB9 = FinalDesign.ClampTempC;
+                double tabLB9 = FinalDesign.TabLengthMm, halfWB9 = FinalDesign.TabHalfWidthMm;
                 double discFloorB9 = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
                                      * (discB9 - 26.0) * p.WeldSafetyFactor;
 
                 var pB9 = SegmentSolver.Clone(p);
-                pB9.Layer1.ThicknessMm = 10.0; pB9.Layer1.Enabled = true;
+                pB9.Layer1.ThicknessMm = FinalDesign.TubeInsulMm; pB9.Layer1.Enabled = true;
                 pB9.WallMinMm = wallB9;
                 pB9.FlangeInsulThickMm = 20; pB9.FlangeInsulated = true;
                 pB9.BusbarClampLengthMm = clampLenB9; pB9.BusbarClampTempC = clampB9;
 
-                FlangePlate MkB9(int j)
-                {
-                    double td = Math.Max(tabB9[j], discFloorB9);
-                    return new FlangePlate
-                    {
-                        DiscRadiusMm = discB9, HoleRadiusMm = wallB9 + 25.0,
-                        TabEndXMm = -tabLB9, TabEndHalfWidthMm = halfWB9,
-                        ThicknessMm = td, ThickenedMm = td, TabThicknessMm = double.NaN,
-                        InsulBoundaryXMm = double.NaN, TabInsulThickMm = insB9[j],
-                        TabParallel = true, TabFilletMm = 3.0,
-                        WeldFilletLegMm = Math.Max(td, wallB9)
-                    };
-                }
+                FlangePlate MkB9(int j) => FinalDesign.Plate(j, discFloorB9);
                 var lcB9 = new LineCase
                 {
                     Base = SegmentSolver.Clone(pB9), WallMm = wallB9,
                     UseMeasuredCurrent = false, CheckRamp = false,
-                    SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
+                    SetpointC = FinalDesign.SetpointC,
                     FlangePlates = new[] { MkB9(0), MkB9(1), MkB9(2), MkB9(3) },
                     ClampTempC = new[] { clampB9, clampB9, clampB9, clampB9 }
                 };
 
                 Console.WriteLine("=== 铜排：长宽高 + 在舌片上的位置 ===");
+                Console.WriteLine("几何取自 **FinalDesign**（定案唯一来源）：");
+                Console.WriteLine("  " + FinalDesign.Describe());
                 Console.WriteLine("先跑一次定案整线，取每片**真实**的电流与铜排带走的热，再据此定尺寸。");
+                // ★ 交叉核对：铜排是照着「可行方案」配的，那这一跑本身必须仍然全过。
+                //   不打这一句的话，几何一旦漂移，铜排会安静地配给一个不可行的方案。
                 var rB9 = LineRunner.Run(lcB9);
                 if (!rB9.Ok) { Console.WriteLine("✗ " + rB9.Message); return; }
+                Console.WriteLine(rB9.AllOk
+                    ? "  ✓ 该构型整线全判据通过 —— 下面的铜排是配给一个**可行**方案的"
+                    : "  ⚠ **该构型整线并未全过**：" + string.Join("；", rB9.Failed) +
+                      "\n    ⇒ 下面的铜排尺寸只是数字，不构成交付件。先把 FinalDesign 更新到定案值。");
 
                 double xTangent = MkB9(0).Tangent().X;
                 Console.WriteLine();
