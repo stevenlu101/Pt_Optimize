@@ -21,10 +21,10 @@ public static class FinalDesign
     /// <summary>本组数值出自哪一次运行 —— 报告里要能追溯到源头</summary>
     public const string Provenance =
         "--final2 可行性阶梯 D6（舌厚→③=8K／环倍率→②″=−0.02K／舌保温抗饱和接力）；" +
-        "管壁 1.4 mm 是**最薄的全过档**，合计 5245 g（1.2 档 ②″ 差 +0.08，两旋钮均饱和）";
+        "**管壁 1.2 mm + 舌根圆角 R14** 是当前最薄的全过档，合计 4559 g。";
 
     // ── 管
-    public static double WallMm = 1.4;
+    public static double WallMm = 1.2;
     public static double TubeInsulMm = 5.0;
     public static readonly double[] SetpointC = { 1150.0, 1080.0, 1050.0 };
 
@@ -32,15 +32,15 @@ public static class FinalDesign
     public static double DiscRadiusMm = 30.0;
     public static double TabLengthMm = 90.0;
     public static double TabHalfWidthMm = 15.0;
-    public static double TabFilletMm = 3.0;
-    public static double[] TabThickMm = { 2.84, 4.75, 4.51, 2.43 };
+    public static double TabFilletMm = 14.0;   // ★ 不是默认值：R3/6/10 均不过，R14 才全过（且质量几乎不变）
+    public static double[] TabThickMm = { 2.59, 4.51, 4.33, 2.25 };
     public static double[] TabInsulMm = { 18.7, 1.6, 1.4, 3.9 };
 
     // ── 管孔渐变环：**相对量**（绝对值写法已两次造成安静失败，见 §1.8 ⑥⑦）
     /// <summary>环宽 mm，相对管孔外扩；两级台阶在 孔+w 与 孔+2w</summary>
     public static double RingWidthMm = 3.0;
     /// <summary>内圈厚度倍率（相对板厚）；外圈取 1 + 0.4(μ−1)</summary>
-    public static double[] RingMul = { 1.34, 1.22, 1.22, 1.18 };
+    public static double[] RingMul = { 1.57, 1.10, 1.11, 1.08 };
 
     // ── 压接
     public static double ClampLengthMm = 40.0;
@@ -73,6 +73,6 @@ public static class FinalDesign
         $"管壁 {WallMm:0.0}／管保温 {TubeInsulMm:0}／盘Ø{2 * DiscRadiusMm:0}／" +
         $"舌 {TabLengthMm:0}×{2 * TabHalfWidthMm:0}／板厚 {string.Join("/", TabThickMm)}／" +
         $"舌保温 {string.Join("/", TabInsulMm)}／" +
-        $"环 r≤孔+{RingWidthMm:0}→×{string.Join("/", RingMul)}／" +
+        $"环 r≤孔+{RingWidthMm:0}→×{string.Join("/", RingMul)}／舌根圆角 R{TabFilletMm:0}／" +
         $"压接 {ClampLengthMm:0} 夹 {ClampTempC:0} °C　【{Provenance}】";
 }

@@ -4710,6 +4710,7 @@ internal static class Program
                 //   不打这一句的话，几何一旦漂移，铜排会安静地配给一个不可行的方案。
                 var rB9 = LineRunner.Run(lcB9);
                 if (!rB9.Ok) { Console.WriteLine("✗ " + rB9.Message); return; }
+                foreach (var nt in rB9.Notes) Console.WriteLine("  NOTE " + nt);
                 Console.WriteLine(rB9.AllOk
                     ? "  ✓ 该构型整线全判据通过 —— 下面的铜排是配给一个**可行**方案的"
                     : "  ⚠ **该构型整线并未全过**：" + string.Join("；", rB9.Failed) +

@@ -122,9 +122,25 @@ public sealed class LineCase
     // ── 段↔法兰外层耦合的数值参数（见 LineRunner.Run 里为什么必须欠松弛）
     /// <summary>欠松弛因子。1.0 = 裸 Picard，在法兰倒灌的正反馈下会发散。</summary>
     public double CoupleRelax = 0.35;
-    public int CoupleMaxRounds = 15;
-    /// <summary>收敛判据：相邻两轮管根温度变化 K</summary>
-    public double CoupleTolK = 1.0;
+    public int CoupleMaxRounds = 60;
+    /// <summary>
+    /// 收敛判据：相邻两轮管根温度变化 K。
+    ///
+    /// ★★★★★ 2026-08-15 收紧 1.0 → 0.02：**判据的分辨率必须优于求解器的收敛容差。**
+    ///
+    /// 病症：同一套几何两次运行，②″ 一次报 −0.00（全过）、一次报 +0.00（不过）。
+    /// 追下去是这里：容差 1.0 K 时每次都打「外层耦合 5 轮收敛（管根温差 0.70 K）」，
+    /// 而 ②″ 是在 **0.01 K** 量级上判过不过。
+    ///
+    /// ②″ = T_盘峰 − T_管根，两项同向随管根漂 ⇒ 差值没有 0.70 K 那么敏感；
+    /// 实测有效灵敏度约 0.014（残差 0.70 K ⇒ ②″ 动 0.01 K）。
+    /// 但这仍与被判的裕度（0.00…0.08 K）**同量级** ——
+    /// ⇒ 可行性阶梯上那些「差 0.08 K」的精细区分，有一部分是在读收敛残差。
+    ///
+    /// 代价：外层轮数上升（容差 1.0 时约 5 轮）。轮数上限同步从 15 提到 60，
+    /// 否则收紧容差只会把「已收敛」变成「未收敛」—— 那正是「修一个坏另一个」。
+    /// </summary>
+    public double CoupleTolK = 0.02;
 
     /// <summary>
     /// **无法兰基线**的两端管温缓存 `[段][0=左,1=右]`（空 = 由 LineRunner 自己算）。
@@ -368,7 +384,13 @@ public static class LineRunner
             //   而净流入从 +1 W 到 +7 W（差 7 倍）它纹丝不动 ——
             //   **不随因变量变，就不是那个因造成的**。
             double wBase = c.CoupleRelax;
-            for (int k = 0; k < 30; k++)
+            // ★ 基线也必须**报出自己的收敛情况**。收紧 CoupleTolK 之后，如果基线
+            //   悄悄地不收敛，③ 会整体偏掉几十 K 而判据表照样打得漂漂亮亮
+            //   —— HANDOVER 记过一次：基线没收敛好时 ③ 恒为 31.5±0.4 K、
+            //   净流入从 +1 到 +7 W 它纹丝不动。**不随因变量变，就不是那个因造成的。**
+            int baseRounds = 0; double baseDmax = double.NaN;
+            int baseMaxRounds = Math.Max(30, c.CoupleMaxRounds);
+            for (int k = 0; k < baseMaxRounds; k++)
             {
                 br = RunOnce(c, null, cancel, zero, zeroLR, bnb);
                 if (!br.Ok) break;
@@ -388,8 +410,11 @@ public static class LineRunner
                     if (!double.IsNaN(nr)) dmax = Math.Max(dmax, Math.Abs(nr - bnb[i].R));
                     bnb[i] = (nl, nr);
                 }
-                if (dmax < c.CoupleTolK) break;
+                if (dmax < c.CoupleTolK) { baseRounds = k + 1; baseDmax = dmax; break; }
+                baseRounds = k + 1; baseDmax = dmax;
             }
+            if (baseDmax >= c.CoupleTolK)
+                baseFailMsg += $"基线外层 {baseRounds} 轮**未收敛**（端温残差 {baseDmax:0.00} K ≥ 容差 {c.CoupleTolK:0.00}）；";
             for (int i = 0; i < c.SegmentCount; i++)
                 baseline[i] = br is { Ok: true }
                             ? (br.Segments[i].TRootAC, br.Segments[i].TRootBC)
@@ -414,6 +439,12 @@ public static class LineRunner
         //   而那正是曾被读成「模型判现役设备烧断」的那批数。
         //   欠松弛不改变不动点，只改变到达方式：**若加了松弛仍发散，那才是物理上的热失控**。
         double omega = c.CoupleRelax;
+        // ★ 残差轨迹：判「收敛到精度地板」还是「极限环」要靠它。
+        //   单看最终 delta 分不清 —— 前者单调衰减后压平，后者上下摆。
+        //   这两种病的处置完全相反（前者收紧内层容差，后者降 ω 或找非光滑环节）。
+        var deltaTrace = new List<double>();
+        double[]? prevDraws = null; (double L, double R)[]? prevLR = null;
+        double rEst = 0.0; int ratioOk = 0, extrapolations = 0;
         double[]? draws = null;
         (double L, double R)[]? drawsLR = null;
         (double L, double R)[]? nbT = null;      // 段间端温（欠松弛，同上）
@@ -454,6 +485,31 @@ public static class LineRunner
                             : (double.IsNaN(nbT[i].R) ? nbNew[i].R
                                : (1 - omega) * nbT[i].R + omega * nbNew[i].R));
 
+            // ★★★★★ Aitken Δ² 外推（2026-08-15）：专治**慢模式**。
+            //
+            // 残差轨迹实测：快模式衰完后进入 r ≈ 0.9855 的慢模式，
+            // 0.669 → 0.352 用了 44 轮 ⇒ 按几何外推，当前解距不动点还有
+            //   Δ∞ ≈ 0.352·r/(1−r) ≈ **24 K** —— 根本没收敛。
+            // 反推裸 Picard 增益 g = 1 − (1−r)/ω ≈ 0.959 ⇒ **欠松弛在这里帮倒忙**：
+            //   ω=0.35 把速率从 0.959 拖慢到 0.986。ω 是为很久以前那个会发散的构型加的。
+            //
+            // ⚠ 不直接把 ω 调大：那个「会发散」的构型可能还会回来（薄壁 + 高压接温度）。
+            //   改成**保留 ω，另加外推**：只有当残差连续 3 轮单调下降且比值稳定在
+            //   (0.6, 0.999) 时才外推一步，外推倍数封顶 —— 不满足就退回原来的行为。
+            if (draws is not null && prevDraws is not null && ratioOk >= 3)
+            {
+                double kExt = Math.Min(rEst / (1 - rEst), 20.0);
+                for (int i = 0; i < draws.Length; i++)
+                    draws[i] += kExt * (draws[i] - prevDraws[i]);
+                for (int i = 0; i < drawsLR!.Length; i++)
+                    drawsLR[i] = (drawsLR[i].L + kExt * (drawsLR[i].L - prevLR![i].L),
+                                  drawsLR[i].R + kExt * (drawsLR[i].R - prevLR[i].R));
+                extrapolations++;
+                ratioOk = 0;   // 外推一步后重新观察，避免连推失稳
+            }
+            prevDraws = (double[])draws!.Clone();
+            prevLR = ((double L, double R)[])drawsLR!.Clone();
+
             progress?.Report($"外层耦合 {outer + 1}/{c.CoupleMaxRounds}（ω={omega:0.00}）：回灌法兰抽热 + 段间端温…");
             var next = RunOnce(c, progress, cancel, (double[])draws.Clone(),
                                ((double L, double R)[])drawsLR.Clone(),
@@ -461,16 +517,27 @@ public static class LineRunner
             if (!next.Ok) return next;
             delta = Enumerable.Range(0, c.SegmentCount)
                 .Max(i => Math.Abs(next.Segments[i].TRootC - res.Segments[i].TRootC));
+            deltaTrace.Add(delta);
+            // 残差比值：只在**单调下降且比值稳定**时才认为是几何慢模式
+            if (deltaTrace.Count >= 2)
+            {
+                double dPrev = deltaTrace[^2];
+                double r = dPrev > 1e-12 ? delta / dPrev : 0.0;
+                if (r > 0.6 && r < 0.999) { rEst = 0.5 * rEst + 0.5 * r; ratioOk++; }
+                else ratioOk = 0;
+            }
             res = next;
             if (delta < c.CoupleTolK)
             {
-                res.Notes.Add($"外层耦合 {outer + 1} 轮收敛（管根温差 {delta:0.00} K，ω={omega:0.00}）");
+                res.Notes.Add($"外层耦合 {outer + 1} 轮收敛（管根温差 {delta:0.00} K，ω={omega:0.00}，Aitken 外推 {extrapolations} 次）");
                 res.Converged = true;
                 break;
             }
         }
         if (!res.Converged)
         {
+            res.Notes.Add($"★ Aitken 外推 {extrapolations} 次，末端比值估计 r={rEst:0.000}");
+            res.Notes.Add("★ 残差轨迹 " + string.Join(" ", deltaTrace.Select(v => v.ToString("0.000"))));
             res.Notes.Add($"★ 外层耦合 {c.CoupleMaxRounds} 轮未收敛（管根温差仍 {delta:0.0} K，ω={omega:0.00}）——" +
                           "本次结果的每个数都不可用：要么再降 ω / 加轮数，要么该工况确实热失控");
             res.Message = "段↔法兰耦合未收敛";
