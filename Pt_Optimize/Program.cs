@@ -4104,12 +4104,12 @@ internal static class Program
                 Console.WriteLine();
                 double glassDrop = bestF2.Segments[0].GlassInC - bestF2.Segments[^1].GlassOutC;
                 // 判定与失败原因**全部取自 Judge**（LineResult.AllOk / Failed）
-                string verdict = bestF2.AllOk
-                    ? "✓ **全过**"
-                    : "✗ " + string.Join("；", bestF2.Failed);
-                frontRows.Add((wallF2 + 1000 * filletF2, dtB.Min(), dtB.Max(), e2B[wj], mAll,
-                    verdict + $"　净流入min {fluxMin:+0;−0} W" +
-                    $"／管J {bestF2.Segments.Max(s => s.TubeJAPerMm2):0.0}／玻璃降 {glassDrop:0.0}"));
+                // ⚠⚠ **汇总行的判定必须取自带升温的完整复核**（§1.8 第 9 例，2026-08-15）。
+                //   原来这里先用定尺寸循环的 `bestF2`（**CheckRamp=false**）写判定，
+                //   带升温的复核跑在后面、结果从未回填 ⇒ **① 升温从不参与汇总判定**。
+                //   实测后果：管壁 0.6 汇总行写「✓ 全过」，而它自己的判据表第一行是
+                //   「① 升温 NaN/72.00 ✗ —— 限时 72 h 内只升到 1005.7 °C」。
+                //   ⇒ 先跑完整复核，再写汇总行。
 
                 // ── 完整判据表 + 逐片明细（交付件）
                 Console.WriteLine("   ── 全判据复核（含升温规程）");
@@ -4166,6 +4166,14 @@ internal static class Program
                     }
                 }
                 catch (Exception ex) { Console.WriteLine("   异常 " + ex.Message); }
+
+                // ★ 汇总行**在这里**才写：此时 bestF2 已是带升温的完整复核结果。
+                string verdict = bestF2.AllOk
+                    ? "✓ **全过**"
+                    : "✗ " + string.Join("；", bestF2.Failed);
+                frontRows.Add((wallF2 + 1000 * filletF2, dtB.Min(), dtB.Max(), e2B[wj], mAll,
+                    verdict + $"　净流入min {fluxMin:+0;−0} W" +
+                    $"／管J {bestF2.Segments.Max(s => s.TubeJAPerMm2):0.0}／玻璃降 {glassDrop:0.0}"));
                 Console.WriteLine();
                 }   // ← 管壁循环结束
                 }   // ← 舌根圆角循环结束
