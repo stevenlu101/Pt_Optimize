@@ -36,7 +36,7 @@ if ! dotnet build "$ROOT/Pt_Optimize.sln" -c Release -v q --nologo > /tmp/pt_bui
 fi
 
 cd "$BIN"
-if ! dotnet Pt_Optimize.dll --cli --selfcheck; then
+if ! dotnet Pt_Optimize.dll --cli --quiet --selfcheck; then
     echo ""
     echo "✗ 自检不过 —— 提交中止。"
     echo "  上面标 ✗ 的是「定案档自己不过判据」或「记录值与实算对不上」，"
