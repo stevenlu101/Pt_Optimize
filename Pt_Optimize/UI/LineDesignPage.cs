@@ -337,6 +337,11 @@ public sealed class LineDesignPage : TabPage
     {
         void Watch(Control c)
         {
+            // ⚠ **工具条整条跳过**。ToolStripComboBox 内部宿主着一个真 ComboBox，
+            //   而它确实挂在 ToolStrip.Controls 上 ⇒ 递归会把「定案档 ▾」也当成参数，
+            //   于是用户只是想换个档看看，就触发了一次分钟级的整线重算（实测抓到）。
+            //   工具条上的东西是**命令**，不是参数。
+            if (c is ToolStrip) return;
             switch (c)
             {
                 case NumericUpDown n: n.ValueChanged += (_, _) => ParamChanged(); break;
@@ -374,7 +379,7 @@ public sealed class LineDesignPage : TabPage
         if (!_autoArmed) return;
         if (_cts is not null) { _cts.Cancel(); _autoTimer.Start(); return; }   // 等它退出再来
         _autoArmed = false;
-        _ = RunAsync(false);
+        _ = RunAsync(false, byTimer: true);
     }
 
     // ★ 实测雅可比（2026-08-16 `--vary`，端点均已收敛，管壁 0.8 定案点附近）。
@@ -455,12 +460,27 @@ public sealed class LineDesignPage : TabPage
     ///   不默认加轮数（那会让每次都慢几倍），而是**问一句** —— 决定权在用户。
     /// </summary>
     private async Task<LineResult> RetryIfJustSlowAsync(
-        LineResult r, LineCase lc, IProgress<string> prog, CancellationToken ct)
+        LineResult r, LineCase lc, IProgress<string> prog, CancellationToken ct,
+        bool interactive)
     {
         if (r is null || !r.Ok || r.Converged) return r;
         if (!(r.Message?.Contains("慢") ?? false)) return r;      // 没在收缩 ⇒ 加轮数没用
 
         string need = r.Notes.FirstOrDefault(n => n.Contains("还需约")) ?? "";
+
+        // ⚠ **自动跑的那次绝不弹模态框**。自动重算是用户改完参数就走开的场景 ——
+        //   回来看到一个卡住整个界面的对话框，比没算完更糟；而且他一改参数
+        //   这次结果就已作废，弹框问「要不要为它多跑」本身就没意义。
+        //   ⇒ 自动跑只把建议写进输出框；要重跑，手动点「核算整线」。
+        if (!interactive)
+        {
+            _out.Text +=
+                "\r\n── ⚠ 没收敛，但残差**仍在收缩** —— 是「慢」，不是「发散」。\r\n" +
+                (need.Length > 0 ? "   " + need.Replace("★ ", "") + "\r\n" : "") +
+                "   要为这组参数多跑一会儿：点一下「核算整线」（手动跑才会问你要不要加轮数）。\r\n";
+            return r;
+        }
+
         var ans = MessageBox.Show(this,
             "外层耦合没收敛，但残差**仍在单调收缩** —— 是「慢」，不是「发散」。\r\n\r\n" +
             (need.Length > 0 ? need.Replace("★ ", "") + "\r\n\r\n" : "") +
@@ -503,7 +523,7 @@ public sealed class LineDesignPage : TabPage
             // ★ checkRamp: true —— ① 也要判。少判一条就不是「全判据通过」。
             var lc = fd.BuildCase(_base, checkRamp: true);
             var r = await Task.Run(() => LineRunner.Run(lc, prog, ct), ct);
-            r = await RetryIfJustSlowAsync(r, lc, prog, ct);
+            r = await RetryIfJustSlowAsync(r, lc, prog, ct, interactive: true);
             _last = r;
             Show(r);
 
@@ -710,7 +730,11 @@ public sealed class LineDesignPage : TabPage
         return lc;
     }
 
-    private async Task RunAsync(bool autoSize)
+    /// <param name="autoSize">true = 「自动定厚」，false = 「核算整线」</param>
+    /// <param name="byTimer">true = 防抖定时器自动触发（用户可能已经走开）。
+    /// ⚠ 与 <paramref name="autoSize"/> 是两回事，别混：前者说**做什么**，后者说**谁点的**。
+    /// 只有「谁点的 = 用户」时才允许弹模态框。</param>
+    private async Task RunAsync(bool autoSize, bool byTimer = false)
     {
         if (_cts is not null) { _cts.Cancel(); return; }        // 再点一次 = 取消
         _cts = new CancellationTokenSource();
@@ -720,11 +744,17 @@ public sealed class LineDesignPage : TabPage
         _prog.Visible = true; _prog.Style = ProgressBarStyle.Marquee;
         _status.Text = autoSize ? "自动定厚中…" : "核算中…";
 
-        var lc = BuildCase();
+        // ⚠⚠ BuildCase() **必须在 try 里面**。它会抛（如「.3dm 模式但文件没填」）——
+        //   放在外面时异常越过 finally ⇒ _cts 不清、按钮不恢复、进度条一直转，
+        //   而且此后 TryAutoRun 每次都撞上「_cts 不为 null」而无限重排定时器
+        //   ⇒ **自动重算从此永久死掉，且一声不吭**。
+        //   实测复现：点一下「Rhino .3dm 文件」单选钮（还没填文件）就中招。
+        LineCase lc;
         var prog = new Progress<string>(s => _status.Text = s);
 
         try
         {
+            lc = BuildCase();
             if (autoSize)
             {
                 var init = _tPlate.Select(n => (double)n.Value).ToArray();
@@ -744,15 +774,19 @@ public sealed class LineDesignPage : TabPage
                     r = await Task.Run(() => FlangeAutoSizer.SolveAuto(
                         lc, mk, init, new FlangeAutoSizer.Options(), prog, ct), ct);
                 }
+                // ⚠ 这是**程序**在把刚解出来的厚度写回控件。不闭掉自动重算的话，
+                //   「自动定厚」一结束就会立刻再排一次整线重算 —— 算的还是它自己刚给的答案。
+                _suppressAuto = true;
                 for (int i = 0; i < _tPlate.Length && i < r.ThicknessMm.Length; i++)
                     _tPlate[i].Value = (decimal)Math.Clamp(r.ThicknessMm[i], 0.1, 8.0);
+                _suppressAuto = false;
                 _last = r.Line;
                 Show(r.Line, autoNote: r.Message + (r.Converged ? "" : "　⚠ 未收敛，下面的数不可引用"));
             }
             else
             {
                 var r = await Task.Run(() => LineRunner.Run(lc, prog, ct), ct);
-                r = await RetryIfJustSlowAsync(r, lc, prog, ct);
+                r = await RetryIfJustSlowAsync(r, lc, prog, ct, interactive: !byTimer);
                 _last = r;
                 // ★ 只有**真收敛**的解才配当外推基准。拿没收敛的解做基准，
                 //   预测会看着很稳而其实一路偏 —— 那正是今天那个假收敛的形状。
@@ -776,7 +810,13 @@ public sealed class LineDesignPage : TabPage
         catch (Exception ex)
         {
             _status.Text = "失败";
-            MessageBox.Show(this, ex.Message, "求解失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            // ⚠ 自动触发的那次**不弹模态框**：用户可能只是点了个单选钮就走开，
+            //   回来看到一个卡住整个界面的弹窗，比看到一行说明糟得多。
+            if (byTimer)
+                _out.Text += "\r\n── ✗ 这组参数解不出来：" + ex.Message +
+                             "\r\n   （改好之后会自动再试；也可以手动点「核算整线」）\r\n";
+            else
+                MessageBox.Show(this, ex.Message, "求解失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
         {
