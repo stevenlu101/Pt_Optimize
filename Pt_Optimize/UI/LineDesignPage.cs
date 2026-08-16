@@ -42,6 +42,30 @@ public sealed class LineDesignPage : TabPage
     private readonly ToolStripProgressBar _prog = new() { Visible = false, Maximum = 1000 };
     private readonly ToolStripLabel _status = new("");
     private readonly ToolStripButton _btnRun, _btnAuto, _btnExport, _btnLoadCase, _btn3dm, _btnRepro;
+
+    // ★★★★★ 改参数**自动**给答案（2026-08-16 用户：「UI 已经够复杂，不要再加按钮」）
+    //
+    // 做法不是加控件，而是**去掉「要记得按核算」这件事**：
+    //   参数一动 → 立刻用闭式给出解析量与**外推预测**（毫秒级）→ 后台自动排队真解。
+    // 「核算整线」按钮保留，作为手动重来的入口，但正常用法下不必碰它。
+    //
+    // ⚠ 三层必须**各自标明自己是什么**：解析（精确）／预测（未解）／已解。
+    //   本项目最贵的两次错都是「数字看着正常」造成的 —— 预测值绝不能长得像解出来的。
+    private readonly System.Windows.Forms.Timer _autoTimer = new() { Interval = 1500 };
+    private bool _autoArmed;                 // 参数动过、还没解
+    private bool _suppressAuto;              // 程序化写控件时暂闭（载入定案等）
+    private Snap? _solvedSnap;               // 上一次**真解**时的参数
+    private LineResult? _solvedRes;
+
+    /// <summary>参与外推的那几个参数（有实测雅可比的才放进来）。</summary>
+    private sealed class Snap { public double Wall, Plate, TubeIns; }
+
+    private Snap CurrentSnap() => new()
+    {
+        Wall = (double)_wall.Value,
+        Plate = _tPlate.Average(n => (double)n.Value),
+        TubeIns = (double)_tubeIns.Value
+    };
     private readonly ToolStripComboBox _caseBox =
         new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 150 };
     private readonly TabControl _plots = new() { Dock = DockStyle.Fill };
@@ -84,6 +108,9 @@ public sealed class LineDesignPage : TabPage
         _flIns.Items.AddRange(new object[] { "不包", "仅圆盘包", "全包" });
         _flIns.SelectedIndex = 2;
         _flIns.SelectedIndexChanged += (_, _) => _flInsT.Enabled = _flIns.SelectedIndex > 0;
+
+        // 自动重算：任何输入一动就 (a) 立刻给预测 (b) 重排防抖定时器
+        _autoTimer.Tick += (_, _) => { _autoTimer.Stop(); TryAutoRun(); };
 
         var tool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
         _btnRun = Btn("核算整线", (_, _) => _ = RunAsync(false));
@@ -152,8 +179,14 @@ public sealed class LineDesignPage : TabPage
         Row("壁厚 mm", _wall,
             "工艺下界 0.6 mm = **手工 TIG 烧穿下界**（自动 TIG 0.3、激光 0.1，差一个量级）。\n" +
             "另一条独立的界是管 J ≤ 12 A/mm²（现场给定：一般上限 15，壁 0.6 时 12 是极限）。\n" +
-            "定案两档正是被这两条同点咬住（0.6）与全都留有余量（0.8）。");
-        Row("纤维保温 mm", _tubeIns, "无空间限制。加厚同时降电流与 J，是管侧的免费杠杆");
+            "定案两档正是被这两条同点咬住（0.6）与全都留有余量（0.8）。\n" +
+            "实测斜率（--vary）：③ −221 K/mm　②″ +16.7 K/mm　管J −5.98　管重 +3051 g/mm\n" +
+            "⚠ ②″ 那条只在**这个工作点附近**成立：②″ 由两个竞争峰决定，符号会随构型翻。");
+        Row("纤维保温 mm", _tubeIns,
+            "无空间限制、不花铂 —— 但**不是免费的**：\n" +
+            "  ③ +22.7 K/mm　②″ −3.1 K/mm　管J −0.57 (A/mm²)/mm　（实测 --vary）\n" +
+            "机理：保温厚 ⇒ 管散热少 ⇒ 电流小（利），但 β 变小而 ③=D/√(kAβ) 里 β 在分母（不利）。\n" +
+            "现用的 5 mm 恰在拐点上 —— 这个值原本是没量过的默认值，碰巧是对的。");
 
         Head("法兰几何来源");
         _srcAnalytic.Checked = true;
@@ -181,17 +214,28 @@ public sealed class LineDesignPage : TabPage
             "先点「分析几何变数」才会列出各级。");
 
         Head("法兰形状（解析模式；四片同形状，厚度各自独立）");
-        Row("圆盘直径 mm", _discD);
+        Row("圆盘直径 mm", _discD,
+            "缩小它是本问题里少有的「三者同向」：省铂 + 放松焊接下界 + 改善端片热平衡。\n" +
+            "已缩到 Ø60。⚠ 再缩会让两级渐变环占满整个圆盘（环外半径已越过盘缘）。");
         Row("舌片长度 mm", _tabLen, "省铂宜短；但舌片越长形状数 Ψ 越小、局部越不易过热");
         Row("舌端半宽 mm", _tabW);
 
         Head("法兰厚度 mm / 厚度标度（可点「自动定厚」求解）");
-        for (int i = 0; i < 4; i++) Row(names[i], _tPlate[i]);
+        string tipPlate =
+            "**最强的旋钮**，实测（--vary，端点均已收敛）：\n" +
+            "  ③ +123 K/mm　②″ −14.6 K/mm　法兰重 +264 g/mm\n" +
+            "⚠ ③ 是**正号** —— 加厚会把 ③ 推向限值。「哪里热就加厚哪里」在这里是反的：\n" +
+            "  加厚同时降单位面积发热（∝1/t）与增强横向导热（∝t），后者把热从管根抽走。\n" +
+            "共用片承 √3 倍电流、发热 3 倍 ⇒ 必须比端片厚，四片等厚不是最优。";
+        for (int i = 0; i < 4; i++) Row(names[i], _tPlate[i], tipPlate);
 
         Head("保温与夹持");
         Row("法兰保温", _flIns, "包纤维会降低自给所需厚度；不包则法兰更凉但从管子抽热更多");
         Row("法兰保温厚 mm", _flInsT);
-        Row("铜排夹持 °C", _clamp, "空冷即可，<0 = 无夹冷。★ 这是现场把自给率整定到位的唯一旋钮");
+        Row("铜排夹持 °C", _clamp,
+            "空冷即可，<0 = 无夹冷。★ 现场把自给率整定到位的唯一旋钮。\n" +
+            "⚠ 压接段被铜排短接 ⇒ **那一段不发热**：舌片有效发热长度 = 舌长 − 压接长。\n" +
+            "  90 mm 舌片扣掉 40 mm 只剩 50 mm —— 想靠缩短舌片省铂会先把发热段砍没。");
 
         Head("分段控温点");
         _segGrid.Dock = DockStyle.Top;
@@ -228,6 +272,15 @@ public sealed class LineDesignPage : TabPage
 
         Controls.Add(main);
         Controls.Add(tool);
+
+        HookAutoRun();
+
+        _out.Text =
+            "改任何一个参数，**会自动重算**（停手约 1.5 秒后开始，分钟级，随时可取消）。\r\n" +
+            "改的当下会先给两样东西：解析量（精确）与线性外推的预测值（标「预测」），\r\n" +
+            "真解跑完再覆盖它们。\r\n\r\n" +
+            "想直接看定案档：工具条上选「定案档 ▾」再点「▶ 复现定案」。\r\n" +
+            "按 F1 有图文说明书。";
         SyncGeomSource();
         HandleCreated += (_, _) => BeginInvoke(() =>
         {
@@ -274,6 +327,115 @@ public sealed class LineDesignPage : TabPage
         n.Minimum = lo; n.Maximum = hi;
         n.Value = Math.Clamp(v, lo, hi);
         return n;
+    }
+
+    /// <summary>
+    /// 把「参数一动」接到「自动出答案」上。**不新增任何控件** ——
+    /// 用户改的还是原来那些框，只是不必再记得去按「核算整线」。
+    /// </summary>
+    private void HookAutoRun()
+    {
+        void Watch(Control c)
+        {
+            switch (c)
+            {
+                case NumericUpDown n: n.ValueChanged += (_, _) => ParamChanged(); break;
+                case ComboBox cb: cb.SelectedIndexChanged += (_, _) => ParamChanged(); break;
+                case CheckBox ck: ck.CheckedChanged += (_, _) => ParamChanged(); break;
+                case RadioButton rb: rb.CheckedChanged += (_, _) => ParamChanged(); break;
+            }
+            foreach (Control k in c.Controls) Watch(k);
+        }
+        foreach (Control c in Controls) Watch(c);
+        _segGrid.CellValueChanged += (_, _) => ParamChanged();
+        _segGrid.RowsRemoved += (_, _) => ParamChanged();
+    }
+
+    /// <summary>参数动了：立刻给预测，并重排防抖定时器。</summary>
+    private void ParamChanged()
+    {
+        if (_suppressAuto) return;           // 程序在写控件，不是用户在改
+        _autoArmed = true;
+        _autoTimer.Stop(); _autoTimer.Start();       // 连续改只在最后一次之后跑
+        ShowPrediction();
+    }
+
+    /// <summary>
+    /// 防抖到期：真解一次。若上一次还在跑就先取消 —— 用户已经改了参数，
+    /// 那次的结果**本来就已经过期**，跑完也没人要。
+    /// </summary>
+    private void TryAutoRun()
+    {
+        if (!_autoArmed) return;
+        if (_cts is not null) { _cts.Cancel(); _autoTimer.Start(); return; }   // 等它退出再来
+        _autoArmed = false;
+        _ = RunAsync(false);
+    }
+
+    // ★ 实测雅可比（2026-08-16 `--vary`，端点均已收敛，管壁 0.8 定案点附近）。
+    //   ⚠ 只对**这个工作点附近**成立 —— ②″ 由两个竞争峰决定，符号会随构型变
+    //     （同一天已经栽过一次：拿另一构型的符号外推，判反了）。
+    //   ⇒ 外推只用来给「大概会往哪边走」，绝不当结论；超出一步就不显示。
+    private const double dDip_dWall = -221.3, dC2_dWall = +16.66, dJ_dWall = -5.98;
+    private const double dDip_dPlate = +123.4, dC2_dPlate = -14.59;
+    private const double dDip_dTubeIns = +22.66, dC2_dTubeIns = -3.10, dJ_dTubeIns = -0.57;
+
+    /// <summary>
+    /// 三层里的前两层：**解析层**（精确）与**预测层**（外推）。毫秒级，不解场。
+    /// 第三层（真解）由 <see cref="TryAutoRun"/> 在后台补上，回来后覆盖本文本。
+    /// </summary>
+    private void ShowPrediction()
+    {
+        var now = CurrentSnap();
+        var sb = new StringBuilder();
+
+        // ── 解析层：纯几何，闭式，精确
+        double wall = now.Wall;
+        double area = Math.PI * (Math.Pow(25 + wall, 2) - 625.0);          // mm²
+        double tubeG = area * 300.0 * 3 * Materials.PtDensity * 1e-6;
+        sb.AppendLine("── 参数已改（下面标「解析」的是精确值，标「预测」的还没解）");
+        sb.AppendLine($"   {"管截面",-8}{area,10:0.0} mm²      解析");
+        sb.AppendLine($"   {"管铂重",-8}{tubeG,10:0} g        解析（三段）");
+        sb.AppendLine($"   {"管孔半径",-7}{wall + 25,10:0.0} mm       解析（跟随管外径）");
+        if (wall < 0.6 - 1e-9)
+            sb.AppendLine($"   ⚠ 壁厚 {wall:0.00} 低于手工 TIG 烧穿下界 0.6 mm —— 工艺上焊不出来");
+
+        // ── 预测层：只在**有已解基准**且**改动不太大**时才给
+        if (_solvedSnap is not null && _solvedRes is { Ok: true, Converged: true })
+        {
+            double dW = now.Wall - _solvedSnap.Wall;
+            double dP = now.Plate - _solvedSnap.Plate;
+            double dI = now.TubeIns - _solvedSnap.TubeIns;
+            bool tooFar = Math.Abs(dW) > 0.25 || Math.Abs(dP) > 0.4 || Math.Abs(dI) > 3.0;
+
+            double V(string k)
+            { foreach (var c in _solvedRes.Checks) if (c.Name.StartsWith(k, StringComparison.Ordinal)) return c.Actual; return double.NaN; }
+
+            sb.AppendLine();
+            if (tooFar)
+                sb.AppendLine("   （改动已超出实测雅可比的适用范围 ⇒ **不给预测**，等真解）");
+            else
+            {
+                void P(string nm, double base0, double pred, double limit, string drivers)
+                {
+                    string verdict = pred <= limit ? "" : "　⚠ 预测越限";
+                    sb.AppendLine($"   {nm,-8}{base0,8:0.00} → 预测 {pred,7:0.00} / {limit,-6:0.0}{verdict}　{drivers}");
+                }
+                P("③", V("③"), V("③") + dDip_dWall * dW + dDip_dPlate * dP + dDip_dTubeIns * dI, 10.0,
+                  "板厚 +123 K/mm　管壁 −221　管保温 +23");
+                P("②″", V("②″"), V("②″") + dC2_dWall * dW + dC2_dPlate * dP + dC2_dTubeIns * dI, 5.0,
+                  "板厚 −14.6 K/mm　管壁 +16.7　管保温 −3.1");
+                P("管J", V("管 J"), V("管 J") + dJ_dWall * dW + dJ_dTubeIns * dI, 12.0,
+                  "管壁 −5.98　管保温 −0.57");
+                sb.AppendLine("   ⚠ 预测是**线性外推**，只说方向与量级，不是答案。");
+            }
+        }
+        else
+            sb.AppendLine("   （还没有已解的基准 ⇒ 给不了预测。第一次请等真解跑完）");
+
+        sb.AppendLine();
+        sb.AppendLine("── 正在后台重算…（改完参数停手约 1.5 秒就自动开始；点「取消」可中止）");
+        _out.Text = sb.ToString();
     }
 
     /// <summary>
@@ -395,6 +557,10 @@ public sealed class LineDesignPage : TabPage
         decimal C(double v, NumericUpDown n) =>
             Math.Clamp((decimal)v, n.Minimum, n.Maximum);
 
+        // ⚠ 下面是**程序**在写控件，不是用户在改 —— 闭掉自动重算，
+        //   否则这一批赋值会连环触发，还会把本方法的说明文字冲掉。
+        _suppressAuto = true;
+
         _wall.Value = C(fd.WallMm, _wall);
         _tubeIns.Value = C(fd.TubeInsulMm, _tubeIns);
         _discD.Value = C(2 * fd.DiscRadiusMm, _discD);
@@ -422,8 +588,9 @@ public sealed class LineDesignPage : TabPage
             $"   · 管孔两级渐变环：r ≤ 孔+{fd.RingWidthMm:0} → 板厚×{fd.RingMul[0]:0.00}，" +
             $"r ≤ 孔+{2 * fd.RingWidthMm:0} → 板厚×{fd.RingMulOuter(0):0.000}\r\n" +
             $"   · 逐片舌保温：{string.Join(" / ", fd.TabInsulMm)} mm（四片差 12 倍，不能同规格）\r\n" +
-            "   ⇒ 想复现定案数，请用「导出定案 3DM」或命令行 --busbarplan --wall " +
-            $"{fd.WallMm:0.0}；本页的「核算整线」走的是页面上这些参数。";
+            "   ⇒ 想复现定案数，请点工具条上的「▶ 复现定案」——" +
+            "本页参数表达不了上面两项，「核算整线」算的是另一片法兰。";
+        _suppressAuto = false;
     }
 
     /// <summary>导出选中定案档的整机 3DM（子进程渲染 + 写完从磁盘回读自校）。</summary>
@@ -582,6 +749,9 @@ public sealed class LineDesignPage : TabPage
                 var r = await Task.Run(() => LineRunner.Run(lc, prog, ct), ct);
                 r = await RetryIfJustSlowAsync(r, lc, prog, ct);
                 _last = r;
+                // ★ 只有**真收敛**的解才配当外推基准。拿没收敛的解做基准，
+                //   预测会看着很稳而其实一路偏 —— 那正是今天那个假收敛的形状。
+                if (r.Ok && r.Converged) { _solvedRes = r; _solvedSnap = CurrentSnap(); }
                 Show(r);
                 // ★ 把「本次实际解的是什么」打出来。不打，用户会以为自己在试定案构型。
                 if (_srcAnalytic.Checked && lc.FlangePlates is { Length: > 0 })
