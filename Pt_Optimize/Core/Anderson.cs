@@ -40,6 +40,9 @@ public sealed class Anderson
     private int _rejectRun;        // 连续被阀门打掉的次数
 
     public int Accepted, Rejected, Restarts;
+    /// <summary>上一步是否真的走了 Anderson 步（false = 退回欠松弛 Picard）。
+    /// 外层的 ω 自适应要据此决定**要不要动 ω** —— 见 LineRunner 里的说明。</summary>
+    public bool LastAccepted { get; private set; }
     public int Depth => _dF.Count;
 
     public Anderson(int depth = 4) => _m = Math.Max(1, depth);
@@ -80,6 +83,7 @@ public sealed class Anderson
         }
         _xPrev = (double[])x.Clone();
         _fPrev = (double[])f.Clone();
+        LastAccepted = false;
         if (_dF.Count == 0 || _w is null) return picard;
 
         // min_γ ‖f − ΔF·γ‖（标度化）—— 正规方程 + Tikhonov
@@ -128,7 +132,7 @@ public sealed class Anderson
             return picard;
         }
 
-        Accepted++; _rejectRun = 0;
+        Accepted++; _rejectRun = 0; LastAccepted = true;
         return cand;
     }
 

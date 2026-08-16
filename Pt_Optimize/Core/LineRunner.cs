@@ -148,17 +148,27 @@ public sealed class LineCase
     // ── 段↔法兰外层耦合的数值参数（见 LineRunner.Run 里为什么必须欠松弛）
     /// <summary>欠松弛因子。1.0 = 裸 Picard，在法兰倒灌的正反馈下会发散。</summary>
     public double CoupleRelax = 0.35;
-    public int CoupleMaxRounds = 200;
+    /// <summary>
+    /// 外层轮数上限。**200 只够贴着定案点用**：一改参数，g≈0.96 把扰动放大约 25 倍
+    /// （极端档实测 134 倍），200 轮就不够 —— 而那只是「慢」，不是发散。
+    /// Anderson 之后定案点只要 9 轮，所以放宽上限**只在真需要时才付时间代价**
+    /// （循环一收敛就 break）。
+    /// </summary>
+    public int CoupleMaxRounds = 600;
     /// <summary>Anderson 加速（见 <see cref="Anderson"/>）。关掉即退回纯欠松弛 Picard。</summary>
     public bool UseAnderson = true;
     /// <summary>历史深度。状态维数只有 ≤10，深度 4 已足够张开慢模式子空间。</summary>
     public int AndersonDepth = 4;
     /// <summary>
     /// 安全阀：AA 步长超过 **κ×‖残差‖** 就丢弃并重启历史。
-    /// ⚠ 参照系是残差、**不是**欠松弛步 —— 挂在 ω 上会随 ω 收紧而把 Anderson 关死
-    ///   （实测 98/102 步被丢弃，见 <see cref="Anderson"/> 的注释）。
+    ///
+    /// ⚠⚠ κ 的量级**不能拍脑袋**，它由环路增益定：不动点距离 ≈ ‖F‖/(1−g)，
+    ///   而本问题 g≈0.96 ⇒ **正确的那一步本来就有 25‖F‖ 那么长**。
+    ///   κ=5 等于把「走对的那一步」当成异常挡掉 —— 实测难工况 139/159 步被丢弃、
+    ///   深度永远 0。⇒ 取 50（≈2/(1−g)），只挡真正离谱的步。
+    /// ⚠ 参照系是残差、**不是**欠松弛步 —— 挂在 ω 上会随 ω 收紧而把 Anderson 关死。
     /// </summary>
-    public double AndersonKappa = 5.0;
+    public double AndersonKappa = 50.0;
     /// <summary>
     /// 收敛判据：相邻两轮管根温度变化 K。
     ///
@@ -508,6 +518,7 @@ public static class LineRunner
         (double L, double R)[]? drawsLR = null;
         (double L, double R)[]? nbT = null;      // 段间端温（欠松弛，同上）
         double delta = double.NaN;
+        double resKLast = double.NaN;   // 末轮真残差，供未收敛报告用
         for (int outer = 0; outer < c.CoupleMaxRounds; outer++)
         {
             cancel.ThrowIfCancellationRequested();
@@ -530,6 +541,8 @@ public static class LineRunner
                 nbNew[i] = (i == 0 ? double.NaN : res.Segments[i - 1].TRootBC,
                             i == c.SegmentCount - 1 ? double.NaN : res.Segments[i + 1].TRootAC);
             nbT ??= nbNew;
+            // 真残差要用**步之前**的 x，故先快照（写回之后 nbT 已经是 x⁺ 了）
+            var nbTOld = ((double L, double R)[])nbT.Clone();
 
             // ★★★★★ 一步不动点迭代：x ← G(x)，x =（各段两端抽热，各段两侧邻段端温）
             //
@@ -585,6 +598,26 @@ public static class LineRunner
                 if (double.IsNaN(nbNew[i].R)) nbT[i] = (nbT[i].L, double.NaN);
             }
 
+            // ★★★★★ **真残差** ‖G(x) − x‖∞（温度分量，K）。2026-08-16 加，起因是一次假收敛。
+            //
+            // 原来的收敛判据只看「相邻两轮走了多远」δ，再乘几何放大。那套推理默认迭代是
+            // **线性定常**的（纯 Picard 成立）。上了 Anderson 之后**不再成立**：
+            // 外推可以让 δ→0 而 x 根本不在不动点上（Anderson 的经典停滞模式）。
+            // 实测就撞上了：Anderson 报「19 轮收敛、剩余误差 0.86 K」，
+            // 纯 Picard 报「收敛、剩余误差 0.65 K」，两者**管根温度差 14 K**、③ 差 12.5 K。
+            // 基线完全相同 ⇒ 差的是解本身，不是基线。
+            //
+            // ⇒ 又一次「代理量不是原量」：δ 是残差的代理，换了迭代格式就不成立。
+            //   真残差就在手边（G(x) 与 x 都是现成的），没有任何理由再用代理量。
+            double resK = 0;
+            for (int i = 0; i < c.SegmentCount; i++)
+            {
+                if (!double.IsNaN(nbNew[i].L) && !double.IsNaN(nbTOld[i].L))
+                    resK = Math.Max(resK, Math.Abs(nbNew[i].L - nbTOld[i].L));
+                if (!double.IsNaN(nbNew[i].R) && !double.IsNaN(nbTOld[i].R))
+                    resK = Math.Max(resK, Math.Abs(nbNew[i].R - nbTOld[i].R));
+            }
+
             // ★★★★★ Aitken Δ² 外推（2026-08-15）：专治**慢模式**。
             //
             // 残差轨迹实测：快模式衰完后进入 r ≈ 0.9855 的慢模式，
@@ -624,6 +657,7 @@ public static class LineRunner
                 if (!double.IsNaN(db)) delta = Math.Max(delta, db);
             }
             deltaTrace.Add(delta);
+            resKLast = resK;
             // ★ 跳变捕捉：残差突然放大 5 倍以上 = 有离散量在翻。
             //   把当轮与上一轮的**全部状态**并排打出来，让它自己说是什么翻了 ——
             //   继续猜「大概是 XX 开关」已经错过太多次（§1.8）。
@@ -645,10 +679,19 @@ public static class LineRunner
                 double r = dPrev > 1e-12 ? delta / dPrev : 0.0;
                 if (r > 0.9 && r < 0.999) { rEst = 0.5 * rEst + 0.5 * r; ratioOk++; }
                 else ratioOk = 0;
-                if (r > 1.0) { omega = Math.Max(omegaMin, 0.5 * omega); ratioOk = 0; omegaCuts++; }
-                else if (ratioOk >= 4)
+                // ★★ ω 自适应**只在没走成 Anderson 步的那些轮**生效（2026-08-16）。
+                //   Anderson 步会让残差**非单调**——那是外推的正常表现，不是发散信号。
+                //   而原来的规则见到 r>1 就把 ω 减半 ⇒ ω 一路压到下限 0.15
+                //   ⇒ 兜底的 Picard 步变得极小 ⇒ 残差几乎不动 ⇒ ΔF 又小又噪
+                //   ⇒ 最小二乘病态 ⇒ AA 步被阀门打掉 ⇒ 更依赖 ω…… **自锁**。
+                //   实测：难工况 ω 回退 38–39 次、AA 丢弃 139–141 次、末端深度恒为 0。
+                //   ⇒ ω 只管兜底那条路；Anderson 走通时不动它。
+                bool aaTook = aa is not null && aa.LastAccepted;
+                if (!aaTook)
                 {
-                    omega = Math.Min(omegaMax, 1.5 * omega); ratioOk = 0; omegaBoosts++;
+                    if (r > 1.0) { omega = Math.Max(omegaMin, 0.5 * omega); ratioOk = 0; omegaCuts++; }
+                    else if (ratioOk >= 4)
+                    { omega = Math.Min(omegaMax, 1.5 * omega); ratioOk = 0; omegaBoosts++; }
                 }
             }
             res = next;
@@ -666,9 +709,12 @@ public static class LineRunner
             const double ampWorst = 25.0;
             double amp = (rEst > 0.5 && rEst < 0.999) ? rEst / (1 - rEst) : ampWorst;
             double remain = delta * amp;
-            if (remain < c.CoupleTolK)
+            // ⚠ 两条**都**要过：δ 那条防「步子还很大」，真残差那条防「步子小但不在不动点上」。
+            //   放大取已知最坏 25（= 1/(1−g)，g≈0.96）——真残差乘它才是到不动点的距离。
+            bool resOk = resK * ampWorst < c.CoupleTolK;
+            if (remain < c.CoupleTolK && resOk)
             {
-                res.Notes.Add($"外层耦合 {outer + 1} 轮收敛（剩余误差估计 {remain:0.00} K = 步长 {delta:0.00} × 放大 {amp:0.0}，ω={omega:0.00}，ω 末值 {omega:0.00}／放大 {omegaBoosts} 次／回退 {omegaCuts} 次）"
+                res.Notes.Add($"外层耦合 {outer + 1} 轮收敛（剩余误差估计 {remain:0.00} K = 步长 {delta:0.00} × 放大 {amp:0.0}，真残差 {resK:0.000} K，ω={omega:0.00}，ω 末值 {omega:0.00}／放大 {omegaBoosts} 次／回退 {omegaCuts} 次）"
                               + (aa is null ? "" : "　" + aa.Report()));
                 res.Converged = true;
                 break;
@@ -688,8 +734,21 @@ public static class LineRunner
             //   **只把轮数上限提到 1000、其余一律不动，第 734 轮收敛，剩余误差 0.99 K**。
             //   ⇒ 那一档从来不是发散，是轮数不够。原来这条提示把两种情形并列写成
             //     「要么加轮数、要么热失控」，等于把判断推给读的人 —— 而判据本身就该给出三态。
-            int look = Math.Min(12, deltaTrace.Count);
-            bool shrinking = look >= 4 && deltaTrace[^1] < deltaTrace[^look] * 0.999;
+            // ⚠ 「还在不在收缩」不能拿**单点**比单点：Anderson 步让残差天然带毛刺，
+            //   实测「盘半径 28」档残差 36.91 → 0.081（明明在收缩）却被判成「没在收缩」，
+            //   只因为末点恰好落在一个尖峰上。⇒ 比**两段窗口的最小值**，对毛刺免疫。
+            int win = Math.Min(8, deltaTrace.Count / 2);
+            bool shrinking = false;
+            if (win >= 3)
+            {
+                double recent = double.MaxValue, older = double.MaxValue;
+                for (int k = 0; k < win; k++)
+                {
+                    recent = Math.Min(recent, deltaTrace[^(k + 1)]);
+                    older = Math.Min(older, deltaTrace[^(win + k + 1)]);
+                }
+                shrinking = recent < older * 0.995;
+            }
             double ampNow = rEst > 0.5 && rEst < 0.999 ? rEst / (1 - rEst) : 25.0;
             // 还要多少轮：按几何收缩 δ·r^n·amp < tol 解 n
             string need = "";
@@ -699,7 +758,7 @@ public static class LineRunner
                 if (n > 0 && n < 1e6) need = $"，按当前收缩率还需约 **{Math.Ceiling(n):0} 轮**";
             }
             res.Notes.Add($"★ 外层耦合 {c.CoupleMaxRounds} 轮未收敛（**剩余误差估计 {delta * ampNow:0.0} K**，" +
-                          $"步长 {delta:0.0} K，ω={omega:0.00}）—— 本次结果的每个数都不可用。");
+                          $"步长 {delta:0.0} K，真残差 {resKLast:0.000} K，ω={omega:0.00}）—— 本次结果的每个数都不可用。");
             res.Notes.Add(shrinking
                 ? $"★ 残差**仍在单调收缩** ⇒ 是「慢」不是「发散」：加轮数上限即可{need}" +
                   "（LineCase.CoupleMaxRounds，默认 200）。"

@@ -71,6 +71,23 @@ public sealed class FinalDesign
     /// </summary>
     public double RampH, DiscOverK, HoleFluxW, FlangeDipK, TubeJ;
 
+    // ================================================================
+    // ★★★★★ 2026-08-16 第二次修正：**旧板厚是优化器停早了一轮的结果**。
+    //
+    // 收敛判据原来看「相邻两轮走多远 δ」，那套推理只在**线性定常**迭代下成立。
+    // 上了 Anderson 之后 δ→0 而 x 并不在不动点上（Anderson 的经典停滞模式）——
+    // 两个解算器一个报 ③=6.18、一个报 ③=18.70，**都自称收敛**，才把它逼出来。
+    // 改判**真残差 ‖G(x)−x‖** 之后，Anderson 与纯 Picard（tol 0.2／2000 轮）
+    // 落到同一点，差 0.09 K。
+    //
+    // ⇒ 旧值 2.11/3.40/3.18/1.76 的真实 ③ 是 **18.7（限 10）**，根本不通过。
+    //   控制律本身没错，它只是被喂了一个假的 ③ —— **再走一轮就到位**
+    //   （0.8 档第 3→4 轮，0.6 档第 4→5 轮）。
+    //
+    // ⇒ 教训：判据的分辨率取决于**解收敛到什么程度**，
+    //   而收敛度量本身也可能是代理量 —— 这是「代理量不是原量」的第五次发作。
+    // ================================================================
+
     /// <summary>某条判据的裕度 %（(限−实)/限）。方向性判据（限 0）不适用，返回 NaN。</summary>
     public static double Margin(double actual, double limit) =>
         System.Math.Abs(limit) < 1e-9 ? double.NaN : (limit - actual) / System.Math.Abs(limit) * 100.0;
@@ -173,26 +190,26 @@ public sealed class FinalDesign
     public static readonly FinalDesign W08 = new()
     {
         Name = "管壁 0.8 · 留余量",
-        Provenance = "尺寸出自 --final2 可行性阶梯 D7（2026-08-15）；判据值 2026-08-16 复核重跑",
-        Binding = "无 —— 每条判据都有裕度：②″ 80 %／管 J 21 %／③ 38 %／壁厚高于焊接下界 33 %",
+        Provenance = "--final2 可行性阶梯 D7，**2026-08-16 修正收敛判据后重跑**（旧值停在第 3 轮）",
+        Binding = "无 —— 每条判据都有裕度：②″ 79 %／管 J 21 %／③ 46 %／壁厚高于焊接下界 33 %",
         WallMm = 0.8,
-        TabThickMm = new[] { 2.11, 3.40, 3.18, 1.76 },
-        RingMul = new[] { 1.24, 1.24, 1.24, 1.24 },
-        TotalMassG = 3117, TubeMassG = 2466, FlangeMassG = 652, ResidualK = 0.65,
-        RampH = 0.057, DiscOverK = 0.981, HoleFluxW = 1.669, FlangeDipK = 6.184, TubeJ = 9.506,
+        TabThickMm = new[] { 2.11, 3.33, 3.12, 1.76 },
+        RingMul = new[] { 1.22, 1.22, 1.22, 1.22 },
+        TotalMassG = 3106, TubeMassG = 2466, FlangeMassG = 641, ResidualK = 0.86,
+        RampH = 0.057, DiscOverK = 1.03, HoleFluxW = 1.48, FlangeDipK = 5.40, TubeJ = 9.51,
     };
 
     /// <summary>底档：可行域的底。焊接烧穿下界与管 J 12 **在同一点咬住**。</summary>
     public static readonly FinalDesign W06 = new()
     {
         Name = "管壁 0.6 · 底档",
-        Provenance = "尺寸出自 --final2 可行性阶梯 D7（2026-08-15）；判据值 2026-08-16 复核重跑",
+        Provenance = "--final2 可行性阶梯 D7，**2026-08-16 修正收敛判据后重跑**（旧值停在第 4 轮）",
         Binding = "焊接烧穿下界 0.6 mm（余量 0）＋ 管 J 10.96/12（余量 9 %）—— 两条同点咬住",
         WallMm = 0.6,
-        TabThickMm = new[] { 1.82, 2.91, 2.71, 1.49 },
-        RingMul = new[] { 1.22, 1.22, 1.22, 1.22 },
-        TotalMassG = 2398, TubeMassG = 1842, FlangeMassG = 557, ResidualK = 0.75,
-        RampH = 0.079, DiscOverK = 1.121, HoleFluxW = 1.912, FlangeDipK = 5.297, TubeJ = 10.961,
+        TabThickMm = new[] { 1.82, 2.85, 2.66, 1.49 },
+        RingMul = new[] { 1.20, 1.20, 1.20, 1.20 },
+        TotalMassG = 2388, TubeMassG = 1842, FlangeMassG = 547, ResidualK = 0.37,
+        RampH = 0.079, DiscOverK = 1.24, HoleFluxW = 1.34, FlangeDipK = 5.83, TubeJ = 10.96,
     };
 
     public static readonly FinalDesign[] All = { W08, W06 };
