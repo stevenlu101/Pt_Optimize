@@ -5,7 +5,7 @@
 #  为什么要有它：本项目被抓到的错，靠的全是**会自己跑的检查**；
 #  写在注释里的教训一次也没抓到过 —— 注释不会跑，要人记得去跑的工具也等于不会跑。
 #
-#  ⚠ 只在**动了内核**时才拦，否则改个文档也要等 3.5 分钟，门就会被人关掉。
+#  ⚠ 只在**动了内核或界面**时才拦，否则改个文档也要等几分钟，门就会被人关掉。
 #     门要有人愿意一直开着才有用。
 #
 #  跳过：git commit --no-verify   （赶时间可以，但请自己知道跳过了什么）
@@ -13,14 +13,14 @@
 # ============================================================================
 set -e
 
-WATCH='Pt_Optimize/Core/|Pt_Optimize/Program.cs'
+WATCH='Pt_Optimize/Core/|Pt_Optimize/Program.cs|Pt_Optimize/UI/'
 CHANGED=$(git diff --cached --name-only | grep -E "$WATCH" || true)
 
 if [ -z "$CHANGED" ]; then
     exit 0
 fi
 
-echo "── 动到内核，跑自检门（约 3.5 分钟；--no-verify 可跳过）"
+echo "── 动到内核或界面，跑自检门（约 4 分钟；--no-verify 可跳过）"
 echo "$CHANGED" | sed 's/^/     /'
 
 ROOT=$(git rev-parse --show-toplevel)
@@ -34,7 +34,23 @@ if ! dotnet build "$ROOT/Pt_Optimize.sln" -c Release -v q --nologo > /tmp/pt_bui
     grep -E ": error" /tmp/pt_build.log | head -20
     exit 1
 fi
+if ! dotnet build "$ROOT/tests/UiWiring/UiWiring.csproj" -c Release -v q --nologo >> /tmp/pt_build.log 2>&1; then
+    echo "✗ 界面接线测试编译失败，提交中止："
+    grep -E ": error" /tmp/pt_build.log | head -20
+    exit 1
+fi
 
+# ① 界面接线（秒级）。GUI「编译过」不代表「接对了」——
+#    实测抓到过「求解中改参数，作废的那次还要跑满 1.5 秒防抖窗口才被取消」，
+#    这种错只在运行时现形，编译器和 --selfcheck 都看不见。
+echo "── 界面接线测试"
+if ! "$ROOT/tests/UiWiring/bin/Release/net8.0-windows/UiWiring.exe"; then
+    echo ""
+    echo "✗ 界面接线测试不过 —— 提交中止。上面标 ✗ 的那一项指到了具体哪一环。"
+    exit 1
+fi
+
+# ② 内核自检（分钟级）：复现对账 + 不安静失败
 cd "$BIN"
 if ! dotnet Pt_Optimize.dll --cli --quiet --selfcheck; then
     echo ""

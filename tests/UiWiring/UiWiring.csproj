@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    界面接线测试：不点屏幕，直接把控件跑起来用反射验事件链。
+
+    为什么这样测：GUI「编译过」不代表「接对了」。本次就抓到一条真 bug ——
+    求解中改参数时，结果已作废的那次还要再跑满 1.5 秒防抖窗口才被取消。
+    而屏幕驱动依赖开始菜单注册、分辨率、焦点，跑不稳也定位不到原因；
+    反射直接验状态机，失败时能指到具体是哪一环。
+
+    跑法见 HANDOVER；退出码 = 失败项数。
+    （XML 注释里不能出现两个连着的 ASCII 连字符，所以命令写在别处。）
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <AssemblyName>UiWiring</AssemblyName>
+    <RootNamespace>UiWiring</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Pt_Optimize\Pt_Optimize.csproj" />
+  </ItemGroup>
+</Project>

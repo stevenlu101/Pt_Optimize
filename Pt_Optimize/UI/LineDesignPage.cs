@@ -356,6 +356,11 @@ public sealed class LineDesignPage : TabPage
     {
         if (_suppressAuto) return;           // 程序在写控件，不是用户在改
         _autoArmed = true;
+        // ⚠ **立刻**取消在跑的那次，不要等防抖到期（实测发现的：原来放在 TryAutoRun 里，
+        //   于是用户改完参数后，一个**结果已经作废**的求解还要再跑满 1.5 秒防抖窗口，
+        //   之后才被取消 —— 白烧 CPU，还把重启又往后推了一整个窗口）。
+        //   参数一动，在跑的那次就已经过期了，没有任何理由让它继续。
+        _cts?.Cancel();
         _autoTimer.Stop(); _autoTimer.Start();       // 连续改只在最后一次之后跑
         ShowPrediction();
     }
