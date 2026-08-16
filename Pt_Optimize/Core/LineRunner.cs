@@ -149,6 +149,16 @@ public sealed class LineCase
     /// <summary>欠松弛因子。1.0 = 裸 Picard，在法兰倒灌的正反馈下会发散。</summary>
     public double CoupleRelax = 0.35;
     public int CoupleMaxRounds = 200;
+    /// <summary>Anderson 加速（见 <see cref="Anderson"/>）。关掉即退回纯欠松弛 Picard。</summary>
+    public bool UseAnderson = true;
+    /// <summary>历史深度。状态维数只有 ≤10，深度 4 已足够张开慢模式子空间。</summary>
+    public int AndersonDepth = 4;
+    /// <summary>
+    /// 安全阀：AA 步长超过 **κ×‖残差‖** 就丢弃并重启历史。
+    /// ⚠ 参照系是残差、**不是**欠松弛步 —— 挂在 ω 上会随 ω 收紧而把 Anderson 关死
+    ///   （实测 98/102 步被丢弃，见 <see cref="Anderson"/> 的注释）。
+    /// </summary>
+    public double AndersonKappa = 5.0;
     /// <summary>
     /// 收敛判据：相邻两轮管根温度变化 K。
     ///
@@ -486,6 +496,15 @@ public static class LineRunner
         double[]? prevDraws = null; (double L, double R)[]? prevLR = null;
         double rEst = 0.0; int ratioOk = 0, omegaBoosts = 0, omegaCuts = 0;
         double[]? draws = null;
+        // ★ Anderson 加速器（默认开）。它只改变到达不动点的路径，不改变不动点本身；
+        //   最坏情形（安全阀连连丢弃）退化回原来的欠松弛 Picard。
+        var aa = c.UseAnderson ? new Anderson(c.AndersonDepth) : null;
+        static double[] PicardStep(double[] x, double[] g, double w)
+        {
+            var y = new double[x.Length];
+            for (int i = 0; i < x.Length; i++) y[i] = x[i] + w * (g[i] - x[i]);
+            return y;
+        }
         (double L, double R)[]? drawsLR = null;
         (double L, double R)[]? nbT = null;      // 段间端温（欠松弛，同上）
         double delta = double.NaN;
@@ -503,12 +522,6 @@ public static class LineRunner
             }
             draws ??= new double[c.SegmentCount];
             drawsLR ??= new (double, double)[c.SegmentCount];
-            for (int i = 0; i < c.SegmentCount; i++)
-            {
-                draws[i] = (1 - omega) * draws[i] + omega * target[i];
-                drawsLR[i] = ((1 - omega) * drawsLR[i].L + omega * targetLR[i].L,
-                              (1 - omega) * drawsLR[i].R + omega * targetLR[i].R);
-            }
 
             // ── 段间端温：段 i 的左邻是段 i−1 的**右**端，右邻是段 i+1 的**左**端。
             //    整线两头没有邻段 ⇒ NaN（退化为纯法兰抽热边界）。
@@ -517,13 +530,60 @@ public static class LineRunner
                 nbNew[i] = (i == 0 ? double.NaN : res.Segments[i - 1].TRootBC,
                             i == c.SegmentCount - 1 ? double.NaN : res.Segments[i + 1].TRootAC);
             nbT ??= nbNew;
-            for (int i = 0; i < c.SegmentCount; i++)      // 与抽热同样欠松弛
-                nbT[i] = (double.IsNaN(nbNew[i].L) ? double.NaN
-                            : (double.IsNaN(nbT[i].L) ? nbNew[i].L
-                               : (1 - omega) * nbT[i].L + omega * nbNew[i].L),
-                          double.IsNaN(nbNew[i].R) ? double.NaN
-                            : (double.IsNaN(nbT[i].R) ? nbNew[i].R
-                               : (1 - omega) * nbT[i].R + omega * nbNew[i].R));
+
+            // ★★★★★ 一步不动点迭代：x ← G(x)，x =（各段两端抽热，各段两侧邻段端温）
+            //
+            // 抽热与端温**必须放进同一个状态向量**一起加速：慢模式正是这两者
+            // 耦合起来的那个方向 —— 早先的 Aitken 只作用在抽热向量上，实测无效
+            // （残差被推下去又被拉回），HANDOVER §1.85 已记，原因就在这里。
+            //
+            // NaN 位（整线两头没有邻段）在整个迭代中位置固定，直接跳过不入向量。
+            var slotSeg = new List<int>(); var slotIsDraw = new List<bool>();
+            var slotIsL = new List<bool>();
+            for (int i = 0; i < c.SegmentCount; i++)
+            {
+                slotSeg.Add(i); slotIsDraw.Add(true); slotIsL.Add(true);
+                slotSeg.Add(i); slotIsDraw.Add(true); slotIsL.Add(false);
+                if (!double.IsNaN(nbNew[i].L)) { slotSeg.Add(i); slotIsDraw.Add(false); slotIsL.Add(true); }
+                if (!double.IsNaN(nbNew[i].R)) { slotSeg.Add(i); slotIsDraw.Add(false); slotIsL.Add(false); }
+            }
+            int nv = slotSeg.Count;
+            var xv = new double[nv]; var gv = new double[nv];
+            for (int s = 0; s < nv; s++)
+            {
+                int i = slotSeg[s];
+                if (slotIsDraw[s])
+                {
+                    xv[s] = slotIsL[s] ? drawsLR[i].L : drawsLR[i].R;
+                    gv[s] = slotIsL[s] ? targetLR[i].L : targetLR[i].R;
+                }
+                else
+                {
+                    double cur = slotIsL[s] ? nbT[i].L : nbT[i].R;
+                    double tgt = slotIsL[s] ? nbNew[i].L : nbNew[i].R;
+                    xv[s] = double.IsNaN(cur) ? tgt : cur;      // 首轮直接落到目标上
+                    gv[s] = tgt;
+                }
+            }
+
+            double[] xn = aa is not null
+                        ? aa.Step(xv, gv, omega, c.AndersonKappa)
+                        : PicardStep(xv, gv, omega);
+
+            for (int s = 0; s < nv; s++)
+            {
+                int i = slotSeg[s];
+                if (slotIsDraw[s])
+                    drawsLR[i] = slotIsL[s] ? (xn[s], drawsLR[i].R) : (drawsLR[i].L, xn[s]);
+                else
+                    nbT[i] = slotIsL[s] ? (xn[s], nbT[i].R) : (nbT[i].L, xn[s]);
+            }
+            for (int i = 0; i < c.SegmentCount; i++)
+            {
+                draws[i] = 0.5 * (drawsLR[i].L + drawsLR[i].R);   // 仅作兼容/汇报
+                if (double.IsNaN(nbNew[i].L)) nbT[i] = (double.NaN, nbT[i].R);
+                if (double.IsNaN(nbNew[i].R)) nbT[i] = (nbT[i].L, double.NaN);
+            }
 
             // ★★★★★ Aitken Δ² 外推（2026-08-15）：专治**慢模式**。
             //
@@ -608,20 +668,43 @@ public static class LineRunner
             double remain = delta * amp;
             if (remain < c.CoupleTolK)
             {
-                res.Notes.Add($"外层耦合 {outer + 1} 轮收敛（剩余误差估计 {remain:0.00} K = 步长 {delta:0.00} × 放大 {amp:0.0}，ω={omega:0.00}，ω 末值 {omega:0.00}／放大 {omegaBoosts} 次／回退 {omegaCuts} 次）");
+                res.Notes.Add($"外层耦合 {outer + 1} 轮收敛（剩余误差估计 {remain:0.00} K = 步长 {delta:0.00} × 放大 {amp:0.0}，ω={omega:0.00}，ω 末值 {omega:0.00}／放大 {omegaBoosts} 次／回退 {omegaCuts} 次）"
+                              + (aa is null ? "" : "　" + aa.Report()));
                 res.Converged = true;
                 break;
             }
         }
         if (!res.Converged)
         {
+            if (aa is not null) res.Notes.Add("★ " + aa.Report());
             res.Notes.Add($"★ ω 末值 {omega:0.00}（放大 {omegaBoosts} 次／回退 {omegaCuts} 次），末端比值 r={rEst:0.000}" +
                           $"　⇒ 裸 Picard 增益 g≈{1 - (1 - rEst) / Math.Max(1e-9, omega):0.000}（g→1 即热失控）");
             foreach (var jr in jumpReports) res.Notes.Add("★ 跳变 " + jr);
             res.Notes.Add("★ 残差轨迹 " + string.Join(" ", deltaTrace.Select(v => v.ToString("0.000"))));
-            res.Notes.Add($"★ 外层耦合 {c.CoupleMaxRounds} 轮未收敛（**剩余误差估计 {delta * (rEst > 0.5 && rEst < 0.999 ? rEst / (1 - rEst) : 25.0):0.0} K**，步长 {delta:0.0} K，ω={omega:0.00}）——" +
-                          "本次结果的每个数都不可用：要么再降 ω / 加轮数，要么该工况确实热失控");
-            res.Message = "段↔法兰耦合未收敛";
+            // ★★ 「未收敛」要分成两件事说，因为**对策完全不同**（2026-08-16 实测所得）：
+            //     ① 还在单调收缩、只是慢  ⇒ 加轮数就行，模型没问题
+            //     ② 残差不降甚至在涨      ⇒ 该工况可能真的热失控，加轮数没用
+            //   实测：偏离定案点的「管保温 1 mm」档，200 轮报未收敛（剩余误差 76.9 K），
+            //   **只把轮数上限提到 1000、其余一律不动，第 734 轮收敛，剩余误差 0.99 K**。
+            //   ⇒ 那一档从来不是发散，是轮数不够。原来这条提示把两种情形并列写成
+            //     「要么加轮数、要么热失控」，等于把判断推给读的人 —— 而判据本身就该给出三态。
+            int look = Math.Min(12, deltaTrace.Count);
+            bool shrinking = look >= 4 && deltaTrace[^1] < deltaTrace[^look] * 0.999;
+            double ampNow = rEst > 0.5 && rEst < 0.999 ? rEst / (1 - rEst) : 25.0;
+            // 还要多少轮：按几何收缩 δ·r^n·amp < tol 解 n
+            string need = "";
+            if (shrinking && rEst > 0.5 && rEst < 0.999 && delta > 0)
+            {
+                double n = Math.Log(c.CoupleTolK / (delta * ampNow)) / Math.Log(rEst);
+                if (n > 0 && n < 1e6) need = $"，按当前收缩率还需约 **{Math.Ceiling(n):0} 轮**";
+            }
+            res.Notes.Add($"★ 外层耦合 {c.CoupleMaxRounds} 轮未收敛（**剩余误差估计 {delta * ampNow:0.0} K**，" +
+                          $"步长 {delta:0.0} K，ω={omega:0.00}）—— 本次结果的每个数都不可用。");
+            res.Notes.Add(shrinking
+                ? $"★ 残差**仍在单调收缩** ⇒ 是「慢」不是「发散」：加轮数上限即可{need}" +
+                  "（LineCase.CoupleMaxRounds，默认 200）。"
+                : "★ 残差**没有在收缩** ⇒ 加轮数大概率没用：该工况可能真的热失控，或迭代进了极限环。");
+            res.Message = "段↔法兰耦合未收敛（" + (shrinking ? "慢，加轮数可解" : "未收缩，疑似失控") + "）";
         }
         return res;
     }

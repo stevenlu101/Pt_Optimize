@@ -81,6 +81,21 @@ public sealed class FinalDesign
     /// <summary>外圈倍率（内圈的 40 % 过渡回板身）</summary>
     public double RingMulOuter(int j) => 1 + (RingMul[j] - 1) * 0.4;
 
+    /// <summary>
+    /// 深拷贝 —— 供**参数扰动验证**用（`--vary`）：扰动必须作用在副本上，
+    /// 否则 <see cref="W08"/>/<see cref="W06"/> 这两个 static 实例会被就地改掉，
+    /// 后面每一次「定案」都变成上一次扰动的结果（典型的静默污染）。
+    /// </summary>
+    public FinalDesign Clone()
+    {
+        var c = (FinalDesign)MemberwiseClone();
+        c.SetpointC = (double[])SetpointC.Clone();
+        c.TabThickMm = (double[])TabThickMm.Clone();
+        c.TabInsulMm = (double[])TabInsulMm.Clone();
+        c.RingMul = (double[])RingMul.Clone();
+        return c;
+    }
+
     /// <summary>按本定案构型造第 j 片（0=入口, 1=共用1, 2=共用2, 3=出口）。</summary>
     public FlangePlate Plate(int j, double discFloorMm)
     {

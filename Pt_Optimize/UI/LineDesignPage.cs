@@ -277,6 +277,39 @@ public sealed class LineDesignPage : TabPage
     }
 
     /// <summary>
+    /// 未收敛时的**一次性追问**：如果求解器判断是「慢」而不是「发散」，
+    /// 就问一句要不要加轮数重跑。
+    ///
+    /// 为什么值得做（2026-08-16 实测）：默认轮数上限 200 只够贴着定案点用。
+    /// 稍一改参数，环路增益 g≈0.96 把扰动放大约 25 倍，200 轮就不够了 ——
+    /// 实测「管保温 1 mm」那档 200 轮报未收敛（剩余误差 76.9 K），
+    /// **只把上限提到 1000、其余一律不动，第 734 轮收敛，剩余误差 0.99 K**。
+    /// ⇒ 用户改个参数就看到「不可引用」，其实只差多跑几百轮。
+    ///   不默认加轮数（那会让每次都慢几倍），而是**问一句** —— 决定权在用户。
+    /// </summary>
+    private async Task<LineResult> RetryIfJustSlowAsync(
+        LineResult r, LineCase lc, IProgress<string> prog, CancellationToken ct)
+    {
+        if (r is null || !r.Ok || r.Converged) return r;
+        if (!(r.Message?.Contains("慢") ?? false)) return r;      // 没在收缩 ⇒ 加轮数没用
+
+        string need = r.Notes.FirstOrDefault(n => n.Contains("还需约")) ?? "";
+        var ans = MessageBox.Show(this,
+            "外层耦合没收敛，但残差**仍在单调收缩** —— 是「慢」，不是「发散」。\r\n\r\n" +
+            (need.Length > 0 ? need.Replace("★ ", "") + "\r\n\r\n" : "") +
+            $"要把轮数上限从 {lc.CoupleMaxRounds} 提到 1500 重跑一次吗？\r\n" +
+            "（可能要几倍时间；随时可以点「取消」中止）",
+            "要不要更耐心地再跑一次", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        if (ans != DialogResult.Yes) return r;
+
+        lc.CoupleMaxRounds = 1500;
+        _status.Text = "加轮数重跑中…";
+        var r2 = await Task.Run(() => LineRunner.Run(lc, prog, ct), ct);
+        _out.Text = $"（第一次 {200} 轮未收敛，已把上限提到 1500 重跑）\r\n";
+        return r2;
+    }
+
+    /// <summary>
     /// ▶ 复现定案：按选中档的**完整几何**解一次，出判据表。
     ///
     /// 与「核算整线」的区别，一句话：
@@ -303,6 +336,7 @@ public sealed class LineDesignPage : TabPage
             // ★ checkRamp: true —— ① 也要判。少判一条就不是「全判据通过」。
             var lc = fd.BuildCase(_base, checkRamp: true);
             var r = await Task.Run(() => LineRunner.Run(lc, prog, ct), ct);
+            r = await RetryIfJustSlowAsync(r, lc, prog, ct);
             _last = r;
             Show(r);
 
@@ -431,6 +465,28 @@ public sealed class LineDesignPage : TabPage
         return b;
     }
 
+    /// <summary>
+    /// 本页控件**表达不了**的法兰特征 —— 用来在输出里逐条列出来。
+    ///
+    /// ⚠ 我此前对用户说的是「有两项表达不了」，那是**低估**。实测 <see cref="MakePlate"/>
+    ///   与 <see cref="FinalDesign.Plate"/> 逐字段比对，差的是**六项**：
+    ///   两级渐变环、角焊缝、逐片舌保温、等宽舌片、舌根圆角、逐片独立厚度以外的分区。
+    ///   ⇒ 用本页参数「核算整线」解的是一个**结构上更简单的法兰**，不是定案那一片。
+    ///   判据仍然照实判（没有作假），但**不要拿它的数去和定案值比**。
+    ///   把差异**打出来**，比悄悄用定案默认值补上更安全：后者会让人以为自己在试
+    ///   定案构型，实际上试的是别的东西（§1.8 的形状）。
+    /// </summary>
+    private static string PageVsFinal(FlangePlate pg)
+    {
+        var miss = new List<string>();
+        if (pg.DiscStepRadiiMm.Length == 0) miss.Add("管孔两级渐变环（定案 ×1.22–1.24）");
+        if (pg.WeldFilletLegMm <= 1e-9) miss.Add("管孔两面角焊缝（定案 焊脚 = max(板厚, 壁厚)）");
+        if (double.IsNaN(pg.TabInsulThickMm)) miss.Add("逐片舌保温（定案 18.7/1.6/1.4/3.9 mm，四片差 12 倍）");
+        if (!pg.TabParallel) miss.Add("等宽舌片（本页是**梯形**，定案是等宽）");
+        if (pg.TabFilletMm <= 1e-9) miss.Add("舌根过渡圆角（定案 R3；峰值电流拥塞就在这个凹角上）");
+        return miss.Count == 0 ? "" : string.Join("\r\n         · ", miss);
+    }
+
     private FlangePlate MakePlate(double tMm) => new()
     {
         DiscRadiusMm = (double)_discD.Value * 0.5,
@@ -524,8 +580,20 @@ public sealed class LineDesignPage : TabPage
             else
             {
                 var r = await Task.Run(() => LineRunner.Run(lc, prog, ct), ct);
+                r = await RetryIfJustSlowAsync(r, lc, prog, ct);
                 _last = r;
                 Show(r);
+                // ★ 把「本次实际解的是什么」打出来。不打，用户会以为自己在试定案构型。
+                if (_srcAnalytic.Checked && lc.FlangePlates is { Length: > 0 })
+                {
+                    string miss = PageVsFinal(lc.FlangePlates[0]);
+                    if (miss.Length > 0)
+                        _out.Text +=
+                            "\r\n── ⚠ 本次解的**不是**定案那一片法兰\r\n" +
+                            "   本页控件表达不了下面这些，已按「没有」求解：\r\n         · " + miss +
+                            "\r\n   ⇒ 判据是照实判的，但**不要拿这些数去和定案值比**。" +
+                            "要定案数字请点「▶ 复现定案」。\r\n";
+                }
             }
             _status.Text = "完成";
         }

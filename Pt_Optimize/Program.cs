@@ -4716,6 +4716,292 @@ internal static class Program
                 return;
             }
 
+            // ════════════════════════════════════════════════════════════════
+            // --cli --vary   ★★★★★ 参数扰动验证（2026-08-16 用户提出）
+            //
+            // 用户的问题分两层，这里一次答完：
+            //   ①「改变参数是不是能跑出**合理**的结果」
+            //   ②「如果不是定案档呢？运算能不能继续？能不能得到合理答案？」
+            //
+            // 「合理」必须先定义，否则无法证伪。本命令按两条独立的口径判：
+            //
+            //   A 灵敏度 —— **预言写在跑之前**（符号出自闭式或已实测的雅可比），
+            //     跑完比对。符号不符 = 模型错**或**预言错，两种都是信息。
+            //     ⚠ 只判**符号**与量级，不判小数：外层耦合剩余误差 0.65–0.75 K，
+            //       比它细的差别不构成证据（§1.83 的分辨率原则）。
+            //
+            //   B 鲁棒性 —— 把参数推到定案点之外（含明显不可行的档）。
+            //     这里问的**不是「过不过」**，而是：
+            //       会不会**安静地**给出一个看着正常、其实错的答案？
+            //     判据：每一档都必须落到「收敛且给出明确三态」或「自己报未收敛/报错」，
+            //     且不得出现 NaN 判据、超熔点却报全过、能量残差发散这类情形。
+            //
+            // 为什么这条命令值得单独存在：本项目至今所有严重错误都不是「算崩了」，
+            // 而是「算出来了、格式正常、结论错」（§1.8）。**能不能算**从来不是问题，
+            // **错了会不会被看见**才是。
+            //
+            // ⚠ 全程 checkRamp=false（① 升温另有 200+ 倍裕度，且瞬态解很慢）。
+            //   扰动只作用在 FinalDesign.Clone() 的副本上，不碰 static 定案实例。
+            // ════════════════════════════════════════════════════════════════
+            if (args.Contains("--vary"))
+            {
+                var FD0 = FinalDesign.Select(args);
+                Console.WriteLine("=== 参数扰动验证 ===");
+                Console.WriteLine("基准：" + FD0.Describe());
+                Console.WriteLine("判据分辨率：外层耦合剩余误差 " + FD0.ResidualK.ToString("0.00")
+                                  + " K ⇒ 只判**符号与量级**，不判小数。");
+                Console.WriteLine();
+
+                var swVary = System.Diagnostics.Stopwatch.StartNew();
+                int runs = 0;
+                int roundsOverride = 0;
+                {
+                    int ri = Array.IndexOf(args, "--rounds");
+                    if (ri >= 0 && ri + 1 < args.Length && int.TryParse(args[ri + 1], out int rn))
+                    { roundsOverride = rn; Console.WriteLine($"外层轮数上限临时改为 {rn}（默认 200）"); }
+                }
+                bool onlyB = args.Contains("--only-b");
+                bool onlyA = args.Contains("--only-a");
+
+                // 一次求解 + 提取要看的量。**不做任何平滑与兜底** —— 失败要看得见。
+                (bool ok, bool conv, bool allOk, double dip, double c2, double flux,
+                 double tj, double mass, double tmax, double resid, string msg) Solve(FinalDesign f)
+                {
+                    runs++;
+                    LineResult r;
+                    var lcv = f.BuildCase(p, checkRamp: false);
+                    // `--rounds N`：临时放大外层轮数上限。用来区分**两件事**——
+                    //   「偏离定案点后发散了」 vs 「只是慢、轮数不够」。
+                    //   两者的对策完全不同（前者要改模型，后者只要多跑），不能混为一谈。
+                    if (roundsOverride > 0) lcv.CoupleMaxRounds = roundsOverride;
+                    try { r = LineRunner.Run(lcv); }
+                    catch (Exception ex)
+                    { return (false, false, false, 0, 0, 0, 0, 0, 0, 0, "抛异常：" + ex.Message); }
+                    if (!r.Ok) return (false, false, false, 0, 0, 0, 0, 0, 0, 0, r.Message);
+
+                    double V(string key)
+                    {
+                        foreach (var c in r.Checks)
+                            if (c.Name.StartsWith(key, StringComparison.Ordinal)) return c.Actual;
+                        return double.NaN;
+                    }
+                    return (true, r.Converged, r.AllOk,
+                            V("③"), V("②″"), V("②′"), V("管 J"),
+                            r.TotalMassG,
+                            r.Flanges.Max(x => x.TMaxC),
+                            r.Flanges.Max(x => Math.Abs(x.EnergyResidualW)),
+                            "");
+                }
+
+                var b = Solve(FD0);
+                if (!b.ok) { Console.WriteLine("✗ 基准就解不出来：" + b.msg); return; }
+                Console.WriteLine($"基准解：③={b.dip:0.00} ②″={b.c2:0.00} ②′={b.flux:+0.00;−0.00} " +
+                                  $"管J={b.tj:0.00} 总重={b.mass:0} g　收敛={b.conv}　全过={b.allOk}");
+                Console.WriteLine();
+
+                // ── A 灵敏度 ───────────────────────────────────────────────
+                // 预言只写**符号**（+ 升 / − 降 / 0 无直接作用 / ? 无预言）。
+                // 出处逐条写在最后一列 —— 没出处的预言不许上表。
+                if (onlyB) goto sectionB;
+                Console.WriteLine("── A 灵敏度：每个旋钮 ±一步，预言写在跑之前");
+                Console.WriteLine();
+                Console.WriteLine($"{"旋钮",-12}{"步长",-10}{"量",-6}{"−步",9}{"基准",9}{"+步",9}" +
+                                  $"{"斜率",11}{"预言",6}{"判",4}  出处");
+                Console.WriteLine(new string('─', 118));
+
+                int predOk = 0, predBad = 0, predSkip = 0;
+                // 参照旋钮（板厚）在各个量上的斜率 —— 「≈0」类预言按它的 1/20 判
+                var refSlope = new Dictionary<string, double>();
+                // sign: +1 升, -1 降, 0 无直接作用（|斜率| 应远小于其它旋钮）, 2 = 不预言
+                void Sweep(string knob, string stepLabel,
+                           Func<FinalDesign, double, FinalDesign> mut, double step,
+                           (string name, Func<(bool, bool, bool, double, double, double, double,
+                                                double, double, double, string), double> get,
+                            int sign, double tol, string why)[] metrics,
+                           bool isRef = false)
+                {
+                    var lo = Solve(mut(FD0.Clone(), -step));
+                    var hi = Solve(mut(FD0.Clone(), +step));
+                    if (!lo.ok || !hi.ok)
+                    {
+                        Console.WriteLine($"{knob,-12}{stepLabel,-10}—— 解不出来：{(lo.ok ? hi.msg : lo.msg)}");
+                        return;
+                    }
+                    // ★★ 未收敛的点**不能用来验预言**。
+                    //   环路增益 g≈0.96 ⇒ 一步扰动被放大约 25 倍，端点很容易掉出收敛域；
+                    //   在那种点上算出来的斜率既证实不了预言、也证伪不了它。
+                    //   ⇒ 判成「?未收敛」，**两边都不计分** —— 与判据的三态规则同一条道理：
+                    //     无法判定既不算过、也不算不过。
+                    bool usable = lo.conv && hi.conv;
+                    string convTag = $"收敛 −{(lo.conv ? "✓" : "✗")} +{(hi.conv ? "✓" : "✗")}";
+                    bool first = true;
+                    foreach (var m in metrics)
+                    {
+                        double a = m.get(lo), c = m.get(b), d = m.get(hi);
+                        double slope = (d - a) / (2 * step);
+                        string sgn = m.sign switch { 1 => "↑", -1 => "↓", 0 => "≈0", _ => "?" };
+                        string verdict;
+                        // ★ 「≈0」这一类的判法（2026-08-16 改）：
+                        //   原来拿一个**我自己拍的绝对值**当阈值 —— 那正是「限值没有出处」的老毛病，
+                        //   实测舌保温→②″ 斜率 +0.10 被判 ✗，而它比板厚→②″ 弱 150 倍。
+                        //   ⇒ 改成**相对强度**：与同一个量上最强的那个旋钮（板厚）比，
+                        //     弱 20 倍以上就算「不是控它的旋钮」。这是**设计判断**，不是物理限值，
+                        //     所以阈值写在这里并说明它是什么。
+                        //   例外：总重那种**恒等式**（纤维不是铂）仍按绝对值判，且阈值必须极小。
+                        if (!usable) verdict = "?未收";
+                        else if (m.sign == 2) verdict = "—";
+                        else if (m.sign == 0)
+                        {
+                            double refS = refSlope.TryGetValue(m.name, out double rr) ? Math.Abs(rr) : 0;
+                            verdict = m.tol <= 1e-6                       // 恒等式：必须严格为 0
+                                    ? (Math.Abs(slope) <= 1e-6 ? "✓" : "✗")
+                                    : refS > 0 ? (Math.Abs(slope) * 20 <= refS ? "✓" : "✗")
+                                               : (Math.Abs(slope) <= m.tol ? "✓" : "✗");
+                        }
+                        else verdict = Math.Abs(d - a) <= m.tol ? "?小"           // 变化没超分辨率
+                                     : (Math.Sign(d - a) == m.sign ? "✓" : "✗");
+                        if (isRef && usable) refSlope[m.name] = slope;   // 板厚 = 参照旋钮
+                        if (verdict == "✓") predOk++;
+                        else if (verdict == "✗") predBad++;
+                        else if (verdict == "?未收") predSkip++;
+                        Console.WriteLine($"{(first ? knob : ""),-12}{(first ? stepLabel : ""),-10}" +
+                                          $"{m.name,-6}{a,9:0.00}{c,9:0.00}{d,9:0.00}" +
+                                          $"{slope,11:+0.00;−0.00}{sgn,6}{verdict,6}  {m.why}");
+                        first = false;
+                    }
+                    Console.WriteLine($"{"",-22}{convTag}" +
+                                      (usable ? "" : "　⇒ 本组斜率**不可引用**，不计分"));
+                    Console.WriteLine();
+                }
+
+                // 各量的取值器
+                Func<(bool, bool, bool, double, double, double, double, double, double, double, string), double>
+                    Dip = t => t.Item4, C2 = t => t.Item5, Flux = t => t.Item6,
+                    TJ = t => t.Item7, M = t => t.Item8;
+
+                Sweep("管壁", "±0.1 mm", (f, d) => { f.WallMm += d; return f; }, 0.1, new[]
+                {
+                    ("③", Dip,  -1, 0.3,  "式(4.3) ③=D/√(kAβ)，A∝壁厚 ⇒ 壁厚↑则 ③↓"),
+                    ("管J", TJ, -1, 0.05, "J=I/A，电流由散热定、几乎不随壁厚变 ⇒ J∝1/A"),
+                    ("总重", M,   1, 5.0, "管截面 ∝ 壁厚"),
+                    ("②″", C2,  -1, 0.10, "环1 实测：壁 2.0→1.8 时 ②″ +0.31"),
+                });
+
+                Sweep("板厚", "±0.1 mm", (f, d) =>
+                { for (int k = 0; k < 4; k++) f.TabThickMm[k] += d; return f; }, 0.1, new[]
+                {
+                    ("③", Dip,   1, 0.3,  "实测雅可比 ∂③/∂板厚 = +149 K/mm（正号）"),
+                    ("②″", C2,  -1, 0.05, "实测雅可比 ∂②″/∂板厚 = −1.6 K/mm"),
+                    ("总重", M,   1, 5.0, "法兰料变多"),
+                }, isRef: true);        // ★ 板厚是参照旋钮：「≈0」类预言按它的 1/20 判
+
+                Sweep("环倍率", "±0.05", (f, d) =>
+                { for (int k = 0; k < 4; k++) f.RingMul[k] += d; return f; }, 0.05, new[]
+                {
+                    ("②″", C2,  -1, 0.05, "环4 实测：μ 1.00→1.30 时 ②″ +0.24→−0.03"),
+                    ("③", Dip,   1, 0.3,  "环5：环加厚⇒导热截面↑⇒抽热 D↑⇒式(4.3) ③↑"),
+                    ("总重", M,   1, 2.0, "环是料"),
+                });
+
+                Sweep("舌保温", "±1 mm", (f, d) =>
+                { for (int k = 0; k < 4; k++) f.TabInsulMm[k] = Math.Max(0.2, f.TabInsulMm[k] + d); return f; }, 1.0, new[]
+                {
+                    ("③", Dip,  -1, 0.3,  "环3 实测：保温↑⇒③ 41.9→0.0"),
+                    ("②″", C2,   0, 0.05, "环3：80 倍扫描 ②″ 恒为 −0.04 ⇒ 弱于板厚 20 倍以上才算「不是控它的旋钮」"),
+                    ("总重", M,   0, 0.0, "纤维不是铂 ⇒ **恒等式**，必须严格为 0"),
+                });
+
+                Sweep("管保温", "±1 mm", (f, d) => { f.TubeInsulMm += d; return f; }, 1.0, new[]
+                {
+                    ("③", Dip,   1, 0.3,  "式(4.2) β 在分母 ⇒ 保温↑则 β↓、ℓ↑、③↑（实测 +11…20 K/mm）"),
+                    ("管J", TJ, -1, 0.05, "保温↑⇒散热↓⇒电流↓"),
+                    ("总重", M,   0, 0.0, "纤维不是铂 ⇒ **恒等式**，必须严格为 0"),
+                });
+
+                Sweep("盘半径", "±2 mm", (f, d) => { f.DiscRadiusMm += d; return f; }, 2.0, new[]
+                {
+                    ("③", Dip,   1, 0.3,  "盘大⇒电学死区散热↑⇒抽热↑⇒③↑（§4.3f 缩盘三者同向的反向）"),
+                    ("总重", M,   1, 2.0, "盘面积 ∝ R²"),
+                    ("②″", C2,   2, 0.0, "峰 A 在盘缘、峰 B 在舌根，谁赢不确定 ⇒ **不预言，只记录**"),
+                });
+
+                Console.WriteLine($"A 小结：{predOk} 条符合，{predBad} 条不符，{predSkip} 条**因端点未收敛而无法判定**" +
+                                  (predBad == 0 ? "　★ 判得了的全部符合" : "　★★ 有不符的，逐条查上表"));
+                if (predSkip > 0)
+                    Console.WriteLine("   ⚠ 无法判定的那些**不算通过**。要判它们，得先把步长缩到收敛域之内，" +
+                                      "或先解决 §1.85 的慢模式（g≈0.96 ⇒ 一步扰动被放大约 25 倍）。");
+                Console.WriteLine();
+
+                // ── B 鲁棒性 ───────────────────────────────────────────────
+                sectionB:
+                if (onlyA) { Console.WriteLine($"（--only-a：跳过 B）　共 {runs} 次求解，" +
+                                               $"用时 {swVary.Elapsed.TotalMinutes:0.0} 分钟。"); return; }
+                Console.WriteLine("── B 鲁棒性：推到定案点之外");
+                Console.WriteLine("   判的**不是过不过**，而是「会不会安静地给出一个看着正常、其实错的答案」。");
+                Console.WriteLine();
+                Console.WriteLine($"{"构型",-24}{"解出",6}{"收敛",6}{"③",9}{"②″",9}{"管J",8}" +
+                                  $"{"最高°C",9}{"能量残差W",11}{"全过",6}  判读");
+                Console.WriteLine(new string('─', 118));
+
+                int silent = 0;
+                void Probe(string name, Func<FinalDesign, FinalDesign> mut, string expect)
+                {
+                    var t = Solve(mut(FD0.Clone()));
+                    if (!t.ok)
+                    {
+                        // 解不出来**不算失败** —— 它明说了自己不行，这正是要的行为
+                        Console.WriteLine($"{name,-24}{"✗",6}{"—",6}{"—",9}{"—",9}{"—",8}{"—",9}{"—",11}{"—",6}" +
+                                          $"  明确报错（可接受）：{t.msg}");
+                        return;
+                    }
+                    // 安静失败的三种形状
+                    bool nan = double.IsNaN(t.dip) || double.IsNaN(t.c2) || double.IsNaN(t.tj);
+                    bool overMelt = t.tmax > Materials.PtMeltC;
+                    bool bigResid = t.resid > 50.0;
+                    bool quiet = t.conv && t.allOk && (nan || overMelt || bigResid);
+                    if (quiet) silent++;
+                    string read = quiet ? "★★ 安静失败：报全过但 " +
+                                          (nan ? "有 NaN 判据" : overMelt ? "已超铂熔点" : "能量残差发散")
+                                : !t.conv ? "未收敛 —— **自己报了**（可接受）"
+                                : nan ? "有 NaN 判据，但没报全过（可接受）"
+                                : overMelt ? "超熔点，但没报全过（可接受）"
+                                : expect;
+                    Console.WriteLine($"{name,-24}{"✓",6}{(t.conv ? "✓" : "✗"),6}{t.dip,9:0.00}{t.c2,9:0.00}" +
+                                      $"{t.tj,8:0.00}{t.tmax,9:0.0}{t.resid,11:0.000}{(t.allOk ? "✓" : "✗"),6}  {read}");
+                }
+
+                Probe("管壁 0.3（低于焊接界）", f => { f.WallMm = 0.3; return f; },
+                      "预期：管 J 越界 ⇒ 应判✗");
+                Probe("管壁 2.0（远高于定案）", f => { f.WallMm = 2.0; return f; },
+                      "预期：判据宽松但很重");
+                Probe("板厚 ×2", f => { for (int k = 0; k < 4; k++) f.TabThickMm[k] *= 2; return f; },
+                      "预期：③ 被 +149 K/mm 推爆 ⇒ 应判✗");
+                Probe("板厚 ×0.5", f => { for (int k = 0; k < 4; k++) f.TabThickMm[k] *= 0.5; return f; },
+                      "预期：②″ 或 ②′ 出问题");
+                Probe("环关掉（μ=1.0）", f => { for (int k = 0; k < 4; k++) f.RingMul[k] = 1.0; return f; },
+                      "预期：②″ 变差（环4 的机理）");
+                Probe("舌保温全 0.2 mm", f => { for (int k = 0; k < 4; k++) f.TabInsulMm[k] = 0.2; return f; },
+                      "预期：③ 变小、②′ 变大（环3）");
+                Probe("舌保温全 60 mm", f => { for (int k = 0; k < 4; k++) f.TabInsulMm[k] = 60; return f; },
+                      "预期：②′ 转负（法兰倒灌）");
+                Probe("管保温 1 mm", f => { f.TubeInsulMm = 1; return f; },
+                      "预期：③ 变差、②′ 大幅变化（环7）");
+                Probe("盘 Ø120（旧构型）", f => { f.DiscRadiusMm = 60; return f; },
+                      "预期：抽热大增 ⇒ ③ 变差、法兰重");
+                Probe("舌长 30 mm（短舌）", f => { f.TabLengthMm = 30; return f; },
+                      "预期：发热段几乎没了（压接占 40）—— 看它是否明确失败");
+
+                Console.WriteLine();
+                Console.WriteLine(silent == 0
+                    ? "B 小结：★ 没有一档是「安静失败」—— 越界时要么判✗、要么自报未收敛、要么明确报错。"
+                    : $"B 小结：★★ 有 {silent} 档安静失败 —— **这比算不出来严重得多，必须先修。**");
+                Console.WriteLine();
+                Console.WriteLine($"共 {runs} 次求解，用时 {swVary.Elapsed.TotalMinutes:0.0} 分钟。");
+                Console.WriteLine("⚠ 本命令只验**方向与不安静失败**，不验绝对精度 —— " +
+                                  "绝对精度的唯一校准点仍是玻璃温降（实测 20 K）。");
+                return;
+            }
+
             // --cli --make3dm   ★★★★★ 出定案 3DM（两档各一个），并做 round-trip 校验
             //
             // 为什么必须 round-trip：Geom 子进程的注释里记着一次事故 ——
