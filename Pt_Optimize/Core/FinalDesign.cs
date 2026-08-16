@@ -195,8 +195,8 @@ public sealed class FinalDesign
         WallMm = 0.8,
         TabThickMm = new[] { 2.11, 3.33, 3.12, 1.76 },
         RingMul = new[] { 1.22, 1.22, 1.22, 1.22 },
-        TotalMassG = 3106, TubeMassG = 2466, FlangeMassG = 641, ResidualK = 0.86,
-        RampH = 0.057, DiscOverK = 1.03, HoleFluxW = 1.48, FlangeDipK = 5.40, TubeJ = 9.51,
+        TotalMassG = 3106, TubeMassG = 2465, FlangeMassG = 641, ResidualK = 0.86,
+        RampH = 0.057, DiscOverK = 1.050, HoleFluxW = 1.351, FlangeDipK = 5.522, TubeJ = 9.506,
     };
 
     /// <summary>底档：可行域的底。焊接烧穿下界与管 J 12 **在同一点咬住**。</summary>
@@ -208,8 +208,8 @@ public sealed class FinalDesign
         WallMm = 0.6,
         TabThickMm = new[] { 1.82, 2.85, 2.66, 1.49 },
         RingMul = new[] { 1.20, 1.20, 1.20, 1.20 },
-        TotalMassG = 2388, TubeMassG = 1842, FlangeMassG = 547, ResidualK = 0.37,
-        RampH = 0.079, DiscOverK = 1.24, HoleFluxW = 1.34, FlangeDipK = 5.83, TubeJ = 10.96,
+        TotalMassG = 2388, TubeMassG = 1841, FlangeMassG = 547, ResidualK = 0.37,
+        RampH = 0.078, DiscOverK = 1.186, HoleFluxW = 1.583, FlangeDipK = 5.965, TubeJ = 10.961,
     };
 
     public static readonly FinalDesign[] All = { W08, W06 };

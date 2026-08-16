@@ -4717,6 +4717,103 @@ internal static class Program
             }
 
             // ════════════════════════════════════════════════════════════════
+            // --cli --selfcheck   ★★★★★ **会自己跑的那道门**（2026-08-16）
+            //
+            // 为什么要有它：本项目今天三次被抓到的错，靠的都是**会自己跑的检查**
+            // （质量对账、真残差判据、单一来源）；而写在注释里的教训一次也没抓到过——
+            // **注释不会跑**。`--vary` 是好工具，但它要人记得去跑，等于也不会跑。
+            // ⇒ 把最要命的两条做成门：改了内核就必须过。
+            //
+            // 只验两件事，都是**已经真出过事**的：
+            //   A 复现对账：FinalDesign 记的数与实算对不对得上。
+            //     （出过两次：判据值抄成另一次运行的、板厚是优化器停早一轮的结果）
+            //   B 不安静失败：偏离档不许「报全过」同时给出荒谬的数。
+            //     （超熔点 / NaN 判据 / 能量残差发散）
+            //
+            // ⚠ 刻意**不**做全套灵敏度 —— 那是 `--vary` 的事，27 分钟，不该挂在提交上。
+            //   这道门的预算是 5 分钟量级：门要有人愿意让它一直开着才有用。
+            //
+            // 退出码：0 = 过，1 = 不过（供 git hook 判断）。
+            // ════════════════════════════════════════════════════════════════
+            if (args.Contains("--selfcheck"))
+            {
+                Console.WriteLine("=== 自检门（--selfcheck）===");
+                var swSc = System.Diagnostics.Stopwatch.StartNew();
+                int bad = 0;
+
+                Console.WriteLine();
+                Console.WriteLine("── A 复现对账：FinalDesign 记的数 vs 实算");
+                foreach (var fd in FinalDesign.All)
+                {
+                    var rc = LineRunner.Run(fd.BuildCase(p, checkRamp: true));
+                    if (!rc.Ok) { Console.WriteLine($"   ✗ {fd.Name} 解不出：{rc.Message}"); bad++; continue; }
+                    if (!rc.Converged) { Console.WriteLine($"   ✗ {fd.Name} 未收敛 —— 记录值无从对账"); bad++; continue; }
+                    double V(string k)
+                    { foreach (var c in rc.Checks) if (c.Name.StartsWith(k, StringComparison.Ordinal)) return c.Actual; return double.NaN; }
+
+                    Console.WriteLine($"   {fd.Name}　收敛 ✓　全判据 {(rc.AllOk ? "✓" : "✗")}");
+                    if (!rc.AllOk)
+                    {
+                        bad++;
+                        Console.WriteLine("      ✗ **定案档自己不过判据** —— 这是最严重的一种：");
+                        foreach (var c in rc.Checks)
+                            if (c.Kind != CheckKind.Reference && (!c.Ok || c.Undetermined))
+                                Console.WriteLine($"         {c.Name} {c.Actual:0.000} / {c.Limit:0.000}　{c.Where}");
+                    }
+                    void Chk(string nm, double got, double want, double tol, string unit)
+                    {
+                        bool ok = Math.Abs(got - want) <= tol;
+                        if (!ok) bad++;
+                        Console.WriteLine($"      {(ok ? "✓" : "✗")} {nm,-6}{got,9:0.000} {unit,-6} 记录 {want,8:0.000}" +
+                                          $"　差 {got - want,+7:0.000}" + (ok ? "" : $"　**超容差 {tol:0.###}**"));
+                    }
+                    Chk("①",  V("①"),  fd.RampH,      0.02, "h");
+                    Chk("②″", V("②″"), fd.DiscOverK,  0.20, "K");
+                    Chk("②′", V("②′"), fd.HoleFluxW,  0.50, "W");
+                    Chk("③",  V("③"),  fd.FlangeDipK, 1.00, "K");
+                    Chk("管J", V("管 J"), fd.TubeJ,    0.05, "A/mm²");
+                    Chk("合计", rc.TotalMassG, fd.TotalMassG, 2.0, "g");
+                }
+
+                Console.WriteLine();
+                Console.WriteLine("── B 不安静失败：偏离档不许「报全过」同时给出荒谬的数");
+                var probes = new (string n, Func<FinalDesign, FinalDesign> mut)[]
+                {
+                    ("环关掉 μ=1.0", f => { for (int k = 0; k < 4; k++) f.RingMul[k] = 1.0; return f; }),
+                    ("板厚 ×0.5",    f => { for (int k = 0; k < 4; k++) f.TabThickMm[k] *= 0.5; return f; }),
+                    ("管保温 1 mm",  f => { f.TubeInsulMm = 1.0; return f; }),
+                };
+                foreach (var (nm, mut) in probes)
+                {
+                    var fd = mut(FinalDesign.Current.Clone());
+                    LineResult rp;
+                    try { rp = LineRunner.Run(fd.BuildCase(p, checkRamp: false)); }
+                    catch (Exception ex)
+                    { Console.WriteLine($"   ✓ {nm,-14}明确抛异常（可接受）：{ex.Message}"); continue; }
+                    if (!rp.Ok) { Console.WriteLine($"   ✓ {nm,-14}明确报错（可接受）：{rp.Message}"); continue; }
+
+                    double tmax = rp.Flanges.Max(f => f.TMaxC);
+                    double resid = rp.Flanges.Max(f => Math.Abs(f.EnergyResidualW));
+                    bool nan = rp.Checks.Any(c => c.Kind != CheckKind.Reference && double.IsNaN(c.Actual));
+                    bool absurd = nan || tmax > Materials.PtMeltC || resid > 50.0;
+                    bool quiet = rp.Converged && rp.AllOk && absurd;
+                    if (quiet) bad++;
+                    Console.WriteLine($"   {(quiet ? "✗" : "✓")} {nm,-14}收敛 {(rp.Converged ? "✓" : "✗")}　" +
+                                      $"全过 {(rp.AllOk ? "✓" : "✗")}　最高 {tmax,7:0.0} °C　能量残差 {resid,7:0.000} W" +
+                                      (quiet ? "　★★ **安静失败**" : ""));
+                }
+
+                Console.WriteLine();
+                Console.WriteLine(bad == 0
+                    ? $"★ 自检通过（{swSc.Elapsed.TotalMinutes:0.0} 分钟）"
+                    : $"✗ 自检**不过**：{bad} 项（{swSc.Elapsed.TotalMinutes:0.0} 分钟）。" +
+                      "先查上面标 ✗ 的，不要提交。");
+                Console.WriteLine("（本门只验复现与不安静失败；完整灵敏度用 --vary，约 27 分钟）");
+                Environment.ExitCode = bad == 0 ? 0 : 1;
+                return;
+            }
+
+            // ════════════════════════════════════════════════════════════════
             // --cli --vary   ★★★★★ 参数扰动验证（2026-08-16 用户提出）
             //
             // 用户的问题分两层，这里一次答完：

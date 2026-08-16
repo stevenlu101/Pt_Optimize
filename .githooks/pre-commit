@@ -1,0 +1,48 @@
+#!/bin/sh
+# ============================================================================
+#  提交前自检门（2026-08-16）
+#
+#  为什么要有它：本项目被抓到的错，靠的全是**会自己跑的检查**；
+#  写在注释里的教训一次也没抓到过 —— 注释不会跑，要人记得去跑的工具也等于不会跑。
+#
+#  ⚠ 只在**动了内核**时才拦，否则改个文档也要等 3.5 分钟，门就会被人关掉。
+#     门要有人愿意一直开着才有用。
+#
+#  跳过：git commit --no-verify   （赶时间可以，但请自己知道跳过了什么）
+#  安装：git config core.hooksPath .githooks
+# ============================================================================
+set -e
+
+WATCH='Pt_Optimize/Core/|Pt_Optimize/Program.cs'
+CHANGED=$(git diff --cached --name-only | grep -E "$WATCH" || true)
+
+if [ -z "$CHANGED" ]; then
+    exit 0
+fi
+
+echo "── 动到内核，跑自检门（约 3.5 分钟；--no-verify 可跳过）"
+echo "$CHANGED" | sed 's/^/     /'
+
+ROOT=$(git rev-parse --show-toplevel)
+BIN="$ROOT/Pt_Optimize/bin/Release/net8.0-windows"
+
+# ⚠ 必须先编译。否则门验的是**上一次的二进制** —— 那比不验更危险：
+#   它会给这次的改动发一张不属于它的通过证。
+echo "── 先编译（Release）"
+if ! dotnet build "$ROOT/Pt_Optimize.sln" -c Release -v q --nologo > /tmp/pt_build.log 2>&1; then
+    echo "✗ 编译失败，提交中止："
+    grep -E ": error" /tmp/pt_build.log | head -20
+    exit 1
+fi
+
+cd "$BIN"
+if ! dotnet Pt_Optimize.dll --cli --selfcheck; then
+    echo ""
+    echo "✗ 自检不过 —— 提交中止。"
+    echo "  上面标 ✗ 的是「定案档自己不过判据」或「记录值与实算对不上」，"
+    echo "  两者都属于会安静发出错结论的那一类，先查清楚再提交。"
+    echo "  确实要跳过：git commit --no-verify"
+    exit 1
+fi
+
+exit 0
