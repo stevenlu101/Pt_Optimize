@@ -38,6 +38,32 @@ public static class FlangeAutoSizer
         /// <summary>阻尼系数。1 = 全牛顿步（会振荡），0.6 实测稳定</summary>
         public double Damping = 0.6;
         public double MinThickMm = 0.4, MaxThickMm = 6.0;
+
+        // ════════════════════════════════════════════════════════════════
+        // ★★★★★ 靶换成**抽热窗口**（2026-08-17）。原来的靶会往烧断方向优化。
+        //
+        // 病：原来单边追 ③（只在 ③ 超靶时往薄里走），而注释里写着这样设计的理由是
+        //     「让『越薄越省铂』自己去撞另一侧的界（②′ 净流入 > 0）」——
+        //     **可是没有任何东西在那一侧拦着**。判据表事后报 ✗，而按钮已经把设计
+        //     推过去了。②′ < 0 的物理含义是**热往管子里灌**，正是现场烧断的机理。
+        //
+        // 依据（2026-08-17 `--window` 实测，六行、D 从 +0.6 到 +144 W 吻合 5 % 以内）：
+        //     ③ = γ·D，γ = 2.40 K/W
+        // ⇒ ②′>0 与 ③≤10 合起来就是一句话：**0 < D ≤ 10/γ ≈ 4.2 W**。
+        //   两条判据是**同一个量的两侧**，所以一个双向靶就同时守住两条，
+        //   而单边靶必然只守一条。
+        //
+        // ⚠ `.3dm` 路上**没有舌保温这个旋钮**（LineRunner 里 tabInsulThickMm 传 NaN，
+        //   现场实况是「仅圆盘保温、舌片裸露」）⇒ 只能用板厚做促动器。
+        //   可行：实测 dD/d板厚 = 62–107 W/mm（`--vary` 新定案点）。
+        // ════════════════════════════════════════════════════════════════
+
+        /// <summary>抽热靶 W。窗口 (0, ③限/γ]，取偏安全的低侧。</summary>
+        public double DrawTargetW = 2.0;
+        /// <summary>收敛判据：每片 |D − 靶| 均小于此值 W。</summary>
+        public double DrawTolW = 0.6;
+        /// <summary>d(抽热)/d(板厚) W/mm。实测 62–107；取偏小值 ⇒ 步子偏保守，不过冲。</summary>
+        public double DrawSensWPerMm = 60.0;
         /// <summary>单步对数位移上限，防止首轮从很差的初值一步跳飞</summary>
         public double MaxLogStep = 0.35;
 
@@ -63,11 +89,46 @@ public static class FlangeAutoSizer
         /// 除非你已用 --fidelity 验证过该形状上放粗无害，否则不要设。
         /// </summary>
         public double SearchMeshFineMm = 0;
-        /// <summary>搜索期的**远场**网格步长 mm（原值 11.0）。远场放粗是安全的</summary>
-        public double SearchMeshCoarseMm = 16.0;
-        /// <summary>搜索期的段↔法兰耦合轮数与容差（实测只影响 10–18 K，可放松）</summary>
-        public int SearchCoupleRounds = 5;
-        public double SearchCoupleTolK = 4.0;
+        /// <summary>
+        /// 搜索期的**远场**网格步长 mm。★ 2026-08-17 起默认 **0 = 不放粗**。
+        ///
+        /// 原值 16.0，注释写「远场放粗是安全的」。那句话是 2026-08-13 在**旧形状**
+        /// （舌 90×30、细化半径 50 mm）上用 `--fidelity` 验的 —— 那时舌片窄而短，
+        /// 「远场」确实只是圆盘外围的一点边角料。
+        ///
+        /// **新形状把这个前提废掉了**：舌片 140×60，细化半径仍是 50 mm ⇒
+        /// **舌片的绝大部分现在就落在「远场」里**。把它从 11 放到 16 mm，
+        /// 放粗的不再是边角料，而是发热与散热的主体。
+        ///
+        /// 实测（自检 E 段）：只收紧耦合容差（4→1 K）后，搜索期与全精度的抽热差
+        /// 仍有 **5.2 W**（窗口才 4.2 W 宽）⇒ 主要误差不在耦合，在这里。
+        ///
+        /// ⇒ 不再放粗。速度由**热启动**补回来（2026-08-17 加，单次全精度复核 14 s）——
+        ///   当初降精度就是为了速度，而那个理由现在有更好的解法。
+        /// ⚠ 这条再次说明：**「验证过安全」是绑在当时那个构型上的**，
+        ///   构型一换就要重验，不能当成永久结论。
+        /// </summary>
+        public double SearchMeshCoarseMm = 0;
+        /// <summary>
+        /// 搜索期的段↔法兰耦合轮数与容差。
+        ///
+        /// ★★★★★ 2026-08-17 从「5 轮 / 4.0 K」收紧到「30 轮 / 1.0 K」，理由是**量纲对不上**：
+        ///
+        /// 原注释写「实测只影响 10–18 K，可放松」——那是当靶还是**管根温差**（几十 K 量级）
+        /// 时说的。现在靶是**抽热窗口**，整个窗口只有 0–4.2 W 宽，而
+        ///     ③ = 2.40·D  ⇒  **4 K 的耦合容差 ≈ 1.7 W 的抽热误差**
+        /// 也就是说搜索模型的误差**和靶值本身同量级** —— 它根本分辨不出窗口。
+        ///
+        /// 实测后果（自检 E 段抓到）：搜索期报「各片抽热已落进窗口，+1.7…+2.0 W」，
+        /// 全精度复核却是 **②′ = −4.47 W** —— 差 6 W，比整个窗口还宽，
+        /// 而 −4.47 W 的物理含义是**热往管子里灌**。
+        ///
+        /// 这是记忆里那条「**求解器的收敛容差必须优于判据的分辨率**」的又一次发作，
+        /// 只是这次发在**搜索期**的容差上：优化器在一个分辨不出可行域的模型里找可行解。
+        /// ⇒ 远场网格仍可放粗（那条是验证过的），但耦合容差必须跟上判据。
+        /// </summary>
+        public int SearchCoupleRounds = 30;
+        public double SearchCoupleTolK = 1.0;
     }
 
     public sealed class Result
@@ -175,12 +236,18 @@ public static class FlangeAutoSizer
             if (!v.Ok) { res.Message += "　⚠ 全精度复核失败：" + v.Message; return; }
 
             res.Line = v;
-            double worst = v.Segments.Length == 0 ? 0
-                         : v.Segments.Max(s => Math.Abs(s.RootDeltaK - opt.TargetK));
+            // ★★★ 复核必须用**和迭代同一个**判据（2026-08-17）。
+            //   我把迭代靶换成抽热窗口，却漏了这里 —— 它还在用旧的单边 ③ 度量，
+            //   于是出现「复核说达标、而 ②′ = −4.47 W」这种自相矛盾的输出。
+            //   **改了靶就要把所有读靶的地方一起改**，这正是今天反复在犯的那一条。
+            double worst = v.Flanges.Length == 0 ? 0
+                         : v.Flanges.Max(f => Math.Abs(opt.DrawTargetW - f.QFromTubeW));
             bool searchSaidOk = res.Converged;
-            res.Converged = worst < opt.TolK && v.Converged;
+            res.Converged = worst < opt.DrawTolW && v.Converged;
 
-            res.Message += $"　【全精度复核】管根温差偏离目标 {worst:0.0} K";
+            res.Message += $"　【全精度复核】抽热偏离靶 {worst:0.0} W" +
+                           $"（②′ {v.ValueOf(LineResult.Key.NetFlux):+0.00;−0.00} W／" +
+                           $"③ {v.ValueOf(LineResult.Key.FlangeDip):0.00} K）";
             if (!v.Converged) res.Message += "；⚠ 段↔法兰耦合未收敛，数值不可引用";
             if (searchSaidOk && !res.Converged)
                 res.Message += "；⚠ 搜索精度下判为达标，全精度下**不达标** —— 以本次为准";
@@ -204,12 +271,19 @@ public static class FlangeAutoSizer
         opt ??= new Options();
         var t = (double[])initialThicknessMm.Clone();
         var res = new Result { ThicknessMm = t };
+        // ★ 热启动跨轮传递（2026-08-17）：相邻两轮只差百分之几的厚度，
+        //   上一轮的不动点离这一轮很近。这正是**取消降精度搜索**之后补速度的手段。
+        //   ⚠ 只在收敛时接过 —— 没收敛的 x 不是不动点（同 Core/Sizer 的做法）。
+        double[][] warmA = Array.Empty<double[]>();
+        double[][] baseA = Array.Empty<double[]>();
 
         for (int it = 0; it < opt.MaxIterations; it++)
         {
             cancel.ThrowIfCancellationRequested();
 
             var lc = CloneCase(baseCase);
+            lc.WarmStart = warmA;
+            lc.BaselineRootC = baseA;
             // 孔周（MeshFineMm）只在显式设了才动 —— 默认不动，见 Options 里的对照表
             if (opt.SearchMeshFineMm > 0) lc.MeshFineMm = opt.SearchMeshFineMm;
             if (opt.SearchMeshCoarseMm > 0) lc.MeshCoarseMm = opt.SearchMeshCoarseMm;
@@ -233,31 +307,71 @@ public static class FlangeAutoSizer
                 return res;
             }
             if (!lr.Ok) { res.Message = lr.Message; res.Iterations = it; return res; }
+            baseA = lc.BaselineRootC;                       // 基线只随管几何变，可无条件复用
+            if (lr.Converged) warmA = lc.WarmStart;         // 抽热/端温只在收敛时才是不动点
 
             res.Line = lr;
             res.Iterations = it + 1;
 
-            var err = lr.Segments.Select(s => s.RootDeltaK - opt.TargetK).ToArray();
-            double worst = err.Length == 0 ? 0 : err.Max(Math.Abs);
+            // ★★★★★ 误差量（2026-08-17 换掉，原来追的是一个**够不着的靶**）。
+            //
+            // 原：err = RootDeltaK − TargetK，即「偏离本段控温点」。
+            // 那个量 2026-08-15 已被降为参考量，理由写在 LineRunner.Judge 里：
+            //   接上段间导热后，共用法兰处的管温由**两侧控温点**决定
+            //   （实测 HC1|HC2 接头停在 1116 °C = 1150 与 1080 的中间，偏离本段 34 K），
+            //   **与法兰设计无关**。让法兰去背控温点梯度的锅 = 给优化器一个够不着的靶。
+            // 判据体系改了，**定尺寸器一直没跟着改** —— 于是它按 34~37 K 的地板去追
+            // 5 K 的靶，把四片一路削到 0.4 mm 下界仍差 40 K。
+            // 实测（Pt_Heater3.3dm）：35 轮后厚度 0.44/1.12/1.10/0.42，偏差停在 39.5 K 不动。
+            //
+            // 现在追 ③ **法兰增量温降**（= 无法兰基线 − 实际），它按构造就把控温点梯度剔除了，
+            // 正是判据实际判的那个量。
+            //
+            // ⚠ 但 ③ 不能当**双向**靶：∂③/∂板厚 = +149 K/mm 是**正号**，
+            //   若 ③ 已经低于靶，双向控制会去**加厚**板把 ③ 抬到靶上 ——
+            //   花铂金把判据推坏（HANDOVER §1.83 推论 2）。
+            //   ⇒ 做成**单边**：只在 ③ 偏大时往薄里走；③ 已经够小就不动它，
+            //     让「越薄越省铂」自己去撞另一侧的界（②′ 净流入 > 0）。
+            var dips = lr.Segments.Select(s => s.FlangeDipK).ToArray();
+            bool dipOk = dips.All(v => !double.IsNaN(v));
+            if (!dipOk)
+            {
+                res.Message = "无法兰基线没算出来 ⇒ ③ 增量温降无从得知，定尺寸器**拒绝瞎调**。" +
+                              "（原来会退回追「偏离本段控温点」，那是个够不着的靶。）";
+                return res;
+            }
+            // ★★★ 误差量 = **抽热离窗口靶有多远**（双向），不再是「③ 超了多少」（单边）。
+            //   逐片取，不用再从段误差插值 —— 抽热本来就是**每片**的量，一一对应。
+            var draws = lr.Flanges.Select(f => f.QFromTubeW).ToArray();
+            var errW = new double[t.Length];
+            for (int j = 0; j < t.Length; j++)
+                errW[j] = opt.DrawTargetW - (j < draws.Length ? draws[j] : opt.DrawTargetW);
+            double worst = errW.Length == 0 ? 0 : errW.Max(Math.Abs);
             res.History.Add(worst);
-            progress?.Report($"第 {it + 1} 轮：最大偏差 {worst:0.0} K　厚度 " +
+            progress?.Report($"第 {it + 1} 轮：抽热最大偏差 {worst:0.0} W　" +
+                             $"D {string.Join("/", draws.Select(v => v.ToString("+0.0;−0.0")))}　" +
+                             $"③max {dips.Max():0.0}　厚度 " +
                              string.Join("/", t.Select(x => x.ToString("0.00"))));
 
-            if (worst < opt.TolK)
+            if (worst < opt.DrawTolW)
             {
                 res.Converged = true;
-                res.Message = $"{it + 1} 轮收敛，各段管根温差偏离目标 < {opt.TolK:0.#} K";
+                res.Message =
+                    $"{it + 1} 轮收敛：各片抽热已落进窗口（靶 {opt.DrawTargetW:0.#} W，" +
+                    $"实测 {draws.Min():+0.0;−0.0}…{draws.Max():+0.0;−0.0} W）。" +
+                    $"③ 随之为 {dips.Max():0.00} K。\r\n" +
+                    "  ②′>0 与 ③≤限 是同一个抽热的两侧（③ = 2.40·D 实测）⇒ **一个靶同时守住两条**。";
                 return res;
             }
 
-            // 片 j 的误差 = 相邻段误差均值（端片只有一个邻段）
             int pinned = 0;
             for (int j = 0; j < t.Length; j++)
             {
-                double e = j == 0 ? err[0]
-                         : j >= err.Length ? err[^1]
-                         : 0.5 * (err[j - 1] + err[j]);
-                double step = Math.Clamp(-opt.Damping * e / opt.SensitivityK,
+                // e > 0 ⇒ 抽热不够（②′ 危险）⇒ **加厚**；e < 0 ⇒ 抽太多（③ 危险）⇒ 削薄。
+                // 方向来自实测 dD/d板厚 > 0（+62…+107 W/mm）。
+                // ⚠ 旧代码这里是 `-Damping*e/...`（单边、只会削薄）。符号换了，是因为靶换了。
+                double dtMm = errW[j] / Math.Max(1.0, opt.DrawSensWPerMm);
+                double step = Math.Clamp(opt.Damping * dtMm / Math.Max(0.1, t[j]),
                                          -opt.MaxLogStep, opt.MaxLogStep);
                 double want = t[j] * Math.Exp(step);
                 double next = Math.Clamp(want, opt.MinThickMm, opt.MaxThickMm);
@@ -273,15 +387,19 @@ public static class FlangeAutoSizer
             //   合计约一万三千次场解），**一格算了一个多小时才吐出一个必然失败的结果**。
             if (pinned == t.Length)
             {
+                bool tooThin = errW.Average() > 0;   // 还想加厚却顶在上界 / 还想削薄却顶在下界
                 res.Message = $"{it + 1} 轮后全部厚度顶在" +
-                              (err.Average() > 0 ? $"下界 {opt.MinThickMm:0.00}" : $"上界 {opt.MaxThickMm:0.00}") +
-                              $" mm 仍不达标（最大偏差 {worst:0.0} K）—— 该几何在此工况下无解，" +
-                              "不是迭代不够。";
+                              (tooThin ? $"上界 {opt.MaxThickMm:0.00}" : $"下界 {opt.MinThickMm:0.00}") +
+                              $" mm 仍进不了抽热窗口（最大偏差 {worst:0.0} W）—— " +
+                              "**该几何在此工况下无解，不是迭代不够**。\r\n" +
+                              (tooThin
+                               ? "  还想加厚 = 抽热不够 = 法兰太热、热在往管里灌（②′<0）⇒ 需要更大的过流断面或更少的发热。"
+                               : "  还想削薄 = 抽热太多 = 把管根抽出深坑（③ 超限）⇒ 需要缩小法兰或加保温。");
                 return res;
             }
         }
 
-        res.Message = $"{opt.MaxIterations} 轮未收敛（最大偏差 {res.History.LastOrDefault():0.0} K）。" +
+        res.Message = $"{opt.MaxIterations} 轮未收敛（抽热最大偏差 {res.History.LastOrDefault():0.0} W）。" +
                       "可能是某片已顶到厚度上下界，或该形状在此电流下无解。";
         return res;
     }
@@ -373,6 +491,8 @@ public static class FlangeAutoSizer
             // ── 内层：按各级峰值温度重新分配比例（总平均厚度不变）
             var lr = last.Line;
             double worstOver = 0;
+            // ★ 最热的那一级：用来判「还值不值得继续迭代」
+            double hottestC = double.NegativeInfinity; int hottestPlate = -1, hottestLevel = -1;
             for (int j = 0; j < nf && j < lr.Flanges.Length; j++)
             {
                 var f = lr.Flanges[j];
@@ -386,6 +506,8 @@ public static class FlangeAutoSizer
                     double tm = f.LevelTMaxC[m];
                     double e = double.IsNaN(tm) ? 0 : tm - baseT;      // >0 = 该级比管根热
                     worstOver = Math.Max(worstOver, e);
+                    if (!double.IsNaN(tm) && tm > hottestC)
+                    { hottestC = tm; hottestPlate = j; hottestLevel = m; }
                     // 越热越加厚：Δln t = +ω·e/S
                     double st = Math.Clamp(opt.Damping * e / opt.SensitivityK, -0.30, 0.30);
                     adj[m] = Math.Exp(st);
@@ -402,7 +524,31 @@ public static class FlangeAutoSizer
                                              opt.MaxThickMm / Math.Max(1e-6, levelThicknessMm[j][m]));
                 }
             }
-            progress?.Report($"第 {round + 1} 轮 · 内层：各级峰值最高超管根 {worstOver:0.0} K");
+            progress?.Report($"第 {round + 1} 轮 · 内层：各级峰值最高超管根 {worstOver:0.0} K" +
+                             (hottestPlate >= 0 ? $"（第 {hottestPlate + 1} 片第 {hottestLevel + 1} 级 {hottestC:0} °C）" : ""));
+
+            // ★★★★★ 熔点闸（2026-08-17 加）。
+            //
+            // 实测（Pt_Heater3.3dm，孔边最薄且该处还开槽）：内层「各级峰值超管根」
+            // 一路 391.9 → 406.0 → 434.1 → **1799.5 K**，即该级约 2900 °C ——
+            // 早已越过铂熔点 1768.2 °C，而求解器**还在继续迭代**，最后还会吐出一组厚度。
+            //
+            // 越过熔点之后：① 电阻率拟合只到 1500 °C，再往上是外推，数已不可信；
+            //               ② 那个「解」物理上不存在，继续调比例是在优化一个熔掉的零件。
+            // ⇒ 立刻停，并说清楚**哪一片哪一级、多少度**，让人能回图上去改。
+            //   不停的代价不只是白算 —— 它会吐出一组看着正常的厚度。
+            if (hottestC > Materials.PtMeltC)
+            {
+                last.Converged = false;
+                last.LevelScale = scale;
+                last.Message =
+                    $"★ 第 {hottestPlate + 1} 片第 {hottestLevel + 1} 级峰值 {hottestC:0} °C，" +
+                    $"**已超铂熔点 {Materials.PtMeltC:0} °C** —— 停止迭代。" +
+                    " 这不是迭代不够：该级太薄、电流被挤在窄带上，局部发热物理上就下不来。" +
+                    " 常见成因：厚度梯度画反（孔边最薄），或该级恰好被开槽削掉过流截面。" +
+                    " ⇒ 回 Rhino 把该级加厚 / 挪槽 / 加宽过流带，再来一轮。";
+                return last;
+            }
             if (last.Converged && worstOver < 15) break;
         }
 
@@ -433,13 +579,38 @@ public static class FlangeAutoSizer
             {
                 last.Line = verify;
                 double worst = verify.Segments.Length == 0 ? 0
-                             : verify.Segments.Max(x => Math.Abs(x.RootDeltaK - opt.TargetK));
+                             : verify.Segments.Max(x => Math.Max(0.0, x.FlangeDipK - opt.TargetK));
                 bool searchSaidOk = last.Converged;
                 last.Converged = worst < opt.TolK && verify.Converged;
                 last.Message += $"　【全精度复核】管根温差偏离目标 {worst:0.0} K";
                 if (!verify.Converged) last.Message += "；⚠ 段↔法兰耦合未收敛，数值不可引用";
                 if (searchSaidOk && !last.Converged)
                     last.Message += "；⚠ 搜索精度下判为达标，全精度下**不达标** —— 以本次为准";
+
+                // ★★★★★ 「③ 达标」**不等于**「方案可行」（2026-08-17 加）。
+                //
+                // 本定尺寸器只有一族旋钮（各级厚度）和一个靶（③ 增量温降）。
+                // ②′ 净流入与 ②″ 圆盘峰它**够不着** —— 那两条在 `--final2` 的
+                // D7 控制律里是靠**另外两个旋钮**（管孔渐变环倍率、逐片舌保温）管的，
+                // 而这两个旋钮不在本器的自由度里。
+                //
+                // 实测（Pt_Heater3.3dm）：③ 收到 6.8 K（限 10，达标），
+                // 同一个解的 ②″ = 600 K、②′ = −591 W —— 全线倒灌，方案完全不可用。
+                // 若只报「③ 达标」，工程师会把它当成可行方案。
+                // ⇒ 达标之后**再看一眼判据表**，不过就明说是哪几条、以及为什么不是加减厚度能解决的。
+                var bad = verify.Checks
+                    .Where(c => c.Kind != CheckKind.Reference && (!c.Ok || c.Undetermined))
+                    .Select(c => $"{c.Name}={c.Actual:0.0}/{c.Limit:0.0}")
+                    .ToArray();
+                if (bad.Length > 0)
+                {
+                    last.Converged = false;
+                    last.Message +=
+                        "；★ **③ 达标但整线判据不过**：" + string.Join("、", bad) +
+                        "。本器只调**厚度**，管不到 ②′/②″ —— 那两条在完整控制律里靠" +
+                        "「管孔渐变环倍率」与「逐片舌保温」调，不是加减厚度能补的。" +
+                        " ⇒ 用「▶ 复现定案」比对，或回图上改几何（环 / 槽位 / 舌长）。";
+                }
             }
         }
         catch (OperationCanceledException) { throw; }

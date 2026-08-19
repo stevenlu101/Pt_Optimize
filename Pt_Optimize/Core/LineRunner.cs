@@ -147,6 +147,13 @@ public sealed class LineCase
 
     // ── 段↔法兰外层耦合的数值参数（见 LineRunner.Run 里为什么必须欠松弛）
     /// <summary>欠松弛因子。1.0 = 裸 Picard，在法兰倒灌的正反馈下会发散。</summary>
+    /// <summary>
+    /// 舌片**自由段**长度下界 mm（= 舌长 − 圆盘切点 − 压接段）。
+    /// 现场参考（用户 2026-08-17）：铜排长 100／宽 60–80 mm，自由段基本留 100 mm。
+    /// ⚠ 这是**装配约束**，性质同焊接烧穿下界 —— 不是算出来的，是现场条件给的。
+    /// </summary>
+    public double FreeTabMinMm = 100.0;
+
     public double CoupleRelax = 0.35;
     /// <summary>
     /// 外层轮数上限。**200 只够贴着定案点用**：一改参数，g≈0.96 把扰动放大约 25 倍
@@ -198,6 +205,23 @@ public sealed class LineCase
     /// 阶梯搜索直接慢 5 倍。
     /// </summary>
     public double[][] BaselineRootC = Array.Empty<double[]>();
+
+    /// <summary>
+    /// ★★★★★ 外层耦合的**热启动**状态（2026-08-17）：`[段][0=左抽热W, 1=右抽热W,
+    /// 2=左邻端温°C, 3=右邻端温°C]`。空 = 冷启动（抽热全 0）。
+    ///
+    /// 为什么需要：定尺寸器每一轮都在**几乎相同**的设计上重解整线，而外层耦合每次
+    /// 都从「抽热 = 0」重新爬。环路增益 g ≈ 0.96 ⇒ 放大约 25 倍 ⇒ 冷启动动辄上百轮。
+    /// 实测定尺寸一轮要 1–3 分钟，一个形状 26 轮就是**半小时到一小时**，
+    /// 而形状搜索要跑十几个形状 —— 这直接决定了「APP 能不能自动改形状」是不是可用的功能。
+    ///
+    /// 相邻两轮的设计只差 0.1 mm 板厚 / 几 mm 保温 ⇒ 上一轮的不动点离这一轮**很近**。
+    ///
+    /// ⚠ 热启动**只改到达路径，不改不动点**：收敛判据仍是真残差 ‖G(x)−x‖，
+    ///   它对起点无记忆。若热启动会改变答案，那说明不动点不唯一 —— 那是另一个病，
+    ///   必须被看见，所以 `--selfcheck` 里有一条**冷/热启动必须给同一个解**的对账。
+    /// </summary>
+    public double[][] WarmStart = Array.Empty<double[]>();
 
     /// <summary>其余物性、保温、电气、环境沿用 DesignInputs</summary>
     public DesignInputs Base = new();
@@ -475,7 +499,26 @@ public static class LineRunner
             c.BaselineRootC = baseline.Select(b => new[] { b.A, b.B }).ToArray();
         }
 
-        var res = RunOnce(c, progress, cancel, null, null, null, baseline);
+        // ── 热启动：把上一次同类算例的收敛状态当起点（见 LineCase.WarmStart）
+        (double L, double R)[]? warmDraw = null, warmNb = null;
+        bool warmOk = c.WarmStart.Length >= c.SegmentCount;
+        for (int i = 0; warmOk && i < c.SegmentCount; i++)
+            if (c.WarmStart[i].Length < 4 || double.IsNaN(c.WarmStart[i][0]) || double.IsNaN(c.WarmStart[i][1]))
+                warmOk = false;      // 抽热两位必须是数；端温两位允许 NaN（整线两头本来就没有邻段）
+        if (warmOk)
+        {
+            warmDraw = new (double, double)[c.SegmentCount];
+            warmNb = new (double, double)[c.SegmentCount];
+            for (int i = 0; i < c.SegmentCount; i++)
+            {
+                warmDraw[i] = (c.WarmStart[i][0], c.WarmStart[i][1]);
+                warmNb[i] = (c.WarmStart[i][2], c.WarmStart[i][3]);
+            }
+        }
+
+        var res = RunOnce(c, progress, cancel,
+                          warmDraw?.Select(w => 0.5 * (w.L + w.R)).ToArray(),
+                          warmDraw, warmNb, baseline);
         if (!res.Ok) return res;
         if (baseFailMsg.Length > 0) res.Notes.Add("★ 无法兰基线失败 ⇒ 判据③无法判定：" + baseFailMsg);
 
@@ -515,8 +558,9 @@ public static class LineRunner
             for (int i = 0; i < x.Length; i++) y[i] = x[i] + w * (g[i] - x[i]);
             return y;
         }
-        (double L, double R)[]? drawsLR = null;
-        (double L, double R)[]? nbT = null;      // 段间端温（欠松弛，同上）
+        // 热启动的状态直接当迭代起点；冷启动时仍是 null，由循环内 ??= 补零
+        (double L, double R)[]? drawsLR = warmDraw is null ? null : ((double L, double R)[])warmDraw.Clone();
+        (double L, double R)[]? nbT = warmNb is null ? null : ((double L, double R)[])warmNb.Clone();
         double delta = double.NaN;
         double resKLast = double.NaN;   // 末轮真残差，供未收敛报告用
         for (int outer = 0; outer < c.CoupleMaxRounds; outer++)
@@ -717,6 +761,12 @@ public static class LineRunner
                 res.Notes.Add($"外层耦合 {outer + 1} 轮收敛（剩余误差估计 {remain:0.00} K = 步长 {delta:0.00} × 放大 {amp:0.0}，真残差 {resK:0.000} K，ω={omega:0.00}，ω 末值 {omega:0.00}／放大 {omegaBoosts} 次／回退 {omegaCuts} 次）"
                               + (aa is null ? "" : "　" + aa.Report()));
                 res.Converged = true;
+                // ★ 回写热启动状态：**只在收敛时写**。没收敛的状态不是不动点，
+                //   拿它去热启动下一轮，等于把一次失败的迭代当成了经验（会连环放大）。
+                if (drawsLR is not null && nbT is not null)
+                    c.WarmStart = Enumerable.Range(0, c.SegmentCount)
+                        .Select(i => new[] { drawsLR[i].L, drawsLR[i].R, nbT[i].L, nbT[i].R })
+                        .ToArray();
                 break;
             }
         }
@@ -1104,10 +1154,11 @@ public static class LineRunner
                     Actual = worst.Reached ? worst.HoursToTarget : double.NaN,
                     Limit = c.RampHours, Ok = worst.Reached && worst.HoursToTarget <= c.RampHours,
                     Where = where,
-                    Note = worst.Reached
+                    Note = (worst.Reached
                         ? $"{c.RampFromC:0}→{c.RampTargetC:0} °C，J={worst.JAPerMm2:0.00}" +
                           (worst.StabilityLimited ? "（电流被热稳定极限压低，不是故障）" : "")
-                        : worst.Note
+                        : worst.Note)
+                        + (worst.Reached && worst.HoursToTarget <= c.RampHours ? "" : NextAction.RampSlow)
                 });
         }
 
@@ -1167,7 +1218,9 @@ public static class LineRunner
                        $"z={hottestDisc.DiscMaxZMm:+0.0;−0.0}）J={hottestDisc.DiscMaxJAPerMm2:0.00} " +
                        $"t={hottestDisc.DiscMaxThickMm:0.00} mm；" +
                        $"舌片区峰值 {hottestDisc.TTabMaxC:0.0} °C（另由熔点与局部失稳管）；" +
-                       $"管孔净流入 {hottestDisc.QFromTubeW:+0;-0} W"
+                       $"管孔净流入 {hottestDisc.QFromTubeW:+0;-0} W" +
+                       (hottestDisc.TDiscMaxC - hottestDisc.TRootC > c.DiscOverTempMaxK
+                        ? NextAction.DiscHot : "")
             });
 
         // ── ②′ 同一条安全线的管侧视角：**热不能往管子里灌**
@@ -1186,8 +1239,8 @@ public static class LineRunner
             Actual = worstFlux.QFromTubeW, Limit = 0, LessIsBetter = false,
             Ok = worstFlux.QFromTubeW > 0, Where = worstFlux.Name,
             Note = worstFlux.QFromTubeW <= 0
-                 ? "★ 热正在往管子里灌 —— 这是烧断的过程"
-                 : "法兰在从管子抽热，方向安全"
+                 ? "★ 热正在往管子里灌 —— 这是烧断的过程。" + NextAction.NetFluxLow
+                 : "法兰在从管子抽热，方向安全。" + NextAction.DrawWindow
         });
 
         // ── ③ **法兰造成的增量温降** ≤ 上限
@@ -1211,7 +1264,8 @@ public static class LineRunner
                 Actual = deepest.FlangeDipK, Limit = c.RootDeltaMaxK,
                 Ok = deepest.FlangeDipK <= c.RootDeltaMaxK, Where = deepest.Name,
                 Note = $"= 无法兰基线 − 实际（{deepest.BaseTRootAC:0.0}/{deepest.BaseTRootBC:0.0} " +
-                       $"vs {deepest.TRootAC:0.0}/{deepest.TRootBC:0.0} °C）；控温点梯度不算在内"
+                       $"vs {deepest.TRootAC:0.0}/{deepest.TRootBC:0.0} °C）；控温点梯度不算在内。" +
+                       (deepest.FlangeDipK > c.RootDeltaMaxK ? NextAction.DipHigh : NextAction.DrawWindow)
             });
         }
         else
@@ -1295,8 +1349,168 @@ public static class LineRunner
             Note = "限值来源：用户 2026-08-15 现场（一般 15；管壁 0.6 时 12 是极限）。" +
                    (c.Base.LossScale == 1.0
                 ? "⚠ 散热未标定，本值系统性偏高（§4.2l）⇒ 判定偏保守"
-                : $"散热已按 LossScale={c.Base.LossScale:0.000} 标定")
+                : $"散热已按 LossScale={c.Base.LossScale:0.000} 标定") +
+                   (worstJt.TubeJAPerMm2 > c.Base.TubeJAllowAPerMm2 ? NextAction.TubeJHigh : "")
         });
+
+        // ── ⑥ 几何必须**造得出来**：圆盘要盖得住管孔，还要留得下焊脚
+        //
+        // 2026-08-17 抓到（跑界面「◇ 搜形状」用的那个网格时暴露）：
+        //   盘 R25 + 管壁 0.8 ⇒ 管孔半径 = 25.8 > 盘半径 25 ——**孔比盘还大**，
+        //   法兰压根焊不到管子上。而程序照样解、照样收敛、照样报
+        //   「✓ 全判据通过　合计 3621 g」，还因为盘小、料少而**排在前面**。
+        //
+        // ⇒ 这是「安静失败」里最坏的一种：**不可造的几何反而看起来最优**，
+        //   优化器会主动往那里跑。判据不写，搜索就一定会找到它。
+        //
+        // 下界取 孔半径 + 焊脚：焊脚 = max(板厚, 壁厚)，它必须落在盘面上才焊得住。
+        if (c.FlangePlates is { Length: > 0 })
+        {
+            double worstRing = double.PositiveInfinity; string whereRing = "";
+            string[] pn6 = { "入口", "共用1", "共用2", "出口" };
+            for (int j = 0; j < c.FlangePlates.Length; j++)
+            {
+                var g6 = c.FlangePlates[j];
+                double leg = Math.Max(g6.WeldFilletLegMm, 0);
+                double ringW = g6.DiscRadiusMm - g6.HoleRadiusMm - leg;   // 焊脚外还剩多少盘
+                if (ringW < worstRing) { worstRing = ringW; whereRing = j < pn6.Length ? pn6[j] : $"片{j + 1}"; }
+            }
+            checks.Add(new ConstraintOut
+            {
+                Name = "⑥ 圆盘盖得住管孔＋焊脚", Unit = "mm", Kind = CheckKind.HardSafety,
+                Actual = worstRing, Limit = 0, LessIsBetter = false,
+                Ok = worstRing >= 0, Where = whereRing,
+                Note = "= 盘半径 − 管孔半径 − 焊脚（焊脚 = max(板厚, 壁厚)）。" +
+                       (worstRing < 0
+                        ? "★★ **负数 ⇒ 这个法兰造不出来**：圆盘盖不住管孔（或焊脚落在盘外），" +
+                          "焊不到管子上。⚠ 这种几何**料最少**，所以优化器会主动往这里跑 —— " +
+                          "判据不拦，搜索一定会找到它。" +
+                          "　【下一步】放大圆盘直径，或减薄管壁（管孔半径 = 管壁 + 25）。"
+                        : "圆盘在焊脚外还剩这么多料")
+            });
+        }
+        else
+        {
+            // 同上：`.3dm` 模式下不能让 ⑥ 整条消失（见 ⑤ 的 else 分支）
+            checks.Add(new ConstraintOut
+            {
+                Name = "⑥ 圆盘盖得住管孔＋焊脚", Unit = "mm", Kind = CheckKind.HardSafety,
+                Actual = double.NaN, Limit = 0, Ok = false,
+                Undetermined = true, Where = "—",
+                Note = "★ **无法判定**：本次几何来自 .3dm 厚度场，没有解析的「盘半径」。" +
+                       "**不要把它读成通过** —— 请在图上确认圆盘外缘比管孔至少大出一个焊脚" +
+                       "（焊脚 = max(板厚, 壁厚)），否则法兰焊不到管子上。"
+            });
+        }
+
+        // ── ⑤ 装配：舌片必须放得下铜排（2026-08-17 用户给出现场尺寸后新增）
+        //
+        // 为什么必须是**硬判据**而不是事后提醒：定案的舌长 90 mm 从来就装不下铜排 ——
+        // 圆盘切点 26 + 压接段 + 自由段 已经超过 90，而程序此前
+        //   ① 只把压接段当纯热电界面算（校核压接界面 J ≤ 1.0，从不问它靠什么固定）；
+        //   ② `--busbarplan` 里自由段算出负数还 `Math.Abs` 取绝对值打印，
+        //      把「装不下」显示成「装得下」。
+        // ⇒ 一个**在设计上就不成立**的解，被当成可行解用了很久，还出了 3DM 和论文。
+        //
+        // 现场参考尺寸（用户 2026-08-17）：铜排长 100 mm、宽 60–80 mm；自由段基本留 100 mm。
+        // 自由段不只是装配空间，它同时是**引线漏热的杠杆**（漏热 ∝ 1/ℓ，§4.3e）——
+        // 太短会把管根抽冷，所以它在热学上也不该压缩。
+        if (c.FlangePlates is { Length: > 0 })
+        {
+            double worstFree = double.PositiveInfinity; string whereFree = "";
+            double worstTangent = 0;
+            string[] pn5 = { "入口", "共用1", "共用2", "出口" };
+            for (int j = 0; j < c.FlangePlates.Length; j++)
+            {
+                var g5 = c.FlangePlates[j];
+                double tabLen = Math.Abs(g5.TabEndXMm);
+                double tangent = Math.Abs(g5.Tangent().X);
+                double free = tabLen - tangent - c.Base.BusbarClampLengthMm;
+                if (free < worstFree)
+                { worstFree = free; worstTangent = tangent; whereFree = j < pn5.Length ? pn5[j] : $"片{j + 1}"; }
+            }
+            checks.Add(new ConstraintOut
+            {
+                Name = "⑤ 舌片自由段 ≥ 下界", Unit = "mm", Kind = CheckKind.HardSafety,
+                Actual = worstFree, Limit = c.FreeTabMinMm, LessIsBetter = false,
+                Ok = worstFree >= c.FreeTabMinMm, Where = whereFree,
+                Note = $"自由段 = 舌长 − 圆盘切点 − 压接段（{c.Base.BusbarClampLengthMm:0} mm）。" +
+                       (worstFree < 0
+                          ? "★★ **负数 ⇒ 压接段根本放不下**，压接块会伸进圆盘里。"
+                          : worstFree < c.FreeTabMinMm
+                          ? "★ 装不下铜排：现场铜排长 100／宽 60–80 mm，自由段基本留 100 mm（用户 2026-08-17）。" +
+                            "这不是余量不够，是**设计上不成立**。"
+                          : "") +
+                       " ⚠ 自由段同时是引线漏热的杠杆（∝1/ℓ）—— 压缩它会把管根抽冷。" +
+                       (worstFree < c.FreeTabMinMm
+                        ? NextAction.FreeTabShort(worstTangent, c.Base.BusbarClampLengthMm, c.FreeTabMinMm)
+                        : "")
+            });
+        }
+        else
+        {
+            // ★★★★★ **判据绝不允许消失**（2026-08-17 补上；③ 早就有这个 else，⑤ 一直没有）。
+            //
+            // `.3dm` 模式下 FlangePlates 是空的（几何来自厚度场），于是上面整个 if 不执行
+            // ⇒ 判据 ⑤ **整条不出现** ⇒ AllOk 少判一条还报「全过」。
+            // 这与 §1.8 第 4 例（`if (有数据) checks.Add(...)` 让 ③ 整条消失）**一模一样**，
+            // 只是换了个判据。铁律就写在本文件 ③ 那一段上：
+            //   「判据消失比判据不过危险得多：不过会被看见，消失不会。」
+            checks.Add(new ConstraintOut
+            {
+                Name = "⑤ 舌片自由段 ≥ 下界", Unit = "mm", Kind = CheckKind.HardSafety,
+                Actual = double.NaN, Limit = c.FreeTabMinMm, Ok = false,
+                Undetermined = true, Where = "—",
+                Note = "★ **无法判定**：本次几何来自 .3dm 厚度场，程序拿不到「圆盘切点」与「舌端」" +
+                       "这两个解析量，算不出自由段。**不要把它读成通过** —— " +
+                       "请自行在图上量：自由段 = 舌端到圆盘切点的距离 − 压接段 " +
+                       $"{c.Base.BusbarClampLengthMm:0} mm，下界 {c.FreeTabMinMm:0} mm。"
+            });
+
+            // ★ 舌宽被盘径夹住时必须报出来：否则「扫舌宽」的后半段全是同一个几何，
+            //   却给出一模一样的数，看着像「加宽没用」——**其实是根本没加宽**。
+            if (c.FlangePlates.Any(g => g.HalfWidthClamped))
+                checks.Add(new ConstraintOut
+                {
+                    Name = "· 舌宽被盘径夹住", Unit = "—", Kind = CheckKind.Reference, Ok = true,
+                    Actual = c.FlangePlates.Max(g => g.TabEndHalfWidthMm),
+                    Limit = c.FlangePlates.Max(g => g.DiscRadiusMm), Where = "解析几何",
+                    Note = "★ 半宽 > 盘半径 ⇒ 舌片与圆盘没有切点，半宽已被**静默夹到盘半径**。" +
+                           "要真的加宽舌片，必须**同时放大圆盘** —— 这两个自由度是绑在一起的。"
+                });
+        }
+
+        // ── 数值自洽：法兰热平衡残差。**始终露出来**（2026-08-17 加）。
+        //
+        // 它一直被算出来（FlangeOut.EnergyResidualW），却从来没进过判据表 ——
+        // 只有 `--selfcheck` / `--vary` 看得见。于是界面上永远不知道
+        // 「这个解到底守不守恒」。
+        //
+        // 为什么值得单列：它是**唯一与任何一条判据都无关**的自洽性检查。
+        // 别的判据回答「这个设计好不好」，它回答「**这组数能不能信**」——
+        // 后者若不成立，前者全部作废，而且不会有任何一条判据变红。
+        //
+        // 标定（2026-08-17 `--vary` 23 次求解）：正常构型残差 **0.014–0.036 W**；
+        // 而「舌长 30 mm（短于压接段 40）」这个退化几何是 **120.6 W**，差四个数量级。
+        // ⇒ 先按参考量报，让它的量级先积累起来；限值有出处了再谈升为硬判据
+        //   （管 J 当年就是这么从参考量升上去的）。
+        if (flanges.Length > 0)
+        {
+            var worstRes = flanges.OrderByDescending(f => Math.Abs(f.EnergyResidualW)).First();
+            double resW = Math.Abs(worstRes.EnergyResidualW);
+            checks.Add(new ConstraintOut
+            {
+                Name = "· 法兰热平衡残差", Unit = "W", Kind = CheckKind.Reference, Ok = true,
+                Actual = resW, Limit = 0, Where = worstRes.Name,
+                Note = "= 发热 − 散热 − 净流出，理想为 0。**它与任何一条判据都无关**，" +
+                       "回答的是「这组数能不能信」而不是「设计好不好」。" +
+                       $"标定：正常构型 0.01–0.05 W。" +
+                       (resW > 1.0
+                        ? "　★★ **本次远高于正常量级** ⇒ 先别读上面任何一个数，" +
+                          "多半是几何退化（例如舌长短于压接段、盘盖不住孔）或网格没解开。"
+                        : "")
+            });
+        }
 
         // ── 现场验证点：玻璃温降。这是全模型唯一一个拿实测校准的量，必须始终露出来。
         checks.Add(new ConstraintOut

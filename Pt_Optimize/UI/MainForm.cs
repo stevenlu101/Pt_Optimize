@@ -31,11 +31,19 @@ public sealed class MainForm : Form
     public MainForm()
     {
         Text = "Pt_Optimize — 铂金直接加热 整线设计与用量优化";
-        Width = 1400; Height = 900;
+        // ★ 窗口与字号都随屏幕走（2026-08-17）。原来写死 1400×900 + 9 pt，
+        //   在高分屏上只占约 36 % 的画面，字也小 —— 见 UiScale 的说明。
+        var sz = UiScale.WindowSize();
+        Width = sz.Width; Height = sz.Height;
+        MinimumSize = new Size(UiScale.S(1000), UiScale.S(680));
         StartPosition = FormStartPosition.CenterScreen;
-        Font = new Font("Microsoft YaHei UI", 9f);
+        Font = UiScale.Ui();
+        // ⚠ 这里**故意不设** AutoScaleMode.Font：字号已经由 UiScale 显式放大过一轮，
+        //   再让框架按字体自动缩放一次就是**放大两次**（尺寸对不上、控件互相盖）。
+        //   缩放只允许有一个来源 —— 与「判据只有一个来源」是同一条道理。
+        AutoScaleMode = AutoScaleMode.None;
 
-        var tool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, ImageScalingSize = new Size(1, 1) };
+        var tool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, ImageScalingSize = new Size(1, 1), Font = UiScale.Ui() };
         tool.Items.Add(Btn("计算 (F5)", (_, _) => Run()));
         tool.Items.Add(new ToolStripSeparator());
         tool.Items.Add(Btn("扫描：保温厚度", (_, _) => Sweep("insul", 0, 50, 11, "内层保温厚度 [mm]")));
@@ -52,10 +60,13 @@ public sealed class MainForm : Form
         _grid.Dock = DockStyle.Fill;
 
         _out.Dock = DockStyle.Fill;
-        _out.Font = new Font("Consolas", 9.5f);
+        _out.Font = UiScale.Mono();
         _out.ReadOnly = true;
         _out.WordWrap = false;
         _out.BackColor = Color.FromArgb(252, 252, 250);
+        // 挂一次就覆盖这个框的所有写入路径（`.Text =`、`+=`、AppendText）。
+        // 逐处改成「格式化写入」必然漏掉几处，而漏掉的那几处夹在排好的内容中间最难发现。
+        TextFmt.Hook(_out);
 
         // ★ 2026-08-12：删掉「温度场/电流密度场/体积发热场」（走 FieldMap 的子午面图，
         //   其法兰部分是已作废的一维环形模型）与「法兰温度剖面/厚度·自给率」（同源）。
@@ -81,18 +92,19 @@ public sealed class MainForm : Form
         _segGrid.DataError += (_, e) => e.ThrowException = false;
 
         _segOut.Dock = DockStyle.Fill;
-        _segOut.Font = new Font("Consolas", 9.5f);
+        _segOut.Font = UiScale.Mono();
         _segOut.ReadOnly = true; _segOut.WordWrap = false;
         _segOut.BackColor = Color.FromArgb(252, 252, 250);
+        TextFmt.Hook(_segOut);
 
-        var segTool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
+        var segTool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, Font = UiScale.Ui() };
         segTool.Items.Add(Btn("核算全线", (_, _) => RunLine()));
         segTool.Items.Add(Btn("为各段选最省牌号", (_, _) => AutoGrade()));
         segTool.Items.Add(Btn("按强度取最小壁厚", (_, _) => MinWalls()));
         segTool.Items.Add(new ToolStripSeparator());
         _flangeBtn = Btn("核算法兰（分钟级）", (_, _) => _ = RunFlangesAsync());
         segTool.Items.Add(_flangeBtn);
-        _segProg.Size = new Size(180, 16);
+        _segProg.Size = new Size(UiScale.S(180), UiScale.S(16));
         segTool.Items.Add(_segProg);
         segTool.Items.Add(_segStatus);
 
@@ -124,7 +136,11 @@ public sealed class MainForm : Form
 
         Load += (_, _) =>
         {
-            main.SplitterDistance = 430;
+            // 左侧参数表按窗口比例给宽度（原来写死 430）—— 屏越宽，标签越不该被切
+            main.SplitterDistance = Math.Clamp((int)(main.Width * 0.30),
+                                               UiScale.S(360), Math.Max(UiScale.S(360), main.Width - UiScale.S(520)));
+            WidenPropertyGridLabels(_grid, 0.62);
+            ApplyToolStripFont(this);
             right.SplitterDistance = (int)(right.Height * 0.56);
             Run();
             RunLine();
@@ -136,6 +152,66 @@ public sealed class MainForm : Form
             // F1 = 帮助：跳到「使用说明」页（图文，按定案档实时生成）
             else if (e.KeyCode == Keys.F1) ShowHelp();
         };
+    }
+
+    /// <summary>
+    /// ★★★ 把**整棵控件树**里所有 ToolStrip 的字体统一设一遍（2026-08-18）。
+    ///
+    /// 起因：用户反馈「下排的字还是太小」。原因是 <see cref="ToolStrip"/>
+    /// **不继承父窗体的 Font**（它用 ToolStripManager 的默认字体），
+    /// 所以在 Form 上设 Font 对每一条工具条都无效。
+    ///
+    /// 为什么不逐个在构造处设、而要在这里扫一遍：
+    /// 逐个设漏了一条就少一条，而**漏掉的那条夹在正确的几条中间，比全都不设更难发现**。
+    /// 实测就漏了一条 —— <see cref="PropertyGrid"/> **内部自带**一条工具条
+    /// （参数表上方那排小图标），那条根本不在我的代码里，逐个设永远设不到它。
+    /// ⇒ 统一扫，把「必须记得设」这个前提整个去掉。
+    /// </summary>
+    private static void ApplyToolStripFont(Control root)
+    {
+        if (root is ToolStrip ts)
+        {
+            ts.Font = UiScale.Ui();
+            // ⚠ 光设 ToolStrip.Font 不够：**已经被显式设过字体的项不再继承**
+            //   （典型是 `new Font(btn.Font, Bold)` —— 它把当时的小字体固化了），
+            //   而 ToolStripComboBox/TextBox 这类**宿主控件**里包着一个真控件，
+            //   也不跟着走。⇒ 逐项按住，并把宿主里的控件也一并设。
+            foreach (ToolStripItem it in ts.Items)
+            {
+                it.Font = it.Font is { Bold: true } ? UiScale.Ui(FontStyle.Bold) : UiScale.Ui();
+                if (it is ToolStripControlHost host && host.Control is { } inner)
+                    inner.Font = UiScale.Ui();
+            }
+        }
+        foreach (Control c in root.Controls) ApplyToolStripFont(c);
+    }
+
+    /// <summary>
+    /// ★ 把 PropertyGrid 的**标签列**加宽（2026-08-17，抓 UI 时发现的）。
+    ///
+    /// 实况：标签被切成「管许用电流密度 [A/m」「焊接工艺最小厚度 [mr」「端部额外保温的长度 rr」
+    /// —— **被吃掉的正好是单位**，而单位是最不能靠猜的部分（A/mm² 还是 A/m？mm 还是 m？）。
+    /// PropertyGrid 默认把标签列固定在一个较窄的比例上，且没有公开属性可调。
+    ///
+    /// ⚠ 只能走内部字段，所以**必须包在 try 里**：换 .NET 版本时字段名可能变
+    ///   （.NET Framework 叫 gridView，.NET Core 叫 _gridView），
+    ///   拿不到就维持默认 —— 界面难看总好过启动就崩。
+    /// </summary>
+    private static void WidenPropertyGridLabels(PropertyGrid grid, double frac)
+    {
+        try
+        {
+            var f = typeof(PropertyGrid).GetField("_gridView",
+                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                 ?? typeof(PropertyGrid).GetField("gridView",
+                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var gv = f?.GetValue(grid);
+            if (gv is null) return;
+            var m = gv.GetType().GetMethod("MoveSplitterTo",
+                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            m?.Invoke(gv, new object[] { (int)(grid.Width * frac) });
+        }
+        catch { /* 拿不到就算了：宁可标签窄，也不能因为排版让程序起不来 */ }
     }
 
     /// <summary>F1／「帮助」：切到使用说明页。说明书不做成单独的导出命令，
@@ -155,15 +231,18 @@ public sealed class MainForm : Form
         sb.AppendLine($"材料数据：用户实测工作簿   寿命 {_in.DesignLifeHours:0} h   安全系数 {_in.SafetyFactor:0.0}");
         sb.AppendLine($"金属价格比：Rh/Pt = 4.91（Umicore PMM 2026-08-06，Pt $1731/oz、Rh $8500/oz）");
         sb.AppendLine();
-        sb.AppendLine($"{"段",6}{"温度",7}{"水头",7}{"牌号",20}{"壁厚",8}{"强度最小",9}" +
-                      $"{"σ_vm",8}{"许用",8}{"利用率",8}{"铂重",9}{"相对成本",9}  判定");
-        sb.AppendLine($"{"",6}{"°C",7}{"m",7}{"",20}{"mm",8}{"mm",9}{"MPa",8}{"MPa",8}{"",8}{"g",9}{"",9}");
-        sb.AppendLine(new string('-', 108));
+        // ★ 列宽不再由这里定，改由 TextFmt 按真实像素量 —— 所以单位可以并进表头，
+        //   不必再单开一行「°C / m / mm …」去凑那 8 个字的宽度。
+        sb.AppendLine("段\t温度 °C\t水头 m\t牌号\t壁厚 mm\t强度最小 mm\tσ_vm MPa\t许用 MPa\t"
+                    + "利用率\t铂重 g\t相对成本\t判定");
+        sb.AppendLine(TextFmt.SepRow(12));
         foreach (var r in rs)
-            sb.AppendLine($"{r.Seg.Name,6}{r.Seg.TSetC,7:0}{r.Seg.GlassHeadM,7:0.0}{r.Seg.GradeName,20}" +
-                $"{r.Seg.WallMm,8:0.000}{(double.IsNaN(r.MinWallStrengthMm) ? "不可行" : r.MinWallStrengthMm.ToString("0.000")),9}" +
-                $"{r.VonMisesMPa,8:0.000}{r.AllowMPa,8:0.000}{r.Utilization,8:0.00}" +
-                $"{r.MassG,9:0}{r.CostRelative,9:0}  {(r.Feasible ? "✓" : "✗ " + r.Binding)}");
+            sb.AppendLine($"{r.Seg.Name}\t{r.Seg.TSetC:0}\t{r.Seg.GlassHeadM:0.0}\t{r.Seg.GradeName}\t"
+                        + $"{r.Seg.WallMm:0.000}\t"
+                        + (double.IsNaN(r.MinWallStrengthMm) ? "不可行" : r.MinWallStrengthMm.ToString("0.000"))
+                        + $"\t{r.VonMisesMPa:0.000}\t{r.AllowMPa:0.000}\t{r.Utilization:0.00}\t"
+                        + $"{r.MassG:0}\t{r.CostRelative:0}\t"
+                        + (r.Feasible ? "✓" : "✗ " + r.Binding));
         sb.AppendLine();
         sb.AppendLine($"合计铂重 {mass:0} g    相对成本 {cost:0}（= Σ 质量×牌号成本倍数，纯铂同质量为基准）");
         if (bad > 0) sb.AppendLine($"★ {bad} 段强度超限 —— 加厚或换牌号");
@@ -220,11 +299,11 @@ public sealed class MainForm : Form
             var sb = new StringBuilder(_segOut.Text);
             sb.AppendLine();
             sb.AppendLine($"=== 法兰（{segs.Count} 段 → {fs.Count} 片，段间共用）===");
-            sb.AppendLine($"{"接头",14}{"共用",6}{"电流 A",10}{"厚度 mm",10}{"铂重 g",10}  定尺依据");
-            sb.AppendLine(new string('-', 66));
+            sb.AppendLine("接头\t共用\t电流 A\t厚度 mm\t铂重 g\t定尺依据");
+            sb.AppendLine(TextFmt.SepRow(6));
             foreach (var f in fs)
-                sb.AppendLine($"{f.Joint,14}{(f.Shared ? "是" : "—"),6}{f.CurrentA,10:0}" +
-                              $"{f.ThicknessMm,10:0.000}{f.MassG,10:0}  {f.SizedBy}");
+                sb.AppendLine($"{f.Joint}\t{(f.Shared ? "是" : "—")}\t{f.CurrentA:0}\t"
+                            + $"{f.ThicknessMm:0.000}\t{f.MassG:0}\t{f.SizedBy}");
             double fg = fs.Sum(x => x.MassG);
             sb.AppendLine();
             sb.AppendLine($"法兰合计 {fg:0} g   管 {tubeG:0} g   全线 {tubeG + fg:0} g   " +
@@ -295,8 +374,11 @@ public sealed class MainForm : Form
     private static string Report(DesignInputs p, SolveResult r)
     {
         var s = new StringBuilder();
-        void H(string t) { s.AppendLine(); s.AppendLine("── " + t + " " + new string('─', Math.Max(2, 58 - t.Length * 2))); }
-        void L(string k, string v) => s.AppendLine($"  {k,-26}{v}");
+        // H = 小节标题：**不带 \t**，于是它把上下两节断成两张表 —— 这正是要的，
+        //     每节各算各的列宽，某节的长键名不会把别节的值列推歪。
+        //     横线长度按显示宽度扣（中文一个字算两个字宽），别用 t.Length。
+        void H(string t) { s.AppendLine(); s.AppendLine("── " + t + " " + new string('─', Math.Max(2, 58 - TextFmt.Width(t)))); }
+        void L(string k, string v) => s.AppendLine($"  {k}\t{v}");
 
         H("铂用量  ← 目标函数");
         L("设计壁厚", $"{r.WallDesignMm:0.000} mm" +
@@ -365,14 +447,14 @@ public sealed class MainForm : Form
         var s = new StringBuilder();
         s.AppendLine($"扫描：{label}");
         s.AppendLine();
-        s.AppendLine($"{label,-22}{"损失kW/m",10}{"壁厚mm",10}{"总铂kg",10}{"最冷°C",10}{"裕度K",9}{"Φ",8}{"I(A)",9}");
-        s.AppendLine(new string('─', 88));
+        s.AppendLine($"{label}\t损失 kW/m\t壁厚 mm\t总铂 kg\t最冷 °C\t裕度 K\tΦ\tI (A)");
+        s.AppendLine(TextFmt.SepRow(8));
         double? baseMass = null;
         foreach (var x in rows)
         {
             baseMass ??= x.MassKg;
-            s.AppendLine($"{x.Value,-22:0.00}{x.LossPerM / 1000,10:0.00}{x.WallMm,10:0.000}" +
-                         $"{x.MassKg,10:0.000}{x.TMin,10:0.0}{x.Margin,9:0.0}{x.Phi,8:0.00}{x.IA,9:0}");
+            s.AppendLine($"{x.Value:0.00}\t{x.LossPerM / 1000:0.00}\t{x.WallMm:0.000}\t" +
+                         $"{x.MassKg:0.000}\t{x.TMin:0.0}\t{x.Margin:0.0}\t{x.Phi:0.00}\t{x.IA:0}");
         }
         if (rows.Count > 1)
         {

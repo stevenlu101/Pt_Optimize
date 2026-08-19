@@ -23,7 +23,7 @@ public sealed class ManualPage : TabPage
     private readonly Label _fallback = new()
     {
         Dock = DockStyle.Fill, Visible = false, Padding = new Padding(24),
-        Font = new Font("Microsoft YaHei UI", 10f)
+        Font = UiScale.Ui()
     };
     private string _tempDir = "";
 
@@ -31,7 +31,7 @@ public sealed class ManualPage : TabPage
     {
         Padding = new Padding(2);
 
-        var tool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
+        var tool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, Font = UiScale.Ui() };
         tool.Items.Add(new ToolStripLabel("图按定案档实时生成"));
         tool.Items.Add(_caseBox);
         foreach (var fd in FinalDesign.All) _caseBox.Items.Add(fd.Name);
@@ -193,8 +193,10 @@ public sealed class ManualPage : TabPage
         // ⚠ 这条内工具条只画得下几个 —— 全表在图下方。
         //   按 11.6 px/字 排完必须落在面板右边界 588 之内，加项前先算一遍：
         //   多出去的不会被裁掉，会直接画到 viewBox 外，图上看不见但确实丢了。
-        foreach (var s in new[] { "核算整线", "自动定厚", "│",
-                                  "定案档▾", "载入定案", "导出定案 3DM", "…" })
+        // 2026-08-17：加了「◇ 搜形状」。画得下就画出来 —— 界面地图上没有的按钮，
+        // 用户在真界面上看到时会以为自己点错了地方。
+        foreach (var s in new[] { "核算整线", "自动定厚", "◇ 搜形状", "│",
+                                  "定案档▾", "载入定案", "…" })
         { sb.Append(Txt(bx, 245, s, "lbl dim")); bx += s == "│" ? 10 : s.Length * 11.6 + 10; }
         sb.Append(Box(222, 258, 366, 46, "var(--bg)"));
         sb.Append(Txt(232, 275, "判据表 + 收敛信息（文本）", "lbl dim"));
@@ -543,10 +545,20 @@ public sealed class ManualPage : TabPage
         return sb.ToString();
     }
 
+    /// <param name="lessIsBetter">
+    /// true = 判据是「≤ 限值」（裕度 = 限−实）；false = 「≥ 下界」（裕度 = 实−限）。
+    ///
+    /// ★★★ 2026-08-17 修：这个参数**一直是声明了却从没用**的 —— 函数体无条件按
+    ///   「越小越好」算。加进判据 ⑤（舌片自由段 **≥** 100 mm）之后当场暴露：
+    ///   自由段做到 150 mm（更宽裕）会被算成 (100−150)/100 = −50 %，
+    ///   显示成「**超 50 %**」—— 把一个更安全的设计显示成违规。
+    ///   声明了却不用的参数比没有更危险：它让人以为这里已经考虑过方向了。
+    /// </param>
     private static string Bar(double actual, double limit, bool lessIsBetter = true)
     {
+        double raw = lessIsBetter ? limit - actual : actual - limit;
         double pct = Math.Abs(limit) < 1e-9 ? 60
-                   : Math.Clamp((limit - actual) / Math.Abs(limit) * 100, 2, 99);
+                   : Math.Clamp(raw / Math.Abs(limit) * 100, 2, 99);
         string cls = pct < 15 ? "bar tight" : "bar";
         return $"<span class=\"{cls}\"><i style=\"width:{pct:0}%\"></i></span>" +
                $"<span class=\"pct\">{(Math.Abs(limit) < 1e-9 ? "方向安全" : pct.ToString("0") + " %")}</span>";
@@ -566,13 +578,26 @@ public sealed class ManualPage : TabPage
         // 抄的说 0.8 档 ③ 更小（5.38 < 6.29），实算是 0.8 档 ③ 更大（6.18 > 5.30）。
         // 判定结论没变（两档仍全过），但「哪一档在 ③ 上更宽裕」这句话说反了。
         // ⇒ 又一次「同一个数存两处然后悄悄漂开」。收敛到一处才不会再犯。
-        var crit = new (string n, string k, double a, double l, string u)[]
+        // ⚠ 2026-08-17 判据从五条加到**七条**（⑤ 装配、⑥ 可造）。
+        //   本表若不跟着加，说明书就会展示一个「五条全过」的漂亮结论 ——
+        //   而正是 ⑤ 把旧定案判掉的。**说明书漏一条判据，比程序漏一条更难被发现**：
+        //   它有排版、有图，看起来就是答案。
+        double tangentM = Math.Sqrt(Math.Max(0, fd.DiscRadiusMm * fd.DiscRadiusMm
+                        - Math.Min(fd.TabHalfWidthMm, fd.DiscRadiusMm)
+                        * Math.Min(fd.TabHalfWidthMm, fd.DiscRadiusMm)));
+        double weldLegM = Math.Max(fd.TabThickMm.Max(), fd.WallMm);
+        // 末位 less = 判据方向：true 是「≤ 限值」，false 是「≥ 下界」。
+        // ⚠ 方向必须逐条写明 —— ⑤ 是唯一一条「越大越好」的，漏了就会把更安全的设计显示成违规。
+        var crit = new (string n, string k, double a, double l, string u, bool less)[]
         {
-            ("① 升温 空管到目标",      "硬判据", fd.RampH,      72,    "h"),
-            ("②″ 圆盘区最高温 − 管温", "硬判据", fd.DiscOverK,  5.00,  "K"),
-            ("②′ 管孔净流入 须为正",   "硬判据", fd.HoleFluxW,  0,     "W"),
-            ("③ 法兰增量温降",         "目标",   fd.FlangeDipK, 10.00, "K"),
-            ("管 J 电流密度",          "硬判据", fd.TubeJ,      12.00, "A/mm²"),
+            ("① 升温 空管到目标",      "硬判据", fd.RampH,      72,    "h",      true),
+            ("②″ 圆盘区最高温 − 管温", "硬判据", fd.DiscOverK,  5.00,  "K",      true),
+            ("②′ 管孔净流入 须为正",   "硬判据", fd.HoleFluxW,  0,     "W",      false),
+            ("③ 法兰增量温降",         "目标",   fd.FlangeDipK, 10.00, "K",      true),
+            ("管 J 电流密度",          "硬判据", fd.TubeJ,      12.00, "A/mm²",  true),
+            ("⑤ 舌片自由段 ≥ 下界",    "硬判据", fd.FreeTabMm,  100.0, "mm",     false),
+            ("⑥ 圆盘盖得住管孔＋焊脚",  "硬判据",
+                fd.DiscRadiusMm - fd.HoleRadiusMm - weldLegM, 0, "mm",          false),
         };
 
         var sb = new StringBuilder();
@@ -586,7 +611,7 @@ public sealed class ManualPage : TabPage
 --tube:#33424A;--clamp:#4FA8BC;--ok:#6FC0A4;--hot:#F0904A;--dim:#5C6A72;--ptDark:#514429;--ring1d:#7E5423;--ring2d:#5C442A;--tubeDark:#26323A;--tubeTop:#44565F;--weld:#D9694F}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);
-font-family:'Microsoft YaHei UI','Segoe UI',system-ui,sans-serif;font-size:15px;line-height:1.7}
+font-family:'Microsoft YaHei UI','Segoe UI',system-ui,sans-serif;font-size:MANUALFONTpx;line-height:1.75}
 .wrap{max-width:760px;margin:0 auto;padding:28px 24px 80px}
 h1{font-size:1.7rem;margin:0 0 .3rem}
 h2{font-size:1.2rem;margin:2.2rem 0 .6rem;padding-bottom:.3rem;border-bottom:1px solid var(--rule)}
@@ -624,6 +649,18 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   $"（管 {fd.TubeMassG:0} + 法兰 {fd.FlangeMassG:0}）<br>" +
                   $"咬住它的：{fd.Binding}</p>");
 
+        // ★★★ 失效告示必须在**标题下面第一块**（2026-08-17）。
+        //   说明书是最容易被当成结论直接引用的一份东西：它有排版、有图、有判据表，
+        //   看起来就是「答案」。若某档已失效而说明书照常展示它的几何与铂重，
+        //   那就是把一个装不上的设计包装成交付件 —— §1.8 里危害最大的一种形态。
+        if (fd.Invalid.Length > 0)
+            sb.Append("<div class=\"note\" style=\"border-left-width:6px\">" +
+                      "<b>★★ 本档已失效，几何与铂重不可作为交付值 ★★</b><br>" +
+                      System.Net.WebUtility.HtmlEncode(fd.Invalid).Replace("**", "") +
+                      $"<br>自由段实测 <b>{fd.FreeTabMm:0.0} mm</b>（判据⑤ 下界 100）。" +
+                      "<br>下面的图与判据表照常按本档画 —— <b>它们描述的是一个装不上的形状</b>，" +
+                      "留在这里是为了让「哪里不成立」看得见，不是为了给它背书。</div>");
+
         sb.Append("<div class=\"note\"><b>下面所有图都是按当前定案档实时画的。</b>" +
                   "换档，图跟着变。图片一旦静态化就成了「同一个数存两处」——" +
                   "定案值一改，图还留在旧构型上，而它看起来完全正常。</div>");
@@ -643,11 +680,24 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "<td>输出框里的 round-trip 与质量对账</td></tr>" +
                   "<tr><td><b>改个参数试试</b></td>" +
                   "<td>改左侧参数表或本页控件 → <b>核算整线</b>（分钟级，可取消）</td>" +
-                  "<td>判据表 + 三张场图</td></tr></table>");
-        sb.Append("<div class=\"note\"><b>「核算整线」走的是页面上的参数，不是定案档。</b>" +
-                  "「载入定案」有两项控件表达不了 —— <b>管孔两级渐变环</b>与<b>逐片舌保温</b>，" +
-                  "载入后输出框会把它们列出来。要<b>复现定案数</b>，用「导出定案 3DM」" +
-                  "或命令行 <code>--cli --busbarplan --wall 0.6</code>。</div>");
+                  "<td>判据表 + 三张场图</td></tr>" +
+                  "<tr><td><b>给一个形状，让 APP 自己优化并说出好坏</b></td>" +
+                  "<td>「整线设计」页 → 填盘径/舌宽（舌长会<b>自己顶到装配下界</b>）→ 点<b>自动定厚</b></td>" +
+                  "<td><b>形状体检报告</b>（见 §5.1）：能不能造能不能用、优点、缺点、代价</td></tr>" +
+                  "<tr><td><b>连盘径都让 APP 去搜</b></td>" +
+                  "<td>「整线设计」页 → 点<b>◇ 搜形状</b>（有进度条，随时可取消）</td>" +
+                  "<td>逐个形状一行结果；结束后最轻的那个<b>写回控件</b></td></tr></table>");
+        // ★ 2026-08-17（1b）改写。原文说「有两项控件表达不了、核算整线算的是另一片法兰」——
+        //   1b 之后解析模式与「复现定案」走同一个几何构造器，界面接线测试每次都验
+        //   「页面路径复现定案记录值」（差 0.000），旧话已经不成立。
+        //   ⚠ 留着旧话比没有话更糟：它会让人以为页面上的数不可信而绕开去用别的路径。
+        sb.Append("<div class=\"note\"><b>「核算整线」走的是页面上的参数，" +
+                  "但几何用的是<u>和定案完全同一套</u>构造器</b>（2026-08-17 起）。" +
+                  "所以「载入定案 → 核算整线」<b>能直接复现定案数字</b>。<br>" +
+                  "本页没有控件的几项（渐变环、逐片舌保温、压接段、舌根圆角、角焊缝、等宽舌片）" +
+                  "按定案值参与求解，<b>每次核算完输出框都会把实际用值逐条列出来</b> —— " +
+                  "看不见又在起作用的量，是最容易出事的地方。<br>" +
+                  "「▶ 复现定案」仍然保留：它<b>完全不读页面控件</b>，用于排除「页面被改过而不自知」。</div>");
 
         sb.Append("<h2>2. 界面在哪、按钮做什么</h2>");
         sb.Append($"<div class=\"fig\">{SvgUi()}" +
@@ -669,13 +719,99 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "<td>整线设计页的按钮在这里，见下表</td></tr></table>");
 
         sb.Append("<h3>「整线设计」页的工具条（主力页）</h3>");
+        // ════════════════════════════════════════════════════════════════
+        // ★★★★★ 「整线设计」工具条：怎么用、什么时候用（2026-08-17 用户要求）
+        //
+        // 用户看到的是一条横排十个按钮，没有任何分组提示。而工具条上那**两条分隔线**
+        // 其实已经把它们分成了三组，分组恰恰就是「何时用哪个」的答案：
+        //   左组不读页面控件，中组读页面控件，右组是工具。
+        // 这条区别正是当初不得不单独做「▶ 复现定案」的原因 —— 说明书必须先讲清它。
+        // ════════════════════════════════════════════════════════════════
+        // ⚠ 2026-08-17：这里原来写「照着工具条上的分隔线分组」。用户当场质疑，去抓 UI 核实：
+        //   分隔线**结构上确实有三条**、位置也对，但默认渲染下只是一条 1 px 细线，
+        //   在截图里几乎看不出来。**让用户去照着一条看不清的线分组是不可靠的说法**
+        //   ⇒ 改成直接点名按钮。分组的依据写在按钮名字上，不写在像素上。
+        sb.Append("<h3>工具条分三组（按名字记，不必去找分隔线）</h3>");
+        sb.Append("<div class=\"note\"><b>先记住这一条，其余都好办：</b><br>" +
+                  "<b>「定案」两个字打头的那几个 —— 不读页面上的控件</b>" +
+                  "（定案档 ▾ / ▶ 复现定案 / 导出定案 3DM / 载入定案）：" +
+                  "它们只认 <code>FinalDesign</code> 里存的定案值，你在页面上改什么都影响不了它们。<br>" +
+                  "<b>中间三个 —— 读页面控件</b>（核算整线 / 自动定厚 / ◇ 搜形状）：算的是你现在填的这组参数。<br>" +
+                  "<b>最后两个是工具</b>（分析几何变数 / 导出本页 3DM）。<br><br>" +
+                  "所以「同一件事两个按钮给的数不一样」通常不是 bug，是你在拿<b>左组</b>的答案" +
+                  "跟<b>中组</b>的答案比 —— 而它们的输入本来就不同。" +
+                  "（2026-08-17 起两组的<b>几何构造器已经统一</b>，只要页面参数等于定案值，两边就该给同一个数；" +
+                  "给不出同一个数，就说明页面上有控件被改过。）</div>");
+
+        sb.Append("<h3>按「我想做什么」查</h3>");
+        sb.Append("<table><tr><th>我想…</th><th>点哪个</th><th>看哪里</th></tr>" +
+                  "<tr><td>看现在的定案长什么样、用多少铂</td>" +
+                  "<td>定案档 ▾ → <b>▶ 复现定案</b></td><td>判据表；这条路不受页面影响，最可信</td></tr>" +
+                  "<tr><td>把定案参数调出来当起点改</td>" +
+                  "<td><b>载入定案</b>（灌进控件）→ 再改</td><td>输出框会列出本页没有控件的那几项用了什么值</td></tr>" +
+                  "<tr><td>我改了几个参数，想知道过不过</td>" +
+                  "<td><b>核算整线</b></td><td>判据表；<b>最上面先给判定与「先解决哪一条」</b></td></tr>" +
+                  "<tr><td><b>给一个形状，让 APP 自己定厚并说出好坏</b></td>" +
+                  "<td><b>自动定厚</b></td><td><b>形状体检报告</b>（§5.1）：能不能造能不能用 → 优点 → 缺点 → 代价</td></tr>" +
+                  "<tr><td><b>连盘径/舌宽都让 APP 去搜</b></td>" +
+                  "<td><b>◇ 搜形状</b></td><td>每算完一个形状出一行；结束后最轻的那个写回控件</td></tr>" +
+                  "<tr><td>出加工图</td><td>定案构型用<b>导出定案 3DM</b>；本页构型用<b>导出本页 3DM</b></td>" +
+                  "<td>输出框里的逐件质量对账（差应在 ±1 % 内，对不上就别出图）</td></tr>" +
+                  "<tr><td>想知道某个尺寸改一点会往哪边走</td><td><b>分析几何变数</b></td>" +
+                  "<td>各几何量对判据的斜率（只测不调）</td></tr></table>");
+
+        sb.Append("<h3>典型顺序（第一次用就照这个走）</h3>");
+        sb.Append("<table class=\"nw\"><tr><th>步</th><th>做什么</th><th>为什么是这个顺序</th></tr>" +
+                  "<tr><td>1</td><td>定案档 ▾ → <b>▶ 复现定案</b></td>" +
+                  "<td>先看一眼「已知可行的答案」长什么样，后面才有比较的基准</td></tr>" +
+                  "<tr><td>2</td><td><b>载入定案</b></td><td>把那组参数灌进控件，从一个**已知可行**的点出发改</td></tr>" +
+                  "<tr><td>3</td><td>改盘径 / 舌宽 / 管壁 …</td>" +
+                  "<td><b>舌长会自己顶到装配下界</b>，不用管它；改完停手约 1.5 秒会自动重算</td></tr>" +
+                  "<tr><td>4</td><td><b>自动定厚</b></td><td>让求解器把三个旋钮调到位，并出体检报告</td></tr>" +
+                  "<tr><td>5</td><td>（可选）<b>◇ 搜形状</b></td><td>如果连盘径都还没定，让它去搜</td></tr>" +
+                  "<tr><td>6</td><td><b>导出本页 3DM</b></td><td>拿到与刚才求解<b>完全一致</b>的几何</td></tr></table>");
+
+        sb.Append("<h3>四个常见误用</h3>");
+        sb.Append("<table class=\"nw\"><tr><th>现象</th><th>其实是</th></tr>" +
+                  "<tr><td>点了「◇ 搜形状」没反应</td>" +
+                  "<td>当前是 <b>.3dm 几何模式</b>。形状由图纸给定，不是可搜索的自由度 —— " +
+                  "输出框会写明理由</td></tr>" +
+                  "<tr><td>「复现定案」与「核算整线」给的数不一样</td>" +
+                  "<td>页面上有控件被改过（两者的几何构造器已统一，参数相同就该同数）</td></tr>" +
+                  "<tr><td>选了「（已作废）…」那两档，导出 3DM 没反应</td>" +
+                  "<td><b>故意拦住的</b>。已声明失效的档不许出图 —— 输出框会说明为什么失效</td></tr>" +
+                  "<tr><td>判据全过，但数看着不对</td>" +
+                  "<td>先看判据表<b>上方</b>那行收敛信息。写「未收敛」时，<b>下面每个数都不可引用</b>——" +
+                  "那是字面意思</td></tr></table>");
+
+        sb.Append("<h3>逐个按钮</h3>");
+        // ⚠ 2026-08-17 更新：加了「◇ 搜形状」、「自动定厚」换了算法、「导出 .3dm」改名并改内容。
+        //   按钮表是用户最常照着操作的一张表 —— 它一旦落后，用户会去点一个不存在的按钮，
+        //   或者以为某个按钮还在做它三个月前做的事。
         sb.Append("<table class=\"nw\"><tr><th>按钮</th><th>做什么</th><th>耗时</th></tr>" +
-                  "<tr><td><b>核算整线</b></td><td>按页面参数解一次耦合场，出判据表</td><td>分钟级，可取消</td></tr>" +
-                  "<tr><td><b>自动定厚</b></td><td>让优化器调四片法兰厚度</td><td>更久，可取消</td></tr>" +
+                  "<tr><td><b>核算整线</b></td><td>按页面参数解一次耦合场，出判据表。" +
+                  "<b>几何用的是和定案完全同一套构造器</b></td><td>分钟级，可取消</td></tr>" +
+                  "<tr><td><b>自动定厚</b></td><td>解析几何走 <b>D8 定尺寸</b>：舌保温守抽热窗口、" +
+                  "环倍率守 ②″、板厚只做接力与省铂。<b>结束后附一份「形状体检」</b>（见 §5.1）" +
+                  "<br>.3dm 几何走逐级定厚（只调厚度）</td><td>更久，可取消</td></tr>" +
+                  "<tr><td><b>◇ 搜形状</b></td><td><b>自动改盘径与舌宽</b>（舌长按装配算出来），" +
+                  "逐个形状定尺寸并挑最轻的全过解。<br>有<b>确定式进度条</b>、每算完一个立刻出一行、" +
+                  "随时可取消（<b>已算完的不丢</b>）；结束后把盘径/舌宽/舌长/板厚<b>写回控件</b>" +
+                  "<br>⚠ 只在解析几何模式可用</td><td>几十分钟</td></tr>" +
                   "<tr><td>分析几何变数</td><td>报各几何量对判据的斜率（只测不调）</td><td>分钟级</td></tr>" +
-                  "<tr><td>导出 .3dm</td><td>只导法兰板（旧功能，非定案构型）</td><td>秒级</td></tr>" +
-                  "<tr><td><b>定案档 ▾ + 载入定案</b></td><td>把 <code>FinalDesign</code> 的某一档灌进各控件</td><td>即时</td></tr>" +
-                  "<tr><td><b>导出定案 3DM</b></td><td>整机几何 + 自校（见 §7）</td><td>十几秒</td></tr></table>");
+                  "<tr><td>导出本页 3DM</td><td><b>整机</b>（三段管 + 四片法兰），几何与刚才求解的<b>完全一致</b>" +
+                  "<br>（旧版叫「导出 .3dm」，只导简化法兰板，与求解的不是同一个形状）</td><td>十几秒</td></tr>" +
+                  "<tr><td><b>定案档 ▾ + 载入定案</b></td><td>把 <code>FinalDesign</code> 的某一档灌进各控件。" +
+                  "<b>已作废的档会在最前面自报失效</b></td><td>即时</td></tr>" +
+                  "<tr><td><b>导出定案 3DM</b></td><td>整机几何 + 自校（见 §7）。" +
+                  "<b>已声明失效的档一律拒绝出图</b></td><td>十几秒</td></tr>" +
+                  "<tr><td><b>▶ 复现定案</b></td><td><b>完全不读页面控件</b>，直接按定案档解一次。" +
+                  "用来排除「页面上某个控件被改过而自己没注意到」</td><td>分钟级</td></tr></table>");
+        sb.Append("<p style=\"font-size:.88rem\"><b>三条通用的：</b>" +
+                  "① 会跑很久的按钮（核算整线／自动定厚／搜形状／复现定案）点下去会<b>变成「取消」</b>，" +
+                  "再点一次就是中止，不必等；" +
+                  "② 进度条右边那行字会说<b>现在在算第几轮</b>，「搜形状」还是**确定式**进度条（看得出还剩多少）；" +
+                  "③ <b>改参数会自动取消正在跑的那次</b> —— 参数一动，那次的结果本来就已经过期了。</p>");
 
         sb.Append("<h3>其余四个页签</h3>");
         sb.Append("<table class=\"nw\"><tr><th>页签</th><th>用途</th></tr>" +
@@ -696,13 +832,20 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         sb.Append($"<div class=\"fig\">{SvgPlate(fd)}" +
                   $"<div class=\"cap\">板面在 XZ 平面、厚度沿 Y（与 3DM 的方位约定一致）。" +
                   $"<b>舌根圆角 R{fd.TabFilletMm:0}</b> 不是装饰：峰值电流拥塞就发生在这个凹角上" +
-                  $"（实测峰位 x≈−24.3, z≈±13）。<b>管孔两级渐变环</b>压制孔周电流集中，" +
-                  $"半径与厚度都是<b>相对量</b>（相对管孔 / 相对板厚）——" +
-                  $"写成绝对值时板一变厚环就静默消失，整条优化曾因此停在离最优 28 % 的地方。<br><br>" +
-                  $"<b>注意盘缘那条虚线</b>：环外级的外半径 {fd.RingRadiiMm[1]:0.0} mm <b>大于盘半径 {fd.DiscRadiusMm:0.0} mm</b>，" +
-                  $"而盘孔环带只有 {fd.DiscRadiusMm - fd.HoleRadiusMm:0.0} mm 宽 —— " +
-                  $"<b>两级环几乎覆盖了整个圆盘</b>，「板身」在盘上几乎不存在、只存在于舌片。" +
-                  $"这就是环倍率为何一直是个强旋钮：它动的不是「孔边一圈」，是整个圆盘。</div></div>");
+                  $"（实测峰位 x≈−24.3, z≈±13）。<br><br>" +
+                  (fd.RingMul[0] > 1.001
+                   ? $"<b>管孔两级渐变环</b>（倍率 ×{fd.RingMul[0]:0.00}）压制孔周电流集中，" +
+                     $"半径与厚度都是<b>相对量</b>（相对管孔 / 相对板厚）——" +
+                     $"写成绝对值时板一变厚环就静默消失，整条优化曾因此停在离最优 28 % 的地方。<br><br>" +
+                     $"<b>注意盘缘那条虚线</b>：环外级的外半径 {fd.RingRadiiMm[1]:0.0} mm " +
+                     $"<b>大于盘半径 {fd.DiscRadiusMm:0.0} mm</b>，而盘孔环带只有 " +
+                     $"{fd.DiscRadiusMm - fd.HoleRadiusMm:0.0} mm 宽 ⇒ <b>两级环几乎覆盖整个圆盘</b>。"
+                   : $"<b>本档没有管孔渐变环</b>（倍率 1.00 = 等厚）。这是 2026-08-17 重解的结果，" +
+                     $"不是漏掉了：舌片加宽到 {2 * fd.TabHalfWidthMm:0} mm 之后，电流从管孔进来有足够的" +
+                     $"过流断面可走，孔周不再拥塞 —— 实测 ②″ = {fd.DiscOverK:0.00} K（限 +5），" +
+                     $"整整低了一个数量级。<b>少一道两级台阶的机加工。</b><br>" +
+                     $"⚠ 这条结论**绑在这个形状上**：舌片一窄回去，尖峰就会回来，环也要跟着回来。") +
+                  $"</div></div>");
 
         sb.Append($"<h3>立体示意（入口片）</h3>");
         sb.Append($"<div class=\"fig\">{SvgIso(fd, 0)}" +
@@ -738,21 +881,59 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                       $"<td class=\"n\">{fd.TabThickMm[j] * fd.RingMul[j]:0.00}</td>" +
                       $"<td class=\"n\">{fd.TabThickMm[j] * fd.RingMulOuter(j):0.00}</td>" +
                       $"<td class=\"n\">{fd.TabInsulMm[j]:0.0}</td></tr>");
-        sb.Append("</table><p style=\"font-size:.88rem\">舌片保温四片差 <b>12 倍</b>：" +
-                  "端片要靠保温保住发热，共用片本身发热过剩、几乎要裸露散热。<b>不能同规格。</b></p>");
+        // ⚠ 2026-08-17：这段话在**新构型上已经不成立**。旧的 90×30 窄舌片电阻大、发热多，
+        //   端片才要靠 18.7 mm 纤维保住热、共用片几乎要裸露 —— 四片差 12 倍。
+        //   舌片加宽到 60 mm 之后电阻降下来，四片都只要 0.3–0.6 mm（≈裸），差异消失。
+        //   ⇒ 文案按当前档的**实际值**判断，不写死结论。
+        double insHi = fd.TabInsulMm.Max(), insLo = fd.TabInsulMm.Min();
+        sb.Append("</table><p style=\"font-size:.88rem\">" +
+                  (insHi > insLo * 3
+                   ? $"舌片保温四片差 <b>{insHi / Math.Max(0.01, insLo):0} 倍</b>（{insHi:0.0} vs {insLo:0.0} mm）：" +
+                     "端片要靠保温保住发热，共用片本身发热过剩、几乎要裸露散热。<b>不能同规格。</b>"
+                   : $"本档四片舌保温都在 {insLo:0.0}–{insHi:0.0} mm，<b>几乎等于不包</b>。" +
+                     "这是宽舌片带来的：舌片加宽 ⇒ 电阻降 ⇒ 自身发热少 ⇒ 不再需要靠纤维保住热，" +
+                     "反而要保持散热能力才抽得动管子里的热（判据 ②′）。" +
+                     "<br><b>这个旋钮不花铂</b>（只是纤维），所以铂重只由板厚和舌片尺寸决定 —— " +
+                     "它也正是守住「抽热窗口」的主力。") + "</p>");
 
         sb.Append("<h2>5. 判据表怎么读</h2>");
         sb.Append("<table><tr><th>判据</th><th>类别</th><th>实际</th><th>限值</th><th>裕度</th></tr>");
-        foreach (var (n, k, a, l, u) in crit)
+        foreach (var (n, k, a, l, u, less) in crit)
             sb.Append($"<tr><td>{n}</td><td>{k}</td><td class=\"n\">{a:0.000} {u}</td>" +
-                      $"<td class=\"n\">{(Math.Abs(l) < 1e-9 ? "> 0" : l.ToString("0.00"))}</td>" +
-                      $"<td>{Bar(a, l)}</td></tr>");
+                      $"<td class=\"n\">{(Math.Abs(l) < 1e-9 ? "> 0" : (less ? "≤ " : "≥ ") + l.ToString("0.00"))}</td>" +
+                      $"<td>{Bar(a, l, less)}</td></tr>");
         sb.Append("</table>");
         sb.Append("<div class=\"note\"><b>裕度这一列比「✓」有用。</b>" +
                   "本项目最常见的错就是<b>贴着限值判过与不过</b>——" +
                   "曾用 0.02–0.08 K 的差别决定了 700 g 铂金，而那点温差只对应 <b>14 mW</b>、" +
                   "占段功率 5 ppm，现场任何仪器都测不出来。<br>" +
                   "看到 ✓ 先问两句：这个裕度比<b>数值噪声</b>大吗？比<b>现场能分辨的尺度</b>大吗？</div>");
+
+        // ── §5.1 形状体检报告（2026-08-17 新增功能，说明书必须跟上）
+        sb.Append("<h3>5.1 形状体检报告 —— 「有依据地告诉我发现了什么」</h3>");
+        sb.Append("<p>点<b>自动定厚</b>或<b>◇ 搜形状</b>之后，判据表上方会多出一段<b>形状体检</b>。" +
+                  "它的结构不是随便排的，而是按一条原则来的：" +
+                  "<b>能造能用是先决条件，省铂金是在这个前提下才讨论的</b>（业主 2026-08-15）。</p>");
+        sb.Append("<table class=\"nw\"><tr><th>段落</th><th>回答什么</th><th>为什么这样排</th></tr>" +
+                  "<tr><td><b>一、能不能造能不能用</b></td><td>七条硬安全线 + 板厚 vs 工艺下界</td>" +
+                  "<td><b>不过就到此为止</b>，后面完全不谈铂重。<br>" +
+                  "反例就在本项目里：舌长 90 那版热学五条全过、铂重最轻，而铜排根本装不上</td></tr>" +
+                  "<tr><td>二、优化后</td><td>三个旋钮的收敛值 + 总铂 + 与定案的差</td><td>—</td></tr>" +
+                  "<tr><td><b>三、抽热窗口</b></td><td>四片的抽热 D 落在 0–4.2 W 的哪一段</td>" +
+                  "<td>②′ 与 ③ 是<b>同一个量的两侧</b>（实测 ③ = 2.40·D）。" +
+                  "偏低那侧是「热往管里灌」（烧断），偏高那侧是「把管根抽出深坑」</td></tr>" +
+                  "<tr><td>四、优点</td><td>按裕度排序，每条带实测值与位置</td>" +
+                  "<td>「散热好」不是结论，「②″ 裕度 104 %、峰位 r=28.1、局部 J=0.00」才是</td></tr>" +
+                  "<tr><td>五、缺点／咬住它的</td><td>裕度最紧的两条 + <b>哪个旋钮已经顶死</b></td>" +
+                  "<td>旋钮余量是「还有没有回旋空间」的直接量</td></tr>" +
+                  "<tr><td>六、代价</td><td>多花多少铂、换来了什么</td>" +
+                  "<td>只讲省了多少就是广告。优点与代价必须成对出现</td></tr></table>");
+        sb.Append("<div class=\"note\"><b>报告里不会出现没有数撑着的因果。</b>" +
+                  "初版曾写「舌片更大 ⇒ 局部 J 更低、更不容易过热」，而实跑的例子是 " +
+                  "163×52 对比 140×60 —— <b>更窄</b>、面积几乎持平，那句因果是凭空加的，已删。<br>" +
+                  "同理，① 升温不算「优点」（它算的是空管，裕度 100 % 是结构性的，任何形状都这样）；" +
+                  "⑤ 自由段不算「缺点」（舌长是<b>算出来</b>的，必然贴着下界）—— " +
+                  "但会单独提醒<b>装配没有余量</b>。</div>");
 
         sb.Append("<h3>限值的出处（每条都必须有）</h3><table class=\"nw\">" +
                   "<tr><th>判据</th><th>限值</th><th>出处</th></tr>" +
@@ -761,6 +942,16 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "<tr><td>②″ 圆盘峰</td><td class=\"n\">5 K</td><td>现场控温精度 ±5 K</td></tr>" +
                   "<tr><td>③ 增量温降</td><td class=\"n\">10 K</td><td>总纲 C2；<b>业主明确：贴着热偶误差定的</b></td></tr>" +
                   "<tr><td>管 J</td><td class=\"n\">12 A/mm²</td><td>现场：一般 15，管壁 0.6 时 12 是极限</td></tr>" +
+                  "<tr><td><b>⑤ 舌片自由段</b></td><td class=\"n\">≥ 100 mm</td>" +
+                  "<td><b>业主 2026-08-17</b>：现场铜排长 100／宽 60–80 mm，自由段基本留 100。" +
+                  "「这些是参考值并非绝对，铜排尺寸可以定制」<br>" +
+                  "⚠ 这条判据是 2026-08-17 才加的，而它<b>当场把原来的定案判掉了</b>" +
+                  "（舌长 90 ⇒ 自由段只有 24 mm，铜排装不上）</td></tr>" +
+                  "<tr><td><b>⑥ 圆盘盖得住管孔＋焊脚</b></td><td class=\"n\">≥ 0</td>" +
+                  "<td>可造性：盘半径 − 管孔半径 − 焊脚（= max(板厚, 壁厚)）。" +
+                  "<b>不可造的几何料最少，所以优化器会主动往那里跑</b> —— " +
+                  "实测盘 R25 + 管壁 0.8 时管孔半径 25.8 &gt; 盘半径，孔比盘还大，" +
+                  "而它照样报「全判据通过 3621 g」并排在最前面</td></tr>" +
                   "<tr><td>管壁下界</td><td class=\"n\">0.6 mm</td><td>手工 TIG 烧穿下界（自动 0.3、激光 0.1）</td></tr>" +
                   "</table>");
         sb.Append("<div class=\"note\"><b>③ 的 10 K：出处是热偶误差，物理依据未知。</b>" +
@@ -840,6 +1031,11 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "工具条上的「打开 Markdown 版」打开的就是它。<br>" +
                   "两处都写全 = 同一份内容存两份，迟早漂开 —— 本项目最常见的失效。</p>");
         sb.Append("</div></body></html>");
+        // ★ 说明书正文字号跟着屏幕走（2026-08-17）。原来写死 15px ——
+        //   WebView2 **不吃 WinForms 的字体设置**，所以外面那些 UiScale 对它一点用都没有，
+        //   必须在 CSS 里换。放在最后统一替换：内容是分段 Append 的，
+        //   中途替换会漏掉后面追加的段（同一个占位符将来若出现在别处也能一起换到）。
+        sb.Replace("MANUALFONT", Math.Round(15 * UiScale.K).ToString("0"));
         return sb.ToString();
     }
 }

@@ -3651,9 +3651,22 @@ internal static class Program
                 //
                 // ⇒ 改成**从宽到窄的阶梯**：先找到确实全过的那一档，再往下削到某条约束咬住。
                 //   报告里给出的是「最薄的那个**全过**档位」，不是「最轻但差一点」的档位。
-                double discF2 = 30.0;
+                // ★★★★★ 形状不再写死（2026-08-17）。
+                //
+                // 起因：定案的舌长 90 mm 装不下铜排（自由段只有 24 mm）——
+                // 那是个**在设计上就不成立**的解，而它之所以能被选出来，正是因为
+                // 舌长/半宽/盘径在这里是**硬编码常数**，从来不参与搜索，
+                // 装配约束也从来没进过判据。
+                // ⇒ 三个形状量改成可由命令行给，判据 ⑤（自由段下界）在 Judge 里把关。
+                //   `--final2 --tablen 166 --halfw 40 --disc 40`
+                double ArgF2(string name, double dflt)
+                {
+                    int i = Array.IndexOf(args, name);
+                    return i >= 0 && i + 1 < args.Length && double.TryParse(args[i + 1], out double v) ? v : dflt;
+                }
+                double discF2 = ArgF2("--disc", 30.0);
                 double wallF2 = 1.0;
-                double clampLenF2 = 40.0;
+                double clampLenF2 = ArgF2("--clamplen", 40.0);
                 // 外层扫压接温度：几何**跟着重新定尺寸**，这才是它真正的影响
                 double clampF2 = 300.0;
                 var frontRows = new List<(double clamp, double c2min, double c2max,
@@ -3691,8 +3704,23 @@ internal static class Program
                 //   第八次「默认值当成给定条件」。
                 // ⚠ 代价要一起看：管保温薄 ⇒ 散热大 ⇒ 电流大 ⇒ 管 J 升；
                 //   且**玻璃温降会变** —— 那是全模型唯一拿现场实测（20 K）校准过的点。
-                double halfWF2 = 15.0;
-                double lenScaleF2 = 90.0;
+                double halfWF2 = ArgF2("--halfw", 15.0);
+                double lenScaleF2 = ArgF2("--tablen", 90.0);
+                {
+                    // 装配下界当场校核 —— 不合格就别浪费几十分钟去解一个装不下的形状
+                    double tanF2 = Math.Sqrt(Math.Max(0, discF2 * discF2
+                                   - Math.Min(halfWF2, discF2) * Math.Min(halfWF2, discF2)));
+                    double freeF2 = lenScaleF2 - tanF2 - clampLenF2;
+                    Console.WriteLine($"形状：盘Ø{2 * discF2:0}／舌长 {lenScaleF2:0}／半宽 {halfWF2:0}" +
+                                      $"（舌宽 {2 * halfWF2:0}）／压接 {clampLenF2:0}" +
+                                      $"　⇒ 自由段 **{freeF2:0.0} mm**");
+                    if (halfWF2 > discF2 + 1e-9)
+                        Console.WriteLine($"  ⚠ 半宽 {halfWF2:0} > 盘半径 {discF2:0} ⇒ 会被**静默夹到盘半径**，" +
+                                          "等宽舌片与圆盘没有切点。要真加宽，请同时放大盘。");
+                    if (freeF2 < 100)
+                        Console.WriteLine($"  ★ 自由段 {freeF2:0.0} < 100 mm ⇒ **判据 ⑤ 不会过**（装不下铜排）。" +
+                                          $"　该形状需要舌长 ≥ {tanF2 + clampLenF2 + 100:0} mm。");
+                }
                 // 实测（靶=+5）：管保温 2/5/10/20 给 ② +2.83/+3.83/+2.93/+3.30 —— 方向对、幅度不够。
                 // 因为靶钉在 +5，等于没去用薄保温换来的那份 D。本轮**两个一起动**。
                 double tubeInsF2 = 5.0, c2TargetF2 = 5.0;
@@ -4197,6 +4225,257 @@ internal static class Program
                 Console.WriteLine();
                 Console.WriteLine("★ 若所有档位都是「C2 过、② 差一点」，那说明在本构型下两条约束的可行带为空，");
                 Console.WriteLine("  差额就是还需要另外找的那部分 —— 而不是再调这两个旋钮能补上的。");
+                return;
+            }
+
+            // --cli --window   ★★★★★ 抽热窗口实测（2026-08-17）
+            //
+            // 起因：`--final2` 的 D7 控制律把 **舌厚 → ②′（靶 2 W）／环倍率 → ②″／舌保温 → ②″接力**，
+            //   **③ 没有任何旋钮**。它在舌长 90 的老几何上能过，只因为那里 ③ 天然就是 5.5。
+            //   换到装配可行的形状（盘 R45／舌 165）后，13 轮里 ②″ 从 +8.8 压到 +6.1，
+            //   而 ③ 从 149.8 只挪到 135.4（限 10）—— **控制律覆盖不到的判据不会自己变好**。
+            //
+            // 但在改控制律之前必须先**量**一件事（推「哪里最热」已错三次，见 memory
+            // 「法兰峰值先量再说」）：②′ 与 ③ 是不是同一个抽热 D 的两侧？
+            //   · 若是 ⇒ 二者对板厚**同向单调**，可行域是板厚的一个**区间**
+            //           [t_min(②′>0), t_max(③≤10)]，可用二分求两端，且「有没有解」有确定答案；
+            //   · 若不是 ⇒ 那是另一件事，二分同样救不了，得先弄清是什么。
+            //
+            // ⇒ 本命令**只测不调**：固定形状，扫板厚标度，把 ②′ 逐片、③ 逐段、②″、管 J
+            //   连同**基线管根温度与实际管根温度**一起打出来。不调旋钮、不下判定。
+            //   （只打差值时分不清「法兰挖坑」还是「基线本身就偏」—— §1.8 那一族的老坑。）
+            //
+            //   `--cli --quiet --window --disc 45 --halfw 40 --tablen 165 --scale 0.4,0.7,1.0,1.4`
+            if (args.Contains("--window"))
+            {
+                double ArgW(string name, double dflt)
+                {
+                    int i = Array.IndexOf(args, name);
+                    return i >= 0 && i + 1 < args.Length && double.TryParse(args[i + 1], out double v) ? v : dflt;
+                }
+                // 形状与工艺全部落在 FinalDesign 上 —— **几何只有一个来源**（见 FinalDesign 头注）。
+                // 这里不再手抄一份 MakeF2：抄一份就多一处会漂的定义。
+                var shapeW = FinalDesign.W08.Clone();
+                shapeW.DiscRadiusMm = ArgW("--disc", shapeW.DiscRadiusMm);
+                shapeW.TabHalfWidthMm = ArgW("--halfw", shapeW.TabHalfWidthMm);
+                shapeW.TabLengthMm = ArgW("--tablen", shapeW.TabLengthMm);
+                shapeW.ClampLengthMm = ArgW("--clamplen", shapeW.ClampLengthMm);
+                shapeW.WallMm = ArgW("--wall", shapeW.WallMm);
+                shapeW.TubeInsulMm = ArgW("--tubeins", shapeW.TubeInsulMm);
+                double[] baseThickW = (double[])FinalDesign.W08.TabThickMm.Clone();
+
+                double[] ListW(string name, double[] dflt)
+                {
+                    int i = Array.IndexOf(args, name);
+                    if (i < 0 || i + 1 >= args.Length || args[i + 1].StartsWith("--")) return dflt;
+                    return args[i + 1].Split(',').Where(t => t.Trim().Length > 0)
+                                      .Select(t => double.Parse(t.Trim())).ToArray();
+                }
+                // ★ 允许**直接给一组板厚/舌保温**（2026-08-17）：定尺寸器吐出来的候选要写进
+                //   FinalDesign 之前必须先复核一次，而候选的四片厚度**不成比例**，
+                //   用「基准 × 标度」表达不了它。没有这条就只能靠肉眼抄，那正是
+                //   「同一个数存两处然后悄悄漂开」的起点。
+                double[]? thickW = null, insW = null;
+                {
+                    int i = Array.IndexOf(args, "--thick");
+                    if (i >= 0 && i + 1 < args.Length && !args[i + 1].StartsWith("--"))
+                        thickW = args[i + 1].Split(',').Select(t => double.Parse(t.Trim())).ToArray();
+                    i = Array.IndexOf(args, "--ins");
+                    if (i >= 0 && i + 1 < args.Length && !args[i + 1].StartsWith("--"))
+                        insW = args[i + 1].Split(',').Select(t => double.Parse(t.Trim())).ToArray();
+                }
+                if (thickW is not null) baseThickW = thickW;
+                if (insW is not null)
+                    for (int j = 0; j < shapeW.TabInsulMm.Length && j < insW.Length; j++)
+                        shapeW.TabInsulMm[j] = insW[j];
+                double[] ringW = ListW("--ring", Array.Empty<double>());
+                for (int j = 0; j < ringW.Length && j < shapeW.RingMul.Length; j++)
+                    shapeW.RingMul[j] = ringW[j];
+
+                double[] scalesW = ListW("--scale", new[] { 0.3, 0.5, 0.7, 1.0, 1.4, 2.0 });
+                // ★ 保温也要能扫：它是 `--knob2` 实测「能把 ③ 扫过 42 K 而 ②″ 纹丝不动」的那个旋钮，
+                //   而 D7 只把它接成 ②″ 的抗饱和接力 —— 从来没让它去管 ②′/③。
+                //   两个旋钮一起扫，才看得出「板厚窗口空了的时候保温能不能补上」。
+                double[] insMulsW = ListW("--insmul", new[] { 1.0 });
+
+                double tanW = Math.Sqrt(Math.Max(0, shapeW.DiscRadiusMm * shapeW.DiscRadiusMm
+                              - Math.Min(shapeW.TabHalfWidthMm, shapeW.DiscRadiusMm)
+                              * Math.Min(shapeW.TabHalfWidthMm, shapeW.DiscRadiusMm)));
+                double freeW = shapeW.TabLengthMm - tanW - shapeW.ClampLengthMm;
+                Console.WriteLine("=== 抽热窗口实测：②′ 定下界、③ 定上界，看它们在板厚上夹不夹得出区间 ===");
+                Console.WriteLine($"形状：盘Ø{2 * shapeW.DiscRadiusMm:0}／舌 {shapeW.TabLengthMm:0}×{2 * shapeW.TabHalfWidthMm:0}" +
+                                  $"／压接 {shapeW.ClampLengthMm:0}　⇒ 自由段 **{freeW:0.0} mm**" +
+                                  (freeW < 100 ? "（< 100 ⇒ 判据⑤ 不过）" : "（≥ 100 ✓）"));
+                Console.WriteLine($"管壁 {shapeW.WallMm:0.0}／管保温 {shapeW.TubeInsulMm:0}／环倍率 {shapeW.RingMul[0]:0.00}" +
+                                  $"／舌保温基准 {string.Join("/", shapeW.TabInsulMm.Select(v => v.ToString("0.0")))} × 保温倍率");
+                Console.WriteLine($"板厚基准（W08）{string.Join("/", baseThickW.Select(v => v.ToString("0.00")))} × 标度");
+                Console.WriteLine("**只测不调。** 收敛列为 ✗ 时该行每个数都不可引用。");
+                Console.WriteLine();
+                Console.WriteLine($"{"标度",6}{"保温×",7}{"板厚 mm",24}{"②′逐片 W",34}{"③逐段 K",26}" +
+                                  $"{"②″K",8}{"管J",7}{"合计g",8}{"收敛",6}");
+
+                // 基线只依赖管几何/保温/控温点（LineRunner 头注），与法兰无关 ⇒ 全扫共用一份
+                double[][] baseCacheW = Array.Empty<double[]>();
+                foreach (double sW in scalesW)
+                foreach (double imW in insMulsW)
+                {
+                    var dW = shapeW.Clone();
+                    for (int j = 0; j < 4; j++)
+                    {
+                        dW.TabThickMm[j] = baseThickW[j] * sW;
+                        dW.TabInsulMm[j] = Math.Clamp(shapeW.TabInsulMm[j] * imW, 0.3, 80.0);
+                    }
+                    var lcW = dW.BuildCase(p, checkRamp: false);
+                    lcW.BaselineRootC = baseCacheW;
+                    LineResult rW;
+                    try { rW = LineRunner.Run(lcW); }
+                    catch (Exception ex) { Console.WriteLine($"{sW,6:0.00}{imW,7:0.00}  异常 {ex.Message}"); continue; }
+                    if (!rW.Ok) { Console.WriteLine($"{sW,6:0.00}{imW,7:0.00}  ✗ {rW.Message}"); continue; }
+                    baseCacheW = lcW.BaselineRootC;
+
+                    double massW = rW.Segments.Sum(s => s.MassG) + rW.Flanges.Sum(f => f.MassG);
+                    Console.WriteLine(
+                        $"{sW,6:0.00}{imW,7:0.00}{string.Join("/", dW.TabThickMm.Select(v => v.ToString("0.00"))),24}" +
+                        $"{string.Join("/", rW.Flanges.Select(f => f.QFromTubeW.ToString("+0.0;−0.0"))),34}" +
+                        $"{string.Join("/", rW.Segments.Select(s => s.FlangeDipK.ToString("+0.0;−0.0"))),26}" +
+                        $"{rW.ValueOf(LineResult.Key.DiscTemp),8:+0.00;−0.00}" +
+                        $"{rW.Segments.Max(s => s.TubeJAPerMm2),7:0.00}{massW,8:0}{(rW.Converged ? "✓" : "✗"),6}");
+                    // 管根两侧的**绝对温度**：只看差值分不清「法兰挖坑」与「基线本身偏」
+                    foreach (var s in rW.Segments)
+                        Console.WriteLine($"        └ {s.Name,-10} 基线 {s.BaseTRootAC,8:0.0}/{s.BaseTRootBC,0:0.0}" +
+                                          $"　实际 {s.TRootAC,8:0.0}/{s.TRootBC,0:0.0}　电流 {s.CurrentA,6:0} A");
+                }
+                Console.WriteLine();
+                Console.WriteLine("读法：②′ 与 ③ 若**同向随标度增大**，则二者是同一个抽热 D 的两侧 ⇒");
+                Console.WriteLine("  可行域 = 板厚区间 [②′ 刚过零, ③ 刚到 10]，二分可解，且「有没有解」有确定答案。");
+                Console.WriteLine("  若某片的 ②′ 在整个标度范围内都远大于窗口 ⇒ 那片**靠板厚救不了**，得动保温/形状。");
+                return;
+            }
+
+            // --cli --shape   ★★★★★ 形状搜索 + D8 定尺寸（2026-08-17）
+            //
+            // 用户第 2 项：「APP 不能**自动**改变法兰盘直径与舌片长度吗？」
+            // 此前不能：盘径/舌长/舌宽在 `--final2` 里是硬编码常数，从来不参与搜索，
+            // 装配约束也从来没进过判据 —— 定案的舌长 90 mm 就是这么来的。
+            //
+            // 本命令做两件事：
+            //   ① **舌长不是自由变量**，是**算出来的**：舌长 = 圆盘切点 + 压接段 + 自由段下界。
+            //      更长只会多花铂、多发热，没有任何好处（自由段的热学作用由 ⑤ 的下界兜住）。
+            //      ⇒ 真正的搜索维度只有 **盘半径 × 舌半宽**，舌长跟着走。
+            //   ② 每个形状交给 <see cref="Sizer"/>（D8）定尺寸，取**最轻的全过点**。
+            //
+            //   `--cli --quiet --shape --discs 30,35 --halfws 15,22,30 --wall 0.8`
+            //   `--cli --quiet --shape --disc 30 --halfw 30`（单形状，打完整轨迹）
+            if (args.Contains("--shape"))
+            {
+                double ArgS(string name, double dflt)
+                {
+                    int i = Array.IndexOf(args, name);
+                    return i >= 0 && i + 1 < args.Length && double.TryParse(args[i + 1], out double v) ? v : dflt;
+                }
+                double[] ListS(string name, double[] dflt)
+                {
+                    int i = Array.IndexOf(args, name);
+                    if (i < 0 || i + 1 >= args.Length || args[i + 1].StartsWith("--")) return dflt;
+                    return args[i + 1].Split(',').Where(t => t.Trim().Length > 0)
+                                      .Select(t => double.Parse(t.Trim())).ToArray();
+                }
+                double wallS = ArgS("--wall", 0.8);
+                double clampLenS = ArgS("--clamplen", 40.0);
+                double freeMinS = ArgS("--freemin", 100.0);
+                double[] discsS = ListS("--discs", new[] { ArgS("--disc", 30.0) });
+                double[] halfwsS = ListS("--halfws", new[] { ArgS("--halfw", 30.0) });
+                // 默认**打轨迹**：一个形状要跑几十轮、每轮几十秒，不打就是几十分钟的黑屏，
+                // 分不清「在算」还是「卡死」。要静默用 --notrace。
+                bool traceS = !args.Contains("--notrace");
+                var optS = new SizerOptions
+                {
+                    MaxRounds = (int)ArgS("--rounds", 40),
+                    SaveMetal = !args.Contains("--nosave")
+                };
+
+                Console.WriteLine("=== 形状搜索 × D8 定尺寸 ===");
+                Console.WriteLine($"管壁 {wallS:0.0}／压接段 {clampLenS:0}／自由段下界 {freeMinS:0}（判据⑤）");
+                Console.WriteLine("★ **舌长是算出来的**：舌长 = 圆盘切点 + 压接段 + 自由段下界。");
+                Console.WriteLine("  更长只多花铂多发热 —— 舌长从来不该是自由变量，它是装配的因变量。");
+                Console.WriteLine("★ D8 分派：舌保温 → 抽热 D（免费旋钮，管 ②′ 与 ③）／环倍率 → ②″／板厚 → 接力+省铂。");
+                Console.WriteLine();
+
+                var rowsS = new List<(double disc, double hw, double len, double mass, bool ok, string msg, FinalDesign d)>();
+                foreach (double discS in discsS)
+                foreach (double hwS in halfwsS)
+                {
+                    if (hwS > discS + 1e-9)
+                    {
+                        Console.WriteLine($"盘R{discS:0}／半宽{hwS:0}　⇒ **跳过**：半宽 > 盘半径，" +
+                                          "等宽舌片与圆盘没有切点，会被静默夹到盘半径（那就不是这个形状了）。");
+                        continue;
+                    }
+                    // ★ 早筛「造不出来」的盘径（判据 ⑥ 会兜底，但那要先白跑十几轮）。
+                    //   焊脚 = max(板厚, 壁厚) ≥ 壁厚 ⇒ 盘半径至少要 孔半径 + 壁厚 = 25 + 2×壁厚。
+                    double minDiscS = 25.0 + 2 * wallS;
+                    if (discS < minDiscS - 1e-9)
+                    {
+                        Console.WriteLine($"盘R{discS:0}　⇒ **跳过**：管壁 {wallS:0.0} 时管孔半径已是 " +
+                            $"{25 + wallS:0.0} mm，盘半径至少要 {minDiscS:0.0} mm 才盖得住孔与焊脚（判据⑥）。");
+                        continue;
+                    }
+                    double tanS = Math.Sqrt(Math.Max(0, discS * discS - hwS * hwS));
+                    double lenS = tanS + clampLenS + freeMinS;
+
+                    var seedS = FinalDesign.W08.Clone();
+                    seedS.Name = $"盘R{discS:0}·舌{lenS:0}×{2 * hwS:0}";
+                    seedS.Invalid = "";                             // 这是新解，不继承旧档的失效告示
+                    seedS.InvalidChecks = Array.Empty<string>();    // 声明的判据清单也要一起清
+                    seedS.WallMm = wallS;
+                    seedS.DiscRadiusMm = discS;
+                    seedS.TabHalfWidthMm = hwS;
+                    seedS.TabLengthMm = lenS;
+                    seedS.ClampLengthMm = clampLenS;
+
+                    Console.WriteLine($"── 盘R{discS:0}（Ø{2 * discS:0}）／半宽 {hwS:0}（舌宽 {2 * hwS:0}）" +
+                                      $"／舌长 {lenS:0.0}　⇒ 自由段 {seedS.FreeTabMm:0.0} mm");
+                    var prog = traceS ? new Progress<string>(Console.WriteLine) : null;
+                    SizerResult sr;
+                    try { sr = Sizer.Solve(seedS, p, optS, prog); }
+                    catch (Exception ex) { Console.WriteLine("   异常 " + ex.Message); continue; }
+                    Console.WriteLine($"   {sr.Message}　合计 {sr.MassG:0} g　（③/D 实测 {sr.GammaKPerW:0.00} K/W）");
+                    if (sr.Design is not null)
+                    {
+                        // ★ 用户 2026-08-17：「有依据地告诉我 APP 发现了什么？这个法兰的
+                        //   优点与缺点、或是要付出的代价 —— 但前提还是要能造能用。」
+                        //   报告只**读**判据表，不另立标准（判据只有一个来源）。
+                        Console.WriteLine();
+                        // 报告写的是 TSV（UI 那侧靠制表位排）。控制台没有可设的制表位 ⇒
+                        // 走 Plain 换成空格补齐，否则这里会印出一串裸 Tab。
+                        Console.Write(TextFmt.Plain(ShapeReview.Build(sr.Design, sr.Best, FinalDesign.Current, sr.Message)));
+                        rowsS.Add((discS, hwS, lenS, sr.MassG, sr.Feasible, sr.Message, sr.Design));
+                    }
+                    Console.WriteLine();
+                }
+
+                Console.WriteLine("── 形状前沿");
+                Console.WriteLine($"{"盘R",6}{"半宽",6}{"舌长",8}{"自由段",8}{"合计g",9}  判定");
+                foreach (var rs in rowsS.OrderBy(x => x.ok ? 0 : 1)
+                                        .ThenBy(x => double.IsNaN(x.mass) ? double.MaxValue : x.mass))
+                    Console.WriteLine($"{rs.disc,6:0}{rs.hw,6:0}{rs.len,8:0.0}{rs.d.FreeTabMm,8:0.0}" +
+                                      $"{(double.IsNaN(rs.mass) ? "—" : rs.mass.ToString("0")),9}" +
+                                      $"  {(rs.ok ? "✓ " : "")}{rs.msg}");
+                var win = rowsS.Where(x => x.ok).OrderBy(x => x.mass).FirstOrDefault();
+                Console.WriteLine();
+                if (win.d is not null)
+                {
+                    Console.WriteLine("★ **最轻的全过形状**：" + win.d.Describe());
+                    Console.WriteLine("  ⇒ 把这一组写进 FinalDesign 之前，先用 `--window` 在该形状上复核一次；");
+                    Console.WriteLine("    FinalDesign 是几何的唯一来源，写错一次会污染 3DM／论文／说明书三处。");
+                }
+                else Console.WriteLine("★ 本网格内**没有全过的形状** —— 上表的失败原因逐行列出，据此扩网格或松工艺。");
+                Console.WriteLine();
+                Console.WriteLine($"⚠ 上面每一克铂都挂在一个**输入**上：自由段下界 {freeMinS:0} mm。");
+                Console.WriteLine("  它来自用户 2026-08-17 给的现场铜排（长 100／宽 60–80，自由段基本留 100），");
+                Console.WriteLine("  用户同时说明「**这些是参考值并非绝对**，铜排宽度与长度都可以定制」。");
+                Console.WriteLine("  ⇒ 舌长 = 切点 + 压接段 + 自由段，铂重几乎线性跟着它走。");
+                Console.WriteLine($"    想知道这条装配要求值多少铂，换个下界再跑一次：`--shape --freemin 60`。");
                 return;
             }
 
@@ -4716,10 +4995,16 @@ internal static class Program
                 Console.WriteLine($"  {"--geom [file.3dm]",-34}读 3dm 量几何并与常数比对");
                 Console.WriteLine();
                 Console.WriteLine("定案档（几何的唯一来源 = Core/FinalDesign）");
+                // ⚠ 作废档与现役档**共用同一个管壁值** ⇒ 若照直每档都打一行 `--wall 0.8`，
+                //   等于告诉人「同一个开关能选出两个不同的档」，而 ByWall 只会返回**第一个**。
+                //   ⇒ 现役档才标 --wall；作废档标明它取不到，只是留档。
                 foreach (var fd in FinalDesign.All)
-                    Console.WriteLine($"  --wall {fd.WallMm:0.0}   {fd.Name}　{fd.TotalMassG:0} g　咬住它的：{fd.Binding}");
+                    Console.WriteLine(fd.Invalid.Length == 0
+                        ? $"  --wall {fd.WallMm:0.0}   {fd.Name}　{fd.TotalMassG:0} g　咬住它的：{fd.Binding}"
+                        : $"  （取不到） {fd.Name}　{fd.TotalMassG:0} g　**已作废**，仅留档备查");
                 Console.WriteLine();
                 Console.WriteLine("  ⚠ --wall 给了不认识的值会**抛异常**，不会静默回退到默认档。");
+                Console.WriteLine("  ⚠ --wall 只会选到**现役**档：作废档与现役档管壁相同，ByWall 取第一个。");
                 return;
             }
 
@@ -4758,14 +5043,51 @@ internal static class Program
                     double V(string k)
                     { foreach (var c in rc.Checks) if (c.Name.StartsWith(k, StringComparison.Ordinal)) return c.Actual; return double.NaN; }
 
-                    Console.WriteLine($"   {fd.Name}　收敛 ✓　全判据 {(rc.AllOk ? "✓" : "✗")}");
-                    if (!rc.AllOk)
+                    Console.WriteLine($"   {fd.Name}　收敛 ✓　全判据 {(rc.AllOk ? "✓" : "✗")}" +
+                                      (fd.Invalid.Length > 0 ? "　（本档**已声明失效**）" : ""));
+
+                    // ★★★ 已声明失效的档：门要判的**不是「过不过」**，而是
+                    //   「**它不过的地方，是不是正好是它自己声明的那一条**」。
+                    //
+                    // 为什么要分这一支（2026-08-17）：判据 ⑤ 一加进 Judge，两档定案当场就不过了。
+                    // 若门只会喊「定案档自己不过判据」，它就变成一条**永远红着的告警** ——
+                    // 而永远红着的门，人（我）会先学会忽略它，再也不会去看它第二次说了什么。
+                    // ⇒ 声明失效 ⇒ 要求「确实不过」且「失败项 ⊆ 声明项」；
+                    //   若它**居然全过了**，说明失效声明本身过期了，同样要报。
+                    var failed = rc.Checks
+                        .Where(c => c.Kind != CheckKind.Reference && (!c.Ok || c.Undetermined)).ToArray();
+                    if (fd.Invalid.Length > 0)
+                    {
+                        if (rc.AllOk)
+                        {
+                            bad++;
+                            Console.WriteLine("      ✗ **失效声明已过期**：本档声明失效，实算却全判据通过。" +
+                                              "　⇒ 清掉 FinalDesign.Invalid，或说明为什么还留着。");
+                        }
+                        else
+                        {
+                            // 声明里点名了哪几条，就只准坏那几条（比对的是 InvalidChecks 这个
+                            // **独立字段**，不是 Invalid 正文 —— 正文里写着「①②′②″③管J 仍全过」，
+                            // 拿它做子串匹配会每条都命中，门就成了摆设）
+                            var unexpected = failed.Where(c =>
+                                !fd.InvalidChecks.Any(k => c.Name.StartsWith(k, StringComparison.Ordinal))).ToArray();
+                            foreach (var c in failed)
+                                Console.WriteLine($"      {(unexpected.Contains(c) ? "✗" : "·")} " +
+                                    $"{c.Name} {c.Actual:0.000} / {c.Limit:0.000}　{c.Where}" +
+                                    (unexpected.Contains(c) ? "　★ **声明之外的失败**" : "　（声明之内）"));
+                            if (unexpected.Length > 0)
+                            {
+                                bad++;
+                                Console.WriteLine("      ✗ 上面标 ★ 的不在失效声明里 ⇒ 这是**新出现的**问题，不是已知的那条。");
+                            }
+                        }
+                    }
+                    else if (!rc.AllOk)
                     {
                         bad++;
                         Console.WriteLine("      ✗ **定案档自己不过判据** —— 这是最严重的一种：");
-                        foreach (var c in rc.Checks)
-                            if (c.Kind != CheckKind.Reference && (!c.Ok || c.Undetermined))
-                                Console.WriteLine($"         {c.Name} {c.Actual:0.000} / {c.Limit:0.000}　{c.Where}");
+                        foreach (var c in failed)
+                            Console.WriteLine($"         {c.Name} {c.Actual:0.000} / {c.Limit:0.000}　{c.Where}");
                     }
                     void Chk(string nm, double got, double want, double tol, string unit)
                     {
@@ -4786,7 +5108,11 @@ internal static class Program
                 Console.WriteLine("── B 不安静失败：偏离档不许「报全过」同时给出荒谬的数");
                 var probes = new (string n, Func<FinalDesign, FinalDesign> mut)[]
                 {
-                    ("环关掉 μ=1.0", f => { for (int k = 0; k < 4; k++) f.RingMul[k] = 1.0; return f; }),
+                    // ⚠ 这里原来第一条是「环关掉 μ=1.0」。2026-08-17 重解之后**新定案本来就是 μ=1.0**
+                    //   （舌片宽了一倍，孔周不再拥塞，环没有存在必要）⇒ 那条探针成了**空操作**，
+                    //   照样打 ✓，却什么都没试。空转的检查比没有检查更糟：它给人「验过了」的错觉。
+                    //   ⇒ 换成一条真正会翻判据的：把舌长改回 90（即旧定案那个装不下铜排的值）。
+                    ("舌长退回 90",  f => { f.TabLengthMm = 90.0; return f; }),
                     ("板厚 ×0.5",    f => { for (int k = 0; k < 4; k++) f.TabThickMm[k] *= 0.5; return f; }),
                     ("管保温 1 mm",  f => { f.TubeInsulMm = 1.0; return f; }),
                 };
@@ -4809,6 +5135,173 @@ internal static class Program
                                       $"全过 {(rp.AllOk ? "✓" : "✗")}　最高 {tmax,7:0.0} °C　能量残差 {resid,7:0.000} W" +
                                       (quiet ? "　★★ **安静失败**" : ""));
                 }
+
+                // ════════════════════════════════════════════════════════════
+                // ── C 闭式对账：**③ 必须随抽热 D 一起动**（2026-08-17 新增）
+                //
+                // 依据（`--window` 实测，六行、D 从 +0.6 到 +144 W）：
+                //     ③(段) = γ · max(D_左, D_右)，γ = 2.40 K/W（管壁 0.8）
+                // γ 是**管子**的性质（③ = D/√(kAβ)），法兰形状怎么变都不改它。
+                //
+                // 为什么这条值得做成门：本项目出过一次**教科书式**的安静失败 ——
+                //   基线的段间耦合只跑 4 轮（主解跑到收敛），于是 ③ 恒为 31.5±0.4 K，
+                //   而净流入从 +1 W 到 +7 W（差 7 倍）它**纹丝不动**。
+                //   判据表照样打得漂漂亮亮。当时抓到它靠的正是这句话：
+                //   **「不随因变量变，就不是那个因造成的」**。
+                // ⇒ 把这句话做成会自己跑的检查：动一个已知会改 D 的旋钮（舌保温），
+                //   ③ 必须跟着动，且比例落在合理区间。不动 = 基线又冻住了。
+                Console.WriteLine();
+                Console.WriteLine("── C 闭式对账：③ 必须随抽热 D 一起动（γ = ③/D，实测 2.40 K/W）");
+                double GammaOf(LineResult rr)
+                {
+                    var gl = new List<double>();
+                    for (int i = 0; i < rr.Segments.Length && i + 1 < rr.Flanges.Length; i++)
+                    {
+                        double dL = rr.Flanges[i].QFromTubeW, dR = rr.Flanges[i + 1].QFromTubeW;
+                        double dom = Math.Abs(dL) > Math.Abs(dR) ? dL : dR;
+                        double dip = rr.Segments[i].FlangeDipK;
+                        if (!double.IsNaN(dip) && Math.Abs(dom) > 1.0) gl.Add(dip / dom);
+                    }
+                    if (gl.Count == 0) return double.NaN;
+                    gl.Sort();
+                    return gl[gl.Count / 2];
+                }
+                try
+                {
+                    var fA = FinalDesign.Current.Clone();
+                    var fB = FinalDesign.Current.Clone();
+                    for (int k = 0; k < fB.TabInsulMm.Length; k++)
+                        fB.TabInsulMm[k] = Math.Max(0.3, fB.TabInsulMm[k] * 0.4);
+                    var rA = LineRunner.Run(fA.BuildCase(p, checkRamp: false));
+                    var rB = LineRunner.Run(fB.BuildCase(p, checkRamp: false));
+                    if (!rA.Ok || !rB.Ok) { Console.WriteLine("   ✗ 对账跑不出来 ⇒ 无法判定，按不过计"); bad++; }
+                    else
+                    {
+                        double dipA = rA.ValueOf(LineResult.Key.FlangeDip), dipB = rB.ValueOf(LineResult.Key.FlangeDip);
+                        double fxA = rA.ValueOf(LineResult.Key.NetFlux), fxB = rB.ValueOf(LineResult.Key.NetFlux);
+                        double gA = GammaOf(rA), gB = GammaOf(rB);
+                        Console.WriteLine($"   舌保温 ×1.0：③ {dipA,7:0.00} K　②′ {fxA,7:0.00} W　γ {gA,6:0.00}");
+                        Console.WriteLine($"   舌保温 ×0.4：③ {dipB,7:0.00} K　②′ {fxB,7:0.00} W　γ {gB,6:0.00}");
+                        // ① D 必须真的被推动了（否则这条检查本身没意义，要报出来而不是默默通过）
+                        if (Math.Abs(fxB - fxA) < 0.5)
+                        {
+                            bad++;
+                            Console.WriteLine("   ✗ 舌保温 ×0.4 没能推动 ②′ ⇒ **旋钮失效**，或保温根本没进模型。");
+                        }
+                        // ② ③ 必须跟着动
+                        else if (Math.Abs(dipB - dipA) < 0.2)
+                        {
+                            bad++;
+                            Console.WriteLine("   ✗ ②′ 动了 " + $"{fxB - fxA:+0.00;−0.00} W 而 ③ 纹丝不动 ⇒ " +
+                                              "**③ 的基线八成又被冻住了**（不随因变量变，就不是那个因造成的）。");
+                        }
+                        // ③ 比例要落在合理区间（γ 随管壁在 2–3 之间，放宽到 1–6 只抓量级错误）
+                        else if (double.IsNaN(gA) || gA < 1.0 || gA > 6.0)
+                        {
+                            bad++;
+                            Console.WriteLine($"   ✗ γ = {gA:0.00} K/W 落在 [1, 6] 之外 ⇒ ③ 与 D 的闭式关系对不上，" +
+                                              "两者之一算错了。");
+                        }
+                        else Console.WriteLine($"   ✓ ③ 随 D 同步变化，γ = {gA:0.00} K/W（实测基准 2.40）");
+                    }
+                }
+                catch (Exception ex) { bad++; Console.WriteLine("   ✗ 对账异常：" + ex.Message); }
+
+                // ── D 冷启动 vs 热启动：**必须落到同一个解**（2026-08-17 新增）
+                //
+                // 热启动（LineCase.WarmStart）是为了让形状搜索从「小时」降到「分钟」而加的。
+                // 它按设计**只改到达路径、不改不动点** —— 但这句话必须被**验**，不能被信：
+                // 迭代里但凡有一处带记忆（限幅、棘轮、离散量翻转），起点就会渗进答案，
+                // 而它的表现形式恰恰是「两次都收敛、都报全过、数不一样」——§1.8 的正脸。
+                Console.WriteLine();
+                Console.WriteLine("── D 冷启动 vs 热启动：只准改路径，不准改答案");
+                try
+                {
+                    var fd0 = FinalDesign.Current;
+                    var lcCold = fd0.BuildCase(p, checkRamp: false);
+                    var rCold = LineRunner.Run(lcCold);            // 冷启动，并留下收敛状态
+                    var lcWarm = fd0.BuildCase(p, checkRamp: false);
+                    lcWarm.WarmStart = lcCold.WarmStart;           // 用它去热启动同一个算例
+                    var swW = System.Diagnostics.Stopwatch.StartNew();
+                    var rWarm = LineRunner.Run(lcWarm);
+                    if (!rCold.Ok || !rWarm.Ok) { bad++; Console.WriteLine("   ✗ 有一次没算出来"); }
+                    else if (!rCold.Converged || !rWarm.Converged)
+                    { bad++; Console.WriteLine($"   ✗ 收敛 冷{(rCold.Converged ? "✓" : "✗")}／热{(rWarm.Converged ? "✓" : "✗")}"); }
+                    else
+                    {
+                        double dDip = Math.Abs(rCold.ValueOf(LineResult.Key.FlangeDip)
+                                             - rWarm.ValueOf(LineResult.Key.FlangeDip));
+                        double dFx = Math.Abs(rCold.ValueOf(LineResult.Key.NetFlux)
+                                            - rWarm.ValueOf(LineResult.Key.NetFlux));
+                        double dM = Math.Abs(rCold.TotalMassG - rWarm.TotalMassG);
+                        // 容差 = 收敛容差本身（CoupleTolK = 1 K）。比它细的差别不构成证据。
+                        bool same = dDip < 1.0 && dFx < 0.5 && dM < 1.0;
+                        if (!same) bad++;
+                        Console.WriteLine($"   {(same ? "✓" : "✗")} ③ 差 {dDip:0.000} K／②′ 差 {dFx:0.000} W／" +
+                                          $"合计差 {dM:0.00} g　（热启动耗时 {swW.Elapsed.TotalSeconds:0.0} s）");
+                        if (!same)
+                            Console.WriteLine("      ★ 起点渗进了答案 ⇒ 迭代里有带记忆的环节（限幅/棘轮/离散翻转）。" +
+                                              "在找到它之前，**热启动不可用**（LineCase.WarmStart 置空即回到冷启动）。");
+                    }
+                }
+                catch (Exception ex) { bad++; Console.WriteLine("   ✗ 冷热对账异常：" + ex.Message); }
+
+                // ── E 定尺寸器不许往**烧断方向**优化（2026-08-17 新增）
+                //
+                // 病（已修）：`FlangeAutoSizer` 的靶原来是**单边的 ③**
+                //   （err = max(0, ③ − 靶)），设计意图写在注释里：
+                //   「让『越薄越省铂』自己去撞另一侧的界（②′ 净流入 > 0）」——
+                //   **可是那一侧没有任何东西拦着**。
+                //   最恶劣的表现：从**偏薄**的起点出发时 ③ 本来就小 ⇒ err ≡ 0
+                //   ⇒ 它**当场宣布收敛**，而那个点上 ②′ 可能已经是负的（热往管里灌 = 烧断机理）。
+                //
+                // ⇒ 现在靶换成**抽热窗口**（③ = 2.40·D 实测 ⇒ 一个双向靶同时守住 ②′ 与 ③）。
+                //   本检查从一个明显偏薄的起点跑一次，要求收敛后 **②′ > 0**。
+                Console.WriteLine();
+                Console.WriteLine("── E 定尺寸器不许往烧断方向优化（从偏薄起点出发，②′ 必须回正）");
+                try
+                {
+                    var fdE = FinalDesign.Current;
+                    double floorE = fdE.DiscFloorMm(p);
+                    FlangePlate MkE(double td)
+                    {
+                        var g = fdE.Plate(0, floorE);
+                        g.ThicknessMm = Math.Max(td, floorE);
+                        g.DiscStepThicknessMm = new[] { g.ThicknessMm * fdE.RingMul[0],
+                                                        g.ThicknessMm * fdE.RingMulOuter(0) };
+                        g.WeldFilletLegMm = Math.Max(g.ThicknessMm, fdE.WallMm);
+                        return g;
+                    }
+                    // 起点：定案厚度的 0.75 倍（**仍然明显偏薄**，D 为负），但不必从下界起步。
+                    // ⚠ 这是**门的预算**与**检出力**的取舍：从下界 0.60 起步要 20 轮全精度，
+                    //   门从 11 分钟涨到 30 分钟 —— 而门的第一条注释就是
+                    //   「门要有人愿意一直开着才有用」。0.75× 同样落在 ②′<0 的一侧，
+                    //   检出的是同一件事，轮数少一半。
+                    var thin = fdE.TabThickMm.Select(v => Math.Max(floorE, v * 0.75)).ToArray();
+                    var lcE = fdE.BuildCase(p, checkRamp: false);
+                    lcE.FlangePlates = thin.Select(MkE).ToArray();
+                    var rE = FlangeAutoSizer.SolveAuto(lcE, MkE, thin,
+                                 new FlangeAutoSizer.Options(),
+                                 new SyncProgress<string>(_ => { }), default);
+                    if (rE.Line is not { Ok: true } lrE)
+                    { bad++; Console.WriteLine("   ✗ 定尺寸器没跑出结果：" + rE.Message); }
+                    else
+                    {
+                        double fxE = lrE.ValueOf(LineResult.Key.NetFlux);
+                        double dipE = lrE.ValueOf(LineResult.Key.FlangeDip);
+                        bool okE = fxE > 0;
+                        if (!okE) bad++;
+                        Console.WriteLine($"   起点厚度 {string.Join("/", thin.Select(x => x.ToString("0.00")))}" +
+                                          $"（定案 ×0.75，下界 {floorE:0.00}）⇒ 收敛厚度 " +
+                                          string.Join("/", rE.ThicknessMm.Select(x => x.ToString("0.00"))));
+                        Console.WriteLine($"   {(okE ? "✓" : "✗")} ②′ = {fxE:+0.00;−0.00} W" +
+                                          $"（须 > 0）　③ = {dipE:0.00} K　{rE.Message.Split('\n')[0]}");
+                        if (!okE)
+                            Console.WriteLine("      ★★ **定尺寸器把设计停在了「热往管里灌」的一侧** —— " +
+                                              "这正是现场烧断的机理，比任何一条判据不过都严重。");
+                    }
+                }
+                catch (Exception ex) { bad++; Console.WriteLine("   ✗ 异常：" + ex.Message); }
 
                 Console.WriteLine();
                 Console.WriteLine(bad == 0
@@ -5131,9 +5624,41 @@ internal static class Program
                 Console.WriteLine();
 
                 int bad = 0;
+                // ★★★★★ 两条护栏（2026-08-17，用户发现新旧 3DM「一模一样」后加）。
+                //
+                // 出的事：`FinalDesign.All` 当天加进了两个**已作废**档（Retired08/Retired06），
+                // 而本命令按 `定案_管壁{壁厚}mm.3dm` 命名 —— 作废档的壁厚与现役档**一样**是
+                // 0.8 / 0.6，且排在后面 ⇒ **它们把刚写好的现役档整个覆盖掉了**。
+                // 用户拿到的 0.6 档 3DM 里是 舌90×30、板厚 1.82/2.85/2.66/1.49（作废那一版）。
+                //
+                // 更要命的是**它没报错**：round-trip 校验拿「刚渲染的那个 fd」去对文件，
+                // 两者当然自洽 ⇒ 全绿。这是 §5.5「校验量选错 ⇒ 发虚假通过证」的又一例：
+                // 校验回答的是「文件和它自己的输入一致吗」，而不是「文件是不是**该出的那个设计**」。
+                //
+                // ⇒ ① 已声明失效的档**一律不出图**（交付件不能是一个自己声明不成立的设计）；
+                //    ② 输出路径**去重**，撞名直接判失败 —— 命名规则将来再变也不会静默覆盖。
+                var used = new Dictionary<string, string>();
                 foreach (var fd in FinalDesign.All)
                 {
+                    if (fd.Invalid.Length > 0)
+                    {
+                        Console.WriteLine($"── {fd.Name}");
+                        Console.WriteLine("   ⊘ **已声明失效，跳过不出图**：" + fd.Invalid);
+                        Console.WriteLine();
+                        continue;
+                    }
                     string f3 = Path.Combine(outDir, $"定案_管壁{fd.WallMm:0.0}mm.3dm");
+                    if (used.TryGetValue(f3, out string? owner))
+                    {
+                        bad++;
+                        Console.WriteLine($"── {fd.Name}");
+                        Console.WriteLine($"   ✗ **输出文件名撞车**：{Path.GetFileName(f3)} 已被「{owner}」占用。");
+                        Console.WriteLine("     命名只按管壁厚，而现在有两个现役档共用同一管壁 ⇒ 会静默覆盖。");
+                        Console.WriteLine("     先把命名规则改成能区分它们的（例如带上档名），再出图。");
+                        Console.WriteLine();
+                        continue;
+                    }
+                    used[f3] = fd.Name;
                     Console.WriteLine($"── {fd.Name}");
                     Console.WriteLine("   " + fd.Describe());
                     string echo;
@@ -5271,6 +5796,20 @@ internal static class Program
                         Console.WriteLine($"      {"合计",-6}{s3,9:0.0}g{sf,11:0.0}g"
                                         + $"{(s3 - sf) / sf * 100,8:+0.00;−0.00}%"
                                         + $"　（FinalDesign 记 {fd.TotalMassG:0} g）");
+
+                        // ★★★ 与**记录值**对账，而且要**判**，不能只打印（2026-08-17）。
+                        //
+                        // 上面每一条校验比的都是「文件 vs 刚才渲染它的那个 fd」——两者天然自洽，
+                        // 所以当 `All` 里混进作废档、把现役档的文件覆盖掉时，**全部校验照样全绿**。
+                        // 记录值 `TotalMassG` 是唯一一个**独立于本次渲染**的锚：
+                        // 它由 `--selfcheck` 用整线求解器复核过。对不上就说明这个文件
+                        // 描述的不是报告里那个设计 —— 那正是用户 2026-08-17 发现的那种情形。
+                        double relRec = (s3 - fd.TotalMassG) / fd.TotalMassG * 100.0;
+                        bool okRec = Math.Abs(relRec) <= 2.0;
+                        if (!okRec) bad++;
+                        Console.WriteLine($"      {(okRec ? "✓" : "✗")} 对 FinalDesign 记录值 "
+                                        + $"{fd.TotalMassG:0} g 差 {relRec:+0.00;−0.00} %"
+                                        + (okRec ? "" : "　★★ **这个 3DM 画的不是记录里那个设计**"));
                     }
                     catch (Exception ex)
                     { bad++; Console.WriteLine("   ✗ 回显解析失败：" + ex.Message); }
@@ -5333,7 +5872,22 @@ internal static class Program
                 Console.WriteLine("── ① 排布（四片相同，由几何定）");
                 Console.WriteLine($"舌片：自圆盘切点 x={xTangent:0.0} 伸到末端 x=−{tabLB9:0}，等宽 {2 * halfWB9:0} mm");
                 Console.WriteLine($"压接段：**自舌片末端往回 {clampLenB9:0} mm**，即 x ∈ [−{tabLB9:0}, −{tabLB9 - clampLenB9:0}]");
-                Console.WriteLine($"自由段：x ∈ [{xTangent:0.0}, −{tabLB9 - clampLenB9:0}]，长 {(-(tabLB9 - clampLenB9)) - xTangent:0.0} mm（取绝对值 {Math.Abs(-(tabLB9 - clampLenB9) - xTangent):0.0}）");
+                // ★★★★★ 自由段长度 = 舌长 − 切点 − 压接长。它**可能为负** ——
+                //   负数的物理含义是「压接段放不下」：压接块会伸进圆盘里去。
+                //   原来这里算出负数就 `Math.Abs` 取绝对值打出来，等于把
+                //   「装不下」显示成「装得下 24 mm」。**这是把不可行解粉饰成可行解**，
+                //   与本项目其余「安静失败」同型（§1.8）。
+                //   ⇒ 直接算、直接判，负数或过小一律明说。
+                double freeLenB9 = tabLB9 - Math.Abs(xTangent) - clampLenB9;
+                Console.WriteLine($"自由段：x ∈ [−{tabLB9 - clampLenB9:0}, {xTangent:0.0}]，长 **{freeLenB9:0.0} mm**");
+                if (freeLenB9 < 0)
+                    Console.WriteLine($"  ★★ **负数 ⇒ 压接段根本放不下**：舌长 {tabLB9:0} − 切点 {Math.Abs(xTangent):0.0}" +
+                                      $" − 压接 {clampLenB9:0} = {freeLenB9:0.0}。压接块会伸进圆盘里。" +
+                                      "　⇒ 舌片必须加长，或压接段缩短（缩短受压接界面 J ≤ 1.0 限制）。");
+                else if (freeLenB9 < 30)
+                    Console.WriteLine($"  ⚠ 自由段只有 {freeLenB9:0.0} mm。**这一段是装配空间，也是引线漏热的杠杆**" +
+                                      "（漏热 ∝ 1/ℓ，太短会把管根抽冷）。" +
+                                      "　现场能不能在这段里下工具、上螺栓，要按实物判 —— 程序只管热电，不管装配。");
                 Console.WriteLine("★ 两面夹（上下各一块铜排）⇒ 接触面积翻倍，压接界面 J 减半。");
                 Console.WriteLine("★ 压接段**必须在末端**：它是 300 °C 的冷边界，越靠近圆盘，");
                 Console.WriteLine("  自由段越短 ⇒ 引线漏热 ∝ 1/ℓ 越大 ⇒ 直接把管根抽冷（§4.3e）。");

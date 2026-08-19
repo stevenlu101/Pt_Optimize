@@ -31,7 +31,7 @@ public sealed class AnalysisPage : TabPage
         Text = "分析";
         Padding = new Padding(2);
 
-        var tool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
+        var tool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, Font = UiScale.Ui() };
         _btnGate = Btn("① 升温可达性", (_, _) => _ = RunAsync(true));
         _btnScan = Btn("② 厚度灵敏度", (_, _) => _ = RunAsync(false));
         tool.Items.Add(_btnGate);
@@ -43,9 +43,11 @@ public sealed class AnalysisPage : TabPage
         tool.Items.Add(_status);
 
         _out.Dock = DockStyle.Fill;
-        _out.Font = new Font("Consolas", 9.5f);
+        _out.Font = UiScale.Mono();
         _out.ReadOnly = true; _out.WordWrap = false;
         _out.BackColor = Color.FromArgb(252, 252, 250);
+        // 本页两张表都靠制表位排；不挂钩就退回「按字符数补空格」，中文表头一多必歪，`**` 也不加粗
+        TextFmt.Hook(_out);
 
         var split = new SplitContainer
         { Dock = DockStyle.Fill, Orientation = System.Windows.Forms.Orientation.Horizontal };
@@ -103,8 +105,8 @@ public sealed class AnalysisPage : TabPage
         sb.AppendLine($"目标 {tTarget:0} °C　空管口径（升温时管内无玻璃）");
         sb.AppendLine("温控功率下升温是准静态的 ⇒「能不能到」= 该温度的稳态工作点要多大电流");
         sb.AppendLine();
-        sb.AppendLine($"{"纤维 mm",9}{"壁厚 mm",9}{"段散热 W",10}{"电流 A",9}{"管 J",8}" +
-                      $"{"I_stab A",10}{"稳定裕度",10}{"管铂 g/段",11}  判定");
+        sb.AppendLine("纤维 mm\t壁厚 mm\t段散热 W\t电流 A\t管 J A/mm²\t" +
+                      "I_stab A\t稳定裕度\t管铂 g/段\t判定");
 
         var xs = new List<double>(); var ys = new List<double>();
         foreach (double ins in new[] { 2.5, 5.0, 10.0, 20.0, 40.0 })
@@ -133,12 +135,16 @@ public sealed class AnalysisPage : TabPage
                 double margin = iStab / Math.Max(1e-9, iA);
                 double massG = aMm2 * q.TubeLengthMm * Materials.PtDensity * 1e-6;
                 string v = margin > 1.5 ? "✓" : margin > 1.0 ? "⚠ 裕度薄" : "✗ 越热稳定极限";
-                sb.AppendLine($"{ins,9:0.0}{w,9:0.0}{lossW,10:0}{iA,9:0}{jA,8:0.00}" +
-                              $"{iStab,10:0}{margin,10:0.00}{massG,11:0}  {v}");
+                sb.AppendLine($"{ins:0.0}\t{w:0.0}\t{lossW:0}\t{iA:0}\t{jA:0.00}\t" +
+                              $"{iStab:0}\t{margin:0.00}\t{massG:0}\t{v}");
                 if (Math.Abs(w - 0.4) < 1e-9) { xs.Add(ins); ys.Add(jA); }
             }
-            sb.AppendLine();
+            // 分档之间要横线不要空行：空行会把这张表断成五张，五段各自算列宽 ⇒ 彼此对不齐
+            sb.AppendLine(TextFmt.SepRow(9));
         }
+        // 最后那条 SepRow 就当表的底框；与「读法：」之间空一行 ——
+        // 原来分档之间的空行改成横线之后，表和散文就贴在一起了
+        sb.AppendLine();
         sb.AppendLine("读法：");
         sb.AppendLine("· 管 J ∝ 1/√壁厚 —— 减薄管壁不减少电流负担，反而抬高 J");
         sb.AppendLine("· 加厚保温同时降电流与 J，且保温无空间限制 ⇒ 管侧的免费杠杆");
@@ -167,7 +173,7 @@ public sealed class AnalysisPage : TabPage
         sb.AppendLine("=== ② 厚度灵敏度（每点一次整线耦合解）===");
         sb.AppendLine("形状 Ø60/舌50/半宽20；共用片厚 = 端片厚 × √3；管壁 0.4、纤维 10、法兰全包 20、夹持 300 °C");
         sb.AppendLine();
-        sb.AppendLine($"{"端片t mm",10}{"HC1 ΔT",10}{"HC2 ΔT",10}{"HC3 ΔT",10}{"法兰最高°C",12}{"总铂 g",9}  收敛");
+        sb.AppendLine("端片 t mm\tHC1 ΔT\tHC2 ΔT\tHC3 ΔT\t法兰最高 °C\t总铂 g\t收敛");
 
         var p = SegmentSolver.Clone(_base);
         p.Layer1.ThicknessMm = 10; p.Layer1.Enabled = true;
@@ -198,9 +204,9 @@ public sealed class AnalysisPage : TabPage
             catch { continue; }
             if (!r.Ok) continue;
             double dMin = r.Segments.Min(s => s.RootDeltaK);
-            sb.AppendLine($"{tE,10:0.00}{r.Segments[0].RootDeltaK,10:+0.0;-0.0}" +
-                          $"{r.Segments[1].RootDeltaK,10:+0.0;-0.0}{r.Segments[2].RootDeltaK,10:+0.0;-0.0}" +
-                          $"{r.Flanges.Max(f => f.TMaxC),12:0}{r.TotalMassG,9:0}  " + (r.Converged ? "✓" : "✗"));
+            sb.AppendLine($"{tE:0.00}\t{r.Segments[0].RootDeltaK:+0.0;-0.0}\t" +
+                          $"{r.Segments[1].RootDeltaK:+0.0;-0.0}\t{r.Segments[2].RootDeltaK:+0.0;-0.0}\t" +
+                          $"{r.Flanges.Max(f => f.TMaxC):0}\t{r.TotalMassG:0}\t" + (r.Converged ? "✓" : "✗"));
             xs.Add(tE); y1.Add(dMin);
             if (!double.IsNaN(prevT) && Math.Abs(dMin) < 200 && Math.Abs(prevD) < 200)
                 slope = (dMin - prevD) / (tE - prevT);

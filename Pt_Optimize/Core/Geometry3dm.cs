@@ -309,6 +309,8 @@ public static class Geometry3dm
         public int Nx { get; set; }
         public int Nz { get; set; }
         public double[] Thickness { get; set; } = Array.Empty<double>();
+        public int GroupCount { get; set; }
+        public int PartsUsed { get; set; }
     }
 
     /// <summary>同一 (文件, 图层, 平面, 步长) 只提一次 —— 每次提取要跑一遍 Rhino 子进程（数秒）</summary>
@@ -352,8 +354,15 @@ public static class Geometry3dm
         var f = new ThicknessField
         {
             X0 = dto.X0, Z0 = dto.Z0, Step = dto.Step,
-            Nx = dto.Nx, Nz = dto.Nz, T = dto.Thickness
+            Nx = dto.Nx, Nz = dto.Nz, T = dto.Thickness,
+            GroupCount = dto.GroupCount, PlaneY = dto.PlaneY
         };
+        // ⚠ 一个图层里有好几片、而调用方又没指定量哪一片 —— 这是**能正常跑完的错**：
+        //   量到的是其中一片，另外几片被无声丢掉。必须让上层看得见。
+        if (f.GroupCount > 1 && double.IsNaN(planeY))
+            f.Warning = $"图层「{layer}」里有 {f.GroupCount} 片互不相连的实体，" +
+                        $"本次只量了其中一片（中面 Y={f.PlaneY:0.0}）。" +
+                        "要指定量哪一片，请给 planeY。";
         _tfCache[key] = f;
         return f;
     }

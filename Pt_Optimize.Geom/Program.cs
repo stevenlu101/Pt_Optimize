@@ -361,9 +361,20 @@ internal static class GeomProbe
             for (int i = 0; i < boxes.Count; i++)
                 for (int j = i + 1; j < boxes.Count; j++)
                 {
+                    // ⚠⚠ **必须三个方向都判**（2026-08-17 实测修）。
+                    //   原来只判 X/Z：意图是把「同一片的各级台阶」并成一组 ——
+                    //   它们在 X/Z 上确实重叠。但**四片法兰沿 Y 排成一列时，
+                    //   X/Z 也完全相同**（就是同一个轮廓平移），于是四片被并成一组，
+                    //   射线一次穿透四片、厚度**相加**。
+                    //   实测 Pt_Heater3.3dm：读出「3 级 4/8/12 mm、单片 5467 g」，
+                    //   而真实是四片各 ~1.9/3.0 mm、单片 1368 g —— 差 4 倍，且不报错。
+                    //   这与 3DM **写**那边「同层被一次穿透、厚度加起来」是同一个病，
+                    //   写那边按片分层修好了，**读这边一直没修**。
+                    //   ⇒ 同一片的各级共享同一个 Y 带（都含中面），不同片沿 Y 分离 ⇒ 加 Y 判据即可分开。
                     bool ox = boxes[i].Min.X <= boxes[j].Max.X && boxes[j].Min.X <= boxes[i].Max.X;
                     bool oz = boxes[i].Min.Z <= boxes[j].Max.Z && boxes[j].Min.Z <= boxes[i].Max.Z;
-                    if (ox && oz) Union(i, j);
+                    bool oy = boxes[i].Min.Y <= boxes[j].Max.Y && boxes[j].Min.Y <= boxes[i].Max.Y;
+                    if (ox && oz && oy) Union(i, j);
                 }
             var groups = new Dictionary<int, List<int>>();
             for (int i = 0; i < boxes.Count; i++)
@@ -440,6 +451,10 @@ internal static class GeomProbe
                 ["file"] = Path.GetFullPath(path),
                 ["layer"] = layerName,
                 ["planeY"] = 0.5 * (bb.Min.Y + bb.Max.Y),
+                // ★ 分组信息必须进 JSON：调用方只在退出码非 0 时才读 stderr，
+                //   而「一个图层里有好几片」恰恰是**能正常跑完**的那种错。
+                ["groupCount"] = groups.Count,
+                ["partsUsed"] = parts.Count,
                 ["x0"] = x0, ["z0"] = z0, ["step"] = step, ["nx"] = nx, ["nz"] = nz,
                 ["solidPoints"] = solidPts,
                 ["areaMm2"] = solidPts * step * step,

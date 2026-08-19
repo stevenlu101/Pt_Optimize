@@ -20,7 +20,7 @@ public sealed class LineDesignPage : TabPage
     private readonly NumericUpDown _wall = Num(0.40m, 0.10m, 5.00m, 0.05m, 2);
     private readonly NumericUpDown _tubeIns = Num(10.0m, 0.0m, 100.0m, 0.5m, 1);
     private readonly NumericUpDown _clamp = Num(300m, -1m, 1200m, 10m, 0);
-    private readonly ComboBox _flIns = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 110 };
+    private readonly ComboBox _flIns = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = UiScale.S(110) };
     private readonly NumericUpDown _flInsT = Num(20.0m, 0.0m, 60.0m, 0.5m, 1);
     private readonly NumericUpDown _discD = Num(60m, 30m, 300m, 2m, 0);
     private readonly NumericUpDown _tabLen = Num(50m, 20m, 400m, 5m, 0);
@@ -36,12 +36,13 @@ public sealed class LineDesignPage : TabPage
     { Text = "Rhino .3dm 文件（任意形状：阶梯厚度、开槽、异形轮廓）", AutoSize = true };
     private readonly TextBox[] _file3dm = { new(), new(), new(), new() };
     private readonly Control[] _row3dm = new Control[4];
-    private readonly TextBox _layer3dm = new() { Text = "法兰", Width = 96 };
+    private readonly TextBox _layer3dm = new() { Text = "法兰", Width = UiScale.S(96) };
     private readonly DataGridView _segGrid = new();
     private readonly RichTextBox _out = new();
     private readonly ToolStripProgressBar _prog = new() { Visible = false, Maximum = 1000 };
     private readonly ToolStripLabel _status = new("");
     private readonly ToolStripButton _btnRun, _btnAuto, _btnExport, _btnLoadCase, _btn3dm, _btnRepro;
+    private readonly ToolStripButton _btnShape;
 
     // ★★★★★ 改参数**自动**给答案（2026-08-16 用户：「UI 已经够复杂，不要再加按钮」）
     //
@@ -57,17 +58,33 @@ public sealed class LineDesignPage : TabPage
     private Snap? _solvedSnap;               // 上一次**真解**时的参数
     private LineResult? _solvedRes;
 
-    /// <summary>参与外推的那几个参数（有实测雅可比的才放进来）。</summary>
-    private sealed class Snap { public double Wall, Plate, TubeIns; }
+    /// <summary>
+    /// 参与外推的那几个参数（有实测雅可比的才放进来），**外加形状**。
+    ///
+    /// ★ 形状是 2026-08-17 补的，起因是一个真空档：原来 `tooFar` 只管
+    ///   「离上次已解的点走了多远」，**从不问「现在这个形状是不是雅可比测过的那个形状」**。
+    ///   而雅可比那几个常数自己的注释就写着「只对这个工作点附近成立，
+    ///   ②″ 由两个竞争峰决定，**符号会随构型变**（已经栽过一次：拿另一构型的符号外推，判反了）」。
+    ///   ⇒ 换了盘径/舌长/舌宽之后再解一次，然后微调板厚，预测照样显示 ——
+    ///     而它用的是**另一个构型**的斜率。这正是那条注释警告过的事，只是没人拦。
+    /// </summary>
+    private sealed class Snap
+    {
+        public double Wall, Plate, TubeIns;
+        public double Disc, TabLen, TabW;
+    }
 
     private Snap CurrentSnap() => new()
     {
         Wall = (double)_wall.Value,
         Plate = _tPlate.Average(n => (double)n.Value),
-        TubeIns = (double)_tubeIns.Value
+        TubeIns = (double)_tubeIns.Value,
+        Disc = (double)_discD.Value,
+        TabLen = (double)_tabLen.Value,
+        TabW = (double)_tabW.Value
     };
     private readonly ToolStripComboBox _caseBox =
-        new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 150 };
+        new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = UiScale.S(210) };
     private readonly TabControl _plots = new() { Dock = DockStyle.Fill };
     private readonly ScottPlot.WinForms.FormsPlot _pT = FieldPlots.NewPlot();
     private readonly ScottPlot.WinForms.FormsPlot _pJ = FieldPlots.NewPlot();
@@ -112,10 +129,14 @@ public sealed class LineDesignPage : TabPage
         // 自动重算：任何输入一动就 (a) 立刻给预测 (b) 重排防抖定时器
         _autoTimer.Tick += (_, _) => { _autoTimer.Stop(); TryAutoRun(); };
 
-        var tool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
+        // ⚠ ToolStrip **不继承父窗体的字体**（它用 ToolStripManager 的默认字体）。
+        //   所以在 Form 上设 Font 对工具条一点用都没有 —— 用户 2026-08-18 反馈
+        //   「下排的字还是太小」，指的就是这一排。必须逐个显式设。
+        var tool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, Font = UiScale.Ui() };
         _btnRun = Btn("核算整线", (_, _) => _ = RunAsync(false));
         _btnAuto = Btn("自动定厚", (_, _) => _ = RunAsync(true));
-        _btnExport = Btn("导出 .3dm", (_, _) => Export());
+        // 1b 之后它导出的是**整机**（管 + 四片法兰）且几何与求解一致，故改名点明
+        _btnExport = Btn("导出本页 3DM", (_, _) => Export());
 
         // ★ 定案档：直接从 Core/FinalDesign 取，**不在 UI 里再抄一份数**。
         //   两档都全判据通过，差别只在裕度与铂重（见各档的 Binding 说明）。
@@ -133,7 +154,21 @@ public sealed class LineDesignPage : TabPage
         // 数字对不上，而它照样出一张漂亮的判据表 —— §1.8「安静失败」的形状。
         // ⇒ 本按钮**完全绕过页面控件**，直接用 FinalDesign.BuildCase 造算例。
         _btnRepro = Btn("▶ 复现定案", (_, _) => _ = ReproduceAsync());
-        _btnRepro.Font = new Font(_btnRepro.Font, FontStyle.Bold);
+        // ⚠ 不能写 `new Font(_btnRepro.Font, Bold)` —— 那会**在这一刻捕获**按钮当时的字体
+        //   （默认 9 pt），从此这个按钮就不再跟着工具条的字体走了。
+        //   用户 2026-08-18 截图里「▶ 复现定案」比邻居明显小一号，就是这么来的。
+        _btnRepro.Font = UiScale.Ui(FontStyle.Bold);
+
+        // ★★★★★ 搜形状（2026-08-17，用户指出「跑得久」该用**进度条**解决，不是把功能挡在 CLI 外）。
+        //
+        // 我原来的理由是「一次形状网格几十分钟，挂在按钮上会变成点一下没反应半小时」——
+        // 那是把**没有进度显示**当成了**功能不能进 UI**。进度管线（_prog/_status）本来就在，
+        // Sizer 也早就吐 IProgress<string>，接上即可。
+        //
+        // ⚠ 这是本轮**唯一**新增的控件，与「UI 已经够复杂不要再加」是有冲突的，所以说明理由：
+        //   功能需要一个触发点；藏成快捷键或修饰键（Shift+自动定厚）会直接违反
+        //   「不看说明书也能用」。⇒ 宁可多一个**名字说得清**的按钮。
+        _btnShape = Btn("◇ 搜形状", (_, _) => _ = SearchShapeAsync());
 
         tool.Items.Add(new ToolStripLabel("定案档"));
         tool.Items.Add(_caseBox);
@@ -143,18 +178,19 @@ public sealed class LineDesignPage : TabPage
         tool.Items.Add(new ToolStripSeparator());
         tool.Items.Add(_btnRun);
         tool.Items.Add(_btnAuto);
+        tool.Items.Add(_btnShape);
         tool.Items.Add(new ToolStripSeparator());
         tool.Items.Add(btnAnalyze);
         tool.Items.Add(_btnExport);
         tool.Items.Add(new ToolStripSeparator());
-        _prog.Size = new Size(160, 16);
+        _prog.Size = new Size(UiScale.S(160), UiScale.S(16));
         tool.Items.Add(_prog);
         tool.Items.Add(_status);
 
         // ── 输入面板
         var input = new TableLayoutPanel
         { Dock = DockStyle.Fill, ColumnCount = 2, AutoScroll = true, Padding = new Padding(6) };
-        input.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
+        input.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, UiScale.S(188)));
         input.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
         void Head(string s)
@@ -162,7 +198,7 @@ public sealed class LineDesignPage : TabPage
             var l = new Label
             {
                 Text = s, AutoSize = true, Margin = new Padding(0, 10, 0, 4),
-                Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
+                Font = UiScale.Ui(FontStyle.Bold),
                 ForeColor = Color.FromArgb(40, 90, 140)
             };
             input.Controls.Add(l); input.SetColumnSpan(l, 2);
@@ -176,15 +212,21 @@ public sealed class LineDesignPage : TabPage
         }
 
         Head("管");
+        // ⚠ 斜率一律**插值自 dDip_*／dJ_* 那组常数**，不再手抄一遍（2026-08-20）。
+        //   手抄的那版已经漂开过：常数早在 2026-08-17 换成新定案点的实测值，
+        //   而这三条提示还停在旧构型的 ③ +123／−221／+22.7 上 ——
+        //   **同一个数存两处，迟早对不上账**（§7 头一条）。插值之后它不可能再漂。
         Row("壁厚 mm", _wall,
             "工艺下界 0.6 mm = **手工 TIG 烧穿下界**（自动 TIG 0.3、激光 0.1，差一个量级）。\n" +
             "另一条独立的界是管 J ≤ 12 A/mm²（现场给定：一般上限 15，壁 0.6 时 12 是极限）。\n" +
             "定案两档正是被这两条同点咬住（0.6）与全都留有余量（0.8）。\n" +
-            "实测斜率（--vary）：③ −221 K/mm　②″ +16.7 K/mm　管J −5.98　管重 +3051 g/mm\n" +
+            $"实测斜率（--vary）：③ {dDip_dWall:+0.0;−0.0} K/mm　②″ +16.7 K/mm" +
+            $"　管J {dJ_dWall:+0.00;−0.00}　管重 +3051 g/mm\n" +
             "⚠ ②″ 那条只在**这个工作点附近**成立：②″ 由两个竞争峰决定，符号会随构型翻。");
         Row("纤维保温 mm", _tubeIns,
             "无空间限制、不花铂 —— 但**不是免费的**：\n" +
-            "  ③ +22.7 K/mm　②″ −3.1 K/mm　管J −0.57 (A/mm²)/mm　（实测 --vary）\n" +
+            $"  ③ {dDip_dTubeIns:+0.0;−0.0} K/mm　②″ −3.1 K/mm" +
+            $"　管J {dJ_dTubeIns:+0.00;−0.00} (A/mm²)/mm　（实测 --vary）\n" +
             "机理：保温厚 ⇒ 管散热少 ⇒ 电流小（利），但 β 变小而 ③=D/√(kAβ) 里 β 在分母（不利）。\n" +
             "现用的 5 mm 恰在拐点上 —— 这个值原本是没量过的默认值，碰巧是对的。");
 
@@ -201,8 +243,8 @@ public sealed class LineDesignPage : TabPage
         {
             int idx = i;
             var pnl = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0), WrapContents = false };
-            _file3dm[idx].Width = 150; _file3dm[idx].ReadOnly = true;
-            var b = new Button { Text = "…", Width = 30, Height = 22 };
+            _file3dm[idx].Width = UiScale.S(150); _file3dm[idx].ReadOnly = true;
+            var b = new Button { Text = "…", Width = UiScale.S(30), Height = UiScale.S(22) };
             b.Click += (_, _) => PickFile(idx);
             pnl.Controls.Add(_file3dm[idx]); pnl.Controls.Add(b);
             _row3dm[idx] = pnl;
@@ -223,7 +265,7 @@ public sealed class LineDesignPage : TabPage
         Head("法兰厚度 mm / 厚度标度（可点「自动定厚」求解）");
         string tipPlate =
             "**最强的旋钮**，实测（--vary，端点均已收敛）：\n" +
-            "  ③ +123 K/mm　②″ −14.6 K/mm　法兰重 +264 g/mm\n" +
+            $"  ③ {dDip_dPlate:+0.0;−0.0} K/mm　②″ −14.6 K/mm　法兰重 +264 g/mm\n" +
             "⚠ ③ 是**正号** —— 加厚会把 ③ 推向限值。「哪里热就加厚哪里」在这里是反的：\n" +
             "  加厚同时降单位面积发热（∝1/t）与增强横向导热（∝t），后者把热从管根抽走。\n" +
             "共用片承 √3 倍电流、发热 3 倍 ⇒ 必须比端片厚，四片等厚不是最优。";
@@ -239,7 +281,7 @@ public sealed class LineDesignPage : TabPage
 
         Head("分段控温点");
         _segGrid.Dock = DockStyle.Top;
-        _segGrid.Height = 110;
+        _segGrid.Height = UiScale.S(110);
         _segGrid.AutoGenerateColumns = true;
         _segGrid.AllowUserToAddRows = true;
         _segGrid.DataSource = _segs;
@@ -249,7 +291,16 @@ public sealed class LineDesignPage : TabPage
 
         // ── 输出
         _out.Dock = DockStyle.Fill;
-        _out.Font = new Font("Consolas", 9.5f);
+        _out.Font = UiScale.Mono();
+
+        // 排版一次挂钩、覆盖所有写入路径 —— 理由见 TextFmt.Hook 的说明。
+        //
+        // ⚠ 挂钩之后本页**只用** `_out.Text = …` / `+=` / `AppendText` 写输出，
+        //   不再单独调 TextFmt.Write。理由**不是**「直接调会与钩子打架」——
+        //   Write 自带闸门（TextFmt._writing 在进 WriteCore 之前就置上了），
+        //   它写的过程中钩子不会插进来。真正的理由是：本页写输出的地方有几十处，
+        //   只要留着两种写法，早晚会有几处漏掉的混在排好的内容中间 —— 那比全都不排版更难查。
+        TextFmt.Hook(_out);
         _out.ReadOnly = true; _out.WordWrap = false;
         _out.BackColor = Color.FromArgb(252, 252, 250);
 
@@ -261,9 +312,16 @@ public sealed class LineDesignPage : TabPage
             _plots.TabPages.Add(pg);
         }
 
+        // 判据表（Excel 式）在上、散文说明在下 —— 表归表、话归话
+        InitChecksGrid();
+        var textSplit = new SplitContainer
+        { Dock = DockStyle.Fill, Orientation = System.Windows.Forms.Orientation.Horizontal };
+        textSplit.Panel1.Controls.Add(_checks);
+        textSplit.Panel2.Controls.Add(_out);
+
         var rightSplit = new SplitContainer
         { Dock = DockStyle.Fill, Orientation = System.Windows.Forms.Orientation.Horizontal };
-        rightSplit.Panel1.Controls.Add(_out);
+        rightSplit.Panel1.Controls.Add(textSplit);
         rightSplit.Panel2.Controls.Add(_plots);
 
         var main = new SplitContainer { Dock = DockStyle.Fill };
@@ -284,8 +342,9 @@ public sealed class LineDesignPage : TabPage
         SyncGeomSource();
         HandleCreated += (_, _) => BeginInvoke(() =>
         {
-            main.SplitterDistance = 300;
-            rightSplit.SplitterDistance = (int)(rightSplit.Height * 0.62);
+            main.SplitterDistance = Math.Min(UiScale.S(330), Math.Max(UiScale.S(240), main.Width / 3));
+            rightSplit.SplitterDistance = (int)(rightSplit.Height * 0.66);
+            textSplit.SplitterDistance = (int)(textSplit.Height * 0.46);   // 判据表 : 说明 ≈ 46:54
         });
     }
 
@@ -323,7 +382,7 @@ public sealed class LineDesignPage : TabPage
 
     private static NumericUpDown Num(decimal v, decimal lo, decimal hi, decimal inc, int dec)
     {
-        var n = new NumericUpDown { Width = 96, DecimalPlaces = dec, Increment = inc };
+        var n = new NumericUpDown { Width = UiScale.S(96), DecimalPlaces = dec, Increment = inc };
         n.Minimum = lo; n.Maximum = hi;
         n.Value = Math.Clamp(v, lo, hi);
         return n;
@@ -356,6 +415,46 @@ public sealed class LineDesignPage : TabPage
         _segGrid.RowsRemoved += (_, _) => ParamChanged();
     }
 
+    /// <summary>
+    /// ★★★★★ **舌长的装配下界**（2026-08-17）—— 用户第 2 项：
+    /// 「APP 不能**自动**改变法兰盘直径与舌片长度吗？」
+    ///
+    /// 舌长根本不该是一个自由旋钮：它由三段拼出来，
+    ///   舌长 = 圆盘切点 + 压接段 + 自由段
+    /// 前两段是几何与工艺给的，第三段有下界（铜排装得下）。
+    /// **加长只会多花铂、多发热**，所以最优解永远贴着这个下界。
+    ///
+    /// 定案的 90 mm 之所以能长期存在，正是因为舌长在程序里是个独立常数，
+    /// 从来没人拿盘径去核对过它。⇒ 现在让盘径/舌宽一动，舌长**自己跟上来**。
+    /// </summary>
+    private double TabLenFloorMm()
+    {
+        double R = (double)_discD.Value * 0.5;
+        double hw = Math.Min((double)_tabW.Value, R);
+        double tangent = Math.Sqrt(Math.Max(0, R * R - hw * hw));
+        return tangent + FinalDesign.Current.ClampLengthMm + _freeTabMinMm;
+    }
+
+    /// <summary>自由段下界 mm。现场铜排长 100／宽 60–80（用户 2026-08-17），基本留 100。</summary>
+    private readonly double _freeTabMinMm = 100.0;
+
+    /// <summary>舌长低于装配下界就**顶上去**，并说清楚为什么 —— 不静默、也不放行。</summary>
+    private string EnforceTabLenFloor()
+    {
+        double floor = TabLenFloorMm();
+        if ((double)_tabLen.Value >= floor - 1e-9) return "";
+        decimal want = Math.Min(_tabLen.Maximum, Math.Ceiling((decimal)floor));
+        double had = (double)_tabLen.Value;
+        bool keep = _suppressAuto;
+        _suppressAuto = true;                       // 这是程序在写控件，别再触发一轮
+        _tabLen.Value = want;
+        _suppressAuto = keep;
+        return $"   ★ 舌长已由 {had:0} **自动顶到 {want:0} mm** —— 低于它铜排装不上（判据⑤）。\r\n" +
+               $"     舌长 = 圆盘切点 {Math.Sqrt(Math.Max(0, Math.Pow((double)_discD.Value * 0.5, 2) - Math.Pow(Math.Min((double)_tabW.Value, (double)_discD.Value * 0.5), 2))):0.0}" +
+               $" + 压接段 {FinalDesign.Current.ClampLengthMm:0} + 自由段 {_freeTabMinMm:0}。\r\n" +
+               $"     想要更短的舌片，要改的是**盘径或铜排尺寸**，不是舌长本身。\r\n";
+    }
+
     /// <summary>参数动了：立刻给预测，并重排防抖定时器。</summary>
     private void ParamChanged()
     {
@@ -382,13 +481,41 @@ public sealed class LineDesignPage : TabPage
         _ = RunAsync(false, byTimer: true);
     }
 
-    // ★ 实测雅可比（2026-08-16 `--vary`，端点均已收敛，管壁 0.8 定案点附近）。
+    // ★ 实测雅可比（`--vary`，端点均已收敛，管壁 0.8 定案点附近）。
     //   ⚠ 只对**这个工作点附近**成立 —— ②″ 由两个竞争峰决定，符号会随构型变
-    //     （同一天已经栽过一次：拿另一构型的符号外推，判反了）。
+    //     （已经栽过一次：拿另一构型的符号外推，判反了）。
     //   ⇒ 外推只用来给「大概会往哪边走」，绝不当结论；超出一步就不显示。
-    private const double dDip_dWall = -221.3, dC2_dWall = +16.66, dJ_dWall = -5.98;
-    private const double dDip_dPlate = +123.4, dC2_dPlate = -14.59;
-    private const double dDip_dTubeIns = +22.66, dC2_dTubeIns = -3.10, dJ_dTubeIns = -0.57;
+    //
+    // ★★★ 下面这三个「测点」常数是 2026-08-17 补的，**必须与上面那组斜率同时更新**。
+    //   在此之前它们不存在，于是没有任何东西能回答「这组斜率是在哪个形状上测的」——
+    //   换了形状照样外推。而斜率本身那句注释早就写着「符号会随构型变」。
+    //   ⇒ 谁改斜率，就必须一起改这三个数；`ShowPrediction` 用它们判「本构型在不在范围内」。
+    private const double JacDiscD = 60.0, JacTabLen = 140.0, JacTabW = 30.0;
+    // 2026-08-17 `--vary` 在**新定案点**（盘Ø60／舌140×60／板厚 0.89/2.45/2.35/0.73）重测：
+    //
+    // ★ 2026-08-20 起，参数提示框与外推的「驱动项」文字都**插值自这里**，不再各抄一份。
+    //   起因：这几个常数 08-17 就换成了新值，而提示框里还挂着旧构型的
+    //   ③ +123／−221／+22.7 —— 三处数字对不上，谁也没发现。
+    //   ⇒ 改这几个数只需改这一处；界面上所有引用它们的地方会自己跟着变。
+    private const double dDip_dWall = -333.6, dJ_dWall = -5.99;
+    private const double dDip_dPlate = +194.5;
+    private const double dDip_dTubeIns = +34.0, dJ_dTubeIns = -0.57;
+
+    // ★★★★★ **②″ 的外推被撤掉了**（2026-08-17），这是有实测依据的决定，不是省事。
+    //
+    // 旧常数（另一个构型：舌 90×30、环 1.22、板厚约两倍）：
+    //     ∂②″/∂管壁 = **+16.66**　∂②″/∂板厚 = **−14.59**
+    // 新定案点重测：
+    //     ∂②″/∂管壁 = **−0.12**　∂②″/∂板厚 = **+0.14**
+    // ⇒ **两个都翻了符号，量级掉了 100–140 倍。**
+    //
+    // 物理上说得通：舌片加宽一倍之后孔周电流不再拥塞，②″ = −0.21 K 而限值是 +5 ——
+    // 这条判据在本构型上**根本不活跃**，所以什么都推不动它。
+    //
+    // ⇒ 对一个「不动的量」做线性外推，最好的情况是噪声，最坏的情况是拿**反号**的斜率
+    //   告诉用户「往那边走会更好」。两者都不该发生 ⇒ 不推，只在真解里报它的实测值。
+    //   这正是那句注释警告过的事：「②″ 由两个竞争峰决定，符号会随构型变」——
+    //   以前只是写着，现在有两组数把它坐实了。
 
     /// <summary>
     /// 三层里的前两层：**解析层**（精确）与**预测层**（外推）。毫秒级，不解场。
@@ -404,9 +531,25 @@ public sealed class LineDesignPage : TabPage
         double area = Math.PI * (Math.Pow(25 + wall, 2) - 625.0);          // mm²
         double tubeG = area * 300.0 * 3 * Materials.PtDensity * 1e-6;
         sb.AppendLine("── 参数已改（下面标「解析」的是精确值，标「预测」的还没解）");
-        sb.AppendLine($"   {"管截面",-8}{area,10:0.0} mm²      解析");
-        sb.AppendLine($"   {"管铂重",-8}{tubeG,10:0} g        解析（三段）");
-        sb.AppendLine($"   {"管孔半径",-7}{wall + 25,10:0.0} mm       解析（跟随管外径）");
+        // ★ 装配先算：它是纯几何、闭式、精确，且**不合格时热学结果没有意义**
+        //   （一个装不上的形状，算得再准也交不出去）⇒ 放在最前面。
+        string fixedTab = EnforceTabLenFloor();
+        if (fixedTab.Length > 0) sb.Append(fixedTab);
+        double tanNow = Math.Sqrt(Math.Max(0, Math.Pow((double)_discD.Value * 0.5, 2)
+                        - Math.Pow(Math.Min((double)_tabW.Value, (double)_discD.Value * 0.5), 2)));
+        double freeNow = (double)_tabLen.Value - tanNow - FinalDesign.Current.ClampLengthMm;
+        // 解析层这四行是一张表：名称 / 值 / 单位 / 说明。
+        // ⚠ 两条 ⚠ 告警**必须排在整张表之后**，不能夹在行与行中间：不带 \t 的整句
+        //   会被当成普通句子，**把一张表断成两截**，两截各自量各自的列宽 ——
+        //   于是「自由段」那行的数值列与下面三行错开，而错的时机偏偏是告警触发的时候。
+        sb.AppendLine($"   自由段\t{freeNow:0.0}\tmm\t解析（判据⑤ 下界 {_freeTabMinMm:0}）" +
+                      (freeNow >= _freeTabMinMm - 1e-9 ? "　✓ 铜排装得下" : "　✗ **装不下**"));
+        sb.AppendLine($"   管截面\t{area:0.0}\tmm²\t解析");
+        sb.AppendLine($"   管铂重\t{tubeG:0}\tg\t解析（三段）");
+        sb.AppendLine($"   管孔半径\t{wall + 25:0.0}\tmm\t解析（跟随管外径）");
+        if ((double)_tabW.Value > (double)_discD.Value * 0.5 + 1e-9)
+            sb.AppendLine($"   ⚠ 舌端半宽 {(double)_tabW.Value:0} > 盘半径 {(double)_discD.Value * 0.5:0}" +
+                          " ⇒ 等宽舌片与圆盘没有切点，半宽会被**静默夹到盘半径**。要真加宽请同时放大盘。");
         if (wall < 0.6 - 1e-9)
             sb.AppendLine($"   ⚠ 壁厚 {wall:0.00} 低于手工 TIG 烧穿下界 0.6 mm —— 工艺上焊不出来");
 
@@ -417,26 +560,41 @@ public sealed class LineDesignPage : TabPage
             double dP = now.Plate - _solvedSnap.Plate;
             double dI = now.TubeIns - _solvedSnap.TubeIns;
             bool tooFar = Math.Abs(dW) > 0.25 || Math.Abs(dP) > 0.4 || Math.Abs(dI) > 3.0;
+            // ★ 还要问一句：**当前形状是不是雅可比测过的那个形状**（2026-08-17 补）。
+            //   步长小不等于可以外推 —— 换个构型，②″ 的符号都可能翻。
+            bool offShape = Math.Abs(now.Disc - JacDiscD) > 1e-6
+                         || Math.Abs(now.TabLen - JacTabLen) > 1e-6
+                         || Math.Abs(now.TabW - JacTabW) > 1e-6;
 
             double V(string k)
             { foreach (var c in _solvedRes.Checks) if (c.Name.StartsWith(k, StringComparison.Ordinal)) return c.Actual; return double.NaN; }
 
             sb.AppendLine();
-            if (tooFar)
+            if (offShape)
+                sb.AppendLine($"   （**本构型不在雅可比的适用范围** —— 那组斜率是在 " +
+                              $"盘Ø{JacDiscD:0}／舌 {JacTabLen:0}×{2 * JacTabW:0} 上实测的，" +
+                              $"而现在是 盘Ø{now.Disc:0}／舌 {now.TabLen:0}×{2 * now.TabW:0}。" +
+                              "②″ 的符号会随构型翻 ⇒ **不给预测**，等真解。）");
+            else if (tooFar)
                 sb.AppendLine("   （改动已超出实测雅可比的适用范围 ⇒ **不给预测**，等真解）");
             else
             {
+                // 五列：名称 / 基准 / 预测 / 限值 / 说明。
+                // ⚠ 「预测」两个字必须留在数值同一格里 —— 它是这一屏唯一区分
+                //   「已解」与「外推」的记号（见本类顶部：预测值绝不能长得像解出来的）。
                 void P(string nm, double base0, double pred, double limit, string drivers)
                 {
-                    string verdict = pred <= limit ? "" : "　⚠ 预测越限";
-                    sb.AppendLine($"   {nm,-8}{base0,8:0.00} → 预测 {pred,7:0.00} / {limit,-6:0.0}{verdict}　{drivers}");
+                    string verdict = pred <= limit ? "" : "⚠ 预测越限　";
+                    sb.AppendLine($"   {nm}\t{base0:0.00}\t预测 {pred:0.00}\t/ {limit:0.0}\t{verdict}{drivers}");
                 }
+                // 驱动项的数值同样插值自常数 —— 与提示框、与外推用的斜率是**同一个来源**
                 P("③", V("③"), V("③") + dDip_dWall * dW + dDip_dPlate * dP + dDip_dTubeIns * dI, 10.0,
-                  "板厚 +123 K/mm　管壁 −221　管保温 +23");
-                P("②″", V("②″"), V("②″") + dC2_dWall * dW + dC2_dPlate * dP + dC2_dTubeIns * dI, 5.0,
-                  "板厚 −14.6 K/mm　管壁 +16.7　管保温 −3.1");
+                  $"板厚 {dDip_dPlate:+0;−0} K/mm　管壁 {dDip_dWall:+0;−0}　管保温 {dDip_dTubeIns:+0;−0}");
                 P("管J", V("管 J"), V("管 J") + dJ_dWall * dW + dJ_dTubeIns * dI, 12.0,
-                  "管壁 −5.98　管保温 −0.57");
+                  $"管壁 {dJ_dWall:+0.00;−0.00}　管保温 {dJ_dTubeIns:+0.00;−0.00}");
+                // ⚠ 列数必须与 P 完全一致，否则它会自成一张表、和上面两行对不齐
+                sb.AppendLine($"   ②″\t{V("②″"):0.00}\t**不外推**\t/ 5.0\t" +
+                              "本构型上它不活跃（实测各斜率 |·| ≤ 0.15，且符号与旧构型相反）");
                 sb.AppendLine("   ⚠ 预测是**线性外推**，只说方向与量级，不是答案。");
             }
         }
@@ -502,7 +660,12 @@ public sealed class LineDesignPage : TabPage
     /// 与「核算整线」的区别，一句话：
     ///   · 核算整线 —— 读**页面上的控件**（可以随便改，用来试）
     ///   · 复现定案 —— 读 <see cref="FinalDesign"/>，**完全不看页面**（用来复现交付数字）
-    /// 页面控件表达不了渐变环与逐片舌保温，所以只有这条路能对上定案值。
+    ///
+    /// ⚠ 1b（2026-08-17）之后，「核算整线」用的是**同一套几何构造器**，
+    ///   把定案参数填进页面也能复现定案值（界面接线测试第 16 项每次都验，差 0.000）。
+    ///   那本条为什么还留着？——因为它**完全不读页面**：
+    ///   用来排除「页面上某个控件被改过而自己没注意到」。
+    ///   两条路给同一个数，才说明页面没被动过手脚；给不同的数，就该查页面。
     /// </summary>
     private async Task ReproduceAsync()
     {
@@ -534,11 +697,14 @@ public sealed class LineDesignPage : TabPage
             if (r.Ok)
             {
                 double mt = r.TubeMassG, mf = r.FlangeMassG, all = r.TotalMassG;
+                // 四列：名称 / 本次实算 / 记录值 / 差。
+                // ⚠ 差值格式里用 ASCII 的 `-`，不用 U+2212 —— 右对齐靠补空格，
+                //   一格里混进非 ASCII 字形就宽度不成整数倍，那一列会退回左对齐。
                 void Line(string nm, double got, double want)
                 {
                     double d = want > 0 ? (got - want) / want * 100 : 0;
-                    sb.AppendLine($"   {nm,-8}{got,9:0.0} g　记录 {want,7:0} g　" +
-                                  $"差 {d,6:+0.0;−0.0} %" + (Math.Abs(d) <= 1.0 ? "" : "　⚠"));
+                    sb.AppendLine($"   {nm}\t{got:0.0} g\t记录 {want:0} g\t" +
+                                  $"差 {d:+0.0;-0.0} %" + (Math.Abs(d) <= 1.0 ? "" : "　⚠"));
                 }
                 Line("管", mt, fd.TubeMassG);
                 Line("法兰", mf, fd.FlangeMassG);
@@ -549,8 +715,10 @@ public sealed class LineDesignPage : TabPage
             sb.AppendLine();
             sb.AppendLine("本次用的是 " + fd.Describe());
             sb.AppendLine("出处：" + fd.Provenance);
-            sb.AppendLine("⚠ 这条路**完全不读页面上的控件** —— 页面表达不了渐变环与逐片舌保温。");
-            sb.AppendLine("   想改参数试验请用「核算整线」；那条路读页面，数字不会等于定案值。");
+            sb.AppendLine("⚠ 这条路**完全不读页面上的控件**。");
+            sb.AppendLine("   1b（2026-08-17）之后「核算整线」用的是同一套几何构造器 ——");
+            sb.AppendLine("   把定案参数填进页面，它也能给出上面这组数。两条路**应当一致**；");
+            sb.AppendLine("   不一致就说明页面上有控件被改过，查页面，别怀疑内核。");
             _out.Text += sb.ToString();
             _status.Text = "完成";
         }
@@ -605,18 +773,49 @@ public sealed class LineDesignPage : TabPage
         _segGrid.Refresh();
 
         _out.Text =
+            // ★ 失效告示必须在**最前面**：这一段是用户载入定案后唯一会读的文字，
+            //   把「本档已失效」写在第五行等于没写（§1.8：安静失败靠的就是没人看的位置）。
+            (fd.Invalid.Length > 0
+                ? "═══ ★★★ 本档已失效，不可作为交付值 ★★★ ═══\r\n" + fd.Invalid + "\r\n" +
+                  $"（自由段 {fd.FreeTabMm:0.0} mm）\r\n═══════════════════════════════\r\n\r\n"
+                : "") +
             "已载入定案档：" + fd.Describe() + "\r\n" +
             "咬住它的：" + fd.Binding + "\r\n" +
             "出处：" + fd.Provenance + "\r\n" +
             $"外层耦合剩余误差估计 {fd.ResidualK:0.00} K（不是步长；见 HANDOVER §1.85）\r\n\r\n" +
-            "⚠ 有两项本页控件表达不了，已在内核里按定案值生效、但界面上看不到：\r\n" +
-            $"   · 管孔两级渐变环：r ≤ 孔+{fd.RingWidthMm:0} → 板厚×{fd.RingMul[0]:0.00}，" +
-            $"r ≤ 孔+{2 * fd.RingWidthMm:0} → 板厚×{fd.RingMulOuter(0):0.000}\r\n" +
-            $"   · 逐片舌保温：{string.Join(" / ", fd.TabInsulMm)} mm（四片差 12 倍，不能同规格）\r\n" +
-            "   ⇒ 想复现定案数，请点工具条上的「▶ 复现定案」——" +
-            "本页参数表达不了上面两项，「核算整线」算的是另一片法兰。";
+            // ★ 这段话 2026-08-17（1b）之前是「本页表达不了两项，核算整线算的是另一片法兰」。
+            //   1b 之后**不再成立**：解析模式与「复现定案」走同一个构造器，
+            //   界面接线测试第 16 项每次都验「页面路径复现定案记录值」（差 0.000）。
+            //   ⚠ 留着旧话比没有话更糟 —— 它会让人以为页面上的数不可信而绕开去用别的路径。
+            "本页控件**没有**下面这几项，但它们已按定案值参与求解（界面上看不到）：\r\n" +
+            $"   · 管孔渐变环 ×{FinalDesign.Fmt(fd.RingMul, "0.00")}" +
+            (fd.RingMul[0] <= 1.001
+                ? "（=1.00 即**不需要环**）\r\n"
+                : $"，r ≤ 孔+{fd.RingWidthMm:0} 与 孔+{2 * fd.RingWidthMm:0} 两级\r\n") +
+            $"   · 逐片舌保温 {FinalDesign.Fmt(fd.TabInsulMm, "0.0")} mm（守 ②′/③ 的主力旋钮）\r\n" +
+            $"   · 压接段 {fd.ClampLengthMm:0} mm　舌根圆角 R{fd.TabFilletMm:0}　等宽舌片　管孔两面角焊缝\r\n" +
+            "   ⇒ 现在点「核算整线」**就能**复现定案数字（与「▶ 复现定案」同一套几何）。\r\n" +
+            "     两者的区别只剩：本按钮用页面上的水头，「复现定案」用内核默认值。";
         _suppressAuto = false;
     }
+
+    /// <summary>
+    /// ★★★ 出图前的拦截：**已声明失效的档一律不许出图**（2026-08-17）。
+    ///
+    /// 与 `--make3dm` 那条同根同源（用户当天发现新旧 3DM 一模一样）：
+    /// 交付件不能是一个**自己声明不成立**的设计。而这条 UI 路径比 CLI 更危险 ——
+    /// 下拉里作废档就排在现役档后面，隔一个位置，手一滑就选中了；
+    /// 默认文件名又是 `定案_管壁0.8mm.3dm`，与现役档**一字不差**，
+    /// 存到同一个目录就把好的那个盖掉，且**没有任何提示**。
+    ///
+    /// 单独抽成方法是为了能被界面接线测试直接调用（SaveFileDialog 是模态的，测不了）。
+    /// </summary>
+    public static string ExportBlockedReason(FinalDesign fd) =>
+        fd.Invalid.Length == 0 ? "" :
+        "★ 本档已声明失效，**不出图**。\r\n" + fd.Invalid + "\r\n" +
+        $"（自由段 {fd.FreeTabMm:0.0} mm）\r\n\r\n" +
+        "交付件不能是一个自己声明不成立的设计。要看它长什么样，请用「使用说明」页 —— " +
+        "那里会连同失效原因一起画出来。";
 
     /// <summary>导出选中定案档的整机 3DM（子进程渲染 + 写完从磁盘回读自校）。</summary>
     private void ExportFinal3dm()
@@ -625,10 +824,14 @@ public sealed class LineDesignPage : TabPage
         if (i < 0 || i >= FinalDesign.All.Length) return;
         var fd = FinalDesign.All[i];
 
+        string blocked = ExportBlockedReason(fd);
+        if (blocked.Length > 0) { _out.Text = blocked; return; }
+
         using var dlg = new SaveFileDialog
         {
             Filter = "Rhino 3DM|*.3dm",
-            FileName = $"定案_管壁{fd.WallMm:0.0}mm.3dm"
+            // 文件名带上档名：只按管壁命名时，两个同壁厚的档会写成同一个文件名而互相覆盖
+            FileName = $"定案_管壁{fd.WallMm:0.0}mm_舌{fd.TabLengthMm:0}x{2 * fd.TabHalfWidthMm:0}.3dm"
         };
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
@@ -660,7 +863,7 @@ public sealed class LineDesignPage : TabPage
     /// <summary>
     /// 本页控件**表达不了**的法兰特征 —— 用来在输出里逐条列出来。
     ///
-    /// ⚠ 我此前对用户说的是「有两项表达不了」，那是**低估**。实测 <see cref="MakePlate"/>
+    /// ⚠ 我此前对用户说的是「有两项表达不了」，那是**低估**。实测本页旧的 MakePlate
     ///   与 <see cref="FinalDesign.Plate"/> 逐字段比对，差的是**六项**：
     ///   两级渐变环、角焊缝、逐片舌保温、等宽舌片、舌根圆角、逐片独立厚度以外的分区。
     ///   ⇒ 用本页参数「核算整线」解的是一个**结构上更简单的法兰**，不是定案那一片。
@@ -671,31 +874,77 @@ public sealed class LineDesignPage : TabPage
     private static string PageVsFinal(FlangePlate pg)
     {
         var miss = new List<string>();
-        if (pg.DiscStepRadiiMm.Length == 0) miss.Add("管孔两级渐变环（定案 ×1.22–1.24）");
+        // ⚠ 定案值一律**现取**，不写字面量。这里原来硬编码「×1.22–1.24」，
+        //   而 2026-08-17 重解后定案的环倍率是 1.00（不需要环）—— 又一处会悄悄漂开的抄写。
+        if (pg.DiscStepRadiiMm.Length == 0)
+            miss.Add($"管孔两级渐变环（当前定案 ×{FinalDesign.Current.RingMul[0]:0.00}" +
+                     (FinalDesign.Current.RingMul[0] <= 1.001 ? "，即**不需要环**）" : "）"));
         if (pg.WeldFilletLegMm <= 1e-9) miss.Add("管孔两面角焊缝（定案 焊脚 = max(板厚, 壁厚)）");
-        if (double.IsNaN(pg.TabInsulThickMm)) miss.Add("逐片舌保温（定案 18.7/1.6/1.4/3.9 mm，四片差 12 倍）");
+        if (double.IsNaN(pg.TabInsulThickMm)) miss.Add("逐片舌保温");
         if (!pg.TabParallel) miss.Add("等宽舌片（本页是**梯形**，定案是等宽）");
-        if (pg.TabFilletMm <= 1e-9) miss.Add("舌根过渡圆角（定案 R3；峰值电流拥塞就在这个凹角上）");
+        if (pg.TabFilletMm <= 1e-9) miss.Add("舌根过渡圆角（峰值电流拥塞就在这个凹角上）");
         return miss.Count == 0 ? "" : string.Join("\r\n         · ", miss);
     }
 
-    private FlangePlate MakePlate(double tMm) => new()
-    {
-        DiscRadiusMm = (double)_discD.Value * 0.5,
-        HoleRadiusMm = (double)_wall.Value + 25.0,      // LineRunner 会按管外径覆写
-        TabEndXMm = -(double)_tabLen.Value,
-        TabEndHalfWidthMm = (double)_tabW.Value,
-        ThicknessMm = tMm, ThickenedMm = tMm,
-        InsulBoundaryXMm = _flIns.SelectedIndex switch
-        {
-            0 => 1e9,              // 不包
-            1 => double.NaN,       // 仅圆盘（取切点）
-            _ => -1e9              // 全包
-        }
-    };
+    /// <summary>
+    /// 1b 之后：解析模式解的**就是**定案那套几何，所以要报的不再是「表达不了什么」，
+    /// 而是「**本页没有控件的那几项，这次实际用了什么值**」。
+    ///
+    /// 为什么必须报：这几项都会显著改变结果（舌保温是守 ②′/③ 的主力旋钮），
+    /// 而它们在界面上看不见。看不见又在起作用的量，正是「安静失败」的温床 ——
+    /// 与其藏起来，不如每次都摊开。
+    /// </summary>
+    private static string AnalyticUsedWhat(FinalDesign d) =>
+        $"   · 压接段 {d.ClampLengthMm:0} mm（决定判据⑤ 自由段与舌片有效发热长度）\r\n" +
+        $"   · 逐片舌保温 {FinalDesign.Fmt(d.TabInsulMm, "0.0")} mm（**守 ②′/③ 的主力旋钮**）\r\n" +
+        $"   · 管孔渐变环 ×{FinalDesign.Fmt(d.RingMul, "0.00")}" +
+        (d.RingMul[0] <= 1.001 ? "（=1.00 即不需要环）" : $"，环宽 {d.RingWidthMm:0} mm") + "\r\n" +
+        $"   · 舌根圆角 R{d.TabFilletMm:0}　等宽舌片　管孔两面角焊缝（焊脚 = max(板厚, 壁厚)）\r\n" +
+        $"   · 圆盘保温 {(d.FlangeInsulated ? $"{d.FlangeInsulMm:0} mm" : "不包")}（本页「法兰保温」控件）\r\n" +
+        "   ⇒ 这几项本页没有控件；要改它们请用「自动定厚」/「◇ 搜形状」求解，" +
+        "或改 Core/FinalDesign。";
 
+    // ★★★ 这里原来有个 `MakePlate(double)` —— 本页自己造 FlangePlate 的那个方法。
+    //   1b（2026-08-17）之后解析几何一律走 FinalDesign.Plate，它已经没有调用者。
+    //
+    //   **删掉而不是留着**：一个长得就像「几何构造器」的私有方法留在页面里，
+    //   下一个人（包括我）要加功能时会顺手用它 —— 第二个几何来源就是这么长回来的。
+    //   今天修的三条 bug 根都是「同一件事存了两处」，不能一边拆一边留个种子。
+    //   要看它长什么样：git log 里有。
+
+    /// <summary>
+    /// ★★★★★ **1b：解析模式下，页面与内核共用同一个几何构造器**（2026-08-17）。
+    ///
+    /// 在此之前本页自己造 <c>FlangePlate</c>（旧的 MakePlate，已删），只填五个字段；
+    /// 而 <see cref="FinalDesign.Plate"/> 还填渐变环、角焊缝、逐片舌保温、等宽舌片、舌根圆角。
+    /// ⇒ 「核算整线」解的是**另一片法兰**，判据照实判，但那些数不能跟定案比。
+    ///
+    /// 「几何只有一个来源」这条铁律，在页面这里一直是破的。而 2026-08-17 一天里
+    /// 抓到的三条 bug 根都是同一句：**同一件事存了两处**
+    ///   · 压接段：页面用 3 mm 默认值，定案是 40（判据⑤ 因此判反）
+    ///   · 3DM：作废档与现役档同名，把现役档整个覆盖
+    ///   · 渐变环倍率：警告文字里硬编码「×1.22–1.24」，而定案早已是 1.00
+    /// ⇒ 把页面这一处拆掉：解析几何一律走 <see cref="PageToFinalDesign"/> → <c>BuildCase</c>。
+    ///
+    /// ⚠ **行为会变**：同样的页面参数，「核算整线」的数会与以前不同（现在带环、带焊缝、
+    ///   带舌保温）。这是**修正**不是回归 —— 以前那组数解的是一片不存在的法兰。
+    ///   输出里会逐条列出本次实际用了什么值。
+    ///
+    /// ⚠ `.3dm` 那条路**保留旧路**：任意台阶几何 <c>FinalDesign</c> 表达不了。
+    /// </summary>
     private LineCase BuildCase()
     {
+        var rows = _segs.Where(s => !string.IsNullOrWhiteSpace(s.名称)).ToList();
+
+        if (_srcAnalytic.Checked)
+        {
+            // ★ 与「自动定厚」「搜形状」「复现定案」走**同一个构造器**，不再另造一片
+            var lcA = PageToFinalDesign().BuildCase(_base, checkRamp: true);
+            // 水头是**操作条件**不是几何，FinalDesign 不带它 ⇒ 在这里补上（页面表格里有）
+            lcA.HeadM = rows.Select(s => s.水头m).ToArray();
+            return lcA;
+        }
+
         var p = SegmentSolver.Clone(_base);
         p.WallMinMm = (double)_wall.Value;
         p.Layer1.ThicknessMm = (double)_tubeIns.Value;
@@ -703,8 +952,11 @@ public sealed class LineDesignPage : TabPage
         p.FlangeInsulThickMm = _flIns.SelectedIndex == 0 ? 0 : (double)_flInsT.Value;
         p.FlangeInsulated = _flIns.SelectedIndex != 0;
         p.BusbarClampTempC = (double)_clamp.Value;
+        // ★★★ BUG（2026-08-17 抓到）：本页从来没设过**压接段长度**，于是它一直用
+        //   DesignInputs 的默认值 **3.0 mm** —— 而那个 3 mm 是 ShellMesh 自己注释里写明的
+        //   「**数值边界不是设计值**」，定案用的是 40 mm。
+        p.BusbarClampLengthMm = FinalDesign.Current.ClampLengthMm;
 
-        var rows = _segs.Where(s => !string.IsNullOrWhiteSpace(s.名称)).ToList();
         var lc = new LineCase
         {
             Base = p,
@@ -714,9 +966,6 @@ public sealed class LineDesignPage : TabPage
             HeadM = rows.Select(s => s.水头m).ToArray(),
             CheckRamp = true,
         };
-        if (_srcAnalytic.Checked)
-            lc.FlangePlates = _tPlate.Select(n => MakePlate((double)n.Value)).ToArray();
-        else
         {
             var files = _file3dm.Select(f => f.Text.Trim()).ToArray();
             if (files.Any(string.IsNullOrEmpty))
@@ -728,6 +977,214 @@ public sealed class LineDesignPage : TabPage
             if (_levelScale is not null) lc.LevelScale = _levelScale;
         }
         return lc;
+    }
+
+    /// <summary>
+    /// ★★★★★ 把本页控件读成一个 <see cref="FinalDesign"/>（2026-08-17）。
+    ///
+    /// 为什么需要：「自动定厚」原来调的是 <see cref="FlangeAutoSizer"/> —— 它**只有板厚一个旋钮**，
+    /// 靶是 ③，而且它自己的注释就写着「管不到 ②′/②″」。
+    /// 问题在于 ③ 与 ②′ 是**同一个抽热 D 的两侧**（实测 ③ = 2.40·D）：
+    /// 把 ③ 往下压 = 把 D 往下压 = **把 ②′ 往负里推**，也就是往「热倒灌进管子」那个方向走
+    /// —— 那正是现场烧断的机理。旧器只会在事后让判据表去说「②′ 没过」。
+    ///
+    /// ⇒ 改调 D8（<see cref="Sizer"/>）：舌保温守抽热窗口、环倍率守 ②″、板厚只做接力与省铂。
+    ///
+    /// ⚠ D8 工作在**定案那套完整几何**上（逐片舌保温、渐变环、等宽舌片、舌根圆角、角焊缝），
+    ///   而本页控件表达不了其中几项（见 <see cref="PageVsFinal"/>）。
+    ///   所以这里**明说**：自动定厚解的是完整构型，不是本页那片简化法兰。
+    ///   与其让两套几何各解各的（那是「同一个数存两处」的老毛病），不如统一到 FinalDesign 这一套。
+    /// </summary>
+    private FinalDesign PageToFinalDesign()
+    {
+        var seed = FinalDesign.Current;
+        var d = seed.Clone();
+        d.Name = "本页参数";
+        d.Provenance = "由「整线设计」页控件读入，D8 定尺寸";
+        d.Binding = ""; d.Invalid = ""; d.InvalidChecks = Array.Empty<string>();
+        d.WallMm = (double)_wall.Value;
+        d.TubeInsulMm = (double)_tubeIns.Value;
+        d.DiscRadiusMm = (double)_discD.Value * 0.5;
+        d.TabLengthMm = (double)_tabLen.Value;
+        d.TabHalfWidthMm = (double)_tabW.Value;
+        d.ClampTempC = (double)_clamp.Value;
+        d.ClampLengthMm = seed.ClampLengthMm;          // 本页无控件，取定案值（已在输出里注明）
+        // 圆盘保温：本页**有**控件，接过去（BuildCase 里原来写死 20，已改成读字段）
+        d.FlangeInsulated = _flIns.SelectedIndex != 0;
+        d.FlangeInsulMm = d.FlangeInsulated ? (double)_flInsT.Value : 0;
+        var rows = _segs.Where(s => !string.IsNullOrWhiteSpace(s.名称)).ToList();
+        if (rows.Count > 0) d.SetpointC = rows.Select(s => s.控温C).ToArray();
+        // 起点：板厚用页面上的值（起点只影响轮数，不影响解 —— 每个旋钮对自己的靶单调）
+        for (int i = 0; i < d.TabThickMm.Length && i < _tPlate.Length; i++)
+            d.TabThickMm[i] = (double)_tPlate[i].Value;
+        return d;
+    }
+
+    /// <summary>
+    /// ★★★★★ **形状搜索**（盘半径 × 舌半宽），舌长按装配算，逐个形状交给 D8 定尺寸。
+    ///
+    /// 用户第 2 项要的就是这个：「APP 不能**自动**改变法兰盘直径与舌片长度吗？」
+    ///
+    /// 三条设计决定：
+    ///  ① **舌长不参与搜索**。它 = 圆盘切点 + 压接段 + 自由段下界，是装配的因变量；
+    ///     加长只多花铂多发热 ⇒ 最优解永远贴着下界。真正的维度只有 盘半径 × 舌半宽。
+    ///  ② **两段式**：先用少轮数把网格筛一遍（看谁有解、谁大概轻），
+    ///     再只对胜出的那个形状跑足轮数。全网格都跑足轮数是纯浪费。
+    ///  ③ **每个形状算完立刻把结果贴进输出框**，不等全部跑完 ——
+    ///     几十分钟的任务如果只在最后才出东西，中途取消就等于全白跑。
+    ///
+    /// 进度用**确定式**进度条（分母 = 形状数 × 轮数），不是转圈：
+    /// 转圈只说明「还活着」，说不出「还要多久」。
+    /// </summary>
+    private async Task SearchShapeAsync()
+    {
+        if (_cts is not null) { _cts.Cancel(); return; }        // 再点一次 = 取消
+        if (!_srcAnalytic.Checked)
+        {
+            _out.Text = "「搜形状」只在**解析几何**模式下可用。\r\n" +
+                        ".3dm 模式下形状由图纸给定，不是可搜索的自由度 —— " +
+                        "要搜形状请先切回「解析（圆盘+舌片）」。";
+            return;
+        }
+        _cts = new CancellationTokenSource();
+        var ct = _cts.Token;
+        _btnShape.Text = "取消";
+        _btnRun.Enabled = _btnAuto.Enabled = _btnRepro.Enabled = false;
+
+        // 网格：盘半径 × 半宽比例。半宽 > 盘半径没有切点（等宽舌片与圆盘接不上），故按比例取。
+        double[] discs = { 25, 30, 35 };
+        double[] wFrac = { 0.75, 1.00 };
+        const int screenRounds = 16, finalRounds = 40;
+        int total = discs.Length * wFrac.Length * screenRounds + finalRounds;
+        int done = 0;
+
+        _prog.Visible = true; _prog.Style = ProgressBarStyle.Continuous;
+        _prog.Maximum = total; _prog.Value = 0;
+
+        var sb = new StringBuilder();
+        sb.AppendLine("=== 搜形状（盘半径 × 舌宽；舌长按装配算）===");
+        sb.AppendLine($"网格 {discs.Length}×{wFrac.Length} 个形状，先各筛 {screenRounds} 轮，再对胜出者跑 {finalRounds} 轮。");
+        sb.AppendLine($"自由段下界 {_freeTabMinMm:0} mm（判据⑤）　压接段 {FinalDesign.Current.ClampLengthMm:0} mm");
+        sb.AppendLine("★ 舌长不是搜出来的，是**算出来的**：切点 + 压接段 + 自由段。");
+        sb.AppendLine("随时可以点「取消」——**已经算完的形状结果不会丢**。");
+        sb.AppendLine();
+        // ⚠ 表头必须是 sb 的**最后一行**，后面不能垫空行：下面的数据行是随算随
+        //   AppendText 贴上来的，只有与表头**连续**才会被认成同一张表；
+        //   一旦断开，表头和数据各自算各自的列宽，就再也对不上了。
+        sb.AppendLine("盘Ø\t舌宽\t舌长\t合计 g\t判定");
+        _out.Text = sb.ToString();
+
+        var rows = new List<(FinalDesign d, double mass, bool ok, string msg)>();
+        try
+        {
+            foreach (double R in discs)
+                foreach (double f in wFrac)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    // ★ 早筛「造不出来」的盘径（判据⑥ 会兜底，但那要先白跑十几轮）。
+                    //   焊脚 = max(板厚, 壁厚) ≥ 壁厚 ⇒ 盘半径至少要 孔半径 + 壁厚 = 25 + 2×壁厚。
+                    //   2026-08-17 实测：盘 R25 + 管壁 0.8 时孔半径 25.8 > 盘半径，孔比盘还大，
+                    //   而这种几何**料最少**，不拦住它就会排在最前面。
+                    double minDisc = 25.0 + 2 * (double)_wall.Value;
+                    if (R < minDisc - 1e-9)
+                    {
+                        done += screenRounds; _prog.Value = Math.Min(_prog.Maximum, done);
+                        _out.AppendText($"{2 * R:0}\t—\t—\t—\t" +
+                            $"跳过：管壁 {(double)_wall.Value:0.0} 时盘半径至少要 {minDisc:0.0}（判据⑥）\r\n");
+                        continue;
+                    }
+                    double hw = R * f;
+                    var seed = PageToFinalDesign();
+                    seed.DiscRadiusMm = R;
+                    seed.TabHalfWidthMm = hw;
+                    seed.TabLengthMm = Math.Sqrt(Math.Max(0, R * R - hw * hw))
+                                       + seed.ClampLengthMm + _freeTabMinMm;
+                    string tag = $"盘Ø{2 * R:0}／舌宽{2 * hw:0}";
+                    int baseDone = done;
+                    var prog2 = new Progress<string>(s =>
+                    {
+                        // Sizer 每轮吐一行；用行首的轮号推进度条
+                        if (s.Length > 4 && int.TryParse(s.AsSpan(0, 4).Trim(), out int rd))
+                            _prog.Value = Math.Min(_prog.Maximum, baseDone + rd);
+                        _status.Text = $"{tag}　{s.Split('\n')[0]}";
+                    });
+                    var sr = await Task.Run(() => Sizer.Solve(seed, _base,
+                                 new SizerOptions { MaxRounds = screenRounds }, prog2, ct), ct);
+                    done = baseDone + screenRounds;
+                    _prog.Value = Math.Min(_prog.Maximum, done);
+                    rows.Add((sr.Design, sr.MassG, sr.Feasible, sr.Message));
+                    // ★ 算完一个贴一个：中途取消也留得住已有结果
+                    _out.AppendText(
+                        $"{2 * R:0}\t{2 * hw:0}\t{sr.Design.TabLengthMm:0}\t" +
+                        (double.IsNaN(sr.MassG) ? "—" : sr.MassG.ToString("0")) +
+                        $"\t{(sr.Feasible ? "✓ " : "")}{sr.Message}\r\n");
+                }
+
+            var win = rows.Where(x => x.ok && !double.IsNaN(x.mass))
+                          .OrderBy(x => x.mass).FirstOrDefault();
+            if (win.d is null)
+            {
+                _out.AppendText("\r\n★ 本网格里**没有全过的形状**。上面每行的失败原因已逐条列出，" +
+                                "据此扩网格（改盘径范围）或松工艺（管壁、控温点）。\r\n");
+                _status.Text = "无解";
+                return;
+            }
+
+            _status.Text = "精算胜出形状…";
+            var fin = await Task.Run(() => Sizer.Solve(win.d, _base,
+                          new SizerOptions { MaxRounds = finalRounds },
+                          new Progress<string>(s =>
+                          {
+                              if (s.Length > 4 && int.TryParse(s.AsSpan(0, 4).Trim(), out int rd))
+                                  _prog.Value = Math.Min(_prog.Maximum, done + rd);
+                              _status.Text = "精算　" + s.Split('\n')[0];
+                          }), ct), ct);
+            _prog.Value = _prog.Maximum;
+
+            // 把胜出形状写回控件（这是「自动改变盘径与舌长」真正落地的地方）
+            decimal C(double v, NumericUpDown n) => Math.Clamp((decimal)v, n.Minimum, n.Maximum);
+            _suppressAuto = true;
+            _discD.Value = C(2 * fin.Design.DiscRadiusMm, _discD);
+            _tabW.Value = C(fin.Design.TabHalfWidthMm, _tabW);
+            _tabLen.Value = C(fin.Design.TabLengthMm, _tabLen);
+            for (int i = 0; i < _tPlate.Length && i < fin.Design.TabThickMm.Length; i++)
+                _tPlate[i].Value = C(fin.Design.TabThickMm[i], _tPlate[i]);
+            _suppressAuto = false;
+            _last = fin.Best;
+
+            // 形状体检：搜出来的赢家也要说清楚它好在哪、代价在哪
+            _out.AppendText("\r\n" + ShapeReview.Build(fin.Design, fin.Best,
+                                                       FinalDesign.Current, fin.Message));
+            _out.AppendText("\r\n★ **最轻的全过形状**（已写回上面的盘径/舌宽/舌长/板厚）\r\n" +
+                $"   盘Ø{2 * fin.Design.DiscRadiusMm:0}／舌 {fin.Design.TabLengthMm:0}×{2 * fin.Design.TabHalfWidthMm:0}" +
+                $"／自由段 {fin.Design.FreeTabMm:0.0} mm\r\n" +
+                $"   板厚 {FinalDesign.Fmt(fin.Design.TabThickMm, "0.00")}" +
+                $"　舌保温 {FinalDesign.Fmt(fin.Design.TabInsulMm, "0.0")}" +
+                $"　环倍率 {FinalDesign.Fmt(fin.Design.RingMul, "0.00")}\r\n" +
+                $"   合计 {fin.MassG:0} g　{fin.Message}\r\n\r\n" +
+                "   ⚠ **舌保温与环倍率本页没有控件**，但它们是解的一部分（舌保温还是守 ②′/③ 的主力）。\r\n" +
+                "     要照这组数出图，请把上面三行抄进 Core/FinalDesign 再走「导出定案 3DM」。\r\n" +
+                "   ⚠ 筛选只跑了 " + screenRounds + " 轮，**是粗筛**：名次靠前几名接近时，" +
+                "把它们各自再跑一次足轮数才算数。\r\n");
+            _status.Text = "完成";
+        }
+        catch (OperationCanceledException)
+        {
+            _status.Text = "已取消";
+            _out.AppendText("\r\n（已取消。上面已经算完的形状结果仍然有效。）\r\n");
+        }
+        catch (Exception ex)
+        {
+            _status.Text = "失败";
+            _out.AppendText("\r\n✗ " + ex.Message + "\r\n");
+        }
+        finally
+        {
+            _prog.Visible = false; _prog.Style = ProgressBarStyle.Marquee;
+            _btnShape.Text = "◇ 搜形状";
+            _btnRun.Enabled = _btnAuto.Enabled = _btnRepro.Enabled = true;
+            _cts?.Dispose(); _cts = null;
+        }
     }
 
     /// <param name="autoSize">true = 「自动定厚」，false = 「核算整线」</param>
@@ -757,31 +1214,56 @@ public sealed class LineDesignPage : TabPage
             lc = BuildCase();
             if (autoSize)
             {
-                var init = _tPlate.Select(n => (double)n.Value).ToArray();
-                FlangeAutoSizer.Result r;
                 if (!_srcAnalytic.Checked && _levels is { Length: > 0 } && _levels[0].Length > 1)
                 {
-                    // 逐级定厚：外层调每片整体厚度（管根温差），内层调各级比例（局部过热）
+                    // 逐级定厚（.3dm 任意形状）：D8 只在解析几何上工作，管不了任意台阶，
+                    // 所以这条路仍用 FlangeAutoSizer。
+                    // ⚠ 它**只有板厚一个旋钮**、靶是 ③，管不到 ②′/②″（它自己的注释写着）。
+                    //   ⇒ 用完必须看判据表，尤其 ②′ 净流入是不是仍为正。
                     var lvl = _levels;
                     var lockMask = LockedMask();
-                    r = await Task.Run(() => FlangeAutoSizer.SolveByLevel(
+                    var r = await Task.Run(() => FlangeAutoSizer.SolveByLevel(
                         lc, lvl, new FlangeAutoSizer.Options(), prog, ct, 6, lockMask), ct);
                     _levelScale = r.LevelScale;
+                    // ⚠ 这是**程序**在把刚解出来的厚度写回控件。不闭掉自动重算的话，
+                    //   「自动定厚」一结束就会立刻再排一次整线重算 —— 算的还是它自己刚给的答案。
+                    _suppressAuto = true;
+                    for (int i = 0; i < _tPlate.Length && i < r.ThicknessMm.Length; i++)
+                        _tPlate[i].Value = (decimal)Math.Clamp(r.ThicknessMm[i], 0.1, 8.0);
+                    _suppressAuto = false;
+                    _last = r.Line;
+                    Show(r.Line, autoNote: r.Message + (r.Converged ? "" : "　⚠ 未收敛，下面的数不可引用") +
+                        "\r\n   ⚠ 本器**只调板厚**，管不到 ②′ 净流入与 ②″ 圆盘峰 —— 请自行看判据表。");
                 }
                 else
                 {
-                    Func<double, FlangePlate>? mk = _srcAnalytic.Checked ? MakePlate : null;
-                    r = await Task.Run(() => FlangeAutoSizer.SolveAuto(
-                        lc, mk, init, new FlangeAutoSizer.Options(), prog, ct), ct);
+                    // ★★★ 解析几何走 **D8**（Core/Sizer）。旧的 FlangeAutoSizer 只有板厚一个旋钮、
+                    //   靶是 ③，而 ③ 与 ②′ 是同一个抽热的两侧 ⇒ 它把 ③ 压下去的同时
+                    //   把 ②′ 往负里推（热倒灌进管 = 烧断机理），且它自己管不到 ②′。
+                    //   D8 用舌保温守抽热窗口、环倍率守 ②″、板厚只做接力与省铂。
+                    var seedD8 = PageToFinalDesign();
+                    var srD8 = await Task.Run(() => Sizer.Solve(seedD8, _base,
+                                   new SizerOptions { MaxRounds = 40 }, prog, ct), ct);
+                    _suppressAuto = true;
+                    for (int i = 0; i < _tPlate.Length && i < srD8.Design.TabThickMm.Length; i++)
+                        _tPlate[i].Value = (decimal)Math.Clamp(srD8.Design.TabThickMm[i], 0.1, 8.0);
+                    // 舌长可能被装配下界顶高（D8 不动它，但页面上要跟着显示）
+                    _suppressAuto = false;
+                    _last = srD8.Best;
+                    _pendingReview = ShapeReview.Build(srD8.Design, srD8.Best,
+                                                       FinalDesign.Current, srD8.Message);
+                    Show(srD8.Best, autoNote:
+                        "【D8 定尺寸】" + srD8.Message + "\r\n" +
+                        $"   板厚 {FinalDesign.Fmt(srD8.Design.TabThickMm, "0.00")}" +
+                        $"　舌保温 {FinalDesign.Fmt(srD8.Design.TabInsulMm, "0.0")}" +
+                        $"　环倍率 {FinalDesign.Fmt(srD8.Design.RingMul, "0.00")}" +
+                        $"　合计 {srD8.MassG:0} g\r\n" +
+                        "   ⚠ **只有板厚写回了本页控件** —— 舌保温与环倍率本页没有控件，\r\n" +
+                        "     但它们是解的一部分（舌保温还是守 ②′/③ 的主力旋钮）。\r\n" +
+                        "     要照这组数出图，请把上面三行抄进 Core/FinalDesign 再走「导出定案 3DM」。\r\n" +
+                        $"   ⚠ 本次解的是**定案那套完整几何**（含渐变环/角焊缝/等宽舌片/舌根圆角），\r\n" +
+                        $"     不是本页那片简化法兰 —— 压接段取定案值 {seedD8.ClampLengthMm:0} mm。");
                 }
-                // ⚠ 这是**程序**在把刚解出来的厚度写回控件。不闭掉自动重算的话，
-                //   「自动定厚」一结束就会立刻再排一次整线重算 —— 算的还是它自己刚给的答案。
-                _suppressAuto = true;
-                for (int i = 0; i < _tPlate.Length && i < r.ThicknessMm.Length; i++)
-                    _tPlate[i].Value = (decimal)Math.Clamp(r.ThicknessMm[i], 0.1, 8.0);
-                _suppressAuto = false;
-                _last = r.Line;
-                Show(r.Line, autoNote: r.Message + (r.Converged ? "" : "　⚠ 未收敛，下面的数不可引用"));
             }
             else
             {
@@ -792,16 +1274,21 @@ public sealed class LineDesignPage : TabPage
                 //   预测会看着很稳而其实一路偏 —— 那正是今天那个假收敛的形状。
                 if (r.Ok && r.Converged) { _solvedRes = r; _solvedSnap = CurrentSnap(); }
                 Show(r);
-                // ★ 把「本次实际解的是什么」打出来。不打，用户会以为自己在试定案构型。
+                // ★ 把「本次实际解的是什么」打出来。看不见又在起作用的量是安静失败的温床。
                 if (_srcAnalytic.Checked && lc.FlangePlates is { Length: > 0 })
                 {
                     string miss = PageVsFinal(lc.FlangePlates[0]);
                     if (miss.Length > 0)
+                        // 1b 之后正常不该再走到这里；留着是**兜底告警** ——
+                        // 万一哪天构造器又被绕过去，这一段会立刻喊出来。
                         _out.Text +=
-                            "\r\n── ⚠ 本次解的**不是**定案那一片法兰\r\n" +
-                            "   本页控件表达不了下面这些，已按「没有」求解：\r\n         · " + miss +
-                            "\r\n   ⇒ 判据是照实判的，但**不要拿这些数去和定案值比**。" +
-                            "要定案数字请点「▶ 复现定案」。\r\n";
+                            "\r\n── ⚠⚠ 本次解的**不是**定案那套几何（1b 之后不应出现）\r\n" +
+                            "   缺了：\r\n         · " + miss +
+                            "\r\n   ⇒ 说明有人绕过了 FinalDesign.Plate 这个唯一构造器，请查 BuildCase。\r\n";
+                    else
+                        _out.Text +=
+                            "\r\n── 本次解的是**定案那套完整几何**（与「复现定案」同一个构造器）\r\n" +
+                            AnalyticUsedWhat(PageToFinalDesign()) + "\r\n";
                 }
             }
             _status.Text = "完成";
@@ -827,8 +1314,150 @@ public sealed class LineDesignPage : TabPage
         }
     }
 
+    /// <summary>
+    /// 待插入的形状体检报告（<see cref="ShapeReview"/>）。由定尺寸器那条路设置，
+    /// <see cref="Show"/> 取用后清空 —— 放在**判定之后、明细之前**，
+    /// 那是用户读完「过没过」之后最想知道「为什么、代价是什么」的位置。
+    /// </summary>
+    private string _pendingReview = "";
+
+    /// <summary>
+    /// ★★★★★ 判据表改成**真表格**（2026-08-18，用户：「类似 Excel 也行」）。
+    ///
+    /// 之前它是 RichTextBox 里的一段文字，靠补空格 / 制表位对齐。两条路都失败了，
+    /// 而失败的原因是同一个：**判据名的宽度差得太远**
+    /// （「① 升温 空管到目标」vs「② 法兰最高温 − 管温（整片，含舌片）」），
+    /// 一旦超过预留宽度就把后面所有列推走 —— 实测同一张表里数值列落在 x≈430 / 460 / 700 三处。
+    /// 再加上长注释混在同一条流里、数字与单位被折行拆开（「1768」「°C」分两行）。
+    ///
+    /// ⇒ 列宽该由**控件**去算，不该由我去猜。DataGridView 天然做到：
+    ///   列宽自适应、行可上色（不过的标红）、可选可复制、注释挂在 ToolTip 上不占版面。
+    ///   散文（结论、下一步、体检报告、逐段明细）留在下面的文本框里，各归其位。
+    /// </summary>
+    private readonly DataGridView _checks = new()
+    {
+        Dock = DockStyle.Fill,
+        ReadOnly = true,
+        AllowUserToAddRows = false,
+        AllowUserToDeleteRows = false,
+        AllowUserToResizeRows = false,
+        RowHeadersVisible = false,
+        SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+        MultiSelect = false,
+        AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.AllCells,
+        ShowCellToolTips = true,
+        BackgroundColor = Color.FromArgb(252, 252, 250),
+        BorderStyle = BorderStyle.None,
+        EnableHeadersVisualStyles = false,
+    };
+
+    /// <summary>
+    /// 把一段长说明按**显示宽度**折行，并在中文标点后优先断开。
+    ///
+    /// 为什么要有它：判据的 Note 现在带着「【下一步】…」的动作说明，动辄两三百字。
+    /// 直接一行灌进去，靠控件自动换行，结果是一堵没有缩进层次的墙 ——
+    /// 用户看到的就是「文挡好乱」。折过行、缩进一层之后，判据表才重新变成一张**表**。
+    /// </summary>
+    private static List<string> WrapNote(string s, int width)
+    {
+        var outp = new List<string>();
+        var cur = new StringBuilder();
+        int w = 0;
+        foreach (char c in s)
+        {
+            cur.Append(c); w += TextFmt.CharWidth(c);
+            bool breakable = c is '。' or '；' or '，' or '）' or '：' or ' ';
+            if (w >= width && breakable) { outp.Add(cur.ToString().TrimEnd()); cur.Clear(); w = 0; }
+            else if (w >= width + 24) { outp.Add(cur.ToString().TrimEnd()); cur.Clear(); w = 0; }
+        }
+        if (cur.Length > 0) outp.Add(cur.ToString().TrimEnd());
+        // 收尾：不让一行以标点**开头**（断在「）」之后会把紧跟的「。」甩到下一行行首）
+        for (int i = 1; i < outp.Count; i++)
+            while (outp[i].Length > 0 && outp[i][0] is '。' or '；' or '，' or '：' or '、' or '）')
+            { outp[i - 1] += outp[i][0]; outp[i] = outp[i][1..].TrimStart(); }
+        outp.RemoveAll(string.IsNullOrWhiteSpace);
+        return outp;
+    }
+
+    /// <summary>判据表的列。列宽交给控件自适应 —— 这正是换成表格的意义。</summary>
+    private void InitChecksGrid()
+    {
+        _checks.Font = UiScale.Ui();
+        _checks.ColumnHeadersDefaultCellStyle.Font = UiScale.Ui(FontStyle.Bold);
+        _checks.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(240, 240, 236);
+        _checks.RowTemplate.Height = UiScale.S(22);
+        _checks.Columns.AddRange(
+            new DataGridViewTextBoxColumn { Name = "kind", HeaderText = "类别", FillWeight = 8 },
+            new DataGridViewTextBoxColumn { Name = "name", HeaderText = "判据", FillWeight = 34 },
+            new DataGridViewTextBoxColumn { Name = "act", HeaderText = "实际", FillWeight = 12 },
+            new DataGridViewTextBoxColumn { Name = "lim", HeaderText = "限值", FillWeight = 12 },
+            new DataGridViewTextBoxColumn { Name = "mg", HeaderText = "裕度", FillWeight = 10 },
+            new DataGridViewTextBoxColumn { Name = "ok", HeaderText = "判定", FillWeight = 8 },
+            new DataGridViewTextBoxColumn { Name = "where", HeaderText = "位置", FillWeight = 16 });
+        // 数字列右对齐 —— 表格能做到「真右对齐」，这是纯文本做不到的
+        foreach (var c in new[] { "act", "lim", "mg" })
+            _checks.Columns[c]!.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
+        foreach (var c in new[] { "kind", "ok" })
+            _checks.Columns[c]!.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+    }
+
+    /// <summary>把判据填进表格。**只读 Judge 的结果**，不在这里重算任何判定。</summary>
+    private void FillChecks(LineResult? r)
+    {
+        _checks.Rows.Clear();
+        if (r is null || !r.Ok) return;
+        foreach (var c in r.Checks)
+        {
+            string kind = c.Kind == CheckKind.HardSafety ? "硬"
+                        : c.Kind == CheckKind.Target ? "目标" : "参考";
+            string act = double.IsNaN(c.Actual) ? "达不到" : c.Actual.ToString("0.000");
+            string lim = Math.Abs(c.Limit) < 1e-9 ? "> 0" : c.Limit.ToString("0.000");
+            string mg = "—";
+            if (c.Kind != CheckKind.Reference && !double.IsNaN(c.Actual))
+            {
+                if (Math.Abs(c.Limit) > 1e-9)
+                {
+                    double pct = (c.Limit - c.Actual) / Math.Abs(c.Limit) * 100.0;
+                    mg = pct >= 0 ? $"{pct:0} %" : $"超 {-pct:0} %";
+                }
+                else mg = SizerResult.Signed(c.Actual - c.Limit, "+0.00;−0.00");
+            }
+            string vd = c.Kind == CheckKind.Reference ? "—" : c.Undetermined ? "?" : c.Ok ? "✓" : "✗";
+
+            // 判据名里那个手写的「· 」前缀是给纯文本用的，表格里有「类别」列了，去掉
+            string nm = c.Name.StartsWith("· ", StringComparison.Ordinal) ? c.Name[2..] : c.Name;
+            int i = _checks.Rows.Add(kind, nm, act, lim, mg, vd, c.Where);
+            var row = _checks.Rows[i];
+            // 行上色：不过=淡红、无法判定=淡黄、参考量=灰字。颜色只是**重复**判定，不产生判定。
+            if (c.Kind == CheckKind.Reference)
+                row.DefaultCellStyle.ForeColor = Color.FromArgb(120, 120, 120);
+            else if (c.Undetermined)
+                row.DefaultCellStyle.BackColor = Color.FromArgb(255, 248, 214);
+            else if (!c.Ok)
+            {
+                row.DefaultCellStyle.BackColor = Color.FromArgb(255, 226, 226);
+                row.DefaultCellStyle.Font = UiScale.Ui(FontStyle.Bold);
+            }
+            // 长注释挂 ToolTip：既不占版面，也不会把数字和单位折成两行
+            if (!string.IsNullOrWhiteSpace(c.Note))
+                foreach (DataGridViewCell cell in row.Cells)
+                    cell.ToolTipText = TextFmt.Strip(c.Note);
+        }
+    }
+
     private void Show(LineResult? r, string? autoNote = null)
     {
+        // ★★★★★ 判据表**必须在这里填**（2026-08-20 复核抓到：以前一次都没填过）。
+        //
+        // 判据表从纯文字改成 DataGridView 之后，文字版被删掉了，
+        // 下面的报告改说「判据表见上方表格」—— 可 <see cref="FillChecks"/> **没有任何调用者**，
+        // 那张表**永远是空的**。于是界面在指着一张空表说「判据在那儿」，
+        // 比不给判据更糟：人会以为「没有行 = 没有不过的」。
+        //
+        // ⚠ 三个提前 return 的分支（无结果 / 未 Ok）也要先清表，
+        //   否则上一次的判据会**留在屏幕上冒充这一次的**。所以这一行放在最前面。
+        FillChecks(r);
+
         if (r is null) { _out.Text = "无结果"; return; }
         var sb = new StringBuilder();
         if (autoNote is not null) sb.AppendLine("【自动定厚】" + autoNote).AppendLine();
@@ -837,15 +1466,60 @@ public sealed class LineDesignPage : TabPage
         if (!r.Converged)
             sb.AppendLine("╔══ ⚠ 段↔法兰耦合未收敛 —— 以下所有数值均不可引用 ══╗").AppendLine();
 
-        sb.AppendLine($"{"段",6}{"控温",7}{"电流 A",9}{"管 J",8}{"管根 °C",10}{"衔接温差 K",12}{"管重 g",9}");
+        // ★★★ **结论与下一步先写**（用户第 4 项：不看说明书也能用）。
+        //
+        // 判据表在下面几十行外，而人是从上往下读的。原来第一屏是段/法兰的数值表，
+        // 「过没过」「接下来该动哪个旋钮」要自己往下翻、翻到了还要自己翻译成动作。
+        // ⇒ 把**判定**和**最该先做的那一件事**顶到最前面；细节留在原位不动。
+        if (r.Converged)
+        {
+            var bads = r.Checks.Where(c => c.Kind is CheckKind.HardSafety or CheckKind.Target
+                                        && (!c.Ok || c.Undetermined))
+                               // 硬安全线优先，其次超限最狠的
+                               .OrderBy(c => c.Kind == CheckKind.HardSafety ? 0 : 1)
+                               .ThenByDescending(c => Math.Abs(c.Limit) > 1e-9
+                                    ? Math.Abs(c.Actual - c.Limit) / Math.Abs(c.Limit)
+                                    : Math.Abs(c.Actual - c.Limit))
+                               .ToArray();
+            if (bads.Length == 0)
+                sb.AppendLine("★ **全判据通过。** 下面是明细。").AppendLine();
+            else
+            {
+                sb.AppendLine($"✗ **{bads.Length} 条判据没过**：" +
+                              string.Join("；", bads.Select(c => $"{c.Name.Split(' ')[0]} " +
+                                  (c.Undetermined ? "无法判定" : $"{c.Actual:0.0}/{c.Limit:0.0}"))));
+                var first = bads[0];
+                sb.AppendLine($"　先解决这一条 ⇒ **{first.Name}**（{first.Where}）");
+                // Note 里带着「【下一步】…」，把那一段单独拎出来，不让它埋在长注里
+                int k = first.Note.IndexOf("【下一步】", StringComparison.Ordinal);
+                if (k >= 0) sb.AppendLine("　" + first.Note[k..].Replace("；", "；\r\n　　"));
+                else if (first.Undetermined) sb.AppendLine("　【下一步】先让它算得出来 —— **无法判定不等于通过**。");
+                sb.AppendLine();
+            }
+        }
+
+        // ★ 形状体检报告插在这里：判定已经说完，明细还没开始 ——
+        //   用户读完「过没过」之后，下一个问题就是「为什么、代价是什么」。
+        if (_pendingReview.Length > 0)
+        { sb.AppendLine(_pendingReview); _pendingReview = ""; }
+
+        // 段表与法兰表：一格一个 `\t`，列宽由 TextFmt 按真实像素量出来。
+        //
+        // ⚠ 两张表**必须被一个空行隔开**。连着写的话它们会被认成同一张表，
+        //   列宽合并计算 —— 两组毫不相干的量（控温 °C 与 Φ）从此互相顶着走。
+        // ⚠ 表头不再有「挤进 8 个字」这条约束（列宽跟着内容走），所以单位写全：
+        //   以前的「控温」「管 J」「J_max」不看文档不知道单位，那是省版面省出来的坑。
+        //   但**只补单位，不改叫法**：「衔接温差 K」本来就是全名，缩成「衔接 ΔT」是往回走。
+        sb.AppendLine("段\t控温 °C\t电流 A\t管 J A/mm²\t管根 °C\t衔接温差 K\t管重 g");
         foreach (var s in r.Segments)
-            sb.AppendLine($"{s.Name,6}{s.SetpointC,7:0}{s.CurrentA,9:0}{s.TubeJAPerMm2,8:0.00}" +
-                          $"{s.TRootC,10:0.0}{s.RootDeltaK,12:+0.0;-0.0}{s.MassG,9:0}");
+            sb.AppendLine($"{s.Name}\t{s.SetpointC:0}\t{s.CurrentA:0}\t{s.TubeJAPerMm2:0.00}\t" +
+                          $"{s.TRootC:0.0}\t{s.RootDeltaK.ToString("+0.0;-0.0")}\t{s.MassG:0}");
         sb.AppendLine();
-        sb.AppendLine($"{"法兰",10}{"电流 A",9}{"J_max",8}{"Φ",8}{"抽热 W",9}{"最高 °C",10}{"铂重 g",9}");
+
+        sb.AppendLine("法兰\t电流 A\tJ_max A/mm²\tΦ\t抽热 W\t最高 °C\t铂重 g");
         foreach (var f in r.Flanges)
-            sb.AppendLine($"{f.Name,10}{f.CurrentA,9:0}{f.JMaxAPerMm2,8:0.00}{f.Phi,8:0.000}" +
-                          $"{f.QFromTubeW,9:+0;-0}{f.TMaxC,10:0.0}{f.MassG,9:0}");
+            sb.AppendLine($"{f.Name}\t{f.CurrentA:0}\t{f.JMaxAPerMm2:0.00}\t{f.Phi:0.000}\t" +
+                          $"{f.QFromTubeW.ToString("+0;-0")}\t{f.TMaxC:0.0}\t{f.MassG:0}");
         sb.AppendLine();
         // ★ 收敛情况必须**跟判据一起看**：判据是在解上判的，解没收敛判据就没意义。
         //   剩余误差是「距不动点」的估计，不是「相邻两轮变化」——后者曾把没收敛的解报成收敛（§1.85）。
@@ -854,34 +1528,22 @@ public sealed class LineDesignPage : TabPage
         if (!r.Converged) sb.AppendLine("  ⚠ **未收敛 ⇒ 下面每个数都不可引用**");
         sb.AppendLine();
 
-        sb.AppendLine("判据　★=硬安全线，越界即失效　○=设计目标　·=参考量，只报数不判");
-        sb.AppendLine("　　　裕度 = 离限值还有多远。**贴着限值判过与不过是本项目最常见的错**，");
-        sb.AppendLine("　　　判之前先看它是否大于数值噪声与现场可分辨的尺度。");
-        foreach (var c in r.Checks)
-        {
-            string mk = c.Kind == CheckKind.HardSafety ? "★" : c.Kind == CheckKind.Target ? "○" : "·";
-            string vd = c.Kind == CheckKind.Reference ? "—" : c.Undetermined ? "?" : c.Ok ? "✓" : "✗";
-            string act = double.IsNaN(c.Actual) ? "达不到" : c.Actual.ToString("0.000");
-            // 裕度：单边上限判据用 (限−实)/限；方向性判据（限=0）只报差值本身
-            string mg = "—";
-            if (c.Kind != CheckKind.Reference && !double.IsNaN(c.Actual))
-            {
-                if (Math.Abs(c.Limit) > 1e-9)
-                {
-                    double pct = (c.Limit - c.Actual) / Math.Abs(c.Limit) * 100.0;
-                    mg = pct >= 0 ? $"{pct,5:0}%" : $"超{-pct,4:0}%";
-                }
-                else mg = $"{c.Actual - c.Limit,+6:+0.00;−0.00}";
-            }
-            sb.AppendLine($"  {mk} {c.Name,-18}{act,12} / {c.Limit,-10:0.000} {mg,7} {vd}  {c.Where}");
-            if (!string.IsNullOrEmpty(c.Note)) sb.AppendLine($"      {c.Note}");
-        }
+        // ⚠ 标记别用 ★ / ○：等宽字体（Consolas）没有这些字形，Windows 会回落到另一套字体，
+        //   实测渲染成一个**黑色旗子状的方块**，而且宽度也对不上、把整列推歪。
+        //   ⇒ 改用中文字：CJK 字体里一定有，宽度恰好是两个字宽（TextFmt 也按 2 算），
+        //     而且不用看图例就知道什么意思。
+        // ★★★ 判据表已改成**真表格控件**（_checks，见 FillChecks）——
+        //   这里不再用文字排它。文字排不出来的根因写在 _checks 的注释上：
+        //   判据名宽度差太远，一超预留宽度就把整行的列全推走。
+        sb.AppendLine("判据表见上方表格：不过的行标红，注释在鼠标悬停里。");
         sb.AppendLine();
         sb.AppendLine($"★ 整线总铂 {r.TotalMassG:0} g（管 {r.TubeMassG:0} + 法兰 {r.FlangeMassG:0}）" +
                       $"　基准 {r.BaselineMassG:0} g　省 {r.SavingPct:0.0} %");
         sb.AppendLine($"  玻璃温降 模型 {r.GlassDropModelK:0.0} / 实测 {r.GlassDropMeasuredK:0.0} K" +
                       "　（模型唯一的现场验证点）");
         foreach (var n in r.Notes) sb.AppendLine("  " + n);
+        // 照常写文本即可：排版（逐表制表位、`**…**` 加粗）由构造函数里挂的
+        // TextFmt.Hook 接管 —— 与本页其余几十处写输出的地方走同一条路。
         _out.Text = sb.ToString();
 
         // 场图取最不利那片（局部最高温）
@@ -904,21 +1566,34 @@ public sealed class LineDesignPage : TabPage
     private void Export()
     {
         if (!_srcAnalytic.Checked) { ExportScaled(); return; }
+        // ★★★ 1b 之后必须换写法（2026-08-17）。
+        //
+        // 原来走 `WritePlate3dm`，而那个入口**只往渲染子进程传五个数**
+        //（盘半径/孔半径/舌端X/舌端半宽/厚度列表）—— 它在结构上就表达不了
+        // 渐变环、舌根圆角、角焊缝、等宽舌片。
+        // 1b 让页面**求解**的是完整几何，如果导出仍走它，就成了
+        // 「**算的是一个东西、导出的是另一个东西**」——正是今天反复在修的那类错，
+        // 而且这一种最难发现：两边各自都自洽。
+        // ⇒ 改走 `WriteFinal3dm`（与「导出定案 3DM」同一个写入器，今天已验过
+        //   逐件质量对账 +0.03 %），导出的就是刚才解的那套几何。
+        var dExp = PageToFinalDesign();
         using var dlg = new SaveFileDialog
         {
             Filter = "Rhino 3D 模型 (*.3dm)|*.3dm",
-            FileName = $"法兰_盘{_discD.Value:0}_舌{_tabLen.Value:0}.3dm"
+            FileName = $"本页_盘{2 * dExp.DiscRadiusMm:0}_舌{dExp.TabLengthMm:0}x{2 * dExp.TabHalfWidthMm:0}.3dm"
         };
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
         try
         {
             Cursor = Cursors.WaitCursor;
-            string log = Geometry3dm.WritePlate3dm(
-                dlg.FileName, MakePlate(1.0),
-                _tPlate.Select(n => (double)n.Value).ToArray(),
-                new[] { "法兰_入口", "法兰_HC1|HC2", "法兰_HC2|HC3", "法兰_出口" });
-            _out.Text = "【导出 .3dm】" + dlg.FileName + Environment.NewLine + log
-                      + Environment.NewLine + _out.Text;
+            string log = Geometry3dm.WriteFinal3dm(dExp, dlg.FileName);
+            _out.Text = "【导出本页 3DM】" + dlg.FileName + "\r\n" +
+                        "整机（三段管 + 四片法兰），几何 = 本页参数 + 下列本页无控件项：\r\n" +
+                        AnalyticUsedWhat(dExp) + "\r\n" +
+                        (_last is { Ok: true } && !_last.AllOk
+                          ? "⚠ **上一次核算并非全判据通过** —— 这张图只是几何，不代表方案可用。\r\n"
+                          : "") +
+                        log + Environment.NewLine + _out.Text;
             _status.Text = "已导出";
         }
         catch (Exception ex)

@@ -88,6 +88,12 @@ public sealed class FlangePlate
     public bool TabParallel = false;
 
     /// <summary>
+    /// 等宽舌片的半宽被盘半径夹住过（半宽 &gt; 盘半径）。
+    /// **要加宽舌片就必须同时放大圆盘** —— 这条耦合此前是静默的。
+    /// </summary>
+    public bool HalfWidthClamped;
+
+    /// <summary>
     /// 等宽舌片与圆盘交界处的**过渡圆角半径** mm（仅 <see cref="TabParallel"/> 时有意义）。
     ///
     /// 为什么必须有：等宽舌片是直边切进圆盘，交界是一个**凹尖角**——
@@ -216,6 +222,13 @@ public sealed class FlangePlate
     {
         if (TabParallel)
         {
+            // ⚠ 等宽舌片的半宽**受盘半径限制**：舌片是从圆盘上「切」出来的，
+            //   半宽超过盘半径就没有切点，舌片与圆盘不再有几何意义上的交界。
+            //   这里原来只是 Math.Min **静默夹住**：半宽填 45 与填 30（盘 R=30）
+            //   给出**逐字相同**的场、相同的判据、相同的铂重，而界面上什么都不说 ——
+            //   用户以为自己在扫舌宽，其实后半段全是同一个几何（2026-08-17 实测发现）。
+            //   ⇒ 夹住可以，但必须**留下痕迹**，让上层能报出来。
+            if (TabEndHalfWidthMm > DiscRadiusMm + 1e-9) HalfWidthClamped = true;
             double w = Math.Min(TabEndHalfWidthMm, DiscRadiusMm);
             return (-Math.Sqrt(Math.Max(0, DiscRadiusMm * DiscRadiusMm - w * w)), w);
         }

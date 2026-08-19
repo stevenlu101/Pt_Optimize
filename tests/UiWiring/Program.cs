@@ -1,5 +1,6 @@
-using System;
+﻿using System;
 using System.Linq;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Windows.Forms;
 using PtOptimize.Core;
@@ -55,6 +56,15 @@ class UiWiringTests {
         var plate = (NumericUpDown[])F(page, "_tPlate")!;
         var tubeIns = (NumericUpDown)F(page, "_tubeIns")!;
         var outBox = (RichTextBox)F(page, "_out")!;
+        // ★★★★★ **必须先把句柄逼出来**（2026-08-20）。
+        //
+        // 句柄没建之前，RichTextBox 的 `.Text` 赋值**不触发 TextChanged**
+        // （TextChanged 是原生控件 EN_CHANGE 转上来的，没窗口就没通知）⇒
+        // 挂在 TextChanged 上的排版一次也不会跑。本测试若不建句柄，
+        // 验的就是一条**用户永远走不到的路**：它会说排版没生效，而真机上是生效的；
+        // 反过来，真正的排版 bug 也会被这层假象盖住。
+        // 读一下 Handle 就会建（Control.Handle 的 getter 会 CreateHandle）。
+        _ = outBox.Handle;
         var caseBox = (ToolStripComboBox)F(page, "_caseBox")!;
 
         Head("0 启动：不该自己开跑，也不该弹任何东西");
@@ -85,10 +95,33 @@ class UiWiringTests {
               F(page, "_cts") is null ? "" : "★ 载入即开跑，用户可能只是想看看数");
 
         Head("3 说明书页：判据表要读 FinalDesign 的新值");
-        string html = ManualPage.BuildHtml(FinalDesign.W08);
-        Check("含新合计 3106", html.Contains("3106"));
-        Check("含新板厚 3.33", html.Contains("3.33"));
-        Check("③ 用的是新值 5.5", html.Contains("5.52") || html.Contains("5.5"));
+        // ⚠ 这里**不要再手抄期望值**。上一版写死了 3106 / 3.33 / 5.52，
+        //   2026-08-17 重解定案后三个数全变了，测试就成了「守着旧答案的门」——
+        //   它会拦住正确的改动，而这正是 §1.8 那一族最擅长伪装的形态。
+        //   ⇒ 期望值一律从 FinalDesign 现取：测的是「说明书有没有跟上定案」，
+        //     不是「定案等不等于某个历史数字」。
+        var fdM = FinalDesign.W08;
+        string html = ManualPage.BuildHtml(fdM);
+        Check($"含当前合计 {fdM.TotalMassG:0}", html.Contains(fdM.TotalMassG.ToString("0")));
+        Check($"含当前板厚 {fdM.TabThickMm[1]:0.00}", html.Contains(fdM.TabThickMm[1].ToString("0.00")));
+        Check($"③ 用的是当前值 {fdM.FlangeDipK:0.0}", html.Contains(fdM.FlangeDipK.ToString("0.00"))
+                                                    || html.Contains(fdM.FlangeDipK.ToString("0.0")));
+        Check("已作废档不得被当成当前定案", fdM.Invalid.Length == 0,
+              fdM.Invalid.Length == 0 ? "" : "★ FinalDesign.W08 自己带着失效声明");
+        // ★ 说明书必须跟上界面与判据（2026-08-17）。说明书落后比程序落后更难发现：
+        //   它有排版、有图、有判据表，看起来就是答案。
+        Check("判据表含 ⑤ 自由段", html.Contains("⑤ 舌片自由段"));
+        Check("判据表含 ⑥ 盘盖住孔", html.Contains("⑥ 圆盘盖得住管孔"));
+        Check("按钮表含「◇ 搜形状」", html.Contains("◇ 搜形状"));
+        Check("按钮表已改名「导出本页 3DM」", html.Contains("导出本页 3DM"));
+        Check("有形状体检那一节", html.Contains("形状体检"));
+        Check("不再说「核算整线算的是另一片法兰」", !html.Contains("算的是另一片法兰"));
+        // 落后的旧文案：新构型四片舌保温都在 0.3–0.6，不该再说「差 12 倍」
+        Check("舌保温文案跟着当前档走",
+              fdM.TabInsulMm.Max() > fdM.TabInsulMm.Min() * 3 || !html.Contains("差 <b>12 倍</b>"));
+        // 把渲染结果落盘，便于人工过目（测试不判样式，只判内容）
+        var outHtml = System.IO.Path.Combine(RepoRoot(), "deliverable", "说明书_渲染样本.html");
+        try { System.IO.File.WriteAllText(outHtml, html, new System.Text.UTF8Encoding(false)); } catch { }
         // ⚠ 只在**数据区**判旧值。说明书里有一段讲 2026-08-12 那次事故的文字，
         //   引的是「出事那天的板厚」2.11+3.40+3.18+1.76 —— 那是史料，不是当前值。
         //   上一版把整篇一起判，把史料当成了残留（测试写得比被测对象还粗）。
@@ -96,6 +129,9 @@ class UiWiringTests {
         string dataPart = cut > 0 ? html[..cut] : html;
         Check("数据区不含旧合计 3117", !dataPart.Contains("3117"));
         Check("数据区不含旧板厚 3.40", !dataPart.Contains("3.40"));
+        // 2026-08-17 重解后：已作废那两档的合计（3106 / 2388）也不许出现在数据区。
+        // 它们仍会出现在**史料段落**里（有出处、标了已作废），那是允许的。
+        Check("数据区不含已作废档的合计 3106", !dataPart.Contains("3106"));
         Check("史料段落保留且标明是当时的值",
               html.Contains("出事那天的板厚"));
 
@@ -163,6 +199,497 @@ class UiWiringTests {
                 .Matches(System.IO.File.ReadAllText(full), @"\{[A-Za-z_][^{}:]*:([0#,.;+\-\s]*[1-9][0#,.;+\-\s0-9]*)\}")
                 .Select(m => m.Value).Distinct().ToArray();
             Check(f + " 无可疑格式串", bad.Length == 0, bad.Length > 0 ? string.Join("  ", bad.Take(4)) : "");
+        }
+
+        Head("9 装配下界：舌长低于「切点+压接+自由段」时必须**自己顶上去**");
+        // 为什么做成测试：定案的舌长 90 mm 装不下铜排，而它能长期存在，
+        // 正是因为舌长在程序里是个谁都不核对的独立常数（memory: 舌长90是错误解）。
+        // 这条测试的作用是：以后**任何人**把舌长改回一个装不下的值，界面都会当场顶回来。
+        var discD = (NumericUpDown)F(page, "_discD")!;
+        var tabLen = (NumericUpDown)F(page, "_tabLen")!;
+        var tabW = (NumericUpDown)F(page, "_tabW")!;
+        Set(page, "_suppressAuto", true);
+        discD.Value = 60m; tabW.Value = 15m; tabLen.Value = 90m;   // 正是旧定案那一组
+        Set(page, "_suppressAuto", false);
+        M(page, "ShowPrediction");
+        Pump(300);
+        Check("舌长 90 被顶高了", tabLen.Value > 90m, $"现在 {tabLen.Value} mm");
+        // 切点 √(30²−15²)=25.98，压接 40，自由段 100 ⇒ 下界 165.98 ⇒ 顶到 166
+        Check("顶到的正是装配下界 166", tabLen.Value == 166m, $"现在 {tabLen.Value} mm");
+        Check("并且说清楚了为什么", outBox.Text.Contains("自动顶到") && outBox.Text.Contains("铜排"));
+        Check("输出里有自由段这一行", outBox.Text.Contains("自由段"));
+        ((System.Threading.CancellationTokenSource?)F(page, "_cts"))?.Cancel();
+        Set(page, "_autoArmed", false);
+        Pump(300);
+
+        Head("10 压接段长度：不能再用 3 mm 那个**数值默认值**");
+        // 2026-08-17 抓到：本页从来没设过 BusbarClampLengthMm ⇒ 一直用 DesignInputs 的 3.0，
+        // 而定案是 40。少扣 37 mm 会让判据⑤「装不下」被判成「装得下」——
+        // 正好盖住 90 mm 那个错，属于最危险的一类：错得看不出来。
+        var lcProbe = M(page, "BuildCase") as LineCase;
+        Check("BuildCase 返回了算例", lcProbe is not null);
+        if (lcProbe is not null)
+            Check("压接段 = 定案值，不是 3 mm 默认值",
+                  Math.Abs(lcProbe.Base.BusbarClampLengthMm - FinalDesign.Current.ClampLengthMm) < 1e-9,
+                  $"{lcProbe.Base.BusbarClampLengthMm} vs {FinalDesign.Current.ClampLengthMm}");
+
+        Head("11 失效告示：已失效的定案档必须在**最前面**说出来");
+        var invalid = FinalDesign.All.FirstOrDefault(x => x.Invalid.Length > 0);
+        if (invalid is null)
+            Check("（当前没有已失效的档，跳过）", true);
+        else {
+            caseBox.SelectedIndex = Array.IndexOf(FinalDesign.All, invalid);
+            M(page, "LoadFinalDesign");
+            Pump(400);
+            Check("载入后有失效告示", outBox.Text.Contains("已失效"));
+            int posWarn = outBox.Text.IndexOf("已失效", StringComparison.Ordinal);
+            int posLoad = outBox.Text.IndexOf("已载入定案档", StringComparison.Ordinal);
+            Check("告示排在「已载入定案档」之前", posWarn >= 0 && posWarn < posLoad,
+                  $"告示@{posWarn} 载入@{posLoad}　★ 排在后面等于没写");
+            Check("说明了失效的判据", invalid.InvalidChecks.Length > 0,
+                  "InvalidChecks 为空 ⇒ 自检门无法分辨「已知的失败」与「新出现的失败」");
+        }
+
+        Head("12 出图拦截：已失效的档不许导出 3DM");
+        // 与 --make3dm 那条同根：用户 2026-08-17 发现作废档把现役档的 3DM 覆盖掉了。
+        // UI 这条路更险 —— 下拉里作废档就排在现役档后面，默认文件名还一字不差。
+        foreach (var fdX in FinalDesign.All) {
+            string reason = LineDesignPage.ExportBlockedReason(fdX);
+            bool shouldBlock = fdX.Invalid.Length > 0;
+            Check($"{fdX.Name} → {(shouldBlock ? "拦" : "放")}",
+                  (reason.Length > 0) == shouldBlock,
+                  reason.Length > 0 ? "已拦" : "放行");
+        }
+
+        Head("13 不看说明书也能用：判据没过时，界面要**直接说下一步**");
+        // ④ 的验收不能只验「代码里有这段文字」，要验**它真的出现在用户看的那块文本里**。
+        // 做法：喂一个必然不过的算例（舌长退回 90 ⇒ 判据⑤ 不过），跑真解，读输出框。
+        {
+            var bad90 = FinalDesign.Current.Clone();
+            bad90.TabLengthMm = 90.0;
+            var lcBad = bad90.BuildCase(new DesignInputs(), checkRamp: false);
+            var rBad = LineRunner.Run(lcBad);
+            Check("算例确实解出来了", rBad.Ok && rBad.Converged,
+                  rBad.Ok ? "" : rBad.Message);
+            var ck5 = rBad.Checks.FirstOrDefault(c => c.Name.StartsWith("⑤", StringComparison.Ordinal));
+            Check("判据⑤ 确实不过", ck5 is { Ok: false }, $"{ck5?.Actual:0.0}/{ck5?.Limit:0.0}");
+            Check("⑤ 的 Note 里带**下一步**动作", ck5?.Note.Contains("【下一步】") ?? false);
+            Check("下一步说的是装配、不是调热学旋钮",
+                  ck5?.Note.Contains("调热学旋钮没有用") ?? false);
+            // 把结果灌进页面的 Show()，验「结论与下一步」有没有顶到最前面
+            var mShow = typeof(LineDesignPage).GetMethod("Show",
+                            BindingFlags.NonPublic | BindingFlags.Instance);
+            Check("Show() 存在", mShow is not null);
+            mShow?.Invoke(page, new object?[] { rBad, null });
+            string txt = outBox.Text;
+            int posVerdict = txt.IndexOf("条判据没过", StringComparison.Ordinal);
+            // ⚠ 锚点换过（2026-08-20）：原来找的是纯文字判据表的表头「判据　★=硬安全线」，
+            //   而判据表已改成真表格控件（_checks），那张纯文字表**整个被删掉了** ⇒
+            //   IndexOf 恒为 −1，这条断言从「验顺序」变成了「恒不过」。
+            //   **断言挂了先查前提是否还在**（HANDOVER §8 记过同样的教训）。
+            //   本条要守的道理没变：判定必须排在「判据细节在哪儿」之前 ——
+            //   在新架构里，指路那句话就是判据细节的入口。
+            int posTable = txt.IndexOf("判据表见上方表格", StringComparison.Ordinal);
+            Check("开头就给出判定", posVerdict >= 0 && posVerdict < 400,
+                  $"位置 {posVerdict}");
+            Check("判定排在判据表**之前**", posVerdict >= 0 && posTable > posVerdict,
+                  $"判定@{posVerdict} 表@{posTable}");
+            Check("开头就给出「先解决哪一条」", txt.Contains("先解决这一条"));
+            Check("开头就带【下一步】", txt.IndexOf("【下一步】", StringComparison.Ordinal) is int q
+                                        && q >= 0 && q < 800, "");
+            Check("输出里没有残留的 Markdown 星号", !txt.Contains("**"),
+                  txt.Contains("**") ? "★ 还在往纯文本框里灌 Markdown 源码" : "");
+            // ★★★★★ 报告说「判据表见上方表格」，那张表就**必须真的有行**（2026-08-20）。
+            //   判据表从纯文字改成 DataGridView 时，控件、初始化、布局、填充方法都写好了，
+            //   **唯独没有人调用 FillChecks** ⇒ 表永远是空的，而报告还在指着它。
+            //   空表比没有表更坏：人会把「没有行」读成「没有不过的」。
+            //   ⇒ 这条门守的是「指路的话」与「被指的地方」对得上。
+            var checksGrid = (DataGridView)F(page, "_checks")!;
+            Check("判据表真的被填上了", checksGrid.Rows.Count > 0,
+                  $"{checksGrid.Rows.Count} 行" + (checksGrid.Rows.Count == 0
+                      ? "　★ 报告在指着一张空表说「判据在那儿」" : ""));
+            Check("判据表的行数与判据条数一致",
+                  checksGrid.Rows.Count == rBad.Checks.Length,
+                  $"表 {checksGrid.Rows.Count} 行 / 判据 {rBad.Checks.Length} 条");
+            // 不过的行要标出来 —— 颜色只是**重复**判定，但它是人第一眼看的东西
+            Check("有不过的行被标了底色",
+                  checksGrid.Rows.Cast<DataGridViewRow>()
+                      .Any(x => x.DefaultCellStyle.BackColor.R > 250
+                             && x.DefaultCellStyle.BackColor.G < 240));
+            // 把真实输出落盘，供人工过目 —— 排版这种事，测试只能验规则，好不好看要用眼睛
+            try {
+                System.IO.File.WriteAllText(
+                    System.IO.Path.Combine(RepoRoot(), "deliverable", "输出框_排版样本.txt"),
+                    txt, new System.Text.UTF8Encoding(false));
+            } catch { }
+        }
+
+        Head("14 搜形状：按钮在、不自己跑、.3dm 模式下要**明确拒绝**而不是空转");
+        var btnShape = (ToolStripButton)F(page, "_btnShape")!;
+        Check("按钮存在且可用", btnShape is { Enabled: true }, btnShape?.Text ?? "");
+        Check("启动后没有在跑", F(page, "_cts") is null);
+        {
+            // 切到 .3dm 模式：形状由图纸给定，不是可搜索的自由度 ⇒ 必须说清楚，不能默默什么都不做
+            var src3 = (RadioButton)F(page, "_src3dm")!;
+            Set(page, "_suppressAuto", true);
+            src3.Checked = true;
+            Set(page, "_suppressAuto", false);
+            var mSearch = page.GetType().GetMethod("SearchShapeAsync",
+                              BindingFlags.NonPublic | BindingFlags.Instance);
+            Check("SearchShapeAsync 存在", mSearch is not null);
+            mSearch?.Invoke(page, null);
+            Pump(400);
+            Check("拒绝并说明了原因",
+                  outBox.Text.Contains("只在") && outBox.Text.Contains("解析"),
+                  outBox.Text.Length > 0 ? "" : "★ 输出框什么都没说");
+            Check("没有把界面卡在求解态", F(page, "_cts") is null,
+                  F(page, "_cts") is null ? "" : "★ _cts 没清");
+            var srcA = (RadioButton)F(page, "_srcAnalytic")!;
+            Set(page, "_suppressAuto", true);
+            srcA.Checked = true;
+            Set(page, "_suppressAuto", false);
+            Set(page, "_autoArmed", false);
+            Pump(200);
+        }
+
+        Head("15 页面 ↔ FinalDesign 的**单位**必须对得上（盘径是直径，模型要半径）");
+        // 这是 UI 这条路最容易出、又最不容易被看见的错：直径/半径、半宽/全宽各差一倍，
+        // 而两边都是「合理的数」，判据表照样出得来 —— 典型的安静失败。
+        {
+            Set(page, "_suppressAuto", true);
+            discD.Value = 70m; tabW.Value = 28m; tabLen.Value = 200m; wall.Value = 0.7m;
+            for (int i = 0; i < 4; i++) plate[i].Value = 1.11m + i * 0.10m;
+            Set(page, "_suppressAuto", false);
+            var mP2F = page.GetType().GetMethod("PageToFinalDesign",
+                           BindingFlags.NonPublic | BindingFlags.Instance);
+            Check("PageToFinalDesign 存在", mP2F is not null);
+            var fdP = mP2F?.Invoke(page, null) as FinalDesign;
+            Check("盘径 70 → 半径 35", fdP is not null && Math.Abs(fdP.DiscRadiusMm - 35) < 1e-9,
+                  $"{fdP?.DiscRadiusMm}");
+            Check("舌端半宽 28 原样过去", fdP is not null && Math.Abs(fdP.TabHalfWidthMm - 28) < 1e-9,
+                  $"{fdP?.TabHalfWidthMm}");
+            Check("舌长 200 原样过去", fdP is not null && Math.Abs(fdP.TabLengthMm - 200) < 1e-9,
+                  $"{fdP?.TabLengthMm}");
+            Check("管壁 0.7 原样过去", fdP is not null && Math.Abs(fdP.WallMm - 0.7) < 1e-9,
+                  $"{fdP?.WallMm}");
+            Check("四片板厚按序过去", fdP is not null &&
+                  Enumerable.Range(0, 4).All(i => Math.Abs(fdP.TabThickMm[i] - (1.11 + i * 0.10)) < 1e-9),
+                  fdP is null ? "" : string.Join("/", fdP.TabThickMm));
+            Check("不继承种子的失效声明", fdP is not null && fdP.Invalid.Length == 0
+                                          && fdP.InvalidChecks.Length == 0);
+            // 反向：写回控件的换算必须是同一套（搜形状结束时用的就是这段）
+            Check("半径 35 写回去应是直径 70", Math.Abs(2 * (fdP?.DiscRadiusMm ?? 0) - 70) < 1e-9);
+            ((System.Threading.CancellationTokenSource?)F(page, "_cts"))?.Cancel();
+            Set(page, "_autoArmed", false);
+        }
+
+        Head("16 【1b】页面与内核**同一个几何构造器**");
+        // 1b 的全部意义就是这一条：把页面上的定案参数原样填进控件，
+        // 「核算整线」造出来的 FlangePlate 必须与 FinalDesign.Plate 逐字段相同。
+        // 只要有人再绕过构造器自己造一片，这条立刻红。
+        {
+            var fd1b = FinalDesign.Current;
+            Set(page, "_suppressAuto", true);
+            wall.Value = (decimal)fd1b.WallMm;
+            tubeIns.Value = (decimal)fd1b.TubeInsulMm;
+            discD.Value = (decimal)(2 * fd1b.DiscRadiusMm);
+            tabLen.Value = (decimal)fd1b.TabLengthMm;
+            tabW.Value = (decimal)fd1b.TabHalfWidthMm;
+            for (int i = 0; i < 4; i++) plate[i].Value = (decimal)fd1b.TabThickMm[i];
+            var srcA2 = (RadioButton)F(page, "_srcAnalytic")!;
+            srcA2.Checked = true;
+            Set(page, "_suppressAuto", false);
+            Set(page, "_autoArmed", false);
+
+            var mBuild = page.GetType().GetMethod("BuildCase",
+                             BindingFlags.NonPublic | BindingFlags.Instance);
+            var lc1b = mBuild?.Invoke(page, null) as LineCase;
+            Check("BuildCase 返回算例", lc1b is not null);
+            Check("解析模式下造出四片法兰", lc1b?.FlangePlates.Length == 4);
+            if (lc1b is { FlangePlates.Length: 4 })
+            {
+                var want0 = fd1b.Plate(0, fd1b.DiscFloorMm(new DesignInputs()));
+                var got0 = lc1b.FlangePlates[0];
+                Check("盘半径一致", Math.Abs(got0.DiscRadiusMm - want0.DiscRadiusMm) < 1e-9);
+                Check("舌端 X 一致", Math.Abs(got0.TabEndXMm - want0.TabEndXMm) < 1e-9);
+                Check("舌端半宽一致", Math.Abs(got0.TabEndHalfWidthMm - want0.TabEndHalfWidthMm) < 1e-9);
+                Check("★ 管孔渐变环在（1b 之前缺）",
+                      got0.DiscStepRadiiMm.Length == want0.DiscStepRadiiMm.Length
+                      && got0.DiscStepRadiiMm.Length > 0,
+                      $"{got0.DiscStepRadiiMm.Length} 级");
+                Check("★ 角焊缝在（1b 之前缺）",
+                      Math.Abs(got0.WeldFilletLegMm - want0.WeldFilletLegMm) < 1e-9,
+                      $"{got0.WeldFilletLegMm:0.00}");
+                Check("★ 逐片舌保温在（1b 之前缺）",
+                      !double.IsNaN(got0.TabInsulThickMm)
+                      && Math.Abs(got0.TabInsulThickMm - want0.TabInsulThickMm) < 1e-9,
+                      $"{got0.TabInsulThickMm:0.0} mm");
+                Check("★ 等宽舌片（1b 之前是梯形）", got0.TabParallel && want0.TabParallel);
+                Check("★ 舌根圆角在（1b 之前缺）",
+                      Math.Abs(got0.TabFilletMm - want0.TabFilletMm) < 1e-9, $"R{got0.TabFilletMm:0}");
+                Check("四片厚度按序对上",
+                      Enumerable.Range(0, 4).All(i =>
+                          Math.Abs(lc1b.FlangePlates[i].ThicknessMm
+                                   - fd1b.Plate(i, fd1b.DiscFloorMm(new DesignInputs())).ThicknessMm) < 1e-9));
+                // 这一条是「表达不了」清单必须已经空掉
+                var mPvF = typeof(LineDesignPage).GetMethod("PageVsFinal",
+                               BindingFlags.NonPublic | BindingFlags.Static);
+                string missNow = mPvF?.Invoke(null, new object?[] { got0 }) as string ?? "?";
+                Check("「本页表达不了」清单已空", missNow.Length == 0, missNow);
+            }
+            Check("压接段仍是定案值不是 3 mm 默认值",
+                  lc1b is not null &&
+                  Math.Abs(lc1b.Base.BusbarClampLengthMm - fd1b.ClampLengthMm) < 1e-9,
+                  $"{lc1b?.Base.BusbarClampLengthMm}");
+            // 法兰保温：1b 前 BuildCase 里写死 20，控件动了也没用
+            Check("圆盘保温跟着页面控件走（原来写死 20）",
+                  lc1b is not null && lc1b.Base.FlangeInsulThickMm > 0,
+                  $"{lc1b?.Base.FlangeInsulThickMm:0.#} mm");
+            Check("水头没有在换构造器时丢掉",
+                  lc1b is not null && lc1b.HeadM.Length > 0, $"{lc1b?.HeadM.Length} 段");
+
+            // ★★★★★ 1b 的**决定性**验证（慢，约 1–2 分钟，值得）：
+            //   把定案参数填进页面、走页面的 BuildCase 真解一次，
+            //   结果必须**复现定案记录值**。
+            //   1b 之前这件事做不到 —— 页面解的是另一片法兰，这正是当初不得不单独做
+            //   「▶ 复现定案」按钮的原因。现在两条路应该落到同一个解。
+            //   容差沿用 --selfcheck 那一套（③ 1.0 K／②′ 0.5 W／②″ 0.2 K／管J 0.05／合计 2 g）。
+            if (lc1b is not null)
+            {
+                Console.WriteLine("  …（真解一次，约 1–2 分钟）");
+                var r1b = LineRunner.Run(lc1b);
+                Check("页面路径解得出且收敛", r1b.Ok && r1b.Converged, r1b.Ok ? "" : r1b.Message);
+                if (r1b is { Ok: true, Converged: true })
+                {
+                    double V(string k) => r1b.Checks
+                        .FirstOrDefault(c => c.Name.StartsWith(k, StringComparison.Ordinal))?.Actual ?? double.NaN;
+                    // ⚠ 差值要先掐负零：(-0.0).ToString("+0.000;−0.000") 会打出 "-+0.000"
+                    void Near(string nm, double got, double want, double tol, string unit) =>
+                        Check($"页面路径复现定案 {nm}", Math.Abs(got - want) <= tol,
+                              $"{got:0.000} {unit} vs 记录 {want:0.000}　差 " +
+                              SizerResult.Signed(got - want, "+0.000;−0.000"));
+                    Near("③", V("③"), fd1b.FlangeDipK, 1.00, "K");
+                    Near("②′", V("②′"), fd1b.HoleFluxW, 0.50, "W");
+                    Near("②″", V("②″"), fd1b.DiscOverK, 0.20, "K");
+                    Near("管J", V("管 J"), fd1b.TubeJ, 0.05, "A/mm²");
+                    Near("合计", r1b.TotalMassG, fd1b.TotalMassG, 2.0, "g");
+                    Check("页面路径也判为全过", r1b.AllOk,
+                          r1b.AllOk ? "" : string.Join("；", r1b.Failed));
+                }
+            }
+        }
+
+        Head("17 输出框排版：不许出现 Markdown 源码，中文列宽要按显示宽度算");
+        // 用户 2026-08-17 反馈「文挡好乱」。两个病：
+        //   ① `**粗体**` 是 Markdown，而输出框显示纯文本 ⇒ 满屏星号；
+        //   ② 列宽按字符数补齐，而中文一个字占两个西文字宽 ⇒ 每行列位置都不一样。
+        {
+            // ① 灌一段带 ** 的文本，读回来不该还有 **（应已渲染成粗体并去掉标记）
+            outBox.Text = "普通 **要加粗的** 普通";
+            Pump(300);
+            Check("`**` 已被渲染掉，不再显示成星号",
+                  !outBox.Text.Contains("**"), "读回：" + outBox.Text);
+            Check("被标记的字还在（只是去了标记）", outBox.Text.Contains("要加粗的"));
+            // 真的加粗了吗：选中那段，看字体
+            int p = outBox.Text.IndexOf("要加粗的", StringComparison.Ordinal);
+            if (p >= 0) {
+                outBox.SelectionStart = p; outBox.SelectionLength = 4;
+                Check("那段确实是粗体", outBox.SelectionFont?.Bold == true,
+                      outBox.SelectionFont?.Style.ToString() ?? "取不到字体");
+                outBox.SelectionStart = 0; outBox.SelectionLength = 0;
+            }
+            // ② 显示宽度：中文按 2 算
+            var tW = typeof(LineDesignPage).Assembly.GetType("PtOptimize.UI.TextFmt");
+            var mWidth = tW?.GetMethod("Width", BindingFlags.Public | BindingFlags.Static);
+            var mPadR = tW?.GetMethod("PadR", BindingFlags.Public | BindingFlags.Static);
+            Check("TextFmt 可用", tW is not null && mWidth is not null && mPadR is not null);
+            if (mWidth is not null && mPadR is not null) {
+                Check("中文宽度按 2 算", (int)mWidth.Invoke(null, new object?[] { "管壁" })! == 4,
+                      $"「管壁」= {mWidth.Invoke(null, new object?[] { "管壁" })}");
+                Check("西文宽度按 1 算", (int)mWidth.Invoke(null, new object?[] { "abcd" })! == 4);
+                // 两个显示宽度相同的串，补齐后总宽必须一致 —— 这正是表格对齐的充要条件
+                string a = (string)mPadR.Invoke(null, new object?[] { "管 J", 26 })!;
+                string b = (string)mPadR.Invoke(null, new object?[] { "⑥ 圆盘盖得住管孔＋焊脚", 26 })!;
+                int wa = (int)mWidth.Invoke(null, new object?[] { a })!;
+                int wb = (int)mWidth.Invoke(null, new object?[] { b })!;
+                Check("长短不一的判据名补齐后显示宽度相同", wa == wb, $"{wa} vs {wb}");
+            }
+            outBox.Clear();
+        }
+
+        Head("17′ Excel 式表格：制表位真的设上了，而且只管它自己那张表");
+        // 排版改成「一格一个 Tab」之后，对齐不再靠补空格，靠的是 SelectionTabs（像素定位）。
+        // 这机制前两版栽的两个坑都在**选区下标**上，而且都长着「看起来在工作」的样子：
+        //   ① 下标算偏 ⇒ 只有一部分行被设上（同一张表里几行对齐、几行不对齐）；
+        //   ② 选区把行尾换行也选进去 ⇒ 顺带把下一段普通句子也套上了表的制表位。
+        // 两条都不会报错、也不会崩，只能靠门守。
+        {
+            const string tsv =
+                "名称\t数值\t备注\n" +
+                "甲行\t9\t甲注\n" +
+                "乙行\t1150\t乙注\n" +
+                "\n" +
+                "这一句不是表，制表位不该管到它。";
+            outBox.Text = tsv;          // ⚠ 要经 TextChanged 挂钩才会重排 ⇒ 设完 Text 必须 Pump
+            Pump(300);
+
+            // 取某段文字所在**段落**的制表位。
+            // ⚠ 不按行号取：GetFirstCharIndexFromLine 数的是**显示行**，一旦哪天 WordWrap 打开
+            //   就会静悄悄地取错段落 —— 拿控件文本里的锚点找位置，才与显示无关。
+            int[] TabsAt(string anchor) {
+                int q = outBox.Text.IndexOf(anchor, StringComparison.Ordinal);
+                if (q < 0) return Array.Empty<int>();
+                outBox.Select(q, anchor.Length);
+                var got = outBox.SelectionTabs;
+                outBox.Select(0, 0);
+                return got is null ? Array.Empty<int>() : got;
+            }
+
+            var tHead = TabsAt("名称");
+            var tRow1 = TabsAt("甲行");
+            var tRow2 = TabsAt("乙行");
+            var tProse = TabsAt("这一句不是表");
+
+            Check("表被认出来了：数据行有制表位", tRow1.Length > 0,
+                  tRow1.Length > 0 ? string.Join("/", tRow1) : "★ 制表位根本没设上");
+            Check("制表位严格递增（不递增则 Tab 原地不动，两列贴成一格）",
+                  tRow1.Length > 0 && Enumerable.Range(1, tRow1.Length - 1).All(i => tRow1[i] > tRow1[i - 1]),
+                  string.Join("/", tRow1));
+            Check("同一张表三行的制表位完全一致",
+                  tHead.Length > 0 && tHead.SequenceEqual(tRow1) && tRow1.SequenceEqual(tRow2),
+                  $"[{string.Join("/", tHead)}] [{string.Join("/", tRow1)}] [{string.Join("/", tRow2)}]");
+            Check("表外的段落没被套上表的制表位",
+                  tProse.Length == 0 || !tProse.SequenceEqual(tRow1),
+                  tProse.Length == 0 ? "" : "★ 选区连行尾换行一起选了，改到了下一段：" + string.Join("/", tProse));
+
+            // 数字列右对齐（Excel 同款默认）：窄的那格前面必须被补上空格
+            var shown = outBox.Text.Replace("\r\n", "\n").Split('\n');
+            var cells9 = (shown.FirstOrDefault(r => r.StartsWith("甲行", StringComparison.Ordinal)) ?? "")
+                         .Split('\t');
+            Check("那一行还是三格", cells9.Length == 3, string.Join(" | ", cells9));
+            Check("窄的数字格前面被补了空格（数字列右对齐）",
+                  cells9.Length == 3 && cells9[1].Length > 1 && cells9[1][0] == ' ',
+                  cells9.Length == 3 ? $"「{cells9[1]}」" : "");
+            Check("补空格没有动到数值本身",
+                  cells9.Length == 3 && cells9[1].Trim() == "9", cells9.Length == 3 ? cells9[1].Trim() : "");
+
+            // 命令行那一侧：同一份 TSV 走 Plain，不能留裸 Tab（控制台没有可设的制表位）
+            // ⚠ TextFmt 是 internal，本测试在另一个程序集 ⇒ 只能反射。
+            var tFmt = typeof(MainForm).Assembly.GetType("PtOptimize.UI.TextFmt");
+            var mPlain = tFmt?.GetMethod("Plain", BindingFlags.Public | BindingFlags.Static);
+            var mW2 = tFmt?.GetMethod("Width", BindingFlags.Public | BindingFlags.Static);
+            Check("TextFmt.Plain / Width 可用", mPlain is not null && mW2 is not null);
+            if (mPlain is not null && mW2 is not null) {
+                var fW = mW2!;      // 局部函数里的 null 分析不跟着外面的 if 走，先落成非空局部量
+                string plain = (string)mPlain.Invoke(null, new object?[] { tsv })!;
+                Check("Plain 的输出里没有裸 Tab", !plain.Contains('\t'),
+                      plain.Contains('\t') ? "★ 控制台每 8 格跳一次，裸 Tab 一定歪" : "");
+                var pls = plain.Replace("\r\n", "\n").Split('\n');
+                int ColAt(string anchor) {
+                    string line = pls.FirstOrDefault(x => x.Contains(anchor, StringComparison.Ordinal)) ?? "";
+                    int q = line.IndexOf(anchor, StringComparison.Ordinal);
+                    return q < 0 ? -1 : (int)fW.Invoke(null, new object?[] { line[..q] })!;
+                }
+                int p0 = ColAt("备注"), p1 = ColAt("甲注"), p2 = ColAt("乙注");
+                Check("Plain 里各行第三列的起点一致（按显示宽度算）",
+                      p0 > 0 && p0 == p1 && p1 == p2, $"{p0}/{p1}/{p2}");
+            }
+            outBox.Clear();
+        }
+
+        Head("18 工具条实况：说明书按名字分的三组，必须与真实按钮顺序对得上");
+        // 用户 2026-08-17 质疑这句话，让我去抓 UI 看。说明书里写「照着分隔线分组」，
+        // 而如果分隔线根本不显示，那就是**让用户去找一个看不见的东西** —— 比不写更糟。
+        {
+            ToolStrip? ts = null;
+            void Walk(Control c) {
+                if (c is ToolStrip t && t.Items.Count > 3 && ts is null) { ts = t; return; }
+                foreach (Control k in c.Controls) Walk(k);
+            }
+            Walk(page);
+            Check("找到「整线设计」页的工具条", ts is not null);
+            if (ts is not null) {
+                Console.WriteLine("     实况（按左到右）：");
+                var groups = new List<List<string>> { new() };
+                int sepVisible = 0, sepTotal = 0;
+                // ⚠ 这里必须用 `Available` 不是 `Visible`（2026-08-17 第一版写错了）：
+                //   窗体没真正显示时 `Visible` 对**所有**项都是 false —— 按钮也一样，
+                //   于是「实际 0 组」，看起来像分隔线全没了，其实是**检查量选错了**。
+                //   `Available` 才是「若父容器显示则会显示」，无头环境下也有意义。
+                //   （拿一个在测试环境里恒为 false 的量当证据，就是「校验量选错」的又一例。）
+                foreach (ToolStripItem it in ts.Items) {
+                    if (it is ToolStripSeparator sp) {
+                        sepTotal++; if (sp.Available) sepVisible++;
+                        groups.Add(new List<string>());
+                        Console.WriteLine($"       ── 分隔线（Available={sp.Available}）");
+                    } else {
+                        string label = it is ToolStripComboBox ? "[定案档下拉]"
+                                     : it.Text.Length > 0 ? it.Text
+                                     : it is ToolStripProgressBar ? "[进度条]" : "[" + it.GetType().Name + "]";
+                        if (it.Available) groups[^1].Add(label);
+                        Console.WriteLine($"       {label}");
+                    }
+                }
+                Check("确实有分隔线", sepTotal > 0, $"{sepTotal} 条");
+                Check("分隔线都在（Available）", sepTotal > 0 && sepVisible == sepTotal,
+                      $"{sepVisible}/{sepTotal}");
+                var nonEmpty = groups.Where(g => g.Count > 0).ToList();
+                Console.WriteLine("     ⇒ 实际分成 " + nonEmpty.Count + " 组：");
+                foreach (var g in nonEmpty) Console.WriteLine("       · " + string.Join(" / ", g));
+                // 说明书讲的是「三组」：定案档组 / 本页参数组 / 工具组（进度条那段不算）
+                Check("与说明书说的组数对得上", nonEmpty.Count >= 3, $"实际 {nonEmpty.Count} 组");
+                // ★ 说明书是按**按钮名字**分组讲的（不是让用户去找那条 1 px 的分隔线）。
+                //   所以要验的是：每一组里确实是说明书点名的那些按钮。
+                string g1 = nonEmpty.Count > 0 ? string.Join("/", nonEmpty[0]) : "";
+                string g2 = nonEmpty.Count > 1 ? string.Join("/", nonEmpty[1]) : "";
+                Check("第一组 = 定案档那几个（不读页面控件）",
+                      g1.Contains("复现定案") && g1.Contains("载入定案") && g1.Contains("导出定案"), g1);
+                Check("第二组 = 读页面控件那几个",
+                      g2.Contains("核算整线") && g2.Contains("自动定厚") && g2.Contains("搜形状"), g2);
+            }
+        }
+
+        Head("19 界面缩放：窗口与字号随屏幕，且小屏上不许抛异常");
+        {
+            var tU = typeof(LineDesignPage).Assembly.GetType("PtOptimize.UI.UiScale");
+            Check("UiScale 可用", tU is not null);
+            if (tU is not null) {
+                float k = (float)tU.GetProperty("K", BindingFlags.Public | BindingFlags.Static)!.GetValue(null)!;
+                float fp = (float)tU.GetProperty("FontPt", BindingFlags.Public | BindingFlags.Static)!.GetValue(null)!;
+                Check("缩放系数在 1.0–1.7 之间", k >= 1.0f && k <= 1.7f, $"K={k:0.00}");
+                Check("字号不小于 9 pt", fp >= 9f, $"{fp:0.0} pt");
+                var mS = tU.GetMethod("S", BindingFlags.Public | BindingFlags.Static)!;
+                Check("S(100) 随 K 放大", (int)mS.Invoke(null, new object?[] { 100 })! == (int)Math.Round(100 * k));
+                // ⚠ 这一条是真抓到过的：Math.Clamp(w, 1100, wa.Width) 在小屏上 min>max ⇒ 抛异常 ⇒ 程序起不来
+                var mW = tU.GetMethod("WindowSize", BindingFlags.Public | BindingFlags.Static)!;
+                bool threw = false;
+                try { mW.Invoke(null, new object?[] { 0.8 }); } catch { threw = true; }
+                Check("WindowSize 不抛异常", !threw);
+            }
+            // 窗口真的按屏幕比例来了（而不是写死 1400×900）
+            var wa = Screen.PrimaryScreen!.WorkingArea;
+            Check("窗口宽度跟着屏幕走（不是写死的 1400）",
+                  main.Width != 1400 || wa.Width < 1600,
+                  $"窗口 {main.Width}×{main.Height}　工作区 {wa.Width}×{wa.Height}");
+            Check("窗口没有超出工作区", main.Width <= wa.Width && main.Height <= wa.Height);
+            // 字体真的应用到了主窗口
+            Check("主窗口字号 = UiScale.FontPt",
+                  tU is null || Math.Abs(main.Font.SizeInPoints
+                      - (float)tU.GetProperty("FontPt", BindingFlags.Public | BindingFlags.Static)!.GetValue(null)!) < 0.05,
+                  $"{main.Font.SizeInPoints:0.0} pt");
+            // 说明书 CSS 字号也必须跟着（WebView2 不吃 WinForms 字体）
+            Check("说明书 CSS 字号已替换（没有残留占位符）", !html.Contains("MANUALFONT"));
+            // ⚠ ToolStrip **不继承父窗体字体** —— 用户 2026-08-18：「下排的字还是太小」。
+            //   在 Form 上设 Font 对工具条无效，必须逐个显式设；这条守住它。
+            var strips = new List<ToolStrip>();
+            void Collect(Control c) { if (c is ToolStrip t) strips.Add(t); foreach (Control k in c.Controls) Collect(k); }
+            Collect(main);
+            Check("找到工具条", strips.Count > 0, $"{strips.Count} 条");
+            var small = strips.Where(t => t.Font.SizeInPoints < main.Font.SizeInPoints - 0.05).ToList();
+            Check("每条工具条的字号都不小于主窗口",
+                  small.Count == 0,
+                  small.Count == 0 ? $"全部 {main.Font.SizeInPoints:0.0} pt"
+                                   : "★ 偏小：" + string.Join("、", small.Select(t => $"{t.Font.SizeInPoints:0.0}pt")));
         }
 
         Console.WriteLine();

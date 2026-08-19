@@ -123,6 +123,17 @@ public sealed class ThicknessField
     public int Nx, Nz;
     public double[] T = Array.Empty<double>();
 
+    /// <summary>该图层里互不相连的实体**组数**（一片法兰的各级台阶算一组）。</summary>
+    public int GroupCount = 1;
+    /// <summary>本次量的那一组的中面 Y。</summary>
+    public double PlaneY;
+    /// <summary>
+    /// 非空 = 提取时有值得警告的事，**必须显示给用户**。
+    /// 典型：一个图层里放了四片法兰（沿 Y 排开），而调用方没说要量哪一片 ——
+    /// 那是**能正常跑完**的错，不显示就没人会发现。
+    /// </summary>
+    public string Warning = "";
+
     /// <summary>最近邻取值（网格步长通常 1 mm，远细于特征尺寸，无需插值）</summary>
     public double At(double x, double z)
     {
