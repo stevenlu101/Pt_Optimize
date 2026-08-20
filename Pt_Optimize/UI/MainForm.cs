@@ -19,6 +19,8 @@ public sealed class MainForm : Form
         new Segment { Name = "HC3", TSetC = 1050, TGlassInC = 1130, GlassHeadM = 1.0, LengthMm = 300 },
     };
     private readonly RichTextBox _segOut = new();
+    /// <summary>「② 粗算」分段结果的**真表格**（用户 2026-08-20：能用 Excel 格式就用）。</summary>
+    private readonly DataGridView _segResult = GridFmt.NewGrid();
     private DesignInputs _in = new();
     private SolveResult? _res;
 
@@ -122,7 +124,8 @@ public sealed class MainForm : Form
         screenTool.Items.Add(_segStatus);
 
         var screenInner = new TabControl { Dock = DockStyle.Fill };
-        screenInner.TabPages.Add(TabWith("分段核算", SplitH(_segGrid, _segOut)));
+        screenInner.TabPages.Add(TabWith("分段核算",
+            SplitH(_segGrid, SplitH(_segResult, _segOut))));
         screenInner.TabPages.Add(TabWith("单段报告", _out));
         screenInner.TabPages.Add(TabWith("轴向剖面", _pAxial));
 
@@ -403,21 +406,26 @@ public sealed class MainForm : Form
         var rs = LineSolver.Solve(_segs, _in);
         var (mass, cost, bad) = LineSolver.Totals(rs);
         var sb = new StringBuilder();
-        sb.AppendLine($"材料数据：用户实测工作簿   寿命 {_in.DesignLifeHours:0} h   安全系数 {_in.SafetyFactor:0.0}");
-        sb.AppendLine($"金属价格比：Rh/Pt = 4.91（Umicore PMM 2026-08-06，Pt $1731/oz、Rh $8500/oz）");
-        sb.AppendLine();
-        // ★ 列宽不再由这里定，改由 TextFmt 按真实像素量 —— 所以单位可以并进表头，
-        //   不必再单开一行「°C / m / mm …」去凑那 8 个字的宽度。
-        sb.AppendLine("段\t温度 °C\t水头 m\t牌号\t壁厚 mm\t强度最小 mm\tσ_vm MPa\t许用 MPa\t"
-                    + "利用率\t铂重 g\t相对成本\t判定");
-        sb.AppendLine(TextFmt.SepRow(12));
+        // ★★ 2026-08-20：这张表改用**真表格控件**（用户：「能用 Excel 格式表示就用」
+        //   「要有自动合适的格宽与格高」）。
+        //   文本框 + 制表位是在**模拟**表格：没有列宽自适应、没有行高，长内容只能折行；
+        //   实测这张表的表头与数据行还错开了位，查因很费劲。
+        //   DataGridView 的列宽行高是控件自己算 —— 不需要任何人去量像素。
+        //   散文（材料数据 / 合计 / 注）仍留在下面的文本框里，各归各位。
+        var tab = new StringBuilder();
+        tab.AppendLine("段	温度 °C	水头 m	牌号	壁厚 mm	强度最小 mm	σ_vm MPa	许用 MPa	"
+                    + "利用率	铂重 g	相对成本	判定");
         foreach (var r in rs)
-            sb.AppendLine($"{r.Seg.Name}\t{r.Seg.TSetC:0}\t{r.Seg.GlassHeadM:0.0}\t{r.Seg.GradeName}\t"
+            tab.AppendLine($"{r.Seg.Name}\t{r.Seg.TSetC:0}\t{r.Seg.GlassHeadM:0.0}\t{r.Seg.GradeName}\t"
                         + $"{r.Seg.WallMm:0.000}\t"
                         + (double.IsNaN(r.MinWallStrengthMm) ? "不可行" : r.MinWallStrengthMm.ToString("0.000"))
                         + $"\t{r.VonMisesMPa:0.000}\t{r.AllowMPa:0.000}\t{r.Utilization:0.00}\t"
                         + $"{r.MassG:0}\t{r.CostRelative:0}\t"
                         + (r.Feasible ? "✓" : "✗ " + r.Binding));
+        GridFmt.Fill(_segResult, tab.ToString());
+
+        sb.AppendLine($"材料数据：用户实测工作簿   寿命 {_in.DesignLifeHours:0} h   安全系数 {_in.SafetyFactor:0.0}");
+        sb.AppendLine($"金属价格比：Rh/Pt = 4.91（Umicore PMM 2026-08-06，Pt $1731/oz、Rh $8500/oz）");
         sb.AppendLine();
         sb.AppendLine($"合计铂重 {mass:0} g    相对成本 {cost:0}（= Σ 质量×牌号成本倍数，纯铂同质量为基准）");
         if (bad > 0) sb.AppendLine($"★ {bad} 段强度超限 —— 加厚或换牌号");
