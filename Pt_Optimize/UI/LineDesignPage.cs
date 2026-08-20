@@ -30,10 +30,15 @@ public sealed class LineDesignPage : TabPage
         Num(0.516m, 0.10m, 8.0m, 0.02m, 3), Num(0.855m, 0.10m, 8.0m, 0.02m, 3),
         Num(0.776m, 0.10m, 8.0m, 0.02m, 3), Num(0.426m, 0.10m, 8.0m, 0.02m, 3),
     };
+    // ⚠ 文字要短到**放得下**（2026-08-20 实测截图里这两行断在半个词上：
+    //   「解析形状（圆盘 + 梯形舌片，程」「Rhino .3dm 文件（任意形状：阶」）。
+    //   它们已经是 AutoSize + 跨两列了 —— 截断的原因是文字本身比左栏还宽，
+    //   靠布局救不回来。⇒ 可见文字缩短，完整说明挪进 ToolTip（见构造函数）。
+    //   断在半个词上的标签比短标签更糟：它看着像程序出错了。
     private readonly RadioButton _srcAnalytic = new()
-    { Text = "解析形状（圆盘 + 梯形舌片，程序生成）", AutoSize = true };
+    { Text = "解析形状（程序生成）", AutoSize = true };
     private readonly RadioButton _src3dm = new()
-    { Text = "Rhino .3dm 文件（任意形状：阶梯厚度、开槽、异形轮廓）", AutoSize = true };
+    { Text = "Rhino .3dm 文件", AutoSize = true };
     private readonly TextBox[] _file3dm = { new(), new(), new(), new() };
     private readonly Control[] _row3dm = new Control[4];
     private readonly TextBox _layer3dm = new() { Text = "法兰", Width = UiScale.S(96) };
@@ -236,6 +241,15 @@ public sealed class LineDesignPage : TabPage
             "现用的 5 mm 恰在拐点上 —— 这个值原本是没量过的默认值，碰巧是对的。");
 
         Head("法兰几何来源");
+        // ⚠ 提示文字用 Environment.NewLine 拼，不写反斜杠转义 ——
+        //   本仓有个钩子会把转义序列改成真字符，那会让字符串字面量当场断掉。
+        var tipSrc = new ToolTip();
+        tipSrc.SetToolTip(_srcAnalytic,
+            "圆盘 + 梯形舌片，由程序按盘径/舌长/舌端半宽生成。" + Environment.NewLine
+            + "只有这个模式能用「◇ 搜形状」—— 形状是可搜索的自由度。");
+        tipSrc.SetToolTip(_src3dm,
+            "任意形状：阶梯厚度、开槽、异形轮廓，从 Rhino .3dm 读厚度场。" + Environment.NewLine
+            + "形状由图纸给定 ⇒ 判据 ⑤⑥ 拿不到解析量，会报「无法判定」（不等于通过）。");
         _srcAnalytic.Checked = true;
         _srcAnalytic.CheckedChanged += (_, _) => SyncGeomSource();
         input.Controls.Add(_srcAnalytic); input.SetColumnSpan(_srcAnalytic, 2);
@@ -336,6 +350,10 @@ public sealed class LineDesignPage : TabPage
         Controls.Add(main);
         Controls.Add(tool);
 
+        // 首屏三张图先摆空态 —— 开箱看到的不该是三个 −10…10 的空坐标轴
+        FieldPlots.DrawEmpty(_pT, "还没有结果 —— 点「核算整线」");
+        FieldPlots.DrawEmpty(_pJ, "还没有结果 —— 点「核算整线」");
+        FieldPlots.DrawEmpty(_pAx, "还没有结果 —— 点「核算整线」");
         HookAutoRun();
 
         _out.Text =
@@ -1639,6 +1657,16 @@ public sealed class LineDesignPage : TabPage
         // 照常写文本即可：排版（逐表制表位、`**…**` 加粗）由构造函数里挂的
         // TextFmt.Hook 接管 —— 与本页其余几十处写输出的地方走同一条路。
         _out.Text = sb.ToString();
+
+        // ★ 没结果时画**空态提示**，不是空坐标轴 —— 一个 −10…10 的空轴
+        //   看着像「算坏了」，而实际是「还没算」。两者要做的动作完全不同。
+        if (r is null || !r.Ok)
+        {
+            FieldPlots.DrawEmpty(_pT, "还没有结果 —— 点「核算整线」");
+            FieldPlots.DrawEmpty(_pJ, "还没有结果 —— 点「核算整线」");
+            FieldPlots.DrawEmpty(_pAx, "还没有结果 —— 点「核算整线」");
+            return;
+        }
 
         // 场图取最不利那片（局部最高温）
         var worst = r.Flanges.OrderByDescending(f => f.TMaxC).FirstOrDefault();

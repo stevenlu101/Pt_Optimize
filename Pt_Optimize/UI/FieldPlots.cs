@@ -1,4 +1,4 @@
-using PtOptimize.Core;
+﻿using PtOptimize.Core;
 using ScottPlot;
 using Color = ScottPlot.Color;
 using Colors = ScottPlot.Colors;
@@ -139,6 +139,32 @@ public static class FieldPlots
     /// 法兰温度只随 r 变 → 等温线是水平段。两者都由一维解精确定位，
     /// 不需要 marching squares。
     /// </summary>
+    /// <summary>
+    /// **空态**：还没有结果时画一行提示，而不是一个空坐标轴。
+    ///
+    /// ★ 2026-08-20：此前没数据时 ScottPlot 会画出 −10…10 的默认坐标轴，
+    ///   **看着像「算坏了」而不是「还没算」** —— 用户分不出这两件事，
+    ///   而它们要做的动作完全不同。提示语要直接说**下一步点什么**
+    ///   （本项目既定诉求：「不看说明书也能用」）。
+    /// </summary>
+    public static void DrawEmpty(FormsPlot fp, string hint)
+    {
+        var plot = fp.Plot;
+        plot.Clear();
+        plot.Axes.Frameless();
+        plot.HideGrid();
+        plot.Axes.SetLimits(0, 1, 0, 1);
+        var t = plot.Add.Text(hint, 0.5, 0.5);
+        t.Alignment = Alignment.MiddleCenter;
+        t.LabelFontSize = 14;
+        t.LabelFontColor = new Color(120, 120, 120);
+        // ⚠ **必须显式设中文字体**：NewPlot() 只给坐标轴与标题设了 Microsoft YaHei，
+        //   Text 标注走的是另一套默认字体，中文会整串渲染成豆腐块 □□□。
+        //   而豆腐块比空坐标轴更像「程序坏了」—— 那正是本方法要消除的观感。
+        t.LabelFontName = "Microsoft YaHei";
+        fp.Refresh();
+    }
+
     /// <summary>
     /// **整线**轴向温度分布：三段首尾相接画成一条，段界（= 法兰所在处）标竖线。
     ///

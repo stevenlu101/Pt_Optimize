@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using Microsoft.Web.WebView2.WinForms;
 using PtOptimize.Core;
 
@@ -116,95 +116,205 @@ public sealed class ManualPage : TabPage
     //  SVG：全部按 FinalDesign 的实际尺寸画，标注也取自它
     // ════════════════════════════════════════════════════════════════════
 
+    // ════════════════════════════════════════════════════════════════════
+    //  说明书里的**名字一律从 Flow 取**，不再手抄
+    //
+    //  以前页签名与按钮名写死在 HTML 字符串里：界面改了而没人回来改这里时，
+    //  没有任何东西会报错，说明书就开始骗人 —— 而说明书有排版、有图、有判据表，
+    //  看起来就是答案，比程序落后更难被发现。
+    //  现在这几个函数读的是 UI/Flow.cs，和 MainForm 建页签、各页建工具条**同一张表**。
+    // ════════════════════════════════════════════════════════════════════
+
+    private static string H(string s) => System.Net.WebUtility.HtmlEncode(s);
+
     /// <summary>
-    /// 界面地图：主窗口分几块、五个页签各是什么。
+    /// Flow 的文案用 <c>**</c> 标粗（与页顶横幅、判据 Note 共用同一套写法）⇒ 转成 &lt;b&gt;。
     ///
-    /// ⚠ 这张图是**手写的示意**，不像其余几张那样由 FinalDesign 生成 ——
-    ///   它画的是界面结构，而界面结构在代码里（MainForm 的 SplitContainer 与 TabPages）。
-    ///   ⇒ 改了页签或工具条，**必须回来改这里**。图与界面漂开时没有任何东西会报错。
-    ///   （已知同源：MainForm.cs 的 TabPages 顺序、LineDesignPage/AnalysisPage 的工具条。）
+    /// ⚠ 不能像 <see cref="MainForm"/> 的横幅那样直接把 <c>**</c> 删掉：Label 没有富文本才只能删，
+    ///   这里是 HTML，删掉就是把作者标出来的重点整段抹平 —— 而重点正是那些文案存在的理由。
     /// </summary>
-    private static string SvgUi()
+    private static string Md(string s)
     {
+        string[] parts = H(s).Split("**");
+        var b = new StringBuilder();
+        for (int i = 0; i < parts.Length; i++)
+            b.Append(i % 2 == 1 ? "<b>" + parts[i] + "</b>" : parts[i]);
+        return b.ToString();
+    }
+
+    /// <summary>按钮名。<c>Flow.Cmd</c> 查不到当场抛 —— 宁可吵着失败，也不要印一个不存在的按钮。</summary>
+    private static string B(string cmdId) => "<b>" + H(Flow.Cmd(cmdId).Text) + "</b>";
+
+    /// <summary>页签名（＝阶段名，阶段轨上那一格）。</summary>
+    private static string Pg(StageId s) => "「" + H(Flow.Stage(s).Title) + "」";
+
+    /// <summary>「在哪一格点哪个按钮」—— 格名与按钮名两个都来自 Flow。</summary>
+    private static string At(string cmdId)
+    {
+        var c = Flow.Cmd(cmdId);
+        return Pg(c.Stage) + "页 → 点" + B(cmdId);
+    }
+
+    /// <summary>
+    /// 界面地图：主窗口分三块 + 阶段轨六格各带哪些命令。
+    ///
+    /// ★ 本图由 <see cref="Flow"/> 生成：页签名取 <c>StageSpec.Title</c>、
+    ///   按钮名取 <c>CommandSpec.Text</c> —— 与真界面读的是同一张表，图与界面**不可能漂开**。
+    ///   （2026-08-20 前这里是手写 SVG，注释自己写着「改了页签或工具条必须回来改这里，
+    ///     图与界面漂开时没有任何东西会报错」。阶段轨改造当天那张图就整个作废了：
+    ///     页签从 5 个变 6 个且全部改名、主工具条整条没了、按钮按阶段散到各页。
+    ///     ⇒ 与其留一条靠人记得的警告，不如让那件事在结构上不可能发生。）
+    /// </summary>
+    /// <param name="omitted">
+    /// 画不下而被省略的条目（空串 = 全画下了）。**调用方必须把它印在图下。**
+    ///
+    /// ⚠ 排不进列宽/列高的按钮若只是悄悄不画，就是一次安静失败：用户在真界面上
+    ///   看到一个图上没有的按钮，只会以为自己点错了地方。旧版是按 11.6 px/字
+    ///   手算「排得下几个」，算错就直接画到 viewBox 外 —— 图上看不见，但确实丢了。
+    /// </param>
+    private static string SvgUi(out string omitted)
+    {
+        var dropped = new List<string>();
+
+        // 字号/行高。命令名 9.5 px 是量出来的：当前最长的一条「核算法兰（分钟级）」占 9 个
+        // 全角宽，列内宽 88.7 px ⇒ 9.3 格，正好落进去。将来 Flow 里出现更长的名字也不会
+        // 挤出框：先折行，折不下才进 dropped 并在图下注明。
+        const double FSTab = 11, LHTab = 14, FSCmd = 9.5, LHCmd = 12.5;
+        const double X0 = 10, TRACK_W = 600, GAP = 4;
+        const int MaxTabRows = 3, MaxCmdRows = 14;      // 图还得是张图：超了就省略并注明
+        double colW = (TRACK_W - GAP * 5) / 6;
+        double innerW = colW - 10;
+
+        // 文本宽度估算：ASCII 按 0.55 个字号宽，其余（汉字 / ① / ★ / ·）按 1 个。
+        // ⚠ 宁可**高估**：高估只会提前触发折行与省略（看得见），低估会画到框外（看不见）。
+        static List<string> Wrap(string s, double maxW, double fs)
+        {
+            var lines = new List<string>();
+            var cur = new StringBuilder();
+            double w = 0;
+            foreach (char c in s)
+            {
+                double cw = (c < 0x80 ? 0.55 : 1.0) * fs;
+                if (w + cw > maxW && cur.Length > 0) { lines.Add(cur.ToString()); cur.Clear(); w = 0; }
+                cur.Append(c);
+                w += cw;
+            }
+            if (cur.Length > 0) lines.Add(cur.ToString());
+            return lines;
+        }
+
+        var stages = Flow.Stages.OrderBy(s => s.Order).ToArray();
+
+        // ── 先把所有文字排完版，才知道图该多高。六列**等高**，看起来才是一条轨。
+        var tabLines = new List<string>[stages.Length];
+        var cmdLines = new List<List<string>>[stages.Length];
+        for (int i = 0; i < stages.Length; i++)
+        {
+            tabLines[i] = Wrap(stages[i].Title, innerW, FSTab);
+            if (tabLines[i].Count > MaxTabRows)
+            {
+                dropped.Add($"页签名「{stages[i].Title}」只画得下前 {MaxTabRows} 行");
+                tabLines[i] = tabLines[i].Take(MaxTabRows).ToList();
+                tabLines[i][^1] += "…";
+            }
+
+            cmdLines[i] = new List<List<string>>();
+            int rows = 0;
+            for (int k = 0; k < stages[i].CommandIds.Length; k++)
+            {
+                var ln = Wrap(Flow.Cmd(stages[i].CommandIds[k]).Text, innerW, FSCmd);
+                if (rows + ln.Count > MaxCmdRows)
+                {
+                    // 画不下的**逐条记账**（连同它后面的），绝不静默丢弃
+                    foreach (string rest in stages[i].CommandIds.Skip(k))
+                        dropped.Add($"{stages[i].Title} 的「{Flow.Cmd(rest).Text}」");
+                    break;
+                }
+                cmdLines[i].Add(ln);
+                rows += ln.Count;
+            }
+        }
+        int tabRows = tabLines.Max(t => t.Count);
+        int cmdRows = Math.Max(1, cmdLines.Max(a => a.Sum(l => l.Count)));
+
+        double trackTop = 192;
+        double tabH = 6 + tabRows * LHTab;
+        double bodyTop = trackTop + tabH + 8;
+        double bodyH = cmdRows * LHCmd + 10;
+        double HH = bodyTop + bodyH + 8;
+
         var sb = new StringBuilder();
-        sb.Append("<svg viewBox=\"0 0 620 376\" width=\"100%\" style=\"max-width:620px\">");
+        sb.Append($"<svg viewBox=\"0 0 620 {HH:0}\" width=\"100%\" style=\"max-width:620px\">");
 
         string Box(double x, double y, double w, double h, string fill) =>
             $"<rect x=\"{x:0.#}\" y=\"{y:0.#}\" width=\"{w:0.#}\" height=\"{h:0.#}\" rx=\"3\" " +
             $"fill=\"{fill}\" stroke=\"var(--rule)\" stroke-width=\"1\"/>";
         string Txt(double x, double y, string t, string cls = "lbl", string an = "start") =>
-            $"<text x=\"{x:0.#}\" y=\"{y:0.#}\" text-anchor=\"{an}\" class=\"{cls}\">{t}</text>";
+            $"<text x=\"{x:0.#}\" y=\"{y:0.#}\" text-anchor=\"{an}\" class=\"{cls}\">{H(t)}</text>";
+        string TxtS(double x, double y, string t, string style, string an = "start") =>
+            $"<text x=\"{x:0.#}\" y=\"{y:0.#}\" text-anchor=\"{an}\" class=\"lbl\" " +
+            $"style=\"{style}\">{H(t)}</text>";
         string Badge(double x, double y, string n) =>
             $"<circle cx=\"{x:0.#}\" cy=\"{y:0.#}\" r=\"10\" fill=\"var(--clamp)\"/>" +
             $"<text x=\"{x:0.#}\" y=\"{y + 4.5:0.#}\" text-anchor=\"middle\" " +
             $"style=\"font:bold 12px sans-serif;fill:#FFF\">{n}</text>";
 
-        sb.Append(Box(10, 10, 600, 356, "var(--bg)"));
-        // 标题栏
+        // ── 上半：窗口分三块（**没有主工具条了** —— 命令按阶段散到各格自己的工具条上）
+        sb.Append(Box(10, 10, 600, 158, "var(--bg)"));
         sb.Append(Box(10, 10, 600, 24, "var(--card)"));
         sb.Append(Txt(20, 26, "Pt_Optimize — 铂金直接加热 整线设计与用量优化", "lbl dim"));
-        // 主工具条
-        sb.Append(Box(10, 34, 600, 27, "var(--card)"));
-        double bx = 18;
-        foreach (var s in new[] { "计算 (F5)", "│", "扫描：保温厚度", "扫描：法兰厚度",
-                                  "扫描：铂发射率", "│", "保存", "读取", "导出 CSV" })
-        { sb.Append(Txt(bx, 52, s, "lbl")); bx += s == "│" ? 12 : s.Length * 12.4 + 12; }
-        sb.Append(Badge(596, 47, "④"));
 
-        // 左：参数表
-        sb.Append(Box(15, 66, 194, 294, "var(--card)"));
-        sb.Append(Txt(25, 86, "参数表", "lbl"));
-        sb.Append(Txt(25, 103, "DesignInputs，分类折叠", "lbl dim"));
-        for (int i = 0; i < 7; i++)
-        {
-            sb.Append($"<line x1=\"25\" y1=\"{122 + i * 22}\" x2=\"110\" y2=\"{122 + i * 22}\" " +
-                      "stroke=\"var(--rule)\" stroke-width=\"6\" stroke-linecap=\"round\"/>");
-            sb.Append($"<line x1=\"124\" y1=\"{122 + i * 22}\" x2=\"196\" y2=\"{122 + i * 22}\" " +
-                      "stroke=\"var(--dim)\" stroke-width=\"6\" stroke-linecap=\"round\" stroke-opacity=\"0.45\"/>");
-        }
-        sb.Append(Badge(28, 296, "①"));
-
-        // 右上：报告
-        sb.Append(Box(215, 66, 380, 122, "var(--card)"));
-        sb.Append(Txt(227, 86, "报告（单段解，随「计算 (F5)」刷新）", "lbl"));
+        sb.Append(Box(16, 40, 176, 120, "var(--card)"));
+        sb.Append(Txt(26, 58, "参数表", "lbl"));
+        sb.Append(Txt(26, 74, "DesignInputs，分类折叠", "lbl dim"));
         for (int i = 0; i < 5; i++)
-            sb.Append($"<line x1=\"227\" y1=\"{104 + i * 16}\" x2=\"{300 + (i * 61) % 250}\" " +
-                      $"y2=\"{104 + i * 16}\" stroke=\"var(--rule)\" stroke-width=\"5\" stroke-linecap=\"round\"/>");
-        sb.Append(Badge(578, 175, "②"));
-
-        // 右下：页签区
-        sb.Append(Box(215, 194, 380, 166, "var(--card)"));
-        double tx = 219;
-        foreach (var (t, on) in new (string, bool)[]
-                 { ("整线设计", true), ("分析", false), ("分段核算", false),
-                   ("轴向剖面", false), ("使用说明", false) })
         {
-            double w = t.Length * 13.2 + 14;
-            sb.Append($"<rect x=\"{tx:0.#}\" y=\"198\" width=\"{w:0.#}\" height=\"23\" rx=\"3\" " +
-                      $"fill=\"{(on ? "var(--clamp)" : "var(--bg)")}\" stroke=\"var(--rule)\"/>");
-            sb.Append($"<text x=\"{tx + w / 2:0.#}\" y=\"214\" text-anchor=\"middle\" class=\"lbl\"" +
-                      (on ? " style=\"fill:#FFF\"" : "") + $">{t}</text>");
-            tx += w + 4;
+            sb.Append($"<line x1=\"26\" y1=\"{90 + i * 13}\" x2=\"96\" y2=\"{90 + i * 13}\" " +
+                      "stroke=\"var(--rule)\" stroke-width=\"5\" stroke-linecap=\"round\"/>");
+            sb.Append($"<line x1=\"106\" y1=\"{90 + i * 13}\" x2=\"170\" y2=\"{90 + i * 13}\" " +
+                      "stroke=\"var(--dim)\" stroke-width=\"5\" stroke-linecap=\"round\" stroke-opacity=\"0.45\"/>");
         }
-        sb.Append(Badge(578, 210, "③"));
-        // 页签内部：自己的工具条 + 输出 + 图
-        sb.Append(Box(222, 228, 366, 24, "var(--bg)"));
-        bx = 230;
-        // ⚠ 这条内工具条只画得下几个 —— 全表在图下方。
-        //   按 11.6 px/字 排完必须落在面板右边界 588 之内，加项前先算一遍：
-        //   多出去的不会被裁掉，会直接画到 viewBox 外，图上看不见但确实丢了。
-        // 2026-08-17：加了「◇ 搜形状」。画得下就画出来 —— 界面地图上没有的按钮，
-        // 用户在真界面上看到时会以为自己点错了地方。
-        foreach (var s in new[] { "核算整线", "自动定厚", "◇ 搜形状", "│",
-                                  "定案档▾", "载入定案", "…" })
-        { sb.Append(Txt(bx, 245, s, "lbl dim")); bx += s == "│" ? 10 : s.Length * 11.6 + 10; }
-        sb.Append(Box(222, 258, 366, 46, "var(--bg)"));
-        sb.Append(Txt(232, 275, "判据表 + 收敛信息（文本）", "lbl dim"));
-        sb.Append(Box(222, 310, 366, 44, "var(--bg)"));
-        sb.Append(Txt(232, 327, "法兰温度场 / 法兰电流密度场 / 管轴向剖面", "lbl dim"));
-        sb.Append(Badge(578, 332, "⑤"));
+        sb.Append(Badge(30, 146, "①"));
+
+        sb.Append(Box(200, 40, 404, 56, "var(--card)"));
+        sb.Append(Txt(210, 58, "状态面板", "lbl"));
+        sb.Append(Txt(210, 74, "现在算的是哪条链（求解器入口 · 耗时 · 可不可交付）", "lbl dim"));
+        sb.Append(Txt(210, 89, "结果新不新鲜 ／ 上次判定 ／ 门开没开、为什么没开", "lbl dim"));
+        sb.Append(Badge(586, 84, "②"));
+
+        sb.Append(Box(200, 100, 404, 60, "var(--card)"));
+        sb.Append(Txt(210, 118, "阶段轨：六格页签（下面按格放大）", "lbl"));
+        sb.Append(Txt(210, 134, "每格自带页顶横幅与自己的工具条", "lbl dim"));
+        sb.Append(Txt(210, 150, "锁着的格子标题带 🔒，但仍可只读进入", "lbl dim"));
+        sb.Append(Badge(586, 148, "③"));
+
+        // ── 下半：阶段轨放大。顺序、格名、每格的命令全部来自 Flow。
+        sb.Append(Txt(10, 184, "阶段轨（左 → 右就是阅读顺序；每格下面列的是本格工具条上的命令）", "lbl dim"));
+        for (int i = 0; i < stages.Length; i++)
+        {
+            double x = X0 + i * (colW + GAP);
+            // 高亮哪一格 —— 不写死「整线设计」，而是问 Flow：这一格上有没有**可交付**的链。
+            bool star = stages[i].Chains.Any(c => Flow.Chain(c).Deliverable);
+
+            sb.Append($"<rect x=\"{x:0.#}\" y=\"{trackTop:0.#}\" width=\"{colW:0.#}\" " +
+                      $"height=\"{tabH:0.#}\" rx=\"3\" " +
+                      $"fill=\"{(star ? "var(--clamp)" : "var(--bg)")}\" stroke=\"var(--rule)\"/>");
+            for (int k = 0; k < tabLines[i].Count; k++)
+                sb.Append(TxtS(x + colW / 2, trackTop + 4 + (k + 1) * LHTab - 3, tabLines[i][k],
+                               $"font-size:{FSTab:0.#}px" + (star ? ";fill:#FFF" : ""), "middle"));
+
+            sb.Append(Box(x, bodyTop - 6, colW, bodyH, "var(--card)"));
+            double y = bodyTop + 3;
+            foreach (var ln in cmdLines[i])
+                foreach (string line in ln)
+                { sb.Append(TxtS(x + 5, y, line, $"font-size:{FSCmd:0.#}px")); y += LHCmd; }
+        }
 
         sb.Append("</svg>");
+
+        omitted = dropped.Count == 0 ? ""
+                : "<br><b>⚠ 图上画不下、已省略：</b>" + H(string.Join("、", dropped)) +
+                  $"（共 {dropped.Count} 条）—— 全表见下面的「逐个按钮」，一条都没少。";
         return sb.ToString();
     }
 
@@ -631,7 +741,7 @@ th,td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--rule)}
 th{font-size:.76rem;color:var(--muted);background:var(--bg)}
 tr:last-child td{border-bottom:none}
 td.n{font-family:Consolas,monospace}
-/* 首列是短标签的表：不让「分段核算」被折成「分段核／算」 */
+/* 首列是短标签的表：不让页签名被折成「分段核／算」这种断在半个词上的样子 */
 table.nw td:first-child,table.nw th:first-child{white-space:nowrap}
 .bar{display:inline-block;width:86px;height:7px;background:var(--rule);position:relative;
 border-radius:1px;vertical-align:middle}
@@ -673,19 +783,19 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         sb.Append("<h2>1. 上手：三件最常做的事</h2>");
         sb.Append("<table><tr><th>你想做什么</th><th>怎么做</th><th>看哪里</th></tr>" +
                   "<tr><td><b>看定案档长什么样、用多少铂</b></td>" +
-                  "<td>「整线设计」页 → 选<b>定案档 ▾</b> → 点<b>载入定案</b> → 点<b>核算整线</b></td>" +
+                  $"<td>{Pg(StageId.整线核算)}页 → 选<b>定案档 ▾</b> → 点{B("final.load")} → 点{B("core.runLine")}</td>" +
                   "<td>下方判据表（先看<b>裕度</b>列）</td></tr>" +
                   "<tr><td><b>出图纸交给加工</b></td>" +
-                  "<td>「整线设计」页 → 选定案档 → 点<b>导出定案 3DM</b></td>" +
+                  $"<td>{Pg(StageId.整线核算)}页选定案档 →{Pg(StageId.交付)}页点{B("final.export3dm")}</td>" +
                   "<td>输出框里的 round-trip 与质量对账</td></tr>" +
                   "<tr><td><b>改个参数试试</b></td>" +
                   "<td>改左侧参数表或本页控件 → <b>核算整线</b>（分钟级，可取消）</td>" +
                   "<td>判据表 + 三张场图</td></tr>" +
                   "<tr><td><b>给一个形状，让 APP 自己优化并说出好坏</b></td>" +
-                  "<td>「整线设计」页 → 填盘径/舌宽（舌长会<b>自己顶到装配下界</b>）→ 点<b>自动定厚</b></td>" +
+                  $"<td>{Pg(StageId.整线核算)}页填盘径/舌宽（舌长会<b>自己顶到装配下界</b>）→{Pg(StageId.定尺寸)}页点{B("core.autoThick")}</td>" +
                   "<td><b>形状体检报告</b>（见 §5.1）：能不能造能不能用、优点、缺点、代价</td></tr>" +
                   "<tr><td><b>连盘径都让 APP 去搜</b></td>" +
-                  "<td>「整线设计」页 → 点<b>◇ 搜形状</b>（有进度条，随时可取消）</td>" +
+                  $"<td>{Pg(StageId.定尺寸)}页点{B("shape.search")}（有进度条，随时可取消）</td>" +
                   "<td>逐个形状一行结果；结束后最轻的那个<b>写回控件</b></td></tr></table>");
         // ★ 2026-08-17（1b）改写。原文说「有两项控件表达不了、核算整线算的是另一片法兰」——
         //   1b 之后解析模式与「复现定案」走同一个几何构造器，界面接线测试每次都验
@@ -700,25 +810,53 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "「▶ 复现定案」仍然保留：它<b>完全不读页面控件</b>，用于排除「页面被改过而不自知」。</div>");
 
         sb.Append("<h2>2. 界面在哪、按钮做什么</h2>");
-        sb.Append($"<div class=\"fig\">{SvgUi()}" +
-                  "<div class=\"cap\">窗口分三块：左边参数表、右上报告、右下页签区。" +
-                  "顶上那条是<b>主工具条</b>（只管左边那张参数表）；" +
-                  "<b>每个页签有自己的工具条</b>，两者互不相干 —— 这是最常见的误按。</div></div>");
+        // ⚠ 图注必须跟着阶段轨改（2026-08-20）：主工具条**整条没有了**，
+        //   命令按阶段散到各页；右上那块现在是状态面板，不再是单段报告。
+        //   说明书落后比程序落后更难发现 —— 它有排版有图，看起来就是答案。
+        string svg = SvgUi(out string omitted);
+        sb.Append($"<div class=\"fig\">{svg}" +
+                  "<div class=\"cap\">窗口分三块：左边<b>参数表</b>、右上<b>状态面板</b>" +
+                  "（现在算哪条链、结果新不新鲜、门开没开）、右下<b>阶段轨</b>。" +
+                  "命令按阶段各归各页 —— 不再有一条管全局的主工具条，" +
+                  "所以「我该点哪个」由你现在站在哪一格决定。" +
+                  (omitted.Length > 0 ? $"<br>（图上画不下的按钮：{omitted}）" : "") +
+                  "</div></div>");
 
+        // ★ 这张「界面地图」也从 Flow 生成 —— 2026-08-20 之前它整张写死，
+        //   而阶段轨改造把页签、右上那块、主工具条**全换了**，
+        //   于是它一夜之间从「说明」变成了「误导」。
         sb.Append("<table><tr><th></th><th>是什么</th><th>要点</th></tr>" +
                   "<tr><td>①</td><td><b>参数表</b>（左侧，分类折叠）</td>" +
-                  "<td>单段模型的全部输入。选中某项时下方有说明。" +
-                  "改这里只影响「计算 (F5)」那条链</td></tr>" +
-                  "<tr><td>②</td><td><b>报告</b>（右上）</td>" +
-                  "<td>单段解：铂用量／热平衡／电气／温度分布／流动。<b>不含法兰</b></td></tr>" +
-                  "<tr><td>③</td><td><b>五个页签</b></td>" +
-                  "<td>整线设计（主力）／分析／分段核算／轴向剖面／使用说明（本页，<b>F1</b> 直达）</td></tr>" +
-                  "<tr><td>④</td><td><b>主工具条</b></td>" +
-                  "<td>计算 (F5)、三个扫描、保存／读取方案、导出 CSV</td></tr>" +
-                  "<tr><td>⑤</td><td><b>页签自己的工具条</b></td>" +
-                  "<td>整线设计页的按钮在这里，见下表</td></tr></table>");
+                  "<td>分类名已标出<b>这一项对哪条链有效</b>；" +
+                  "以 <b>✗</b> 打头的两组表示「在这里改了对整线链没用」——" +
+                  "要么被页面控件接管，要么被求解器强制取值</td></tr>" +
+                  "<tr><td>②</td><td><b>状态面板</b>（右上）</td>" +
+                  "<td>现在算的是哪条链、求解器入口是谁、结果<b>还新不新鲜</b>、" +
+                  "上次判定、下一格的门开没开。<b>它没有任何可点的东西</b></td></tr>" +
+                  $"<tr><td>③</td><td><b>阶段轨</b>（{Flow.Stages.Length} 格）</td>" +
+                  "<td>" + H(string.Join("／", Flow.Stages.OrderBy(x => x.Order).Select(x => x.Title))) +
+                  "（说明书 <b>F1</b> 直达）</td></tr>" +
+                  "<tr><td>④</td><td><b>每一格自己的工具条</b></td>" +
+                  "<td>命令按阶段归位，<b>没有一条管全局的主工具条</b>——" +
+                  "「我该点哪个」由你站在哪一格决定</td></tr></table>");
 
-        sb.Append("<h3>「整线设计」页的工具条（主力页）</h3>");
+        // 逐格：这一格算哪条链、能不能交付、有哪些命令
+        sb.Append("<table><tr><th>阶段</th><th>算哪条链</th><th>命令</th></tr>");
+        foreach (var st in Flow.Stages.OrderBy(x => x.Order))
+        {
+            var chains = st.Chains.Where(c => c != ChainId.无).Select(Flow.Chain).ToArray();
+            string ch = chains.Length == 0
+                ? "—"
+                : H(string.Join("；", chains.Select(c => $"{c.Name}（{c.EntryPoint}·{c.Cost}）")))
+                  + (chains.Any(c => c.Deliverable)
+                     ? " <b>★ 可交付</b>" : " <span class=\"dim\">⚠ 不可交付</span>");
+            string cmds = st.CommandIds.Length == 0 ? "—"
+                : string.Join("、", st.CommandIds.Select(B));
+            sb.Append($"<tr><td><b>{H(st.Title)}</b></td><td>{ch}</td><td>{cmds}</td></tr>");
+        }
+        sb.Append("</table>");
+
+        sb.Append($"<h3>{Pg(StageId.整线核算)}页的工具条（主力页）</h3>");
         // ════════════════════════════════════════════════════════════════
         // ★★★★★ 「整线设计」工具条：怎么用、什么时候用（2026-08-17 用户要求）
         //
@@ -820,8 +958,8 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "「核算法兰」把法兰算进来才是可交付的总铂</td></tr>" +
                   "<tr><td><b>轴向剖面</b></td><td>单段解的温度沿轴分布（随 F5 刷新）</td></tr>" +
                   "<tr><td><b>使用说明</b></td><td>本页。工具条上可切定案档，图跟着重画</td></tr></table>");
-        sb.Append("<div class=\"note\"><b>「分段核算」页是解析的，「整线设计」页是耦合数值解。</b>" +
-                  "两者数不一样很正常 —— 前者不解温度场。<b>可交付的数以「整线设计」页为准。</b></div>");
+        sb.Append($"<div class=\"note\"><b>{Pg(StageId.粗算)}是解析粗算，{Pg(StageId.整线核算)}是耦合数值解。</b>" +
+                  $"两者数不一样很正常 —— 前者不解温度场。<b>可交付的数以{Pg(StageId.整线核算)}为准。</b></div>");
 
         sb.Append("<h2>3. 整线布置</h2>");
         sb.Append($"<div class=\"fig\">{SvgLine(fd)}" +

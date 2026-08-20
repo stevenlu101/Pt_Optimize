@@ -59,6 +59,7 @@ public sealed class AnalysisPage : TabPage
         split.Panel1.Controls.Add(_out);
         split.Panel2.Controls.Add(_plot);
 
+        FieldPlots.DrawEmpty(_plot, "点「① 升温可达性」开始");
         Controls.Add(split);
         Controls.Add(tool);
         HandleCreated += (_, _) => BeginInvoke(() => split.SplitterDistance = (int)(split.Height * 0.55));
