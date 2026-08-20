@@ -2,6 +2,7 @@
 using System.Linq;
 using System.Collections.Generic;
 using System.Reflection;
+using System.ComponentModel;
 using System.Windows.Forms;
 using PtOptimize.Core;
 using PtOptimize.UI;
@@ -885,6 +886,79 @@ class UiWiringTests {
                   segGrid22.Rows.Count > rows0, $"{rows0} → {segGrid22.Rows.Count} 行");
             Check("段表加一行会触发自动重算", (bool)F(page, "_autoArmed")! == true);
             segs22.RemoveAt(segs22.Count - 1);
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        Head("23 参数表：每一项都必须有链归属");
+        {
+            // 病灶：整线链上有一批参数**根本不看参数表** —— 有的被 ③ 页控件接管，
+            // 有的被 LineRunner 强制取值，而表上完全看不出来。用户在那里改了半天，
+            // 整线解一动不动。这是「不知道自己在算什么」的另一半病因。
+            //
+            // 归属靠 [Category] 前缀表达（编译期常量 ⇒ 天然单一来源）。
+            // 这条断言守的是：**没有哪个参数会漏掉归属** —— 新加一个属性却忘了归类，
+            // 它会安静地落进一个界面上不存在的分组里。
+            var known = Flow.Params.Select(x => x.CategoryPrefix).ToHashSet(StringComparer.Ordinal);
+            var props = typeof(DesignInputs).GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Where(x => x.GetCustomAttribute<BrowsableAttribute>()?.Browsable != false)
+                .ToArray();
+            Check("扫到可见参数", props.Length > 0, $"{props.Length} 项");
+
+            var orphan = props
+                .Select(x => (x.Name, Cat: x.GetCustomAttribute<CategoryAttribute>()?.Category ?? ""))
+                .Where(t => !known.Contains(t.Cat))
+                .ToList();
+            Check("每个可见参数的分类都在 Flow.Params 里登记",
+                  orphan.Count == 0,
+                  orphan.Count == 0 ? $"{known.Count} 个分类全部登记"
+                                    : "★ 没归属：" + string.Join("、", orphan.Select(t => $"{t.Name}「{t.Cat}」")));
+
+            // ✗ 打头的两组必须**说清楚是谁接管了它** —— 只标「无效」而不说去哪儿改，
+            //   等于把用户丢在原地。
+            var overridden = props
+                // ⚠ 认 ✗ 要用 Contains 不是 StartsWith：分类名前面还有个**数字排序前缀**
+                //   （PropertyGrid 按字母序排分类，✗ 会排到最前面 —— 无效的参数反而最显眼，
+                //     正好反了 ⇒ 用 1…9 显式定序，把两组 ✗ 压到最后）。
+                .Where(x => (x.GetCustomAttribute<CategoryAttribute>()?.Category ?? "").Contains('✗'))
+                .ToArray();
+            Check("有被接管的参数", overridden.Length > 0, $"{overridden.Length} 项");
+            // ★ 自动抓「参数表说有效，实际被覆盖」这一类错 ——
+            //   这条不是理论洁癖：本轮 BusbarClampLengthMm 就归错了组，参数表显示 3 mm，
+            //   而整线链两条路都强制取定案档的 40 mm。是靠人看截图才发现的，
+            //   而「看起来正常的错数」正是本项目最危险的形状 ⇒ 交给机器守。
+            //
+            // 判据：凡在**整线链的构造器**里被赋值的 DesignInputs 字段，
+            //       就不许挂在宣称对 C 链有效的分类下（"C 整线 …" 开头的组）。
+            var builders = new[] { "Pt_Optimize/Core/FinalDesign.cs",
+                                   "Pt_Optimize/UI/LineDesignPage.cs" };
+            var forced = new HashSet<string>(StringComparer.Ordinal);
+            bool srcOk = true;
+            foreach (var f in builders)
+            {
+                string full = System.IO.Path.Combine(RepoRoot(), f);
+                if (!System.IO.File.Exists(full)) { srcOk = false; continue; }
+                foreach (System.Text.RegularExpressions.Match m in
+                         System.Text.RegularExpressions.Regex.Matches(
+                             System.IO.File.ReadAllText(full), @"\bp\.(\w+)\s*(?:\.\w+\s*)?="))
+                    forced.Add(m.Groups[1].Value);
+            }
+            Check("读得到整线链构造器源码", srcOk && forced.Count > 0, $"{forced.Count} 个被强制字段");
+
+            var lying = props
+                .Where(x => forced.Contains(x.Name))
+                .Select(x => (x.Name, Cat: x.GetCustomAttribute<CategoryAttribute>()?.Category ?? ""))
+                .Where(t => t.Cat.Contains("C 整线", StringComparison.Ordinal))
+                .ToList();
+            Check("没有参数一边被整线链强制取值、一边宣称对 C 链有效",
+                  lying.Count == 0,
+                  lying.Count == 0 ? "" : "★ 归错组：" + string.Join("、", lying.Select(t => $"{t.Name}「{t.Cat}」")));
+
+            var noWhy = overridden
+                .Where(x => !(x.GetCustomAttribute<DescriptionAttribute>()?.Description ?? "").Contains("接管"))
+                .Select(x => x.Name).ToList();
+            Check("每个被接管的参数都写明了谁接管它",
+                  noWhy.Count == 0,
+                  noWhy.Count == 0 ? "" : "★ 没写：" + string.Join("、", noWhy));
         }
 
         Console.WriteLine();

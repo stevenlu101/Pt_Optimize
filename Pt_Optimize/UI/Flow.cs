@@ -336,17 +336,18 @@ public static class Flow
     //   宁可看得见但明写着「无效」。
     public static readonly ParamScope[] Params =
     {
-        new("A·B 快筛 — 工艺", new[] { ChainId.A单段解析, ChainId.B分段解析 }, ""),
-        new("A·B·C 共用 — 电气",
+        new("1 A·B 粗算 — 工艺", new[] { ChainId.A单段解析, ChainId.B分段解析 }, ""),
+        new("2 A·B·C 共用 — 电气",
             new[] { ChainId.A单段解析, ChainId.B分段解析, ChainId.C整线耦合 }, ""),
-        new("A·B·C 共用 — 保温与表面",
+        new("3 A·B·C 共用 — 保温与表面",
             new[] { ChainId.A单段解析, ChainId.B分段解析, ChainId.C整线耦合 }, ""),
-        new("C 整线 — 管几何", new[] { ChainId.C整线耦合 }, ""),
-        new("C 整线 — 法兰边界", new[] { ChainId.C整线耦合 }, ""),
-        new("D 闸门", new[] { ChainId.D升温闸 }, ""),
-        new("✗ ③ 页控件接管", new[] { ChainId.A单段解析, ChainId.B分段解析 },
+        new("4 A·B·C 共用 — 玻璃物性",
+            new[] { ChainId.A单段解析, ChainId.B分段解析, ChainId.C整线耦合 }, ""),
+        new("5 C 整线 — 管几何", new[] { ChainId.C整线耦合 }, ""),
+        new("6 C 整线 — 法兰边界", new[] { ChainId.C整线耦合 }, ""),
+        new("8 ✗ 被页面/定案档接管（改了对整线链没用）", new[] { ChainId.A单段解析, ChainId.B分段解析 },
             "「③ 整线核算」页的同名控件"),
-        new("✗ 对整线链无效", new[] { ChainId.A单段解析 },
+        new("9 ✗ 对整线链无效", new[] { ChainId.A单段解析 },
             "LineRunner 强制取值（整线链的壁厚由 LineCase.WallMm 定）"),
         new("7 数值", new[] { ChainId.A单段解析, ChainId.C整线耦合 }, ""),
     };
