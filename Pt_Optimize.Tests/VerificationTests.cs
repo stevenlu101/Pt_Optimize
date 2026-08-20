@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using PtOptimize.Core;
 using Xunit;
 using Xunit.Abstractions;
@@ -352,5 +352,45 @@ public class VerificationTests
         // 极限检验：Ta → 0 K 时比值 → 4
         double s0 = eps * Materials.Sigma * (Math.Pow(Ts + 273.15, 4) - 0) / (Ts + 273.15);
         Assert.InRange(tangent / s0, 3.999, 4.001);
+    }
+
+    // =========================================================
+    // 7. 扫描入口：不认识的量名必须**炸**，不许安静地返回一堆相同解
+    // =========================================================
+
+    [Fact]
+    public void Sweep_UnknownQuantity_Throws()
+    {
+        // 病史（2026-08-20）：界面上的「扫描：法兰厚度」传的量名是 "flangeTf"，
+        // 而 Sweep 的 switch 里没有这个分支、也没有 default ⇒ 它照跑 11 轮，
+        // 每轮解的都是同一个**没被改过**的基准算例，最后吐出一张
+        // 「第一列在变、其余列全同」的表。看起来像扫描，其实一个点都没扫。
+        //
+        // 这就是本项目的头号失效模式：安静地给出**可信外观**的错误结果。
+        var p = new DesignInputs();
+        var ex = Assert.Throws<ArgumentException>(
+            () => SegmentSolver.Sweep(p, "flangeTf", 0.4, 5, 11));
+        _o.WriteLine($"未知量名如期抛出：{ex.Message}");
+        Assert.Contains("flangeTf", ex.Message);
+    }
+
+    [Fact]
+    public void Sweep_KnownQuantity_ActuallyVaries()
+    {
+        // 与上一条配对：光会抛还不够 —— 认识的量名必须真的扫出**不同**的解。
+        // 只验「会抛」的话，把 switch 整个删了也能过。
+        var p = new DesignInputs();
+        var rows = SegmentSolver.Sweep(p, "insul", 0, 50, 11);
+        Assert.True(rows.Count >= 2, $"只解出 {rows.Count} 行");
+
+        int distinctMass = rows.Select(r => Math.Round(r.MassKg, 6)).Distinct().Count();
+        int distinctLoss = rows.Select(r => Math.Round(r.LossPerM, 6)).Distinct().Count();
+        _o.WriteLine($"保温 0→50 mm 扫 {rows.Count} 点：铂重 {distinctMass} 种、散热 {distinctLoss} 种");
+        _o.WriteLine($"  首 {rows[0].LossPerM:F1} W/m → 末 {rows[^1].LossPerM:F1} W/m");
+
+        // 保温加厚 ⇒ 散热必然单调下降，这是物理，不是拟合
+        Assert.True(rows[^1].LossPerM < rows[0].LossPerM,
+                    $"加保温反而更耗散：{rows[0].LossPerM:F1} → {rows[^1].LossPerM:F1}");
+        Assert.True(distinctLoss > 1, "散热列全同 —— 扫描没有真的在变");
     }
 }

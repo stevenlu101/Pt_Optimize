@@ -139,6 +139,83 @@ public static class FieldPlots
     /// 法兰温度只随 r 变 → 等温线是水平段。两者都由一维解精确定位，
     /// 不需要 marching squares。
     /// </summary>
+    /// <summary>
+    /// **整线**轴向温度分布：三段首尾相接画成一条，段界（= 法兰所在处）标竖线。
+    ///
+    /// ★ 2026-08-20 补。此前「管轴向剖面」这个子页签**从建出来就没画过任何东西**
+    ///   （声明、挂页签，然后 Show() 里只画了法兰的 T/J 两张场图）——
+    ///   一个永远空白的页签比没有这个页签更坏：它看起来像是「这次没算出来」。
+    ///
+    /// 数据一直都在（<see cref="SegmentOut.X"/>/<see cref="SegmentOut.TMetal"/>/
+    /// <see cref="SegmentOut.TGlass"/>），只是没人接上。
+    ///
+    /// 段界竖线不是装饰：法兰就在那儿，③「法兰增量温降」挖的坑正是在段界两侧，
+    /// 这张图是唯一能**看见**那个坑的地方。
+    /// </summary>
+    public static void DrawLineAxialProfile(FormsPlot fp, LineResult r, DesignInputs p)
+    {
+        var plot = fp.Plot;
+        plot.Clear();
+        if (!r.Ok || r.Segments.Length == 0) { fp.Refresh(); return; }
+
+        // 段偏移**从数据本身累加**，不从外面传段长进来：
+        // 传进来的那个数（LineCase.SegLengthMm）与各段 X 的实际跨度是两个来源，
+        // 它们一旦对不上，图会画得又连续又错 —— 而这种错没有任何东西会报。
+        double x0 = 0;
+        bool labelled = false;
+        for (int i = 0; i < r.Segments.Length; i++)
+        {
+            var s = r.Segments[i];
+            if (s.X.Length < 2) continue;
+
+            var xs = s.X.Select(v => v + x0).ToArray();
+
+            var metal = plot.Add.Scatter(xs, s.TMetal);
+            metal.LineWidth = 2.2f; metal.MarkerSize = 0;
+            metal.Color = new Color(20, 90, 200);
+            // 三段是同一条曲线的三截，图例只写一次，否则「铂金属」会重复三行
+            metal.LegendText = labelled ? string.Empty : "铂金属";
+
+            var glass = plot.Add.Scatter(xs, s.TGlass);
+            glass.LineWidth = 1.6f; glass.MarkerSize = 0;
+            glass.Color = new Color(30, 160, 110);
+            glass.LegendText = labelled ? string.Empty : "玻璃";
+
+            if (labelled)
+            {
+                // 段界：法兰就在这儿。③「法兰增量温降」挖的坑正是在这条线两侧。
+                var seam = plot.Add.VerticalLine(x0);
+                seam.Color = new Color(150, 150, 150);
+                seam.LineWidth = 1.0f;
+                seam.LinePattern = LinePattern.Dotted;
+                seam.LegendText = string.Empty;
+            }
+            labelled = true;
+
+            x0 += s.X[^1] - s.X[0];
+        }
+
+        if (!labelled) { fp.Refresh(); return; }
+
+        var liq = plot.Add.HorizontalLine(p.TLiquidusC);
+        liq.Color = new Color(220, 60, 60);
+        liq.LineWidth = 1.6f;
+        liq.LinePattern = LinePattern.Dashed;
+        liq.LegendText = $"T_liq = {p.TLiquidusC:0} °C";
+
+        var safe = plot.Add.HorizontalLine(p.TLiquidusC + p.DevitMarginK);
+        safe.Color = new Color(235, 160, 40);
+        safe.LineWidth = 1.3f;
+        safe.LinePattern = LinePattern.Dotted;
+        safe.LegendText = $"安全线 +{p.DevitMarginK:0} K";
+
+        plot.Title("整线轴向温度分布（竖线 = 段界，法兰所在）");
+        plot.XLabel("x [mm]（全线累计）");
+        plot.YLabel("温度 [°C]");
+        plot.Axes.AutoScale();
+        fp.Refresh();
+    }
+
     public static void DrawAxialProfile(FormsPlot fp, SolveResult r, DesignInputs p)
     {
         var plot = fp.Plot;

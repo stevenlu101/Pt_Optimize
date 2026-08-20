@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -11,10 +11,25 @@ namespace PtOptimize.Core;
 public sealed class LineCase
 {
     // ── 管（数值输入）
-    public double TubeIdMm = 50.0;
+    //
+    // ★★ 2026-08-20：TubeIdMm / SegLengthMm / GradeName 改成**哨兵**（NaN / 空串）。
+    //
+    //   病灶：它们原来写死 50.0 / 300.0 / "Pt"，而 Run 里又用它们**覆盖** p 的同名字段
+    //   （见 Normalize 下方的 `p.TubeIdMm = c.TubeIdMm` 那几行）⇒ 工程师在参数表里改
+    //   「内径」「段长」「铂材牌号」，**整线链完全无视**，界面上却毫无异样。
+    //   这正是用户说的「工程师根本不知道自己目前在算什么」的一半病因。
+    //
+    //   全仓 45 处 `new LineCase{...}` 没有任何一处显式设过这三项（唯一出现是
+    //   FlangeAutoSizer.CloneCase 的**传播**），而 DesignInputs 的默认值恰好逐位相同
+    //   （50.0 / 300 / "Pt"）⇒ 接上之后 `new DesignInputs()` 那条路零漂移，
+    //   已用 `--cli --selfcheck` 逐档对账证明。
+    //
+    //   ⚠ 用哨兵而不是直接删字段：`--tscan` 之类的地方要能显式指定段长，
+    //     保留「可覆盖」这个能力，只是默认改成「跟着参数表走」。
+    public double TubeIdMm = double.NaN;
     public double WallMm = 1.0;
-    public double SegLengthMm = 300.0;
-    public string GradeName = "Pt";
+    public double SegLengthMm = double.NaN;
+    public string GradeName = "";
 
     /// <summary>各段控温点 °C（控温点在每段中点）。长度即段数。</summary>
     public double[] SetpointC = { 1150, 1080, 1050 };
@@ -152,7 +167,7 @@ public sealed class LineCase
     /// 现场参考（用户 2026-08-17）：铜排长 100／宽 60–80 mm，自由段基本留 100 mm。
     /// ⚠ 这是**装配约束**，性质同焊接烧穿下界 —— 不是算出来的，是现场条件给的。
     /// </summary>
-    public double FreeTabMinMm = 100.0;
+    public double FreeTabMinMm = GeometryScreen.FreeTabMinDefaultMm;
 
     public double CoupleRelax = 0.35;
     /// <summary>
@@ -375,6 +390,14 @@ public sealed class LineResult
         public const string NetFlux = "②′管孔净流入";      // B：热流方向本身
         public const string DiscTemp = "②″圆盘区最高温";     // C：贴管子那一圈
         public const string FlangeDip = "③ 法兰增量温降";    // 法兰挖的坑
+
+        // ★ 2026-08-20 补三条。它们一直都是判据（都在 Judge 里、都是硬安全线），
+        //   只是此前没人用常量引用过 ⇒ 常量表缺了它们。界面门禁（UI/Flow.cs 的 GateSpec）
+        //   要按名字读这三条，而门禁**只准用常量** —— 判据改名时编译期就断，
+        //   而不是门禁悄悄永远放行。
+        public const string FreeTab = "⑤ 舌片自由段";        // 现场铜排装得下吗（几何闭式）
+        public const string DiscCover = "⑥ 圆盘盖得住管孔";   // 盘半径 − 管孔半径 − 焊脚（几何闭式）
+        public const string TubeJ = "管 J";                   // 管电流密度上限（≠「· 法兰 J_max」那条参考量）
     }
 
     public ConstraintOut? Find(string keyPrefix)
@@ -422,9 +445,27 @@ public sealed class LineResult
 /// </summary>
 public static class LineRunner
 {
+    /// <summary>
+    /// 把未显式指定的项接到 <see cref="LineCase.Base"/>（＝界面左侧那张参数表）。
+    ///
+    /// 幂等：跑过一次之后哨兵已被填实，再跑不会变。
+    /// 之所以能安全地就地改传入的 c：这三项**没有任何 UI 会读**，
+    /// 而写进去的值只依赖 c.Base，稳定可重现。
+    /// FlangeAutoSizer.CloneCase 复制的是已归一化的值，派生算例进 Run 后再归一化一次也无妨。
+    /// </summary>
+    private static void Normalize(LineCase c)
+    {
+        if (double.IsNaN(c.TubeIdMm)) c.TubeIdMm = c.Base.TubeIdMm;
+        if (double.IsNaN(c.SegLengthMm)) c.SegLengthMm = c.Base.TubeLengthMm;
+        if (string.IsNullOrEmpty(c.GradeName)) c.GradeName = c.Base.GradeName;
+    }
+
     public static LineResult Run(LineCase c, IProgress<string>? progress = null,
                                  CancellationToken cancel = default)
     {
+        // ★ 先把「没显式指定」的项接到参数表上。必须在**任何**读取这三项之前。
+        Normalize(c);
+
         // ── ★ 先算**无法兰基线**：同几何、同保温、同段间耦合，只把法兰抽热置零。
         //   C2 要判的是「法兰挖了多深的坑」，不是「偏离本段控温点多少」——
         //   后者在共用法兰处由两侧控温点决定，法兰管不着（见 SegmentOut.BaseTRootAC）。
@@ -1353,132 +1394,15 @@ public static class LineRunner
                    (worstJt.TubeJAPerMm2 > c.Base.TubeJAllowAPerMm2 ? NextAction.TubeJHigh : "")
         });
 
-        // ── ⑥ 几何必须**造得出来**：圆盘要盖得住管孔，还要留得下焊脚
+        // ── ⑤⑥ 几何闭式判据 —— 实现已搬到 Core/GeometryScreen.cs
         //
-        // 2026-08-17 抓到（跑界面「◇ 搜形状」用的那个网格时暴露）：
-        //   盘 R25 + 管壁 0.8 ⇒ 管孔半径 = 25.8 > 盘半径 25 ——**孔比盘还大**，
-        //   法兰压根焊不到管子上。而程序照样解、照样收敛、照样报
-        //   「✓ 全判据通过　合计 3621 g」，还因为盘小、料少而**排在前面**。
-        //
-        // ⇒ 这是「安静失败」里最坏的一种：**不可造的几何反而看起来最优**，
-        //   优化器会主动往那里跑。判据不写，搜索就一定会找到它。
-        //
-        // 下界取 孔半径 + 焊脚：焊脚 = max(板厚, 壁厚)，它必须落在盘面上才焊得住。
-        if (c.FlangePlates is { Length: > 0 })
-        {
-            double worstRing = double.PositiveInfinity; string whereRing = "";
-            string[] pn6 = { "入口", "共用1", "共用2", "出口" };
-            for (int j = 0; j < c.FlangePlates.Length; j++)
-            {
-                var g6 = c.FlangePlates[j];
-                double leg = Math.Max(g6.WeldFilletLegMm, 0);
-                double ringW = g6.DiscRadiusMm - g6.HoleRadiusMm - leg;   // 焊脚外还剩多少盘
-                if (ringW < worstRing) { worstRing = ringW; whereRing = j < pn6.Length ? pn6[j] : $"片{j + 1}"; }
-            }
-            checks.Add(new ConstraintOut
-            {
-                Name = "⑥ 圆盘盖得住管孔＋焊脚", Unit = "mm", Kind = CheckKind.HardSafety,
-                Actual = worstRing, Limit = 0, LessIsBetter = false,
-                Ok = worstRing >= 0, Where = whereRing,
-                Note = "= 盘半径 − 管孔半径 − 焊脚（焊脚 = max(板厚, 壁厚)）。" +
-                       (worstRing < 0
-                        ? "★★ **负数 ⇒ 这个法兰造不出来**：圆盘盖不住管孔（或焊脚落在盘外），" +
-                          "焊不到管子上。⚠ 这种几何**料最少**，所以优化器会主动往这里跑 —— " +
-                          "判据不拦，搜索一定会找到它。" +
-                          "　【下一步】放大圆盘直径，或减薄管壁（管孔半径 = 管壁 + 25）。"
-                        : "圆盘在焊脚外还剩这么多料")
-            });
-        }
-        else
-        {
-            // 同上：`.3dm` 模式下不能让 ⑥ 整条消失（见 ⑤ 的 else 分支）
-            checks.Add(new ConstraintOut
-            {
-                Name = "⑥ 圆盘盖得住管孔＋焊脚", Unit = "mm", Kind = CheckKind.HardSafety,
-                Actual = double.NaN, Limit = 0, Ok = false,
-                Undetermined = true, Where = "—",
-                Note = "★ **无法判定**：本次几何来自 .3dm 厚度场，没有解析的「盘半径」。" +
-                       "**不要把它读成通过** —— 请在图上确认圆盘外缘比管孔至少大出一个焊脚" +
-                       "（焊脚 = max(板厚, 壁厚)），否则法兰焊不到管子上。"
-            });
-        }
-
-        // ── ⑤ 装配：舌片必须放得下铜排（2026-08-17 用户给出现场尺寸后新增）
-        //
-        // 为什么必须是**硬判据**而不是事后提醒：定案的舌长 90 mm 从来就装不下铜排 ——
-        // 圆盘切点 26 + 压接段 + 自由段 已经超过 90，而程序此前
-        //   ① 只把压接段当纯热电界面算（校核压接界面 J ≤ 1.0，从不问它靠什么固定）；
-        //   ② `--busbarplan` 里自由段算出负数还 `Math.Abs` 取绝对值打印，
-        //      把「装不下」显示成「装得下」。
-        // ⇒ 一个**在设计上就不成立**的解，被当成可行解用了很久，还出了 3DM 和论文。
-        //
-        // 现场参考尺寸（用户 2026-08-17）：铜排长 100 mm、宽 60–80 mm；自由段基本留 100 mm。
-        // 自由段不只是装配空间，它同时是**引线漏热的杠杆**（漏热 ∝ 1/ℓ，§4.3e）——
-        // 太短会把管根抽冷，所以它在热学上也不该压缩。
-        if (c.FlangePlates is { Length: > 0 })
-        {
-            double worstFree = double.PositiveInfinity; string whereFree = "";
-            double worstTangent = 0;
-            string[] pn5 = { "入口", "共用1", "共用2", "出口" };
-            for (int j = 0; j < c.FlangePlates.Length; j++)
-            {
-                var g5 = c.FlangePlates[j];
-                double tabLen = Math.Abs(g5.TabEndXMm);
-                double tangent = Math.Abs(g5.Tangent().X);
-                double free = tabLen - tangent - c.Base.BusbarClampLengthMm;
-                if (free < worstFree)
-                { worstFree = free; worstTangent = tangent; whereFree = j < pn5.Length ? pn5[j] : $"片{j + 1}"; }
-            }
-            checks.Add(new ConstraintOut
-            {
-                Name = "⑤ 舌片自由段 ≥ 下界", Unit = "mm", Kind = CheckKind.HardSafety,
-                Actual = worstFree, Limit = c.FreeTabMinMm, LessIsBetter = false,
-                Ok = worstFree >= c.FreeTabMinMm, Where = whereFree,
-                Note = $"自由段 = 舌长 − 圆盘切点 − 压接段（{c.Base.BusbarClampLengthMm:0} mm）。" +
-                       (worstFree < 0
-                          ? "★★ **负数 ⇒ 压接段根本放不下**，压接块会伸进圆盘里。"
-                          : worstFree < c.FreeTabMinMm
-                          ? "★ 装不下铜排：现场铜排长 100／宽 60–80 mm，自由段基本留 100 mm（用户 2026-08-17）。" +
-                            "这不是余量不够，是**设计上不成立**。"
-                          : "") +
-                       " ⚠ 自由段同时是引线漏热的杠杆（∝1/ℓ）—— 压缩它会把管根抽冷。" +
-                       (worstFree < c.FreeTabMinMm
-                        ? NextAction.FreeTabShort(worstTangent, c.Base.BusbarClampLengthMm, c.FreeTabMinMm)
-                        : "")
-            });
-        }
-        else
-        {
-            // ★★★★★ **判据绝不允许消失**（2026-08-17 补上；③ 早就有这个 else，⑤ 一直没有）。
-            //
-            // `.3dm` 模式下 FlangePlates 是空的（几何来自厚度场），于是上面整个 if 不执行
-            // ⇒ 判据 ⑤ **整条不出现** ⇒ AllOk 少判一条还报「全过」。
-            // 这与 §1.8 第 4 例（`if (有数据) checks.Add(...)` 让 ③ 整条消失）**一模一样**，
-            // 只是换了个判据。铁律就写在本文件 ③ 那一段上：
-            //   「判据消失比判据不过危险得多：不过会被看见，消失不会。」
-            checks.Add(new ConstraintOut
-            {
-                Name = "⑤ 舌片自由段 ≥ 下界", Unit = "mm", Kind = CheckKind.HardSafety,
-                Actual = double.NaN, Limit = c.FreeTabMinMm, Ok = false,
-                Undetermined = true, Where = "—",
-                Note = "★ **无法判定**：本次几何来自 .3dm 厚度场，程序拿不到「圆盘切点」与「舌端」" +
-                       "这两个解析量，算不出自由段。**不要把它读成通过** —— " +
-                       "请自行在图上量：自由段 = 舌端到圆盘切点的距离 − 压接段 " +
-                       $"{c.Base.BusbarClampLengthMm:0} mm，下界 {c.FreeTabMinMm:0} mm。"
-            });
-
-            // ★ 舌宽被盘径夹住时必须报出来：否则「扫舌宽」的后半段全是同一个几何，
-            //   却给出一模一样的数，看着像「加宽没用」——**其实是根本没加宽**。
-            if (c.FlangePlates.Any(g => g.HalfWidthClamped))
-                checks.Add(new ConstraintOut
-                {
-                    Name = "· 舌宽被盘径夹住", Unit = "—", Kind = CheckKind.Reference, Ok = true,
-                    Actual = c.FlangePlates.Max(g => g.TabEndHalfWidthMm),
-                    Limit = c.FlangePlates.Max(g => g.DiscRadiusMm), Where = "解析几何",
-                    Note = "★ 半宽 > 盘半径 ⇒ 舌片与圆盘没有切点，半宽已被**静默夹到盘半径**。" +
-                           "要真的加宽舌片，必须**同时放大圆盘** —— 这两个自由度是绑在一起的。"
-                });
-        }
+        // 为什么搬走：这两条**不需要解场**，给定几何就有答案。而界面的阶段门禁
+        // 要在跑分钟级整线解**之前**就回答「这个几何造不造得出来」。
+        // 更要紧的是，⑤ 此前在 LineDesignPage 里还有**第二份实现**（连限值 100.0
+        // 都各存一份）—— 铁律三点名的形状。现在两边调同一个函数：
+        // **界面上看到的 ⑤⑥，与这里跑出来的，是同一段代码算的。**
+        checks.AddRange(GeometryScreen.Judge(
+            c.FlangePlates, c.Base.BusbarClampLengthMm, c.FreeTabMinMm));
 
         // ── 数值自洽：法兰热平衡残差。**始终露出来**（2026-08-17 加）。
         //

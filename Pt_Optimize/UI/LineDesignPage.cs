@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.IO;
 using System.Text;
 using PtOptimize.Core;
@@ -170,18 +170,23 @@ public sealed class LineDesignPage : TabPage
         //   「不看说明书也能用」。⇒ 宁可多一个**名字说得清**的按钮。
         _btnShape = Btn("◇ 搜形状", (_, _) => _ = SearchShapeAsync());
 
+        // ★★ 2026-08-20 阶段轨：本页只留「③ 整线核算」这一格的命令。
+        //
+        //   搬走的四个（自动定厚 / ◇ 搜形状 → ④；导出本页 3DM / 导出定案 3DM → ⑤）
+        //   **仍然由本页创建和持有** —— 只是挂到了 ④⑤ 页的工具条上（见
+        //   BtnAutoThick 等几个属性）。
+        //
+        //   为什么这样而不是「④ 页新建按钮再回调本页方法」：那些按钮身上挂着
+        //   一整套运行时状态（跑起来变「取消」、互相禁用、finally 里恢复，见 RunAsync）。
+        //   重建一套按钮就等于把那套状态**抄第二份**，而两份状态迟早会漂开。
+        //   ToolStripItem 本来就能挂到任何一条工具条上，让它换个位置最省事、也最不会错。
         tool.Items.Add(new ToolStripLabel("定案档"));
         tool.Items.Add(_caseBox);
         tool.Items.Add(_btnRepro);
-        tool.Items.Add(_btn3dm);
         tool.Items.Add(_btnLoadCase);
         tool.Items.Add(new ToolStripSeparator());
         tool.Items.Add(_btnRun);
-        tool.Items.Add(_btnAuto);
-        tool.Items.Add(_btnShape);
-        tool.Items.Add(new ToolStripSeparator());
         tool.Items.Add(btnAnalyze);
-        tool.Items.Add(_btnExport);
         tool.Items.Add(new ToolStripSeparator());
         _prog.Size = new Size(UiScale.S(160), UiScale.S(16));
         tool.Items.Add(_prog);
@@ -408,11 +413,30 @@ public sealed class LineDesignPage : TabPage
                 case CheckBox ck: ck.CheckedChanged += (_, _) => ParamChanged(); break;
                 case RadioButton rb: rb.CheckedChanged += (_, _) => ParamChanged(); break;
             }
+
+            // ★★ 2026-08-20：**以后新生的控件也要自动接上。**
+            //
+            // 病灶：本方法在构造函数末尾跑完一次就完事，而各级「锁定」勾选框是
+            // `BuildLockBoxes` 在**运行时**（点过「分析几何变数」之后）才创建的 ⇒
+            // 它们永远赶不上这趟车，勾/取消锁定**不触发自动重算**。
+            // 用户改了锁定却看不到任何反应，而界面没有任何异样。
+            //
+            // 修法不是「在 BuildLockBoxes 里记得也挂一次」—— 那只是补上今天这一处，
+            // 明天第二处运行时控件照样漏。这里把「必须记得挂」这个前提整个去掉，
+            // 与 MainForm.ApplyToolStripFont 的既定做法同源。
+            //
+            // ⚠ 上面那句 `if (c is ToolStrip) return;` 必须继续管用：ControlAdded 递归
+            //   同样会走到工具条上，而「定案档 ▾」被当成参数会让切档触发分钟级重算
+            //   （那个 bug 修过一次，接线测试第 1 项守着它）。
+            c.ControlAdded += (_, e) => Watch(e.Control);
+
             foreach (Control k in c.Controls) Watch(k);
         }
         foreach (Control c in Controls) Watch(c);
         _segGrid.CellValueChanged += (_, _) => ParamChanged();
         _segGrid.RowsRemoved += (_, _) => ParamChanged();
+        // 加一段是真的会改变段数与法兰片数 —— 与删一段同等重要，此前只挂了删。
+        _segGrid.RowsAdded += (_, _) => ParamChanged();
     }
 
     /// <summary>
@@ -432,11 +456,20 @@ public sealed class LineDesignPage : TabPage
         double R = (double)_discD.Value * 0.5;
         double hw = Math.Min((double)_tabW.Value, R);
         double tangent = Math.Sqrt(Math.Max(0, R * R - hw * hw));
-        return tangent + FinalDesign.Current.ClampLengthMm + _freeTabMinMm;
+        return tangent + FinalDesign.Current.ClampLengthMm + FreeTabMin;
     }
 
-    /// <summary>自由段下界 mm。现场铜排长 100／宽 60–80（用户 2026-08-17），基本留 100。</summary>
-    private readonly double _freeTabMinMm = 100.0;
+    /// <summary>
+    /// 自由段下界 mm —— **读判据的那一份，本页不再自己存一个**。
+    ///
+    /// ⚠ 2026-08-20 之前这里是 `private readonly double FreeTabMin = 100.0;`，
+    ///   （字段名 `_freeTabMinMm`），而判据侧另有 `LineCase.FreeTabMinMm = 100.0`。同一条判据、同一个限值，
+    ///   **存了两处**。当时两边碰巧相等，所以谁也没发现 —— 而这正是
+    ///   HANDOVER §1.8 铁律三点名的形状（「散在三处正是连错四次的根源」）：
+    ///   哪天有人只改了其中一处，界面会说「装得下」而判据说「装不下」，
+    ///   或者反过来，且两边都言之凿凿。
+    /// </summary>
+    private static double FreeTabMin => GeometryScreen.FreeTabMinDefaultMm;
 
     /// <summary>舌长低于装配下界就**顶上去**，并说清楚为什么 —— 不静默、也不放行。</summary>
     private string EnforceTabLenFloor()
@@ -451,7 +484,7 @@ public sealed class LineDesignPage : TabPage
         _suppressAuto = keep;
         return $"   ★ 舌长已由 {had:0} **自动顶到 {want:0} mm** —— 低于它铜排装不上（判据⑤）。\r\n" +
                $"     舌长 = 圆盘切点 {Math.Sqrt(Math.Max(0, Math.Pow((double)_discD.Value * 0.5, 2) - Math.Pow(Math.Min((double)_tabW.Value, (double)_discD.Value * 0.5), 2))):0.0}" +
-               $" + 压接段 {FinalDesign.Current.ClampLengthMm:0} + 自由段 {_freeTabMinMm:0}。\r\n" +
+               $" + 压接段 {FinalDesign.Current.ClampLengthMm:0} + 自由段 {FreeTabMin:0}。\r\n" +
                $"     想要更短的舌片，要改的是**盘径或铜排尺寸**，不是舌长本身。\r\n";
     }
 
@@ -523,6 +556,7 @@ public sealed class LineDesignPage : TabPage
     /// </summary>
     private void ShowPrediction()
     {
+        PushFlow();          // 参数一动，右上角的门禁与新鲜度立刻跟上
         var now = CurrentSnap();
         var sb = new StringBuilder();
 
@@ -542,8 +576,8 @@ public sealed class LineDesignPage : TabPage
         // ⚠ 两条 ⚠ 告警**必须排在整张表之后**，不能夹在行与行中间：不带 \t 的整句
         //   会被当成普通句子，**把一张表断成两截**，两截各自量各自的列宽 ——
         //   于是「自由段」那行的数值列与下面三行错开，而错的时机偏偏是告警触发的时候。
-        sb.AppendLine($"   自由段\t{freeNow:0.0}\tmm\t解析（判据⑤ 下界 {_freeTabMinMm:0}）" +
-                      (freeNow >= _freeTabMinMm - 1e-9 ? "　✓ 铜排装得下" : "　✗ **装不下**"));
+        sb.AppendLine($"   自由段\t{freeNow:0.0}\tmm\t解析（判据⑤ 下界 {FreeTabMin:0}）" +
+                      (freeNow >= FreeTabMin - 1e-9 ? "　✓ 铜排装得下" : "　✗ **装不下**"));
         sb.AppendLine($"   管截面\t{area:0.0}\tmm²\t解析");
         sb.AppendLine($"   管铂重\t{tubeG:0}\tg\t解析（三段）");
         sb.AppendLine($"   管孔半径\t{wall + 25:0.0}\tmm\t解析（跟随管外径）");
@@ -1064,7 +1098,7 @@ public sealed class LineDesignPage : TabPage
         var sb = new StringBuilder();
         sb.AppendLine("=== 搜形状（盘半径 × 舌宽；舌长按装配算）===");
         sb.AppendLine($"网格 {discs.Length}×{wFrac.Length} 个形状，先各筛 {screenRounds} 轮，再对胜出者跑 {finalRounds} 轮。");
-        sb.AppendLine($"自由段下界 {_freeTabMinMm:0} mm（判据⑤）　压接段 {FinalDesign.Current.ClampLengthMm:0} mm");
+        sb.AppendLine($"自由段下界 {FreeTabMin:0} mm（判据⑤）　压接段 {FinalDesign.Current.ClampLengthMm:0} mm");
         sb.AppendLine("★ 舌长不是搜出来的，是**算出来的**：切点 + 压接段 + 自由段。");
         sb.AppendLine("随时可以点「取消」——**已经算完的形状结果不会丢**。");
         sb.AppendLine();
@@ -1098,7 +1132,7 @@ public sealed class LineDesignPage : TabPage
                     seed.DiscRadiusMm = R;
                     seed.TabHalfWidthMm = hw;
                     seed.TabLengthMm = Math.Sqrt(Math.Max(0, R * R - hw * hw))
-                                       + seed.ClampLengthMm + _freeTabMinMm;
+                                       + seed.ClampLengthMm + FreeTabMin;
                     string tag = $"盘Ø{2 * R:0}／舌宽{2 * hw:0}";
                     int baseDone = done;
                     var prog2 = new Progress<string>(s =>
@@ -1273,6 +1307,7 @@ public sealed class LineDesignPage : TabPage
                 // ★ 只有**真收敛**的解才配当外推基准。拿没收敛的解做基准，
                 //   预测会看着很稳而其实一路偏 —— 那正是今天那个假收敛的形状。
                 if (r.Ok && r.Converged) { _solvedRes = r; _solvedSnap = CurrentSnap(); }
+                PushFlow();
                 Show(r);
                 // ★ 把「本次实际解的是什么」打出来。看不见又在起作用的量是安静失败的温床。
                 if (_srcAnalytic.Checked && lc.FlangePlates is { Length: > 0 })
@@ -1402,6 +1437,65 @@ public sealed class LineDesignPage : TabPage
     }
 
     /// <summary>把判据填进表格。**只读 Judge 的结果**，不在这里重算任何判定。</summary>
+    /// <summary>
+    /// 阶段轨共享的运行时状态（③④⑤ 共用）。由 MainForm 注入；为 null 时本页照常工作。
+    /// </summary>
+    internal FlowState? Shared { get; set; }
+
+    /// <summary>
+    /// 把本页的当前状态推给阶段轨。**只搬运，不计算判据** ——
+    /// ⑤⑥ 一律经 <see cref="GeometryScreen"/> 出，与整线解跑的是同一段代码。
+    /// </summary>
+    private void PushFlow()
+    {
+        if (Shared is not { } f) return;
+        f.CurrentSnap = CurrentSnap();
+        f.SolvedSnap = _solvedSnap;
+        f.Last = _last;
+
+        // 几何闭式判据：解析模式才有解析量；.3dm 模式下 GeometryScreen 会返回两条「无法判定」
+        try
+        {
+            var plates = _srcAnalytic.Checked
+                ? PageToFinalDesign().BuildCase(_base, checkRamp: false).FlangePlates
+                : System.Array.Empty<FlangePlate>();
+            f.GeomScreen = GeometryScreen.Judge(
+                plates, FinalDesign.Current.ClampLengthMm, FreeTabMin);
+        }
+        catch { /* 几何还没填全（例如 .3dm 没选文件）时不该把界面拖垮 */ }
+
+        f.Notify();
+    }
+
+    // ── 归 ④「定尺寸」与 ⑤「交付」两格托管的命令按钮。
+    //    本页仍是它们的**所有者**（跑起来改文字、互相禁用的逻辑都在 RunAsync 里），
+    //    ④⑤ 只是把它们挂到自己的工具条上。⇒ 状态只有一份。
+    internal ToolStripButton BtnAutoThick => _btnAuto;
+    internal ToolStripButton BtnSearchShape => _btnShape;
+    internal ToolStripButton BtnExportPage3dm => _btnExport;
+    internal ToolStripButton BtnExportFinal3dm => _btn3dm;
+
+    /// <summary>④⑤ 页要显示「③ 解出来的是什么」，需要读这一份状态。</summary>
+    internal LineResult? LastResult => _last;
+
+    /// <summary>
+    /// 上一次的解已作废 —— 判据表清空、外推基准丢弃、输出框说明缘由。
+    ///
+    /// ★ 2026-08-20：给「读取方案」用。换了方案之后，判据表若还挂着旧方案的结论，
+    ///   而参数表已经是新方案，就是一张**看起来完全正常的错表**。
+    ///   判据宁可消失得很吵，也不能安静地留在那儿骗人。
+    /// </summary>
+    internal void InvalidateSolution()
+    {
+        _last = null;
+        _solvedRes = null;
+        _solvedSnap = null;
+        FillChecks(null);
+        Shared?.Invalidate();
+        _out.Text = "读取了新方案 —— 上一次的解与判据表**已作废**。\r\n"
+                  + "请点「核算整线」重新求解。\r\n";
+    }
+
     private void FillChecks(LineResult? r)
     {
         _checks.Rows.Clear();
@@ -1555,6 +1649,11 @@ public sealed class LineDesignPage : TabPage
             FieldPlots.DrawShellField(_pJ, worst.Mesh, worst.JField,
                 $"电流密度场　{worst.Name}", "J", "A/mm²", (double)_wall.Value + 25.0);
         }
+
+        // ★ 2026-08-20：第三张图（「管轴向剖面」）**从建出来就没画过** ——
+        //   页签在、控件在、数据也一直在，只是没人接这一行。
+        //   一个永远空白的页签比没有这个页签更坏：它看起来像「这次没算出来」。
+        FieldPlots.DrawLineAxialProfile(_pAx, r, _base);
     }
 
     /// <summary>
@@ -1681,7 +1780,13 @@ public sealed class LineDesignPage : TabPage
         finally { Cursor = Cursors.Default; }
     }
 
-    /// <summary>按解析出的分级列出「锁定」勾选框。半径大的在上，便于对应「外圈」。</summary>
+    /// <summary>
+    /// 按解析出的分级列出「锁定」勾选框。半径大的在上，便于对应「外圈」。
+    ///
+    /// ⚠ 这里**不需要**再手挂 `CheckedChanged += ParamChanged` —— `_lockPanel.Controls.Add`
+    ///   会触发 `HookAutoRun` 装的 `ControlAdded`，勾选框在**加进来的那一刻**就被接上了。
+    ///   再挂一次的后果不是「更保险」，是**每次勾选触发两回重算**。
+    /// </summary>
     private void BuildLockBoxes(PlateShapeAnalyzer.Shape sh)
     {
         _lockPanel.Controls.Clear();

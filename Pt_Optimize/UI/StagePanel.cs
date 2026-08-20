@@ -1,0 +1,203 @@
+﻿using System;
+using System.Drawing;
+using System.Linq;
+using System.Windows.Forms;
+
+using PtOptimize.Core;
+
+namespace PtOptimize.UI;
+
+/// <summary>
+/// 「**你现在在算什么**」—— 常驻状态面板。
+///
+/// ★ 用户 2026-08-20：「现在是所有标签键都可以点，工程师根本不知道自己目前在算什么」。
+///
+/// 界面里同时跑着六条链，耗时差四个数量级、权威性完全不同（只有 C 整线耦合可交付）。
+/// 在此之前，判断「手上这个数字是哪条链算的、能不能拿去交付」需要读说明书 ——
+/// 而用户的另一条诉求正是「不看说明书也能用」。这块面板把那份知识搬到屏幕上。
+///
+/// ⚠ **它没有任何可点的命令**（唯一的 LinkLabel 只在门锁住时出现）。
+///   用户 2026-08-16 说过「UI 已经够复杂，不要再加按钮」——
+///   这块面板不增加决策点，反而**消除**一个（「我该信哪个数字」）；
+///   而且控件净数是负的：它合并掉了原先散在三处的状态标签
+///   （MainForm._segStatus、AnalysisPage._status、LineDesignPage._status）。
+///
+/// 显示的每一项都来自**已有状态**，本类不做任何计算、更不产生判据。
+/// </summary>
+public sealed class StagePanel : Panel
+{
+    private readonly Label _title = new();
+    private readonly Label _chain = new();
+    private readonly Label _input = new();
+    private readonly Label _fresh = new();
+    private readonly Label _verdict = new();
+    private readonly Label _banner = new();
+    private readonly LinkLabel _bypass = new();
+    private readonly FlowLayoutPanel _stack = new();
+
+    private readonly FlowState _state;
+    private StageId _stage = StageId.整线核算;
+
+    /// <summary>用户点了「我知道风险，越关进入」。参数是被越的那一关。</summary>
+    public event Action<StageId>? BypassRequested;
+
+    /// <summary>
+    /// 本面板想要多高（像素）。
+    ///
+    /// ⚠ 必须有这个：面板高度原来是**写死**的，门一锁内容就多出三四行
+    ///   （为什么锁 / 现在什么状态 / 怎么解锁），于是横幅被挤到滚动条外面 ——
+    ///   实测截图里越关链接好端端显示着，而它上面那段「为什么」一个字都看不见。
+    ///   **把话说了一半的提示，比不提示更容易误导。**
+    /// </summary>
+    public event Action<int>? HeightWanted;
+
+    /// <summary>本页输入来自哪儿的补充说明（例如「解析几何」/「.3dm 图纸 4 片」）。</summary>
+    public string InputNote { get; set; } = "";
+
+    public StagePanel(FlowState state)
+    {
+        _state = state;
+        Dock = DockStyle.Fill;
+        BackColor = Color.FromArgb(250, 250, 247);
+        Padding = new Padding(UiScale.S(10), UiScale.S(6), UiScale.S(10), UiScale.S(6));
+
+        // ⚠ 用 FlowLayoutPanel 而**不是**一叠 Dock=Top 的 Label（第一版就栽在这里）：
+        //   Dock.Top + AutoSize 对「高度随文字行数变」的标签不可靠 ——
+        //   门禁横幅是三行，实测被压成一行高，于是「为什么锁 / 怎么解锁」**整段看不见**，
+        //   而越关链接却好端端地显示着。一个把话说了一半的提示，比不提示更容易误导。
+        _stack.Dock = DockStyle.Fill;
+        _stack.FlowDirection = FlowDirection.TopDown;
+        _stack.WrapContents = false;
+        _stack.AutoScroll = true;
+        Controls.Add(_stack);
+
+        foreach (var (lab, style) in new (Label, FontStyle)[]
+        {
+            (_title,   FontStyle.Bold),
+            (_chain,   FontStyle.Regular),
+            (_input,   FontStyle.Regular),
+            (_fresh,   FontStyle.Bold),
+            (_verdict, FontStyle.Regular),
+            (_banner,  FontStyle.Regular),
+            (_bypass,  FontStyle.Regular),
+        })
+        {
+            lab.AutoSize = true;
+            lab.Font = UiScale.Ui(style);
+            lab.Margin = new Padding(0, 0, 0, UiScale.S(3));
+            _stack.Controls.Add(lab);
+        }
+
+        _banner.ForeColor = Color.FromArgb(150, 20, 20);
+        _banner.BackColor = Color.FromArgb(255, 242, 242);
+        _banner.Padding = new Padding(UiScale.S(6), UiScale.S(4), UiScale.S(6), UiScale.S(4));
+        _bypass.LinkColor = Color.FromArgb(150, 20, 20);
+        _bypass.Text = "我知道风险，越关进入 →";
+        _bypass.Visible = false;
+        _bypass.LinkClicked += (_, _) => BypassRequested?.Invoke(_stage);
+
+        // 换行宽度跟着面板走：窗口变窄时长句要折行，而不是被裁掉
+        Resize += (_, _) => SyncWrapWidth();
+        SyncWrapWidth();
+
+        _state.Changed += () =>
+        {
+            if (IsHandleCreated) BeginInvoke(Refresh2);
+            else Refresh2();
+        };
+        Refresh2();
+    }
+
+    private void SyncWrapWidth()
+    {
+        int w = Math.Max(UiScale.S(300), ClientSize.Width - Padding.Horizontal - UiScale.S(24));
+        foreach (Control c in _stack.Controls) c.MaximumSize = new Size(w, 0);
+    }
+
+    /// <summary>切到了哪一格。</summary>
+    public void SetStage(StageId s) { _stage = s; Refresh2(); }
+
+    /// <summary>
+    /// 去掉 Markdown 的 `**` 标记。
+    ///
+    /// ⚠ 这些文案是与判据 Note、页顶横幅**共用**的（一份文字四处显示），而那些地方走
+    ///   TextFmt.Hook，`**` 会被渲染成粗体。Label 没有那一层 ⇒ 星号会**原样漏到界面上**。
+    ///   本项目栽过这个（接线测试第 17 项专门守着「输出里没有残留的 Markdown 星号」）。
+    /// </summary>
+    private static string Plain(string s) => s.Replace("**", "");
+
+    /// <summary>把状态重画一遍。名字不叫 Refresh —— 那是 Control 的方法。</summary>
+    public void Refresh2()
+    {
+        var st = Flow.Stage(_stage);
+        var gate = Gate.Evaluate(_stage, _state);
+
+        _title.Text = "现在算的是：" + st.Title;
+
+        // 链：名字 + 求解器入口 + 耗时。入口方法名直接印出来，
+        // 让「我在算什么」有一个可以拿去 grep 的答案。
+        var chains = st.Chains.Where(x => x != ChainId.无).Select(Flow.Chain).ToArray();
+        _chain.Text = Plain(chains.Length == 0
+            ? "链：—（不算东西：存档 / 出图）"
+            : "链：" + string.Join("　", chains.Select(c => $"{c.Name}（{c.EntryPoint}·{c.Cost}）"))
+                    + (chains.Any(c => c.Deliverable) ? "　★ 可交付" : "　⚠ 不可交付"));
+
+        // 正在跑什么 —— 取各页已有的进度文字，不另起一套
+        if (_state.Running is { } run)
+            _input.Text = $"正在算：{Flow.Chain(run).Name}"
+                        + (_state.RunningNote.Length > 0 ? $"　{_state.RunningNote}" : "")
+                        + "　（再点那个按钮 = 取消）";
+        else
+            _input.Text = "输入来自：" + (InputNote.Length > 0 ? InputNote : "本页控件 + 左侧参数表");
+
+        // 结果新鲜度 —— 这一条是整块面板里最要紧的：
+        // 「下面这些数是这组参数算出来的吗」
+        if (_state.Last is null)
+            { _fresh.Text = "结果：还没解过"; _fresh.ForeColor = Color.DimGray; }
+        else if (!_state.Fresh)
+            { _fresh.Text = "⚠ 参数已改 —— 下面的数是上一次的"; _fresh.ForeColor = Color.FromArgb(170, 90, 0); }
+        else if (!_state.Last.Converged)
+            { _fresh.Text = "✗ 上次解未收敛 —— 下面每个数都不可引用"; _fresh.ForeColor = Color.FromArgb(150, 20, 20); }
+        else
+            { _fresh.Text = "✓ 已解（参数未变）"; _fresh.ForeColor = Color.FromArgb(20, 110, 40); }
+
+        // 上次判定 —— 直接引用 LineResult 的单一来源访问器，不自己数
+        if (_state.Last is { Ok: true } r)
+        {
+            var failed = r.Failed;
+            _verdict.Text = failed.Length == 0
+                ? "判定：✓ 判据全过"
+                : $"判定：✗ {failed.Length} 条没过　" + string.Join("；", failed.Take(2))
+                  + (failed.Length > 2 ? " …" : "");
+            _verdict.ForeColor = failed.Length == 0
+                ? Color.FromArgb(20, 110, 40) : Color.FromArgb(150, 20, 20);
+        }
+        else { _verdict.Text = ""; }
+
+        // 门禁横幅：锁住时说清「为什么 / 现在什么状态 / 怎么解锁」
+        if (!gate.Unlocked)
+        {
+            string now = gate.Blocking is { } b
+                ? $"\r\n现在的状态：{b.Name} = {b.Actual:0.0} / 限 {b.Limit:0.0}"
+                  + (b.Where.Length > 0 ? $"　位置：{b.Where}" : "")
+                : "";
+            _banner.Text = $"🔒 {st.Title} —— 还没解锁"
+                         + $"\r\n为什么：{gate.Why}{now}"
+                         + (gate.How.Length > 0 ? $"\r\n怎么解锁：{gate.How}" : "");
+            _banner.Visible = true;
+            _bypass.Visible = true;
+        }
+        else if (gate.Bypassed)
+        {
+            // 越关是**粘着的**：只要还在这一格，就一直说着。
+            // 一个能被忘掉的例外，三个月后就成了没人记得来由的默认值。
+            _banner.Text = "⚠ 越关中：本页是在门没开的情况下进来的。本页所有结果不可引用。";
+            _banner.Visible = true;
+            _bypass.Visible = false;
+        }
+        else { _banner.Visible = false; _bypass.Visible = false; }
+
+        // 内容高度变了就要来一次 —— 锁与不锁差三四行
+        HeightWanted?.Invoke(_stack.PreferredSize.Height + Padding.Vertical + UiScale.S(10));
+    }
+}

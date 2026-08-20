@@ -354,7 +354,11 @@ public static class SegmentSolver
 
     public sealed class SweepRow
     {
-        public double Value, LossPerM, WallMm, MassKg, FlangeMassKg, TMin, Margin, Phi, IA;
+        // ⚠ 2026-08-20 删掉 FlangeMassKg 与 Phi：本方法**从来没给它们赋过值**，
+        //   于是界面上那两列恒为 0。A 链结构上不含法兰（一维环形法兰模型已于
+        //   2026-08-12 删除），这两个量在这里根本没有来源。
+        //   字段留着只会让下一个人以为「有这个数，只是这次是 0」。
+        public double Value, LossPerM, WallMm, MassKg, TMin, Margin, IA;
     }
 
     public static List<SweepRow> Sweep(DesignInputs p, string what, double from, double to, int steps)
@@ -370,6 +374,16 @@ public static class SegmentSolver
                 case "flangeInsul": q.FlangeInsulThickMm = v; q.FlangeInsulated = v > 1e-6; break;
                 case "eps": q.PtEmissivity = v; break;
                 case "J": q.JAllowAPerMm2 = v; break;
+
+                // ★★ 2026-08-20 补 default。原来没有这一支 ⇒ 传一个不认识的量名，
+                //   循环照跑 steps 轮、每轮解的都是**同一个没被改过的基准算例**，
+                //   最后吐出一张「第一列在变、其余列全同」的表。
+                //   界面上「扫描：法兰厚度」传的正是这样一个不存在的量名（"flangeTf"），
+                //   而它安静地这样跑了很久。
+                //   —— 「安静地给出可信外观的错误结果」，本项目的头号失效模式。
+                default:
+                    throw new ArgumentException(
+                        $"未知的扫描量「{what}」。可用：insul / flangeInsul / eps / J", nameof(what));
             }
             var r = Solve(q);
             if (!r.Ok) continue;
@@ -401,4 +415,31 @@ public static class SegmentSolver
     public static DesignInputs Clone(DesignInputs p)
         => System.Text.Json.JsonSerializer.Deserialize<DesignInputs>(
                System.Text.Json.JsonSerializer.Serialize(p, CloneOpts), CloneOpts)!;
+
+    /// <summary>
+    /// 把 <paramref name="src"/> 的全部内容覆盖进 <paramref name="dst"/> —— **不换引用**。
+    ///
+    /// ★★ 为什么必须有这个（2026-08-20 抓到）：
+    ///   MainForm、LineDesignPage、AnalysisPage **三处持有同一个 DesignInputs 的引用**
+    ///   （构造时直接传引用，没有 Clone）。而「读取方案」原本写的是 `_in = x` ——
+    ///   **换引用只换得掉持有它的那一个**：参数表指向了新方案，另外两页的 `_base`
+    ///   是 readonly、仍指着旧对象。
+    ///
+    ///   于是点完「读取」，界面显示的是新方案，「整线核算」页算的还是旧方案，
+    ///   **没有任何提示**。这正是「安静地给出可信外观的错误结果」那一族。
+    ///
+    ///   就地覆盖之后，三处看到的永远是同一份数据 —— 接线测试用
+    ///   `ReferenceEquals(page._base, main._in)` 永久守住这一族。
+    /// </summary>
+    public static void CopyInto(DesignInputs src, DesignInputs dst)
+    {
+        if (ReferenceEquals(src, dst)) return;
+        foreach (var f in typeof(DesignInputs).GetFields(
+                     System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+            f.SetValue(dst, f.GetValue(src));
+        foreach (var pr in typeof(DesignInputs).GetProperties(
+                     System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+            if (pr.CanRead && pr.CanWrite && pr.GetIndexParameters().Length == 0)
+                pr.SetValue(dst, pr.GetValue(src));
+    }
 }

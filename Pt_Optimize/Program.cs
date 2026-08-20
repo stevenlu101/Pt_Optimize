@@ -134,6 +134,18 @@ internal static class Program
                 return;
             }
 
+            // --cli --uishot [dir]   把界面逐页画成 PNG（用户 2026-08-20 要求「自己抓全部 UI」）
+            // 放在求解之前：出图与热解无关，不必先花时间解一遍管段
+            if (args.Contains("--uishot"))
+            {
+                int si = Array.IndexOf(args, "--uishot");
+                string sdir = si + 1 < args.Length && !args[si + 1].StartsWith("--")
+                              ? args[si + 1] : "figs/ui";
+                ApplicationConfiguration.Initialize();
+                UI.UiShot.CaptureAll(sdir);
+                return;
+            }
+
             var r = SegmentSolver.Solve(p);
             if (!r.Ok) { Console.WriteLine("FAIL: " + r.Message); return; }
             // ★ --quiet：只是**不打印**这段「单段解」开场白，仍然要算（后面有命令用 r）。

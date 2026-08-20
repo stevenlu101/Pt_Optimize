@@ -40,6 +40,11 @@ class UiWiringTests {
 
     [STAThread]
     static void Main() {
+        // ⚠ 输出强制 UTF-8：默认走控制台代码页（简中机器上是 GBK），而 ✓(U+2713)
+        //   与 ✗(U+2717) 都不在 GBK 里 —— **两个都会变成同一个 `?`**，
+        //   于是重定向到文件之后，「过」和「不过」在文本上完全无法分辨。
+        //   一份分不出成败的测试报告，等于没有报告。
+        Console.OutputEncoding = System.Text.Encoding.UTF8;
         Application.EnableVisualStyles();
 
         // ── 用**整个 MainForm** 起，而不是单独 new 一个页 ——
@@ -281,6 +286,15 @@ class UiWiringTests {
                             BindingFlags.NonPublic | BindingFlags.Instance);
             Check("Show() 存在", mShow is not null);
             mShow?.Invoke(page, new object?[] { rBad, null });
+
+            // ★ 顺带守住「管轴向剖面」那张图（2026-08-20 之前它**从来没被画过**）。
+            //   借用这里已经解出来的 rBad，不另跑一次分钟级的解。
+            //   空页签的坏处是它看起来像「这次没算出来」，而不是「没接线」。
+            var pAx = (ScottPlot.WinForms.FormsPlot)F(page, "_pAx")!;
+            Check("「管轴向剖面」真的画了东西",
+                  pAx.Plot.GetPlottables().Any(),
+                  $"{pAx.Plot.GetPlottables().Count()} 个图元");
+
             string txt = outBox.Text;
             int posVerdict = txt.IndexOf("条判据没过", StringComparison.Ordinal);
             // ⚠ 锚点换过（2026-08-20）：原来找的是纯文字判据表的表头「判据　★=硬安全线」，
@@ -640,12 +654,34 @@ class UiWiringTests {
                 Check("与说明书说的组数对得上", nonEmpty.Count >= 3, $"实际 {nonEmpty.Count} 组");
                 // ★ 说明书是按**按钮名字**分组讲的（不是让用户去找那条 1 px 的分隔线）。
                 //   所以要验的是：每一组里确实是说明书点名的那些按钮。
-                string g1 = nonEmpty.Count > 0 ? string.Join("/", nonEmpty[0]) : "";
-                string g2 = nonEmpty.Count > 1 ? string.Join("/", nonEmpty[1]) : "";
-                Check("第一组 = 定案档那几个（不读页面控件）",
-                      g1.Contains("复现定案") && g1.Contains("载入定案") && g1.Contains("导出定案"), g1);
-                Check("第二组 = 读页面控件那几个",
-                      g2.Contains("核算整线") && g2.Contains("自动定厚") && g2.Contains("搜形状"), g2);
+                // ★ 2026-08-20：期望值改成**从 Flow 现取**，不再手抄按钮名。
+                //
+                //   原来这里写死「第一组要有 复现定案/载入定案/导出定案，第二组要有
+                //   核算整线/自动定厚/搜形状」。阶段轨把「导出定案 3DM」搬去了 ⑤、
+                //   「自动定厚 / 搜形状」搬去了 ④，这两条断言当场变红 ——
+                //   而它们红得**没有信息**：不是接线错了，是断言自己抄了一份会过期的清单。
+                //
+                //   现在验的是同一条道理、但不会过期的形式：
+                //   本页工具条上属于「定案不读页面」组的按钮，必须与 Flow 登记的一致；
+                //   属于「页面参数」组的同理。搬到别页的按钮自然不在本页，也就不必改测试。
+                var onPage = nonEmpty.SelectMany(g => g).ToHashSet(StringComparer.Ordinal);
+                foreach (var grp in new[] { CmdGroup.定案不读页面, CmdGroup.页面参数 })
+                {
+                    var want = Flow.Commands
+                        .Where(c => c.Stage == StageId.整线核算 && c.Group == grp)
+                        .Select(c => c.Text).ToArray();
+                    var missing = want.Where(t => !onPage.Contains(t)).ToArray();
+                    Check($"本页「{grp}」组与 Flow 一致",
+                          want.Length > 0 && missing.Length == 0,
+                          missing.Length == 0 ? string.Join("/", want)
+                                              : "★ 页上没有：" + string.Join("/", missing));
+                }
+                // 分组的**含义**仍要守住：不读页面控件的那些，必须与读页面的分在不同组 ——
+                // 说明书就是按这条教用户的（「定案两个字打头的那几个不读页面控件」）。
+                var caseGrp = nonEmpty.FirstOrDefault(g => g.Any(x => x.Contains("复现定案")));
+                Check("「定案」组里不混入读页面控件的命令",
+                      caseGrp is not null && !caseGrp.Any(x => x.Contains("核算整线")),
+                      caseGrp is null ? "没找到定案组" : string.Join("/", caseGrp));
             }
         }
 
@@ -690,6 +726,165 @@ class UiWiringTests {
                   small.Count == 0,
                   small.Count == 0 ? $"全部 {main.Font.SizeInPoints:0.0} pt"
                                    : "★ 偏小：" + string.Join("、", small.Select(t => $"{t.Font.SizeInPoints:0.0}pt")));
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        Head("20 Flow 单一数据源：登记表与真界面必须**双向**对得上");
+        {
+            // 为什么是双向：单向断言（Flow 里的都能找到）只抓得到「界面少了个按钮」，
+            // 抓不到「界面多了个没登记的按钮」—— 而后者正是漂移的常见方向：
+            // 有人加了个按钮，忘了登记，于是它不属于任何链、不受门禁、说明书里也没有，
+            // 却安安静静地待在工具条上等人点。
+            try { Flow.SelfTest(); Check("Flow 自检（Id 唯一、命令与阶段互指）", true); }
+            catch (Exception ex) { Check("Flow 自检（Id 唯一、命令与阶段互指）", false, ex.Message); }
+
+            var btns = new List<ToolStripButton>();
+            void Walk(Control c) {
+                // ⚠ PropertyGrid 自带一条工具条（「按类别顺序」「按字母顺序」「属性页」），
+                //   那是 WinForms 的东西、不是我们的命令 —— 断言它只会在换框架版本或
+                //   换系统语言时莫名其妙地红。整棵子树跳过。
+                if (c is PropertyGrid) return;
+                if (c is ToolStrip ts)
+                    foreach (var it in ts.Items.OfType<ToolStripButton>()) btns.Add(it);
+                foreach (Control k in c.Controls) Walk(k);
+            }
+            Walk(main);
+            Check("扫到工具条按钮", btns.Count > 0, $"{btns.Count} 个");
+
+            // ── 方向 ①：Flow 登记的，界面上都要有
+            var onScreen = btns.Select(b => b.Text).ToHashSet(StringComparer.Ordinal);
+            var missing = Flow.Commands.Where(c => !onScreen.Contains(c.Text)).ToList();
+            Check("Flow 登记的命令，界面上都找得到",
+                  missing.Count == 0,
+                  missing.Count == 0 ? $"{Flow.Commands.Length} 条全部命中"
+                                     : "★ 界面上没有：" + string.Join("、", missing.Select(c => $"{c.Id}「{c.Text}」")));
+
+            // ── 方向 ②：界面上有的，Flow 里都要登记
+            var known = Flow.Commands.Select(c => c.Text).ToHashSet(StringComparer.Ordinal);
+            var unregistered = btns.Select(b => b.Text).Distinct(StringComparer.Ordinal)
+                                   .Where(t => !known.Contains(t)).ToList();
+            Check("界面上的按钮，Flow 里都登记了",
+                  unregistered.Count == 0,
+                  unregistered.Count == 0 ? "无遗漏"
+                                          : "★ 没登记：" + string.Join("、", unregistered.Select(t => $"「{t}」")));
+
+            // ── 链的权威性：可交付的**有且只有一条**
+            var deliverable = Flow.Chains.Where(c => c.Deliverable).ToList();
+            Check("可交付的链有且只有一条", deliverable.Count == 1,
+                  deliverable.Count == 1 ? deliverable[0].Name
+                                         : "★ " + string.Join("、", deliverable.Select(c => c.Name)));
+            Check("可交付的那条是 C 整线耦合",
+                  deliverable.Count == 1 && deliverable[0].Id == ChainId.C整线耦合);
+
+            // ── 门禁只准引用判据常量，不准写字面量。
+            //    这里反过来验：GateSpec 里出现的每个 key，都必须真是 LineResult.Key 的某个常量值。
+            var keyConsts = typeof(LineResult.Key)
+                .GetFields(BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy)
+                .Where(f => f.IsLiteral && f.FieldType == typeof(string))
+                .Select(f => (string)f.GetRawConstantValue()!).ToHashSet(StringComparer.Ordinal);
+            var strayKeys = Flow.Stages
+                .Where(s => s.GateToUnlockNext is not null)
+                .SelectMany(s => s.GateToUnlockNext!.RequiredChecks)
+                .Where(k => !keyConsts.Contains(k)).ToList();
+            Check("门禁引用的判据都是 LineResult.Key 常量",
+                  strayKeys.Count == 0,
+                  strayKeys.Count == 0 ? $"常量表 {keyConsts.Count} 条"
+                                       : "★ 野字符串：" + string.Join("、", strayKeys));
+
+            // ── ★ 这一条守的是本次改造最容易写反的地方：
+            //    ④ 的用途就是把不过的判据调过来 ⇒ 判据没过但**收敛**时，④ 必须是解锁的。
+            //    写成 RequireAllOk 就会把正常用法整个锁死，而且表面上毫无异样。
+            var g3 = Flow.Stage(StageId.整线核算).GateToUnlockNext!;
+            Check("③→④ 的门是「收敛」而不是「判据全过」",
+                  g3.RequireConverged && !g3.RequireAllOk,
+                  $"RequireConverged={g3.RequireConverged} RequireAllOk={g3.RequireAllOk}");
+            var g4 = Flow.Stage(StageId.定尺寸).GateToUnlockNext!;
+            Check("④→⑤ 的门是「判据全过」", g4.RequireAllOk);
+
+            // ── 「定案」那四个不读页面控件 ⇒ 不受阶段门禁
+            var caseCmds = Flow.Commands.Where(c => c.Group == CmdGroup.定案不读页面).ToList();
+            Check("「定案」组都标了不读页面控件",
+                  caseCmds.Count > 0 && caseCmds.All(c => !c.ReadsPageControls),
+                  $"{caseCmds.Count} 条：" + string.Join("、", caseCmds.Select(c => c.Text)));
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        Head("21 参数对象只有一份：读取方案不许把某些页甩在旧数据上");
+        {
+            // 病灶（2026-08-20 抓到）：LoadCase 原来写 `_in = x` —— **换引用**。
+            // 而 LineDesignPage/AnalysisPage 在构造时拿到的是引用且字段是 readonly ⇒
+            // 换完之后参数表指向新方案，那两页仍算旧方案，**没有任何提示**。
+            var inMain = F(main, "_in")!;
+            var anal = tabs.TabPages.OfType<AnalysisPage>().First();
+            Check("整线设计页与主窗口共用同一个参数对象",
+                  ReferenceEquals(F(page, "_base"), inMain));
+            Check("分析页与主窗口共用同一个参数对象",
+                  ReferenceEquals(F(anal, "_base"), inMain));
+
+            // CopyInto 必须真的搬值，而且**不换引用**（换了就等于没修）
+            var src = new DesignInputs { TAmbC = 42.5, TubeIdMm = 61.0, GradeName = "PtRh10" };
+            var dst = (DesignInputs)inMain;
+            double keepAmb = dst.TAmbC;
+            SegmentSolver.CopyInto(src, dst);
+            Check("CopyInto 搬了值", Math.Abs(dst.TAmbC - 42.5) < 1e-9 && dst.GradeName == "PtRh10",
+                  $"TAmb {keepAmb}→{dst.TAmbC}　牌号 {dst.GradeName}");
+            Check("CopyInto 之后仍是同一个对象", ReferenceEquals(F(main, "_in"), dst));
+            Check("CopyInto 之后两页看到的还是它",
+                  ReferenceEquals(F(page, "_base"), dst) && ReferenceEquals(F(anal, "_base"), dst));
+
+            // 换了方案 ⇒ 判据表与上一次的解必须**清掉**，不能安静地留着骗人
+            var checksGrid = (DataGridView)F(page, "_checks")!;
+            typeof(LineDesignPage).GetMethod("InvalidateSolution",
+                BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public)
+                !.Invoke(page, null);
+            Check("作废之后判据表清空", checksGrid.Rows.Count == 0, $"{checksGrid.Rows.Count} 行");
+            Check("作废之后上一次的解也丢掉", F(page, "_last") is null && F(page, "_solvedSnap") is null);
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        Head("22 运行时新生的控件也要接上自动重算");
+        {
+            // 病灶：各级「锁定」勾选框是 BuildLockBoxes 在**运行时**创建的，
+            // 而 HookAutoRun 在构造函数末尾就跑完了 ⇒ 它们永远赶不上那趟车，
+            // 勾/取消锁定**不触发自动重算**，而界面毫无异样。
+            // 修法是让 Watch 挂 ControlAdded 递归，把「必须记得挂」这个前提整个去掉。
+            var lockPanel = (Control)F(page, "_lockPanel")!;
+            Set(page, "_autoArmed", false);
+            var probe = new CheckBox { Text = "接线探针" };
+            lockPanel.Controls.Add(probe);      // ← 运行时才出生，正是原来漏掉的那类
+            probe.Checked = true;
+            Check("运行时加进来的勾选框能触发自动重算",
+                  (bool)F(page, "_autoArmed")! == true);
+            lockPanel.Controls.Remove(probe);
+
+            // ⚠ 同一个递归绝不能把工具条也钩进去 —— 「定案档 ▾」被当成参数会让
+            //   切档触发一次分钟级重算（那个 bug 修过一次，第 1 项守着它）。
+            //   这里正面验一次：工具条上的 ComboBox 不该被接线。
+            Set(page, "_autoArmed", false);
+            var caseBox22 = (ToolStripComboBox)F(page, "_caseBox")!;
+            if (caseBox22.Items.Count > 1)
+            {
+                caseBox22.SelectedIndex = caseBox22.SelectedIndex == 0 ? 1 : 0;
+                Pump(80);
+                Check("工具条上的下拉**不算**参数（切档不触发重算）",
+                      (bool)F(page, "_autoArmed")! == false);
+            }
+
+            // 段表加一行 = 真的多一段管、多两片法兰，必须触发重算
+            Set(page, "_autoArmed", false);
+            var segGrid22 = (DataGridView)F(page, "_segGrid")!;
+            var segs22 = (System.Collections.IList)F(page, "_segs")!;
+            // ★ 先把句柄逼出来，否则 DataGridView 不会真的生成行，RowsAdded 也就不会响 ——
+            //   那样这条断言会「过」得毫无意义（和 outBox 那条句柄坑是同一族）。
+            _ = segGrid22.Handle;
+            int rows0 = segGrid22.Rows.Count;
+            var rowType22 = segs22.GetType().GetGenericArguments()[0];
+            segs22.Add(Activator.CreateInstance(rowType22));
+            Pump(120);
+            Check("段表真的多出一行（否则下一条等于没测）",
+                  segGrid22.Rows.Count > rows0, $"{rows0} → {segGrid22.Rows.Count} 行");
+            Check("段表加一行会触发自动重算", (bool)F(page, "_autoArmed")! == true);
+            segs22.RemoveAt(segs22.Count - 1);
         }
 
         Console.WriteLine();

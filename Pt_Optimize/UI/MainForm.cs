@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 using PtOptimize.Core;
 
@@ -28,6 +28,18 @@ public sealed class MainForm : Form
     private ToolStripButton? _flangeBtn;
     private CancellationTokenSource? _flangeCts;
 
+    // ── 阶段轨（2026-08-20）
+    /// <summary>「解」的单一来源，③④⑤ 共享。与「判据」的单一来源（LineRunner.Judge）对应。</summary>
+    private readonly FlowState _flow = new();
+    private StagePanel? _stagePanel;
+    private LineDesignPage? _linePage;
+
+    /// <summary>给 UiShot 逐页出图用（--cli --uishot）。</summary>
+    internal TabControl Tabs => _tabs;
+    private readonly Dictionary<TabPage, StageId> _stageOf = new();
+    /// <summary>每一格的门禁横幅，SyncGates 按锁态显示/隐藏。</summary>
+    private readonly Dictionary<StageId, Label> _banners = new();
+
     public MainForm()
     {
         Text = "Pt_Optimize — 铂金直接加热 整线设计与用量优化";
@@ -43,16 +55,16 @@ public sealed class MainForm : Form
         //   缩放只允许有一个来源 —— 与「判据只有一个来源」是同一条道理。
         AutoScaleMode = AutoScaleMode.None;
 
-        var tool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, ImageScalingSize = new Size(1, 1), Font = UiScale.Ui() };
-        tool.Items.Add(Btn("计算 (F5)", (_, _) => Run()));
-        tool.Items.Add(new ToolStripSeparator());
-        tool.Items.Add(Btn("扫描：保温厚度", (_, _) => Sweep("insul", 0, 50, 11, "内层保温厚度 [mm]")));
-        tool.Items.Add(Btn("扫描：法兰厚度", (_, _) => Sweep("flangeTf", 0.4, 5, 11, "法兰厚度 tf [mm]")));
-        tool.Items.Add(Btn("扫描：铂发射率", (_, _) => Sweep("eps", 0.10, 0.30, 9, "铂表面发射率 ε")));
-        tool.Items.Add(new ToolStripSeparator());
-        tool.Items.Add(Btn("保存", (_, _) => Save()));
-        tool.Items.Add(Btn("读取", (_, _) => LoadCase()));
-        tool.Items.Add(Btn("导出 CSV", (_, _) => ExportCsv()));
+        // ═══════════════════════════════════════════════════════════════
+        //  阶段轨（2026-08-20）
+        // ═══════════════════════════════════════════════════════════════
+        //
+        // 用户：「目前的 UI 界面太乱了，有好几种算法链条，可以依照算链条分类
+        //        （现在是所有标签键都可以点，工程师根本不知道自己目前在算什么）」
+        //
+        // 结构全部来自 UI/Flow.cs 这一份数据 —— 页签、按钮归属、门禁、说明书的
+        // 界面地图、接线测试，四方读同一张表。**不再有第二处需要人记得同步的地方。**
+        Flow.SelfTest();
 
         _grid.SelectedObject = _in;
         _grid.PropertySort = PropertySort.Categorized;
@@ -68,20 +80,7 @@ public sealed class MainForm : Form
         // 逐处改成「格式化写入」必然漏掉几处，而漏掉的那几处夹在排好的内容中间最难发现。
         TextFmt.Hook(_out);
 
-        // ★ 2026-08-12：删掉「温度场/电流密度场/体积发热场」（走 FieldMap 的子午面图，
-        //   其法兰部分是已作废的一维环形模型）与「法兰温度剖面/厚度·自给率」（同源）。
-        //   法兰的真实二维场改看「整线设计」页，那里直接画壳解的 T/J。
-        foreach (var (title, ctrl) in new (string, Control)[]
-        {
-            ("轴向剖面", _pAxial),
-        })
-        {
-            var page = new TabPage(title) { Padding = new Padding(2) };
-            page.Controls.Add(ctrl);
-            _tabs.TabPages.Add(page);
-        }
-
-        // ── 分段输入页：每段独立的温度、水头、牌号、几何
+        // ── 分段输入表：每段独立的温度、水头、牌号、几何
         _segGrid.Dock = DockStyle.Fill;
         _segGrid.AutoGenerateColumns = true;
         _segGrid.AllowUserToAddRows = true;
@@ -97,42 +96,118 @@ public sealed class MainForm : Form
         _segOut.BackColor = Color.FromArgb(252, 252, 250);
         TextFmt.Hook(_segOut);
 
-        var segTool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, Font = UiScale.Ui() };
-        segTool.Items.Add(Btn("核算全线", (_, _) => RunLine()));
-        segTool.Items.Add(Btn("为各段选最省牌号", (_, _) => AutoGrade()));
-        segTool.Items.Add(Btn("按强度取最小壁厚", (_, _) => MinWalls()));
-        segTool.Items.Add(new ToolStripSeparator());
+        // ── ③ 整线核算 / ① 闸门：两页各自持有自己的控件与按钮
+        var linePage = new LineDesignPage(_in) { Shared = _flow };
+        var gatePage = new AnalysisPage(_in);
+        _linePage = linePage;
+
+        // ── ② 快筛：把原来散在「分段核算」「轴向剖面」与**主窗口右上**的三块并成一页。
+        //
+        // ★ 把单段报告 `_out` 从常驻右上搬进这一页，是本次重排里最要紧的一刀：
+        //   一个**不含法兰的单段解**长期占着主视野的三分之一，
+        //   正是「不知道自己在算什么」的根源之一。
+        var screenTool = NewTool();
+        screenTool.Items.Add(Btn("计算 (F5)", (_, _) => Run()));
+        screenTool.Items.Add(Btn("扫描：保温厚度", (_, _) => Sweep("insul", 0, 50, 11, "内层保温厚度 [mm]")));
+        screenTool.Items.Add(Btn("扫描：铂发射率", (_, _) => Sweep("eps", 0.10, 0.30, 9, "铂表面发射率 ε")));
+        screenTool.Items.Add(Btn("导出 CSV", (_, _) => ExportCsv()));
+        screenTool.Items.Add(new ToolStripSeparator());
+        screenTool.Items.Add(Btn("核算全线", (_, _) => RunLine()));
+        screenTool.Items.Add(Btn("为各段选最省牌号", (_, _) => AutoGrade()));
+        screenTool.Items.Add(Btn("按强度取最小壁厚", (_, _) => MinWalls()));
         _flangeBtn = Btn("核算法兰（分钟级）", (_, _) => _ = RunFlangesAsync());
-        segTool.Items.Add(_flangeBtn);
+        screenTool.Items.Add(_flangeBtn);
         _segProg.Size = new Size(UiScale.S(180), UiScale.S(16));
-        segTool.Items.Add(_segProg);
-        segTool.Items.Add(_segStatus);
+        screenTool.Items.Add(_segProg);
+        screenTool.Items.Add(_segStatus);
 
-        var segSplit = new SplitContainer
-        { Dock = DockStyle.Fill, Orientation = System.Windows.Forms.Orientation.Horizontal };
-        segSplit.Panel1.Controls.Add(_segGrid);
-        segSplit.Panel2.Controls.Add(_segOut);
-        var segPage = new TabPage("分段核算") { Padding = new Padding(2) };
-        segPage.Controls.Add(segSplit);
-        segPage.Controls.Add(segTool);
-        _tabs.TabPages.Insert(0, segPage);
+        var screenInner = new TabControl { Dock = DockStyle.Fill };
+        screenInner.TabPages.Add(TabWith("分段核算", SplitH(_segGrid, _segOut)));
+        screenInner.TabPages.Add(TabWith("单段报告", _out));
+        screenInner.TabPages.Add(TabWith("轴向剖面", _pAxial));
 
-        // ★ 整线设计页：工程师的主工作面，放在最前
-        _tabs.TabPages.Insert(0, new AnalysisPage(_in));
-        _tabs.TabPages.Insert(0, new LineDesignPage(_in));
-        _tabs.TabPages.Add(new ManualPage());   // 使用说明（图文，按定案档实时生成）
+        var screenPage = new TabPage(Flow.Stage(StageId.粗算).Title) { Padding = new Padding(2) };
+        screenPage.Controls.Add(screenInner);
+        screenPage.Controls.Add(Banner(Flow.Stage(StageId.粗算).Banner));
+        screenPage.Controls.Add(screenTool);
 
+        // ── ④ 定尺寸 / ⑤ 交付：**薄页**。
+        //   它们的输入就是 ③ 的解，不是新的输入 —— 所以只放命令与只读摘要。
+        //   把这些按钮塞回 ③ 的工具条，正是今天「十个按钮一横排」的病因。
+        var sizeTool = NewTool();
+        sizeTool.Items.Add(linePage.BtnAutoThick);
+        sizeTool.Items.Add(linePage.BtnSearchShape);
+        sizeTool.Items.Add(new ToolStripSeparator());
+        sizeTool.Items.Add(gatePage.BtnThicknessScan);
+        var sizePage = new TabPage(Flow.Stage(StageId.定尺寸).Title) { Padding = new Padding(2) };
+        sizePage.Controls.Add(StageHint(StageId.定尺寸));
+        sizePage.Controls.Add(Banner(Flow.Stage(StageId.定尺寸).Banner));
+        sizePage.Controls.Add(sizeTool);
+
+        var shipTool = NewTool();
+        shipTool.Items.Add(linePage.BtnExportPage3dm);
+        shipTool.Items.Add(linePage.BtnExportFinal3dm);
+        shipTool.Items.Add(new ToolStripSeparator());
+        shipTool.Items.Add(Btn("保存", (_, _) => Save()));
+        shipTool.Items.Add(Btn("读取", (_, _) => LoadCase()));
+        var shipPage = new TabPage(Flow.Stage(StageId.交付).Title) { Padding = new Padding(2) };
+        shipPage.Controls.Add(StageHint(StageId.交付));
+        shipPage.Controls.Add(Banner(Flow.Stage(StageId.交付).Banner));
+        shipPage.Controls.Add(shipTool);
+
+        // ── 按 Flow 的顺序装轨
+        gatePage.Text = Flow.Stage(StageId.先决条件).Title;
+        linePage.Text = Flow.Stage(StageId.整线核算).Title;
+        _tabs.TabPages.Add(gatePage);
+        _tabs.TabPages.Add(screenPage);
+        _tabs.TabPages.Add(linePage);
+        _tabs.TabPages.Add(sizePage);
+        _tabs.TabPages.Add(shipPage);
+        _tabs.TabPages.Add(new ManualPage());
+
+        _stageOf[gatePage] = StageId.先决条件;
+        _stageOf[screenPage] = StageId.粗算;
+        _stageOf[linePage] = StageId.整线核算;
+        _stageOf[sizePage] = StageId.定尺寸;
+        _stageOf[shipPage] = StageId.交付;
+
+        // ── 状态面板：接替原来右上那块单段报告的位置
         var right = new SplitContainer
         { Dock = DockStyle.Fill, Orientation = System.Windows.Forms.Orientation.Horizontal };
-        right.Panel1.Controls.Add(_out);
+        right.FixedPanel = FixedPanel.Panel1;
+
+        _stagePanel = new StagePanel(_flow);
+        _stagePanel.BypassRequested += s =>
+        {
+            _flow.Bypassed.Add(s);
+            _flow.Notify();
+            SyncGates();
+        };
+        _tabs.SelectedIndexChanged += (_, _) => SyncGates();
+        _stagePanel.HeightWanted += h =>
+        {
+            // 面板要多高就给多高，但留出下半部至少能看见页签与工具条
+            if (right.Parent is null) return;
+            int max = Math.Max(UiScale.S(90), right.Height - UiScale.S(320));
+            int want = Math.Clamp(h, UiScale.S(90), max);
+            try { if (Math.Abs(right.SplitterDistance - want) > 2) right.SplitterDistance = want; }
+            catch { /* 窗口还没排完版时会抛，下一次刷新会补上 */ }
+        };
+
+        right.Panel1.Controls.Add(_stagePanel);
         right.Panel2.Controls.Add(_tabs);
 
         var main = new SplitContainer { Dock = DockStyle.Fill };
         main.Panel1.Controls.Add(_grid);
         main.Panel2.Controls.Add(right);
 
+        HandleCreated += (_, _) => BeginInvoke(() =>
+        {
+            try { right.SplitterDistance = UiScale.S(150); } catch { }
+            SyncGates();
+        });
+
         Controls.Add(main);
-        Controls.Add(tool);
 
         Load += (_, _) =>
         {
@@ -141,7 +216,6 @@ public sealed class MainForm : Form
                                                UiScale.S(360), Math.Max(UiScale.S(360), main.Width - UiScale.S(520)));
             WidenPropertyGridLabels(_grid, 0.62);
             ApplyToolStripFont(this);
-            right.SplitterDistance = (int)(right.Height * 0.56);
             Run();
             RunLine();
         };
@@ -154,7 +228,108 @@ public sealed class MainForm : Form
         };
     }
 
+    // ═══ 阶段轨的搭建辅助 ═══════════════════════════════════════════
+
+    private static ToolStrip NewTool() => new()
+    { GripStyle = ToolStripGripStyle.Hidden, ImageScalingSize = new Size(1, 1), Font = UiScale.Ui() };
+
+    private static TabPage TabWith(string title, Control c)
+    {
+        var t = new TabPage(title) { Padding = new Padding(2) };
+        c.Dock = DockStyle.Fill;
+        t.Controls.Add(c);
+        return t;
+    }
+
+    private static SplitContainer SplitH(Control top, Control bottom)
+    {
+        var sp = new SplitContainer
+        { Dock = DockStyle.Fill, Orientation = System.Windows.Forms.Orientation.Horizontal };
+        sp.Panel1.Controls.Add(top);
+        sp.Panel2.Controls.Add(bottom);
+        return sp;
+    }
+
+    /// <summary>页顶横幅 —— 文字来自 Flow.StageSpec.Banner，本处不另写一份。</summary>
+    private static Label Banner(string text) => new()
+    {
+        Text = text.Replace("**", ""),   // 横幅是 Label，不走 TextFmt 的加粗
+        Dock = DockStyle.Top,
+        AutoSize = false,
+        Height = UiScale.S(34),
+        Padding = new Padding(UiScale.S(8), UiScale.S(6), UiScale.S(8), UiScale.S(6)),
+        BackColor = Color.FromArgb(255, 250, 225),
+        ForeColor = Color.FromArgb(90, 70, 0),
+        Font = UiScale.Ui(),
+        Visible = text.Length > 0,
+    };
+
     /// <summary>
+    /// ④⑤ 这类薄页的正文：说明本页的输入**来自上一格的解**，不是新的输入。
+    /// 真正的门禁提示在右上的状态面板里（那里才有实时判据数据）。
+    /// </summary>
+    private Label StageHint(StageId s)
+    {
+        var lab = new Label
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(UiScale.S(14)),
+            Font = UiScale.Ui(),
+            ForeColor = Color.FromArgb(70, 70, 70),
+        };
+        var spec = Flow.Stage(s);
+        var sb = new StringBuilder();
+        sb.AppendLine(spec.Title);
+        sb.AppendLine();
+        sb.AppendLine("本页的输入是「③ 整线核算」解出来的那个构型 —— 不是新的一组参数。");
+        sb.AppendLine("要改参数请回 ③；本页只负责在那个解的基础上继续。");
+        sb.AppendLine();
+        sb.AppendLine("本页命令：");
+        foreach (var c in spec.CommandIds.Select(Flow.Cmd))
+            sb.AppendLine($"　· {c.Text}（{c.Cost}）—— {c.Tip.Replace("**", "")}");
+        sb.AppendLine();
+        sb.AppendLine("右上角的状态面板会说明：现在算的是哪条链、结果还新不新鲜、门开没开。");
+        lab.Text = sb.ToString();
+        _stageHints[s] = lab;
+        return lab;
+    }
+    private readonly Dictionary<StageId, Label> _stageHints = new();
+
+    /// <summary>
+    /// 按门禁刷新：锁住的那一格，**命令按钮禁用 + 页签标题加锁**，但**允许只读进入**。
+    ///
+    /// ⚠ 不用 TabControl.Selecting + e.Cancel 硬拦 —— 那个效果是「点了没反应」，
+    ///   正是用户抱怨的那一类。让人进得去、看得见为什么锁着，才叫说明白了。
+    /// </summary>
+    private void SyncGates()
+    {
+        if (_stagePanel is null) return;
+
+        if (_tabs.SelectedTab is { } tab && _stageOf.TryGetValue(tab, out var cur))
+            _stagePanel.SetStage(cur);
+
+        foreach (var (page, sid) in _stageOf)
+        {
+            var g = Gate.Evaluate(sid, _flow);
+            string baseTitle = Flow.Stage(sid).Title;
+            string want = g.Unlocked ? (g.Bypassed ? "⚠ " + baseTitle : baseTitle) : "🔒 " + baseTitle;
+            if (page.Text != want) page.Text = want;
+
+            // 命令按钮：只管「读页面控件」的那些；「定案」组不受门禁（它们不读页面）
+            foreach (var ts in page.Controls.OfType<ToolStrip>())
+                foreach (var b in ts.Items.OfType<ToolStripButton>())
+                {
+                    var spec = Flow.Commands.FirstOrDefault(c => c.Text == b.Text);
+                    if (spec is null) continue;                 // 跑起来变成「取消」的那个，别动它
+                    if (!spec.ReadsPageControls) continue;
+                    b.Enabled = g.Unlocked;
+                }
+        }
+        _stagePanel.Refresh2();
+    }
+
+    /// <summary>
+    /// ★★★ 把**整棵控件树**里所有 ToolStrip 的字体统一设一遍（2026-08-18）。
     /// ★★★ 把**整棵控件树**里所有 ToolStrip 的字体统一设一遍（2026-08-18）。
     ///
     /// 起因：用户反馈「下排的字还是太小」。原因是 <see cref="ToolStrip"/>
@@ -366,8 +541,9 @@ public sealed class MainForm : Form
         _out.Text = _res.Ok ? Report(_in, _res) : "求解失败: " + _res.Message;
         if (!_res.Ok) return;
 
-        // 视野取 5 倍热衰减长度，覆盖法兰冷效应的全部影响范围
-        double xView = Math.Min(_in.TubeLengthMm * 0.5, Math.Max(30.0, 6.0 * _res.DecayLengthMm));
+        // ⚠ 这里原来算了一个 xView（「视野取 5 倍热衰减长度」）却从未传给谁 ——
+        //   DrawAxialProfile 自己 AutoScale。留着一个算了不用的量，
+        //   下一个人会以为视野是被限制过的。
         FieldPlots.DrawAxialProfile(_pAxial, _res, _in);
     }
 
@@ -447,14 +623,15 @@ public sealed class MainForm : Form
         var s = new StringBuilder();
         s.AppendLine($"扫描：{label}");
         s.AppendLine();
-        s.AppendLine($"{label}\t损失 kW/m\t壁厚 mm\t总铂 kg\t最冷 °C\t裕度 K\tΦ\tI (A)");
-        s.AppendLine(TextFmt.SepRow(8));
-        double? baseMass = null;
+        // ⚠ 原来这里还有一列「Φ」。SegmentSolver.Sweep **从来没给 Phi 赋过值** ⇒
+        //   那一列恒为 0.00。一个永远打 0 的列比没有这一列更坏：它看起来像个测出来的数，
+        //   而「法兰自给率 = 0」恰好又是个说得通的读数。已随字段一起删。
+        s.AppendLine($"{label}\t损失 kW/m\t壁厚 mm\t总铂 kg\t最冷 °C\t裕度 K\tI (A)");
+        s.AppendLine(TextFmt.SepRow(7));
         foreach (var x in rows)
         {
-            baseMass ??= x.MassKg;
             s.AppendLine($"{x.Value:0.00}\t{x.LossPerM / 1000:0.00}\t{x.WallMm:0.000}\t" +
-                         $"{x.MassKg:0.000}\t{x.TMin:0.0}\t{x.Margin:0.0}\t{x.Phi:0.00}\t{x.IA:0}");
+                         $"{x.MassKg:0.000}\t{x.TMin:0.0}\t{x.Margin:0.0}\t{x.IA:0}");
         }
         if (rows.Count > 1)
         {
@@ -479,7 +656,21 @@ public sealed class MainForm : Form
         if (d.ShowDialog() != DialogResult.OK) return;
         var x = JsonSerializer.Deserialize<DesignInputs>(File.ReadAllText(d.FileName));
         if (x is null) return;
-        _in = x; _grid.SelectedObject = _in; Run();
+
+        // ★★ 2026-08-20：**就地覆盖，不换引用**（原来是 `_in = x`）。
+        //   「整线设计」「分析」两页在构造时拿到的是 `_in` 的引用且是 readonly，
+        //   换引用只换得掉参数表这一处 —— 那两页会继续拿旧方案算，且毫无提示。
+        //   详见 SegmentSolver.CopyInto 的注释。
+        SegmentSolver.CopyInto(x, _in);
+        _grid.SelectedObject = _in;   // 同一个实例，但要让 PropertyGrid 重读一遍
+        _grid.Refresh();
+
+        // 换了方案 ⇒ 上一次的解与判据**全部作废**。不清掉的话，
+        // 判据表会挂着旧方案的结论，而参数表已经是新方案了。
+        _linePage?.InvalidateSolution();
+
+        Run();
+        RunLine();   // 原来漏了这一句 ⇒ 「分段核算」页也留着旧方案的结果
     }
 
     private void ExportCsv()

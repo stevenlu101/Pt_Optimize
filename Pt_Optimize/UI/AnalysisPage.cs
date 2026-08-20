@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using PtOptimize.Core;
 
 namespace PtOptimize.UI;
@@ -34,11 +34,16 @@ public sealed class AnalysisPage : TabPage
         var tool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, Font = UiScale.Ui() };
         _btnGate = Btn("① 升温可达性", (_, _) => _ = RunAsync(true));
         _btnScan = Btn("② 厚度灵敏度", (_, _) => _ = RunAsync(false));
+        // ★ 2026-08-20 阶段轨：本页是「① 闸门」，只留升温可达性这一条闭式快筛。
+        //   「② 厚度灵敏度」搬到「④ 定尺寸」—— 它逐点跑 LineRunner.Run，
+        //   每一点都是**权威解**，属于 C 链的工具，从来就不该和闭式快筛并排。
+        //   按钮仍由本页创建持有（禁用/取消逻辑在 RunAsync 里），只是挂到 ④ 的工具条上。
         tool.Items.Add(_btnGate);
-        tool.Items.Add(_btnScan);
         tool.Items.Add(new ToolStripSeparator());
         _prog.Style = ProgressBarStyle.Marquee;
-        _prog.Size = new Size(140, 16);
+        // ⚠ 写死像素要过 UiScale.S —— 本页原来是全项目唯一漏网的一处
+        //   （MainForm、LineDesignPage 的进度条都过了）。
+        _prog.Size = new Size(UiScale.S(140), UiScale.S(16));
         tool.Items.Add(_prog);
         tool.Items.Add(_status);
 
@@ -58,6 +63,9 @@ public sealed class AnalysisPage : TabPage
         Controls.Add(tool);
         HandleCreated += (_, _) => BeginInvoke(() => split.SplitterDistance = (int)(split.Height * 0.55));
     }
+
+    /// <summary>归「④ 定尺寸」托管的按钮 —— 所有权仍在本页，只是挂到那边的工具条上。</summary>
+    internal ToolStripButton BtnThicknessScan => _btnScan;
 
     private static ToolStripButton Btn(string t, EventHandler h)
     {
@@ -99,45 +107,29 @@ public sealed class AnalysisPage : TabPage
     /// <summary>① 升温可达性：温控功率下升温是准静态的，「能不能到」＝「该温度的稳态工作点要多大电流」</summary>
     private string Gate1(CancellationToken ct)
     {
-        const double tTarget = 1150;
+        const double tTarget = RampScreen.TargetC;   // 目标温度也归 RampScreen，别在界面再写一个 1150
         var sb = new StringBuilder();
         sb.AppendLine("=== ① 升温可达性（管侧）===");
         sb.AppendLine($"目标 {tTarget:0} °C　空管口径（升温时管内无玻璃）");
         sb.AppendLine("温控功率下升温是准静态的 ⇒「能不能到」= 该温度的稳态工作点要多大电流");
         sb.AppendLine();
-        sb.AppendLine("纤维 mm\t壁厚 mm\t段散热 W\t电流 A\t管 J A/mm²\t" +
-                      "I_stab A\t稳定裕度\t管铂 g/段\t判定");
+        sb.AppendLine("纤维 mm	壁厚 mm	段散热 W	电流 A	管 J A/mm²	" +
+                      "I_stab A	稳定裕度	管铂 g/段	判定");
 
+        // ★ 物理与判定阈值都在 Core/RampScreen —— 本页只负责把它排成表。
+        //   2026-08-20 之前，那段闭式和 `margin > 1.5 ? "✓" : ...` 就写在这里，
+        //   是全项目第四处判定逻辑；而阶段门禁也要用同一个结论，再抄一遍就是第五处。
         var xs = new List<double>(); var ys = new List<double>();
         foreach (double ins in new[] { 2.5, 5.0, 10.0, 20.0, 40.0 })
         {
             foreach (double w in new[] { 0.4, 0.6, 0.8, 1.0 })
             {
                 ct.ThrowIfCancellationRequested();
-                var q = SegmentSolver.Clone(_base);
-                q.Layer1.ThicknessMm = ins; q.Layer1.Enabled = true;
-                q.WallMinMm = w; q.TSetC = tTarget;
-
-                double ri = q.TubeIdMm * 0.5e-3, ww = w * 1e-3, rOut = ri + ww;
-                double aM2 = Math.PI * (rOut * rOut - ri * ri), aMm2 = aM2 * 1e6;
-                bool anyIns = q.Layers.Any(l => l.Enabled && l.ThicknessMm > 1e-6);
-                double eps = anyIns ? q.OuterEmissivity : q.PtEmissivity;
-                var tab = new LossTable(q.TAmbC, tTarget + 300, 60,
-                    t => Insulation.CylinderLoss(t, q.TAmbC, rOut, q.Layers, eps,
-                             q.Posture == PtOptimize.Core.Orientation.Vertical,
-                             q.TubeLength, q.LossScale).QPerLength);
-                double lossW = tab.Eval(tTarget) * q.TubeLength;
-                double rOhm = Materials.PtResistivity(tTarget) * q.TubeLength / aM2;
-                double iA = Math.Sqrt(lossW / rOhm), jA = iA / aMm2;
-                double beta = tab.Slope(tTarget);
-                double drho = Materials.RhoRef * (Materials.AlphaFit + 2 * Materials.BetaFit * tTarget);
-                double iStab = Math.Sqrt(Math.Max(1e-9, beta * aM2 / drho));
-                double margin = iStab / Math.Max(1e-9, iA);
-                double massG = aMm2 * q.TubeLengthMm * Materials.PtDensity * 1e-6;
-                string v = margin > 1.5 ? "✓" : margin > 1.0 ? "⚠ 裕度薄" : "✗ 越热稳定极限";
-                sb.AppendLine($"{ins:0.0}\t{w:0.0}\t{lossW:0}\t{iA:0}\t{jA:0.00}\t" +
-                              $"{iStab:0}\t{margin:0.00}\t{massG:0}\t{v}");
-                if (Math.Abs(w - 0.4) < 1e-9) { xs.Add(ins); ys.Add(jA); }
+                var pt = RampScreen.Evaluate(_base, ins, w, tTarget);
+                sb.AppendLine($"{pt.InsulMm:0.0}	{pt.WallMm:0.0}	{pt.LossW:0}	{pt.CurrentA:0}	" +
+                              $"{pt.TubeJAPerMm2:0.00}	{pt.IStabA:0}	{pt.Margin:0.00}	" +
+                              $"{pt.MassG:0}	{pt.Verdict}");
+                if (Math.Abs(w - 0.4) < 1e-9) { xs.Add(ins); ys.Add(pt.TubeJAPerMm2); }
             }
             // 分档之间要横线不要空行：空行会把这张表断成五张，五段各自算列宽 ⇒ 彼此对不齐
             sb.AppendLine(TextFmt.SepRow(9));
