@@ -8052,9 +8052,20 @@ internal static class Program
                         Console.WriteLine($"{r.Seg.Name,6}{r.Seg.TSetC,7:0}{r.Seg.GlassHeadM,7:0.0}" +
                             $"{r.Seg.GradeName,20}{r.Seg.WallMm,8:0.000}" +
                             $"{(double.IsNaN(r.MinWallStrengthMm) ? "不可行" : r.MinWallStrengthMm.ToString("0.000")),10}" +
-                            $"{r.VonMisesMPa,8:0.000}{r.AllowMPa,8:0.000}{r.Utilization,8:0.00}" +
-                            $"{r.MassG,8:0}{r.CostRelative,10:0}  {(r.Feasible ? "✓" : "✗ 强度")}");
-                    Console.WriteLine($"合计 管铂重 {m:0} g   相对成本 {c:0}" + (bad > 0 ? $"   ★{bad} 段超限" : ""));
+                            $"{r.VonMisesMPa,8:0.000}" +
+                            // NaN 直接进格式串会打出「非数值 / 非數值」（还跟区域设置走）。
+                            // 判不了就写「—」，让人看出这一格**没有数**，而不是像程序坏了。
+                            $"{(double.IsNaN(r.AllowMPa) ? "—" : r.AllowMPa.ToString("0.000")),8}" +
+                            $"{(double.IsNaN(r.Utilization) ? "—" : r.Utilization.ToString("0.00")),8}" +
+                            $"{r.MassG,8:0}{r.CostRelative,10:0}  " +
+                            // ⚠ 判定原来把「强度」**写死**，连 r.Binding 都不看 ⇒
+                            //   任何不可行都报「✗ 强度」，包括「温度在蠕变拟合区间外、根本没算」。
+                            //   界面那侧同步修（MainForm.RunLine）—— 同一份内容两种渲染，不能只修一边。
+                            (r.Feasible ? "✓" : (r.Unknown ? "⚠ " : "✗ ") + r.Binding));
+                    int unk = rs.Count(x => x.Unknown);
+                    Console.WriteLine($"合计 管铂重 {m:0} g   相对成本 {c:0}"
+                        + (bad - unk > 0 ? $"   ★{bad - unk} 段超限" : "")
+                        + (unk > 0 ? $"   ⚠{unk} 段无法判定（不等于通过）" : ""));
                 }
 
                 static List<Segment> Copy(List<Segment> ss) => ss.Select(s => new Segment

@@ -237,10 +237,17 @@ public static class Flow
         new("final.export3dm", "导出定案 3DM", StageId.交付, ChainId.无,
             CmdGroup.定案不读页面, false, "十几秒",
             "整机几何 + 自校。**已声明失效的档一律拒绝出图**"),
+        // ⚠ 这两个 ReadsPageControls **必须是 false**（2026-08-21 修）。
+        //   它们读的是**左侧参数表**（DesignInputs），不是 ③ 页的控件，
+        //   也不依赖任何解 —— 而 MainForm.SyncGates 正是按这个标志决定「锁 ⑤ 时禁哪些按钮」。
+        //   标成 true 的后果：⑤ 没解锁时「保存」也被禁 ⇒
+        //   **工程师调了半天参数存不下来，非得先解出一个收敛解才准存档**。
+        //   存参数和「这一版几何算没算通」是两件毫不相干的事，
+        //   而门禁的意义是拦住「拿不成立的解去出图」，不是拦住记事本。
         new("case.save", "保存", StageId.交付, ChainId.无,
-            CmdGroup.导出, true, "即时", "把参数表存成 .json"),
+            CmdGroup.工具, false, "即时", "把参数表存成 .json"),
         new("case.load", "读取", StageId.交付, ChainId.无,
-            CmdGroup.导出, true, "即时", "从 .json 载入参数表。**载入后上一次的解即作废**"),
+            CmdGroup.工具, false, "即时", "从 .json 载入参数表。**载入后上一次的解即作废**"),
 
         // ── 使用说明 ──────────────────────────────────────────────────
         new("manual.openMd", "打开 Markdown 版", StageId.说明, ChainId.无,

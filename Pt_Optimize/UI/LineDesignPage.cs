@@ -73,7 +73,22 @@ public sealed class LineDesignPage : TabPage
     ///   ⇒ 换了盘径/舌长/舌宽之后再解一次，然后微调板厚，预测照样显示 ——
     ///     而它用的是**另一个构型**的斜率。这正是那条注释警告过的事，只是没人拦。
     /// </summary>
-    private sealed class Snap
+    /// ★★★★★ **必须是 record（值相等），不能是 class**（2026-08-21 --walk 抓到）。
+    ///
+    /// <see cref="FlowState.Fresh"/> 判「结果新不新鲜」用的是
+    /// `Equals(SolvedSnap, CurrentSnap)`。这两个字段是 `object?`，
+    /// 若 Snap 是普通 class 且不重写 Equals ⇒ 走的是**引用相等**；
+    /// 而 <see cref="PushFlow"/> 每次都 `CurrentSnap()` 新建一个实例 ⇒
+    /// **两者永远不是同一个对象 ⇒ Fresh 恒为 false**。
+    ///
+    /// 后果不是「偶尔多解一次」，是**整条流程被堵死**：
+    /// ④⑤ 两道门都带 RequireFresh ⇒ 无论解得多好、判据全过，
+    /// 它们**永远不解锁**，而且给出的理由是「参数在上次求解之后又动过了」——
+    /// 一句**假话**。用户会回去反复重解，每次几十秒，永远等不到门开。
+    ///
+    /// 「假红灯」和本项目一直在防的「假绿灯」是同一种病：
+    /// 界面说的话与实际状态对不上，而它说得像真的。
+    private sealed record Snap
     {
         public double Wall, Plate, TubeIns;
         public double Disc, TabLen, TabW;
@@ -261,11 +276,43 @@ public sealed class LineDesignPage : TabPage
         for (int i = 0; i < 4; i++)
         {
             int idx = i;
-            var pnl = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0), WrapContents = false };
-            _file3dm[idx].Width = UiScale.S(150); _file3dm[idx].ReadOnly = true;
-            var b = new Button { Text = "…", Width = UiScale.S(30), Height = UiScale.S(22) };
+
+            // ⚠ 这一行**必须按列宽自适应**，不能用「固定宽文本框 + 固定宽按钮」硬拼
+            //   （2026-08-21 用户报「3DM 输入入口不见了」，实测就是这么丢的）：
+            //
+            //   旧写法是 FlowLayoutPanel{WrapContents=false} 里塞 S(150) 文本框 + S(30) 按钮。
+            //   在 K=1.6 的屏上那是 240+48≈300 px，而本表第二列只有
+            //   （中间栏宽 − 第一列 S(188)）≈ 220 px ⇒ **「…」按钮整个被父容器裁掉**。
+            //   父表是 TableLayoutPanel，第二列是 Percent 100 ——
+            //   单元格不会为超宽内容变宽，也**不会给出横向滚动条** ⇒ 按钮永远够不到，
+            //   而选文件只有这一个入口 ⇒ .3dm 模式**整条链无法使用**。
+            //   文本框是只读的，看起来一切正常 —— 又一次「安静地不可用」。
+            //
+            //   改成两列表格：文本框 Percent 100 + Dock Fill（栏窄它就窄），
+            //   按钮 AutoSize（永远画得下）。这样任何缩放、任何分栏宽度都不会再丢入口。
+            var pnl = new TableLayoutPanel
+            {
+                ColumnCount = 2, RowCount = 1, AutoSize = true,
+                Dock = DockStyle.Fill, Margin = new Padding(0),
+            };
+            pnl.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            pnl.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+            _file3dm[idx].ReadOnly = true;
+            _file3dm[idx].Dock = DockStyle.Fill;
+            _file3dm[idx].Margin = new Padding(0, 2, 2, 2);
+            // 路径通常比栏宽长得多：鼠标停上去看全名，否则只看得见开头几个字符
+            new ToolTip().SetToolTip(_file3dm[idx], "点右边「…」选 .3dm 文件");
+
+            var b = new Button
+            {
+                Text = "…", AutoSize = true, Margin = new Padding(0, 2, 0, 2),
+                MinimumSize = new Size(UiScale.S(28), UiScale.S(22)),
+            };
             b.Click += (_, _) => PickFile(idx);
-            pnl.Controls.Add(_file3dm[idx]); pnl.Controls.Add(b);
+
+            pnl.Controls.Add(_file3dm[idx], 0, 0);
+            pnl.Controls.Add(b, 1, 0);
             _row3dm[idx] = pnl;
             Row(names[idx] + " .3dm", pnl);
         }

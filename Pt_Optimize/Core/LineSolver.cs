@@ -32,16 +32,37 @@ public static class LineSolver
             var mr = Mechanics.Check(p, s.WallMm, 2.0, plate);
             r.VonMisesMPa = mr.TubeVonMisesMPa;
             r.AllowMPa = g.AllowableMPa(s.TSetC, p.DesignLifeHours, p.SafetyFactor);
-            r.Utilization = r.AllowMPa > 0 ? r.VonMisesMPa / r.AllowMPa : 999;
             r.MinWallStrengthMm = Mechanics.MinWallForStrengthMm(p, plate, s.TSetC);
+
+            // ★ 分清「判不了」与「没通过」（2026-08-21）。
+            //   段温落在该牌号蠕变拟合区间外时 AllowMPa 是 NaN —— 这是**对的**，
+            //   §7 头一条就是「纯铂外推到 900 °C 得 8648 MPa」，护栏必须在。
+            //   错的是旧写法把 NaN 一路折成「利用率 999 ⇒ ✗ 强度」，
+            //   把「没有数据可判」说成了「强度不够」。见 SegmentResult.Unknown。
+            r.Unknown = !g.InCreepRange(s.TSetC) || double.IsNaN(r.AllowMPa) || r.AllowMPa <= 0;
 
             // 质量：用该牌号的密度
             double area = Math.PI * (s.WallMm * 1e-3) * (s.TubeIdMm * 1e-3 + s.WallMm * 1e-3);
             r.MassG = area * (s.LengthMm * 1e-3) * g.DensityKgM3 * 1000.0;
             r.CostRelative = r.MassG * g.CostPerKgRelative;
 
-            r.Feasible = r.Utilization <= 1.0;
-            r.Binding = r.Utilization > 1.0 ? "强度" : "";
+            if (r.Unknown)
+            {
+                // 利用率留 NaN 而不是塞 999：**假数字比空着更坏** ——
+                // 999 会被当成「超限 999 倍」，而真相是这一格根本没有数。
+                r.Utilization = double.NaN;
+                r.Feasible = false;                       // 判不了 ⇒ 不算通过
+                r.Binding = g.HasCreep
+                    ? $"无法判定：{s.TSetC:0} °C 在 {g.Name} 蠕变拟合区间 "
+                      + $"{g.CreepTMinC:0}–{g.CreepTMaxC:0} °C 之外"
+                    : $"无法判定：{g.Name} 没有蠕变数据";
+            }
+            else
+            {
+                r.Utilization = r.VonMisesMPa / r.AllowMPa;
+                r.Feasible = r.Utilization <= 1.0;
+                r.Binding = r.Utilization > 1.0 ? "强度" : "";
+            }
             res.Add(r);
         }
         return res;

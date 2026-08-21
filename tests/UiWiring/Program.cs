@@ -40,7 +40,11 @@ class UiWiringTests {
     static void Head(string s) { Console.WriteLine(); Console.WriteLine("=== " + s + " ==="); }
 
     [STAThread]
-    static void Main() {
+    static void Main(string[] args) {
+        // `--walk`：①→⑤ 全程走通并逐步核对（用户 2026-08-21）。
+        // 与接线测试分开跑：那个验「接线对不对」，这个验「整条流程跑得完、数对不对」。
+        if (args.Contains("--walk")) { Environment.ExitCode = Walk.Run(); return; }
+
         // ⚠ 输出强制 UTF-8：默认走控制台代码页（简中机器上是 GBK），而 ✓(U+2713)
         //   与 ✗(U+2717) 都不在 GBK 里 —— **两个都会变成同一个 `?`**，
         //   于是重定向到文件之后，「过」和「不过」在文本上完全无法分辨。
@@ -959,6 +963,70 @@ class UiWiringTests {
             Check("每个被接管的参数都写明了谁接管它",
                   noWhy.Count == 0,
                   noWhy.Count == 0 ? "" : "★ 没写：" + string.Join("、", noWhy));
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        Head("24 门禁只该拦「拿不成立的解去出图」，不该拦记事本");
+        {
+            // 病灶（2026-08-21 用户抓到）：`保存`/`读取` 被标成 ReadsPageControls=true，
+            // 于是随 ⑤ 一起锁 ⇒ **参数调了半天存不下来，非得先解出一个收敛解才准存档**。
+            // 存参数和「这一版几何算没算通」毫不相干。
+            //
+            // 这条是**行为断言**，不是复述那个标志位：直接看真按钮的 Enabled。
+            //
+            // ⚠ 必须**自己把状态驱到锁态**：跑到这一节时第 16 节已经真解过一次并收敛，
+            //   ④⑤ 早就解锁了 —— 头一版忘了这点，四条断言集体空转
+            //   （靠「此刻确实有锁着的阶段」那条前置才发现，见 §7「空集通过的断言」）。
+            typeof(LineDesignPage).GetMethod("InvalidateSolution",
+                BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public)
+                !.Invoke(page, null);
+            typeof(MainForm).GetMethod("SyncGates",
+                BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public)
+                !.Invoke(main, null);
+            Pump(200);
+
+            var lockedPages = tabs.TabPages.OfType<TabPage>()
+                .Where(t => t.Text.StartsWith("🔒", StringComparison.Ordinal)).ToArray();
+            Check("此刻确实有锁着的阶段（否则本节等于没测）",
+                  lockedPages.Length > 0,
+                  lockedPages.Length > 0
+                      ? string.Join("、", lockedPages.Select(t => t.Text))
+                      : "★ 一格都没锁 —— 断言会空转");
+
+            var lockedBtns = new List<ToolStripButton>();
+            void W(Control c)
+            {
+                if (c is ToolStrip ts) foreach (var it in ts.Items.OfType<ToolStripButton>()) lockedBtns.Add(it);
+                foreach (Control k in c.Controls) W(k);
+            }
+            foreach (var t in lockedPages) W(t);
+
+            // 「不消费解」的命令：ReadsPageControls=false 的那些，锁着也必须能点
+            var shouldStayOn = lockedBtns
+                .Select(b => (b, spec: Flow.Commands.FirstOrDefault(c => c.Text == b.Text)))
+                .Where(x => x.spec is { ReadsPageControls: false })
+                .ToArray();
+            Check("锁着的阶段上确实有「不消费解」的命令", shouldStayOn.Length > 0,
+                  string.Join("、", shouldStayOn.Select(x => x.b.Text)));
+            var wronglyOff = shouldStayOn.Where(x => !x.b.Enabled).Select(x => x.b.Text).ToList();
+            Check("它们在锁态下仍然可点", wronglyOff.Count == 0,
+                  wronglyOff.Count == 0 ? "" : "★ 被误锁：" + string.Join("、", wronglyOff));
+
+            // 反面：消费解的命令在锁态下**必须**被禁，否则门禁形同虚设
+            var mustBeOff = lockedBtns
+                .Select(b => (b, spec: Flow.Commands.FirstOrDefault(c => c.Text == b.Text)))
+                .Where(x => x.spec is { ReadsPageControls: true })
+                .ToArray();
+            Check("锁着的阶段上确实有「消费解」的命令", mustBeOff.Length > 0,
+                  string.Join("、", mustBeOff.Select(x => x.b.Text)));
+            var leaked = mustBeOff.Where(x => x.b.Enabled).Select(x => x.b.Text).ToList();
+            Check("消费解的命令在锁态下确实被禁", leaked.Count == 0,
+                  leaked.Count == 0 ? "" : "★ 没拦住：" + string.Join("、", leaked));
+
+            // 「保存」必须在场且可用 —— 上面两条是通则，这条钉死用户报的那个具体症状
+            var save = lockedBtns.FirstOrDefault(b => b.Text == "保存");
+            Check("「保存」在 ⑤ 上找得到", save is not null);
+            Check("「保存」不随 ⑤ 上锁", save?.Enabled == true);
         }
 
         Console.WriteLine();

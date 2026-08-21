@@ -333,7 +333,6 @@ public sealed class MainForm : Form
 
     /// <summary>
     /// ★★★ 把**整棵控件树**里所有 ToolStrip 的字体统一设一遍（2026-08-18）。
-    /// ★★★ 把**整棵控件树**里所有 ToolStrip 的字体统一设一遍（2026-08-18）。
     ///
     /// 起因：用户反馈「下排的字还是太小」。原因是 <see cref="ToolStrip"/>
     /// **不继承父窗体的 Font**（它用 ToolStripManager 的默认字体），
@@ -419,16 +418,34 @@ public sealed class MainForm : Form
             tab.AppendLine($"{r.Seg.Name}\t{r.Seg.TSetC:0}\t{r.Seg.GlassHeadM:0.0}\t{r.Seg.GradeName}\t"
                         + $"{r.Seg.WallMm:0.000}\t"
                         + (double.IsNaN(r.MinWallStrengthMm) ? "不可行" : r.MinWallStrengthMm.ToString("0.000"))
-                        + $"\t{r.VonMisesMPa:0.000}\t{r.AllowMPa:0.000}\t{r.Utilization:0.00}\t"
+                        + $"\t{r.VonMisesMPa:0.000}\t"
+                        // ⚠ NaN 不能直接丢进格式串：.NET 会打出「非数值 / 非數值」（还跟区域设置走），
+                        //   看起来像程序出错。判不了就写「—」，让人一眼看出是**这一格没有数**。
+                        + (double.IsNaN(r.AllowMPa) ? "—" : r.AllowMPa.ToString("0.000")) + "\t"
+                        + (double.IsNaN(r.Utilization) ? "—" : r.Utilization.ToString("0.00")) + "\t"
                         + $"{r.MassG:0}\t{r.CostRelative:0}\t"
-                        + (r.Feasible ? "✓" : "✗ " + r.Binding));
+                        + (r.Feasible ? "✓" : (r.Unknown ? "⚠ " : "✗ ") + r.Binding));
         GridFmt.Fill(_segResult, tab.ToString());
 
         sb.AppendLine($"材料数据：用户实测工作簿   寿命 {_in.DesignLifeHours:0} h   安全系数 {_in.SafetyFactor:0.0}");
         sb.AppendLine($"金属价格比：Rh/Pt = 4.91（Umicore PMM 2026-08-06，Pt $1731/oz、Rh $8500/oz）");
         sb.AppendLine();
         sb.AppendLine($"合计铂重 {mass:0} g    相对成本 {cost:0}（= Σ 质量×牌号成本倍数，纯铂同质量为基准）");
-        if (bad > 0) sb.AppendLine($"★ {bad} 段强度超限 —— 加厚或换牌号");
+        // ★ 汇总也要分清「超限」与「判不了」：两者的下一步动作是相反的。
+        //   Totals 的 infeasible 把两类都算作不可行（对：判不了不算通过），
+        //   但**说出来的时候必须分开**，否则又把「没有数据」说成「强度不够」，
+        //   工程师照着去加厚，白费铂且治不了病。
+        int unknown = rs.Count(x => x.Unknown);
+        int overrun = bad - unknown;
+        if (overrun > 0) sb.AppendLine($"★ {overrun} 段强度超限 —— 加厚或换牌号");
+        if (unknown > 0)
+        {
+            sb.AppendLine($"⚠ {unknown} 段**无法判定**（不等于通过）——");
+            foreach (var r in rs.Where(x => x.Unknown))
+                sb.AppendLine($"    {r.Seg.Name}：{r.Binding}");
+            sb.AppendLine("    下一步不是加厚：请确认该牌号蠕变数据的温度区间，");
+            sb.AppendLine("    或换用覆盖该温度的牌号（如 Tanaka-ZGS-Pt 为 1000–1500 °C）。");
+        }
         sb.AppendLine();
         sb.AppendLine($"★ 以上只是**管壁**。整线还有 {LineSolver.FlangeCount(_segs.Count)} 片法兰"
                     + $"（{_segs.Count} 段 → n+1 片，段间共用），厚度由电流密度定，");
@@ -436,7 +453,14 @@ public sealed class MainForm : Form
         sb.AppendLine();
         sb.AppendLine("注：本页强度与质量核算是解析的（即时）。电流密度与析晶需耦合热解，");
         sb.AppendLine("    请用 --cli --matrix / --save 等批处理模式。");
-        _segOut.Text = sb.ToString();
+        // ⚠ 这里**直接调 Write**，不靠 TextFmt.Hook 的事件（2026-08-21）。
+        //   RunLine 在 MainForm.Load 里就跑一次，那时本框在 ② 页的内层页签里、
+        //   句柄还没建 ⇒ `.Text =` **不触发 TextChanged**（原生控件没窗口就没有
+        //   EN_CHANGE 通知），而 HandleCreated 是在更早的空文本时刻就烧掉了。
+        //   结果：首屏这一框顶着一串 `**` 摆着 —— 实测截图抓到，靠人看才发现。
+        //   钩子是给「散在几十处的写入」兜底的；自己这条路没必要押在事件时机上。
+        //   Write 自带重入闸门，钩子在它执行期间被完整压住，两者不会打架。
+        TextFmt.Write(_segOut, sb.ToString());
     }
 
     /// <summary>
@@ -492,7 +516,14 @@ public sealed class MainForm : Form
             sb.AppendLine($"法兰合计 {fg:0} g   管 {tubeG:0} g   全线 {tubeG + fg:0} g   " +
                           $"法兰占 {fg / (tubeG + fg) * 100:0}%");
             sb.AppendLine("共用片电流 = (I_左+I_右)/2 × 1.5（《鉑金電氣計算.xlsx》口径）；厚度 t ∝ I。");
-            _segOut.Text = sb.ToString();
+            // ⚠ 这里**直接调 Write**，不靠 TextFmt.Hook 的事件（2026-08-21）。
+        //   RunLine 在 MainForm.Load 里就跑一次，那时本框在 ② 页的内层页签里、
+        //   句柄还没建 ⇒ `.Text =` **不触发 TextChanged**（原生控件没窗口就没有
+        //   EN_CHANGE 通知），而 HandleCreated 是在更早的空文本时刻就烧掉了。
+        //   结果：首屏这一框顶着一串 `**` 摆着 —— 实测截图抓到，靠人看才发现。
+        //   钩子是给「散在几十处的写入」兜底的；自己这条路没必要押在事件时机上。
+        //   Write 自带重入闸门，钩子在它执行期间被完整压住，两者不会打架。
+        TextFmt.Write(_segOut, sb.ToString());
             _segStatus.Text = "完成";
         }
         catch (OperationCanceledException) { _segStatus.Text = "已取消"; }

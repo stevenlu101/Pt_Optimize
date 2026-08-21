@@ -33,4 +33,21 @@ public sealed class SegmentResult
     public double CostRelative;        // 相对成本（纯铂同质量 = 1）
     public string Binding = "";        // 卡住的约束
     public bool Feasible;
+
+    /// <summary>
+    /// 判据**无法评估**（不是「没通过」）。
+    ///
+    /// ★ 2026-08-21：此前这两件事被混成一件 —— 段温落在蠕变拟合区间外时
+    ///   <see cref="AllowMPa"/> 是 NaN，而 `Utilization = AllowMPa > 0 ? … : 999`
+    ///   （NaN &gt; 0 为 false）⇒ 利用率 999 ⇒ 判定打成「✗ 强度」。
+    ///   表面上看是「强度不够」，工程师会去**加厚管壁** —— 白费铂，而且治不了病：
+    ///   真正该做的是确认材料数据的温度区间，或换用覆盖该温度的牌号。
+    ///
+    ///   本项目的铁律是「**「无法判定」也要出现在表里，且不算通过**」——
+    ///   它没有消失，但被**伪装成了另一种失败**，那比消失更难发现。
+    ///
+    /// 语义：Unknown 为真时 <see cref="Feasible"/> **必须**为 false（不算通过），
+    ///       但 <see cref="Binding"/> 讲的是「为什么判不了」，不是「哪条约束卡住」。
+    /// </summary>
+    public bool Unknown;
 }
