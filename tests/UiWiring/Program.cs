@@ -2,6 +2,7 @@
 using System.Linq;
 using System.Collections.Generic;
 using System.Reflection;
+using System.IO;
 using System.ComponentModel;
 using System.Windows.Forms;
 using PtOptimize.Core;
@@ -1027,6 +1028,51 @@ class UiWiringTests {
             var save = lockedBtns.FirstOrDefault(b => b.Text == "保存");
             Check("「保存」在 ⑤ 上找得到", save is not null);
             Check("「保存」不随 ⑤ 上锁", save?.Enabled == true);
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        Head("25 复现定案要走完全程：解完必须发布状态，否则 ④⑤ 一格不开");
+        {
+            // 病灶（2026-08-21 用户提出「能否一键」时查出）：ReproduceAsync 只写
+            // `_last` + `Show()`，**既不设 _solvedSnap 也不 PushFlow** ⇒
+            // FlowState.Last 从没被推过、Fresh 恒 false ⇒
+            // **复现出一个全判据通过的解，④⑤ 照样锁着**，阶段轨当作什么都没发生。
+            //
+            // 这里不真跑分钟级复现（第 16 节已经验过页面路径能复现记录值），
+            // 只验**接线**：那两句在不在。方法体是编译期常量，读源码即可判定，
+            // 比跑一次几十秒的解便宜得多，且不会因机器快慢而不稳。
+            string src = File.ReadAllText(Path.Combine(RepoRoot(),
+                "Pt_Optimize", "UI", "LineDesignPage.cs"));
+            int a = src.IndexOf("private async Task ReproduceAsync", StringComparison.Ordinal);
+            int b = src.IndexOf("private void LoadFinalDesign()", StringComparison.Ordinal);
+            Check("找得到 ReproduceAsync 的方法体", a >= 0 && b > a, $"{a}..{b}");
+            string raw = a >= 0 && b > a ? src[a..b] : "";
+            // ⚠ 必须**剥掉注释再判**：这段代码的注释里正大段解释「为什么不走
+            //   PageToFinalDesign」，直接对全文做子串匹配会命中那些**散文**，
+            //   把「代码没调它」误报成「代码调了它」。
+            //   断言要测的是**那件事**，不是那件事附近的文字。
+            // 不用任何反斜杠转义：本仓的钩子会把转义序列改成真字符，字面量当场断掉。
+            var noCmt = raw.Split((char)10)   // (char)10 = LF：避开转义，且不挑 CRLF/LF
+                .Select(l => { int k = l.IndexOf("//", StringComparison.Ordinal);
+                               return k >= 0 ? l.Substring(0, k) : l; });
+            string body = string.Join(" ", noCmt);
+
+            Check("复现之后会灌控件（页面显示与档一致）",
+                  body.Contains("LoadFinalDesignFrom", StringComparison.Ordinal));
+            Check("复现**仍从档解**（不走 PageToFinalDesign，保住交叉校验）",
+                  body.Contains("fd.BuildCase", StringComparison.Ordinal)
+                  && !body.Contains("PageToFinalDesign", StringComparison.Ordinal),
+                  "从档解 = 独立于页面搬运的那条路");
+            Check("复现之后会发布状态（PushFlow）",
+                  body.Contains("PushFlow()", StringComparison.Ordinal),
+                  "没有它 FlowState.Last 永远是 null ⇒ ④⑤ 不开");
+            Check("复现之后会记下 _solvedSnap（否则 Fresh 恒 false）",
+                  body.Contains("_solvedSnap = CurrentSnap()", StringComparison.Ordinal));
+            // ★ 而且**不能无条件**记：水头不属于定案几何，页面水头与存档不同时
+            //   这个解并不是「页面参数的解」，记了就是假的 Fresh。
+            Check("记 _solvedSnap 是**有条件**的（水头对得上才记）",
+                  body.Contains("headSame", StringComparison.Ordinal),
+                  "水头不属于定案几何 ⇒ 不同就不能假装 Fresh");
         }
 
         Console.WriteLine();

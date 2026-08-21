@@ -53,6 +53,8 @@ public sealed class LineDesignPage : TabPage
     private readonly ToolStripProgressBar _prog = new() { Visible = false, Maximum = 1000 };
     private readonly ToolStripLabel _status = new("");
     private readonly ToolStripButton _btnRun, _btnAuto, _btnExport, _btnLoadCase, _btn3dm, _btnRepro;
+    /// <summary>「分析几何变数」——只在 .3dm 模式且入口片已选时可用，由 SyncGeomSource 控。</summary>
+    private readonly ToolStripButton _btnAnalyze;
     private readonly ToolStripButton _btnShape;
 
     // ★★★★★ 改参数**自动**给答案（2026-08-16 用户：「UI 已经够复杂，不要再加按钮」）
@@ -171,7 +173,7 @@ public sealed class LineDesignPage : TabPage
         if (_caseBox.SelectedIndex < 0) _caseBox.SelectedIndex = 0;
         _btnLoadCase = Btn("载入定案", (_, _) => LoadFinalDesign());
         _btn3dm = Btn("导出定案 3DM", (_, _) => ExportFinal3dm());
-        var btnAnalyze = Btn("分析几何变数", (_, _) => AnalyzeShape());
+        _btnAnalyze = Btn("分析几何变数", (_, _) => AnalyzeShape());
 
         // ★★★ 复现定案：**界面上唯一能跑出定案数字的按钮**（2026-08-16 用户提出）。
         //
@@ -212,7 +214,7 @@ public sealed class LineDesignPage : TabPage
         tool.Items.Add(_btnLoadCase);
         tool.Items.Add(new ToolStripSeparator());
         tool.Items.Add(_btnRun);
-        tool.Items.Add(btnAnalyze);
+        tool.Items.Add(_btnAnalyze);
         tool.Items.Add(new ToolStripSeparator());
         _prog.Size = new Size(UiScale.S(160), UiScale.S(16));
         tool.Items.Add(_prog);
@@ -439,6 +441,20 @@ public sealed class LineDesignPage : TabPage
         _discD.Enabled = _tabLen.Enabled = _tabW.Enabled = an;
         foreach (var r in _row3dm) if (r is not null) r.Enabled = !an;
         _layer3dm.Enabled = !an;
+
+        // ★ 「分析几何变数」只在 **.3dm 模式且入口片已选** 时可用（2026-08-21 用户提出）。
+        //   本页早就在按模式禁用文件行与盘径/舌长/舌宽了，**唯独漏了这个按钮** ——
+        //   于是它在解析模式下照样可点，点了只是弹一句「请先切到…」。
+        //   「能点但点了没用」正是用户最初那句抱怨的形状：
+        //   「所有标签键都可以点，工程师根本不知道自己目前在算什么」。
+        //   ⚠ 禁用必须**同时说明为什么**，否则灰掉的按钮就是个哑谜 —— 用 ToolTip 讲。
+        bool hasEntry = !string.IsNullOrWhiteSpace(_file3dm[0].Text);
+        _btnAnalyze.Enabled = !an && hasEntry;
+        _btnAnalyze.ToolTipText = an
+            ? "只在「Rhino .3dm 文件」模式下可用 —— 解析形状是程序生成的，没有图纸需要反推。"
+            : hasEntry
+                ? "读入口片 .3dm，反推出各级台阶厚度，「自动定厚」才能逐级优化。"
+                : "请先选好**入口 .3dm** —— 要反推的就是那张图。";
         for (int i = 0; i < _tPlate.Length; i++)
         {
             _tPlate[i].DecimalPlaces = an ? 3 : 3;
@@ -451,6 +467,8 @@ public sealed class LineDesignPage : TabPage
         using var dlg = new OpenFileDialog { Filter = "Rhino 3D 模型 (*.3dm)|*.3dm" };
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
         _file3dm[idx].Text = dlg.FileName;
+        // 选完文件要重新过一遍 enable —— 否则「分析几何变数」选了图纸也不会亮
+        SyncGeomSource();
         // 空着的后续片默认沿用同一文件 —— 四片常常同形状，省得点四次
         for (int k = idx + 1; k < _file3dm.Length; k++)
             if (string.IsNullOrWhiteSpace(_file3dm[k].Text)) _file3dm[k].Text = dlg.FileName;
@@ -793,6 +811,22 @@ public sealed class LineDesignPage : TabPage
 
         try
         {
+            // ═══ 一键走完全程（2026-08-21 用户要求）：灌控件 → **仍从档解** → 发布状态 ═══
+            //
+            // 病灶：此前本方法只写 `_last` + `Show()`，**既不设 _solvedSnap 也不 PushFlow**
+            //   ⇒ FlowState.Last 从来没被推过、Fresh 恒 false
+            //   ⇒ **复现出一个全判据通过的解，④⑤ 一格都不开**，阶段轨当作什么都没发生。
+            //   与 Snap 那个引用相等 bug 同族：界面状态不反映实际。
+            //
+            // ① 先把定案值灌进页面控件 —— 让界面显示与档一致，CurrentSnap 才对得上。
+            LoadFinalDesignFrom(fd, quiet: true);
+
+            // ② **仍从档解**，不走 PageToFinalDesign()。
+            //    保住这条独立路径是有代价换来的：PageToFinalDesign 是一段**搬运代码**，
+            //    本项目已经栽过好几次（盘径直径/半径、压接段用了 3 mm 默认值、
+            //    管孔渐变环整个漏掉）。复现对账的作用就是抓这类错 ——
+            //    若复现也改走页面路径，就成了**用有嫌疑的那条路去验它自己**，
+            //    搬运错了两边一起错，对账照样打勾。那正是假绿灯。
             // ★ checkRamp: true —— ① 也要判。少判一条就不是「全判据通过」。
             var lc = fd.BuildCase(_base, checkRamp: true);
             var r = await Task.Run(() => LineRunner.Run(lc, prog, ct), ct);
@@ -830,6 +864,38 @@ public sealed class LineDesignPage : TabPage
             sb.AppendLine("   把定案参数填进页面，它也能给出上面这组数。两条路**应当一致**；");
             sb.AppendLine("   不一致就说明页面上有控件被改过，查页面，别怀疑内核。");
             _out.Text += sb.ToString();
+
+            // ═══ ③ 发布状态 —— 没有这一步，复现出全判据通过的解 ④⑤ 也一格不开 ═══
+            //
+            // ⚠ 「新鲜」这个断言必须**说真话**：Fresh 的含义是
+            //    「页面上这组参数就是解出这个结果的那组」。
+            //    水头**不属于定案几何**（LoadFinalDesignFrom 故意不动它），
+            //    而本按钮从档解、用的是 LineCase 的内核默认水头 —— 两者可能不同。
+            //    此时页面参数并没有产生这个解，**不能假装 Fresh**，否则 ④ 会拿
+            //    「页面工况的解」当起点，而它其实是「存档工况的解」。
+            var headPage = _segs.Where(x => !string.IsNullOrWhiteSpace(x.名称))
+                                .Select(x => x.水头m).ToArray();
+            var headCase = lc.HeadM;
+            bool headSame = headPage.Length == headCase.Length
+                         && headPage.Zip(headCase).All(t => Math.Abs(t.First - t.Second) < 1e-9);
+
+            if (r.Ok && r.Converged && headSame)
+            {
+                _solvedRes = r; _solvedSnap = CurrentSnap();
+            }
+            PushFlow();
+
+            if (r.Ok && r.Converged && !headSame)
+                _out.Text +=
+                    Environment.NewLine
+                    + "⚠ **本次解的是存档工况，不是页面上的水头**（页面 "
+                    + string.Join("/", headPage.Select(v => v.ToString("0.0"))) + " m，存档 "
+                    + string.Join("/", headCase.Select(v => v.ToString("0.0"))) + " m）。"
+                    + Environment.NewLine
+                    + "   ⇒ 不把它记作「页面参数的解」，④ 仍需你点「核算整线」按页面工况重解一次。"
+                    + Environment.NewLine
+                    + "   水头是工艺量、不属于定案几何，所以「载入定案」不会覆盖它 —— 这是有意的。";
+
             _status.Text = "完成";
         }
         catch (OperationCanceledException) { _status.Text = "已取消"; }
@@ -855,8 +921,19 @@ public sealed class LineDesignPage : TabPage
     {
         int i = _caseBox.SelectedIndex;
         if (i < 0 || i >= FinalDesign.All.Length) return;
-        var fd = FinalDesign.All[i];
+        LoadFinalDesignFrom(FinalDesign.All[i], quiet: false);
+    }
 
+    /// <summary>
+    /// 按**指定档**灌控件。<paramref name="quiet"/> = true 时**不写输出框** ——
+    /// 供「▶ 复现定案」复用：它自己要在输出框里写复现对账，
+    /// 不能被这里的「已载入定案档…」整段冲掉。
+    ///
+    /// 拆出来是为了让两个入口共用同一段灌值代码 ——
+    /// 各抄一份就是「同一件事存两处然后悄悄漂开」。
+    /// </summary>
+    private void LoadFinalDesignFrom(FinalDesign fd, bool quiet)
+    {
         decimal C(double v, NumericUpDown n) =>
             Math.Clamp((decimal)v, n.Minimum, n.Maximum);
 
@@ -881,6 +958,8 @@ public sealed class LineDesignPage : TabPage
             else _segs.Add(new SegRow { 名称 = segNames[k], 控温C = fd.SetpointC[k] });
         }
         _segGrid.Refresh();
+
+        if (quiet) { _suppressAuto = false; return; }
 
         _out.Text =
             // ★ 失效告示必须在**最前面**：这一段是用户载入定案后唯一会读的文字，
@@ -1324,7 +1403,31 @@ public sealed class LineDesignPage : TabPage
             lc = BuildCase();
             if (autoSize)
             {
-                if (!_srcAnalytic.Checked && _levels is { Length: > 0 } && _levels[0].Length > 1)
+                // ★★★ .3dm 模式**没有分级**时必须**当场拒绝**，不许落进下面的 D8
+                //   （2026-08-21 用户看出来的）。原来这里是静默回退，后果不是
+                //   「换了个算法」，是**算了另一个零件**：
+                //     · D8 走 `Sizer.Solve(PageToFinalDesign(), …)`，
+                //       上面刚从 .3dm 造好的 `lc` **一眼都没看** ⇒ 图纸被静默丢弃；
+                //     · 盘径/舌长/舌半宽在 .3dm 模式下是**禁用**的，里面是上次的残值 ——
+                //       D8 拿这组残值当几何去优化；
+                //     · `_tPlate` 在 .3dm 模式下含义是**厚度标度 k**，D8 当**毫米**读、
+                //       算完又把毫米数写回去 ⇒ 标度字段被覆盖坏。
+                //   而输出照旧是「【D8 定尺寸】板厚 … 合计 … g」，看起来完全正常。
+                if (!_srcAnalytic.Checked && !(_levels is { Length: > 0 } && _levels[0].Length > 1))
+                {
+                    // ⚠ 用 Environment.NewLine 拼，不写反斜杠转义 ——
+                    //   本仓的钩子会把转义序列改成真字符，字面量当场断掉。
+                    string nl = Environment.NewLine;
+                    Show(_last, autoNote:
+                        "【自动定厚：已拒绝】本页是 **Rhino .3dm 模式**，但还没有分级厚度。" + nl
+                        + "   请先点「**分析几何变数**」把图纸反推成各级台阶，再回来定厚。" + nl
+                        + "   ⚠ 不能替你用 D8：D8 优化的是**解析形状**（圆盘＋舌片），" + nl
+                        + "      它不读你的 .3dm，盘径/舌长在本模式下又是禁用的残值 ——" + nl
+                        + "      那样算出来的是**另一个零件**的厚度，数字却看不出异样。");
+                    return;
+                }
+
+                if (!_srcAnalytic.Checked)
                 {
                     // 逐级定厚（.3dm 任意形状）：D8 只在解析几何上工作，管不了任意台阶，
                     // 所以这条路仍用 FlangeAutoSizer。
