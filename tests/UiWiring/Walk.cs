@@ -210,9 +210,15 @@ static class Walk
                             + $"耗时 {(Environment.TickCount64 - t0) / 1000.0:0.0} s");
             Console.WriteLine();
             Console.WriteLine($"  {"判据",-26}{"实际",12}{"限值",12}  判定");
+            // ⚠ 判定列的写法必须与 APP 的判据表**一致**（LineDesignPage.FillChecks）：
+            //   参考量印「—」而不是 ✓。头一版照 c.Ok 印，于是
+            //   「· 法兰 J_max  35.762 / 10.000  ✓」这种行被印成通过 ——
+            //   参考量按构造就是 Ok=true，实际值超限值三四倍照样打勾，读起来就是「过了」。
+            //   另造一套渲染约定，本身就是「同一件事两处表达然后对不上」。
             foreach (var c in r3.Checks)
                 Console.WriteLine($"  {c.Name,-26}{c.Actual,12:0.000}{c.Limit,12:0.000}  "
-                                + (c.Undetermined ? "⚠ 无法判定" : c.Ok ? "✓" : "✗"));
+                                + (c.Kind == CheckKind.Reference ? "—（参考，不判定）"
+                                   : c.Undetermined ? "⚠ 无法判定" : c.Ok ? "✓" : "✗"));
             Console.WriteLine();
             Console.WriteLine($"  合计铂重 {r3.TotalMassG:0.0} g");
 
@@ -329,14 +335,23 @@ static class Walk
         // ═══════════════════════════════════════════════════════════
         H("⑤ 交付 —— 出图闸门（不真写文件，只验闸门判得对）");
         {
+            // ⚠ 这两个都是 **string 且永不为 null**：`""` 才表示「放行 / 有效」。
+            //   头一版写成 `why is not null` / `fd.Invalid is not null` ⇒ 两边恒为 true
+            //   ⇒ `true == true` **四条断言全部空转还打 ✓**，标签也一律印成「已声明失效」。
+            //   典型的「空集通过的断言」（HANDOVER §7）—— 假绿灯比没有断言更坏。
+            int pass = 0, block = 0;
             foreach (var fd in FinalDesign.All)
             {
-                string? why = (string?)Call(line, "ExportBlockedReason", fd);
-                bool blocked = why is not null;
-                OK($"{fd.Name}：{(fd.Invalid is null ? "有效档 → 应放行" : "已声明失效 → 应拦截")}",
-                   blocked == (fd.Invalid is not null),
+                bool declaredInvalid = fd.Invalid.Length > 0;
+                bool blocked = ((string)Call(line, "ExportBlockedReason", fd)!).Length > 0;
+                if (blocked) block++; else pass++;
+                OK($"{fd.Name}：{(declaredInvalid ? "已声明失效 → 应拦截" : "有效档 → 应放行")}",
+                   blocked == declaredInvalid,
                    blocked ? "已拦" : "放行");
             }
+            // 自证：若四个档给出的结论完全一致，说明这一节根本没在分辨什么。
+            OK("这一节确实分辨出了两类（否则等于没测）", pass > 0 && block > 0,
+               $"放行 {pass} 个 / 拦截 {block} 个");
         }
 
         return Done();
