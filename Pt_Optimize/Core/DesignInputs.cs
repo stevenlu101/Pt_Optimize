@@ -75,7 +75,31 @@ public class DesignInputs
      Description("⚠ 本项被「③ 整线核算」页的「壁厚 mm」控件接管 —— 在这张表里改它，对「③ 整线核算」没有影响。　工艺/操作下限。设计壁厚 = max(电学所需, 本值)")]
     public double WallMinMm { get; set; } = 1.0;    // Pt_Heater.3dm 实测壁厚
 
-    [Category("5 C 整线 — 管几何"), DisplayName("焊接工艺最小厚度 [mm]"),
+        /// <summary>
+    /// 焊接工艺最小厚度的**内置默认值** [mm]。
+    ///
+    /// 用户 2026-08-21：「0.6 是默认值不随牌号，只需标明默认或是手动[实际经验]」。
+    /// 常数放这里是为了让 <see cref="WeldMinSource"/> 有一个可比的基准 ——
+    /// 判「这个数是内置的还是人填的」只能跟它比。
+    /// </summary>
+    public const double WeldMinDefaultMm = 0.6;
+
+    /// <summary>
+    /// 这条下界是**默认值**还是**手动（实际经验）**。
+    ///
+    /// ★ 故意**不做成勾选框**：多一个开关就多一个「值改了、开关忘了改」的机会，
+    ///   而那正是本项目最忌的「同一件事存两处然后悄悄漂开」。
+    ///   直接拿值本身判 —— 等于内置默认即「默认」，被改过即「手动」。
+    ///   来源只有一个：那个数本身。
+    ///
+    /// （若现场经验恰好也是 0.6，显示成「默认」无害 —— 数是同一个。）
+    /// </summary>
+    [Browsable(false)]
+    public string WeldMinSource =>
+        Math.Abs(WeldMinThicknessMm - WeldMinDefaultMm) < 1e-9
+            ? "默认" : "手动（实际经验）";
+
+[Category("5 C 整线 — 管几何"), DisplayName("焊接工艺最小厚度 [mm]"),
      Description("★★ **工艺下界的真实来源**（用户 2026-08-14）：\n" +
                  "「这个下限必须是工艺能够焊接铂金不变形的情况厚度」。\n\n" +
                  "此前程序用的 0.4 mm 来自「太薄没意义」的拍板（总纲·边界条件），\n" +

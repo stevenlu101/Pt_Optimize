@@ -560,9 +560,26 @@ public sealed class MainForm : Form
     {
         _segBind.EndEdit();
         var rs = LineSolver.Solve(_segs, _in);
+        // ★ 夹的是**焊接工艺下界**，不是从前那个硬编码的 0.3（2026-08-21 修）。
+        //   用户：「低于焊接工艺下界 0.6 mm —— 这是基本，能造能用后才是优化铂金减重」。
+        //   旧写法拿 0.3 当底，与 WeldMinThicknessMm(0.6) 毫无关系 ⇒
+        //   点一下本按钮，管壁就被设成强度解 0.477，**低于工艺下界且没有任何提示** ——
+        //   为了减重把壁厚压到造不出来，正是这条原则要拦的事。
+        double floor = _in.WeldMinThicknessMm;
+        int clamped = 0;
         for (int i = 0; i < _segs.Count && i < rs.Count; i++)
             if (!double.IsNaN(rs[i].MinWallStrengthMm))
-                _segs[i].WallMm = Math.Round(Math.Max(rs[i].MinWallStrengthMm, 0.3), 3);
+            {
+                double want = rs[i].MinWallStrengthMm;
+                if (want < floor - 1e-9) clamped++;
+                _segs[i].WallMm = Math.Round(Math.Max(want, floor), 3);
+            }
+        if (clamped > 0)
+            MessageBox.Show(
+                $"{clamped} 段的强度最小壁厚低于焊接工艺下界 {floor:0.00} mm（{_in.WeldMinSource}），已顶到下界。"
+                + Environment.NewLine + Environment.NewLine
+                + "强度算得再薄也没用 —— 焊不出来的壁厚不是可选项。",
+                "已按工艺下界夹住", MessageBoxButtons.OK, MessageBoxIcon.Information);
         _segBind.ResetBindings(false);
         RunLine();
     }

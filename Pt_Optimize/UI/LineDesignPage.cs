@@ -17,7 +17,13 @@ namespace PtOptimize.UI;
 /// </summary>
 public sealed class LineDesignPage : TabPage
 {
-    private readonly NumericUpDown _wall = Num(0.40m, 0.10m, 5.00m, 0.05m, 2);
+    // ★ 默认取**当前定案档的壁厚 0.80**，不再是 0.40（2026-08-21）。
+    //   用户：「低于焊接工艺下界 0.6 mm —— 这是基本，**能造能用后才是优化铂金减重**」。
+    //   0.40 低于工艺下界 0.6 ⇒ 开箱那一刻界面上摆的就是一个**焊不出来的构型**；
+    //   第一次用的人直接点「核算整线」，会拿它跑几十秒，解发散到 5000 °C 以上、
+    //   判据大面积不过 —— 看起来像程序坏了，其实是默认值本身不可制造。
+    //   （--walk 全程验证抓到。下限仍保留 0.10：允许探索，但判据与夹持会拦住。）
+    private readonly NumericUpDown _wall = Num(0.80m, 0.10m, 5.00m, 0.05m, 2);
     private readonly NumericUpDown _tubeIns = Num(10.0m, 0.0m, 100.0m, 0.5m, 1);
     private readonly NumericUpDown _clamp = Num(300m, -1m, 1200m, 10m, 0);
     private readonly ComboBox _flIns = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = UiScale.S(110) };
@@ -649,8 +655,13 @@ public sealed class LineDesignPage : TabPage
         if ((double)_tabW.Value > (double)_discD.Value * 0.5 + 1e-9)
             sb.AppendLine($"   ⚠ 舌端半宽 {(double)_tabW.Value:0} > 盘半径 {(double)_discD.Value * 0.5:0}" +
                           " ⇒ 等宽舌片与圆盘没有切点，半宽会被**静默夹到盘半径**。要真加宽请同时放大盘。");
-        if (wall < 0.6 - 1e-9)
-            sb.AppendLine($"   ⚠ 壁厚 {wall:0.00} 低于手工 TIG 烧穿下界 0.6 mm —— 工艺上焊不出来");
+        // ⚠ 下界取自参数表，**不再写死 0.6** —— 写死等于同一个数存两处，
+        //   用户按现场经验把它改成别的值时，这行警告还会拿旧数去比。
+        //   顺带标明这条下界是内置默认还是人按实际经验填的（用户 2026-08-21）。
+        if (wall < _base.WeldMinThicknessMm - 1e-9)
+            sb.AppendLine($"   ⚠ 壁厚 {wall:0.00} 低于焊接工艺下界 "
+                + $"{_base.WeldMinThicknessMm:0.00} mm（{_base.WeldMinSource}）—— 工艺上焊不出来。"
+                + "能造能用是前提，减重排在它后面");
 
         // ── 预测层：只在**有已解基准**且**改动不太大**时才给
         if (_solvedSnap is not null && _solvedRes is { Ok: true, Converged: true })
