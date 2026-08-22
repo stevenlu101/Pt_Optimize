@@ -354,8 +354,13 @@ public sealed class MainForm : Form
                     //   正在跑的那个按钮此刻文字是「取消」⇒ 上面 spec is null 已经放过它。
                     if (busy && spec.Chain != ChainId.无) { b.Enabled = false; continue; }
 
-                    if (!spec.ReadsPageControls) continue;
-                    b.Enabled = g.Unlocked;
+                    // 适用性：由命令的**归属页**回答（几何来源不对时那条命令根本无从谈起）。
+                    // ⚠ 按钮可能摆在别的页上（④ 的两个就来自 ③ 页），所以问的是**页对象**，
+                    //   不是它此刻挂在哪个 TabPage 下。
+                    bool applicable = _linePage?.CommandApplicable(spec.Id) ?? true;
+
+                    if (!spec.ReadsPageControls) { if (!applicable) b.Enabled = false; continue; }
+                    b.Enabled = g.Unlocked && applicable;
                 }
         }
         _stagePanel.Refresh2();

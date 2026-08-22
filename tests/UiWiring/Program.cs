@@ -1170,6 +1170,71 @@ class UiWiringTests {
                   $"LineDesignPage {CountOf(ldp, "SetRunning(null)")} 处清");
         }
 
+        // ═══════════════════════════════════════════════════════════════
+        Head("27 适用性：几何来源不对的命令必须**真的**禁掉（Enabled 只能有一个来源）");
+        {
+            // 病灶（2026-08-22 用户截图指出「分析几何变数还是没 Disable」）：
+            //   LineDesignPage.SyncGeomSource 设了 `_btnAnalyze.Enabled = false`，
+            //   而 MainForm.SyncGates 也在设同一个按钮
+            //   （geom.analyze 是 ReadsPageControls=true ⇒ `b.Enabled = g.Unlocked`），
+            //   ③ 已解锁 ⇒ **它把禁用又打开了**。同一个按钮两处控制，后跑的那个赢。
+            //
+            // ⚠ 本节断言的是**最终可见状态**，不是「某一处设了什么」——
+            //   头一版的 bug 恰恰是「设了，但被另一处覆盖」，只查设置点是查不出来的。
+            var lp = tabs.TabPages.OfType<LineDesignPage>().First();
+            var btnAn = (ToolStripButton)F(lp, "_btnAnalyze")!;
+            var btnSh = (ToolStripButton)F(lp, "_btnShape")!;
+            var srcA = (RadioButton)F(lp, "_srcAnalytic")!;
+            var src3 = (RadioButton)F(lp, "_src3dm")!;
+            var files = (TextBox[])F(lp, "_file3dm")!;
+
+            void Mode(bool analytic)
+            {
+                Set(lp, "_suppressAuto", true);
+                if (analytic) srcA.Checked = true; else src3.Checked = true;
+                Set(lp, "_suppressAuto", false);
+                lp.GetType().GetMethod("SyncGeomSource",
+                    BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(lp, null);
+                Pump(120);
+            }
+
+            // ── 解析形状：没有图纸可反推 ⇒ 分析几何变数必须禁
+            files[0].Text = "";
+            Mode(analytic: true);
+            Check("解析模式下「分析几何变数」被禁", !btnAn.Enabled,
+                  btnAn.Enabled ? "★ 仍可点 —— 点了只会弹一句「请先切到…」" : "");
+            Check("解析模式下禁用有写明理由（灰掉而不解释就是哑谜）",
+                  btnAn.ToolTipText is { Length: > 0 }, btnAn.ToolTipText ?? "");
+
+            // ── .3dm 但还没选入口片 ⇒ 仍然禁（要反推的就是那张图）
+            Mode(analytic: false);
+            Check(".3dm 但没选入口片时仍被禁", !btnAn.Enabled);
+            Check("此时「◇ 搜形状」也被禁（形状由图纸给定，不是自由度）", !btnSh.Enabled);
+
+            // ── 选了入口片 ⇒ 才亮
+            files[0].Text = "entry-plate.3dm";   // 只验接线，不真读文件（故不带路径分隔符）      // 只验接线，不真读文件
+            Mode(analytic: false);
+            Check("选了入口片之后「分析几何变数」才可点", btnAn.Enabled,
+                  btnAn.Enabled ? "" : "★ 选了图纸也不亮");
+
+            // ── 切回解析 ⇒ 又该禁，且「◇ 搜形状」回来
+            Mode(analytic: true);
+            Check("切回解析后又被禁（状态是跟着走的，不是一次性的）", !btnAn.Enabled);
+            Check("切回解析后「◇ 搜形状」适用了",
+                  (bool)typeof(LineDesignPage).GetMethod("CommandApplicable",
+                      BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public)!
+                      .Invoke(lp, new object[] { "shape.search" })!);
+
+            // ★ 关键：SyncGates 跑一遍之后**不许把它重新打开**
+            typeof(MainForm).GetMethod("SyncGates",
+                BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(main, null);
+            Pump(120);
+            Check("SyncGates 之后仍然是禁的（不许有第二处把它打开）", !btnAn.Enabled,
+                  btnAn.Enabled ? "★ 被 SyncGates 覆盖了 —— Enabled 又变成两个来源" : "");
+            files[0].Text = "";
+            Mode(analytic: true);
+        }
+
         Console.WriteLine();
         Console.WriteLine(fail == 0 ? "★ 全部通过" : $"✗ {fail} 项不过");
         Environment.ExitCode = fail;

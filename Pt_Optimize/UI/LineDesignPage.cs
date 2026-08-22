@@ -449,7 +449,12 @@ public sealed class LineDesignPage : TabPage
         //   「所有标签键都可以点，工程师根本不知道自己目前在算什么」。
         //   ⚠ 禁用必须**同时说明为什么**，否则灰掉的按钮就是个哑谜 —— 用 ToolTip 讲。
         bool hasEntry = !string.IsNullOrWhiteSpace(_file3dm[0].Text);
-        _btnAnalyze.Enabled = !an && hasEntry;
+        // ⚠ **这里不设 Enabled**（2026-08-22 用户指出它没生效）。
+        //   原来写 `_btnAnalyze.Enabled = !an && hasEntry;`，但 MainForm.SyncGates 也在设
+        //   同一个按钮（geom.analyze 是 ReadsPageControls=true ⇒ `b.Enabled = g.Unlocked`），
+        //   而 SyncGates 在切页签/状态变化时**后跑** ⇒ 它把这里的禁用又打开了。
+        //   同一个按钮两处控制 —— 正是本项目反复栽的那一类。
+        //   ⇒ 本页只回答「适不适用」（CommandApplicable），Enabled 只由 SyncGates 一处设。
         _btnAnalyze.ToolTipText = an
             ? "只在「Rhino .3dm 文件」模式下可用 —— 解析形状是程序生成的，没有图纸需要反推。"
             : hasEntry
@@ -460,7 +465,29 @@ public sealed class LineDesignPage : TabPage
             _tPlate[i].DecimalPlaces = an ? 3 : 3;
             if (!an && _tPlate[i].Value > 3m) _tPlate[i].Value = 1.0m;   // 标度从 1 起
         }
+
+        // 几何来源变了 ⇒ 有些命令的「适不适用」跟着变 ⇒ 让 SyncGates 重算一遍。
+        // 走 Notify 而不是直接改按钮：Enabled 只允许有一个来源。
+        Shared?.Notify();
     }
+
+    /// <summary>
+    /// 这条命令**在当前页面状态下适不适用**。只回答适用性，**不碰 Enabled** ——
+    /// 真正的启停由 <see cref="MainForm"/> 的 SyncGates 一处决定
+    /// （门禁 × 互斥 × 适用性 三者取与）。
+    ///
+    /// ★ 为什么要有这个：「能点但点了只弹一句『请先切到…』」正是用户最初那句
+    ///   「所有标签键都可以点，工程师根本不知道自己目前在算什么」的形状。
+    ///   而把 Enabled 分散到各页去设，就会出现本方法注释里那种**两处打架**。
+    /// </summary>
+    internal bool CommandApplicable(string cmdId) => cmdId switch
+    {
+        // 读 .3dm 反推台阶 —— 解析形状是程序生成的，没有图纸可反推
+        "geom.analyze" => !_srcAnalytic.Checked && !string.IsNullOrWhiteSpace(_file3dm[0].Text),
+        // 形状搜索只在解析模式有意义：.3dm 的形状由图纸给定，不是可搜索的自由度
+        "shape.search" => _srcAnalytic.Checked,
+        _ => true,
+    };
 
     private void PickFile(int idx)
     {
