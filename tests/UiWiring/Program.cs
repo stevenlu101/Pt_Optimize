@@ -38,6 +38,13 @@ class UiWiringTests {
             d = d.Parent;
         return d?.FullName ?? ".";
     }
+    static int CountOf(string hay, string needle)
+    {
+        int n = 0, i = 0;
+        while ((i = hay.IndexOf(needle, i, StringComparison.Ordinal)) >= 0) { n++; i += needle.Length; }
+        return n;
+    }
+
     static void Head(string s) { Console.WriteLine(); Console.WriteLine("=== " + s + " ==="); }
 
     [STAThread]
@@ -346,7 +353,13 @@ class UiWiringTests {
 
         Head("14 搜形状：按钮在、不自己跑、.3dm 模式下要**明确拒绝**而不是空转");
         var btnShape = (ToolStripButton)F(page, "_btnShape")!;
-        Check("按钮存在且可用", btnShape is { Enabled: true }, btnShape?.Text ?? "");
+        // ⚠ 断言从「可用」改成「存在」（2026-08-21）：**前提变了**。
+        //   本条写于阶段轨之前，那时所有按钮永远可点。现在「◇ 搜形状」归 ④ 定尺寸，
+        //   而此刻还没解过 ⇒ ④ 未解锁 ⇒ 它**应当**是禁用的 —— 那正是门禁在起作用。
+        //   （在这里断言「可用」等于要求门禁失效。）它的锁态由第 24 节按门禁规则专门验。
+        Check("按钮存在", btnShape is not null, btnShape?.Text ?? "");
+        Check("④ 未解锁时它是禁用的（门禁在起作用）", btnShape is { Enabled: false },
+              $"Enabled={btnShape?.Enabled}");
         Check("启动后没有在跑", F(page, "_cts") is null);
         {
             // 切到 .3dm 模式：形状由图纸给定，不是可搜索的自由度 ⇒ 必须说清楚，不能默默什么都不做
@@ -1073,6 +1086,88 @@ class UiWiringTests {
             Check("记 _solvedSnap 是**有条件**的（水头对得上才记）",
                   body.Contains("headSame", StringComparison.Ordinal),
                   "水头不属于定案几何 ⇒ 不同就不能假装 Fresh");
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        Head("26 有链在跑时：状态面板要说话，其它会起算的命令一律禁掉");
+        {
+            // 病灶（2026-08-21 用户提出）：
+            //  ① FlowState.Running/RunningNote 声明了、StagePanel 也早就在读
+            //     （「正在算：…（再点那个按钮 = 取消）」），**但从来没有人赋值** ⇒
+            //     ④ 页点「自动定厚」要跑三分多钟，而那一页没有进度条也没有状态标签
+            //     （_prog/_status 都长在 ③ 上）⇒ 界面一动不动，看着像卡死。
+            //  ② ④ 上三个按钮**可以同时点** —— RunAsync 只禁自己那两个，
+            //     ◇搜形状 不禁，② 厚度灵敏度 又属于另一页各禁各的。
+            var flow = (FlowState)F(main, "_flow")!;
+
+            // 先回到「没在跑」的干净态，并让 ④⑤ 解锁（否则下面分不清是门禁禁的还是互斥禁的）
+            flow.SetRunning(null);
+            Pump(100);
+            var allBtns = new List<ToolStripButton>();
+            void W2(Control c)
+            {
+                if (c is ToolStrip ts) foreach (var it in ts.Items.OfType<ToolStripButton>()) allBtns.Add(it);
+                foreach (Control k in c.Controls) W2(k);
+            }
+            foreach (TabPage t in tabs.TabPages) W2(t);
+            var compute = allBtns
+                .Select(b => (b, spec: Flow.Commands.FirstOrDefault(c => c.Text == b.Text)))
+                .Where(x => x.spec is not null && x.spec.Chain != ChainId.无)
+                .ToArray();
+            var inert = allBtns
+                .Select(b => (b, spec: Flow.Commands.FirstOrDefault(c => c.Text == b.Text)))
+                .Where(x => x.spec is not null && x.spec.Chain == ChainId.无)
+                .ToArray();
+            Check("扫到「会起算」的命令", compute.Length > 0,
+                  string.Join("、", compute.Select(x => x.b.Text)));
+            Check("扫到「不算东西」的命令（保存/读取/出图）", inert.Length > 0,
+                  string.Join("、", inert.Select(x => x.b.Text)));
+
+            // ── 开跑
+            flow.SetRunning(ChainId.C定尺寸, "自动定厚");
+            Pump(200);
+            Check("状态面板能说出正在算哪条链", flow.Running == ChainId.C定尺寸,
+                  Flow.Chain(flow.Running!.Value).Name);
+            Check("进度文字能刷新", flow.RunningNote.Length > 0, flow.RunningNote);
+
+            var stillOn = compute.Where(x => x.b.Enabled).Select(x => x.b.Text).ToList();
+            Check("跑起来之后，会起算的命令全被禁", stillOn.Count == 0,
+                  stillOn.Count == 0 ? $"{compute.Length} 个全禁"
+                                     : "★ 还能点：" + string.Join("、", stillOn));
+            // ⚠ 只能在**已解锁**的阶段上断言 —— 「导出本页 3DM」是 ChainId.无 但
+            //   ReadsPageControls=true，⑤ 没解锁时它被门禁正常锁住，那是**对的**，不是误禁。
+            //   头一版没分这两种「禁」，把门禁的功劳算成了互斥闸的错。
+            var inertUnlocked = inert
+                .Where(x => Gate.Evaluate(x.spec!.Stage, flow).Unlocked).ToArray();
+            Check("有「不算东西」的命令处在已解锁的阶段上（否则下一条空转）",
+                  inertUnlocked.Length > 0,
+                  string.Join("、", inertUnlocked.Select(x => x.b.Text)));
+            var wronglyOff = inertUnlocked.Where(x => !x.b.Enabled).Select(x => x.b.Text).ToList();
+            Check("不算东西的命令不受互斥牵连", wronglyOff.Count == 0,
+                  wronglyOff.Count == 0 ? "" : "★ 被误禁：" + string.Join("、", wronglyOff));
+
+            // ── 结束：必须恢复
+            flow.SetRunning(null);
+            Pump(200);
+            Check("跑完之后状态清掉", flow.Running is null);
+            Check("跑完之后至少有一个会起算的命令恢复可点",
+                  compute.Any(x => x.b.Enabled),
+                  string.Join("、", compute.Where(x => x.b.Enabled).Select(x => x.b.Text)));
+
+            // 三个入口都要报状态 —— 少一个，那条链跑起来界面就是死的
+            string ldp = File.ReadAllText(Path.Combine(RepoRoot(), "Pt_Optimize", "UI", "LineDesignPage.cs"));
+            string apg = File.ReadAllText(Path.Combine(RepoRoot(), "Pt_Optimize", "UI", "AnalysisPage.cs"));
+            // ⚠ 别按 "SetRunning(ChainId." 数：RunAsync 那处是三元
+            //   `SetRunning(autoSize ? ChainId.C定尺寸 : ChainId.C整线耦合, …)`，数不到。
+            //   改成「总数 − 清空数」，与写法无关。
+            int setAll = CountOf(ldp, "SetRunning("), setNull = CountOf(ldp, "SetRunning(null)");
+            Check("③/④ 的三个入口都报了状态", setAll - setNull >= 3,
+                  $"LineDesignPage 里开跑 {setAll - setNull} 处 / 清空 {setNull} 处");
+            Check("① 与「② 厚度灵敏度」也报状态",
+                  apg.Contains("SetRunning(", StringComparison.Ordinal));
+            Check("每个入口都在 finally 里清（异常/取消也要解除互斥）",
+                  CountOf(ldp, "SetRunning(null)") >= 3 && apg.Contains("SetRunning(null)", StringComparison.Ordinal),
+                  $"LineDesignPage {CountOf(ldp, "SetRunning(null)")} 处清");
         }
 
         Console.WriteLine();

@@ -100,7 +100,7 @@ public sealed class MainForm : Form
 
         // ── ③ 整线核算 / ① 闸门：两页各自持有自己的控件与按钮
         var linePage = new LineDesignPage(_in) { Shared = _flow };
-        var gatePage = new AnalysisPage(_in);
+        var gatePage = new AnalysisPage(_in) { Shared = _flow };
         _linePage = linePage;
 
         // ── ② 快筛：把原来散在「分段核算」「轴向剖面」与**主窗口右上**的三块并成一页。
@@ -187,6 +187,22 @@ public sealed class MainForm : Form
             SyncGates();
         };
         _tabs.SelectedIndexChanged += (_, _) => SyncGates();
+
+        // ★ 状态一变就重算门禁与互斥（2026-08-21）。
+        //   没有这一句，SetRunning 只会让**状态面板**跟着变，
+        //   而按钮的 Enabled 纹丝不动 —— 互斥闸等于没装。
+        //   StagePanel 自己也订阅了 Changed，两边各刷各的那一部分，互不知道对方。
+        _flow.Changed += () =>
+        {
+            // ⚠ 判据是「有没有句柄 **且** 跨没跨线程」，不是「有没有句柄」。
+            //   头一版写成 `if (!IsHandleCreated) return;` —— 而 Form.CreateControl()
+            //   **只在控件可见时才建句柄**，窗体没 Show 过就恒 false
+            //   ⇒ 处理器每次直接 return，互斥闸整个不生效（接线测试第 26 节抓到）。
+            //   StagePanel 的写法才是对的：没句柄就直接调。
+            if (IsDisposed) return;
+            if (IsHandleCreated && InvokeRequired) { BeginInvoke(new Action(SyncGates)); return; }
+            SyncGates();
+        };
         _stagePanel.HeightWanted += h =>
         {
             // 面板要多高就给多高，但留出下半部至少能看见页签与工具条
@@ -308,6 +324,10 @@ public sealed class MainForm : Form
     {
         if (_stagePanel is null) return;
 
+        // 「现在有没有链在跑」只有一个来源：FlowState.Running。
+        // 各页自己那套 Enabled 只管得住自己页内的按钮，管不了跨页。
+        bool busy = _flow.Running is not null;
+
         if (_tabs.SelectedTab is { } tab && _stageOf.TryGetValue(tab, out var cur))
             _stagePanel.SetStage(cur);
 
@@ -324,6 +344,16 @@ public sealed class MainForm : Form
                 {
                     var spec = Flow.Commands.FirstOrDefault(c => c.Text == b.Text);
                     if (spec is null) continue;                 // 跑起来变成「取消」的那个，别动它
+
+                    // ★★ 互斥闸（2026-08-21 用户提出）：有链在跑时，**所有会起算的命令一律禁掉**。
+                    //   此前 ④ 上三个按钮（自动定厚 / ◇搜形状 / ② 厚度灵敏度）**可以同时点** ——
+                    //   RunAsync 只禁自己那两个，◇搜形状 不禁，② 厚度灵敏度 又属于另一页各禁各的。
+                    //   三个分钟级求解同时开跑，抢 CPU 还互相覆盖 _last，结果无从分辨是谁的。
+                    //   判据是 `spec.Chain != 无` —— 保存/读取/打开说明这类不算东西的照常可用
+                    //   （与第 24 节「门禁不该拦记事本」同一条道理）。
+                    //   正在跑的那个按钮此刻文字是「取消」⇒ 上面 spec is null 已经放过它。
+                    if (busy && spec.Chain != ChainId.无) { b.Enabled = false; continue; }
+
                     if (!spec.ReadsPageControls) continue;
                     b.Enabled = g.Unlocked;
                 }

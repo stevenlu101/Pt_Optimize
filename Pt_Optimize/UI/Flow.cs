@@ -462,6 +462,36 @@ public sealed class FlowState
     public event Action? Changed;
     public void Notify() => Changed?.Invoke();
 
+    /// <summary>
+    /// 标记「现在正在跑哪条链」。**开跑时设、结束时清（放 finally）**。
+    ///
+    /// ★ 2026-08-21：这两个字段本来就声明着、StagePanel 也早就在读
+    ///   （「正在算：… （再点那个按钮 = 取消）」），**但从来没有人赋值** ——
+    ///   又一个「接了一半」的空壳（同族：FillChecks 无调用者、_pAx 从没画过）。
+    ///   后果：④ 页点「自动定厚」要跑三分多钟，而那一页**没有进度条也没有状态标签**
+    ///   （_prog/_status 都长在 ③ 上）⇒ 界面一动不动，看着像卡死了。
+    ///
+    /// 状态面板在右上角、**切到哪一页都看得见** ⇒ 接上它，
+    /// 就不必给每一页各配一套进度条（那又会变成「同一件事多处表达」）。
+    ///
+    /// 它同时是**互斥的单一来源**：MainForm.SyncGates 据此把所有会起算的命令禁掉，
+    /// 免得三个分钟级求解同时开跑（④ 上的三个按钮此前正是可以同时点的）。
+    /// </summary>
+    public void SetRunning(ChainId? chain, string note = "")
+    {
+        Running = chain;
+        RunningNote = note;
+        Notify();
+    }
+
+    /// <summary>只更新进度文字（不改「在跑哪条链」）。供 Progress&lt;string&gt; 直接接。</summary>
+    public void SetRunningNote(string note)
+    {
+        if (Running is null) return;      // 已经结束了就别再刷，免得残留一行假进度
+        RunningNote = note;
+        Notify();
+    }
+
     /// <summary>上一次的解已作废（读取了新方案、切换了几何来源等）。</summary>
     public void Invalidate()
     {

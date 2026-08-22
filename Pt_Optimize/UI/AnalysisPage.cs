@@ -23,6 +23,9 @@ public sealed class AnalysisPage : TabPage
     private readonly ToolStripProgressBar _prog = new() { Visible = false };
     private readonly ToolStripButton _btnGate, _btnScan;
     private readonly DesignInputs _base;
+
+    /// <summary>阶段轨共享状态。由 MainForm 注入 —— 本页两个扫描也要报「正在算什么」。</summary>
+    internal FlowState? Shared { get; set; }
     private CancellationTokenSource? _cts;
 
     public AnalysisPage(DesignInputs baseInputs)
@@ -80,9 +83,18 @@ public sealed class AnalysisPage : TabPage
         if (_cts is not null) { _cts.Cancel(); return; }
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
-        _btnGate.Enabled = _btnScan.Enabled = false;
+        // ⚠ **正在跑的那个按钮必须保持可点**（2026-08-21 修）。
+        //   原来两个一起禁 ⇒ 方法开头那句「再点一次 = 取消」永远到不了，
+        //   而「② 厚度灵敏度」要跑 10 次整线耦合解、五分钟起 —— **实际不可取消**。
+        //   ③ 页早就是「禁另一个、正在跑的改名取消」，这里对齐它。
+        (gate ? _btnScan : _btnGate).Enabled = false;
+        (gate ? _btnGate : _btnScan).Text = "取消";
         _prog.Visible = true;
         _status.Text = gate ? "扫描升温可达性…" : "扫描厚度灵敏度（每点一次整线耦合解）…";
+        // ★ 报给阶段轨：右上角状态面板切到哪一页都看得见，
+        //   而「② 厚度灵敏度」的按钮在 ④ 页、进度条却在本页 ⇒ 不接上就完全没有提示。
+        Shared?.SetRunning(gate ? ChainId.D升温闸 : ChainId.C整线耦合,
+                           gate ? "① 升温可达性" : "② 厚度灵敏度（10 点，每点一次整线解）");
         try
         {
             string txt = gate
@@ -102,6 +114,9 @@ public sealed class AnalysisPage : TabPage
             _cts?.Dispose(); _cts = null;
             _prog.Visible = false;
             _btnGate.Enabled = _btnScan.Enabled = true;
+            // 按钮名要还原 —— 否则取消之后它永远顶着「取消」二字
+            _btnGate.Text = "① 升温可达性"; _btnScan.Text = "② 厚度灵敏度";
+            Shared?.SetRunning(null);          // 清在 finally：异常/取消也必须解除互斥
         }
     }
 

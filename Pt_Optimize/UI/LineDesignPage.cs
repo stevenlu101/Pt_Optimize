@@ -807,7 +807,11 @@ public sealed class LineDesignPage : TabPage
         _btnRepro.Text = "取消"; _btnRun.Enabled = _btnAuto.Enabled = false;
         _prog.Visible = true; _prog.Style = ProgressBarStyle.Marquee;
         _status.Text = "复现中…（分钟级）";
-        var prog = new Progress<string>(s => _status.Text = s);
+        // ★ 告诉阶段轨「正在跑哪条链」——右上角状态面板据此显示「正在算：…」，
+        //   而且它**切到哪一页都看得见**（④ 页自己没有进度条）。
+        //   同时它是互斥闸：SyncGates 会把所有会起算的命令禁掉。
+        Shared?.SetRunning(ChainId.C整线耦合, "复现定案");
+        var prog = new Progress<string>(s => { _status.Text = s; Shared?.SetRunningNote(s); });
 
         try
         {
@@ -910,6 +914,7 @@ public sealed class LineDesignPage : TabPage
             _prog.Visible = false;
             _btnRepro.Text = "▶ 复现定案";
             _btnRun.Enabled = _btnAuto.Enabled = true;
+            Shared?.SetRunning(null);          // 清在 finally：异常/取消也必须解除互斥
         }
     }
 
@@ -1239,6 +1244,7 @@ public sealed class LineDesignPage : TabPage
         var ct = _cts.Token;
         _btnShape.Text = "取消";
         _btnRun.Enabled = _btnAuto.Enabled = _btnRepro.Enabled = false;
+        Shared?.SetRunning(ChainId.C形状搜索, "搜形状");
 
         // 网格：盘半径 × 半宽比例。半宽 > 盘半径没有切点（等宽舌片与圆盘接不上），故按比例取。
         double[] discs = { 25, 30, 35 };
@@ -1373,6 +1379,7 @@ public sealed class LineDesignPage : TabPage
             _btnShape.Text = "◇ 搜形状";
             _btnRun.Enabled = _btnAuto.Enabled = _btnRepro.Enabled = true;
             _cts?.Dispose(); _cts = null;
+            Shared?.SetRunning(null);
         }
     }
 
@@ -1389,6 +1396,10 @@ public sealed class LineDesignPage : TabPage
         (autoSize ? _btnAuto : _btnRun).Text = "取消";
         _prog.Visible = true; _prog.Style = ProgressBarStyle.Marquee;
         _status.Text = autoSize ? "自动定厚中…" : "核算中…";
+        // ★ 「自动定厚」在 ④ 页，而进度条与状态标签都长在 ③ 上 ⇒ ④ 那边一动不动。
+        //   接上状态面板（右上角，切到哪一页都看得见）才有动态提示。
+        Shared?.SetRunning(autoSize ? ChainId.C定尺寸 : ChainId.C整线耦合,
+                           autoSize ? "自动定厚" : "核算整线");
 
         // ⚠⚠ BuildCase() **必须在 try 里面**。它会抛（如「.3dm 模式但文件没填」）——
         //   放在外面时异常越过 finally ⇒ _cts 不清、按钮不恢复、进度条一直转，
@@ -1396,7 +1407,7 @@ public sealed class LineDesignPage : TabPage
         //   ⇒ **自动重算从此永久死掉，且一声不吭**。
         //   实测复现：点一下「Rhino .3dm 文件」单选钮（还没填文件）就中招。
         LineCase lc;
-        var prog = new Progress<string>(s => _status.Text = s);
+        var prog = new Progress<string>(s => { _status.Text = s; Shared?.SetRunningNote(s); });
 
         try
         {
@@ -1525,6 +1536,7 @@ public sealed class LineDesignPage : TabPage
             _prog.Visible = false;
             _btnRun.Enabled = _btnAuto.Enabled = true;
             _btnRun.Text = "核算整线"; _btnAuto.Text = "自动定厚";
+            Shared?.SetRunning(null);          // 清在 finally：异常/取消也必须解除互斥
         }
     }
 
