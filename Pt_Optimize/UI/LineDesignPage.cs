@@ -55,6 +55,8 @@ public sealed class LineDesignPage : TabPage
     private readonly ToolStripButton _btnRun, _btnAuto, _btnExport, _btnLoadCase, _btn3dm, _btnRepro;
     /// <summary>「分析几何变数」——只在 .3dm 模式且入口片已选时可用，由 SyncGeomSource 控。</summary>
     private readonly ToolStripButton _btnAnalyze;
+    /// <summary>「另存为定案档」—— 把当前的解写成 finaldesigns/*.fd.json。</summary>
+    private readonly ToolStripButton _btnSaveFinal;
     private readonly ToolStripButton _btnShape;
 
     // ★★★★★ 改参数**自动**给答案（2026-08-16 用户：「UI 已经够复杂，不要再加按钮」）
@@ -68,6 +70,11 @@ public sealed class LineDesignPage : TabPage
     private readonly System.Windows.Forms.Timer _autoTimer = new() { Interval = 1500 };
     private bool _autoArmed;                 // 参数动过、还没解
     private bool _suppressAuto;              // 程序化写控件时暂闭（载入定案等）
+    /// <summary>
+    /// 首屏排版结束、可以把控件事件当「用户改参数」看了。
+    /// 在此之前的 ValueChanged/CellValueChanged 都是**框架在排版**，不是人在改。
+    /// </summary>
+    private bool _userReady;
     private Snap? _solvedSnap;               // 上一次**真解**时的参数
     private LineResult? _solvedRes;
 
@@ -174,6 +181,7 @@ public sealed class LineDesignPage : TabPage
         _btnLoadCase = Btn("载入定案", (_, _) => LoadFinalDesign());
         _btn3dm = Btn("导出定案 3DM", (_, _) => ExportFinal3dm());
         _btnAnalyze = Btn("分析几何变数", (_, _) => AnalyzeShape());
+        _btnSaveFinal = Btn("另存为定案档", (_, _) => SaveAsFinalDesign());
 
         // ★★★ 复现定案：**界面上唯一能跑出定案数字的按钮**（2026-08-16 用户提出）。
         //
@@ -208,11 +216,13 @@ public sealed class LineDesignPage : TabPage
         //   一整套运行时状态（跑起来变「取消」、互相禁用、finally 里恢复，见 RunAsync）。
         //   重建一套按钮就等于把那套状态**抄第二份**，而两份状态迟早会漂开。
         //   ToolStripItem 本来就能挂到任何一条工具条上，让它换个位置最省事、也最不会错。
-        tool.Items.Add(new ToolStripLabel("定案档"));
-        tool.Items.Add(_caseBox);
-        tool.Items.Add(_btnRepro);
-        tool.Items.Add(_btnLoadCase);
-        tool.Items.Add(new ToolStripSeparator());
+        // ★ 定案档那一组（下拉 / 复现 / 载入 / 另存 / 导出定案 3DM）**已搬到独立的
+        //   「定案档」页**（2026-08-23）。它们不读页面控件、不受阶段门禁，
+        //   与「你手上这个设计走到哪一步」是正交的两根轴，混在同一条工具条上正是
+        //   用户最初抱怨的「不知道自己在算什么」。控件仍归本页所有（载入要灌本页控件、
+        //   另存要读本页的解），只是**摆在别处** —— 见 MainForm 装配。
+        //
+        // 本页现在只剩「关于当前这个设计」的两个命令。
         tool.Items.Add(_btnRun);
         tool.Items.Add(_btnAnalyze);
         tool.Items.Add(new ToolStripSeparator());
@@ -410,6 +420,9 @@ public sealed class LineDesignPage : TabPage
         FieldPlots.DrawEmpty(_pJ, "还没有结果 —— 点「核算整线」");
         FieldPlots.DrawEmpty(_pAx, "还没有结果 —— 点「核算整线」");
         HookAutoRun();
+        // 排版完成之后才开始把控件事件当用户操作。用 BeginInvoke 排到消息队列尾部：
+        // 那时首屏的绑定与排版都已经跑完，之后的事件才真是人点出来的。
+        HandleCreated += (_, _) => BeginInvoke(new Action(() => _userReady = true));
 
         _out.Text =
             "改任何一个参数，**会自动重算**（停手约 1.5 秒后开始，分钟级，随时可取消）。\r\n" +
@@ -480,12 +493,76 @@ public sealed class LineDesignPage : TabPage
     ///   「所有标签键都可以点，工程师根本不知道自己目前在算什么」的形状。
     ///   而把 Enabled 分散到各页去设，就会出现本方法注释里那种**两处打架**。
     /// </summary>
+    /// <summary>
+    /// 把**当前这个解**写成 <c>finaldesigns/*.fd.json</c>。
+    ///
+    /// ★ 用户 2026-08-22：「不想让工程师复制粘贴，感觉不靠谱」。
+    ///   此前落档要人工把十几个数抄进 FinalDesign.cs，其中五个判据值还得从判据表逐个读，
+    ///   抄错一位要跑 8 分钟 --selfcheck 才知道。手抄正是「同一个数存两处」的入口。
+    ///
+    /// ⚠ 程序写这五个记录值**不削弱** --selfcheck：A 段验的从来不是「设计对不对」，
+    ///   而是「内核以后改了还能不能算出同一个数」。那五个值本来就来自同一次运行。
+    ///
+    /// ⚠ Name 由用户填、Binding 留空 —— 「什么咬住了它」是工程判断，不是程序能算的，
+    ///   留空比替你猜一句更诚实。
+    /// </summary>
+    private void SaveAsFinalDesign()
+    {
+        if (Shared is not { Last: { } r } f || !f.Fresh || !r.AllOk)
+        {
+            MessageBox.Show(this,
+                "只有**判据全过**且**参数没再动过**的解才能落档。" + Environment.NewLine
+                + "不成立的设计不该有一个「能落档」的形态；参数动过之后存下去的，"
+                + "是上一组参数的解。",
+                "还不能另存", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        string name = Microsoft.VisualBasic.Interaction.InputBox(
+            "给这一档起个名（会成为文件名与下拉里的显示名）：",
+            "另存为定案档", $"管壁 {(double)_wall.Value:0.0} · 自定");
+        if (string.IsNullOrWhiteSpace(name)) return;
+
+        var d = PageToFinalDesign();
+        d.Name = name.Trim();
+        d.Provenance = $"由 APP「另存为定案档」写出；解出自「{(_srcAnalytic.Checked ? "解析形状" : "Rhino .3dm")}」路径";
+        d.Binding = "";                       // ← 工程判断，留给人填
+        d.TotalMassG = r.TotalMassG; d.TubeMassG = r.TubeMassG; d.FlangeMassG = r.FlangeMassG;
+        // 五个回归基准值：**从本次解直接取**，不经人手
+        d.RampH = r.ValueOf(LineResult.Key.Ramp);
+        d.DiscOverK = r.ValueOf(LineResult.Key.DiscTemp);
+        d.HoleFluxW = r.ValueOf(LineResult.Key.NetFlux);
+        d.FlangeDipK = r.ValueOf(LineResult.Key.FlangeDip);
+        d.TubeJ = r.ValueOf(LineResult.Key.TubeJ);
+
+        try
+        {
+            string path = FinalDesignStore.Save(d);
+            MessageBox.Show(this,
+                $"已写出：{path}" + Environment.NewLine + Environment.NewLine
+                + "下一步（都要做）：" + Environment.NewLine
+                + "  1. 把 binding 填上 —— 什么咬住了它（余量最小的那条）" + Environment.NewLine
+                + "  2. 跑 --selfcheck，A 段这一档的差须为 0.000" + Environment.NewLine
+                + "  3. 提交进 git —— 档是回归基准，变更要被 diff 记录" + Environment.NewLine + Environment.NewLine
+                + "⚠ 重启 APP 后它才会出现在定案档下拉里（档在启动时读入）。",
+                "已另存", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "另存失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
     internal bool CommandApplicable(string cmdId) => cmdId switch
     {
         // 读 .3dm 反推台阶 —— 解析形状是程序生成的，没有图纸可反推
         "geom.analyze" => !_srcAnalytic.Checked && !string.IsNullOrWhiteSpace(_file3dm[0].Text),
         // 形状搜索只在解析模式有意义：.3dm 的形状由图纸给定，不是可搜索的自由度
         "shape.search" => _srcAnalytic.Checked,
+        // 另存：存的是**当前这个解**，所以必须「判据全过」且「参数没再动过」。
+        //   不成立的设计不该有一个「能落档」的形态；
+        //   参数动过之后存下去的，是**上一组参数**的解 —— 那是最坏的一种档。
+        "final.save" => Shared is { Fresh: true, Last.AllOk: true },
         _ => true,
     };
 
@@ -608,6 +685,12 @@ public sealed class LineDesignPage : TabPage
     private void ParamChanged()
     {
         if (_suppressAuto) return;           // 程序在写控件，不是用户在改
+        // ★ 首屏那一阵的控件事件**不是用户改的参数**（2026-08-23 界面抓图抓到）。
+        //   实况：窗体一 Show 出来，_segGrid 在首次绑定/排版时抛 CellValueChanged，
+        //   被当成「参数动了」⇒ 防抖 1.5 s 到期，**自己起了一次分钟级的解**。
+        //   抓图里状态面板全程写着「正在算：核算整线」而结果是「还没解过」，就是它。
+        //   ⚠ 接线测试没抓到，因为它只 CreateControl 不 Show —— 排版路径根本没走。
+        if (!_userReady) return;
         _autoArmed = true;
         // ⚠ **立刻**取消在跑的那次，不要等防抖到期（实测发现的：原来放在 TryAutoRun 里，
         //   于是用户改完参数后，一个**结果已经作废**的求解还要再跑满 1.5 秒防抖窗口，
@@ -1692,6 +1775,12 @@ public sealed class LineDesignPage : TabPage
     internal ToolStripButton BtnSearchShape => _btnShape;
     internal ToolStripButton BtnExportPage3dm => _btnExport;
     internal ToolStripButton BtnExportFinal3dm => _btn3dm;
+    // ── 定案档那一组（2026-08-23 从 ③ 拆到独立页）。控件仍归本页所有 ——
+    //    它们要读写本页的控件（载入=灌值、另存=读当前解），换个地方摆而已。
+    internal ToolStripButton BtnReproduce => _btnRepro;
+    internal ToolStripButton BtnLoadCase => _btnLoadCase;
+    internal ToolStripComboBox CaseBox => _caseBox;
+    internal ToolStripButton BtnSaveFinal => _btnSaveFinal;
 
     /// <summary>④⑤ 页要显示「③ 解出来的是什么」，需要读这一份状态。</summary>
     internal LineResult? LastResult => _last;

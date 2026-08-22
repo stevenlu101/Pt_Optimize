@@ -88,6 +88,24 @@ class UiWiringTests {
         Head("0 启动：不该自己开跑，也不该弹任何东西");
         Check("启动后没有在跑求解", F(page, "_cts") is null,
               F(page, "_cts") is null ? "" : "★ 一打开就自己开跑了");
+        // ★ 再静置 2.5 s（防抖是 1.5 s）——「启动那一瞬没在跑」不等于「不会自己开跑」。
+        //   界面抓图里状态面板写着「正在算：核算整线」而结果是「还没解过」，就是这么来的：
+        //   没人碰它，防抖定时器自己到期，开了一次分钟级的解。
+        Pump(2500);
+        Check("静置 2.5 s 之后仍然没有自己开跑", F(page, "_cts") is null,
+              F(page, "_cts") is null ? "" : "★ 没人碰它，它自己跑了一次分钟级的解");
+        // ★ 首屏闸门（2026-08-23 新增）：排版期的控件事件不算「用户改参数」。
+        //   先验它确实拦得住，再置位 —— 后面几节模拟的都是**用户操作**，
+        //   而本测试从不 Show 窗体（页面句柄是懒建的）⇒ 不置位它永远是 false。
+        Check("首屏闸门在（排版期的事件不算用户操作）", F(page, "_userReady") is false,
+              "没 Show 过 ⇒ 仍处于首屏期");
+        typeof(LineDesignPage).GetMethod("ParamChanged",
+            BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(page, null);
+        Check("首屏期触发参数变更**不会**武装自动重算",
+              (bool)F(page, "_autoArmed")! == false,
+              "★ 没人碰它就自己排上了一次分钟级的解");
+        Set(page, "_userReady", true);          // 此后按「用户在操作」对待
+
         Check("首屏是说明而不是预测块",
               outBox.Text.Contains("自动重算") && !outBox.Text.Contains("参数已改"));
         Check("四个页签都在", tabs.TabPages.Count >= 4, $"（{tabs.TabPages.Count} 个）");
@@ -670,37 +688,49 @@ class UiWiringTests {
                 Console.WriteLine("     ⇒ 实际分成 " + nonEmpty.Count + " 组：");
                 foreach (var g in nonEmpty) Console.WriteLine("       · " + string.Join(" / ", g));
                 // 说明书讲的是「三组」：定案档组 / 本页参数组 / 工具组（进度条那段不算）
-                Check("与说明书说的组数对得上", nonEmpty.Count >= 3, $"实际 {nonEmpty.Count} 组");
-                // ★ 说明书是按**按钮名字**分组讲的（不是让用户去找那条 1 px 的分隔线）。
-                //   所以要验的是：每一组里确实是说明书点名的那些按钮。
-                // ★ 2026-08-20：期望值改成**从 Flow 现取**，不再手抄按钮名。
-                //
-                //   原来这里写死「第一组要有 复现定案/载入定案/导出定案，第二组要有
-                //   核算整线/自动定厚/搜形状」。阶段轨把「导出定案 3DM」搬去了 ⑤、
-                //   「自动定厚 / 搜形状」搬去了 ④，这两条断言当场变红 ——
-                //   而它们红得**没有信息**：不是接线错了，是断言自己抄了一份会过期的清单。
-                //
-                //   现在验的是同一条道理、但不会过期的形式：
-                //   本页工具条上属于「定案不读页面」组的按钮，必须与 Flow 登记的一致；
-                //   属于「页面参数」组的同理。搬到别页的按钮自然不在本页，也就不必改测试。
-                var onPage = nonEmpty.SelectMany(g => g).ToHashSet(StringComparer.Ordinal);
-                foreach (var grp in new[] { CmdGroup.定案不读页面, CmdGroup.页面参数 })
+                // ★ 2026-08-23：分组断言改成**逐页对 Flow**。
+                //   上一版把「定案组在 ③ 上」写死了，而定案那一组随后被搬到独立的
+                //   「定案档」页 ⇒ 三条断言同时变红，红得**没有信息**：
+                //   不是接线错了，是断言又抄了一份会过期的清单（同一个教训第二次）。
+                //   现在只问一件不会过期的事：**每一页工具条上的按钮，与 Flow 为
+                //   那一页登记的命令一致**；谁搬到哪页都不必改测试。
+                Check("本页分成了不止一组（分隔线确实在分组）", nonEmpty.Count >= 2,
+                      $"实际 {nonEmpty.Count} 组");
+
+                foreach (var sid in new[] { StageId.整线核算, StageId.定案档 })
                 {
-                    var want = Flow.Commands
-                        .Where(c => c.Stage == StageId.整线核算 && c.Group == grp)
-                        .Select(c => c.Text).ToArray();
-                    var missing = want.Where(t => !onPage.Contains(t)).ToArray();
-                    Check($"本页「{grp}」组与 Flow 一致",
-                          want.Length > 0 && missing.Length == 0,
-                          missing.Length == 0 ? string.Join("/", want)
-                                              : "★ 页上没有：" + string.Join("/", missing));
+                    var tp = tabs.TabPages.OfType<TabPage>()
+                        .FirstOrDefault(x => x.Text.Contains(Flow.Stage(sid).Title, StringComparison.Ordinal));
+                    Check($"找得到「{Flow.Stage(sid).Title}」页", tp is not null);
+                    if (tp is null) continue;
+
+                    var names = new List<string>();
+                    void W3(Control c)
+                    {
+                        if (c is ToolStrip t2)
+                            foreach (var it in t2.Items.OfType<ToolStripButton>()) names.Add(it.Text);
+                        foreach (Control k in c.Controls) W3(k);
+                    }
+                    W3(tp);
+
+                    var want2 = Flow.Stage(sid).CommandIds.Select(id => Flow.Cmd(id).Text).ToArray();
+                    Check($"「{Flow.Stage(sid).Title}」的按钮与 Flow 登记的一致（集合非空）",
+                          want2.Length > 0, string.Join("/", want2));
+                    var miss2 = want2.Where(t => !names.Contains(t, StringComparer.Ordinal)).ToArray();
+                    Check($"「{Flow.Stage(sid).Title}」页上一个都不缺", miss2.Length == 0,
+                          miss2.Length == 0 ? $"{want2.Length} 个都在"
+                                            : "★ 缺：" + string.Join("/", miss2));
                 }
-                // 分组的**含义**仍要守住：不读页面控件的那些，必须与读页面的分在不同组 ——
+
+                // 分组的**含义**仍要守住：不读页面控件的那些，不能与读页面的混在一组 ——
                 // 说明书就是按这条教用户的（「定案两个字打头的那几个不读页面控件」）。
-                var caseGrp = nonEmpty.FirstOrDefault(g => g.Any(x => x.Contains("复现定案")));
-                Check("「定案」组里不混入读页面控件的命令",
-                      caseGrp is not null && !caseGrp.Any(x => x.Contains("核算整线")),
-                      caseGrp is null ? "没找到定案组" : string.Join("/", caseGrp));
+                // 现在它们各在一页，这条自然成立；仍然断言一次，防止有人把它们搬回去。
+                var mixed = Flow.Stage(StageId.定案档).CommandIds
+                    .Select(Flow.Cmd)
+                    .Where(c => c.Group == CmdGroup.定案不读页面 && c.ReadsPageControls)
+                    .Select(c => c.Text).ToList();
+                Check("「定案」组里不混入读页面控件的命令", mixed.Count == 0,
+                      mixed.Count == 0 ? "" : "★ 混入：" + string.Join("/", mixed));
             }
         }
 
@@ -1137,8 +1167,15 @@ class UiWiringTests {
             // ⚠ 只能在**已解锁**的阶段上断言 —— 「导出本页 3DM」是 ChainId.无 但
             //   ReadsPageControls=true，⑤ 没解锁时它被门禁正常锁住，那是**对的**，不是误禁。
             //   头一版没分这两种「禁」，把门禁的功劳算成了互斥闸的错。
+            // ⚠ 「禁」有三种来源：门禁 / 互斥 / **适用性**。本节验的是互斥，
+            //   所以另两种都要先排除。上一版漏了适用性 ⇒「另存为定案档」被误报成
+            //   互斥误禁，而它此刻禁用是**对的**（还没解过，AllOk/Fresh 都不成立）。
+            var lp2 = tabs.TabPages.OfType<LineDesignPage>().First();
+            bool App(string id) => (bool)typeof(LineDesignPage).GetMethod("CommandApplicable",
+                BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public)!
+                .Invoke(lp2, new object[] { id })!;
             var inertUnlocked = inert
-                .Where(x => Gate.Evaluate(x.spec!.Stage, flow).Unlocked).ToArray();
+                .Where(x => Gate.Evaluate(x.spec!.Stage, flow).Unlocked && App(x.spec!.Id)).ToArray();
             Check("有「不算东西」的命令处在已解锁的阶段上（否则下一条空转）",
                   inertUnlocked.Length > 0,
                   string.Join("、", inertUnlocked.Select(x => x.b.Text)));

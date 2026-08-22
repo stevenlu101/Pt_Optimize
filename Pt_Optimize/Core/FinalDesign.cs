@@ -1,3 +1,5 @@
+﻿using System.Linq;
+
 namespace PtOptimize.Core;
 
 /// <summary>
@@ -43,6 +45,14 @@ public sealed class FinalDesign
     ///   每一个引用点都能读到。重解出新档后把本字段清空。
     /// </summary>
     public string Invalid = "";
+
+    /// <summary>
+    /// 非空 = 本档来自 <c>finaldesigns/</c> 下的文件（值即文件名）；空 = 写死在本文件里的内置档。
+    ///
+    /// ⚠ 界面下拉与 --selfcheck 都要**标出来**：你得能分清手上这个是
+    ///   「守内核的回归基准」还是「别人昨天存的方案」。分不清就会拿错的那个去出图。
+    /// </summary>
+    public string FromFile = "";
 
     /// <summary>
     /// 失效声明点名的判据**前缀**（对应 <c>ConstraintOut.Name</c> 的开头）。
@@ -349,7 +359,21 @@ public sealed class FinalDesign
     /// 现役两档在前，已作废两档在后 —— 顺序就是界面下拉的顺序，别调换。
     /// 作废档留在表里是有用的：自检门每次都要验「⑤ 仍然抓得住它们」。
     /// </summary>
-    public static readonly FinalDesign[] All = { W08, W06, Retired08, Retired06 };
+    /// <summary>
+    /// **内置**四档 —— 写死在代码里，走 PR 变更、被 diff 记录。
+    /// 它们是守内核的回归基准：内核哪天算出别的数，--selfcheck A 段当场红。
+    /// 测试只认这一组（文件档在磁盘上，会让测试结果依赖机器状态）。
+    /// </summary>
+    public static readonly FinalDesign[] Builtin = { W08, W06, Retired08, Retired06 };
+
+    /// <summary>
+    /// 内置档 + <c>finaldesigns/*.fd.json</c>。顺序：内置在前（下拉里先看到基准），文件档在后。
+    ///
+    /// ⚠ 读档失败**不静默** —— 见 <see cref="FinalDesignStore.LoadErrors"/>，
+    ///   启动路径与 --selfcheck 都会把它当失败报出来。少一个档 = 少一组判据。
+    /// </summary>
+    public static readonly FinalDesign[] All =
+        Builtin.Concat(FinalDesignStore.LoadAll(Builtin.Select(x => x.Name))).ToArray();
 
     /// <summary>
     /// 当前生效的档。**默认取保守的 0.8** —— 业主尚未在两档间拍板，

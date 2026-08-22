@@ -147,9 +147,24 @@ public sealed class MainForm : Form
         sizePage.Controls.Add(Banner(Flow.Stage(StageId.定尺寸).Banner));
         sizePage.Controls.Add(sizeTool);
 
+        // ── 定案档：**不带编号的一页**，放在 ① 之前。
+        //   载入/复现会灌页面控件、是给 ③ 喂起点的 ⇒ 它是入口，不是尾巴。
+        //   这几条命令都 ReadsPageControls=false（另存除外），本来就豁免阶段门禁。
+        var caseTool = NewTool();
+        caseTool.Items.Add(new ToolStripLabel("定案档"));
+        caseTool.Items.Add(linePage.CaseBox);
+        caseTool.Items.Add(linePage.BtnReproduce);
+        caseTool.Items.Add(linePage.BtnLoadCase);
+        caseTool.Items.Add(new ToolStripSeparator());
+        caseTool.Items.Add(linePage.BtnSaveFinal);
+        caseTool.Items.Add(linePage.BtnExportFinal3dm);
+        var casePage = new TabPage(Flow.Stage(StageId.定案档).Title) { Padding = new Padding(2) };
+        casePage.Controls.Add(StageHint(StageId.定案档));
+        casePage.Controls.Add(Banner(Flow.Stage(StageId.定案档).Banner));
+        casePage.Controls.Add(caseTool);
+
         var shipTool = NewTool();
         shipTool.Items.Add(linePage.BtnExportPage3dm);
-        shipTool.Items.Add(linePage.BtnExportFinal3dm);
         shipTool.Items.Add(new ToolStripSeparator());
         shipTool.Items.Add(Btn("保存", (_, _) => Save()));
         shipTool.Items.Add(Btn("读取", (_, _) => LoadCase()));
@@ -161,6 +176,7 @@ public sealed class MainForm : Form
         // ── 按 Flow 的顺序装轨
         gatePage.Text = Flow.Stage(StageId.先决条件).Title;
         linePage.Text = Flow.Stage(StageId.整线核算).Title;
+        _tabs.TabPages.Add(casePage);
         _tabs.TabPages.Add(gatePage);
         _tabs.TabPages.Add(screenPage);
         _tabs.TabPages.Add(linePage);
@@ -168,6 +184,7 @@ public sealed class MainForm : Form
         _tabs.TabPages.Add(shipPage);
         _tabs.TabPages.Add(new ManualPage());
 
+        _stageOf[casePage] = StageId.定案档;
         _stageOf[gatePage] = StageId.先决条件;
         _stageOf[screenPage] = StageId.粗算;
         _stageOf[linePage] = StageId.整线核算;

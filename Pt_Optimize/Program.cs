@@ -5045,6 +5045,16 @@ internal static class Program
                 var swSc = System.Diagnostics.Stopwatch.StartNew();
                 int bad = 0;
 
+                // ★ 读档失败**算失败**（2026-08-23）。少载入一个档 = 少一组判据，
+                //   而「判据凭空消失」正是铁律二盯的那一族。静默跳过比报错更坏。
+                if (FinalDesignStore.LoadErrors.Count > 0)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("── ★ 定案档读取失败（每一条都算不过）");
+                    foreach (string e in FinalDesignStore.LoadErrors)
+                    { Console.WriteLine("   ✗ " + e); bad++; }
+                }
+
                 Console.WriteLine();
                 Console.WriteLine("── A 复现对账：FinalDesign 记的数 vs 实算");
                 foreach (var fd in FinalDesign.All)
@@ -5055,7 +5065,10 @@ internal static class Program
                     double V(string k)
                     { foreach (var c in rc.Checks) if (c.Name.StartsWith(k, StringComparison.Ordinal)) return c.Actual; return double.NaN; }
 
-                    Console.WriteLine($"   {fd.Name}　收敛 ✓　全判据 {(rc.AllOk ? "✓" : "✗")}" +
+                    // 标出来源：分不清「守内核的基准」与「昨天存的方案」就会拿错的那个去出图
+                    Console.WriteLine($"   {fd.Name}"
+                                      + (fd.FromFile.Length > 0 ? $"　[档案 {fd.FromFile}]" : "　[内置]")
+                                      + $"　收敛 ✓　全判据 {(rc.AllOk ? "✓" : "✗")}" +
                                       (fd.Invalid.Length > 0 ? "　（本档**已声明失效**）" : ""));
 
                     // ★★★ 已声明失效的档：门要判的**不是「过不过」**，而是

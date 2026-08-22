@@ -66,7 +66,7 @@ public enum ChainId
 ///   而那个口子迟早会被第二个、第三个例外挤大。它没有门（前一格 GateToUnlockNext 为 null）
 ///   ⇒ 天然永远解锁，正合「说明书任何时候都该能看」。
 /// </summary>
-public enum StageId { 先决条件, 粗算, 整线核算, 定尺寸, 交付, 说明 }
+public enum StageId { 定案档, 先决条件, 粗算, 整线核算, 定尺寸, 交付, 说明 }
 
 /// <summary>
 /// 命令的三组分法 —— 沿用说明书里已经教给用户的那套（ManualPage §2.3）。
@@ -212,10 +212,10 @@ public static class Flow
             "按页面参数解一次耦合场，出判据表。**几何用的是和定案完全同一套构造器**"),
         new("geom.analyze", "分析几何变数", StageId.整线核算, ChainId.C整线耦合,
             CmdGroup.工具, true, "分钟级", "报各几何量对判据的斜率（只测不调）"),
-        new("final.reproduce", "▶ 复现定案", StageId.整线核算, ChainId.C整线耦合,
+        new("final.reproduce", "▶ 复现定案", StageId.定案档, ChainId.C整线耦合,
             CmdGroup.定案不读页面, false, "分钟级，可取消",
             "**完全不读页面控件**，直接按定案档解一次。用来排除「页面上某个控件被改过而自己没注意到」"),
-        new("final.load", "载入定案", StageId.整线核算, ChainId.无,
+        new("final.load", "载入定案", StageId.定案档, ChainId.无,
             CmdGroup.定案不读页面, false, "即时",
             "把 FinalDesign 的某一档灌进各控件。**已作废的档会在最前面自报失效**"),
 
@@ -234,7 +234,7 @@ public static class Flow
         new("export.page3dm", "导出本页 3DM", StageId.交付, ChainId.无,
             CmdGroup.导出, true, "十几秒",
             "**整机**（三段管 + 四片法兰），几何与刚才求解的**完全一致**"),
-        new("final.export3dm", "导出定案 3DM", StageId.交付, ChainId.无,
+        new("final.export3dm", "导出定案 3DM", StageId.定案档, ChainId.无,
             CmdGroup.定案不读页面, false, "十几秒",
             "整机几何 + 自校。**已声明失效的档一律拒绝出图**"),
         // ⚠ 这两个 ReadsPageControls **必须是 false**（2026-08-21 修）。
@@ -244,6 +244,13 @@ public static class Flow
         //   **工程师调了半天参数存不下来，非得先解出一个收敛解才准存档**。
         //   存参数和「这一版几何算没算通」是两件毫不相干的事，
         //   而门禁的意义是拦住「拿不成立的解去出图」，不是拦住记事本。
+        // 把当前的解写成 finaldesigns/*.fd.json。**读页面控件**（存的就是你手上这个解）
+        // ⇒ 受适用性约束：AllOk + Fresh 才可用（见 LineDesignPage.CommandApplicable）。
+        new("final.save", "另存为定案档", StageId.定案档, ChainId.无,
+            CmdGroup.导出, true, "即时",
+            "把当前这个**全判据通过**的解写成档案文件。五个判据记录值由程序填 —— "
+            + "手抄它们是本项目最常见的错源，而抄错要跑 8 分钟 --selfcheck 才知道"),
+
         new("case.save", "保存", StageId.交付, ChainId.无,
             CmdGroup.工具, false, "即时", "把参数表存成 .json"),
         new("case.load", "读取", StageId.交付, ChainId.无,
@@ -266,6 +273,26 @@ public static class Flow
     // 会把「工程师明明可以直接算整线」拦下来，那种门第二天就会被要求关掉。
     public static readonly StageSpec[] Stages =
     {
+        // ── 定案档：**不带编号**，因为它不是阶段轨的一格。
+        //
+        // 这几条命令早就带着同一个标记 CmdGroup.定案不读页面 —— 它们**不读页面控件**，
+        // 也因此不受阶段门禁。而 ①→⑤ 说的是「你手上这个设计走到哪一步」。
+        // 两根轴正交，此前被混在 ③ 的同一条工具条上（用户 2026-08-23 要求拆出来）。
+        //
+        // 放在**最前面**而不是最后：载入/复现会**灌页面控件**，是给 ③ 喂起点的。
+        // 摆在 ⑤ 之后等于把入口放在出口。
+        //
+        //   [定案档] 载入/复现 ─→ ① ② ③ ④ ⑤ ─→ [定案档] 另存/出图
+        //
+        // GateToUnlockNext = null ⇒ 下一格（①）不受它约束，本页自己也永不上锁。
+        new(StageId.定案档, 0, "定案档",
+            "档里的数与你手上这一版是**两回事**。「载入」把档灌进页面当起点；"
+            + "「▶ 复现定案」完全不读页面控件，用来排除「页面被改过而不自知」。",
+            new[] { ChainId.C整线耦合 },
+            GateToUnlockNext: null,
+            new[] { "final.reproduce", "final.load", "final.save", "final.export3dm" },
+            Array.Empty<string>()),
+
         new(StageId.先决条件, 1, "① 先决条件（能造 · 能升温）",
             "先决条件先答：能不能造、能不能用是一个 yes/no 闸门。**不过闸就到此为止 —— 不谈铂重、不谈优点。**",
             new[] { ChainId.D升温闸 },
@@ -300,7 +327,7 @@ public static class Flow
                 RequireConverged: true, RequireAllOk: false, RequireFresh: true,
                 LockedTitle: "④ 定尺寸 —— 还没解锁",
                 LockedWhy: "定尺寸器每轮都要跑一次整线解，起点必须是一个**解得出来且收敛**的构型。"),
-            new[] { "core.runLine", "geom.analyze", "final.reproduce", "final.load" },
+            new[] { "core.runLine", "geom.analyze" },
             new[] { "C 整线", "A·B·C 共用" }),
 
         new(StageId.定尺寸, 4, "④ 定尺寸 / 搜形状",
@@ -320,7 +347,7 @@ public static class Flow
             "出图前请核对输出里的**逐件质量对账**（差应在 ±1 % 内，对不上就别出图）。",
             new[] { ChainId.无 },
             GateToUnlockNext: null,
-            new[] { "export.page3dm", "final.export3dm", "case.save", "case.load" },
+            new[] { "export.page3dm", "case.save", "case.load" },
             Array.Empty<string>()),
 
         // 没有门（上一格 GateToUnlockNext 为 null）⇒ 永远解锁。F1 直达。
