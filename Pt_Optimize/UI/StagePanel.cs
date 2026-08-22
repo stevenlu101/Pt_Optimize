@@ -33,6 +33,8 @@ public sealed class StagePanel : Panel
     private readonly Label _verdict = new();
     private readonly Label _banner = new();
     private readonly LinkLabel _bypass = new();
+    /// <summary>「下一步 → 点『…』」。可点，但**只带你去**，不代你跑。</summary>
+    private readonly LinkLabel _next = new();
     private readonly FlowLayoutPanel _stack = new();
 
     private readonly FlowState _state;
@@ -40,6 +42,9 @@ public sealed class StagePanel : Panel
 
     /// <summary>用户点了「我知道风险，越关进入」。参数是被越的那一关。</summary>
     public event Action<StageId>? BypassRequested;
+    /// <summary>用户点了「下一步」那一行 —— 参数是该点的命令 Id。**由 MainForm 负责带路，不执行。**</summary>
+    public event Action<string>? NextStepRequested;
+    private string _nextCmd = "";
 
     /// <summary>
     /// 本面板想要多高（像素）。
@@ -80,6 +85,7 @@ public sealed class StagePanel : Panel
             (_verdict, FontStyle.Regular),
             (_banner,  FontStyle.Regular),
             (_bypass,  FontStyle.Regular),
+            (_next,    FontStyle.Bold),
         })
         {
             lab.AutoSize = true;
@@ -91,6 +97,17 @@ public sealed class StagePanel : Panel
         _banner.ForeColor = Color.FromArgb(150, 20, 20);
         _banner.BackColor = Color.FromArgb(255, 242, 242);
         _banner.Padding = new Padding(UiScale.S(6), UiScale.S(4), UiScale.S(6), UiScale.S(4));
+        // 下一步：蓝底、可点。点它**只切页签 + 让那个按钮闪一下**，不执行 ——
+        // ④ 会改输入、③ 要跑几十秒、⑤ 会写文件，代跑等于把判断从人手里拿走。
+        _next.LinkColor = Color.FromArgb(20, 80, 170);
+        _next.ActiveLinkColor = Color.FromArgb(20, 80, 170);
+        _next.BackColor = Color.FromArgb(235, 244, 255);
+        _next.Padding = new Padding(UiScale.S(6), UiScale.S(4), UiScale.S(6), UiScale.S(4));
+        _next.LinkClicked += (_, _) =>
+        {
+            if (_nextCmd.Length > 0) NextStepRequested?.Invoke(_nextCmd);
+        };
+
         _bypass.LinkColor = Color.FromArgb(150, 20, 20);
         _bypass.Text = "我知道风险，越关进入 →";
         _bypass.Visible = false;
@@ -185,6 +202,7 @@ public sealed class StagePanel : Panel
                          + $"\r\n为什么：{gate.Why}{now}"
                          + (gate.How.Length > 0 ? $"\r\n怎么解锁：{gate.How}" : "");
             _banner.Visible = true;
+
             _bypass.Visible = true;
         }
         else if (gate.Bypassed)
@@ -196,6 +214,26 @@ public sealed class StagePanel : Panel
             _bypass.Visible = false;
         }
         else { _banner.Visible = false; _bypass.Visible = false; }
+
+        // ── 下一步：我现在该点哪个按钮（规则在 Flow.Next，只读现成状态）
+        //   ⚠ **必须放在所有分支之外**：头一版插进了 `if (locked)` 里面，
+        //     于是在已解锁的 ③ 上根本不执行 —— 界面上只剩一小块空蓝底。
+        var ns = Flow.Next(_state);
+        if (ns is null)
+        {
+            _nextCmd = "";
+            _next.Visible = false;
+        }
+        else
+        {
+            var cmd = Flow.Cmd(ns.CmdId);
+            _nextCmd = ns.CmdId;
+            // 连「在哪一页、要多久」一起说 —— 光说按钮名，用户还得自己找
+            _next.Text = $"下一步 → 点「{Plain(cmd.Text)}」"
+                       + $"（{Plain(Flow.Stage(cmd.Stage).Title)}，{Plain(cmd.Cost)}）"
+                       + Environment.NewLine + "　　" + Plain(ns.Why);
+            _next.Visible = true;
+        }
 
         // 内容高度变了就要来一次 —— 锁与不锁差三四行
         HeightWanted?.Invoke(_stack.PreferredSize.Height + Padding.Vertical + UiScale.S(10));

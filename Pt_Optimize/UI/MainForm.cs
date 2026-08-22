@@ -188,6 +188,18 @@ public sealed class MainForm : Form
         };
         _tabs.SelectedIndexChanged += (_, _) => SyncGates();
 
+        // 点「下一步」那一行：**只带路，不代跑**（2026-08-22 与用户议定）。
+        //   ④ 会改输入、③ 要跑几十秒、⑤ 会写文件 —— 代跑等于把
+        //   「我知道我在做什么」从工程师手里拿走，而那正是要治的病。
+        _stagePanel.NextStepRequested += cmdId =>
+        {
+            var spec = Flow.Commands.FirstOrDefault(c => c.Id == cmdId);
+            if (spec is null) return;
+            var target = _stageOf.FirstOrDefault(kv => kv.Value == spec.Stage).Key;
+            if (target is not null) _tabs.SelectedTab = target;
+            FlashCommand(spec.Text);
+        };
+
         // ★ 状态一变就重算门禁与互斥（2026-08-21）。
         //   没有这一句，SetRunning 只会让**状态面板**跟着变，
         //   而按钮的 Enabled 纹丝不动 —— 互斥闸等于没装。
@@ -320,6 +332,30 @@ public sealed class MainForm : Form
     /// ⚠ 不用 TabControl.Selecting + e.Cancel 硬拦 —— 那个效果是「点了没反应」，
     ///   正是用户抱怨的那一类。让人进得去、看得见为什么锁着，才叫说明白了。
     /// </summary>
+    /// <summary>
+    /// 让某个命令按钮闪两下 —— 用户点了「下一步」之后，把眼睛引到它上面。
+    /// **只改外观，不触发它的 Click。**
+    /// </summary>
+    private void FlashCommand(string text)
+    {
+        ToolStripButton? btn = null;
+        foreach (TabPage p in _tabs.TabPages)
+            foreach (var ts in p.Controls.OfType<ToolStrip>())
+                foreach (var b in ts.Items.OfType<ToolStripButton>())
+                    if (b.Text == text) btn = b;
+        if (btn is null) return;
+
+        var keep = btn.BackColor;
+        int n = 0;
+        var t = new System.Windows.Forms.Timer { Interval = 180 };
+        t.Tick += (_, _) =>
+        {
+            btn.BackColor = (n % 2 == 0) ? Color.FromArgb(255, 236, 150) : keep;
+            if (++n >= 6) { t.Stop(); t.Dispose(); btn.BackColor = keep; }
+        };
+        t.Start();
+    }
+
     private void SyncGates()
     {
         if (_stagePanel is null) return;
@@ -327,6 +363,9 @@ public sealed class MainForm : Form
         // 「现在有没有链在跑」只有一个来源：FlowState.Running。
         // 各页自己那套 Enabled 只管得住自己页内的按钮，管不了跨页。
         bool busy = _flow.Running is not null;
+
+        // 该点哪个 —— 规则在 Flow.Next，这里只负责把它画出来。
+        string nextId = Flow.Next(_flow)?.CmdId ?? "";
 
         if (_tabs.SelectedTab is { } tab && _stageOf.TryGetValue(tab, out var cur))
             _stagePanel.SetStage(cur);
@@ -361,6 +400,12 @@ public sealed class MainForm : Form
 
                     if (!spec.ReadsPageControls) { if (!applicable) b.Enabled = false; continue; }
                     b.Enabled = g.Unlocked && applicable;
+
+                    // ★ 高亮「现在该点的那个」——眼睛直接落上去，不用先读文字。
+                    //   只在它**真的能点**时才亮，否则等于指着一个灰按钮说「点这个」。
+                    bool isNext = b.Enabled && spec.Id == nextId;
+                    b.Font = isNext ? UiScale.Ui(FontStyle.Bold) : UiScale.Ui();
+                    b.BackColor = isNext ? Color.FromArgb(214, 233, 255) : Color.Transparent;
                 }
         }
         _stagePanel.Refresh2();

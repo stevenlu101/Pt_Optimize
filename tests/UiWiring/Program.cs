@@ -1235,6 +1235,80 @@ class UiWiringTests {
             Mode(analytic: true);
         }
 
+        // ═══════════════════════════════════════════════════════════════
+        Head("28 下一步：每种状态都要指出**该点哪个按钮**，且指的方向要对");
+        {
+            // 用户 2026-08-20 的原话是「工程师根本不知道自己目前在算什么」。
+            // 阶段横幅 / 门禁说明 / 状态面板都在答「你在哪」，没有一处答「往哪走」。
+            //
+            // ⚠ 规则只读现成状态（Last / Fresh / AllOk / Converged），**不产生新判据**。
+            //   本节逐个状态构造，验它指的方向对不对 —— 而不是验「有没有这一行」。
+            var st = new FlowState();
+
+            Check("还没解过 → 指向「核算整线」",
+                  Flow.Next(st)?.CmdId == "core.runLine", Flow.Next(st)?.Why ?? "(无)");
+
+            // 正在算的时候不催 —— 那一行的位置已经被「正在算：…」占着
+            st.SetRunning(ChainId.C整线耦合, "核算整线");
+            Check("正在算时不给下一步（别催）", Flow.Next(st) is null);
+            st.SetRunning(null);
+
+            // 造一个「收敛、全过、新鲜」的解
+            var snap = new object();
+            LineResult Mk(bool conv, params ConstraintOut[] cs) => new()
+            { Ok = true, Converged = conv, Checks = cs };
+            ConstraintOut C2(string name, bool ok, CheckKind k = CheckKind.Target) =>
+                new() { Name = name, Ok = ok, Kind = k, Actual = ok ? 1 : 9, Limit = 5 };
+
+            st.Last = Mk(false, C2("③ 法兰增量温降 ≤ 上限", true));
+            st.SolvedSnap = snap; st.CurrentSnap = snap;
+            Check("解了但没收敛 → 仍指向「核算整线」",
+                  Flow.Next(st)?.CmdId == "core.runLine", Flow.Next(st)?.Why ?? "");
+
+            // 收敛 + 全过 + 新鲜 ⇒ 出图
+            st.Last = Mk(true, C2("③ 法兰增量温降 ≤ 上限", true));
+            Check("收敛且判据全过 → 指向「导出本页 3DM」",
+                  Flow.Next(st)?.CmdId == "export.page3dm", Flow.Next(st)?.Why ?? "");
+
+            // 参数改过 ⇒ 必须先重解（这一条要排在 AllOk 前面，否则会照着过期结论指路）
+            st.CurrentSnap = new object();
+            Check("参数改过 → 指回「核算整线」（不许照过期结论指路）",
+                  Flow.Next(st)?.CmdId == "core.runLine", Flow.Next(st)?.Why ?? "");
+            st.CurrentSnap = snap;
+
+            // 热-电判据不过 ⇒ 厚度能救 ⇒ 自动定厚
+            st.Last = Mk(true, C2(LineResult.Key.NetFlux + " 须为正", false));
+            Check("热-电判据不过 → 指向「自动定厚」",
+                  Flow.Next(st)?.CmdId == "core.autoThick", Flow.Next(st)?.Why ?? "");
+
+            // ★ 几何判据不过 ⇒ 厚度**救不了** ⇒ 必须指向搜形状（用户 2026-08-22 提醒）
+            st.Last = Mk(true, C2(LineResult.Key.FreeTab + " ≥ 下界", false));
+            Check("⑤ 舌片自由段不过 → 指向「◇ 搜形状」（厚度调不动几何）",
+                  Flow.Next(st)?.CmdId == "shape.search", Flow.Next(st)?.Why ?? "");
+            st.Last = Mk(true, C2(LineResult.Key.DiscCover + "＋焊脚", false));
+            Check("⑥ 圆盘盖不住管孔 → 也指向「◇ 搜形状」",
+                  Flow.Next(st)?.CmdId == "shape.search", Flow.Next(st)?.Why ?? "");
+
+            // 几何 + 热电同时不过 ⇒ 先解决几何（厚度那条无论如何都白跑）
+            st.Last = Mk(true, C2(LineResult.Key.FreeTab + " ≥ 下界", false),
+                               C2(LineResult.Key.NetFlux + " 须为正", false));
+            Check("几何与热电同时不过 → 先指几何", Flow.Next(st)?.CmdId == "shape.search");
+
+            // 「无法判定」也不算过 —— 不能因为它没被判成 false 就放行到出图
+            st.Last = new()
+            { Ok = true, Converged = true, Checks = new[]
+              { new ConstraintOut { Name = LineResult.Key.FreeTab + " ≥ 下界",
+                                    Ok = true, Undetermined = true, Kind = CheckKind.Target } } };
+            Check("判据「无法判定」时不许指向出图",
+                  Flow.Next(st)?.CmdId != "export.page3dm", Flow.Next(st)?.CmdId ?? "(无)");
+
+            // 指的每一个命令都必须在 Flow 里登记（否则界面上根本没有那个按钮）
+            string[] pointed = { "core.runLine", "core.autoThick", "shape.search", "export.page3dm" };
+            var missing = pointed.Where(id => Flow.Commands.All(c => c.Id != id)).ToList();
+            Check("指路指到的命令都真实存在", missing.Count == 0,
+                  missing.Count == 0 ? string.Join("、", pointed) : "★ 不存在：" + string.Join("、", missing));
+        }
+
         Console.WriteLine();
         Console.WriteLine(fail == 0 ? "★ 全部通过" : $"✗ {fail} 项不过");
         Environment.ExitCode = fail;

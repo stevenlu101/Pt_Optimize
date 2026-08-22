@@ -359,6 +359,73 @@ public static class Flow
         new("7 数值", new[] { ChainId.A单段解析, ChainId.C整线耦合 }, ""),
     };
 
+    /// <param name="CmdId">该点的那个命令（Flow.Commands 里的 Id）。空串 = 没有下一步可指。</param>
+    /// <param name="Why">为什么是它 —— 一句话，直接显示给用户。</param>
+    public sealed record NextStep(string CmdId, string Why);
+
+    /// <summary>
+    /// 「我现在该点哪个按钮」。
+    ///
+    /// ★ 用户 2026-08-20 的原话是「工程师根本不知道自己目前在算什么」。
+    ///   阶段横幅、门禁说明、状态面板都在回答「**你在哪**」，
+    ///   却没有一处回答「**往哪走**」—— 这条补的就是后者。
+    ///
+    /// ⚠⚠ **只读现成状态，绝不产生新判据**（铁律一）。
+    ///   下面每一个分支的依据都来自 <see cref="FlowState"/> 已有的字段
+    ///   （Last / Fresh / AllOk / Converged），一个数都不重算。
+    ///   一旦这里自己算点什么，判据就有了第二个来源 —— 那是本项目连错五次的根源。
+    ///
+    /// ⚠ 故意**不做成「下一步」按钮直接执行**（2026-08-22 与用户议定）：
+    ///   ④ 会改你的输入、③ 要跑几十秒、⑤ 会写文件。一个按钮包住这些，
+    ///   等于把「我知道我在做什么」从工程师手里拿走 —— 而那正是要治的病。
+    ///   这里只指路，动作仍由人下。
+    /// </summary>
+    public static NextStep? Next(FlowState st)
+    {
+        // 正在算的时候不催 —— 状态面板那一行已经在说「正在算：…」
+        if (st.Running is not null) return null;
+
+        if (st.Last is null)
+            return new("core.runLine", "还没解过 —— 先解一次整线，才谈得上判据与出图");
+
+        if (!st.Last.Ok || !st.Last.Converged)
+            return new("core.runLine", "上次没收敛 ⇒ 那组数一个都不可引用 —— 重解一次");
+
+        // ⚠ 这一条必须排在 AllOk 前面：参数改过之后，AllOk 说的是**上一组参数**的事，
+        //   拿它去指路等于让人照着过期结论走下一步。
+        if (!st.Fresh)
+            return new("core.runLine", "参数在上次求解之后又动过了 —— 回 ③ 按现在这组重解");
+
+        if (!st.Last.AllOk)
+        {
+            // ★★ 分清「厚度能救」与「厚度救不了」（用户 2026-08-22 提醒补上搜形状）。
+            //
+            //   判据 ⑤ 舌片自由段、⑥ 圆盘盖得住管孔 是**纯几何**的：
+            //   它们只取决于盘径 / 舌长 / 舌端半宽，**与板厚无关** ——
+            //   「自动定厚」把厚度调到上限也过不了，只会白跑几分钟然后说还是不过。
+            //   这两条不过时该动的是形状 ⇒ 指向「◇ 搜形状」。
+            //
+            //   反过来，②′/②″/③/管J 是热-电耦合量，厚度正是它们的旋钮 ⇒ 指向「自动定厚」。
+            //
+            //   ⚠ 判据名一律走 LineResult.Key 常量，不写字符串字面量 ——
+            //     判据改名时编译期就断，而不是这条指路悄悄指错方向。
+            bool geomBlocked = st.Last.Checks.Any(c =>
+                (c.Kind is CheckKind.HardSafety or CheckKind.Target)
+                && (!c.Ok || c.Undetermined)
+                && (c.Name.StartsWith(LineResult.Key.FreeTab, StringComparison.Ordinal)
+                 || c.Name.StartsWith(LineResult.Key.DiscCover, StringComparison.Ordinal)));
+
+            if (geomBlocked)
+                return new("shape.search",
+                    "卡住的是**几何**判据（舌片自由段 / 圆盘盖住管孔）—— "
+                    + "厚度调不动它们，要改盘径与舌宽：点「◇ 搜形状」（几十分钟）");
+
+            return new("core.autoThick", "判据没全过，卡的是热-电量 —— 用「自动定厚」把厚度调到过");
+        }
+
+        return new("export.page3dm", "判据全过且是当前参数的解 —— 可以出图了");
+    }
+
     // ═══ 查询 ═════════════════════════════════════════════════════════════
 
     public static CommandSpec Cmd(string id)
