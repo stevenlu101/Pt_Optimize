@@ -75,6 +75,16 @@ public sealed class LineDesignPage : TabPage
     /// 在此之前的 ValueChanged/CellValueChanged 都是**框架在排版**，不是人在改。
     /// </summary>
     private bool _userReady;
+
+    /// <summary>
+    /// 另一个模式下那组值。<see cref="_tPlate"/> 在解析模式是**板厚 mm**、
+    /// 在 .3dm 模式是**厚度标度 k** —— 两个物理量共用一组控件，
+    /// 所以切模式时要整组换出去，不能让一个量的数字被当成另一个量。
+    /// 初值 1.0 = .3dm 模式的「按图纸原尺寸」。
+    /// </summary>
+    private readonly decimal[] _keepOther = { 1.0m, 1.0m, 1.0m, 1.0m };
+    /// <summary>上一次 SyncGeomSource 看到的模式，用来判「是不是刚切过来」。</summary>
+    private bool _lastAnalytic = true;
     private Snap? _solvedSnap;               // 上一次**真解**时的参数
     private LineResult? _solvedRes;
 
@@ -473,10 +483,24 @@ public sealed class LineDesignPage : TabPage
             : hasEntry
                 ? "读入口片 .3dm，反推出各级台阶厚度，「自动定厚」才能逐级优化。"
                 : "请先选好**入口 .3dm** —— 要反推的就是那张图。";
-        for (int i = 0; i < _tPlate.Length; i++)
+        // ★★★ 同一组控件在两个模式下**是两个物理量**：
+        //     解析模式 = 板厚 mm；.3dm 模式 = 厚度**标度 k**（无量纲，图纸整体 ×k）。
+        //
+        // ⚠ 旧写法只在「值 > 3」时重置为 1.0，理由大概是「看着像厚度就重置」。
+        //   但薄板的厚度（0.5–2.5 mm）**恰好也像个合理的标度** ⇒ 一切就静默地错了：
+        //   实测（Pt_Heater3.3dm 走一遍）页面默认 0.516/0.855/0.776/0.426 被原样当标度，
+        //   1366.8 g 的图纸被缩成 874 g/片 —— **算的不是用户给的那张图**，
+        //   而输出照旧报「合计 5962 g」，看不出任何异样。
+        //   靠数值区分两个量，本来就分不开：0.9 既是合理的厚度也是合理的标度。
+        //
+        // ⇒ 两个量**各存各的**，切模式时整组交换。谁也不会被对方的值污染。
+        if (an != _lastAnalytic)
         {
-            _tPlate[i].DecimalPlaces = an ? 3 : 3;
-            if (!an && _tPlate[i].Value > 3m) _tPlate[i].Value = 1.0m;   // 标度从 1 起
+            for (int i = 0; i < _tPlate.Length; i++)
+            {
+                (_keepOther[i], _tPlate[i].Value) = (_tPlate[i].Value, _keepOther[i]);
+            }
+            _lastAnalytic = an;
         }
 
         // 几何来源变了 ⇒ 有些命令的「适不适用」跟着变 ⇒ 让 SyncGates 重算一遍。

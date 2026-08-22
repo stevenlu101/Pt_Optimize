@@ -197,6 +197,8 @@ public sealed class MainForm : Form
         right.FixedPanel = FixedPanel.Panel1;
 
         _stagePanel = new StagePanel(_flow);
+        // 指路不许指到用不了的命令上（.3dm 模式下的「◇ 搜形状」就是这种）
+        _stagePanel.ApplicableProbe = id => _linePage?.CommandApplicable(id) ?? true;
         _stagePanel.BypassRequested += s =>
         {
             _flow.Bypassed.Add(s);
@@ -382,7 +384,8 @@ public sealed class MainForm : Form
         bool busy = _flow.Running is not null;
 
         // 该点哪个 —— 规则在 Flow.Next，这里只负责把它画出来。
-        string nextId = Flow.Next(_flow)?.CmdId ?? "";
+        string nextId = Flow.Next(_flow,
+            id => _linePage?.CommandApplicable(id) ?? true)?.CmdId ?? "";
 
         if (_tabs.SelectedTab is { } tab && _stageOf.TryGetValue(tab, out var cur))
             _stagePanel.SetStage(cur);

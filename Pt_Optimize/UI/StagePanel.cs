@@ -135,6 +135,13 @@ public sealed class StagePanel : Panel
     public void SetStage(StageId s) { _stage = s; Refresh2(); }
 
     /// <summary>
+    /// 「这条命令此刻用不用得了」——由宿主（MainForm）注入，本面板不自己判。
+    /// 没注入时一律当可用（面板可以脱离 MainForm 单独构造，测试就这么用）。
+    /// </summary>
+    public Func<string, bool>? ApplicableProbe { get; set; }
+    private bool Applicable(string id) => ApplicableProbe?.Invoke(id) ?? true;
+
+    /// <summary>
     /// 去掉 Markdown 的 `**` 标记。
     ///
     /// ⚠ 这些文案是与判据 Note、页顶横幅**共用**的（一份文字四处显示），而那些地方走
@@ -218,11 +225,19 @@ public sealed class StagePanel : Panel
         // ── 下一步：我现在该点哪个按钮（规则在 Flow.Next，只读现成状态）
         //   ⚠ **必须放在所有分支之外**：头一版插进了 `if (locked)` 里面，
         //     于是在已解锁的 ③ 上根本不执行 —— 界面上只剩一小块空蓝底。
-        var ns = Flow.Next(_state);
+        var ns = Flow.Next(_state, Applicable);
         if (ns is null)
         {
             _nextCmd = "";
             _next.Visible = false;
+        }
+        else if (ns.CmdId.Length == 0)
+        {
+            // 有话要说、但**没有按钮可指**（例如 .3dm 模式下几何判据判不了，
+            // 要改形状得回 Rhino 改图）。这时只给说明，不给一个点不动的链接。
+            _nextCmd = "";
+            _next.Text = "下一步 → " + Plain(ns.Why);
+            _next.Visible = true;
         }
         else
         {

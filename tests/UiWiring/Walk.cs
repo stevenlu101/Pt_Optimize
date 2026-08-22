@@ -2,6 +2,7 @@
 using System.Linq;
 using System.Collections.Generic;
 using System.Reflection;
+using System.IO;
 using System.Windows.Forms;
 using PtOptimize.Core;
 using PtOptimize.UI;
@@ -92,6 +93,199 @@ static class Walk
             if (done()) return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// `--walk3dm &lt;file&gt;`：驱动 APP 走 **.3dm 任意形状**那条路，逐步把数抓下来。
+    /// 与 <see cref="Run"/> 同理 —— 走的是 APP 自己的方法，不是绕过界面直调内核。
+    /// </summary>
+    public static int Run3dm(string file)
+    {
+        Console.OutputEncoding = System.Text.Encoding.UTF8;
+        Application.EnableVisualStyles();
+
+        var main = new MainForm();
+        main.CreateControl();
+        var tabs = (TabControl)F(main, "_tabs")!;
+        var line = tabs.TabPages.OfType<LineDesignPage>().First();
+        var flow = (FlowState)F(main, "_flow")!;
+        typeof(Form).GetMethod("OnLoad", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(main, new object?[] { EventArgs.Empty });
+        Pump(1000);
+        void Force(Control c) { _ = c.Handle; foreach (Control k in c.Controls) Force(k); }
+        Force(main); Pump(200);
+        Set(line, "_userReady", true);
+
+        H("输入：" + file);
+        {
+            OK("文件在", File.Exists(file), new FileInfo(file).Length + " 字节");
+            OK("几何探针在（.3dm 那条路全靠它）", Geometry3dm.FindProbe() is not null,
+               Geometry3dm.FindProbe() ?? "★ 找不到 Pt_Optimize.Geom.exe");
+        }
+
+        // ── 切到 .3dm 模式，四片都用同一张图（APP 支持：「每片一个文件，可重复同一文件」）
+        H("① 切到 .3dm 模式并填图纸");
+        var files = (TextBox[])F(line, "_file3dm")!;
+        var layer = (TextBox)F(line, "_layer3dm")!;
+        {
+            Set(line, "_suppressAuto", true);
+            ((RadioButton)F(line, "_src3dm")!).Checked = true;
+            foreach (var t in files) t.Text = file;
+            layer.Text = "法兰";
+            Set(line, "_suppressAuto", false);
+            Call(line, "SyncGeomSource");
+            Pump(200);
+            OK("四片图纸都填上了", files.All(t => t.Text.Length > 0));
+            OK("解析形状专用的盘径/舌长/舌宽已被禁用（图纸给定，不是自由度）",
+               !((NumericUpDown)F(line, "_discD")!).Enabled
+               && !((NumericUpDown)F(line, "_tabLen")!).Enabled);
+            var an = (ToolStripButton)F(line, "_btnAnalyze")!;
+            Call(main, "SyncGates"); Pump(120);
+            OK("「分析几何变数」此时可用", an.Enabled, an.ToolTipText ?? "");
+            var sh = (ToolStripButton)F(line, "_btnShape")!;
+            OK("「◇ 搜形状」此时被禁（形状由图纸给定）", !sh.Enabled);
+
+            // ★★ 切到 .3dm 之后，_tPlate 的含义从**板厚 mm** 变成**厚度标度 k**。
+            //    实测过一次静默出错：页面默认 0.516/0.855/0.776/0.426（毫米）被原样
+            //    当成标度 ⇒ 1366.8 g 的图纸缩成 874 g/片，**算的不是用户给的那张图**，
+            //    而输出照报「合计 5962 g」。靠数值区分两个量本来就分不开
+            //    （0.9 既是合理厚度也是合理标度）⇒ 必须靠**模式切换**来换值。
+            var tp = (NumericUpDown[])F(line, "_tPlate")!;
+            var scales = tp.Select(x => (double)x.Value).ToArray();
+            OK("切到 .3dm 后厚度标度回到 1.0（图纸按原尺寸算）",
+               scales.All(v => Math.Abs(v - 1.0) < 1e-9),
+               string.Join("/", scales.Select(v => v.ToString("0.000")))
+               + (scales.All(v => Math.Abs(v - 1.0) < 1e-9) ? "" : "　★ 图纸被静默缩放了"));
+        }
+
+        // ── 分析几何变数
+        H("② 分析几何变数：把图纸反推成各级台阶");
+        {
+            var t0 = Environment.TickCount64;
+            Call(line, "AnalyzeShape");
+            Pump(500);
+            var box = (RichTextBox)F(line, "_out")!;
+            Console.WriteLine(Indent(box.Text, 46));
+            var levels = (double[][]?)F(line, "_levels");
+            OK("解析出了分级", levels is { Length: > 0 } && levels[0].Length > 0,
+               levels is null ? "★ 没有" : $"{levels[0].Length} 级：{string.Join("/", levels[0].Select(v => v.ToString("0.00")))}　{Environment.TickCount64 - t0} ms");
+            if (levels is { Length: > 0 })
+            {
+                // ⚠ 厚度场里有孤立格（实测：3/2/1 mm 之外还有**一个**格子是 2.5 mm）。
+                //   若它被当成一级，逐级定厚就会去优化一个 0.25 mm² 的像素。
+                OK("分级数不荒谬（≤ 6）", levels[0].Length <= 6, $"{levels[0].Length} 级");
+                OK("每一级都是正厚度", levels[0].All(v => v > 1e-9),
+                   string.Join("/", levels[0].Select(v => v.ToString("0.000"))));
+            }
+            var lockBoxes = (System.Collections.Generic.List<CheckBox>?)F(line, "_lockBoxes");
+            OK("各级的「锁定」勾选框已生成", lockBoxes is { Count: > 0 },
+               $"{lockBoxes?.Count ?? 0} 个");
+        }
+
+        // ── 核算整线
+        H("③ 核算整线（.3dm 几何）");
+        LineResult? r;
+        {
+            var t0 = Environment.TickCount64;
+            Call(line, "RunAsync", false, false);
+            bool fin = Wait(() => F(line, "_cts") is null, 900_000);
+            OK("在超时内跑完", fin, $"{(Environment.TickCount64 - t0) / 1000.0:0.0} s");
+            r = (LineResult?)F(line, "LastResult");
+            var box = (RichTextBox)F(line, "_out")!;
+            if (r is null)
+            {
+                OK("有结果", false, "★ 没有结果对象 —— 下面是输出框说了什么");
+                Console.WriteLine(Indent(box.Text, 40));
+                return Done();
+            }
+            Console.WriteLine($"  收敛 {(r.Converged ? "✓" : "✗")}　Ok={r.Ok}　{r.Message}");
+            Console.WriteLine();
+            Console.WriteLine($"  {"判据",-26}{"实际",12}{"限值",12}  判定");
+            foreach (var c in r.Checks)
+                // NaN 直接进格式串会打出「非數值」（还跟区域设置走）——
+                // APP 的判据表写的是「达不到」，这里对齐它，别另造一套。
+                Console.WriteLine($"  {c.Name,-26}"
+                                + $"{(double.IsNaN(c.Actual) ? "达不到" : c.Actual.ToString("0.000")),12}"
+                                + $"{c.Limit,12:0.000}  "
+                                + (c.Kind == CheckKind.Reference ? "—（参考）"
+                                   : c.Undetermined ? "⚠ 无法判定" : c.Ok ? "✓" : "✗"));
+            Console.WriteLine();
+            Console.WriteLine($"  合计铂重 {r.TotalMassG:0.0} g（管 {r.TubeMassG:0.0} + 法兰 {r.FlangeMassG:0.0}）");
+
+            OK("解出来了", r.Ok, r.Message);
+            OK("收敛", r.Converged);
+            OK("判据一条都没少", r.Checks.Length > 0, $"{r.Checks.Length} 条");
+            // ⚠ NaN 本身不是错 —— .3dm 模式下 ⑤⑥ 拿不到解析量，NaN + Undetermined
+            //   正是「无法判定」的正确表达。真正的错是 **NaN 却没标 Undetermined**：
+            //   那种会被当成一个数参与比较。
+            var nanNotMarked = r.Checks
+                .Where(c => c.Kind != CheckKind.Reference
+                         && double.IsNaN(c.Actual) && !c.Undetermined).ToArray();
+            OK("算出 NaN 的判据都标了「无法判定」", nanNotMarked.Length == 0,
+               nanNotMarked.Length == 0 ? "" : "★ 没标：" + string.Join("、", nanNotMarked.Select(c => c.Name)));
+            // ★ .3dm 模式下 ⑤⑥ 是解析闭式量，拿不到 ⇒ 应当报「无法判定」而**不是**悄悄通过
+            var geom = r.Checks.Where(c =>
+                c.Name.StartsWith(LineResult.Key.FreeTab, StringComparison.Ordinal)
+             || c.Name.StartsWith(LineResult.Key.DiscCover, StringComparison.Ordinal)).ToArray();
+            OK("⑤⑥ 两条几何判据仍在表里（不许消失）", geom.Length == 2,
+               string.Join("、", geom.Select(c => $"{c.Name}={(c.Undetermined ? "无法判定" : c.Actual.ToString("0.000"))}")));
+            OK("⑤⑥ 在 .3dm 模式下不冒充通过",
+               geom.All(c => c.Undetermined || !c.Ok || c.Kind == CheckKind.Reference)
+               || geom.All(c => !c.Undetermined),
+               string.Join("、", geom.Select(c => c.Undetermined ? "无法判定" : (c.Ok ? "过" : "不过"))));
+            if (r.Flanges.Length > 0)
+            {
+                double tmax = r.Flanges.Max(f => f.TMaxC);
+                double resid = r.Flanges.Max(f => Math.Abs(f.EnergyResidualW));
+                Console.WriteLine($"  最高温 {tmax:0.0} °C　能量残差 {resid:0.000} W");
+                OK("最高温未超铂熔点", tmax < Materials.PtMeltC, $"{tmax:0.0} °C");
+                // 容差按几何规模放宽：这张图的法兰面积是定案的四倍多，
+                // 残差 0.125 W 相对 71 W 的抽热是 0.2 % —— 不是发散。
+                // （--selfcheck B 段判发散用的是 50 W。）
+                OK("能量残差不发散（< 1 W）", resid < 1.0, $"{resid:0.000} W");
+            }
+            // ★ 关键：这个状态下「下一步」指向哪个按钮？它点得动吗？
+            Call(main, "SyncGates"); Pump(150);
+            // ⚠ 必须把**适用性**一起传进去 —— 与 MainForm/StagePanel 的调用方式一致。
+            //   不传就等于测了一条 APP 根本不走的路：头一版这么写，
+            //   于是报「指着一个用不了的按钮」，而 APP 里其实已经不指了。
+            bool App3(string id) => (bool)typeof(LineDesignPage).GetMethod("CommandApplicable",
+                BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public)!
+                .Invoke(line, new object[] { id })!;
+            var ns = Flow.Next(flow, App3);
+            if (ns is null) OK("给出了下一步", false, "★ 没有");
+            else
+            {
+                if (ns.CmdId.Length == 0)
+                {
+                    // 只给说明、不指按钮 —— .3dm 模式下几何判据判不了，要改形状得回 Rhino
+                    Console.WriteLine($"  下一步 →（只有说明，不指按钮）{ns.Why}");
+                    OK("没有可点的命令时，只给说明而不指一个灰按钮", true);
+                    OK("不是安静失败（报全过同时给荒谬的数）",
+                       !(r.Converged && r.AllOk && r.Flanges.Length > 0
+                         && r.Flanges.Max(f => f.TMaxC) > Materials.PtMeltC));
+                    return Done();
+                }
+                var spec = Flow.Cmd(ns.CmdId);
+                bool applicable = App3(ns.CmdId);
+                ToolStripButton? btn = null;
+                foreach (TabPage tp in tabs.TabPages)
+                    foreach (var ts in tp.Controls.OfType<ToolStrip>())
+                        foreach (var b in ts.Items.OfType<ToolStripButton>())
+                            if (b.Text == spec.Text) btn = b;
+                Console.WriteLine($"  下一步 → 「{spec.Text}」　适用={applicable}　"
+                                + $"可点={btn?.Enabled}　理由：{ns.Why}");
+                OK("「下一步」指的按钮在当前模式下**点得动**",
+                   applicable && btn?.Enabled == true,
+                   applicable ? "" : "★ 指着一个在本模式下用不了的按钮");
+            }
+
+            OK("不是安静失败（报全过同时给荒谬的数）",
+               !(r.Converged && r.AllOk && r.Flanges.Length > 0
+                 && r.Flanges.Max(f => f.TMaxC) > Materials.PtMeltC));
+        }
+
+        return Done();
     }
 
     public static int Run()

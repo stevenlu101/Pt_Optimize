@@ -407,7 +407,9 @@ public static class Flow
     ///   等于把「我知道我在做什么」从工程师手里拿走 —— 而那正是要治的病。
     ///   这里只指路，动作仍由人下。
     /// </summary>
-    public static NextStep? Next(FlowState st)
+    /// <param name="inapplicable">此刻**用不了**的命令 Id（几何来源不对等）。
+    /// 指路不许指到它们身上 —— 指着一个灰按钮说「点这个」比不指更糟。</param>
+    public static NextStep? Next(FlowState st, Func<string, bool>? applicable = null)
     {
         // 正在算的时候不催 —— 状态面板那一行已经在说「正在算：…」
         if (st.Running is not null) return null;
@@ -441,6 +443,15 @@ public static class Flow
                 && (!c.Ok || c.Undetermined)
                 && (c.Name.StartsWith(LineResult.Key.FreeTab, StringComparison.Ordinal)
                  || c.Name.StartsWith(LineResult.Key.DiscCover, StringComparison.Ordinal)));
+
+            // ⚠ .3dm 模式下「◇ 搜形状」**用不了**（形状由图纸给定，不是可搜索的自由度）。
+            //   而 ⑤⑥ 在那个模式下必然「无法判定」⇒ geomBlocked 恒真 ⇒
+            //   不加这一层，界面会稳定地指着一个**灰按钮**说「点这个」。
+            //   实测（Pt_Heater3.3dm 走一遍）：下一步 → ◇搜形状，适用=False 可点=False。
+            if (geomBlocked && applicable is not null && !applicable("shape.search"))
+                return new("", "几何判据在本模式下**判不了**（形状由 .3dm 给定）—— "
+                             + "⑤⑥ 要改盘径/舌长得回 Rhino 改图；"
+                             + "本程序能调的只有厚度，改完回 ③ 重解");
 
             if (geomBlocked)
                 return new("shape.search",

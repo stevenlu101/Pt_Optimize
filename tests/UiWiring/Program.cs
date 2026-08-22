@@ -52,6 +52,10 @@ class UiWiringTests {
         // `--walk`：①→⑤ 全程走通并逐步核对（用户 2026-08-21）。
         // 与接线测试分开跑：那个验「接线对不对」，这个验「整条流程跑得完、数对不对」。
         if (args.Contains("--walk")) { Environment.ExitCode = Walk.Run(); return; }
+        // `--walk3dm <file>`：走 .3dm 任意形状那条路
+        int i3 = Array.IndexOf(args, "--walk3dm");
+        if (i3 >= 0 && i3 + 1 < args.Length)
+        { Environment.ExitCode = Walk.Run3dm(args[i3 + 1]); return; }
 
         // ⚠ 输出强制 UTF-8：默认走控制台代码页（简中机器上是 GBK），而 ✓(U+2713)
         //   与 ✗(U+2717) 都不在 GBK 里 —— **两个都会变成同一个 `?`**，
