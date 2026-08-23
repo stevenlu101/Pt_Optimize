@@ -163,6 +163,26 @@ class UiWiringTests {
         Check("判据表含 ⑤ 自由段", html.Contains("⑤ 舌片自由段"));
         Check("判据表含 ⑥ 盘盖住孔", html.Contains("⑥ 圆盘盖得住管孔"));
         Check("按钮表含「◇ 搜形状」", html.Contains("◇ 搜形状"));
+        // ★★ 2026-08-23：说明书的「逐个按钮」表以前是**手写**的，而它自己的注释就警告过
+        //   「一旦落后，用户会去点一个不存在的按钮」——事实是它**已经落后了**：
+        //   新增的「另存为定案档」根本不在表里。现在改成从 Flow 生成，并在这里守住：
+        //   **Flow 里登记的每一个命令，说明书上都要出现。**
+        {
+            // ⚠ 必须**只在按钮表那一段里**找。头一版对全文搜，于是散文里提过的命令
+            //   也算「在表里」—— 注入「表里漏掉另存为定案档」竟然没红，
+            //   因为另一节的说明文字里也有这四个字。断言得守它自称要守的那块地方。
+            int tb = html.IndexOf("逐个按钮", StringComparison.Ordinal);
+            int te = tb >= 0 ? html.IndexOf("</table>", tb, StringComparison.Ordinal) : -1;
+            Check("找得到「逐个按钮」那张表", tb >= 0 && te > tb, $"{tb}..{te}");
+            string tbl = tb >= 0 && te > tb ? html[tb..te] : "";
+            var missingInDoc = Flow.Commands
+                .Where(c => !tbl.Contains(c.Text, StringComparison.Ordinal))
+                .Select(c => c.Text).ToList();
+            Check("Flow 登记的命令，**按钮表里**一个都不缺",
+                  tbl.Length > 0 && missingInDoc.Count == 0,
+                  missingInDoc.Count == 0 ? $"{Flow.Commands.Length} 条全在"
+                                          : "★ 表里没有：" + string.Join("、", missingInDoc));
+        }
         Check("按钮表已改名「导出本页 3DM」", html.Contains("导出本页 3DM"));
         Check("有形状体检那一节", html.Contains("形状体检"));
         Check("不再说「核算整线算的是另一片法兰」", !html.Contains("算的是另一片法兰"));
