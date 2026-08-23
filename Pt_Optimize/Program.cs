@@ -2440,7 +2440,7 @@ internal static class Program
                             FlangePlates = new[] { MkA2(0.5), MkA2(0.5), MkA2(0.5), MkA2(0.5) },
                             ClampTempC = new[] { -1.0, ctS2, ctS2, -1.0 }
                         };
-                        var rA2 = FlangeAutoSizer.SolveAuto(lcA2, MkA2,
+                        var rA2 = FlangeAutoSizer.SolveAuto(lcA2, (t, _) => MkA2(t),
                                       new[] { 0.5, 0.5, 0.5, 0.5 }, new FlangeAutoSizer.Options(),
                                       new SyncProgress<string>(_ => { }), default);
                         if (rA2.Line is not { Ok: true } lr6)
@@ -5316,7 +5316,7 @@ internal static class Program
                     var thin = fdE.TabThickMm.Select(v => Math.Max(floorE, v * 0.75)).ToArray();
                     var lcE = fdE.BuildCase(p, checkRamp: false);
                     lcE.FlangePlates = thin.Select(MkE).ToArray();
-                    var rE = FlangeAutoSizer.SolveAuto(lcE, MkE, thin,
+                    var rE = FlangeAutoSizer.SolveAuto(lcE, (t, _) => MkE(t), thin,
                                  new FlangeAutoSizer.Options(),
                                  new SyncProgress<string>(_ => { }), default);
                     if (rE.Line is not { Ok: true } lrE)
@@ -7041,7 +7041,7 @@ internal static class Program
                                         CheckRamp = false, SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
                                         FlangePlates = new[] { MkD(0.8), MkD(1.2), MkD(1.1), MkD(0.7) }
                                     };
-                                    var rD = FlangeAutoSizer.SolveAuto(lcD, MkD,
+                                    var rD = FlangeAutoSizer.SolveAuto(lcD, (t, _) => MkD(t),
                                                  new[] { 0.8, 1.2, 1.1, 0.7 },
                                                  new FlangeAutoSizer.Options { MinThickMm = tMin2 },
                                                  new SyncProgress<string>(_ => { }), default);
@@ -7162,7 +7162,7 @@ internal static class Program
                                     CheckRamp = false, SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
                                     FlangePlates = new[] { MkF3(0.8), MkF3(1.2), MkF3(1.1), MkF3(0.7) }
                                 };
-                                var rF3 = FlangeAutoSizer.SolveAuto(lcF3, MkF3,
+                                var rF3 = FlangeAutoSizer.SolveAuto(lcF3, (t, _) => MkF3(t),
                                               new[] { 0.8, 1.2, 1.1, 0.7 }, new FlangeAutoSizer.Options(),
                                               new SyncProgress<string>(_ => { }), default);
                                 if (rF3.Line is not { Ok: true } lr4) continue;
@@ -7255,7 +7255,7 @@ internal static class Program
                                 SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
                                 FlangePlates = new[] { MkS3(0.5), MkS3(0.9), MkS3(0.8), MkS3(0.45) }
                             };
-                            var rS3 = FlangeAutoSizer.SolveAuto(lcS3, MkS3, new[] { 0.5, 0.9, 0.8, 0.45 },
+                            var rS3 = FlangeAutoSizer.SolveAuto(lcS3, (t, _) => MkS3(t), new[] { 0.5, 0.9, 0.8, 0.45 },
                                           new FlangeAutoSizer.Options(),
                                           new SyncProgress<string>(_ => { }), default);
                             if (rS3.Line is not { Ok: true } lr3)
@@ -7321,7 +7321,7 @@ internal static class Program
                             SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
                             FlangePlates = new[] { MkT2(0.5), MkT2(0.9), MkT2(0.8), MkT2(0.45) }
                         };
-                        var rT2 = FlangeAutoSizer.SolveAuto(lcT2, MkT2, new[] { 0.5, 0.9, 0.8, 0.45 },
+                        var rT2 = FlangeAutoSizer.SolveAuto(lcT2, (t, _) => MkT2(t), new[] { 0.5, 0.9, 0.8, 0.45 },
                                       new FlangeAutoSizer.Options(),
                                       new SyncProgress<string>(_ => { }), default);
                         if (rT2.Line is not { Ok: true } lr2)
@@ -7652,7 +7652,7 @@ internal static class Program
                         SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
                         FlangePlates = new[] { MkG(0.5), MkG(0.9), MkG(0.8), MkG(0.45) }
                     };
-                    var rG = FlangeAutoSizer.SolveAuto(lcG, MkG, new[] { 0.5, 0.9, 0.8, 0.45 },
+                    var rG = FlangeAutoSizer.SolveAuto(lcG, (t, _) => MkG(t), new[] { 0.5, 0.9, 0.8, 0.45 },
                                 new FlangeAutoSizer.Options(),
                                 new SyncProgress<string>(_ => { }), default);
                     if (rG.Line is not { Ok: true } lr) { Console.WriteLine($"{g,7:0.0}   求解失败"); continue; }
@@ -7722,7 +7722,7 @@ internal static class Program
                                 SetpointC = setpS,
                                 FlangePlates = new[] { MkS(0.6), MkS(0.8), MkS(0.8), MkS(0.6) }
                             };
-                            var rS = FlangeAutoSizer.SolveAuto(lcS, MkS, new[] { 0.6, 0.8, 0.8, 0.6 },
+                            var rS = FlangeAutoSizer.SolveAuto(lcS, (t, _) => MkS(t), new[] { 0.6, 0.8, 0.8, 0.6 },
                                         new FlangeAutoSizer.Options(),
                                         new SyncProgress<string>(_ => { }), default);
                             if (rS.Line is not { Ok: true } lr) continue;
@@ -7749,6 +7749,139 @@ internal static class Program
                         $" mm　整线总铂 {best.mass:0} g（现状 7141 g，省 {(7141 - best.mass) / 7141 * 100:0.0} %）");
                 }
                 else Console.WriteLine("✗ 本轮形状库内无可行解 —— 需继续缩小或改电流。");
+                return;
+            }
+
+            // --cli --surrogate <file.3dm> [图层]   解析替身保真度
+            //
+            // 逐级定厚在 .3dm 上慢，是因为**每次评估都要起 Geom 子进程重算厚度场**。
+            // 解析替身能把它变成毫秒级 —— 前提是那片替身跟图纸是同一片板。
+            // 本命令就是量这件事，而且**故意做成一个独立命令**：
+            // 这个数必须先摆在人面前，再谈要不要让优化器用它。
+            if (args.Contains("--surrogate"))
+            {
+                int si = Array.IndexOf(args, "--surrogate");
+                string sf = si + 1 < args.Length && !args[si + 1].StartsWith("--")
+                            ? args[si + 1] : Find3dm("Pt_Heater.3dm");
+                string sl = si + 2 < args.Length && !args[si + 2].StartsWith("--")
+                            ? args[si + 2] : "法兰";
+
+                // --surrogate --selftest：闭环自证。解析板 → 厚度场 → 反推 → 替身 → 量，
+                // 残差应≈0。量尺若报不出「相同」，它报的「不同」就是不可证伪的。
+                if (args.Contains("--selftest"))
+                {
+                    Console.WriteLine("=== 替身量尺自证（不读图纸，纯闭环）===");
+                    var gp = new FlangePlate
+                    {
+                        HoleRadiusMm = 26, DiscRadiusMm = 60,
+                        TabEndXMm = -200, TabEndHalfWidthMm = 40, TabParallel = true,
+                        ThicknessMm = 3, ThickenedMm = 3, TabThicknessMm = 3,
+                        DiscStepRadiiMm = new[] { 36.0, 46.0 },
+                        DiscStepThicknessMm = new[] { 1.0, 2.0 },
+                        WeldFilletLegMm = 0,
+                    };
+                    var gf = AnalyticSurrogate.Rasterize(gp);
+                    var gs = PlateShapeAnalyzer.Analyze(gf);
+                    Console.WriteLine(PlateShapeAnalyzer.Format(gs));
+                    Console.WriteLine();
+                    var mA0 = FlangeMesher.Build(gp, 0, 2.0, 11.0, 50.0, 4.0);
+                    var mF0 = FlangeMesher.BuildFromField(gf, gs.HoleRadiusMm, 0, 2.0, 11.0, 50.0, 4.0);
+                    Console.WriteLine($"   原板网格   单元 {mA0.CellCount,6}　面积 {mA0.TotalArea,10:0.0}　体积 {mA0.VolumeMm3,10:0.0}");
+                    Console.WriteLine($"   厚度场网格 单元 {mF0.CellCount,6}　面积 {mF0.TotalArea,10:0.0}　体积 {mF0.VolumeMm3,10:0.0}");
+                    Console.WriteLine($"   厚度场自报 面积 {gf.AreaMm2:0.0}　体积 {gf.VolumeMm3:0.0}　切点 X {gp.Tangent().X:0.00}");
+                    Console.WriteLine($"   舌片半宽抽查 x=-100 → {gp.HalfWidth(-100):0.0}　x=-190 → {gp.HalfWidth(-190):0.0}");
+                    Console.WriteLine();
+                    var lvS = gs.Levels.Select(x => x.ThicknessMm).ToArray();
+                    var (_, fS, oS) = AnalyticSurrogate.BestFit(gs, gf, lvS);
+                    Console.WriteLine("   " + fS.Report());
+                    Console.WriteLine("   " + oS.Report());
+                    return;
+                }
+
+                // --surrogate --bench <3dm>：量「每评估一片法兰」两条路各多贵。
+                // 这是 ④ 慢不慢的**唯一**决定因素：一次整线解要评估几百上千片次。
+                if (args.Contains("--bench"))
+                {
+                    int bi = Array.IndexOf(args, "--surrogate");
+                    string bf = bi + 1 < args.Length && !args[bi + 1].StartsWith("--")
+                                ? args[bi + 1] : Find3dm("Pt_Heater.3dm");
+                    string bl = bi + 2 < args.Length && !args[bi + 2].StartsWith("--")
+                                ? args[bi + 2] : "法兰";
+                    Console.WriteLine("=== 每片法兰的评估成本 ===");
+                    var swW = System.Diagnostics.Stopwatch.StartNew();
+                    var bfield = Geometry3dm.LoadThickness(bf, bl, double.NaN, 0.5);
+                    swW.Stop();
+                    var bshape = PlateShapeAnalyzer.Analyze(bfield);
+                    Console.WriteLine($"   首次读厚度场（起 Geom 子进程）      {swW.ElapsedMilliseconds,7} ms");
+
+                    const int N = 5;
+                    var sw1 = System.Diagnostics.Stopwatch.StartNew();
+                    for (int q = 0; q < N; q++)
+                    {
+                        var tf = Geometry3dm.LoadThickness(bf, bl, double.NaN, 0.5);
+                        FlangeMesher.BuildFromField(tf, bshape.HoleRadiusMm, 0, 2.0, 11.0, 50.0, 4.0);
+                    }
+                    sw1.Stop();
+
+                    var blv = bshape.Levels.Select(x => x.ThicknessMm).ToArray();
+                    var bp = AnalyticSurrogate.Build(bshape, blv, tabParallel: true);
+                    var sw2 = System.Diagnostics.Stopwatch.StartNew();
+                    for (int q = 0; q < N; q++) FlangeMesher.Build(bp, 0, 2.0, 11.0, 50.0, 4.0);
+                    sw2.Stop();
+
+                    double a1 = sw1.Elapsed.TotalMilliseconds / N, a2 = sw2.Elapsed.TotalMilliseconds / N;
+                    Console.WriteLine($"   .3dm 路径：读场 + 建网格            {a1,7:0.0} ms/片");
+                    Console.WriteLine($"   解析路径：直接建网格                {a2,7:0.0} ms/片");
+                    Console.WriteLine($"   ⇒ 快 {a1 / Math.Max(1e-9, a2):0} 倍");
+                    Console.WriteLine();
+                    Console.WriteLine("   ★ 注意：.3dm 那条路里，**同一个文件被反复重读**——");
+                    Console.WriteLine("     文件自始至终没变，变的只是厚度标度（乘在读回来的场上）。");
+                    Console.WriteLine("     所以这笔开销不是「解析 vs 图纸」之争，是**纯粹的重复劳动**。");
+                    return;
+                }
+
+                Console.WriteLine("=== 解析替身保真度 ===");
+                Console.WriteLine("问的是一句话：拿解析形状去替这张图，优化器看到的还是同一片板吗？");
+                Console.WriteLine("比的是**电学三量**（净面积 / 电阻形状因子 / 峰值电流密度形状因子）——");
+                Console.WriteLine("轮廓像不像不算数，定尺寸器只通过这三个量看见板。");
+                Console.WriteLine();
+
+                var sfield = Geometry3dm.LoadThickness(sf, sl, double.NaN, 0.5);
+                var sshape = PlateShapeAnalyzer.Analyze(sfield);
+                Console.WriteLine(PlateShapeAnalyzer.Format(sshape));
+                Console.WriteLine();
+
+                var lvT0 = sshape.Levels.Select(x => x.ThicknessMm).ToArray();
+                var swS = System.Diagnostics.Stopwatch.StartNew();
+                var (bestPlate, bestFid, otherFid) = AnalyticSurrogate.BestFit(sshape, sfield, lvT0);
+                swS.Stop();
+
+                Console.WriteLine("── 两种舌片各量一遍（分析器量不出中段怎么收，所以不猜）");
+                Console.WriteLine("   " + bestFid.Report());
+                Console.WriteLine("   " + otherFid.Report());
+                Console.WriteLine($"   量这两遍共用时 {swS.ElapsedMilliseconds} ms"
+                                  + " —— 保真门比它守护的那次求解便宜五个数量级");
+                Console.WriteLine();
+
+                Console.WriteLine("── 结论");
+                if (bestFid.Blockers.Count > 0)
+                {
+                    foreach (var b in bestFid.Blockers) Console.WriteLine("   ✗ " + b);
+                    Console.WriteLine("   ⇒ **结构性差异，不看残差**：数字碰巧接近也不能用。");
+                    Console.WriteLine("     替身缺的那部分材料不在几何里，优化器给出的厚度是针对另一片板的。");
+                }
+                else if (bestFid.Worst > 0.02)
+                    Console.WriteLine($"   ✗ 最差一项差 {bestFid.Worst * 100:0.0} %（限 2.0 %）⇒ 不够像，不能替。");
+                else
+                    Console.WriteLine($"   ✓ 最差一项差 {bestFid.Worst * 100:0.0} %（限 2.0 %）⇒ 可以替。");
+                Console.WriteLine();
+                Console.WriteLine("   替身几何：盘 R" + $"{bestPlate.DiscRadiusMm:0.0}　孔 R{bestPlate.HoleRadiusMm:0.0}　"
+                                  + $"舌端 X{bestPlate.TabEndXMm:0.0}／半宽 {bestPlate.TabEndHalfWidthMm:0.0}　"
+                                  + $"外缘 {bestPlate.ThicknessMm:0.000}　舌 {bestPlate.TabThicknessMm:0.000}　"
+                                  + "阶梯 " + (bestPlate.DiscStepRadiiMm.Length == 0 ? "无"
+                                      : string.Join("、", bestPlate.DiscStepRadiiMm.Zip(
+                                          bestPlate.DiscStepThicknessMm,
+                                          (r, t) => $"r≤{r:0.0}→{t:0.000}"))));
                 return;
             }
 

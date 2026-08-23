@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 
 namespace PtOptimize.Core;
 
@@ -279,8 +279,26 @@ public sealed class FlangePlate
         return wt + (TabEndHalfWidthMm - wt) * u;
     }
 
+    /// <summary>
+    /// (x, z) 处有没有料。**全项目只此一处** —— <see cref="FlangeMesher.Build"/> 也调它。
+    ///
+    /// ★★★★★ 这里曾少一句 x 越界判断（2026-08-23 修）：
+    ///   原式 `|z| ≤ HalfWidth(x) && r ≥ 孔半径`，而 <see cref="HalfWidth"/> 在 x 出了
+    ///   [舌尖, 盘外缘] 之后返回 **0** ⇒ `|z| ≤ 0` 在 **z 恰好为 0** 时成立 ⇒
+    ///   **沿 z=0 这条轴线，板外任意远都被判成有料**。
+    ///
+    ///   为什么一直没被发现：<see cref="PlateCurrent2D.Solve"/> 的图幅只往外放一格，
+    ///   多出来的是两个悬空单元，不通电流、看不出来。
+    ///   而 FlangeMesher 里另写了一份**先排除 x 越界**的同名判断 —— 它是对的，
+    ///   于是网格一直正常。两处答案不一致，靠「用错的那处影响小」蒙混了过去。
+    ///   把解析板栅格化成厚度场（图幅留白 4 mm）时它才现形：
+    ///   反推出来的盘外半径 R60→R64、舌长 200→204、**舌端半宽 40→0**。
+    /// </summary>
     public bool Inside(double x, double z)
-        => Math.Abs(z) <= HalfWidth(x) && x * x + z * z >= HoleRadiusMm * HoleRadiusMm;
+    {
+        if (x < TabTipXMm || x > DiscRadiusMm) return false;
+        return Math.Abs(z) <= HalfWidth(x) && x * x + z * z >= HoleRadiusMm * HoleRadiusMm;
+    }
 }
 
 public static class PlateCurrent2D

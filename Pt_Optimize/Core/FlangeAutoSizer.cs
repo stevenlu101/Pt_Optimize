@@ -167,7 +167,7 @@ public static class FlangeAutoSizer
     /// </summary>
     private const double HalfQuantMm = 0.005;
 
-    public static Result SolveAuto(LineCase baseCase, Func<double, FlangePlate>? makePlate,
+    public static Result SolveAuto(LineCase baseCase, Func<double, int, FlangePlate>? makePlate,
                                    double[] initialThicknessMm, Options? opt = null,
                                    IProgress<string>? progress = null,
                                    CancellationToken cancel = default,
@@ -275,7 +275,7 @@ public static class FlangeAutoSizer
     /// 复核后**重新判定**是否达标：以全精度下的实际管根温差为准，
     /// 而不是沿用搜索期的判定。两者不一致时明说，不掩盖。
     /// </summary>
-    private static void Verify(LineCase baseCase, Func<double, FlangePlate>? makePlate,
+    private static void Verify(LineCase baseCase, Func<double, int, FlangePlate>? makePlate,
                                Result res, Options opt,
                                IProgress<string>? progress, CancellationToken cancel)
     {
@@ -284,7 +284,7 @@ public static class FlangeAutoSizer
 
         var lc = CloneCase(baseCase);            // 不套搜索期的降精度设置
         if (makePlate is not null)
-            lc.FlangePlates = res.ThicknessMm.Select(makePlate).ToArray();
+            lc.FlangePlates = res.ThicknessMm.Select((t, j) => makePlate(t, j)).ToArray();
         else
         {
             lc.FlangeFile3dm = baseCase.FlangeFile3dm;
@@ -324,7 +324,7 @@ public static class FlangeAutoSizer
     /// <paramref name="makePlate"/> 把厚度变成几何 —— 由调用方提供，
     /// 于是本类不关心形状（解析圆盘/舌片、阶梯、乃至 .3dm 的厚度标度都行）。
     /// </summary>
-    public static Result Solve(LineCase baseCase, Func<double, FlangePlate>? makePlate,
+    public static Result Solve(LineCase baseCase, Func<double, int, FlangePlate>? makePlate,
                                double[] initialThicknessMm, Options? opt = null,
                                IProgress<string>? progress = null,
                                CancellationToken cancel = default)
@@ -354,7 +354,7 @@ public static class FlangeAutoSizer
             if (opt.SearchCoupleRounds > 0) lc.CoupleMaxRounds = opt.SearchCoupleRounds;
             if (opt.SearchCoupleTolK > 0) lc.CoupleTolK = opt.SearchCoupleTolK;
             if (makePlate is not null)
-                lc.FlangePlates = t.Select(makePlate).ToArray();      // 解析几何：t 就是厚度
+                lc.FlangePlates = t.Select((v, j) => makePlate(v, j)).ToArray();   // 解析几何：t 就是厚度
             else
             {
                 lc.FlangeFile3dm = baseCase.FlangeFile3dm;            // .3dm：t 是厚度**标度**
@@ -526,6 +526,35 @@ public static class FlangeAutoSizer
         return res;
     }
 
+    /// <summary>
+    /// 第 <paramref name="plateIdx"/> 片在外层标量 <paramref name="k"/> 下的各级厚度
+    /// = 该片的**基准级厚** × 当前各级比例 × k。
+    ///
+    /// 抽出来单放，是因为它同时踩过两个雷，而两个都**不会报错**：
+    ///   ① 片序号原来靠闭包里的 `callIdx++ % 片数` 推 —— 只在「每轮恰好按序调 nf 次」
+    ///      时才对，多调少调一次，第 2 片就拿到第 3 片的级配比；
+    ///   ② 基准级厚原来一律取 `levelThicknessMm[0]`（第 0 片的）——
+    ///      逐片基准不同时，其余三片全在按第 1 片的基准算。
+    /// 两个雷都只会让优化器对着**别的板**求解，输出照样是一张漂亮的判据表。
+    /// 循环本身要跑真解、验不动；这个函数是纯的，一条断言几微秒。
+    /// </summary>
+    public static double[] LevelThicknessFor(IReadOnlyList<double[]> baseLevels,
+                                             IReadOnlyList<double[]> scale,
+                                             int plateIdx, double k)
+    {
+        if (baseLevels.Count == 0 || scale.Count == 0)
+            throw new ArgumentException("基准级厚或各级比例是空的 —— 造不出这一片");
+        var lv = scale[Math.Clamp(plateIdx, 0, scale.Count - 1)];
+        var bs = baseLevels[Math.Clamp(plateIdx, 0, baseLevels.Count - 1)];
+        if (bs.Length != lv.Length)
+            throw new ArgumentException(
+                $"第 {plateIdx + 1} 片：基准 {bs.Length} 级、比例 {lv.Length} 级，对不上 —— " +
+                "对不上就别凑，凑出来的是另一片板的厚度");
+        var th = new double[lv.Length];
+        for (int m = 0; m < lv.Length; m++) th[m] = bs[m] * lv[m] * k;
+        return th;
+    }
+
     /// <summary>残差走势。两种「没到」要给**相反**的建议，所以必须分开。</summary>
     public enum Trend
     {
@@ -591,7 +620,21 @@ public static class FlangeAutoSizer
     /// </param>
     /// <param name="makePlateByLevel">
     /// 解析几何的逐级构造器：给一组各级厚度，返回 FlangePlate（用 DiscStepRadii/Thickness）。
-    /// 传了它就走**解析路径**（不经 Rhino，快一个量级）；为 null 则走 .3dm + 厚度标度。
+    /// 传了它，搜索期就走**解析路径**；为 null 则走 .3dm + 厚度标度。
+    ///
+    /// ⚠ 这里原本写着「不经 Rhino，**快一个量级**」—— **实测不成立，2026-08-23 更正**。
+    ///   那句话写在一段**从未被执行过**的代码上（此前没有任何调用方传这个参数）。
+    ///   实测（Pt_Heater3.3dm，`--surrogate --bench`）：
+    ///     · 首次读厚度场 11.4 s（起 Geom 子进程），但
+    ///       <see cref="Geometry3dm.LoadThickness"/> **本来就带缓存**
+    ///       （同一「文件|图层|平面|步长」只提一次）⇒ 子进程每个文件只起一次，不是每次评估。
+    ///     · 之后每片：.3dm 读缓存 + 建网格 3.1 ms，解析直接建网格 2.7 ms —— **只差 13 %**。
+    ///   而一次整线解要跑几百轮耦合场解，几何这一步本来就微不足道。
+    ///   ⇒ 传它**几乎不会让 ④ 变快**。它的真正用处是给纯解析算例一条不碰图纸的路。
+    ///   ④ 在大几何上慢，原因在别处（空转的迭代与升级，见本文件的三处不动点/极限环判据）。
+    ///
+    /// ⚠ 传了它也只影响**搜索期**：全精度复核在 baseCase 指着 .3dm 时一律回到原图纸，
+    ///   所以报出去的数始终是图纸的数。
     /// </param>
     public static Result SolveByLevel(LineCase baseCase, double[][] levelThicknessMm,
                                       Options? opt = null, IProgress<string>? progress = null,
@@ -631,19 +674,23 @@ public static class FlangeAutoSizer
             //   于是要么白等，要么中途掐掉一个本来快好了的解。
             progress?.Report($"第 {round + 1}/{outerRounds} 轮 · 外层：调整每片整体厚度…"
                              + $"（已用 {clock.Elapsed.TotalMinutes:0.0} 分）");
-            Func<double, FlangePlate>? mk = null;
+            Func<double, int, FlangePlate>? mk = null;
             if (makePlateByLevel is not null)
             {
-                // 解析路径：外层的标量 k 乘在**当前各级比例**上，构造该片几何
+                // 解析路径：外层的标量 k 乘在**当前各级比例**上，构造第 j 片的几何。
+                //
+                // ★★★★★ 片序号原来是靠一个**有状态计数器** `callIdx++ % 片数` 推出来的
+                //   （2026-08-23 换掉）。它只在「每一轮恰好按序调 nf 次」时才对 ——
+                //   Solve 里的 `t.Select(makePlate)` 碰巧就是这样，所以它一直是**巧合成立**。
+                //   任何一处多调或少调一次，第 2 片就会拿到第 3 片的级配比：
+                //   不抛异常、不报错，只是给出一组针对别的板算出来的厚度。
+                //   这段代码从来没被执行过，所以这个雷一直没响。
+                //   ⇒ 序号改成由调用方显式传入，counter 这个东西根本不该存在。
+                //
+                // 另修：原式对所有片都用 `levelThicknessMm[0]`（第 0 片的基准级厚），
+                //   逐片基准不同时会静默取错。现在按 j 取。
                 var snap = scale.Select(a => (double[])a.Clone()).ToArray();
-                int callIdx = 0;
-                mk = k =>
-                {
-                    var lv = snap[Math.Min(callIdx++ % Math.Max(1, snap.Length), snap.Length - 1)];
-                    var th = new double[lv.Length];
-                    for (int m = 0; m < lv.Length; m++) th[m] = levelThicknessMm[0][m] * lv[m] * k;
-                    return makePlateByLevel(th);
-                };
+                mk = (k, j) => makePlateByLevel(LevelThicknessFor(levelThicknessMm, snap, j, k));
             }
             last = SolveAuto(lcBase, mk, overall, opt, progress, cancel, 4, verify: false);
             if (last.Line is null) return last;
@@ -739,13 +786,26 @@ public static class FlangeAutoSizer
         var lcFinal = CloneCase(baseCase);
         lcFinal.LevelThicknessMm = levelThicknessMm;
         lcFinal.LevelScale = scale;
-        if (makePlateByLevel is not null)
+        // ★★★★★ 搜索可以用替身，**复核必须回到原图**（2026-08-23）。
+        //
+        // 替身的用处只有一个：让每次评估从「起 Geom 子进程重算厚度场」变成毫秒级，
+        // 好把方向找出来。但它跟图纸有百分之几的差 —— 报出去的数若也来自替身，
+        // 就成了「解的是 A、**报的**也是 A」，而工程师会拿这个数去出图、去落档。
+        //
+        // ⇒ baseCase 指着 .3dm 时，这一步**不塞 FlangePlates**：
+        //   CloneCase 已经把 FlangeFile3dm 与各级标度带过来了，
+        //   于是复核走的是真图纸那条路，报出来的是图纸的数。
+        bool baseIs3dm = baseCase.FlangeFile3dm is { Length: > 0 }
+                         && baseCase.FlangeFile3dm.Any(x => !string.IsNullOrWhiteSpace(x));
+        if (makePlateByLevel is not null && !baseIs3dm)
             lcFinal.FlangePlates = Enumerable.Range(0, nf).Select(j =>
             {
                 var th = new double[scale[j].Length];
                 for (int m = 0; m < th.Length; m++) th[m] = levelThicknessMm[j][m] * scale[j][m];
                 return makePlateByLevel(th);
             }).ToArray();
+        else if (makePlateByLevel is not null)
+            progress?.Report("全精度复核回到**原图纸**几何（替身只用来搜方向）");
         try
         {
             var verify = LineRunner.Run(lcFinal, progress, cancel);

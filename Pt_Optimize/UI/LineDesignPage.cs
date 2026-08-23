@@ -156,6 +156,18 @@ public sealed class LineDesignPage : TabPage
     /// 那是**诚实的**：还没告诉过程序这张图长什么样。
     /// </summary>
     private PlateShapeAnalyzer.Shape? _shape;
+
+    /// <summary>
+    /// 「分析几何变数」时量出来的**解析替身保真度**。null = 还没分析过。
+    ///
+    /// 替身是给 ④ 提速用的：逐级定厚在 .3dm 上每次评估都要起 Geom 子进程重算厚度场，
+    /// 换成解析形状就是毫秒级。但只有量出来足够像才准用 —— 详见
+    /// <see cref="AnalyticSurrogate"/>。这个数**要显示给工程师**，
+    /// 因为「④ 为什么这么慢」的答案就在里面。
+    /// </summary>
+    private AnalyticSurrogate.Fidelity? _surrFid;
+    /// <summary>替身选的是等宽舌还是梯形舌（由量出来的残差决定，不是猜）</summary>
+    private bool _surrTabParallel = true;
     private double[][]? _levelScale;
     /// <summary>各级的「锁定」勾选框（解析几何变数后动态生成）</summary>
     private readonly List<CheckBox> _lockBoxes = new();
@@ -1690,8 +1702,19 @@ public sealed class LineDesignPage : TabPage
                     //   ⇒ 用完必须看判据表，尤其 ②′ 净流入是不是仍为正。
                     var lvl = _levels;
                     var lockMask = LockedMask();
+
+                    // ★ 解析替身：量过、且量出来够像，才拿它搜方向（每次评估从分钟级变毫秒级）。
+                    //   量不过就传 null —— 回到逐次重算厚度场那条慢路，慢总比算错强。
+                    //   ⚠ 不论走哪条，SolveByLevel 的**全精度复核都回到原图纸**，
+                    //     所以报出去的数始终是图纸的数（见该处注释）。
+                    Func<double[], FlangePlate>? mkLevel = null;
+                    if (_shape is { } shp && _surrFid is { } fid && AnalyticSurrogate.Usable(fid))
+                    {
+                        bool par = _surrTabParallel;
+                        mkLevel = th => AnalyticSurrogate.Build(shp, th, par);
+                    }
                     var r = await Task.Run(() => FlangeAutoSizer.SolveByLevel(
-                        lc, lvl, new FlangeAutoSizer.Options(), prog, ct, 6, lockMask), ct);
+                        lc, lvl, new FlangeAutoSizer.Options(), prog, ct, 6, lockMask, mkLevel), ct);
                     _levelScale = r.LevelScale;
                     // ⚠ 这是**程序**在把刚解出来的厚度写回控件。不闭掉自动重算的话，
                     //   「自动定厚」一结束就会立刻再排一次整线重算 —— 算的还是它自己刚给的答案。
@@ -2230,9 +2253,38 @@ public sealed class LineDesignPage : TabPage
             _levels = Enumerable.Range(0, 4).Select(_ => (double[])lv.Clone()).ToArray();
             _levelScale = null;
             BuildLockBoxes(sh);
+
+            // ── 顺手量一下解析替身像不像（毫秒级，比它省下的那次求解便宜五个数量级）
+            string surrNote;
+            try
+            {
+                var (_, fid, _) = AnalyticSurrogate.BestFit(sh, f, lv);
+                _surrFid = fid; _surrTabParallel = fid.TabParallel;
+                surrNote = AnalyticSurrogate.Usable(fid)
+                    ? "→ **解析替身可用**（" + fid.Report() + "）"
+                      + Environment.NewLine
+                      + "   ⇒ 「自动定厚」将在替身上搜方向，**每次评估从分钟级变毫秒级**；"
+                      + Environment.NewLine
+                      + "     最终解仍回到**原图纸**几何上全精度复核，报出来的是图纸的数。"
+                    : "→ **解析替身不可用**，「自动定厚」只能逐次重算厚度场（慢）。原因："
+                      + Environment.NewLine
+                      + (fid.Blockers.Count > 0
+                         ? "     · " + string.Join(Environment.NewLine + "     · ", fid.Blockers)
+                           + Environment.NewLine
+                           + "     结构性差异不看残差：缺的那部分材料不在解析几何里，"
+                           + "数字碰巧接近也不代表是同一片板。"
+                         : $"     · 电学差最大 {fid.Worst * 100:0.0} %，超过 {AnalyticSurrogate.Tol * 100:0.0} % 的界"
+                           + Environment.NewLine + "     " + fid.Report());
+            }
+            catch (Exception exS)
+            {
+                _surrFid = null;
+                surrNote = "→ 替身保真度没量成：" + exS.Message + "　⇒ 「自动定厚」按慢路径走（保守）。";
+            }
+
             _out.Text = PlateShapeAnalyzer.Format(sh) + Environment.NewLine
                       + $"→ 已记下 {lv.Length} 级厚度，「自动定厚」将让优化器自行决定各级比例。"
-                      + Environment.NewLine
+                      + Environment.NewLine + surrNote + Environment.NewLine
                       + "来源：" + src + Environment.NewLine + Environment.NewLine + _out.Text;
             _status.Text = "已解析";
         }

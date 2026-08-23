@@ -1445,6 +1445,32 @@ class UiWiringTests {
                         BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(lp3, null);
                     Pump(300);
                     Check("分析之后这一位落下", !fl.GeomAnalysisPending);
+
+                    // ── 解析替身的保真门（2026-08-23）
+                    //
+                    // ④ 可以在解析替身上搜方向。Pt_Heater3 这张图**开了 4 个槽**，
+                    // 而 FlangePlate 没有槽这个概念 ⇒ 替身是实心的、电流不用绕行，
+                    // 局部过热会被系统性地算轻。这种情况必须**拒绝**，
+                    // 而不是「残差看着还行就用」——缺的材料不在几何里，残差小是巧合。
+                    {
+                        var fidO = F(lp3, "_surrFid");
+                        Check("分析时顺手量了替身保真度", fidO is not null,
+                              fidO is null ? "★ 没量 ⇒ ④ 无从判断能不能用替身" : "");
+                        if (fidO is AnalyticSurrogate.Fidelity fid3)
+                        {
+                            Check("这张图上替身被**拒绝**", !AnalyticSurrogate.Usable(fid3),
+                                  AnalyticSurrogate.Usable(fid3)
+                                      ? "★ 有槽的图纸却放行了替身 ⇒ 解的是另一片板" : fid3.Report());
+                            Check("拒绝的理由是结构性的（开槽），不是残差", fid3.Blockers.Count > 0,
+                                  string.Join("；", fid3.Blockers));
+                            Check("量尺读出了真实差距（不是恒 0）", fid3.Worst > 1e-6,
+                                  $"最差 {fid3.Worst * 100:0.0} %");
+                        }
+                        var outT = ((RichTextBox)F(lp3, "_out")!).Text;
+                        Check("输出框把「替身不可用」说给人看", outT.Contains("解析替身不可用"),
+                              "★ 只在内部拦掉、不告诉人，等于让人猜 ④ 为什么慢");
+                        Check("并且说了是开槽的缘故", outT.Contains("开槽"));
+                    }
                     var n2 = Flow.Next(fl, AppL);
                     Check("分析之后不再指「分析几何变数」", n2?.CmdId != "geom.analyze",
                           n2?.CmdId ?? "(无)");

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -215,13 +215,11 @@ public static class FlangeMesher
             for (int j = 0; j < nz; j++)
             { nodeId[i, j] = m.Nodes.Count; m.Nodes.Add(new Vec3(xs[i], yPlane, zs[j])); }
 
-        // 材料内判据：在轮廓内且不在管孔内
-        bool Inside(double x, double z)
-        {
-            if (x < g.TabTipXMm || x > g.DiscRadiusMm) return false;
-            if (Math.Abs(z) > g.HalfWidth(x)) return false;
-            return x * x + z * z >= g.HoleRadiusMm * g.HoleRadiusMm;
-        }
+        // 材料内判据：只此一处，见 FlangePlate.Inside。
+        // 这里原本另写了一份 —— 两份逻辑相同，但只有这一份带 x 越界判断，
+        // 那一份少了，于是板外 z=0 轴线被判成有料。同一个判断写两遍，
+        // 迟早有一遍是错的，而且错的那遍会因为「影响小」活很久。
+        bool Inside(double x, double z) => g.Inside(x, z);
 
         for (int i = 0; i < nx - 1; i++)
             for (int j = 0; j < nz - 1; j++)
