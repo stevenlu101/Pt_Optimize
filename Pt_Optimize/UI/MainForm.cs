@@ -230,6 +230,16 @@ public sealed class MainForm : Form
         {
             if (_flow.Running is null) return;
             e.Cancel = true;
+            // ⚠ 只 e.Cancel 就是「点了没反应」——本文件 SyncGates 那段注释点名批过这一类。
+            //   所以拦下的同时必须当场说清楚：气泡出现在**点击处**（不抢状态面板的进度文字），
+            //   2.5 秒自己消失；同时把「取消」闪两下 —— 那是唯一能让他离开的按钮。
+            var pt = _tabs.PointToClient(Cursor.Position);
+            _blockTip.ToolTipTitle = "正在算，先取消才能换页";
+            _blockTip.Show($"当前在跑：{_flow.Running}"
+                           + (_flow.RunningNote.Length > 0 ? $"（{_flow.RunningNote}）" : "")
+                           + Environment.NewLine
+                           + "换页会让你看不见自己在算什么 —— 判据表、指路、门禁显示的都是上一次的。",
+                           _tabs, pt.X + 12, pt.Y + 20, 2500);
             FlashCommand("取消");
         };
 
@@ -371,11 +381,22 @@ public sealed class MainForm : Form
     }
     private readonly Dictionary<StageId, Label> _stageHints = new();
 
+    /// <summary>拦下换页时那个说明气泡 —— 出现在点击处，2.5 秒自散，不占状态面板。</summary>
+    private readonly ToolTip _blockTip = new() { IsBalloon = true, UseAnimation = true };
+
     /// <summary>
     /// 按门禁刷新：锁住的那一格，**命令按钮禁用 + 页签标题加锁**，但**允许只读进入**。
     ///
     /// ⚠ 不用 TabControl.Selecting + e.Cancel 硬拦 —— 那个效果是「点了没反应」，
     ///   正是用户抱怨的那一类。让人进得去、看得见为什么锁着，才叫说明白了。
+    ///
+    /// ★ 与「有链在跑时禁止换页」是**两回事**，别混（2026-08-24 补）：
+    ///   · 本条说的是**门禁**——「这一格的前置条件还没满足」。那是个**静态**状态，
+    ///     人进去看清楚为什么锁着，比被挡在外面有用。
+    ///   · 那一条说的是**有活在跑**——「你现在离开，就看不见自己在算什么」。
+    ///     那是个**瞬时**状态，而且有唯一出口（取消）。这一种才该硬拦，
+    ///     并且拦的时候必须当场说明白（气泡 + 闪「取消」），不能只是点了没反应。
+    ///   两者都用 Selecting，但**条件不同、给的话也不同**。
     /// </summary>
     /// <summary>
     /// 让某个命令按钮闪两下 —— 用户点了「下一步」之后，把眼睛引到它上面。

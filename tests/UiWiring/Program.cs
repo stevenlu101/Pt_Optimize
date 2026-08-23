@@ -1312,6 +1312,94 @@ class UiWiringTests {
             Check("不算东西的命令不受互斥牵连", wronglyOff.Count == 0,
                   wronglyOff.Count == 0 ? "" : "★ 被误禁：" + string.Join("、", wronglyOff));
 
+            // ── 「我在算什么」这块面板：跑着的时候必须**说人话**（2026-08-24）
+            //
+            // 用户原话：「这类的指导链路对工程师使用非常重要，这是我们讨论很久才得到的结果，
+            // 必须强烈的保留」。在本项目里，「强烈保留」= 有一条会自己跑的断言。
+            //
+            // 病灶（用户抓图）：几十分钟的搜形状跑着，而面板上同时挂着
+            //   「正在算：C″ 形状搜索」 与 「✓ 已解（参数未变）」 与 一行判定
+            // —— 后两句讲的是**上一次**的解，读起来却像「算完了」。
+            // 更糟的是「下一步」那一行是**空的**：Flow.Next 在有链在跑时按设计不给命令
+            // （§28「别催」），但「不催」被做成了「什么都不说」⇒
+            // 指路链偏偏在最需要它的时候哑了。
+            {
+                var sp = F(main, "_stagePanel")!;
+                string L(string f) => ((Control)F(sp, f)!).Text;
+                Pump(200);
+
+                // ⚠ **不能用 Control.Visible 判**：本测试从不 Show 窗体，而 Visible 返回的是
+                //   **有效可见性**（任一祖先隐藏就是 false）⇒ 整棵树恒 false，
+                //   照它写会报「指路链哑了」而真机上好好的 —— HANDOVER 记过同族的坑
+                //   （句柄没建之前 .Text 赋值不触发 TextChanged）。看**内容**才作数。
+                Check("跑着的时候「下一步」那一行不是空的", L("_next").Length > 0,
+                      L("_next").Length > 0 ? "" : "★ 指路链在最需要它的时候哑了");
+                Check("它说得出现在能做什么（等 / 取消）",
+                      L("_next").Contains("取消") && L("_next").Contains("等它跑完"),
+                      L("_next").Replace(Environment.NewLine, " ⏎ "));
+                Check("并且说了为什么参数与页签被锁住",
+                      L("_next").Contains("锁住"), "");
+                Check("「已解」这一行标明是**上一次**的（否则和「正在算」自相矛盾）",
+                      L("_fresh").Length == 0 || L("_fresh").StartsWith("上一次：", StringComparison.Ordinal)
+                      || L("_fresh").Contains("还没解过") || L("_fresh").Contains("参数已改"),
+                      L("_fresh"));
+                Check("判定这一行同样标明是上一次的",
+                      L("_verdict").Length == 0
+                      || L("_verdict").StartsWith("上一次：", StringComparison.Ordinal),
+                      L("_verdict"));
+
+                // 自证：不在跑的时候**不该**带「上一次」前缀，否则上面几条只是恒真
+                flow.SetRunning(null);
+                Pump(200);
+                Check("不在跑时「已解」不带「上一次」前缀（自证）",
+                      !L("_fresh").StartsWith("上一次：", StringComparison.Ordinal), L("_fresh"));
+                Check("不在跑时判定不带「上一次」前缀（自证）",
+                      !L("_verdict").StartsWith("上一次：", StringComparison.Ordinal), L("_verdict"));
+                flow.SetRunning(ChainId.C定尺寸, "自动定厚");
+                Pump(200);
+            }
+
+            // ── 有链在跑时**禁止换页**（2026-08-24 用户提出）
+            //
+            // 用户原话：「④ 页点没算完(执行中)，禁止跳页（应该说只要有运算，禁止跳到任何页），
+            // 没有这限制工程师随便点，整条链路就乱（甚至不知道自己正在算什麽）」。
+            //
+            // 为什么这条要单独验：互斥只禁**按钮**，页签是另一条路。
+            // 在 ④ 点了「搜形状」（几十分钟）之后切到 ③ 改参数、再切到 ⑤ 看出图 ——
+            // 链还在跑，而每一页讲的都是**上一次**的事。
+            // ⚠ 与「门禁锁着的格子允许只读进入」是两回事：那是静态状态、进去看清楚更有用；
+            //   这是瞬时状态、且有唯一出口（取消）。
+            {
+                // ⚠⚠ **不能用 `tabs.SelectedIndex = n` 来验拦截**（2026-08-24 踩过）。
+                //   程序改 SelectedIndex 走的是 Win32 的 TCM_SETCURSEL，而它
+                //   **不发 TCN_SELCHANGING** ⇒ WinForms 的 Selecting 事件根本不触发。
+                //   照那样写，测试会报「跑着就跳过去了」，而真机上用户点页签**是拦得住的**
+                //   —— 一条**用户永远走不到的路**，两个方向都会骗人（§17′ 那次是同一族）。
+                //   ⇒ 直接触发处理器本身：拦不拦得住，看它有没有把 e.Cancel 置上。
+                var onSel = typeof(TabControl).GetMethod("OnSelecting",
+                                BindingFlags.NonPublic | BindingFlags.Instance)!;
+                bool Blocked()
+                {
+                    var ev = new TabControlCancelEventArgs(
+                        tabs.TabPages[0], 0, false, TabControlAction.Selecting);
+                    onSel.Invoke(tabs, new object[] { ev });
+                    return ev.Cancel;
+                }
+
+                Check("先造出「有链在跑」这个前提（否则下一条空转）", flow.Running is not null,
+                      flow.Running?.ToString() ?? "★ 没在跑，验不了拦截");
+                Check("有链在跑时换页被拦下", Blocked(),
+                      Blocked() ? "e.Cancel = true" : "★ 跑着还能换页 ⇒ 链路会乱");
+
+                // 自证：不在跑的时候必须放行，否则上一条只是「页签永远打不开」
+                flow.SetRunning(null);
+                Pump(50);
+                Check("不在跑的时候换页照常放行", !Blocked(),
+                      !Blocked() ? "" : "★ 没在跑也拦 ⇒ 上一条证明不了拦截");
+                flow.SetRunning(ChainId.C定尺寸, "自动定厚");   // 还原本节的在跑态
+                Pump(50);
+            }
+
             // ── 结束：必须恢复
             flow.SetRunning(null);
             Pump(200);

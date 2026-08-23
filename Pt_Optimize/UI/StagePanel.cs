@@ -176,22 +176,29 @@ public sealed class StagePanel : Panel
 
         // 结果新鲜度 —— 这一条是整块面板里最要紧的：
         // 「下面这些数是这组参数算出来的吗」
+        // ★ 有链在跑时，下面这两行讲的都是**上一次**的解 —— 必须说出来（2026-08-24）。
+        //   用户抓图里同时出现「正在算：C″ 形状搜索」和「✓ 已解（参数未变）」：
+        //   读起来像是「算完了」，其实那是上一轮的结论，新的还在跑。
+        //   同一块面板里两句话互相打架，就等于没说。
+        string past = _state.Running is null ? "" : "上一次：";
+
         if (_state.Last is null)
-            { _fresh.Text = "结果：还没解过"; _fresh.ForeColor = Color.DimGray; }
+            { _fresh.Text = _state.Running is null ? "结果：还没解过" : "结果：还没解过（正在算第一次）";
+              _fresh.ForeColor = Color.DimGray; }
         else if (!_state.Fresh)
             { _fresh.Text = "⚠ 参数已改 —— 下面的数是上一次的"; _fresh.ForeColor = Color.FromArgb(170, 90, 0); }
         else if (!_state.Last.Converged)
             { _fresh.Text = "✗ 上次解未收敛 —— 下面每个数都不可引用"; _fresh.ForeColor = Color.FromArgb(150, 20, 20); }
         else
-            { _fresh.Text = "✓ 已解（参数未变）"; _fresh.ForeColor = Color.FromArgb(20, 110, 40); }
+            { _fresh.Text = past + "✓ 已解（参数未变）"; _fresh.ForeColor = Color.FromArgb(20, 110, 40); }
 
         // 上次判定 —— 直接引用 LineResult 的单一来源访问器，不自己数
         if (_state.Last is { Ok: true } r)
         {
             var failed = r.Failed;
             _verdict.Text = failed.Length == 0
-                ? "判定：✓ 判据全过"
-                : $"判定：✗ {failed.Length} 条没过　" + string.Join("；", failed.Take(2))
+                ? past + "判定：✓ 判据全过"
+                : past + $"判定：✗ {failed.Length} 条没过　" + string.Join("；", failed.Take(2))
                   + (failed.Length > 2 ? " …" : "");
             _verdict.ForeColor = failed.Length == 0
                 ? Color.FromArgb(20, 110, 40) : Color.FromArgb(150, 20, 20);
@@ -226,7 +233,26 @@ public sealed class StagePanel : Panel
         //   ⚠ **必须放在所有分支之外**：头一版插进了 `if (locked)` 里面，
         //     于是在已解锁的 ③ 上根本不执行 —— 界面上只剩一小块空蓝底。
         var ns = Flow.Next(_state, Applicable);
-        if (ns is null)
+
+        // ★★★★★ 有链在跑时，Flow.Next 按设计**不给下一个命令**（UiWiring §28「别催」）——
+        //   跑着的时候催人去点下一个按钮是错的。但「不催」不等于**什么都不说**：
+        //   用户抓图里，几十分钟的搜形状跑着，而这一行是空的 ⇒
+        //   指路链偏偏在最需要它的时候哑了。
+        //   ⇒ 这一行改成说**现在能做什么**（只有两件事），并点名那个唯一的出口。
+        //   这不违反「别催」：它不指向下一阶段，它描述当下。
+        if (_state.Running is { } runNow)
+        {
+            _nextCmd = "";
+            _next.Text = $"正在算：{Plain(Flow.Chain(runNow).Name)}"
+                       + (_state.RunningNote.Length > 0 ? $"　{Plain(_state.RunningNote)}" : "")
+                       + Environment.NewLine
+                       + "　　现在只有两件事可做：**等它跑完**，或点那个已经变成「取消」的按钮。"
+                         .Replace("**", "")
+                       + Environment.NewLine
+                       + "　　跑着的时候参数与页签都锁住了 —— 免得算完之后分不清这张表是哪组参数的。";
+            _next.Visible = true;
+        }
+        else if (ns is null)
         {
             _nextCmd = "";
             _next.Visible = false;
