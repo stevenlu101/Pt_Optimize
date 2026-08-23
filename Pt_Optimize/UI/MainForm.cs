@@ -73,6 +73,13 @@ public sealed class MainForm : Form
         _grid.HelpVisible = true;
         _grid.Dock = DockStyle.Fill;
 
+        // ★★★★★ 参数表改一项 = 上一次的解不再新鲜（2026-08-24）。
+        //   此前这个事件**从来没被挂过** —— 详见 LineDesignPage.MarkParamsChanged 的说明：
+        //   改控温点/保温/牌号既不作废解、也不改 CurrentSnap（它只记 6 个页面控件）
+        //   ⇒ Fresh 仍为 true ⇒ ④⑤ 的门开在一张**别的参数**的判据表上。
+        _grid.PropertyValueChanged += (_, e) =>
+            _linePage?.MarkParamsChanged(e.ChangedItem?.Label ?? "某一项");
+
         _out.Dock = DockStyle.Fill;
         _out.Font = UiScale.Mono();
         _out.ReadOnly = true;
@@ -206,6 +213,25 @@ public sealed class MainForm : Form
             SyncGates();
         };
         _tabs.SelectedIndexChanged += (_, _) => SyncGates();
+
+        // ★★★★★ 有链在跑时**禁止切页**（2026-08-24 用户提出）。
+        //
+        // 用户原话：「没有这限制工程师随便点，整条链路就乱（甚至不知道自己正在算什麽）」。
+        // 实况：在 ④ 点了「搜形状」（几十分钟）之后可以立刻切到 ③ 改参数、再切到 ⑤ 看出图 ——
+        // 链还在跑，而每一页讲的都是**别的**事：③ 的输出框是上一次的解、
+        // ⑤ 的门禁读的是上一次的判据。于是「我在算什么」从界面上消失了。
+        //
+        // ⇒ 跑起来就钉在当前页。**取消键就在这一页上**（它已经变成「取消」），
+        //   状态面板也在，所以钉住不会把人困死 —— 想走，先取消。
+        //
+        // ⚠ 不静默拒绝：点了没反应比拦住更糟。拦下时把「取消」闪两下，
+        //   把眼睛引到那个唯一能让他离开的按钮上。
+        _tabs.Selecting += (_, e) =>
+        {
+            if (_flow.Running is null) return;
+            e.Cancel = true;
+            FlashCommand("取消");
+        };
 
         // 点「下一步」那一行：**只带路，不代跑**（2026-08-22 与用户议定）。
         //   ④ 会改输入、③ 要跑几十秒、⑤ 会写文件 —— 代跑等于把
@@ -382,6 +408,15 @@ public sealed class MainForm : Form
         // 「现在有没有链在跑」只有一个来源：FlowState.Running。
         // 各页自己那套 Enabled 只管得住自己页内的按钮，管不了跨页。
         bool busy = _flow.Running is not null;
+
+        // ★★★★★ 有链在跑时，**输入面整块冻住**（2026-08-24 用户提出）。
+        //
+        // 互斥此前只禁「会起算的按钮」。可参数是自由的：整线解跑着的那几分钟里，
+        // 左边参数表、③ 页的壁厚/盘径/段表/几何来源都还能改，而判据表、指路、
+        // 门禁显示的全是**上一次**的结论 —— 工程师看到的和正在算的不是一回事。
+        // 这不只是「乱」：它能让 ④⑤ 两道 RequireFresh 的门开在一张**别的参数**的判据表上。
+        _grid.Enabled = !busy;
+        _linePage?.SetInputsEnabled(!busy);
 
         // 该点哪个 —— 规则在 Flow.Next，这里只负责把它画出来。
         string nextId = Flow.Next(_flow,

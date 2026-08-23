@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -208,6 +208,20 @@ public static class MaterialDb
         S("Pd", 12020, 0); S("Ni", 8908, 0); S("Cu", 8960, 0);
     }
 
-    public static PtGrade Get(string name) => All[name];
+    /// <summary>
+    /// 按牌号取材料。**找不到就说清楚是哪个牌号、有哪些可选**，不抛裸的
+    /// <c>KeyNotFoundException</c>（2026-08-24 修）。
+    ///
+    /// 病灶：原式是 <c>All[name]</c>。而 <see cref="DesignInputs.GradeName"/> 在参数表里是
+    /// **没有下拉约束的纯文本** —— 用户随手打错一个字，或读进一个存了旧牌号名的方案档，
+    /// 整线解就在 <c>LineRunner.Judge</c> 里当场崩掉，抛出来的是
+    /// 「The given key 'PtRh10' was not present in the dictionary」——
+    /// 这句话既不说是牌号的事，也不说该填什么，而它出现在一次分钟级求解的**末尾**。
+    /// </summary>
+    public static PtGrade Get(string name)
+        => All.TryGetValue(name ?? "", out var g) ? g
+           : throw new KeyNotFoundException(
+               $"材料库里没有牌号「{name}」。可选：" + string.Join("、", All.Keys)
+               + "。（参数表里的「铂材牌号」是自由文本，打错一个字就会走到这里。）");
     public static IEnumerable<PtGrade> WithCreep => All.Values.Where(x => x.HasCreep);
 }

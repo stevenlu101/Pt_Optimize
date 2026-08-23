@@ -47,6 +47,24 @@ class UiWiringTests {
 
     static void Head(string s) { Console.WriteLine(); Console.WriteLine("=== " + s + " ==="); }
 
+    /// <summary>
+    /// 把页面**静置**下来：解除自动重算的武装、取消在跑的解、等它真的退出。
+    ///
+    /// 为什么需要：本文件的各节共用同一个 MainForm。某一节只要把 `_autoArmed`
+    /// 留成 true，防抖定时器就会在**后面某一节的 Pump 里**起一次分钟级的真解 ——
+    /// 于是那一节看到 FlowState.Running 非空，而 Flow.Next 在有链在跑时返回 null
+    /// ⇒ 报出来的是「没给下一步」，跟真因（上一节没收干净）八竿子打不着。
+    /// 实测第 29 节正是这么红的，而且它**在另一个 bug 被修掉之前一直没暴露**：
+    /// 那次后台解会撞上一个非法牌号抛异常，finally 顺手把 Running 清了。
+    /// </summary>
+    static void Quiesce(object page)
+    {
+        Set(page, "_autoArmed", false);
+        ((System.Threading.CancellationTokenSource?)F(page, "_cts"))?.Cancel();
+        for (int i = 0; i < 40 && F(page, "_cts") is not null; i++) Pump(250);
+        Set(page, "_autoArmed", false);
+    }
+
     [STAThread]
     static void Main(string[] args) {
         // `--walk`：①→⑤ 全程走通并逐步核对（用户 2026-08-21）。
@@ -123,6 +141,31 @@ class UiWiringTests {
         Check("首屏是说明而不是预测块",
               outBox.Text.Contains("自动重算") && !outBox.Text.Contains("参数已改"));
         Check("四个页签都在", tabs.TabPages.Count >= 4, $"（{tabs.TabPages.Count} 个）");
+
+        // ★★★★★ 开箱那一刻摆在界面上的几何，**必须是造得出来的**（2026-08-24）。
+        //
+        // 用户实测：什么都没改，直接点「核算整线」，得到
+        //   ⑤ 舌片自由段 −12.4 / 100　③ 法兰增量温降 599.5 / 10
+        // 默认 盘Ø60(R30)／半宽20／舌长50／压接40 ⇒
+        //   自由段 = 50 − 40 − √(30²−20²) = −12.36 ⇒ 压接块伸进圆盘里。
+        // 也就是说：**开箱即是一个装不上铜排的构型**，而工程师第一次点核算
+        // 就会花几分钟拿到一张全红的表，还以为是自己参数没设对。
+        // （同族前科：管壁默认 0.40 低于焊接下界 0.6，见本页类头。）
+        {
+            var lc0 = M(page, "BuildCase") as LineCase;
+            Check("开箱就造得出算例", lc0 is not null);
+            if (lc0?.FlangePlates is { Length: > 0 } pl0)
+            {
+                var g0 = GeometryScreen.Judge(pl0, lc0.Base.BusbarClampLengthMm, lc0.FreeTabMinMm);
+                var c5 = g0.FirstOrDefault(c => c.Name.StartsWith(LineResult.Key.FreeTab, StringComparison.Ordinal));
+                Check("开箱默认的 ⑤ 自由段不是负数（压接块没伸进圆盘）",
+                      c5 is not null && c5.Actual >= 0,
+                      c5 is null ? "★ 没有这条判据" : $"{c5.Actual:0.0} mm");
+                Check("开箱默认的 ⑤ 直接就过（不必先让人踩一次坑）",
+                      c5 is not null && c5.Ok,
+                      c5 is null ? "" : $"{c5.Actual:0.0} / {c5.Limit:0}");
+            }
+        }
 
         Head("1 定案档下拉：切档**不该**触发整线重算");
         int before = caseBox.SelectedIndex;
@@ -939,12 +982,18 @@ class UiWiringTests {
             var src = new DesignInputs { TAmbC = 42.5, TubeIdMm = 61.0, GradeName = "PtRh10" };
             var dst = (DesignInputs)inMain;
             double keepAmb = dst.TAmbC;
+            // ⚠ 本段改的是**全局共享**的那个 DesignInputs，用完必须还原：
+            //   「PtRh10」不是材料库里的牌号（真名是 Tanaka-ZGS-PtRh10 等），
+            //   留着它，后面任何一段只要真跑一次解就会在 MaterialDb.Get 上炸 ——
+            //   实测第 31 节就是这么崩的，而堆栈指向 Judge，看不出是上游污染。
+            string keepGrade = dst.GradeName; double keepId = dst.TubeIdMm;
             SegmentSolver.CopyInto(src, dst);
             Check("CopyInto 搬了值", Math.Abs(dst.TAmbC - 42.5) < 1e-9 && dst.GradeName == "PtRh10",
                   $"TAmb {keepAmb}→{dst.TAmbC}　牌号 {dst.GradeName}");
             Check("CopyInto 之后仍是同一个对象", ReferenceEquals(F(main, "_in"), dst));
             Check("CopyInto 之后两页看到的还是它",
                   ReferenceEquals(F(page, "_base"), dst) && ReferenceEquals(F(anal, "_base"), dst));
+            dst.TAmbC = keepAmb; dst.GradeName = keepGrade; dst.TubeIdMm = keepId;   // 还原全局态
 
             // 换了方案 ⇒ 判据表与上一次的解必须**清掉**，不能安静地留着骗人
             var checksGrid = (DataGridView)F(page, "_checks")!;
@@ -1002,6 +1051,11 @@ class UiWiringTests {
         }
 
         // ═══════════════════════════════════════════════════════════════
+
+        // ★ 本节故意把自动重算武装起来验它接没接上 —— 用完必须收干净，
+        //   否则防抖会在后面某一节里起一次真解（见 Quiesce 的说明）。
+        Quiesce(page);
+
         Head("23 参数表：每一项都必须有链归属");
         {
             // 病灶：整线链上有一批参数**根本不看参数表** —— 有的被 ③ 页控件接管，
@@ -1174,8 +1228,18 @@ class UiWiringTests {
             Check("复现之后会发布状态（PushFlow）",
                   body.Contains("PushFlow()", StringComparison.Ordinal),
                   "没有它 FlowState.Last 永远是 null ⇒ ④⑤ 不开");
+            // ★ 快照必须取**开解那一刻**，不是解完这一刻（2026-08-24 修）。
+            //   原来是解完再 `_solvedSnap = CurrentSnap()` —— 复现要几分钟，
+            //   这几分钟里控件可改，于是「解的那组」与「记下的那组」可以是两组，
+            //   而 Fresh 会判成 true ⇒ ④⑤ 的门开在一张别的参数的判据表上。
+            //   所以这里不只验「记了」，还要验**没有再用那个旧写法**。
             Check("复现之后会记下 _solvedSnap（否则 Fresh 恒 false）",
-                  body.Contains("_solvedSnap = CurrentSnap()", StringComparison.Ordinal));
+                  body.Contains("_solvedSnap = snapAtStart", StringComparison.Ordinal));
+            Check("快照取自开解那一刻，不是解完那一刻",
+                  body.Contains("var snapAtStart = CurrentSnap()", StringComparison.Ordinal)
+                  && !body.Contains("_solvedSnap = CurrentSnap()", StringComparison.Ordinal),
+                  body.Contains("_solvedSnap = CurrentSnap()", StringComparison.Ordinal)
+                      ? "★ 还在用解完取快照的旧写法 ⇒ 解算中改参数会被判成「参数未变」" : "");
             // ★ 而且**不能无条件**记：水头不属于定案几何，页面水头与存档不同时
             //   这个解并不是「页面参数的解」，记了就是假的 Fresh。
             Check("记 _solvedSnap 是**有条件**的（水头对得上才记）",
@@ -1489,6 +1553,11 @@ class UiWiringTests {
                 //   —— 白跑一分多钟才发现该先点分析（用户 2026-08-23 指出）。
                 {
                     var fl = (FlowState)F(main, "_flow")!;
+            // 自证：本节所有「下一步」断言都以「没有链在跑」为前提
+            //（Flow.Next 在 Running 非空时返回 null）。前一节若漏了 Quiesce，
+            // 报出来的会是一串「没给下一步」，指不到真因 —— 所以先把前提验掉。
+            Check("本节开工时没有链在跑（前提）", fl.Running is null,
+                  fl.Running is null ? "" : $"★ 上一节漏了 Quiesce：还在跑 {fl.Running}");
                     bool AppL(string id) => (bool)typeof(LineDesignPage).GetMethod("CommandApplicable",
                         BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public)!
                         .Invoke(lp3, new object[] { id })!;
@@ -1624,6 +1693,98 @@ class UiWiringTests {
             }
             Check("清理之后它从下拉里消失了", !InBox(),
                   InBox() ? "★ 探针档没删干净，会污染 --selfcheck A 段" : "");
+        }
+
+        // ════════════════════════════════════════════════════════════
+        Head("31 对话里得出的结论，**APP 自己也得这么说**");
+        //
+        // 这一节守的不是某个函数，是「**答案只有一处**」在**用户看得见的那一层**成立：
+        // 前面几节验的是内核算得对（selfcheck）、接线接对了（各节），
+        // 但工程师读的是**这张渲染出来的表**。表上写的若和内核算的不是一回事，
+        // 前面全绿也没有意义 —— 而本项目栽过的每一次都是这个形状。
+        {
+            var chk = (DataGridView)F(page, "_checks")!;
+            var fl31 = (FlowState)F(main, "_flow")!;
+
+            // 舌长给足余量，让 ⑤ 有正裕度 —— 定案构型上 ⑤ 恰好贴着下界（裕度 0），
+            // 那个 0 对符号错不错都成立，验不出东西（这正是裕度符号 bug 藏了那么久的原因）。
+            Set(page, "_suppressAuto", true);
+            ((NumericUpDown)F(page, "_discD")!).Value = 60m;
+            ((NumericUpDown)F(page, "_tabW")!).Value = 30m;
+            ((NumericUpDown)F(page, "_tabLen")!).Value = 200m;
+            Set(page, "_suppressAuto", false);
+
+            var lc31 = M(page, "BuildCase") as LineCase;
+            Check("造得出算例", lc31 is not null);
+            if (lc31 is not null)
+            {
+                Console.WriteLine("  …（真解一次，约 1–2 分钟）");
+                var r31 = LineRunner.Run(lc31);
+                Check("解得出且收敛", r31.Ok && r31.Converged, r31.Message);
+
+                // 把它渲染到界面上 —— 下面读的全是**渲染后**的格子，不是 r31 里的字段
+                page.GetType().GetMethod("Show", BindingFlags.NonPublic | BindingFlags.Instance,
+                                         null, new[] { typeof(LineResult), typeof(string) }, null)!
+                    .Invoke(page, new object?[] { r31, null });
+                Pump(200);
+
+                string Cell(string namePart, int col)
+                {
+                    foreach (DataGridViewRow row in chk.Rows)
+                        if ((row.Cells[1].Value?.ToString() ?? "").Contains(namePart, StringComparison.Ordinal))
+                            return row.Cells[col].Value?.ToString() ?? "";
+                    return "";
+                }
+
+                // ── ① 两条热稳定判据必须**出现在表上**（对话里量到 整片 10.2×／局部 2.0×）
+                //    它们本来只有 CLI 的 --flangestab/--localstab 算得到，界面上一条都没有。
+                string sFl = Cell("整片热稳定", 2), sLo = Cell("局部热稳定", 2);
+                Check("判据表里有「整片热稳定」", sFl.Length > 0,
+                      sFl.Length > 0 ? $"实际 {sFl}" : "★ 只在 CLI 有 ⇒ 换个几何就没人再算它");
+                Check("判据表里有「局部热稳定」", sLo.Length > 0,
+                      sLo.Length > 0 ? $"实际 {sLo}" : "★ 同上");
+                bool okFl = double.TryParse(sFl, out double vFl);
+                bool okLo = double.TryParse(sLo, out double vLo);
+                Check("整片热稳定是个实数（不是 ∞／非數值）", okFl && !double.IsInfinity(vFl), sFl);
+                Check("局部热稳定是个实数（不是 ∞／非數值）", okLo && !double.IsInfinity(vLo), sLo);
+                // ★ 「最热那一格」曾被当成局部代表 ⇒ 那里 J≈0 ⇒ 裕度 +∞ ⇒ 表上写「无限安全」
+                //   而一格都没验。所以这条不是形式检查，是**它当初真的错成那样**。
+                Check("局部热稳定落在合理量级（1–20×）", okLo && vLo > 1.0 && vLo < 20.0,
+                      okLo ? $"{vLo:0.0}×（selfcheck 在定案上量到 1.9–2.9×）" : sLo);
+                Check("整片热稳定落在合理量级（1–100×）", okFl && vFl > 1.0 && vFl < 100.0,
+                      okFl ? $"{vFl:0.0}×（selfcheck 在定案上量到 8.2–44×）" : sFl);
+
+                // ── ② 裕度符号：⑤ 是「须 ≥ 限」，通过时裕度列必须是**正**的
+                //    改之前显示成「超 15 %」而同一行判定是 ✓ —— 两列自相矛盾。
+                string v5 = Cell("⑤ 舌片自由段", 5), m5 = Cell("⑤ 舌片自由段", 4);
+                Check("⑤ 这一行在表上", v5.Length > 0, $"实际 {Cell("⑤ 舌片自由段", 2)} / 限 {Cell("⑤ 舌片自由段", 3)}　判定 {v5}　裕度 {m5}　舌长控件 {((NumericUpDown)F(page, "_tabLen")!).Value}");
+                if (v5 == "✓")
+                    Check("⑤ 通过时裕度列不是「超 …%」（方向没判反）",
+                          !m5.StartsWith("超", StringComparison.Ordinal),
+                          m5.StartsWith("超", StringComparison.Ordinal)
+                              ? $"★ 判定 ✓ 而裕度写「{m5}」—— 同一行自相矛盾" : $"裕度 {m5}");
+
+                // ── ③ 参数表改一项 ⇒ 上一次的解立刻不新鲜，④⑤ 的门关上
+                //    此前 PropertyGrid 的变更事件根本没挂 ⇒ 门开在别的参数的判据表上。
+                // Fresh 还要求 Last 非空 —— 只塞快照造不出新鲜态
+                Set(page, "_last", r31);
+                Set(page, "_solvedSnap", M(page, "CurrentSnap"));
+                M(page, "PushFlow");
+                Pump(100);
+                Check("先造出「新鲜」这个状态（否则下一条空转）", fl31.Fresh,
+                      fl31.Fresh ? "" : "★ 造不出新鲜态，下面验不了「变不新鲜」");
+                page.GetType().GetMethod("MarkParamsChanged", BindingFlags.NonPublic | BindingFlags.Instance)!
+                    .Invoke(page, new object?[] { "控温点" });
+                Pump(100);
+                Check("参数表改一项之后就**不新鲜**了", !fl31.Fresh,
+                      fl31.Fresh ? "★ 改了参数还说「参数未变」⇒ ④⑤ 会开在旧结论上" : "");
+                Check("④ 定尺寸的门随之关上",
+                      !Gate.Evaluate(StageId.定尺寸, fl31).Unlocked);
+                Check("⑤ 交付的门随之关上",
+                      !Gate.Evaluate(StageId.交付, fl31).Unlocked);
+                Check("并且告诉了人为什么",
+                      ((RichTextBox)F(page, "_out")!).Text.Contains("参数表改了"));
+            }
         }
 
         Console.WriteLine();

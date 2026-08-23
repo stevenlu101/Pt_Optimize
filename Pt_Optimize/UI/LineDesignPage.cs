@@ -165,6 +165,13 @@ public sealed class LineDesignPage : TabPage
     private PlateShapeAnalyzer.Shape? _shape;
 
     /// <summary>
+    /// 左侧那块**输入面**（参数框、几何来源单选、段表、各级锁定…）。
+    /// 有链在跑时整块禁掉 —— 见 <see cref="SetInputsEnabled"/>。
+    /// 工具条（命令，含「取消」）与右侧输出**不在这块里**，所以冻住不会把人困死。
+    /// </summary>
+    private TableLayoutPanel? _inputPanel;
+
+    /// <summary>
     /// 「分析几何变数」时量出来的**解析替身保真度**。null = 还没分析过。
     ///
     /// 替身是给 ④ 提速用的：逐级定厚在 .3dm 上每次评估都要起 Geom 子进程重算厚度场，
@@ -270,7 +277,7 @@ public sealed class LineDesignPage : TabPage
         tool.Items.Add(_status);
 
         // ── 输入面板
-        var input = new TableLayoutPanel
+        var input = _inputPanel = new TableLayoutPanel
         { Dock = DockStyle.Fill, ColumnCount = 2, AutoScroll = true, Padding = new Padding(6) };
         input.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, UiScale.S(188)));
         input.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -470,7 +477,29 @@ public sealed class LineDesignPage : TabPage
         // 那时首屏的绑定与排版都已经跑完，之后的事件才真是人点出来的。
         HandleCreated += (_, _) => BeginInvoke(new Action(() => _userReady = true));
 
+        // ★★★★★ 开箱那一刻的默认几何**必须是造得出来的**（2026-08-24 用户实测抓到）。
+        //
+        // 出的事：用户什么都没改，直接点「核算整线」，得到
+        //   ⑤ 舌片自由段 −12.4 / 100　③ 法兰增量温降 599.5 / 10
+        // 一算就对上了：默认 盘Ø60(R30)／半宽20／舌长50／压接40 ⇒
+        //   自由段 = 50 − 40 − √(30²−20²) = 50 − 40 − 22.36 = **−12.36**
+        // 也就是压接块伸进圆盘里 —— 这个构型根本装不上铜排，
+        // 而 ③=599.5 只是这个退化几何的下游噪声，不是热学结论。
+        //
+        // 为什么顶高逻辑没救它：EnforceTabLenFloor 挂在 ShowPrediction 上，
+        // 而 ShowPrediction 只由 ParamChanged 调，ParamChanged 又被**首屏闸门**
+        // （_userReady=false，防止排版事件被当成用户操作）挡住 ⇒ 启动时一次都没顶过。
+        // ⇒ 在这里顶一次：默认值从此自洽，而且用的是**同一个** TabLenFloorMm，
+        //   将来盘径/半宽/压接段的默认值改了，舌长会自己跟上，不必再记得改第二处。
+        string bootFloor = EnforceTabLenFloor();
+
         _out.Text =
+            (bootFloor.Length > 0
+             ? "★ 开箱默认的舌长装不下铜排，已按装配下界顶高：" + Environment.NewLine
+               + bootFloor
+               + "  （舌长不是自由旋钮：它 = 圆盘切点 + 压接段 + 自由段。"
+               + "想要更短的舌片要改盘径或铜排尺寸。）" + Environment.NewLine + Environment.NewLine
+             : "") +
             "改任何一个参数，**会自动重算**（停手约 1.5 秒后开始，分钟级，随时可取消）。\r\n" +
             "改的当下会先给两样东西：解析量（精确）与线性外推的预测值（标「预测」），\r\n" +
             "真解跑完再覆盖它们。\r\n\r\n" +
@@ -704,6 +733,55 @@ public sealed class LineDesignPage : TabPage
         n.Minimum = lo; n.Maximum = hi;
         n.Value = Math.Clamp(v, lo, hi);
         return n;
+    }
+
+    /// <summary>
+    /// 左边**参数表**改了一项 —— 上一次的解立刻不再新鲜（2026-08-24）。
+    ///
+    /// ★★★★★ 在此之前 <c>PropertyGrid.PropertyValueChanged</c> **根本没被挂过**，
+    ///   而 <see cref="Snap"/> 只记 6 个页面控件（壁厚/板厚/管保温/盘径/舌长/舌宽）。
+    ///   于是在参数表里改控温点、保温层、牌号、铜排夹持温度……：
+    ///     · 不武装自动重算
+    ///     · 不作废上一次的解
+    ///     · CurrentSnap 一点不变 ⇒ <c>Fresh</c> 仍是 **true**
+    ///   ⇒ 判据表还挂着旧参数的结论，而 ④⑤ 两道 RequireFresh 的门**照开**。
+    ///   这不是「界面乱」，是**交付门上的假绿灯**：拿一张别的参数的判据表去出图。
+    ///
+    /// 处理方式：只把「新鲜」摘掉，**不清空判据表**。
+    /// 数字留着让人对照，但 <see cref="Flow.Next"/> 会说
+    /// 「参数在上次求解之后又动过了 —— 回 ③ 按现在这组重解」，门也随之关上。
+    ///
+    /// ⚠ 故意**不**触发自动重算（页面控件那条会）：参数表里有一批只是读说明时
+    ///   顺手碰到的项，为它排一次分钟级的解是惊吓不是服务。两条路的差别写在这里，
+    ///   免得下次有人当成漏接。
+    /// </summary>
+    internal void MarkParamsChanged(string what)
+    {
+        if (_solvedSnap is null && _last is null) return;    // 本来就没有可作废的
+        _solvedSnap = null;                                   // ⇒ Fresh = false，门关上
+        PushFlow();
+        _out.Text = $"⚠ 参数表改了「{what}」—— 上一次的解**不再对应当前参数**。" + Environment.NewLine
+                  + "   判据表留在下面供对照，但它是**上一组参数**的结论；" + Environment.NewLine
+                  + "   ④ 定尺寸与 ⑤ 交付已经关上，请点「核算整线」按现在这组重解。"
+                  + Environment.NewLine + Environment.NewLine + _out.Text;
+    }
+
+    /// <summary>
+    /// 有链在跑时**冻住输入面**（2026-08-24 用户提出：「只要有运算，禁止跳到任何页」）。
+    ///
+    /// 互斥此前只管**按钮**（会起算的命令全禁掉），防的是三个分钟级求解同时开跑。
+    /// 但输入是自由的：整线解跑着的那几分钟里，壁厚、盘径、段表、几何来源
+    /// 都还能改 —— 而工程师看到的判据表、指路、门禁全是**上一次**的。
+    /// 「我现在在算什么」这件事就从界面上消失了，而那正是整个阶段轨要治的病。
+    ///
+    /// ⇒ 跑起来就冻住输入，只留命令（取消）与只读输出。
+    ///   这**不是**替代 snapAtStart 那条修正：那条保证「即使改了也不会判成新鲜」，
+    ///   这条保证「压根改不了」。两条是内外两道，缺一条都还有缝
+    ///   （例如程序自己在 _suppressAuto 期间写控件，就绕过了界面这一层）。
+    /// </summary>
+    internal void SetInputsEnabled(bool on)
+    {
+        if (_inputPanel is not null) _inputPanel.Enabled = on;
     }
 
     /// <summary>
@@ -1055,6 +1133,13 @@ public sealed class LineDesignPage : TabPage
             // ① 先把定案值灌进页面控件 —— 让界面显示与档一致，CurrentSnap 才对得上。
             LoadFinalDesignFrom(fd, quiet: true);
 
+            // ★ 快照取在**灌完控件、开解之前**这一刻（2026-08-24）。
+            //   原来是解完再取 —— 复现要几分钟，这几分钟里控件可改，
+            //   于是「解的那组」与「记下的那组」可以是两组，而 Fresh 判成 true。
+            //   ⚠ 必须在 LoadFinalDesignFrom **之后**：上一行刚把定案值灌进控件，
+            //     放到它前面记的就是用户原来那组，复现完会永远判成不新鲜。
+            var snapAtStart = CurrentSnap();
+
             // ② **仍从档解**，不走 PageToFinalDesign()。
             //    保住这条独立路径是有代价换来的：PageToFinalDesign 是一段**搬运代码**，
             //    本项目已经栽过好几次（盘径直径/半径、压接段用了 3 mm 默认值、
@@ -1115,7 +1200,10 @@ public sealed class LineDesignPage : TabPage
 
             if (r.Ok && r.Converged && headSame)
             {
-                _solvedRes = r; _solvedSnap = CurrentSnap();
+                // 同 RunAsync：快照取**开解那一刻**，不是解完这一刻。
+                // 复现要几分钟，这几分钟里控件可改 —— 拿解完时的控件当「解过的参数」，
+                // 就会把一张别的参数的判据表标成新鲜。
+                _solvedRes = r; _solvedSnap = snapAtStart;
             }
             PushFlow();
 
@@ -1706,6 +1794,20 @@ public sealed class LineDesignPage : TabPage
         //   （那条路的几何来自图纸，⑤ 由 GeomForJudge 判）。
         string floorNote = _srcAnalytic.Checked ? EnforceTabLenFloor() : "";
 
+        // ★★★★★ 快照必须取**开解这一刻**，不能等解完再取（2026-08-24）。
+        //
+        // 原来是解完之后 `_solvedSnap = CurrentSnap()` —— 读的是**那时候**的控件。
+        // 整线解要几分钟，这几分钟里控件是可以改的（页签也能切）。改了之后：
+        //   · r 是用**改之前**那组参数算的
+        //   · _solvedSnap 记的是**改之后**那组
+        //   ⇒ Fresh = Equals(SolvedSnap, CurrentSnap) 判成 **true**
+        //   ⇒ 界面写「✓ 已解（参数未变）」，④⑤ 两道 RequireFresh 的门照开 ——
+        //     而那张判据表根本不是这组参数的结论。**假绿灯，且言之凿凿。**
+        //
+        // 取开解时刻就没有这个缝：解完再比，参数动过就是不新鲜，指路会说
+        // 「参数在上次求解之后又动过了 —— 回 ③ 按现在这组重解」。那是实话。
+        var snapAtStart = CurrentSnap();
+
         try
         {
             lc = BuildCase();
@@ -1804,7 +1906,7 @@ public sealed class LineDesignPage : TabPage
                 _last = r;
                 // ★ 只有**真收敛**的解才配当外推基准。拿没收敛的解做基准，
                 //   预测会看着很稳而其实一路偏 —— 那正是今天那个假收敛的形状。
-                if (r.Ok && r.Converged) { _solvedRes = r; _solvedSnap = CurrentSnap(); }
+                if (r.Ok && r.Converged) { _solvedRes = r; _solvedSnap = snapAtStart; }
                 PushFlow();
                 Show(r, autoNote: floorNote);
                 // ★ 把「本次实际解的是什么」打出来。看不见又在起作用的量是安静失败的温床。
