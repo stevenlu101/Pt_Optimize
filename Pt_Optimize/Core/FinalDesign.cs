@@ -129,10 +129,6 @@ public sealed class FinalDesign
     //   而收敛度量本身也可能是代理量 —— 这是「代理量不是原量」的第五次发作。
     // ================================================================
 
-    /// <summary>某条判据的裕度 %（(限−实)/限）。方向性判据（限 0）不适用，返回 NaN。</summary>
-    public static double Margin(double actual, double limit) =>
-        System.Math.Abs(limit) < 1e-9 ? double.NaN : (limit - actual) / System.Math.Abs(limit) * 100.0;
-
     public double HoleRadiusMm => WallMm + 25.0;
     public double[] RingRadiiMm =>
         new[] { HoleRadiusMm + RingWidthMm, HoleRadiusMm + 2 * RingWidthMm };

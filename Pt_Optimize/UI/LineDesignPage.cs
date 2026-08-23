@@ -10,7 +10,14 @@ namespace PtOptimize.UI;
 /// 改参数 → 核算 → 自动定厚 → 导出 .3dm。**不需要碰命令行**。
 ///
 /// 内核一律走 <see cref="LineRunner"/> / <see cref="FlangeAutoSizer"/> /
-/// <see cref="Geometry3dm.WritePlate3dm"/>，与 CLI 同源，两边不可能跑出不同结果。
+/// <see cref="Sizer"/>，出图走 <see cref="Geometry3dm.WriteFinal3dm"/>（解析形状）
+/// 与 <see cref="Geometry3dm.ScalePlate3dm"/>（.3dm 形状），与 CLI 同源。
+///
+/// ⚠ 这一句 2026-08-23 前写的是「出图走 Geom<c>etry3dm.WritePlate3dm</c>」——
+///   而那个入口早在 1b（2026-08-17）就被换掉了，理由见 <see cref="Export"/>：
+///   它只往渲染子进程传五个数，表达不了渐变环 / 舌根圆角 / 角焊缝 / 等宽舌。
+///   换掉之后没人回来改这句，于是**类头拿一个已经不存在的调用当「两边不可能不同」的保证**。
+///   死方法本身无害，靠它作保的那句话才是问题。（该方法已随本次清理删除。）
 ///
 /// 界面上只放**当前判据体系用得到的**输入（HANDOVER §0.0 的四个自由度 + 边界条件）；
 /// 已作废的一维法兰模型那套参数（盘内外半径、剖面形状、梯形厚度…）已随模型删除。
@@ -1973,11 +1980,10 @@ public sealed class LineDesignPage : TabPage
             string mg = "—";
             if (c.Kind != CheckKind.Reference && !double.IsNaN(c.Actual))
             {
-                if (Math.Abs(c.Limit) > 1e-9)
-                {
-                    double pct = (c.Limit - c.Actual) / Math.Abs(c.Limit) * 100.0;
+                // 裕度只有一处来源：ConstraintOut.MarginPct（它看方向，见那里的说明）
+                double pct = c.MarginPct;
+                if (!double.IsNaN(pct))
                     mg = pct >= 0 ? $"{pct:0} %" : $"超 {-pct:0} %";
-                }
                 else mg = SizerResult.Signed(c.Actual - c.Limit, "+0.00;−0.00");
             }
             string vd = c.Kind == CheckKind.Reference ? "—" : c.Undetermined ? "?" : c.Ok ? "✓" : "✗";

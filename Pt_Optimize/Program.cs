@@ -5075,11 +5075,19 @@ internal static class Program
                     if (!rc.Converged) { Console.WriteLine($"   ✗ {fd.Name} 未收敛 —— 记录值无从对账"); bad++; continue; }
                     double V(string k)
                     { foreach (var c in rc.Checks) if (c.Name.StartsWith(k, StringComparison.Ordinal)) return c.Actual; return double.NaN; }
+                    // ★ 两条热稳定裕度：**现为参考量，本行就是在攒它跨几何的量级**。
+                    //   限值 1.0 是精确物理（dQ/dT ÷ dP/dT、J_stab ÷ J_实际），本可直接当硬判据；
+                    //   但拿一条没量过分布的判据去卡交付，风险只是换了一侧。
+                    //   ⇒ 先在每次跑门时把四个档的数打出来，攒够了再谈升级。
+                    string Stab(string k)
+                    { double v = V(k); return double.IsNaN(v) ? "判不了" : $"{v:0.0}×"; }
 
                     // 标出来源：分不清「守内核的基准」与「昨天存的方案」就会拿错的那个去出图
                     Console.WriteLine($"   {fd.Name}"
                                       + (fd.FromFile.Length > 0 ? $"　[档案 {fd.FromFile}]" : "　[内置]")
-                                      + $"　收敛 ✓　全判据 {(rc.AllOk ? "✓" : "✗")}" +
+                                      + $"　收敛 ✓　全判据 {(rc.AllOk ? "✓" : "✗")}"
+                                      + $"　热稳定 整片 {Stab(LineResult.Key.FlangeStab)}"
+                                      + $" / 局部 {Stab(LineResult.Key.LocalStab)}" +
                                       (fd.Invalid.Length > 0 ? "　（本档**已声明失效**）" : ""));
 
                     // ★★★ 已声明失效的档：门要判的**不是「过不过」**，而是

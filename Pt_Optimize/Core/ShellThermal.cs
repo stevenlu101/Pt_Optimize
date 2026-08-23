@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -64,6 +64,18 @@ public sealed class ShellThermalResult
     /// 才是法兰自身发热顶起来的局部尖峰，治它要动法兰几何。
     /// 两者要用完全不同的旋钮，只看差值必然误诊。
     /// </summary>
+    /// <summary>
+    /// **局部热稳定**的最小裕度（J_stab ÷ J_实际）与它落在哪。&lt; 1 即该点会自行升温直到烧断。
+    ///
+    /// ⚠ 不能拿「最热那一格」代替：实测现役档上盘温峰落在外缘，那里
+    /// **电流密度接近 0** ⇒ 裕度算出 +∞，看起来无限安全，其实什么都没验。
+    /// 判据要的是「最不稳定」的点，不是「最热」的点，两者不是一回事。
+    /// </summary>
+    public double LocalStabMargin = double.NaN, LocalStabRMm = double.NaN,
+                  LocalStabTempC = double.NaN, LocalStabJAPerMm2 = double.NaN,
+                  LocalStabThickMm = double.NaN, LocalStabLatLenMm = double.NaN;
+    public bool LocalStabOnTab;
+
     public double DiscMaxXMm = double.NaN, DiscMaxZMm = double.NaN,
                   DiscMaxRMm = double.NaN, DiscMaxJAPerMm2 = double.NaN,
                   DiscMaxThickMm = double.NaN;
@@ -307,6 +319,11 @@ public static class ShellThermal
         double gD = 0, lD = 0, aD = 0, tD = 0, gT = 0, lT = 0, aT = 0, tT = 0;
         double tDMax = double.NegativeInfinity, tTMax = double.NegativeInfinity;
         int iDMax = -1;
+        // 局部热稳定的候选：按**不稳定判据自己的分子** ρe(T)·J²·t·TCR(T) 排（= LocalStability 的 HeatDeriv）。
+        // 逐格精算太贵（本后处理每次场解都跑一遍，一次整线解要跑两千多次）⇒ 先筛后算。
+        // **分区各筛各的**：盘包保温、舌常裸露，冷却侧差一个量级，混在一起筛会漏掉裸舌那侧。
+        var candD = new List<(double Proxy, int I)>();
+        var candT = new List<(double Proxy, int I)>();
         for (int i = 0; i < n; i++)
         {
             if (Excluded(i)) continue;
@@ -316,13 +333,78 @@ public static class ShellThermal
             bool onTab = symmetricInsul
                        ? Math.Abs(m.Centroid[i].X) > Math.Abs(xb)
                        : m.Centroid[i].X < xb;
-            if (onTab) { gT += g; lT += l; aT += A; tT += ti * A; tTMax = Math.Max(tTMax, ti); }
+            double jj = jMagAPerMm2[i];
+            double proxy = Materials.PtResistivity(ti) * jj * jj * t * Materials.PtTcr(ti);
+            if (onTab) { gT += g; lT += l; aT += A; tT += ti * A; tTMax = Math.Max(tTMax, ti);
+                         candT.Add((proxy, i)); }
             else
             {
                 gD += g; lD += l; aD += A; tD += ti * A;
                 if (ti > tDMax) { tDMax = ti; iDMax = i; }
+                candD.Add((proxy, i));
             }
         }
+        // ── 局部热稳定：两区各取前 12 个候选精算，取最小裕度
+        {
+            const int NCand = 12;
+            double best = double.PositiveInfinity; int bi = -1; bool bTab = false;
+
+            // ── 每格到**最近定温锚点**的距离 L（J_stab 公式里的横向导热项 k·t/L²）
+            //
+            // 锚点有两个：管孔（被控温的管子按住）与压接段（被铜排夹按住）。
+            // ★ 不能传 NaN「不计横向导热」：实测那样把两个现役定案档判成 0.6×（失稳），
+            //   而 HANDOVER §2038 记的是 3.1–9.8。这正是 LocalStability.TabHalfSpanMm
+            //   注释里记载过的那个错 —— L 取错 1.65 倍就「整张扫描表被误判成全部局部失稳」
+            //   —— 只是这次把 L 当成了 ∞，错得更彻底。
+            //   **保守到失真不叫保守，叫判据坏了**：它会把能造的方案全否掉。
+            double rHole = double.PositiveInfinity, xClamp = double.NaN;
+            for (int i = 0; i < n; i++)
+            {
+                if (holeCell[i])
+                    rHole = Math.Min(rHole, Math.Sqrt(m.Centroid[i].X * m.Centroid[i].X
+                                                    + m.Centroid[i].Z * m.Centroid[i].Z));
+                if (tabCell[i])
+                    xClamp = double.IsNaN(xClamp) ? m.Centroid[i].X
+                                                  : Math.Max(xClamp, Math.Abs(m.Centroid[i].X)) * Math.Sign(m.Centroid[i].X);
+            }
+            if (double.IsInfinity(rHole)) rHole = 0;
+            double LatLen(int i)
+            {
+                double x = m.Centroid[i].X, z = m.Centroid[i].Z;
+                double toHole = Math.Sqrt(x * x + z * z) - rHole;
+                double toClamp = double.IsNaN(xClamp) ? double.PositiveInfinity : Math.Abs(x - xClamp);
+                return Math.Max(1.0, Math.Min(toHole, toClamp));
+            }
+            void Scan(List<(double Proxy, int I)> cand, bool onTab)
+            {
+                foreach (var (_, i) in cand.OrderByDescending(x => x.Proxy).Take(NCand))
+                {
+                    // 保温厚度跟 lossFor 用**同一个** insulated[] 判定，不另立一份
+                    double insMm = insulated[i] ? p.FlangeInsulThickMm
+                                 : (tabInsul ? tabInsulThickMm : 0.0);
+                    // lateralLenMm 传 NaN = **不计横向导热**，是 LocalStability 自己写明的保守侧。
+                    // 不猜每一格到定温边界的距离：猜错会把裕度算大（偏危险侧），
+                    // 而保守版若能过，设计就真的过得了。
+                    var pt = LocalStability.Check(p, res.T[i], jMagAPerMm2[i], m.Thickness[i],
+                                                  insMm, LatLen(i));
+                    if (double.IsNaN(pt.JStab)) continue;      // 超拟合区间 ⇒ 这一格判不了，不算数
+                    if (pt.Margin < best) { best = pt.Margin; bi = i; bTab = onTab; }
+                }
+            }
+            Scan(candD, false); Scan(candT, true);
+            if (bi >= 0)
+            {
+                var cb = m.Centroid[bi];
+                res.LocalStabMargin = best;
+                res.LocalStabRMm = Math.Sqrt(cb.X * cb.X + cb.Z * cb.Z);
+                res.LocalStabTempC = res.T[bi];
+                res.LocalStabJAPerMm2 = jMagAPerMm2[bi];
+                res.LocalStabThickMm = m.Thickness[bi];
+                res.LocalStabOnTab = bTab;
+                res.LocalStabLatLenMm = LatLen(bi);
+            }
+        }
+
         if (iDMax >= 0)
         {
             var cD = m.Centroid[iDMax];

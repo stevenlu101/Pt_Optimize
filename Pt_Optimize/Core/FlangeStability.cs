@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace PtOptimize.Core;
@@ -55,10 +55,22 @@ public static class FlangeStability
     /// <param name="tabSectionMm2">舌片导热截面（= 2×半宽×厚），沿舌长传向铜排夹</param>
     /// <param name="tabLenMm">舌片长度</param>
     /// <param name="holeSectionMm2">管孔处的导热截面（= 2π·孔半径×厚）</param>
+    /// <param name="tabInsulThickMm">
+    /// 舌片自己的保温厚度 mm。NaN = 舌片裸露（现场实况，也是默认）。
+    ///
+    /// ★ 2026-08-23 补：原来只有一个 <paramref name="insulThickMm"/>，
+    ///   于是整片只能「全包」或「全裸」。而定案构型是**分区**的
+    ///   —— 圆盘包 <c>FlangeInsulThickMm</c>、舌片包 <c>TabInsulMm[j]</c>，
+    ///   两者常常差一个量级。用单一厚度去算 dQ_散热/dT，
+    ///   在「盘包厚、舌近裸」的真实构型上会把散热侧算**偏小**（偏危险侧不是偏安全侧）。
+    ///   本参数让 <paramref name="areaBareMm2"/> 那一片按自己的保温算。
+    ///   传 NaN 即退回原行为（裸），故老调用点不受影响。
+    /// </param>
     public static Result Check(DesignInputs p, double qGenW, double tPlateC,
                                double areaInsulMm2, double areaBareMm2, double insulThickMm,
                                double tabSectionMm2, double tabLenMm,
-                               double holeSectionMm2, double discSpanMm)
+                               double holeSectionMm2, double discSpanMm,
+                               double tabInsulThickMm = double.NaN)
     {
         var r = new Result { QGenW = qGenW };
 
@@ -81,9 +93,10 @@ public static class FlangeStability
 
         // ── ① 表面：数值微分 q″(T)，两面
         double dT = 5.0;
+        double tabIns = double.IsNaN(tabInsulThickMm) ? 0.0 : tabInsulThickMm;
         double QSurf(double t)
             => 2.0 * 1e-6 * (areaInsulMm2 * DesignScreen.PlateFluxWPerM2(p, t, insulThickMm)
-                           + areaBareMm2 * DesignScreen.PlateFluxWPerM2(p, t, 0));
+                           + areaBareMm2 * DesignScreen.PlateFluxWPerM2(p, t, tabIns));
         r.DSurfDT = (QSurf(tPlateC + dT) - QSurf(tPlateC - dT)) / (2 * dT);
 
         // ── ② 沿舌片到铜排夹：夹持是定温边界 ⇒ dQ/dT = 导度本身

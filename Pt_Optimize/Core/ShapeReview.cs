@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -32,8 +32,9 @@ public static class ShapeReview
     /// <summary>③/D 实测比例 K/W（`--window` 六行，D 从 +0.6 到 +144 W 吻合 5 % 以内）。</summary>
     public const double GammaKPerW = 2.40;
 
-    private static string Pct(double actual, double limit) =>
-        Math.Abs(limit) < 1e-9 ? "—" : $"{(limit - actual) / Math.Abs(limit) * 100:0} %";
+    /// <summary>裕度显示。数由 <see cref="ConstraintOut.MarginPct"/> 给 —— 本处不再自己算。</summary>
+    private static string Pct(double pct) =>
+        double.IsNaN(pct) ? "—" : $"{pct:0} %";
 
     /// <param name="d">优化后的设计（几何 + 三个旋钮的收敛值）</param>
     /// <param name="r">该设计的完整求解结果（判据表从这里读）</param>
@@ -162,12 +163,12 @@ public static class ShapeReview
         var judged = r.Checks.Where(c => c.Kind is CheckKind.HardSafety or CheckKind.Target
                                       && c.Ok && !c.Undetermined && Math.Abs(c.Limit) > 1e-9
                                       && Informative(c))
-                             .OrderByDescending(c => (c.Limit - c.Actual) / Math.Abs(c.Limit)).ToArray();
+                             .OrderByDescending(c => c.MarginPct).ToArray();
 
         sb.AppendLine("四、优点（按裕度从宽到紧，**每条都带实测值**）");
         foreach (var c in judged.Take(3))
             sb.AppendLine($"　 ·\t{c.Name}\t{c.Actual:0.00}\t{c.Limit:0.00}\t" +
-                          $"裕度 **{Pct(c.Actual, c.Limit)}**\t{c.Where}");
+                          $"裕度 **{Pct(c.MarginPct)}**\t{c.Where}");
         if (d.RingMul.All(m => m <= 1.001))
             sb.AppendLine("　 · **不需要管孔渐变环**（倍率 1.00）⇒ 少一道两级台阶的机加工。" +
                           "　依据：②″ = " + r.ValueOf(LineResult.Key.DiscTemp).ToString("0.00") +
@@ -181,7 +182,7 @@ public static class ShapeReview
         var tight = judged.Reverse().Take(2).ToArray();
         foreach (var c in tight)
             sb.AppendLine($"　 ·\t{c.Name}\t{c.Actual:0.00}\t{c.Limit:0.00}\t" +
-                          $"只剩 **{Pct(c.Actual, c.Limit)}**\t{c.Where}");
+                          $"只剩 **{Pct(c.MarginPct)}**\t{c.Where}");
         // ⑤ 单独说：它贴着下界是**构造使然**，不是缺陷；但装配确实没有余量。
         sb.AppendLine($"　 · 自由段 {d.FreeTabMm:0.0} mm **正好贴着装配下界** —— 这是构造使然" +
                       "（舌长 = 切点 + 压接段 + 自由段下界，加长只多花铂），不是设计缺陷；" +

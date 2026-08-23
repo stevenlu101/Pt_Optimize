@@ -346,6 +346,11 @@ public sealed class FlangeOut
     /// <summary>分区峰值温度 —— 判据②要用 <see cref="TDiscMaxC"/>，见 ShellThermalResult 同名注释</summary>
     public double TDiscMaxC, TTabMaxC;
     /// <summary>圆盘峰值的**位置与局部电流**，见 ShellThermalResult 同名注释（判据 ②″ 的病灶定位）</summary>
+    /// <summary>局部热稳定的最小裕度与落点，见 <see cref="ShellThermalResult.LocalStabMargin"/></summary>
+    public double LocalStabMargin = double.NaN, LocalStabRMm = double.NaN,
+                  LocalStabTempC = double.NaN, LocalStabJAPerMm2 = double.NaN, LocalStabLatLenMm = double.NaN;
+    public bool LocalStabOnTab;
+
     public double DiscMaxXMm = double.NaN, DiscMaxZMm = double.NaN,
                   DiscMaxRMm = double.NaN, DiscMaxJAPerMm2 = double.NaN,
                   DiscMaxThickMm = double.NaN;
@@ -392,6 +397,25 @@ public sealed class ConstraintOut
     public CheckKind Kind = CheckKind.Target;
     /// <summary>数据不足以判定（如纯铂在 1100 °C 以下无持久强度实测，见 §6 待补 ③）</summary>
     public bool Undetermined;
+
+    /// <summary>
+    /// 本条判据的**裕度 %**。正 = 还有余量，负 = 越限。方向性判据（限 0）返回 NaN。
+    ///
+    /// ★★★★★ **必须看 <see cref="LessIsBetter"/>**（2026-08-23 修）。
+    ///
+    /// 在此之前，同一个公式 `(限−实)/|限|` 在**四处**各写了一遍
+    /// （FinalDesign.Margin、ShapeReview 两处、整线设计页的判据表），
+    /// 四处都没看方向 ⇒ 对「须 ≥ 限」的判据**符号是反的**。
+    ///
+    /// 实际后果（.3dm 那条路上现形）：⑤ 舌片自由段 114.8 / 100 是**通过且富余 14.8**，
+    /// 而判据表把它显示成「**超 15 %**」—— 裕度列说越限、判定列打 ✓，同一行自相矛盾。
+    /// 定案档上看不出来，是因为舌长按「切点+压接+自由段下界」**算出来**、
+    /// ⑤ 恰好贴着 100 ⇒ 裕度 0 %，符号错不错都是 0。**这个 bug 一直躲在那个巧合后面。**
+    ///
+    /// ⇒ 裕度只有这一处来源。要显示裕度就读它，别再各写一遍。
+    /// </summary>
+    public double MarginPct => System.Math.Abs(Limit) < 1e-9 ? double.NaN
+        : (LessIsBetter ? Limit - Actual : Actual - Limit) / System.Math.Abs(Limit) * 100.0;
 }
 
 public sealed class LineResult
@@ -430,7 +454,11 @@ public sealed class LineResult
         //   而不是门禁悄悄永远放行。
         public const string FreeTab = "⑤ 舌片自由段";        // 现场铜排装得下吗（几何闭式）
         public const string DiscCover = "⑥ 圆盘盖得住管孔";   // 盘半径 − 管孔半径 − 焊脚（几何闭式）
-        public const string TubeJ = "管 J";                   // 管电流密度上限（≠「· 法兰 J_max」那条参考量）
+        public const string TubeJ = "管 J";
+        /// <summary>整片热稳定：dQ_散热/dT ÷ dP_发热/dT，须 &gt; 1</summary>
+        public const string FlangeStab = "· 整片热稳定";
+        /// <summary>局部热稳定：J_stab ÷ J_实际（圆盘峰值点），须 &gt; 1</summary>
+        public const string LocalStab = "· 局部热稳定";                   // 管电流密度上限（≠「· 法兰 J_max」那条参考量）
     }
 
     public ConstraintOut? Find(string keyPrefix)
@@ -1133,6 +1161,10 @@ public static class LineRunner
                 TDiscMaxC = th.TDiscMaxC, TTabMaxC = th.TTabMaxC,
                 DiscMaxXMm = th.DiscMaxXMm, DiscMaxZMm = th.DiscMaxZMm,
                 DiscMaxRMm = th.DiscMaxRMm, DiscMaxJAPerMm2 = th.DiscMaxJAPerMm2,
+                LocalStabMargin = th.LocalStabMargin, LocalStabRMm = th.LocalStabRMm,
+                LocalStabTempC = th.LocalStabTempC, LocalStabJAPerMm2 = th.LocalStabJAPerMm2,
+                LocalStabLatLenMm = th.LocalStabLatLenMm,
+                LocalStabOnTab = th.LocalStabOnTab,
                 DiscMaxThickMm = th.DiscMaxThickMm,
                 TMaxC = th.TMaxC, TMinC = th.TMinC, TTabEndC = th.TTabEndMeanC,
                 AreaMm2 = mesh.TotalArea, VolumeMm3 = mesh.VolumeMm3,
@@ -1238,6 +1270,16 @@ public static class LineRunner
                           (worst.StabilityLimited ? "（电流被热稳定极限压低，不是故障）" : "")
                         : worst.Note)
                         + (worst.Reached && worst.HoursToTarget <= c.RampHours ? "" : NextAction.RampSlow)
+                        // ★ 把这条判据的**前提**说出来（2026-08-24 补）。
+                        //   本条走 RampSolver：集总空管模型，功率随需给足、只受 J_allow 约束，
+                        //   **不含二次侧闭环方式**。现场是「温控」（用户 2026-08-11 确认），
+                        //   冷态所需功率极小、电流只有几十安 —— 这个前提下不建电源模型是站得住的。
+                        //   但换成恒压/恒流/恒功率就是另一族工况：恒压冷启电流可达设计值的 4.4 倍
+                        //   （冷态 ρe 只有热态的 1/4.4），那一族由 RampTwoNode 建模，
+                        //   只在 `--cli --ramp2` 里跑得到，**本表不覆盖**。
+                        //   前提不写出来，读表的人会以为 ① 过了就等于升温这一段全过。
+                        + "　⚠ 前提：按**温控**（功率随需给足、只受 J 上限）算，不含二次侧闭环方式。"
+                        + "改恒压/恒流/恒功率是另一族工况（恒压冷启电流约 4.4 倍），用 `--cli --ramp2` 单独扫。"
                 });
         }
 
@@ -1475,6 +1517,88 @@ public static class LineRunner
                           "多半是几何退化（例如舌长短于压接段、盘盖不住孔）或网格没解开。"
                         : "")
             });
+        }
+
+        // ── 热稳定两条：**判据一直存在，只是从来没进过这张表**（2026-08-23 补）
+        //
+        // 机理（用户 2026-08-13 亲述）：保温过头 → 温度↑ → 电阻↑ → 同电流下发热↑
+        // → 温度更↑ → 烧断。这是**正反馈失控**，与净热流方向无关 ——
+        // 一个系统可以处在平衡态却是不稳定平衡。FlangeStability 的类头写着它是为了补
+        // 「管侧早有同类判据（RampSolver 的 I_stab），法兰侧此前完全没有」这个洞而建的，
+        // 可它建好之后只接到 CLI 的 --flangestab / --localstab 上，
+        // **界面上的判据表里一条都没有** ⇒ 换个几何就没人再算它。
+        //
+        // 先按**参考量**报（管 J 与能量残差当年都是这么进来的）：
+        // 限值 1.0 是精确物理不是经验阈值，本可直接当硬判据；
+        // 但它在**定案以外的几何**上的量级从没量过，
+        // 拿一条没量过分布的判据去卡交付，风险在另一侧。
+        // ⇒ 这一轮先让它在每个算例上露出来、把量级攒起来，再谈升为硬判据。
+        {
+            var plates = c.FlangePlates is { Length: > 0 } ? c.FlangePlates : c.GeomForJudge;
+            if (flanges.Length > 0 && plates is { Length: > 0 })
+            {
+                // 最不利的一片 = 发热最大那片（dP/dT ∝ 发热）
+                int wj = 0;
+                for (int j = 1; j < flanges.Length; j++)
+                    if (flanges[j].QGenW > flanges[wj].QGenW) wj = j;
+                var fw = flanges[wj];
+                var pl = plates[Math.Min(wj, plates.Length - 1)];
+
+                // 盘/舌面积按**切点**分 —— 与 DesignScreen.Extract 同一个口径，不另立标准
+                var mesh = FlangeMesher.Build(pl, 0, c.MeshFineMm, c.MeshCoarseMm,
+                                              c.MeshFineRadiusMm, c.Base.BusbarClampLengthMm);
+                var sf = DesignScreen.Extract(mesh, 1000.0, 1050.0, pl.Tangent().X);
+                double tThick = double.IsNaN(pl.TabThicknessMm) ? pl.ThicknessMm : pl.TabThicknessMm;
+
+                // ⚠ 评估温度取**管根温度**，不取片上最高温：FlangeStability 的护栏写明
+                //   发散几何上片温会跑到几千度，拿那个温度判出来的全是垃圾。
+                var st = FlangeStability.Check(
+                    c.Base, fw.QGenW, fw.TRootC,
+                    sf.DiscAreaMm2, sf.TabAreaMm2, c.Base.FlangeInsulThickMm,
+                    2 * pl.TabEndHalfWidthMm * tThick, Math.Abs(pl.TabEndXMm),
+                    2 * Math.PI * pl.HoleRadiusMm * pl.ThicknessMm,
+                    pl.DiscRadiusMm - pl.HoleRadiusMm,
+                    pl.TabInsulThickMm);
+                checks.Add(new ConstraintOut
+                {
+                    Name = LineResult.Key.FlangeStab, Unit = "×", Kind = CheckKind.Reference,
+                    Actual = st.Undetermined ? double.NaN : st.Margin, Limit = 1.0,
+                    LessIsBetter = false, Ok = st.Stable, Undetermined = st.Undetermined,
+                    Where = fw.Name,
+                    Note = "dQ_散热/dT ÷ dP_发热/dT，**须 > 1**；< 1 即正反馈失控（保温过头那条路）。"
+                         + (st.Undetermined ? "　" + st.Note
+                            : $"　散热侧 表面 {st.DSurfDT:0.000} + 夹持 {st.DClampDT:0.000}"
+                              + $" + 管孔 {st.DTubeDT:0.000} = {st.DLossDT:0.000} W/K，"
+                              + $"发热侧 {st.DGenDT:0.000} W/K")
+                         + "　⚠ 现为**参考量**：限 1.0 是精确物理，但跨几何的量级还没攒够，"
+                         + "攒够再升为硬判据（管 J 当年也是这么升上去的）。"
+                });
+
+                // 局部热稳定：取**全线最不稳定的那一格**（由场解逐格筛出，见
+                // ShellThermalResult.LocalStabMargin）。
+                //
+                // ★ 第一版拿「圆盘最热那一格」当代表，**是错的**：实测两个现役档上
+                //   盘温峰落在外缘，那里电流密度≈0 ⇒ 裕度算出 +∞ ⇒ 判据表上会写着
+                //   「无限安全」而其实一格都没验。最热 ≠ 最不稳定。
+                var wl = flanges.Where(f => !double.IsNaN(f.LocalStabMargin))
+                                .OrderBy(f => f.LocalStabMargin).FirstOrDefault();
+                checks.Add(new ConstraintOut
+                {
+                    Name = LineResult.Key.LocalStab, Unit = "×", Kind = CheckKind.Reference,
+                    Actual = wl?.LocalStabMargin ?? double.NaN, Limit = 1.0,
+                    LessIsBetter = false, Ok = wl is not null && wl.LocalStabMargin > 1.0,
+                    Undetermined = wl is null,
+                    Where = wl is null ? "—"
+                          : $"{wl.Name} {(wl.LocalStabOnTab ? "舌" : "盘")} r={wl.LocalStabRMm:0.0}",
+                    Note = "J_stab ÷ J_实际，**须 > 1**；< 1 即该点会自行升温直到烧断。"
+                         + (wl is null
+                            ? "　候选点的温度全部超出电阻率拟合区间 ⇒ 判不了（多半是场解已发散）"
+                            : $"　该点 {wl.LocalStabTempC:0} °C、J={wl.LocalStabJAPerMm2:0.00} A/mm²。"
+                              + $"　横向导热长 L={wl.LocalStabLatLenMm:0.0} mm（到最近**定温锚点**：管孔 / 压接段）。"
+                              + "　L 若按「不计横向导热」取 ∞，两个现役定案档会被判成 0.6×（失稳）——保守到失真不叫保守，叫判据坏了。")
+                         + "　⚠ 现为参考量，同上。"
+                });
+            }
         }
 
         // ── 现场验证点：玻璃温降。这是全模型唯一一个拿实测校准的量，必须始终露出来。

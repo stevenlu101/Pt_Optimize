@@ -42,13 +42,6 @@ public class RootNotBracketedException : Exception
 public static class Roots
 {
     /// <summary>
-    /// 光滑函数：用 MathNet 的 Brent 法（含自动扩展括号）。
-    /// </summary>
-    public static double Smooth(Func<double, double> f, double lo, double hi,
-                                double accuracy = 1e-6, int maxIter = 200)
-        => Brent.FindRootExpand(f, lo, hi, accuracy, maxIter);
-
-    /// <summary>
     /// 单调 + 带噪 + 昂贵的函数：纯二分。
     ///
     /// 不用 Brent —— 其逆二次插值会把内层迭代残留的噪声放大，

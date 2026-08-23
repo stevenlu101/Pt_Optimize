@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 
@@ -78,47 +78,6 @@ public static class Geometry3dm
                     if (File.Exists(c)) return c;
                 }
         return null;
-    }
-
-    /// <summary>
-    /// 把**解析法兰**写成 .3dm（调 Geom 子进程的 plate 模式，与 thickness 反向）。
-    ///
-    /// 用途：APP 里搜出最优形状后直接出图纸，工程师不必碰命令行。
-    /// 一个文件放 n+1 片，沿 X 依次排开，每片一个图层「法兰_入口」「法兰_HC1|HC2」…
-    /// 写出的轮廓与 <see cref="FlangePlate"/> 完全一致（同一套切点公式），
-    /// 故回读做 <c>--geom</c> 校核时应当逐项吻合。
-    /// </summary>
-    /// <param name="thicknessMm">各片厚度，长度即片数</param>
-    /// <returns>子进程的 stdout（含每片体积与铂重，供界面回显）</returns>
-    public static string WritePlate3dm(string outPath, FlangePlate g, IReadOnlyList<double> thicknessMm,
-                                       IReadOnlyList<string>? layerNames = null)
-    {
-        string probe = FindProbe()
-            ?? throw new FileNotFoundException($"找不到 {ProbeName}.exe。先构建 {ProbeName}（需本机装 Rhino 8）。");
-        if (thicknessMm.Count == 0) throw new ArgumentException("厚度列表为空", nameof(thicknessMm));
-
-        var psi = new ProcessStartInfo(probe)
-        {
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
-            UseShellExecute = false, CreateNoWindow = true
-        };
-        psi.ArgumentList.Add("plate");
-        psi.ArgumentList.Add(outPath);
-        psi.ArgumentList.Add(g.DiscRadiusMm.ToString("R"));
-        psi.ArgumentList.Add(g.HoleRadiusMm.ToString("R"));
-        psi.ArgumentList.Add(g.TabEndXMm.ToString("R"));
-        psi.ArgumentList.Add(g.TabEndHalfWidthMm.ToString("R"));
-        psi.ArgumentList.Add(string.Join(",", thicknessMm.Select(t => t.ToString("R"))));
-        if (layerNames is { Count: > 0 }) psi.ArgumentList.Add(string.Join(",", layerNames));
-
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException("无法启动 " + probe);
-        string stdout = proc.StandardOutput.ReadToEnd();
-        string stderr = proc.StandardError.ReadToEnd();
-        proc.WaitForExit();
-        if (proc.ExitCode != 0)
-            throw new InvalidOperationException($"{ProbeName} plate 退出码 {proc.ExitCode}。{stderr.Trim()}");
-        return stdout;
     }
 
     /// <summary>

@@ -143,7 +143,6 @@ public sealed class ThicknessField
         return T[i * Nz + j];
     }
 
-    public bool HasMaterial(double x, double z) => At(x, z) > 1e-9;
 
     public double AreaMm2 => T.Count(v => v > 1e-9) * Step * Step;
     public double VolumeMm3 => T.Sum() * Step * Step;
