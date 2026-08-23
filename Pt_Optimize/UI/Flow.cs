@@ -414,6 +414,13 @@ public static class Flow
         // 正在算的时候不催 —— 状态面板那一行已经在说「正在算：…」
         if (st.Running is not null) return null;
 
+        // ★ .3dm 且还没分析：先分析，再解。顺序不能颠倒 ——
+        //   不分析直接解，⑤⑥ 会是「无法判定」，那一分多钟等于白跑。
+        if (st.GeomAnalysisPending)
+            return new("geom.analyze",
+                "本页是 **Rhino .3dm 模式**，图纸还没反推成几何变数 —— "
+                + "先点它，⑤⑥ 才判得了（否则解完仍是「无法判定」，白跑一次分钟级的解）");
+
         if (st.Last is null)
             return new("core.runLine", "还没解过 —— 先解一次整线，才谈得上判据与出图");
 
@@ -550,6 +557,15 @@ public sealed class FlowState
 
     /// <summary>正在跑的链（null = 空闲）。状态面板据此显示「正在算…」。</summary>
     public ChainId? Running;
+
+    /// <summary>
+    /// `.3dm` 模式、图纸已选、但**还没「分析几何变数」**。
+    ///
+    /// ★ 为什么要单独立一位（2026-08-23 用户指出）：不分析也能点「核算整线」，
+    ///   但那样跑完一次分钟级的解，⑤⑥ 仍是「无法判定」——
+    ///   **白跑一分多钟才发现该先点分析**。指路必须先把这一步说出来。
+    /// </summary>
+    public bool GeomAnalysisPending;
 
     /// <summary>进度文字，取自各页已有的 Progress&lt;string&gt;。</summary>
     public string RunningNote = "";

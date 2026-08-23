@@ -523,6 +523,7 @@ public sealed class LineDesignPage : TabPage
 
         // 几何来源变了 ⇒ 有些命令的「适不适用」跟着变 ⇒ 让 SyncGates 重算一遍。
         // 走 Notify 而不是直接改按钮：Enabled 只允许有一个来源。
+        SyncAnalysisPending();
         Shared?.Notify();
     }
 
@@ -593,6 +594,19 @@ public sealed class LineDesignPage : TabPage
         {
             MessageBox.Show(this, ex.Message, "另存失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
+    }
+
+    /// <summary>
+    /// 维护「.3dm 已选图纸但还没分析」这一位。**只在这一处算**，
+    /// 指路（Flow.Next）只读它 —— 判据/状态一律单一来源。
+    /// </summary>
+    private void SyncAnalysisPending()
+    {
+        if (Shared is not { } f) return;
+        f.GeomAnalysisPending =
+            !_srcAnalytic.Checked
+            && !string.IsNullOrWhiteSpace(_file3dm[0].Text)
+            && _shape is null;
     }
 
     internal bool CommandApplicable(string cmdId) => cmdId switch
@@ -2164,6 +2178,8 @@ public sealed class LineDesignPage : TabPage
             var f = Geometry3dm.LoadThickness(src, _layer3dm.Text.Trim(), double.NaN, 0.5);
             var sh = PlateShapeAnalyzer.Analyze(f);
             _shape = sh;
+            SyncAnalysisPending();          // 分析完了 ⇒ 指路不该再指它
+            Shared?.Notify();
             // 四片先按同一张图的分级；各片可各自选不同 .3dm 时逐片解析亦可
             var lv = sh.Levels.Select(l => l.ThicknessMm).ToArray();
             _levels = Enumerable.Range(0, 4).Select(_ => (double[])lv.Clone()).ToArray();

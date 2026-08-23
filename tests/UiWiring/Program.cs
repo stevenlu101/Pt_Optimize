@@ -1402,6 +1402,49 @@ class UiWiringTests {
                 Check("★ 不许把它塞进求解用的 FlangePlates（那会变成「判的是 A、解的是 B」）",
                       lcB.FlangePlates.Length == 0, $"{lcB.FlangePlates.Length} 片");
 
+                // ★ 指路顺序：.3dm 已选图纸但**还没分析**时，第一步必须是「分析几何变数」。
+                //   不分析也能点「核算整线」，但那样跑完一次分钟级的解 ⑤⑥ 仍是「无法判定」
+                //   —— 白跑一分多钟才发现该先点分析（用户 2026-08-23 指出）。
+                {
+                    var fl = (FlowState)F(main, "_flow")!;
+                    bool AppL(string id) => (bool)typeof(LineDesignPage).GetMethod("CommandApplicable",
+                        BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public)!
+                        .Invoke(lp3, new object[] { id })!;
+
+                    // 先把「已分析」这个状态退回去，重演首次进入 .3dm 的那一刻
+                    Set(lp3, "_shape", null);
+                    typeof(LineDesignPage).GetMethod("SyncAnalysisPending",
+                        BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(lp3, null);
+                    Check("未分析时这一位是立着的", fl.GeomAnalysisPending);
+                    var n1 = Flow.Next(fl, AppL);
+                    Check("未分析时指向「分析几何变数」", n1?.CmdId == "geom.analyze",
+                          n1 is null ? "★ 没给下一步" : $"{n1.CmdId}　{n1.Why}");
+
+                    // 分析之后就不该再指它
+                    typeof(LineDesignPage).GetMethod("AnalyzeShape",
+                        BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(lp3, null);
+                    Pump(300);
+                    Check("分析之后这一位落下", !fl.GeomAnalysisPending);
+                    var n2 = Flow.Next(fl, AppL);
+                    Check("分析之后不再指「分析几何变数」", n2?.CmdId != "geom.analyze",
+                          n2?.CmdId ?? "(无)");
+                    Check("分析之后指向「核算整线」（还没解过）", n2?.CmdId == "core.runLine",
+                          n2?.CmdId ?? "(无)");
+
+                    // 解析模式下这一位永远不该立起来
+                    Set(lp3, "_suppressAuto", true);
+                    ((RadioButton)F(lp3, "_srcAnalytic")!).Checked = true;
+                    Set(lp3, "_suppressAuto", false);
+                    typeof(LineDesignPage).GetMethod("SyncGeomSource",
+                        BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(lp3, null);
+                    Check("解析模式下这一位不立（没有图纸可反推）", !fl.GeomAnalysisPending);
+                    Set(lp3, "_suppressAuto", true);
+                    ((RadioButton)F(lp3, "_src3dm")!).Checked = true;
+                    Set(lp3, "_suppressAuto", false);
+                    typeof(LineDesignPage).GetMethod("SyncGeomSource",
+                        BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(lp3, null);
+                }
+
                 var g = GeometryScreen.Judge(lcB.GeomForJudge, 40.0, 100.0);
                 var five = g.FirstOrDefault(c => c.Name.StartsWith(LineResult.Key.FreeTab, StringComparison.Ordinal));
                 var six = g.FirstOrDefault(c => c.Name.StartsWith(LineResult.Key.DiscCover, StringComparison.Ordinal));
