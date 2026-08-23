@@ -52,6 +52,16 @@ class UiWiringTests {
         // `--walk`：①→⑤ 全程走通并逐步核对（用户 2026-08-21）。
         // 与接线测试分开跑：那个验「接线对不对」，这个验「整条流程跑得完、数对不对」。
         if (args.Contains("--walk")) { Environment.ExitCode = Walk.Run(); return; }
+        if (args.Contains("--tabins0")) { Environment.ExitCode = Walk.TabIns0(); return; }
+        int ie = Array.IndexOf(args, "--export3dm");
+        if (ie >= 0 && ie + 1 < args.Length)
+        {
+            double kk = ie + 2 < args.Length && double.TryParse(args[ie + 2], out var v) ? v : 1.0;
+            Environment.ExitCode = Walk.Export3dm(args[ie + 1], kk); return;
+        }
+        int im = Array.IndexOf(args, "--map3dm");
+        if (im >= 0 && im + 1 < args.Length)
+        { Environment.ExitCode = Walk.Map3dm(args[im + 1]); return; }
         // `--walk3dm <file>`：走 .3dm 任意形状那条路
         int i3 = Array.IndexOf(args, "--walk3dm");
         if (i3 >= 0 && i3 + 1 < args.Length)
@@ -1348,6 +1358,66 @@ class UiWiringTests {
             var missing = pointed.Where(id => Flow.Commands.All(c => c.Id != id)).ToList();
             Check("指路指到的命令都真实存在", missing.Count == 0,
                   missing.Count == 0 ? string.Join("、", pointed) : "★ 不存在：" + string.Join("、", missing));
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        Head("29 .3dm 模式下 ⑤⑥ 也要判得了（否则那条路永远到不了交付）");
+        {
+            // 病灶（2026-08-23 用 Pt_Heater3.3dm 实跑发现）：
+            //   .3dm 模式下 LineCase.FlangePlates 是空的（几何来自厚度场）
+            //   ⇒ GeometryScreen 给出两条「无法判定」⇒ 而「无法判定不算通过」
+            //   ⇒ AllOk 恒 false ⇒ ④→⑤ 的门（RequireAllOk）**永远打不开**
+            //   ⇒ **.3dm 这条路走不到交付**。
+            //   可「分析几何变数」早就把盘半径/管孔半径/舌端 X/舌端半宽全反推出来了。
+            string dm = Path.Combine(RepoRoot(), "Pt_Heater3.3dm");
+            if (!File.Exists(dm)) { Check("有 .3dm 样件可测", false, "★ 缺 " + dm); }
+            else if (Geometry3dm.FindProbe() is null) { Check("几何探针在", false, "★ 缺 Pt_Optimize.Geom.exe"); }
+            else
+            {
+                var lp3 = tabs.TabPages.OfType<LineDesignPage>().First();
+                var f3 = (TextBox[])F(lp3, "_file3dm")!;
+                Set(lp3, "_suppressAuto", true);
+                ((RadioButton)F(lp3, "_src3dm")!).Checked = true;
+                foreach (var t in f3) t.Text = dm;
+                ((TextBox)F(lp3, "_layer3dm")!).Text = "法兰";
+                Set(lp3, "_suppressAuto", false);
+                typeof(LineDesignPage).GetMethod("SyncGeomSource",
+                    BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(lp3, null);
+                Pump(120);
+
+                // 还没分析 ⇒ 不该硬凑：GeomForJudge 空，⑤⑥ 仍报无法判定（那是诚实的）
+                var lcA = (LineCase)typeof(LineDesignPage).GetMethod("BuildCase",
+                    BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(lp3, null)!;
+                Check("没分析过时不硬凑几何（⑤⑥ 仍无法判定是诚实的）",
+                      lcA.GeomForJudge.Length == 0, $"{lcA.GeomForJudge.Length} 片");
+
+                typeof(LineDesignPage).GetMethod("AnalyzeShape",
+                    BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(lp3, null);
+                Pump(300);
+
+                var lcB = (LineCase)typeof(LineDesignPage).GetMethod("BuildCase",
+                    BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(lp3, null)!;
+                Check("分析之后有了供判据用的等效几何", lcB.GeomForJudge.Length == 4,
+                      $"{lcB.GeomForJudge.Length} 片");
+                Check("★ 不许把它塞进求解用的 FlangePlates（那会变成「判的是 A、解的是 B」）",
+                      lcB.FlangePlates.Length == 0, $"{lcB.FlangePlates.Length} 片");
+
+                var g = GeometryScreen.Judge(lcB.GeomForJudge, 40.0, 100.0);
+                var five = g.FirstOrDefault(c => c.Name.StartsWith(LineResult.Key.FreeTab, StringComparison.Ordinal));
+                var six = g.FirstOrDefault(c => c.Name.StartsWith(LineResult.Key.DiscCover, StringComparison.Ordinal));
+                Check("⑤ 判得出来了（不再是无法判定）", five is { Undetermined: false },
+                      five is null ? "★ 没有这条" : (five.Undetermined ? "★ 仍无法判定" : $"{five.Actual:0.0} / {five.Limit:0}"));
+                Check("⑥ 判得出来了", six is { Undetermined: false },
+                      six is null ? "★ 没有这条" : (six.Undetermined ? "★ 仍无法判定" : $"{six.Actual:0.0} / {six.Limit:0}"));
+
+                // 复原，别把后面的节带偏
+                Set(lp3, "_suppressAuto", true);
+                ((RadioButton)F(lp3, "_srcAnalytic")!).Checked = true;
+                foreach (var t in f3) t.Text = "";
+                Set(lp3, "_suppressAuto", false);
+                typeof(LineDesignPage).GetMethod("SyncGeomSource",
+                    BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(lp3, null);
+            }
         }
 
         Console.WriteLine();

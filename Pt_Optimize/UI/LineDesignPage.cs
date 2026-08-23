@@ -26,6 +26,11 @@ public sealed class LineDesignPage : TabPage
     private readonly NumericUpDown _wall = Num(0.80m, 0.10m, 5.00m, 0.05m, 2);
     private readonly NumericUpDown _tubeIns = Num(10.0m, 0.0m, 100.0m, 0.5m, 1);
     private readonly NumericUpDown _clamp = Num(300m, -1m, 1200m, 10m, 0);
+    /// <summary>
+    /// `.3dm` 模式下的舌保温 mm。解析模式不用它（那边逐片来自 FinalDesign.TabInsulMm）。
+    /// 0 = 裸舌 —— 那是此前 .3dm 路径**写死**的行为。
+    /// </summary>
+    private readonly NumericUpDown _tabIns3dm = Num(0.0m, 0.0m, 5.0m, 0.05m, 2);
     private readonly ComboBox _flIns = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = UiScale.S(110) };
     private readonly NumericUpDown _flInsT = Num(20.0m, 0.0m, 60.0m, 0.5m, 1);
     private readonly NumericUpDown _discD = Num(60m, 30m, 300m, 2m, 0);
@@ -145,6 +150,12 @@ public sealed class LineDesignPage : TabPage
     private LineResult? _last;
     /// <summary>「分析几何变数」解析出的各级原始厚度，逐级定厚要用</summary>
     private double[][]? _levels;
+    /// <summary>
+    /// 「分析几何变数」反推出来的形状。留着是为了让 ⑤⑥ 在 .3dm 模式下也判得了 ——
+    /// 见 <see cref="LineCase.GeomForJudge"/>。没分析过时为 null ⇒ ⑤⑥ 仍报「无法判定」，
+    /// 那是**诚实的**：还没告诉过程序这张图长什么样。
+    /// </summary>
+    private PlateShapeAnalyzer.Shape? _shape;
     private double[][]? _levelScale;
     /// <summary>各级的「锁定」勾选框（解析几何变数后动态生成）</summary>
     private readonly List<CheckBox> _lockBoxes = new();
@@ -344,6 +355,13 @@ public sealed class LineDesignPage : TabPage
             _row3dm[idx] = pnl;
             Row(names[idx] + " .3dm", pnl);
         }
+        Row("舌保温 mm（.3dm）", _tabIns3dm,
+            "舌片自己的保温厚度。**0 = 裸舌**，那是本路径此前写死的行为。"
+            + Environment.NewLine
+            + "它是守 ②′/③ 的主力旋钮：实测在定案几何上，0.4 mm ⇒ ③ = 5.2 K ✓，"
+            + "而 0（裸舌）⇒ 法兰 2986 °C、往管里灌 256 W。"
+            + Environment.NewLine
+            + "舌片裸露占端片散热的 90 % 以上 —— 一裸就净抽热、一全包又净倒灌，中间有零点。");
         Row("图层名", _layer3dm, "厚度场从该图层提取。t=0 表示无材料 ⇒ 开槽、孔、轮廓一次拿全");
         Row("锁定的级", _lockPanel,
             "勾上的级厚度锁死，优化器只调其余级。典型用法：外圈勾上 = 外圈不动、只调内圈。" +
@@ -1301,8 +1319,41 @@ public sealed class LineDesignPage : TabPage
             lc.FlangeFile3dm = files;
             lc.FlangeLayer = _layer3dm.Text.Trim();
             lc.ThicknessScale = _tPlate.Select(n => (double)n.Value).ToArray();
+            // 0 ⇒ 传 NaN（裸舌，与从前一致）；> 0 才真的包保温
+            double ti3 = (double)_tabIns3dm.Value;
+            lc.TabInsul3dmMm = ti3 > 1e-9 ? ti3 : double.NaN;
             if (_levels is not null) lc.LevelThicknessMm = _levels;
             if (_levelScale is not null) lc.LevelScale = _levelScale;
+
+            // ★ 把「分析几何变数」反推出的形状喂给 ⑤⑥（2026-08-23）。
+            //   在此之前 .3dm 模式下这两条恒为「无法判定」，而无法判定不算通过
+            //   ⇒ **.3dm 这条路永远解锁不了 ⑤ 交付**。可它们要的量
+            //   （盘半径 / 管孔半径 / 舌端 X / 舌端半宽）分析时全都拿到了。
+            //
+            //   ⚠ 只喂 GeomForJudge，**不碰 FlangePlates** —— 后者是求解用的，
+            //     .3dm 模式下求解走厚度场。塞进去就成了「判的是 A、解的是 B」。
+            //   ⚠ 没分析过（_shape 为 null）就**不喂** ⇒ ⑤⑥ 仍报无法判定。
+            //     那是诚实的：还没告诉过程序这张图长什么样。
+            if (_shape is { } sh3)
+            {
+                // 厚度取各级里**最薄**的那一级：焊脚 = max(板厚, 壁厚)，
+                // 而 ⑥ 是「盘在焊脚外还剩多少料」—— 取最薄片会给出**最宽松**的焊脚，
+                // 所以这里反过来取**最厚**的一级，让 ⑥ 判在最严的那一侧。
+                double tMax = sh3.Levels.Count > 0
+                    ? sh3.Levels.Max(l => l.ThicknessMm) : (double)_wall.Value;
+                var eq = new FlangePlate
+                {
+                    DiscRadiusMm = sh3.DiscRadiusMm,
+                    HoleRadiusMm = sh3.HoleRadiusMm,
+                    TabEndXMm = sh3.TabEndXMm,
+                    TabEndHalfWidthMm = sh3.TabEndHalfWidthMm,
+                    ThicknessMm = tMax,
+                    TabParallel = true,
+                    WeldFilletLegMm = Math.Max(tMax, (double)_wall.Value),
+                };
+                // 四片同图 ⇒ 四片同形。逐片各选各的 .3dm 时这里要跟着改。
+                lc.GeomForJudge = new[] { eq, eq, eq, eq };
+            }
         }
         return lc;
     }
@@ -2049,7 +2100,17 @@ public sealed class LineDesignPage : TabPage
     {
         using var fb = new FolderBrowserDialog { Description = "选择输出目录（四片各出一个 .3dm）" };
         if (fb.ShowDialog(this) != DialogResult.OK) return;
+        ExportScaledTo(fb.SelectedPath);
+    }
 
+    /// <summary>
+    /// 按指定目录导出四片。抽出来是为了**能被接线测试直接调**
+    /// （FolderBrowserDialog 是模态的，测不了）——
+    /// 与 <see cref="ExportBlockedReason"/> 当初抽出来是同一个理由。
+    /// </summary>
+    internal void ExportScaledTo(string dir)
+    {
+        Directory.CreateDirectory(dir);
         var names = new[] { "入口", "共用1", "共用2", "出口" };
         var sb = new StringBuilder("【导出最终图纸】厚度已按自动定厚的结果改好，可直接用" + Environment.NewLine);
         try
@@ -2060,7 +2121,7 @@ public sealed class LineDesignPage : TabPage
                 string src = _file3dm[i].Text.Trim();
                 if (string.IsNullOrEmpty(src)) continue;
                 double k = (double)_tPlate[i].Value;
-                string dst = Path.Combine(fb.SelectedPath,
+                string dst = Path.Combine(dir,
                     $"{Path.GetFileNameWithoutExtension(src)}_{names[i]}_x{k:0.0000}.3dm");
                 var ks = _levelScale is not null && i < _levelScale.Length && _levelScale[i].Length > 0
                        ? _levelScale[i] : new[] { k };
@@ -2102,6 +2163,7 @@ public sealed class LineDesignPage : TabPage
             _status.Text = "提取厚度场并解析…";
             var f = Geometry3dm.LoadThickness(src, _layer3dm.Text.Trim(), double.NaN, 0.5);
             var sh = PlateShapeAnalyzer.Analyze(f);
+            _shape = sh;
             // 四片先按同一张图的分级；各片可各自选不同 .3dm 时逐片解析亦可
             var lv = sh.Levels.Select(l => l.ThicknessMm).ToArray();
             _levels = Enumerable.Range(0, 4).Select(_ => (double[])lv.Clone()).ToArray();

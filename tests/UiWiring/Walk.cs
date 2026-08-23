@@ -285,7 +285,381 @@ static class Walk
                  && r.Flanges.Max(f => f.TMaxC) > Materials.PtMeltC));
         }
 
+        // ═══════════════════════════════════════════════════════════
+        H("④0 舌保温扫描：一裸就净抽热、一全包又净倒灌 —— 中间那个零点在哪");
+        {
+            // 用户 2026-08-23：「0.5-1.0 一定有解，加厚造成抽热，那就加厚保温」。
+            // ShellThermal 的参数文档也早写着这一条。此前 .3dm 路径把舌保温**写死为裸露**，
+            // 所以那个零点根本不在可达范围内 —— 现在它是个可调量了。
+            var ti = (NumericUpDown)F(line, "_tabIns3dm")!;
+            var tp0 = (NumericUpDown[])F(line, "_tPlate")!;
+            Set(line, "_suppressAuto", true);
+            foreach (var n in tp0) n.Value = 1.0m;          // 图纸原尺寸
+            Set(line, "_suppressAuto", false);
+            double[] tins = { 0.0, 0.2, 0.4, 0.8, 1.5 };
+            Console.WriteLine($"  {"舌保温 mm",11}{"③ 温降 K",12}{"②′ W",11}{"②″ K",10}{"法兰最高 °C",13}  判定");
+            var rec = new System.Collections.Generic.List<(double t, double dip, double flux)>();
+            foreach (double t in tins)
+            {
+                Set(line, "_suppressAuto", true); ti.Value = (decimal)t; Set(line, "_suppressAuto", false);
+                Call(line, "RunAsync", false, false);
+                if (!Wait(() => F(line, "_cts") is null, 600_000)) { Console.WriteLine($"  {t,11:0.00}　★ 超时"); continue; }
+                var rt = (LineResult?)F(line, "LastResult");
+                if (rt is null) { Console.WriteLine($"  {t,11:0.00}　★ 无结果"); continue; }
+                double dip = rt.ValueOf(LineResult.Key.FlangeDip), fx = rt.ValueOf(LineResult.Key.NetFlux);
+                rec.Add((t, dip, fx));
+                Console.WriteLine($"  {(t == 0 ? "0（裸舌）" : t.ToString("0.00")),11}{dip,12:0.0}{fx,11:0.00}"
+                                + $"{rt.ValueOf(LineResult.Key.DiscTemp),10:0.00}"
+                                + $"{(rt.Flanges.Length > 0 ? rt.Flanges.Max(f => f.TMaxC) : 0),13:0.0}"
+                                + "  " + (rt.AllOk ? "✓ 全过" : "✗ " + string.Join("/", rt.Failed.Take(1))));
+            }
+            OK("扫描点都算出来了", rec.Count == tins.Length, $"{rec.Count}/{tins.Length}");
+            if (rec.Count >= 2)
+            {
+                double best = rec.Min(x => Math.Abs(x.dip));
+                bool crossed = rec.Any(x => x.flux > 0) && rec.Any(x => x.flux < 0);
+                OK("②′ 在扫描区间内确实过零（存在那个零点）", crossed,
+                   crossed ? "抽热与倒灌两侧都出现了" : "★ 整段同号 —— 零点不在这个区间");
+                OK("★ 舌保温能把 ③ 压到限值（10 K）以内", best <= 10.0,
+                   best <= 10.0 ? $"最好 |③| = {best:0.0} K" : $"最好也只有 |③| = {best:0.0} K");
+            }
+            Set(line, "_suppressAuto", true); ti.Value = 0m; Set(line, "_suppressAuto", false);
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        H("④a 厚度灵敏度：厚度到底救不救得了 ③？");
+        {
+            // 逐级定厚跑满 30 分钟没收敛（实测）。与其等它，不如**先量清楚**
+            // 厚度这个旋钮对 ③ 有多大权限 —— 若整个可行区间都远在限值之外，
+            // 那就不是「迭代不够」，是**这个形状没有解**（§定案重解 里同一种判断）。
+            var tp2 = (NumericUpDown[])F(line, "_tPlate")!;
+            double[] ks = { 0.5, 1.0, 2.0, 3.0 };
+            Console.WriteLine($"  {"厚度标度",10}{"③ 温降 K",12}{"②′ W",10}{"合计 g",12}{"最高温 °C",11}");
+            var got = new System.Collections.Generic.List<(double k, double dip)>();
+            foreach (double k in ks)
+            {
+                Set(line, "_suppressAuto", true);
+                foreach (var n in tp2) n.Value = (decimal)k;
+                Set(line, "_suppressAuto", false);
+                Call(line, "RunAsync", false, false);
+                if (!Wait(() => F(line, "_cts") is null, 600_000))
+                { Console.WriteLine($"  ×{k:0.0}　★ 超时"); continue; }
+                var rk = (LineResult?)F(line, "LastResult");
+                if (rk is null) { Console.WriteLine($"  ×{k:0.0}　★ 无结果"); continue; }
+                double dip = rk.ValueOf(LineResult.Key.FlangeDip);
+                got.Add((k, dip));
+                Console.WriteLine($"  {"×" + k.ToString("0.0"),10}{dip,12:0.0}"
+                                + $"{rk.ValueOf(LineResult.Key.NetFlux),10:0.0}{rk.TotalMassG,12:0}"
+                                + $"{(rk.Flanges.Length > 0 ? rk.Flanges.Max(f => f.TMaxC) : 0),11:0.0}");
+            }
+            OK("四个厚度点都算出来了", got.Count == ks.Length, $"{got.Count}/{ks.Length}");
+            if (got.Count >= 2)
+            {
+                double best = got.Min(t => t.dip);
+                OK("★ 厚度能把 ③ 压到限值（10 K）以内", best <= 10.0,
+                   best <= 10.0 ? $"最好 {best:0.0} K"
+                   : $"★ 整个扫描区间里最好也只有 {best:0.0} K —— **这个形状没有解**，"
+                     + "不是迭代不够。要改的是盘径与舌长（回 Rhino 改图）");
+            }
+            // 复原到图纸原尺寸
+            Set(line, "_suppressAuto", true);
+            foreach (var n in tp2) n.Value = 1.0m;
+            Set(line, "_suppressAuto", false);
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        H("④ 逐级定厚（.3dm 走 FlangeAutoSizer.SolveByLevel）");
+        {
+            Call(main, "SyncGates"); Pump(150);
+            var g4 = Gate.Evaluate(StageId.定尺寸, flow);
+            OK("③ 收敛之后 ④ 解锁", g4.Unlocked, g4.Unlocked ? "" : "★ " + g4.Why);
+            if (!g4.Unlocked) return Done();
+
+            var lv0 = (double[][]?)F(line, "_levels");
+            Console.WriteLine($"  起点各级厚度 {string.Join("/", lv0![0].Select(v => v.ToString("0.00")))}");
+            var t0 = Environment.TickCount64;
+            Call(line, "RunAsync", true, false);
+            bool fin = Wait(() => F(line, "_cts") is null, 1_800_000);
+            OK("④ 在超时内跑完", fin, $"{(Environment.TickCount64 - t0) / 1000.0:0.0} s");
+
+            var r4 = (LineResult?)F(line, "LastResult");
+            OK("④ 之后仍有结果", r4 is not null);
+            if (r4 is not null)
+            {
+                var sc = (double[][]?)F(line, "_levelScale");
+                if (sc is { Length: > 0 })
+                    Console.WriteLine($"  各级标度 {string.Join("/", sc[0].Select(v => v.ToString("0.000")))}");
+                Console.WriteLine($"  ③ 温降 {r4.ValueOf(LineResult.Key.FlangeDip):0.000} K"
+                                + $"　②′ {r4.ValueOf(LineResult.Key.NetFlux):0.000} W"
+                                + $"　合计 {r4.TotalMassG:0.0} g");
+                OK("④ 把 ③ 往下压了", r4.ValueOf(LineResult.Key.FlangeDip) < r.ValueOf(LineResult.Key.FlangeDip),
+                   $"{r.ValueOf(LineResult.Key.FlangeDip):0.0} → {r4.ValueOf(LineResult.Key.FlangeDip):0.0} K");
+                foreach (var c in r4.Checks.Where(c => c.Kind is CheckKind.HardSafety or CheckKind.Target))
+                    Console.WriteLine($"    {(c.Undetermined ? "⚠" : c.Ok ? "✓" : "✗")} {c.Name,-24}"
+                                    + $"{(double.IsNaN(c.Actual) ? "达不到" : c.Actual.ToString("0.000")),12} / {c.Limit,-10:0.000}");
+                Console.WriteLine($"  全判据 {(r4.AllOk ? "✓ 全过" : "✗ 有不过的")}");
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        H("⑤ 交付：出图 + 报告");
+        {
+            Call(main, "SyncGates"); Pump(150);
+            var g5 = Gate.Evaluate(StageId.交付, flow);
+            var rr = (LineResult?)F(line, "LastResult");
+            OK("⑤ 的锁态与「判据全过」一致", g5.Unlocked == (rr?.AllOk == true),
+               $"全过={rr?.AllOk}　⑤解锁={g5.Unlocked}");
+            if (!g5.Unlocked)
+            {
+                Console.WriteLine("  ⇒ ⑤ 未解锁是**正确行为**。挡住它的：");
+                foreach (var c in rr!.Checks.Where(c => c.Kind is CheckKind.HardSafety or CheckKind.Target)
+                                            .Where(c => !c.Ok || c.Undetermined))
+                    Console.WriteLine($"    · {c.Name}　"
+                                    + (c.Undetermined ? "无法判定" : $"{c.Actual:0.000} / {c.Limit:0.000}")
+                                    + (c.Note.Length > 0 ? "　" + c.Note.Split('。')[0] : ""));
+                return Done();
+            }
+
+            string outDir = Path.Combine(RepoRootOf(file), "deliverable");
+            Directory.CreateDirectory(outDir);
+            string sub = Path.Combine(outDir, "Pt_Heater3_出图");
+            if (Directory.Exists(sub)) Directory.Delete(sub, true);
+            var t0 = Environment.TickCount64;
+            try
+            {
+                Call(line, "ExportScaledTo", sub);
+                var made = Directory.Exists(sub) ? Directory.GetFiles(sub, "*.3dm") : Array.Empty<string>();
+                OK("3DM 出图：四片都出来了", made.Length == 4,
+                   made.Length == 4
+                     ? string.Join("、", made.Select(f => Path.GetFileName(f) + " " + new FileInfo(f).Length + "B"))
+                       + $"　{(Environment.TickCount64 - t0)/1000.0:0.0} s"
+                     : $"★ 只出了 {made.Length} 个");
+                foreach (var f in made)
+                    OK("  " + Path.GetFileName(f) + " 不是空文件", new FileInfo(f).Length > 1000);
+            }
+            catch (Exception ex) { OK("3DM 出图成功", false, ex.Message); }
+        }
+
         return Done();
+    }
+
+    /// <summary>
+    /// `--tabins0`：拿**定案几何**（Ø60、舌 140）把舌保温逐档减到 0，看 ③ 怎么走。
+    ///
+    /// ★ 为什么要单独做这个实验（用户 2026-08-23 问「舌保温 0.3–0.5 如果不保温呢」）：
+    ///   `.3dm` 路径按**舌片裸露**建模（LineRunner: tabInsulThickMm = NaN，
+    ///   注释「沿用现场实况『仅圆盘保温、舌片裸露』」），
+    ///   而解析路径的定案用 0.3–0.5 mm 舌保温，APP 自己称它是「守 ②′/③ 的主力旋钮」。
+    ///   ⇒ Pt_Heater3 的 ③ = 341 K 到底是**裸舌片**造成的，还是**盘 Ø120 / 舌 200 太大**？
+    ///   把定案的舌保温减到 0，就把这两个病因分开了。
+    ///
+    /// ⚠ 本实验走**内核**（LineRunner.Run），不经界面 —— 它问的是物理，不是接线。
+    /// </summary>
+    public static int TabIns0()
+    {
+        Console.OutputEncoding = System.Text.Encoding.UTF8;
+        var p = new DesignInputs();
+        var fd = FinalDesign.Current;
+
+        H($"舌保温 → ③：定案几何（{fd.Name}）　盘Ø{2 * fd.DiscRadiusMm:0}／舌 {fd.TabLengthMm:0}");
+        Console.WriteLine($"  定案舌保温 {FinalDesign.Fmt(fd.TabInsulMm, "0.0")} mm");
+        Console.WriteLine();
+        Console.WriteLine($"  {"舌保温",10}{"③ 温降 K",12}{"②′ W",10}{"②″ K",10}{"合计 g",11}{"法兰最高 °C",13}  判定");
+
+        double[] mult = { 1.0, 0.5, 0.25, 0.0 };
+        foreach (double m in mult)
+        {
+            var d = fd.Clone();
+            d.TabInsulMm = fd.TabInsulMm.Select(v => v * m).ToArray();
+            var lc = d.BuildCase(p, checkRamp: true);
+            var r = LineRunner.Run(lc);
+            if (!r.Ok) { Console.WriteLine($"  ×{m:0.00}　★ 解不出：{r.Message}"); continue; }
+            string tag = m == 0.0 ? "0（裸舌）" : FinalDesign.Fmt(d.TabInsulMm, "0.00");
+            Console.WriteLine($"  {tag,10}{r.ValueOf(LineResult.Key.FlangeDip),12:0.0}"
+                            + $"{r.ValueOf(LineResult.Key.NetFlux),10:0.00}"
+                            + $"{r.ValueOf(LineResult.Key.DiscTemp),10:0.00}"
+                            + $"{r.TotalMassG,11:0}"
+                            + $"{(r.Flanges.Length > 0 ? r.Flanges.Max(f => f.TMaxC) : 0),13:0.0}"
+                            + "  " + (r.AllOk ? "✓ 全过" : "✗ " + string.Join("/", r.Failed.Take(2))));
+        }
+        Console.WriteLine();
+        Console.WriteLine("  ⇒ 与 Pt_Heater3.3dm（盘Ø120／舌 200／裸舌）的 ③ = 340.9 K 对照，");
+        Console.WriteLine("    就能把「裸舌片」与「图纸太大」两个病因分开。");
+        return Done();
+    }
+
+    /// <summary>
+    /// `--map3dm &lt;file&gt;`：**厚度标度 × 舌保温** 的二维图，读 ③ 与 ②′。
+    ///
+    /// ★ 用户 2026-08-23：「把铂金厚度与保温厚度作为坐标轴，对应其温度，
+    ///   在温差 &lt; 10 °C 的范围，推出一个铂金厚度与保温厚度」。
+    ///
+    /// 为什么要二维：两个旋钮**是耦合的**。一维扫描各自都不通 ——
+    ///   · 只扫厚度（舌裸）：③ 最好 203 K，且 ×0.5 处 ②′ 已翻负；
+    ///   · 只扫保温（×1.0）：②′ 全程 +71…+101 W，根本不过零。
+    /// 但减薄会把舌片从「导热主导」推回「自发热主导」（截面 240 → 120 mm²，
+    /// 接近定案的 54 mm²），**那里保温才重新有效**。两个一起扫才看得见。
+    /// </summary>
+    public static int Map3dm(string file)
+    {
+        Console.OutputEncoding = System.Text.Encoding.UTF8;
+        Application.EnableVisualStyles();
+        var main = new MainForm();
+        main.CreateControl();
+        var tabs = (TabControl)F(main, "_tabs")!;
+        var line = tabs.TabPages.OfType<LineDesignPage>().First();
+        typeof(Form).GetMethod("OnLoad", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(main, new object?[] { EventArgs.Empty });
+        Pump(800);
+        void Force(Control c) { _ = c.Handle; foreach (Control k in c.Controls) Force(k); }
+        Force(main); Pump(200);
+        Set(line, "_userReady", true);
+
+        var files = (TextBox[])F(line, "_file3dm")!;
+        Set(line, "_suppressAuto", true);
+        ((RadioButton)F(line, "_src3dm")!).Checked = true;
+        foreach (var t in files) t.Text = file;
+        ((TextBox)F(line, "_layer3dm")!).Text = "法兰";
+        Set(line, "_suppressAuto", false);
+        Call(line, "SyncGeomSource"); Pump(150);
+        Call(line, "AnalyzeShape"); Pump(400);
+
+        var tp = (NumericUpDown[])F(line, "_tPlate")!;
+        var ti = (NumericUpDown)F(line, "_tabIns3dm")!;
+        var sh = F(line, "_shape");
+        // ★ 下界 k ≥ 0.6，不是 0.5（用户 2026-08-23：「0.5 以下没有意义」，理由更具体）：
+        //   本图三级厚度是 1.0 @ R26–36 / 2.0 @ R36–46 / 3.0 @ R46–203，
+        //   **最薄那级正是紧贴管孔、要焊到管子上的那一圈** ⇒ 受焊接工艺下界约束：
+        //       k × 1.0 mm ≥ 0.6 mm  ⇒  k ≥ 0.6
+        //   （舌片在 3.0 那级，与圆盘同板切出、无焊缝 ⇒ 不受该下界约束，见 §4.6。）
+        //   k = 0.5 时那圈只有 0.5 mm，已经低于手工 TIG 烧穿下界 —— 数再好也造不出来。
+        double[] ks = { 0.60, 0.75, 0.90, 1.00 };
+        double[] ts = { 0.0, 0.5, 1.5 };
+
+        H($"③ 温降 K 的二维图　行 = 厚度标度　列 = 舌保温 mm　（图纸 {Path.GetFileName(file)}）");
+        Console.WriteLine("  三级原厚 1/2/3 mm ⇒ 标度 k 后为 k×(1/2/3)。限值 ③ ≤ 10 K，②′ 须 > 0。");
+        Console.WriteLine("  ⚠ 最薄那级（R26–36，紧贴管孔、要焊管）受焊接下界约束 ⇒ k ≥ 0.60。");
+        Console.WriteLine();
+        Console.Write($"  {"k / 保温",10}");
+        foreach (double t in ts) Console.Write($"{(t == 0 ? "裸舌" : t.ToString("0.0") + " mm"),16}");
+        Console.WriteLine();
+
+        var best = (dip: double.MaxValue, k: 0.0, t: 0.0, flux: 0.0);
+        int ok10 = 0;
+        foreach (double k in ks)
+        {
+            Console.Write($"  {"×" + k.ToString("0.00"),10}");
+            foreach (double t in ts)
+            {
+                Set(line, "_suppressAuto", true);
+                foreach (var n in tp) n.Value = (decimal)k;
+                ti.Value = (decimal)t;
+                Set(line, "_suppressAuto", false);
+                Call(line, "RunAsync", false, false);
+                if (!Wait(() => F(line, "_cts") is null, 600_000)) { Console.Write($"{"超时",16}"); continue; }
+                var r = (LineResult?)F(line, "LastResult");
+                if (r is null) { Console.Write($"{"—",16}"); continue; }
+                double dip = r.ValueOf(LineResult.Key.FlangeDip), fx = r.ValueOf(LineResult.Key.NetFlux);
+                if (Math.Abs(dip) < Math.Abs(best.dip)) best = (dip, k, t, fx);
+                if (Math.Abs(dip) <= 10.0 && fx > 0) ok10++;
+                // 「③/②′」一格里两个数：③ 决定判定，②′ 决定方向（负 = 往管里灌 = 烧断向）
+                Console.Write($"{dip,9:0.0}/{fx,6:0.0}");
+            }
+            Console.WriteLine();
+        }
+        Console.WriteLine();
+        Console.WriteLine($"  最好一格：k=×{best.k:0.00}　舌保温 {best.t:0.0} mm　⇒ ③ = {best.dip:0.0} K　②′ = {best.flux:0.0} W");
+        OK("★ 网格里存在 ③ ≤ 10 K 且 ②′ > 0 的点", ok10 > 0,
+           ok10 > 0 ? $"{ok10} 个"
+           : $"★ 一个都没有 —— 最好 |③| = {Math.Abs(best.dip):0.0} K（限 10）。"
+             + "**这个形状没有解**：要改的是舌片截面（80×3 mm² 是通往 300 °C 铜排的粗导热桥），"
+             + "不是厚度也不是保温");
+        return Done();
+    }
+
+    /// <summary>
+    /// `--export3dm &lt;file&gt; [k]`：只做「切 .3dm → 分析 → 按标度 k 出图」，跳过所有扫描。
+    /// 出完之后**用探针把输入与输出逐项量一遍**，回答「形状变没变」。
+    /// </summary>
+    public static int Export3dm(string file, double k)
+    {
+        Console.OutputEncoding = System.Text.Encoding.UTF8;
+        Application.EnableVisualStyles();
+        var main = new MainForm();
+        main.CreateControl();
+        var tabs = (TabControl)F(main, "_tabs")!;
+        var line = tabs.TabPages.OfType<LineDesignPage>().First();
+        typeof(Form).GetMethod("OnLoad", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(main, new object?[] { EventArgs.Empty });
+        Pump(800);
+        void Force(Control c) { _ = c.Handle; foreach (Control kk in c.Controls) Force(kk); }
+        Force(main); Pump(200);
+        Set(line, "_userReady", true);
+
+        var files = (TextBox[])F(line, "_file3dm")!;
+        Set(line, "_suppressAuto", true);
+        ((RadioButton)F(line, "_src3dm")!).Checked = true;
+        foreach (var t in files) t.Text = file;
+        ((TextBox)F(line, "_layer3dm")!).Text = "法兰";
+        Set(line, "_suppressAuto", false);
+        Call(line, "SyncGeomSource"); Pump(150);
+        Call(line, "AnalyzeShape"); Pump(400);
+
+        var tp = (NumericUpDown[])F(line, "_tPlate")!;
+        Set(line, "_suppressAuto", true);
+        foreach (var n in tp) n.Value = (decimal)k;
+        Set(line, "_suppressAuto", false);
+
+        string dir = Path.Combine(RepoRootOf(file), "deliverable", "Pt_Heater3_出图");
+        if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        H($"出图：厚度 ×{k:0.00}　→ {dir}");
+        Call(line, "ExportScaledTo", dir);
+        var made = Directory.Exists(dir) ? Directory.GetFiles(dir, "*.3dm").OrderBy(x => x).ToArray()
+                                         : Array.Empty<string>();
+        OK("四片都出来了", made.Length == 4, string.Join("、", made.Select(Path.GetFileName)));
+        if (made.Length == 0) return Done();
+
+        // ── 形状变没变：用探针量输入与输出，逐项比
+        H("形状核对：输出 vs 原图（只该厚度变，轮廓/孔/槽/阶梯半径一律不动）");
+        var a = Geometry3dm.LoadThickness(file, "法兰", double.NaN, 0.5);
+        var b = Geometry3dm.LoadThickness(made[0], "法兰", double.NaN, 0.5);
+        var sa = PlateShapeAnalyzer.Analyze(a);
+        var sb = PlateShapeAnalyzer.Analyze(b);
+
+        void Cmp(string name, double x, double y, double tol, string unit = "mm")
+            => OK(name, Math.Abs(x - y) <= tol,
+                  $"原 {x:0.000} → 出 {y:0.000} {unit}（差 {y - x:+0.000;-0.000}）");
+
+        Cmp("管孔半径不变", sa.HoleRadiusMm, sb.HoleRadiusMm, 0.51);
+        Cmp("圆盘外半径不变", sa.DiscRadiusMm, sb.DiscRadiusMm, 0.51);
+        Cmp("舌端 X 不变", sa.TabEndXMm, sb.TabEndXMm, 0.51);
+        Cmp("舌端半宽不变", sa.TabEndHalfWidthMm, sb.TabEndHalfWidthMm, 0.51);
+        Cmp("净面积不变（轮廓与开槽都没动）", sa.NetAreaMm2, sb.NetAreaMm2, sa.NetAreaMm2 * 0.005, "mm²");
+        OK("开槽数不变", sa.Slot.Count == sb.Slot.Count, $"原 {sa.Slot.Count} → 出 {sb.Slot.Count}");
+        OK("分级数不变", sa.Levels.Count == sb.Levels.Count, $"原 {sa.Levels.Count} → 出 {sb.Levels.Count}");
+
+        Console.WriteLine();
+        Console.WriteLine($"  {"级",4}{"原厚 mm",12}{"出厚 mm",12}{"实际倍数",12}{"半径范围 mm",22}");
+        for (int i = 0; i < Math.Min(sa.Levels.Count, sb.Levels.Count); i++)
+        {
+            var la = sa.Levels[i]; var lb = sb.Levels[i];
+            Console.WriteLine($"  {i + 1,4}{la.ThicknessMm,12:0.000}{lb.ThicknessMm,12:0.000}"
+                            + $"{lb.ThicknessMm / la.ThicknessMm,12:0.0000}"
+                            + $"{la.RInnerMm.ToString("0.0") + " – " + la.ROuterMm.ToString("0.0"),22}");
+            Cmp($"  第 {i + 1} 级半径范围内径不变", la.RInnerMm, lb.RInnerMm, 0.51);
+            Cmp($"  第 {i + 1} 级厚度确实 ×{k:0.00}", lb.ThicknessMm, la.ThicknessMm * k, 0.011);
+        }
+        Cmp("体积按倍数缩放", sb.VolumeMm3, sa.VolumeMm3 * k, sa.VolumeMm3 * k * 0.01, "mm³");
+        return Done();
+    }
+
+    /// <summary>从给定文件往上找仓库根（有 .git 的那一层）。</summary>
+    static string RepoRootOf(string anyPath)
+    {
+        var d = new DirectoryInfo(Path.GetDirectoryName(Path.GetFullPath(anyPath))!);
+        for (int i = 0; i < 8 && d is not null; i++, d = d.Parent)
+            if (Directory.Exists(Path.Combine(d.FullName, ".git"))) return d.FullName;
+        return Path.GetDirectoryName(Path.GetFullPath(anyPath))!;
     }
 
     public static int Run()

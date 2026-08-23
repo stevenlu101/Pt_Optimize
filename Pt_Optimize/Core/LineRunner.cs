@@ -62,6 +62,39 @@ public sealed class LineCase
     /// </summary>
     public FlangePlate[] FlangePlates = Array.Empty<FlangePlate>();
 
+    /// <summary>
+    /// **只供 ⑤⑥ 几何判据用**的等效片。`.3dm` 模式下 <see cref="FlangePlates"/> 是空的
+    /// （几何来自厚度场，不是解析形状），于是 ⑤⑥ 恒为「无法判定」——
+    /// 而「无法判定不算通过」⇒ **.3dm 这条路永远解锁不了 ⑤ 交付**。
+    ///
+    /// 但「分析几何变数」其实已经把盘半径、管孔半径、舌端 X、舌端半宽全反推出来了，
+    /// 正是 <see cref="GeometryScreen.Judge"/> 需要的全部输入 —— 只是没接上。
+    ///
+    /// ⚠ **单独开一个字段，不往 FlangePlates 里塞**：那个数组是**求解**用的，
+    ///   .3dm 模式下求解走厚度场，塞进去会让它改用解析形状去解 ——
+    ///   那就成了「判的是 A、解的是 B」，比判不了更坏。
+    /// </summary>
+    public FlangePlate[] GeomForJudge = Array.Empty<FlangePlate>();
+
+    /// <summary>
+    /// `.3dm` 模式下的**舌片保温厚度** mm。NaN 或 &lt; 0.05 = 舌片裸露（原行为）。
+    ///
+    /// ★ 2026-08-23：在此之前 .3dm 路径把舌保温**写死为裸露**
+    ///   （`tabInsulThickMm: double.NaN`，注释「沿用现场实况『仅圆盘保温、舌片裸露』」），
+    ///   于是这条路**根本没有守 ②′/③ 的那个主力旋钮**。
+    ///
+    ///   实测（定案几何 Ø60/舌140，只改舌保温）：
+    ///       0.40/0.40/0.50/0.30 → ③ = 5.2 K　②′ = +1.12 W　✓ 全过
+    ///       减半                → ③ = 35.2 K　②′ = +8.88 W　✗
+    ///       0（裸舌）           → ③ = −102 K　②′ = **−256 W**　法兰 **2986 °C**（熔点 1768）
+    ///   ⇒ 舌保温不是修饰，它就是把抽热钉住的那颗螺丝。
+    ///     ShellThermal 的参数文档也早写着：「一裸就把端片推成净抽热、一全包又过冲成
+    ///     净倒灌 —— **中间必然存在一个零点**」。
+    ///
+    /// ⚠ 默认仍是 NaN（裸露）——**不改既有 .3dm 算例的答案**。要用它得显式给值。
+    /// </summary>
+    public double TabInsul3dmMm = double.NaN;
+
     // ── 法兰（每片一个 .3dm，长度 = 段数+1；可重复同一文件）
     public string[] FlangeFile3dm = Array.Empty<string>();
     public string FlangeLayer = "法兰";
@@ -1047,11 +1080,16 @@ public static class LineRunner
             // .3dm 路径沿用现场实况「仅圆盘保温、舌片裸露」的切点。
             double insulX = analytic ? plate!.InsulBoundaryXResolved
                                      : new FlangePlate().InsulBoundaryXResolved;
+            // ★ .3dm 也能包舌保温（2026-08-23）。切点取自「分析几何变数」反推的等效片
+            //   —— 与 ⑤⑥ 用的是同一组几何，不另立一套。
+            //   没有等效片（没分析过）或没给厚度时，仍按裸舌走，行为与从前一致。
+            var eq3 = !analytic && c.GeomForJudge is { Length: > 0 } ? c.GeomForJudge[0] : null;
             var th = ShellThermal.Solve(mesh, sc.JMagAPerMm2, p2, tRoot, insulX,
                                         symmetricInsul: analytic && plate!.TwoTabs,
-                                        tabBoundaryX: analytic ? plate!.Tangent().X : double.NaN,
+                                        tabBoundaryX: analytic ? plate!.Tangent().X
+                                                     : eq3?.Tangent().X ?? double.NaN,
                                         tabInsulThickMm: analytic ? plate!.TabInsulThickMm
-                                                                  : double.NaN);
+                                                                  : c.TabInsul3dmMm);
 
             // 逐级峰值温度：按单元厚度归级，取该级内的最高温
             double[] lvTmax = Array.Empty<double>(), lvTh = Array.Empty<double>();
@@ -1401,8 +1439,11 @@ public static class LineRunner
         // 更要紧的是，⑤ 此前在 LineDesignPage 里还有**第二份实现**（连限值 100.0
         // 都各存一份）—— 铁律三点名的形状。现在两边调同一个函数：
         // **界面上看到的 ⑤⑥，与这里跑出来的，是同一段代码算的。**
+        // 解析模式用求解用的那组片；.3dm 模式用「分析几何变数」反推出来的等效片。
+        // 两者都空时 Judge 自己会给出「无法判定」（绝不省略这两条）。
         checks.AddRange(GeometryScreen.Judge(
-            c.FlangePlates, c.Base.BusbarClampLengthMm, c.FreeTabMinMm));
+            c.FlangePlates is { Length: > 0 } ? c.FlangePlates : c.GeomForJudge,
+            c.Base.BusbarClampLengthMm, c.FreeTabMinMm));
 
         // ── 数值自洽：法兰热平衡残差。**始终露出来**（2026-08-17 加）。
         //
