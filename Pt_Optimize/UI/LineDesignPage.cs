@@ -1519,6 +1519,23 @@ public sealed class LineDesignPage : TabPage
         _prog.Visible = true; _prog.Style = ProgressBarStyle.Continuous;
         _prog.Maximum = total; _prog.Value = 0;
 
+        // ★★★★★ 进度要往**状态面板**报，不能只报给本页的 _prog/_status（2026-08-24）。
+        //
+        // 2026-08-21 定过：不给每一页各配一套进度条（那是「同一件事多处表达」），
+        // 改成右上角状态面板 —— 它切到哪一页都看得见。SetRunningNote 就是那个通道。
+        // 可这条链**从来没往它写过一个字**：开跑时 SetRunning(…, "搜形状") 之后再无更新。
+        // 后果：搜形状要几十分钟，而它是从 ④ 页点的，④ 上没有 _prog 也没有 _status
+        // ⇒ 面板上那句「正在算：C″ 形状搜索 搜形状」几十分钟纹丝不动，
+        //   既看不出还活着、也看不出到哪了。**又一个「接了一半」，而且漏的偏是最长的那条。**
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        void Note(string s2)
+        {
+            _status.Text = s2;
+            int pct = _prog.Maximum > 0 ? 100 * _prog.Value / _prog.Maximum : 0;
+            Shared?.SetRunningNote($"{pct,3} %　已用 {clock.Elapsed.TotalMinutes:0.0} 分　{s2}");
+        }
+        Note("准备网格…");
+
         var sb = new StringBuilder();
         sb.AppendLine("=== 搜形状（盘半径 × 舌宽；舌长按装配算）===");
         sb.AppendLine($"网格 {discs.Length}×{wFrac.Length} 个形状，先各筛 {screenRounds} 轮，再对胜出者跑 {finalRounds} 轮。");
@@ -1547,6 +1564,7 @@ public sealed class LineDesignPage : TabPage
                     if (R < minDisc - 1e-9)
                     {
                         done += screenRounds; _prog.Value = Math.Min(_prog.Maximum, done);
+                        Note($"跳过 盘Ø{2 * R:0}（判据⑥ 早筛）");
                         _out.AppendText($"{2 * R:0}\t—\t—\t—\t" +
                             $"跳过：管壁 {(double)_wall.Value:0.0} 时盘半径至少要 {minDisc:0.0}（判据⑥）\r\n");
                         continue;
@@ -1564,12 +1582,13 @@ public sealed class LineDesignPage : TabPage
                         // Sizer 每轮吐一行；用行首的轮号推进度条
                         if (s.Length > 4 && int.TryParse(s.AsSpan(0, 4).Trim(), out int rd))
                             _prog.Value = Math.Min(_prog.Maximum, baseDone + rd);
-                        _status.Text = $"{tag}　{s.Split('\n')[0]}";
+                        Note($"{tag}　" + s.Split('\n')[0]);
                     });
                     var sr = await Task.Run(() => Sizer.Solve(seed, _base,
                                  new SizerOptions { MaxRounds = screenRounds }, prog2, ct), ct);
                     done = baseDone + screenRounds;
                     _prog.Value = Math.Min(_prog.Maximum, done);
+                    Note($"{tag} 已完成　{(double.IsNaN(sr.MassG) ? "无解" : sr.MassG.ToString("0") + " g")}");
                     rows.Add((sr.Design, sr.MassG, sr.Feasible, sr.Message));
                     // ★ 算完一个贴一个：中途取消也留得住已有结果
                     _out.AppendText(
@@ -1588,14 +1607,14 @@ public sealed class LineDesignPage : TabPage
                 return;
             }
 
-            _status.Text = "精算胜出形状…";
+            Note("精算胜出形状…");
             var fin = await Task.Run(() => Sizer.Solve(win.d, _base,
                           new SizerOptions { MaxRounds = finalRounds },
                           new Progress<string>(s =>
                           {
                               if (s.Length > 4 && int.TryParse(s.AsSpan(0, 4).Trim(), out int rd))
                                   _prog.Value = Math.Min(_prog.Maximum, done + rd);
-                              _status.Text = "精算　" + s.Split('\n')[0];
+                              Note("精算　" + s.Split('\n')[0]);
                           }), ct), ct);
             _prog.Value = _prog.Maximum;
 

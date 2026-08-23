@@ -1236,6 +1236,37 @@ class UiWiringTests {
                   $"LineDesignPage 里开跑 {setAll - setNull} 处 / 清空 {setNull} 处");
             Check("① 与「② 厚度灵敏度」也报状态",
                   apg.Contains("SetRunning(", StringComparison.Ordinal));
+            // ── 每条长跑的链都必须往**状态面板**报进度（2026-08-24）
+            //
+            // 面板是唯一「切到哪一页都看得见」的地方（Flow.SetRunning 的注释说明了
+            // 2026-08-21 为什么不给每页各配进度条）。SetRunningNote 是那个通道。
+            //
+            // 原来的病：SearchShapeAsync **整个方法体里一次都没调过它** ——
+            // 开跑时 SetRunning(…, "搜形状") 之后再无更新。而它要跑几十分钟、
+            // 又是从 ④ 页点的，④ 上既没有 _prog 也没有 _status
+            // ⇒ 面板上那句话几十分钟纹丝不动，看着像卡死。细粒度进度全写在 ③ 页
+            //   那两个用户看不见的控件上。**进度管线本来就在，只是这条链没接。**
+            //
+            // 断言只查「有没有接」，不查「接了几处」：数调用点看不穿包装函数
+            // （把 Note(...) 这层一包，计数就骗人了 —— 试过，注入后仍能蒙混过关）。
+            foreach (string fn in new[] { "SearchShapeAsync", "RunAsync", "ReproduceAsync" })
+            {
+                // ⚠ 用 "\n" 而不是 Environment.NewLine 找方法末尾：本文件是 LF，
+                //   拿 CRLF 去匹配一次都命中不了 ⇒ 方法体一路切到文件尾（实测 39621 字），
+                //   断言就退化成「整个文件里有没有这个词」—— 又一个看着绿的空转。
+                // ⚠ 锚点必须是**声明**：方法名第一次出现是在构造函数里挂按钮那行，
+                //   从那儿切出来的是一段没有任何上报的构造代码，三条会一起误报。
+                int b0 = ldp.IndexOf("private async Task " + fn, StringComparison.Ordinal);
+                int b1 = b0 < 0 ? -1 : ldp.IndexOf("\n    private ",
+                                                   b0 + fn.Length, StringComparison.Ordinal);
+                string body = b0 < 0 ? "" : (b1 < 0 ? ldp[b0..] : ldp[b0..b1]);
+                Check($"{fn} 把进度报给状态面板", body.Contains("SetRunningNote(", StringComparison.Ordinal),
+                      b0 < 0 ? "★ 找不到这个方法的声明，断言失去了对象"
+                             : body.Contains("SetRunningNote(", StringComparison.Ordinal)
+                               ? $"体长 {body.Length} 字"
+                               : "★ 一次都没报 ⇒ 这条链跑起来，面板上那句话不会变");
+            }
+
             Check("每个入口都在 finally 里清（异常/取消也要解除互斥）",
                   CountOf(ldp, "SetRunning(null)") >= 3 && apg.Contains("SetRunning(null)", StringComparison.Ordinal),
                   $"LineDesignPage {CountOf(ldp, "SetRunning(null)")} 处清");
