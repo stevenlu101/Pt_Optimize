@@ -1691,6 +1691,21 @@ public sealed class LineDesignPage : TabPage
         LineCase lc;
         var prog = new Progress<string>(s => { _status.Text = s; Shared?.SetRunningNote(s); });
 
+        // ★★★★★ 装配下界要在**求解路径上**也顶一次（2026-08-24）。
+        //
+        // EnforceTabLenFloor 此前只挂在 ShowPrediction 里，也就是只在
+        // 「用户手改了参数」那条路上跑。而任何绕过 ParamChanged 的写入都躲得过它：
+        // _suppressAuto 期间的程序写值、首屏那一阵、载入档…
+        // ⇒ 一个自由段为负的几何照样能进求解器。
+        //
+        // 判据本身是**对的**：⑤ 会红（实测见过 −12.4/100），没有放行。
+        // 但那要等一次分钟级的解，而这件事是闭式的、一毫秒就知道 ——
+        // 让人白等几分钟才被告知「压接块伸进圆盘里了」，是**能省而没省**的代价。
+        //
+        // ⚠ 只在解析模式顶：.3dm 模式下盘径/舌长/舌宽是禁用的残值，顶它没有意义
+        //   （那条路的几何来自图纸，⑤ 由 GeomForJudge 判）。
+        string floorNote = _srcAnalytic.Checked ? EnforceTabLenFloor() : "";
+
         try
         {
             lc = BuildCase();
@@ -1750,7 +1765,7 @@ public sealed class LineDesignPage : TabPage
                     _suppressAuto = false;
                     _last = r.Line;
                     Show(r.Line, autoNote: r.Message + (r.Converged ? "" : "　⚠ 未收敛，下面的数不可引用") +
-                        "\r\n   ⚠ 本器**只调板厚**，管不到 ②′ 净流入与 ②″ 圆盘峰 —— 请自行看判据表。");
+                        "\r\n   ⚠ 本器**只调板厚**，管不到 ②′ 净流入与 ②″ 圆盘峰 —— 请自行看判据表。" + floorNote);
                 }
                 else
                 {
@@ -1791,7 +1806,7 @@ public sealed class LineDesignPage : TabPage
                 //   预测会看着很稳而其实一路偏 —— 那正是今天那个假收敛的形状。
                 if (r.Ok && r.Converged) { _solvedRes = r; _solvedSnap = CurrentSnap(); }
                 PushFlow();
-                Show(r);
+                Show(r, autoNote: floorNote);
                 // ★ 把「本次实际解的是什么」打出来。看不见又在起作用的量是安静失败的温床。
                 if (_srcAnalytic.Checked && lc.FlangePlates is { Length: > 0 })
                 {

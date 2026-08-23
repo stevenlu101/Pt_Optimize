@@ -292,6 +292,37 @@ class UiWiringTests {
         Set(page, "_autoArmed", false);
         Pump(300);
 
+        // ── 装配下界要在**求解路径上**也顶（2026-08-24）
+        //
+        // 上面那段验的是「用户手改参数」那条路（ParamChanged → ShowPrediction）。
+        // 但任何**绕过 ParamChanged** 的写入都躲得过它：_suppressAuto 期间的程序写值、
+        // 首屏那一阵、载入档… ⇒ 一个自由段为负的几何照样进求解器。
+        // 判据是对的（⑤ 会红，实测见过 −12.4/100，没有放行），
+        // 但那要等一次分钟级的解 —— 而这件事闭式一毫秒就知道。
+        {
+            Set(page, "_suppressAuto", true);           // 正是那条绕过去的路
+            discD.Value = 300m; tabW.Value = 5m; tabLen.Value = 20m;   // 切点≈149.9 ⇒ 自由段 −170
+            Set(page, "_suppressAuto", false);
+            Check("绕过参数变更写进去的值确实低于下界（否则下一条空转）",
+                  tabLen.Value == 20m, $"舌长 {tabLen.Value}");
+            string lifted = (string)page.GetType()
+                .GetMethod("EnforceTabLenFloor", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .Invoke(page, null)!;
+            Check("顶高机制对这条路同样有效", tabLen.Value > 20m, $"现在 {tabLen.Value} mm");
+            Check("顶高时说明了原因（不静默改用户的输入）", lifted.Contains("自动顶到"),
+                  lifted.Length == 0 ? "★ 一声不吭就改了控件" : "");
+            // 求解路径必须真的调它 —— 机制在、没接上，等于没有
+            string ldp9 = File.ReadAllText(Path.Combine(RepoRoot(), "Pt_Optimize", "UI", "LineDesignPage.cs"));
+            int r0 = ldp9.IndexOf("private async Task RunAsync", StringComparison.Ordinal);
+            int r1 = r0 < 0 ? -1 : ldp9.IndexOf("\n    private ", r0 + 10, StringComparison.Ordinal);
+            string rbody = r0 < 0 ? "" : (r1 < 0 ? ldp9[r0..] : ldp9[r0..r1]);
+            Check("求解路径（RunAsync）会先顶一次装配下界",
+                  rbody.Contains("EnforceTabLenFloor(", StringComparison.Ordinal),
+                  rbody.Contains("EnforceTabLenFloor(", StringComparison.Ordinal)
+                      ? $"体长 {rbody.Length} 字"
+                      : "★ 没接 ⇒ 绕过参数变更的几何会白跑一次分钟级的解才被 ⑤ 拦下");
+        }
+
         Head("10 压接段长度：不能再用 3 mm 那个**数值默认值**");
         // 2026-08-17 抓到：本页从来没设过 BusbarClampLengthMm ⇒ 一直用 DesignInputs 的 3.0，
         // 而定案是 40。少扣 37 mm 会让判据⑤「装不下」被判成「装得下」——
