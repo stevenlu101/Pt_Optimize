@@ -404,22 +404,13 @@ public sealed class MainForm : Form
                     var spec = Flow.Commands.FirstOrDefault(c => c.Text == b.Text);
                     if (spec is null) continue;                 // 跑起来变成「取消」的那个，别动它
 
-                    // ★★ 互斥闸（2026-08-21 用户提出）：有链在跑时，**所有会起算的命令一律禁掉**。
-                    //   此前 ④ 上三个按钮（自动定厚 / ◇搜形状 / ② 厚度灵敏度）**可以同时点** ——
-                    //   RunAsync 只禁自己那两个，◇搜形状 不禁，② 厚度灵敏度 又属于另一页各禁各的。
-                    //   三个分钟级求解同时开跑，抢 CPU 还互相覆盖 _last，结果无从分辨是谁的。
-                    //   判据是 `spec.Chain != 无` —— 保存/读取/打开说明这类不算东西的照常可用
-                    //   （与第 24 节「门禁不该拦记事本」同一条道理）。
-                    //   正在跑的那个按钮此刻文字是「取消」⇒ 上面 spec is null 已经放过它。
-                    if (busy && spec.Chain != ChainId.无) { b.Enabled = false; continue; }
+                    // ★ 能不能点**只问 Flow.Blocks 一处**（2026-08-23）。
+                    //   这三个因素（门禁 × 互斥 × 适用性）原本内联在这里，
+                    //   而 Gate 里另有一个只算门禁的 Blocks —— 两处答案不一致，
+                    //   只因那一处是死代码才没出事。现在它是唯一来源，这里只负责画。
+                    var why = Gate.Blocks(spec, _flow, id => _linePage?.CommandApplicable(id) ?? true);
+                    b.Enabled = why == Gate.Block.None;
 
-                    // 适用性：由命令的**归属页**回答（几何来源不对时那条命令根本无从谈起）。
-                    // ⚠ 按钮可能摆在别的页上（④ 的两个就来自 ③ 页），所以问的是**页对象**，
-                    //   不是它此刻挂在哪个 TabPage 下。
-                    bool applicable = _linePage?.CommandApplicable(spec.Id) ?? true;
-
-                    if (!spec.ReadsPageControls) { if (!applicable) b.Enabled = false; continue; }
-                    b.Enabled = g.Unlocked && applicable;
 
                     // ★ 高亮「现在该点的那个」——眼睛直接落上去，不用先读文字。
                     //   只在它**真的能点**时才亮，否则等于指着一个灰按钮说「点这个」。

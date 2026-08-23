@@ -1483,6 +1483,61 @@ class UiWiringTests {
             }
         }
 
+        // ────────────────────────────────────────────────────────────
+        Head("30 另存定案档：新档要**立刻**出现在下拉里，不该等重启");
+
+        // 在此之前 FinalDesign.All 是 static readonly，只在启动时算一次 ⇒
+        // 界面说「已写出」而下拉里找不到它。工程师看不到自己刚存的东西，
+        // 只能猜是没存上，于是再存一次（撞重名被拒）—— 或者从此不信这个功能。
+        {
+            const string probe = "UiWiring临时探针档";
+            bool InBox() => caseBox.Items.Cast<object>().Any(x => (x as string) == probe);
+
+            // 自证①：一开始下拉里没有它。若一开始就有（上一轮没清干净），
+            // 后面「重扫之后出现了」就是恒真的 —— 空集/恒真的断言是本项目栽过的坑。
+            Check("开工时下拉里没有这个名字", !InBox(),
+                  InBox() ? "★ 上一轮残留，本节所有断言都不成立" : "");
+
+            string? saved = null;
+            try
+            {
+                // 先把选中项挪到第二档，用来验重扫**不会把选择冲掉**
+                caseBox.SelectedIndex = Math.Min(1, caseBox.Items.Count - 1);
+                string keep = (string)caseBox.SelectedItem!;
+
+                var d = FinalDesign.Builtin[0].Clone();
+                d.Name = probe;
+                d.Provenance = "UiWiring 临时探针，本节结束即删";
+                saved = FinalDesignStore.Save(d);
+                Check("档确实写到磁盘上了", File.Exists(saved), saved);
+
+                // 自证②：只写档、还没重扫 ⇒ 下拉里仍不该有它。
+                // 这一条把下面那条从「反正会通过」变成「只有重扫真的起作用才会通过」。
+                Check("只写档、没重扫时下拉里仍然没有它", !InBox(),
+                      InBox() ? "★ 没重扫就出现了 ⇒ 下一条证明不了任何事" : "");
+
+                FinalDesign.Reload();
+                Pump(200);
+                Check("重扫之后下拉里出现了新档", InBox(),
+                      InBox() ? $"（共 {caseBox.Items.Count} 档）" : "★ 存了却看不见，等于没存");
+                Check("重扫没有读出档案错误", FinalDesignStore.LoadErrors.Count == 0,
+                      string.Join("；", FinalDesignStore.LoadErrors));
+                Check("重扫没有把选中的那一档冲掉", (caseBox.SelectedItem as string) == keep,
+                      $"{caseBox.SelectedItem} vs {keep}");
+                Check("重扫后 All 与下拉一样长", caseBox.Items.Count == FinalDesign.All.Length,
+                      $"{caseBox.Items.Count} vs {FinalDesign.All.Length}");
+            }
+            finally
+            {
+                // 探针档留在 finaldesigns/ 里会被 --selfcheck A 段当成一个要复核的基准，
+                // 那时它已经没有对应的解 ⇒ 会在别处报一个跟本节毫无关系的红。
+                if (saved is not null && File.Exists(saved)) File.Delete(saved);
+                FinalDesign.Reload();
+            }
+            Check("清理之后它从下拉里消失了", !InBox(),
+                  InBox() ? "★ 探针档没删干净，会污染 --selfcheck A 段" : "");
+        }
+
         Console.WriteLine();
         Console.WriteLine(fail == 0 ? "★ 全部通过" : $"✗ {fail} 项不过");
         Environment.ExitCode = fail;

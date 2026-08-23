@@ -372,8 +372,33 @@ public sealed class FinalDesign
     /// ⚠ 读档失败**不静默** —— 见 <see cref="FinalDesignStore.LoadErrors"/>，
     ///   启动路径与 --selfcheck 都会把它当失败报出来。少一个档 = 少一组判据。
     /// </summary>
-    public static readonly FinalDesign[] All =
-        Builtin.Concat(FinalDesignStore.LoadAll(Builtin.Select(x => x.Name))).ToArray();
+    public static FinalDesign[] All { get; private set; } = Scan();
+
+    private static FinalDesign[] Scan()
+        => Builtin.Concat(FinalDesignStore.LoadAll(Builtin.Select(x => x.Name))).ToArray();
+
+    /// <summary>
+    /// 重扫 <c>finaldesigns/</c> 并重建 <see cref="All"/>，然后广播 <see cref="Reloaded"/>。
+    ///
+    /// **另存新档之后必须调**：在此之前 <c>All</c> 只在启动时算一次，
+    /// 于是刚存的档要重启 APP 才出现在下拉里 —— 而对着一个「已经存好了」的提示
+    /// 却在下拉里找不到它，工程师最可能的反应是再存一次（撞重名被拒），
+    /// 或者以为没存上。
+    ///
+    /// <see cref="FinalDesignStore.LoadAll"/> 每次进来先清 <c>LoadErrors</c>，
+    /// 所以反复调不会把错误堆起来；但**新出现的读档错误会覆盖旧的**，
+    /// 调用方要在调完之后再看 <c>LoadErrors</c>。
+    /// </summary>
+    public static void Reload()
+    {
+        All = Scan();
+        // Current 可能是个已被删掉的文件档 —— 让它退回内置首档，别留一个不在 All 里的 Current
+        if (System.Array.IndexOf(All, Current) < 0) Current = Builtin[0];
+        Reloaded?.Invoke(null, System.EventArgs.Empty);
+    }
+
+    /// <summary><see cref="All"/> 变过了。界面上每个列出定案档的下拉都该挂上来。</summary>
+    public static event System.EventHandler? Reloaded;
 
     /// <summary>
     /// 当前生效的档。**默认取保守的 0.8** —— 业主尚未在两档间拍板，

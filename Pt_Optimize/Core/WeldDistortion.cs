@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 
 namespace PtOptimize.Core;
 
@@ -91,17 +91,6 @@ public static class WeldDistortion
                          Materials.PtMeltC - startTempC, Materials.PtPoisson, beta, etaMelt, kb);
         return new Result { SlopePerB = s, WidthMm = widthMm, TMinMm = s * widthMm };
     }
-
-    /// <summary>
-    /// 圆筒（管）纵缝的**等效无支撑宽度** mm。
-    ///
-    /// 平板公式直接套管子会严重高估：曲率把屈曲半波长限制在壳的特征长度内，
-    /// 圆筒远比同厚度平板难鼓曲。取 b_eff = min(半周长, 2.4·√(R·t)) ——
-    /// 后者是薄壳的经典衰减长度量级。**这是本类里最粗的一步**，
-    /// 它决定管壁的下界，故 --weldmin 会把两种取法都列出来让人自己判。
-    /// </summary>
-    public static double ShellEffectiveWidthMm(double radiusMm, double thickMm)
-        => Math.Min(Math.PI * radiusMm, 2.4 * Math.Sqrt(Math.Max(1e-9, radiusMm * thickMm)));
 
     /// <summary>
     /// **圆筒侧的屈曲判据**：环缝在筒上会不会把筒压屈。

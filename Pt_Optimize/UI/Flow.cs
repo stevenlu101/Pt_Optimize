@@ -683,9 +683,40 @@ public static class Gate
         return new Status(stage, true, bypassed, "", "", null);
     }
 
-    /// <summary>门禁只管「读页面控件」的命令；「定案」那四个不受约束。</summary>
-    public static bool Blocks(CommandSpec cmd, FlowState st)
-        => cmd.ReadsPageControls && !Evaluate(cmd.Stage, st).Unlocked;
+    /// <summary>一条命令此刻为什么不能点。<see cref="None"/> = 能点。</summary>
+    public enum Block
+    {
+        /// <summary>能点</summary>
+        None,
+        /// <summary>有链在跑 —— 会起算的命令一律让路，免得几个分钟级求解互相覆盖结果</summary>
+        Busy,
+        /// <summary>当前页面状态下这条命令无从谈起（如解析模式下的「分析几何变数」）</summary>
+        NotApplicable,
+        /// <summary>所在阶段还没解锁</summary>
+        Gate,
+    }
+
+    /// <summary>
+    /// **一条命令能不能点，只由这里回答。**
+    ///
+    /// ⚠ 2026-08-23 之前这个方法只算门禁一项，而 MainForm.SyncGates 另外**内联**算了
+    ///   门禁 × 互斥 × 适用性三项 —— 于是它成了一个**答案已经过时的死代码**：
+    ///   长得像「问某个命令能不能点」的正门，谁调它谁得到和界面不一样的答案。
+    ///   只因当时没人调，这件事才看不见。
+    ///   ⇒ 现在三个因素收进这一处，SyncGates 只负责把结果画出来。
+    ///
+    /// <paramref name="applicable"/> 由命令的**归属页**提供（页面状态，Flow 不知道）。
+    /// 不给则一律当适用。
+    /// </summary>
+    public static Block Blocks(CommandSpec cmd, FlowState st, Func<string, bool>? applicable = null)
+    {
+        // 「不算东西」的命令（保存/读取/出图/载入定案）不受互斥牵连 ——
+        // 门禁的意义是拦住「拿不成立的解去出图」，不是拦住记事本。
+        if (st.Running is not null && cmd.Chain != ChainId.无) return Block.Busy;
+        if (applicable is not null && !applicable(cmd.Id)) return Block.NotApplicable;
+        if (cmd.ReadsPageControls && !Evaluate(cmd.Stage, st).Unlocked) return Block.Gate;
+        return Block.None;
+    }
 
     // ── 内部 ────────────────────────────────────────────────────────────
 

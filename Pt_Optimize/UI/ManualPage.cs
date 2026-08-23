@@ -34,9 +34,9 @@ public sealed class ManualPage : TabPage
         var tool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, Font = UiScale.Ui() };
         tool.Items.Add(new ToolStripLabel("图按定案档实时生成"));
         tool.Items.Add(_caseBox);
-        foreach (var fd in FinalDesign.All) _caseBox.Items.Add(fd.Name);
-        _caseBox.SelectedIndex = Math.Max(0, Array.IndexOf(FinalDesign.All, FinalDesign.Current));
-        _caseBox.SelectedIndexChanged += (_, _) => Render();
+        RefillCaseBox();
+        _caseBox.SelectedIndexChanged += (_, _) => { if (!_refilling) Render(); };
+        FinalDesign.Reloaded += OnFinalDesignsReloaded;
 
         var open = new ToolStripButton("打开 Markdown 版")
         { DisplayStyle = ToolStripItemDisplayStyle.Text };
@@ -983,7 +983,9 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                 + "存完还要做三件事：① 把 <code>binding</code> 填上（什么咬住了它，那是工程判断，程序算不出）；"
                 + "② 跑 <code>--cli --selfcheck</code>，A 段这一档的差须为 0.000；"
                 + "③ 提交进 git——档是回归基准，变更要被 diff 记录。<br>"
-                + "⚠ <b>重启 APP 后新档才出现在下拉里</b>（档在启动时读入）。"
+                + "存完新档<b>立刻</b>出现在两个页面的定案档下拉里，不用重启"
+                + "（2026-08-23 之前要重启——界面说「已写出」而下拉里找不到它，"
+                + "看着就像没存上）。"
                 + "读档失败不会静默跳过：自检门会把它算作失败——少一个档就是少一组判据。</div>");
 
         sb.Append("<h3>左侧参数表：分类名就写着「对哪条链有效」</h3>");
@@ -1247,5 +1249,46 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         //   中途替换会漏掉后面追加的段（同一个占位符将来若出现在别处也能一起换到）。
         sb.Replace("MANUALFONT", Math.Round(15 * UiScale.K).ToString("0"));
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// 定案档下拉重填，**按档名保住选中项**（新档追加在后面，下标会移位）。
+    ///
+    /// 本页的下拉挂着 <c>Render()</c>，清空 Items 会连带触发它 ——
+    /// 用 <c>_refilling</c> 抑制，重填完只渲染一次。
+    /// 不抑制的话，重填期间会拿一个**中途状态的选中项**渲染一遍图，
+    /// 那张图画的是哪一档全看清空到第几个，属于典型的「看起来正常的错」。
+    /// </summary>
+    private bool _refilling;
+
+    private void RefillCaseBox()
+    {
+        string keep = _caseBox.SelectedItem as string ?? "";
+        _refilling = true;
+        try
+        {
+            _caseBox.Items.Clear();
+            foreach (var fd in FinalDesign.All) _caseBox.Items.Add(fd.Name);
+            int i = _caseBox.Items.IndexOf(keep);
+            if (i < 0) i = Array.IndexOf(FinalDesign.All, FinalDesign.Current);
+            _caseBox.SelectedIndex = Math.Max(0, i);
+        }
+        finally { _refilling = false; }
+    }
+
+    private void OnFinalDesignsReloaded(object? sender, EventArgs e)
+    {
+        if (IsDisposed) return;
+        if (IsHandleCreated && InvokeRequired) { BeginInvoke(new Action(Refresh2)); return; }
+        Refresh2();
+    }
+
+    private void Refresh2() { RefillCaseBox(); Render(); }
+
+    /// <summary>静态事件不退订 = 旧实例被永远拿着，见 LineDesignPage 同名方法的说明。</summary>
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) FinalDesign.Reloaded -= OnFinalDesignsReloaded;
+        base.Dispose(disposing);
     }
 }

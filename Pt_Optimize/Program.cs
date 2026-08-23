@@ -1081,12 +1081,11 @@ internal static class Program
                 double QIns(double tC) => Insulation.PlateFlux(tC, p.TAmbC, insLayers,
                                                 p.OuterEmissivity, charLen, p.LossScale);
 
+                // C1a 只有一处实现：<see cref="DesignScreen.JLimitAPerMm2"/>（§4.2t）。
+                // 这里曾另写一份同公式的副本 —— 两份当时算出来一样，
+                // 但改其中一处不会传到另一处，跟 Gate.Blocks 是同一类隐患。
                 double JLim(double tC, double tMm, bool bare)
-                {
-                    double q = bare ? QBare(tC) : QIns(tC);
-                    double rho = Materials.PtResistivity(tC);          // Ω·m
-                    return Math.Sqrt(2.0 * q / (rho * tMm * 1e-3)) * 1e-6;   // A/mm²
-                }
+                    => DesignScreen.JLimitAPerMm2(p, tC, tMm, bare ? 0.0 : p.FlangeInsulThickMm);
 
                 foreach (double tC in new[] { 1050.0, 1150.0, RampTwoNode.PtMeltingC })
                 {
@@ -1561,7 +1560,13 @@ internal static class Program
                                 $"{(double.IsNaN(psiFlat) ? 1 : psi / psiFlat),9:0.00}" +
                                 $"  {(psi <= 1.0 ? "✓ Ψ≤1" : psi < 1.5 ? "≈" : "✗")}");
                         }
-                        catch { }
+                        catch (Exception exRow)
+                        {
+                            // ⚠ 原来是空 catch —— 算不出的那一行**整行消失**，表上看不出少了什么。
+                            //   「判据消失比判据不过危险」在扫描表上是同一回事：
+                            //   一张少了几行的表，读的人会以为那几个形状不存在。
+                            Console.WriteLine($"{$"Ø{2 * rd:0}/舌{-tabX:0}/半宽{halfW:0}",20}  ✗ 跳过：{exRow.Message}");
+                        }
                     }
                     Console.WriteLine();
                 }
@@ -1616,7 +1621,13 @@ internal static class Program
                                     $"{s.AreaMm2,12:0}{s.ShapeR,9:0.000}{s.ShapeJ,10:0.0000}" +
                                     $"{psi,9:0.00}{tPeak,10:0}  {(psi <= 1.0 ? "✓" : "✗ Ψ>1")}");
                             }
-                            catch { }
+                            catch (Exception exRow)
+                            {
+                                // ⚠ 原来是空 catch —— 算不出的那一行**整行消失**，表上看不出少了什么。
+                                //   「判据消失比判据不过危险」在扫描表上是同一回事：
+                                //   一张少了几行的表，读的人会以为那几个形状不存在。
+                                Console.WriteLine($"{$"Ø{2 * rd:0}/舌{-tabX:0}/半宽{halfW:0}",20}  ✗ 跳过：{exRow.Message}");
+                            }
                         }
 
                 Console.WriteLine();
@@ -7792,8 +7803,13 @@ internal static class Program
                     Console.WriteLine();
                     Console.WriteLine("── " + tag);
                     var sw = System.Diagnostics.Stopwatch.StartNew();
+                    // ⚠ progress 原本是 `_ => { }` —— 一句都不打。
+                    //   这条路每轮四次全解、每次评估还要起 Geom.exe 子进程，
+                    //   大几何上单个解要几十分钟：**四十分钟不出一个字**，
+                    //   人分不清它是在算还是卡死了，跟「档存了却看不见」是同一个毛病。
                     var rr2 = FlangeAutoSizer.SolveByLevel(lc, lvT, new FlangeAutoSizer.Options(),
-                                new SyncProgress<string>(_ => { }), default, 5, mask);
+                                new SyncProgress<string>(m => Console.WriteLine("     · " + m)),
+                                default, 5, mask);
                     sw.Stop();
                     Console.WriteLine($"   用时 {sw.Elapsed.TotalMinutes:0.0} min　" +
                                       (rr2.Converged ? "✓ 收敛" : "✗ 未收敛"));

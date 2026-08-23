@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using MathNet.Numerics.Interpolation;
 using MathNet.Numerics.RootFinding;
 
@@ -197,17 +197,6 @@ public static class Bvp1D
             if (err < opt.Tol) break;
         }
         return T;
-    }
-
-    /// <summary>端点处的传导热流 K·dT/ds，指向 +s（左端点用 i=0）。</summary>
-    public static double EdgeFlux(double s0, double s1, Func<double, double> kOf,
-                                  double[] T, bool atLeft)
-    {
-        int n = T.Length;
-        double ds = (s1 - s0) / (n - 1);
-        return atLeft
-            ? kOf(s0 + 0.5 * ds) * (T[1] - T[0]) / ds
-            : kOf(s1 - 0.5 * ds) * (T[n - 1] - T[n - 2]) / ds;
     }
 
     /// <summary>三对角追赶法（Thomas）。O(n)，对角占优时无条件稳定。</summary>

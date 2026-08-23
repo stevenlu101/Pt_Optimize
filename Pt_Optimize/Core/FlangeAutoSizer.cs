@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -153,6 +153,20 @@ public static class FlangeAutoSizer
     /// 最多升级 <paramref name="maxEscalations"/> 次。这样「二分/迭代次数不够就误报无解」
     /// 那类错误（§7）在界面上不可能再发生 —— 不收敛只会是真的无解。
     /// </summary>
+    /// <summary>
+    /// 图纸厚度量化格 mm（<c>Sizer.QuantThickMm</c> 同一个数）——
+    /// 厚度按 0.01 mm 出图，比这更细的差别**造不出来**。
+    /// </summary>
+    private const double QuantMm = 0.01;
+
+    /// <summary>
+    /// 图纸厚度量化格的一半 mm。厚度按 0.01 mm 出图（<c>Sizer.QuantThickMm</c> 同一个数），
+    /// 比这更细的差别**造不出来**，所以「动了不到半格」在工程上就是「没动」。
+    /// 用它当收敛/停滞的判据，比随手挑一个 1e-9 有据得多 —— 那种数只要撞上
+    /// 求解器自身的噪声就会失效。
+    /// </summary>
+    private const double HalfQuantMm = 0.005;
+
     public static Result SolveAuto(LineCase baseCase, Func<double, FlangePlate>? makePlate,
                                    double[] initialThicknessMm, Options? opt = null,
                                    IProgress<string>? progress = null,
@@ -169,11 +183,58 @@ public static class FlangeAutoSizer
         };
         var start = (double[])initialThicknessMm.Clone();
         Result last = new();
+        // 上一次升级的落点 —— 用来判「这次升级到底改变了什么没有」
+        double[]? prevTh = null; double prevErr = double.NaN;
 
         for (int esc = 0; esc <= maxEscalations; esc++)
         {
             last = Solve(baseCase, makePlate, start, cur, progress, cancel);
             if (last.Converged) break;
+
+            // ★★★★★ 升级前先问：上一次升级**改变了什么吗**（2026-08-23 加）。
+            //
+            // 原来的升级判据只看「误差还在不在降」，没看这一步是否**动得了**。
+            // Pt_Heater3 实测：四片厚度全被 MinThickMm 咬在 0.40，
+            // 于是连退四次，每次拿回一模一样的 71.5 W / 0.40·0.40·0.40·0.40 ——
+            //     轮次 50 → 阻尼 0.300 → 0.150 → 0.075
+            // 而顶在界上时步长是被**截掉**的，不是冲过头：降阻尼在数学上
+            // 不可能让它动。每退一次要重跑一遍分钟级的解，那一整轮
+            // 8.8 分钟里约一半烧在这四次可证明无效的重试上。
+            //
+            // ⇒ 落点与上一次逐位相同就停。这不是「提前放弃」：
+            //   同一个起点、同一个模型，再算一次只会得到同一个数。
+            //
+            // ★ 判「没动」看的是**厚度**，不是误差。误差是耦合解自己算出来的，
+            //   带一点求解器噪声（实测同一组厚度两次跑出 D=+17.4 与 +17.3）。
+            //   拿 1e-9 去要求误差逐位相等，会被这点噪声骗过去、白退一次 ——
+            //   厚度才是本器的状态变量，它没动就说明这一步什么都没发生。
+            //   误差那一侧只用来兜底：万一真在往下走（≥0.1 %），就还是让它继续。
+            double errNow = last.History.Count > 0 ? last.History[^1] : double.NaN;
+            // 同样按图纸量化格判：1e-12 那种严格相等会被耦合解自身的噪声骗过去
+            // （实测同一组厚度两次跑出 D=+17.4 与 +17.3），于是白退一次升级。
+            bool thickFrozen = prevTh is not null
+                && last.ThicknessMm.Length == prevTh.Length
+                && last.ThicknessMm.Zip(prevTh, (a, b) => Math.Abs(a - b) < HalfQuantMm).All(x => x);
+            bool errStuck = double.IsNaN(errNow) || double.IsNaN(prevErr)
+                || errNow > prevErr * (1 - 1e-3);
+            if (thickFrozen && errStuck)
+            {
+                int atLo = last.ThicknessMm.Count(t => t <= cur.MinThickMm * (1 + 1e-9));
+                int atHi = last.ThicknessMm.Count(t => t >= cur.MaxThickMm * (1 - 1e-9));
+                last.Message =
+                    $"升级 {esc} 次之后落点**一步都没动**（偏差仍 {errNow:0.0} W，厚度 "
+                    + string.Join("/", last.ThicknessMm.Select(t => t.ToString("0.00")))
+                    + "）⇒ 停止升级。"
+                    + (atLo > 0 ? $" {atLo} 片顶在厚度**下界 {cur.MinThickMm:0.00} mm** 上 —— "
+                                  + "被界咬住时步长是被截掉的，不是冲过头，**降阻尼动不了它**。"
+                                  + " 要么放宽下界（工艺上能不能做更薄？），要么这个几何在此电流下就是无解。"
+                      : atHi > 0 ? $" {atHi} 片顶在厚度**上界 {cur.MaxThickMm:0.00} mm** 上 —— 同理。"
+                      : " 落点不在界上却纹丝不动，多半是靶函数在此处平坦（梯度≈0）——"
+                        + "换起点或改几何，继续升级没有意义。")
+                    + " " + last.Message;
+                break;
+            }
+            prevErr = errNow; prevTh = (double[])last.ThicknessMm.Clone();
 
             // 判断失败模式：末段误差是否还在下降
             var h = last.History;
@@ -271,6 +332,9 @@ public static class FlangeAutoSizer
         opt ??= new Options();
         var t = (double[])initialThicknessMm.Clone();
         var res = new Result { ThicknessMm = t };
+        // 每轮**入口**的厚度向量。认极限环要跟 2 轮前同相位比 —— 只留误差序列不够，
+        // 误差相同未必是同一个点，而厚度相同才真是回到了原处。
+        var tHist = new List<double[]>();
         // ★ 热启动跨轮传递（2026-08-17）：相邻两轮只差百分之几的厚度，
         //   上一轮的不动点离这一轮很近。这正是**取消降精度搜索**之后补速度的手段。
         //   ⚠ 只在收敛时接过 —— 没收敛的 x 不是不动点（同 Core/Sizer 的做法）。
@@ -348,6 +412,7 @@ public static class FlangeAutoSizer
                 errW[j] = opt.DrawTargetW - (j < draws.Length ? draws[j] : opt.DrawTargetW);
             double worst = errW.Length == 0 ? 0 : errW.Max(Math.Abs);
             res.History.Add(worst);
+            tHist.Add((double[])t.Clone());        // 本轮**入口**的厚度，用来认极限环
             progress?.Report($"第 {it + 1} 轮：抽热最大偏差 {worst:0.0} W　" +
                              $"D {string.Join("/", draws.Select(v => v.ToString("+0.0;−0.0")))}　" +
                              $"③max {dips.Max():0.0}　厚度 " +
@@ -364,7 +429,34 @@ public static class FlangeAutoSizer
                 return res;
             }
 
-            int pinned = 0;
+            // ★★★★★ 2-周期极限环（2026-08-23 加）。
+            //
+            // 实测（Pt_Heater3.3dm 外层第 3 轮）：厚度从第 3 轮起就在两个点之间来回跳
+            //     0.54/0.97/0.89/0.51  ⇄  0.64/0.96/0.89/0.40
+            // 偏差跟着跳 13.2 ⇄ 11.3，一路跳到 25 轮跑满才轮到降阻尼。
+            // 中间那二十轮每一轮都是一次整线耦合解，全是白算 ——
+            // **这个环第 5 轮就认得出来**。
+            //
+            // 与「不动点」不同的是：极限环**降阻尼真的有用**（步子迈过头了），
+            // 所以这里不是终止，是**提前交棒**给 SolveAuto 的升级层去减阻尼。
+            // 判据要同相位比（跟 2 轮前比，不是跟上一轮比）——
+            // 隔相位比的话，高点跟低点比，永远看着像「在下降」。
+            if (tHist.Count >= 3 && res.History.Count >= 3
+                && worst >= res.History[^3] * (1 - 1e-3)
+                && tHist[^1].Length == tHist[^3].Length
+                && tHist[^1].Zip(tHist[^3], (a, b) => Math.Abs(a - b) < 1.5 * QuantMm).All(x => x))
+            {
+                res.Message =
+                    $"{it + 1} 轮后进入**2 周期极限环**：厚度在两个点之间来回跳"
+                    + $"（{string.Join("/", tHist[^2].Select(x => x.ToString("0.00")))}"
+                    + $" ⇄ {string.Join("/", tHist[^1].Select(x => x.ToString("0.00")))}），"
+                    + $"偏差同相位停在 {worst:0.0} W 不再下降。"
+                    + "步子迈过头了 —— 交给上层减阻尼重试，继续按当前阻尼迭代只会一直跳。";
+                res.Iterations = it + 1;
+                return res;
+            }
+
+            int pinned = 0, frozen = 0;
             for (int j = 0; j < t.Length; j++)
             {
                 // e > 0 ⇒ 抽热不够（②′ 危险）⇒ **加厚**；e < 0 ⇒ 抽太多（③ 危险）⇒ 削薄。
@@ -378,6 +470,9 @@ public static class FlangeAutoSizer
                 // 想往界外走、且已经贴着那个界 ⇒ 这一片被钉死了
                 if ((want < opt.MinThickMm && t[j] <= opt.MinThickMm * 1.001) ||
                     (want > opt.MaxThickMm && t[j] >= opt.MaxThickMm * 0.999)) pinned++;
+                // ★ 这一片这一步**实际走了多远**。厚度按 0.01 mm 量化（图纸精度，
+                //   比这更细的差别造不出来），走不满半格就等于没走。
+                if (Math.Abs(next - t[j]) < HalfQuantMm) frozen++;
                 t[j] = next;
             }
 
@@ -385,6 +480,33 @@ public static class FlangeAutoSizer
             //   早先没有这条：某算例四片全钉在 0.4 mm 下界，求解器仍跑满
             //   25 轮 × 自动升级 4 次 = 125 次整线耦合解（每次 15 轮耦合 × 7 个场解，
             //   合计约一万三千次场解），**一格算了一个多小时才吐出一个必然失败的结果**。
+            // ★★★★★ 不动点：**没有一片还动得了**（2026-08-23 加）。
+            //
+            // 上面那条只认「四片全钉在界上」。实测（Pt_Heater3.3dm）打不中的形态是：
+            //     厚度 0.40/0.85/0.75/0.40　D +3.9/+2.0/+2.0/+22.0（靶 2 W）
+            // 两片钉在 0.40 下界、另两片**已经落在靶上**（步长≈0）⇒ pinned 只有 2，
+            // 那条不响，于是第 5~25 轮打出了二十一行**一模一样**的数；
+            // 升级一次之后又是 37 行一模一样的数。
+            //
+            // ⇒ 判据改成「这一步四片加起来一格都没挪动」，并且**误差连续三轮没降**。
+            //   两个条件缺一不可：只看误差会误杀慢收敛（步子小但一直在降），
+            //   只看步长会误杀「刚好这一轮走得小」。
+            bool noGain = res.History.Count >= 4
+                          && worst >= res.History[^4] * (1 - 1e-3);
+            if (pinned != t.Length && frozen == t.Length && noGain)
+            {
+                res.Message =
+                    $"{it + 1} 轮后**没有一片还动得了**：最大偏差停在 {worst:0.0} W 连续三轮没降，"
+                    + "而这一步四片的厚度改动都不足图纸精度的半格（0.005 mm）。"
+                    + $"　厚度 {string.Join("/", t.Select(x => x.ToString("0.00")))}"
+                    + $"　抽热 {string.Join("/", draws.Select(v => v.ToString("+0.0;−0.0")))} W（靶 {opt.DrawTargetW:0.#}）。"
+                    + Environment.NewLine + "  典型形态：一部分片钉在厚度界上、另一部分已经落在靶上 —— "
+                    + "**这是不动点，不是迭代不够**。差的那几片只能靠改几何"
+                    + "（过流断面 / 保温分区 / 舌长），加轮数或降阻尼都动不了它。";
+                res.Iterations = it + 1;
+                return res;
+            }
+
             if (pinned == t.Length)
             {
                 bool tooThin = errW.Average() > 0;   // 还想加厚却顶在上界 / 还想削薄却顶在下界
@@ -402,6 +524,44 @@ public static class FlangeAutoSizer
         res.Message = $"{opt.MaxIterations} 轮未收敛（抽热最大偏差 {res.History.LastOrDefault():0.0} W）。" +
                       "可能是某片已顶到厚度上下界，或该形状在此电流下无解。";
         return res;
+    }
+
+    /// <summary>残差走势。两种「没到」要给**相反**的建议，所以必须分开。</summary>
+    public enum Trend
+    {
+        /// <summary>轮数还不够判</summary>
+        数据不足,
+        /// <summary>还在往下走 ⇒ 是轮数不够，加轮数有用</summary>
+        还在缩,
+        /// <summary>进了平台或在震荡 ⇒ 再跑也是白跑，要改的是几何</summary>
+        已停滞,
+    }
+
+    /// <summary>
+    /// 残差序列还在不在往下走。
+    ///
+    /// 取最近 <paramref name="window"/> 轮的**最好值**，跟更早各轮的最好值比：
+    /// 改善不足 <paramref name="minGain"/>（相对）就判停滞。
+    ///
+    /// ★ 比的是**最好值**而不是最后一个值 —— 这条曲线本来就会震荡，
+    ///   只看最后一轮，一次向上的抖动会被读成「越跑越差」，
+    ///   而一次向下的抖动会被读成「还有救」，两个方向都会骗人。
+    ///
+    /// 为什么要分这两种：跑满轮数没到的时候，「加大轮数再来一次」和
+    /// 「回 Rhino 改几何」是完全相反的两条路。只报一句「未收敛」，
+    /// 工程师只能靠猜 —— 而每猜错一次的代价是几十分钟。
+    /// </summary>
+    public static Trend TrendOf(IReadOnlyList<double> hist, int window = 2, double minGain = 0.05)
+    {
+        if (hist is null || hist.Count < window + 1) return Trend.数据不足;
+        double bestOld = double.PositiveInfinity, bestNew = double.PositiveInfinity;
+        for (int i = 0; i < hist.Count - window; i++) bestOld = Math.Min(bestOld, hist[i]);
+        for (int i = hist.Count - window; i < hist.Count; i++) bestNew = Math.Min(bestNew, hist[i]);
+        // NaN 会让 Math.Min 传染，判不了就说判不了 —— 别拿它当「停滞」把人劝退
+        if (double.IsNaN(bestOld) || double.IsNaN(bestNew)
+            || double.IsInfinity(bestOld) || double.IsInfinity(bestNew)) return Trend.数据不足;
+        if (bestOld <= 0) return Trend.已停滞;          // 已经压到 0，没有可改善的余地
+        return bestNew < bestOld * (1 - minGain) ? Trend.还在缩 : Trend.已停滞;
     }
 
     /// <summary>
@@ -451,6 +611,10 @@ public static class FlangeAutoSizer
         }
 
         Result last = new();
+        // 每轮的内层残差（各级峰值超管根 K）。用来分「轮数不够」和「已经在原地打转」。
+        var hist = new List<double>();
+        int stalledAt = 0;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
         for (int round = 0; round < outerRounds; round++)
         {
             cancel.ThrowIfCancellationRequested();
@@ -462,7 +626,11 @@ public static class FlangeAutoSizer
             lcBase.LevelThicknessMm = levelThicknessMm;
             lcBase.LevelScale = scale;
 
-            progress?.Report($"第 {round + 1}/{outerRounds} 轮 · 外层：调整每片整体厚度…");
+            // ★ 报用时：大几何上一轮就是分钟级，六轮跑满能到半小时。
+            //   不报的话，界面上只有一句不动的「正在算」，人分不清是在算还是卡死了，
+            //   于是要么白等，要么中途掐掉一个本来快好了的解。
+            progress?.Report($"第 {round + 1}/{outerRounds} 轮 · 外层：调整每片整体厚度…"
+                             + $"（已用 {clock.Elapsed.TotalMinutes:0.0} 分）");
             Func<double, FlangePlate>? mk = null;
             if (makePlateByLevel is not null)
             {
@@ -550,6 +718,19 @@ public static class FlangeAutoSizer
                 return last;
             }
             if (last.Converged && worstOver < 15) break;
+
+            // ── 停滞就提前收工（2026-08-23 加）
+            //
+            // 在此之前，无论残差还在不在动，轮数一律跑满。大几何（Pt_Heater3）上
+            // 每轮要四次全解、一次分钟级 ⇒ 半小时之后吐一句「未收敛」。
+            // 残差若早已进平台，那半小时里的后半段是纯粹的白算。
+            hist.Add(worstOver);
+            if (TrendOf(hist) == Trend.已停滞 && round < outerRounds - 1)
+            {
+                stalledAt = round + 1;
+                progress?.Report($"残差进平台（{worstOver:0.0} K），提前收工 —— 再跑也是这个数");
+                break;
+            }
         }
 
         // ── 全精度复核：搜索期是粗网格 + 松耦合，最终解必须用原精度重跑一次。
@@ -618,6 +799,23 @@ public static class FlangeAutoSizer
 
         // 汇报最终的各级厚度
         var sb = new System.Text.StringBuilder(last.Message);
+        if (!last.Converged && hist.Count > 0)
+        {
+            string seq = string.Join(" → ", hist.Select(x => x.ToString("0")));
+            if (stalledAt > 0)
+                sb.Append($"　★ 第 {stalledAt}/{outerRounds} 轮残差就进了平台（{seq} K，各级峰值超管根）"
+                          + " —— 已提前收工。**加大轮数不会有用**：本器只有「各级厚度」这一族旋钮，"
+                          + "它能压的已经压完了。要动的是几何 —— 回图上改环 / 槽位 / 舌长 / 盘径。");
+            else if (TrendOf(hist) == Trend.还在缩)
+                sb.Append($"　★ 轮数用完时残差**还在往下走**（{seq} K）—— 这次是轮数不够，不是无解。"
+                          + $"把外层轮数从 {outerRounds} 调大再跑一次，很可能就到了。");
+            else if (TrendOf(hist) == Trend.已停滞)
+                // 恰好在最后一轮才停滞：提前收工的条件排除了最后一轮（那时已经没有可省的轮数），
+                // 于是 stalledAt 是 0。少了这一支，这种情形两条走势提示一条都不打 ——
+                // 「该说话时不说话」和报错数是同一类问题。
+                sb.Append($"　★ 轮数用完，残差已在平台（{seq} K）—— **加大轮数不会有用**，"
+                          + "本器只有「各级厚度」这一族旋钮，要动的是几何。");
+        }
         if (levelLocked is not null && !last.Converged)
             sb.Append("　⚠ 有级被锁死，整片热平衡只能靠未锁的级去凑 —— " +
                       "未收敛可能是锁的限制，不一定是物理无解。可试着解锁一级再跑。");

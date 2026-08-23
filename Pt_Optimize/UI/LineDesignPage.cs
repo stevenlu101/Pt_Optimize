@@ -196,9 +196,8 @@ public sealed class LineDesignPage : TabPage
 
         // ★ 定案档：直接从 Core/FinalDesign 取，**不在 UI 里再抄一份数**。
         //   两档都全判据通过，差别只在裕度与铂重（见各档的 Binding 说明）。
-        foreach (var fd in FinalDesign.All) _caseBox.Items.Add(fd.Name);
-        _caseBox.SelectedIndex = System.Array.IndexOf(FinalDesign.All, FinalDesign.Current);
-        if (_caseBox.SelectedIndex < 0) _caseBox.SelectedIndex = 0;
+        RefillCaseBox();
+        FinalDesign.Reloaded += OnFinalDesignsReloaded;
         _btnLoadCase = Btn("载入定案", (_, _) => LoadFinalDesign());
         _btn3dm = Btn("导出定案 3DM", (_, _) => ExportFinal3dm());
         _btnAnalyze = Btn("分析几何变数", (_, _) => AnalyzeShape());
@@ -586,14 +585,60 @@ public sealed class LineDesignPage : TabPage
                 + "下一步（都要做）：" + Environment.NewLine
                 + "  1. 把 binding 填上 —— 什么咬住了它（余量最小的那条）" + Environment.NewLine
                 + "  2. 跑 --selfcheck，A 段这一档的差须为 0.000" + Environment.NewLine
-                + "  3. 提交进 git —— 档是回归基准，变更要被 diff 记录" + Environment.NewLine + Environment.NewLine
-                + "⚠ 重启 APP 后它才会出现在定案档下拉里（档在启动时读入）。",
+                + "  3. 提交进 git —— 档是回归基准，变更要被 diff 记录",
                 "已另存", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            // 重扫磁盘，让新档立刻出现在**每一个**定案档下拉里。
+            // 少了这一句，界面会说「已写出」而下拉里找不到它 —— 工程师只能
+            // 猜是没存上，于是再存一次（撞重名被拒），或者干脆不信这个功能。
+            FinalDesign.Reload();
+            if (FinalDesignStore.LoadErrors.Count > 0)
+                MessageBox.Show(this,
+                    "档已写出，但重扫 finaldesigns/ 时有档读不进来：" + Environment.NewLine
+                    + string.Join(Environment.NewLine, FinalDesignStore.LoadErrors) + Environment.NewLine
+                    + Environment.NewLine + "少一个档 = 少一组回归基准，不要放着不管。",
+                    "读档有错", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         catch (Exception ex)
         {
             MessageBox.Show(this, ex.Message, "另存失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
+    }
+
+    /// <summary>
+    /// 把定案档下拉重填一遍，**按档名保住当前选中的那一档** —— 不能按下标，
+    /// 新档追加在内置档后面，下标会移位。
+    ///
+    /// 本页的下拉**没挂** SelectedIndexChanged（换档只是改选择，要点「载入定案」才生效），
+    /// 所以重填不触发任何计算。哪天给它挂上了事件，这里必须同时加抑制位，
+    /// 否则重扫一次就等于替用户按了一下载入。
+    /// </summary>
+    private void RefillCaseBox()
+    {
+        string keep = _caseBox.SelectedItem as string ?? "";
+        _caseBox.Items.Clear();
+        foreach (var fd in FinalDesign.All) _caseBox.Items.Add(fd.Name);
+        int i = _caseBox.Items.IndexOf(keep);
+        if (i < 0) i = System.Array.IndexOf(FinalDesign.All, FinalDesign.Current);
+        _caseBox.SelectedIndex = i < 0 ? 0 : i;
+    }
+
+    private void OnFinalDesignsReloaded(object? sender, System.EventArgs e)
+    {
+        if (IsDisposed) return;
+        if (IsHandleCreated && InvokeRequired) { BeginInvoke(new System.Action(RefillCaseBox)); return; }
+        RefillCaseBox();
+    }
+
+    /// <summary>
+    /// ⚠ <see cref="FinalDesign.Reloaded"/> 是**静态**事件：不退订，这个页面就永远被它拿着。
+    /// 真机上只有一个实例、无所谓，但 UiWiring 一个进程里反复造窗体 ——
+    /// 旧实例的处理器会跟着累加，然后往**已销毁的控件**上写，
+    /// 报出来的错跟真正的病因八竿子打不着。
+    /// </summary>
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) FinalDesign.Reloaded -= OnFinalDesignsReloaded;
+        base.Dispose(disposing);
     }
 
     /// <summary>

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace PtOptimize.Core;
@@ -10,7 +10,7 @@ namespace PtOptimize.Core;
 /// 本类把两条硬约束都写成**闭式**，于是单个候选是微秒级，可以扫几十万个点；
 /// 筛出来的少数候选再送 <see cref="LineRunner"/> 与壳解复核。
 ///
-/// 三条闭式判据：
+/// 闭式判据（现役两条）：
 ///
 /// **C2（稳态管根温差 &lt; 10 K）——「抽热预算」**
 /// 冷点深度由半无限翅片解给出（HANDOVER §6 ②）：
@@ -26,9 +26,8 @@ namespace PtOptimize.Core;
 ///
 /// **C1a（稳态段不烧）** 逐点自热判据（§4.2t）：J ≤ √(2q″(T)/(ρe(T)·t))
 ///
-/// **C1b（冷启不烧）** 冷态两边散热≈0，比升温率，电流约掉：
-///
-///   f² · (R_法兰/C_法兰) ÷ (R_管/C_管) ≤ 1
+/// C1b（冷启比值）曾是第三条，2026-08 撤下：升温时管子是被刻意慢慢加热的，
+/// 法兰会升到自己的平衡点并停住，照字面用等于禁止任何升温（见 --solve4 处的说明）。
 /// </summary>
 public static class DesignScreen
 {
@@ -152,78 +151,4 @@ public static class DesignScreen
         return Insulation.PlateFlux(tempC, p.TAmbC, layers, p.OuterEmissivity, charLen, p.LossScale);
     }
 
-    /// <summary>一个候选法兰的评估结果</summary>
-    public sealed class PlateEval
-    {
-        public double ThickMm, MassG;
-        public double QGenW, QLossW, DrawW;      // 自身发热 / 自身散热 / 从管子抽的热
-        public double Phi;
-        public double JMax, JLimWork, JLimMelt;
-        public double RootDeltaK;                // 由抽热换算的管根温差
-        public bool OkC2, OkC1a;
-    }
-
-    /// <summary>
-    /// 评估一片法兰：给定形状、厚度、电流、管根温度、保温厚度，闭式给出两条约束的判定。
-    ///
-    /// 抽热用**能量恒等式** D = Q_散热 − Q_发热（HANDOVER §7：逐面累加会漏面，偏小 14 %）。
-    /// 散热在管根温度处取值 —— 对**可行**方案（|ΔT| &lt; 10 K）这是自洽的。
-    /// </summary>
-    public static PlateEval EvalPlate(DesignInputs p, ShapeFactors s, double tMm,
-                                      double currentA, double tRootC,
-                                      double insulThickMm, double drawBudgetW,
-                                      double deltaMaxK = 10.0)
-    {
-        double r = s.ResistanceOhm(tMm, tRootC);
-        double gen = currentA * currentA * r;
-        double loss = 2.0 * (s.AreaMm2 * 1e-6) * PlateFluxWPerM2(p, tRootC, insulThickMm);
-        double draw = loss - gen;
-
-        double jmax = s.JMax(currentA, tMm);
-        return new PlateEval
-        {
-            ThickMm = tMm,
-            MassG = s.MassG(tMm),
-            QGenW = gen, QLossW = loss, DrawW = draw,
-            Phi = loss > 1e-12 ? gen / loss : double.NaN,
-            JMax = jmax,
-            JLimWork = JLimitAPerMm2(p, tRootC, tMm, insulThickMm),
-            JLimMelt = JLimitAPerMm2(p, RampTwoNode.PtMeltingC, tMm, insulThickMm),
-            RootDeltaK = drawBudgetW > 0 ? draw / (drawBudgetW / deltaMaxK) : double.NaN,
-            OkC2 = draw > 0 && draw <= drawBudgetW,
-            OkC1a = jmax <= JLimitAPerMm2(p, tRootC, tMm, insulThickMm)
-        };
-    }
-
-    /// <summary>
-    /// **C1b 冷启判据**：f² · (R_法兰/C_法兰) ÷ (R_管/C_管) ≤ 1。
-    /// 返回该比值；&gt;1 表示升温期法兰会跑到管子前面。热容含各自的保温层。
-    /// </summary>
-    public static double ColdStartRatio(DesignInputs p, ShapeFactors s, double plateThickMm,
-                                        double wallMm, double sharedFactor,
-                                        double plateInsulThickMm, double refTempC = 500.0)
-    {
-        double ri = p.TubeIdMm * 0.5e-3, w = wallMm * 1e-3, rOut = ri + w;
-        double areaTube = Math.PI * (rOut * rOut - ri * ri);
-        double rTube = Materials.PtResistivity(refTempC) * p.TubeLength / areaTube;
-
-        double capTube = Materials.PtDensity * areaTube * p.TubeLength * Materials.PtCp(refTempC);
-        double rr = rOut;
-        foreach (var lay in p.Layers)
-        {
-            if (!lay.Enabled || lay.ThicknessMm <= 1e-6) continue;
-            double rNext = rr + lay.ThicknessMm * 1e-3;
-            capTube += Math.PI * (rNext * rNext - rr * rr) * p.TubeLength
-                       * lay.DensityKgM3 * lay.CpJKgK * 0.5;
-            rr = rNext;
-        }
-
-        double rPlate = s.ResistanceOhm(plateThickMm, refTempC);
-        double capPlate = s.MassG(plateThickMm) * 1e-3 * Materials.PtCp(refTempC);
-        if (plateInsulThickMm > 1e-6)
-            capPlate += 2.0 * (s.AreaMm2 * 1e-6) * (plateInsulThickMm * 1e-3)
-                        * p.Layer1.DensityKgM3 * p.Layer1.CpJKgK * 0.5;
-
-        return sharedFactor * sharedFactor * (rPlate / capPlate) / (rTube / capTube);
-    }
 }
