@@ -535,15 +535,15 @@ public sealed class ManualPage : TabPage
         double xEnd = Math.Max(R, r2) + 8;      // 越过盘缘，进入舌片
         double x0 = 25.0 - 1.0, x1 = xEnd;      // 左端留出管壁
 
-        // 角焊缝：与 Core/PlateCurrent2D.ThicknessAt 同一式子，也与 3DM 里那圈回转体同一式子。
-        //   hw(d) = a − √(a²−(d−a)²)，d = r − 孔R，焊脚 a = max(板厚, 壁厚)
-        //   隐式写作 (d−a)² + (hw−a)² = a² ⇒ 半径 a 的**凹圆弧**，贴管壁处切线竖直。
-        // ⚠ 这张剖面此前没画它。而管孔边正是它最厚的地方（环内级厚 + 2a），
+        // 角焊缝：**直接调 Core 那一份**（2026-08-24 收敛）。
+        //   本处原来自己抄了一遍 `hw(d) = a − √(a²−(d−a)²)`，
+        //   靠注释写着「与 Core/PlateCurrent2D.ThicknessAt 同一式子」—— 而没有任何东西在验。
+        // ⚠ 这张剖面此前**根本没画焊缝**。而管孔边正是它最厚的地方（环内级厚 + 2a），
         //   图上却只有 ti —— 图与所交付的件、与 FE 实际算的厚度**三者不一致**。
+        //   那次就是「同一个式子存三处然后悄悄漂开」的实例，所以这次不留第二份。
         double aw = Math.Max(t, wall);
         double Zone(double r) => r <= r1 ? ti : r <= r2 ? to : t;
-        double Hw(double d) => (d < 0 || d >= aw) ? 0
-                             : aw - Math.Sqrt(Math.Max(0, aw * aw - (d - aw) * (d - aw)));
+        double Hw(double d) => FlangePlate.WeldFilletHeightMm(d, aw);
 
         double tMax = Math.Max(ti + 2 * aw, Math.Max(ti, Math.Max(to, t)));
         // ⚠ 比例必须**按宽度定**，不能按厚度定。

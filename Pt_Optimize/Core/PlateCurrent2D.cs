@@ -188,6 +188,28 @@ public sealed class FlangePlate
     /// <summary>与 <see cref="DiscStepRadiiMm"/> 一一对应的厚度 mm</summary>
     public double[] DiscStepThicknessMm = Array.Empty<double>();
 
+    /// <summary>
+    /// 角焊缝**单面**堆高 mm（凹圆弧）。<paramref name="d"/> = r − 孔半径，
+    /// <paramref name="legMm"/> = 焊脚 a。
+    ///
+    ///   hw(d) = a − √(a² − (d−a)²)，即 (d−a)² + (hw−a)² = a² ——
+    ///   半径 a 的**凹圆弧**，贴管壁处切线竖直。焊缝是**焊上去的额外金属**，
+    ///   与各种「厚度分区」是叠加关系，不是覆盖。
+    ///
+    /// ⚠ **本式全程序只准有这一份**（2026-08-24 收敛）。此前它有三份：
+    ///   这里、`ManualPage` 的剖面图、`Pt_Optimize.Geom` 的回转体，
+    ///   三处靠注释互相宣称「同一式子」，而**没有任何东西在验**。
+    ///   它已经漂过一次：剖面图当时**根本没画焊缝** ⇒
+    ///   「图 / 交付的件 / FE 实际算的厚度」三者不一致。
+    ///   · ManualPage 现在直接调本方法（同一个组件，本来就不该抄）。
+    ///   · Geom 那份**合不了** —— 它是 net7（Rhino 8 引擎锁死 .NET 7）、独立进程、
+    ///     不引用 Core。那一份由 `--make3dm` 的**解析积分体积对账**守着（差 >0.5 % 即判不吻合）。
+    /// </summary>
+    public static double WeldFilletHeightMm(double d, double legMm)
+        => legMm <= 1e-9 || d < 0 || d >= legMm
+           ? 0.0
+           : legMm - Math.Sqrt(Math.Max(0, legMm * legMm - (d - legMm) * (d - legMm)));
+
     /// <summary>该点的板厚 mm。优先级：圆盘阶梯 > 孔周加厚 > 舌片厚 > 圆盘外缘厚。</summary>
     public double ThicknessAt(double x, double z)
     {
@@ -200,13 +222,8 @@ public sealed class FlangePlate
 
         // 角焊缝：两面各堆一个**凹圆弧**焊角（见 WeldFilletLegMm）。
         // 与下面各种「厚度分区」是**叠加**关系，不是覆盖 —— 焊缝是焊上去的额外金属。
-        double weld = 0.0;
-        if (WeldFilletLegMm > 1e-9)
-        {
-            double a = WeldFilletLegMm, d = r - HoleRadiusMm;
-            if (d >= 0 && d < a)
-                weld = 2.0 * (a - Math.Sqrt(Math.Max(0, a * a - (d - a) * (d - a))));
-        }
+        // ★ 两面各一个 ⇒ ×2。式子本身收敛在 WeldFilletHeightMm（**唯一一份**）。
+        double weld = 2.0 * WeldFilletHeightMm(r - HoleRadiusMm, WeldFilletLegMm);
 
         int nStep = Math.Min(DiscStepRadiiMm.Length, DiscStepThicknessMm.Length);
         for (int k = 0; k < nStep; k++)
