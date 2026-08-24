@@ -285,7 +285,14 @@ public class VerificationTests
     [Fact]
     public void LinearK_IntegralMeanEqualsMeanTemperatureValue()
     {
-        // 理论模型 §6.1.1：对线性 k(T)，积分平均恒等于平均温度处的 k 值
+        // 对**线性** k(T) = K0 + K1·T，区间 [T1,T2] 上的积分平均恒等于中点温度处的 k 值：
+        //   (1/(T2−T1))∫k dT = K0 + K1·(T1+T2)/2 = k((T1+T2)/2)
+        // ⚠ 这里原来写着「理论模型 6.1.1 节」—— 那一节**不存在**，
+        //   （原文写的是「理论模型 6.2.1 节」那一族的编号；此处**刻意不写 § 号**，
+        //     免得 DocRefTests 把这句历史说明当成一条真引用 —— 不另设可被滥用的豁免开关。）
+        //   而且理论模型通篇没有讲过保温层 k(T) 的积分平均（2026-08-24 核实）。
+        //   凭空的出处比没有出处更坏：它让人以为查得到，于是不再追问。
+        //   ⇒ 结论本身是初等的，直接写在这里；DocRefTests 从此盯着这一族引用。
         var layer = new InsulationLayer { K0 = 0.04, K1 = 3.0e-4 };
         double t1 = 200, t2 = 1200;
         const int N = 2000001;
@@ -340,7 +347,7 @@ public class VerificationTests
     [Fact]
     public void RadiationTangentToSecantRatio_ApproachesFour()
     {
-        // 理论模型 §6.2.1：dq″/dT 与 q″/ΔT 之比在 Ta ≪ Ts 时趋于 4
+        // 理论模型 §4.4「辐射线性化：割线与切线」：dq″/dT 与 q″/ΔT 之比在 Ta ≪ Ts 时趋于 4
         const double eps = 0.18, Ta = 25;
         double Ts = 1300;
         double secant = Materials.HRad(eps, Ts, Ta);

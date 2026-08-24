@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace PtOptimize.Core;
@@ -142,7 +142,7 @@ public static class SegmentSolver
         res.MassFlangePairKg = 0;
         res.MassTotalKg = res.MassTubeKg;
 
-        // ── 特征量（切线斜率 + 玻璃耦合，见理论模型 §6.2.1 与 §7.1）
+        // ── 特征量（切线斜率 + 玻璃耦合，见理论模型 §4.4「辐射线性化」与 §7.1「为什么必须是串级」）
         double rOut = ri + wall;
         var lossAt = Insulation.CylinderLoss(p.TSetC, tAmb, rOut, p.Layers,
                         EffectiveEmissivity(p), p.Posture == Orientation.Vertical, L, p.LossScale);
