@@ -21,9 +21,14 @@ namespace PtOptimize.Tests;
 /// 同一天还在同族里抓到三处更严重的：注释宣称的**机制**根本没实现
 /// （FlowState.RampScreen 零赋值、① 门禁名单少一条、`--cli --manual` 不存在）。
 ///
-/// ⚠ 本档只核**点名了文件**的引用（「理论模型 §X」「工程师版 §X」）。
-///   裸写的「§X.Y」按惯例指 HANDOVER，但那有 170 多处、且历史上有跨文档引用，
-///   一刀切会制造噪声 —— 噪声大的门迟早被关掉。**先把能确定的那部分钉死。**
+/// ⚠ 两级口径，因为两种引用的确定性不同：
+///   · **点名了文件**的（「理论模型 §X」「工程师版 §X」）—— 严格核到那个文件。
+///   · **裸写的「§X.Y」**（238 处）—— 只要求它在四份文件（HANDOVER / 理论模型 /
+///     工程师版 / APP 使用说明书）之一里存在。这一级**抓得到「号码根本不存在」，
+///     抓不到「指错了文件」** —— 说清楚，不假装更强。实测 238 处只有 3 处落空，
+///     噪声足够低；要求每处都点名文件才会制造噪声，而**噪声大的门迟早被人关掉**。
+///   · UiWiring/Program.cs **自己**档里的裸「§N」指的是它自己的节号（如「§28 别催」），
+///     那一档另外允许 UiWiring 的 Head 编号。
 /// </summary>
 public class DocRefTests
 {
@@ -40,6 +45,7 @@ public class DocRefTests
     {
         ("理论模型", "docs/Pt_理论模型.md"),
         ("工程师版", "docs/Pt_工程师版.md"),
+        // UiWiring 不是 markdown 档，节号另由 UiWiringSections 解析（见下）
     };
 
     private static HashSet<string> HeadingsOf(string path)
@@ -47,7 +53,10 @@ public class DocRefTests
         var set = new HashSet<string>(StringComparer.Ordinal);
         foreach (string line in File.ReadAllLines(path))
         {
-            var m = Regex.Match(line, "^#+[ ]+([0-9]+(?:[.][0-9]+)*)");
+            // ⚠ 末尾的 [a-z]? 不能省：HANDOVER 用了大量**字母尾**小节（4.2b、4.2l …，共 40 个）。
+            //   漏掉它们会让「四份文件里都没有这一节」大面积误报 ——
+            //   2026-08-24 装门时正是自证那条（小节数 >= 80）把这个解析错误当场挡下的。
+            var m = Regex.Match(line, "^#+[ ]+([0-9]+(?:[.][0-9]+)*[a-z]?)");
             if (m.Success) set.Add(m.Groups[1].Value);
         }
         return set;
@@ -71,6 +80,71 @@ public class DocRefTests
         }
     }
 
+    private const char Q = (char)34;
+
+    /// <summary>UiWiring 自己的节号（Head("28 …")）。</summary>
+    private static HashSet<string> UiWiringSections(string root)
+    {
+        string f = Path.Combine(root, "tests", "UiWiring", "Program.cs");
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        if (!File.Exists(f)) return set;
+        foreach (Match m in Regex.Matches(File.ReadAllText(f), "Head[(]" + Q + "([0-9]+)"))
+            set.Add(m.Groups[1].Value);
+        return set;
+    }
+
+    /// <summary>裸写的「§N」：只要求它在四份文件之一里存在（口径见类注释）。</summary>
+    [Fact]
+    public void EveryBareSectionReference_ExistsInSomeDoc()
+    {
+        string root = RepoRoot();
+        string[] all = { "HANDOVER.md", "docs/Pt_理论模型.md",
+                         "docs/Pt_工程师版.md", "docs/APP使用说明书.md" };
+        var known = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string rel in all)
+        {
+            string full = Path.Combine(root, rel);
+            Assert.True(File.Exists(full), $"{rel} 不在 —— 断言失去了对象");
+            known.UnionWith(HeadingsOf(full));
+        }
+        Assert.True(known.Count >= 80,
+            $"四份文件合起来只解析出 {known.Count} 个小节号 —— 解析多半坏了");
+
+        var uiw = UiWiringSections(root);
+        Assert.True(uiw.Count >= 20, $"UiWiring 只解析出 {uiw.Count} 个节号 —— 解析坏了");
+
+        var bad = new List<string>();
+        int seen = 0;
+        foreach (string f in SourceFiles(root))
+        {
+            bool isWire = f.Replace('/', Path.DirectorySeparatorChar)
+                           .EndsWith(Path.Combine("tests", "UiWiring", "Program.cs"),
+                                     StringComparison.Ordinal);
+            string[] lines = File.ReadAllLines(f);
+            for (int i = 0; i < lines.Length; i++)
+            {
+                // 点名文件的那一级归上面那条断言；ManualPage 用的是它自己的编号
+                if (lines[i].Contains("理论模型", StringComparison.Ordinal)
+                 || lines[i].Contains("工程师版", StringComparison.Ordinal)
+                 || lines[i].Contains("UiWiring", StringComparison.Ordinal)   // 交给严格那一级
+                 || lines[i].Contains("ManualPage", StringComparison.Ordinal)) continue;
+                foreach (Match m in Regex.Matches(lines[i], "§[ ]*([0-9]+(?:[.][0-9]+)*[a-z]?)"))
+                {
+                    seen++;
+                    string sec = m.Groups[1].Value;
+                    if (known.Contains(sec)) continue;
+                    if (isWire && uiw.Contains(sec)) continue;   // 本档内的自指
+                    bad.Add($"{Path.GetRelativePath(root, f)}:{i + 1}  「§{sec}」 "
+                          + $"—— 四份文件里都没有这一节：{lines[i].Trim()}");
+                }
+            }
+        }
+        Assert.True(seen >= 100, $"全仓只抓到 {seen} 处裸「§N」—— 正则多半失效了");
+        Assert.True(bad.Count == 0,
+            "有指不到的出处（**凭空的出处比没有出处更坏**）：" + Environment.NewLine
+            + string.Join(Environment.NewLine, bad));
+    }
+
     [Fact]
     public void EveryNamedDocReference_ResolvesToARealHeading()
     {
@@ -87,6 +161,12 @@ public class DocRefTests
                 $"{rel} 只解析出 {hs.Count} 个小节号 —— 多半是标题写法变了，解析坏了");
             headings[word] = hs;
         }
+        // ★ 「UiWiring §N」也走严格这一级（2026-08-24 补）：接线门的节号会随着加节变动，
+        //   而全仓有好几处注释指着它（Flow、StagePanel、各节之间互指）。
+        //   节号一旦重编，陈旧引用当场现形 —— 这正是本门最有价值的用法。
+        headings["UiWiring"] = UiWiringSections(root);
+        Assert.True(headings["UiWiring"].Count >= 20,
+            $"UiWiring 只解析出 {headings["UiWiring"].Count} 个节号 —— 解析坏了");
 
         var bad = new List<string>();
         int seen = 0;
@@ -94,7 +174,7 @@ public class DocRefTests
         {
             string[] lines = File.ReadAllLines(f);
             for (int i = 0; i < lines.Length; i++)
-                foreach (var (word, _) in Docs)
+                foreach (string word in headings.Keys)
                 {
                     // 「理论模型 §4.4」「理论模型 §4.4「标题」」都算
                     foreach (Match m in Regex.Matches(lines[i], word + @"[^§]{0,8}§[ ]*([0-9]+(?:[.][0-9]+)*)"))
