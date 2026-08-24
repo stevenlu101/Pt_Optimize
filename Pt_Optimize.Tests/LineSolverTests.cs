@@ -140,6 +140,107 @@ public class LineSolverTests
         Assert.All(rs, f => Assert.False(f.Shared));
     }
 
+    // ══════════════════════════════════════════════════════════════
+    // B′ 的「共用片取两侧较大值」——**此前零覆盖**（2026-08-24 补）
+    //
+    // 这段算术原来内联在 SizeFlanges 里，而那个方法每段要跑一次耦合解（约 30 s/段）
+    // ⇒ 想验「两侧竞争」就得跑 ≥2 段。于是单段测试碰不到它：
+    // 单段线上两端都是端片，内层循环每次只有一个合法的 k，
+    // `if (tk > t)` 这个比较**一次都没执行过**。
+    // 抽成 JointThickness 之后微秒级验完，慢的那半（耦合解算出 need/amps）
+    // 由 SizeFlanges_OneSegment_… 覆盖。
+    //
+    // 判错的后果：共用片被**较弱那一侧**定厚 ⇒ 偏薄 ⇒ 违反的恰恰是定尺寸
+    // 本来要满足的那条判据；而 SizedBy 会报错段名，工程师照它去改**另一段**。
+    // ══════════════════════════════════════════════════════════════
+
+    private static readonly string[] N3 = { "HC1", "HC2", "HC3" };
+
+    /// <summary>端片只有一侧邻段，厚度就由它定</summary>
+    [Theory]
+    [InlineData(0, "HC1")]
+    [InlineData(3, "HC3")]
+    public void EndJoint_IsSizedByItsOnlyNeighbour(int j, string expect)
+    {
+        var (t, by) = LineSolver.JointThickness(
+            new[] { 1.0, 2.0, 3.0 }, new[] { 100.0, 200.0, 300.0 }, N3, j);
+        Assert.Equal(expect, by);
+        Assert.True(t > 0);
+        // 端片的接头电流 = 那一段自己的电流 ⇒ 折算比 1 ⇒ 厚度就是该段的 need
+        double need = j == 0 ? 1.0 : 3.0;
+        Assert.Equal(need, t, 9);
+    }
+
+    /// <summary>
+    /// ★ 共用片取**较大**的那一侧，SizedBy 报的就是那一侧。
+    ///
+    /// 接头 1 在 HC1|HC2 之间：I接头 = √(100²+200²+100·200) = 264.575。
+    ///   HC1 侧折算：1.0 × 264.575/100 = 2.6458
+    ///   HC2 侧折算：2.0 × 264.575/200 = 2.6458   ← 故意做成相等，见下一条
+    /// 这里把 HC2 的 need 抬高，让它明确胜出。
+    /// </summary>
+    [Fact]
+    public void SharedJoint_TakesTheThickerSide()
+    {
+        double iJ = Math.Sqrt(100.0 * 100 + 200.0 * 200 + 100 * 200);
+        var (t, by) = LineSolver.JointThickness(
+            new[] { 1.0, 5.0, 3.0 }, new[] { 100.0, 200.0, 300.0 }, N3, 1);
+        Assert.Equal("HC2", by);
+        Assert.Equal(5.0 * (iJ / 200.0), t, 9);
+    }
+
+    /// <summary>
+    /// 自证：把两侧的需求**对调**，结果与 SizedBy 必须跟着换边。
+    /// 少了这一条，一个「永远取左侧」或「永远取右侧」的实现都能通过上一条。
+    /// </summary>
+    [Fact]
+    public void SharedJoint_SwitchesSideWhenTheOtherSideBinds()
+    {
+        var names = N3;
+        var amps = new[] { 100.0, 200.0, 300.0 };
+        var left = LineSolver.JointThickness(new[] { 9.0, 1.0, 3.0 }, amps, names, 1);
+        var right = LineSolver.JointThickness(new[] { 1.0, 9.0, 3.0 }, amps, names, 1);
+        Assert.Equal("HC1", left.SizedBy);
+        Assert.Equal("HC2", right.SizedBy);
+        Assert.True(Math.Abs(left.ThicknessMm - right.ThicknessMm) > 1e-9,
+            "两种情形算出同一个厚度 ⇒ 「取较大」没有真的在比");
+    }
+
+    /// <summary>
+    /// 折算按 t ∝ I：接头电流比该段大多少，厚度就按同样比例放大。
+    /// 这一条把「用错电流口径」钉死 —— 拿算术平均代替矢量合成会低 13 %，
+    /// 那 13 % 直接落在法兰厚度上。
+    /// </summary>
+    [Fact]
+    public void Thickness_ScalesWithJointOverSegmentCurrent()
+    {
+        var amps = new[] { 1000.0, 1000.0 };
+        var names = new[] { "A", "B" };
+        var (t, _) = LineSolver.JointThickness(new[] { 2.0, 2.0 }, amps, names, 1);
+        // 两段同流 ⇒ I接头 = √3·I ⇒ 厚度 = 2.0 × √3
+        Assert.Equal(2.0 * Math.Sqrt(3.0), t, 9);
+    }
+
+    /// <summary>
+    /// 某段解失败（电流为 0）时**不折算**，直接用它的 need —— 但绝不能因此算出 0。
+    /// 一片厚度为 0 的法兰会让下游每个量都变成垃圾，而且看不出是哪来的。
+    /// </summary>
+    [Fact]
+    public void FailedSegment_FallsBackToItsNeed_NeverZero()
+    {
+        var (t, by) = LineSolver.JointThickness(
+            new[] { 4.0, 2.0 }, new[] { 0.0, 500.0 }, new[] { "坏", "好" }, 0);
+        Assert.Equal(4.0, t, 9);            // 端片，唯一邻段是「坏」
+        Assert.Equal("坏", by);
+        Assert.True(t > 0);
+    }
+
+    /// <summary>段数对不上要抛，不许凑 —— 凑出来的是另一条线的厚度</summary>
+    [Fact]
+    public void MismatchedLengths_Throw()
+        => Assert.Throws<ArgumentException>(() =>
+               LineSolver.JointThickness(new[] { 1.0, 2.0 }, new[] { 100.0 }, new[] { "A", "B" }, 0));
+
     /// <summary>Totals 的合计必须等于逐段之和 —— 汇总层不许自己另算一份</summary>
     [Fact]
     public void Totals_EqualsSumOfSegments()

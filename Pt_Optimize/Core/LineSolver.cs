@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -147,7 +147,7 @@ public static class LineSolver
     /// ⚠ 二阶效应未计：相控触发角不同会使基波电流相对电压各自滞后不同角度，
     ///   实际相位差偏离 120°。三段功率差别不大时影响有限，需要更准则须做波形叠加。
     /// </summary>
-    public static double JointCurrentA(IList<double> segmentCurrentA, int j)
+    public static double JointCurrentA(IReadOnlyList<double> segmentCurrentA, int j)
     {
         int n = segmentCurrentA.Count;
         if (j <= 0) return segmentCurrentA[0];
@@ -156,6 +156,47 @@ public static class LineSolver
         return UseWorkbookSharedFactor
             ? (il + ir) / 2.0 * WorkbookSharedFactor       // 工作簿口径，仅供对照
             : Math.Sqrt(il * il + ir * ir + il * ir);      // 120° 相位差下的矢量差
+    }
+
+    /// <summary>
+    /// 第 <paramref name="joint"/> 号接头那一片的厚度，以及**是被哪一段的需求定的**。
+    ///
+    /// 折算依据：深度平均下面电流 K = J·t 守恒 ⇒ J ∝ I/t；定尺后 J = J_allow
+    /// ⇒ **t ∝ I**，于是 t_接头 = t_段 × (I_接头 / I_段)。
+    /// **共用片要同时满足两侧，取两者较大值。**
+    ///
+    /// ★ 为什么抽出来（2026-08-24）：这段「取两侧较大」是纯算术，
+    ///   可它原来内联在 <see cref="SizeFlanges"/> 里，而那个方法**每段要跑一次耦合解**
+    ///   （约 30 s/段）⇒ 想验「两侧竞争」就得跑 ≥2 段。于是它一直**零覆盖**：
+    ///   单段线上两端都是端片，内层循环每次只有一个合法的 k，
+    ///   `if (tk > t)` 这个比较**一次都没执行过**。
+    ///   抽出来之后微秒级就能验完，而慢的那半（耦合解算出 need/amps）单段测试已经覆盖。
+    ///
+    /// ⚠ 判错的后果不是「数字略差」：共用片被**较弱那一侧**定厚 ⇒ 偏薄
+    ///   ⇒ 它违反的恰恰是定尺寸本来要满足的那条判据；而 SizedBy 会报错段名，
+    ///   工程师照它去改**另一段**。
+    ///
+    /// <param name="needMm">各段自身要求的法兰厚度</param>
+    /// <param name="ampsA">各段电流；某段解失败时为 0 ⇒ 该侧不做折算，直接用它的 need</param>
+    /// </summary>
+    public static (double ThicknessMm, string SizedBy) JointThickness(
+        IReadOnlyList<double> needMm, IReadOnlyList<double> ampsA,
+        IReadOnlyList<string> segNames, int joint)
+    {
+        int n = needMm.Count;
+        if (n == 0 || ampsA.Count != n || segNames.Count != n)
+            throw new ArgumentException(
+                $"段数对不上：need {needMm.Count} / amps {ampsA.Count} / 名字 {segNames.Count}");
+
+        double iJoint = JointCurrentA(ampsA, joint);
+        double t = 0; string by = "";
+        for (int k = joint - 1; k <= joint; k++)      // 左邻段、右邻段
+        {
+            if (k < 0 || k >= n) continue;            // 端片只有一侧
+            double tk = ampsA[k] > 0 ? needMm[k] * (iJoint / ampsA[k]) : needMm[k];
+            if (tk > t) { t = tk; by = segNames[k]; } // ★ 共用片取较大者
+        }
+        return (t, by);
     }
 
     /// <summary>
@@ -214,15 +255,8 @@ public static class LineSolver
         for (int j = 0; j <= n; j++)
         {
             double iJoint = JointCurrentA(amps, j);
-
-            // t ∝ I：把每一侧段的定尺结果按电流比折算到本接头，共用片取较大者
-            double t = 0; string by = "";
-            for (int k = j - 1; k <= j; k++)
-            {
-                if (k < 0 || k >= n) continue;
-                double tk = amps[k] > 0 ? need[k] * (iJoint / amps[k]) : need[k];
-                if (tk > t) { t = tk; by = segs[k].Name; }
-            }
+            // 折算与「共用片取较大」只有一处实现：JointThickness（那里可以微秒级验）
+            var (t, by) = JointThickness(need, amps, segs.Select(x => x.Name).ToList(), j);
 
             res.Add(new FlangeResult
             {
