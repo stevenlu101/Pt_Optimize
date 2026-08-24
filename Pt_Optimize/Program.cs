@@ -134,6 +134,37 @@ internal static class Program
                 return;
             }
 
+            // ── --cli --manual [dir]   不开 GUI 导出说明书 HTML（每个定案档一份）
+            //
+            // ⚠ 这个旗标 **2026-08-24 才真的做出来**。在那之前 `ManualPage.BuildHtml` 的
+            //   注释已经写着「**public 是故意的**：`--cli --manual` 要能不开 GUI 就导出，
+            //   否则「图对不对」只能靠肉眼开窗口看 —— 那不是可复核的验证」，
+            //   而 Program.cs 里**根本没有这个旗标**。意图是真的，实现从来没做 ——
+            //   今天在同一个仓里第三次撞见这个形态（另两处：FlowState.RampScreen 零赋值、
+            //   ① 那一格门禁注释说「⑤⑥ + 升温快筛」而名单里只有 ⑤⑥）。
+            //
+            //   导出的 HTML 是自足的（样式与 SVG 全内嵌），可以直接丢进浏览器，
+            //   也可以跨版本 diff —— 说明书里的图与数改没改，从此看得见。
+            if (args.Contains("--manual"))
+            {
+                int mi = Array.IndexOf(args, "--manual");
+                string mdir = mi + 1 < args.Length && !args[mi + 1].StartsWith("--")
+                              ? args[mi + 1] : "figs/manual";
+                Directory.CreateDirectory(mdir);
+                foreach (var fdM in FinalDesign.All)
+                {
+                    // 档名里不能留路径分隔符与非法字元（定案档名是人写的）
+                    string safe = string.Join("_", fdM.Name.Split(Path.GetInvalidFileNameChars()));
+                    string outp = Path.Combine(mdir, safe + ".html");
+                    // ★ 传**活的** p：说明书里的限值跟着参数表走（见 ManualPage 那张限值表）
+                    File.WriteAllText(outp, UI.ManualPage.BuildHtml(fdM, p),
+                                      new System.Text.UTF8Encoding(false));
+                    Console.WriteLine($"  写出 {outp}　{new FileInfo(outp).Length / 1024} KB");
+                }
+                Console.WriteLine($"★ {FinalDesign.All.Length} 份说明书已导出到 {mdir}/");
+                return;
+            }
+
             // --cli --uishot [dir]   把界面逐页画成 PNG（用户 2026-08-20 要求「自己抓全部 UI」）
             // 放在求解之前：出图与热解无关，不必先花时间解一遍管段
             if (args.Contains("--uishot"))
@@ -5016,6 +5047,7 @@ internal static class Program
                 Console.WriteLine($"  {"--hotspot [--wall 0.6]",-34}峰值位置实测（坐标、局部 J、局部厚度）");
                 Console.WriteLine($"  {"--knob2 / --ring / --tins",-34}三个旋钮的斜率实测（只测不调）");
                 Console.WriteLine($"  {"--geom [file.3dm]",-34}读 3dm 量几何并与常数比对");
+                Console.WriteLine($"  {"--manual [目录]",-34}不开 GUI 导出说明书 HTML（每个定案档一份）");
                 Console.WriteLine();
                 Console.WriteLine("定案档（几何的唯一来源 = Core/FinalDesign）");
                 // ⚠ 作废档与现役档**共用同一个管壁值** ⇒ 若照直每档都打一行 `--wall 0.8`，

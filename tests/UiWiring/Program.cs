@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Collections.Generic;
 using System.Reflection;
 using System.IO;
@@ -2273,6 +2274,39 @@ class UiWiringTests {
             Check("还原之后又变回去了（自证：否则上一条可能只是碰巧）",
                   ManualPage.BuildHtml(fdManual, pIn).Contains($"{keepJ:0.#} A/mm²", StringComparison.Ordinal),
                   $"{pIn.TubeJAllowAPerMm2:0.#}");
+            // ④ ★ 说明书宣传的 CLI 旗标必须**真的存在**。
+            //
+            //   起因：BuildHtml 的注释写着「**public 是故意的**：`--cli --manual`
+            //   要能不开 GUI 就导出，否则「图对不对」只能靠肉眼开窗口看 ——
+            //   那不是可复核的验证」，而 Program.cs 里**根本没有这个旗标**。
+            //   意图是真的，实现从来没做。（同一天在同一个仓里第三次撞见这个形态。）
+            //   ⇒ 旗标已补上，同时把「说明书说的命令得能跑」变成一条会自己跑的检查。
+            //
+            //   只看 `--cli` 后面跟的那几个 —— CSS 里的 var(--bg) 这类不会被误抓。
+            {
+                char qq = (char)34;
+                string progSrc = File.ReadAllText(
+                    Path.Combine(RepoRoot(), "Pt_Optimize", "Program.cs"));
+                var real = new HashSet<string>(
+                    Regex.Matches(progSrc, qq + "(--[a-z0-9]+)" + qq)
+                         .Select(m => m.Groups[1].Value), StringComparer.Ordinal);
+                var adv = new SortedSet<string>(StringComparer.Ordinal);
+                foreach (Match m in Regex.Matches(manual, "--cli(?:[ ]+--[a-z0-9]+)+"))
+                    foreach (Match f in Regex.Matches(m.Value, "--[a-z0-9]+"))
+                        if (f.Value != "--cli") adv.Add(f.Value);
+
+                // 自证：一个都没抓到不是「没问题」（空集恒真是本项目的老毛病）
+                Check("从说明书里抓得到被宣传的 CLI 旗标（自证）", adv.Count >= 4,
+                      string.Join(" ", adv));
+                Check("Program.cs 里认得的旗标数合理（自证：读错档会让下一条恒真）",
+                      real.Count >= 50, $"{real.Count} 个");
+                var ghost = adv.Where(a => !real.Contains(a)).ToArray();
+                Check("说明书宣传的每个 CLI 旗标都真的存在", ghost.Length == 0,
+                      ghost.Length == 0 ? string.Join(" ", adv)
+                                        : "★ 程式不认得：" + string.Join(" ", ghost));
+                Check("★ --manual 已经是真的了（本轮补的）", real.Contains("--manual"));
+            }
+
         }
 
         Console.WriteLine();

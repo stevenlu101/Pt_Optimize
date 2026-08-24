@@ -1256,6 +1256,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "<tr><td class=\"n\">--cli --busbarplan --wall 0.6</td><td>铜排尺寸与位置（自检整线是否全过）</td></tr>" +
                   "<tr><td class=\"n\">--cli --make3dm</td><td>两档定案 3DM + round-trip 校验</td></tr>" +
                   "<tr><td class=\"n\">--cli --hotspot --wall 0.6</td><td>峰值位置实测（坐标、局部 J、局部厚度）</td></tr>" +
+                  "<tr><td class=\"n\">--cli --manual [目录]</td><td>不开 GUI 导出本说明书 HTML（每档一份，样式与图全内嵌，可跨版本 diff）</td></tr>" +
                   "</table><p style=\"font-size:.88rem\"><code>--wall</code> 给了不认识的值会<b>抛异常</b>，不会静默回退。</p>");
 
         sb.Append("<h2>11. 现场还需确认的数</h2>");
