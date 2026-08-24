@@ -579,6 +579,25 @@ public static class FlangeAutoSizer
     /// 为什么要分这两种：跑满轮数没到的时候，「加大轮数再来一次」和
     /// 「回 Rhino 改几何」是完全相反的两条路。只报一句「未收敛」，
     /// 工程师只能靠猜 —— 而每猜错一次的代价是几十分钟。
+    /// <summary>
+    /// 从末尾往回数：**连续有几轮比上一轮更差**（hist 越小越好）。
+    ///
+    /// ★ 为什么抽成纯函数（2026-08-25，用户要求「一路变坏就即刻停」）：
+    ///   两个定尺寸器各有一个几十分钟的循环，都要这条判断。
+    ///   写在循环里就只能靠跑满几十分钟才验得到 —— 而它本身是纯算术，微秒可验。
+    ///   **同一个教训今天第四次**（TrendOf / LevelThicknessFor / JointThickness 都是这么抽的）。
+    ///
+    /// ⚠ 严格「更差」才算，持平不算：持平归 <see cref="TrendOf"/> 的「已停滞」管，
+    ///   两条规则不该抢同一件事。
+    /// </summary>
+    public static int WorseningRun(IReadOnlyList<double> hist)
+    {
+        if (hist is null) return 0;
+        int n = 0;
+        for (int i = hist.Count - 1; i > 0 && hist[i] > hist[i - 1]; i--) n++;
+        return n;
+    }
+
     /// </summary>
     public static Trend TrendOf(IReadOnlyList<double> hist, int window = 2, double minGain = 0.05)
     {
@@ -739,8 +758,21 @@ public static class FlangeAutoSizer
                                              opt.MaxThickMm / Math.Max(1e-6, levelThicknessMm[j][m]));
                 }
             }
+            // ★ 报**方向**，不只报绝对值（用户 2026-08-25）：
+            //   「超管根 12.3 K」只说了现在多少，说不出「这一轮是在变好还是变坏」——
+            //   而工程师盯着一条几十分钟的进度条，最想知道的正是后者。
+            string dirMark = "";
+            if (hist.Count > 0)
+            {
+                double prev = hist[hist.Count - 1];
+                double d = worstOver - prev;
+                dirMark = Math.Abs(d) <= 0.05 * Math.Max(1e-9, Math.Abs(prev))
+                        ? "　≈ 与上一轮持平"
+                        : d < 0 ? $"　↓ 比上一轮**好** {prev - worstOver:0.0} K"
+                                : $"　↑ 比上一轮**差** {worstOver - prev:0.0} K";
+            }
             progress?.Report($"第 {round + 1} 轮 · 内层：各级峰值最高超管根 {worstOver:0.0} K" +
-                             (hottestPlate >= 0 ? $"（第 {hottestPlate + 1} 片第 {hottestLevel + 1} 级 {hottestC:0} °C）" : ""));
+                             (hottestPlate >= 0 ? $"（第 {hottestPlate + 1} 片第 {hottestLevel + 1} 级 {hottestC:0} °C）" : "") + dirMark);
 
             // ★★★★★ 熔点闸（2026-08-17 加）。
             //
@@ -772,6 +804,27 @@ public static class FlangeAutoSizer
             // 每轮要四次全解、一次分钟级 ⇒ 半小时之后吐一句「未收敛」。
             // 残差若早已进平台，那半小时里的后半段是纯粹的白算。
             hist.Add(worstOver);
+
+            // ★★★★★ **一路都在变坏就立刻停**（用户 2026-08-25）。
+            //   此前只有「进平台就收工」—— 那管的是「不动了」。
+            //   但还有一种更该停的情形：**每一轮都比上一轮差**。
+            //   那说明这个方向是错的，再跑下去只是把几十分钟花在往坏里走。
+            //   ⚠ 门槛取「连续 3 轮」而不是 1 轮：单轮回升可能是阻尼/振荡的正常抖动，
+            //     §7 记过「出现振荡 ⇒ 降阻尼重试」正是这种情况，一轮就停会误杀。
+            int worsen = WorseningRun(hist);
+            if (worsen >= 3)
+            {
+                stalledAt = round + 1;
+                progress?.Report($"连续 {worsen} 轮都在变差"
+                    + $"（{hist[hist.Count - 1 - worsen]:0.0} → {worstOver:0.0} K）"
+                    + " —— **这个方向是错的，停下**，不再往坏里跑。");
+                last.Message = (last.Message ?? "") +
+                    $"　⚠ 第 {round + 1} 轮中止：连续 {worsen} 轮越调越差"
+                    + $"（超管根 {hist[hist.Count - 1 - worsen]:0.0} → {worstOver:0.0} K）。"
+                    + " 厚度这个旋钮在这张图上救不了 ③ ——"
+                    + " ⇒ 回 Rhino 改梯度分布（孔边加厚、削薄外缘），或改环径。";
+                break;
+            }
             if (TrendOf(hist) == Trend.已停滞 && round < outerRounds - 1)
             {
                 stalledAt = round + 1;

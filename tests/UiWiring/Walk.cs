@@ -947,7 +947,7 @@ static class Walk
     //      提示要是指到点不了的按钮、原地打转、或者漏掉必经步骤，跟着走的人一定撞上。
     //      —— 写死顺序的走查器**永远发现不了这一类**：它根本没在读提示。
     // ════════════════════════════════════════════════════════════════════
-    public static int Follow()
+    public static int Follow(string? file3dm = null)
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         Application.EnableVisualStyles();
@@ -963,6 +963,27 @@ static class Walk
         void Force(Control c) { _ = c.Handle; foreach (Control k in c.Controls) Force(k); }
         Force(main); Pump(300);
 
+        // ── .3dm 那条路：先把 APP 切进图纸模式，再照提示走。
+        //    这条路的提示分支比解析路多：要先「分析几何变数」，⑤⑥ 在分析前必然「无法判定」，
+        //    而「◇ 搜形状」在这个模式下**不适用**（形状由图纸给定，不是可搜索的自由度）。
+        if (file3dm is not null)
+        {
+            if (!File.Exists(file3dm))
+            { OK("样件在", false, "★ 缺 " + file3dm); return _bad; }
+            if (Geometry3dm.FindProbe() is null)
+            { OK("几何探针在", false, "★ 缺 Pt_Optimize.Geom.exe"); return _bad; }
+            var files = (TextBox[])F(line, "_file3dm")!;
+            Set(line, "_suppressAuto", true);
+            ((RadioButton)F(line, "_src3dm")!).Checked = true;
+            foreach (var t in files) t.Text = file3dm;
+            ((TextBox)F(line, "_layer3dm")!).Text = "法兰";
+            Set(line, "_suppressAuto", false);
+            Call(line, "SyncGeomSource");
+            Pump(200);
+            Call(main, "SyncGates"); Pump(150);
+            H("输入：" + Path.GetFileName(file3dm) + "（.3dm 模式，图层「法兰」）");
+        }
+
         bool App(string id) => (bool)typeof(LineDesignPage).GetMethod("CommandApplicable",
             BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public)!
             .Invoke(line, new object[] { id })!;
@@ -972,6 +993,9 @@ static class Walk
 
         var hist = new List<string>();
         string lastId = "";
+        // ★ 「做了但没变」：光看「过没过」不够 —— .3dm 路实测到自动定厚**跑完一个数都没动**，
+        //   而提示继续指它 ⇒ 死循环。指纹取判据实测值 + 总铂，逐步比。
+        string lastFinger = "";
         int repeat = 0;
 
         for (int step = 1; step <= 12; step++)
@@ -988,14 +1012,32 @@ static class Walk
                 break;
             }
 
-            Console.WriteLine($"  提示原文：{ns.Why}");
+            // ⚠ 审视导引就得看**工程师真正看到的那一行** —— 面板会在 Why 前面
+            //   加上「点哪个按钮、在哪一页、要多久」。头一版只打 ns.Why，
+            //   于是我据此说了一句「提示没告诉人这要多久」—— **那是走查器的缺陷，不是 APP 的**。
+            var cmdSpec0 = ns.CmdId.Length > 0 ? Flow.Cmd(ns.CmdId) : null;
+            Console.WriteLine("  面板那一行：" + (cmdSpec0 is null
+                ? "下一步 → " + ns.Why
+                : $"下一步 → 点「{cmdSpec0.Text}」（{Flow.Stage(cmdSpec0.Stage).Title}，{cmdSpec0.Cost}）"
+                  + Environment.NewLine + "　　　　　　" + ns.Why));
             Console.WriteLine($"  它指向　：{(ns.CmdId.Length == 0 ? "（不指按钮，只给说明）" : ns.CmdId)}");
 
             if (ns.CmdId.Length == 0)
             {
-                OK($"第 {step} 步：提示指得出按钮", false,
-                   "★ 只给说明不指按钮 —— 跟着走的人不知道下一步点哪");
-                break;
+                // ⚠ 「只给说明、不指按钮」**不是失败**（2026-08-25 更正）：
+                //   有些出路本来就不在 APP 里 —— 「回 Rhino 给圆盘分级」没有按钮，
+                //   「改厚度标度 k」是页面上的数值框而不是命令。
+                //   头一版把它一律判成不过，那是照**解析路**写的规则套到 .3dm 路上。
+                //   真正该守的是：它**说不说得出具体动作** —— 空话才是坑。
+                OK($"第 {step} 步：交回给人时说得出具体动作",
+                   ns.Why.Length >= 20,
+                   ns.Why.Length >= 20 ? "" : "★ 只有一句空话：" + ns.Why);
+                Console.WriteLine();
+                Console.WriteLine($"  ■ 指路到此**把决定权交回给人**（{step - 1} 步）——");
+                Console.WriteLine("     它要的动作 APP 里没有对应按钮，这是诚实的，不是断掉。");
+                Console.WriteLine($"     路径：{string.Join(" → ", hist)}");
+                DumpChecks(line, "交回给人时的判据表");
+                return _bad;
             }
 
             // ── 坑 ①：它指的按钮，此刻真的能点吗
@@ -1074,6 +1116,13 @@ static class Walk
                     if (!Wait(() => F(line, "_cts") is null, 1_800_000))
                     { OK("自动定厚在预算内跑完", false, "★ 超时"); return _bad; }
                     break;
+                case "geom.analyze":
+                    // 把图纸反推成各级台阶。不先做这一步就解，⑤⑥ 仍是「无法判定」，
+                    // 那一分多钟等于白跑 —— 提示把它排在解之前，正是为了这个。
+                    Call(line, "AnalyzeShape");
+                    if (!Wait(() => F(line, "_cts") is null, 600_000))
+                    { OK("分析几何变数在预算内跑完", false, "★ 超时"); return _bad; }
+                    break;
                 case "shape.search":
                     Console.WriteLine("     ⚠ 提示指向「◇ 搜形状」——**几十分钟**，本走查不跑。");
                     Console.WriteLine("        这本身是一条结论：开箱默认走到这里就需要改几何，");
@@ -1088,11 +1137,37 @@ static class Walk
 
             Pump(300);
             DumpChecks(line, $"第 {step} 步之后的判据表");
+            // ★ 把**输出框**里这一步写的话也抓出来 —— 定尺寸器自己会说
+            //   「收敛 / 顶死 / 无解」。指路若没读它，那是指路的错；
+            //   它若什么都没说，那是引擎的错。两者要分清才知道该修哪边。
+            if (F(line, "_out") is Control ob && ob.Text.Length > 0)   // RichTextBox，不是 TextBox
+            {
+                var tail = ob.Text.Replace(((char)13).ToString(), "").Split((char)10)
+                            .Where(x => x.Trim().Length > 0).Take(6).ToArray();
+                Console.WriteLine("  输出框（前 6 行）：");
+                foreach (var t in tail) Console.WriteLine("     " + t.Trim());
+            }
+            string finger = Finger(line);
+            if (finger.Length > 0 && finger == lastFinger)
+                OK($"第 {step} 步：这一步**起作用了**", false,
+                   $"★「{ns.CmdId}」跑完，判据表与总铂**逐字未变** —— "
+                   + "做了等于没做，而提示只看「过没过」，会继续指同一个按钮");
+            lastFinger = finger;
         }
 
         Console.WriteLine();
         Console.WriteLine(_bad == 0 ? "★ 链路提示走查通过" : $"✗ 链路提示走查：{_bad} 项不过");
         return _bad;
+    }
+
+    /// <summary>判据实测值 + 总铂的指纹 —— 用来认出「这一步跑完什么都没变」。</summary>
+    static string Finger(LineDesignPage line)
+    {
+        var r = F(line, "LastResult") as LineResult;
+        if (r is null) return "";
+        return string.Join("|", r.Checks.Where(c => c.Kind != CheckKind.Reference)
+                                        .Select(c => c.Name + "=" + c.Actual.ToString("0.000")))
+             + "|g=" + r.TotalMassG.ToString("0.00");
     }
 
     /// <summary>把当前判据表原样抓下来 —— 复核数据用的就是工程师看到的那张表。</summary>

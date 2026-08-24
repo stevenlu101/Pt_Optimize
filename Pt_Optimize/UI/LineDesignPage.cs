@@ -723,6 +723,10 @@ public sealed class LineDesignPage : TabPage
             !_srcAnalytic.Checked
             && !string.IsNullOrWhiteSpace(_file3dm[0].Text)
             && _shape is null;
+        // ★ 逐级定厚有没有可调的级（≥2 级）。判据与「自动定厚」的拒绝条件**同一处**：
+        //   拒绝写在 RunAsync 里，而指路要提前知道，否则会指着一个必被拒的按钮（2026-08-25）。
+        f.SizerNoLevels = !_srcAnalytic.Checked
+                        && !(_levels is { Length: > 0 } && _levels[0].Length > 1);
     }
 
     internal bool CommandApplicable(string cmdId) => cmdId switch
@@ -1735,9 +1739,14 @@ public sealed class LineDesignPage : TabPage
         var rows = new List<(FinalDesign d, double mass, bool ok, string msg)>();
         try
         {
-            foreach (double R in discs)
-                foreach (double f in wFrac)
-                {
+            // ★★★★★ **一轮 = 改一次形状（盘径/舌宽）+ 在它上面把梯度分布扫一遍**
+            //   （用户 2026-08-25：「改变法兰直径与扫梯度分布算一轮」）。
+            //   此前是**固定网格全枚举**：3 个盘径 × 2 个舌宽跑满就收工 ——
+            //   走不出 25/30/35，也不会因为「都在变坏」提前停。
+            //   现在：网格当**第 1 轮**（给基准点与方向），之后沿改善方向**外推**，
+            //   一轮下来没有任何邻点更好就停。
+            async Task EvalShape(double R, double hw)
+            {
                     ct.ThrowIfCancellationRequested();
                     // ★ 早筛「造不出来」的盘径（判据⑥ 会兜底，但那要先白跑十几轮）。
                     //   焊脚 = max(板厚, 壁厚) ≥ 壁厚 ⇒ 盘半径至少要 孔半径 + 壁厚 = 25 + 2×壁厚。
@@ -1750,9 +1759,8 @@ public sealed class LineDesignPage : TabPage
                         Note($"跳过 盘Ø{2 * R:0}（判据⑥ 早筛）");
                         _out.AppendText($"{2 * R:0}\t—\t—\t—\t" +
                             $"跳过：管壁 {(double)_wall.Value:0.0} 时盘半径至少要 {minDisc:0.0}（判据⑥）\r\n");
-                        continue;
+                        return;
                     }
-                    double hw = R * f;
                     var seed = PageToFinalDesign();
                     seed.DiscRadiusMm = R;
                     seed.TabHalfWidthMm = hw;
@@ -1778,7 +1786,64 @@ public sealed class LineDesignPage : TabPage
                         $"{2 * R:0}\t{2 * hw:0}\t{sr.Design.TabLengthMm:0}\t" +
                         (double.IsNaN(sr.MassG) ? "—" : sr.MassG.ToString("0")) +
                         $"\t{(sr.Feasible ? "✓ " : "")}{sr.Message}\r\n");
+            }
+
+
+
+            // ── 第 1 轮：网格粗筛。它的作用是**给出发点与方向**，不是最终答案。
+            foreach (double R in discs)
+                foreach (double f in wFrac)
+                    await EvalShape(R, R * f);
+
+            // ── 之后每一轮：从当前最好点出发，试四个邻点（盘径 ±5、舌宽比例 ±0.125）。
+            //    有更好的就搬过去继续；**一个都没更好就停** —— 这正是用户 2026-08-25 要的
+            //    「有好的方向则继续，如果都是变坏即刻停止」。
+            //    ⚠ 上限 6 轮：这条链本来就是几十分钟量级，不设上限会没完。
+            //      停下时**已算过的形状全都留着**（rows），不会因为中止丢结果。
+            const int maxExtend = 6;
+            string NL2 = Environment.NewLine;
+            var seen = new HashSet<string>();
+            foreach (var r0 in rows)
+                if (r0.d is not null)
+                    seen.Add(ShapeSearchPlan.Key(r0.d.DiscRadiusMm, r0.d.TabHalfWidthMm));
+
+            double BestMass() => rows.Where(x => x.ok && !double.IsNaN(x.mass))
+                                     .Select(x => x.mass).DefaultIfEmpty(double.NaN).Min();
+
+            for (int ext = 1; ext <= maxExtend; ext++)
+            {
+                ct.ThrowIfCancellationRequested();
+                var cur = rows.Where(x => x.ok && !double.IsNaN(x.mass))
+                              .OrderBy(x => x.mass).FirstOrDefault();
+                if (cur.d is null)
+                {
+                    _out.AppendText("　（网格里没有可行解 ⇒ 没有出发点，不外推）" + NL2);
+                    break;
                 }
+                double before = cur.mass, R0 = cur.d.DiscRadiusMm, hw0 = cur.d.TabHalfWidthMm;
+                // ★ 「试哪几个 / 算不算变好」的规则**只有一份**：Core/ShapeSearchPlan
+                //   （2026-08-25 抽出并配了 10 条微秒级门）。这里只负责跑，不再自己判。
+                var todo = ShapeSearchPlan.Worth(ShapeSearchPlan.Neighbours(R0, hw0), seen);
+                if (todo.Count == 0)
+                {
+                    _out.AppendText($"　第 {ext + 1} 轮：四个邻点都试过了 ⇒ 停。" + NL2);
+                    break;
+                }
+
+                _prog.Maximum += todo.Count * screenRounds;
+                _out.AppendText(NL2 + $"第 {ext + 1} 轮 · 从 盘Ø{2 * R0:0}／舌宽{2 * hw0:0}"
+                              + $"（{before:0} g）出发，试 {todo.Count} 个邻点" + NL2);
+                foreach (var (R2, hw2) in todo) await EvalShape(R2, hw2);
+
+                double after = BestMass();
+                bool better = ShapeSearchPlan.Improved(before, after);   // 唯一一份口径
+                _out.AppendText($"　⇒ 第 {ext + 1} 轮：{before:0} → {after:0} g　"
+                              + (better ? "**↓ 变好，继续**" : "**↑ 没有更好的方向 ⇒ 停**")
+                              + NL2);
+                Note($"第 {ext + 1} 轮 {(better ? "变好" : "无改善")}　{before:0} → {after:0} g");
+                if (!better) break;
+            }
+
 
             var win = rows.Where(x => x.ok && !double.IsNaN(x.mass))
                           .OrderBy(x => x.mass).FirstOrDefault();
@@ -1924,11 +1989,21 @@ public sealed class LineDesignPage : TabPage
                     //   本仓的钩子会把转义序列改成真字符，字面量当场断掉。
                     string nl = Environment.NewLine;
                     Show(_last, autoNote:
-                        "【自动定厚：已拒绝】本页是 **Rhino .3dm 模式**，但还没有分级厚度。" + nl
-                        + "   请先点「**分析几何变数**」把图纸反推成各级台阶，再回来定厚。" + nl
+                        // ⚠ 必须分清**两种**拒绝（2026-08-25 `--follow3dm` 抓到）：
+                        //   ① 还没分析 ⇒ 指「分析几何变数」是对的；
+                        //   ② 分析过了、但这张图是**等厚板（1 级）** ⇒ 再点分析也不会有台阶。
+                        //   原来两种混成一句「请先点分析几何变数」，把已经点过的人指回同一个按钮，
+                        //   而判据表逐字不变 ⇒ 他会一直点下去。**指回一个按过的按钮，比不给指引更坏。**
+                        ("【自动定厚：已拒绝】本页是 **Rhino .3dm 模式**，" + nl
+                        + (_shape is null
+                           ? "   图纸**还没反推**成几何变数 —— 请先点「**分析几何变数**」，再回来定厚。" + nl
+                           : "   图纸已经分析过了，但反推出来只有**一级厚度（等厚板）** ——" + nl
+                             + "   「自动定厚」是**逐级**定厚，没有可调的级，再点一次分析也不会有台阶。" + nl
+                             + "   ⇒ 两条出路：① 直接改本页的**厚度标度 k** 再回 ③ 重解；" + nl
+                             + "      ② 回 Rhino 给圆盘分级（做出台阶），再重新「分析几何变数」。" + nl)
                         + "   ⚠ 不能替你用 D8：D8 优化的是**解析形状**（圆盘＋舌片），" + nl
                         + "      它不读你的 .3dm，盘径/舌长在本模式下又是禁用的残值 ——" + nl
-                        + "      那样算出来的是**另一个零件**的厚度，数字却看不出异样。");
+                        + "      那样算出来的是**另一个零件**的厚度，数字却看不出异样。"));
                     return;
                 }
 
@@ -2627,12 +2702,19 @@ public sealed class LineDesignPage : TabPage
             var f = Geometry3dm.LoadThickness(src, _layer3dm.Text.Trim(), double.NaN, 0.5);
             var sh = PlateShapeAnalyzer.Analyze(f);
             _shape = sh;
-            SyncAnalysisPending();          // 分析完了 ⇒ 指路不该再指它
             Shared?.Notify();
             // 四片先按同一张图的分级；各片可各自选不同 .3dm 时逐片解析亦可
             var lv = sh.Levels.Select(l => l.ThicknessMm).ToArray();
             _levels = Enumerable.Range(0, 4).Select(_ => (double[])lv.Clone()).ToArray();
             _levelScale = null;
+            // ★★★★★ **必须放在 `_levels` 赋值之后**（2026-08-25 当场踩到）。
+            //   本方法算两位：`GeomAnalysisPending`（看 `_shape`）与
+            //   `SizerNoLevels`（看 `_levels`）。头一版把调用放在 `_shape = sh;` 紧后面，
+            //   那时 `_levels` **还没赋值** ⇒ 新那位恒为「没有可调的级」，
+            //   于是 Pt_Heater3（明明有多级台阶）也被指路说成「等厚板」。
+            //   **把计算加进一个在它所读的数据被填之前就跑的方法** —— 本轮反复抓到的那一族，
+            //   这次是我自己犯的。
+            SyncAnalysisPending();          // 分析完了 ⇒ 指路不该再指「分析」，且级数已知
             BuildLockBoxes(sh);
 
             // ── 顺手量一下解析替身像不像（毫秒级，比它省下的那次求解便宜五个数量级）

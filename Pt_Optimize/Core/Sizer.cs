@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -198,6 +198,9 @@ public static class Sizer
             }
         }
 
+        // ★ 逐轮记 bad（越小越好）—— 报「这一轮比上一轮好还是差」，
+        //   并在**连续变差**时停下（用户 2026-08-25）。
+        var badHist = new List<double>();
         for (int round = 0; round < opt.MaxRounds; round++)
         {
             cancel.ThrowIfCancellationRequested();
@@ -247,7 +250,7 @@ public static class Sizer
                 $"{string.Join("/", draws.Select(v => SizerResult.Signed(v))),26}" +
                 $"{SizerResult.Signed(dipMax),8}" +
                 $"{SizerResult.Signed(r.ValueOf(LineResult.Key.DiscTemp), "+0.00;−0.00"),8}" +
-                $"{mass,8:0}{bad,9:0.0}");
+                $"{mass,8:0}{bad,9:0.0}" + (badHist.Count == 0 ? "" : Math.Abs(bad - badHist[badHist.Count - 1]) <= 0.05 * Math.Max(1e-9, badHist[badHist.Count - 1]) ? "  ≈" : bad < badHist[badHist.Count - 1] ? "  ↓好" : "  ↑差"));
 
             // ★ 收货要留裕度：全过**且**抽热与 ③ 都没贴着限值。
             //   只判 AllOk 会收下裕度 ≈ 0 的点 —— 那种点四舍五入到图纸精度就不过了
@@ -258,6 +261,23 @@ public static class Sizer
                          && !double.IsNaN(dipMax) && dipMax <= opt.AcceptDipK;
             if (roomy && mass < bestMass) { bestMass = mass; bestFeas = d.Clone(); }
             if (bad < bestBad) { bestBad = bad; bestAny = d.Clone(); }
+
+            // ★★★★★ **连续变差就停**（用户 2026-08-25）。
+            //   此前只有「所有旋钮都到位或都顶死 ⇒ 停」—— 那管的是「动不了了」。
+            //   一路越调越差是另一回事：方向错了，再跑只是把时间花在往坏里走。
+            //   ⚠ 门槛取连续 3 轮：单轮回升可能是控制律的正常抖动（反饱和接力、
+            //     阻尼调整都会让某一轮短暂变差），一轮就停会误杀。
+            //   ⚠ 停的时候**保留 bestAny/bestFeas** —— 中止不等于丢掉已经找到的最好点。
+            badHist.Add(bad);
+            int worseRun = FlangeAutoSizer.WorseningRun(badHist);   // 唯一一份实现
+            if (worseRun >= 3)
+            {
+                Log($"   ⇒ 连续 {worseRun} 轮越调越差"
+                  + $"（{badHist[badHist.Count - 1 - worseRun]:0.0} → {bad:0.0}）"
+                  + " —— **方向错了，停**。已找到的最好点保留在下面的复核里。");
+                res.Message = $"连续 {worseRun} 轮越调越差 ⇒ 提前停（第 {round + 1} 轮）。";
+                break;
+            }
 
             // ════════ 控制律 ════════
             bool moved = false;
