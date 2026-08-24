@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -132,7 +132,9 @@ internal static class GeomProbe
 
             try { RhinoInside.Resolver.Initialize(); }
             catch (Exception e) { Console.Error.WriteLine("Resolver 失败：" + e.Message); return 1; }
-            try { return RunSteps(sOut, sHole, sR, sT, sTabX, sTabHW, sTabT, sN, sDeg, sSlotIn, sSlotOut); }
+            // 第 11 个参数：舌型（par = 等宽，与 FlangePlate.TabParallel 同口径；缺省梯形，保持旧行为）
+            bool sPar = args.Length > 11 && args[11].Equals("par", StringComparison.OrdinalIgnoreCase);
+            try { return RunSteps(sOut, sHole, sR, sT, sTabX, sTabHW, sTabT, sN, sDeg, sSlotIn, sSlotOut, sPar); }
             catch (Exception e) { Console.Error.WriteLine(e.GetType().Name + ": " + e.Message); return 2; }
             finally { Console.Out.Flush(); Environment.Exit(Environment.ExitCode); }
         }
@@ -1076,7 +1078,8 @@ internal static class GeomProbe
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static int RunSteps(string outPath, double holeR, double[] rs, double[] ts,
                                 double tabX, double tabHW, double tabT,
-                                int slotN, double slotDeg, double slotRin, double slotRout)
+                                int slotN, double slotDeg, double slotRin, double slotRout,
+                                bool tabParallel = false)
     {
         using (new RhinoCore(new[] { "/NOSPLASH" }, WindowStyle.Hidden))
         {
@@ -1140,11 +1143,36 @@ internal static class GeomProbe
             double amp = Math.Sqrt(tabX * tabX + tabHW * tabHW);
             if (rout2 < amp)
             {
-                double phi = Math.Atan2(tabHW, tabX);
-                double th = phi - Math.Acos(rout2 / amp);
-                var tp = new Point3d(rout2 * Math.Cos(th), 0, rout2 * Math.Sin(th));
-                var tn = new Point3d(tp.X, 0, -tp.Z);
+                // ★★★★★ 舌型必须与 FlangePlate 那一侧对得上（2026-08-24）。
+                //
+                // 本模式原来只会写**梯形**舌（从圆上的切点收到末端半宽）。可本项目的
+                // 定案几何早就改成**等宽舌**（FlangePlate.TabParallel）——理由写在那里：
+                // 梯形在两条约束上同时吃亏（导热漏按平均截面、局部失稳按最窄截面）。
+                // 于是「写出来的图」与「APP 在设计的形状」是两族：
+                // 实测把梯形舌那张图读回来，等宽替身面积差 −12.2 %、ShapeJ 差 8.2 %
+                // ⇒ 保真门当场拒绝，而它拒绝得**对** —— 错的是写入器。
+                //
+                // ⇒ 等宽时舌片是一条 [tabX, x交] × [−w, +w] 的直条，
+                //   x交 = −√(R²−w²) 正是 FlangePlate 的交界公式，两边同一个口径。
+                Point3d tp, tn;
+                if (tabParallel)
+                {
+                    double w = Math.Min(tabHW, rout2);
+                    double xi = -Math.Sqrt(Math.Max(0, rout2 * rout2 - w * w));
+                    tp = new Point3d(xi, 0, w);
+                    tn = new Point3d(xi, 0, -w);
+                }
+                else
+                {
+                    double phi = Math.Atan2(tabHW, tabX);
+                    double th = phi - Math.Acos(rout2 / amp);
+                    tp = new Point3d(rout2 * Math.Cos(th), 0, rout2 * Math.Sin(th));
+                    tn = new Point3d(tp.X, 0, -tp.Z);
+                }
                 var poly = new PolyCurve();
+                // ⚠ 圆弧必须走**舌片这一侧**（过 −R）：舌片实体是「矩形**减去**圆盘」，
+                //   靠这段弧把圆盘那块挖掉。改成过 +R 会把整个圆盘也圈进舌片，
+                //   与三个环**叠加** ⇒ 读回来厚度变成 4/5/6、管孔被填掉（实测踩过）。
                 poly.Append(new ArcCurve(new Arc(tp, new Point3d(-rout2, 0, 0), tn)));
                 poly.Append(new LineCurve(tn, new Point3d(tabX, 0, -tabHW)));
                 poly.Append(new LineCurve(new Point3d(tabX, 0, -tabHW), new Point3d(tabX, 0, tabHW)));

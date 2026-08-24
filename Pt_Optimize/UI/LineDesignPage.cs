@@ -67,6 +67,7 @@ public sealed class LineDesignPage : TabPage
     private readonly ToolStripButton _btnRun, _btnAuto, _btnExport, _btnLoadCase, _btn3dm, _btnRepro;
     /// <summary>「分析几何变数」——只在 .3dm 模式且入口片已选时可用，由 SyncGeomSource 控。</summary>
     private readonly ToolStripButton _btnAnalyze;
+    private readonly ToolStripButton _btnExportRead;
     /// <summary>「另存为定案档」—— 把当前的解写成 finaldesigns/*.fd.json。</summary>
     private readonly ToolStripButton _btnSaveFinal;
     private readonly ToolStripButton _btnShape;
@@ -227,6 +228,7 @@ public sealed class LineDesignPage : TabPage
         _btnLoadCase = Btn("载入定案", (_, _) => LoadFinalDesign());
         _btn3dm = Btn("导出定案 3DM", (_, _) => ExportFinal3dm());
         _btnAnalyze = Btn("分析几何变数", (_, _) => AnalyzeShape());
+        _btnExportRead = Btn("导出可回读 3DM", (_, _) => ExportReadable3dm());
         _btnSaveFinal = Btn("另存为定案档", (_, _) => SaveAsFinalDesign());
 
         // ★★★ 复现定案：**界面上唯一能跑出定案数字的按钮**（2026-08-16 用户提出）。
@@ -271,6 +273,7 @@ public sealed class LineDesignPage : TabPage
         // 本页现在只剩「关于当前这个设计」的两个命令。
         tool.Items.Add(_btnRun);
         tool.Items.Add(_btnAnalyze);
+        tool.Items.Add(_btnExportRead);
         tool.Items.Add(new ToolStripSeparator());
         _prog.Size = new Size(UiScale.S(160), UiScale.S(16));
         tool.Items.Add(_prog);
@@ -2430,6 +2433,91 @@ public sealed class LineDesignPage : TabPage
                             "导出失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally { Cursor = Cursors.Default; }
+    }
+
+    /// <summary>
+    /// 把本页的解析几何写成**单图层、多级台阶**的 .3dm —— 一张 **APP 自己读得回来**的图。
+    ///
+    /// ★ 它补的是解析路径与 .3dm 路径之间断掉的那一环：
+    ///   「导出本页/定案 3DM」走 <see cref="Geometry3dm.WriteFinal3dm"/>，写的是**多图层**
+    ///   （板身 / 环外级 / 环内级 / 压接段 / 角焊缝），而读取端要**单图层**
+    ///   ⇒ APP 导出的图，APP 自己读不回来。于是
+    ///   「解析里搜出方案 → 出图 → 去 Rhino 改轮廓/挪槽 → 读回来核算」这条路是断的。
+    ///
+    /// ⚠ 舌片写成**等宽**（与 <see cref="FlangePlate.TabParallel"/> 同口径）。
+    ///   Geom 的 steps 模式旧默认是梯形，而定案几何早就不用梯形了 ——
+    ///   实测把梯形舌那张图读回来，等宽替身面积差 −12 %，保真门当场拒绝，
+    ///   而它拒绝得对：错的是写入器写了 APP 已经不再设计的形状。
+    ///
+    /// ★★ 写完**立刻按读取端的口径量回来**（照 --make3dm 的先例）：
+    ///   Geom 子进程的注释里记着一次事故 —— 自己写出的 .3dm 再读回来量到 0 材料，
+    ///   文件能打开、图看着对，数是错的。不回读就等于没写。
+    /// </summary>
+    private void ExportReadable3dm()
+    {
+        if (!_srcAnalytic.Checked)
+        {
+            MessageBox.Show(this,
+                "本命令导出的是**解析几何**。当前是 Rhino .3dm 模式 —— 图纸本来就在你手上，"
+                + Environment.NewLine + "要改厚度请用「自动定厚」之后的逐级出图。",
+                "导出可回读 3DM", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dlg = new FolderBrowserDialog { Description = "选一个目录，四片各写一个 .3dm" };
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+        var d = PageToFinalDesign();
+        double floor = d.DiscFloorMm(_base);
+        var sb = new StringBuilder();
+        sb.AppendLine("=== 导出可回读 3DM（单图层 · 多级台阶 · 等宽舌）===");
+        sb.AppendLine("写完立刻按读取端的口径量回来 —— 不回读就等于没写。");
+        sb.AppendLine();
+        sb.AppendLine("片	文件	写入级厚 mm	读回级厚 mm	盘R 写/读	判定");
+
+        string[] pn = { "入口", "共用1", "共用2", "出口" };
+        int bad = 0;
+        try
+        {
+            Cursor = Cursors.WaitCursor;
+            for (int j = 0; j < 4; j++)
+            {
+                double td = Math.Max(d.TabThickMm[j], floor);
+                var radii = d.RingRadiiMm.Concat(new[] { d.DiscRadiusMm }).ToArray();
+                var thick = new[] { td * d.RingMul[j], td * d.RingMulOuter(j), td };
+                string file = Path.Combine(dlg.SelectedPath,
+                    $"可回读_{pn[j]}_壁{d.WallMm:0.0}.3dm");
+
+                Geometry3dm.WriteStepped3dm(file, d.HoleRadiusMm, radii, thick,
+                    -d.TabLengthMm, d.TabHalfWidthMm, td, slotCount: 0);
+
+                // ── 回读校验：走的是**读取端那条路**，不是自己再算一遍
+                var f = Geometry3dm.LoadThickness(file, "法兰", double.NaN, 0.5);
+                var sh = PlateShapeAnalyzer.Analyze(f);
+                var got = sh.Levels.Select(x => x.ThicknessMm).ToArray();
+                bool ok = got.Length == thick.Length
+                       && got.Zip(thick).All(t => Math.Abs(t.First - t.Second) < 0.05)
+                       && Math.Abs(sh.DiscRadiusMm - d.DiscRadiusMm) < 0.5;
+                if (!ok) bad++;
+                sb.AppendLine($"{pn[j]}	{Path.GetFileName(file)}	"
+                    + string.Join("/", thick.Select(v => v.ToString("0.00"))) + "	"
+                    + string.Join("/", got.Select(v => v.ToString("0.00"))) + "	"
+                    + $"{d.DiscRadiusMm:0.0}/{sh.DiscRadiusMm:0.0}	{(ok ? "✓" : "✗ 对不上")}");
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "导出失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        finally { Cursor = Cursors.Default; }
+
+        sb.AppendLine();
+        sb.AppendLine(bad == 0
+            ? "✓ 四片都能原样读回来 —— 这些图可以直接切到「Rhino .3dm 文件」模式喂回本页。"
+            : $"✗ {bad} 片读回来对不上。**别用这些图** —— 写与读两侧的口径不一致，"
+              + "先查 Geom 的 steps 模式与 PlateShapeAnalyzer。");
+        _out.Text = sb.ToString() + Environment.NewLine + _out.Text;
     }
 
     /// <summary>

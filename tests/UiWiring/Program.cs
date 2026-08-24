@@ -45,6 +45,12 @@ class UiWiringTests {
         return n;
     }
 
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    static extern IntPtr GetCurrentProcess();
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
+
     static void Head(string s) { Console.WriteLine(); Console.WriteLine("=== " + s + " ==="); }
 
     /// <summary>
@@ -1984,8 +1990,82 @@ class UiWiringTests {
             }
         }
 
+        // ════════════════════════════════════════════════════════════
+        Head("32 出图 → 读回来：APP 导出的图，APP 自己必须读得回来");
+        //
+        // 这一节关掉的是长期挂着的 G3：**保真门从来没在「会被放行」的图纸上跑过**。
+        // 以前拿不到这种图 —— 现有出图走 WriteFinal3dm，写的是**多图层**
+        // （板身/环外级/环内级/压接段/角焊缝），而读取端要**单图层** ⇒ 自己写的自己读不回来。
+        // 现在有了「导出可回读 3DM」（Geom 的 steps 模式 + 等宽舌），这条闭环才跑得通。
+        {
+            string tmp = Path.Combine(Path.GetTempPath(), "uiw_readable.3dm");
+            try
+            {
+                // 三级台阶 + 等宽舌，**不开槽** —— 解析几何本来就没有槽
+                Geometry3dm.WriteStepped3dm(tmp, 26.0,
+                    new[] { 36.0, 46.0, 60.0 }, new[] { 1.0, 2.0, 3.0 },
+                    -200.0, 40.0, 3.0, slotCount: 0);
+                Check("写出来了", File.Exists(tmp), tmp);
+
+                var f32 = Geometry3dm.LoadThickness(tmp, "法兰", double.NaN, 0.5);
+                var sh32 = PlateShapeAnalyzer.Analyze(f32);
+
+                Check("读回来级数对得上", sh32.Levels.Count == 3, $"{sh32.Levels.Count} 级");
+                if (sh32.Levels.Count == 3)
+                {
+                    var got = sh32.Levels.Select(x => x.ThicknessMm).ToArray();
+                    Check("读回来各级厚度对得上",
+                          Math.Abs(got[0] - 1.0) < 0.05 && Math.Abs(got[1] - 2.0) < 0.05
+                          && Math.Abs(got[2] - 3.0) < 0.05,
+                          string.Join("/", got.Select(v => v.ToString("0.00"))));
+                }
+                Check("读回来盘半径对得上", Math.Abs(sh32.DiscRadiusMm - 60.0) < 0.5,
+                      $"{sh32.DiscRadiusMm:0.00}");
+                Check("读回来孔半径对得上", Math.Abs(sh32.HoleRadiusMm - 26.0) < 0.5,
+                      $"{sh32.HoleRadiusMm:0.00}");
+                Check("**没有**把不存在的槽认出来", !sh32.Slot.Found,
+                      sh32.Slot.Found ? "★ 无中生有" : "");
+
+                // ★★ G3 的正向用例：这张图必须**被放行**
+                var lv32 = sh32.Levels.Select(x => x.ThicknessMm).ToArray();
+                var (_, fid32, other32) = AnalyticSurrogate.BestFit(sh32, f32, lv32);
+                Check("等宽舌是更接近的那一支（写入器写的就是等宽）", fid32.TabParallel,
+                      fid32.Report());
+                Check("★ 保真门**放行**这张图（G3 第一次有正向用例）",
+                      AnalyticSurrogate.Usable(fid32),
+                      $"最差 {fid32.Worst * 100:0.0} %（限 {AnalyticSurrogate.Tol * 100:0.0} %）");
+                // 自证：另一支必须明显更差，否则「挑更接近的那一支」这件事没被验到
+                Check("梯形舌那一支明显更差（自证）", other32.Worst > fid32.Worst * 2,
+                      $"梯形 {other32.Worst * 100:0.0} % vs 等宽 {fid32.Worst * 100:0.0} %");
+            }
+            catch (Exception ex)
+            {
+                Check("出图→读回来这条闭环跑得通", false, "★ " + ex.GetType().Name + ": " + ex.Message);
+            }
+            finally { try { if (File.Exists(tmp)) File.Delete(tmp); } catch { } }
+        }
+
         Console.WriteLine();
         Console.WriteLine(fail == 0 ? "★ 全部通过" : $"✗ {fail} 项不过");
-        Environment.ExitCode = fail;
+        Console.Out.Flush();
+
+        // ★★★★★ 必须**强制退出**，不能只设 ExitCode 让 Main 返回（2026-08-24）。
+        //
+        // 症状：断言全跑完、「★ 全部通过」也打出来了，**进程却不退** ——
+        //   实测挂了 41 分钟只用掉 99 秒 CPU（即根本没在算），
+        //   而提交钩子在等它 ⇒ 整个提交卡死。
+        // 原因是本进程建过 WinForms 窗体、起过子进程，某个前台线程没退；
+        //   Main 返回之后 CLR 会一直等它。
+        // ⚠ 这比「跑得慢」危险：它**看起来是通过的**（输出完整、最后一行是全部通过），
+        //   只有去看进程表才知道它没结束。上一轮我就据此误判过一次「已完成」。
+        // Geom 的命令分派早就用同一手兜底（finally 里 Environment.Exit）。
+        // ⚠ `Environment.Exit` **不够** —— 实测它也挂住：它会跑 ProcessExit 处理器与终结器，
+        //   而阻塞就在那里面。断言在第 4 分钟就打完「全部通过」，之后又挂了 6 分钟以上
+        //   （41 分钟只用掉 99 秒 CPU ⇒ 没在算，是在等）。
+        //   ⇒ 直接终止本进程：结果已经打完并 Flush 过，没有任何需要善后的东西。
+        //   ⚠ 不能用 Process.Kill()：它**不保留退出码**（实测全部通过却给 127）。
+        //     提交钩子是靠退出码判通过的 ⇒ 那样会把**每一次**提交都拒掉。
+        //     TerminateProcess 能精确带上 fail，两个方向都对。
+        TerminateProcess(GetCurrentProcess(), (uint)fail);
     }
 }

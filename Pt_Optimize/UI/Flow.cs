@@ -212,6 +212,11 @@ public static class Flow
             "按页面参数解一次耦合场，出判据表。**几何用的是和定案完全同一套构造器**"),
         new("geom.analyze", "分析几何变数", StageId.整线核算, ChainId.C整线耦合,
             CmdGroup.工具, true, "分钟级", "报各几何量对判据的斜率（只测不调）"),
+        new("geom.export3dm", "导出可回读 3DM", StageId.整线核算, ChainId.无,
+            CmdGroup.工具, true, "十几秒",
+            "把本页解析几何写成**单图层多级台阶**的 .3dm —— 一张 APP 自己读得回来的图。" +
+            "现有的出图是多图层，读取端要单图层，于是「出图 → 去 Rhino 改 → 读回来核算」这条路是断的。" +
+            "写完立刻回读校验"),
         new("final.reproduce", "▶ 复现定案", StageId.定案档, ChainId.C整线耦合,
             CmdGroup.定案不读页面, false, "分钟级，可取消",
             "**完全不读页面控件**，直接按定案档解一次。用来排除「页面上某个控件被改过而自己没注意到」"),
@@ -327,7 +332,7 @@ public static class Flow
                 RequireConverged: true, RequireAllOk: false, RequireFresh: true,
                 LockedTitle: "④ 定尺寸 —— 还没解锁",
                 LockedWhy: "定尺寸器每轮都要跑一次整线解，起点必须是一个**解得出来且收敛**的构型。"),
-            new[] { "core.runLine", "geom.analyze" },
+            new[] { "core.runLine", "geom.analyze", "geom.export3dm" },
             new[] { "C 整线", "A·B·C 共用" }),
 
         new(StageId.定尺寸, 4, "④ 定尺寸 / 搜形状",

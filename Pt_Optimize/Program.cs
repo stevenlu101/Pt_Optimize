@@ -7854,7 +7854,13 @@ internal static class Program
                 Console.WriteLine("轮廓像不像不算数，定尺寸器只通过这三个量看见板。");
                 Console.WriteLine();
 
-                var sfield = Geometry3dm.LoadThickness(sf, sl, double.NaN, 0.5);
+                // --step <mm>：采样格。默认 0.5 与界面一致；加密用来分辨
+                //   「替身与图纸真有差」还是「量具本身的量化噪声」。
+                int stpi = Array.IndexOf(args, "--step");
+                double sStep = stpi >= 0 && stpi + 1 < args.Length
+                               && double.TryParse(args[stpi + 1], out var sv) ? sv : 0.5;
+                var sfield = Geometry3dm.LoadThickness(sf, sl, double.NaN, sStep);
+                Console.WriteLine($"采样格 {sStep:0.00} mm");
                 var sshape = PlateShapeAnalyzer.Analyze(sfield);
                 Console.WriteLine(PlateShapeAnalyzer.Format(sshape));
                 Console.WriteLine();
@@ -7878,10 +7884,16 @@ internal static class Program
                     Console.WriteLine("   ⇒ **结构性差异，不看残差**：数字碰巧接近也不能用。");
                     Console.WriteLine("     替身缺的那部分材料不在几何里，优化器给出的厚度是针对另一片板的。");
                 }
-                else if (bestFid.Worst > 0.02)
-                    Console.WriteLine($"   ✗ 最差一项差 {bestFid.Worst * 100:0.0} %（限 2.0 %）⇒ 不够像，不能替。");
+                // ⚠ 门槛只有一处来源：AnalyticSurrogate.Tol / Usable。
+                //   这里原来把 0.02 与「2.0 %」**写死**了 —— 于是 Tol 一改，
+                //   判定跟着变而**打印出来的限值还是旧的**，两句话自相矛盾。
+                //   （这次重标 Tol 时当场被照出来，正是「同一个数两处」的又一例。）
+                else if (!AnalyticSurrogate.Usable(bestFid))
+                    Console.WriteLine($"   ✗ 最差一项差 {bestFid.Worst * 100:0.0} %"
+                                      + $"（限 {AnalyticSurrogate.Tol * 100:0.0} %）⇒ 不够像，不能替。");
                 else
-                    Console.WriteLine($"   ✓ 最差一项差 {bestFid.Worst * 100:0.0} %（限 2.0 %）⇒ 可以替。");
+                    Console.WriteLine($"   ✓ 最差一项差 {bestFid.Worst * 100:0.0} %"
+                                      + $"（限 {AnalyticSurrogate.Tol * 100:0.0} %）⇒ 可以替。");
                 Console.WriteLine();
                 Console.WriteLine("   替身几何：盘 R" + $"{bestPlate.DiscRadiusMm:0.0}　孔 R{bestPlate.HoleRadiusMm:0.0}　"
                                   + $"舌端 X{bestPlate.TabEndXMm:0.0}／半宽 {bestPlate.TabEndHalfWidthMm:0.0}　"

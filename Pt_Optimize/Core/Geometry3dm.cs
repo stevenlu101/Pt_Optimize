@@ -147,6 +147,68 @@ public static class Geometry3dm
         return so.Trim();
     }
 
+    /// <summary>
+    /// 写一张**单图层、多级台阶**的法兰 .3dm（调 Geom 子进程的 steps 模式）。
+    ///
+    /// ★ 它补的是解析路径与 .3dm 路径之间**断掉的那一环**：
+    ///   现有的「导出本页/定案 3DM」走 <see cref="WriteFinal3dm"/>，写的是**多图层**
+    ///   （板身 / 环外级 / 环内级 / 压接段 / 角焊缝），而 .3dm 的读取端
+    ///   （<see cref="LoadThickness"/> + <see cref="PlateShapeAnalyzer"/>）要的是**单图层**
+    ///   ⇒ **APP 导出的图，APP 自己读不回来**。
+    ///   有了本方法，「解析里搜出方案 → 出图 → 去 Rhino 改轮廓/挪槽 → 读回来核算」
+    ///   才是一条闭环。
+    ///
+    /// ⚠ Geom 的 steps 模式**早就写好了**（注释写着「供逐级定厚验证」），
+    ///   但一直没有 C# 包装、也没有按钮 —— 又一个「造好了没接线」。
+    ///
+    /// <param name="radiiMm">各级**外**半径，自小到大；最后一个即圆盘外半径</param>
+    /// <param name="thickMm">与半径一一对应的厚度</param>
+    /// <param name="slotCount">开槽数，**0 = 不开槽**（解析几何本来就没有槽）</param>
+    /// </summary>
+    public static string WriteStepped3dm(string outPath, double holeRadiusMm,
+                                         IReadOnlyList<double> radiiMm, IReadOnlyList<double> thickMm,
+                                         double tabEndXMm, double tabHalfWidthMm, double tabThickMm,
+                                         int slotCount = 0, double slotWidthDeg = 20,
+                                         double slotRInMm = double.NaN, double slotROutMm = double.NaN)
+    {
+        string probe = FindProbe()
+            ?? throw new FileNotFoundException($"找不到 {ProbeName}.exe。先构建 {ProbeName}（需本机装 Rhino 8）。");
+        if (radiiMm.Count == 0 || radiiMm.Count != thickMm.Count)
+            throw new ArgumentException(
+                $"半径 {radiiMm.Count} 个、厚度 {thickMm.Count} 个 —— 必须一一对应且非空");
+
+        var psi = new ProcessStartInfo(probe)
+        {
+            RedirectStandardOutput = true, RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
+            UseShellExecute = false, CreateNoWindow = true
+        };
+        psi.ArgumentList.Add("steps");
+        psi.ArgumentList.Add(outPath);
+        psi.ArgumentList.Add(holeRadiusMm.ToString("R"));
+        psi.ArgumentList.Add(string.Join(",", radiiMm.Select(v => v.ToString("R"))));
+        psi.ArgumentList.Add(string.Join(",", thickMm.Select(v => v.ToString("R"))));
+        psi.ArgumentList.Add(tabEndXMm.ToString("R"));
+        psi.ArgumentList.Add(tabHalfWidthMm.ToString("R"));
+        psi.ArgumentList.Add(tabThickMm.ToString("R"));
+        psi.ArgumentList.Add(slotCount.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        psi.ArgumentList.Add(slotWidthDeg.ToString("R"));
+        if (!double.IsNaN(slotRInMm) && !double.IsNaN(slotROutMm))
+            psi.ArgumentList.Add($"{slotRInMm.ToString("R")},{slotROutMm.ToString("R")}");
+        else psi.ArgumentList.Add("0,0");          // 占位：舌型必须落在第 11 个参数上
+        // 等宽舌 —— 与 FlangePlate.TabParallel 同口径。梯形是本模式的旧默认，
+        // 而定案几何早已不用梯形（见 Geom 的 RunSteps 注释）。
+        psi.ArgumentList.Add("par");
+
+        using var proc = Process.Start(psi) ?? throw new InvalidOperationException("无法启动 " + probe);
+        string stdout = proc.StandardOutput.ReadToEnd();
+        string stderr = proc.StandardError.ReadToEnd();
+        proc.WaitForExit();
+        if (proc.ExitCode != 0)
+            throw new InvalidOperationException($"{ProbeName} steps 退出码 {proc.ExitCode}。{stderr.Trim()}");
+        return stdout;
+    }
+
     public static string ScalePlate3dm(string inPath, string outPath, string layer,
                                        IReadOnlyList<double> scale, double planeY = double.NaN)
     {
