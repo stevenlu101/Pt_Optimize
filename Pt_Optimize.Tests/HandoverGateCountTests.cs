@@ -76,16 +76,8 @@ public class HandoverGateCountTests
         return k;
     }
 
-    private static string FindHandover()
-    {
-        var d = new DirectoryInfo(AppContext.BaseDirectory);
-        for (int i = 0; i < 8 && d is not null; i++, d = d.Parent)
-        {
-            string p = Path.Combine(d.FullName, "HANDOVER.md");
-            if (File.Exists(p)) return p;
-        }
-        throw new FileNotFoundException("往上找 8 层都没有 HANDOVER.md —— 断言失去了对象，不能算通过");
-    }
+    // 定位逻辑已抽到 HandoverDoc（CriteriaTableTests 也要用；同一件事不留两份）
+    private static string FindHandover() => HandoverDoc.Path();
 
     [Fact]
     public void Handover_StatedTestCount_MatchesReality()

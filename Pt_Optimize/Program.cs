@@ -5032,6 +5032,84 @@ internal static class Program
             }
 
             // ════════════════════════════════════════════════════════════════
+            //  --stabscan：把定案沿两个方向推向失稳，看两条热稳定判据
+            //              **是不是第一个变红的**。
+            //
+            //  为什么需要这个仪器：两条热稳定判据一直挂在「参考量」上，理由写的是
+            //  「跨几何量级没量够」。但那句话不可证伪 —— 多少算够？
+            //  真正该问的是一个**能判定**的问题：
+            //      存不存在一个「别的判据都过、只有热稳定不过」的几何？
+            //  · 存在 ⇒ 升成硬判据确实能拦住东西，该升。
+            //  · 不存在 ⇒ 它在设计范围内永远被别的判据抢先拦下，那就跟 ① 快筛一样
+            //             是条**不会咬人的判据**（见 §7），该照实说明，而不是含糊挂着。
+            //
+            //  两个驱动方向是独立的：
+            //   · 板厚倍率 ↓：截面变小 ⇒ J 变大、散热变小（分子分母同向恶化）
+            //   · 舌保温 ×：只把片子捂热，不改电流路径（只恶化材料侧 J_stab）
+            //  单跑一个方向会误以为结论普适。
+            //
+            //  不挂进提交钩子：十来次整线解，分钟级，且它是**探针**不是回归门。
+            // ════════════════════════════════════════════════════════════════
+            if (args.Contains("--stabscan"))
+            {
+                Console.WriteLine("=== 热稳定判据会不会「第一个变红」 ===");
+                Console.WriteLine("（判定用的是 LineResult.Required 那 7 条；热稳定两条目前是参考量，不进 AllOk）");
+
+                string Stab(LineResult r, string key)
+                {
+                    foreach (var c in r.Checks)
+                        if (c.Name.StartsWith(key, StringComparison.Ordinal))
+                            return c.Undetermined || double.IsNaN(c.Actual) ? "判不了" : $"{c.Actual,5:0.00}×";
+                    return "  —  ";
+                }
+
+                void Sweep(string title, double[] knobs, Func<FinalDesign, double, FinalDesign> mut)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("── " + title);
+                    Console.WriteLine("   旋钮   整片     局部     片温°C   判据全过   最先不过的是");
+                    foreach (double k in knobs)
+                    {
+                        var fd = mut(FinalDesign.Current.Clone(), k);
+                        LineResult r;
+                        try { r = LineRunner.Run(fd.BuildCase(p, checkRamp: false)); }
+                        catch (Exception ex) { Console.WriteLine($"   {k,5:0.00}  抛异常：{ex.Message}"); continue; }
+                        if (!r.Ok) { Console.WriteLine($"   {k,5:0.00}  解不出：{r.Message}"); continue; }
+
+                        double tmax = r.Flanges.Count() > 0 ? r.Flanges.Max(f => f.TMaxC) : double.NaN;
+                        string failed = r.Failed.Length == 0 ? "（无）" : string.Join("；", r.Failed);
+                        Console.WriteLine($"   {k,5:0.00}  {Stab(r, LineResult.Key.FlangeStab)}  "
+                                        + $"{Stab(r, LineResult.Key.LocalStab)}  {tmax,8:0.0}   "
+                                        + $"{(r.AllOk ? "  ✓  " : "  ✗  ")}    {failed}");
+                    }
+                }
+
+                Sweep("板厚倍率（截面 ↓ ⇒ J ↑ 且散热 ↓，两头一起恶化）",
+                      new[] { 1.00, 0.90, 0.80, 0.75, 0.70, 0.65, 0.60 },
+                      (fd, k) => { for (int i = 0; i < 4; i++) fd.TabThickMm[i] *= k; return fd; });
+
+                // ⚠ 这里原来写成「把四片的舌保温**统一设成** v mm」。那不是沿一个轴扰动，
+                //   是**跳到另一个族**：定案的舌保温高度不均匀（18.7 / 1.6 / 1.4 / 3.9），
+                //   统一设值之后每一行片温都在 3000–4500 °C，全部发散、什么也证明不了。
+                //   （第一版实测：v=0 就 2986 °C，比定案的 1234 °C 还热一倍多 —— 数字本身
+                //     就在喊「这个设置不对」，但它长得像一张正常的扫描表。）⇒ 改成倍率。
+                Sweep("舌保温倍率（只把片子捂热，不动电流路径）",
+                      new[] { 1.00, 1.50, 2.00, 3.00, 5.00, 8.00 },
+                      (fd, k) => { for (int i = 0; i < 4; i++) fd.TabInsulMm[i] *= k; return fd; });
+
+                // 第三条轴：舌片变窄 ⇒ 舌片里的 J 直接变大，而管孔那侧的热平衡受影响较小
+                //   —— 前两条轴上 ②′ 都抢先变红，这条是给热稳定「最公平的一次机会」。
+                Sweep("舌半宽 mm（抬舌片里的 J，尽量不动管侧热平衡）",
+                      new[] { 40.0, 30.0, 25.0, 20.0, 15.0, 12.0, 10.0 },
+                      (fd, v) => { fd.TabHalfWidthMm = v; return fd; });
+
+                Console.WriteLine();
+                Console.WriteLine("读法：只要有哪一行「判据全过 ✓」而热稳定 < 1.00× 或判不了，");
+                Console.WriteLine("      就证明它能拦住别的判据拦不住的东西 ⇒ 该升硬判据。");
+                return;
+            }
+
+            // ════════════════════════════════════════════════════════════════
             // --cli --selfcheck   ★★★★★ **会自己跑的那道门**（2026-08-16）
             //
             // 为什么要有它：本项目今天三次被抓到的错，靠的都是**会自己跑的检查**
@@ -5085,6 +5163,40 @@ internal static class Program
                     => $"热稳定 整片 {StabOf(r, LineResult.Key.FlangeStab)}"
                      + $" / 局部 {StabOf(r, LineResult.Key.LocalStab)}";
 
+                // ★★ 把「为什么不把热稳定升成硬判据」这个理由**变成断言**（2026-08-24）。
+                //
+                //   原来的理由是「跨几何量级还没攒够」—— 一句不可证伪的话：多少算够？
+                //   `--stabscan` 沿三条独立的轴（板厚倍率 / 舌保温倍率 / 舌半宽）实测：
+                //   **②′ 管孔净流入永远先红**。板厚 0.90 时 ②′ 已 −14.3 W 而局部还有 1.88×；
+                //   舌保温 1.50 倍时 ②′ −10.8 W 而局部纹丝不动 1.95×；
+                //   舌半宽 25 mm 时 ②′ 与 ⑤ 双双不过，局部仍 1.88×。
+                //   ⇒ 升成硬判据在**所有实测点上都改变不了任何一个判定**，
+                //     所以不升；但「不升」是**有条件**的，条件就是下面这条不变式：
+                //
+                //       七条判定用的判据全过时，两条热稳定必须 ≥ 1.0 且判得了。
+                //
+                //   哪天模型改了、口径变了，出现「别的都过、只有热稳定不过」的算例，
+                //   本条当场红 —— 那就是该升硬判据的信号。**理由有门盯着，才不会变成口号。**
+                int StabWatch(string nm, LineResult r)
+                {
+                    if (!r.AllOk) return 0;             // 别的判据已经拦住了，本条不表态
+                    int hit = 0;
+                    foreach (string key in new[] { LineResult.Key.FlangeStab, LineResult.Key.LocalStab })
+                    {
+                        var c = r.Checks.FirstOrDefault(
+                            x => x.Name.StartsWith(key, StringComparison.Ordinal));
+                        if (c is null) continue;
+                        bool bad0 = c.Undetermined || double.IsNaN(c.Actual) || c.Actual < 1.0;
+                        if (!bad0) continue;
+                        hit++;
+                        Console.WriteLine($"      ✗ {nm}：七条判据全过，而「{key}」是 "
+                            + (c.Undetermined || double.IsNaN(c.Actual) ? "**判不了**" : $"{c.Actual:0.00}×")
+                            + " ⇒ **热稳定第一次成为唯一拦得住它的那一条**。"
+                            + "这正是把它从参考量升为硬判据的条件（见 §1.83 与 --stabscan）。");
+                    }
+                    return hit;
+                }
+
                 Console.WriteLine();
                 Console.WriteLine("── A 复现对账：FinalDesign 记的数 vs 实算");
                 foreach (var fd in FinalDesign.All)
@@ -5101,6 +5213,7 @@ internal static class Program
                                       + $"　收敛 ✓　全判据 {(rc.AllOk ? "✓" : "✗")}"
                                       + "　" + StabPair(rc) +
                                       (fd.Invalid.Length > 0 ? "　（本档**已声明失效**）" : ""));
+                    bad += StabWatch(fd.Name, rc);
 
                     // ★★★ 已声明失效的档：门要判的**不是「过不过」**，而是
                     //   「**它不过的地方，是不是正好是它自己声明的那一条**」。
@@ -5208,6 +5321,7 @@ internal static class Program
                                       $"全过 {(rp.AllOk ? "✓" : "✗")}　最高 {tmax,7:0.0} °C　能量残差 {resid,7:0.000} W" +
                                       "　" + StabPair(rp) +
                                       (quiet ? "　★★ **安静失败**" : ""));
+                    bad += StabWatch(nm, rp);
                 }
 
                 // ════════════════════════════════════════════════════════════
@@ -5371,6 +5485,7 @@ internal static class Program
                         Console.WriteLine($"   {(okE ? "✓" : "✗")} ②′ = {fxE:+0.00;−0.00} W" +
                                           $"（须 > 0）　③ = {dipE:0.00} K　" + StabPair(lrE) +
                                           $"　{rE.Message.Split('\n')[0]}");
+                        bad += StabWatch("定尺寸器收敛解", lrE);
                         if (!okE)
                             Console.WriteLine("      ★★ **定尺寸器把设计停在了「热往管里灌」的一侧** —— " +
                                               "这正是现场烧断的机理，比任何一条判据不过都严重。");
