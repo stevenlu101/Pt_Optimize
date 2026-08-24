@@ -5066,6 +5066,25 @@ internal static class Program
                     { Console.WriteLine("   ✗ " + e); bad++; }
                 }
 
+                // ★ 两条热稳定裕度：**现为参考量，本门就是在攒它跨几何的量级**。
+                //   限值 1.0 是精确物理（dQ/dT ÷ dP/dT、J_stab ÷ J_实际），本可直接当硬判据；
+                //   但拿一条只在**定案族**四个点上量过的判据去卡交付，风险只是换了一侧
+                //   —— 从「漏判」变成「误杀能造的方案」。这一轮已经在 ① 快筛上见过一次误杀
+                //   （横向导热长取 ∞ 时把两个现役定案档判成 0.6×）。
+                //   ⇒ A / B / E 三段都打，每跑一次门就多攒一批**异族**几何上的点：
+                //     B 段三个扰动构型、E 段定尺寸器自己收敛到的解，都不在定案族里。
+                //     攒够了再谈升硬判据（管 J 当年就是这么从参考量升上去的）。
+                string StabOf(LineResult r, string key)
+                {
+                    foreach (var c in r.Checks)
+                        if (c.Name.StartsWith(key, StringComparison.Ordinal))
+                            return double.IsNaN(c.Actual) ? "判不了" : $"{c.Actual:0.0}×";
+                    return "—";
+                }
+                string StabPair(LineResult r)
+                    => $"热稳定 整片 {StabOf(r, LineResult.Key.FlangeStab)}"
+                     + $" / 局部 {StabOf(r, LineResult.Key.LocalStab)}";
+
                 Console.WriteLine();
                 Console.WriteLine("── A 复现对账：FinalDesign 记的数 vs 实算");
                 foreach (var fd in FinalDesign.All)
@@ -5075,19 +5094,12 @@ internal static class Program
                     if (!rc.Converged) { Console.WriteLine($"   ✗ {fd.Name} 未收敛 —— 记录值无从对账"); bad++; continue; }
                     double V(string k)
                     { foreach (var c in rc.Checks) if (c.Name.StartsWith(k, StringComparison.Ordinal)) return c.Actual; return double.NaN; }
-                    // ★ 两条热稳定裕度：**现为参考量，本行就是在攒它跨几何的量级**。
-                    //   限值 1.0 是精确物理（dQ/dT ÷ dP/dT、J_stab ÷ J_实际），本可直接当硬判据；
-                    //   但拿一条没量过分布的判据去卡交付，风险只是换了一侧。
-                    //   ⇒ 先在每次跑门时把四个档的数打出来，攒够了再谈升级。
-                    string Stab(string k)
-                    { double v = V(k); return double.IsNaN(v) ? "判不了" : $"{v:0.0}×"; }
 
                     // 标出来源：分不清「守内核的基准」与「昨天存的方案」就会拿错的那个去出图
                     Console.WriteLine($"   {fd.Name}"
                                       + (fd.FromFile.Length > 0 ? $"　[档案 {fd.FromFile}]" : "　[内置]")
                                       + $"　收敛 ✓　全判据 {(rc.AllOk ? "✓" : "✗")}"
-                                      + $"　热稳定 整片 {Stab(LineResult.Key.FlangeStab)}"
-                                      + $" / 局部 {Stab(LineResult.Key.LocalStab)}" +
+                                      + "　" + StabPair(rc) +
                                       (fd.Invalid.Length > 0 ? "　（本档**已声明失效**）" : ""));
 
                     // ★★★ 已声明失效的档：门要判的**不是「过不过」**，而是
@@ -5175,8 +5187,26 @@ internal static class Program
                     bool absurd = nan || tmax > Materials.PtMeltC || resid > 50.0;
                     bool quiet = rp.Converged && rp.AllOk && absurd;
                     if (quiet) bad++;
+
+                    // ★★ 场都跑到拟合区间外了，热稳定却给得出数 ⇒ 那个数只能来自**健康片/凉格**，
+                    //   看着比定案还安全。这也是一种安静失败，本段就是管这个的。
+                    //   实测抓到过两次：格那一层（凉格顶上）与片那一层（健康片顶上），都已修。
+                    if (tmax > LocalStability.FitMaxC)
+                        foreach (string key in new[] { LineResult.Key.FlangeStab, LineResult.Key.LocalStab })
+                        {
+                            var cs = rp.Checks.FirstOrDefault(
+                                c => c.Name.StartsWith(key, StringComparison.Ordinal));
+                            if (cs is not null && !cs.Undetermined && !double.IsNaN(cs.Actual))
+                            {
+                                bad++;
+                                Console.WriteLine($"      ✗ {nm}：片温 {tmax:0} °C 已出拟合区间"
+                                    + $"（上界 {LocalStability.FitMaxC:0}），而「{key}」仍报 {cs.Actual:0.0}×"
+                                    + " ⇒ **这个数只能来自没发散的那部分，是假象**");
+                            }
+                        }
                     Console.WriteLine($"   {(quiet ? "✗" : "✓")} {nm,-14}收敛 {(rp.Converged ? "✓" : "✗")}　" +
                                       $"全过 {(rp.AllOk ? "✓" : "✗")}　最高 {tmax,7:0.0} °C　能量残差 {resid,7:0.000} W" +
+                                      "　" + StabPair(rp) +
                                       (quiet ? "　★★ **安静失败**" : ""));
                 }
 
@@ -5339,7 +5369,8 @@ internal static class Program
                                           $"（定案 ×0.75，下界 {floorE:0.00}）⇒ 收敛厚度 " +
                                           string.Join("/", rE.ThicknessMm.Select(x => x.ToString("0.00"))));
                         Console.WriteLine($"   {(okE ? "✓" : "✗")} ②′ = {fxE:+0.00;−0.00} W" +
-                                          $"（须 > 0）　③ = {dipE:0.00} K　{rE.Message.Split('\n')[0]}");
+                                          $"（须 > 0）　③ = {dipE:0.00} K　" + StabPair(lrE) +
+                                          $"　{rE.Message.Split('\n')[0]}");
                         if (!okE)
                             Console.WriteLine("      ★★ **定尺寸器把设计停在了「热往管里灌」的一侧** —— " +
                                               "这正是现场烧断的机理，比任何一条判据不过都严重。");

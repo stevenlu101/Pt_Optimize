@@ -1580,8 +1580,17 @@ public static class LineRunner
                 // ★ 第一版拿「圆盘最热那一格」当代表，**是错的**：实测两个现役档上
                 //   盘温峰落在外缘，那里电流密度≈0 ⇒ 裕度算出 +∞ ⇒ 判据表上会写着
                 //   「无限安全」而其实一格都没验。最热 ≠ 最不稳定。
-                var wl = flanges.Where(f => !double.IsNaN(f.LocalStabMargin))
-                                .OrderBy(f => f.LocalStabMargin).FirstOrDefault();
+                // ★★ **任何一片判不了 ⇒ 整条判不了**（2026-08-24 修）。
+                //
+                //   原来是 `Where(!NaN).OrderBy(margin).First()` —— 取「剩下几片里最差的」。
+                //   可判不了的恰恰是**发散的那一片**（温度出了电阻率拟合区间），
+                //   于是发散算例上会报出一个由**健康片**算来的漂亮数：
+                //   实测 selfcheck B 段「板厚 ×0.5」四片最高 4361 °C，
+                //   而这一条报 **1.9×**，看着比定案还安全。
+                //   这是同一个偏乐观偏差在**片这一层**的重演（格那一层已修）。
+                bool anyUnknownPlate = flanges.Any(f => double.IsNaN(f.LocalStabMargin));
+                var wl = anyUnknownPlate ? null
+                       : flanges.OrderBy(f => f.LocalStabMargin).FirstOrDefault();
                 checks.Add(new ConstraintOut
                 {
                     Name = LineResult.Key.LocalStab, Unit = "×", Kind = CheckKind.Reference,
@@ -1592,7 +1601,8 @@ public static class LineRunner
                           : $"{wl.Name} {(wl.LocalStabOnTab ? "舌" : "盘")} r={wl.LocalStabRMm:0.0}",
                     Note = "J_stab ÷ J_实际，**须 > 1**；< 1 即该点会自行升温直到烧断。"
                          + (wl is null
-                            ? "　候选点的温度全部超出电阻率拟合区间 ⇒ 判不了（多半是场解已发散）"
+                            ? "　有片的温度超出电阻率拟合区间 ⇒ **整条判不了**（多半是场解已发散）。"
+                              + "　不拿健康片的数充数 —— 那会报出一个比定案还安全的假象"
                             : $"　该点 {wl.LocalStabTempC:0} °C、J={wl.LocalStabJAPerMm2:0.00} A/mm²。"
                               + $"　横向导热长 L={wl.LocalStabLatLenMm:0.0} mm（到最近**定温锚点**：管孔 / 压接段）。"
                               + "　L 若按「不计横向导热」取 ∞，两个现役定案档会被判成 0.6×（失稳）——保守到失真不叫保守，叫判据坏了。")

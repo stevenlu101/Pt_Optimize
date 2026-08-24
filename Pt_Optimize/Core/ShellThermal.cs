@@ -324,6 +324,8 @@ public static class ShellThermal
         // **分区各筛各的**：盘包保温、舌常裸露，冷却侧差一个量级，混在一起筛会漏掉裸舌那侧。
         var candD = new List<(double Proxy, int I)>();
         var candT = new List<(double Proxy, int I)>();
+        // 超出电阻率拟合区间的自由单元数 —— 见下方「判不了」那一段
+        int hotOutOfRange = 0;
         for (int i = 0; i < n; i++)
         {
             if (Excluded(i)) continue;
@@ -334,6 +336,7 @@ public static class ShellThermal
                        ? Math.Abs(m.Centroid[i].X) > Math.Abs(xb)
                        : m.Centroid[i].X < xb;
             double jj = jMagAPerMm2[i];
+            if (ti > LocalStability.FitMaxC) hotOutOfRange++;
             double proxy = Materials.PtResistivity(ti) * jj * jj * t * Materials.PtTcr(ti);
             if (onTab) { gT += g; lT += l; aT += A; tT += ti * A; tTMax = Math.Max(tTMax, ti);
                          candT.Add((proxy, i)); }
@@ -348,6 +351,7 @@ public static class ShellThermal
         {
             const int NCand = 12;
             double best = double.PositiveInfinity; int bi = -1; bool bTab = false;
+            int skipped = 0;
 
             // ── 每格到**最近定温锚点**的距离 L（J_stab 公式里的横向导热项 k·t/L²）
             //
@@ -387,11 +391,27 @@ public static class ShellThermal
                     // 而保守版若能过，设计就真的过得了。
                     var pt = LocalStability.Check(p, res.T[i], jMagAPerMm2[i], m.Thickness[i],
                                                   insMm, LatLen(i));
-                    if (double.IsNaN(pt.JStab)) continue;      // 超拟合区间 ⇒ 这一格判不了，不算数
+                    // ★★★★★ 超拟合区间的格子**不能只是跳过**（2026-08-24 修）。
+                    //
+                    //   跳过之后，报出来的是「剩下那些**凉**格子里最差的」——
+                    //   而判不了的恰恰是最热、最可能失稳的那些。于是发散算例上会给出
+                    //   一个**看起来很安全**的数：实测 selfcheck B 段「管保温 1 mm」
+                    //   （片温 5277 °C）报 **10.8×**，而那一片根本没有一格热区被评过。
+                    //   这是**偏乐观**的偏差，正是本项目最忌的方向。
+                    //   ⇒ 记下跳过数；只要有跳过，整条就报**判不了**（见下方）。
+                    if (double.IsNaN(pt.JStab)) { skipped++; continue; }
                     if (pt.Margin < best) { best = pt.Margin; bi = i; bTab = onTab; }
                 }
             }
             Scan(candD, false); Scan(candT, true);
+            // ★★ 只要**场里有一格**超出电阻率拟合区间，整条就判不了。
+            //
+            //   光数「候选里被跳过几个」不够：候选是按 ρe·J²·t·**TCR(T)** 排的，
+            //   而 TCR 在拟合区间外会翻号/变小 ⇒ **最热的格子根本进不了前 12**，
+            //   既没被评、也没被记成跳过。实测 selfcheck B 段「板厚 ×0.5」
+            //   （片温 4361 °C）就这样报出 1.9×，而热区一格没评过。
+            //   ⇒ 判据的有效性取决于**场**在不在模型的适用范围内，不取决于候选。
+            if (skipped > 0 || hotOutOfRange > 0) bi = -1;
             if (bi >= 0)
             {
                 var cb = m.Centroid[bi];
