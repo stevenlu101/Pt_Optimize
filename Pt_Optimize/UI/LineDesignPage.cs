@@ -762,8 +762,7 @@ public sealed class LineDesignPage : TabPage
         _solvedRes = null;                                    // 外推基准也作废（它是另一组参数的解）
         _pendingReview = null;                                // 待插入的形状体检同理
         PushFlow();
-        Shared?.RestartChain();                               // ★ 连越关一起作废，见那里的说明
-        WarnParamsRestartOnce(what);
+        NoteUserInputChanged(what);      // ★ 唯一入口：越关作废 + 一次性告知
         _out.Text = $"⚠ 参数表改了「{what}」—— 上一次的解**不再对应当前参数**。" + Environment.NewLine
                   + "   判据表留在下面供对照，但它是**上一组参数**的结论；" + Environment.NewLine
                   + "   ④ 定尺寸与 ⑤ 交付已经关上，请点「核算整线」按现在这组重解。"
@@ -795,6 +794,27 @@ public sealed class LineDesignPage : TabPage
     ///   没显示的窗体上弹框本来也没有意义。**一次性的开关也不在这种情况下消耗掉。**
     /// </summary>
     private bool _paramWarnShown;
+
+    /// <summary>
+    /// **「用户改了输入」的唯一入口**（2026-08-24）。
+    ///
+    /// 现在有两条路会走到这里：页面控件（<see cref="ParamChanged"/>）与
+    /// 左侧参数表（<see cref="MarkParamsChanged"/>）。把**共同**的那部分收在这里，
+    /// 是为了防第三条路：将来谁再加一个改输入的入口（程序化载入、新页面、
+    /// 运行时生成的控件…），只要调它就全都对，不必再去记「还要顺手清越关」
+    /// 「还要弹一次告知」。散着写，第三条路一定会漏其中一条 —— 本项目已经栽过太多次。
+    ///
+    /// ⚠ 两条路**故意**保留各自的差异，不强行统一：
+    ///   · 页面控件那条**保留** <c>_solvedRes</c>（线性外推的基准）——
+    ///     那几个雅可比常数就是按这 6 个控件测的，改它们时外推仍然有意义；
+    ///   · 参数表那条**清掉**它 —— 改控温点/保温/牌号已经出了雅可比的定义域，
+    ///     再拿旧解外推就是拿另一个构型的斜率说话（§7 记过这个错）。
+    /// </summary>
+    private void NoteUserInputChanged(string what)
+    {
+        Shared?.RestartChain();          // Fresh 转 false、越关作废、④⑤ 关门
+        WarnParamsRestartOnce(what);     // 一次性告知
+    }
 
     private void WarnParamsRestartOnce(string what)
     {
@@ -931,8 +951,7 @@ public sealed class LineDesignPage : TabPage
         //   新鲜度那一侧本来就自动成立（Snap 变了 ⇒ Fresh 变 false），
         //   但**越关**不会自己失效 —— 它是在**旧参数**上批的。
         //   放在首屏闸门之后：程序写控件、排版期的事件都不算「用户改了参数」。
-        Shared?.RestartChain();
-        WarnParamsRestartOnce("页面参数");
+        NoteUserInputChanged("页面参数");
 
         _autoArmed = true;
         // ⚠ **立刻**取消在跑的那次，不要等防抖到期（实测发现的：原来放在 TryAutoRun 里，

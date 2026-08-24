@@ -87,6 +87,29 @@ public sealed class PtGrade
         => RuptureStressMPa(tC, hours) / Math.Max(1e-6, sf);
 }
 
+/// <summary>
+/// 让参数表里的「铂材牌号」变成**下拉**，而不是可以随便打字的文本框（2026-08-24）。
+///
+/// 为什么要有它：`GradeName` 是个普通 string，PropertyGrid 默认渲染成自由文本框。
+/// 打错一个字，整线解会一直跑到 `LineRunner.Judge` 才在 `MaterialDb.Get` 上崩 ——
+/// 一次分钟级求解白跑，而报出来的话（现在虽然说清楚了）仍是**事后**的。
+/// 下拉是**从源头**堵：选不出材料库里没有的名字。
+///
+/// ⚠ 两层都要留着，不是重复：
+///   · 下拉挡的是**人在界面上打字**；
+///   · `MaterialDb.Get` 的明确异常挡的是**方案档里存着旧牌号名**被反序列化进来
+///     —— 那条路根本不经过 TypeConverter。
+/// </summary>
+public sealed class GradeNameConverter : System.ComponentModel.StringConverter
+{
+    public override bool GetStandardValuesSupported(System.ComponentModel.ITypeDescriptorContext? c) => true;
+    /// <summary>true = 只能选、不能打字。这正是本类存在的理由。</summary>
+    public override bool GetStandardValuesExclusive(System.ComponentModel.ITypeDescriptorContext? c) => true;
+    public override System.ComponentModel.TypeConverter.StandardValuesCollection GetStandardValues(
+        System.ComponentModel.ITypeDescriptorContext? c)
+        => new(MaterialDb.All.Keys.OrderBy(x => x, System.StringComparer.Ordinal).ToArray());
+}
+
 public static class MaterialDb
 {
     private static PtGrade G(string name, double a, double b, double r0, double t0)

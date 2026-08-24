@@ -382,6 +382,9 @@ public sealed class MainForm : Form
     private readonly Dictionary<StageId, Label> _stageHints = new();
 
     /// <summary>拦下换页时那个说明气泡 —— 出现在点击处，2.5 秒自散，不占状态面板。</summary>
+    /// <summary>正在闪的按钮 —— 防止连点叠加定时器，把底色恢复成闪烁中的那个颜色。</summary>
+    private readonly HashSet<ToolStripButton> _flashing = new();
+
     private readonly ToolTip _blockTip = new() { IsBalloon = true, UseAnimation = true };
 
     /// <summary>
@@ -411,13 +414,18 @@ public sealed class MainForm : Form
                     if (b.Text == text) btn = b;
         if (btn is null) return;
 
+        // ★ 连点保护（2026-08-24）：拦下换页时会闪「取消」，而用户可能连点几下页签。
+        //   两个定时器叠上去，第二个会把**已经闪成黄色**的那一刻当作原色存下来，
+        //   收工时把按钮恢复成黄的 —— 一个永远亮着的「取消」比不闪更误导。
+        if (!_flashing.Add(btn)) return;
+
         var keep = btn.BackColor;
         int n = 0;
         var t = new System.Windows.Forms.Timer { Interval = 180 };
         t.Tick += (_, _) =>
         {
             btn.BackColor = (n % 2 == 0) ? Color.FromArgb(255, 236, 150) : keep;
-            if (++n >= 6) { t.Stop(); t.Dispose(); btn.BackColor = keep; }
+            if (++n >= 6) { t.Stop(); t.Dispose(); btn.BackColor = keep; _flashing.Remove(btn); }
         };
         t.Start();
     }

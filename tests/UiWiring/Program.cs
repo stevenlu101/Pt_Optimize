@@ -1812,6 +1812,19 @@ class UiWiringTests {
                 if (saved is not null && File.Exists(saved)) File.Delete(saved);
                 FinalDesign.Reload();
             }
+            // ★ G7：说明书页的下拉也挂了同一个重扫广播，但它带 WebView2 ——
+            //   headless 下实例化有把整套测试挂住的风险，所以只做**源码级**断言，
+            //   并且把「这是源码级、没有真跑过」写在这里，不假装覆盖到了。
+            {
+                string mp = File.ReadAllText(Path.Combine(RepoRoot(), "Pt_Optimize", "UI", "ManualPage.cs"));
+                Check("说明书页也挂了定案档重扫广播",
+                      mp.Contains("FinalDesign.Reloaded +=", StringComparison.Ordinal));
+                Check("而且在 Dispose 里退订（静态事件不退订会拿着已销毁的窗体）",
+                      mp.Contains("FinalDesign.Reloaded -=", StringComparison.Ordinal));
+                Check("重填时抑制了自身的渲染回调（否则会拿中途状态画一次图）",
+                      mp.Contains("_refilling", StringComparison.Ordinal));
+            }
+
             Check("清理之后它从下拉里消失了", !InBox(),
                   InBox() ? "★ 探针档没删干净，会污染 --selfcheck A 段" : "");
         }
@@ -1930,8 +1943,39 @@ class UiWiringTests {
                     Check("窗体没显示时不弹（否则接线测试会被模态框挂死）",
                           ldpW.Contains("if (!IsHandleCreated || !Visible) return;", StringComparison.Ordinal));
                     // 两条改参数的路都要接上：页面控件 与 左侧参数表
-                    int n = CountOf(ldpW, "WarnParamsRestartOnce(");
-                    Check("页面控件与参数表两条路都接了（含定义共 3 处）", n >= 3, $"{n} 处");
+                    // ★ G6：「用户改了输入」必须只有**一个入口**（2026-08-24）。
+                    //   散着写，将来第三条改输入的路（程序化载入、新页面、运行时控件…）
+                    //   一定会漏掉其中一件（清越关 / 弹告知）—— 本项目栽过太多次。
+                    Check("「用户改了输入」收敛成单一入口",
+                          ldpW.Contains("private void NoteUserInputChanged", StringComparison.Ordinal));
+                    Check("RestartChain 在本页只被调一次（就在那个入口里）",
+                          CountOf(ldpW, "Shared?.RestartChain()") == 1,
+                          $"{CountOf(ldpW, "Shared?.RestartChain()")} 处 —— 多于一处就说明有路绕过了入口");
+                    Check("一次性告知也只在那个入口里调",
+                          CountOf(ldpW, "WarnParamsRestartOnce(") == 2,
+                          $"{CountOf(ldpW, "WarnParamsRestartOnce(")} 处（1 定义 + 1 调用）");
+                    Check("两条改输入的路都走这个入口",
+                          CountOf(ldpW, "NoteUserInputChanged(") == 3,
+                          $"{CountOf(ldpW, "NoteUserInputChanged(")} 处（1 定义 + 页面控件 + 参数表）");
+
+                    // ★ G1：牌号必须是**只能选的下拉**，不是自由文本
+                    var pd = TypeDescriptor.GetProperties(typeof(DesignInputs))["GradeName"]!;
+                    var cv = pd.Converter;
+                    Check("牌号是下拉（不是自由文本框）", cv.GetStandardValuesSupported(),
+                          cv.GetType().Name);
+                    Check("而且只能选、不能打字", cv.GetStandardValuesExclusive());
+                    var vals = cv.GetStandardValues()!.Cast<string>().ToArray();
+                    Check("下拉里列的就是材料库里的牌号",
+                          vals.Length > 0 && vals.All(v => MaterialDb.All.ContainsKey(v)),
+                          $"{vals.Length} 个：" + string.Join("、", vals.Take(3)) + " …");
+                    Check("材料库里的牌号一个都不缺", vals.Length == MaterialDb.All.Count,
+                          $"{vals.Length} vs {MaterialDb.All.Count}");
+                    // 自证：打错的名字必须**不在**下拉里，且 Get 会报人话
+                    Check("打错的名字不在下拉里（自证）", !vals.Contains("PtRh10"));
+                    string msg = "";
+                    try { MaterialDb.Get("PtRh10"); } catch (Exception ex) { msg = ex.Message; }
+                    Check("方案档里存了旧牌号名时，报的是人话不是字典异常",
+                          msg.Contains("PtRh10") && msg.Contains("可选"), msg[..Math.Min(70, msg.Length)]);
                 }
 
                 Check("判据表**没有**被清空（数字留给人对照改前改后）",

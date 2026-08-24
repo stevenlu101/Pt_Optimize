@@ -106,6 +106,40 @@ public class LineSolverTests
         Assert.Contains("无法判定", r.Binding);
     }
 
+    /// <summary>
+    /// ★ B′ 主引擎的门（2026-08-24 补，此前**零覆盖**）。
+    ///
+    /// 它是「核算法兰（分钟级）」那个按钮的引擎，每段要跑一次耦合解 ——
+    /// 所以这里只用**一段**，把跑得动的那部分契约钉住：
+    ///   · n 段给 n+1 片（两端各一片，段间共用）
+    ///   · 每片都有厚度与质量，且都为正
+    ///   · 每片都说得出「厚度是被哪一段的需求定的」（SizedBy）——
+    ///     一个只给数不给依据的定尺寸结果，工程师无从复核
+    ///
+    /// ⚠ 仍**没有**覆盖多段共用片取两侧较大值那条逻辑（那要 ≥2 段、约 1 分钟）。
+    ///   这条缺口写在这里，不假装覆盖到了。
+    /// </summary>
+    [Fact]
+    public void SizeFlanges_OneSegment_GivesTwoPlatesWithProvenance()
+    {
+        var segs = Segs(0.8);
+        var proto = new FlangePlate
+        {
+            DiscRadiusMm = 30, HoleRadiusMm = 26,
+            TabEndXMm = -140, TabEndHalfWidthMm = 30, TabParallel = true,
+            ThicknessMm = 2.0, ThickenedMm = 2.0,
+        };
+        var rs = LineSolver.SizeFlanges(segs, new DesignInputs(), proto);
+
+        Assert.Equal(LineSolver.FlangeCount(segs.Count), rs.Count);      // 1 段 ⇒ 2 片
+        Assert.All(rs, f => Assert.True(f.ThicknessMm > 0, $"{f.Joint} 厚度 {f.ThicknessMm}"));
+        Assert.All(rs, f => Assert.True(f.MassG > 0, $"{f.Joint} 铂重 {f.MassG}"));
+        Assert.All(rs, f => Assert.False(string.IsNullOrWhiteSpace(f.SizedBy),
+            $"{f.Joint} 没说厚度是被哪一段定的 —— 只给数不给依据，没法复核"));
+        // 单段线上两端都不共用
+        Assert.All(rs, f => Assert.False(f.Shared));
+    }
+
     /// <summary>Totals 的合计必须等于逐段之和 —— 汇总层不许自己另算一份</summary>
     [Fact]
     public void Totals_EqualsSumOfSegments()

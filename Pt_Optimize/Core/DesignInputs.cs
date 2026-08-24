@@ -47,8 +47,14 @@ public class DesignInputs
      Description("铂管两支承点间距。默认取段长（两端法兰即支承点）")]
     public double SupportSpanMm { get; set; } = 300;
 
+    /// <summary>
+    /// ⚠ <see cref="GradeNameConverter"/> 把它做成**只能选的下拉** —— 见那里的说明：
+    ///   自由文本时打错一个字，整线解会跑到最后才在 MaterialDb.Get 上崩。
+    /// </summary>
     [Category("5 C 整线 — 管几何"), DisplayName("铂材牌号"),
-     Description("MaterialDb 中的牌号名。电阻率与持久强度均取该牌号的实测数据")]
+     TypeConverter(typeof(GradeNameConverter)),
+     Description("MaterialDb 中的牌号名（**只能从下拉里选**，打不了字）。" +
+                 "电阻率与持久强度均取该牌号的实测数据")]
     public string GradeName { get; set; } = "Pt";
 
     [Category("1 A·B 粗算 — 工艺"), DisplayName("设计寿命 [h]"), Description("1 年 = 8760 h")]
