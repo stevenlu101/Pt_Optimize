@@ -40,7 +40,31 @@ if ! dotnet build "$ROOT/tests/UiWiring/UiWiring.csproj" -c Release -v q --nolog
     exit 1
 fi
 
-# ① 界面接线（秒级）。GUI「编译过」不代表「接对了」——
+# ① 单元测试（约 15 秒）。守的是**纯判断逻辑** ——
+#    裕度符号、接头取厚、趋势判定、外推分档这一类。
+#    ⚠ 这一段是 2026-08-24 才补的：在那之前每条提交讯息都写着「dotnet test NN/NN」，
+#      而钩子**从来没跑过它** —— 一句没有机制撑着的断言，正是本项目最忌的那种。
+#      测试项目就在 sln 里，上面那次 build 已经编过，所以 --no-build，几乎不加时间。
+#    ⚠ --no-build **靠上面那道编译闸撑着**：编译失败时 dotnet test 会拿**上一次的 DLL**
+#      照样报「全过」（补这段时实测到了）。所以那道闸的 exit 1 不能省，
+#      也不要把本段挪到编译之前。
+echo "── 单元测试"
+# ⚠ 不要写成 `if ! dotnet test | grep ...` —— 管道的退出码是**最后一段**的。
+#   测试失败时输出里恰好有「失败!」，grep 匹配到就退出 0 ⇒ 取反为假 ⇒ 失败被吞掉。
+#   （这个坑我在补这段时当场踩了一次。）先跑、只看它自己的退出码，再挑行显示。
+# -v n 而不是 -v q：q 只打得出测试名，打不出断言内容；明细只在失败时才捞。
+dotnet test "$ROOT/Pt_Optimize.sln" -c Release --no-build --nologo -v n > /tmp/pt_test.log 2>&1
+rc=$?
+grep -E "测试运行(成功|失败)|^ +(通过数|失败数|总数|已跳过)" /tmp/pt_test.log | sed 's/^ */   /'
+if [ $rc -ne 0 ]; then
+    echo "✗ 单元测试不过 —— 提交中止，红的是这几条："
+    grep -E "\[FAIL\]" /tmp/pt_test.log | sed 's/^/   /' | head -20
+    grep -A6 -E "\[FAIL\]" /tmp/pt_test.log | grep -E "Assert|Expected|Actual|预期|实际" | head -20
+    echo "  完整明细：/tmp/pt_test.log"
+    exit 1
+fi
+
+# ② 界面接线（秒级）。GUI「编译过」不代表「接对了」——
 #    实测抓到过「求解中改参数，作废的那次还要跑满 1.5 秒防抖窗口才被取消」，
 #    这种错只在运行时现形，编译器和 --selfcheck 都看不见。
 echo "── 界面接线测试"
@@ -50,7 +74,7 @@ if ! "$ROOT/tests/UiWiring/bin/Release/net8.0-windows/UiWiring.exe"; then
     exit 1
 fi
 
-# ② 内核自检（分钟级）：复现对账 + 不安静失败
+# ③ 内核自检（分钟级）：复现对账 + 不安静失败
 cd "$BIN"
 if ! dotnet Pt_Optimize.dll --cli --quiet --selfcheck; then
     echo ""
