@@ -613,11 +613,34 @@ public sealed class FlowState
         Notify();
     }
 
-    /// <summary>上一次的解已作废（读取了新方案、切换了几何来源等）。</summary>
+    /// <summary>
+    /// **参数动过 ⇒ 这条链从头走一遍**（2026-08-24 用户要求：
+    /// 「APP 使用期间只要参数有任何更动（APP 没有在计算），计算都需重头开始，
+    ///   链路指示也需重头更新，直至存档出图」）。
+    ///
+    /// 作废的是一切「已经过了」的**凭据**，而不是数字本身：
+    ///   · <see cref="SolvedSnap"/> = null ⇒ Fresh 变 false ⇒ ④⑤ 两道门关上，
+    ///     指路回到「回 ③ 按现在这组重解」；
+    ///   · <see cref="Bypassed"/> 清空 —— ★ 这一条此前**漏了**：
+    ///     越关是在**旧参数**上批的，参数一动它就不该再算数。
+    ///     不清它，工程师改完参数还站在一个「当初批准进来的」页面上，
+    ///     而批准的理由已经不存在了。
+    ///
+    /// 判据表（<see cref="Last"/>）**故意留着**：数字留给人对照「改之前是多少」，
+    /// 但它旁边会写明是上一组参数的。要连表一起清的是 <see cref="Invalidate"/>。
+    /// </summary>
+    public void RestartChain()
+    {
+        SolvedSnap = null;
+        Bypassed.Clear();
+        Notify();
+    }
+
+    /// <summary>上一次的解已作废（读取了新方案、切换了几何来源等）—— 连判据表一起清。</summary>
     public void Invalidate()
     {
-        Last = null; SolvedSnap = null;
-        Notify();
+        Last = null;
+        RestartChain();
     }
 }
 

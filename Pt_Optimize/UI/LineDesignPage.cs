@@ -759,7 +759,11 @@ public sealed class LineDesignPage : TabPage
     {
         if (_solvedSnap is null && _last is null) return;    // 本来就没有可作废的
         _solvedSnap = null;                                   // ⇒ Fresh = false，门关上
+        _solvedRes = null;                                    // 外推基准也作废（它是另一组参数的解）
+        _pendingReview = null;                                // 待插入的形状体检同理
         PushFlow();
+        Shared?.RestartChain();                               // ★ 连越关一起作废，见那里的说明
+        WarnParamsRestartOnce(what);
         _out.Text = $"⚠ 参数表改了「{what}」—— 上一次的解**不再对应当前参数**。" + Environment.NewLine
                   + "   判据表留在下面供对照，但它是**上一组参数**的结论；" + Environment.NewLine
                   + "   ④ 定尺寸与 ⑤ 交付已经关上，请点「核算整线」按现在这组重解。"
@@ -779,6 +783,39 @@ public sealed class LineDesignPage : TabPage
     ///   这条保证「压根改不了」。两条是内外两道，缺一条都还有缝
     ///   （例如程序自己在 _suppressAuto 期间写控件，就绕过了界面这一层）。
     /// </summary>
+    /// <summary>「参数一动，整条链从头再走一遍」这条规则的**一次性**告知（2026-08-24 用户要求）。
+    ///
+    /// 为什么只弹一次：这是一条**规则**，不是一次事件。第一次讲清楚，之后由
+    /// 状态面板那一行（「⚠ 参数已改 —— 下面的数是上一次的」）持续提醒就够了。
+    /// 每改一次弹一次，三次之后人就只会闭着眼睛点「确定」——
+    /// 那时它既没教会规则，又拖慢了操作。
+    ///
+    /// ⚠ 窗体没 Show 出来就不弹：接线测试从不 Show（只 CreateControl），
+    ///   而那里有专门验「自动跑那次不该弹模态框」的节 —— 真弹出来会把整套测试挂住。
+    ///   没显示的窗体上弹框本来也没有意义。**一次性的开关也不在这种情况下消耗掉。**
+    /// </summary>
+    private bool _paramWarnShown;
+
+    private void WarnParamsRestartOnce(string what)
+    {
+        if (_paramWarnShown) return;
+        if (!IsHandleCreated || !Visible) return;
+        _paramWarnShown = true;
+        // 排到消息队列尾部：别在控件的 ValueChanged 里同步弹模态框
+        BeginInvoke(new Action(() => MessageBox.Show(this,
+            $"你刚改了「{what}」。从这一刻起：" + Environment.NewLine + Environment.NewLine
+            + "  · 上一次的解**不再对应当前参数** —— 判据表留着给你对照，" + Environment.NewLine
+            + "    但它是**上一组参数**的结论；" + Environment.NewLine
+            + "  · ④ 定尺寸 与 ⑤ 交付 两道门已经关上；" + Environment.NewLine
+            + "  · 之前若「越关」进过某一格，那张通行证也一并作废" + Environment.NewLine
+            + "    （它是按旧参数批的）。" + Environment.NewLine + Environment.NewLine
+            + "要拿到当前这组参数的结论，请回「③ 整线核算」重解一次。"
+            + Environment.NewLine + Environment.NewLine
+            + "（本提示只出现这一次；之后由右上角状态面板持续提醒。）",
+            "参数一动 —— 整条链要从头再走一遍",
+            MessageBoxButtons.OK, MessageBoxIcon.Information)));
+    }
+
     internal void SetInputsEnabled(bool on)
     {
         if (_inputPanel is not null) _inputPanel.Enabled = on;
@@ -889,6 +926,14 @@ public sealed class LineDesignPage : TabPage
         //   抓图里状态面板全程写着「正在算：核算整线」而结果是「还没解过」，就是它。
         //   ⚠ 接线测试没抓到，因为它只 CreateControl 不 Show —— 排版路径根本没走。
         if (!_userReady) return;
+
+        // ★ 页面控件动了同样要「从头走一遍」（2026-08-24 用户要求）。
+        //   新鲜度那一侧本来就自动成立（Snap 变了 ⇒ Fresh 变 false），
+        //   但**越关**不会自己失效 —— 它是在**旧参数**上批的。
+        //   放在首屏闸门之后：程序写控件、排版期的事件都不算「用户改了参数」。
+        Shared?.RestartChain();
+        WarnParamsRestartOnce("页面参数");
+
         _autoArmed = true;
         // ⚠ **立刻**取消在跑的那次，不要等防抖到期（实测发现的：原来放在 TryAutoRun 里，
         //   于是用户改完参数后，一个**结果已经作废**的求解还要再跑满 1.5 秒防抖窗口，

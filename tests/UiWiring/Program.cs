@@ -1861,6 +1861,14 @@ class UiWiringTests {
                 Pump(100);
                 Check("先造出「新鲜」这个状态（否则下一条空转）", fl31.Fresh,
                       fl31.Fresh ? "" : "★ 造不出新鲜态，下面验不了「变不新鲜」");
+                // ★ 「重头开始」还包括**越关作废**（2026-08-24 用户要求）：
+                //   越关是在**旧参数**上批的，参数一动它就不该再算数。
+                //   此前 Invalidate 只清 Last/SolvedSnap，**Bypassed 一直留着** ⇒
+                //   工程师改完参数还站在一个「当初批准进来的」页面上，而理由已经没了。
+                fl31.Bypassed.Add(StageId.定尺寸);
+                Check("先造出「越过关」这个状态（否则下一条空转）",
+                      fl31.Bypassed.Contains(StageId.定尺寸));
+
                 page.GetType().GetMethod("MarkParamsChanged", BindingFlags.NonPublic | BindingFlags.Instance)!
                     .Invoke(page, new object?[] { "控温点" });
                 Pump(100);
@@ -1872,6 +1880,30 @@ class UiWiringTests {
                       !Gate.Evaluate(StageId.交付, fl31).Unlocked);
                 Check("并且告诉了人为什么",
                       ((RichTextBox)F(page, "_out")!).Text.Contains("参数表改了"));
+                Check("越关也随之作废（不能拿旧参数批的通行证继续走）",
+                      !fl31.Bypassed.Contains(StageId.定尺寸),
+                      fl31.Bypassed.Contains(StageId.定尺寸)
+                          ? "★ 改了参数，越关还留着 ⇒ 那道门是靠旧理由开着的" : "");
+                // ★ 「参数一动」要有**一次性**弹窗告知（2026-08-24 用户要求）。
+                //   只验接线与一次性，不验它真的弹出来 —— 本测试从不 Show 窗体，
+                //   而 §4/§6 专门验「不该弹模态框」：真弹出来会把整套测试挂住。
+                //   所以生产代码里那句 `if (!IsHandleCreated || !Visible) return;`
+                //   既是对现实的判断（没显示的窗体上弹框没意义），也是这套测试跑得完的前提。
+                {
+                    string ldpW = File.ReadAllText(Path.Combine(RepoRoot(), "Pt_Optimize", "UI", "LineDesignPage.cs"));
+                    Check("有「参数一动」的一次性告知", ldpW.Contains("WarnParamsRestartOnce", StringComparison.Ordinal));
+                    Check("它是一次性的（有开关且先判开关）",
+                          ldpW.Contains("if (_paramWarnShown) return;", StringComparison.Ordinal));
+                    Check("窗体没显示时不弹（否则接线测试会被模态框挂死）",
+                          ldpW.Contains("if (!IsHandleCreated || !Visible) return;", StringComparison.Ordinal));
+                    // 两条改参数的路都要接上：页面控件 与 左侧参数表
+                    int n = CountOf(ldpW, "WarnParamsRestartOnce(");
+                    Check("页面控件与参数表两条路都接了（含定义共 3 处）", n >= 3, $"{n} 处");
+                }
+
+                Check("判据表**没有**被清空（数字留给人对照改前改后）",
+                      fl31.Last is not null,
+                      "作废的是「已经过了」这个凭据，不是数字本身");
             }
         }
 
