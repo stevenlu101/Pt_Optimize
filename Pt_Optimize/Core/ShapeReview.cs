@@ -67,8 +67,14 @@ public static class ShapeReview
         // 一、先决条件：能不能造、能不能用
         // ───────────────────────────────────────────────────────────
         sb.AppendLine("一、能不能造、能不能用（**先决条件；不过这一关就不谈省铂**）");
+        // ⚠ 「哪些硬安全线没过」只有一个来源：LineResult.HardBlocked。
+        //   这里原来是**第二份实现**（`hard.Where(!Ok || Undetermined)`），规则虽然写对了，
+        //   但它在**空集上放行** —— 判据表若整条没有硬安全线，blocked 为空 ⇒ 打印
+        //   「✓ 能造、能用」。缺席被读成了通过，正是铁律三点名的形态。
+        //   现在缺席由 r.MissingChecks 独立报出，通过与否只问 r.HardOk。
         var hard = r.Checks.Where(c => c.Kind == CheckKind.HardSafety).ToArray();
-        var blocked = hard.Where(c => !c.Ok || c.Undetermined).ToArray();
+        var blocked = r.HardBlocked;
+        var missing = r.MissingChecks;
         // 实测与限值原来挤在一格里写成「12.34 / 20.00」，是补空格年代的将就：
         // 一格一个数才能各自按列右对齐，扫一眼就知道离限值还有多远。
         foreach (var c in hard)
@@ -80,6 +86,14 @@ public static class ShapeReview
         sb.AppendLine($"　 · 板厚 vs 工艺下界 {floorD:0.00} mm（max(焊接屈曲, 烧穿)）：" +
                       $"最薄 {d.TabThickMm.Min():0.00} mm" + (atWeldFloor ? " ← **已贴住**" : ""));
 
+        if (missing.Length > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"✗ **判据表不完整** —— 该出现却整条没出现：{string.Join("、", missing)}");
+            sb.AppendLine("　⇒ **不要把缺席读成通过。** 这一关根本没被检查过，"
+                        + "在补齐之前这个形状的好坏无从谈起。");
+            return sb.ToString();
+        }
         if (blocked.Length > 0)
         {
             sb.AppendLine();

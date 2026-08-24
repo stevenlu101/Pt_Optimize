@@ -1579,10 +1579,26 @@ class UiWiringTests {
 
             // 造一个「收敛、全过、新鲜」的解
             var snap = new object();
-            LineResult Mk(bool conv, params ConstraintOut[] cs) => new()
-            { Ok = true, Converged = conv, Checks = cs };
             ConstraintOut C2(string name, bool ok, CheckKind k = CheckKind.Target) =>
                 new() { Name = name, Ok = ok, Kind = k, Actual = ok ? 1 : 9, Limit = 5 };
+
+            // ⚠ 夹具必须造**完整**的判据表（2026-08-24）。
+            //   原来写成 `Mk(true, 一条通过的③)` 就期待 AllOk —— 那在真机上不可能发生：
+            //   真解出来的表必定含 LineResult.Required 的全部 7 条。
+            //   「判据缺席」机制上线后这条夹具当场红，**它红得对**：
+            //   一张少了 6 条硬安全线的表本来就不该自称「全过」。
+            //   ⇒ 先铺一张「该有的都有、条条通过」的底表，再让传进来的覆盖同前缀那一条。
+            //     底表跟着 Required 走，将来加判据不必回来改这里。
+            LineResult Mk(bool conv, params ConstraintOut[] cs) => new()
+            {
+                Ok = true,
+                Converged = conv,
+                RampChecked = true,
+                Checks = LineResult.Required
+                    .Where(q => cs.All(c => !c.Name.StartsWith(q.Prefix, StringComparison.Ordinal)))
+                    .Select(q => C2(q.Prefix + " 底表", true, q.Kind))
+                    .Concat(cs).ToArray()
+            };
 
             st.Last = Mk(false, C2("③ 法兰增量温降 ≤ 上限", true));
             st.SolvedSnap = snap; st.CurrentSnap = snap;
@@ -1861,6 +1877,32 @@ class UiWiringTests {
                 Console.WriteLine("  …（真解一次，约 1–2 分钟）");
                 var r31 = LineRunner.Run(lc31);
                 Check("解得出且收敛", r31.Ok && r31.Converged, r31.Message);
+
+                // ── ⓪ 判据缺席（2026-08-24 补）。
+                //    铁律三：判据只能过 / 不过 / **无法判定**，绝不允许消失。
+                //    此前它的执行方式是「每条判据自己记得写 else」，三次踩坑三次就地补
+                //    （③ 08-15、⑤ 08-17、②″ 08-24 才发现）。现在 LineResult.Required
+                //    把「该有哪几条」变成一份数据 —— 本节验它在**真解**上确实成立。
+                //    纯逻辑（拿掉一条 ⇒ AllOk 变 false）在 RequiredChecksTests，这里只验真解。
+                Check("必备判据名单不是空的（自证：空名单会让下一条恒真）",
+                      LineResult.Required.Length >= 7, $"{LineResult.Required.Length} 条");
+                Check("这次真解评了升温 ①（否则 ① 属合法缺席，本节覆盖会弱一档）", r31.RampChecked);
+                Check("真解的判据表里必备判据一条不缺", r31.MissingChecks.Length == 0,
+                      r31.MissingChecks.Length == 0
+                        ? $"{LineResult.Required.Length} 条全在"
+                        : "★ 缺席：" + string.Join("、", r31.MissingChecks));
+                {
+                    // 自证：抽掉一条就必须被抓到。没有这条，上面那句在「机制失效」时也会绿。
+                    var kept31 = r31.Checks;
+                    r31.Checks = kept31.Where(c => !c.Name.StartsWith(
+                        LineResult.Key.DiscTemp, StringComparison.Ordinal)).ToArray();
+                    Check("抽掉 ②″ 之后当场报缺席、且不再全过（自证）",
+                          r31.MissingChecks.Contains(LineResult.Key.DiscTemp) && !r31.AllOk,
+                          $"缺席 [{string.Join("、", r31.MissingChecks)}]　AllOk={r31.AllOk}");
+                    r31.Checks = kept31;
+                    Check("还原后又是齐的（别把后面几节的表毁了）",
+                          r31.MissingChecks.Length == 0 && r31.Checks.Length == kept31.Length);
+                }
 
                 // 把它渲染到界面上 —— 下面读的全是**渲染后**的格子，不是 r31 里的字段
                 page.GetType().GetMethod("Show", BindingFlags.NonPublic | BindingFlags.Instance,

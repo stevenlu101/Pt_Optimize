@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -19,18 +19,61 @@ namespace PtOptimize.Tests;
 /// </summary>
 public class HandoverGateCountTests
 {
-    /// <summary>从测试程序集反射数出运行器会报的用例数：[Fact] 一条，[Theory] 按 [InlineData] 行数。</summary>
+    /// <summary>
+    /// 从测试程序集反射数出运行器会报的用例数：[Fact] 一条，[Theory] 按数据行数。
+    ///
+    /// ⚠ 2026-08-24 修：原来只数 [InlineData]，于是 **[MemberData] 理论一律记 0**。
+    ///   加了两个 MemberData 理论（各 7 行）之后，这里数出 94 而真跑是 108 ——
+    ///   差的正是 14 行。**它没报错，只是少数了**：假如反过来（先改文档再补测试），
+    ///   两个错数还会互相印证。这就是本项目说的「安静失败」在**门自己身上**的样子。
+    ///   ⇒ 既补上 MemberData，也加一条「数不出行数的 Theory 一律炸」，
+    ///     免得下一种数据来源（ClassData、自定义 DataAttribute）重演同一出。
+    /// </summary>
     private static int ActualCaseCount()
     {
         int n = 0;
         foreach (var t in Assembly.GetExecutingAssembly().GetTypes())
             foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
             {
-                if (m.GetCustomAttributes().Any(a => a.GetType().Name == "FactAttribute")) n++;
-                else if (m.GetCustomAttributes().Any(a => a.GetType().Name == "TheoryAttribute"))
-                    n += m.GetCustomAttributes().Count(a => a.GetType().Name == "InlineDataAttribute");
+                var attrs = m.GetCustomAttributes().ToArray();
+                if (attrs.Any(a => a.GetType().Name == "FactAttribute")) { n++; continue; }
+                if (!attrs.Any(a => a.GetType().Name == "TheoryAttribute")) continue;
+
+                int rows = attrs.Count(a => a.GetType().Name == "InlineDataAttribute");
+                foreach (var a in attrs.Where(a => a.GetType().Name == "MemberDataAttribute"))
+                    rows += MemberRowCount(t, a);
+
+                Assert.True(rows > 0,
+                    $"{t.Name}.{m.Name} 挂着 [Theory] 却一行数据都数不出来 —— "
+                    + "多半是用了本方法还不认得的数据来源（ClassData / 自定义 DataAttribute）。"
+                    + "记 0 会让总数**悄悄少算**，而少算的方向恰好是「文档看起来还对」。");
+                n += rows;
             }
         return n;
+    }
+
+    /// <summary>数出一个 [MemberData(...)] 指向的静态成员会产出几行。</summary>
+    private static int MemberRowCount(Type declaring, Attribute a)
+    {
+        var at = a.GetType();
+        string name = (string)(at.GetProperty("MemberName")?.GetValue(a)
+                               ?? throw new InvalidOperationException("MemberData 上读不到 MemberName"));
+        var owner = at.GetProperty("MemberType")?.GetValue(a) as Type ?? declaring;
+        const BindingFlags F = BindingFlags.Public | BindingFlags.NonPublic
+                             | BindingFlags.Static | BindingFlags.FlattenHierarchy;
+
+        object? raw = owner.GetProperty(name, F)?.GetValue(null)
+                   ?? owner.GetMethod(name, F)?.Invoke(null, null)
+                   ?? owner.GetField(name, F)?.GetValue(null);
+
+        if (raw is not System.Collections.IEnumerable e)
+            throw new InvalidOperationException(
+                $"[MemberData(「{name}」)] 在 {owner.Name} 上找不到可枚举的静态成员 —— "
+                + "数不出来就不许当成 0 行");
+
+        int k = 0;
+        foreach (var _ in e) k++;
+        return k;
     }
 
     private static string FindHandover()

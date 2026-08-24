@@ -467,9 +467,53 @@ public sealed class LineResult
     /// <summary>某条判据的实测值（找不到则 NaN）</summary>
     public double ValueOf(string keyPrefix) => Find(keyPrefix)?.Actual ?? double.NaN;
 
-    /// <summary>全部**硬安全线**是否通过（**无法判定 ≠ 通过**）</summary>
-    public bool HardOk => Checks.Where(c => c.Kind == CheckKind.HardSafety)
-                                .All(c => c.Ok && !c.Undetermined);
+    /// <summary>本次是否评了升温 ①（<c>LineCase.CheckRamp</c>）。定尺寸内循环故意关掉它省时间，
+    /// 复核那一次必定打开（见 Sizer 的「全判据复核（含升温 ①）」）。</summary>
+    public bool RampChecked;
+
+    /// <summary>
+    /// **这张表必须有哪几条** —— 「判据缺席」的唯一防线（2026-08-24 补）。
+    ///
+    /// 为什么需要它：铁律三写着「判据只能过 / 不过 / **无法判定**，绝不允许消失」，
+    /// 但此前它的执行方式是**每条判据自己记得写 else 分支**。实际发生的是：
+    ///   · ③ 2026-08-15 补上 else（基线算不出来时曾整条消失 ⇒ 报「✓ 全过」而增量降 +32）
+    ///   · ⑤ 2026-08-17 补上 else（.3dm 模式下 FlangePlates 为空，同一个形态换个判据）
+    ///   · ②″ **一直没补** —— 所有片的 TDiscMaxC 都是 NaN 时（一格都没判进圆盘区，
+    ///     见 ShellThermal 的 `IsNegativeInfinity(tDMax) ? NaN`）整条消失，至 2026-08-24 才发现。
+    /// 三次都是「就地补一个 else」，于是第四次一定还会发生。**注释不会跑，名单会。**
+    ///
+    /// ⚠ 只列**判定用**的（HardSafety / Target）。参考量按定义不参与 AllOk，缺了不影响判定，
+    ///   硬要它们在场反而会把「参考量算不出来」误判成「设计不合格」。
+    /// </summary>
+    public static readonly (string Prefix, CheckKind Kind, bool NeedsRamp)[] Required =
+    {
+        (Key.Ramp,      CheckKind.HardSafety, true),   // CheckRamp=false 时**合法缺席**
+        (Key.NetFlux,   CheckKind.HardSafety, false),
+        (Key.DiscTemp,  CheckKind.HardSafety, false),
+        (Key.FreeTab,   CheckKind.HardSafety, false),
+        (Key.DiscCover, CheckKind.HardSafety, false),
+        (Key.TubeJ,     CheckKind.HardSafety, false),
+        (Key.FlangeDip, CheckKind.Target,     false),
+    };
+
+    /// <summary>该出现却没出现的判据。**缺席 ≠ 通过。**</summary>
+    public string[] MissingChecks => Required
+        .Where(q => (!q.NeedsRamp || RampChecked) && Find(q.Prefix) is null)
+        .Select(q => q.Prefix).ToArray();
+
+    /// <summary>没过的**硬安全线**（含无法判定）。要这份名单就用它，不要另行过滤 Checks。</summary>
+    public ConstraintOut[] HardBlocked => Checks
+        .Where(c => c.Kind == CheckKind.HardSafety && (!c.Ok || c.Undetermined)).ToArray();
+
+    /// <summary>
+    /// 全部**硬安全线**是否通过（**无法判定 ≠ 通过**，**缺席 ≠ 通过**）。
+    ///
+    /// ⚠ 原来写成 `Checks.Where(硬).All(过)` —— 空集上 `All` **恒真**，
+    ///   于是一张空判据表会报「硬安全线全过」。加 MissingHard 之后这条路堵死了。
+    /// </summary>
+    public bool HardOk => !Required.Any(q => q.Kind == CheckKind.HardSafety
+                                          && (!q.NeedsRamp || RampChecked) && Find(q.Prefix) is null)
+                       && HardBlocked.Length == 0;
 
     /// <summary>
     /// 硬安全线 + 设计目标是否全部通过 —— **可交付的唯一判定**。
@@ -481,7 +525,9 @@ public sealed class LineResult
     /// 这是「安静地给出可信外观的错误结果」家族的第五个成员
     /// （前四：两端抽热取平均、C2 只判左端、段间无导热、判据整条消失）。
     /// </summary>
-    public bool AllOk => Converged && Checks
+    /// ⚠ `MissingChecks.Length == 0` 是**第六个成员**的解药：判据整条消失时，
+    /// 下面那个 `All` 只在**剩下的**判据上取全称量词 —— 缺的那条不投反对票。
+    public bool AllOk => Converged && MissingChecks.Length == 0 && Checks
         .Where(c => c.Kind is CheckKind.HardSafety or CheckKind.Target)
         .All(c => c.Ok && !c.Undetermined);
 
@@ -490,7 +536,11 @@ public sealed class LineResult
         .Where(c => c.Kind is CheckKind.HardSafety or CheckKind.Target && (!c.Ok || c.Undetermined))
         .Select(c => c.Undetermined
                    ? $"{c.Name} **无法判定**"
-                   : $"{c.Name} {c.Actual:0.0}/{c.Limit:0.0}").ToArray();
+                   : $"{c.Name} {c.Actual:0.0}/{c.Limit:0.0}")
+        // 缺席的也要报出来 —— 否则 AllOk 为 false 而 Failed 是空的，
+        // 界面上就是「✗」后面什么都不写，比不报还难查。
+        .Concat(MissingChecks.Select(k => $"{k} **判据缺席**（该出现却整条没出现）"))
+        .ToArray();
 }
 
 /// <summary>
@@ -939,7 +989,7 @@ public static class LineRunner
                                       (double L, double R)[]? nbT = null,
                                       (double A, double B)[]? baseline = null)
     {
-        var res = new LineResult { BaselineMassG = c.BaselineMassG };
+        var res = new LineResult { BaselineMassG = c.BaselineMassG, RampChecked = c.CheckRamp };
         int n = c.SegmentCount, nf = c.FlangeCount;
         if (n < 1) { res.Ok = false; res.Message = "段数不能为 0"; return res; }
         if (c.UseMeasuredCurrent && c.MeasuredCurrentA.Length < n)
@@ -1258,6 +1308,11 @@ public static class LineRunner
                         (rr.Reached ? rr.HoursToTarget > worst.HoursToTarget : rr.TPeakC < worst.TPeakC));
                 if (worse) { worst = rr; where = segs[i].Name; }
             }
+            // ⚠ 这里**故意不写 else**：n < 1 在 RunOnce 入口就被挡掉（「段数不能为 0」），
+            //   所以 n >= 1 ⇒ 循环至少跑一轮 ⇒ worst 必非 null。写个 else 就是一段
+            //   永远跑不到、也永远没被验过的代码，而「死代码里的错答案」正是本项目的病灶之一。
+            //   万一将来这个前提被改掉：兜底的是 LineResult.Required —— CheckRamp 为真时
+            //   ① 在必备名单里，缺了 AllOk 直接为 false 并在 Failed 里报「判据缺席」。
             if (worst is not null)
                 checks.Add(new ConstraintOut
                 {
@@ -1321,6 +1376,13 @@ public static class LineRunner
         // 拿它跟管根比是在比两个不相干的位置。真正决定「热往不往管里灌」的是圆盘区。
         // **但 ② 不能因此删掉**：舌片跑多热本身仍要盯（熔点、局部失稳），
         // 而且一旦哪天圆盘重新成为峰值所在，② 与 ②″ 会自动重合。两条都报，谁不过都要交代。
+        // ⚠⚠ **判据绝不允许消失**（2026-08-24 补 else；③ 2026-08-15 补过、⑤ 2026-08-17 补过，
+        //    ②″ 是同一个形态的第三次，一直漏到今天）。
+        //    TDiscMaxC 在「一格都没被判进圆盘区」时是 NaN（ShellThermal:
+        //    `IsNegativeInfinity(tDMax) ? NaN`）。所有片都这样 ⇒ hottestDisc 为 null
+        //    ⇒ 原来整条判据不出现 ⇒ AllOk 少判一条硬安全线还报「全过」。
+        //    现在补 else 报「无法判定」，并且 LineResult.Required 会**独立地**再兜一次底 ——
+        //    两道是有意重复的：else 给得出原因，名单保证下一条新判据漏写 else 时也不会溜过去。
         var hottestDisc = flanges.Where(f => !double.IsNaN(f.TDiscMaxC))
                                  .OrderByDescending(f => f.TDiscMaxC - f.TRootC).FirstOrDefault();
         if (hottestDisc is not null)
@@ -1342,6 +1404,16 @@ public static class LineRunner
                        $"管孔净流入 {hottestDisc.QFromTubeW:+0;-0} W" +
                        (hottestDisc.TDiscMaxC - hottestDisc.TRootC > c.DiscOverTempMaxK
                         ? NextAction.DiscHot : "")
+            });
+        else
+            checks.Add(new ConstraintOut
+            {
+                Name = "②″圆盘区最高温 − 管温", Unit = "K", Kind = CheckKind.HardSafety,
+                Actual = double.NaN, Limit = c.DiscOverTempMaxK, Ok = false,
+                Undetermined = true, Where = "—",
+                Note = "★ **无法判定**：没有任何一片算出圆盘区温度（每一片的网格里都没有" +
+                       "落在圆盘区的单元）。**不要把它读成通过** —— 这一关没被检查过。" +
+                       "常见成因：几何来自 .3dm 厚度场而盘/舌分区认不出来，或盘半径 ≤ 孔半径。"
             });
 
         // ── ②′ 同一条安全线的管侧视角：**热不能往管子里灌**
