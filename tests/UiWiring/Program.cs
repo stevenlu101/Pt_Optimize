@@ -77,6 +77,8 @@ class UiWiringTests {
         // `--walk`：①→⑤ 全程走通并逐步核对（用户 2026-08-21）。
         // 与接线测试分开跑：那个验「接线对不对」，这个验「整条流程跑得完、数对不对」。
         if (args.Contains("--walk")) { Environment.ExitCode = Walk.Run(); return; }
+        // `--follow`：完全照链路提示走一遍（用户 2026-08-25 验收）
+        if (args.Contains("--follow")) { Environment.ExitCode = Walk.Follow(); return; }
         if (args.Contains("--tabins0")) { Environment.ExitCode = Walk.TabIns0(); return; }
         int ie = Array.IndexOf(args, "--export3dm");
         if (ie >= 0 && ie + 1 < args.Length)

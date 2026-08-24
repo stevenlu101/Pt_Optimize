@@ -934,4 +934,179 @@ static class Walk
         Console.WriteLine(_bad == 0 ? "★ 全程走通，逐步核对无误" : $"✗ {_bad} 项不对");
         return _bad;
     }
+
+    // ════════════════════════════════════════════════════════════════════
+    //  `UiWiring.exe --follow`
+    //
+    //  **完全照着链路提示走一遍**（用户 2026-08-25 验收要求）：
+    //  每一步先问 `Flow.Next`「现在该点哪个」，然后就点它，直到它指向出图。
+    //
+    //  与 `--walk` 的分工：
+    //    · `--walk` 照**写死的顺序** ①→⑤ 走，验的是「每一步算得对不对」。
+    //    · `--follow` 由**提示本身**决定走哪，验的是「跟着提示走，走不走得到交付」。
+    //      提示要是指到点不了的按钮、原地打转、或者漏掉必经步骤，跟着走的人一定撞上。
+    //      —— 写死顺序的走查器**永远发现不了这一类**：它根本没在读提示。
+    // ════════════════════════════════════════════════════════════════════
+    public static int Follow()
+    {
+        Console.OutputEncoding = System.Text.Encoding.UTF8;
+        Application.EnableVisualStyles();
+
+        var main = new MainForm();
+        main.CreateControl();
+        var tabs = (TabControl)F(main, "_tabs")!;
+        var line = tabs.TabPages.OfType<LineDesignPage>().First();
+        var flow = (FlowState)F(main, "_flow")!;
+        typeof(Form).GetMethod("OnLoad", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(main, new object?[] { EventArgs.Empty });
+        Pump(1200);
+        void Force(Control c) { _ = c.Handle; foreach (Control k in c.Controls) Force(k); }
+        Force(main); Pump(300);
+
+        bool App(string id) => (bool)typeof(LineDesignPage).GetMethod("CommandApplicable",
+            BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public)!
+            .Invoke(line, new object[] { id })!;
+
+        H("从**开箱默认**出发，完全照链路提示走");
+        Console.WriteLine("  规则：每一步只问「提示说该点哪个」，然后就点它。不看攻略、不抄近路。");
+
+        var hist = new List<string>();
+        string lastId = "";
+        int repeat = 0;
+
+        for (int step = 1; step <= 12; step++)
+        {
+            var ns = Flow.Next(flow, App);
+            Console.WriteLine();
+            Console.WriteLine($"──── 第 {step} 步 ────");
+
+            if (ns is null)
+            {
+                OK($"第 {step} 步：提示给得出下一步", false,
+                   flow.Running is not null ? "★ 提示说「正在算」——但这一步不该在算"
+                                            : "★ 提示是空的：跟着走的人到这里就断了");
+                break;
+            }
+
+            Console.WriteLine($"  提示原文：{ns.Why}");
+            Console.WriteLine($"  它指向　：{(ns.CmdId.Length == 0 ? "（不指按钮，只给说明）" : ns.CmdId)}");
+
+            if (ns.CmdId.Length == 0)
+            {
+                OK($"第 {step} 步：提示指得出按钮", false,
+                   "★ 只给说明不指按钮 —— 跟着走的人不知道下一步点哪");
+                break;
+            }
+
+            // ── 坑 ①：它指的按钮，此刻真的能点吗
+            var spec = Flow.Commands.FirstOrDefault(c => c.Id == ns.CmdId);
+            OK($"第 {step} 步：「{ns.CmdId}」这个命令真实存在", spec is not null);
+            if (spec is null) break;
+            var blk = Gate.Blocks(spec, flow, App);
+            string blkWhy = blk switch
+            {
+                Gate.Block.Busy => "有链在跑（提示不该在这时候指命令）",
+                Gate.Block.NotApplicable => "当前几何来源下这个命令不适用",
+                Gate.Block.Gate => "阶段门禁没开",
+                _ => "",
+            };
+            OK($"第 {step} 步：它指的按钮此刻点得动", blk == Gate.Block.None,
+               blk == Gate.Block.None ? "" : $"★ 被拦：{blkWhy}　——**提示指了一个点不动的按钮**");
+            if (blk != Gate.Block.None) break;
+
+            // ── 坑 ②：提示原地打转
+            repeat = ns.CmdId == lastId ? repeat + 1 : 0;
+            lastId = ns.CmdId;
+            hist.Add(ns.CmdId);
+            OK($"第 {step} 步：提示没有原地打转", repeat < 2,
+               repeat < 2 ? "" : $"★「{ns.CmdId}」连指 {repeat + 1} 次，跟着走会死循环");
+            if (repeat >= 2) break;
+
+            // ── 坑 ③：**蓝色索引**（点那一行会切页签 + 闪按钮）指得到东西吗
+            //
+            //   蓝键与提示文字读的是**同一个** Flow.Next ⇒ 目标一致，这半没问题。
+            //   但索引的另一半是 MainForm 的 NextStepRequested：
+            //     · 按 spec.Stage 找页签（_stageOf 里没有 ⇒ **不切页，静默**）
+            //     · FlashCommand(spec.Text) 按**显示文字精确匹配**找按钮
+            //       （找不到就 `return` ⇒ **带你切了页却什么都不闪**，站在那页上不知道点哪）
+            //   两条都是静默失败，界面上看不出来 —— 所以必须在这里验。
+            {
+                var stageOf = (System.Collections.IDictionary)F(main, "_stageOf")!;
+                bool hasTab = false;
+                foreach (System.Collections.DictionaryEntry e in stageOf)
+                    if (e.Value is StageId sid && sid == spec.Stage) hasTab = true;
+                OK($"第 {step} 步：蓝键切得到「{spec.Stage}」那一页", hasTab,
+                    hasTab ? "" : "★ _stageOf 里没有这个阶段 ⇒ 点蓝键不切页，且不报错");
+
+                var found = new List<string>();
+                foreach (TabPage tp in tabs.TabPages)
+                    foreach (var ts in tp.Controls.OfType<ToolStrip>())
+                        foreach (var b in ts.Items.OfType<ToolStripButton>())
+                            if (b.Text == spec.Text) found.Add(tp.Text);
+                OK($"第 {step} 步：蓝键闪得到「{spec.Text}」这个按钮", found.Count > 0,
+                    found.Count > 0 ? "在：" + string.Join("、", found)
+                                    : "★ 全窗口没有一个按钮的文字等于它 ⇒ FlashCommand 静默 return");
+            }
+
+
+            // ── 到终点了？
+            if (ns.CmdId is "export.page3dm" or "final.export3dm")
+            {
+                Console.WriteLine();
+                Console.WriteLine($"  ★ 提示指向出图 —— **跟着提示走，{step - 1} 步走到了交付**。");
+                Console.WriteLine($"     路径：{string.Join(" → ", hist)}");
+                Console.WriteLine("     （本走查不真写档，到此为止）");
+                DumpChecks(line, "交付前最终判据表");
+                return _bad;
+            }
+
+            // ── 点它
+            Console.WriteLine($"  ⇒ 点「{spec.Text}」…");
+            switch (ns.CmdId)
+            {
+                case "core.runLine":
+                    Call(line, "RunAsync", false, false);
+                    if (!Wait(() => F(line, "_cts") is null && F(line, "LastResult") is not null, 900_000))
+                    { OK("整线解在预算内跑完", false, "★ 超时"); return _bad; }
+                    break;
+                case "core.autoThick":
+                    Call(line, "RunAsync", true, false);
+                    if (!Wait(() => F(line, "_cts") is null, 1_800_000))
+                    { OK("自动定厚在预算内跑完", false, "★ 超时"); return _bad; }
+                    break;
+                case "shape.search":
+                    Console.WriteLine("     ⚠ 提示指向「◇ 搜形状」——**几十分钟**，本走查不跑。");
+                    Console.WriteLine("        这本身是一条结论：开箱默认走到这里就需要改几何，");
+                    Console.WriteLine("        而提示确实把人指到了对的那个按钮（厚度救不了几何判据）。");
+                    DumpChecks(line, "停在这一步时的判据表");
+                    return _bad;
+                default:
+                    OK($"第 {step} 步：本走查认得「{ns.CmdId}」怎么点", false,
+                       "★ 走查器没实作这个命令 —— 不是 APP 的错，是本走查覆盖不到");
+                    return _bad;
+            }
+
+            Pump(300);
+            DumpChecks(line, $"第 {step} 步之后的判据表");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine(_bad == 0 ? "★ 链路提示走查通过" : $"✗ 链路提示走查：{_bad} 项不过");
+        return _bad;
+    }
+
+    /// <summary>把当前判据表原样抓下来 —— 复核数据用的就是工程师看到的那张表。</summary>
+    static void DumpChecks(LineDesignPage line, string title)
+    {
+        var r = F(line, "LastResult") as LineResult;
+        if (r is null) { Console.WriteLine($"  （{title}：还没有解）"); return; }
+        Console.WriteLine($"  {title}　收敛 {(r.Converged ? "✓" : "✗")}　"
+                        + $"全判据 {(r.AllOk ? "✓" : "✗")}　总铂 {r.TotalMassG:0} g");
+        foreach (var c in r.Checks.Where(c => c.Kind != CheckKind.Reference))
+            Console.WriteLine($"     {(c.Undetermined ? "?" : c.Ok ? "✓" : "✗")} {c.Name,-26}"
+                            + $"{(double.IsNaN(c.Actual) ? "判不了" : c.Actual.ToString("0.00")),10}"
+                            + $" / {c.Limit,-8:0.00} {c.Where}");
+        if (r.MissingChecks.Length > 0)
+            OK("判据表完整", false, "★ 缺席：" + string.Join("、", r.MissingChecks));
+    }
 }

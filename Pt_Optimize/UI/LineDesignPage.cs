@@ -130,7 +130,25 @@ public sealed class LineDesignPage : TabPage
     {
         public double Wall, Plate, TubeIns;
         public double Disc, TabLen, TabW;
+        // ★ 定尺寸器带回来的另外两个旋钮（2026-08-25）。**必须进快照** ——
+        //   它们参与判据（舌保温是守 ②′/③ 的主力），却没有页面控件；
+        //   不进快照就会「换了旋钮而 Fresh 不变」= 假新鲜。
+        public double SizerTabIns, SizerRingMul;
     }
+
+    /// <summary>
+    /// 定尺寸器（D8）解出来的**舌保温**与**环倍率**。null = 尚未定尺寸，用定案值。
+    ///
+    /// ★★★★★ 为什么必须由本页承载（2026-08-25 `--follow` 走查逼出来的）：
+    ///   D8 用**三个**旋钮找可行解（板厚 / 舌保温 / 环倍率），而本页原先只承载板厚。
+    ///   于是「定尺寸 → 回 ③ 重解」这条路**必然退回失败**：重解时另外两个被丢回定案值，
+    ///   ②′ 立刻掉负 ⇒ 提示又指回定尺寸 ⇒ **两步一循环，永远走不到交付**。
+    ///   实测：定尺寸后 3569 g 全过 → 重解 ②′ = −9.32 不过 → 再定尺寸 3565 g 全过 → …
+    ///
+    ///   ⚠ 它们没有控件，所以**必须在输出里印出来**（本项目规矩：
+    ///     「看不见又在起作用的量是安静失败的温床」），并且**必须进 Snap**。
+    /// </summary>
+    private double[]? _sizerTabIns, _sizerRingMul;
 
     private Snap CurrentSnap() => new()
     {
@@ -139,7 +157,9 @@ public sealed class LineDesignPage : TabPage
         TubeIns = (double)_tubeIns.Value,
         Disc = (double)_discD.Value,
         TabLen = (double)_tabLen.Value,
-        TabW = (double)_tabW.Value
+        TabW = (double)_tabW.Value,
+        SizerTabIns = (_sizerTabIns ?? FinalDesign.Current.TabInsulMm).Average(),
+        SizerRingMul = (_sizerRingMul ?? FinalDesign.Current.RingMul).Average()
     };
     private readonly ToolStripComboBox _caseBox =
         new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = UiScale.S(210) };
@@ -1603,7 +1623,11 @@ public sealed class LineDesignPage : TabPage
     /// ⇒ 改调 D8（<see cref="Sizer"/>）：舌保温守抽热窗口、环倍率守 ②″、板厚只做接力与省铂。
     ///
     /// ⚠ D8 工作在**定案那套完整几何**上（逐片舌保温、渐变环、等宽舌片、舌根圆角、角焊缝），
-    ///   而本页控件表达不了其中几项（见 <see cref="PageVsFinal"/>）。
+    ///   而本页**没有这几项的控件**（见 <see cref="PageVsFinal"/>）。
+    ///   ⚠ 2026-08-25 起：没有控件不等于本页不承载它们 ——
+    ///     定尺寸算完会把舌保温与环倍率存进 <see cref="_sizerTabIns"/> / <see cref="_sizerRingMul"/>，
+    ///     后续 PageToFinalDesign 会带上 ⇒ 「回 ③ 重解」复现的是同一个设计。
+    ///     在那之前只带板厚回来，于是重解必然退回失败，指路与定尺寸两步死循环。
     ///   所以这里**明说**：自动定厚解的是完整构型，不是本页那片简化法兰。
     ///   与其让两套几何各解各的（那是「同一个数存两处」的老毛病），不如统一到 FinalDesign 这一套。
     /// </summary>
@@ -1621,6 +1645,10 @@ public sealed class LineDesignPage : TabPage
         d.TabHalfWidthMm = (double)_tabW.Value;
         d.ClampTempC = (double)_clamp.Value;
         d.ClampLengthMm = seed.ClampLengthMm;          // 本页无控件，取定案值（已在输出里注明）
+        // ★ 定尺寸器带回来的两个旋钮：有就用它的，没有才用定案值。
+        //   少了这两行，「定尺寸 → 重解」会把 D8 的解丢掉一大半（见 _sizerTabIns 的注释）。
+        if (_sizerTabIns is { Length: > 0 }) d.TabInsulMm = (double[])_sizerTabIns.Clone();
+        if (_sizerRingMul is { Length: > 0 }) d.RingMul = (double[])_sizerRingMul.Clone();
         // 圆盘保温：本页**有**控件，接过去（BuildCase 里原来写死 20，已改成读字段）
         d.FlangeInsulated = _flIns.SelectedIndex != 0;
         d.FlangeInsulMm = d.FlangeInsulated ? (double)_flInsT.Value : 0;
@@ -1933,6 +1961,21 @@ public sealed class LineDesignPage : TabPage
                         _tPlate[i].Value = (decimal)Math.Clamp(r.ThicknessMm[i], 0.1, 8.0);
                     _suppressAuto = false;
                     _last = r.Line;
+                    // ★★★★★ **必须发布到 FlowState**（2026-08-25 `--follow` 走查抓到）。
+                    //
+                    // 此前这两条「自动定厚」分支都只写 `_last` 就走了，**一次 PushFlow 都没有** ⇒
+                    // FlowState 的 Last / CurrentSnap / SolvedSnap **三者全冻在上一次整线解**。
+                    // 后果不是「显示慢一拍」，是三条：
+                    //   ① 链路提示读 flow.Last（旧的、不过的）⇒ 永远说「判据没全过，用自动定厚」
+                    //      ⇒ **跟着提示走的人在自动定厚上死循环，每次几十分钟，永远走不到交付**；
+                    //   ② ④→⑤ 那道 RequireAllOk 的门读的也是旧解 ⇒ 这条路走不到出图；
+                    //   ③ **最危险的一条**：上一次解若是**过的**，而自动定厚把它调坏了，
+                    //      门会**继续开着** —— 假绿灯。
+                    // 本分支（.3dm 逐级定厚）把**所有**厚度都写回了控件 ⇒ 页面状态完整代表这个解
+                    // ⇒ 可以标成「已解且新鲜」。
+                    if (r.Line is { Ok: true, Converged: true })
+                    { _solvedRes = r.Line; _solvedSnap = CurrentSnap(); }
+                    PushFlow();
                     Show(r.Line, autoNote: r.Message + (r.Converged ? "" : "　⚠ 未收敛，下面的数不可引用") +
                         "\r\n   ⚠ 本器**只调板厚**，管不到 ②′ 净流入与 ②″ 圆盘峰 —— 请自行看判据表。" + floorNote);
                 }
@@ -1950,7 +1993,29 @@ public sealed class LineDesignPage : TabPage
                         _tPlate[i].Value = (decimal)Math.Clamp(srD8.Design.TabThickMm[i], 0.1, 8.0);
                     // 舌长可能被装配下界顶高（D8 不动它，但页面上要跟着显示）
                     _suppressAuto = false;
+                    // ★★★★★ **把 D8 的三个旋钮都带回本页**（2026-08-25）。
+                    //   只写板厚是不够的：舌保温与环倍率也是这个解的一部分，
+                    //   丢掉它们再重解，②′ 会掉负 ⇒ 提示指回定尺寸 ⇒ **两步死循环**。
+                    //   实测：定尺寸 3569 g 全过 → 重解 ②′ = −9.32 不过 → 再定尺寸 3565 g 全过 → …
+                    //   带回来之后本页承载的就是 D8 那个**完整设计**，而 ③ 页与 D8 用的是
+                    //   **同一个几何构造器**（UiWiring §16 逐字段钉着）⇒ 重解会复现这张表，路径收得了尾。
+                    _sizerTabIns = (double[])srD8.Design.TabInsulMm.Clone();
+                    _sizerRingMul = (double[])srD8.Design.RingMul.Clone();
                     _last = srD8.Best;
+                    // ★★★★★ 同上：必须发布，否则提示与门禁读的是冻住的旧解（见上一分支的长注释）。
+                    //
+                    // ⚠ 但**不能**像上一分支那样标成「新鲜」：D8 的解含**舌保温**与**环倍率**，
+                    //   而本页**没有这两个控件** ⇒ 页面状态代表不了这个解。
+                    //   标成新鲜就等于宣称「照本页参数出图能得到这张表」——
+                    //   而照本页参数出的是**另一个设计**（少了守 ②′/③ 的主力旋钮）。**那是假绿灯。**
+                    //   ⇒ 只发布 Last（让判据表与提示说真话），不动 _solvedSnap；
+                    //     板厚写回已经改了 CurrentSnap ⇒ Fresh 自然为 false，
+                    //     提示会说「参数在上次求解之后又动过了 —— 回 ③ 重解」，这是实话。
+                    //   —— 上面那段顾虑在**旋钮带回本页之后不再成立**：本页现在承载完整设计，
+                    //     所以可以标成「已解且新鲜」，提示会直接指向出图。
+                    if (srD8.Best is { Ok: true, Converged: true })
+                    { _solvedRes = srD8.Best; _solvedSnap = CurrentSnap(); }
+                    PushFlow();
                     _pendingReview = ShapeReview.Build(srD8.Design, srD8.Best,
                                                        FinalDesign.Current, srD8.Message);
                     Show(srD8.Best, autoNote:
@@ -1959,11 +2024,12 @@ public sealed class LineDesignPage : TabPage
                         $"　舌保温 {FinalDesign.Fmt(srD8.Design.TabInsulMm, "0.0")}" +
                         $"　环倍率 {FinalDesign.Fmt(srD8.Design.RingMul, "0.00")}" +
                         $"　合计 {srD8.MassG:0} g\r\n" +
-                        "   ⚠ **只有板厚写回了本页控件** —— 舌保温与环倍率本页没有控件，\r\n" +
-                        "     但它们是解的一部分（舌保温还是守 ②′/③ 的主力旋钮）。\r\n" +
-                        "     要照这组数出图，请把上面三行抄进 Core/FinalDesign 再走「导出定案 3DM」。\r\n" +
+                        "   ★ 三个旋钮**都已带回本页工作设计**（2026-08-25 起）：\r\n" +
+                        "     板厚写进控件；舌保温与环倍率本页无控件，但已由本页承载并参与后续求解\r\n" +
+                        "     ⇒「回 ③ 重解」会**复现这张表**，不会把它们丢回定案值。\r\n" +
+                        "     （在此之前只带板厚 ⇒ 重解必然退回失败 ⇒ 提示与定尺寸两步死循环。）\r\n" +
                         $"   ⚠ 本次解的是**定案那套完整几何**（含渐变环/角焊缝/等宽舌片/舌根圆角），\r\n" +
-                        $"     不是本页那片简化法兰 —— 压接段取定案值 {seedD8.ClampLengthMm:0} mm。");
+                        $"     ③ 页用的是**同一个几何构造器**（UiWiring §16 逐字段钉着），不是另一片简化法兰；压接段取定案值 {seedD8.ClampLengthMm:0} mm。");
                 }
             }
             else
