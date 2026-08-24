@@ -26,7 +26,7 @@ if [ -z "$CHANGED" ]; then
     exit 0
 fi
 
-echo "── 动到会影响判定的档，跑自检门（约 11 分钟；--no-verify 可跳过）"
+echo "── 动到会影响判定的档，跑自检门（约 7 分钟；--no-verify 可跳过）"
 echo "$CHANGED" | sed 's/^/     /'
 
 ROOT=$(git rev-parse --show-toplevel)
@@ -46,6 +46,11 @@ if ! dotnet build "$ROOT/tests/UiWiring/UiWiring.csproj" -c Release -v q --nolog
     exit 1
 fi
 
+# 四道合计约 7 分钟（2026-08-24 起）：编译 ~30 s + 单元测试 ~15 s
+#   + 界面接线 ~150 s + 自检门 ~225 s。
+#   自检门本来是 8 分钟，把 A/B/C 九次彼此独立的整线解并行预算之后降到 3.7 分钟，
+#   **输出逐字节一致**（判据先立后改）。见 HANDOVER §8。
+#
 # ① 单元测试（约 15 秒）。守的是**纯判断逻辑** ——
 #    裕度符号、接头取厚、趋势判定、外推分档这一类。
 #    ⚠ 这一段是 2026-08-24 才补的：在那之前每条提交讯息都写着「dotnet test NN/NN」，
