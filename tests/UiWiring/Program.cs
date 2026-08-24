@@ -2087,6 +2087,116 @@ class UiWiringTests {
             finally { try { if (File.Exists(tmp)) File.Delete(tmp); } catch { } }
         }
 
+        Head("33 ① 升温快筛：**造好了要接上**，而且门禁真的读它");
+        {
+            // 病灶（2026-08-24）：RampScreen.Judge 在**整个生产路径上一次都没被调用过**
+            //   （只有单测在调），FlowState.RampScreen 这个栏位**一处赋值都没有**。
+            // 于是三处注释都在描述一件没发生的事：
+            //   · Flow.FindCheck 那条「退到闭式快筛」的分支是死的；
+            //   · ① 那一格的门禁注释写着「解锁 ③：几何可造（⑤⑥）+ 升温快筛不判死」，
+            //     而 RequiredChecks 里只有 ⑤⑥；
+            //   · §7 曾把它记成「一条在设计范围内不可能不过的硬判据」——
+            //     实情更糟：它**根本没在跑**。
+            // 本节守三件事：名单里有它、栏位真被填上、门禁真按它开关。
+            var lp33 = tabs.TabPages.OfType<LineDesignPage>().First();
+            var f33 = (FlowState)F(main, "_flow")!;
+
+            // ① 名单：注释说的那三条，RequiredChecks 里必须真有三条
+            var g33 = Flow.Stage(StageId.先决条件).GateToUnlockNext;
+            Check("① 那一格有解锁下一格的门", g33 is not null);
+            Check("门的名单里有「① 升温」（注释说了就得做到）",
+                  g33!.RequiredChecks.Contains(LineResult.Key.Ramp),
+                  string.Join("、", g33.RequiredChecks));
+            Check("⑤⑥ 也还在名单里（别修一条弄丢两条）",
+                  g33.RequiredChecks.Contains(LineResult.Key.FreeTab)
+                  && g33.RequiredChecks.Contains(LineResult.Key.DiscCover));
+
+            // ② 栏位真被填上 —— 这是「造好了没接线」那一族的唯一防线
+            typeof(LineDesignPage).GetMethod("PushFlow",
+                BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(lp33, null);
+            Pump(60);
+            Check("PushFlow 之后 FlowState.RampScreen 不再是 null",
+                  f33.RampScreen is not null,
+                  f33.RampScreen is null ? "★ 仍然没有人给它赋值" : f33.RampScreen.Name);
+            Check("它的名字以 LineResult.Key.Ramp 打头（门禁按前缀找）",
+                  f33.RampScreen?.Name.StartsWith(LineResult.Key.Ramp, StringComparison.Ordinal) == true,
+                  f33.RampScreen?.Name ?? "(null)");
+            Check("它给得出实数裕度，不是 NaN",
+                  f33.RampScreen is { } rs33 && !double.IsNaN(rs33.Actual),
+                  f33.RampScreen is null ? "(null)" : $"{f33.RampScreen.Actual:0.00}（限 {f33.RampScreen.Limit:0.00}）");
+
+            // ③ 门禁真按它开关 —— 两个方向都验，否则上面几条只是「有这么个东西」。
+            //
+            // ⚠⚠ 这里踩到一个更深的东西（2026-08-24，靠本节的自证挖出来）：
+            //   Gate.Evaluate 取的是「Order 比目标小的**最近**那一格」的门。
+            //     先决条件(1) → 粗算(2) → 整线核算(3)
+            //   而 粗算 的 GateToUnlockNext 是 **null**（它自称「末端节点，不解锁任何东西」）
+            //   ⇒ **③ 恒开，没有任何前置闸门**；
+            //   而 先决条件 那道门（⑤⑥ + ①）实际拦的是 **② 粗算**，
+            //   它的 LockedTitle 却写着「③ 整线核算 —— 还没解锁」。**拦错格，还说错话。**
+            //
+            //   ⇒ 本节按**实际**受管的那一格（② 粗算）验开关，并把「③ 恒开」也钉住 ——
+            //     它不是笔误可以随手改的：.3dm 模式下 ⑤⑥ 是「无法判定」，
+            //     而解开它的「分析几何变数」按钮**就在 ③ 页上**
+            //     （见 Flow 里 整线核算 的 CommandIds）⇒ 真拦 ③ 会死锁。
+            //     文案该怎么改、③ 要不要另设前置闸门，是工作流决定，记在 §8 已知缺口。
+            var keepLast = f33.Last; var keepScreen = f33.RampScreen;
+            f33.Last = null;                       // 没有权威解 ⇒ 只能靠快筛
+            var okNow = Gate.Evaluate(StageId.粗算, f33);
+            Check("快筛通过时 ② 开着（自证：否则下一条恒成立）", okNow.Unlocked,
+                  okNow.Unlocked ? "" : "★ " + okNow.Why + " / " + okNow.How);
+            Check("★ 先决条件那道门管的是 ②，不是它文案里说的 ③（③ 恒开）",
+                  Gate.Evaluate(StageId.整线核算, f33).Unlocked
+                  && Flow.Stage(StageId.粗算).GateToUnlockNext is null,
+                  "粗算.GateToUnlockNext = "
+                  + (Flow.Stage(StageId.粗算).GateToUnlockNext is null ? "null" : "有门"));
+
+            f33.RampScreen = new ConstraintOut
+            {
+                Name = LineResult.Key.Ramp + " 可达性（快筛）", Unit = "—",
+                Kind = CheckKind.HardSafety, Actual = 0.5, Limit = 1.0,
+                LessIsBetter = false, Ok = false, Where = "注入",
+            };
+            var blocked33 = Gate.Evaluate(StageId.粗算, f33);
+            Check("快筛判死时 ② 被拦住", !blocked33.Unlocked,
+                  blocked33.Unlocked ? "★ 名单里有它，门却不读它" : blocked33.How);
+            Check("拦住时指得出是哪一条", blocked33.Blocking?.Name.StartsWith(
+                      LineResult.Key.Ramp, StringComparison.Ordinal) == true,
+                  blocked33.Blocking?.Name ?? "(没说是哪条)");
+
+            // ④ 权威优先：③ 解出来之后，Judge 的 ① 必须盖过快筛的 ①
+            f33.Last = new LineResult
+            {
+                Ok = true, Converged = true, RampChecked = true,
+                Checks = LineResult.Required
+                    .Select(q => new ConstraintOut
+                    {
+                        Name = q.Prefix + " 权威", Kind = q.Kind,
+                        Ok = true, Actual = 1, Limit = 2,
+                    }).ToArray(),
+            };
+            var authoritative = Gate.Evaluate(StageId.粗算, f33);
+            Check("有权威解时，Judge 的 ① 盖过快筛的 ①（快筛不是绕过权威的通行证）",
+                  authoritative.Unlocked,
+                  authoritative.Unlocked ? "" : "★ " + authoritative.How);
+
+            // ⑤ 文案必须说的是它**真的**拦的那一格。
+            //   改文案这件事只有断言盯着才不会再漂 —— 上一次漂了两年没人对。
+            Check("锁住时的标题说的是 ②（它真拦的那一格），不是 ③",
+                  g33.LockedTitle.Contains("②", StringComparison.Ordinal)
+                  && !g33.LockedTitle.Contains("③", StringComparison.Ordinal),
+                  g33.LockedTitle);
+            Check("锁住时的说明讲清了「③ 仍然进得去」（否则人会以为被拦死了）",
+                  g33.LockedWhy.Contains("③", StringComparison.Ordinal)
+                  && g33.LockedWhy.Contains("进得去", StringComparison.Ordinal),
+                  g33.LockedWhy);
+            Check("说明里给出了不拦 ③ 的**理由**（.3dm 那条路会死锁）",
+                  g33.LockedWhy.Contains(".3dm", StringComparison.Ordinal),
+                  g33.LockedWhy);
+
+            f33.Last = keepLast; f33.RampScreen = keepScreen;   // 收干净，别泄漏给后面的节
+        }
+
         Console.WriteLine();
         Console.WriteLine(fail == 0 ? "★ 全部通过" : $"✗ {fail} 项不过");
         Console.Out.Flush();
