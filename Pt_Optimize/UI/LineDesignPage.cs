@@ -150,6 +150,40 @@ public sealed class LineDesignPage : TabPage
     /// </summary>
     private double[]? _sizerTabIns, _sizerRingMul;
 
+    /// <summary>
+    /// 把**定尺寸 / 搜形状算出来的那个设计**接管为本页的工作设计 —— 一处做完四件事：
+    ///   ① 带回本页没有控件的那两个旋钮（舌保温 / 环倍率）；
+    ///   ② 发布 Last；③ 收敛就标新鲜；④ 推给 FlowState。
+    ///
+    /// ★★★★★ 为什么收敛成一处（2026-08-25，同一个缺陷**第三次**出现）：
+    ///   「自动定厚」的两条分支与「搜形状」原本各写各的，而**三处都漏了发布**
+    ///   （只写 `_last` 就走）⇒ 指路与门禁读的是冻住的旧解：
+    ///     · 提示会在同一个按钮上死循环，每轮几十分钟，永远走不到交付；
+    ///     · ④→⑤ 那道 RequireAllOk 的门读的也是旧解；
+    ///     · **最危险**：上一次解若是过的、而这一次把它调坏了，门会继续开着（假绿灯）。
+    ///   逐处补第四次还会忘 —— 所以让它们**只能**从这一个入口接管。
+    /// </summary>
+    private void AdoptSolvedDesign(FinalDesign d, LineResult? best)
+    {
+        _sizerTabIns = (double[])d.TabInsulMm.Clone();
+        _sizerRingMul = (double[])d.RingMul.Clone();
+        _last = best;
+        if (best is { Ok: true, Converged: true }) { _solvedRes = best; _solvedSnap = CurrentSnap(); }
+        PushFlow();
+    }
+
+    /// <summary>「搜形状」每个候选筛几轮 / 胜出者精算几轮。**只有走查器会改它**。</summary>
+    internal int SearchScreenRounds = 16, SearchFinalRounds = 40;
+
+    /// <summary>
+    /// 搜形状的网格与外推上限。**只有走查器会改它们**。
+    /// ⚠ 每一「轮」都是一次完整整线解（分钟级）—— 所以压轮数还不够快，
+    ///   要把**网格点数**也压下来，接线验证才回得到分钟级。
+    /// </summary>
+    internal double[] SearchDiscs = { 25, 30, 35 };
+    internal double[] SearchWFrac = { 0.75, 1.00 };
+    internal int SearchMaxExtend = 6;
+
     private Snap CurrentSnap() => new()
     {
         Wall = (double)_wall.Value,
@@ -1697,9 +1731,12 @@ public sealed class LineDesignPage : TabPage
         Shared?.SetRunning(ChainId.C形状搜索, "搜形状");
 
         // 网格：盘半径 × 半宽比例。半宽 > 盘半径没有切点（等宽舌片与圆盘接不上），故按比例取。
-        double[] discs = { 25, 30, 35 };
-        double[] wFrac = { 0.75, 1.00 };
-        const int screenRounds = 16, finalRounds = 40;
+        double[] discs = SearchDiscs;
+        double[] wFrac = SearchWFrac;
+        // ★ 不是 const：走查器要能把它压到极小，好在**分钟级**验「接线对不对」
+        //   （2026-08-25）。搜形状真跑是几十分钟 —— 那验的是「答案好不好」，
+        //   与「把决策串进循环有没有串错」是两件事，不该只能靠跑满几十分钟才验得到。
+        int screenRounds = SearchScreenRounds, finalRounds = SearchFinalRounds;
         int total = discs.Length * wFrac.Length * screenRounds + finalRounds;
         int done = 0;
 
@@ -1800,7 +1837,7 @@ public sealed class LineDesignPage : TabPage
             //    「有好的方向则继续，如果都是变坏即刻停止」。
             //    ⚠ 上限 6 轮：这条链本来就是几十分钟量级，不设上限会没完。
             //      停下时**已算过的形状全都留着**（rows），不会因为中止丢结果。
-            const int maxExtend = 6;
+            int maxExtend = SearchMaxExtend;
             string NL2 = Environment.NewLine;
             var seen = new HashSet<string>();
             foreach (var r0 in rows)
@@ -1875,7 +1912,9 @@ public sealed class LineDesignPage : TabPage
             for (int i = 0; i < _tPlate.Length && i < fin.Design.TabThickMm.Length; i++)
                 _tPlate[i].Value = C(fin.Design.TabThickMm[i], _tPlate[i]);
             _suppressAuto = false;
-            _last = fin.Best;
+            // ★ 统一入口（见 AdoptSolvedDesign）：此前这里只写 _last ⇒
+            //   舌保温/环倍率丢掉、状态没发布，与「自动定厚」是同一个病的第三例。
+            AdoptSolvedDesign(fin.Design, fin.Best);
 
             // 形状体检：搜出来的赢家也要说清楚它好在哪、代价在哪
             _out.AppendText("\r\n" + ShapeReview.Build(fin.Design, fin.Best,
@@ -1887,8 +1926,8 @@ public sealed class LineDesignPage : TabPage
                 $"　舌保温 {FinalDesign.Fmt(fin.Design.TabInsulMm, "0.0")}" +
                 $"　环倍率 {FinalDesign.Fmt(fin.Design.RingMul, "0.00")}\r\n" +
                 $"   合计 {fin.MassG:0} g　{fin.Message}\r\n\r\n" +
-                "   ⚠ **舌保温与环倍率本页没有控件**，但它们是解的一部分（舌保温还是守 ②′/③ 的主力）。\r\n" +
-                "     要照这组数出图，请把上面三行抄进 Core/FinalDesign 再走「导出定案 3DM」。\r\n" +
+                "     ★ 舌保温与环倍率本页没有控件，但**已由本页承载**（2026-08-25 起）：" + Environment.NewLine + "" +
+                "       它们跟着后续求解与出图走，不必再手抄进 Core/FinalDesign。" + Environment.NewLine + "" +
                 "   ⚠ 筛选只跑了 " + screenRounds + " 轮，**是粗筛**：名次靠前几名接近时，" +
                 "把它们各自再跑一次足轮数才算数。\r\n");
             _status.Text = "完成";
@@ -2074,9 +2113,7 @@ public sealed class LineDesignPage : TabPage
                     //   实测：定尺寸 3569 g 全过 → 重解 ②′ = −9.32 不过 → 再定尺寸 3565 g 全过 → …
                     //   带回来之后本页承载的就是 D8 那个**完整设计**，而 ③ 页与 D8 用的是
                     //   **同一个几何构造器**（UiWiring §16 逐字段钉着）⇒ 重解会复现这张表，路径收得了尾。
-                    _sizerTabIns = (double[])srD8.Design.TabInsulMm.Clone();
-                    _sizerRingMul = (double[])srD8.Design.RingMul.Clone();
-                    _last = srD8.Best;
+                    AdoptSolvedDesign(srD8.Design, srD8.Best);   // 统一入口
                     // ★★★★★ 同上：必须发布，否则提示与门禁读的是冻住的旧解（见上一分支的长注释）。
                     //
                     // ⚠ 但**不能**像上一分支那样标成「新鲜」：D8 的解含**舌保温**与**环倍率**，
@@ -2088,9 +2125,7 @@ public sealed class LineDesignPage : TabPage
                     //     提示会说「参数在上次求解之后又动过了 —— 回 ③ 重解」，这是实话。
                     //   —— 上面那段顾虑在**旋钮带回本页之后不再成立**：本页现在承载完整设计，
                     //     所以可以标成「已解且新鲜」，提示会直接指向出图。
-                    if (srD8.Best is { Ok: true, Converged: true })
-                    { _solvedRes = srD8.Best; _solvedSnap = CurrentSnap(); }
-                    PushFlow();
+                    //   （带回 + 发布 + 标新鲜四件事已经收进 AdoptSolvedDesign，上面那一行。）
                     _pendingReview = ShapeReview.Build(srD8.Design, srD8.Best,
                                                        FinalDesign.Current, srD8.Message);
                     Show(srD8.Best, autoNote:

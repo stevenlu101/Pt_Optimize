@@ -1184,4 +1184,92 @@ static class Walk
         if (r.MissingChecks.Length > 0)
             OK("判据表完整", false, "★ 缺席：" + string.Join("、", r.MissingChecks));
     }
+
+    // ════════════════════════════════════════════════════════════════════
+    //  `UiWiring.exe --searchshape [quick]`
+    //
+    //  驱动**真的**「◇ 搜形状」，把它逐轮的记录原样抓出来。
+    //
+    //  两种用法，验的**不是同一件事**（用户 2026-08-25 要求两个都做）：
+    //   · 不带 quick：默认轮数，几十分钟 —— 验「**答案好不好**」（真实行为）。
+    //   · 带 quick  ：把每候选的筛轮压到 2 轮 —— 分钟级，验「**接线对不对**」：
+    //                 一轮是不是「改形状 + 扫梯度」、变好会不会继续、
+    //                 都变坏会不会停、已算过的形状会不会重算。
+    //     ⚠ quick 模式下**答案没有意义**（2 轮定不出厚度），只看流程 ——
+    //       这一点必须说清楚，否则下一个人会拿 quick 的铂重去汇报。
+    // ════════════════════════════════════════════════════════════════════
+    public static int SearchShape(bool quick)
+    {
+        Console.OutputEncoding = System.Text.Encoding.UTF8;
+        Application.EnableVisualStyles();
+
+        var main = new MainForm();
+        main.CreateControl();
+        var tabs = (TabControl)F(main, "_tabs")!;
+        var line = tabs.TabPages.OfType<LineDesignPage>().First();
+        typeof(Form).GetMethod("OnLoad", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(main, new object?[] { EventArgs.Empty });
+        Pump(1200);
+        void Force(Control c) { _ = c.Handle; foreach (Control k in c.Controls) Force(k); }
+        Force(main); Pump(300);
+
+        if (quick)
+        {
+            // internal 栏位跨组件看不见 ⇒ 走本档已有的反射工具（与其它节一致）
+            // ⚠ 压轮数还不够：**每一轮都是一次完整整线解**（分钟级）。
+            //   要回到分钟级，网格点数与外推上限也得压。
+            Set(line, "SearchScreenRounds", 2);
+            Set(line, "SearchFinalRounds", 2);
+            Set(line, "SearchDiscs", new double[] { 30 });
+            Set(line, "SearchWFrac", new double[] { 1.00 });
+            Set(line, "SearchMaxExtend", 1);
+            // ★ 从**定案**出发，而不是开箱默认。
+            //   头一版从开箱默认起跑：2 轮定不出可行解 ⇒ 网格里没有全过的形状 ⇒
+            //   **外推循环根本没进去**，而那正是本次最想验的那段接线。
+            //   定案本身可行，且它的形状（盘Ø60／舌宽60）正好落在网格点上 ⇒
+            //   低轮数也进得了外推。**这是为了走到那条路径，不是为了让它好看。**
+            typeof(LineDesignPage).GetMethod("LoadFinalDesignFrom",
+                BindingFlags.NonPublic | BindingFlags.Instance)!
+                .Invoke(line, new object[] { FinalDesign.Current, true });
+            Pump(200);
+            H("◇ 搜形状 · **接线验证**（每候选只筛 2 轮 ⇒ 分钟级）");
+            Console.WriteLine("  ⚠ 本模式下**铂重没有意义**（2 轮定不出厚度）——只看流程走得对不对。");
+        }
+        else
+            H("◇ 搜形状 · **真实一跑**（默认轮数，几十分钟）");
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        Call(line, "SearchShapeAsync");
+        bool fin = Wait(() => F(line, "_cts") is null, quick ? 1_800_000 : 10_800_000);
+        OK("搜形状在预算内跑完", fin, $"用时 {clock.Elapsed.TotalMinutes:0.0} 分");
+        if (!fin) return _bad;
+
+        string text = (F(line, "_out") as Control)?.Text ?? "";
+        Console.WriteLine();
+        Console.WriteLine("──── 输出框原文（工程师看到的就是这些）────");
+        foreach (var l in text.Replace(((char)13).ToString(), "").Split((char)10))
+            if (l.Trim().Length > 0) Console.WriteLine("  " + l.TrimEnd());
+
+        // ── 接线断言：这几条只看**流程**，与轮数无关
+        Console.WriteLine();
+        OK("第 1 轮是网格（给出发点与方向）", text.Contains("网格", StringComparison.Ordinal));
+        bool hasRound = text.Contains("轮 · 从 盘Ø", StringComparison.Ordinal);
+        bool gridOnly = text.Contains("网格里没有可行解", StringComparison.Ordinal);
+        OK("网格之后进了外推轮（或明说没有出发点）", hasRound || gridOnly,
+           hasRound ? "有外推轮" : gridOnly ? "网格无可行解 —— 明说了，没有硬推" : "★ 两者都没有");
+        if (hasRound)
+        {
+            OK("每一轮都报了**变好还是变坏**",
+               text.Contains("变好，继续", StringComparison.Ordinal)
+               || text.Contains("没有更好的方向", StringComparison.Ordinal));
+            OK("停下时说得出为什么",
+               text.Contains("没有更好的方向 ⇒ 停", StringComparison.Ordinal)
+               || text.Contains("四个邻点都试过了", StringComparison.Ordinal)
+               || text.Contains("变好，继续", StringComparison.Ordinal),
+               "（跑满上限而停也算 —— 那时最后一轮是「变好，继续」）");
+        }
+        Console.WriteLine();
+        Console.WriteLine(_bad == 0 ? "★ 搜形状走查通过" : $"✗ 搜形状走查：{_bad} 项不过");
+        return _bad;
+    }
 }

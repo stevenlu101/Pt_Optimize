@@ -81,6 +81,9 @@ class UiWiringTests {
         int ifw = Array.IndexOf(args, "--follow3dm");
         if (ifw >= 0 && ifw + 1 < args.Length)
         { Environment.ExitCode = Walk.Follow(args[ifw + 1]); return; }
+        // `--searchshape [quick]`：驱动真的「◇ 搜形状」（用户 2026-08-25）
+        if (args.Contains("--searchshape"))
+        { Environment.ExitCode = Walk.SearchShape(args.Contains("quick")); return; }
         if (args.Contains("--follow")) { Environment.ExitCode = Walk.Follow(); return; }
         if (args.Contains("--tabins0")) { Environment.ExitCode = Walk.TabIns0(); return; }
         int ie = Array.IndexOf(args, "--export3dm");
