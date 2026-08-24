@@ -189,7 +189,7 @@ public sealed class MainForm : Form
         _tabs.TabPages.Add(linePage);
         _tabs.TabPages.Add(sizePage);
         _tabs.TabPages.Add(shipPage);
-        _tabs.TabPages.Add(new ManualPage());
+        _tabs.TabPages.Add(new ManualPage(_in));   // 说明书里的限值要跟着参数表走
 
         _stageOf[casePage] = StageId.定案档;
         _stageOf[gatePage] = StageId.先决条件;

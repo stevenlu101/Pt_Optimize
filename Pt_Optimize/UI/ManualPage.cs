@@ -27,8 +27,17 @@ public sealed class ManualPage : TabPage
     };
     private string _tempDir = "";
 
-    public ManualPage() : base("使用说明")
+    /// <summary>
+    /// 界面上那份**活的**参数（与参数表同一个物件）。
+    /// ⚠ 说明书里的限值必须取自它，不能自己抄一份 —— 「管许用电流密度」这一项
+    ///   在参数表里就是可改的，写死之后工程师一改参数，说明书当场变成假话。
+    ///   null 表示拿不到（例如接线测试里直接 new ManualPage()），那就退回程序默认值。
+    /// </summary>
+    private readonly DesignInputs? _live;
+
+    public ManualPage(DesignInputs? live = null) : base("使用说明")
     {
+        _live = live;
         Padding = new Padding(2);
 
         var tool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, Font = UiScale.Ui() };
@@ -108,7 +117,7 @@ public sealed class ManualPage : TabPage
             Directory.CreateDirectory(_tempDir);
         }
         string html = Path.Combine(_tempDir, "manual.html");
-        File.WriteAllText(html, BuildHtml(fd), new UTF8Encoding(false));
+        File.WriteAllText(html, BuildHtml(fd, _live), new UTF8Encoding(false));
         _web.CoreWebView2.Navigate(new Uri(html).AbsoluteUri);
     }
 
@@ -678,7 +687,7 @@ public sealed class ManualPage : TabPage
     /// 生成说明书 HTML。**public 是故意的**：`--cli --manual` 要能不开 GUI 就导出，
     /// 否则「图对不对」只能靠肉眼开窗口看 —— 那不是可复核的验证。
     /// </summary>
-    public static string BuildHtml(FinalDesign fd)
+    public static string BuildHtml(FinalDesign fd, DesignInputs? live = null)
     {
         // ★ 判据值**只从 FinalDesign 取**，本页不再自己抄一份。
         //
@@ -1147,14 +1156,25 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "⑤ 自由段不算「缺点」（舌长是<b>算出来</b>的，必然贴着下界）—— " +
                   "但会单独提醒<b>装配没有余量</b>。</div>");
 
+        // ★★ 限值一律**从代码取**，本表不再自己抄一份（2026-08-24）。
+        //
+        // 本方法开头那句「判据值只从 FinalDesign 取，本页不再自己抄一份」，
+        // 当时只兑现了**实测值**那一半；**限值**这一半照旧是写死的字面量。
+        // 而「管许用电流密度」在参数表里就是可改的（DisplayName 摆在那儿）——
+        // 工程师一改参数，说明书当场变成假话，而它有排版有图，看起来就是答案。
+        // ⇒ 限值取自：LineCase 的默认值（升温期限 / ②″ / ③）、
+        //   活的 DesignInputs（管 J，拿不到时退回默认）、GeometryScreen 与 DesignInputs 的常数。
+        var lim = new LineCase();
+        var dfl = live ?? new DesignInputs();
         sb.Append("<h3>限值的出处（每条都必须有）</h3><table class=\"nw\">" +
                   "<tr><th>判据</th><th>限值</th><th>出处</th></tr>" +
-                  "<tr><td>① 升温</td><td class=\"n\">72 h</td><td>业主「≤ 3 天」</td></tr>" +
+                  $"<tr><td>① 升温</td><td class=\"n\">{lim.RampHours:0} h</td><td>业主「≤ 3 天」</td></tr>" +
                   "<tr><td>②′ 管孔净流入</td><td class=\"n\">&gt; 0</td><td>总纲 C2「为负即法兰比管热」——方向性判据</td></tr>" +
-                  "<tr><td>②″ 圆盘峰</td><td class=\"n\">5 K</td><td>现场控温精度 ±5 K</td></tr>" +
-                  "<tr><td>③ 增量温降</td><td class=\"n\">10 K</td><td>总纲 C2；<b>业主明确：贴着热偶误差定的</b></td></tr>" +
-                  "<tr><td>管 J</td><td class=\"n\">12 A/mm²</td><td>现场：一般 15，管壁 0.6 时 12 是极限</td></tr>" +
-                  "<tr><td><b>⑤ 舌片自由段</b></td><td class=\"n\">≥ 100 mm</td>" +
+                  $"<tr><td>②″ 圆盘峰</td><td class=\"n\">{lim.DiscOverTempMaxK:0} K</td><td>现场控温精度 ±5 K</td></tr>" +
+                  $"<tr><td>③ 增量温降</td><td class=\"n\">{lim.RootDeltaMaxK:0} K</td><td>总纲 C2；<b>业主明确：贴着热偶误差定的</b></td></tr>" +
+                  $"<tr><td>管 J</td><td class=\"n\">{dfl.TubeJAllowAPerMm2:0.#} A/mm²</td>" +
+                  "<td>现场：一般 15，管壁 0.6 时 12 是极限。<b>这一项在参数表里可改</b>，本行跟着它走</td></tr>" +
+                  $"<tr><td><b>⑤ 舌片自由段</b></td><td class=\"n\">≥ {GeometryScreen.FreeTabMinDefaultMm:0} mm</td>" +
                   "<td><b>业主 2026-08-17</b>：现场铜排长 100／宽 60–80 mm，自由段基本留 100。" +
                   "「这些是参考值并非绝对，铜排尺寸可以定制」<br>" +
                   "⚠ 这条判据是 2026-08-17 才加的，而它<b>当场把原来的定案判掉了</b>" +
@@ -1164,7 +1184,19 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "<b>不可造的几何料最少，所以优化器会主动往那里跑</b> —— " +
                   "实测盘 R25 + 管壁 0.8 时管孔半径 25.8 &gt; 盘半径，孔比盘还大，" +
                   "而它照样报「全判据通过 3621 g」并排在最前面</td></tr>" +
-                  "<tr><td>管壁下界</td><td class=\"n\">0.6 mm</td><td>手工 TIG 烧穿下界（自动 0.3、激光 0.1）</td></tr>" +
+                  $"<tr><td>管壁下界</td><td class=\"n\">{DesignInputs.WeldMinDefaultMm:0.0} mm</td>" +
+                  "<td>手工 TIG 烧穿下界（自动 0.3、激光 0.1）</td></tr>" +
+                  // ★ 两条热稳定 2026-08-24 补进本表。它们在 APP 的判据表里**是露脸的**
+                  //   （参考量，带数值），此前说明书里**一条都没有** ——
+                  //   工程师看到「· 整片热稳定 10.2×」回来查出处，查不到。
+                  //   而本节的标题就是「每条都必须有」。
+                  $"<tr><td>· 整片热稳定</td><td class=\"n\">&gt; 1.0 ×</td>" +
+                  "<td>精确物理：dQ_散热/dT ÷ dP_发热/dT ≤ 1 时正反馈失控。" +
+                  "<b>现为参考量，不卡交付</b> —— `--stabscan` 沿三条轴实测，" +
+                  "②′ 管孔净流入永远先红，升成硬判据改变不了任何一个判定</td></tr>" +
+                  $"<tr><td>· 局部热稳定</td><td class=\"n\">&gt; 1.0 ×</td>" +
+                  "<td>精确物理：J_stab ÷ J_实际（逐格取**最不稳定**点，不是最热点）。" +
+                  "同上，现为参考量。定案两档实测 1.9–2.0×</td></tr>" +
                   "</table>");
         sb.Append("<div class=\"note\"><b>③ 的 10 K：出处是热偶误差，物理依据未知。</b>" +
                   "⇒ 不得据此声称「超过 10 K 也安全」，也不得声称「真实限值是 X」。" +

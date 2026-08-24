@@ -2209,6 +2209,72 @@ class UiWiringTests {
             f33.Last = keepLast; f33.RampScreen = keepScreen;   // 收干净，别泄漏给后面的节
         }
 
+        Head("34 使用说明里的限值：**不许自己抄一份**，且每条判据都得有出处");
+        {
+            // 病灶（2026-08-24）：ManualPage.BuildHtml 开头写着
+            //   「★ 判据值**只从 FinalDesign 取**，本页不再自己抄一份」——
+            // 但那句话当时只兑现了**实测值**那一半；「限值的出处」那张表里的**限值**
+            // 照旧是写死的字面量（72 h / 5 K / 10 K / 12 A/mm² / 100 mm / 0.6 mm）。
+            // 而「管许用电流密度」在参数表里**就是可改的**（有 DisplayName）——
+            // 工程师一改参数，说明书当场变成假话，而它有排版有图，**看起来就是答案**。
+            //
+            // 另外那张表**一条热稳定都没有**，而 APP 的判据表里它们是露脸的（带数值）——
+            // 工程师看到「· 整片热稳定 10.2×」回来查出处，查不到。
+            // 那一节的标题偏偏就是「限值的出处（**每条都必须有**）」。
+            var pIn = (DesignInputs)F(main, "_in")!;
+            var fdManual = FinalDesign.Current;
+            string manual = ManualPage.BuildHtml(fdManual, pIn);
+
+            Check("说明书渲染得出来（自证：空字串会让下面每一条恒假/恒真）",
+                  manual.Length > 2000, $"{manual.Length} 字元");
+
+            // ① 每条判据都要有出处 —— 含两条热稳定
+            string Norm(string t) => t.Replace(" ", "").Replace("　", "");
+            string mn = Norm(manual);
+            foreach (var fi in typeof(LineResult.Key).GetFields(
+                         BindingFlags.Public | BindingFlags.Static))
+            {
+                string key = (string)fi.GetValue(null)!;
+                Check($"说明书里有「{key}」的出处", mn.Contains(Norm(key), StringComparison.Ordinal),
+                      mn.Contains(Norm(key), StringComparison.Ordinal)
+                          ? "" : "★ APP 判据表里露脸、说明书里查不到 —— 本节标题写的是「每条都必须有」");
+            }
+
+            // ② 限值必须与代码一致（写死之后漂开，正是 HANDOVER §1.83 刚出过的事）
+            var limM = new LineCase();
+            (string What, string Must)[] wants =
+            {
+                ("① 升温期限",  $"{limM.RampHours:0} h"),
+                ("②″ 圆盘峰",   $"{limM.DiscOverTempMaxK:0} K"),
+                ("③ 增量温降",  $"{limM.RootDeltaMaxK:0} K"),
+                ("⑤ 自由段下界", $"{GeometryScreen.FreeTabMinDefaultMm:0} mm"),
+                ("管壁下界",    $"{DesignInputs.WeldMinDefaultMm:0.0} mm"),
+            };
+            foreach (var (what, must) in wants)
+                Check($"说明书里的{what}与代码一致（{must}）",
+                      manual.Contains(must, StringComparison.Ordinal), must);
+
+            // ③ ★ 活性自证：改参数表里的管 J，说明书必须跟着变。
+            //    这一条才是真正的防线 —— 前面两组在「写死但恰好写对」时也会全绿。
+            double keepJ = pIn.TubeJAllowAPerMm2;
+            Check($"改之前说明书写的是 {keepJ:0.#} A/mm²",
+                  manual.Contains($"{keepJ:0.#} A/mm²", StringComparison.Ordinal));
+            try
+            {
+                pIn.TubeJAllowAPerMm2 = 9.0;
+                string m2 = ManualPage.BuildHtml(fdManual, pIn);
+                Check("★ 管 J 上限改成 9 之后，说明书跟着变成 9（不是抄死的 12）",
+                      m2.Contains("9 A/mm²", StringComparison.Ordinal)
+                      && !m2.Contains("12 A/mm²</td>", StringComparison.Ordinal),
+                      m2.Contains("9 A/mm²", StringComparison.Ordinal) ? "" : "★ 说明书仍在报旧值");
+            }
+            finally { pIn.TubeJAllowAPerMm2 = keepJ; }   // 收干净，别泄漏给后面的节
+
+            Check("还原之后又变回去了（自证：否则上一条可能只是碰巧）",
+                  ManualPage.BuildHtml(fdManual, pIn).Contains($"{keepJ:0.#} A/mm²", StringComparison.Ordinal),
+                  $"{pIn.TubeJAllowAPerMm2:0.#}");
+        }
+
         Console.WriteLine();
         Console.WriteLine(fail == 0 ? "★ 全部通过" : $"✗ {fail} 项不过");
         Console.Out.Flush();
