@@ -5197,11 +5197,81 @@ internal static class Program
                     return hit;
                 }
 
+                // 各段用时 —— 「钩子 11 分钟」是 §8 记着的一条缺口，
+                // 要缩它得先知道时间花在哪一段。只加一行摘要，不动任何判定。
+                var secT = new List<(string Name, double Sec)>();
+                var swSec = System.Diagnostics.Stopwatch.StartNew();
+                void Mark(string name)
+                { secT.Add((name, swSec.Elapsed.TotalSeconds)); swSec.Restart(); }
+
+                // ════════════════════════════════════════════════════════════
+                //  A / B / C 三段的整线解 —— **先并行算完，再按原顺序打印**（2026-08-24）
+                //
+                //  起因：§8 记着「提交钩子约 11 分钟」，而实测各段用时
+                //  A 146 s · B 129 s · C 55 s · D 40 s · E 111 s ——
+                //  九次彼此独立的整线解占了 330 s，却在一台 **20 核**的机器上串行跑，
+                //  `Core/` 里一处并行都没有。这是**不削弱任何一条断言**就能拿到的加速。
+                //
+                //  D / E 不并行：D 的热启动依赖冷启动留下的收敛态（那正是它要验的东西），
+                //  E 是定尺寸器逐轮迭代，本质串行。
+                //
+                //  ⚠ 并行化最容易做出「快了、数变了」—— 那是本项目头号病灶。逐项查实过：
+                //   · `LineRunner.Run` 里的 `p` 是 `SegmentSolver.Clone(c.Base)` 的**副本**；
+                //     `BuildCase` 虽把共享的 DesignInputs 挂成 `Base`，但**全项目没有任何一处
+                //     写 `.Base.xxx`** ⇒ 求解期间它是只读的。
+                //   · `Core/` 里没有 static 可变栏位被求解路径写到；`FinalDesign.Current`
+                //     在本门里只读；`MaterialDb.All` 静态建构后只读。
+                //   · `Core/` 里**一行 Console 都没有** ⇒ 不会交错输出。
+                //   · 无 Random / DateTime.Now / TickCount ⇒ 没有非决定性来源。
+                //   · 唯一的非线程安全共享物是 `Geometry3dm._tfCache`（普通 Dictionary），
+                //     **只有 .3dm 路径会碰**；A/B/C 走的全是解析档。
+                //     ⇒ 谁要往本门加 .3dm 算例，必须先把那个快取换成 ConcurrentDictionary。
+                //
+                //  判据：改完之后本门的输出必须与改之前**逐字节一致**（只有「各段用时」会变）。
+                //  实测比对过，0 处差异。而且 A 段本来就是**逐位对账**记录值 ——
+                //  并行若动了任何一个数，这道门自己第一个红。
+                static (LineResult? R, Exception? Ex) Solve1(LineCase lc)
+                { try { return (LineRunner.Run(lc), null); } catch (Exception e) { return (null, e); } }
+
+                var probes = new (string n, Func<FinalDesign, FinalDesign> mut)[]
+                {
+                    // ⚠ 这里原来第一条是「环关掉 μ=1.0」。2026-08-17 重解之后**新定案本来就是 μ=1.0**
+                    //   （舌片宽了一倍，孔周不再拥塞，环没有存在必要）⇒ 那条探针成了**空操作**，
+                    //   照样打 ✓，却什么都没试。空转的检查比没有检查更糟：它给人「验过了」的错觉。
+                    //   ⇒ 换成一条真正会翻判据的：把舌长改回 90（即旧定案那个装不下铜排的值）。
+                    ("舌长退回 90",  f => { f.TabLengthMm = 90.0; return f; }),
+                    ("板厚 ×0.5",    f => { for (int k = 0; k < 4; k++) f.TabThickMm[k] *= 0.5; return f; }),
+                    ("管保温 1 mm",  f => { f.TubeInsulMm = 1.0; return f; }),
+                };
+
+                // 算例一律**先串行造好**（BuildCase 会读 FinalDesign.Current），再一起并行解
+                var caseA = FinalDesign.All.Select(fd => fd.BuildCase(p, checkRamp: true)).ToArray();
+                var caseB = probes.Select(pr => pr.mut(FinalDesign.Current.Clone())
+                                                 .BuildCase(p, checkRamp: false)).ToArray();
+                var fCa = FinalDesign.Current.Clone();
+                var fCb = FinalDesign.Current.Clone();
+                for (int k = 0; k < fCb.TabInsulMm.Length; k++)
+                    fCb.TabInsulMm[k] = Math.Max(0.3, fCb.TabInsulMm[k] * 0.4);
+                var caseC = new[] { fCa.BuildCase(p, checkRamp: false), fCb.BuildCase(p, checkRamp: false) };
+
+                var allCases = caseA.Concat(caseB).Concat(caseC).ToArray();
+                var solved = new (LineResult? R, Exception? Ex)[allCases.Length];
+                System.Threading.Tasks.Parallel.For(0, allCases.Length,
+                    i => solved[i] = Solve1(allCases[i]));
+                Mark("并行预解 A·B·C");     // 九次解的时间记在这里，别混进 A 的桶
+                var preA = solved.Take(caseA.Length).ToArray();
+                var preB = solved.Skip(caseA.Length).Take(caseB.Length).ToArray();
+                var preC = solved.Skip(caseA.Length + caseB.Length).ToArray();
+
                 Console.WriteLine();
                 Console.WriteLine("── A 复现对账：FinalDesign 记的数 vs 实算");
-                foreach (var fd in FinalDesign.All)
+                for (int ia = 0; ia < FinalDesign.All.Length; ia++)
                 {
-                    var rc = LineRunner.Run(fd.BuildCase(p, checkRamp: true));
+                    var fd = FinalDesign.All[ia];
+                    // 本段原来没有 try/catch —— 解不出来就该让它炸出来。并行化不改这个口径：
+                    // 捕到的异常在这里原样抛回，行为与串行时一致。
+                    if (preA[ia].Ex is { } exA) throw exA;
+                    var rc = preA[ia].R!;
                     if (!rc.Ok) { Console.WriteLine($"   ✗ {fd.Name} 解不出：{rc.Message}"); bad++; continue; }
                     if (!rc.Converged) { Console.WriteLine($"   ✗ {fd.Name} 未收敛 —— 记录值无从对账"); bad++; continue; }
                     double V(string k)
@@ -5274,24 +5344,15 @@ internal static class Program
                 }
 
                 Console.WriteLine();
+                Mark("A");
                 Console.WriteLine("── B 不安静失败：偏离档不许「报全过」同时给出荒谬的数");
-                var probes = new (string n, Func<FinalDesign, FinalDesign> mut)[]
+                // probes 与算例已在本门开头的预解块里造好（见那里的并行说明）
+                for (int ib = 0; ib < probes.Length; ib++)
                 {
-                    // ⚠ 这里原来第一条是「环关掉 μ=1.0」。2026-08-17 重解之后**新定案本来就是 μ=1.0**
-                    //   （舌片宽了一倍，孔周不再拥塞，环没有存在必要）⇒ 那条探针成了**空操作**，
-                    //   照样打 ✓，却什么都没试。空转的检查比没有检查更糟：它给人「验过了」的错觉。
-                    //   ⇒ 换成一条真正会翻判据的：把舌长改回 90（即旧定案那个装不下铜排的值）。
-                    ("舌长退回 90",  f => { f.TabLengthMm = 90.0; return f; }),
-                    ("板厚 ×0.5",    f => { for (int k = 0; k < 4; k++) f.TabThickMm[k] *= 0.5; return f; }),
-                    ("管保温 1 mm",  f => { f.TubeInsulMm = 1.0; return f; }),
-                };
-                foreach (var (nm, mut) in probes)
-                {
-                    var fd = mut(FinalDesign.Current.Clone());
-                    LineResult rp;
-                    try { rp = LineRunner.Run(fd.BuildCase(p, checkRamp: false)); }
-                    catch (Exception ex)
-                    { Console.WriteLine($"   ✓ {nm,-14}明确抛异常（可接受）：{ex.Message}"); continue; }
+                    string nm = probes[ib].n;
+                    if (preB[ib].Ex is { } exB)
+                    { Console.WriteLine($"   ✓ {nm,-14}明确抛异常（可接受）：{exB.Message}"); continue; }
+                    var rp = preB[ib].R!;
                     if (!rp.Ok) { Console.WriteLine($"   ✓ {nm,-14}明确报错（可接受）：{rp.Message}"); continue; }
 
                     double tmax = rp.Flanges.Max(f => f.TMaxC);
@@ -5339,6 +5400,7 @@ internal static class Program
                 // ⇒ 把这句话做成会自己跑的检查：动一个已知会改 D 的旋钮（舌保温），
                 //   ③ 必须跟着动，且比例落在合理区间。不动 = 基线又冻住了。
                 Console.WriteLine();
+                Mark("B");
                 Console.WriteLine("── C 闭式对账：③ 必须随抽热 D 一起动（γ = ③/D，实测 2.40 K/W）");
                 double GammaOf(LineResult rr)
                 {
@@ -5356,12 +5418,11 @@ internal static class Program
                 }
                 try
                 {
-                    var fA = FinalDesign.Current.Clone();
-                    var fB = FinalDesign.Current.Clone();
-                    for (int k = 0; k < fB.TabInsulMm.Length; k++)
-                        fB.TabInsulMm[k] = Math.Max(0.3, fB.TabInsulMm[k] * 0.4);
-                    var rA = LineRunner.Run(fA.BuildCase(p, checkRamp: false));
-                    var rB = LineRunner.Run(fB.BuildCase(p, checkRamp: false));
+                    // fCa / fCb 与这两次解已在预解块里做好（舌保温 ×1.0 vs ×0.4）
+                    if (preC[0].Ex is { } exC0) throw exC0;      // 本段外面有 try/catch，抛回去即可
+                    if (preC[1].Ex is { } exC1) throw exC1;
+                    var rA = preC[0].R!;
+                    var rB = preC[1].R!;
                     if (!rA.Ok || !rB.Ok) { Console.WriteLine("   ✗ 对账跑不出来 ⇒ 无法判定，按不过计"); bad++; }
                     else
                     {
@@ -5402,6 +5463,7 @@ internal static class Program
                 // 迭代里但凡有一处带记忆（限幅、棘轮、离散量翻转），起点就会渗进答案，
                 // 而它的表现形式恰恰是「两次都收敛、都报全过、数不一样」——§1.8 的正脸。
                 Console.WriteLine();
+                Mark("C");
                 Console.WriteLine("── D 冷启动 vs 热启动：只准改路径，不准改答案");
                 try
                 {
@@ -5446,6 +5508,7 @@ internal static class Program
                 // ⇒ 现在靶换成**抽热窗口**（③ = 2.40·D 实测 ⇒ 一个双向靶同时守住 ②′ 与 ③）。
                 //   本检查从一个明显偏薄的起点跑一次，要求收敛后 **②′ > 0**。
                 Console.WriteLine();
+                Mark("D");
                 Console.WriteLine("── E 定尺寸器不许往烧断方向优化（从偏薄起点出发，②′ 必须回正）");
                 try
                 {
@@ -5492,8 +5555,11 @@ internal static class Program
                     }
                 }
                 catch (Exception ex) { bad++; Console.WriteLine("   ✗ 异常：" + ex.Message); }
+                Mark("E");
 
                 Console.WriteLine();
+                Console.WriteLine("   各段用时　" + string.Join(" · ",
+                    secT.Select(t => $"{t.Name} {t.Sec:0} s")));
                 Console.WriteLine(bad == 0
                     ? $"★ 自检通过（{swSc.Elapsed.TotalMinutes:0.0} 分钟）"
                     : $"✗ 自检**不过**：{bad} 项（{swSc.Elapsed.TotalMinutes:0.0} 分钟）。" +
