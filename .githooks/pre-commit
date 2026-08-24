@@ -5,7 +5,7 @@
 #  为什么要有它：本项目被抓到的错，靠的全是**会自己跑的检查**；
 #  写在注释里的教训一次也没抓到过 —— 注释不会跑，要人记得去跑的工具也等于不会跑。
 #
-#  ⚠ 只在**动了内核或界面**时才拦，否则改个文档也要等几分钟，门就会被人关掉。
+#  ⚠ 只在**动了会影响判定的东西**时才拦，否则改个文档也要等几分钟，门就会被人关掉。
 #     门要有人愿意一直开着才有用。
 #
 #  跳过：git commit --no-verify   （赶时间可以，但请自己知道跳过了什么）
@@ -13,14 +13,20 @@
 # ============================================================================
 set -e
 
+# ⚠ 名单里除了「被验的东西」，还必须有「**验的那一套**」本身 ——
+#   改测试改的是「门断言什么」，改本文件改的是「门跑不跑」。
+#   这两类若不在名单里，**唯一能让所有门失效的改动，恰恰是唯一不触发门的改动**。
+#   （2026-08-24 实测：补 dotnet test 进钩子那一次提交，因为只动了
+#     .githooks/ 与 HANDOVER.md，门整个没跑，而我在提交讯息里写了「四道全绿」。）
 WATCH='Pt_Optimize/Core/|Pt_Optimize/Program.cs|Pt_Optimize/UI/'
+WATCH="$WATCH|Pt_Optimize\.Tests/|tests/UiWiring/|Pt_Optimize\.Geom/|\.githooks/"
 CHANGED=$(git diff --cached --name-only | grep -E "$WATCH" || true)
 
 if [ -z "$CHANGED" ]; then
     exit 0
 fi
 
-echo "── 动到内核或界面，跑自检门（约 4 分钟；--no-verify 可跳过）"
+echo "── 动到会影响判定的档，跑自检门（约 11 分钟；--no-verify 可跳过）"
 echo "$CHANGED" | sed 's/^/     /'
 
 ROOT=$(git rev-parse --show-toplevel)
