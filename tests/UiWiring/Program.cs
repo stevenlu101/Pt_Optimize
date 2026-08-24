@@ -717,9 +717,21 @@ class UiWiringTests {
 
             Check("表被认出来了：数据行有制表位", tRow1.Length > 0,
                   tRow1.Length > 0 ? string.Join("/", tRow1) : "★ 制表位根本没设上");
+            // ⚠ 下界是 **2** 不是 0（2026-08-24 修）：本表 3 列 ⇒ 正常有 2 个制表位（实测 77/154）。
+            //   原来写 `tRow1.Length > 0 && Range(1, Length-1).All(...)` ——
+            //   制表位掉到只剩 **1 个**时 `Range(1, 0)` 是**空集**，`All` **恒真** ⇒ 断言照打 ✓。
+            //   而「3 列只设出 1 个制表位」正是这条断言该抓的回归。
+            //   同族：RequiredChecksTests.EmptyTable_IsNotSilentlyOk（空判据表报「硬安全线全过」）。
             Check("制表位严格递增（不递增则 Tab 原地不动，两列贴成一格）",
-                  tRow1.Length > 0 && Enumerable.Range(1, tRow1.Length - 1).All(i => tRow1[i] > tRow1[i - 1]),
-                  string.Join("/", tRow1));
+                  tRow1.Length >= 2 && Enumerable.Range(1, tRow1.Length - 1).All(i => tRow1[i] > tRow1[i - 1]),
+                  tRow1.Length < 2
+                      ? $"★ 只有 {tRow1.Length} 个制表位 —— 本表 3 列，至少要 2 个"
+                      : string.Join("/", tRow1));
+            // 自证：把「空集恒真」这件事本身证给门看，免得后人把下界又改回 0
+            var oneStop = new[] { 77 };
+            Check("自证：只剩 1 个制表位时「严格递增」恒真（所以下界必须是 2，不是 0）",
+                  Enumerable.Range(1, oneStop.Length - 1).All(i => oneStop[i] > oneStop[i - 1]),
+                  "Range(1, 0) 是空集 ⇒ All 恒真 ⇒ 光靠「递增」验不出制表位掉到 1 个");
             Check("同一张表三行的制表位完全一致",
                   tHead.Length > 0 && tHead.SequenceEqual(tRow1) && tRow1.SequenceEqual(tRow2),
                   $"[{string.Join("/", tHead)}] [{string.Join("/", tRow1)}] [{string.Join("/", tRow2)}]");
