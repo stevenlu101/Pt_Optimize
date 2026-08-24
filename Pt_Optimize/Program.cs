@@ -5296,10 +5296,43 @@ internal static class Program
                     fCb.TabInsulMm[k] = Math.Max(0.3, fCb.TabInsulMm[k] * 0.4);
                 var caseC = new[] { fCa.BuildCase(p, checkRamp: false), fCb.BuildCase(p, checkRamp: false) };
 
+                // ── B′ 主引擎（SizeFlanges）的**多段端到端**：两段 ⇒ 三片
+                //
+                //  为什么放在这里而不是单测：它每段要跑一次耦合解（约 30 s），
+                //  而单测整套只有 15 秒。本门本来就在并行跑一批分钟级的解，
+                //  把它塞进同一批 ⇒ 墙钟基本不变。
+                //
+                //  为什么还需要它（「取较大值」那条逻辑已经在 LineSolverTests 里微秒级验过）：
+                //  验过的是**纯函数** JointThickness；没验过的是**把它们串起来的那几行** ——
+                //  need/amps 有没有按段对齐、接头下标有没有错位、共用片标记有没有标错边。
+                //  这类错不会崩、不会红，只会给出一组**看起来正常的错厚度**。
+                //  ⚠ 测试档里那句「仍没有覆盖多段共用片取两侧较大值」在 2026-08-24
+                //    抽出 JointThickness 之后就已经过时了 —— 顺手改准。
+                var segsBp = Enumerable.Range(0, 2).Select(i => new Segment
+                {
+                    Name = $"HC{i + 1}", TSetC = 1300 - i * 50, TGlassInC = 1300,
+                    GlassHeadM = 0.3 + i * 0.3, LengthMm = 300, TubeIdMm = 50,
+                    WallMm = 0.8, GradeName = "Pt", TLiquidusC = 1050
+                }).ToList();
+                var protoBp = new FlangePlate
+                {
+                    DiscRadiusMm = FinalDesign.Current.DiscRadiusMm,
+                    HoleRadiusMm = FinalDesign.Current.HoleRadiusMm,
+                    TabEndXMm = -FinalDesign.Current.TabLengthMm,
+                    TabEndHalfWidthMm = FinalDesign.Current.TabHalfWidthMm,
+                    TabParallel = true,
+                    ThicknessMm = 2.0, ThickenedMm = 2.0,
+                };
+
                 var allCases = caseA.Concat(caseB).Concat(caseC).ToArray();
                 var solved = new (LineResult? R, Exception? Ex)[allCases.Length];
-                System.Threading.Tasks.Parallel.For(0, allCases.Length,
-                    i => solved[i] = Solve1(allCases[i]));
+                List<LineSolver.FlangeResult>? bpRes = null; Exception? bpEx = null;
+                // 九个整线解 + 一个 B′ 多段定厚，一起并行（B′ 内部是两次耦合解）
+                System.Threading.Tasks.Parallel.Invoke(
+                    () => System.Threading.Tasks.Parallel.For(0, allCases.Length,
+                              i => solved[i] = Solve1(allCases[i])),
+                    () => { try { bpRes = LineSolver.SizeFlanges(segsBp, p, protoBp); }
+                            catch (Exception e) { bpEx = e; } });
                 Mark("并行预解 A·B·C");     // 九次解的时间记在这里，别混进 A 的桶
                 var preA = solved.Take(caseA.Length).ToArray();
                 var preB = solved.Skip(caseA.Length).Take(caseB.Length).ToArray();
@@ -5442,6 +5475,60 @@ internal static class Program
                 // ⇒ 把这句话做成会自己跑的检查：动一个已知会改 D 的旋钮（舌保温），
                 //   ③ 必须跟着动，且比例落在合理区间。不动 = 基线又冻住了。
                 Console.WriteLine();
+                // ════════════════════════════════════════════════════════════
+                // ── B′ 多段定厚的**接线**：两段 ⇒ 三片（2026-08-24 补，此前端到端零覆盖）
+                //
+                // 「取两侧较大值」那条逻辑已在 LineSolverTests 里微秒级验过（纯函数 JointThickness）。
+                // 本段验的是**别的东西**：把它串起来的那几行 —— need/amps 有没有按段对齐、
+                // 接头下标有没有错位、共用片标记有没有标错边。
+                // 这类错不会崩、不会红，只会给出一组**看起来正常的错厚度**。
+                Console.WriteLine();
+                Console.WriteLine("── B′ 多段定厚接线：两段 ⇒ 三片（入口 / 共用 / 出口）");
+                if (bpEx is not null)
+                { bad++; Console.WriteLine("   ✗ 抛异常：" + bpEx.Message); }
+                else if (bpRes is null || bpRes.Count != LineSolver.FlangeCount(segsBp.Count))
+                {
+                    bad++;
+                    Console.WriteLine($"   ✗ 片数应为 {LineSolver.FlangeCount(segsBp.Count)}，"
+                                    + $"实得 {bpRes?.Count.ToString() ?? "（没结果）"}");
+                }
+                else
+                {
+                    var f0 = bpRes[0]; var f1 = bpRes[1]; var f2 = bpRes[2];
+                    string names = string.Join(" / ", bpRes.Select(f => f.Joint));
+                    var segNames = segsBp.Select(x => x.Name).ToArray();
+
+                    void Bp(string what, bool ok, string note = "")
+                    {
+                        if (!ok) bad++;
+                        Console.WriteLine($"   {(ok ? "✓" : "✗")} {what}"
+                                        + (note.Length > 0 ? "　" + note : ""));
+                    }
+
+                    Bp("接头顺序是 入口 → 共用 → 出口",
+                       f0.Joint == "入口" && f2.Joint == "出口"
+                       && f1.Joint == $"{segNames[0]}|{segNames[1]}", names);
+                    Bp("只有中间那片标了共用（两端不共用）",
+                       !f0.Shared && f1.Shared && !f2.Shared,
+                       $"{f0.Shared}/{f1.Shared}/{f2.Shared}");
+                    // 共用片走的是两段电流的**矢量合成** ⇒ 必大于任一端片
+                    Bp("共用片电流大于两端（矢量合成，不是取一侧）",
+                       f1.CurrentA > f0.CurrentA + 1e-9 && f1.CurrentA > f2.CurrentA + 1e-9,
+                       $"{f0.CurrentA:0} / {f1.CurrentA:0} / {f2.CurrentA:0} A");
+                    Bp("三片都有正厚度与正铂重",
+                       bpRes.All(f => f.ThicknessMm > 0 && f.MassG > 0),
+                       string.Join(" / ", bpRes.Select(f => $"{f.ThicknessMm:0.00}mm {f.MassG:0}g")));
+                    // 只给数不给依据，工程师无从复核 —— 且依据必须是**真实存在的段**
+                    Bp("每片都说得出厚度是被哪一段定的，且那一段真的存在",
+                       bpRes.All(f => f.SizedBy.Length > 0 && segNames.Any(
+                           n => f.SizedBy.Contains(n, StringComparison.Ordinal))),
+                       string.Join(" / ", bpRes.Select(f => f.SizedBy)));
+                    // ★ 下标错位最典型的现形处：共用片被记成由**不相邻**的段定厚
+                    Bp("共用片的依据是相邻两段之一（下标没错位）",
+                       segNames.Any(n => f1.SizedBy.Contains(n, StringComparison.Ordinal)),
+                       f1.SizedBy);
+                }
+
                 Mark("B");
                 Console.WriteLine("── C 闭式对账：③ 必须随抽热 D 一起动（γ = ③/D，实测 2.40 K/W）");
                 double GammaOf(LineResult rr)
