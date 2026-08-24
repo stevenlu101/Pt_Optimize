@@ -28,7 +28,8 @@ namespace PtOptimize.UI;
 //      ④ 接线测试（tests/UiWiring，**双向**断言）
 //
 // ⚠ public，不是 internal：接线测试要直接读它。
-//   TextFmt 是 internal，于是测试只能反射进去（tests/UiWiring/Program.cs:502）——
+//   TextFmt 是 internal，于是测试只能反射进去（tests/UiWiring 里 §17 与 §18 那两处
+//   `Assembly.GetType("PtOptimize.UI.TextFmt")`）——
 //   那层反射本身就是一处会静默漂开的接缝（改个方法名，测试悄悄取到 null 而不是编译失败）。
 //   这里不重蹈。
 //

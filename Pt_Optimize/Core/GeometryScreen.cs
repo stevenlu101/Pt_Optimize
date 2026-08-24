@@ -144,7 +144,7 @@ public static class GeometryScreen
             //
             //   它原先待在 else 分支 —— 而进到那个分支就意味着 `plates` 是空数组，
             //   于是 `plates.Any(...)` 恒为 false ⇒ **这条判据从来没有、也不可能触发过**。
-            //   而 `HalfWidthClamped` 只有解析几何才会置位（PlateCurrent2D.cs:231），
+            //   而 `HalfWidthClamped` 只有解析几何才会置位（见 FlangePlate.Tangent 里那句赋值），
             //   也就是说它本来就该在这个 if 分支里。写在那边是纯粹的死代码。
             //
             //   它自己写明了为什么重要：「扫舌宽的后半段全是同一个几何，却给出一模一样的数，

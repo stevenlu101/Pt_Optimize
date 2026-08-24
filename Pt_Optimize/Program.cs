@@ -5110,6 +5110,14 @@ internal static class Program
 
                         double tmax = r.Flanges.Count() > 0 ? r.Flanges.Max(f => f.TMaxC) : double.NaN;
                         string failed = r.Failed.Length == 0 ? "（无）" : string.Join("；", r.Failed);
+
+                        // ★ 半宽 > 盘半径时，舌片与圆盘的切点被**静默夹到盘半径**
+                        //   （FlangePlate.Tangent 里那句 Math.Min，它特意置了 HalfWidthClamped
+                        //    「夹住可以，但必须留下痕迹，让上层能报出来」）。
+                        //   本探针第一版没报 ⇒ 表上「舌半宽 40」这一行看着是个独立几何，
+                        //   其实切点那一侧已经按 30 算了。**用了人家特意留的痕迹才算接上。**
+                        if (r.Checks.Any(c => c.Name.StartsWith("· 舌宽被盘径夹住", StringComparison.Ordinal)))
+                            failed += "　⚠ 舌宽已被盘径夹住（切点按盘半径算）";
                         Console.WriteLine($"   {k,5:0.00}  {Stab(r, LineResult.Key.FlangeStab)}  "
                                         + $"{Stab(r, LineResult.Key.LocalStab)}  {tmax,8:0.0}   "
                                         + $"{(r.AllOk ? "  ✓  " : "  ✗  ")}    {failed}");
@@ -5131,8 +5139,10 @@ internal static class Program
 
                 // 第三条轴：舌片变窄 ⇒ 舌片里的 J 直接变大，而管孔那侧的热平衡受影响较小
                 //   —— 前两条轴上 ②′ 都抢先变红，这条是给热稳定「最公平的一次机会」。
+                // ⚠ 从**盘半径**起扫，不从 40 起：半宽 > 盘半径那一段切点会被夹住
+                //   （见上面 Sweep 里那段说明）—— 扫一个自己都说不清是什么几何的点没有意义。
                 Sweep("舌半宽 mm（抬舌片里的 J，尽量不动管侧热平衡）",
-                      new[] { 40.0, 30.0, 25.0, 20.0, 15.0, 12.0, 10.0 },
+                      new[] { 30.0, 28.0, 25.0, 20.0, 15.0, 12.0, 10.0 },
                       (fd, v) => { fd.TabHalfWidthMm = v; return fd; });
 
                 Console.WriteLine();

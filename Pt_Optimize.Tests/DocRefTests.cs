@@ -145,6 +145,42 @@ public class DocRefTests
             + string.Join(Environment.NewLine, bad));
     }
 
+    /// <summary>
+    /// **注释里不许拿「档名.cs:行号」当引用。**
+    ///
+    /// 行号在活文件里每编辑一次就漂一次 —— 它今天指到的地方，明天指到别处，
+    /// **而且不会有任何东西报错**。2026-08-24 全仓只有两处，**两处都已经错了**：
+    ///   · `GeometryScreen` → `PlateCurrent2D.cs:231`（本意是 HalfWidthClamped 那句赋值，
+    ///     当天被我自己的另一处编辑挤到 248 行；231 行现在是「阶梯已给，外缘取基准厚」）
+    ///   · `Flow` → `tests/UiWiring/Program.cs:502`（本意是反射 TextFmt 那两处；
+    ///     502 行现在是 `Set(page, "_suppressAuto", false)`）
+    /// 同族的还有 `ShellThermal` 把 HANDOVER 的**行号**写成了节号（§2038）。
+    ///
+    /// ⇒ 引用只准指**名字**（型别、成员、小节号、UiWiring 节号）—— 名字改了会编译错或被本档抓到，
+    ///   行号改了什么都不会发生。
+    /// </summary>
+    [Fact]
+    public void NoLineNumberReferencesInComments()
+    {
+        string root = RepoRoot();
+        var bad = new List<string>();
+        int scanned = 0;
+        foreach (string f in SourceFiles(root))
+        {
+            string[] lines = File.ReadAllLines(f);
+            scanned += lines.Length;
+            for (int i = 0; i < lines.Length; i++)
+                foreach (Match m in Regex.Matches(lines[i], "[A-Za-z_][A-Za-z0-9_.]*[.]cs:[0-9]+"))
+                    bad.Add($"{Path.GetRelativePath(root, f)}:{i + 1}  「{m.Value}」"
+                          + $"  {lines[i].Trim()}");
+        }
+        // 自证：一行都没扫到不是「没问题」
+        Assert.True(scanned > 5000, $"只扫到 {scanned} 行原始码 —— 档案枚举多半坏了");
+        Assert.True(bad.Count == 0,
+            "注释里拿行号当引用（**行号一编辑就漂，而且不会有任何东西报错**）：" + Environment.NewLine
+            + string.Join(Environment.NewLine, bad));
+    }
+
     [Fact]
     public void EveryNamedDocReference_ResolvesToARealHeading()
     {
