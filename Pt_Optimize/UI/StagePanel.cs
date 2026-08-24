@@ -35,6 +35,16 @@ public sealed class StagePanel : Panel
     private readonly LinkLabel _bypass = new();
     /// <summary>「下一步 → 点『…』」。可点，但**只带你去**，不代你跑。</summary>
     private readonly LinkLabel _next = new();
+
+    /// <summary>
+    /// **全 APP 唯一的那根进度条**（2026-08-24）。
+    ///
+    /// 放在面板里而不是各页工具条上：面板切到哪一页都看得见，
+    /// 于是 ④「定尺寸/搜形状」也有条了 —— 它此前一根都没有
+    /// （它的按钮是从 ③ 借来的，进度条没借），而搜形状是全程最长的一条。
+    /// 数只有一份（<see cref="FlowState.RunningPct"/>），条只有一根，不构成「同一件事两处表达」。
+    /// </summary>
+    private readonly ProgressBar _bar = new();
     private readonly FlowLayoutPanel _stack = new();
 
     private readonly FlowState _state;
@@ -93,6 +103,15 @@ public sealed class StagePanel : Panel
             lab.Margin = new Padding(0, 0, 0, UiScale.S(3));
             _stack.Controls.Add(lab);
         }
+
+        // 进度条插在「正在算」那一行之后
+        _bar.Height = UiScale.S(10);
+        _bar.Width = UiScale.S(320);
+        _bar.MarqueeAnimationSpeed = 30;
+        _bar.Margin = new Padding(0, 0, 0, UiScale.S(5));
+        _bar.Visible = false;
+        _stack.Controls.Add(_bar);
+        _stack.Controls.SetChildIndex(_bar, _stack.Controls.IndexOf(_input) + 1);
 
         _banner.ForeColor = Color.FromArgb(150, 20, 20);
         _banner.BackColor = Color.FromArgb(255, 242, 242);
@@ -168,11 +187,22 @@ public sealed class StagePanel : Panel
 
         // 正在跑什么 —— 取各页已有的进度文字，不另起一套
         if (_state.Running is { } run)
+        {
             _input.Text = $"正在算：{Flow.Chain(run).Name}"
                         + (_state.RunningNote.Length > 0 ? $"　{_state.RunningNote}" : "")
                         + "　（再点那个按钮 = 取消）";
+            // 说得出百分比就画实条，说不出就走马灯 —— 别拿一根不动的空条冒充「有进度」
+            if (_state.RunningPct >= 0)
+            { _bar.Style = ProgressBarStyle.Continuous; _bar.Maximum = 100; _bar.Value = _state.RunningPct; }
+            else
+            { _bar.Style = ProgressBarStyle.Marquee; }
+            _bar.Visible = true;
+        }
         else
+        {
             _input.Text = "输入来自：" + (InputNote.Length > 0 ? InputNote : "本页控件 + 左侧参数表");
+            _bar.Visible = false;
+        }
 
         // 结果新鲜度 —— 这一条是整块面板里最要紧的：
         // 「下面这些数是这组参数算出来的吗」

@@ -1665,7 +1665,7 @@ public sealed class LineDesignPage : TabPage
         {
             _status.Text = s2;
             int pct = _prog.Maximum > 0 ? 100 * _prog.Value / _prog.Maximum : 0;
-            Shared?.SetRunningNote($"{pct,3} %　已用 {clock.Elapsed.TotalMinutes:0.0} 分　{s2}");
+            Shared?.SetRunningNote($"已用 {clock.Elapsed.TotalMinutes:0.0} 分　{s2}", pct);
         }
         Note("准备网格…");
 

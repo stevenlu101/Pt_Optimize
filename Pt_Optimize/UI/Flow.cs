@@ -571,6 +571,17 @@ public sealed class FlowState
     public string RunningNote = "";
 
     /// <summary>
+    /// 进度 %（0–100）。**−1 = 说不出百分比**（走马灯）。
+    ///
+    /// 为什么放在这里而不是各页自己的进度条上：2026-08-21 定过「不给每页各配一套」——
+    /// 而那条决定当时只落实了一半：状态面板拿到了**文字**，却始终没有条。
+    /// 于是 ④「定尺寸/搜形状」上一根条都没有（它的按钮是从 ③ 借来的，进度条没借），
+    /// 而搜形状恰恰是全程最长的一条（几十分钟）。
+    /// ⇒ 数放这儿，**面板画一根**：一份状态、一根条、每页都看得见。
+    /// </summary>
+    public int RunningPct = -1;
+
+    /// <summary>
     /// 被越关进入的阶段。**按会话，不持久化** —— 能被存进文件的例外，
     /// 三个月后就变成了没人记得来由的默认值。
     /// </summary>
@@ -602,14 +613,19 @@ public sealed class FlowState
     {
         Running = chain;
         RunningNote = note;
+        RunningPct = -1;              // 新的一段活，进度从「说不出」重新开始
         Notify();
     }
 
-    /// <summary>只更新进度文字（不改「在跑哪条链」）。供 Progress&lt;string&gt; 直接接。</summary>
-    public void SetRunningNote(string note)
+    /// <summary>
+    /// 只更新进度（不改「在跑哪条链」）。供 Progress&lt;string&gt; 直接接。
+    /// <paramref name="pct"/> 传 −1 表示这一段说不出百分比（面板画走马灯）。
+    /// </summary>
+    public void SetRunningNote(string note, int pct = -1)
     {
         if (Running is null) return;      // 已经结束了就别再刷，免得残留一行假进度
         RunningNote = note;
+        RunningPct = pct < 0 ? -1 : System.Math.Clamp(pct, 0, 100);
         Notify();
     }
 

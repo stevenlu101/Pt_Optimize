@@ -1332,6 +1332,39 @@ class UiWiringTests {
                 //   **有效可见性**（任一祖先隐藏就是 false）⇒ 整棵树恒 false，
                 //   照它写会报「指路链哑了」而真机上好好的 —— HANDOVER 记过同族的坑
                 //   （句柄没建之前 .Text 赋值不触发 TextChanged）。看**内容**才作数。
+                // ★ ④「定尺寸/搜形状」此前**一根进度条都没有**（用户问「④ 页的进度条有补上吗?」）：
+                //   它的按钮是从 ③ 借来的，而 _prog 长在 ③ 的工具条上、没借过来；
+                //   偏偏搜形状是全程最长的一条（几十分钟）。
+                //   2026-08-21 定过「不给每页各配一套，改用状态面板」——
+                //   但那条决定当时只落实了一半：面板拿到了文字，始终没有条。
+                //   ⇒ 条放进面板（切到哪页都看得见），数只有一份 FlowState.RunningPct。
+                {
+                    var bar = (ProgressBar)F(sp, "_bar")!;
+                    flow.SetRunningNote("盘Ø60／舌宽90　7 轮", 42);
+                    Pump(150);
+                    Check("面板里有进度条，且跑着的时候在显示",
+                          bar.Style == ProgressBarStyle.Continuous && bar.Value == 42,
+                          $"{bar.Style}　{bar.Value} %");
+                    flow.SetRunningNote("核算中…");        // 说不出百分比
+                    Pump(150);
+                    Check("说不出百分比时走马灯（不拿不动的空条冒充进度）",
+                          bar.Style == ProgressBarStyle.Marquee, bar.Style.ToString());
+                    // 自证：不在跑的时候条要收起来
+                    var keepRun = flow.Running;
+                    flow.SetRunning(null); Pump(150);
+                    // ⚠ 这里**不能**验 bar.Visible：本测试不 Show 窗体，Visible 返回的是
+                    //   有效可见性（祖先隐藏就恒 false）⇒ 两种情况都是 false，验不出东西。
+                    //   我第一版写成 `!Visible || true` —— 那是恒真的断言，比不写更坏。
+                    //   ⇒ 改验两件真看得见的事：源码里 else 分支确实收条、以及 RunningPct 归位。
+                    string spSrc = File.ReadAllText(Path.Combine(RepoRoot(), "Pt_Optimize", "UI", "StagePanel.cs"));
+                    Check("不在跑的时候源码里确实把条收起来",
+                          spSrc.Contains("_bar.Visible = false;", StringComparison.Ordinal),
+                          spSrc.Contains("_bar.Visible = false;", StringComparison.Ordinal)
+                              ? "" : "★ 跑完了条还挂着 ⇒ 界面会一直像在算");
+                    Check("不在跑时 RunningPct 归位", flow.RunningPct == -1, $"{flow.RunningPct}");
+                    flow.SetRunning(keepRun, "自动定厚"); Pump(150);
+                }
+
                 Check("跑着的时候「下一步」那一行不是空的", L("_next").Length > 0,
                       L("_next").Length > 0 ? "" : "★ 指路链在最需要它的时候哑了");
                 Check("它说得出现在能做什么（等 / 取消）",
