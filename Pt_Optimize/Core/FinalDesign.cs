@@ -258,7 +258,8 @@ public sealed class FinalDesign
         $"压接 {ClampLengthMm:0} 夹 {ClampTempC:0} °C　合计 {TotalMassG:0} g";
 
     // ════════════════════════════════════════════════════════════════════
-    // ★★★★★ 定案档（2026-08-17 **全部重解**）
+    // ★★★★★ 定案档（**全部重解**；原注「2026-08-17」与仓库对不上 —— 数值与产生它的
+    //   工具同在 2026-08-20 的提交 09c8d9b 落库，2026-08-25 更正，详见 W08 的 Provenance）
     //
     // 为什么重解：判据 ⑤（舌片自由段 ≥ 100 mm）加进来之后，原来两档当场不过 ——
     // 舌长 90 mm 的自由段只有 24 mm，铜排根本装不上。那不是余量不够，是**设计上不成立**。
@@ -285,8 +286,14 @@ public sealed class FinalDesign
     public static readonly FinalDesign W08 = new()
     {
         Name = "管壁 0.8 · 留余量",
-        Provenance = "--shape + D8 定尺寸（Core/Sizer.cs），2026-08-17；60 轮，取最轻的**有裕度**的全过点。" +
-                     "数值已按图纸精度量化（板厚 0.01／舌保温 0.1 mm）后复核，`--window` 逐条对上",
+        Provenance = "--shape + D8 定尺寸（Core/Sizer.cs）；60 轮，取最轻的**有裕度**的全过点。" +
+                     "数值已按图纸精度量化（板厚 0.01／舌保温 0.1 mm）后复核，`--window` 逐条对上。" +
+                     "★ 2026-08-25 更正：此处原写「2026-08-17」，与仓库对不上 —— 数值、--shape、" +
+                     "Core/Sizer.cs、控制律 D8 **全部**在 2026-08-20 的提交 09c8d9b 里首次出现" +
+                     "（那次提交标题是「输出框改用 Excel 式对齐」，正文没提定案被换掉）。" +
+                     "推算过程多半发生在落库前的对话里，代码是事后补写的。" +
+                     "⚠ 故这句出处**不能拿来复现**：今天的 --shape 种子就是本档（见 Core/ShapeSeed.cs），" +
+                     "用它重推等于从答案出发。要复现须用 --seedflat 从中性种子起跑",
         Binding = "抽热窗口：②′ 最小 1.1 W（须 >0）、③ 5.2/10 —— 两者是同一个量的两侧。" +
                   "舌保温已接近下界（0.3–0.5 mm，≈裸舌）⇒ 再削板厚就要转为往管里灌热",
         WallMm = 0.8,
@@ -302,8 +309,9 @@ public sealed class FinalDesign
     public static readonly FinalDesign W06 = new()
     {
         Name = "管壁 0.6 · 底档",
-        Provenance = "--shape + D8 定尺寸（Core/Sizer.cs），2026-08-17；60 轮，取最轻的**有裕度**的全过点。" +
-                     "数值已按图纸精度量化（板厚 0.01／舌保温 0.1 mm）后复核",
+        Provenance = "--shape + D8 定尺寸（Core/Sizer.cs）；60 轮，取最轻的**有裕度**的全过点。" +
+                     "数值已按图纸精度量化（板厚 0.01／舌保温 0.1 mm）后复核。" +
+                     "★ 2026-08-25 更正：原写的「2026-08-17」与仓库对不上，同 W08 那条，理由不再重复",
         Binding = "管壁 0.6 = 焊接烧穿下界（余量 0）；端片板厚 0.62–0.64 也逼近同一条下界 0.60",
         WallMm = 0.6,
         DiscRadiusMm = 30.0, TabLengthMm = 140.0, TabHalfWidthMm = 30.0,
@@ -325,7 +333,7 @@ public sealed class FinalDesign
         Invalid = "★ **判据 ⑤ 不过**：舌长 90 ⇒ 自由段只有 24.0 mm（下界 100）。" +
                   "24 mm 里装不下现场铜排（长 100／宽 60–80）与压接块，**设计上不成立**。" +
                   " 热学五条（①②′②″③管J）仍全过，故本档的**热学结论仍可引用**，" +
-                  "但几何与铂重已由 2026-08-17 的 `--shape` 重解取代（3106 → 3547 g）。",
+                  "但几何与铂重已由 `--shape` 重解取代（3106 → 3547 g；原写「2026-08-17」，与仓库对不上，见 W08 的 Provenance）。",
         InvalidChecks = new[] { "⑤" },
         WallMm = 0.8, TabLengthMm = 90.0, TabHalfWidthMm = 15.0,
         TabThickMm = new[] { 2.11, 3.33, 3.12, 1.76 },
@@ -341,7 +349,7 @@ public sealed class FinalDesign
         Provenance = "--final2 可行性阶梯 D7，2026-08-16",
         Binding = "焊接烧穿下界 0.6 mm ＋ 管 J 10.96/12 —— 两条同点咬住；败在装配",
         Invalid = "★ **判据 ⑤ 不过**：舌长 90 ⇒ 自由段只有 24.0 mm（下界 100）。同上，" +
-                  "几何已由 2026-08-17 的 `--shape` 重解取代（2388 → 2656 g）。",
+                  "几何已由 `--shape` 重解取代（2388 → 2656 g；原写「2026-08-17」，与仓库对不上，见 W08 的 Provenance）。",
         InvalidChecks = new[] { "⑤" },
         WallMm = 0.6, TabLengthMm = 90.0, TabHalfWidthMm = 15.0,
         TabThickMm = new[] { 1.82, 2.85, 2.66, 1.49 },

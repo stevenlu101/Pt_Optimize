@@ -4442,6 +4442,20 @@ internal static class Program
                 // 默认**打轨迹**：一个形状要跑几十轮、每轮几十秒，不打就是几十分钟的黑屏，
                 // 分不清「在算」还是「卡死」。要静默用 --notrace。
                 bool traceS = !args.Contains("--notrace");
+
+                // ★★ 种子是**会影响答案**的输入（2026-08-25 查出）。
+                //   此前这里写死 FinalDesign.W08.Clone()，只覆盖 WallMm ——
+                //   于是 --wall 0.6 会拿 0.8 档的板厚分布去配 0.6 的管，
+                //   而 ByWall(0.6) 明明就在那儿。且输出里一个字都没提种子是谁。
+                //   现在交给 ShapeSeed.Choose，并**强制打印**它的申报。
+                int iSeedS = Array.IndexOf(args, "--seed");
+                string? seedNameS = iSeedS >= 0 && iSeedS + 1 < args.Length
+                                    && !args[iSeedS + 1].StartsWith("--") ? args[iSeedS + 1] : null;
+                int iFlatS = Array.IndexOf(args, "--seedflat");
+                double? seedFlatS = iFlatS >= 0 && iFlatS + 1 < args.Length
+                                    && double.TryParse(args[iFlatS + 1], out double sfS) ? sfS : null;
+                var seedPickS = ShapeSeed.Choose(wallS, seedNameS, seedFlatS,
+                                                 FinalDesign.All, FinalDesign.Current);
                 var optS = new SizerOptions
                 {
                     MaxRounds = (int)ArgS("--rounds", 40),
@@ -4453,6 +4467,8 @@ internal static class Program
                 Console.WriteLine("★ **舌长是算出来的**：舌长 = 圆盘切点 + 压接段 + 自由段下界。");
                 Console.WriteLine("  更长只多花铂多发热 —— 舌长从来不该是自由变量，它是装配的因变量。");
                 Console.WriteLine("★ D8 分派：舌保温 → 抽热 D（免费旋钮，管 ②′ 与 ③）／环倍率 → ②″／板厚 → 接力+省铂。");
+                // ★ 必须印：拿到这份输出的人要能还原出「这是用什么算的」。
+                Console.WriteLine(seedPickS.Note);
                 Console.WriteLine();
 
                 var rowsS = new List<(double disc, double hw, double len, double mass, bool ok, string msg, FinalDesign d)>();
@@ -4477,11 +4493,8 @@ internal static class Program
                     double tanS = Math.Sqrt(Math.Max(0, discS * discS - hwS * hwS));
                     double lenS = tanS + clampLenS + freeMinS;
 
-                    var seedS = FinalDesign.W08.Clone();
+                    var seedS = seedPickS.Seed.Clone();   // 每个形状一份；Invalid/壁厚 Choose 里已处理
                     seedS.Name = $"盘R{discS:0}·舌{lenS:0}×{2 * hwS:0}";
-                    seedS.Invalid = "";                             // 这是新解，不继承旧档的失效告示
-                    seedS.InvalidChecks = Array.Empty<string>();    // 声明的判据清单也要一起清
-                    seedS.WallMm = wallS;
                     seedS.DiscRadiusMm = discS;
                     seedS.TabHalfWidthMm = hwS;
                     seedS.TabLengthMm = lenS;
