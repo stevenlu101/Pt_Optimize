@@ -64,6 +64,9 @@ public class CriteriaTableTests
             (LineResult.Key.TubeJ,      KindOf(LineResult.Key.TubeJ),      di.TubeJAllowAPerMm2),
             (LineResult.Key.FlangeStab, KindOf(LineResult.Key.FlangeStab), 1.0),
             (LineResult.Key.LocalStab,  KindOf(LineResult.Key.LocalStab),  1.0),
+            // 现场升温那条（2026-08-25 新增）。215 是**现役基准**不是通过线，
+            // 但它一样要与代码对得上 —— 基准漂了而文档没跟上，同样会误导。
+            (LineResult.Key.RampField,  KindOf(LineResult.Key.RampField),  215.0),
         };
     }
 

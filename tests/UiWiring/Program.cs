@@ -82,6 +82,16 @@ class UiWiringTests {
         if (ifw >= 0 && ifw + 1 < args.Length)
         { Environment.ExitCode = Walk.Follow(args[ifw + 1]); return; }
         // `--searchshape [quick]`：驱动真的「◇ 搜形状」（用户 2026-08-25）
+        // `--repro <盘Ø> <舌长> <半宽> <管壁> [quick]`：从给定起点复现定案（用户 2026-08-25）
+        int ir = Array.IndexOf(args, "--repro");
+        if (ir >= 0 && ir + 4 < args.Length)
+        {
+            Environment.ExitCode = Walk.Repro(
+                double.Parse(args[ir + 1]), double.Parse(args[ir + 2]),
+                double.Parse(args[ir + 3]), double.Parse(args[ir + 4]),
+                args.Contains("quick"));
+            return;
+        }
         if (args.Contains("--searchshape"))
         { Environment.ExitCode = Walk.SearchShape(args.Contains("quick")); return; }
         if (args.Contains("--follow")) { Environment.ExitCode = Walk.Follow(); return; }

@@ -1272,4 +1272,87 @@ static class Walk
         Console.WriteLine(_bad == 0 ? "★ 搜形状走查通过" : $"✗ 搜形状走查：{_bad} 项不过");
         return _bad;
     }
+
+    // ════════════════════════════════════════════════════════════════════
+    //  `UiWiring.exe --repro <盘Ø> <舌长> <半宽> <管壁> [quick]`
+    //
+    //  **从一个给定的起点几何出发，看 APP 自己能不能走到定案。**
+    //  用户 2026-08-25：「先用 Pt_Heater1.3dm 为例子复现出
+    //  定案_管壁0.6mm.3dm 与 定案_管壁0.8mm.3dm 的结果」。
+    //
+    //  这是本项目少有的**有已知答案**的验证：
+    //    起点 Pt_Heater1.3dm（--geom 量得）：盘Ø120／舌长200／半宽60／板厚2.0 均匀／管壁1.0
+    //    终点 定案 0.8：盘Ø60／舌140×60／管壁0.8 ⇒ **3547 g**
+    //         定案 0.6：同形状／管壁0.6           ⇒ **2656 g**
+    //  当年那条路是**人工**走的（回 Rhino 改环径 + 做阶梯厚度分布）；
+    //  这里问的是：把起点几何交给 APP，它自己搜得回来吗。
+    //
+    //  ⚠ 走**解析路**而不是 .3dm 路：Pt_Heater1 分析出来是等厚板（1 级），
+    //    「逐级定厚」没有可调的级（见 Flow.Next 里那条指路）。
+    //    而定案本身就是解析设计（阶梯/环倍率都是程序生成的），.3dm 只是它的产物。
+    // ════════════════════════════════════════════════════════════════════
+    public static int Repro(double discD, double tabLen, double halfW, double wall, bool quick)
+    {
+        Console.OutputEncoding = System.Text.Encoding.UTF8;
+        Application.EnableVisualStyles();
+
+        var main = new MainForm();
+        main.CreateControl();
+        var tabs = (TabControl)F(main, "_tabs")!;
+        var line = tabs.TabPages.OfType<LineDesignPage>().First();
+        typeof(Form).GetMethod("OnLoad", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(main, new object?[] { EventArgs.Empty });
+        Pump(1200);
+        void Force(Control c) { _ = c.Handle; foreach (Control k in c.Controls) Force(k); }
+        Force(main); Pump(300);
+
+        H($"复现：起点 盘Ø{discD:0}／舌长{tabLen:0}／半宽{halfW:0}／管壁{wall:0.0}");
+        Console.WriteLine("  终点（已知答案）：定案 0.8 = 3547 g　定案 0.6 = 2656 g");
+        Console.WriteLine("  ⚠ 起点几何取自 Pt_Heater1.3dm 的 --geom 实测，不是页面默认。");
+
+        Set(line, "_suppressAuto", true);
+        ((NumericUpDown)F(line, "_discD")!).Value = (decimal)discD;
+        ((NumericUpDown)F(line, "_tabLen")!).Value = (decimal)tabLen;
+        ((NumericUpDown)F(line, "_tabW")!).Value = (decimal)halfW;
+        ((NumericUpDown)F(line, "_wall")!).Value = (decimal)wall;
+        Set(line, "_suppressAuto", false);
+        Pump(200);
+        Console.WriteLine($"  已设：盘Ø{((NumericUpDown)F(line, "_discD")!).Value}"
+                        + $"／舌长{((NumericUpDown)F(line, "_tabLen")!).Value}"
+                        + $"／半宽{((NumericUpDown)F(line, "_tabW")!).Value}"
+                        + $"／管壁{((NumericUpDown)F(line, "_wall")!).Value}");
+
+        if (quick)
+        {
+            Set(line, "SearchScreenRounds", 4);
+            Set(line, "SearchFinalRounds", 8);
+            Set(line, "SearchMaxExtend", 2);
+            Console.WriteLine("  ⚠ quick：轮数压小，**答案不作数**，只看流程。");
+        }
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        Call(line, "SearchShapeAsync");
+        bool fin = Wait(() => F(line, "_cts") is null, 14_400_000);
+        OK("搜形状跑完", fin, $"用时 {clock.Elapsed.TotalMinutes:0.0} 分");
+
+        string text = (F(line, "_out") as Control)?.Text ?? "";
+        Console.WriteLine();
+        Console.WriteLine("──── 输出框原文 ────");
+        foreach (var l in text.Replace(((char)13).ToString(), "").Split((char)10))
+            if (l.Trim().Length > 0) Console.WriteLine("  " + l.TrimEnd());
+
+        var r = F(line, "LastResult") as LineResult;
+        Console.WriteLine();
+        if (r is not null)
+        {
+            double target = wall >= 0.7 ? 3547 : 2656;
+            Console.WriteLine($"  ★ 复现结果 {r.TotalMassG:0} g　vs 定案记录 {target:0} g"
+                            + $"　差 {r.TotalMassG - target:+0;−0} g"
+                            + $"（{100 * (r.TotalMassG - target) / target:+0.0;−0.0} %）");
+            Console.WriteLine($"     全判据 {(r.AllOk ? "✓" : "✗")}"
+                            + (r.AllOk ? "" : "　未过：" + string.Join("；", r.Failed)));
+        }
+        else OK("有结果可比", false, "★ 没有解");
+        return _bad;
+    }
 }

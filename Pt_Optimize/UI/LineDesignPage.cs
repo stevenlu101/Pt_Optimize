@@ -1828,6 +1828,22 @@ public sealed class LineDesignPage : TabPage
 
 
             // ── 第 1 轮：网格粗筛。它的作用是**给出发点与方向**，不是最终答案。
+            // ★ **先把工程师现在这个形状算一遍**（2026-08-25）。
+            //   网格是写死的 {25,30,35}，不从页面当前盘径出发 ⇒ 手上是 R60 的图时，
+            //   搜索连「你现在这个形状值多少」都不告诉他，直接跳到答案区。
+            //   把当前形状当**基准点**加进第 1 轮：
+            //     · 工程师看得到「从我这里到最好的，差多少」；
+            //     · 外推也有了一个真实的出发点，而不是凭网格猜的。
+            //   ⚠ 它可能不可行（那正是他来搜形状的原因）—— 不可行就只是表上多一行，
+            //     不会成为外推的出发点（外推只从**可行**的最好点走）。
+            {
+                double R0now = (double)_discD.Value * 0.5, hw0now = (double)_tabW.Value;
+                if (R0now > 5 && hw0now > 1)
+                {
+                    _out.AppendText("（先算你现在这个形状，作基准）" + Environment.NewLine);
+                    await EvalShape(R0now, Math.Min(hw0now, R0now));
+                }
+            }
             foreach (double R in discs)
                 foreach (double f in wFrac)
                     await EvalShape(R, R * f);

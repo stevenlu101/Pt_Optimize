@@ -164,6 +164,14 @@ public sealed class LineCase
     /// 是错的（见 §4.3i 的更正）。改限时后必须重跑所有带 CheckRamp 的算例。
     /// </summary>
     public double RampHours = 72.0;
+
+    /// <summary>
+    /// 现场升温速率 K/h。**20 是用户给的现场值**（§4.2s：「以温度控制功率，升温速率 20 °C/h」，
+    /// 2026-08-25 再次确认「起始 71 A、max(法兰−管) +215 K、42.6 h **比较符合现状**」）。
+    /// ⚠ 它与 <see cref="RampHours"/> 判的**不是同一件事**：那条判「能不能到」（电流开满的能力），
+    ///   这条判「按现场那条慢坡走时，法兰会不会比管热到危险」。
+    /// </summary>
+    public double RampRateKPerH = 20.0;
     /// <summary>管根温差目标上限 K（③）。下限恒为 0：温差必须为正，即法兰比管冷。</summary>
     public double RootDeltaMaxK = 10.0;
 
@@ -459,6 +467,8 @@ public sealed class LineResult
         public const string FlangeStab = "· 整片热稳定";
         /// <summary>局部热稳定：J_stab ÷ J_实际（圆盘峰值点），须 &gt; 1</summary>
         public const string LocalStab = "· 局部热稳定";                   // 管电流密度上限（≠「· 法兰 J_max」那条参考量）
+        /// <summary>现场升温（温控 20 K/h）下「法兰温度 − 管温」的全程最大值 K</summary>
+        public const string RampField = "· 升温期法兰−管峰值";
     }
 
     public ConstraintOut? Find(string keyPrefix)
@@ -1645,6 +1655,85 @@ public static class LineRunner
                          + "　⚠ 现为**参考量**：限 1.0 是精确物理，但跨几何的量级还没攒够，"
                          + "攒够再升为硬判据（管 J 当年也是这么升上去的）。"
                 });
+
+                // ════════════════════════════════════════════════════════
+                //  ★★★★★ 现场升温工况（温控 20 K/h）—— 2026-08-25 补进判据表
+                //
+                //  用户 2026-08-25：「**实际的工况是电流密度是为升温而设计的**」，
+                //  并确认 §4.2s 那一行「温控 20 K/h：起始 71 A、max(法兰−管) +215 K、
+                //  出现在 42.6 h」**比较符合现状**。
+                //
+                //  ⚠ 而判据 ① 用的是 `RampSolver` —— 它把法兰并进管子当**同一个温度**，
+                //    于是「法兰比管热」这个失效模式在那个模型里**结构性地不可能出现**
+                //    （这句话就写在 RampTwoNode 的类注释里）。而 §4.2k 说的烧断正是这一条。
+                //    ⇒ 现场那条升温**此前没有任何判据在读**，只有一个要人记得跑的 CLI 探针
+                //      （`--ramp2`）。**造好了没接线**，而且落在决定设计的那个量上。
+                //
+                //  ⚠ **先按参考量进表，不升硬判据**：+215 K 是**现役基准**（设备在跑），
+                //    拿它去判现役等于判掉自己。限值需要出处 —— 与「热稳定」当初一样，
+                //    先把量露出来、攒跨几何的分布，有出处了再谈升硬判据。
+                try
+                {
+                    double shareF = fw.Shared ? Math.Sqrt(3.0) : 1.0;
+                    double iSeg = fw.CurrentA / Math.Max(1e-9, shareF);
+                    double rRef = fw.QGenW / Math.Max(1e-9, fw.CurrentA * fw.CurrentA);
+                    double insulX = pl.InsulBoundaryXResolved;
+                    double aIns = 0, aBare = 0;
+                    for (int k = 0; k < mesh.CellCount; k++)
+                        if (mesh.Centroid[k].X >= insulX) aIns += mesh.Area[k]; else aBare += mesh.Area[k];
+                    double holeR = pl.HoleRadiusMm;
+                    double tubeAreaMm2 = Math.PI * ((holeR * holeR)
+                                       - (holeR - c.WallMm) * (holeR - c.WallMm));
+                    var gRamp = new RampTwoNode.Inputs
+                    {
+                        WallMm = c.WallMm,
+                        FlangeMassG = mesh.VolumeMm3 * Materials.PtDensity * 1e-6,
+                        FlangeAreaInsulMm2 = aIns, FlangeAreaBareMm2 = aBare,
+                        FlangeResistanceRefOhm = rRef, FlangeRefTempC = fw.TRootC,
+                        HoleRadiusMm = holeR,
+                        PlateEqOuterRadiusMm = Math.Sqrt(mesh.TotalArea / Math.PI + holeR * holeR),
+                        FlangeThickMm = mesh.VolumeMm3 / Math.Max(1e-9, mesh.TotalArea),
+                        DesignCurrentA = iSeg,
+                        MaxCurrentA = c.Base.TubeJAllowAPerMm2 * tubeAreaMm2,
+                        FromC = c.RampFromC, TargetC = c.RampTargetC,
+                        RampRateKPerH = c.RampRateKPerH,
+                        MaxHours = (c.RampTargetC - c.RampFromC)
+                                   / Math.Max(0.1, c.RampRateKPerH) * 1.4,
+                        SharedFactor = shareF,
+                        Mode = RampControl.TemperatureRamp,
+                    };
+                    var rt = RampTwoNode.Solve(c.Base, gRamp);
+                    checks.Add(new ConstraintOut
+                    {
+                        Name = LineResult.Key.RampField, Unit = "K", Kind = CheckKind.Reference,
+                        Actual = rt.MaxFlangeMinusTubeK, Limit = 215.0,
+                        LessIsBetter = true, Ok = true, Where = fw.Name,
+                        Note = $"现场升温方式（温控 {c.RampRateKPerH:0} K/h、空管）下"
+                             + $"「法兰温度 − 管温」的**全程最大值**，出现在 "
+                             + $"{rt.TimeAtMaxDeltaS / 3600.0:0.0} h、当时管温 {rt.TTubeAtMaxDeltaC:0} °C；"
+                             + $"法兰峰值 {rt.TFlangePeakC:0} °C（铂熔点 {Materials.PtMeltC:0}）；"
+                             + $"电流 {rt.CurrentStartA:0}→{rt.CurrentEndA:0} A"
+                             + (rt.CurrentClipped ? "，**被二次侧上限截住 ⇒ 跟不上设定速率**" : "")
+                             + (rt.FlangeMelts ? "　★★ **法兰在升温期熔化**" : "")
+                             + "。★ 限值 215 是**现役基准**（用户 2026-08-25 确认「比较符合现状」），"
+                             + "**不是通过线** —— 这一条现为参考量，"
+                             + "要升硬判据得先有限值的出处（同「热稳定」当初的路子）。"
+                             + " ⚠ 判据 ① 用的 RampSolver 把法兰并进管子当同一个温度，"
+                             + "「法兰比管热」在那个模型里结构性地看不见；本条用两节点模型补上。"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    checks.Add(new ConstraintOut
+                    {
+                        Name = LineResult.Key.RampField, Unit = "K", Kind = CheckKind.Reference,
+                        Actual = double.NaN, Limit = 215.0, LessIsBetter = true,
+                        Ok = true, Undetermined = true, Where = "—",
+                        Note = "★ **算不出来**：" + ex.Message
+                             + "　（参考量，不参与 AllOk；但算不出来就该说，不能装作没有这一条）"
+                    });
+                }
+
 
                 // 局部热稳定：取**全线最不稳定的那一格**（由场解逐格筛出，见
                 // ShellThermalResult.LocalStabMargin）。

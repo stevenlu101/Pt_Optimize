@@ -5203,7 +5203,19 @@ internal static class Program
                 }
                 string StabPair(LineResult r)
                     => $"热稳定 整片 {StabOf(r, LineResult.Key.FlangeStab)}"
-                     + $" / 局部 {StabOf(r, LineResult.Key.LocalStab)}";
+                     + $" / 局部 {StabOf(r, LineResult.Key.LocalStab)}"
+                     // ★ 现场升温那条同样打出来（2026-08-25 新增）。新判据不打出来
+                     //   就等于没进表 —— 「热稳定」当初就是这么攒起量级的。
+                     + $"　升温Δ {RampOf(r)}";
+
+                string RampOf(LineResult r)
+                {
+                    foreach (var c in r.Checks)
+                        if (c.Name.StartsWith(LineResult.Key.RampField, StringComparison.Ordinal))
+                            return c.Undetermined || double.IsNaN(c.Actual)
+                                 ? "判不了" : $"{c.Actual:+0;−0} K";
+                    return "—";
+                }
 
                 // ★★ 把「为什么不把热稳定升成硬判据」这个理由**变成断言**（2026-08-24）。
                 //
