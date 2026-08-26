@@ -46,9 +46,11 @@ internal static class GeomProbe
 
             try { RhinoInside.Resolver.Initialize(); }
             catch (Exception e) { Console.Error.WriteLine("Resolver 失败：" + e.Message); return 1; }
-            try { return RunThickness(f3, layer, yPlane, step); }
-            catch (Exception e) { Console.Error.WriteLine(e.GetType().Name + ": " + e.Message); return 2; }
-            finally { Console.Out.Flush(); Environment.Exit(Environment.ExitCode); }
+            int rc;
+            try { rc = RunThickness(f3, layer, yPlane, step); }
+            catch (Exception e) { Console.Error.WriteLine(e.GetType().Name + ": " + e.Message); rc = 2; }
+            Bye(rc);      // ★ 带上**真正的**返回码退出
+            return rc;    // 到不了，编译器要
         }
 
         // plate 模式：把优化搜出来的**解析法兰**写成 .3dm（与 thickness 模式反向）
@@ -71,9 +73,11 @@ internal static class GeomProbe
             string specJson = File.ReadAllText(specPath, Encoding.UTF8);
             try { RhinoInside.Resolver.Initialize(); }
             catch (Exception e) { Console.Error.WriteLine("Resolver 失败：" + e.Message); return 1; }
-            try { return RunFinal(specJson, outFinal); }
-            catch (Exception e) { Console.Error.WriteLine(e.GetType().Name + ": " + e.Message); return 2; }
-            finally { Console.Out.Flush(); Environment.Exit(Environment.ExitCode); }
+            int rc;
+            try { rc = RunFinal(specJson, outFinal); }
+            catch (Exception e) { Console.Error.WriteLine(e.GetType().Name + ": " + e.Message); rc = 2; }
+            Bye(rc);      // ★ 带上**真正的**返回码退出
+            return rc;    // 到不了，编译器要
         }
 
         if (args.Length > 0 && args[0] == "plate")
@@ -97,9 +101,11 @@ internal static class GeomProbe
 
             try { RhinoInside.Resolver.Initialize(); }
             catch (Exception e) { Console.Error.WriteLine("Resolver 失败：" + e.Message); return 1; }
-            try { return RunPlate(outPath, discR, holeR, tabX, tabHW, thicks); }
-            catch (Exception e) { Console.Error.WriteLine(e.GetType().Name + ": " + e.Message); return 2; }
-            finally { Console.Out.Flush(); Environment.Exit(Environment.ExitCode); }
+            int rc;
+            try { rc = RunPlate(outPath, discR, holeR, tabX, tabHW, thicks); }
+            catch (Exception e) { Console.Error.WriteLine(e.GetType().Name + ": " + e.Message); rc = 2; }
+            Bye(rc);      // ★ 带上**真正的**返回码退出
+            return rc;    // 到不了，编译器要
         }
 
         // steps 模式：写一个**阶梯厚度 + 开槽**的法兰，各级为**独立实体**
@@ -134,9 +140,11 @@ internal static class GeomProbe
             catch (Exception e) { Console.Error.WriteLine("Resolver 失败：" + e.Message); return 1; }
             // 第 11 个参数：舌型（par = 等宽，与 FlangePlate.TabParallel 同口径；缺省梯形，保持旧行为）
             bool sPar = args.Length > 11 && args[11].Equals("par", StringComparison.OrdinalIgnoreCase);
-            try { return RunSteps(sOut, sHole, sR, sT, sTabX, sTabHW, sTabT, sN, sDeg, sSlotIn, sSlotOut, sPar); }
-            catch (Exception e) { Console.Error.WriteLine(e.GetType().Name + ": " + e.Message); return 2; }
-            finally { Console.Out.Flush(); Environment.Exit(Environment.ExitCode); }
+            int rc;
+            try { rc = RunSteps(sOut, sHole, sR, sT, sTabX, sTabHW, sTabT, sN, sDeg, sSlotIn, sSlotOut, sPar); }
+            catch (Exception e) { Console.Error.WriteLine(e.GetType().Name + ": " + e.Message); rc = 2; }
+            Bye(rc);      // ★ 带上**真正的**返回码退出
+            return rc;    // 到不了，编译器要
         }
 
         // scale 模式：把用户画的法兰**按厚度方向整体缩放** k 倍，另存新 .3dm
@@ -171,9 +179,11 @@ internal static class GeomProbe
 
             try { RhinoInside.Resolver.Initialize(); }
             catch (Exception e) { Console.Error.WriteLine("Resolver 失败：" + e.Message); return 1; }
-            try { return RunScale(inP, outP, lay, kScale, planeYs, kList); }
-            catch (Exception e) { Console.Error.WriteLine(e.GetType().Name + ": " + e.Message); return 2; }
-            finally { Console.Out.Flush(); Environment.Exit(Environment.ExitCode); }
+            int rc;
+            try { rc = RunScale(inP, outP, lay, kScale, planeYs, kList); }
+            catch (Exception e) { Console.Error.WriteLine(e.GetType().Name + ": " + e.Message); rc = 2; }
+            Bye(rc);      // ★ 带上**真正的**返回码退出
+            return rc;    // 到不了，编译器要
         }
 
         if (args.Length < 1)
@@ -199,18 +209,39 @@ internal static class GeomProbe
             return 1;
         }
 
-        try { return Run(path); }
+        int rcMain;
+        try { rcMain = Run(path); }
         catch (Exception e)
         {
             Console.Error.WriteLine(e.GetType().Name + ": " + e.Message);
-            return 2;
+            rcMain = 2;
         }
-        finally
-        {
-            // RhinoCore 的前台线程会挡住进程自然退出，显式退（房规 §6 坑 3）
-            Console.Out.Flush();
-            Environment.Exit(Environment.ExitCode);
-        }
+        Bye(rcMain);
+        return rcMain;    // 到不了，编译器要
+    }
+
+    /// <summary>
+    /// 强制退出，**并且带上真正的返回码**。
+    ///
+    /// ★ 2026-08-25 查出的真事：这里原本写的是
+    ///     finally { Console.Out.Flush(); Environment.Exit(Environment.ExitCode); }
+    ///   而 <c>Environment.ExitCode</c> 是**另一个属性**，默认恒为 0 ——
+    ///   `return 4` 不会写进它。于是 finally 里那句等价于 Environment.Exit(0)，
+    ///   **把每一种失败码都抹成成功**（thickness 的「图层无实体」是 4、异常是 2）。
+    ///   六个模式全是这个写法 ⇒ 这个子进程**根本没有能力向主程序报告失败**。
+    ///
+    ///   现场表现：拿定案自己的图纸去跑 thickness，stderr 明明写着「图层无实体：法兰」，
+    ///   退出码却是 0、stdout 为空 ⇒ 主程序 `ExitCode != 0` 检查通过，
+    ///   转头拿空字符串解析 JSON，崩在 System.Text.Json，与真因隔了三层。
+    ///
+    /// ⚠ 强制退出本身是**必要**的，不能删：RhinoCore 的前台线程会挡住进程自然退出
+    ///   （房规 §6 坑 3）。要改的只是**退出码**。
+    /// </summary>
+    private static void Bye(int rc)
+    {
+        Console.Out.Flush();
+        Console.Error.Flush();
+        Environment.Exit(rc);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -350,7 +381,18 @@ internal static class GeomProbe
                 if (b == null) continue;
                 breps.Add(b); boxes.Add(b.GetBoundingBox(true));
             }
-            if (breps.Count == 0) { Console.Error.WriteLine("图层无实体：" + layerName); return 4; }
+            if (breps.Count == 0)
+            {
+                // ★ 把**现有图层**一并报出来（2026-08-25）。scale 模式一直这么做，
+                //   thickness 模式却只说「无实体」—— 同一个程序里两种口径，
+                //   而拿定案 3DM 撞上来的正是 thickness 这一侧：
+                //   WriteFinal3dm 写的是「入口-板身／入口-环外级／…」这样按**部位**分的
+                //   22 个图层，而本模式要的是**整片一个图层**。不列出来，人无从猜起。
+                Console.Error.WriteLine("图层无实体：" + layerName + "。现有图层："
+                    + string.Join("、", Enumerable.Range(0, doc.Layers.Count)
+                                                  .Select(i2 => doc.Layers[i2].Name)));
+                return 4;
+            }
 
             // ★ 一片法兰可能由**多个独立实体**拼成（阶梯厚度常这么画：每级一个环）。
             //   早先只量 breps[pick] 一个实体，于是阶梯件里**厚度不同的那几级被整个漏掉**

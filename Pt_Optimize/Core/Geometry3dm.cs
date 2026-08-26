@@ -367,6 +367,22 @@ public static class Geometry3dm
         proc.WaitForExit();
         if (proc.ExitCode != 0)
             throw new InvalidOperationException($"厚度场提取失败（退出码 {proc.ExitCode}）：{stderr.Trim()}");
+        // ★★ 退出码 0 **不等于**成功（2026-08-25 实测）：Pt_Optimize.Geom 的六个模式
+        //   此前都写成 finally { Environment.Exit(Environment.ExitCode); }，
+        //   而那个属性默认恒 0 ⇒ 它精心返回的 4（图层无实体）／2（异常）**全被抹平**。
+        //   当时的表现：拿定案自己的图纸跑 thickness，stderr 明明写着「图层无实体：法兰」，
+        //   退出码却是 0、stdout 为空，于是这里照旧往下走，崩在 System.Text.Json ——
+        //   报出来的是「The input does not contain any JSON tokens」，与真因隔了三层。
+        //   子进程那侧已经修好；这一侧**也要挡**：被叫方撒过一次谎，调用方就不该再只信退出码。
+        if (string.IsNullOrWhiteSpace(stdout))
+            throw new InvalidOperationException(
+                "厚度场提取没有输出（退出码 " + proc.ExitCode + "）—— 子进程说的是："
+                + (stderr.Trim().Length > 0 ? stderr.Trim() : "（它什么也没说）")
+                + Environment.NewLine + "文件：" + path3dm
+                + Environment.NewLine + "图层：「" + layer + "」"
+                + "　—— 图层名对不上是最常见的一种：定案 3DM 由 WriteFinal3dm 写出，"
+                + "图层结构与分析器要的单图层不同。");
+
 
         var dto = JsonSerializer.Deserialize<ThicknessDto>(stdout,
                       new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
