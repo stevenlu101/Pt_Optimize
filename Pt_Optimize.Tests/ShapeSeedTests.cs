@@ -28,7 +28,7 @@ public class ShapeSeedTests
     [Fact]
     public void PicksArchiveMatchingTheWall_NotAlwaysW08()
     {
-        var c = ShapeSeed.Choose(0.6, null, null, Archives, FinalDesign.W08);
+        var c = ShapeSeed.Choose(0.6, null, Archives, FinalDesign.W08);
         Assert.False(c.WallMismatch);
         Assert.Equal(FinalDesign.W06.TabThickMm, c.Seed.TabThickMm);
         // 自证：两档的板厚确实不同，否则上一条恒真
@@ -38,7 +38,7 @@ public class ShapeSeedTests
     [Fact]
     public void PicksW08ForTheEightWall()
     {
-        var c = ShapeSeed.Choose(0.8, null, null, Archives, FinalDesign.W06);
+        var c = ShapeSeed.Choose(0.8, null, Archives, FinalDesign.W06);
         Assert.False(c.WallMismatch);
         Assert.Equal(FinalDesign.W08.TabThickMm, c.Seed.TabThickMm);
     }
@@ -47,7 +47,7 @@ public class ShapeSeedTests
     [Fact]
     public void NoArchiveForThisWall_FallsBackButSaysSo()
     {
-        var c = ShapeSeed.Choose(1.0, null, null, Archives, FinalDesign.W08);
+        var c = ShapeSeed.Choose(1.0, null, Archives, FinalDesign.W08);
         Assert.True(c.WallMismatch);
         Assert.Contains("另一档", c.Note);
         Assert.Contains("1.0", c.Note);
@@ -64,7 +64,7 @@ public class ShapeSeedTests
     [InlineData(2.0)]
     public void NoteIsNeverEmpty(double wall)
     {
-        var c = ShapeSeed.Choose(wall, null, null, Archives, FinalDesign.W08);
+        var c = ShapeSeed.Choose(wall, null, Archives, FinalDesign.W08);
         Assert.False(string.IsNullOrWhiteSpace(c.Note));
         Assert.Contains("种子", c.Note);
     }
@@ -73,7 +73,7 @@ public class ShapeSeedTests
     [Fact]
     public void NoteCarriesTheStartingThickness()
     {
-        var c = ShapeSeed.Choose(0.8, null, null, Archives, FinalDesign.W08);
+        var c = ShapeSeed.Choose(0.8, null, Archives, FinalDesign.W08);
         Assert.Contains(FinalDesign.W08.TabThickMm[1].ToString("0.00"), c.Note);
         Assert.Contains("增量", c.Note);       // 说明它为什么要紧
     }
@@ -83,7 +83,7 @@ public class ShapeSeedTests
     [Fact]
     public void SeedByName_Works()
     {
-        var c = ShapeSeed.Choose(0.8, FinalDesign.W06.Name, null, Archives, FinalDesign.W08);
+        var c = ShapeSeed.Choose(0.8, FinalDesign.W06.Name, Archives, FinalDesign.W08);
         Assert.Equal(FinalDesign.W06.TabThickMm, c.Seed.TabThickMm);
         Assert.True(c.WallMismatch);           // 拿 0.6 的档算 0.8 的管 ⇒ 要出声
     }
@@ -93,32 +93,74 @@ public class ShapeSeedTests
     public void UnknownSeedName_ThrowsAndListsOptions()
     {
         var ex = Assert.Throws<ArgumentException>(
-            () => ShapeSeed.Choose(0.8, "没有这个档", null, Archives, FinalDesign.W08));
+            () => ShapeSeed.Choose(0.8, "没有这个档", Archives, FinalDesign.W08));
         Assert.Contains("没有这个档", ex.Message);
         Assert.Contains(FinalDesign.W08.Name, ex.Message);
         Assert.Contains(FinalDesign.W06.Name, ex.Message);
     }
 
-    // ── 压平（复现用：从等厚板出发） ─────────────────────────────
+    // ── 合成种子已禁用；换起点只准用**真实图纸** ──────────────────
 
-    /// <summary>Pt_Heater1 那条路的起点是**等厚**板 —— 没有这个开关就复现不了。</summary>
+    /// <summary>
+    /// ★★ 用户 2026-08-25：「**不能再用所谓的中性种子（以后此方法禁用）**，
+    ///    是要从 UI 或是 3DM(Pt_Heater1.3dm) 输入直接算。」
+    ///
+    /// 我此前加过 `--seedflat`，把板厚压平成一个自己捏的数当「中性起点」。它错在三处：
+    ///  · 不对应任何真实工况 —— 既不是工程师会填的，也不是图纸上的；
+    ///  · 只压平**板厚**，舌保温与环倍率仍来自定案档 ⇒ 连「中性」都名不副实；
+    ///  · 于是算出来的铂重与判据**看着正常却没有归属** —— 本项目最怕的那种错。
+    /// </summary>
     [Fact]
-    public void SeedFlat_MakesUniformPlate()
+    public void 合成种子已禁用_而且是当场抛不是悄悄忽略()
     {
-        var c = ShapeSeed.Choose(0.8, null, 2.0, Archives, FinalDesign.W08);
-        Assert.True(c.Flattened);
+        string src = File.ReadAllText(Path.Combine(RepoRoot(), "Pt_Optimize", "Program.cs"));
+        Assert.Contains("--seedflat 已**禁用**", src);        // 拦下来了
+        Assert.Contains("throw new ArgumentException", src);   // 而且是抛，不是静默忽略
+        Assert.DoesNotContain("seedFlatS", src);               // 旧的解析变量不许还在
+    }
+
+    /// <summary>换起点唯一允许的做法：从 .3dm 图纸起算。</summary>
+    [Fact]
+    public void 从图纸起算_几何与板厚都来自图纸()
+    {
+        var sh = new PlateShapeAnalyzer.Shape
+        {
+            HoleRadiusMm = 26.0, DiscRadiusMm = 59.99,
+            TabEndXMm = -199.5, TabEndHalfWidthMm = 40.0,
+        };
+        sh.Levels.Add(new PlateShapeAnalyzer.Level { ThicknessMm = 2.0, AreaMm2 = 23566 });
+
+        var c = ShapeSeed.FromDrawing(sh, Archives, FinalDesign.W08);
+        Assert.True(c.FromDrawing);
+        Assert.Equal(59.99, c.Seed.DiscRadiusMm, 2);
+        Assert.Equal(199.5, c.Seed.TabLengthMm, 3);
+        Assert.Equal(40.0, c.Seed.TabHalfWidthMm, 3);
+        Assert.Equal(1.0, c.Seed.WallMm, 6);
         Assert.All(c.Seed.TabThickMm, t => Assert.Equal(2.0, t, 9));
-        Assert.Contains("压平", c.Note);
-        // 自证：定案本身不是等厚的，否则这条恒真
+        // 自证：定案本身不是这些数，否则上面几条恒真
+        Assert.NotEqual(FinalDesign.W08.DiscRadiusMm, c.Seed.DiscRadiusMm, 2);
         Assert.True(FinalDesign.W08.TabThickMm.Distinct().Count() > 1);
     }
 
+    /// <summary>
+    /// 图纸给不了的那些（舌保温／环倍率／管保温／控温点／压接段）仍取自定案档 ——
+    /// **这件事必须写在申报里**：种子里有多少来自图纸、多少来自定案，读的人有权知道。
+    /// </summary>
     [Fact]
-    public void SeedFlat_RejectsNonPositive()
+    public void 从图纸起算_必须说清哪些来自图纸哪些来自定案()
     {
-        Assert.Throws<ArgumentException>(
-            () => ShapeSeed.Choose(0.8, null, 0.0, Archives, FinalDesign.W08));
+        var sh = new PlateShapeAnalyzer.Shape
+        {
+            HoleRadiusMm = 26.0, DiscRadiusMm = 59.99,
+            TabEndXMm = -199.5, TabEndHalfWidthMm = 40.0,
+        };
+        sh.Levels.Add(new PlateShapeAnalyzer.Level { ThicknessMm = 2.0, AreaMm2 = 23566 });
+        string note = ShapeSeed.FromDrawing(sh, Archives, FinalDesign.W08).Note;
+        Assert.Contains("来自图纸", note);
+        Assert.Contains("来自定案档", note);
+        Assert.Contains("舌保温", note);
     }
+
 
     // ── 不许污染静态档 ──────────────────────────────────────────
 
@@ -133,7 +175,7 @@ public class ShapeSeedTests
         double[] before06 = (double[])FinalDesign.W06.TabThickMm.Clone();
         double wallBefore = FinalDesign.W08.WallMm;
 
-        var c = ShapeSeed.Choose(0.8, null, 3.14, Archives, FinalDesign.W08);
+        var c = ShapeSeed.Choose(0.8, null, Archives, FinalDesign.W08);
         c.Seed.TabThickMm[0] = 99;
         c.Seed.WallMm = 42;
 
@@ -147,7 +189,7 @@ public class ShapeSeedTests
     public void FreshSeedCarriesNoInvalidNotice()
     {
         var c = ShapeSeed.Choose(FinalDesign.Retired08.WallMm, FinalDesign.Retired08.Name,
-                                 null, Archives, FinalDesign.W08);
+                                 Archives, FinalDesign.W08);
         Assert.Equal("", c.Seed.Invalid);
         Assert.Empty(c.Seed.InvalidChecks);
         // 自证：源档确实带着失效告示，否则上面两条恒真

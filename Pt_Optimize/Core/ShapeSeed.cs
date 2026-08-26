@@ -37,12 +37,12 @@ public static class ShapeSeed
         public string Note = "";
         /// <summary>种子档的壁厚与本次要算的壁厚对不上（找不到同壁厚的档时才会发生）。</summary>
         public bool WallMismatch;
-        /// <summary>板厚被压平成均匀值（`--seedflat`）。</summary>
-        public bool Flattened;
+        /// <summary>种子来自 .3dm 图纸（而不是定案档）。</summary>
+        public bool FromDrawing;
     }
 
     /// <summary>
-    /// 按壁厚挑档；`name` 给了就按档名挑；`flatMm` 给了就把板厚压平成均匀值。
+    /// 按壁厚挑档；`name` 给了就按档名挑。
     ///
     /// ⚠ 三条「不静默」：
     ///  · 档名给了但找不到 ⇒ **抛**，并列出可选（照 <see cref="FinalDesign.Select"/> 的规矩）。
@@ -50,7 +50,7 @@ public static class ShapeSeed
     ///    并在 Note 里写明「板厚分布来自另一档」。回退可以，**不出声不行**。
     ///  · 无论哪条路，Note 都不为空 —— 调用方没得选，只能印。
     /// </summary>
-    public static Choice Choose(double wallMm, string? name, double? flatMm,
+    public static Choice Choose(double wallMm, string? name,
                                 IReadOnlyList<FinalDesign> all, FinalDesign current)
     {
         if (all is null || all.Count == 0) throw new ArgumentException("没有可用的定案档");
@@ -80,19 +80,11 @@ public static class ShapeSeed
         seed.Invalid = "";                            // 这是新解，不继承旧档的失效告示
         seed.InvalidChecks = Array.Empty<string>();   // 声明的判据清单也要一起清
 
-        bool flattened = false;
-        if (flatMm is double t)
-        {
-            if (t <= 0) throw new ArgumentException("--seedflat 要正数，收到 " + t);
-            for (int j = 0; j < seed.TabThickMm.Length; j++) seed.TabThickMm[j] = t;
-            flattened = true;
-        }
-
         string thick = string.Join("/", seed.TabThickMm.Select(v => v.ToString("0.00")));
         var note = "种子：" + tmpl.Name + "（" + how + "，原壁厚 " + tmpl.WallMm.ToString("0.0") + "）"
                  + Environment.NewLine
                  + "  板厚起点 " + thick + " mm"
-                 + (flattened ? "（--seedflat 压平）" : "（来自该档）")
+                 + "（来自该档）"
                  + " —— D8 是在这个起点上**增量**走板厚的，不是重新定。";
         if (mismatch)
             note += Environment.NewLine
@@ -100,6 +92,48 @@ public static class ShapeSeed
                   + "，本次要算 " + wallMm.ToString("0.0")
                   + " —— 板厚分布来自**另一档**，结果不能当作该壁厚的独立推导。";
 
-        return new Choice { Seed = seed, Note = note, WallMismatch = mismatch, Flattened = flattened };
+        return new Choice { Seed = seed, Note = note, WallMismatch = mismatch };
     }
+
+    /// <summary>
+    /// 用 **.3dm 图纸**当种子 —— 这是「换个起点」唯一允许的做法。
+    ///
+    /// ★★ 为什么合成种子被禁（用户 2026-08-25：「不能再用所谓的中性种子，此方法禁用，
+    ///    是要从 UI 或是 3DM(Pt_Heater1.3dm) 输入直接算」）：
+    ///
+    ///    我此前加过一个 `--seedflat`，把板厚压平成 2.0 当「中性起点」。那是**自己捏的数**：
+    ///     · 它不对应任何真实工况 —— 既不是工程师会填的，也不是图纸上的；
+    ///     · 而且它只压平**板厚**，舌保温与环倍率仍来自定案档 ⇒ 连「中性」都名不副实；
+    ///     · 于是算出来的铂重与判据**看着正常却没有归属** —— 正是这个项目最怕的那种错。
+    ///    ⇒ 起点只准来自两处真实输入：**界面参数**，或 **.3dm 图纸**。本方法是后者。
+    ///
+    /// ⚠ 图纸给不了的那些（舌保温、环倍率、管保温、控温点、压接段）仍取自同壁厚的定案档，
+    ///   **这件事必须写进 Note**：种子里有多少来自图纸、多少来自定案，读的人有权知道。
+    /// </summary>
+    public static Choice FromDrawing(PlateShapeAnalyzer.Shape sh,
+                                     IReadOnlyList<FinalDesign> all, FinalDesign current)
+    {
+        var k = ShapeToAnalytic.From(sh);                 // 三条近似由它生成，原样带出去
+        var c = Choose(k.WallMm, null, all, current);     // 图纸给不了的部分：按壁厚取档
+        for (int j = 0; j < c.Seed.TabThickMm.Length; j++) c.Seed.TabThickMm[j] = k.PlateThickMm;
+        c.Seed.DiscRadiusMm = k.DiscDiameterMm * 0.5;
+        c.Seed.TabHalfWidthMm = k.TabHalfWidthMm;
+        c.Seed.TabLengthMm = k.TabLengthMm;
+        c.FromDrawing = true;
+        c.Note =
+            "种子：**.3dm 图纸**（不是定案档）" + Environment.NewLine
+          + "  来自图纸：盘Ø " + k.DiscDiameterMm.ToString("0.0")
+          + "　舌长 " + k.TabLengthMm.ToString("0.0")
+          + "　舌半宽 " + k.TabHalfWidthMm.ToString("0.0")
+          + "　管壁 " + k.WallMm.ToString("0.00")
+          + "　板厚 " + k.PlateThickMm.ToString("0.00") + " mm" + Environment.NewLine
+          + "  来自定案档（图纸给不了）：舌保温／环倍率／管保温／控温点／压接段 —— "
+          + "取自「" + c.Seed.Name + "」" + Environment.NewLine
+          + k.Note + Environment.NewLine
+          + (c.WallMismatch
+             ? "  ⚠ 没有与图纸管壁同档的定案，上面那几项来自**另一个壁厚**的档。"
+             : "");
+        return c;
+    }
+
 }

@@ -4324,7 +4324,7 @@ internal static class Program
                 int iSeedW = Array.IndexOf(args, "--seed");
                 string? seedNameW = iSeedW >= 0 && iSeedW + 1 < args.Length
                                     && !args[iSeedW + 1].StartsWith("--") ? args[iSeedW + 1] : null;
-                var seedPickW = ShapeSeed.Choose(wallW, seedNameW, null,
+                var seedPickW = ShapeSeed.Choose(wallW, seedNameW,
                                                  FinalDesign.All, FinalDesign.Current);
                 var shapeW = seedPickW.Seed;          // Choose 里已 Clone、已按 --wall 覆盖壁厚
                 shapeW.DiscRadiusMm = ArgW("--disc", shapeW.DiscRadiusMm);
@@ -4484,11 +4484,42 @@ internal static class Program
                 int iSeedS = Array.IndexOf(args, "--seed");
                 string? seedNameS = iSeedS >= 0 && iSeedS + 1 < args.Length
                                     && !args[iSeedS + 1].StartsWith("--") ? args[iSeedS + 1] : null;
-                int iFlatS = Array.IndexOf(args, "--seedflat");
-                double? seedFlatS = iFlatS >= 0 && iFlatS + 1 < args.Length
-                                    && double.TryParse(args[iFlatS + 1], out double sfS) ? sfS : null;
-                var seedPickS = ShapeSeed.Choose(wallS, seedNameS, seedFlatS,
-                                                 FinalDesign.All, FinalDesign.Current);
+                // ★★★★★ `--seedflat` 已**禁用**（用户 2026-08-25）。
+                //   「不能再用所谓的中性种子（以后此方法禁用），是要从 UI 或是 3DM 输入直接算。」
+                //   我此前加的那个开关把板厚压平成一个**自己捏的数**：不对应任何真实工况，
+                //   而且只压平板厚（舌保温与环倍率仍来自定案档）⇒ 连「中性」都名不副实。
+                //   算出来的铂重与判据**看着正常却没有归属** —— 正是本项目最怕的那种错。
+                if (Array.IndexOf(args, "--seedflat") >= 0)
+                    throw new ArgumentException(
+                        "--seedflat 已**禁用**（用户 2026-08-25：「不能再用所谓的中性种子，"
+                      + "以后此方法禁用，是要从 UI 或是 3DM(Pt_Heater1.3dm) 输入直接算」）。"
+                      + Environment.NewLine
+                      + "  ⇒ 要从别的起点算，用 --from3dm <file.3dm> [图层] 从**真实图纸**起算；"
+                      + Environment.NewLine
+                      + "    或走界面：分析几何变数 → ◈ 图纸几何 → 参数 → ◇ 搜形状。");
+
+                // ★ 从**真实图纸**起算：几何与板厚都来自 .3dm，图纸给不了的才取定案档。
+                //   没给 --discs/--halfws/--wall 时，默认就用**图纸自己的**值 ——
+                //   「从图纸直接算」得是字面意义上的。
+                ShapeSeed.Choice seedPickS;
+                int iF3S = Array.IndexOf(args, "--from3dm");
+                if (iF3S >= 0)
+                {
+                    if (iF3S + 1 >= args.Length || args[iF3S + 1].StartsWith("--"))
+                        throw new ArgumentException("--from3dm 后面要跟 .3dm 文件路径（再跟一个可选的图层名）");
+                    string f3S = args[iF3S + 1];
+                    string lay3S = iF3S + 2 < args.Length && !args[iF3S + 2].StartsWith("--")
+                                   ? args[iF3S + 2] : "法兰";
+                    var fld3S = Geometry3dm.LoadThickness(f3S, lay3S, double.NaN, 0.5);
+                    seedPickS = ShapeSeed.FromDrawing(PlateShapeAnalyzer.Analyze(fld3S),
+                                                      FinalDesign.All, FinalDesign.Current);
+                    if (Array.IndexOf(args, "--wall") < 0) wallS = seedPickS.Seed.WallMm;
+                    if (Array.IndexOf(args, "--discs") < 0 && Array.IndexOf(args, "--disc") < 0)
+                        discsS = new[] { seedPickS.Seed.DiscRadiusMm };
+                    if (Array.IndexOf(args, "--halfws") < 0 && Array.IndexOf(args, "--halfw") < 0)
+                        halfwsS = new[] { seedPickS.Seed.TabHalfWidthMm };
+                }
+                else seedPickS = ShapeSeed.Choose(wallS, seedNameS, FinalDesign.All, FinalDesign.Current);
                 var optS = new SizerOptions
                 {
                     MaxRounds = (int)ArgS("--rounds", 40),
