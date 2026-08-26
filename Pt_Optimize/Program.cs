@@ -4309,14 +4309,31 @@ internal static class Program
                 }
                 // 形状与工艺全部落在 FinalDesign 上 —— **几何只有一个来源**（见 FinalDesign 头注）。
                 // 这里不再手抄一份 MakeF2：抄一份就多一处会漂的定义。
-                var shapeW = FinalDesign.W08.Clone();
+                //
+                // ★★ 种子（2026-08-25）：此前这里写死 FinalDesign.W08 **两处**（形状 + 板厚基准），
+                //   而 --wall 只覆盖壁厚 ⇒ `--window --wall 0.6` 算的是「0.6 的管 + 0.8 档的铂分布」，
+                //   一个既不是 W06 也不是 W08 的杂交设计。这条命令的产物会被当成「实测依据」抄走
+                //   （W08 的 Provenance 里就写着「--window 逐条对上」），所以它比 --shape 更不能含糊。
+                //   ⇒ 与 --shape 收敛到同一个来源：ShapeSeed.Choose，并**强制打印**它的申报。
+                int iWallW = Array.IndexOf(args, "--wall");
+                if (iWallW >= 0 && (iWallW + 1 >= args.Length || !double.TryParse(args[iWallW + 1], out _)))
+                    throw new ArgumentException("--wall 的值解析不了：" +
+                        (iWallW + 1 < args.Length ? args[iWallW + 1] : "(后面没跟数)") +
+                        "。照 FinalDesign.Select 的规矩：给了但不认识就抛，不静默取默认。");
+                double wallW = ArgW("--wall", FinalDesign.Current.WallMm);
+                int iSeedW = Array.IndexOf(args, "--seed");
+                string? seedNameW = iSeedW >= 0 && iSeedW + 1 < args.Length
+                                    && !args[iSeedW + 1].StartsWith("--") ? args[iSeedW + 1] : null;
+                var seedPickW = ShapeSeed.Choose(wallW, seedNameW, null,
+                                                 FinalDesign.All, FinalDesign.Current);
+                var shapeW = seedPickW.Seed;          // Choose 里已 Clone、已按 --wall 覆盖壁厚
                 shapeW.DiscRadiusMm = ArgW("--disc", shapeW.DiscRadiusMm);
                 shapeW.TabHalfWidthMm = ArgW("--halfw", shapeW.TabHalfWidthMm);
                 shapeW.TabLengthMm = ArgW("--tablen", shapeW.TabLengthMm);
                 shapeW.ClampLengthMm = ArgW("--clamplen", shapeW.ClampLengthMm);
-                shapeW.WallMm = ArgW("--wall", shapeW.WallMm);
                 shapeW.TubeInsulMm = ArgW("--tubeins", shapeW.TubeInsulMm);
-                double[] baseThickW = (double[])FinalDesign.W08.TabThickMm.Clone();
+                double[] baseThickW = (double[])shapeW.TabThickMm.Clone();
+                string thickSrcW = shapeW.Name;       // 板厚基准的**实际**来源 —— 不写死档名
 
                 double[] ListW(string name, double[] dflt)
                 {
@@ -4338,7 +4355,7 @@ internal static class Program
                     if (i >= 0 && i + 1 < args.Length && !args[i + 1].StartsWith("--"))
                         insW = args[i + 1].Split(',').Select(t => double.Parse(t.Trim())).ToArray();
                 }
-                if (thickW is not null) baseThickW = thickW;
+                if (thickW is not null) { baseThickW = thickW; thickSrcW = "命令行 --thick 指定"; }
                 if (insW is not null)
                     for (int j = 0; j < shapeW.TabInsulMm.Length && j < insW.Length; j++)
                         shapeW.TabInsulMm[j] = insW[j];
@@ -4362,12 +4379,19 @@ internal static class Program
                                   (freeW < 100 ? "（< 100 ⇒ 判据⑤ 不过）" : "（≥ 100 ✓）"));
                 Console.WriteLine($"管壁 {shapeW.WallMm:0.0}／管保温 {shapeW.TubeInsulMm:0}／环倍率 {shapeW.RingMul[0]:0.00}" +
                                   $"／舌保温基准 {string.Join("/", shapeW.TabInsulMm.Select(v => v.ToString("0.0")))} × 保温倍率");
-                Console.WriteLine($"板厚基准（W08）{string.Join("/", baseThickW.Select(v => v.ToString("0.00")))} × 标度");
+                Console.WriteLine(seedPickW.Note);
+                Console.WriteLine($"板厚基准（{thickSrcW}）{string.Join("/", baseThickW.Select(v => v.ToString("0.00")))} × 标度");
+                Console.WriteLine($"⚠ 圆盘焊接下界 max(屈曲, 烧穿) = {shapeW.DiscFloorMm(p):0.00} mm。" +
+                                  "板厚列印的是**夹后**值（真正进模型的那个），被夹住的标 *。" +
+                                  "此前印的是夹前值 ⇒ 表上看着不同的几行，其实是同一个几何。");
                 Console.WriteLine("**只测不调。** 收敛列为 ✗ 时该行每个数都不可引用。");
                 Console.WriteLine();
                 Console.WriteLine($"{"标度",6}{"保温×",7}{"板厚 mm",24}{"②′逐片 W",34}{"③逐段 K",26}" +
                                   $"{"②″K",8}{"管J",7}{"合计g",8}{"收敛",6}");
 
+                // 圆盘焊接下界只随**盘半径**与焊接输入变（见 FinalDesign.DiscFloorMm），
+                // 整趟扫描盘半径不变 ⇒ 算一次即可。低于它的板厚会被 Plate() 夹上去。
+                double floorW = shapeW.DiscFloorMm(p);
                 // 基线只依赖管几何/保温/控温点（LineRunner 头注），与法兰无关 ⇒ 全扫共用一份
                 double[][] baseCacheW = Array.Empty<double[]>();
                 foreach (double sW in scalesW)
@@ -4388,8 +4412,17 @@ internal static class Program
                     baseCacheW = lcW.BaselineRootC;
 
                     double massW = rW.Segments.Sum(s => s.MassG) + rW.Flanges.Sum(f => f.MassG);
+                    // ★ 印出来的必须是**模型真正用的那个**，所以走 Plate()（几何的唯一来源）。
+                    //   不在这里重抄一遍 max(板厚, 下界) —— 重抄就是「同一个式子两处来源」，
+                    //   将来下界的定义一改，表上的数就会和模型悄悄漂开。
+                    string thickShownW = string.Join("/", Enumerable.Range(0, dW.TabThickMm.Length)
+                        .Select(j =>
+                        {
+                            double effW = dW.Plate(j, floorW).ThicknessMm;
+                            return effW.ToString("0.00") + (effW > dW.TabThickMm[j] + 1e-9 ? "*" : "");
+                        }));
                     Console.WriteLine(
-                        $"{sW,6:0.00}{imW,7:0.00}{string.Join("/", dW.TabThickMm.Select(v => v.ToString("0.00"))),24}" +
+                        $"{sW,6:0.00}{imW,7:0.00}{thickShownW,24}" +
                         $"{string.Join("/", rW.Flanges.Select(f => f.QFromTubeW.ToString("+0.0;−0.0"))),34}" +
                         $"{string.Join("/", rW.Segments.Select(s => s.FlangeDipK.ToString("+0.0;−0.0"))),26}" +
                         $"{rW.ValueOf(LineResult.Key.DiscTemp),8:+0.00;−0.00}" +
