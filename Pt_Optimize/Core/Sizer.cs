@@ -118,6 +118,13 @@ public sealed class SizerResult
     /// <summary>实测的 ③/D 比例 K/W —— 它是**管子**的性质，与法兰形状无关，可跨形状复用。</summary>
     public double GammaKPerW = double.NaN;
 
+    /// <summary>实际跑了几轮。</summary>
+    public int RoundsUsed;
+    /// <summary>**跑满上限就停了** —— 结果可能只是被截断，不是收敛。</summary>
+    public bool HitRoundCap;
+    /// <summary>停因，一句话。<see cref="Sizer.StopReason"/> 是它唯一的来源。</summary>
+    public string StopWhy = "";
+
     /// <summary>
     /// 带符号格式化，且**先把负零掐掉**。
     ///
@@ -139,6 +146,25 @@ public static class Sizer
     /// <paramref name="seed"/> 的板厚/保温/环倍率只当**起点**用（起点只影响轮数，不影响解：
     /// 每个旋钮对自己的靶都是单调的）。
     /// </summary>
+    /// <summary>
+    /// 主循环为什么停 —— **纯函数**，因为它是一条判断，而 Solve 本身是分钟级的。
+    ///
+    /// ★ 为什么要有它（2026-08-25）：此前「这个形状无解」与「轮数不够」在输出上
+    ///   长得一模一样，工程师分不出来。界面粗筛只跑 16 轮（LineDesignPage.SearchScreenRounds），
+    ///   比 CLI 默认的 40 更容易被截断 —— 偏偏那是最常走的那条路。
+    ///
+    /// ⚠ 第三种情形（循环结束却没有停因）按理不该出现，但**不静默**：
+    ///   宁可打一句「说不出为什么停」，也不要假装它收敛了。
+    /// </summary>
+    public static (bool HitCap, string Why) StopReason(int roundsUsed, int maxRounds, string earlyWhy)
+    {
+        if (!string.IsNullOrEmpty(earlyWhy)) return (false, earlyWhy);
+        if (roundsUsed >= maxRounds)
+            return (true, "**跑满上限 " + maxRounds + " 轮就停了** —— 结果可能只是被截断，不是收敛（--rounds 可加大）");
+        return (false, "说不出为什么停（第 " + roundsUsed + "/" + maxRounds + " 轮）—— 这不该发生，请报一声");
+    }
+
+
     public static SizerResult Solve(FinalDesign seed, DesignInputs baseIn, SizerOptions opt,
                                     IProgress<string>? progress = null,
                                     CancellationToken cancel = default)
@@ -201,8 +227,11 @@ public static class Sizer
         // ★ 逐轮记 bad（越小越好）—— 报「这一轮比上一轮好还是差」，
         //   并在**连续变差**时停下（用户 2026-08-25）。
         var badHist = new List<double>();
+        int roundsUsed = 0;
+        string earlyWhy = "";
         for (int round = 0; round < opt.MaxRounds; round++)
         {
+            roundsUsed = round + 1;
             cancel.ThrowIfCancellationRequested();
             Quantize();
             var lc = d.BuildCase(baseIn, checkRamp: false);
@@ -276,6 +305,7 @@ public static class Sizer
                   + $"（{badHist[badHist.Count - 1 - worseRun]:0.0} → {bad:0.0}）"
                   + " —— **方向错了，停**。已找到的最好点保留在下面的复核里。");
                 res.Message = $"连续 {worseRun} 轮越调越差 ⇒ 提前停（第 {round + 1} 轮）。";
+                earlyWhy = $"连续 {worseRun} 轮越调越差，方向错了";
                 break;
             }
 
@@ -413,9 +443,13 @@ public static class Sizer
                     }
                 }
             }
-            if (!moved) { Log("   ⇒ 所有旋钮都到位或都顶死，停"); break; }
+            if (!moved) { Log("   ⇒ 所有旋钮都到位或都顶死，停"); earlyWhy = "所有旋钮都到位或都顶死"; break; }
         }
 
+        var stop = StopReason(roundsUsed, opt.MaxRounds, earlyWhy);
+        res.RoundsUsed = roundsUsed;
+        res.HitRoundCap = stop.HitCap;
+        res.StopWhy = stop.Why;
         res.GammaKPerW = gamma;
         var pick = bestFeas ?? bestAny;
         if (pick is null)

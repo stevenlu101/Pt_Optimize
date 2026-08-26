@@ -1731,7 +1731,11 @@ public sealed class LineDesignPage : TabPage
         Shared?.SetRunning(ChainId.C形状搜索, "搜形状");
 
         // 网格：盘半径 × 半宽比例。半宽 > 盘半径没有切点（等宽舌片与圆盘接不上），故按比例取。
-        double[] discs = SearchDiscs;
+                // ★ 网格的最低点必须**造得出来**：写死的 25 对两个现役档（壁 0.6/0.8）
+                //   都会被判据⑥ 跳过 ⇒ 第 1 轮实际只探了 R30/R35（2026-08-25 查出）。
+                //   抬到下界上，网格才是三个点。
+                double minDiscAll = 25.0 + 2 * (double)_wall.Value;
+                double[] discs = ShapeSearchPlan.LiveDiscs(SearchDiscs, minDiscAll);
         double[] wFrac = SearchWFrac;
         // ★ 不是 const：走查器要能把它压到极小，好在**分钟级**验「接线对不对」
         //   （2026-08-25）。搜形状真跑是几十分钟 —— 那验的是「答案好不好」，
@@ -1822,7 +1826,10 @@ public sealed class LineDesignPage : TabPage
                     _out.AppendText(
                         $"{2 * R:0}\t{2 * hw:0}\t{sr.Design.TabLengthMm:0}\t" +
                         (double.IsNaN(sr.MassG) ? "—" : sr.MassG.ToString("0")) +
-                        $"\t{(sr.Feasible ? "✓ " : "")}{sr.Message}\r\n");
+                        $"\t{(sr.Feasible ? "✓ " : "")}{sr.Message}" +
+                        // ★ 粗筛只跑 SearchScreenRounds（16）轮，比 CLI 的 40 更容易被截断；
+                        //   截断了却不说，就会被读成「这个形状不行」（2026-08-25）。
+                        (sr.HitRoundCap ? $"（⚠ {sr.StopWhy}）" : "") + "\r\n");
             }
 
 

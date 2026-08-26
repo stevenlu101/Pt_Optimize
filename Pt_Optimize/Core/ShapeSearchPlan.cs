@@ -24,6 +24,31 @@ public static class ShapeSearchPlan
     public const double FracStep = 0.125;
 
     /// <summary>
+    /// 把第 1 轮网格里**造不出来**的盘半径抬到下界上。
+    ///
+    /// ★ 病灶（2026-08-25 查出）：界面的网格写死 {25, 30, 35}，
+    ///   而判据⑥ 的下界是 25 + 2×壁厚 —— 壁 0.6 要 26.2、壁 0.8 要 26.6。
+    ///   ⇒ **R25 对两个现役档都会被跳过**，那一点从来没算过，
+    ///   第 1 轮实际只探了 R30/R35 两个盘径。网格少了三分之一而没人知道。
+    ///
+    /// ⚠ 抬上来而不是删掉：网格的作用是**给出发点与方向**，
+    ///   点少一个，方向就少一个依据。而且下界那一点恰恰是最省铂的方向。
+    /// ⚠ 只抬**低于下界**的；已经合法的点原样保留 —— 不要顺手把整个网格重排，
+    ///   那会把「这次改动」和「搜索策略变了」混成一件事。
+    /// </summary>
+    public static double[] LiveDiscs(IReadOnlyList<double> grid, double minDiscMm)
+    {
+        // 下界通常是 26.2 / 26.6 这样的零头，向上取到 0.5 mm —— 图纸上不画三位小数。
+        double lo = Math.Ceiling(minDiscMm * 2 - 1e-9) / 2.0;
+        var outp = new List<double>();
+        foreach (double g in grid ?? Array.Empty<double>())
+            outp.Add(g < minDiscMm - 1e-9 ? lo : g);
+        if (outp.Count == 0) outp.Add(lo);
+        return outp.Distinct().OrderBy(v => v).ToArray();
+    }
+
+
+    /// <summary>
     /// 从当前最好点出发的四个邻点：盘径 ±一步（**舌宽比例不变**）、舌宽比例 ±一步。
     ///
     /// ⚠ 盘径变化时半宽要**按比例跟着走**，不能保持绝对值：

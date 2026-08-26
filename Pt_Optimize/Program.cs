@@ -4500,6 +4500,9 @@ internal static class Program
                 Console.WriteLine("★ **舌长是算出来的**：舌长 = 圆盘切点 + 压接段 + 自由段下界。");
                 Console.WriteLine("  更长只多花铂多发热 —— 舌长从来不该是自由变量，它是装配的因变量。");
                 Console.WriteLine("★ D8 分派：舌保温 → 抽热 D（免费旋钮，管 ②′ 与 ③）／环倍率 → ②″／板厚 → 接力+省铂。");
+                // ★ 这两个开关会改「合计 g」与判定，所以必须申报（2026-08-25）。
+                Console.WriteLine($"定尺寸：每形状至多 {optS.MaxRounds} 轮（--rounds）／省铂漂移 " +
+                    (optS.SaveMetal ? "开" : "**关**（--nosave）⇒ 只求可行、不省铂，板厚与合计 g 会系统性偏大"));
                 // ★ 必须印：拿到这份输出的人要能还原出「这是用什么算的」。
                 Console.WriteLine(seedPickS.Note);
                 Console.WriteLine();
@@ -4540,6 +4543,8 @@ internal static class Program
                     try { sr = Sizer.Solve(seedS, p, optS, prog); }
                     catch (Exception ex) { Console.WriteLine("   异常 " + ex.Message); continue; }
                     Console.WriteLine($"   {sr.Message}　合计 {sr.MassG:0} g　（③/D 实测 {sr.GammaKPerW:0.00} K/W）");
+                    // ★ 「无解」与「轮数不够」此前长得一模一样 —— 现在分得开。
+                    Console.WriteLine($"   停在第 {sr.RoundsUsed} 轮：{sr.StopWhy}");
                     if (sr.Design is not null)
                     {
                         // ★ 用户 2026-08-17：「有依据地告诉我 APP 发现了什么？这个法兰的

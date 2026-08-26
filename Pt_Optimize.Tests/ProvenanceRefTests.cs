@@ -111,30 +111,52 @@ public class ProvenanceRefTests
     }
 
     /// <summary>
-    /// 已证伪的日期「2026-08-17」**只许出现在更正语境里**，不许再当作归属。
+    /// ★ 2026-08-25 **本条被改写过一次，改写的理由本身就是教训**：
     ///
-    /// ⚠ 这条规则是这样写的，而不是「一律不许出现」：更正本身就得引用那个日期，
-    ///   否则读的人不知道改的是什么。也不是去匹配日期前后的标点 ——
-    ///   那是「拿行号当引用」的变体，本项目明令禁止。
+    /// 它原本断的是「日期 2026-08-17 已被证伪，只许出现在更正语境里」。
+    /// 当天稍后用二进制实证推翻了那个结论 —— deliverable/定案_管壁0.8mm.3dm
+    /// 生成于 2026-08-17 13:45，里面舌长 −140.0 出现 64 次、本档板厚各 114 次，
+    /// 作废档的特征值一次都没有 ⇒ **本档的几何那天确实已经存在，日期是对的**。
+    /// 错的只是**工具归属**（--shape / Core/Sizer.cs / D8 都是 08-20 才写的）。
+    ///
+    /// ⇒ 断言若把一个**结论**写死，结论一翻案，断言自己就变成假的。
+    ///   所以现在钉的是一条不随结论改变的**不变量**：
+    ///   **出处点名了产生它的工具，就必须同时说清这条出处能不能拿来复现。**
+    ///   这一条无论日期对错都成立，也正是「出处」这件事的全部意义。
     /// </summary>
     [Fact]
-    public void TheDisprovenDateOnlyAppearsAsACorrection()
+    public void 出处点名了工具就必须写明能不能复现()
     {
-        foreach (var d in FinalDesign.Builtin)
-        foreach (string text in new[] { d.Provenance, d.Invalid, d.Binding })
+        foreach (var d in new[] { FinalDesign.W08, FinalDesign.W06 })
         {
-            if (!text.Contains("2026-08-17", StringComparison.Ordinal)) continue;
-            Assert.True(text.Contains("更正", StringComparison.Ordinal)
-                     || text.Contains("对不上", StringComparison.Ordinal),
-                d.Name + " 仍把 2026-08-17 当作归属在用");
+            bool namesTool = d.Provenance.Contains("--shape", StringComparison.Ordinal)
+                          || d.Provenance.Contains("Sizer.cs", StringComparison.Ordinal);
+            if (!namesTool) continue;
+            Assert.True(d.Provenance.Contains("不能拿来复现", StringComparison.Ordinal),
+                d.Name + " 的出处点名了工具，却没说清能不能拿它复现 —— " +
+                "而今天的 --shape 种子默认就是该档本身，用它重推等于从答案出发");
         }
     }
 
-    /// <summary>更正必须留在档里 —— 有人重写出处时，这条会拦下「悄悄改回去」。</summary>
+    /// <summary>
+    /// 工具归属的时间错位必须**留在档里** —— 有人重写出处时，这条拦下「悄悄改回去」。
+    /// ⚠ 只钉两个**事实**（提交号与它的日期），不钉措辞：措辞会改，事实不会。
+    /// </summary>
     [Fact]
-    public void TheCorrectionIsRecordedInTheLiveArchive()
+    public void 时间错位这个事实必须留在现役档里()
     {
-        Assert.Contains("2026-08-25 更正", FinalDesign.W08.Provenance);
         Assert.Contains("09c8d9b", FinalDesign.W08.Provenance);
+        Assert.Contains("2026-08-20", FinalDesign.W08.Provenance);
+    }
+
+    /// <summary>
+    /// 「不能复现」不是推断而是**实测**：中性种子在同一形状上落在 3664 g。
+    /// 这个数留在档里 —— 下次有人想重推之前，先知道会偏多少。
+    /// </summary>
+    [Fact]
+    public void 复现偏差是实测值_留在档里()
+    {
+        Assert.Contains("3664", FinalDesign.W08.Provenance);
     }
 }
+
