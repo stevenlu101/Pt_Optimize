@@ -71,6 +71,12 @@ public sealed class SizerOptions
     /// <summary>接力加厚/削薄的步长上限 mm/轮。</summary>
     public double ThickStepMm = 0.15;
     public int MaxRounds = 40;
+
+    /// <summary>
+    /// 跑满上限时，最好点已经「多少轮没再改善」就算**稳定**而非被截断。
+    /// 20 轮是实测定的：R30／壁0.8 的极限环周期约 3 轮，20 轮足够穿过它好几遍。
+    /// </summary>
+    public const int StaleRounds = 20;
     /// <summary>false = 只求可行，不做省铂漂移（诊断用：漂移会让轨迹永远在边界上摆）。</summary>
     public bool SaveMetal = true;
 
@@ -166,11 +172,27 @@ public static class Sizer
     /// ⚠ 第三种情形（循环结束却没有停因）按理不该出现，但**不静默**：
     ///   宁可打一句「说不出为什么停」，也不要假装它收敛了。
     /// </summary>
-    public static (bool HitCap, string Why) StopReason(int roundsUsed, int maxRounds, string earlyWhy)
+    public static (bool HitCap, string Why) StopReason(
+        int roundsUsed, int maxRounds, string earlyWhy, int bestRound = -1)
     {
         if (!string.IsNullOrEmpty(earlyWhy)) return (false, earlyWhy);
         if (roundsUsed >= maxRounds)
-            return (true, "**跑满上限 " + maxRounds + " 轮就停了** —— 结果可能只是被截断，不是收敛（--rounds 可加大）");
+        {
+            // ★ 跑满上限有**两种**，说成一种就是误导（2026-08-25 实测撞到）：
+            //   R30／壁0.8 跑 200 轮的结果与 40 轮**逐位相同**（3547 g），
+            //   轨迹是个极限环（3547 → 3553 → 3537越界 → 回来）——
+            //   它早就稳了，而停因照旧说「可能只是被截断」。**那句话把人指向加轮数，
+            //   而真正卡住它的是判据边界（②′ 第 3 片），加多少轮都没用。**
+            int idle = bestRound >= 0 ? roundsUsed - bestRound : -1;
+            if (idle >= SizerOptions.StaleRounds)
+                return (true,
+                    "跑满上限 " + maxRounds + " 轮，但**最好点出现在第 " + bestRound + " 轮**，"
+                  + "之后 " + idle + " 轮再没改善 ⇒ **已经稳定，不是被截断**"
+                  + "（加轮数没用；要更好得松判据或改形状）");
+            return (true,
+                "**跑满上限 " + maxRounds + " 轮就停了**，而且**最好点就在第 " + bestRound + " 轮**（仍在改善）"
+              + " ⇒ 结果**可能只是被截断**，--rounds 可加大");
+        }
         return (false, "说不出为什么停（第 " + roundsUsed + "/" + maxRounds + " 轮）—— 这不该发生，请报一声");
     }
 
@@ -237,7 +259,7 @@ public static class Sizer
         // ★ 逐轮记 bad（越小越好）—— 报「这一轮比上一轮好还是差」，
         //   并在**连续变差**时停下（用户 2026-08-25）。
         var badHist = new List<double>();
-        int roundsUsed = 0;
+        int roundsUsed = 0, bestRound = 0;
         string earlyWhy = "";
         for (int round = 0; round < opt.MaxRounds; round++)
         {
@@ -298,8 +320,10 @@ public static class Sizer
             double drawMin = draws.Min();
             bool roomy = r.AllOk && drawMin >= opt.AcceptDrawMinW
                          && !double.IsNaN(dipMax) && dipMax <= opt.AcceptDipK;
-            if (roomy && mass < bestMass) { bestMass = mass; bestFeas = d.Clone(); }
-            if (bad < bestBad) { bestBad = bad; bestAny = d.Clone(); }
+            // ★ 记下**最好点出现在第几轮** —— 用来分辨「跑满上限时还在下降」
+            //   与「早就稳了、只是在极限环里空转」。两者输出上此前长得一样（2026-08-25）。
+            if (roomy && mass < bestMass) { bestMass = mass; bestFeas = d.Clone(); bestRound = roundsUsed; }
+            if (bad < bestBad) { bestBad = bad; bestAny = d.Clone(); if (bestFeas is null) bestRound = roundsUsed; }
 
             // ★★★★★ **连续变差就停**（用户 2026-08-25）。
             //   此前只有「所有旋钮都到位或都顶死 ⇒ 停」—— 那管的是「动不了了」。
@@ -456,7 +480,7 @@ public static class Sizer
             if (!moved) { Log("   ⇒ 所有旋钮都到位或都顶死，停"); earlyWhy = "所有旋钮都到位或都顶死"; break; }
         }
 
-        var stop = StopReason(roundsUsed, opt.MaxRounds, earlyWhy);
+        var stop = StopReason(roundsUsed, opt.MaxRounds, earlyWhy, bestRound);
         res.RoundsUsed = roundsUsed;
         res.HitRoundCap = stop.HitCap;
         res.StopWhy = stop.Why;

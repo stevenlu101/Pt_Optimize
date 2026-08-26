@@ -67,4 +67,56 @@ public class StopReasonTests
         // 「无法判定」不算通过，「说不出话」也不算解释 —— 任何一条路都必须给出一句人话。
         Assert.False(string.IsNullOrWhiteSpace(Sizer.StopReason(used, max, early).Why));
     }
+
+    // ── 跑满上限有**两种**，说成一种就是误导（2026-08-25 实测撞到） ──────
+
+    /// <summary>
+    /// R30／壁0.8 跑 200 轮的结果与 40 轮**逐位相同**（3547 g），
+    /// 轨迹是个极限环（3547 → 3553 → 3537 越界 → 回来）—— 它早就稳了。
+    /// 而停因照旧说「可能只是被截断」：**那句话把人指向加轮数**，
+    /// 可真正卡住它的是判据边界（②′ 第 3 片），加多少轮都没用。
+    /// </summary>
+    [Fact]
+    public void 跑满上限但早就不再改善_要说已经稳定而不是被截断()
+    {
+        var r = Sizer.StopReason(200, 200, "", bestRound: 10);
+        Assert.True(r.HitCap);
+        Assert.Contains("已经稳定", r.Why);
+        Assert.Contains("不是被截断", r.Why);
+        Assert.Contains("10", r.Why);              // 得说清最好点在第几轮
+        Assert.DoesNotContain("可能只是被截断", r.Why);
+    }
+
+    [Fact]
+    public void 跑满上限且最好点就在最后_才说可能被截断()
+    {
+        var r = Sizer.StopReason(200, 200, "", bestRound: 199);
+        Assert.True(r.HitCap);
+        Assert.Contains("可能只是被截断", r.Why);
+        Assert.Contains("仍在改善", r.Why);
+    }
+
+    [Fact]
+    public void 自证_两种跑满上限说的不是同一句话()
+    {
+        // 没有这一条，上面两条可能都在验同一段文字里碰巧都有的词。
+        Assert.NotEqual(Sizer.StopReason(200, 200, "", 10).Why,
+                        Sizer.StopReason(200, 200, "", 199).Why);
+    }
+
+    [Fact]
+    public void 阈值边界_正好停滞够久就算稳定()
+    {
+        int b = 200 - SizerOptions.StaleRounds;      // idle 正好 = StaleRounds
+        Assert.Contains("已经稳定", Sizer.StopReason(200, 200, "", b).Why);
+        Assert.Contains("可能只是被截断", Sizer.StopReason(200, 200, "", b + 1).Why);
+    }
+
+    [Fact]
+    public void 没给最好点轮号时_退回保守说法_不假装知道()
+    {
+        // 老调用方（不传 bestRound）不该被说成「已经稳定」—— 那是**没有依据的乐观**。
+        Assert.Contains("可能只是被截断", Sizer.StopReason(40, 40, "").Why);
+    }
+
 }
