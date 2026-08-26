@@ -68,6 +68,14 @@ public sealed class LineDesignPage : TabPage
     /// <summary>「分析几何变数」——只在 .3dm 模式且入口片已选时可用，由 SyncGeomSource 控。</summary>
     private readonly ToolStripButton _btnAnalyze;
     private readonly ToolStripButton _btnExportRead;
+    /// <summary>
+    /// 「◈ 图纸几何 → 参数」—— 把 .3dm 反推出来的几何交给**解析路**（用户 2026-08-25 要求接上）。
+    ///
+    /// 两条输入路线此前给不出接近的答案，本质只有一条：**.3dm 路改不了形状**，
+    /// 而定案的关键一步恰恰是改形状（Ø120 → Ø60）。反推参数这件事早就做到了
+    /// （PlateShapeAnalyzer 一直在印那几个数），缺的只是**把它交过去**。
+    /// </summary>
+    private readonly ToolStripButton _btnToAnalytic;
     /// <summary>「另存为定案档」—— 把当前的解写成 finaldesigns/*.fd.json。</summary>
     private readonly ToolStripButton _btnSaveFinal;
     private readonly ToolStripButton _btnShape;
@@ -283,6 +291,7 @@ public sealed class LineDesignPage : TabPage
         _btn3dm = Btn("导出定案 3DM", (_, _) => ExportFinal3dm());
         _btnAnalyze = Btn("分析几何变数", (_, _) => AnalyzeShape());
         _btnExportRead = Btn("导出可回读 3DM", (_, _) => ExportReadable3dm());
+        _btnToAnalytic = Btn("◈ 图纸几何 → 参数", (_, _) => AdoptShapeToAnalytic());
         _btnSaveFinal = Btn("另存为定案档", (_, _) => SaveAsFinalDesign());
 
         // ★★★ 复现定案：**界面上唯一能跑出定案数字的按钮**（2026-08-16 用户提出）。
@@ -327,6 +336,8 @@ public sealed class LineDesignPage : TabPage
         // 本页现在只剩「关于当前这个设计」的两个命令。
         tool.Items.Add(_btnRun);
         tool.Items.Add(_btnAnalyze);
+        // ⚠ Btn() **只造不挂** —— 忘了这一行，按钮就成了「造好了没接线」（本项目头号敌人）。
+        tool.Items.Add(_btnToAnalytic);
         tool.Items.Add(_btnExportRead);
         tool.Items.Add(new ToolStripSeparator());
         _prog.Size = new Size(UiScale.S(160), UiScale.S(16));
@@ -769,6 +780,8 @@ public sealed class LineDesignPage : TabPage
         "geom.analyze" => !_srcAnalytic.Checked && !string.IsNullOrWhiteSpace(_file3dm[0].Text),
         // 形状搜索只在解析模式有意义：.3dm 的形状由图纸给定，不是可搜索的自由度
         "shape.search" => _srcAnalytic.Checked,
+        // 图纸几何 → 参数：**得先分析过**（否则没有形状可交），且只在 .3dm 模式下才谈得上
+        "geom.toanalytic" => !_srcAnalytic.Checked && _shape is not null,
         // 另存：存的是**当前这个解**，所以必须「判据全过」且「参数没再动过」。
         //   不成立的设计不该有一个「能落档」的形态；
         //   参数动过之后存下去的，是**上一组参数**的解 —— 那是最坏的一种档。
@@ -1692,7 +1705,13 @@ public sealed class LineDesignPage : TabPage
         d.FlangeInsulMm = d.FlangeInsulated ? (double)_flInsT.Value : 0;
         var rows = _segs.Where(s => !string.IsNullOrWhiteSpace(s.名称)).ToList();
         if (rows.Count > 0) d.SetpointC = rows.Select(s => s.控温C).ToArray();
-        // 起点：板厚用页面上的值（起点只影响轮数，不影响解 —— 每个旋钮对自己的靶单调）
+        // 起点：板厚用页面上的值。
+        // ★★ 2026-08-25 更正：此处原写「起点只影响轮数，**不影响解**：每个旋钮对自己的靶单调」。
+        //   **那句话是错的，已被实测推翻。** 同一形状（R30）只换板厚起点：
+        //     0.8 档 3547 g vs 3664 g（+3.3 %）　0.6 档 2650 g vs 2971 g（+12.1 %）
+        //   单旋钮对自己的靶单调 ≠ 耦合系统有唯一不动点；而且 Sizer 交回去的是
+        //   **已访问点集上的 argmin**（bestFeas ?? bestAny），按定义就是路径相关的。
+        //   ⇒ 起点是**会影响答案**的输入。详见 Core/ShapeSeed.cs 与 HANDOVER §0.0.3 ⑦。
         for (int i = 0; i < d.TabThickMm.Length && i < _tPlate.Length; i++)
             d.TabThickMm[i] = (double)_tPlate[i].Value;
         return d;
@@ -2739,6 +2758,77 @@ public sealed class LineDesignPage : TabPage
               + "先查 Geom 的 steps 模式与 PlateShapeAnalyzer。");
         _out.Text = sb.ToString() + Environment.NewLine + _out.Text;
     }
+
+    /// <summary>
+    /// 把「分析几何变数」反推出来的形状**交给解析路** —— 填进盘径/舌长/舌半宽/管壁/板厚，
+    /// 并切到解析模式，于是「◇ 搜形状」可用：那是全程唯一能**改形状**的东西。
+    ///
+    /// ★ 用户 2026-08-25：「3DM 只读几何数据（画网格的依据），为何不能带入计算？」
+    ///   能。反推早就做到了（PlateShapeAnalyzer 一直在印那几个数），缺的只是这一步。
+    ///   在此之前两条输入路线给不出接近的答案，本质原因只有一条：**.3dm 路改不了形状**，
+    ///   而定案的关键一步恰恰是改形状（Ø120 → Ø60）。
+    ///
+    /// ⚠ 三条近似由 <see cref="ShapeToAnalytic"/> 生成并**原样呈现**，这里不许吞。
+    /// ⚠ 第四条只有这里知道，必须自己说：**转过去之后几何不再跟图纸绑定**。
+    ///   那正是目的，但人得知道自己跨过了这条线 —— 否则他会以为还在算那张图。
+    /// </summary>
+    private void AdoptShapeToAnalytic()
+    {
+        if (_shape is not { } sh)
+        {
+            Show(_last, "【图纸几何 → 参数：做不了】还没「分析几何变数」—— 没有形状可交。"
+                      + Environment.NewLine + "先选 .3dm 与图层，点「分析几何变数」。");
+            return;
+        }
+
+        ShapeToAnalytic.Knobs k;
+        try { k = ShapeToAnalytic.From(sh); }
+        catch (Exception ex) { Show(_last, "【图纸几何 → 参数：做不了】" + ex.Message); return; }
+
+        string nl2 = Environment.NewLine;
+        // ★ 「够不够像」只有一处来源：AnalyticSurrogate（它有自己的 Tol）。这里**不另立门槛**。
+        string fidNote = _surrFid is { } fid
+            ? (AnalyticSurrogate.Usable(fid)
+               ? "· 解析替身保真度**合格**（" + fid.Report() + "）⇒ 这张图确实属于「圆盘＋舌片」那一族。"
+               : "· ⚠ 解析替身保真度**不合格**（" + fid.Report() + "，限 "
+                 + (AnalyticSurrogate.Tol * 100).ToString("0.0") + " %）—— 解析模型与这张图不是同一片板，"
+                 + "转过去之后算的**不是原图**。仍放行（形状本来就要改），但这句话得记住。")
+            : "· ⚠ 没量到替身保真度 ⇒ **不知道**解析模型像不像这张图。";
+
+        decimal Clamp(NumericUpDown n, double v) =>
+            Math.Clamp((decimal)v, n.Minimum, n.Maximum);
+
+        _suppressAuto = true;
+        try
+        {
+            _discD.Value = Clamp(_discD, k.DiscDiameterMm);
+            _tabLen.Value = Clamp(_tabLen, k.TabLengthMm);
+            _tabW.Value = Clamp(_tabW, k.TabHalfWidthMm);
+            _wall.Value = Clamp(_wall, k.WallMm);
+            for (int i2 = 0; i2 < _tPlate.Length; i2++)
+                _tPlate[i2].Value = Clamp(_tPlate[i2], k.PlateThickMm);
+            _srcAnalytic.Checked = true;      // 切到解析 ⇒ 三个几何控件解禁、搜形状可用
+        }
+        finally { _suppressAuto = false; }
+        SyncGeomSource();
+        // 参数确实变了 ⇒ 上一次的解与「越关」一律作废（否则门会开在别组参数的判据表上）
+        MarkParamsChanged("图纸几何 → 参数");
+
+        Show(_last,
+            "【图纸几何 → 参数：已交接】" + nl2
+          + "盘Ø " + k.DiscDiameterMm.ToString("0.0")
+          + "　舌长 " + k.TabLengthMm.ToString("0.0")
+          + "　舌半宽 " + k.TabHalfWidthMm.ToString("0.0")
+          + "　管壁 " + k.WallMm.ToString("0.00")
+          + "　板厚 " + k.PlateThickMm.ToString("0.00") + " mm" + nl2 + nl2
+          + k.Note + nl2
+          + fidNote + nl2
+          + "· ★ **从这一刻起几何不再跟图纸绑定** —— 这正是目的：解析路能改形状，"
+          + "而图纸那条路不能（它的旋钮只有各级厚度）。" + nl2 + nl2
+          + "⇒ 下一步：「◇ 搜形状」现在可用了，它会改盘径与舌宽找最轻的全过解。" + nl2
+          + "⚠ 想回到「照图纸算」，把几何来源切回 Rhino .3dm 即可 —— **图纸本身没有被改动**。");
+    }
+
 
     /// <summary>
     /// 读入口片的 .3dm，把它反推成一组几何变数（各级半径与厚度、槽数与角宽、舌片尺寸）。
