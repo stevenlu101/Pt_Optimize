@@ -53,12 +53,24 @@ public sealed class SizerOptions
     public double DrawTargetW = 2.0;
     /// <summary>抽热死区 W。小于它就不动旋钮 —— 否则在数值噪声上空转。</summary>
     public double DrawDeadW = 0.35;
-    /// <summary>③ 的限值 K（与 <c>LineCase.RootDeltaMaxK</c> 同源，只用来反解 D 的上界）。</summary>
-    public double DipLimitK = 10.0;
     /// <summary>③/D 的初值 K/W（在线实测覆盖它）。2.40 = `--window` 六行实测。</summary>
     public double GammaKPerW = 2.40;
     /// <summary>②″ 靶 K。限值 5（现场控温精度），留 2 K 裕度。</summary>
-    public double DiscOverTargetK = 3.0;
+    /// <summary>
+    /// ②″ 的**整定裕度** K：靶 = 判据限值 − 本裕度，留出控制余量。
+    ///
+    /// ★★ 2026-08-28 收口：此处**原来存的是两份限值副本**
+    ///   （<c>DipLimitK = 10.0</c> 与 <c>DiscOverTargetK = 3.0</c>），
+    ///   而注释声称「与 LineCase.RootDeltaMaxK **同源**」—— grep 证实
+    ///   本类从未读过 RootDeltaMaxK，「同源」是假的（注释描述不存在的机制）。
+    ///   ③ 的限值更是承重：<c>drawMax = 限值 / γ</c> 是整个 D8 分派的硬上界，
+    ///   判据一收紧而这里不动，就是本类注释自己点名「连犯过四次」的
+    ///   **「优化器在调 A、判据在判 B」**。
+    ///
+    /// ⇒ 现在限值**只从 LineCase 读**（判据的唯一来源），本类只保留「裕度」这一个自己的量。
+    ///   2.0 = 原先 5.0(限值) − 3.0(靶)，行为不变，但从此只有一处限值。
+    /// </summary>
+    public double DiscOverMarginK = 2.0;
     public double DiscOverDeadK = 0.30;
 
     /// <summary>环倍率上下界。**常量版供界面控件用** —— 界面与优化器的界必须是同一个。</summary>
@@ -244,7 +256,12 @@ public static class Sizer
 
         Log($"D8 定尺寸　形状 盘Ø{2 * d.DiscRadiusMm:0}／舌 {d.TabLengthMm:0}×{2 * d.TabHalfWidthMm:0}" +
             $"／压接 {d.ClampLengthMm:0}　自由段 {d.FreeTabMm:0.0} mm　管壁 {d.WallMm:0.0}");
-        Log($"分派：**舌保温 → 抽热 D（靶 {opt.DrawTargetW:0.0} W）**／**环倍率 → ②″（靶 {opt.DiscOverTargetK:0.0} K）**／" +
+        // ★ 限值只有一个来源：判据那一份（LineCase）。本类只加自己的**裕度**。
+        //   限值不随设计变，循环前照种子造一次算例取出来即可。
+        var lcLim = d.BuildCase(baseIn, checkRamp: false);
+        double dipLimK = lcLim.RootDeltaMaxK;                                   // ③ 的限值
+        double discTgtK = Math.Max(0.0, lcLim.DiscOverTempMaxK - opt.DiscOverMarginK);  // ②″ 靶 = 限值 − 裕度
+        Log($"分派：**舌保温 → 抽热 D（靶 {opt.DrawTargetW:0.0} W）**／**环倍率 → ②″（靶 {discTgtK:0.0} K ＝ 限值 {lcLim.DiscOverTempMaxK:0.0} − 裕度 {opt.DiscOverMarginK:0.0}）**／" +
             $"**板厚 → 接力+省铂**（下界 {tLo:0.00} mm = max(焊接屈曲, 烧穿 {baseIn.WeldMinThicknessMm:0.0})）");
         Log($"{"轮",4}{"板厚 mm",22}{"舌保温 mm",24}{"环倍率",22}{"抽热D W",26}{"③max",8}{"②″max",8}{"合计g",8}{"违反度",9}");
 
@@ -307,7 +324,7 @@ public static class Sizer
                 double gm = gs[gs.Count / 2];
                 if (gm > 0.2 && gm < 40) gamma = 0.5 * gamma + 0.5 * gm;
             }
-            double drawMax = opt.DipLimitK / Math.Max(0.2, gamma);
+            double drawMax = dipLimK / Math.Max(0.2, gamma);
 
             Log($"{round,4}{string.Join("/", d.TabThickMm.Select(v => v.ToString("0.00"))),22}" +
                 $"{string.Join("/", d.TabInsulMm.Select(v => v.ToString("0.0"))),24}" +
@@ -404,7 +421,7 @@ public static class Sizer
                 bool ringSat = false;
                 if (!double.IsNaN(e2))
                 {
-                    double ee = e2 - opt.DiscOverTargetK;    // >0 ⇒ 盘太热
+                    double ee = e2 - discTgtK;    // >0 ⇒ 盘太热
                     if (Math.Abs(ee) > opt.DiscOverDeadK)
                     {
                         // ⚠ 削环要比加环慢：加环解除判据违反，削环只是省铂，代价不对称
@@ -456,7 +473,7 @@ public static class Sizer
                 }
                 else if (insDeadHi && D > drawMax)
                 { dT = Math.Min(stepD, -opt.QuantThickMm); why = "保温已到上界，板厚接手削抽热"; }
-                else if (ringSat && !double.IsNaN(e2) && e2 > opt.DiscOverTargetK + opt.DiscOverDeadK)
+                else if (ringSat && !double.IsNaN(e2) && e2 > discTgtK + opt.DiscOverDeadK)
                 { dT = +opt.ThickStepMm; why = "环已到上限仍压不住 ②″"; }
                 // ⚠ 串级控制的**必要条件**：外环只在内环稳住之后才动。
                 //   实测（第一版漏了这条）：板厚每轮都走 0.15 mm，而保温还没追上，

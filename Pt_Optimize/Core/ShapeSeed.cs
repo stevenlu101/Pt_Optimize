@@ -119,11 +119,12 @@ public static class ShapeSeed
                   + " —— 板厚分布来自**另一档**，结果不能当作该壁厚的独立推导。";
 
         note += Environment.NewLine
-              + "  五个**优化变量**的起点：板厚 ← 上面那一行；舌保温 "
+              + "  优化变量的起点：板厚 ← 上面那一行；舌保温 "
               + StartPoint.TabInsulMm.ToString("0.0") + "（裸舌）／环倍率 "
-              + StartPoint.RingMul.ToString("0.00") + "（无台阶）／管保温 "
-              + StartPoint.TubeInsulMm.ToString("0.0") + "／夹持 "
-              + StartPoint.ClampTempC.ToString("0") + " °C —— 全部取自 Core/StartPoint.cs，**不是定案档**。"
+              + StartPoint.RingMul.ToString("0.00") + "（无台阶）—— 取自 Core/StartPoint.cs，**不是定案档**。"
+              + Environment.NewLine
+              + "  （管保温与夹持温度也在这五项里，但它们可被 --tubeins / --clamptemp 覆盖，"
+              + "**实际生效值由下面那行「工况」为准** —— 此处不重复报数，免得两处对不上。）"
               + Environment.NewLine
               + "  仍取自「" + tmpl.Name + "」的只有**图纸与界面都给不出**的构型常数："
               + "压接段 " + seed.ClampLengthMm.ToString("0") + " mm／舌根圆角／环宽／控温点／圆盘保温"
@@ -146,12 +147,15 @@ public static class ShapeSeed
     /// ⚠ 图纸给不了的那些（舌保温、环倍率、管保温、控温点、压接段）仍取自同壁厚的定案档，
     ///   **这件事必须写进 Note**：种子里有多少来自图纸、多少来自定案，读的人有权知道。
     /// </summary>
-    public static Choice FromDrawing(PlateShapeAnalyzer.Shape sh,
+    public static Choice FromDrawing(PlateShapeAnalyzer.Shape sh, double? wallOverrideMm,
                                      IReadOnlyList<FinalDesign> all, FinalDesign current)
     {
         var k = ShapeToAnalytic.From(sh);                 // 三条近似由它生成，原样带出去
         // 板厚来自**图纸**（真实输入）；其余优化变量由 Choose 覆盖成 StartPoint 的起点
-        var c = Choose(k.WallMm, null, new[] { k.PlateThickMm }, all, current);
+        // ★ 壁厚：命令行给了就用命令行的**去选档**。否则会先按图纸壁厚报一次
+        //   「没有同壁厚的档」，紧接着下一行又说「按 --wall 覆盖」—— 同屏自相矛盾。
+        double wallEff = wallOverrideMm ?? k.WallMm;
+        var c = Choose(wallEff, null, new[] { k.PlateThickMm }, all, current);
         c.Seed.DiscRadiusMm = k.DiscDiameterMm * 0.5;
         c.Seed.TabHalfWidthMm = k.TabHalfWidthMm;
         c.Seed.TabLengthMm = k.TabLengthMm;

@@ -4514,7 +4514,8 @@ internal static class Program
                     string lay3S = iF3S + 2 < args.Length && !args[iF3S + 2].StartsWith("--")
                                    ? args[iF3S + 2] : "法兰";
                     var fld3S = Geometry3dm.LoadThickness(f3S, lay3S, double.NaN, 0.5);
-                    seedPickS = ShapeSeed.FromDrawing(PlateShapeAnalyzer.Analyze(fld3S),
+                    double? wallOvS = Array.IndexOf(args, "--wall") >= 0 ? wallS : null;
+                    seedPickS = ShapeSeed.FromDrawing(PlateShapeAnalyzer.Analyze(fld3S), wallOvS,
                                                       FinalDesign.All, FinalDesign.Current);
                     if (Array.IndexOf(args, "--wall") < 0) wallS = seedPickS.Seed.WallMm;
                     if (Array.IndexOf(args, "--discs") < 0 && Array.IndexOf(args, "--disc") < 0)

@@ -1272,7 +1272,7 @@ public static class LineRunner
     /// HANDOVER §4.2k 的判据体系（取代旧的以 J 为中心的那套）：
     ///
     /// <code>
-    /// ① 升温：空管 3 h 到 1150 °C        ← 决定最小截面（额定电流）
+    /// ① 升温：空管 72 h 到 1150 °C       ← 决定最小截面（额定电流）
     /// ② 法兰温度 ≤ 管温（Φ ≤ 1）         ← 硬安全线，不可越
     /// ③ 管根温差 0 &lt; ΔT ≤ 10 K          ← 优化目标，从 ② 的安全侧逼近
     /// ④ 强度利用率 ≤ 1                   ← 真实工况下极宽松
@@ -1282,8 +1282,21 @@ public static class LineRunner
     /// 会判「✓ 通过」。ΔT ≤ 0 与 Φ &gt; 1 是同一件事的两个视角，两条都列，
     /// 因为一条按段给（看得出卡在哪段），一条按片给（看得出卡在哪片）。
     ///
-    /// **J 不再单独判**（§4.2k）：它在 ① 里是额定工况的能力指标，稳态只是参考量；
-    /// 且 J_allow = 10 的物理依据本身待定（§4.2i）。故降级为 Reference，只报数不判。
+    /// ★★ 2026-08-28 更正：本段散文是 §4.2k（2026-08-10）那一版的快照，此后两次改动
+    ///   只落到了代码与 HANDOVER，**没回头改这里**，于是它对活方法说了两句反话：
+    ///
+    ///   · 「① 升温 **3 h**」—— 2026-08-14 已改为 <c>RampHours = 72.0</c>（见本文件 166 行）。
+    ///     用 3 h 去判会把「升得慢」误报成「升不到」，据此写过的结论已撤回。
+    ///   · 「**J 不再单独判**…降级为 Reference，只报数不判」—— 2026-08-15 **反过来了**：
+    ///     管 J 从「参考」**升为硬判据**，限值 <c>TubeJAllowAPerMm2 = 12</c>（现场依据见
+    ///     DesignInputs 那一段），并且列在 <see cref="LineResult.Required"/> 里
+    ///     ⇒ 缺席即翻 AllOk。而 0.6 档正贴着这条线交付（10.96/12）。
+    ///     ⚠ 那句「J_allow = 10 待定」说的是**法兰**那条参考量（<c>JAllowAPerMm2</c>），
+    ///       与管 J 是两个数，2026-08-15 已分家。
+    ///
+    /// ⇒ **判据清单以 <see cref="LineResult.Required"/> 与 HANDOVER §1.83 为唯一来源**
+    ///   （后者由 CriteriaTableTests 对着代码核）。本段只讲**为什么**这么判，不再列清单 ——
+    ///   第三份需要人工同步的判据描述，注定还会漂。
     /// </summary>
     private static ConstraintOut[] Judge(LineCase c, LineResult res, SegmentOut[] segs,
                                          FlangeOut[] flanges, DesignInputs[] segParams)

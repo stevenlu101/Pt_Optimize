@@ -166,10 +166,23 @@ public sealed class FinalDesign
     /// D8 的省铂漂移一上来就压到 0.75–0.87 mm，正好走进这个缺口。
     /// memory「焊接定的工艺下界」早已记明：**屈曲不构成限制，下界 = 焊接方法**。
     /// </summary>
+    /// <summary>
+    /// 圆盘的板厚工艺下界 = max(抗焊接屈曲, 焊接烧穿底)。
+    ///
+    /// ★★ 2026-08-28 更正：屈曲的**无支撑宽度 b** 原写成 <c>DiscRadiusMm - 26.0</c>，
+    ///   那个 26.0 是字面量，而同一个几何量在本类第一处定义是
+    ///   <see cref="HoleRadiusMm"/> = 管壁 + 25（0.6 档 25.6／0.8 档 25.8）。
+    ///   26.0 的出处查得到：PlateCurrent2D 里 <c>HoleRadiusMm = 26.0  // Ø52（= 管外径）</c>
+    ///   —— 那是**管壁 1.0 的旧构型**，两个现役档都不是它。
+    ///   ⇒ 同一个数两处来源（破铁律②），而且 b 被少算 0.2–0.4 mm，
+    ///     下界随之偏低约 5–10 %，**偏在危险侧**（允许更薄的板）。
+    ///   ⚠ 对现役两档的**数值没有影响**：R30 上屈曲支算出 0.55→0.58，仍低于烧穿底 0.6，
+    ///     max() 取的还是 0.6。只有大盘（屈曲主导）才会变，例如 R60 由 4.71 升到 4.74。
+    /// </summary>
     public double DiscFloorMm(DesignInputs baseInputs) =>
         System.Math.Max(
             WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
-                * (DiscRadiusMm - 26.0) * baseInputs.WeldSafetyFactor,
+                * (DiscRadiusMm - HoleRadiusMm) * baseInputs.WeldSafetyFactor,
             baseInputs.WeldMinThicknessMm);
 
     /// <summary>按本定案构型造第 j 片（0=入口, 1=共用1, 2=共用2, 3=出口）。</summary>

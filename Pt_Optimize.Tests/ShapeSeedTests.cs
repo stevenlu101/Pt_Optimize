@@ -139,7 +139,7 @@ public class ShapeSeedTests
         };
         sh.Levels.Add(new PlateShapeAnalyzer.Level { ThicknessMm = 2.0, AreaMm2 = 23566 });
 
-        var c = ShapeSeed.FromDrawing(sh, Archives, FinalDesign.W08);
+        var c = ShapeSeed.FromDrawing(sh, null, Archives, FinalDesign.W08);
         Assert.True(c.FromDrawing);
         Assert.Equal(59.99, c.Seed.DiscRadiusMm, 2);
         Assert.Equal(199.5, c.Seed.TabLengthMm, 3);
@@ -164,7 +164,7 @@ public class ShapeSeedTests
             TabEndXMm = -199.5, TabEndHalfWidthMm = 40.0,
         };
         sh.Levels.Add(new PlateShapeAnalyzer.Level { ThicknessMm = 2.0, AreaMm2 = 23566 });
-        string note = ShapeSeed.FromDrawing(sh, Archives, FinalDesign.W08).Note;
+        string note = ShapeSeed.FromDrawing(sh, null, Archives, FinalDesign.W08).Note;
         Assert.Contains("来自图纸", note);
         // ★ 2026-08-25 改判：FromDrawing 原本**整段覆盖** Choose 的申报，写的是
         //   「来自定案档：舌保温／环倍率／管保温／控温点／压接段」—— 那句话在
