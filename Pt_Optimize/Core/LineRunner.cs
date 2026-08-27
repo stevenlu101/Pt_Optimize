@@ -749,7 +749,15 @@ public static class LineRunner
                 // 段 i 的两端分别是法兰 i 与 i+1，各贡献自己的抽热
                 double a = res.Flanges[i].QFromTubeW, b = res.Flanges[i + 1].QFromTubeW;
                 target[i] = 0.5 * (a + b);           // 仅作兼容/汇报用
-                targetLR[i] = (a, b);                // ★ 两端各自回灌（原来取平均是 bug）
+                // ★★★★★ 能量守恒（2026-08-28）：**内部共用片属于两段，必须分配**。
+                //   端片（法兰 0 与法兰 n）只属于一段 ⇒ 整份。
+                //   内部片 j 同时是「段 j−1 的右端」与「段 j 的左端」⇒ 各半，Q_L + Q_R = Q。
+                //   不分配时管子失去 Q₀ + 2ΣQ内 + Q_n，法兰只收到 ΣQ —— 实测残差 +2.66/+3.74 W。
+                //   ⚠ 默认**关**：打开会改动定案的数。见 DesignInputs.SplitSharedFlangeDraw。
+                bool sp = c.Base.SplitSharedFlangeDraw;
+                double aEff = sp && i > 0 ? 0.5 * a : a;                        // 左端：i>0 ⇒ 内部片
+                double bEff = sp && i < c.SegmentCount - 1 ? 0.5 * b : b;       // 右端：i<n−1 ⇒ 内部片
+                targetLR[i] = (aEff, bEff);          // ★ 两端各自回灌（原来取平均是另一个 bug，已修）
             }
             draws ??= new double[c.SegmentCount];
             drawsLR ??= new (double, double)[c.SegmentCount];

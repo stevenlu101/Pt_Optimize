@@ -109,6 +109,17 @@ internal static class Program
             var p = args.Length > 1 && !args[1].StartsWith("--")
                 ? System.Text.Json.JsonSerializer.Deserialize<DesignInputs>(File.ReadAllText(args[1]))!
                 : new DesignInputs();
+
+            // ★★ 能量守恒开关（2026-08-28）：--splitdraw 打开「内部共用片抽热两侧各半」。
+            //   默认关 —— 打开会改动定案的数。见 DesignInputs.SplitSharedFlangeDraw。
+            //   放在这里 ⇒ **所有 CLI 命令**都认它，不必逐条接线。
+            if (args.Contains("--splitdraw"))
+            {
+                p.SplitSharedFlangeDraw = true;
+                Console.WriteLine("⚠ --splitdraw：内部共用片抽热**两侧各半**（能量守恒）。"
+                    + "默认是**关**的 —— 本次结果与定案档**不可直接比较**。");
+            }
+
             try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { /* WinExe 无控制台 */ }
 
             // --cli --geom [file.3dm]   直接读 .3dm，校核代码里手抄的几何常数（需装 Rhino 8）
@@ -5374,7 +5385,10 @@ internal static class Program
                 {
                     foreach (var c in r.Checks)
                         if (c.Name.StartsWith(LineResult.Key.HeatBalance, StringComparison.Ordinal))
-                            return double.IsNaN(c.Actual) ? "判不了" : $"{c.Actual:+0.00;−0.00} W";
+                            return double.IsNaN(c.Actual) ? "判不了"
+                                 // ⚠ 负零：(-0.0).ToString("+0.00;−0.00") 会打出 "-+0.00"，
+                                 //   项目里已有 SizerResult.Signed 专治这一种（同族踩过多次）。
+                                 : SizerResult.Signed(c.Actual, "+0.00;−0.00") + " W";
                     return "—";
                 }
 

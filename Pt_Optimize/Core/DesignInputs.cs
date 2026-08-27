@@ -292,7 +292,19 @@ public class DesignInputs
     public double BusbarConductanceWPerK { get; set; } = -1;
 
     [Category("6 C 整线 — 法兰边界"), DisplayName("铜排冷端温度 [°C]")]
-    public double BusbarSinkTempC { get; set; } = 25;
+    public double BusbarSinkTempC { get; set; } = 25;
+    [Category("6 C 整线 — 法兰边界"), DisplayName("共用片抽热两侧均分"),
+     Description("★ 能量守恒开关（2026-08-28）。　" +
+                 "QFromTubeW 是一片法兰经整圈管孔抽走的总量；而外层耦合把每片的全额" +
+                 "挂到相邻段端 ⇒ 内部共用片被两段各扣一次：" +
+                 "管子失去 Q0+2×ΣQ内+Qn，法兰只收到 ΣQ。　" +
+                 "实测残差（--selfcheck A 段「热收支」）：0.8 档 +2.66 W、0.6 档 +3.74 W，四个档全非零。　" +
+                 "打开后：端片（只属于一段）拿整份，内部共用片各半 ⇒ Q_L + Q_R = Q，严格守恒。　" +
+                 "⚠ 默认关：打开会改动定案的数（两档要重解、五个回归基准要重填）；" +
+                 "先跑对照、看清影响方向，再谈要不要重定案。　" +
+                 "⚠ 各半是领头阶正确解（两侧是同一根管、同样的导热）；" +
+                 "更精细的做法是按两侧管端各自的导热通量加权 —— 那要动求解器，尚未做。")]
+    public bool SplitSharedFlangeDraw { get; set; } = false;
 
     // ---------- 6 玻璃物性 ----------
     [Category("4 A·B·C 共用 — 玻璃物性"), DisplayName("密度 [kg/m³]")]
