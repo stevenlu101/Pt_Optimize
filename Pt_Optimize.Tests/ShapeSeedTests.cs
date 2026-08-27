@@ -19,7 +19,10 @@ namespace PtOptimize.Tests;
 /// 有裕度可省时就与出发点有关。⇒ 结论只到「它是输入，必须申报」为止。
 /// </summary>
 public class ShapeSeedTests
-{
+{
+    /// <summary>板厚起点 —— 现在是**必给**的（真实输入：--thick 或图纸）。</summary>
+    private static readonly double[] Th = { 1.0, 2.0, 2.0, 1.0 };
+
     private static FinalDesign[] Archives => FinalDesign.Builtin;
 
     // ── 挑档 ────────────────────────────────────────────────────
@@ -28,26 +31,32 @@ public class ShapeSeedTests
     [Fact]
     public void PicksArchiveMatchingTheWall_NotAlwaysW08()
     {
-        var c = ShapeSeed.Choose(0.6, null, Archives, FinalDesign.W08);
+        var c = ShapeSeed.Choose(0.6, null, Th, Archives, FinalDesign.W08);
         Assert.False(c.WallMismatch);
-        Assert.Equal(FinalDesign.W06.TabThickMm, c.Seed.TabThickMm);
-        // 自证：两档的板厚确实不同，否则上一条恒真
-        Assert.NotEqual(FinalDesign.W06.TabThickMm[1], FinalDesign.W08.TabThickMm[1]);
+        // ★ 2026-08-25 改判：**不再**验「板厚来自 W06」—— 板厚已是必给的真实输入，
+        //   拿定案档的板厚当起点正是被禁掉的做法。这里验的是**挑对了档**：
+        //   档只用来供图纸与界面都给不出的构型常数（压接段/圆角/环宽/控温点）。
+        Assert.Contains(FinalDesign.W06.Name, c.Note);
+        Assert.Equal(0.6, c.Seed.WallMm, 9);
+        Assert.Equal(Th, c.Seed.TabThickMm);            // 板厚来自入参，不是档
+        // 自证：两档确实不同名，否则上一条恒真
+        Assert.NotEqual(FinalDesign.W06.Name, FinalDesign.W08.Name);
     }
 
     [Fact]
     public void PicksW08ForTheEightWall()
     {
-        var c = ShapeSeed.Choose(0.8, null, Archives, FinalDesign.W06);
+        var c = ShapeSeed.Choose(0.8, null, Th, Archives, FinalDesign.W06);
         Assert.False(c.WallMismatch);
-        Assert.Equal(FinalDesign.W08.TabThickMm, c.Seed.TabThickMm);
+        Assert.Contains(FinalDesign.W08.Name, c.Note);
+        Assert.Equal(0.8, c.Seed.WallMm, 9);
     }
 
     /// <summary>挑不到同壁厚的档：可以回退，但**必须出声**。</summary>
     [Fact]
     public void NoArchiveForThisWall_FallsBackButSaysSo()
     {
-        var c = ShapeSeed.Choose(1.0, null, Archives, FinalDesign.W08);
+        var c = ShapeSeed.Choose(1.0, null, Th, Archives, FinalDesign.W08);
         Assert.True(c.WallMismatch);
         Assert.Contains("另一档", c.Note);
         Assert.Contains("1.0", c.Note);
@@ -64,7 +73,7 @@ public class ShapeSeedTests
     [InlineData(2.0)]
     public void NoteIsNeverEmpty(double wall)
     {
-        var c = ShapeSeed.Choose(wall, null, Archives, FinalDesign.W08);
+        var c = ShapeSeed.Choose(wall, null, Th, Archives, FinalDesign.W08);
         Assert.False(string.IsNullOrWhiteSpace(c.Note));
         Assert.Contains("种子", c.Note);
     }
@@ -73,8 +82,8 @@ public class ShapeSeedTests
     [Fact]
     public void NoteCarriesTheStartingThickness()
     {
-        var c = ShapeSeed.Choose(0.8, null, Archives, FinalDesign.W08);
-        Assert.Contains(FinalDesign.W08.TabThickMm[1].ToString("0.00"), c.Note);
+        var c = ShapeSeed.Choose(0.8, null, Th, Archives, FinalDesign.W08);
+        Assert.Contains(Th[1].ToString("0.00"), c.Note);   // 印的是**真实入参**的板厚，不是档里的
         Assert.Contains("增量", c.Note);       // 说明它为什么要紧
     }
 
@@ -83,9 +92,9 @@ public class ShapeSeedTests
     [Fact]
     public void SeedByName_Works()
     {
-        var c = ShapeSeed.Choose(0.8, FinalDesign.W06.Name, Archives, FinalDesign.W08);
-        Assert.Equal(FinalDesign.W06.TabThickMm, c.Seed.TabThickMm);
-        Assert.True(c.WallMismatch);           // 拿 0.6 的档算 0.8 的管 ⇒ 要出声
+        var c = ShapeSeed.Choose(0.8, FinalDesign.W06.Name, Th, Archives, FinalDesign.W08);
+        Assert.Contains(FinalDesign.W06.Name, c.Note);
+        Assert.True(c.WallMismatch);           // 拿 0.6 的档供构型常数、算 0.8 的管 ⇒ 要出声
     }
 
     /// <summary>认不出的档名 **抛**，并列出可选 —— 不静默回退（照 FinalDesign.Select 的规矩）。</summary>
@@ -93,7 +102,7 @@ public class ShapeSeedTests
     public void UnknownSeedName_ThrowsAndListsOptions()
     {
         var ex = Assert.Throws<ArgumentException>(
-            () => ShapeSeed.Choose(0.8, "没有这个档", Archives, FinalDesign.W08));
+            () => ShapeSeed.Choose(0.8, "没有这个档", Th, Archives, FinalDesign.W08));
         Assert.Contains("没有这个档", ex.Message);
         Assert.Contains(FinalDesign.W08.Name, ex.Message);
         Assert.Contains(FinalDesign.W06.Name, ex.Message);
@@ -175,7 +184,7 @@ public class ShapeSeedTests
         double[] before06 = (double[])FinalDesign.W06.TabThickMm.Clone();
         double wallBefore = FinalDesign.W08.WallMm;
 
-        var c = ShapeSeed.Choose(0.8, null, Archives, FinalDesign.W08);
+        var c = ShapeSeed.Choose(0.8, null, Th, Archives, FinalDesign.W08);
         c.Seed.TabThickMm[0] = 99;
         c.Seed.WallMm = 42;
 
@@ -189,7 +198,7 @@ public class ShapeSeedTests
     public void FreshSeedCarriesNoInvalidNotice()
     {
         var c = ShapeSeed.Choose(FinalDesign.Retired08.WallMm, FinalDesign.Retired08.Name,
-                                 Archives, FinalDesign.W08);
+                                 Th, Archives, FinalDesign.W08);
         Assert.Equal("", c.Seed.Invalid);
         Assert.Empty(c.Seed.InvalidChecks);
         // 自证：源档确实带着失效告示，否则上面两条恒真
@@ -219,5 +228,61 @@ public class ShapeSeedTests
         // ⚠ 不用「老写法不许出现」来验 —— 那要靠缩进与行尾去匹配，是「拿行号当引用」的变体。
         //   验**新写法确实在用**才稳：种子必须来自 Choose 的产物，不是某个写死的档。
         Assert.Contains("var seedS = seedPickS.Seed.Clone()", src);
+
+        // ★ --from3dm 配 --wall 时，种子的壁厚必须跟着命令行走 —— 否则
+        //   「表头说 0.8、实际算 1.0」（2026-08-25 差点放过去）。而且覆盖了要出声。
+        Assert.Contains("seedPickS.Seed.WallMm = wallS;", src);
+        Assert.Contains("管壁按命令行覆盖", src);
+    }
+
+    // ── 五个优化变量不许来自定案档（用户 2026-08-25「彻底禁掉」） ──────
+
+    /// <summary>
+    /// ★★ 用户 2026-08-25：「把种子这种方法彻底禁掉，**定案檔是用来校正计算流程**，
+    ///    不应当被乱用」；同日又定：「这些是优化变量：板厚 / 舌保温 / 环倍率 /
+    ///    管保温 / 夹持温度，优化程式需自己给出答案，**可以在 UI 输入框上给初始值**」。
+    /// ⇒ 这五项的起点必须来自 StartPoint（有依据的声明式初始值）或真实输入，**不是定案档**。
+    /// </summary>
+    [Fact]
+    public void 四个优化变量的起点来自StartPoint_不是定案档()
+    {
+        var c = ShapeSeed.Choose(0.8, null, Th, Archives, FinalDesign.W08);
+        Assert.All(c.Seed.TabInsulMm, v => Assert.Equal(StartPoint.TabInsulMm, v, 9));
+        Assert.All(c.Seed.RingMul, v => Assert.Equal(StartPoint.RingMul, v, 9));
+        Assert.Equal(StartPoint.TubeInsulMm, c.Seed.TubeInsulMm, 9);
+        Assert.Equal(StartPoint.ClampTempC, c.Seed.ClampTempC, 9);
+
+        // 自证：定案档的这几项**不等于**起点，否则上面四条恒真
+        Assert.NotEqual(StartPoint.TabInsulMm, FinalDesign.W08.TabInsulMm[2], 9);   // 0.3 vs 0.5
+        Assert.NotEqual(StartPoint.TubeInsulMm, FinalDesign.W08.TubeInsulMm, 9);    // 10 vs 5
+        Assert.NotEqual(StartPoint.ClampTempC, FinalDesign.W08.ClampTempC, 9);      // 300 vs 450
+    }
+
+    [Fact]
+    public void 板厚起点必给_没有就抛并指出三条真实来源()
+    {
+        var ex = Assert.Throws<ArgumentException>(
+            () => ShapeSeed.Choose(0.8, null, null, Archives, FinalDesign.W08));
+        Assert.Contains("--from3dm", ex.Message);
+        Assert.Contains("--thick", ex.Message);
+        Assert.Contains("界面", ex.Message);
+        Assert.Contains("不会**再回退到定案档", ex.Message);
+    }
+
+    [Fact]
+    public void 板厚照命令行给的走()
+    {
+        var c = ShapeSeed.Choose(0.8, null, new[] { 1.11, 2.22, 3.33, 0.44 }, Archives, FinalDesign.W08);
+        Assert.Equal(new[] { 1.11, 2.22, 3.33, 0.44 }, c.Seed.TabThickMm);
+    }
+
+    /// <summary>仍取自定案档的那几项（铁律②要求）必须在申报里点名，不许闷着。</summary>
+    [Fact]
+    public void 申报要说清哪些仍来自定案档()
+    {
+        string note = ShapeSeed.Choose(0.8, null, Th, Archives, FinalDesign.W08).Note;
+        Assert.Contains("不是定案档", note);
+        Assert.Contains("压接段", note);
+        Assert.Contains("铁律②", note);
     }
 }

@@ -4325,6 +4325,9 @@ internal static class Program
                 string? seedNameW = iSeedW >= 0 && iSeedW + 1 < args.Length
                                     && !args[iSeedW + 1].StartsWith("--") ? args[iSeedW + 1] : null;
                 var seedPickW = ShapeSeed.Choose(wallW, seedNameW,
+                                                 // ★ --window 是 **只测不调**：它拿定案档当**被测对象**，
+                                                 //   这正是定案档的正当用途（校正计算流程），不是「当起点」。
+                                                 (FinalDesign.ByWall(wallW) ?? FinalDesign.Current).TabThickMm,
                                                  FinalDesign.All, FinalDesign.Current);
                 var shapeW = seedPickW.Seed;          // Choose 里已 Clone、已按 --wall 覆盖壁厚
                 shapeW.DiscRadiusMm = ArgW("--disc", shapeW.DiscRadiusMm);
@@ -4519,7 +4522,31 @@ internal static class Program
                     if (Array.IndexOf(args, "--halfws") < 0 && Array.IndexOf(args, "--halfw") < 0)
                         halfwsS = new[] { seedPickS.Seed.TabHalfWidthMm };
                 }
-                else seedPickS = ShapeSeed.Choose(wallS, seedNameS, FinalDesign.All, FinalDesign.Current);
+                else
+                {
+                    // ★ 没有图纸时，板厚起点只能来自 --thick（真实输入）。给不出 Choose 会抛。
+                    int iThS = Array.IndexOf(args, "--thick");
+                    double[]? thickS = iThS >= 0 && iThS + 1 < args.Length && !args[iThS + 1].StartsWith("--")
+                        ? args[iThS + 1].Split(',').Select(t => double.Parse(t.Trim())).ToArray()
+                        : null;
+                    seedPickS = ShapeSeed.Choose(wallS, seedNameS, thickS,
+                                                 FinalDesign.All, FinalDesign.Current);
+                }
+
+                // ★★★★★ 表头与模型必须用**同一个**管壁（2026-08-25，差点放过去）。
+                //   --from3dm 时种子的壁厚来自**图纸**，而 --wall 可以另给：
+                //   此前只有 wallS（表头、判据⑥ 早筛）跟着 --wall 走，**种子没跟**
+                //   ⇒ 「表头说 0.8、实际算 1.0」。正是本轮反复在修的那一族：
+                //   一个会改变答案的输入，与输出里印的那个不是同一个。
+                //   ⇒ 同步，而且**说出来** —— 覆盖可以，不出声不行。
+                string wallNoteS = "";
+                if (Math.Abs(seedPickS.Seed.WallMm - wallS) > 1e-9)
+                {
+                    wallNoteS = $"⚠ 管壁按 --wall 取 **{wallS:0.00}**，而图纸画的是 {seedPickS.Seed.WallMm:0.00}"
+                              + " —— 几何来自图纸，**管壁按命令行覆盖**。"
+                              + "（管壁是可焊接性决定的人工选择，不由优化器定。）";
+                    seedPickS.Seed.WallMm = wallS;
+                }
                 var optS = new SizerOptions
                 {
                     MaxRounds = (int)ArgS("--rounds", 40),
@@ -4536,6 +4563,7 @@ internal static class Program
                     (optS.SaveMetal ? "开" : "**关**（--nosave）⇒ 只求可行、不省铂，板厚与合计 g 会系统性偏大"));
                 // ★ 必须印：拿到这份输出的人要能还原出「这是用什么算的」。
                 Console.WriteLine(seedPickS.Note);
+                if (wallNoteS.Length > 0) Console.WriteLine(wallNoteS);
                 Console.WriteLine();
 
                 var rowsS = new List<(double disc, double hw, double len, double mass, bool ok, string msg, FinalDesign d)>();

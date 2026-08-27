@@ -50,7 +50,7 @@ public static class ShapeSeed
     ///    并在 Note 里写明「板厚分布来自另一档」。回退可以，**不出声不行**。
     ///  · 无论哪条路，Note 都不为空 —— 调用方没得选，只能印。
     /// </summary>
-    public static Choice Choose(double wallMm, string? name,
+    public static Choice Choose(double wallMm, string? name, IReadOnlyList<double>? thickMm,
                                 IReadOnlyList<FinalDesign> all, FinalDesign current)
     {
         if (all is null || all.Count == 0) throw new ArgumentException("没有可用的定案档");
@@ -77,6 +77,32 @@ public static class ShapeSeed
 
         var seed = tmpl.Clone();
         seed.WallMm = wallMm;
+
+        // ★★★★★ 五个**优化变量**不许来自定案档（用户 2026-08-25：
+        //   「把种子这种方法彻底禁掉，定案檔是用来校正计算流程，不应当被乱用」）。
+        //   一律覆盖成 StartPoint 里声明的起点；留在定案档里的只有
+        //   **图纸与界面都给不出**的构型/工艺常数（压接段、舌根圆角、环宽、控温点、圆盘保温），
+        //   那是铁律②「几何只有一个来源」要求的 —— 并在 Note 里申报。
+        for (int j = 0; j < seed.TabInsulMm.Length; j++) seed.TabInsulMm[j] = StartPoint.TabInsulMm;
+        for (int j = 0; j < seed.RingMul.Length; j++) seed.RingMul[j] = StartPoint.RingMul;
+        seed.TubeInsulMm = StartPoint.TubeInsulMm;
+        seed.ClampTempC = StartPoint.ClampTempC;
+
+        // 板厚**没有**统一起点：它在解析模式由界面控件/--thick 给，在 .3dm 模式由图纸给 ——
+        // 两者都是真实输入。给不出就**抛**，不许拿定案档的板厚顶上（那正是被禁的做法）。
+        if (thickMm is null || thickMm.Count == 0)
+            throw new ArgumentException(
+                "没有板厚起点。板厚是**优化变量**，起点只能来自真实输入（用户 2026-08-25）："
+              + Environment.NewLine
+              + "  · --from3dm <file.3dm> [图层]  从图纸取；或"
+              + Environment.NewLine
+              + "  · --thick a,b,c,d             明确给四片的板厚 mm；或"
+              + Environment.NewLine
+              + "  · 走界面：那四个「法兰厚度」框就是它的起点。"
+              + Environment.NewLine
+              + "  ⚠ **不会**再回退到定案档的板厚 —— 定案档只用来校正计算流程。");
+        for (int j = 0; j < seed.TabThickMm.Length; j++)
+            seed.TabThickMm[j] = thickMm[System.Math.Min(j, thickMm.Count - 1)];
         seed.Invalid = "";                            // 这是新解，不继承旧档的失效告示
         seed.InvalidChecks = Array.Empty<string>();   // 声明的判据清单也要一起清
 
@@ -84,7 +110,7 @@ public static class ShapeSeed
         var note = "种子：" + tmpl.Name + "（" + how + "，原壁厚 " + tmpl.WallMm.ToString("0.0") + "）"
                  + Environment.NewLine
                  + "  板厚起点 " + thick + " mm"
-                 + "（来自该档）"
+                 + "（来自 --thick／图纸；**不是**定案档）"
                  + " —— D8 是在这个起点上**增量**走板厚的，不是重新定。";
         if (mismatch)
             note += Environment.NewLine
@@ -92,6 +118,16 @@ public static class ShapeSeed
                   + "，本次要算 " + wallMm.ToString("0.0")
                   + " —— 板厚分布来自**另一档**，结果不能当作该壁厚的独立推导。";
 
+        note += Environment.NewLine
+              + "  五个**优化变量**的起点：板厚 ← 上面那一行；舌保温 "
+              + StartPoint.TabInsulMm.ToString("0.0") + "（裸舌）／环倍率 "
+              + StartPoint.RingMul.ToString("0.00") + "（无台阶）／管保温 "
+              + StartPoint.TubeInsulMm.ToString("0.0") + "／夹持 "
+              + StartPoint.ClampTempC.ToString("0") + " °C —— 全部取自 Core/StartPoint.cs，**不是定案档**。"
+              + Environment.NewLine
+              + "  仍取自「" + tmpl.Name + "」的只有**图纸与界面都给不出**的构型常数："
+              + "压接段 " + seed.ClampLengthMm.ToString("0") + " mm／舌根圆角／环宽／控温点／圆盘保温"
+              + "（铁律②：几何只有一个来源）。";
         return new Choice { Seed = seed, Note = note, WallMismatch = mismatch };
     }
 
@@ -114,8 +150,8 @@ public static class ShapeSeed
                                      IReadOnlyList<FinalDesign> all, FinalDesign current)
     {
         var k = ShapeToAnalytic.From(sh);                 // 三条近似由它生成，原样带出去
-        var c = Choose(k.WallMm, null, all, current);     // 图纸给不了的部分：按壁厚取档
-        for (int j = 0; j < c.Seed.TabThickMm.Length; j++) c.Seed.TabThickMm[j] = k.PlateThickMm;
+        // 板厚来自**图纸**（真实输入）；其余优化变量由 Choose 覆盖成 StartPoint 的起点
+        var c = Choose(k.WallMm, null, new[] { k.PlateThickMm }, all, current);
         c.Seed.DiscRadiusMm = k.DiscDiameterMm * 0.5;
         c.Seed.TabHalfWidthMm = k.TabHalfWidthMm;
         c.Seed.TabLengthMm = k.TabLengthMm;

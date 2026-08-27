@@ -61,8 +61,12 @@ public sealed class SizerOptions
     public double DiscOverTargetK = 3.0;
     public double DiscOverDeadK = 0.30;
 
-    public double RingLo = 1.0, RingHi = 2.5;
-    public double InsLoMm = 0.3, InsHiMm = 80.0;    // 用户：管外纤维无空间限制
+    /// <summary>环倍率上下界。**常量版供界面控件用** —— 界面与优化器的界必须是同一个。</summary>
+    public const double RingLoConst = 1.0, RingHiConst = 2.5;
+    public double RingLo = RingLoConst, RingHi = RingHiConst;
+    /// <summary>舌保温上下界。**常量版供界面控件用**（用户：管外纤维无空间限制）。</summary>
+    public const double InsLoMmConst = 0.3, InsHiMmConst = 80.0;
+    public double InsLoMm = InsLoMmConst, InsHiMm = InsHiMmConst;
     public double ThickHiMm = 6.0;
     /// <summary>省铂漂移的**最小**步长 mm/轮（步长本身由保温余量定，见 Sizer 里的阀位控制）。</summary>
     public double ThinStepMm = 0.03;

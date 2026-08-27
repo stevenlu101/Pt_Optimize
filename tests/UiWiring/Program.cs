@@ -580,6 +580,20 @@ class UiWiringTests {
             tabLen.Value = (decimal)fd1b.TabLengthMm;
             tabW.Value = (decimal)fd1b.TabHalfWidthMm;
             for (int i = 0; i < 4; i++) plate[i].Value = (decimal)fd1b.TabThickMm[i];
+            // ★★ 2026-08-25：舌保温与环倍率**成了页面控件**（在此之前本页没有它们，
+            //   PageToFinalDesign 从 FinalDesign.Current 继承 —— 那正是被禁掉的「定案当起点」）。
+            //   本节的前提是「把定案参数**原样填进控件**」，所以这两组也必须填。
+            //   ⚠ 不填会有两种坏法，都被这道门抓到过：
+            //     ① 停在控件默认的 0.3（裸舌）⇒ 复现不出定案；
+            //     ② 更隐蔽：前面某一节跑过定尺寸，结果已由 AdoptSolvedDesign **写回控件**
+            //        （同一个 page 复用），于是这里继承的是**上一节的解**（实测 18.7 mm）。
+            var tabIns1b = (System.Windows.Forms.NumericUpDown[])F(page, "_tabIns")!;
+            var ringMul1b = (System.Windows.Forms.NumericUpDown[])F(page, "_ringMul")!;
+            for (int i = 0; i < 4; i++)
+            {
+                tabIns1b[i].Value = (decimal)fd1b.TabInsulMm[i];
+                ringMul1b[i].Value = (decimal)fd1b.RingMul[i];
+            }
             var srcA2 = (RadioButton)F(page, "_srcAnalytic")!;
             srcA2.Checked = true;
             Set(page, "_suppressAuto", false);

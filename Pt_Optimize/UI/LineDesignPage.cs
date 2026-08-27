@@ -31,8 +31,8 @@ public sealed class LineDesignPage : TabPage
     //   判据大面积不过 —— 看起来像程序坏了，其实是默认值本身不可制造。
     //   （--walk 全程验证抓到。下限仍保留 0.10：允许探索，但判据与夹持会拦住。）
     private readonly NumericUpDown _wall = Num(0.80m, 0.10m, 5.00m, 0.05m, 2);
-    private readonly NumericUpDown _tubeIns = Num(10.0m, 0.0m, 100.0m, 0.5m, 1);
-    private readonly NumericUpDown _clamp = Num(300m, -1m, 1200m, 10m, 0);
+    private readonly NumericUpDown _tubeIns = Num((decimal)StartPoint.TubeInsulMm, 0.0m, 100.0m, 0.5m, 1);
+    private readonly NumericUpDown _clamp = Num((decimal)StartPoint.ClampTempC, -1m, 1200m, 10m, 0);
     /// <summary>
     /// `.3dm` 模式下的舌保温 mm。解析模式不用它（那边逐片来自 FinalDesign.TabInsulMm）。
     /// 0 = 裸舌 —— 那是此前 .3dm 路径**写死**的行为。
@@ -47,6 +47,34 @@ public sealed class LineDesignPage : TabPage
     {
         Num(0.516m, 0.10m, 8.0m, 0.02m, 3), Num(0.855m, 0.10m, 8.0m, 0.02m, 3),
         Num(0.776m, 0.10m, 8.0m, 0.02m, 3), Num(0.426m, 0.10m, 8.0m, 0.02m, 3),
+    };
+
+    /// <summary>
+    /// 舌保温 mm（逐片）—— **优化变量**（用户 2026-08-25：
+    /// 「板厚 / 舌保温 / 环倍率 / 管保温 / 夹持温度…优化程式需自己给出答案，
+    ///  可以在 UI 输入框上给初始值」）。
+    ///
+    /// ★ 此前本页**没有这两组控件**，于是 <see cref="PageToFinalDesign"/> 从
+    ///   <c>FinalDesign.Current</c> 里继承 —— 而 Current 全仓只在声明处赋过值（恒为 W08）。
+    ///   后果：点「载入定案」选 0.6 档，控件变成 0.6 的值，**舌保温却仍是 0.8 档的**
+    ///   （W08 是 0.4/0.4/**0.5**/**0.3**，W06 是 0.4/0.4/**0.4**/**0.6**）
+    ///   ⇒ 算的是「0.6 的管 + 0.8 的保温」，而界面还写着「点核算整线就能复现定案数字」。
+    ///
+    /// 初始值 = <see cref="SizerOptions.InsLoMm"/>（0.3 ≈ **裸舌**）：
+    /// 它是旋钮自己的下界，也是一个**真实物理状态**，不是捏出来的数。
+    /// </summary>
+    private readonly NumericUpDown[] _tabIns =
+    {
+        Ins(), Ins(), Ins(), Ins(),
+    };
+
+    /// <summary>
+    /// 管孔渐变环倍率（逐片）—— **优化变量**。初始值 = <see cref="SizerOptions.RingLo"/>
+    /// （1.00 = **无台阶**，同样是真实状态）。上界 2.5 与 SizerOptions.RingHi 一致。
+    /// </summary>
+    private readonly NumericUpDown[] _ringMul =
+    {
+        Ring(), Ring(), Ring(), Ring(),
     };
     // ⚠ 文字要短到**放得下**（2026-08-20 实测截图里这两行断在半个词上：
     //   「解析形状（圆盘 + 梯形舌片，程」「Rhino .3dm 文件（任意形状：阶」）。
@@ -173,6 +201,19 @@ public sealed class LineDesignPage : TabPage
     /// </summary>
     private void AdoptSolvedDesign(FinalDesign d, LineResult? best)
     {
+        // ★★ 2026-08-25：定尺寸的结果写回**控件**，控件是舌保温/环倍率的**唯一来源**。
+        //   此前另存一份 _sizerTabIns/_sizerRingMul，而 PageToFinalDesign 在它们为空时
+        //   回退到 FinalDesign.Current —— 那是「同一个数两处来源 + 定案档当起点」两个毛病叠一起。
+        //   （另一份仍保留，只为 CurrentSnap 的新鲜度比对，不再参与构造设计。）
+        _suppressAuto = true;
+        try
+        {
+            for (int j = 0; j < _tabIns.Length && j < d.TabInsulMm.Length; j++)
+                _tabIns[j].Value = Math.Clamp((decimal)d.TabInsulMm[j], _tabIns[j].Minimum, _tabIns[j].Maximum);
+            for (int j = 0; j < _ringMul.Length && j < d.RingMul.Length; j++)
+                _ringMul[j].Value = Math.Clamp((decimal)d.RingMul[j], _ringMul[j].Minimum, _ringMul[j].Maximum);
+        }
+        finally { _suppressAuto = false; }
         _sizerTabIns = (double[])d.TabInsulMm.Clone();
         _sizerRingMul = (double[])d.RingMul.Clone();
         _last = best;
@@ -200,8 +241,12 @@ public sealed class LineDesignPage : TabPage
         Disc = (double)_discD.Value,
         TabLen = (double)_tabLen.Value,
         TabW = (double)_tabW.Value,
-        SizerTabIns = (_sizerTabIns ?? FinalDesign.Current.TabInsulMm).Average(),
-        SizerRingMul = (_sizerRingMul ?? FinalDesign.Current.RingMul).Average()
+        // ★★ 2026-08-25：改读**控件**。此前是 `_sizerX ?? FinalDesign.Current.X` ——
+        //   定尺寸没跑过时，快照记的是**定案档**的值，而实际计算用的也是它
+        //   ⇒ 「参数没变」判得对，但两边一起错。现在控件是唯一来源，快照跟着控件走，
+        //   工程师动一下舌保温/环倍率，上一次的解立刻不新鲜（本来就该如此）。
+        SizerTabIns = _tabIns.Average(n => (double)n.Value),
+        SizerRingMul = _ringMul.Average(n => (double)n.Value)
     };
     private readonly ToolStripComboBox _caseBox =
         new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = UiScale.S(210) };
@@ -475,6 +520,24 @@ public sealed class LineDesignPage : TabPage
             "  加厚同时降单位面积发热（∝1/t）与增强横向导热（∝t），后者把热从管根抽走。\n" +
             "共用片承 √3 倍电流、发热 3 倍 ⇒ 必须比端片厚，四片等厚不是最优。";
         for (int i = 0; i < 4; i++) Row(names[i], _tPlate[i], tipPlate);
+
+        // ★ 舌保温与环倍率是**优化变量**，此前本页没有控件 ⇒ 只能从定案档继承（见 _tabIns 头注）。
+        //   用户 2026-08-25 定：这两项由优化器给答案，UI 只给**初始值**。
+        Head("舌保温 mm（优化变量，下界 0.3 = 裸舌）");
+        // ⚠ 提示文字用 Environment.NewLine 拼，**不写反斜杠转义** ——
+        //   本仓的写入链路会把转义序列改成真字符，字面量当场断掉（今天又踩了一次）。
+        string tipIns =
+            "D8 里它是**免费旋钮**：主要动「从管子抽多少热」（判据 ②′ 与 ③），" + Environment.NewLine +
+            "而对 ②″（圆盘区局部峰值）几乎不动 —— 所以它先调，板厚只做接力与省铂。" + Environment.NewLine +
+            "初始值取下界 0.3（≈裸舌）：那是真实状态，不是捏的数。优化器会自己往上加。";
+        for (int i = 0; i < 4; i++) Row(names[i], _tabIns[i], tipIns);
+
+        Head("管孔渐变环倍率（优化变量，1.00 = 无台阶）");
+        string tipRing =
+            "只压**管孔周围**的局部电流拥塞（判据 ②″），作用范围 r ≤ 孔+6 mm。" + Environment.NewLine +
+            "实测 d②″/d倍率 ≈ −1.4 K/单位，上限 2.5。" + Environment.NewLine +
+            "初始值 1.00 = 无台阶（真实状态）。环到 2.5 仍压不住 ②″ 时，才轮到加厚该片板。";
+        for (int i = 0; i < 4; i++) Row(names[i], _ringMul[i], tipRing);
 
         Head("保温与夹持");
         Row("法兰保温", _flIns, "包纤维会降低自给所需厚度；不包则法兰更凉但从管子抽热更多");
@@ -800,6 +863,16 @@ public sealed class LineDesignPage : TabPage
         for (int k = idx + 1; k < _file3dm.Length; k++)
             if (string.IsNullOrWhiteSpace(_file3dm[k].Text)) _file3dm[k].Text = dlg.FileName;
     }
+
+    /// <summary>舌保温框：初始值与上下界都只有一个来源（StartPoint / SizerOptions）。</summary>
+    private static NumericUpDown Ins() =>
+        Num((decimal)StartPoint.TabInsulMm, (decimal)SizerOptions.InsLoMmConst,
+            (decimal)SizerOptions.InsHiMmConst, 0.1m, 1);
+
+    /// <summary>环倍率框：同上。</summary>
+    private static NumericUpDown Ring() =>
+        Num((decimal)StartPoint.RingMul, (decimal)SizerOptions.RingLoConst,
+            (decimal)SizerOptions.RingHiConst, 0.05m, 2);
 
     private static NumericUpDown Num(decimal v, decimal lo, decimal hi, decimal inc, int dec)
     {
@@ -1410,6 +1483,18 @@ public sealed class LineDesignPage : TabPage
         _clamp.Value = C(fd.ClampTempC, _clamp);
         for (int j = 0; j < 4 && j < _tPlate.Length; j++)
             _tPlate[j].Value = C(fd.TabThickMm[j], _tPlate[j]);
+        // ★★ 舌保温与环倍率也要灌进控件（2026-08-25）。
+        //   ⚠ 这**不是**「拿定案当起点」—— 工程师**明确点了「载入定案」**，
+        //     那是定案档的正当用途：**校正计算流程**（载入 → 核算 → 对得上说明链路没坏）。
+        //     被禁的是**静默继承**：没人要求的时候，PageToFinalDesign 自己去 Current 里捡。
+        //   ⚠ 少了这两行，载入 0.6 档之后舌保温会停在控件默认的 0.3（裸舌），
+        //     「载入定案 → 核算整线」就复现不出该档的数 —— 那正是这道校正要验的东西。
+        for (int j = 0; j < 4 && j < _tabIns.Length && j < fd.TabInsulMm.Length; j++)
+            _tabIns[j].Value = C(fd.TabInsulMm[j], _tabIns[j]);
+        for (int j = 0; j < 4 && j < _ringMul.Length && j < fd.RingMul.Length; j++)
+            _ringMul[j].Value = C(fd.RingMul[j], _ringMul[j]);
+        // 定尺寸器上一次的解也一并作废 —— 否则跨档污染（换了档，旧解的旋钮还留着）
+        _sizerTabIns = null; _sizerRingMul = null;
 
         // 分段控温点：只改控温点，水头保持页面上原有的值（那是工艺量，不属于定案几何）
         string[] segNames = { "HC1", "HC2", "HC3" };
@@ -1696,10 +1781,15 @@ public sealed class LineDesignPage : TabPage
         d.TabHalfWidthMm = (double)_tabW.Value;
         d.ClampTempC = (double)_clamp.Value;
         d.ClampLengthMm = seed.ClampLengthMm;          // 本页无控件，取定案值（已在输出里注明）
-        // ★ 定尺寸器带回来的两个旋钮：有就用它的，没有才用定案值。
-        //   少了这两行，「定尺寸 → 重解」会把 D8 的解丢掉一大半（见 _sizerTabIns 的注释）。
-        if (_sizerTabIns is { Length: > 0 }) d.TabInsulMm = (double[])_sizerTabIns.Clone();
-        if (_sizerRingMul is { Length: > 0 }) d.RingMul = (double[])_sizerRingMul.Clone();
+        // ★★★★★ 舌保温与环倍率是**优化变量**，起点从**控件**读（用户 2026-08-25）。
+        //   此前这里是「定尺寸带回来的有就用，没有才用**定案值**」——
+        //   而 FinalDesign.Current 全仓只在声明处赋过值（恒为 W08）⇒ 载入 0.6 档之后，
+        //   舌保温仍是 0.8 档的 0.4/0.4/0.5/0.3（W06 是 0.4/0.4/0.4/0.6）。
+        //   现在定尺寸的结果由 AdoptSolvedDesign **写回控件**，控件是唯一来源。
+        for (int i = 0; i < d.TabInsulMm.Length && i < _tabIns.Length; i++)
+            d.TabInsulMm[i] = (double)_tabIns[i].Value;
+        for (int i = 0; i < d.RingMul.Length && i < _ringMul.Length; i++)
+            d.RingMul[i] = (double)_ringMul[i].Value;
         // 圆盘保温：本页**有**控件，接过去（BuildCase 里原来写死 20，已改成读字段）
         d.FlangeInsulated = _flIns.SelectedIndex != 0;
         d.FlangeInsulMm = d.FlangeInsulated ? (double)_flInsT.Value : 0;
