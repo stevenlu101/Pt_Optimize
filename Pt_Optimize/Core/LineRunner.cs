@@ -428,6 +428,19 @@ public sealed class ConstraintOut
 
 public sealed class LineResult
 {
+    /// <summary>
+    /// **各段端部实际扣掉的抽热总和** W（Σ 段 i 的 L + R）。0 = 本次没走外层耦合。
+    ///
+    /// ★ 为什么要留这个数（2026-08-28 第一性原理通查）：
+    ///   <c>QFromTubeW</c> 是**一片**法兰经整圈管孔抽走的**总量**（ShellThermal 对孔单元累加）。
+    ///   而外层耦合把 <c>targetLR[i] = (Flanges[i].Q, Flanges[i+1].Q)</c> 挂到段 i 两端 ——
+    ///   于是**内部共用片**同时是「段 j−1 的右端」与「段 j 的左端」，全额被扣**两次**。
+    ///   管子实际失去的是 Q₀ + 2ΣQ内 + Q_n，而法兰实际收到的是 ΣQ。
+    ///   ⇒ 差额 = Σ内部片的 Q。此前**没有任何一处在对账**，所以谁也没发现。
+    ///   现在做成一条常驻参考判据（Key.HeatBalance），让它自己说话。
+    /// </summary>
+    public double DrawAppliedW;
+
     public SegmentOut[] Segments = Array.Empty<SegmentOut>();
     public FlangeOut[] Flanges = Array.Empty<FlangeOut>();
     public ConstraintOut[] Checks = Array.Empty<ConstraintOut>();
@@ -469,6 +482,7 @@ public sealed class LineResult
         public const string LocalStab = "· 局部热稳定";                   // 管电流密度上限（≠「· 法兰 J_max」那条参考量）
         /// <summary>现场升温（温控 20 K/h）下「法兰温度 − 管温」的全程最大值 K</summary>
         public const string RampField = "· 升温期法兰−管峰值";
+        public const string HeatBalance = "· 管↔法兰热收支";
     }
 
     public ConstraintOut? Find(string keyPrefix)
@@ -1031,7 +1045,11 @@ public static class LineRunner
             p.FlangeDrawOverrideW = drawW[i]; p.FlangeDrawOverrideSet = true;
             // 两端各挂各的（原来取平均是 bug，见 DesignInputs.FlangeDrawLeftW）
             if (drawLR is not null)
-            { p.FlangeDrawLeftW = drawLR[i].L; p.FlangeDrawRightW = drawLR[i].R; }
+            {
+                p.FlangeDrawLeftW = drawLR[i].L; p.FlangeDrawRightW = drawLR[i].R;
+                // ★ 记账：这两个数就是**真正落到管子边界上**的抽热，用来与各片实收对账
+                res.DrawAppliedW += drawLR[i].L + drawLR[i].R;
+            }
             // 段间轴向导热：把相邻段的端温传进去（见 DesignInputs.NeighbourTempLeftC）。
             // 首轮 nbT 为 null ⇒ 退化成原来的「各解各的」，由外层迭代逐步接上。
             if (nbT is not null)
@@ -1744,6 +1762,33 @@ public static class LineRunner
                         Ok = true, Undetermined = true, Where = "—",
                         Note = "★ **算不出来**：" + ex.Message
                              + "　（参考量，不参与 AllOk；但算不出来就该说，不能装作没有这一条）"
+                    });
+                }
+
+
+                // ★★★★★ 管↔法兰热收支对账（2026-08-28 第一性原理通查补上）
+                //
+                //   QFromTubeW 是**一片**法兰经整圈管孔抽走的**总量**。
+                //   而外层耦合把 targetLR[i] = (Flanges[i].Q, Flanges[i+1].Q) 挂到段 i 两端，
+                //   于是**内部共用片**同时是「段 j−1 的右端」与「段 j 的左端」——
+                //   它的全额被扣**两次**。管子失去 Q₀ + 2ΣQ内 + Q_n，法兰只收到 ΣQ。
+                //
+                //   ⇒ 这条差额此前**没有任何一处在对账**，所以谁也没发现。
+                //     做成参考判据：不参与 AllOk（改判定会动所有历史结果），但**永远看得见**。
+                //   ⚠ 它**不是**「误差」，是**模型口径**：先把它量出来，再决定改不改。
+                if (Math.Abs(res.DrawAppliedW) > 1e-12)
+                {
+                    double gotW = flanges.Sum(f2 => f2.QFromTubeW);
+                    double residW = res.DrawAppliedW - gotW;
+                    double innerW = flanges.Length > 2
+                        ? flanges.Skip(1).Take(flanges.Length - 2).Sum(f2 => f2.QFromTubeW) : 0.0;
+                    checks.Add(new ConstraintOut
+                    {
+                        Name = LineResult.Key.HeatBalance, Unit = "W", Kind = CheckKind.Reference,
+                        Actual = residW, Limit = 0.0, LessIsBetter = true, Ok = true, Where = "整线",
+                        Note = $"段端共扣 {res.DrawAppliedW:0.00} W，各片实收 {gotW:0.00} W"
+                             + $"　⇒ 差 {residW:+0.00;−0.00} W（内部共用片合计 {innerW:0.00} W）"
+                             + "　守恒时应为 0；不为 0 表示内部片被两段各扣一次"
                     });
                 }
 

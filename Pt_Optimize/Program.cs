@@ -5366,7 +5366,17 @@ internal static class Program
                      + $" / 局部 {StabOf(r, LineResult.Key.LocalStab)}"
                      // ★ 现场升温那条同样打出来（2026-08-25 新增）。新判据不打出来
                      //   就等于没进表 —— 「热稳定」当初就是这么攒起量级的。
-                     + $"　升温Δ {RampOf(r)}";
+                     + $"　升温Δ {RampOf(r)}"
+                     // ★★ 管↔法兰热收支残差（2026-08-28）：守恒时应为 0。
+                     //   不为 0 说明内部共用片被相邻两段**各扣一次** —— 先量出来再谈改不改。
+                     + $"　热收支 {HbOf(r)}";
+                string HbOf(LineResult r)
+                {
+                    foreach (var c in r.Checks)
+                        if (c.Name.StartsWith(LineResult.Key.HeatBalance, StringComparison.Ordinal))
+                            return double.IsNaN(c.Actual) ? "判不了" : $"{c.Actual:+0.00;−0.00} W";
+                    return "—";
+                }
 
                 string RampOf(LineResult r)
                 {
