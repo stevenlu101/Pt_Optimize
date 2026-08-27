@@ -4576,6 +4576,37 @@ internal static class Program
                 seedPickS.Seed.ClampTempC = clampTS;
                 Console.WriteLine($"  工况：管保温 {tubeInsS:0.0} mm（--tubeins）／铜排夹持 {clampTS:0} °C（--clamptemp）"
                     + " —— ⚠ D8 **不调这两项**，它们是固定工况，换了就换了一组条件，与优化无关。");
+
+                // ★★★★★ 舌端边界：`--busg 宽,厚,长`（mm）打开**物理上唯一自洽**的那一种。
+                //
+                //   ShellThermal 自己写着三种模式：
+                //     ① 热导 q = G·(T − T_冷端) —— **唯一自洽**，接头温度是**输出**
+                //     ② 定温 —— 「假设铜排无论要带走多少热都能把接触点按住，**等于假设结论**」
+                //     ③ 自由端 —— 实算舌端 1100–2400 °C，而**铜熔点只有 1085 °C**
+                //   而整线链一直走 ②，把一个**输出量**当输入钉死（用户 2026-08-28 要求改）。
+                //
+                //   ⚠ G 不写成常数，由**真实铜排几何**算：G = k_Cu·A/L。
+                //     截面 A 只依赖载流（A = I/J许用），不依赖夹持温度 ⇒ **没有循环**。
+                int iBusS = Array.IndexOf(args, "--busg");   // ⚠ 不能叫 --busbar：那已是顶层命令（铜排选型表），会被它先吃掉
+                if (iBusS >= 0 && iBusS + 1 < args.Length && !args[iBusS + 1].StartsWith("--"))
+                {
+                    var bsS = args[iBusS + 1].Split(',')
+                              .Select(t => double.Parse(t.Trim())).ToArray();
+                    if (bsS.Length != 3)
+                        throw new ArgumentException("--busg 要三个数：宽,厚,长（mm），例如 40,21.8,300");
+                    double aM2S = bsS[0] * bsS[1] * 1e-6;              // mm² → m²
+                    double gBusS = BusbarSizing.CuK * aM2S / (bsS[2] * 1e-3);
+                    p.BusbarConductanceWPerK = gBusS;
+                    p.BusbarSinkTempC = ArgS("--sink", p.BusbarSinkTempC);
+                    Console.WriteLine($"  舌端边界：**热导（唯一自洽）** G = k_Cu·A/L = {BusbarSizing.CuK:0}"
+                        + $"×({bsS[0]:0.#}×{bsS[1]:0.#} mm²)/{bsS[2]:0} mm = **{gBusS:0.000} W/K**"
+                        + $"　冷端 {p.BusbarSinkTempC:0} °C");
+                    Console.WriteLine("    ⇒ **夹持温度由求解给出，不再是输入**"
+                        + $"（--clamptemp 的 {clampTS:0} °C 本次不生效）。铜熔点 1085 °C 是它的硬顶。");
+                }
+                else
+                    Console.WriteLine("  舌端边界：**定温**（夹持温度当已知）—— ShellThermal 自己的定性是"
+                        + "「等于假设结论」。要让它算出来：`--busg 宽,厚,长`（mm）。");
                 Console.WriteLine();
 
                 var rowsS = new List<(double disc, double hw, double len, double mass, bool ok, string msg, FinalDesign d)>();
@@ -4616,6 +4647,13 @@ internal static class Program
                     Console.WriteLine($"   {sr.Message}　合计 {sr.MassG:0} g　（③/D 实测 {sr.GammaKPerW:0.00} K/W）");
                     // ★ 「无解」与「轮数不够」此前长得一模一样 —— 现在分得开。
                     Console.WriteLine($"   停在第 {sr.RoundsUsed} 轮：{sr.StopWhy}");
+                    // ★ 打开热导边界时，夹持温度是**输出** —— 必须报出来，否则等于没算
+                    if (p.BusbarConductanceWPerK >= 0 && sr.Best is { Flanges.Length: > 0 })
+                        Console.WriteLine("   **算出来的舌端（夹持）温度** "
+                            + string.Join(" / ", sr.Best.Flanges.Select(f2 => f2.TTabEndC.ToString("0") + " °C"))
+                            + (sr.Best.Flanges.Max(f2 => f2.TTabEndC) > 1085
+                               ? "　✗ **超铜熔点 1085 °C —— 该工况下接头不存在**"
+                               : "　（铜熔点 1085 °C）"));
                     if (sr.Design is not null)
                     {
                         // ★ 用户 2026-08-17：「有依据地告诉我 APP 发现了什么？这个法兰的
