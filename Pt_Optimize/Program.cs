@@ -4564,6 +4564,17 @@ internal static class Program
                 // ★ 必须印：拿到这份输出的人要能还原出「这是用什么算的」。
                 Console.WriteLine(seedPickS.Note);
                 if (wallNoteS.Length > 0) Console.WriteLine(wallNoteS);
+
+                // ★★ 管保温与夹持温度：用户 2026-08-25 把它们列进「优化变量」，
+                //   但 D8 主循环**只调三个旋钮**（板厚/舌保温/环倍率）—— 这两项它一个都不动。
+                //   ⇒ 今天它们是**固定工况**，起点即终点。既然如此，就必须能显式给，
+                //     而且**必须印出来**：换了它们，答案就变，而那与优化无关。
+                double tubeInsS = ArgS("--tubeins", seedPickS.Seed.TubeInsulMm);
+                double clampTS = ArgS("--clamptemp", seedPickS.Seed.ClampTempC);
+                seedPickS.Seed.TubeInsulMm = tubeInsS;
+                seedPickS.Seed.ClampTempC = clampTS;
+                Console.WriteLine($"  工况：管保温 {tubeInsS:0.0} mm（--tubeins）／铜排夹持 {clampTS:0} °C（--clamptemp）"
+                    + " —— ⚠ D8 **不调这两项**，它们是固定工况，换了就换了一组条件，与优化无关。");
                 Console.WriteLine();
 
                 var rowsS = new List<(double disc, double hw, double len, double mass, bool ok, string msg, FinalDesign d)>();

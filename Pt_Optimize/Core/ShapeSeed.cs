@@ -156,6 +156,12 @@ public static class ShapeSeed
         c.Seed.TabHalfWidthMm = k.TabHalfWidthMm;
         c.Seed.TabLengthMm = k.TabLengthMm;
         c.FromDrawing = true;
+        // ★★ 2026-08-25 更正：此处原本**整段覆盖** Choose 的申报，写的是
+        //   「来自定案档（图纸给不了）：舌保温／环倍率／管保温／控温点／压接段」——
+        //   而 Choose 现在已把舌保温/环倍率/管保温/夹持覆盖成 StartPoint 的起点，
+        //   真正还来自定案档的只剩**控温点／压接段／圆角／环宽**。
+        //   ⇒ 那句话变成了**假的**，而且它把**对的**那段申报挤掉了。
+        //   现在：图纸那部分**加在** Choose 的申报**前面**，不覆盖它。
         c.Note =
             "种子：**.3dm 图纸**（不是定案档）" + Environment.NewLine
           + "  来自图纸：盘Ø " + k.DiscDiameterMm.ToString("0.0")
@@ -163,12 +169,8 @@ public static class ShapeSeed
           + "　舌半宽 " + k.TabHalfWidthMm.ToString("0.0")
           + "　管壁 " + k.WallMm.ToString("0.00")
           + "　板厚 " + k.PlateThickMm.ToString("0.00") + " mm" + Environment.NewLine
-          + "  来自定案档（图纸给不了）：舌保温／环倍率／管保温／控温点／压接段 —— "
-          + "取自「" + c.Seed.Name + "」" + Environment.NewLine
           + k.Note + Environment.NewLine
-          + (c.WallMismatch
-             ? "  ⚠ 没有与图纸管壁同档的定案，上面那几项来自**另一个壁厚**的档。"
-             : "");
+          + c.Note;
         return c;
     }
 

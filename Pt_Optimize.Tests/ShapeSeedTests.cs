@@ -166,8 +166,16 @@ public class ShapeSeedTests
         sh.Levels.Add(new PlateShapeAnalyzer.Level { ThicknessMm = 2.0, AreaMm2 = 23566 });
         string note = ShapeSeed.FromDrawing(sh, Archives, FinalDesign.W08).Note;
         Assert.Contains("来自图纸", note);
-        Assert.Contains("来自定案档", note);
-        Assert.Contains("舌保温", note);
+        // ★ 2026-08-25 改判：FromDrawing 原本**整段覆盖** Choose 的申报，写的是
+        //   「来自定案档：舌保温／环倍率／管保温／控温点／压接段」—— 那句话在
+        //   Choose 改成用 StartPoint 之后变成了**假的**，而且把对的那段挤掉了。
+        //   现在图纸那部分**加在** Choose 的申报前面，两段都得在。
+        Assert.Contains("不是定案档", note);           // 来自 Choose：五个优化变量的起点
+        Assert.Contains("StartPoint", note);
+        Assert.Contains("压接段", note);               // 仍来自档的构型常数，点名
+        Assert.Contains("铁律②", note);
+        // 自证：那句已被推翻的话不许再出现
+        Assert.DoesNotContain("来自定案档（图纸给不了）：舌保温", note);
     }
 
 
