@@ -178,6 +178,12 @@ internal static class Program
                 Console.WriteLine("⚠ --sigmat：电流场按 **σ(T)** 重解（冷区更导电）。"
                     + "默认是**关**的 —— 本次结果与设计记录**不可直接比较**。");
             }
+            if (args.Contains("--basetol"))
+            {
+                p.BaselineTolAmplified = true;
+                Console.WriteLine("⚠ --basetol：**基线**收敛判据改成与主环同口径（真残差 × 放大 25）。"
+                    + "默认是**关**的 —— 本次 ③ 与设计记录**不可直接比较**。");
+            }
             if (args.Contains("--splitdraw"))
             {
                 p.SplitSharedFlangeDraw = true;
@@ -4491,6 +4497,31 @@ internal static class Program
                       (dd, v) => { for (int k = 0; k < dd.TabInsulMm.Length; k++) dd.TabInsulMm[k] = v; });
                 Sweep("环倍率（四片同值）", opt2.RingLo, opt2.RingHi,
                       (dd, v) => { for (int k = 0; k < dd.RingMul.Length; k++) dd.RingMul[k] = v; });
+
+                // ★ 渐变环的另外三个形状变数（算法普查 A⑨ 放开的）。
+                //   此前它们被写死：r₂ = 孔+**2**w、t₂ = 1+**0.4**(μ−1)。
+                //   要不要让求解器动它们，**先量单调性再定** —— 不假设方向。
+                //   ⚠ 扫这三个时把内级倍率抬离 1.0，否则台阶本身不存在（μ=1 就是平盘），
+                //     形状变数当然一点影响都没有，扫出来的「单调」毫无意义。
+                Console.WriteLine();
+                Console.WriteLine("── 以下三个是**渐变环的形状**（A⑨ 新放开）。为让台阶真的存在，内级倍率固定 1.50。");
+                void RingShape(string knob, double lo, double hi, Action<DesignSpec, double> set)
+                    => Sweep(knob, lo, hi, (dd, v) =>
+                       {
+                           for (int k = 0; k < dd.RingMul.Length; k++) dd.RingMul[k] = 1.50;
+                           set(dd, v);
+                       });
+
+                // ⚠ 两级半径必须严格递增（DesignSpec 会当场炸）。所以扫一个时**把另一个钉住**，
+                //   钉的值要让整段扫程都合法：扫 r₁∈[1,10] 就把 r₂ 钉在 12；扫 r₂∈[4,16] 就把 r₁ 钉在 3。
+                RingShape("环内级外扩 r₁ mm（原 = 环宽 w，写死；本支 r₂ 钉 12）", 1.0, 10.0,
+                          (dd, v) => { for (int k = 0; k < dd.RingW1Mm.Length; k++)
+                                       { dd.RingW1Mm[k] = v; dd.RingW2Mm[k] = 12.0; } });
+                RingShape("环外级外扩 r₂ mm（原 = **2**w，写死；本支 r₁ 钉 3）", 4.0, 16.0,
+                          (dd, v) => { for (int k = 0; k < dd.RingW2Mm.Length; k++)
+                                       { dd.RingW2Mm[k] = v; dd.RingW1Mm[k] = 3.0; } });
+                RingShape("环外级倍率 t₂（原 = 1+**0.4**(μ−1)，写死）", 1.0, 2.0,
+                          (dd, v) => { for (int k = 0; k < dd.RingMul2.Length; k++) dd.RingMul2[k] = v; });
 
                 Console.WriteLine("★ 读法：**每个旋钮对自己的靶单调**，才谈得上把「增量行走」换成「二分求根」；");
                 Console.WriteLine("  而二分的解**与初值无关** ⇒ 种子这个概念就没有立足处，病根才算断。");

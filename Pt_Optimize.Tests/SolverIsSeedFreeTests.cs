@@ -78,7 +78,7 @@ public class SolverIsSeedFreeTests
         Assert.DoesNotContain("Math.Min(Get(d", s);
 
         // 二分收在「不违反那一侧」，再**向上**对齐到图纸格 —— 两步都只会往上
-        Assert.Contains("if (Slack(Eval(d, baseIn, res, cancel), key) >= 0) hi = mid; else lo = mid;", s);
+        Assert.Contains("if (PlateSlack(Eval(d, baseIn, res, cancel), key, j, dipMax, discMax) >= 0) hi = mid; else lo = mid;", s);
         Assert.Contains("Math.Ceiling(hi / q - 1e-9) * q", s);
         Assert.DoesNotContain("Math.Floor(hi", s);      // 向下取整会把判据舍掉
     }
@@ -108,14 +108,22 @@ public class SolverIsSeedFreeTests
     }
 
     /// <summary>
-    /// 裕度的方向必须看 <see cref="ConstraintOut.LessIsBetter"/>。
-    /// 弄反了会把「越限」读成「有余量」，二分就会朝错的方向收 —— 本仓库出过这个错。
+    /// 逐片裕度的**方向**必须与整体判据一致：②′ 越大越好（须 &gt; 0），
+    /// ③ 与 ②″ 越小越好（限值 − 实际）。
+    /// 写反会把「越限」读成「有余量」，二分朝错的方向收 —— 本仓库出过这个错。
+    ///
+    /// ⚠ 逐片读的是**原始量**（<c>Flanges[j].QFromTubeW</c> 等），不是 <c>Checks</c> 里
+    ///   那条汇总后的「最差那片」，所以拿不到 <c>LessIsBetter</c>，方向只能自己写对。
+    ///   ⇒ 正因为拿不到那个标志，这道门才必须存在。
     /// </summary>
     [Fact]
-    public void 裕度方向取自判据自己而不是写死()
+    public void 逐片裕度的方向与整体判据一致()
     {
         string s = Src("Solver.cs");
-        Assert.Contains("c.LessIsBetter ? c.Limit - c.Actual : c.Actual - c.Limit", s);
+        Assert.Contains("return double.IsNaN(q) ? double.NaN : q;", s);            // ②′ 越大越好
+        Assert.Contains("discMax - over", s);                                       // ②″ 越小越好
+        Assert.Contains("dipMax - dip", s);                                         // ③  越小越好
+        Assert.Contains("须 > 0，限值就是 0", s);
     }
 
     /// <summary>
@@ -132,20 +140,29 @@ public class SolverIsSeedFreeTests
         Assert.Equal(3, Solver.Allocation.Select(a => a.Knob).Distinct().Count());
 
         string s = Src("Solver.cs");
-        Assert.Contains("RaiseUntil(d, baseIn, opt, hit.Knob, hit.Key", s);
+        Assert.Contains("RaiseUntil(d, baseIn, opt, j, knob, key", s);
     }
 
     /// <summary>
-    /// 没解决的事要**写在类注释里**，不能让人以为整个 A 类都拆完了。
-    /// （四片分开解、量化、形状搜索这三条还在。）
+    /// 没解决的事要**逐条写在类注释里**，不能让人以为整个 A 类都拆完了。
+    ///
+    /// ⚠ 这道门是被自己犯的错逼出来的（2026-08-28）：我在对话里说「不解厚度梯度这条
+    ///   我会明写进『没解决』清单」，**结果没写**；而 HANDOVER 里已经写着
+    ///   「（写进它的「没解决」清单）」—— **文档声称了一个代码里不存在的东西**，
+    ///   正是本仓库在抓的那一族（「注释描述不存在的机制」）。
+    ///   ⇒ 清单从此**逐条被断言**，谁删掉一条而没同步文档，这里当场红。
     /// </summary>
     [Fact]
-    public void 未解决的三条明写在文件里()
+    public void 未解决的每一条都明写在文件里()
     {
         string s = Src("Solver.cs");
         Assert.Contains("这里**没有**解决的", s);
-        Assert.Contains("四片各自的厚度还没分开解", s);
         Assert.Contains("固定步长模式搜索", s);
+        Assert.Contains("没有旋钮能治", s);                    // 判据⑥
+        Assert.Contains("**不解圆盘厚度梯度。**", s);           // 厚度梯度
+        Assert.Contains("解析路表达不了开孔／开槽", s);          // 开孔
+        Assert.Contains("LevelScale[片][级]", s);              // 指出真逐级优化在哪条路
+        Assert.Contains("面积加权平均压成一个数", s);            // ShapeToAnalytic 的陷阱
 
         // A⑤ 已拆：量化搬进求解过程里了，所以「未解决」清单里不该再有它，
         // 而**拆掉这件事本身**要留字，否则以后没人知道为什么解直接就在格子上。

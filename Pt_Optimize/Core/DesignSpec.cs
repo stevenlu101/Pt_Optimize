@@ -82,8 +82,44 @@ public sealed class DesignSpec
     // ── 管孔渐变环：**相对量**（绝对值写法已两次造成安静失败，见 §1.8 ⑥⑦）
     /// <summary>环宽 mm，相对管孔外扩；两级台阶在 孔+w 与 孔+2w</summary>
     public double RingWidthMm = 3.0;
-    /// <summary>内圈厚度倍率（相对板厚）；外圈取 1 + 0.4(μ−1)</summary>
+    /// <summary>内圈厚度倍率（相对板厚）。外圈见 <see cref="RingMulOuter"/>。</summary>
     public double[] RingMul = new double[4];
+
+    // ══ 把渐变环的**形状**放开成变量（2026-08-28，算法普查 A 类第 ⑨ 条）
+    //
+    // 病灶：一个两级台阶本来要 4 个数（r₁、r₂、t₁、t₂），而此前只有 t₁ 那一个
+    // 是优化变量，另外三个全被写死：
+    //   r₁ = 孔 + w，r₂ = 孔 + **2**w（「2 倍」写死），t₂ = t₁ 按 **0.4** 过渡（0.4 写死）。
+    // ⇒ 解析路上称不上「厚度梯度优化」，只是「一个受单旋钮控制、形状写死的台阶」。
+    // 对照 `.3dm` 路的 LevelScale[片][级]：**每片每级一个自由度**，那才是逐级优化。
+    //
+    // ⚠ 三个都做成**逐片**且 NaN = 退回历史关系：
+    //   ① 默认逐位复现今天的几何（`RingShapeDefaultsTests` 钉住）；
+    //   ② 历史关系变成**显式的兜底**而不是藏在式子里的常数；
+    //   ③ 求解器要不要动它们，等 `--monotone` 量完单调性再定 —— **不假设方向**。
+
+    /// <summary>内级外扩 mm，逐片。NaN = 用全局 <see cref="RingWidthMm"/>（历史行为）。</summary>
+    public double[] RingW1Mm = { double.NaN, double.NaN, double.NaN, double.NaN };
+    /// <summary>外级外扩 mm，逐片。NaN = 用 2×<see cref="RingWidthMm"/>（历史行为，「2 倍」原是写死的）。</summary>
+    public double[] RingW2Mm = { double.NaN, double.NaN, double.NaN, double.NaN };
+    /// <summary>外级厚度倍率，逐片。NaN = 用 1+0.4(μ−1)（历史行为，0.4 原是写死的）。</summary>
+    public double[] RingMul2 = { double.NaN, double.NaN, double.NaN, double.NaN };
+
+    /// <summary>
+    /// 第 j 片两级台阶的**外半径** mm（自小到大）。
+    /// ⚠ 必须严格递增：<see cref="PlateCurrent2D"/> 按 `r ≤ 各级半径` 依次命中，
+    ///   顺序错了会**静默**取到错的那一级（几何照画，温度全错）。
+    /// </summary>
+    public double[] RingRadiiOf(int j)
+    {
+        double r1 = HoleRadiusMm + (double.IsNaN(RingW1Mm[j]) ? RingWidthMm : RingW1Mm[j]);
+        double r2 = HoleRadiusMm + (double.IsNaN(RingW2Mm[j]) ? 2 * RingWidthMm : RingW2Mm[j]);
+        if (!(r2 > r1))
+            throw new InvalidOperationException(
+                $"第 {j} 片的环台阶半径没有递增：r1={r1:0.###}、r2={r2:0.###} mm。" +
+                "阶梯表按「r ≤ 各级半径」依次命中，不递增会静默取到错的那一级。");
+        return new[] { r1, r2 };
+    }
 
     // ── 圆盘保温（舌片保温另见 TabInsulMm，两者是不同部位、不同量级）
     /// <summary>圆盘外包的纤维厚度 mm。原来写死在 BuildCase 里，2026-08-17 提为字段。</summary>
@@ -130,10 +166,20 @@ public sealed class DesignSpec
     // ================================================================
 
     public double HoleRadiusMm => WallMm + 25.0;
-    public double[] RingRadiiMm =>
-        new[] { HoleRadiusMm + RingWidthMm, HoleRadiusMm + 2 * RingWidthMm };
-    /// <summary>外圈倍率（内圈的 40 % 过渡回板身）</summary>
-    public double RingMulOuter(int j) => 1 + (RingMul[j] - 1) * 0.4;
+    /// <summary>
+    /// 两级台阶外半径的**第 0 片视角** —— 只给出图与显示用。
+    /// ⚠ 求解与建模一律走 <see cref="RingRadiiOf"/>（逐片），别用这个属性，
+    ///   否则各片放开成不同形状之后这里会悄悄只画第 0 片的样子。
+    /// </summary>
+    public double[] RingRadiiMm => RingRadiiOf(0);
+
+    /// <summary>
+    /// 外圈厚度倍率。<see cref="RingMul2"/> 给了就用它；
+    /// NaN 时退回历史关系「内圈的 40 % 过渡回板身」——
+    /// **那个 0.4 是挑出来的数，不是算出来的**（算法普查 A⑨）。
+    /// </summary>
+    public double RingMulOuter(int j) =>
+        double.IsNaN(RingMul2[j]) ? 1 + (RingMul[j] - 1) * 0.4 : RingMul2[j];
 
     /// <summary>
     /// 深拷贝 —— 供**参数扰动验证**用（`--vary`）：扰动必须作用在副本上，
@@ -147,6 +193,9 @@ public sealed class DesignSpec
         c.TabThickMm = (double[])TabThickMm.Clone();
         c.TabInsulMm = (double[])TabInsulMm.Clone();
         c.RingMul = (double[])RingMul.Clone();
+        c.RingW1Mm = (double[])RingW1Mm.Clone();
+        c.RingW2Mm = (double[])RingW2Mm.Clone();
+        c.RingMul2 = (double[])RingMul2.Clone();
         return c;
     }
 
@@ -194,7 +243,7 @@ public sealed class DesignSpec
             DiscRadiusMm = DiscRadiusMm, HoleRadiusMm = HoleRadiusMm,
             TabEndXMm = -TabLengthMm, TabEndHalfWidthMm = TabHalfWidthMm,
             ThicknessMm = td,
-            DiscStepRadiiMm = RingRadiiMm,
+            DiscStepRadiiMm = RingRadiiOf(j),
             DiscStepThicknessMm = new[] { td * RingMul[j], td * RingMulOuter(j) },
             TabThicknessMm = double.NaN,
             InsulBoundaryXMm = double.NaN, TabInsulThickMm = TabInsulMm[j],

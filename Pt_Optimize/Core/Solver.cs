@@ -40,7 +40,24 @@ namespace PtOptimize.Core;
 ///     ⇒ 收敛到的是**最小的可行点**（单调映射的最小不动点）。
 ///
 ///   ⇒ **解唯一、与传进来的旋钮值无关、且就是最小铂重解。**
-///     `SolverIsSeedFreeTests` 拿两组差得离谱的入参跑出同一个答案，把这句话钉住。
+///     `--solve --seedprobe` 实测：两组差得离谱的入参给出**逐位相同**的答案。
+///
+/// ══ **逐片求解**（2026-08-28，被实测逼出来的）
+///
+/// 第一版四片同步抬，实测**解不出来**：板厚↑修好②′却打坏③，舌保温↑修好③却打坏②′，
+/// 两条判据互相追到盒顶（舌保温顶到 20 mm）。
+/// 而它把舌保温收到 **18.826** —— 历史记录第一片正是 **18.7**：
+/// 求解器**找对了那一片的答案**，却被「四片必须相同」逼着把它糊到另外三片上。
+///
+/// 四片物理上本来就不同：端片只接一段，共用片接两段且两段电流相差 120°
+/// （矢量合成 √(I₁²+I₂²+I₁I₂) ≈ √3 倍），发热 ∝I² 是端片的 **2.6 倍**
+/// （实测自由端下 490 W vs 156 W）。⇒ **四片同步不是简化，是错的模型。**
+///
+/// ⚠ 三条判据的**索引不是同一套**：②′ 与 ②″ 逐**片**，③ 逐**段**（3 段 4 片，错开一位）。
+///   段 i 的 A 端贴第 i 片、B 端贴第 i+1 片 ⇒
+///   **第 j 片的③ 责任 = max(段 j 的 A 端, 段 j−1 的 B 端)**，端片只有一侧。
+///   为此 <see cref="SegmentOut.FlangeDipAK"/>/<c>BK</c> 才把两端各自存下来
+///   （原先只留 <c>Math.Max</c>，说得出「有一片超了」，说不出**是哪一片**）。
 ///
 /// ══ 求解器**检查自己的前提**（三条铁律第 ③ 条用在自己身上）
 ///
@@ -49,12 +66,26 @@ namespace PtOptimize.Core;
 /// 没变好就**报前提不成立**并停，而不是返回一个看着正常的错数。
 /// —— 环倍率→②″ 那一支就是这么被抓出来的：实测 d②″/d倍率 = **+0.056**（文档写 −1.4），
 ///    方向相反，即「加环压不住 ②″，只是花铂」。
+/// —— 逐片之后它还多管一件事：验「第 j 片的判据真的归第 j 片的旋钮管」
+///    （Jacobian 对角占优）。**这条不假设，每次抬之前都实测。**
 ///
 /// ══ 这里**没有**解决的（照实说，别当成已完成）
-///   · 四片各自的厚度还没分开解：现在四片同步抬。分开解要先证 Jacobian 对角占优。
+///   · 判据⑥（圆盘盖得住管孔＋焊脚）**没有旋钮能治** —— 它要改形状（盘径）。
+///     求解器会照实报「抬不动它」，但**求解器与搜形状还没联动**。
+///   · 形状（盘径 / 舌宽）仍归 ShapeSearchPlan 的固定步长模式搜索。
+///   · **不解圆盘厚度梯度。** 解析路的渐变环此前只有 **1 个自由度**（`RingMul`）：
+///     一个两级台阶本要 4 个数（r₁、r₂、t₁、t₂），而 r₁=孔+w、r₂=孔+**2**w、
+///     t₂=1+**0.4**(μ−1) 三个全写死。2026-08-28 已把三者放开成逐片真变量
+///     （<see cref="DesignSpec.RingW1Mm"/>／<see cref="DesignSpec.RingW2Mm"/>／
+///     <see cref="DesignSpec.RingMul2"/>），**但求解器还没把它们当旋钮** ——
+///     要先用 `--monotone` 量出方向再定，不假设。
+///   · **解析路表达不了开孔／开槽。** 那要走 `.3dm` 厚度场（`t=0` 即无材料，
+///     轮廓/管孔/开槽用同一个量表达），由 `FlangeAutoSizer.SolveByLevel` 解
+///     `LevelScale[片][级]` —— **那才是每片每级一个自由度的真逐级优化**。
+///     ⚠ 走 `ShapeToAnalytic`（3DM→解析参数）会把多级厚度**面积加权平均压成一个数**，
+///     代码自己标着「这是近似，铂重与温度都会跟着变」。
 ///   （量化 A⑤ 已拆：二分完**向上对齐到图纸格**，解直接落在可制造集合上，
 ///     不再存在「解完再四舍五入把判据四舍五入掉」这件事。）
-///   · 形状（盘径 / 舌宽）仍归 ShapeSearchPlan 的固定步长模式搜索 —— A 类第 ⑥ 条还没拆。
 /// </summary>
 public static class Solver
 {
@@ -94,20 +125,26 @@ public static class Solver
         // 只留几何与工况；**五个旋钮一律丢掉**，改用盒的下角。
         var d = geometry.Clone();
         d.Invalid = ""; d.InvalidChecks = Array.Empty<string>();
+        int np = d.TabThickMm.Length;
 
         // 下界也得落在图纸格子上（向**上**对齐：向下会掉到屈曲/烧穿下界以下）
         double tLo = Math.Ceiling(d.DiscFloorMm(baseIn) / opt.QuantThickMm - 1e-9) * opt.QuantThickMm;
-        for (int j = 0; j < d.TabThickMm.Length; j++)
+        for (int j = 0; j < np; j++)
         {
             d.TabThickMm[j] = tLo;
             d.TabInsulMm[j] = opt.InsLoMm;
             d.RingMul[j]    = opt.RingLo;
         }
 
+        // ★ 限值**只从 LineCase 读**（判据的唯一来源）。求解器不许自带第二份。
+        var lc = d.BuildCase(baseIn, checkRamp: false);
+        double dipMax = lc.RootDeltaMaxK, discMax = lc.DiscOverTempMaxK;
+
         Log($"起点 = **约束盒的下角**（不是种子）：板厚 {tLo:0.00} mm（焊接屈曲/烧穿下界）／" +
-            $"舌保温 {opt.InsLoMm:0.00} mm（裸舌）／环倍率 {opt.RingLo:0.00}（无台阶）");
+            $"舌保温 {opt.InsLoMm:0.00} mm（裸舌）／环倍率 {opt.RingLo:0.00}（无台阶）　× {np} 片");
         Log($"传进来的旋钮值**一个都没用**（板厚 {string.Join("/", geometry.TabThickMm.Select(x => x.ToString("0.00")))} 被丢弃）—— " +
             "这就是「与初值无关」的实现方式。");
+        Log($"限值只从 LineCase 读：③ ≤ {dipMax:0.0} K　②″ ≤ {discMax:0.0} K");
 
         LineResult? last = null;
 
@@ -117,43 +154,58 @@ public static class Solver
             last = Eval(d, baseIn, res, cancel);
             if (last is null) { res.StopWhy = "场解不收敛，判不了"; break; }
 
-            var bad = Violations(last).ToList();
             double mass = MassOf(last);
-            Log($"第 {round,2} 轮　板厚 {d.TabThickMm[0]:0.000}　舌保温 {d.TabInsulMm[0]:0.000}　" +
-                $"环倍率 {d.RingMul[0]:0.000}　合计 {mass:0} g　" +
-                $"违反 {(bad.Count == 0 ? "无" : string.Join("、", bad.Select(c => c.Name)))}");
+            Log($"第 {round,2} 轮　合计 {mass:0} g" +
+                $"　板厚 {Join(d.TabThickMm)}　舌保温 {Join(d.TabInsulMm)}　环倍率 {Join(d.RingMul)}");
 
-            if (bad.Count == 0)
+            // ── 逐片逐条列违反
+            var todo = new List<(int J, Knob Knob, string Key)>();
+            for (int j = 0; j < np; j++)
+                foreach (var (key, knob) in Allocation)
+                {
+                    double sl = PlateSlack(last, key, j, dipMax, discMax);
+                    if (double.IsNaN(sl))
+                    {
+                        res.StopWhy = $"第 {j} 片的「{key}」**判不了**（值是 NaN）—— 判不了不算过";
+                        res.HitBound = true;
+                        Log("  ✗ " + res.StopWhy);
+                        return Finish(res, d, last, baseIn, cancel);
+                    }
+                    if (sl < 0)
+                    {
+                        todo.Add((j, knob, key));
+                        Log($"     片{j}「{key}」裕度 {sl:+0.000;-0.000} ⇒ 抬{KnobName(knob)}");
+                    }
+                }
+
+            if (todo.Count == 0)
             {
-                res.Feasible = true;
-                res.StopWhy = $"第 {round} 轮全过；因为**只往上走过**，这就是最小的可行点";
+                // 三条逐片判据全过。还有**没有旋钮**的判据（⑥、⑤、①、管 J…）要看。
+                var rest = Violations(last)
+                    .Where(c => !Allocation.Any(a => c.Name.StartsWith(a.Key, StringComparison.Ordinal)))
+                    .ToList();
+                if (rest.Count == 0)
+                {
+                    res.Feasible = true;
+                    res.StopWhy = $"第 {round} 轮全过；因为**只往上走过**，这就是最小的可行点";
+                }
+                else
+                {
+                    res.HitBound = true;
+                    res.StopWhy = "三条逐片判据都过了，但这些判据**没有旋钮能治**（要改形状）："
+                                + string.Join("、", rest.Select(c => c.Name));
+                    Log("  ✗ " + res.StopWhy);
+                }
                 break;
             }
 
-            bool moved = false;
-            foreach (var c in bad)
+            bool bad = false;
+            foreach (var (j, knob, key) in todo)
             {
-                var hit = Allocation.FirstOrDefault(a => c.Name.StartsWith(a.Key, StringComparison.Ordinal));
-                if (hit.Key is null)
-                {
-                    res.StopWhy = $"判据「{c.Name}」没有配旋钮 —— **抬不动它**，不是解不出来";
-                    res.HitBound = true;
-                    Log("  ✗ " + res.StopWhy);
-                    return Finish(res, d, last, baseIn, cancel);
-                }
-
-                var (ok, why) = RaiseUntil(d, baseIn, opt, hit.Knob, hit.Key, res, Log, cancel);
-                if (!ok)
-                {
-                    res.StopWhy = why;
-                    res.HitBound = true;
-                    Log("  ✗ " + why);
-                    return Finish(res, d, last, baseIn, cancel);
-                }
-                moved = true;
+                var (ok, why) = RaiseUntil(d, baseIn, opt, j, knob, key, dipMax, discMax, res, Log, cancel);
+                if (!ok) { res.StopWhy = why; res.HitBound = true; Log("  ✗ " + why); bad = true; break; }
             }
-
-            if (!moved) { res.StopWhy = "有违反但没有旋钮可抬"; res.HitBound = true; break; }
+            if (bad) break;
         }
 
         if (res.StopWhy.Length == 0)
@@ -163,38 +215,46 @@ public static class Solver
     }
 
     /// <summary>
-    /// 把 <paramref name="knob"/> 二分抬到「<paramref name="key"/> 刚好不违反」的最小值。
-    /// **先验前提**：旋钮顶到上界时判据必须变好，否则报前提不成立。
+    /// 把第 <paramref name="j"/> 片的 <paramref name="knob"/> 二分抬到
+    /// 「该片的 <paramref name="key"/> 刚好不违反」的最小值。
+    /// **先验前提**：旋钮顶到上界时该片的判据必须变好，否则报前提不成立。
     /// </summary>
     private static (bool Ok, string Why) RaiseUntil(
-        DesignSpec d, DesignInputs baseIn, SolverOptions opt, Knob knob, string key,
-        SolverResult res, Action<string> Log, CancellationToken cancel)
+        DesignSpec d, DesignInputs baseIn, SolverOptions opt, int j, Knob knob, string key,
+        double dipMax, double discMax, SolverResult res, Action<string> Log, CancellationToken cancel)
     {
-        double lo = Get(d, knob);                 // 当前值：已知**违反**
+        double lo = Get(d, knob, j);
         double hi = HiOf(opt, knob);
-        string nm = KnobName(knob);
+        string nm = $"片{j} {KnobName(knob)}";
+
+        double before = PlateSlack(Eval(d, baseIn, res, cancel), key, j, dipMax, discMax);
+
+        // ★ 上一片抬完可能已经把这一片捎带治好了 —— 那就**不抬**（最小性）
+        if (before >= 0)
+        {
+            Log($"  · {nm}：上一步之后「{key}」已经不违反（裕度 {before:+0.000;-0.000}）⇒ **不抬**");
+            return (true, "");
+        }
 
         if (lo >= hi - 1e-12)
-            return (false, $"**{nm} 已在上界 {hi:0.000}**，判据「{key}」仍不过 ⇒ 这组输入不可行（是证明，不是搜索失败）");
+            return (false, $"**{nm} 已在上界 {hi:0.000}**，「{key}」仍不过 ⇒ 这组输入不可行（是证明，不是搜索失败）");
 
-        double before = Slack(Eval(d, baseIn, res, cancel), key);
+        Set(d, knob, j, hi);
+        double after = PlateSlack(Eval(d, baseIn, res, cancel), key, j, dipMax, discMax);
 
-        Set(d, knob, hi);
-        double after = Slack(Eval(d, baseIn, res, cancel), key);
-
-        // ★ 前提自检：抬到底也没让判据变好 ⇒ 这条分派是错的，**不许假装解出来**
+        // ★ 前提自检：抬到底也没让这一片的判据变好 ⇒ 这条分派对这一片是错的，**不许假装解出来**
         if (!(after > before + 1e-9))
         {
-            Set(d, knob, lo);
+            Set(d, knob, j, lo);
             return (false,
                 $"**分派前提不成立**：{nm} 从 {lo:0.000} 抬到上界 {hi:0.000}，" +
                 $"「{key}」的裕度 {before:+0.000;-0.000} → {after:+0.000;-0.000}（**没变好**）" +
-                " ⇒ 这个旋钮压不住这条判据，二分不适用");
+                " ⇒ 这个旋钮压不住这一片的这条判据，二分不适用");
         }
 
         if (after < 0)
         {
-            Set(d, knob, lo);
+            Set(d, knob, j, lo);
             return (false, $"**{nm} 抬到上界 {hi:0.000} 仍不过**「{key}」⇒ 这组输入不可行");
         }
 
@@ -203,8 +263,8 @@ public static class Solver
         {
             cancel.ThrowIfCancellationRequested();
             double mid = 0.5 * (lo + hi);
-            Set(d, knob, mid);
-            if (Slack(Eval(d, baseIn, res, cancel), key) >= 0) hi = mid; else lo = mid;
+            Set(d, knob, j, mid);
+            if (PlateSlack(Eval(d, baseIn, res, cancel), key, j, dipMax, discMax) >= 0) hi = mid; else lo = mid;
         }
 
         // ★ 量化在**解之内**，不在解之后（算法普查 A⑤）。
@@ -212,11 +272,9 @@ public static class Solver
         //   抬到格点只会让它更过，不会翻回去。
         //   抬高可能让**别的**判据变差 —— 那由外层下一轮再抬它自己的旋钮补上，
         //   「只增不减」的不变式不受影响。
-        //   ∴ 解出来就**直接落在图纸格子上**，不需要事后四舍五入——
-        //   而正是那一步曾把②′与③两条同时翻掉过。
         double q = QuantOf(opt, knob);
         double snapped = Math.Min(Math.Ceiling(hi / q - 1e-9) * q, HiOf(opt, knob));
-        Set(d, knob, snapped);
+        Set(d, knob, j, snapped);
         Log($"  ↑ {nm} → {snapped:0.000}（二分求根 {hi:0.0000} → 向上对齐到图纸格 {q:0.###}）");
         return (true, "");
     }
@@ -253,44 +311,106 @@ public static class Solver
         catch { res.Solves++; return null; }
     }
 
-    /// <summary>违反的硬判据。**判不了 = 不算过**（三条铁律第 ③ 条）。</summary>
+    /// <summary>违反的硬判据（整体口径，用来兜住**没有旋钮**的那些）。判不了 = 不算过。</summary>
     private static IEnumerable<ConstraintOut> Violations(LineResult r) =>
         r.Checks.Where(c => c.Kind != CheckKind.Reference && (!c.Ok || c.Undetermined));
 
     /// <summary>
-    /// 判据裕度，**正 = 过**。方向由 <see cref="ConstraintOut.LessIsBetter"/> 决定 ——
-    /// 弄反了会把「越限」当成「有余量」，是本仓库出过的错。
+    /// **第 j 片**这条判据的裕度，正 = 过。NaN = 判不了（调用方必须当成不过）。
+    ///
+    /// ⚠ 这里读的是**逐片原始量**，不是 <c>Checks</c> 里那条汇总后的
+    ///   「最差那片」——汇总量说得出「有一片超了」，说不出是哪一片，
+    ///   而逐片求解必须知道该抬哪一片的旋钮。
+    ///
+    /// ⚠ 方向与整体判据同一口径：②′ 须 ≥ 0（越大越好），③ 与 ②″ 越小越好。
+    ///   写反会把「越限」读成「有余量」，二分就朝错的方向收 —— 本仓库出过这个错。
     /// </summary>
-    private static double Slack(LineResult? r, string key)
+    private static double PlateSlack(LineResult? r, string key, int j, double dipMax, double discMax)
     {
         if (r is null) return double.NegativeInfinity;
-        var c = r.Checks.FirstOrDefault(x => x.Name.StartsWith(key, StringComparison.Ordinal));
-        if (c is null || c.Undetermined || double.IsNaN(c.Actual)) return double.NegativeInfinity;
-        return c.LessIsBetter ? c.Limit - c.Actual : c.Actual - c.Limit;
+
+        if (key == LineResult.Key.NetFlux)
+        {
+            if (j >= r.Flanges.Length) return double.NegativeInfinity;
+            double q = r.Flanges[j].QFromTubeW;
+            return double.IsNaN(q) ? double.NaN : q;              // 须 > 0，限值就是 0
+        }
+        if (key == LineResult.Key.DiscTemp)
+        {
+            if (j >= r.Flanges.Length) return double.NegativeInfinity;
+            var f = r.Flanges[j];
+            double over = f.TDiscMaxC - f.TRootC;
+            return double.IsNaN(over) ? double.NaN : discMax - over;   // 越小越好
+        }
+        if (key == LineResult.Key.FlangeDip)
+        {
+            double dip = PlateDip(r, j);
+            return double.IsNaN(dip) ? double.NaN : dipMax - dip;      // 越小越好
+        }
+        throw new ArgumentOutOfRangeException(nameof(key), key, "没有这条判据的逐片口径");
+    }
+
+    /// <summary>
+    /// **第 j 片要为哪些「段端」负责** —— 纯映射，微秒可验。
+    ///
+    /// 段 i 的 A 端贴第 i 片、B 端贴第 i+1 片（n 段 ⇒ n+1 片，错开一位）⇒
+    ///   第 j 片 = 段 j 的 A 端（若存在） ＋ 段 j−1 的 B 端（若存在）。
+    /// 端片（j=0 与 j=n）只有一侧，中间的共用片两侧都算。
+    ///
+    /// ★ 不变式：把所有片的结果并起来，**恰好覆盖 n 段 × 2 端，不重不漏**。
+    ///   漏一个端就是「有一片的责任没人担」，重一个端就是「同一个违反被两片抢着治」——
+    ///   两种都会让「只增不减」抬出不必要的铂重。`SolverPerPlateTests` 盯着这条。
+    ///
+    /// ⚠ 抽成纯函数是仓库的既定做法：这种错位一位的下标最容易写反，
+    ///   而写反之后**跑起来一切正常，只是抬错了片**——正是本项目最怕的错误形态。
+    /// </summary>
+    public static (int Seg, bool AEnd)[] EndsOf(int j, int nSeg)
+    {
+        var outp = new List<(int, bool)>(2);
+        if (j >= 0 && j < nSeg) outp.Add((j, true));       // 段 j 的 A 端
+        if (j - 1 >= 0 && j - 1 < nSeg) outp.Add((j - 1, false));  // 段 j−1 的 B 端
+        return outp.ToArray();
+    }
+
+    /// <summary>
+    /// 第 j 片的③ 值：它负责的那些段端里**最差的那个**
+    /// —— 与整体判据同一口径（两端取较差）。任一端判不了则整体判不了。
+    /// </summary>
+    private static double PlateDip(LineResult r, int j)
+    {
+        var ends = EndsOf(j, r.Segments.Length);
+        if (ends.Length == 0) return double.NaN;
+        double worst = double.NegativeInfinity;
+        foreach (var (seg, aEnd) in ends)
+        {
+            double v = aEnd ? r.Segments[seg].FlangeDipAK : r.Segments[seg].FlangeDipBK;
+            if (double.IsNaN(v)) return double.NaN;
+            worst = Math.Max(worst, v);
+        }
+        return worst;
     }
 
     private static double MassOf(LineResult r) =>
         r.Segments.Sum(s => s.MassG) + r.Flanges.Sum(f => f.MassG);
 
-    private static double Get(DesignSpec d, Knob k) => k switch
+    private static string Join(double[] v) => string.Join("/", v.Select(x => x.ToString("0.00")));
+
+    private static double Get(DesignSpec d, Knob k, int j) => k switch
     {
-        Knob.Thick => d.TabThickMm[0],
-        Knob.Insul => d.TabInsulMm[0],
-        Knob.Ring  => d.RingMul[0],
+        Knob.Thick => d.TabThickMm[j],
+        Knob.Insul => d.TabInsulMm[j],
+        Knob.Ring  => d.RingMul[j],
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 
-    private static void Set(DesignSpec d, Knob k, double v)
+    private static void Set(DesignSpec d, Knob k, int j, double v)
     {
-        for (int j = 0; j < d.TabThickMm.Length; j++)
+        switch (k)
         {
-            switch (k)
-            {
-                case Knob.Thick: d.TabThickMm[j] = v; break;
-                case Knob.Insul: d.TabInsulMm[j] = v; break;
-                case Knob.Ring:  d.RingMul[j]    = v; break;
-                default: throw new ArgumentOutOfRangeException(nameof(k));
-            }
+            case Knob.Thick: d.TabThickMm[j] = v; break;
+            case Knob.Insul: d.TabInsulMm[j] = v; break;
+            case Knob.Ring:  d.RingMul[j]    = v; break;
+            default: throw new ArgumentOutOfRangeException(nameof(k));
         }
     }
 
@@ -361,5 +481,6 @@ public sealed class SolverOptions
     public double BisectTolMm   = 0.005;
     public double BisectTolRing = 0.005;
     public int    BisectMaxIter = 14;
-    public int    MaxRounds     = 30;
+    /// <summary>逐片之后一轮要处理的抬升更多，轮数要给够。</summary>
+    public int    MaxRounds     = 60;
 }

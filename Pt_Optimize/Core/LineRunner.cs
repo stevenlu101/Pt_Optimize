@@ -254,6 +254,18 @@ public sealed class LineCase
     public double CoupleTolK = 1.0;
 
     /// <summary>
+    /// **不动点放大系数** = 1/(1−g)，实测环路增益 g ≈ 0.96 ⇒ **25**。
+    ///
+    /// 「相邻两轮变化 δ」**乘它**才是「到不动点的距离」。
+    /// <see cref="CoupleTolK"/> 的含义是后者（见它自己的注释：「解距真解不超过 1 K」），
+    /// 所以任何拿 δ 直接跟 CoupleTolK 比的地方**都是错的**。
+    ///
+    /// ★ 全程序只有这一份（2026-08-28 提出来）：主环与基线环各写一个 25，
+    ///   就会出现「一处改了另一处没改」—— 本仓库最常见的病。
+    /// </summary>
+    public const double FixedPointAmp = 25.0;
+
+    /// <summary>
     /// **无法兰基线**的两端管温缓存 `[段][0=左,1=右]`（空 = 由 LineRunner 自己算）。
     ///
     /// 基线只依赖**管几何 / 保温 / 控温点**，与法兰几何无关 ⇒ 外层搜索里
@@ -324,6 +336,23 @@ public sealed class SegmentOut
     public double BaseTRootAC = double.NaN, BaseTRootBC = double.NaN;
     /// <summary>法兰造成的**增量**温降 K（正 = 法兰把该端拉冷了）。两端取较差者。</summary>
     public double FlangeDipK = double.NaN;
+
+    /// <summary>
+    /// ★★ 两端**各自**的增量温降 K —— A 端贴第 i 片，B 端贴第 i+1 片。
+    ///
+    /// 病灶（2026-08-28）：<see cref="FlangeDipK"/> 是 <c>Math.Max(dA, dB)</c>，
+    /// 两端算完就把较好的那个**扔了**。于是判据③ 说得出「有一片超了」，
+    /// **说不出是哪一片** —— 而③ 恰恰是舌保温要治的那条，
+    /// 不知道责任在哪片就没法逐片抬保温，只能四片一起抬，
+    /// 而四片一起抬**实测解不出来**（--solve --seedprobe：舌保温顶到上界 20 mm）。
+    ///
+    /// ⚠ 与已修过的那个病是**同一个位置的另一半**：代码上面记着
+    ///   「右端的 TFlangeBC 算了却从未被用过……另一端差 16 K，从来没被检查过」。
+    ///   那次修的是「取两端较差者」（不再只看左端）；这次是「两端要各自留着」。
+    ///
+    /// ⇒ 第 j 片的③ 责任 = max(段 j 的 A 端, 段 j−1 的 B 端)，端片只有一侧。
+    /// </summary>
+    public double FlangeDipAK = double.NaN, FlangeDipBK = double.NaN;
     public double[] X = Array.Empty<double>();
     public double[] TMetal = Array.Empty<double>();
     public double[] TGlass = Array.Empty<double>();
@@ -667,11 +696,20 @@ public static class LineRunner
                     if (!double.IsNaN(nr)) dmax = Math.Max(dmax, Math.Abs(nr - bnb[i].R));
                     bnb[i] = (nl, nr);
                 }
-                if (dmax < c.CoupleTolK) { baseRounds = k + 1; baseDmax = dmax; break; }
-                baseRounds = k + 1; baseDmax = dmax;
+                // ★ dmax 是**欠松弛步** = ω×残差，不是残差本身，更不是到不动点的距离。
+                //   到不动点 ≈ (dmax/ω) × FixedPointAmp。主环就是这么判的；
+                //   基线此前直接拿 dmax 比 CoupleTolK —— 两个错叠在一起（见 BaselineTolAmplified）。
+                double baseResid = wBase > 1e-9 ? dmax / wBase : dmax;
+                double baseJudge = c.Base.BaselineTolAmplified
+                                 ? baseResid * LineCase.FixedPointAmp
+                                 : dmax;                      // 历史口径
+                if (baseJudge < c.CoupleTolK) { baseRounds = k + 1; baseDmax = baseJudge; break; }
+                baseRounds = k + 1; baseDmax = baseJudge;
             }
             if (baseDmax >= c.CoupleTolK)
-                baseFailMsg += $"基线外层 {baseRounds} 轮**未收敛**（端温残差 {baseDmax:0.00} K ≥ 容差 {c.CoupleTolK:0.00}）；";
+                baseFailMsg += $"基线外层 {baseRounds} 轮**未收敛**（"
+                             + (c.Base.BaselineTolAmplified ? "到不动点估计" : "欠松弛步（**历史口径**）")
+                             + $" {baseDmax:0.00} K ≥ 容差 {c.CoupleTolK:0.00}）；";
             for (int i = 0; i < c.SegmentCount; i++)
                 baseline[i] = br is { Ok: true }
                             ? (br.Segments[i].TRootAC, br.Segments[i].TRootBC)
@@ -943,7 +981,7 @@ public static class LineRunner
             //   宣布收敛 —— 和被修掉的那个假收敛**同一个位置**。（今天第四次「修一个漏一个」。）
             // ⇒ **没量到 r 时，按已知最坏放大取**，而不是当作没有放大。
             //   实测 g≈0.96 ⇒ 放大 1/(1−g) ≈ 25。这迫使迭代真的走进慢模式、把 r 量出来。
-            const double ampWorst = 25.0;
+            const double ampWorst = LineCase.FixedPointAmp;   // 唯一来源，别在这里另写一个数
             double amp = (rEst > 0.5 && rEst < 0.999) ? rEst / (1 - rEst) : ampWorst;
             double remain = delta * amp;
             // ⚠ 两条**都**要过：δ 那条防「步子还很大」，真残差那条防「步子小但不在不动点上」。
@@ -1019,6 +1057,9 @@ public static class LineRunner
             var s = r.Segments[i];
             s.BaseTRootAC = baseline[i].A; s.BaseTRootBC = baseline[i].B;
             double dA = baseline[i].A - s.TRootAC, dB = baseline[i].B - s.TRootBC;
+            // ★ 两端各自留着（2026-08-28）：只留 max 就说不出「是哪一片的责任」，
+            //   而逐片解必须知道该抬**哪一片**的舌保温。
+            s.FlangeDipAK = dA; s.FlangeDipBK = dB;
             s.FlangeDipK = double.IsNaN(dA) || double.IsNaN(dB)
                          ? double.NaN : Math.Max(dA, dB);
         }
