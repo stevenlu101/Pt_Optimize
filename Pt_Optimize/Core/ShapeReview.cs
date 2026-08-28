@@ -158,9 +158,36 @@ public static class ShapeReview
         //    位置直接说明「离哪个失效模式近」。
         // ───────────────────────────────────────────────────────────
         var draws = r.Flanges.Select(f => f.QFromTubeW).ToArray();
-        double dMax = 10.0 / GammaKPerW;
-        sb.AppendLine($"三、抽热窗口（②′ 与 ③ 是同一个量的两侧；实测 ③ = {GammaKPerW:0.00}·D）");
-        sb.AppendLine($"　 安全区间 0 < D ≤ {dMax:0.0} W　本形状 D = " +
+
+        // ★★ γ **不是常数**（2026-08-28 实测确诊，算法普查 A⑦）。
+        //   --selfcheck C 段同一次运行里两个工况就差 11 %：
+        //     舌保温 ×1.0 → γ = 2.65　　舌保温 ×0.4 → γ = 2.39
+        //   而这里原来拿写死的 2.40 算窗口 ⇒ 窗口报成 4.17 W，真值 3.77 W，
+        //   **把余量报宽了 10 %**。给工程师看的报告不许这样。
+        //   ⇒ 改成**用本次这一解自己测出来的 γ**；常数只在测不出来时兜底，且要标出来。
+        //
+        // ★ 限值也只从判据读（此前这里写死 10.0，是第二份来源）。
+        var dipC = r.Checks.FirstOrDefault(
+            c => c.Name.StartsWith(LineResult.Key.FlangeDip, StringComparison.Ordinal));
+        double dipLim = dipC?.Limit ?? double.NaN;
+        double dipAct = dipC?.Actual ?? double.NaN;
+        double dWorstForG = draws.Length > 0 ? draws.Max() : double.NaN;
+
+        // D 太小时 ③/D 会炸 —— 那时说不出 γ，就照实说说不出，不许拿常数冒充实测
+        bool gMeasured = dWorstForG > 0.05 && !double.IsNaN(dipAct) && !double.IsNaN(dipLim);
+        double gUse = gMeasured ? dipAct / dWorstForG : GammaKPerW;
+        double dMax = (double.IsNaN(dipLim) ? 10.0 : dipLim) / gUse;
+
+        sb.AppendLine("三、抽热窗口（②′ 与 ③ 是同一个量的两侧）");
+        sb.AppendLine(gMeasured
+            ? $"　 γ = ③/D = {gUse:0.00} K/W　**本次实测**"
+              + (Math.Abs(gUse - GammaKPerW) > 0.1 * GammaKPerW
+                 ? $"（历史基准 {GammaKPerW:0.00}，差 {(gUse / GammaKPerW - 1) * 100:+0;-0} % —— **γ 是局部量，不是常数**）"
+                 : $"（历史基准 {GammaKPerW:0.00}，一致）")
+            : $"　 γ 测不出来（最大抽热 {dWorstForG:0.00} W 太小，③/D 无意义）⇒ "
+              + $"退回历史基准 {GammaKPerW:0.00} K/W，**下面这个窗口只是估计**");
+        sb.AppendLine($"　 安全区间 0 < D ≤ {dMax:0.0} W（③ 限 {(double.IsNaN(dipLim) ? 10.0 : dipLim):0.0} K ÷ γ）"
+                      + "　本形状 D = " +
                       string.Join(" / ", draws.Select(v => v.ToString("+0.0;-0.0"))) + " W");
         double dLo = draws.Min(), dHi = draws.Max();
         sb.AppendLine(dLo < 0.8

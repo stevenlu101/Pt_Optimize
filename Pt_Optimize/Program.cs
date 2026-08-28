@@ -80,6 +80,14 @@ internal static class Program
     /// <summary>
     /// 同步进度回调。控制台没有同步上下文，<see cref="Progress{T}"/> 会把回调抛到线程池，
     /// 与主线程的 Console.WriteLine 交错成乱序 —— CLI 一律用这个。
+    ///
+    /// ⚠ **本类存在，不等于所有地方都用了它**（2026-08-28 又抓到 4 处漏网）：
+    ///   `--solve --seedprobe` 的两次求解，逐片诊断行打成
+    ///   「片0/片1/片2/片3」与「片1/片2/片3/片0」两种顺序 —— 计算没乱
+    ///   （求解器按 j 递增遍历，`SolverResult.Trace` 也是按序 Add 的），**乱的是打印**。
+    ///   而本项目的 trace 是拿来**判因果**的（「抬了谁之后谁才不违反」），
+    ///   一份会乱序的日志会让人读出错的因果，**且它看起来完全正常**。
+    ///   ⇒ `SyncProgressOnlyTests` 盯着「CLI 里不许再出现 new Progress&lt;」。
     /// </summary>
     private sealed class SyncProgress<T> : IProgress<T>
     {
@@ -4397,7 +4405,7 @@ internal static class Program
                 Console.WriteLine();
                 Console.WriteLine($"── 网格无关复核：{tag}");
                 var mvv = MeshVerify.Run(dv, p, maxCells: mcV,
-                              progress: new Progress<string>(m3 => Console.WriteLine("     · " + m3)));
+                              progress: new SyncProgress<string>(m3 => Console.WriteLine("     · " + m3)));
                 Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"②″K",9}{"③K",9}{"合计g",9}{"用时s",8}");
                 foreach (var tv in mvv.Trace)
                     Console.WriteLine($"{tv.Fine,10:0.000}{tv.Cells,9:0}{tv.N2p,9:0.000}{tv.N2pp,9:0.000}"
@@ -4468,7 +4476,7 @@ internal static class Program
                 {
                     Console.WriteLine($"── {tag}");
                     var rr = Solver.Solve(g, p, soOpt,
-                                          new Progress<string>(s => Console.WriteLine("   " + s)));
+                                          new SyncProgress<string>(s => Console.WriteLine("   " + s)));
                     Console.WriteLine($"   ⇒ {(rr.Feasible ? "全过 ✓" : "不过 ✗")}　" +
                                       $"合计 {rr.MassG:0.0} g　场解 {rr.Solves} 次");
                     Console.WriteLine(rr.FineRefined
@@ -5110,7 +5118,7 @@ internal static class Program
 
                     Console.WriteLine($"── 盘R{discS:0}（Ø{2 * discS:0}）／半宽 {hwS:0}（舌宽 {2 * hwS:0}）" +
                                       $"／舌长 {lenS:0.0}　⇒ 自由段 {seedS.FreeTabMm:0.0} mm");
-                    var prog = traceS ? new Progress<string>(Console.WriteLine) : null;
+                    var prog = traceS ? new SyncProgress<string>(Console.WriteLine) : null;
                     SizerResult sr;
                     try { sr = Sizer.Solve(seedS, p, optS, prog); }
                     catch (Exception ex) { Console.WriteLine("   异常 " + ex.Message); continue; }
@@ -5187,7 +5195,7 @@ internal static class Program
                         int imc = Array.IndexOf(args, "--maxcells");
                         if (imc >= 0 && imc + 1 < args.Length && int.TryParse(args[imc + 1], out int mcv)) mcS = mcv;
                         var mv = MeshVerify.Run(win.d, p, maxCells: mcS,
-                                     progress: new Progress<string>(m2 => Console.WriteLine("     · " + m2)));
+                                     progress: new SyncProgress<string>(m2 => Console.WriteLine("     · " + m2)));
                         Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"②″K",9}{"③K",9}{"合计g",9}{"用时s",8}");
                         foreach (var t in mv.Trace)
                             Console.WriteLine($"{t.Fine,10:0.000}{t.Cells,9:0}{t.N2p,9:0.000}{t.N2pp,9:0.000}"
