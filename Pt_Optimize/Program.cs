@@ -3308,7 +3308,7 @@ internal static class Program
 
                     // 圆盘厚度：等厚随舌片走，但不得低于**屈曲**下界（与焊接方法无关，
                     // 只随环宽变；Ø60 环宽 4 mm ⇒ 0.0693×4×2 = 0.55）。
-                    double discFloor = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                    double discFloor = WeldDistortion.ForPt(1.0, kb: WeldDistortion.PlateBucklingKFreeEdge).SlopePerB
                                        * (discW9 - 26.0) * p.WeldSafetyFactor;
 
                     LineCase MakeW9(double[] ins, double[] tab)
@@ -3551,7 +3551,7 @@ internal static class Program
                 double tubeInsU = 5.0, clampU = 450.0, clampLenU = 40.0;   // combo 扫描的最优档
                 double[] tabU = { 1.68, 2.71, 2.59, 1.39 }, insU = { 3.6, 0.5, 0.4, 3.3 };
                 double[] stepRU = { 30.0, 36.0 }, stepTU = { 2.4, 1.7 };
-                double discFloorU = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                double discFloorU = WeldDistortion.ForPt(1.0, kb: WeldDistortion.PlateBucklingKFreeEdge).SlopePerB
                                     * (discU - 26.0) * p.WeldSafetyFactor;
 
                 var pU = SegmentSolver.Clone(p);
@@ -3857,7 +3857,7 @@ internal static class Program
                 double[] ringMulF2 = { 1.30, 1.30, 1.30, 1.30 };
                 double holeRF2 = wallF2 + 25.0;
                 double[] stepRF2 = { holeRF2 + ringWidF2, holeRF2 + 2 * ringWidF2 };
-                double discFloorF2 = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                double discFloorF2 = WeldDistortion.ForPt(1.0, kb: WeldDistortion.PlateBucklingKFreeEdge).SlopePerB
                                      * (discF2 - 26.0) * p.WeldSafetyFactor;
 
                 var pF2b = SegmentSolver.Clone(p);
@@ -4742,7 +4742,7 @@ internal static class Program
 
                 foreach (var (wallK2, tabK2) in casesK2)
                 {
-                    double discFloorK2 = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                    double discFloorK2 = WeldDistortion.ForPt(1.0, kb: WeldDistortion.PlateBucklingKFreeEdge).SlopePerB
                                          * (discK2 - 26.0) * p.WeldSafetyFactor;
                     var pK2 = SegmentSolver.Clone(p);
                     pK2.Layer1.ThicknessMm = tubeInsK2; pK2.Layer1.Enabled = true;
@@ -4855,7 +4855,7 @@ internal static class Program
 
                 foreach (var (wall9, tab9) in cases9)
                 {
-                    double discFloor9 = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                    double discFloor9 = WeldDistortion.ForPt(1.0, kb: WeldDistortion.PlateBucklingKFreeEdge).SlopePerB
                                         * (discR9 - 26.0) * p.WeldSafetyFactor;
                     double holeR9 = wall9 + 25.0;
                     var p9 = SegmentSolver.Clone(p);
@@ -4969,7 +4969,7 @@ internal static class Program
 
                 foreach (var (wallT9, tabT9, ringT9) in casesT9)
                 {
-                    double discFloorT9 = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                    double discFloorT9 = WeldDistortion.ForPt(1.0, kb: WeldDistortion.PlateBucklingKFreeEdge).SlopePerB
                                          * (discT9 - 26.0) * p.WeldSafetyFactor;
                     double holeRT9 = wallT9 + 25.0;
                     Console.WriteLine($"── 管壁 {wallT9:0.0} mm　板厚 {string.Join("/", tabT9.Select(v => v.ToString("0.00")))}" +
@@ -5053,7 +5053,7 @@ internal static class Program
                 double wallC9 = p.WeldMinThicknessMm, discC9 = 30.0;
                 double clampLenC9 = 40.0, clampC9 = 300.0;
                 double[] tabC9 = { 1.37, 2.02, 1.80, 1.04 }, insC9 = { 18.7, 1.6, 1.4, 3.9 };
-                double discFloorC9 = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                double discFloorC9 = WeldDistortion.ForPt(1.0, kb: WeldDistortion.PlateBucklingKFreeEdge).SlopePerB
                                      * (discC9 - 26.0) * p.WeldSafetyFactor;
 
                 var pC9 = SegmentSolver.Clone(p);
@@ -6337,7 +6337,7 @@ internal static class Program
                         // （边界单元用有效面积、厚度取形心采样）⇒ 残差就是 FE 自己的离散误差。
                         // ════════════════════════════════════════════════════════
                         double rho = Materials.PtDensity * 1e-6;          // g/mm³
-                        double discFloorM = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                        double discFloorM = WeldDistortion.ForPt(1.0, kb: WeldDistortion.PlateBucklingKFreeEdge).SlopePerB
                                             * (fd.DiscRadiusMm - 26.0) * p.WeldSafetyFactor;
                         var vol3d = new double[4]; double volTube3d = 0;
                         foreach (var e in rt.EnumerateArray())
@@ -6423,7 +6423,7 @@ internal static class Program
                 double wallB9 = FD9.WallMm, discB9 = FD9.DiscRadiusMm;
                 double clampLenB9 = FD9.ClampLengthMm, clampB9 = FD9.ClampTempC;
                 double tabLB9 = FD9.TabLengthMm, halfWB9 = FD9.TabHalfWidthMm;
-                double discFloorB9 = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                double discFloorB9 = WeldDistortion.ForPt(1.0, kb: WeldDistortion.PlateBucklingKFreeEdge).SlopePerB
                                      * (discB9 - 26.0) * p.WeldSafetyFactor;
 
                 // ★ 算例构造收敛到 FinalDesign.BuildCase（唯一入口）。
@@ -6523,7 +6523,7 @@ internal static class Program
             if (args.Contains("--wallfloor"))
             {
                 double discL9 = 30.0;
-                double discFloorL9 = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                double discFloorL9 = WeldDistortion.ForPt(1.0, kb: WeldDistortion.PlateBucklingKFreeEdge).SlopePerB
                                      * (discL9 - 26.0) * p.WeldSafetyFactor;
 
                 Console.WriteLine("=== 管壁的物理下界：升温墙在哪 ===");
@@ -6630,7 +6630,7 @@ internal static class Program
             {
                 double wallT9 = p.WeldMinThicknessMm, holeT9 = wallT9 + 25.0;
                 double discT9 = 30.0, clampLenT9 = 40.0, clampT9 = 300.0, targetT9 = 5.0;
-                double discFloorT9 = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                double discFloorT9 = WeldDistortion.ForPt(1.0, kb: WeldDistortion.PlateBucklingKFreeEdge).SlopePerB
                                      * (discT9 - 26.0) * p.WeldSafetyFactor;
 
                 Console.WriteLine("=== 单舌片 vs 双舌片：能不能把判据 ② 救回来 ===");
@@ -6774,7 +6774,7 @@ internal static class Program
                 //   ⇒ 0.1 K 量级的 ②″ 差别**落在数值分辨率之内**，不能当锐利边界读。
                 //   本轮那次「加圆角逐位相同」的否定结论，真因也是分辨率：
                 //   当时圆角只改 0.25 mm 轮廓，远小于 2 mm 网格 —— **不是圆角无效**。
-                double discFloorH = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+                double discFloorH = WeldDistortion.ForPt(1.0, kb: WeldDistortion.PlateBucklingKFreeEdge).SlopePerB
                                     * (discH - 26.0) * p.WeldSafetyFactor;
                 FlangePlate MkH(int j) => FDH.Plate(j, discFloorH);
                 var rH = LineRunner.Run(lcH);
@@ -6911,7 +6911,7 @@ internal static class Program
                 // ── ② 本装配的每一条焊缝。k_b 是最大不确定源（简支 4.0 vs 一边自由 0.43，
                 //     差 9.3 倍），故不给单值，给区间；安全系数按用户指示加在结果上。
                 double sf = p.WeldSafetyFactor;
-                double sPtFree = WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB;
+                double sPtFree = WeldDistortion.ForPt(1.0, kb: WeldDistortion.PlateBucklingKFreeEdge).SlopePerB;
                 Console.WriteLine($"── ② 本装配各焊缝（b = 无支撑宽度；已乘安全系数 {sf:0.0}）");
                 Console.WriteLine("   两列分别是板边**简支**(k_b=4.0) 与**一边自由**(k_b=0.43) 两种极端；");
                 Console.WriteLine("   法兰盘内边焊在管上、外边自由 ⇒ 以**右列**为准。");

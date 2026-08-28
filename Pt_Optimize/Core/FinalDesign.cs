@@ -181,7 +181,7 @@ public sealed class FinalDesign
     /// </summary>
     public double DiscFloorMm(DesignInputs baseInputs) =>
         System.Math.Max(
-            WeldDistortion.ForPt(1.0, kb: 0.43).SlopePerB
+            WeldDistortion.ForPt(1.0, kb: WeldDistortion.PlateBucklingKFreeEdge).SlopePerB
                 * (DiscRadiusMm - HoleRadiusMm) * baseInputs.WeldSafetyFactor,
             baseInputs.WeldMinThicknessMm);
 
@@ -220,6 +220,26 @@ public sealed class FinalDesign
     /// <param name="checkRamp">是否连 ① 升温一起判。判它更慢，但**少判一条就不是全判据**</param>
     public LineCase BuildCase(DesignInputs baseInputs, bool checkRamp = true)
     {
+        // ★★★★★ 管孔半径有**两处来源**（2026-08-28 第一性原理通查查出）：
+        //   · 本类 HoleRadiusMm => WallMm + **25.0**（写死），几何、图纸、板厚下界都用它；
+        //   · 求解器走 LineRunner 的 holeR = **TubeIdMm*0.5** + WallMm，跟着参数表的管内径。
+        //   两者只在 TubeIdMm = 50 时相等。工程师把管内径一改：
+        //   **求解器动了，几何/图纸/下界不动，不报错** —— 典型的「旋钮转了、一半模型没动」。
+        //
+        //   彻底修要把 TubeIdMm 接进几何（铁律②：几何只有一个来源）⇒ 要改的地方多，**尚未做**。
+        //   在此之前**不许静默**：对不上就当场抛，并说清怎么办。
+        if (System.Math.Abs(baseInputs.TubeIdMm * 0.5 - 25.0) > 1e-9)
+            throw new System.ArgumentException(
+                "管内径 " + baseInputs.TubeIdMm.ToString("0.0") + " mm（半径 "
+              + (baseInputs.TubeIdMm * 0.5).ToString("0.0") + "）与**几何里写死的 25.0 mm** 对不上。"
+              + System.Environment.NewLine
+              + "  FinalDesign.HoleRadiusMm 目前是 `WallMm + 25.0`，而求解器用的是 "
+              + "`TubeIdMm*0.5 + WallMm` —— 改了管内径只有求解器跟着走，"
+              + "几何、3DM 图纸与板厚工艺下界**都不会动**。"
+              + System.Environment.NewLine
+              + "  ⇒ 要换管径，必须先把 TubeIdMm 接进 FinalDesign 的几何（铁律②），"
+              + "而不是只改参数表。**宁可拒算，也不给一个一半对一半错的结果。**");
+
         var p = SegmentSolver.Clone(baseInputs);
         p.WallMinMm = WallMm;
         p.Layer1.ThicknessMm = TubeInsulMm;

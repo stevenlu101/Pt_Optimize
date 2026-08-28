@@ -49,8 +49,28 @@ public static class WeldDistortion
     public const double BeadWidthRatio = 2.0;
     /// <summary>熔化效率 η_melt：电弧焊常规 0.3–0.5</summary>
     public const double MeltEfficiency = 0.35;
-    /// <summary>板屈曲系数 k_b：四边简支长板 = 4；一边自由 ≈ 0.43</summary>
+    /// <summary>
+    /// 板屈曲系数 k_b —— **四边简支**长板 = 4（Timoshenko 经典值）。
+    /// ⚠ **法兰盘不是这一种**，别拿它算法兰：见 <see cref="PlateBucklingKFreeEdge"/>。
+    /// 本常数只服务于 `--welddistort` 报告里的**对照列**。
+    /// </summary>
     public const double PlateBucklingK = 4.0;
+
+    /// <summary>
+    /// 板屈曲系数 k_b —— **三边简支、一边自由**的长板 ≈ 0.43（Timoshenko k≈0.425，工程取 0.43）。
+    /// **法兰盘用的是这一个**：内边焊在管上、外边自由。
+    ///
+    /// ★★ 2026-08-28：此前它是**14 处无名字面量** `kb: 0.43`（FinalDesign 1 处 + Program 13 处），
+    ///   而被命名、被 XML 文档、被报告表头印出来的却是 <see cref="PlateBucklingK"/> = 4.0
+    ///   —— 同一页自相矛盾。更要命的是**任何新调用点忘写 `kb:` 就静默拿到 4.0**，
+    ///   下界小 9.3 倍（0.06 而不是 0.55 mm），不报错、格式正常、结论错。
+    ///   ⇒ 给它名字，14 处字面量全部换成它。
+    ///
+    /// ⚠ 仍未论证的一点（**记着，别当已解决**）：把「一边自由的长条板」这个理想化
+    ///   用在**内边焊死、外边自由的环**上，是一次**没有论证的模型替换** ——
+    ///   环缝是周向收缩把环往里箍，与长条板受单向压不是一回事。
+    /// </summary>
+    public const double PlateBucklingKFreeEdge = 0.43;
 
     public sealed class Result
     {
