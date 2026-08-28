@@ -94,6 +94,11 @@ public class SolverFineRootTests
             HandoverDoc.Root(), "Pt_Optimize", "Program.cs"));
         Assert.Contains("rr.FineRefined", prog);
         Assert.Contains("**没做第二遍** ⇒ 这个解只在导航网格上成立，**不可交付**（A⑬）", prog);
+
+        // ★ 纪律：**先验、不过才付**。复核便宜、二次求根昂贵；
+        //   实测 0.8 档的解在网格无关分辨率上 ③ = 7.333/10 全过 ⇒ 这一步常常不必付。
+        Assert.Contains("先验、不过才付", prog);
+        Assert.Contains("先验，不过才付", Core("Solver.cs"));
     }
 
     /// <summary>
