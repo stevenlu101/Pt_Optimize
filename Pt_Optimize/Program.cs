@@ -4911,11 +4911,56 @@ internal static class Program
                 Console.WriteLine();
                 if (win.d is not null)
                 {
-                    Console.WriteLine("★ **最轻的全过形状**：" + win.d.Describe());
-                    Console.WriteLine("  ⇒ 把这一组写进 FinalDesign 之前，先用 `--window` 在该形状上复核一次；");
-                    Console.WriteLine("    FinalDesign 是几何的唯一来源，写错一次会污染 3DM／论文／说明书三处。");
+                    Console.WriteLine("★ **最轻的全过形状**（导航网格上）：" + win.d.Describe());
+                    Console.WriteLine();
+
+                    // ═══ 流水线最后一段：**网格无关复核**（2026-08-28）
+                    //
+                    //   用户：「我不要定档这种模式（这坑太大），要严格遵守第一性原理」
+                    //   ⇒ 流水线是：输入 → 优化（粗网格导航）→ **复核** → 报告出图。
+                    //     复核不是为了产出一个「定案档」，它就是**本次运行的判据以什么为准**。
+                    //
+                    //   ⚠ 上面那张表是在**导航网格**上跑的 —— 实测导航网格（2 mm）连
+                    //     舌根圆角、环宽、焊脚都画不出来（1.5/1.5/1.2 格），
+                    //     而 ③ 的离散误差是容差的 4.5 倍。**导航值不是结论。**
+                    //   ⚠ 默认**不跑**：网格无关要到 0.4 mm 量级，单次求解 900 秒上下。
+                    //     `--verifymesh` 打开。不打开就必须**明说这批数还没复核**。
+                    if (args.Contains("--verifymesh"))
+                    {
+                        Console.WriteLine("── 网格无关复核（流水线最后一段；判据以此为准）");
+                        int mcS = 40000;
+                        int imc = Array.IndexOf(args, "--maxcells");
+                        if (imc >= 0 && imc + 1 < args.Length && int.TryParse(args[imc + 1], out int mcv)) mcS = mcv;
+                        var mv = MeshVerify.Run(win.d, p, maxCells: mcS,
+                                     progress: new Progress<string>(m2 => Console.WriteLine("     · " + m2)));
+                        Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"②″K",9}{"③K",9}{"合计g",9}{"用时s",8}");
+                        foreach (var t in mv.Trace)
+                            Console.WriteLine($"{t.Fine,10:0.000}{t.Cells,9:0}{t.N2p,9:0.000}{t.N2pp,9:0.000}"
+                                            + $"{t.N3,9:0.000}{t.MassG,9:0}{t.Sec,8:0.0}");
+                        Console.WriteLine();
+                        Console.WriteLine("   " + mv.Verdict);
+                        if (mv.Line is { } lv)
+                        {
+                            Console.WriteLine();
+                            Console.WriteLine("★★ **判据以复核为准**（下表是网格无关的那一次解）：");
+                            Console.Write(TextFmt.Plain(ShapeReview.Build(win.d, lv, null, mv.Verdict, p)));
+                            if (!lv.AllOk)
+                                Console.WriteLine("✗ **在算得准的网格上，这个设计不过** —— "
+                                    + "导航网格上的「全过」是离散误差造成的假象，不要拿它出图。");
+                        }
+                    }
+
                 }
                 else Console.WriteLine("★ 本网格内**没有全过的形状** —— 上表的失败原因逐行列出，据此扩网格或松工艺。");
+
+                // ★ 这句必须**无论有没有赢家都印**（2026-08-28 当场修）：
+                //   第一版把它放进「有赢家」那一支 —— 于是没选出赢家时反而不提醒，
+                //   而那正是人最可能去放宽条件重跑的时候，也最需要知道「上表还没算准」。
+                if (!args.Contains("--verifymesh"))
+                    Console.WriteLine("⚠ **上表是「导航网格」上的值，还没做网格无关复核。**"
+                        + "　实测导航网格（2 mm）连舌根圆角/环宽/焊脚都画不出来（1.5/1.5/1.2 格），"
+                        + "而 ③ 的离散误差是容差的 **4.5 倍** ⇒ 过与不过都可能是假的。"
+                        + "　加 `--verifymesh` 才算数（慢：网格无关要到 0.4 mm 量级、单次约 900 s）。");
                 Console.WriteLine();
                 Console.WriteLine($"⚠ 上面每一克铂都挂在一个**输入**上：自由段下界 {freeMinS:0} mm。");
                 Console.WriteLine("  它来自用户 2026-08-17 给的现场铜排（长 100／宽 60–80，自由段基本留 100），");
