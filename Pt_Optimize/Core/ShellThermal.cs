@@ -18,6 +18,12 @@ namespace PtOptimize.Core;
 /// </summary>
 public sealed class ShellThermalResult
 {
+    /// <summary>
+    /// 铜排热阻折算成的**等效舌片长度** mm（`k·A_截面/G`）。定温边界下为 0。
+    /// 它是「铜排是部分锚点」这件事的量化：既不是理想热沉，也不是绝热。
+    /// </summary>
+    public double BusEquivLenMm;
+
     public double[] T = Array.Empty<double>();
     public double TMaxC, TMinC;
     public double QGenW;          // 整片焦耳热
@@ -384,16 +390,48 @@ public static class ShellThermal
                 //   ⚠ 现役定案四片都夹 450 °C，所以此前不咬；是 --busg 把它激活的。
                 //   没有合格锚点时 xClamp 保持 NaN ⇒ toClamp = +∞ ⇒ 退回只看管孔
                 //   （管孔恒是定温边界），那是**保守**的退路。
-                if (tabCell[i] && isFixed[i])
+                if (tabCell[i] && (isFixed[i] || busG))
                     xClamp = double.IsNaN(xClamp) ? m.Centroid[i].X
                                                   : Math.Max(xClamp, Math.Abs(m.Centroid[i].X)) * Math.Sign(m.Centroid[i].X);
             }
             if (double.IsInfinity(rHole)) rHole = 0;
+
+            // ★★★★★ 铜排是**部分锚点**（2026-08-28 建模）。
+            //
+            //   定温边界下舌端是理想热沉，L 就是几何距离。
+            //   但热导边界（--busg）下它只是个**有限热阻的出口** ——
+            //   既不是理想热沉（旧写法，裕度虚高 2.0×），也不是绝热（保守退路，虚低 0.7×）。
+            //
+            //   串联热阻给出等效距离：
+            //     R = L_几何/(k·A_截面) + 1/G   ⇒   **L_等效 = L_几何 + k·A_截面/G**
+            //   后一项就是「把铜排热阻折算成多长的舌片」。
+            //
+            //   A_截面 = 舌宽 × 舌厚。舌宽由压接带反推：tabAreaTot / 压接段长度。
+            //   k 取舌端实际温度下的铂导热系数（PtThermalK 随 T 变，不用常数）。
+            double busExtraMm = 0.0;
+            if (busG && tabAreaTot > 1e-9 && p.BusbarConductanceWPerK > 1e-12
+                && p.BusbarClampLengthMm > 1e-9)
+            {
+                double wTabMm = tabAreaTot / p.BusbarClampLengthMm;          // 舌宽 mm
+                double tSum = 0, tCnt = 0, tTempSum = 0;
+                for (int i = 0; i < n; i++)
+                    if (tabCell[i]) { tSum += m.Thickness[i]; tTempSum += res.T[i]; tCnt++; }
+                double tTabMm = tCnt > 0 ? tSum / tCnt : 0;                  // 舌厚 mm
+                double tTabC = tCnt > 0 ? tTempSum / tCnt : p.TSetC;
+                double aCrossM2 = wTabMm * tTabMm * 1e-6;                    // mm² → m²
+                busExtraMm = Materials.PtThermalK(tTabC) * aCrossM2
+                           / p.BusbarConductanceWPerK * 1e3;                 // m → mm
+            }
+            res.BusEquivLenMm = busExtraMm;
+
             double LatLen(int i)
             {
                 double x = m.Centroid[i].X, z = m.Centroid[i].Z;
                 double toHole = Math.Sqrt(x * x + z * z) - rHole;
-                double toClamp = double.IsNaN(xClamp) ? double.PositiveInfinity : Math.Abs(x - xClamp);
+                // 舌端：几何距离 + 铜排热阻的等效长度（定温时后者为 0）
+                double toClamp = double.IsNaN(xClamp)
+                               ? double.PositiveInfinity
+                               : Math.Abs(x - xClamp) + busExtraMm;
                 return Math.Max(1.0, Math.Min(toHole, toClamp));
             }
             void Scan(List<(double Proxy, int I)> cand, bool onTab)
