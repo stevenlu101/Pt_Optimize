@@ -2050,7 +2050,7 @@ public sealed class LineDesignPage : TabPage
 
             // 形状体检：搜出来的赢家也要说清楚它好在哪、代价在哪
             _out.AppendText("\r\n" + ShapeReview.Build(fin.Design, fin.Best,
-                                                       FinalDesign.Current, fin.Message));
+                                                       FinalDesign.Current, fin.Message, _base));
             _out.AppendText("\r\n★ **最轻的全过形状**（已写回上面的盘径/舌宽/舌长/板厚）\r\n" +
                 $"   盘Ø{2 * fin.Design.DiscRadiusMm:0}／舌 {fin.Design.TabLengthMm:0}×{2 * fin.Design.TabHalfWidthMm:0}" +
                 $"／自由段 {fin.Design.FreeTabMm:0.0} mm\r\n" +
@@ -2259,7 +2259,7 @@ public sealed class LineDesignPage : TabPage
                     //     所以可以标成「已解且新鲜」，提示会直接指向出图。
                     //   （带回 + 发布 + 标新鲜四件事已经收进 AdoptSolvedDesign，上面那一行。）
                     _pendingReview = ShapeReview.Build(srD8.Design, srD8.Best,
-                                                       FinalDesign.Current, srD8.Message);
+                                                       FinalDesign.Current, srD8.Message, _base);
                     Show(srD8.Best, autoNote:
                         "【D8 定尺寸】" + srD8.Message + "\r\n" +
                         $"   板厚 {FinalDesign.Fmt(srD8.Design.TabThickMm, "0.00")}" +

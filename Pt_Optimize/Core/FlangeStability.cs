@@ -102,8 +102,18 @@ public static class FlangeStability
         // ── ② 沿舌片到铜排夹：夹持是定温边界 ⇒ dQ/dT = 导度本身
         //    夹持**温度**高低不影响稳定性，只影响工作点；导度才是稳定器。
         double k = Materials.PtThermalK(tPlateC) * 1e-3;      // W/(mm·K)
-        r.DClampDT = p.BusbarClampTempC >= 0 && tabLenMm > 1e-6
-                   ? k * tabSectionMm2 / tabLenMm : 0;
+        // ★★ 2026-08-28：热导边界（BusbarConductanceWPerK ≥ 0）下 BusbarClampTempC 恒为 −1，
+        //   于是**明明有 G 这条实打实的导热通道，DClampDT 却被判成 0**（偏保守，抹掉一个稳定器）。
+        //   物理上三种情形分明：
+        //    · 定温：铜排是理想热沉 ⇒ 稳定器就是**舌片导度**本身；
+        //    · 热导：舌片导度与铜排导度**串联** ⇒ 1/(1/g_舌 + 1/G)；
+        //    · 自由端：这条通道不存在 ⇒ 0。
+        double gTab = tabLenMm > 1e-6 ? k * tabSectionMm2 / tabLenMm : 0;
+        r.DClampDT = p.BusbarClampTempC >= 0
+                   ? gTab
+                   : (p.BusbarConductanceWPerK >= 0 && gTab > 1e-12
+                      ? 1.0 / (1.0 / gTab + 1.0 / Math.Max(1e-12, p.BusbarConductanceWPerK))
+                      : 0);
 
         // ── ③ 经管孔到管子：管子也是近似定温（由控温维持）
         r.DTubeDT = discSpanMm > 1e-6 ? k * holeSectionMm2 / discSpanMm : 0;

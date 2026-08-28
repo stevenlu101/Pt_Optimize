@@ -40,8 +40,17 @@ public static class ShapeReview
     /// <param name="r">该设计的完整求解结果（判据表从这里读）</param>
     /// <param name="reference">参照档：目前已知最轻的可行解。null = 不做比较</param>
     /// <param name="sizerNote">定尺寸器自己的话（收敛/顶死/无解），原样带上</param>
+    /// <param name="baseIn">
+    /// ★★ 2026-08-28 补：此前本方法用 <c>new DesignInputs()</c> 去问板厚下界，
+    /// 于是 WeldMinThicknessMm 与 WeldSafetyFactor 被强制退回默认 0.6 / 2.0，
+    /// 而定尺寸器用的是**工程师改过的那份**（Sizer 里 `d.DiscFloorMm(baseIn)`）
+    /// ⇒ 复核页印的下界与实际用的**不是同一个数**，报告还据此印「已贴住」。
+    /// DesignInputs 自己写着「拿到实值请立刻覆盖」「这个数直接决定最终省铂结论」——
+    /// 也就是说，**恰恰在拿到现场实测值那一天，报告开始说错话，而且不报错**。
+    /// null 时退回默认值（保持旧行为），但调用方应当传真实那份。
+    /// </param>
     public static string Build(FinalDesign d, LineResult? r, FinalDesign? reference = null,
-                               string sizerNote = "")
+                               string sizerNote = "", DesignInputs? baseIn = null)
     {
         var sb = new StringBuilder();
         sb.AppendLine("══ 形状体检 ══");
@@ -81,7 +90,7 @@ public static class ShapeReview
             sb.AppendLine($"　 {(c.Undetermined ? "?" : c.Ok ? "✓" : "✗")}\t{c.Name}\t" +
                           $"{(double.IsNaN(c.Actual) ? "达不到" : c.Actual.ToString("0.00"))}\t{c.Limit:0.00}\t" +
                           $"{c.Where}");
-        double floorD = d.DiscFloorMm(new DesignInputs());
+        double floorD = d.DiscFloorMm(baseIn ?? new DesignInputs());
         bool atWeldFloor = d.TabThickMm.Any(t => t <= floorD * 1.02);
         sb.AppendLine($"　 · 板厚 vs 工艺下界 {floorD:0.00} mm（max(焊接屈曲, 烧穿)）：" +
                       $"最薄 {d.TabThickMm.Min():0.00} mm" + (atWeldFloor ? " ← **已贴住**" : ""));
@@ -238,7 +247,7 @@ public static class ShapeReview
                                   $"vs {reference.TabLengthMm * 2 * reference.TabHalfWidthMm / 100:0} cm²）");
                 if (Math.Abs(d.DiscRadiusMm - reference.DiscRadiusMm) > 0.5)
                 {
-                    double floorRef = reference.DiscFloorMm(new DesignInputs());
+                    double floorRef = reference.DiscFloorMm(baseIn ?? new DesignInputs());
                     sb.AppendLine($"　 · 盘径 Ø{2 * d.DiscRadiusMm:0} 对比 Ø{2 * reference.DiscRadiusMm:0}：" +
                                   $"**工艺下界随之从 {floorRef:0.00} 变到 {floorD:0.00} mm**" +
                                   "（焊接屈曲下界随盘径线性增长）——" +

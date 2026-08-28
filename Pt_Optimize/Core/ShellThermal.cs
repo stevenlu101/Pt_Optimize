@@ -167,8 +167,10 @@ public static class ShellThermal
                     K0 = p.Layer1.K0, K1 = p.Layer1.K1, Enabled = p.FlangeInsulThickMm > 1e-6 }
         };
         var insTab = new LossTable(p.TAmbC, p.TSetC + 200, 60,
+            // ★ 风速必须传进保温面（2026-08-28）：此前保温区走 airVelocity=0 的默认值，
+            //   于是同一片法兰上裸露区吹得到风、保温区吹不到 —— 而默认圆盘正是包着的那一半。
             x => Insulation.PlateFlux(x, p.TAmbC, insLayers, p.OuterEmissivity, charLen,
-                                      p.LossScale) * 1e-6);
+                                      p.LossScale, p.FlangeAirVelocityMPerS) * 1e-6);
 
         // 舌片自己的保温（见参数注释）。厚度 0 也不等于裸露 —— 裸露是铂表面 ε=0.18，
         // 而「包了 0 mm」在 PlateFlux 里走的是外覆材料 ε=0.45，两者差 2.5 倍。
@@ -181,7 +183,7 @@ public static class ShellThermal
         var tabInsTab = tabInsul
             ? new LossTable(p.TAmbC, p.TSetC + 200, 60,
                 x => Insulation.PlateFlux(x, p.TAmbC, tabInsLayers, p.OuterEmissivity, charLen,
-                                          p.LossScale) * 1e-6)
+                                          p.LossScale, p.FlangeAirVelocityMPerS) * 1e-6)
             : bareTab;
 
         var insulated = new bool[n];

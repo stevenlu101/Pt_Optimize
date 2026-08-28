@@ -4680,7 +4680,7 @@ internal static class Program
                         Console.WriteLine();
                         // 报告写的是 TSV（UI 那侧靠制表位排）。控制台没有可设的制表位 ⇒
                         // 走 Plain 换成空格补齐，否则这里会印出一串裸 Tab。
-                        Console.Write(TextFmt.Plain(ShapeReview.Build(sr.Design, sr.Best, FinalDesign.Current, sr.Message)));
+                        Console.Write(TextFmt.Plain(ShapeReview.Build(sr.Design, sr.Best, FinalDesign.Current, sr.Message, p)));
                         rowsS.Add((discS, hwS, lenS, sr.MassG, sr.Feasible, sr.Message, sr.Design));
                     }
                     Console.WriteLine();

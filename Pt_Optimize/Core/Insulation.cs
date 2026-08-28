@@ -163,10 +163,17 @@ public static class Insulation
     /// <summary>
     /// 平板（法兰盘面）多层损失，返回热流密度 W/m²。lossScale 见 <see cref="CylinderLoss"/>。
     /// </summary>
+    /// <param name="airVelocity">
+    /// 来流风速 m/s。★★ 2026-08-28 补：此前本方法**根本没有这个形参**，
+    /// 两处外表面调用都走 FlatOuterFlux 的默认 0 ⇒ 强制对流项恒为 0。
+    /// 于是同一片法兰上：裸露区吹得到风、**保温区吹不到**，两套对流物理，没有任何提示。
+    /// 而默认 FlangeInsulated = true ⇒ **圆盘正是包着的那一半** ——
+    /// 「法兰吹风风速」这个旋钮在默认构型下对圆盘**静默失效**。
+    /// </param>
     public static double PlateFlux(double tInnerC, double tAmbC,
                                    IReadOnlyList<InsulationLayer> layers,
                                    double epsOuter, double charLength,
-                                   double lossScale)
+                                   double lossScale, double airVelocity = 0)
     {
         double sc = Math.Max(1e-6, lossScale);
         double sumR = 0;
@@ -175,7 +182,7 @@ public static class Insulation
         foreach (var l in layers) if (l.Enabled && l.ThicknessMm > 1e-6) active.Add(l);
 
         if (active.Count == 0)
-            return Insulation.FlatOuterFlux(tInnerC, tAmbC, epsOuter, charLength, sc);
+            return Insulation.FlatOuterFlux(tInnerC, tAmbC, epsOuter, charLength, sc, airVelocity);
 
         // 迭代 k(T)
         double tOut = 0.5 * (tInnerC + tAmbC);
@@ -196,7 +203,7 @@ public static class Insulation
             {
                 tOut = 0.5 * (lo + hi);
                 double qIn = (tInnerC - tOut) / sumR;
-                double qOut = FlatOuterFlux(tOut, tAmbC, epsOuter, charLength, sc);
+                double qOut = FlatOuterFlux(tOut, tAmbC, epsOuter, charLength, sc, airVelocity);
                 if (qIn > qOut) lo = tOut; else hi = tOut;
             }
             q = (tInnerC - tOut) / sumR;
