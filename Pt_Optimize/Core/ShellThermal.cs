@@ -18,6 +18,9 @@ namespace PtOptimize.Core;
 /// </summary>
 public sealed class ShellThermalResult
 {
+    /// <summary>本次用的对流特征长度 m（由网格包围盒最大跨度算，不再写死 0.05）。</summary>
+    public double CharLenM;
+
     /// <summary>
     /// 铜排热阻折算成的**等效舌片长度** mm（`k·A_截面/G`）。定温边界下为 0。
     /// 它是「铜排是部分锚点」这件事的量化：既不是理想热沉，也不是绝热。
@@ -139,7 +142,22 @@ public static class ShellThermal
         if (n == 0) return res;
 
         // ── 表面热流表 q″(T) [W/mm²]（原始 W/m² → ×1e-6），与 PlateThermal2D 同口径
-        double charLen = 0.05;
+        // ★★★★★ 对流特征长度（2026-08-28）：**唯一来源** = DesignInputs.ConvCharLenM。
+        //
+        //   此前写死 0.05 且**四处各存一份**（本处、DesignScreen×2、RampTwoNode），
+        //   全都与几何脱钩 —— 而盘径与舌长正是被优化的变量。
+        //
+        //   ⚠ 我一度改成「网格包围盒最大跨度」（约 0.17 m）并实测：
+        //     定案 0.8 档的 ②′ 从 +1.123 W 翻成 **−1.880 W**（负 = 热往管里灌，烧断方向），
+        //     ③ 从 +5.182 翻成 −0.643 K，两档双双「定案档自己不过判据」。
+        //   ⚠ **但 0.17 同样是猜的**：Churchill–Chu 要的是**竖直板高度**，
+        //     而这片板在现场怎么摆没有确认过（舌片朝下 ~170 mm；盘立舌横 ~60 mm）。
+        //     把一个拍的数换成另一个拍的数、并借此翻掉定案，**那不叫修复**。
+        //
+        //   ⇒ 处置：升为**显式输入**、带出处、标「待现场确认」，默认仍取 0.05
+        //     （**保持现状**，不是有依据）。灵敏度记在 HANDOVER §0.0.3 ⑱。
+        double charLen = p.ConvCharLenM;
+        res.CharLenM = charLen;
         var bareTab = new LossTable(p.TAmbC, p.TSetC + 200, 60,
             x => Insulation.FlatOuterFlux(x, p.TAmbC, p.PtEmissivity, charLen,
                                           p.LossScale, p.FlangeAirVelocityMPerS) * 1e-6);

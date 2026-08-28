@@ -119,7 +119,7 @@ public static class DesignScreen
     public static double JLimitAPerMm2(DesignInputs p, double tempC, double tMm,
                                        double insulThickMm)
     {
-        double charLen = 0.05;
+        double charLen = p.ConvCharLenM;   // ★ 唯一来源（2026-08-28）：不再各存一份
         double q;
         if (insulThickMm <= 1e-6)
             q = Insulation.FlatOuterFlux(tempC, p.TAmbC, p.PtEmissivity, charLen,
@@ -139,7 +139,7 @@ public static class DesignScreen
     /// <summary>单面热流密度 W/m²（法兰表面，按是否包纤维）</summary>
     public static double PlateFluxWPerM2(DesignInputs p, double tempC, double insulThickMm)
     {
-        double charLen = 0.05;
+        double charLen = p.ConvCharLenM;   // ★ 唯一来源（2026-08-28）：不再各存一份
         if (insulThickMm <= 1e-6)
             return Insulation.FlatOuterFlux(tempC, p.TAmbC, p.PtEmissivity, charLen,
                                             p.LossScale, p.FlangeAirVelocityMPerS);

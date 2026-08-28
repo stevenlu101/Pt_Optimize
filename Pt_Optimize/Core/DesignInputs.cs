@@ -263,7 +263,20 @@ public class DesignInputs
 
     [Category("6 C 整线 — 法兰边界"), DisplayName("法兰吹风风速 [m/s]"),
      Description("压缩空气强制冷却。0 = 仅自然对流。每吹掉一瓦都要由铂金发出来，直接折算成铂重")]
-    public double FlangeAirVelocityMPerS { get; set; } = 0.0;
+    public double FlangeAirVelocityMPerS { get; set; } = 0.0;
+
+    [Category("6 C 整线 — 法兰边界"), DisplayName("对流特征长度 [m]"),
+     Description("★★ 承重且**没有依据**的一个数 —— 2026-08-28 查出并实测（见 HANDOVER §0.0.3 ⑱）。　" +
+                 "它是 Churchill–Chu 自然对流与平板强制对流**唯一的几何输入**。　" +
+                 "此前写死 0.05 且**四处各存一份**（ShellThermal、DesignScreen×2、RampTwoNode），" +
+                 "全都与几何脱钩 —— 而盘径与舌长正是被优化的变量。　" +
+                 "⚠ 实测灵敏度**极高**：把它换成网格包围盒跨度（约 0.17 m），" +
+                 "定案 0.8 档的 ②′ 从 +1.123 W 翻成 **−1.880 W**（负 = 热往管里灌，烧断方向），" +
+                 "③ 从 +5.182 K 翻成 −0.643 K，两个定案档双双「自己不过判据」。　" +
+                 "⚠ 但 0.17 同样是**猜的**：Churchill–Chu 要的是**竖直板高度**，" +
+                 "而这片板在现场怎么摆（舌片朝下 ⇒ ~170 mm；盘立舌横 ⇒ ~60 mm）**没有确认过**。　" +
+                 "⇒ 保留 0.05 只是**保持现状**，不是有依据。**必须现场确认安装姿态与特征高度。**")]
+    public double ConvCharLenM { get; set; } = 0.05;
 
     [Category("8 ✗ 被页面/定案档接管（改了对整线链没用）"), DisplayName("铜排夹持温度 [°C]"),
      Description("⚠ 本项被「③ 整线核算」页的「铜排夹持 °C」控件接管 —— 在这张表里改它，对「③ 整线核算」没有影响。　舌片末端整条边的强制温度。<0 = 无夹冷（自由辐射端）。" +

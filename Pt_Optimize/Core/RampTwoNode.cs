@@ -163,7 +163,7 @@ public static class RampTwoNode
             t => Insulation.CylinderLoss(t, p.TAmbC, rOut, p.Layers, epsTube,
                                          p.Posture == Orientation.Vertical, L, p.LossScale).QPerLength);
 
-        double charLen = 0.05;
+        double charLen = p.ConvCharLenM;   // ★ 唯一来源（2026-08-28）：不再各存一份
         var flangeInsLayers = new List<InsulationLayer>
         {
             new() { Name = "法兰保温", ThicknessMm = p.FlangeInsulThickMm,
