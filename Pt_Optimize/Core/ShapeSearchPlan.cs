@@ -17,11 +17,36 @@ namespace PtOptimize.Core;
 /// </summary>
 public static class ShapeSearchPlan
 {
-    /// <summary>盘半径一步走多少 mm。</summary>
+    /// <summary>盘半径**第一轮**一步走多少 mm。之后由 <see cref="Refine"/> 逐次减半。</summary>
     public const double DiscStepMm = 5.0;
 
-    /// <summary>舌宽比例一步走多少（半宽 / 盘半径）。</summary>
+    /// <summary>舌宽比例**第一轮**一步走多少（半宽 / 盘半径）。同样逐次减半。</summary>
     public const double FracStep = 0.125;
+
+    /// <summary>
+    /// ★★ **步长收缩**（2026-08-28 算法普查 A 类第 ⑥ 条）。
+    ///
+    /// 病灶：此前步长写死 5 mm 且**永不收缩**，停机条件是「四个邻点都不更好」。
+    /// 那句话真正的意思只是「**在 ±5 mm 这个分辨率上**没有更好」——
+    /// 而铂重对盘径是**一阶敏感**的，5 mm 完全可能跨过最优点。
+    /// 把它当成「局部最优」，与把 2 mm 网格上的判据当成结论是同一种错。
+    ///
+    /// 改法与网格无关性同构：**没有更好 ⇒ 步长减半再试**，直到步长落到
+    /// <see cref="MinDiscStepMm"/>。于是停机条件变成一句能写进交付的话：
+    /// 「在 ±<c>MinDiscStepMm</c> mm 分辨率上没有更好」——**分辨率是声明出来的，
+    /// 不是碰巧的**。
+    /// </summary>
+    public static double Refine(double step) => step * 0.5;
+
+    /// <summary>
+    /// 形状分辨率下界 mm。5 → 2.5 → 1.25 → 0.625，减半三次。
+    /// 0.625 mm 已远细于法兰下料公差，再细没有工程意义。
+    /// **这个数必须印在交付里**，因为「局部最优」这句话只在它上面成立。
+    /// </summary>
+    public const double MinDiscStepMm = 0.625;
+
+    /// <summary>步长收到头了吗 —— 收到头才谈得上「局部最优」。</summary>
+    public static bool StepExhausted(double step) => step < MinDiscStepMm - 1e-9;
 
     /// <summary>
     /// 把第 1 轮网格里**造不出来**的盘半径抬到下界上。
@@ -57,13 +82,22 @@ public static class ShapeSearchPlan
     /// ⚠ 比例上限 1.0（半宽 = 盘半径）、下限 0.25：再窄就没有过流截面可言。
     /// </summary>
     public static (double R, double HalfW)[] Neighbours(double R0, double hw0)
+        => Neighbours(R0, hw0, DiscStepMm);
+
+    /// <summary>
+    /// 同上，但步长由调用方给 —— 步长收缩（<see cref="Refine"/>）要用这个重载。
+    /// 舌宽比例的步长**按同样比例缩**，两个方向不能一个细一个粗，
+    /// 否则「四个邻点都不更好」在两个方向上说的不是同一件事。
+    /// </summary>
+    public static (double R, double HalfW)[] Neighbours(double R0, double hw0, double stepMm)
     {
         double f0 = R0 > 1e-9 ? hw0 / R0 : 1.0;
-        double up = Math.Min(1.0, f0 + FracStep), dn = Math.Max(0.25, f0 - FracStep);
+        double fs = FracStep * (stepMm / DiscStepMm);
+        double up = Math.Min(1.0, f0 + fs), dn = Math.Max(0.25, f0 - fs);
         return new[]
         {
-            (R0 + DiscStepMm, (R0 + DiscStepMm) * f0),
-            (R0 - DiscStepMm, (R0 - DiscStepMm) * f0),
+            (R0 + stepMm, (R0 + stepMm) * f0),
+            (R0 - stepMm, (R0 - stepMm) * f0),
             (R0, R0 * up),
             (R0, R0 * dn),
         };
@@ -79,8 +113,19 @@ public static class ShapeSearchPlan
     /// <summary>形状的去重键 —— 同一个形状不该被算两次（每次都是几十分钟）。</summary>
     public static string Key(double R, double halfW) => $"{R:0.###}/{halfW:0.###}";
 
-    /// <summary>把邻点滤成「值得一试」的：几何上说得通、且没算过。</summary>
+    /// <summary>
+    /// 把邻点滤成「值得一试」的：几何上说得通、且没算过。
+    ///
+    /// ⚠ 无参版用的 <c>R &gt; 5</c> 是个**挑出来的数**，不是几何下界 ——
+    ///   真正的下界是判据⑥：盘半径 ≥ 管孔半径 + 焊脚。用 <see cref="Worth(IEnumerable{ValueTuple{double,double}}, ISet{string}, double)"/>
+    ///   把那个下界传进来，才不会把「造不出来的形状」当候选算上几十分钟。
+    /// </summary>
     public static List<(double R, double HalfW)> Worth(
         IEnumerable<(double R, double HalfW)> cand, ISet<string> seen)
-        => cand.Where(c => c.R > 5 && c.HalfW > 1 && seen.Add(Key(c.R, c.HalfW))).ToList();
+        => Worth(cand, seen, 5.0);
+
+    /// <summary>同上，但盘半径下界由调用方按判据⑥ 给出（第一性原理，不是挑的数）。</summary>
+    public static List<(double R, double HalfW)> Worth(
+        IEnumerable<(double R, double HalfW)> cand, ISet<string> seen, double minDiscMm)
+        => cand.Where(c => c.R > minDiscMm && c.HalfW > 1 && seen.Add(Key(c.R, c.HalfW))).ToList();
 }

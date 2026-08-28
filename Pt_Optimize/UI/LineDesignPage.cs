@@ -2021,6 +2021,10 @@ public sealed class LineDesignPage : TabPage
             double BestMass() => rows.Where(x => x.ok && !double.IsNaN(x.mass))
                                      .Select(x => x.mass).DefaultIfEmpty(double.NaN).Min();
 
+            // ★ 步长会**收缩**（算法普查 A⑥）：没有更好 ⇒ 步长减半再试，
+            //   直到 MinDiscStepMm。于是「停」这句话变成「在该分辨率上没有更好」，
+            //   而不是「在碰巧的 5 mm 上没有更好」。
+            double step = ShapeSearchPlan.DiscStepMm;
             for (int ext = 1; ext <= maxExtend; ext++)
             {
                 ct.ThrowIfCancellationRequested();
@@ -2034,11 +2038,20 @@ public sealed class LineDesignPage : TabPage
                 double before = cur.mass, R0 = cur.d.DiscRadiusMm, hw0 = cur.d.TabHalfWidthMm;
                 // ★ 「试哪几个 / 算不算变好」的规则**只有一份**：Core/ShapeSearchPlan
                 //   （2026-08-25 抽出并配了 10 条微秒级门）。这里只负责跑，不再自己判。
-                var todo = ShapeSearchPlan.Worth(ShapeSearchPlan.Neighbours(R0, hw0), seen);
+                var todo = ShapeSearchPlan.Worth(ShapeSearchPlan.Neighbours(R0, hw0, step), seen);
                 if (todo.Count == 0)
                 {
-                    _out.AppendText($"　第 {ext + 1} 轮：四个邻点都试过了 ⇒ 停。" + NL2);
-                    break;
+                    // 邻点都算过 ⇒ 不是没方向，是**这个步长上**没新点可试 ⇒ 收缩再来
+                    double nx0 = ShapeSearchPlan.Refine(step);
+                    if (ShapeSearchPlan.StepExhausted(nx0))
+                    {
+                        _out.AppendText($"　第 {ext + 1} 轮：±{step:0.###} mm 的邻点都试过了，且步长已收到"
+                                      + $"分辨率下界 {ShapeSearchPlan.MinDiscStepMm:0.###} mm ⇒ 停。" + NL2);
+                        break;
+                    }
+                    step = nx0;
+                    _out.AppendText($"　第 {ext + 1} 轮：邻点都试过了 ⇒ **步长减半到 {step:0.###} mm**，继续。" + NL2);
+                    continue;
                 }
 
                 _prog.Maximum += todo.Count * screenRounds;
@@ -2051,8 +2064,22 @@ public sealed class LineDesignPage : TabPage
                 _out.AppendText($"　⇒ 第 {ext + 1} 轮：{before:0} → {after:0} g　"
                               + (better ? "**↓ 变好，继续**" : "**↑ 没有更好的方向 ⇒ 停**")
                               + NL2);
-                Note($"第 {ext + 1} 轮 {(better ? "变好" : "无改善")}　{before:0} → {after:0} g");
-                if (!better) break;
+                Note($"第 {ext + 1} 轮 {(better ? "变好" : "无改善")}　{before:0} → {after:0} g"
+                     + $"　步长 {step:0.###} mm");
+                if (!better)
+                {
+                    // ★ 「没有更好」只说明**在这个步长上**没有更好 —— 减半再问一次。
+                    //   收到分辨率下界才谈得上「局部最优」，而那个下界是声明出来的。
+                    double nx = ShapeSearchPlan.Refine(step);
+                    if (ShapeSearchPlan.StepExhausted(nx))
+                    {
+                        _out.AppendText($"　⇒ 步长已收到 {step:0.###} mm（下界 {ShapeSearchPlan.MinDiscStepMm:0.###} mm）仍无改善"
+                                      + $" ⇒ **在 ±{step:0.###} mm 分辨率上是局部最优**，停。" + NL2);
+                        break;
+                    }
+                    step = nx;
+                    _out.AppendText($"　⇒ 这个步长上没有更好 ⇒ **步长减半到 {step:0.###} mm** 再问一次" + NL2);
+                }
             }
 
 

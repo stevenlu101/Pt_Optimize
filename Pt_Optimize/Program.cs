@@ -4371,6 +4371,68 @@ internal static class Program
             //     本命令就是去量它。量不出单调，就得换别的确定性方法。
             //
             //   `--cli --monotone [--wall 0.8] [--pts 7]`
+            if (args.Contains("--solve"))
+            {
+                // ★ 求解器：从约束盒的下角求根，**不接受任何起点**。
+                //   传进来的 DesignSpec 只提供**几何与工况**，五个旋钮当场被下界覆盖。
+                var geoS = DesignSpec.Select(args);
+                var soOpt = new SolverOptions();
+
+                Console.WriteLine("=== 求解器（不搜索，求根）===");
+                Console.WriteLine($"几何来源：{geoS.Name}　—— 只取形状与工况，**旋钮值一律丢弃**");
+                Console.WriteLine();
+
+                SolverResult RunOnce(DesignSpec g, string tag)
+                {
+                    Console.WriteLine($"── {tag}");
+                    var rr = Solver.Solve(g, p, soOpt,
+                                          new Progress<string>(s => Console.WriteLine("   " + s)));
+                    Console.WriteLine($"   ⇒ {(rr.Feasible ? "全过 ✓" : "不过 ✗")}　" +
+                                      $"合计 {rr.MassG:0.0} g　场解 {rr.Solves} 次");
+                    Console.WriteLine($"   停因：{rr.StopWhy}");
+                    if (rr.HitBound) Console.WriteLine("   ⚠ 这是**不可行的证明**（顶到上界或前提不成立），不是「没搜到」");
+                    Console.WriteLine();
+                    return rr;
+                }
+
+                if (args.Contains("--seedprobe"))
+                {
+                    // ★★ 病根的实证：同一几何，两组**差得离谱**的入参旋钮。
+                    //    若结果逐位相同 ⇒「解与初值无关」不是声称，是测出来的。
+                    Console.WriteLine("★ 种子探针：同一几何 × 两组差得离谱的入参旋钮");
+                    Console.WriteLine("  若两边**逐位相同**，则「种子」这个概念在求解器里没有立足处。");
+                    Console.WriteLine();
+
+                    var gA = geoS.Clone();
+                    var gB = geoS.Clone();
+                    for (int j = 0; j < gA.TabThickMm.Length; j++)
+                    {
+                        gA.TabThickMm[j] = 0.50; gA.TabInsulMm[j] = 0.30; gA.RingMul[j] = 1.00;
+                        gB.TabThickMm[j] = 5.50; gB.TabInsulMm[j] = 18.0; gB.RingMul[j] = 2.40;
+                    }
+
+                    var rA = RunOnce(gA, "入参 A：板厚 0.50 / 舌保温 0.30 / 环倍率 1.00（贴着下界）");
+                    var rB = RunOnce(gB, "入参 B：板厚 5.50 / 舌保温 18.0 / 环倍率 2.40（贴着上界）");
+
+                    Console.WriteLine("── 对账");
+                    double dT = Math.Abs(rA.Design.TabThickMm[0] - rB.Design.TabThickMm[0]);
+                    double dI = Math.Abs(rA.Design.TabInsulMm[0] - rB.Design.TabInsulMm[0]);
+                    double dR = Math.Abs(rA.Design.RingMul[0] - rB.Design.RingMul[0]);
+                    double dM = Math.Abs(rA.MassG - rB.MassG);
+                    Console.WriteLine($"   板厚差 {dT:0.000000} mm　舌保温差 {dI:0.000000} mm　" +
+                                      $"环倍率差 {dR:0.000000}　合计差 {dM:0.000000} g");
+                    bool same = dT < 1e-9 && dI < 1e-9 && dR < 1e-9 && (double.IsNaN(dM) || dM < 1e-6);
+                    Console.WriteLine(same
+                        ? "   ✓ **逐位相同** —— 解与初值无关，种子这个概念在求解器里不存在"
+                        : "   ✗ **两边不一样** —— 说明还有路径依赖没拆干净，这条不许放行");
+                    Environment.ExitCode = same ? 0 : 1; return;
+                }
+
+                var r1 = RunOnce(geoS, "单次求解");
+                Console.WriteLine("★ 提醒：以上跑在**导航网格**上。判据以网格无关复核为准（--verifymesh）。");
+                Environment.ExitCode = r1.Feasible ? 0 : 1; return;
+            }
+
             if (args.Contains("--monotone"))
             {
                 var fdM2 = DesignSpec.Select(args);
