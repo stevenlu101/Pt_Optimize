@@ -154,20 +154,20 @@ public sealed class MainForm : Form
         sizePage.Controls.Add(Banner(Flow.Stage(StageId.定尺寸).Banner));
         sizePage.Controls.Add(sizeTool);
 
-        // ── 定案档：**不带编号的一页**，放在 ① 之前。
+        // ── 设计记录：**不带编号的一页**，放在 ① 之前。
         //   载入/复现会灌页面控件、是给 ③ 喂起点的 ⇒ 它是入口，不是尾巴。
         //   这几条命令都 ReadsPageControls=false（另存除外），本来就豁免阶段门禁。
         var caseTool = NewTool();
-        caseTool.Items.Add(new ToolStripLabel("定案档"));
+        caseTool.Items.Add(new ToolStripLabel("设计记录"));
         caseTool.Items.Add(linePage.CaseBox);
         caseTool.Items.Add(linePage.BtnReproduce);
         caseTool.Items.Add(linePage.BtnLoadCase);
         caseTool.Items.Add(new ToolStripSeparator());
         caseTool.Items.Add(linePage.BtnSaveFinal);
         caseTool.Items.Add(linePage.BtnExportFinal3dm);
-        var casePage = new TabPage(Flow.Stage(StageId.定案档).Title) { Padding = new Padding(2) };
-        casePage.Controls.Add(StageHint(StageId.定案档));
-        casePage.Controls.Add(Banner(Flow.Stage(StageId.定案档).Banner));
+        var casePage = new TabPage(Flow.Stage(StageId.设计记录).Title) { Padding = new Padding(2) };
+        casePage.Controls.Add(StageHint(StageId.设计记录));
+        casePage.Controls.Add(Banner(Flow.Stage(StageId.设计记录).Banner));
         casePage.Controls.Add(caseTool);
 
         var shipTool = NewTool();
@@ -191,7 +191,7 @@ public sealed class MainForm : Form
         _tabs.TabPages.Add(shipPage);
         _tabs.TabPages.Add(new ManualPage(_in));   // 说明书里的限值要跟着参数表走
 
-        _stageOf[casePage] = StageId.定案档;
+        _stageOf[casePage] = StageId.设计记录;
         _stageOf[gatePage] = StageId.先决条件;
         _stageOf[screenPage] = StageId.粗算;
         _stageOf[linePage] = StageId.整线核算;
@@ -309,7 +309,7 @@ public sealed class MainForm : Form
         KeyDown += (_, e) =>
         {
             if (e.KeyCode == Keys.F5) Run();
-            // F1 = 帮助：跳到「使用说明」页（图文，按定案档实时生成）
+            // F1 = 帮助：跳到「使用说明」页（图文，按设计记录实时生成）
             else if (e.KeyCode == Keys.F1) ShowHelp();
         };
     }
@@ -461,7 +461,7 @@ public sealed class MainForm : Form
             string want = g.Unlocked ? (g.Bypassed ? "⚠ " + baseTitle : baseTitle) : "🔒 " + baseTitle;
             if (page.Text != want) page.Text = want;
 
-            // 命令按钮：只管「读页面控件」的那些；「定案」组不受门禁（它们不读页面）
+            // 命令按钮：只管「读页面控件」的那些；「设计记录」组不受门禁（它们不读页面）
             foreach (var ts in page.Controls.OfType<ToolStrip>())
                 foreach (var b in ts.Items.OfType<ToolStripButton>())
                 {
@@ -547,7 +547,7 @@ public sealed class MainForm : Form
     }
 
     /// <summary>F1／「帮助」：切到使用说明页。说明书不做成单独的导出命令，
-    /// 就放在程序里 —— 图是按当前定案档实时画的，导出来的静态副本会和定案值漂开。</summary>
+    /// 就放在程序里 —— 图是按当前设计记录实时画的，导出来的静态副本会和设计记录值漂开。</summary>
     private void ShowHelp()
     {
         foreach (TabPage t in _tabs.TabPages)

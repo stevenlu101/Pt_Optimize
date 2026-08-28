@@ -32,7 +32,7 @@ public class TwoSourceGuardTests
     public void 不许再出现裸的_kb_0点43()
     {
         // 只查**调用点**（Core 与 Program）；WeldDistortion.cs 自己的病历注释里要引用旧写法。
-        foreach (var f in new[] { "Pt_Optimize/Core/FinalDesign.cs", "Pt_Optimize/Program.cs" })
+        foreach (var f in new[] { "Pt_Optimize/Core/DesignSpec.cs", "Pt_Optimize/Program.cs" })
             Assert.DoesNotContain("kb: 0.43",
                 File.ReadAllText(Path.Combine(HandoverDoc.Root(), f)));
     }
@@ -49,7 +49,7 @@ public class TwoSourceGuardTests
     // ── ② 管孔半径：两处来源，对不上就拒算 ────────────────────────
 
     /// <summary>
-    /// ★ 病灶：<see cref="FinalDesign.HoleRadiusMm"/> 是 <c>WallMm + 25.0</c>（**写死的 25**），
+    /// ★ 病灶：<see cref="DesignSpec.HoleRadiusMm"/> 是 <c>WallMm + 25.0</c>（**写死的 25**），
     ///   几何、3DM 图纸、板厚工艺下界都用它；
     ///   而求解器走 <c>TubeIdMm*0.5 + WallMm</c>（跟着参数表的管内径）。
     ///   两者只在 <c>TubeIdMm = 50</c> 时相等 ⇒ 改了管内径，
@@ -62,7 +62,7 @@ public class TwoSourceGuardTests
     public void 管内径与写死的孔半径对不上时_当场拒算()
     {
         var p = new DesignInputs { TubeIdMm = 60.0 };     // 半径 30 ≠ 写死的 25
-        var ex = Assert.Throws<ArgumentException>(() => FinalDesign.W08.BuildCase(p));
+        var ex = Assert.Throws<ArgumentException>(() => DesignSpec.W08.BuildCase(p));
         Assert.Contains("对不上", ex.Message);
         Assert.Contains("铁律", ex.Message);
         Assert.Contains("宁可拒算", ex.Message);
@@ -73,7 +73,7 @@ public class TwoSourceGuardTests
     {
         var p = new DesignInputs();
         Assert.Equal(50.0, p.TubeIdMm, 9);               // 默认就是 50
-        var lc = FinalDesign.W08.BuildCase(p);            // 不抛
+        var lc = DesignSpec.W08.BuildCase(p);            // 不抛
         Assert.NotNull(lc);
     }
 }

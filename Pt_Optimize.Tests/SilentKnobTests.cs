@@ -89,6 +89,6 @@ public class SilentKnobTests
     {
         var a = new DesignInputs();
         var b = new DesignInputs { WeldMinThicknessMm = 1.2 };   // 工程师拿到实值后会改的那个
-        Assert.NotEqual(FinalDesign.W08.DiscFloorMm(a), FinalDesign.W08.DiscFloorMm(b), 6);
+        Assert.NotEqual(DesignSpec.W08.DiscFloorMm(a), DesignSpec.W08.DiscFloorMm(b), 6);
     }
 }

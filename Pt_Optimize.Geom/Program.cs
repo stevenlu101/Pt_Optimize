@@ -57,11 +57,11 @@ internal static class GeomProbe
         //   Pt_Optimize.Geom.exe plate <out.3dm> <盘半径> <孔半径> <舌端X> <舌端半宽> <厚度1[,厚度2,…]>
         // 每个厚度出一个实体，沿 +X 依次排开、各自独立成体，图层统一为「法兰」。
         // 轮廓 = 盘圆弧（切点之外那段）+ 舌片两条直边 + 舌端直边，中心挖孔，再拉伸。
-        // final 模式：按**主程序导出的 JSON 规格**渲染定案整机几何
+        // final 模式：按**主程序导出的 JSON 规格**渲染设计记录整机几何
         //   Pt_Optimize.Geom.exe final <spec.json> <out.3dm>
         //
-        // 几何定义**不在这里**。规格由 Pt_Optimize 从 Core/FinalDesign 导出，
-        // 本进程只负责渲染 —— 否则定案值就在两个项目里各存一份，
+        // 几何定义**不在这里**。规格由 Pt_Optimize 从 Core/DesignSpec 导出，
+        // 本进程只负责渲染 —— 否则设计记录值就在两个项目里各存一份，
         // 而「同一个数抄两处然后悄悄漂开」正是本项目最常见的失效（HANDOVER 1.8）。
         if (args.Length > 0 && args[0] == "final")
         {
@@ -230,7 +230,7 @@ internal static class GeomProbe
     ///   **把每一种失败码都抹成成功**（thickness 的「图层无实体」是 4、异常是 2）。
     ///   六个模式全是这个写法 ⇒ 这个子进程**根本没有能力向主程序报告失败**。
     ///
-    ///   现场表现：拿定案自己的图纸去跑 thickness，stderr 明明写着「图层无实体：法兰」，
+    ///   现场表现：拿设计记录自己的图纸去跑 thickness，stderr 明明写着「图层无实体：法兰」，
     ///   退出码却是 0、stdout 为空 ⇒ 主程序 `ExitCode != 0` 检查通过，
     ///   转头拿空字符串解析 JSON，崩在 System.Text.Json，与真因隔了三层。
     ///
@@ -385,7 +385,7 @@ internal static class GeomProbe
             {
                 // ★ 把**现有图层**一并报出来（2026-08-25）。scale 模式一直这么做，
                 //   thickness 模式却只说「无实体」—— 同一个程序里两种口径，
-                //   而拿定案 3DM 撞上来的正是 thickness 这一侧：
+                //   而拿设计记录 3DM 撞上来的正是 thickness 这一侧：
                 //   WriteFinal3dm 写的是「入口-板身／入口-环外级／…」这样按**部位**分的
                 //   22 个图层，而本模式要的是**整片一个图层**。不列出来，人无从猜起。
                 Console.Error.WriteLine("图层无实体：" + layerName + "。现有图层："
@@ -591,7 +591,7 @@ internal static class GeomProbe
     //   下面先插入 final 模式的实现。）
 
     // ========================================================================
-    //  final：渲染定案整机几何
+    //  final：渲染设计记录整机几何
     //
     //  约定（与 thickness 模式的读取端、Pt_Heater.3dm、Core.FlangePlate 一致）：
     //    · 板面在 XZ 平面，厚度沿 Y；管轴 = Y
@@ -1188,7 +1188,7 @@ internal static class GeomProbe
                 // ★★★★★ 舌型必须与 FlangePlate 那一侧对得上（2026-08-24）。
                 //
                 // 本模式原来只会写**梯形**舌（从圆上的切点收到末端半宽）。可本项目的
-                // 定案几何早就改成**等宽舌**（FlangePlate.TabParallel）——理由写在那里：
+                // 设计记录几何早就改成**等宽舌**（FlangePlate.TabParallel）——理由写在那里：
                 // 梯形在两条约束上同时吃亏（导热漏按平均截面、局部失稳按最窄截面）。
                 // 于是「写出来的图」与「APP 在设计的形状」是两族：
                 // 实测把梯形舌那张图读回来，等宽替身面积差 −12.2 %、ShapeJ 差 8.2 %

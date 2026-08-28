@@ -16,7 +16,7 @@ namespace PtOptimize.Tests;
 ///   ⇒ 这个子进程根本没有能力向主程序报告失败，而主程序每一处
 ///   `if (proc.ExitCode != 0)` 检查的都是一个恒为 0 的东西。
 ///
-///   现场表现：拿**定案自己的图纸**跑 thickness，stderr 明明写着「图层无实体：法兰」，
+///   现场表现：拿**设计记录自己的图纸**跑 thickness，stderr 明明写着「图层无实体：法兰」，
 ///   退出码却是 0、stdout 为空 ⇒ 主程序照旧往下走，崩在 System.Text.Json，
 ///   报「The input does not contain any JSON tokens」—— 与真因隔了三层。
 ///

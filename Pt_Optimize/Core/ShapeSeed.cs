@@ -20,9 +20,9 @@ namespace PtOptimize.Core;
 ///      停在哪里就与出发点有关了。
 ///   ⇒ 所以不说「种子决定答案」，只说「种子是输入，必须印出来」。
 ///
-/// ★ 此前的毛病（本类就是为它而建）：`--shape` 里写死 `FinalDesign.W08.Clone()`，
+/// ★ 此前的毛病（本类就是为它而建）：`--shape` 里写死 `DesignSpec.W08.Clone()`，
 ///   只覆盖 WallMm。于是 `--wall 0.6` 会拿 **0.8 档的板厚分布**去配 0.6 的管；
-///   而 <see cref="FinalDesign.ByWall"/> 明明就在那儿，一直没人接。
+///   而 <see cref="DesignSpec.ByWall"/> 明明就在那儿，一直没人接。
 ///   更糟的是输出里**一个字都没提种子是谁** —— 拿到那份控制台输出的人，
 ///   无法从中还原出「这是用什么算的」。
 /// </summary>
@@ -32,12 +32,12 @@ public static class ShapeSeed
     public sealed class Choice
     {
         /// <summary>已经 Clone 过、壁厚已覆盖的种子。可以直接改形状后交给 Sizer。</summary>
-        public FinalDesign Seed = null!;
+        public DesignSpec Seed = null!;
         /// <summary>种子的出处，**调用方必须原样打印**。</summary>
         public string Note = "";
         /// <summary>种子档的壁厚与本次要算的壁厚对不上（找不到同壁厚的档时才会发生）。</summary>
         public bool WallMismatch;
-        /// <summary>种子来自 .3dm 图纸（而不是定案档）。</summary>
+        /// <summary>种子来自 .3dm 图纸（而不是设计记录）。</summary>
         public bool FromDrawing;
     }
 
@@ -45,16 +45,16 @@ public static class ShapeSeed
     /// 按壁厚挑档；`name` 给了就按档名挑。
     ///
     /// ⚠ 三条「不静默」：
-    ///  · 档名给了但找不到 ⇒ **抛**，并列出可选（照 <see cref="FinalDesign.Select"/> 的规矩）。
+    ///  · 档名给了但找不到 ⇒ **抛**，并列出可选（照 <see cref="DesignSpec.Select"/> 的规矩）。
     ///  · 找不到同壁厚的档 ⇒ 回退到 `current`，但把 <see cref="Choice.WallMismatch"/> 立起来，
     ///    并在 Note 里写明「板厚分布来自另一档」。回退可以，**不出声不行**。
     ///  · 无论哪条路，Note 都不为空 —— 调用方没得选，只能印。
     /// </summary>
     public static Choice Choose(double wallMm, string? name, IReadOnlyList<double>? thickMm,
-                                IReadOnlyList<FinalDesign> all, FinalDesign current)
+                                IReadOnlyList<DesignSpec> all, DesignSpec current)
     {
-        if (all is null || all.Count == 0) throw new ArgumentException("没有可用的定案档");
-        FinalDesign tmpl;
+        if (all is null || all.Count == 0) throw new ArgumentException("没有可用的设计记录");
+        DesignSpec tmpl;
         bool mismatch = false;
         string how;
 
@@ -78,9 +78,9 @@ public static class ShapeSeed
         var seed = tmpl.Clone();
         seed.WallMm = wallMm;
 
-        // ★★★★★ 五个**优化变量**不许来自定案档（用户 2026-08-25：
-        //   「把种子这种方法彻底禁掉，定案檔是用来校正计算流程，不应当被乱用」）。
-        //   一律覆盖成 StartPoint 里声明的起点；留在定案档里的只有
+        // ★★★★★ 五个**优化变量**不许来自设计记录（用户 2026-08-25：
+        //   「把种子这种方法彻底禁掉，设计记录是用来校正计算流程，不应当被乱用」）。
+        //   一律覆盖成 StartPoint 里声明的起点；留在设计记录里的只有
         //   **图纸与界面都给不出**的构型/工艺常数（压接段、舌根圆角、环宽、控温点、圆盘保温），
         //   那是铁律②「几何只有一个来源」要求的 —— 并在 Note 里申报。
         for (int j = 0; j < seed.TabInsulMm.Length; j++) seed.TabInsulMm[j] = StartPoint.TabInsulMm;
@@ -89,7 +89,7 @@ public static class ShapeSeed
         seed.ClampTempC = StartPoint.ClampTempC;
 
         // 板厚**没有**统一起点：它在解析模式由界面控件/--thick 给，在 .3dm 模式由图纸给 ——
-        // 两者都是真实输入。给不出就**抛**，不许拿定案档的板厚顶上（那正是被禁的做法）。
+        // 两者都是真实输入。给不出就**抛**，不许拿设计记录的板厚顶上（那正是被禁的做法）。
         if (thickMm is null || thickMm.Count == 0)
             throw new ArgumentException(
                 "没有板厚起点。板厚是**优化变量**，起点只能来自真实输入（用户 2026-08-25）："
@@ -100,7 +100,7 @@ public static class ShapeSeed
               + Environment.NewLine
               + "  · 走界面：那四个「法兰厚度」框就是它的起点。"
               + Environment.NewLine
-              + "  ⚠ **不会**再回退到定案档的板厚 —— 定案档只用来校正计算流程。");
+              + "  ⚠ **不会**再回退到设计记录的板厚 —— 设计记录只用来校正计算流程。");
         for (int j = 0; j < seed.TabThickMm.Length; j++)
             seed.TabThickMm[j] = thickMm[System.Math.Min(j, thickMm.Count - 1)];
         seed.Invalid = "";                            // 这是新解，不继承旧档的失效告示
@@ -110,7 +110,7 @@ public static class ShapeSeed
         var note = "种子：" + tmpl.Name + "（" + how + "，原壁厚 " + tmpl.WallMm.ToString("0.0") + "）"
                  + Environment.NewLine
                  + "  板厚起点 " + thick + " mm"
-                 + "（来自 --thick／图纸；**不是**定案档）"
+                 + "（来自 --thick／图纸；**不是**设计记录）"
                  + " —— D8 是在这个起点上**增量**走板厚的，不是重新定。";
         if (mismatch)
             note += Environment.NewLine
@@ -121,7 +121,7 @@ public static class ShapeSeed
         note += Environment.NewLine
               + "  优化变量的起点：板厚 ← 上面那一行；舌保温 "
               + StartPoint.TabInsulMm.ToString("0.0") + "（裸舌）／环倍率 "
-              + StartPoint.RingMul.ToString("0.00") + "（无台阶）—— 取自 Core/StartPoint.cs，**不是定案档**。"
+              + StartPoint.RingMul.ToString("0.00") + "（无台阶）—— 取自 Core/StartPoint.cs，**不是设计记录**。"
               + Environment.NewLine
               + "  （管保温与夹持温度也在这五项里，但它们可被 --tubeins / --clamptemp 覆盖，"
               + "**实际生效值由下面那行「工况」为准** —— 此处不重复报数，免得两处对不上。）"
@@ -140,15 +140,15 @@ public static class ShapeSeed
     ///
     ///    我此前加过一个 `--seedflat`，把板厚压平成 2.0 当「中性起点」。那是**自己捏的数**：
     ///     · 它不对应任何真实工况 —— 既不是工程师会填的，也不是图纸上的；
-    ///     · 而且它只压平**板厚**，舌保温与环倍率仍来自定案档 ⇒ 连「中性」都名不副实；
+    ///     · 而且它只压平**板厚**，舌保温与环倍率仍来自设计记录 ⇒ 连「中性」都名不副实；
     ///     · 于是算出来的铂重与判据**看着正常却没有归属** —— 正是这个项目最怕的那种错。
     ///    ⇒ 起点只准来自两处真实输入：**界面参数**，或 **.3dm 图纸**。本方法是后者。
     ///
-    /// ⚠ 图纸给不了的那些（舌保温、环倍率、管保温、控温点、压接段）仍取自同壁厚的定案档，
-    ///   **这件事必须写进 Note**：种子里有多少来自图纸、多少来自定案，读的人有权知道。
+    /// ⚠ 图纸给不了的那些（舌保温、环倍率、管保温、控温点、压接段）仍取自同壁厚的设计记录，
+    ///   **这件事必须写进 Note**：种子里有多少来自图纸、多少来自设计记录，读的人有权知道。
     /// </summary>
     public static Choice FromDrawing(PlateShapeAnalyzer.Shape sh, double? wallOverrideMm,
-                                     IReadOnlyList<FinalDesign> all, FinalDesign current)
+                                     IReadOnlyList<DesignSpec> all, DesignSpec current)
     {
         var k = ShapeToAnalytic.From(sh);                 // 三条近似由它生成，原样带出去
         // 板厚来自**图纸**（真实输入）；其余优化变量由 Choose 覆盖成 StartPoint 的起点
@@ -161,13 +161,13 @@ public static class ShapeSeed
         c.Seed.TabLengthMm = k.TabLengthMm;
         c.FromDrawing = true;
         // ★★ 2026-08-25 更正：此处原本**整段覆盖** Choose 的申报，写的是
-        //   「来自定案档（图纸给不了）：舌保温／环倍率／管保温／控温点／压接段」——
+        //   「来自设计记录（图纸给不了）：舌保温／环倍率／管保温／控温点／压接段」——
         //   而 Choose 现在已把舌保温/环倍率/管保温/夹持覆盖成 StartPoint 的起点，
-        //   真正还来自定案档的只剩**控温点／压接段／圆角／环宽**。
+        //   真正还来自设计记录的只剩**控温点／压接段／圆角／环宽**。
         //   ⇒ 那句话变成了**假的**，而且它把**对的**那段申报挤掉了。
         //   现在：图纸那部分**加在** Choose 的申报**前面**，不覆盖它。
         c.Note =
-            "种子：**.3dm 图纸**（不是定案档）" + Environment.NewLine
+            "种子：**.3dm 图纸**（不是设计记录）" + Environment.NewLine
           + "  来自图纸：盘Ø " + k.DiscDiameterMm.ToString("0.0")
           + "　舌长 " + k.TabLengthMm.ToString("0.0")
           + "　舌半宽 " + k.TabHalfWidthMm.ToString("0.0")

@@ -7,10 +7,10 @@ namespace PtOptimize.UI;
 /// <summary>
 /// 使用说明页：WebView2 渲染的**图文**说明。
 ///
-/// ★ 图不是画好的图片，是**从 <see cref="FinalDesign"/> 实时生成的 SVG**。
+/// ★ 图不是画好的图片，是**从 <see cref="DesignSpec"/> 实时生成的 SVG**。
 ///   理由和整个项目的其余部分一样：图片一旦静态化，就成了「同一个数存两处」——
-///   定案值一改，图还留在旧构型上，而它看起来完全正常（HANDOVER §1.8 最常见的失效）。
-///   现在切换定案档，图随之重画，两者不可能漂开。
+///   设计记录值一改，图还留在旧构型上，而它看起来完全正常（HANDOVER §1.8 最常见的失效）。
+///   现在切换设计记录，图随之重画，两者不可能漂开。
 ///
 /// WebView2 未装运行时的机器不会崩：本页给出提示并指向 docs/APP使用说明书.md，
 /// 其余功能不受影响。
@@ -41,11 +41,11 @@ public sealed class ManualPage : TabPage
         Padding = new Padding(2);
 
         var tool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, Font = UiScale.Ui() };
-        tool.Items.Add(new ToolStripLabel("图按定案档实时生成"));
+        tool.Items.Add(new ToolStripLabel("图按设计记录实时生成"));
         tool.Items.Add(_caseBox);
         RefillCaseBox();
         _caseBox.SelectedIndexChanged += (_, _) => { if (!_refilling) Render(); };
-        FinalDesign.Reloaded += OnFinalDesignsReloaded;
+        DesignSpec.Reloaded += OnDesignSpecsReloaded;
 
         var open = new ToolStripButton("打开 Markdown 版")
         { DisplayStyle = ToolStripItemDisplayStyle.Text };
@@ -109,7 +109,7 @@ public sealed class ManualPage : TabPage
     {
         if (_web.CoreWebView2 == null) return;
         int i = _caseBox.SelectedIndex;
-        var fd = FinalDesign.All[Math.Clamp(i, 0, FinalDesign.All.Length - 1)];
+        var fd = DesignSpec.All[Math.Clamp(i, 0, DesignSpec.All.Length - 1)];
 
         if (_tempDir.Length == 0)
         {
@@ -122,7 +122,7 @@ public sealed class ManualPage : TabPage
     }
 
     // ════════════════════════════════════════════════════════════════════
-    //  SVG：全部按 FinalDesign 的实际尺寸画，标注也取自它
+    //  SVG：全部按 DesignSpec 的实际尺寸画，标注也取自它
     // ════════════════════════════════════════════════════════════════════
 
     // ════════════════════════════════════════════════════════════════════
@@ -328,7 +328,7 @@ public sealed class ManualPage : TabPage
     }
 
     /// <summary>法兰平面图（板面 = XZ 平面，与 3DM 的方位约定一致）。</summary>
-    private static string SvgPlate(FinalDesign fd)
+    private static string SvgPlate(DesignSpec fd)
     {
         double R = fd.DiscRadiusMm, h = fd.HoleRadiusMm, w = fd.TabHalfWidthMm,
                L = fd.TabLengthMm, fr = fd.TabFilletMm;
@@ -415,7 +415,7 @@ public sealed class ManualPage : TabPage
     /// </summary>
     // ⚠ 格式串只许用 0/# 作占位符。写 "0.1" 时 .NET 把 1 当**字面量**、
     //   小数点被吃掉：0.8 打成 "11"、31.6 打成 "321"。这个错今天犯了三次。
-    private static string SvgIso(FinalDesign fd, int plate)
+    private static string SvgIso(DesignSpec fd, int plate)
     {
         double h = fd.HoleRadiusMm, R = fd.DiscRadiusMm, wall = fd.WallMm;
         double r1 = fd.RingRadiiMm[0], r2 = fd.RingRadiiMm[1];
@@ -522,7 +522,7 @@ public sealed class ManualPage : TabPage
         return sb.ToString();
     }
 
-    private static string SvgSection(FinalDesign fd, int plate)
+    private static string SvgSection(DesignSpec fd, int plate)
     {
         double h = fd.HoleRadiusMm, R = fd.DiscRadiusMm, wall = fd.WallMm;
         double r1 = fd.RingRadiiMm[0], r2 = fd.RingRadiiMm[1];
@@ -626,7 +626,7 @@ public sealed class ManualPage : TabPage
     }
 
     /// <summary>整线布置：三段管 + 四片法兰（侧视，管轴 = Y）。</summary>
-    private static string SvgLine(FinalDesign fd)
+    private static string SvgLine(DesignSpec fd)
     {
         const double segLen = 300, tubeId = 50;
         double ro = tubeId / 2 + fd.WallMm, R = fd.DiscRadiusMm, L = fd.TabLengthMm;
@@ -687,19 +687,19 @@ public sealed class ManualPage : TabPage
     /// 生成说明书 HTML。**public 是故意的**：`--cli --manual` 要能不开 GUI 就导出，
     /// 否则「图对不对」只能靠肉眼开窗口看 —— 那不是可复核的验证。
     /// </summary>
-    public static string BuildHtml(FinalDesign fd, DesignInputs? live = null)
+    public static string BuildHtml(DesignSpec fd, DesignInputs? live = null)
     {
-        // ★ 判据值**只从 FinalDesign 取**，本页不再自己抄一份。
+        // ★ 判据值**只从 DesignSpec 取**，本页不再自己抄一份。
         //
-        // 这里原来硬编码了两档各五个数，抄的是定案当天（08-15）那次运行 ——
-        // 而收敛度量与 ②″ 限值都是在那之后才改的。08-16 用「▶ 复现定案」重跑发现
+        // 这里原来硬编码了两档各五个数，抄的是设计记录当天（08-15）那次运行 ——
+        // 而收敛度量与 ②″ 限值都是在那之后才改的。08-16 用「▶ 复现设计记录」重跑发现
         // ②′ 与 ③ 两项对不上，**且两档之间的大小关系是反的**：
         // 抄的说 0.8 档 ③ 更小（5.38 < 6.29），实算是 0.8 档 ③ 更大（6.18 > 5.30）。
         // 判定结论没变（两档仍全过），但「哪一档在 ③ 上更宽裕」这句话说反了。
         // ⇒ 又一次「同一个数存两处然后悄悄漂开」。收敛到一处才不会再犯。
         // ⚠ 2026-08-17 判据从五条加到**七条**（⑤ 装配、⑥ 可造）。
         //   本表若不跟着加，说明书就会展示一个「五条全过」的漂亮结论 ——
-        //   而正是 ⑤ 把旧定案判掉的。**说明书漏一条判据，比程序漏一条更难被发现**：
+        //   而正是 ⑤ 把旧设计记录判掉的。**说明书漏一条判据，比程序漏一条更难被发现**：
         //   它有排版、有图，看起来就是答案。
         double tangentM = Math.Sqrt(Math.Max(0, fd.DiscRadiusMm * fd.DiscRadiusMm
                         - Math.Min(fd.TabHalfWidthMm, fd.DiscRadiusMm)
@@ -764,7 +764,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
 </style></head><body><div class=""wrap"">");
 
         sb.Append($"<h1>Pt_Optimize 使用说明</h1>");
-        sb.Append($"<p class=\"lede\">当前定案档：<b>{fd.Name}</b>　合计 <b>{fd.TotalMassG:0} g</b>" +
+        sb.Append($"<p class=\"lede\">当前设计记录：<b>{fd.Name}</b>　合计 <b>{fd.TotalMassG:0} g</b>" +
                   $"（管 {fd.TubeMassG:0} + 法兰 {fd.FlangeMassG:0}）<br>" +
                   $"咬住它的：{fd.Binding}</p>");
 
@@ -780,9 +780,9 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                       "<br>下面的图与判据表照常按本档画 —— <b>它们描述的是一个装不上的形状</b>，" +
                       "留在这里是为了让「哪里不成立」看得见，不是为了给它背书。</div>");
 
-        sb.Append("<div class=\"note\"><b>下面所有图都是按当前定案档实时画的。</b>" +
+        sb.Append("<div class=\"note\"><b>下面所有图都是按当前设计记录实时画的。</b>" +
                   "换档，图跟着变。图片一旦静态化就成了「同一个数存两处」——" +
-                  "定案值一改，图还留在旧构型上，而它看起来完全正常。</div>");
+                  "设计记录值一改，图还留在旧构型上，而它看起来完全正常。</div>");
 
         // ════════════════════════════════════════════════════════════════
         //  操作说明（用户 2026-08-16：「APP 程式的操作说明放入 APP 内」）
@@ -791,12 +791,12 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         // ════════════════════════════════════════════════════════════════
         sb.Append("<h2>1. 上手：三件最常做的事</h2>");
         sb.Append("<table><tr><th>你想做什么</th><th>怎么做</th><th>看哪里</th></tr>" +
-                  "<tr><td><b>看定案档长什么样、用多少铂</b></td>" +
-                  $"<td>{Pg(StageId.定案档)}页 → 选<b>定案档 ▾</b> → 点{B("final.load")}"
+                  "<tr><td><b>看设计记录长什么样、用多少铂</b></td>" +
+                  $"<td>{Pg(StageId.设计记录)}页 → 选<b>设计记录 ▾</b> → 点{B("final.load")}"
                   + $" →{Pg(StageId.整线核算)}页点{B("core.runLine")}</td>" +
                   "<td>下方判据表（先看<b>裕度</b>列）</td></tr>" +
                   "<tr><td><b>出图纸交给加工</b></td>" +
-                  $"<td>{Pg(StageId.定案档)}页选定案档 → 点{B("final.export3dm")}（同一页）</td>" +
+                  $"<td>{Pg(StageId.设计记录)}页选设计记录 → 点{B("final.export3dm")}（同一页）</td>" +
                   "<td>输出框里的 round-trip 与质量对账</td></tr>" +
                   "<tr><td><b>改个参数试试</b></td>" +
                   "<td>改左侧参数表或本页控件 → <b>核算整线</b>（分钟级，可取消）</td>" +
@@ -809,16 +809,16 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   $"<td>{Pg(StageId.定尺寸)}页点{B("shape.search")}（有进度条，随时可取消）</td>" +
                   "<td>逐个形状一行结果；结束后最轻的那个<b>写回控件</b></td></tr></table>");
         // ★ 2026-08-17（1b）改写。原文说「有两项控件表达不了、核算整线算的是另一片法兰」——
-        //   1b 之后解析模式与「复现定案」走同一个几何构造器，界面接线测试每次都验
-        //   「页面路径复现定案记录值」（差 0.000），旧话已经不成立。
+        //   1b 之后解析模式与「复现设计记录」走同一个几何构造器，界面接线测试每次都验
+        //   「页面路径复现设计记录记录值」（差 0.000），旧话已经不成立。
         //   ⚠ 留着旧话比没有话更糟：它会让人以为页面上的数不可信而绕开去用别的路径。
         sb.Append("<div class=\"note\"><b>「核算整线」走的是页面上的参数，" +
-                  "但几何用的是<u>和定案完全同一套</u>构造器</b>（2026-08-17 起）。" +
-                  "所以「载入定案 → 核算整线」<b>能直接复现定案数字</b>。<br>" +
+                  "但几何用的是<u>和设计记录完全同一套</u>构造器</b>（2026-08-17 起）。" +
+                  "所以「载入设计记录 → 核算整线」<b>能直接复现设计记录数字</b>。<br>" +
                   "本页没有控件的几项（渐变环、逐片舌保温、压接段、舌根圆角、角焊缝、等宽舌片）" +
-                  "按定案值参与求解，<b>每次核算完输出框都会把实际用值逐条列出来</b> —— " +
+                  "按设计记录值参与求解，<b>每次核算完输出框都会把实际用值逐条列出来</b> —— " +
                   "看不见又在起作用的量，是最容易出事的地方。<br>" +
-                  "「▶ 复现定案」仍然保留：它<b>完全不读页面控件</b>，用于排除「页面被改过而不自知」。</div>");
+                  "「▶ 复现设计记录」仍然保留：它<b>完全不读页面控件</b>，用于排除「页面被改过而不自知」。</div>");
 
         sb.Append("<h2>2. 界面在哪、按钮做什么</h2>");
         // ⚠ 图注必须跟着阶段轨改（2026-08-20）：主工具条**整条没有了**，
@@ -874,7 +874,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         // 用户看到的是一条横排十个按钮，没有任何分组提示。而工具条上那**两条分隔线**
         // 其实已经把它们分成了三组，分组恰恰就是「何时用哪个」的答案：
         //   左组不读页面控件，中组读页面控件，右组是工具。
-        // 这条区别正是当初不得不单独做「▶ 复现定案」的原因 —— 说明书必须先讲清它。
+        // 这条区别正是当初不得不单独做「▶ 复现设计记录」的原因 —— 说明书必须先讲清它。
         // ════════════════════════════════════════════════════════════════
         // ⚠ 2026-08-17：这里原来写「照着工具条上的分隔线分组」。用户当场质疑，去抓 UI 核实：
         //   分隔线**结构上确实有三条**、位置也对，但默认渲染下只是一条 1 px 细线，
@@ -882,38 +882,38 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         //   ⇒ 改成直接点名按钮。分组的依据写在按钮名字上，不写在像素上。
         sb.Append("<h3>工具条分三组（按名字记，不必去找分隔线）</h3>");
         sb.Append("<div class=\"note\"><b>先记住这一条，其余都好办：</b><br>" +
-                  "<b>「定案」两个字打头的那几个 —— 不读页面上的控件</b>" +
-                  "（定案档 ▾ / ▶ 复现定案 / 导出定案 3DM / 载入定案）：" +
-                  "它们只认 <code>FinalDesign</code> 里存的定案值，你在页面上改什么都影响不了它们。<br>" +
+                  "<b>「设计记录」两个字打头的那几个 —— 不读页面上的控件</b>" +
+                  "（设计记录 ▾ / ▶ 复现设计记录 / 导出设计记录 3DM / 载入设计记录）：" +
+                  "它们只认 <code>DesignSpec</code> 里存的设计记录值，你在页面上改什么都影响不了它们。<br>" +
                   "<b>中间三个 —— 读页面控件</b>（核算整线 / 自动定厚 / ◇ 搜形状）：算的是你现在填的这组参数。<br>" +
                   "<b>最后两个是工具</b>（分析几何变数 / 导出本页 3DM）。<br><br>" +
                   "所以「同一件事两个按钮给的数不一样」通常不是 bug，是你在拿<b>左组</b>的答案" +
                   "跟<b>中组</b>的答案比 —— 而它们的输入本来就不同。" +
-                  "（2026-08-17 起两组的<b>几何构造器已经统一</b>，只要页面参数等于定案值，两边就该给同一个数；" +
+                  "（2026-08-17 起两组的<b>几何构造器已经统一</b>，只要页面参数等于设计记录值，两边就该给同一个数；" +
                   "给不出同一个数，就说明页面上有控件被改过。）</div>");
 
         sb.Append("<h3>按「我想做什么」查</h3>");
         sb.Append("<table><tr><th>我想…</th><th>点哪个</th><th>看哪里</th></tr>" +
-                  "<tr><td>看现在的定案长什么样、用多少铂</td>" +
-                  "<td>定案档 ▾ → <b>▶ 复现定案</b></td><td>判据表；这条路不受页面影响，最可信</td></tr>" +
-                  "<tr><td>把定案参数调出来当起点改</td>" +
-                  "<td><b>载入定案</b>（灌进控件）→ 再改</td><td>输出框会列出本页没有控件的那几项用了什么值</td></tr>" +
+                  "<tr><td>看现在的设计记录长什么样、用多少铂</td>" +
+                  "<td>设计记录 ▾ → <b>▶ 复现设计记录</b></td><td>判据表；这条路不受页面影响，最可信</td></tr>" +
+                  "<tr><td>把设计记录参数调出来当起点改</td>" +
+                  "<td><b>载入设计记录</b>（灌进控件）→ 再改</td><td>输出框会列出本页没有控件的那几项用了什么值</td></tr>" +
                   "<tr><td>我改了几个参数，想知道过不过</td>" +
                   "<td><b>核算整线</b></td><td>判据表；<b>最上面先给判定与「先解决哪一条」</b></td></tr>" +
                   "<tr><td><b>给一个形状，让 APP 自己定厚并说出好坏</b></td>" +
                   "<td><b>自动定厚</b></td><td><b>形状体检报告</b>（§5.1）：能不能造能不能用 → 优点 → 缺点 → 代价</td></tr>" +
                   "<tr><td><b>连盘径/舌宽都让 APP 去搜</b></td>" +
                   "<td><b>◇ 搜形状</b></td><td>每算完一个形状出一行；结束后最轻的那个写回控件</td></tr>" +
-                  "<tr><td>出加工图</td><td>定案构型用<b>导出定案 3DM</b>；本页构型用<b>导出本页 3DM</b></td>" +
+                  "<tr><td>出加工图</td><td>设计记录构型用<b>导出设计记录 3DM</b>；本页构型用<b>导出本页 3DM</b></td>" +
                   "<td>输出框里的逐件质量对账（差应在 ±1 % 内，对不上就别出图）</td></tr>" +
                   "<tr><td>想知道某个尺寸改一点会往哪边走</td><td><b>分析几何变数</b></td>" +
                   "<td>各几何量对判据的斜率（只测不调）</td></tr></table>");
 
         sb.Append("<h3>典型顺序（第一次用就照这个走）</h3>");
         sb.Append("<table class=\"nw\"><tr><th>步</th><th>做什么</th><th>为什么是这个顺序</th></tr>" +
-                  "<tr><td>1</td><td>定案档 ▾ → <b>▶ 复现定案</b></td>" +
+                  "<tr><td>1</td><td>设计记录 ▾ → <b>▶ 复现设计记录</b></td>" +
                   "<td>先看一眼「已知可行的答案」长什么样，后面才有比较的基准</td></tr>" +
-                  "<tr><td>2</td><td><b>载入定案</b></td><td>把那组参数灌进控件，从一个**已知可行**的点出发改</td></tr>" +
+                  "<tr><td>2</td><td><b>载入设计记录</b></td><td>把那组参数灌进控件，从一个**已知可行**的点出发改</td></tr>" +
                   "<tr><td>3</td><td>改盘径 / 舌宽 / 管壁 …</td>" +
                   "<td><b>舌长会自己顶到装配下界</b>，不用管它；改完停手约 1.5 秒会自动重算</td></tr>" +
                   "<tr><td>4</td><td><b>自动定厚</b></td><td>让求解器把三个旋钮调到位，并出体检报告</td></tr>" +
@@ -926,7 +926,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "<td>当前是 <b>.3dm 几何模式</b>。形状由图纸给定，不是可搜索的自由度 ⇒ "
                   + "该命令<b>不适用</b>，已按状态禁用（鼠标停上去有说明）。"
                   + "2026-08-23 之前它是「能点但点了只弹一句话」—— 那更糟</td></tr>" +
-                  "<tr><td>「复现定案」与「核算整线」给的数不一样</td>" +
+                  "<tr><td>「复现设计记录」与「核算整线」给的数不一样</td>" +
                   "<td>页面上有控件被改过（两者的几何构造器已统一，参数相同就该同数）</td></tr>" +
                   "<tr><td>选了「（已作废）…」那两档，导出 3DM 没反应</td>" +
                   "<td><b>故意拦住的</b>。已声明失效的档不许出图 —— 输出框会说明为什么失效</td></tr>" +
@@ -938,7 +938,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         // ★★ 2026-08-23：这张表改成**从 Flow 生成**。
         //   在此之前它是手写的，而它自己的注释就写着「按钮表是用户最常照着操作的一张表 ——
         //   它一旦落后，用户会去点一个不存在的按钮，或者以为某个按钮还在做它三个月前做的事」。
-        //   而事实是它**已经落后了**：新增的「另存为定案档」根本不在表里。
+        //   而事实是它**已经落后了**：新增的「另存为设计记录」根本不在表里。
         //   ⇒ 改成迭代 Flow.Commands，按阶段分组。谁加按钮、谁改名，这张表自动跟上。
         sb.Append("<table class=\"nw\"><tr><th>在哪一格</th><th>按钮</th><th>做什么</th><th>耗时</th></tr>");
         foreach (var st in Flow.Stages.OrderBy(x => x.Order))
@@ -955,7 +955,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         }
         sb.Append("</table>");
         sb.Append("<p style=\"font-size:.88rem\"><b>三条通用的：</b>" +
-                  "① 会跑很久的按钮（核算整线／自动定厚／搜形状／复现定案）点下去会<b>变成「取消」</b>，" +
+                  "① 会跑很久的按钮（核算整线／自动定厚／搜形状／复现设计记录）点下去会<b>变成「取消」</b>，" +
                   "再点一次就是中止，不必等；" +
                   "<b>其余会起算的命令这期间一律变灰</b>——三个分钟级求解同时跑，" +
                   "抢 CPU 还互相覆盖结果，分不清哪个数是谁的；" +
@@ -1007,9 +1007,9 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                 + "②′ 回正、②″ 落进 ±5 K。"
                 + "<b>交付前那张表与第 2 步逐字相同</b> —— "
                 + "「你看到的表」和「要出的图」是同一个设计，这一条本身也在走查里验。"
-                + "<br>⚠ 3569 g 比现役定案（0.8 档 3547 g）<b>略重</b>："
+                + "<br>⚠ 3569 g 比现役设计记录（0.8 档 3547 g）<b>略重</b>："
                 + "定尺寸器是从<b>开箱默认</b>那个很差的起点出发的，"
-                + "它保证「过」，不保证「比定案更省」。要更省得从更好的起点重跑，或改形状。</div>");
+                + "它保证「过」，不保证「比设计记录更省」。要更省得从更好的起点重跑，或改形状。</div>");
         sb.Append("<h4>这一版修掉的两个坑（都是跟着提示走才撞得到的）</h4>");
         sb.Append("<table class=\"nw\"><tr><th>坑</th><th>你会看到什么</th><th>已修</th></tr>"
                 + "<tr><td><b>提示在「自动定厚」上死循环</b></td>"
@@ -1020,7 +1020,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                 + "<tr><td><b>「定尺寸 → 回 ③ 重解」两步一循环</b></td>"
                 + "<td>定尺寸全过 → 重解又不过（②′ 掉负）→ 再定尺寸又全过 → …</td>"
                 + "<td>定尺寸用<b>三个</b>旋钮（板厚／舌保温／环倍率），而本页原先只带回板厚；"
-                + "重解时另外两个被丢回定案值，②′ 立刻掉负。"
+                + "重解时另外两个被丢回设计记录值，②′ 立刻掉负。"
                 + "现在三个都带回本页 ⇒ 重解<b>复现同一张表</b>，路径收得了尾</td></tr>"
                 + "</table>");
         sb.Append("<div class=\"note\">"
@@ -1034,18 +1034,18 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                 + "「命令存在／点得动／不打转／蓝键切得到那一页／蓝键闪得到那个按钮」。</div>");
 
 
-        sb.Append("<h3>定案档现在是**文件**，可以自己存</h3>");
+        sb.Append("<h3>设计记录现在是**文件**，可以自己存</h3>");
         sb.Append("<div class=\"note\">"
-                + "以前把一个解落成定案档，要人工把十几个数抄进 <code>Core/FinalDesign.cs</code>，"
+                + "以前把一个解落成设计记录，要人工把十几个数抄进 <code>Core/DesignSpec.cs</code>，"
                 + "其中五个判据记录值还得从判据表里逐个读——抄错一位要跑 8 分钟自检才知道。<br>"
-                + "现在「定案档」页有 <b>另存为定案档</b>：把当前这个解写成 "
+                + "现在「设计记录」页有 <b>另存为设计记录</b>：把当前这个解写成 "
                 + "<code>finaldesigns/*.fd.json</code>，所有数由程序填。"
                 + "<b>只有判据全过、且参数没再动过时才可用</b>——"
                 + "不成立的设计不该有一个「能落档」的形态。<br>"
                 + "存完还要做三件事：① 把 <code>binding</code> 填上（什么咬住了它，那是工程判断，程序算不出）；"
                 + "② 跑 <code>--cli --selfcheck</code>，A 段这一档的差须为 0.000；"
                 + "③ 提交进 git——档是回归基准，变更要被 diff 记录。<br>"
-                + "存完新档<b>立刻</b>出现在两个页面的定案档下拉里，不用重启"
+                + "存完新档<b>立刻</b>出现在两个页面的设计记录下拉里，不用重启"
                 + "（2026-08-23 之前要重启——界面说「已写出」而下拉里找不到它，"
                 + "看着就像没存上）。"
                 + "读档失败不会静默跳过：自检门会把它算作失败——少一个档就是少一组判据。</div>");
@@ -1054,7 +1054,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         sb.Append("<div class=\"note\">"
                 + "整线链上有一批参数<b>根本不看参数表</b>：有的被 ③ 页控件接管，有的被求解器强制取值。"
                 + "所以分类名带了链号——<code>1 A·B 粗算</code>…<code>6 C 整线</code> 是真正生效的；"
-                + "而 <b><code>8 ✗ 被页面/定案档接管</code></b> 与 <b><code>9 ✗ 对整线链无效</code></b> "
+                + "而 <b><code>8 ✗ 被页面/设计记录接管</code></b> 与 <b><code>9 ✗ 对整线链无效</code></b> "
                 + "两组，在这里改了对「③ 整线核算」<b>没有影响</b>——点中任一项，下方会说明是谁接管了它。<br>"
                 + "⚠ 这些项<b>没有被隐藏</b>：藏起来会让没标注到的参数静默消失，"
                 + "而「看不见又在起作用」比「看得见但写着无效」危险得多。</div>");
@@ -1093,7 +1093,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "<tr><td><b>分段核算</b></td><td>逐段填温度／水头／牌号／壁厚，出强度与铂重（<b>解析、即时</b>）。" +
                   "「核算法兰」把法兰算进来才是可交付的总铂</td></tr>" +
                   "<tr><td><b>轴向剖面</b></td><td>单段解的温度沿轴分布（随 F5 刷新）</td></tr>" +
-                  "<tr><td><b>使用说明</b></td><td>本页。工具条上可切定案档，图跟着重画</td></tr></table>");
+                  "<tr><td><b>使用说明</b></td><td>本页。工具条上可切设计记录，图跟着重画</td></tr></table>");
         sb.Append($"<div class=\"note\"><b>{Pg(StageId.粗算)}是解析粗算，{Pg(StageId.整线核算)}是耦合数值解。</b>" +
                   $"两者数不一样很正常 —— 前者不解温度场。<b>可交付的数以{Pg(StageId.整线核算)}为准。</b></div>");
 
@@ -1192,7 +1192,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "<tr><td><b>一、能不能造能不能用</b></td><td>七条硬安全线 + 板厚 vs 工艺下界</td>" +
                   "<td><b>不过就到此为止</b>，后面完全不谈铂重。<br>" +
                   "反例就在本项目里：舌长 90 那版热学五条全过、铂重最轻，而铜排根本装不上</td></tr>" +
-                  "<tr><td>二、优化后</td><td>三个旋钮的收敛值 + 总铂 + 与定案的差</td><td>—</td></tr>" +
+                  "<tr><td>二、优化后</td><td>三个旋钮的收敛值 + 总铂 + 与设计记录的差</td><td>—</td></tr>" +
                   "<tr><td><b>三、抽热窗口</b></td><td>四片的抽热 D 落在 0–4.2 W 的哪一段</td>" +
                   "<td>②′ 与 ③ 是<b>同一个量的两侧</b>（实测 ③ = 2.40·D）。" +
                   "偏低那侧是「热往管里灌」（烧断），偏高那侧是「把管根抽出深坑」</td></tr>" +
@@ -1211,7 +1211,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
 
         // ★★ 限值一律**从代码取**，本表不再自己抄一份（2026-08-24）。
         //
-        // 本方法开头那句「判据值只从 FinalDesign 取，本页不再自己抄一份」，
+        // 本方法开头那句「判据值只从 DesignSpec 取，本页不再自己抄一份」，
         // 当时只兑现了**实测值**那一半；**限值**这一半照旧是写死的字面量。
         // 而「管许用电流密度」在参数表里就是可改的（DisplayName 摆在那儿）——
         // 工程师一改参数，说明书当场变成假话，而它有排版有图，看起来就是答案。
@@ -1230,7 +1230,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   $"<tr><td><b>⑤ 舌片自由段</b></td><td class=\"n\">≥ {GeometryScreen.FreeTabMinDefaultMm:0} mm</td>" +
                   "<td><b>业主 2026-08-17</b>：现场铜排长 100／宽 60–80 mm，自由段基本留 100。" +
                   "「这些是参考值并非绝对，铜排尺寸可以定制」<br>" +
-                  "⚠ 这条判据是 2026-08-17 才加的，而它<b>当场把原来的定案判掉了</b>" +
+                  "⚠ 这条判据是 2026-08-17 才加的，而它<b>当场把原来的设计记录判掉了</b>" +
                   "（舌长 90 ⇒ 自由段只有 24 mm，铜排装不上）</td></tr>" +
                   "<tr><td><b>⑥ 圆盘盖得住管孔＋焊脚</b></td><td class=\"n\">≥ 0</td>" +
                   "<td>可造性：盘半径 − 管孔半径 − 焊脚（= max(板厚, 壁厚)）。" +
@@ -1249,7 +1249,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "②′ 管孔净流入永远先红，升成硬判据改变不了任何一个判定</td></tr>" +
                   $"<tr><td>· 局部热稳定</td><td class=\"n\">&gt; 1.0 ×</td>" +
                   "<td>精确物理：J_stab ÷ J_实际（逐格取**最不稳定**点，不是最热点）。" +
-                  "同上，现为参考量。定案两档实测 1.9–2.0×</td></tr>" +
+                  "同上，现为参考量。设计记录两档实测 1.9–2.0×</td></tr>" +
                   $"<tr><td>· 升温期法兰−管峰值</td><td class=\"n\">{lim.RampRateKPerH:0} K/h 下 215 K</td>" +
                   "<td><b>现场升温工况</b>（温控、空管）下「法兰温度 − 管温」的全程最大值。" +
                   "<b>215 不是通过线，是现役基准</b> —— 业主 2026-08-25 确认现场就是这个量级，" +
@@ -1278,12 +1278,12 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "曾经用 δ 当收敛判据：δ=1.36 时报「5 轮收敛」，而真实剩余误差约 34 K。" +
                   "界面在判据表上方打这一行；<b>未收敛时会打「下面每个数都不可引用」——那是字面意思。</b></p>");
 
-        sb.Append("<h2>7. 定案 3DM</h2>");
-        sb.Append("<p>「导出定案 3DM」或命令行 <code>--cli --make3dm</code>。" +
+        sb.Append("<h2>7. 设计记录 3DM</h2>");
+        sb.Append("<p>「导出设计记录 3DM」或命令行 <code>--cli --make3dm</code>。" +
                   "内容：三段铂管 + 四片法兰（板身 / 环外级 / 环内级 / <b>角焊缝</b>）+ 压接段参考线。<br>" +
                   "<b>图层按片分，不按类型分</b> —— 交付件要能单独调出某一片；" +
                   "更硬的理由是厚度探针沿 Y 打射线，而四片正是沿 Y 排成一列，" +
-                  "同层会被一次穿透、厚度<b>加起来</b>（当时实测 10.450 = 2.11+3.40+3.18+1.76，那是<b>出事那天的板厚</b>，不是现在的定案值）。</p>");
+                  "同层会被一次穿透、厚度<b>加起来</b>（当时实测 10.450 = 2.11+3.40+3.18+1.76，那是<b>出事那天的板厚</b>，不是现在的设计记录值）。</p>");
         sb.Append("<h3>写完立刻自校，三条都过才算交付件</h3><table>" +
                   "<tr><th>校验</th><th>判据</th><th>它防的是什么</th></tr>" +
                   "<tr><td>round-trip 方位</td><td>从磁盘读回，沿 Y 的跨度 = 板厚</td>" +
@@ -1300,7 +1300,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
 
         sb.Append("<h2>8. 三条铁律</h2><ol>" +
                   "<li><b>判据只有一个来源</b>：<code>LineRunner.Judge</code>。界面/命令行/报告只读结果，不得自己重算。</li>" +
-                  "<li><b>几何只有一个来源</b>：<code>FinalDesign</code>。曾经辅助命令各钉着几代前的几何，跑得出漂亮的数——但那是另一个设计的数。</li>" +
+                  "<li><b>几何只有一个来源</b>：<code>DesignSpec</code>。曾经辅助命令各钉着几代前的几何，跑得出漂亮的数——但那是另一个设计的数。</li>" +
                   "<li><b>判据不允许消失</b>：只能过/不过/无法判定，<b>无法判定一律不算通过</b>。</li></ol>");
 
         sb.Append("<h2>9. 已知坑（不看这节会重犯）</h2>");
@@ -1323,7 +1323,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         sb.Append("<h2>10. 常用命令行</h2><table><tr><th>命令</th><th>用途</th></tr>" +
                   "<tr><td class=\"n\">--cli --final2</td><td>可行性阶梯：管壁从宽到窄逐档定尺寸</td></tr>" +
                   "<tr><td class=\"n\">--cli --busbarplan --wall 0.6</td><td>铜排尺寸与位置（自检整线是否全过）</td></tr>" +
-                  "<tr><td class=\"n\">--cli --make3dm</td><td>两档定案 3DM + round-trip 校验</td></tr>" +
+                  "<tr><td class=\"n\">--cli --make3dm</td><td>两档设计记录 3DM + round-trip 校验</td></tr>" +
                   "<tr><td class=\"n\">--cli --hotspot --wall 0.6</td><td>峰值位置实测（坐标、局部 J、局部厚度）</td></tr>" +
                   "<tr><td class=\"n\">--cli --manual [目录]</td><td>不开 GUI 导出本说明书 HTML（每档一份，样式与图全内嵌，可跨版本 diff）</td></tr>" +
                   "</table><p style=\"font-size:.88rem\"><code>--wall</code> 给了不认识的值会<b>抛异常</b>，不会静默回退。</p>");
@@ -1354,7 +1354,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
     }
 
     /// <summary>
-    /// 定案档下拉重填，**按档名保住选中项**（新档追加在后面，下标会移位）。
+    /// 设计记录下拉重填，**按档名保住选中项**（新档追加在后面，下标会移位）。
     ///
     /// 本页的下拉挂着 <c>Render()</c>，清空 Items 会连带触发它 ——
     /// 用 <c>_refilling</c> 抑制，重填完只渲染一次。
@@ -1370,15 +1370,15 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         try
         {
             _caseBox.Items.Clear();
-            foreach (var fd in FinalDesign.All) _caseBox.Items.Add(fd.Name);
+            foreach (var fd in DesignSpec.All) _caseBox.Items.Add(fd.Name);
             int i = _caseBox.Items.IndexOf(keep);
-            if (i < 0) i = Array.IndexOf(FinalDesign.All, FinalDesign.Current);
+            if (i < 0) i = Array.IndexOf(DesignSpec.All, DesignSpec.Current);
             _caseBox.SelectedIndex = Math.Max(0, i);
         }
         finally { _refilling = false; }
     }
 
-    private void OnFinalDesignsReloaded(object? sender, EventArgs e)
+    private void OnDesignSpecsReloaded(object? sender, EventArgs e)
     {
         if (IsDisposed) return;
         if (IsHandleCreated && InvokeRequired) { BeginInvoke(new Action(Refresh2)); return; }
@@ -1390,7 +1390,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
     /// <summary>静态事件不退订 = 旧实例被永远拿着，见 LineDesignPage 同名方法的说明。</summary>
     protected override void Dispose(bool disposing)
     {
-        if (disposing) FinalDesign.Reloaded -= OnFinalDesignsReloaded;
+        if (disposing) DesignSpec.Reloaded -= OnDesignSpecsReloaded;
         base.Dispose(disposing);
     }
 }

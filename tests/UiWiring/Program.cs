@@ -82,7 +82,7 @@ class UiWiringTests {
         if (ifw >= 0 && ifw + 1 < args.Length)
         { Environment.ExitCode = Walk.Follow(args[ifw + 1]); return; }
         // `--searchshape [quick]`：驱动真的「◇ 搜形状」（用户 2026-08-25）
-        // `--repro <盘Ø> <舌长> <半宽> <管壁> [quick]`：从给定起点复现定案（用户 2026-08-25）
+        // `--repro <盘Ø> <舌长> <半宽> <管壁> [quick]`：从给定起点复现设计记录（用户 2026-08-25）
         int ir = Array.IndexOf(args, "--repro");
         if (ir >= 0 && ir + 4 < args.Length)
         {
@@ -192,7 +192,7 @@ class UiWiringTests {
             }
         }
 
-        Head("1 定案档下拉：切档**不该**触发整线重算");
+        Head("1 设计记录下拉：切档**不该**触发整线重算");
         int before = caseBox.SelectedIndex;
         caseBox.SelectedIndex = (before + 1) % caseBox.Items.Count;
         Pump(2200);
@@ -201,31 +201,31 @@ class UiWiringTests {
         Check("切档没有把输出框冲掉", !outBox.Text.Contains("参数已改"));
         caseBox.SelectedIndex = before;
 
-        Head("2 载入定案：控件被灌值，但不该连环触发");
-        M(page, "LoadFinalDesign");
+        Head("2 载入设计记录：控件被灌值，但不该连环触发");
+        M(page, "LoadDesignSpec");
         Pump(2200);
-        var fd = FinalDesign.All[Math.Max(0, caseBox.SelectedIndex)];
-        Check("壁厚被灌成定案值", (double)wall.Value == fd.WallMm, $"{wall.Value} vs {fd.WallMm}");
-        Check("板厚被灌成定案值",
+        var fd = DesignSpec.All[Math.Max(0, caseBox.SelectedIndex)];
+        Check("壁厚被灌成设计记录值", (double)wall.Value == fd.WallMm, $"{wall.Value} vs {fd.WallMm}");
+        Check("板厚被灌成设计记录值",
               Enumerable.Range(0, 4).All(i => Math.Abs((double)plate[i].Value - fd.TabThickMm[i]) < 1e-9));
-        Check("说明文字还在（没被预测块冲掉）", outBox.Text.Contains("已载入定案档"));
+        Check("说明文字还在（没被预测块冲掉）", outBox.Text.Contains("已载入设计记录"));
         Check("载入后没有自动开跑", F(page, "_cts") is null,
               F(page, "_cts") is null ? "" : "★ 载入即开跑，用户可能只是想看看数");
 
-        Head("3 说明书页：判据表要读 FinalDesign 的新值");
+        Head("3 说明书页：判据表要读 DesignSpec 的新值");
         // ⚠ 这里**不要再手抄期望值**。上一版写死了 3106 / 3.33 / 5.52，
-        //   2026-08-17 重解定案后三个数全变了，测试就成了「守着旧答案的门」——
+        //   2026-08-17 重解设计记录后三个数全变了，测试就成了「守着旧答案的门」——
         //   它会拦住正确的改动，而这正是 §1.8 那一族最擅长伪装的形态。
-        //   ⇒ 期望值一律从 FinalDesign 现取：测的是「说明书有没有跟上定案」，
-        //     不是「定案等不等于某个历史数字」。
-        var fdM = FinalDesign.W08;
+        //   ⇒ 期望值一律从 DesignSpec 现取：测的是「说明书有没有跟上设计记录」，
+        //     不是「设计记录等不等于某个历史数字」。
+        var fdM = DesignSpec.W08;
         string html = ManualPage.BuildHtml(fdM);
         Check($"含当前合计 {fdM.TotalMassG:0}", html.Contains(fdM.TotalMassG.ToString("0")));
         Check($"含当前板厚 {fdM.TabThickMm[1]:0.00}", html.Contains(fdM.TabThickMm[1].ToString("0.00")));
         Check($"③ 用的是当前值 {fdM.FlangeDipK:0.0}", html.Contains(fdM.FlangeDipK.ToString("0.00"))
                                                     || html.Contains(fdM.FlangeDipK.ToString("0.0")));
-        Check("已作废档不得被当成当前定案", fdM.Invalid.Length == 0,
-              fdM.Invalid.Length == 0 ? "" : "★ FinalDesign.W08 自己带着失效声明");
+        Check("已作废档不得被当成当前设计记录", fdM.Invalid.Length == 0,
+              fdM.Invalid.Length == 0 ? "" : "★ DesignSpec.W08 自己带着失效声明");
         // ★ 说明书必须跟上界面与判据（2026-08-17）。说明书落后比程序落后更难发现：
         //   它有排版、有图、有判据表，看起来就是答案。
         Check("判据表含 ⑤ 自由段", html.Contains("⑤ 舌片自由段"));
@@ -233,11 +233,11 @@ class UiWiringTests {
         Check("按钮表含「◇ 搜形状」", html.Contains("◇ 搜形状"));
         // ★★ 2026-08-23：说明书的「逐个按钮」表以前是**手写**的，而它自己的注释就警告过
         //   「一旦落后，用户会去点一个不存在的按钮」——事实是它**已经落后了**：
-        //   新增的「另存为定案档」根本不在表里。现在改成从 Flow 生成，并在这里守住：
+        //   新增的「另存为设计记录」根本不在表里。现在改成从 Flow 生成，并在这里守住：
         //   **Flow 里登记的每一个命令，说明书上都要出现。**
         {
             // ⚠ 必须**只在按钮表那一段里**找。头一版对全文搜，于是散文里提过的命令
-            //   也算「在表里」—— 注入「表里漏掉另存为定案档」竟然没红，
+            //   也算「在表里」—— 注入「表里漏掉另存为设计记录」竟然没红，
             //   因为另一节的说明文字里也有这四个字。断言得守它自称要守的那块地方。
             int tb = html.IndexOf("逐个按钮", StringComparison.Ordinal);
             int te = tb >= 0 ? html.IndexOf("</table>", tb, StringComparison.Ordinal) : -1;
@@ -263,7 +263,7 @@ class UiWiringTests {
         // ⚠ 只在**数据区**判旧值。说明书里有一段讲 2026-08-12 那次事故的文字，
         //   引的是「出事那天的板厚」2.11+3.40+3.18+1.76 —— 那是史料，不是当前值。
         //   上一版把整篇一起判，把史料当成了残留（测试写得比被测对象还粗）。
-        int cut = html.IndexOf("定案 3DM", StringComparison.Ordinal);
+        int cut = html.IndexOf("设计记录 3DM", StringComparison.Ordinal);
         string dataPart = cut > 0 ? html[..cut] : html;
         Check("数据区不含旧合计 3117", !dataPart.Contains("3117"));
         Check("数据区不含旧板厚 3.40", !dataPart.Contains("3.40"));
@@ -340,14 +340,14 @@ class UiWiringTests {
         }
 
         Head("9 装配下界：舌长低于「切点+压接+自由段」时必须**自己顶上去**");
-        // 为什么做成测试：定案的舌长 90 mm 装不下铜排，而它能长期存在，
+        // 为什么做成测试：设计记录的舌长 90 mm 装不下铜排，而它能长期存在，
         // 正是因为舌长在程序里是个谁都不核对的独立常数（memory: 舌长90是错误解）。
         // 这条测试的作用是：以后**任何人**把舌长改回一个装不下的值，界面都会当场顶回来。
         var discD = (NumericUpDown)F(page, "_discD")!;
         var tabLen = (NumericUpDown)F(page, "_tabLen")!;
         var tabW = (NumericUpDown)F(page, "_tabW")!;
         Set(page, "_suppressAuto", true);
-        discD.Value = 60m; tabW.Value = 15m; tabLen.Value = 90m;   // 正是旧定案那一组
+        discD.Value = 60m; tabW.Value = 15m; tabLen.Value = 90m;   // 正是旧设计记录那一组
         Set(page, "_suppressAuto", false);
         M(page, "ShowPrediction");
         Pump(300);
@@ -393,27 +393,27 @@ class UiWiringTests {
 
         Head("10 压接段长度：不能再用 3 mm 那个**数值默认值**");
         // 2026-08-17 抓到：本页从来没设过 BusbarClampLengthMm ⇒ 一直用 DesignInputs 的 3.0，
-        // 而定案是 40。少扣 37 mm 会让判据⑤「装不下」被判成「装得下」——
+        // 而设计记录是 40。少扣 37 mm 会让判据⑤「装不下」被判成「装得下」——
         // 正好盖住 90 mm 那个错，属于最危险的一类：错得看不出来。
         var lcProbe = M(page, "BuildCase") as LineCase;
         Check("BuildCase 返回了算例", lcProbe is not null);
         if (lcProbe is not null)
-            Check("压接段 = 定案值，不是 3 mm 默认值",
-                  Math.Abs(lcProbe.Base.BusbarClampLengthMm - FinalDesign.Current.ClampLengthMm) < 1e-9,
-                  $"{lcProbe.Base.BusbarClampLengthMm} vs {FinalDesign.Current.ClampLengthMm}");
+            Check("压接段 = 设计记录值，不是 3 mm 默认值",
+                  Math.Abs(lcProbe.Base.BusbarClampLengthMm - DesignSpec.Current.ClampLengthMm) < 1e-9,
+                  $"{lcProbe.Base.BusbarClampLengthMm} vs {DesignSpec.Current.ClampLengthMm}");
 
-        Head("11 失效告示：已失效的定案档必须在**最前面**说出来");
-        var invalid = FinalDesign.All.FirstOrDefault(x => x.Invalid.Length > 0);
+        Head("11 失效告示：已失效的设计记录必须在**最前面**说出来");
+        var invalid = DesignSpec.All.FirstOrDefault(x => x.Invalid.Length > 0);
         if (invalid is null)
             Check("（当前没有已失效的档，跳过）", true);
         else {
-            caseBox.SelectedIndex = Array.IndexOf(FinalDesign.All, invalid);
-            M(page, "LoadFinalDesign");
+            caseBox.SelectedIndex = Array.IndexOf(DesignSpec.All, invalid);
+            M(page, "LoadDesignSpec");
             Pump(400);
             Check("载入后有失效告示", outBox.Text.Contains("已失效"));
             int posWarn = outBox.Text.IndexOf("已失效", StringComparison.Ordinal);
-            int posLoad = outBox.Text.IndexOf("已载入定案档", StringComparison.Ordinal);
-            Check("告示排在「已载入定案档」之前", posWarn >= 0 && posWarn < posLoad,
+            int posLoad = outBox.Text.IndexOf("已载入设计记录", StringComparison.Ordinal);
+            Check("告示排在「已载入设计记录」之前", posWarn >= 0 && posWarn < posLoad,
                   $"告示@{posWarn} 载入@{posLoad}　★ 排在后面等于没写");
             Check("说明了失效的判据", invalid.InvalidChecks.Length > 0,
                   "InvalidChecks 为空 ⇒ 自检门无法分辨「已知的失败」与「新出现的失败」");
@@ -422,7 +422,7 @@ class UiWiringTests {
         Head("12 出图拦截：已失效的档不许导出 3DM");
         // 与 --make3dm 那条同根：用户 2026-08-17 发现作废档把现役档的 3DM 覆盖掉了。
         // UI 这条路更险 —— 下拉里作废档就排在现役档后面，默认文件名还一字不差。
-        foreach (var fdX in FinalDesign.All) {
+        foreach (var fdX in DesignSpec.All) {
             string reason = LineDesignPage.ExportBlockedReason(fdX);
             bool shouldBlock = fdX.Invalid.Length > 0;
             Check($"{fdX.Name} → {(shouldBlock ? "拦" : "放")}",
@@ -434,7 +434,7 @@ class UiWiringTests {
         // ④ 的验收不能只验「代码里有这段文字」，要验**它真的出现在用户看的那块文本里**。
         // 做法：喂一个必然不过的算例（舌长退回 90 ⇒ 判据⑤ 不过），跑真解，读输出框。
         {
-            var bad90 = FinalDesign.Current.Clone();
+            var bad90 = DesignSpec.Current.Clone();
             bad90.TabLengthMm = 90.0;
             var lcBad = bad90.BuildCase(new DesignInputs(), checkRamp: false);
             var rBad = LineRunner.Run(lcBad);
@@ -536,7 +536,7 @@ class UiWiringTests {
             Pump(200);
         }
 
-        Head("15 页面 ↔ FinalDesign 的**单位**必须对得上（盘径是直径，模型要半径）");
+        Head("15 页面 ↔ DesignSpec 的**单位**必须对得上（盘径是直径，模型要半径）");
         // 这是 UI 这条路最容易出、又最不容易被看见的错：直径/半径、半宽/全宽各差一倍，
         // 而两边都是「合理的数」，判据表照样出得来 —— 典型的安静失败。
         {
@@ -544,10 +544,10 @@ class UiWiringTests {
             discD.Value = 70m; tabW.Value = 28m; tabLen.Value = 200m; wall.Value = 0.7m;
             for (int i = 0; i < 4; i++) plate[i].Value = 1.11m + i * 0.10m;
             Set(page, "_suppressAuto", false);
-            var mP2F = page.GetType().GetMethod("PageToFinalDesign",
+            var mP2F = page.GetType().GetMethod("PageToDesignSpec",
                            BindingFlags.NonPublic | BindingFlags.Instance);
-            Check("PageToFinalDesign 存在", mP2F is not null);
-            var fdP = mP2F?.Invoke(page, null) as FinalDesign;
+            Check("PageToDesignSpec 存在", mP2F is not null);
+            var fdP = mP2F?.Invoke(page, null) as DesignSpec;
             Check("盘径 70 → 半径 35", fdP is not null && Math.Abs(fdP.DiscRadiusMm - 35) < 1e-9,
                   $"{fdP?.DiscRadiusMm}");
             Check("舌端半宽 28 原样过去", fdP is not null && Math.Abs(fdP.TabHalfWidthMm - 28) < 1e-9,
@@ -568,11 +568,11 @@ class UiWiringTests {
         }
 
         Head("16 【1b】页面与内核**同一个几何构造器**");
-        // 1b 的全部意义就是这一条：把页面上的定案参数原样填进控件，
-        // 「核算整线」造出来的 FlangePlate 必须与 FinalDesign.Plate 逐字段相同。
+        // 1b 的全部意义就是这一条：把页面上的设计记录参数原样填进控件，
+        // 「核算整线」造出来的 FlangePlate 必须与 DesignSpec.Plate 逐字段相同。
         // 只要有人再绕过构造器自己造一片，这条立刻红。
         {
-            var fd1b = FinalDesign.Current;
+            var fd1b = DesignSpec.Current;
             Set(page, "_suppressAuto", true);
             wall.Value = (decimal)fd1b.WallMm;
             tubeIns.Value = (decimal)fd1b.TubeInsulMm;
@@ -581,10 +581,10 @@ class UiWiringTests {
             tabW.Value = (decimal)fd1b.TabHalfWidthMm;
             for (int i = 0; i < 4; i++) plate[i].Value = (decimal)fd1b.TabThickMm[i];
             // ★★ 2026-08-25：舌保温与环倍率**成了页面控件**（在此之前本页没有它们，
-            //   PageToFinalDesign 从 FinalDesign.Current 继承 —— 那正是被禁掉的「定案当起点」）。
-            //   本节的前提是「把定案参数**原样填进控件**」，所以这两组也必须填。
+            //   PageToDesignSpec 从 DesignSpec.Current 继承 —— 那正是被禁掉的「设计记录当起点」）。
+            //   本节的前提是「把设计记录参数**原样填进控件**」，所以这两组也必须填。
             //   ⚠ 不填会有两种坏法，都被这道门抓到过：
-            //     ① 停在控件默认的 0.3（裸舌）⇒ 复现不出定案；
+            //     ① 停在控件默认的 0.3（裸舌）⇒ 复现不出设计记录；
             //     ② 更隐蔽：前面某一节跑过定尺寸，结果已由 AdoptSolvedDesign **写回控件**
             //        （同一个 page 复用），于是这里继承的是**上一节的解**（实测 18.7 mm）。
             var tabIns1b = (System.Windows.Forms.NumericUpDown[])F(page, "_tabIns")!;
@@ -635,7 +635,7 @@ class UiWiringTests {
                 string missNow = mPvF?.Invoke(null, new object?[] { got0 }) as string ?? "?";
                 Check("「本页表达不了」清单已空", missNow.Length == 0, missNow);
             }
-            Check("压接段仍是定案值不是 3 mm 默认值",
+            Check("压接段仍是设计记录值不是 3 mm 默认值",
                   lc1b is not null &&
                   Math.Abs(lc1b.Base.BusbarClampLengthMm - fd1b.ClampLengthMm) < 1e-9,
                   $"{lc1b?.Base.BusbarClampLengthMm}");
@@ -647,10 +647,10 @@ class UiWiringTests {
                   lc1b is not null && lc1b.HeadM.Length > 0, $"{lc1b?.HeadM.Length} 段");
 
             // ★★★★★ 1b 的**决定性**验证（慢，约 1–2 分钟，值得）：
-            //   把定案参数填进页面、走页面的 BuildCase 真解一次，
-            //   结果必须**复现定案记录值**。
+            //   把设计记录参数填进页面、走页面的 BuildCase 真解一次，
+            //   结果必须**复现设计记录记录值**。
             //   1b 之前这件事做不到 —— 页面解的是另一片法兰，这正是当初不得不单独做
-            //   「▶ 复现定案」按钮的原因。现在两条路应该落到同一个解。
+            //   「▶ 复现设计记录」按钮的原因。现在两条路应该落到同一个解。
             //   容差沿用 --selfcheck 那一套（③ 1.0 K／②′ 0.5 W／②″ 0.2 K／管J 0.05／合计 2 g）。
             if (lc1b is not null)
             {
@@ -663,7 +663,7 @@ class UiWiringTests {
                         .FirstOrDefault(c => c.Name.StartsWith(k, StringComparison.Ordinal))?.Actual ?? double.NaN;
                     // ⚠ 差值要先掐负零：(-0.0).ToString("+0.000;−0.000") 会打出 "-+0.000"
                     void Near(string nm, double got, double want, double tol, string unit) =>
-                        Check($"页面路径复现定案 {nm}", Math.Abs(got - want) <= tol,
+                        Check($"页面路径复现设计记录 {nm}", Math.Abs(got - want) <= tol,
                               $"{got:0.000} {unit} vs 记录 {want:0.000}　差 " +
                               SizerResult.Signed(got - want, "+0.000;−0.000"));
                     Near("③", V("③"), fd1b.FlangeDipK, 1.00, "K");
@@ -833,7 +833,7 @@ class UiWiringTests {
                         groups.Add(new List<string>());
                         Console.WriteLine($"       ── 分隔线（Available={sp.Available}）");
                     } else {
-                        string label = it is ToolStripComboBox ? "[定案档下拉]"
+                        string label = it is ToolStripComboBox ? "[设计记录下拉]"
                                      : it.Text.Length > 0 ? it.Text
                                      : it is ToolStripProgressBar ? "[进度条]" : "[" + it.GetType().Name + "]";
                         if (it.Available) groups[^1].Add(label);
@@ -846,17 +846,17 @@ class UiWiringTests {
                 var nonEmpty = groups.Where(g => g.Count > 0).ToList();
                 Console.WriteLine("     ⇒ 实际分成 " + nonEmpty.Count + " 组：");
                 foreach (var g in nonEmpty) Console.WriteLine("       · " + string.Join(" / ", g));
-                // 说明书讲的是「三组」：定案档组 / 本页参数组 / 工具组（进度条那段不算）
+                // 说明书讲的是「三组」：设计记录组 / 本页参数组 / 工具组（进度条那段不算）
                 // ★ 2026-08-23：分组断言改成**逐页对 Flow**。
-                //   上一版把「定案组在 ③ 上」写死了，而定案那一组随后被搬到独立的
-                //   「定案档」页 ⇒ 三条断言同时变红，红得**没有信息**：
+                //   上一版把「设计记录组在 ③ 上」写死了，而设计记录那一组随后被搬到独立的
+                //   「设计记录」页 ⇒ 三条断言同时变红，红得**没有信息**：
                 //   不是接线错了，是断言又抄了一份会过期的清单（同一个教训第二次）。
                 //   现在只问一件不会过期的事：**每一页工具条上的按钮，与 Flow 为
                 //   那一页登记的命令一致**；谁搬到哪页都不必改测试。
                 Check("本页分成了不止一组（分隔线确实在分组）", nonEmpty.Count >= 2,
                       $"实际 {nonEmpty.Count} 组");
 
-                foreach (var sid in new[] { StageId.整线核算, StageId.定案档 })
+                foreach (var sid in new[] { StageId.整线核算, StageId.设计记录 })
                 {
                     var tp = tabs.TabPages.OfType<TabPage>()
                         .FirstOrDefault(x => x.Text.Contains(Flow.Stage(sid).Title, StringComparison.Ordinal));
@@ -882,13 +882,13 @@ class UiWiringTests {
                 }
 
                 // 分组的**含义**仍要守住：不读页面控件的那些，不能与读页面的混在一组 ——
-                // 说明书就是按这条教用户的（「定案两个字打头的那几个不读页面控件」）。
+                // 说明书就是按这条教用户的（「设计记录两个字打头的那几个不读页面控件」）。
                 // 现在它们各在一页，这条自然成立；仍然断言一次，防止有人把它们搬回去。
-                var mixed = Flow.Stage(StageId.定案档).CommandIds
+                var mixed = Flow.Stage(StageId.设计记录).CommandIds
                     .Select(Flow.Cmd)
-                    .Where(c => c.Group == CmdGroup.定案不读页面 && c.ReadsPageControls)
+                    .Where(c => c.Group == CmdGroup.设计记录不读页面 && c.ReadsPageControls)
                     .Select(c => c.Text).ToList();
-                Check("「定案」组里不混入读页面控件的命令", mixed.Count == 0,
+                Check("「设计记录」组里不混入读页面控件的命令", mixed.Count == 0,
                       mixed.Count == 0 ? "" : "★ 混入：" + string.Join("/", mixed));
             }
         }
@@ -1009,9 +1009,9 @@ class UiWiringTests {
             var g4 = Flow.Stage(StageId.定尺寸).GateToUnlockNext!;
             Check("④→⑤ 的门是「判据全过」", g4.RequireAllOk);
 
-            // ── 「定案」那四个不读页面控件 ⇒ 不受阶段门禁
-            var caseCmds = Flow.Commands.Where(c => c.Group == CmdGroup.定案不读页面).ToList();
-            Check("「定案」组都标了不读页面控件",
+            // ── 「设计记录」那四个不读页面控件 ⇒ 不受阶段门禁
+            var caseCmds = Flow.Commands.Where(c => c.Group == CmdGroup.设计记录不读页面).ToList();
+            Check("「设计记录」组都标了不读页面控件",
                   caseCmds.Count > 0 && caseCmds.All(c => !c.ReadsPageControls),
                   $"{caseCmds.Count} 条：" + string.Join("、", caseCmds.Select(c => c.Text)));
         }
@@ -1071,7 +1071,7 @@ class UiWiringTests {
                   (bool)F(page, "_autoArmed")! == true);
             lockPanel.Controls.Remove(probe);
 
-            // ⚠ 同一个递归绝不能把工具条也钩进去 —— 「定案档 ▾」被当成参数会让
+            // ⚠ 同一个递归绝不能把工具条也钩进去 —— 「设计记录 ▾」被当成参数会让
             //   切档触发一次分钟级重算（那个 bug 修过一次，第 1 项守着它）。
             //   这里正面验一次：工具条上的 ComboBox 不该被接线。
             Set(page, "_autoArmed", false);
@@ -1142,12 +1142,12 @@ class UiWiringTests {
             Check("有被接管的参数", overridden.Length > 0, $"{overridden.Length} 项");
             // ★ 自动抓「参数表说有效，实际被覆盖」这一类错 ——
             //   这条不是理论洁癖：本轮 BusbarClampLengthMm 就归错了组，参数表显示 3 mm，
-            //   而整线链两条路都强制取定案档的 40 mm。是靠人看截图才发现的，
+            //   而整线链两条路都强制取设计记录的 40 mm。是靠人看截图才发现的，
             //   而「看起来正常的错数」正是本项目最危险的形状 ⇒ 交给机器守。
             //
             // 判据：凡在**整线链的构造器**里被赋值的 DesignInputs 字段，
             //       就不许挂在宣称对 C 链有效的分类下（"C 整线 …" 开头的组）。
-            var builders = new[] { "Pt_Optimize/Core/FinalDesign.cs",
+            var builders = new[] { "Pt_Optimize/Core/DesignSpec.cs",
                                    "Pt_Optimize/UI/LineDesignPage.cs" };
             var forced = new HashSet<string>(StringComparer.Ordinal);
             bool srcOk = true;
@@ -1244,7 +1244,7 @@ class UiWiringTests {
         }
 
         // ═══════════════════════════════════════════════════════════════
-        Head("25 复现定案要走完全程：解完必须发布状态，否则 ④⑤ 一格不开");
+        Head("25 复现设计记录要走完全程：解完必须发布状态，否则 ④⑤ 一格不开");
         {
             // 病灶（2026-08-21 用户提出「能否一键」时查出）：ReproduceAsync 只写
             // `_last` + `Show()`，**既不设 _solvedSnap 也不 PushFlow** ⇒
@@ -1257,11 +1257,11 @@ class UiWiringTests {
             string src = File.ReadAllText(Path.Combine(RepoRoot(),
                 "Pt_Optimize", "UI", "LineDesignPage.cs"));
             int a = src.IndexOf("private async Task ReproduceAsync", StringComparison.Ordinal);
-            int b = src.IndexOf("private void LoadFinalDesign()", StringComparison.Ordinal);
+            int b = src.IndexOf("private void LoadDesignSpec()", StringComparison.Ordinal);
             Check("找得到 ReproduceAsync 的方法体", a >= 0 && b > a, $"{a}..{b}");
             string raw = a >= 0 && b > a ? src[a..b] : "";
             // ⚠ 必须**剥掉注释再判**：这段代码的注释里正大段解释「为什么不走
-            //   PageToFinalDesign」，直接对全文做子串匹配会命中那些**散文**，
+            //   PageToDesignSpec」，直接对全文做子串匹配会命中那些**散文**，
             //   把「代码没调它」误报成「代码调了它」。
             //   断言要测的是**那件事**，不是那件事附近的文字。
             // 不用任何反斜杠转义：本仓的钩子会把转义序列改成真字符，字面量当场断掉。
@@ -1271,10 +1271,10 @@ class UiWiringTests {
             string body = string.Join(" ", noCmt);
 
             Check("复现之后会灌控件（页面显示与档一致）",
-                  body.Contains("LoadFinalDesignFrom", StringComparison.Ordinal));
-            Check("复现**仍从档解**（不走 PageToFinalDesign，保住交叉校验）",
+                  body.Contains("LoadDesignSpecFrom", StringComparison.Ordinal));
+            Check("复现**仍从档解**（不走 PageToDesignSpec，保住交叉校验）",
                   body.Contains("fd.BuildCase", StringComparison.Ordinal)
-                  && !body.Contains("PageToFinalDesign", StringComparison.Ordinal),
+                  && !body.Contains("PageToDesignSpec", StringComparison.Ordinal),
                   "从档解 = 独立于页面搬运的那条路");
             Check("复现之后会发布状态（PushFlow）",
                   body.Contains("PushFlow()", StringComparison.Ordinal),
@@ -1291,11 +1291,11 @@ class UiWiringTests {
                   && !body.Contains("_solvedSnap = CurrentSnap()", StringComparison.Ordinal),
                   body.Contains("_solvedSnap = CurrentSnap()", StringComparison.Ordinal)
                       ? "★ 还在用解完取快照的旧写法 ⇒ 解算中改参数会被判成「参数未变」" : "");
-            // ★ 而且**不能无条件**记：水头不属于定案几何，页面水头与存档不同时
+            // ★ 而且**不能无条件**记：水头不属于设计记录几何，页面水头与存档不同时
             //   这个解并不是「页面参数的解」，记了就是假的 Fresh。
             Check("记 _solvedSnap 是**有条件**的（水头对得上才记）",
                   body.Contains("headSame", StringComparison.Ordinal),
-                  "水头不属于定案几何 ⇒ 不同就不能假装 Fresh");
+                  "水头不属于设计记录几何 ⇒ 不同就不能假装 Fresh");
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -1348,7 +1348,7 @@ class UiWiringTests {
             //   ReadsPageControls=true，⑤ 没解锁时它被门禁正常锁住，那是**对的**，不是误禁。
             //   头一版没分这两种「禁」，把门禁的功劳算成了互斥闸的错。
             // ⚠ 「禁」有三种来源：门禁 / 互斥 / **适用性**。本节验的是互斥，
-            //   所以另两种都要先排除。上一版漏了适用性 ⇒「另存为定案档」被误报成
+            //   所以另两种都要先排除。上一版漏了适用性 ⇒「另存为设计记录」被误报成
             //   互斥误禁，而它此刻禁用是**对的**（还没解过，AllOk/Fresh 都不成立）。
             var lp2 = tabs.TabPages.OfType<LineDesignPage>().First();
             bool App(string id) => (bool)typeof(LineDesignPage).GetMethod("CommandApplicable",
@@ -1829,9 +1829,9 @@ class UiWiringTests {
         }
 
         // ────────────────────────────────────────────────────────────
-        Head("30 另存定案档：新档要**立刻**出现在下拉里，不该等重启");
+        Head("30 另存设计记录：新档要**立刻**出现在下拉里，不该等重启");
 
-        // 在此之前 FinalDesign.All 是 static readonly，只在启动时算一次 ⇒
+        // 在此之前 DesignSpec.All 是 static readonly，只在启动时算一次 ⇒
         // 界面说「已写出」而下拉里找不到它。工程师看不到自己刚存的东西，
         // 只能猜是没存上，于是再存一次（撞重名被拒）—— 或者从此不信这个功能。
         {
@@ -1850,10 +1850,10 @@ class UiWiringTests {
                 caseBox.SelectedIndex = Math.Min(1, caseBox.Items.Count - 1);
                 string keep = (string)caseBox.SelectedItem!;
 
-                var d = FinalDesign.Builtin[0].Clone();
+                var d = DesignSpec.Builtin[0].Clone();
                 d.Name = probe;
                 d.Provenance = "UiWiring 临时探针，本节结束即删";
-                saved = FinalDesignStore.Save(d);
+                saved = DesignSpecStore.Save(d);
                 Check("档确实写到磁盘上了", File.Exists(saved), saved);
 
                 // 自证②：只写档、还没重扫 ⇒ 下拉里仍不该有它。
@@ -1861,33 +1861,33 @@ class UiWiringTests {
                 Check("只写档、没重扫时下拉里仍然没有它", !InBox(),
                       InBox() ? "★ 没重扫就出现了 ⇒ 下一条证明不了任何事" : "");
 
-                FinalDesign.Reload();
+                DesignSpec.Reload();
                 Pump(200);
                 Check("重扫之后下拉里出现了新档", InBox(),
                       InBox() ? $"（共 {caseBox.Items.Count} 档）" : "★ 存了却看不见，等于没存");
-                Check("重扫没有读出档案错误", FinalDesignStore.LoadErrors.Count == 0,
-                      string.Join("；", FinalDesignStore.LoadErrors));
+                Check("重扫没有读出档案错误", DesignSpecStore.LoadErrors.Count == 0,
+                      string.Join("；", DesignSpecStore.LoadErrors));
                 Check("重扫没有把选中的那一档冲掉", (caseBox.SelectedItem as string) == keep,
                       $"{caseBox.SelectedItem} vs {keep}");
-                Check("重扫后 All 与下拉一样长", caseBox.Items.Count == FinalDesign.All.Length,
-                      $"{caseBox.Items.Count} vs {FinalDesign.All.Length}");
+                Check("重扫后 All 与下拉一样长", caseBox.Items.Count == DesignSpec.All.Length,
+                      $"{caseBox.Items.Count} vs {DesignSpec.All.Length}");
             }
             finally
             {
                 // 探针档留在 finaldesigns/ 里会被 --selfcheck A 段当成一个要复核的基准，
                 // 那时它已经没有对应的解 ⇒ 会在别处报一个跟本节毫无关系的红。
                 if (saved is not null && File.Exists(saved)) File.Delete(saved);
-                FinalDesign.Reload();
+                DesignSpec.Reload();
             }
             // ★ G7：说明书页的下拉也挂了同一个重扫广播，但它带 WebView2 ——
             //   headless 下实例化有把整套测试挂住的风险，所以只做**源码级**断言，
             //   并且把「这是源码级、没有真跑过」写在这里，不假装覆盖到了。
             {
                 string mp = File.ReadAllText(Path.Combine(RepoRoot(), "Pt_Optimize", "UI", "ManualPage.cs"));
-                Check("说明书页也挂了定案档重扫广播",
-                      mp.Contains("FinalDesign.Reloaded +=", StringComparison.Ordinal));
+                Check("说明书页也挂了设计记录重扫广播",
+                      mp.Contains("DesignSpec.Reloaded +=", StringComparison.Ordinal));
                 Check("而且在 Dispose 里退订（静态事件不退订会拿着已销毁的窗体）",
-                      mp.Contains("FinalDesign.Reloaded -=", StringComparison.Ordinal));
+                      mp.Contains("DesignSpec.Reloaded -=", StringComparison.Ordinal));
                 Check("重填时抑制了自身的渲染回调（否则会拿中途状态画一次图）",
                       mp.Contains("_refilling", StringComparison.Ordinal));
             }
@@ -1907,7 +1907,7 @@ class UiWiringTests {
             var chk = (DataGridView)F(page, "_checks")!;
             var fl31 = (FlowState)F(main, "_flow")!;
 
-            // 舌长给足余量，让 ⑤ 有正裕度 —— 定案构型上 ⑤ 恰好贴着下界（裕度 0），
+            // 舌长给足余量，让 ⑤ 有正裕度 —— 设计记录构型上 ⑤ 恰好贴着下界（裕度 0），
             // 那个 0 对符号错不错都成立，验不出东西（这正是裕度符号 bug 藏了那么久的原因）。
             Set(page, "_suppressAuto", true);
             ((NumericUpDown)F(page, "_discD")!).Value = 60m;
@@ -1977,9 +1977,9 @@ class UiWiringTests {
                 // ★ 「最热那一格」曾被当成局部代表 ⇒ 那里 J≈0 ⇒ 裕度 +∞ ⇒ 表上写「无限安全」
                 //   而一格都没验。所以这条不是形式检查，是**它当初真的错成那样**。
                 Check("局部热稳定落在合理量级（1–20×）", okLo && vLo > 1.0 && vLo < 20.0,
-                      okLo ? $"{vLo:0.0}×（selfcheck 在定案上量到 1.9–2.9×）" : sLo);
+                      okLo ? $"{vLo:0.0}×（selfcheck 在设计记录上量到 1.9–2.9×）" : sLo);
                 Check("整片热稳定落在合理量级（1–100×）", okFl && vFl > 1.0 && vFl < 100.0,
-                      okFl ? $"{vFl:0.0}×（selfcheck 在定案上量到 8.2–44×）" : sFl);
+                      okFl ? $"{vFl:0.0}×（selfcheck 在设计记录上量到 8.2–44×）" : sFl);
 
                 // ── ② 裕度符号：⑤ 是「须 ≥ 限」，通过时裕度列必须是**正**的
                 //    改之前显示成「超 15 %」而同一行判定是 ✓ —— 两列自相矛盾。
@@ -2245,7 +2245,7 @@ class UiWiringTests {
         Head("34 使用说明里的限值：**不许自己抄一份**，且每条判据都得有出处");
         {
             // 病灶（2026-08-24）：ManualPage.BuildHtml 开头写着
-            //   「★ 判据值**只从 FinalDesign 取**，本页不再自己抄一份」——
+            //   「★ 判据值**只从 DesignSpec 取**，本页不再自己抄一份」——
             // 但那句话当时只兑现了**实测值**那一半；「限值的出处」那张表里的**限值**
             // 照旧是写死的字面量（72 h / 5 K / 10 K / 12 A/mm² / 100 mm / 0.6 mm）。
             // 而「管许用电流密度」在参数表里**就是可改的**（有 DisplayName）——
@@ -2255,7 +2255,7 @@ class UiWiringTests {
             // 工程师看到「· 整片热稳定 10.2×」回来查出处，查不到。
             // 那一节的标题偏偏就是「限值的出处（**每条都必须有**）」。
             var pIn = (DesignInputs)F(main, "_in")!;
-            var fdManual = FinalDesign.Current;
+            var fdManual = DesignSpec.Current;
             string manual = ManualPage.BuildHtml(fdManual, pIn);
 
             Check("说明书渲染得出来（自证：空字串会让下面每一条恒假/恒真）",

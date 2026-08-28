@@ -16,7 +16,7 @@ namespace PtOptimize.Tests;
 /// 真跑一轮外层，把回调实际收到的厚度向量记下来对账。
 ///
 /// ⚠ 仍**没有**覆盖「.3dm 图纸上替身被放行」那条路 —— 仓库里没有
-///   「无槽 + 多级」的 .3dm，而 WriteFinal3dm 写出来是多图层的定案几何、
+///   「无槽 + 多级」的 .3dm，而 WriteFinal3dm 写出来是多图层的设计记录几何、
 ///   分析器要的是单图层。造一个要改 Rhino 子进程。这条缺口写在这里，不假装覆盖到了。
 /// </summary>
 public class SolveByLevelWiringTests

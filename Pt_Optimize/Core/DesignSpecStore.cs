@@ -9,12 +9,12 @@ using System.Text.Json.Serialization;
 namespace PtOptimize.Core;
 
 /// <summary>
-/// 定案档的**文件形态**：读写 <c>finaldesigns/*.fd.json</c>。
+/// 设计记录的**文件形态**：读写 <c>finaldesigns/*.fd.json</c>。
 ///
 /// ★ 为什么要有它（用户 2026-08-22：「若以读档的形式呢？不想让工程师复制粘贴，
 ///   感觉不靠谱」）：
 ///
-///   在此之前，把一个解落成定案档要**人工把十几个数抄进 FinalDesign.cs**，
+///   在此之前，把一个解落成设计记录要**人工把十几个数抄进 DesignSpec.cs**，
 ///   其中五个判据值还得从判据表里逐个读。抄错一位要跑 8 分钟 --selfcheck 才知道。
 ///   「同一个数存两处然后悄悄漂开」是本项目栽得最多的一类 —— 手抄正是它的入口。
 ///
@@ -23,11 +23,11 @@ namespace PtOptimize.Core;
 ///   来自同一次运行（人抄的），改成程序写，只是把纯风险环节拿掉。
 ///   真正提供保障的是**档在 git 里、变更走 diff**，而不是它是 .cs 还是 .json。
 ///
-/// ⚠ 内置的四个常数（<see cref="FinalDesign.Builtin"/>）**一个都不动**：
+/// ⚠ 内置的四个常数（<see cref="DesignSpec.Builtin"/>）**一个都不动**：
 ///   它们是守内核的回归基准，继续写死在代码里。文件档是工程师日常产出的新方案，
-///   两者都进 <see cref="FinalDesign.All"/>、都受 A 段回归保护。
+///   两者都进 <see cref="DesignSpec.All"/>、都受 A 段回归保护。
 /// </summary>
-public static class FinalDesignStore
+public static class DesignSpecStore
 {
     public const string DirName = "finaldesigns";
     public const string Ext = ".fd.json";
@@ -120,17 +120,17 @@ public static class FinalDesignStore
     /// ⚠ 出错一律记进 <see cref="LoadErrors"/> 并**跳过那一个**，
     ///   但绝不静默 —— 调用方（启动路径与 --selfcheck）都会把它当失败报出来。
     /// </summary>
-    public static List<FinalDesign> LoadAll(IEnumerable<string> builtinNames)
+    public static List<DesignSpec> LoadAll(IEnumerable<string> builtinNames)
     {
         LoadErrors.Clear();
-        var outp = new List<FinalDesign>();
+        var outp = new List<DesignSpec>();
         string? dir = FindDir();
         if (dir is null) return outp;              // 没有目录 = 没有文件档，不是错
 
         var seen = new HashSet<string>(builtinNames, StringComparer.Ordinal);
         foreach (string f in Directory.GetFiles(dir, "*" + Ext).OrderBy(x => x, StringComparer.Ordinal))
         {
-            FinalDesign? fd;
+            DesignSpec? fd;
             try { fd = Parse(File.ReadAllText(f), Path.GetFileName(f)); }
             catch (Exception ex) { LoadErrors.Add($"{Path.GetFileName(f)}：{ex.Message}"); continue; }
             if (fd is null) continue;              // Parse 已记过错
@@ -147,7 +147,7 @@ public static class FinalDesignStore
         return outp;
     }
 
-    private static FinalDesign? Parse(string json, string file)
+    private static DesignSpec? Parse(string json, string file)
     {
         var d = JsonSerializer.Deserialize<Dto>(json, Opt)
                 ?? throw new InvalidDataException("解析出空对象");
@@ -164,7 +164,7 @@ public static class FinalDesignStore
 
         var c = d.checks ?? throw new InvalidDataException("缺 checks（五个判据记录值）—— 没有它就无法回归对账");
 
-        var fd = new FinalDesign
+        var fd = new DesignSpec
         {
             Name = Need(d.name, "name"),
             Provenance = Need(d.provenance, "provenance"),
@@ -200,8 +200,8 @@ public static class FinalDesignStore
         return fd;
     }
 
-    /// <summary>把一个定案写成档。返回写出的路径。**不覆盖已存在的同名文件。**</summary>
-    public static string Save(FinalDesign fd)
+    /// <summary>把一个设计记录写成档。返回写出的路径。**不覆盖已存在的同名文件。**</summary>
+    public static string Save(DesignSpec fd)
     {
         string dir = FindDir(create: true)
                      ?? throw new IOException($"找不到仓库根（没有 .git），无法建 {DirName}/");

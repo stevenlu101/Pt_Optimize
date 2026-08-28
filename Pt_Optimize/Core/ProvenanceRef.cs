@@ -5,13 +5,13 @@ using System.Text.RegularExpressions;
 namespace PtOptimize.Core;
 
 /// <summary>
-/// 定案档 <see cref="FinalDesign.Provenance"/> 里点名的东西，必须**真的存在**。
+/// 设计记录 <see cref="DesignSpec.Provenance"/> 里点名的东西，必须**真的存在**。
 ///
 /// ★ 为什么要有这道门（2026-08-25 查出的真事）：
 ///   W08/W06 的出处写着「`--shape` + D8 定尺寸（Core/Sizer.cs），**2026-08-17**」，
 ///   而 `--shape`、`Core/Sizer.cs`、控制律代号 `D8` 三样东西**都是 2026-08-20**
 ///   在同一次提交（09c8d9b）里才诞生的 —— 那次提交的标题是
-///   「输出框改用 Excel 式对齐」，正文一个字没提定案被换掉。
+///   「输出框改用 Excel 式对齐」，正文一个字没提设计记录被换掉。
 ///   于是「出处」这件本该让人能复现的事，指向了一个当时不存在的工具。
 ///
 ///   日期对不对，代码里验不了（要读 git 历史，那太脆）。

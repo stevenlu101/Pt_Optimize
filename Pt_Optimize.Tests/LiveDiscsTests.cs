@@ -19,8 +19,8 @@ public class LiveDiscsTests
     public void 自证_写死的25对两个现役档都造不出来()
     {
         // 没有这一条，下面每一条都是空转。
-        Assert.True(25.0 < Floor(FinalDesign.W08.WallMm), "壁 0.8 的下界应高于 25");
-        Assert.True(25.0 < Floor(FinalDesign.W06.WallMm), "壁 0.6 的下界应高于 25");
+        Assert.True(25.0 < Floor(DesignSpec.W08.WallMm), "壁 0.8 的下界应高于 25");
+        Assert.True(25.0 < Floor(DesignSpec.W06.WallMm), "壁 0.6 的下界应高于 25");
     }
 
     [Fact]

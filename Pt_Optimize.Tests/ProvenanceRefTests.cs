@@ -7,11 +7,11 @@ using Xunit;
 namespace PtOptimize.Tests;
 
 /// <summary>
-/// 定案档的出处，点名的东西必须**真的存在**（2026-08-25）。
+/// 设计记录的出处，点名的东西必须**真的存在**（2026-08-25）。
 ///
 /// 真事：W08/W06 的出处写着「--shape + D8 定尺寸（Core/Sizer.cs），2026-08-17」，
 /// 而这三样东西全是 2026-08-20 的提交 09c8d9b 才诞生的 —— 那次提交的标题是
-/// 「输出框改用 Excel 式对齐」，正文没提定案被整个换掉（3106 g → 3547 g）。
+/// 「输出框改用 Excel 式对齐」，正文没提设计记录被整个换掉（3106 g → 3547 g）。
 /// 反倒是两个**作废档**的出处「--final2 可行性阶梯 D7，2026-08-16」与仓库完全对得上。
 ///
 /// 日期没法在代码里验（要读 git 历史，太脆）；但「点名的文件在不在、开关认不认得」
@@ -35,12 +35,12 @@ public class ProvenanceRefTests
             || File.Exists(Path.Combine(root, "Pt_Optimize", r));
     }
 
-    /// <summary>每个定案都得有出处 —— 没有出处的定案不叫定案。</summary>
+    /// <summary>每个设计记录都得有出处 —— 没有出处的设计记录不叫设计记录。</summary>
     [Fact]
     public void EveryArchiveHasProvenance()
     {
-        Assert.NotEmpty(FinalDesign.Builtin);
-        foreach (var d in FinalDesign.Builtin)
+        Assert.NotEmpty(DesignSpec.Builtin);
+        foreach (var d in DesignSpec.Builtin)
             Assert.False(string.IsNullOrWhiteSpace(d.Provenance), d.Name + " 没有出处");
     }
 
@@ -49,7 +49,7 @@ public class ProvenanceRefTests
     public void NamedSourceFilesExist()
     {
         string root = RepoRoot();
-        foreach (var d in FinalDesign.Builtin)
+        foreach (var d in DesignSpec.Builtin)
         foreach (string text in new[] { d.Provenance, d.Invalid, d.Binding })
         {
             var (files, _) = ProvenanceRef.Referenced(text);
@@ -65,7 +65,7 @@ public class ProvenanceRefTests
     {
         string root = RepoRoot();
         string prog = File.ReadAllText(Path.Combine(root, "Pt_Optimize", "Program.cs"));
-        foreach (var d in FinalDesign.Builtin)
+        foreach (var d in DesignSpec.Builtin)
         foreach (string text in new[] { d.Provenance, d.Invalid, d.Binding })
         {
             var (_, flags) = ProvenanceRef.Referenced(text);
@@ -105,7 +105,7 @@ public class ProvenanceRefTests
     [Fact]
     public void LiveArchivesReallyNameThings()
     {
-        var (f8, g8) = ProvenanceRef.Referenced(FinalDesign.W08.Provenance);
+        var (f8, g8) = ProvenanceRef.Referenced(DesignSpec.W08.Provenance);
         Assert.NotEmpty(f8);
         Assert.NotEmpty(g8);
     }
@@ -114,7 +114,7 @@ public class ProvenanceRefTests
     /// ★ 2026-08-25 **本条被改写过一次，改写的理由本身就是教训**：
     ///
     /// 它原本断的是「日期 2026-08-17 已被证伪，只许出现在更正语境里」。
-    /// 当天稍后用二进制实证推翻了那个结论 —— deliverable/定案_管壁0.8mm.3dm
+    /// 当天稍后用二进制实证推翻了那个结论 —— deliverable/设计记录_管壁0.8mm.3dm
     /// 生成于 2026-08-17 13:45，里面舌长 −140.0 出现 64 次、本档板厚各 114 次，
     /// 作废档的特征值一次都没有 ⇒ **本档的几何那天确实已经存在，日期是对的**。
     /// 错的只是**工具归属**（--shape / Core/Sizer.cs / D8 都是 08-20 才写的）。
@@ -127,7 +127,7 @@ public class ProvenanceRefTests
     [Fact]
     public void 出处点名了工具就必须写明能不能复现()
     {
-        foreach (var d in new[] { FinalDesign.W08, FinalDesign.W06 })
+        foreach (var d in new[] { DesignSpec.W08, DesignSpec.W06 })
         {
             bool namesTool = d.Provenance.Contains("--shape", StringComparison.Ordinal)
                           || d.Provenance.Contains("Sizer.cs", StringComparison.Ordinal);
@@ -145,8 +145,8 @@ public class ProvenanceRefTests
     [Fact]
     public void 时间错位这个事实必须留在现役档里()
     {
-        Assert.Contains("09c8d9b", FinalDesign.W08.Provenance);
-        Assert.Contains("2026-08-20", FinalDesign.W08.Provenance);
+        Assert.Contains("09c8d9b", DesignSpec.W08.Provenance);
+        Assert.Contains("2026-08-20", DesignSpec.W08.Provenance);
     }
 
     /// <summary>
@@ -156,7 +156,7 @@ public class ProvenanceRefTests
     [Fact]
     public void 复现偏差是实测值_留在档里()
     {
-        Assert.Contains("3664", FinalDesign.W08.Provenance);
+        Assert.Contains("3664", DesignSpec.W08.Provenance);
     }
 }
 

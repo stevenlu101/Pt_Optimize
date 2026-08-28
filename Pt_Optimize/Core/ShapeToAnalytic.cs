@@ -11,7 +11,7 @@ namespace PtOptimize.Core;
 ///
 ///   两条输入路线此前给不出接近的答案，本质原因只有一个：**.3dm 路改不了形状**。
 ///   逐级定厚的自由度是「各级厚度」，盘径/舌长/舌宽由图纸钉死；
-///   而定案的关键一步恰恰是改形状（Ø120 → Ø60）。
+///   而设计记录的关键一步恰恰是改形状（Ø120 → Ø60）。
 ///
 ///   但「从图纸反推参数」这件事**早就做到了** —— PlateShapeAnalyzer 一直在印
 ///   「圆盘外半径 R59.99／舌片 长 199.5 末端半宽 40.0／管孔 R26.00」，
@@ -19,7 +19,7 @@ namespace PtOptimize.Core;
 ///   本类就是那一步，且刻意做成**纯函数**：一条翻译规则不该只能靠开界面才验得到。
 ///
 /// ⚠ 三条必须说出口的近似（都写进 <see cref="Knobs.Note"/>，调用方必须原样呈现）：
-///  · **管壁是反推的**：孔半径 = 管壁 + 25（<see cref="FinalDesign.HoleRadiusMm"/>），
+///  · **管壁是反推的**：孔半径 = 管壁 + 25（<see cref="DesignSpec.HoleRadiusMm"/>），
 ///    所以管壁 = 孔半径 − 25。图纸的孔若不是按这条画的，这个数就不对。
 ///  · **多级板厚会被压成一个数**：解析模型每片只有一个厚度（外加环倍率），
 ///    多级时取**面积加权平均**，这是近似，必须标出来。
@@ -68,7 +68,7 @@ public static class ShapeToAnalytic
         string nl = Environment.NewLine;
         string note =
             "· 管壁 " + wall.ToString("0.00") + " mm 是**反推**的：孔半径 "
-            + sh.HoleRadiusMm.ToString("0.00") + " − 25（FinalDesign.HoleRadiusMm 的定义）。"
+            + sh.HoleRadiusMm.ToString("0.00") + " − 25（DesignSpec.HoleRadiusMm 的定义）。"
             + "图纸的孔若不是按这条画的，这个数就不对。" + nl
             + "· 舌片族是**等宽**：解析路的搜形状只在等宽舌片上走。"
             + "原图若是梯形舌，转过去之后优化的是等宽舌，**不再是原图那一片**。" + nl

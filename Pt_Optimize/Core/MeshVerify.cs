@@ -12,8 +12,8 @@ namespace PtOptimize.Core;
 /// <code>
 ///   输入（3DM / UI 输入框）→ 优化（粗网格导航）→ **网格无关复核** → 报告 + 出图
 /// </code>
-///   「**我不要定档这种模式（这坑太大），要严格遵守第一性原理**」。
-///   ⇒ 本类**不是**为了产出一个「定案档」。它就是**这一次运行的判据以什么为准**。
+///   「**我不要设计记录这种模式（这坑太大），要严格遵守第一性原理**」。
+///   ⇒ 本类**不是**为了产出一个「设计记录」。它就是**这一次运行的判据以什么为准**。
 ///     跑完即有结果与图纸，没有谁需要去「落档」。
 ///
 /// ★★ 为什么非要分两级（这是实测逼出来的，不是设计偏好）
@@ -69,7 +69,7 @@ public static class MeshVerify
     /// 起点由几何特征定（最小特征 ÷ 3），每轮对半加密，
     /// 停机由**判据本身**定（每条判据的变化落进各自容差），或撞上单元数上限。
     /// </summary>
-    public static Result Run(FinalDesign d, DesignInputs baseIn,
+    public static Result Run(DesignSpec d, DesignInputs baseIn,
                              int maxCells = 40000, int maxRounds = 6,
                              IProgress<string>? progress = null,
                              CancellationToken cancel = default)

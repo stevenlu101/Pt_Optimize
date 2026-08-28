@@ -49,7 +49,7 @@ public static class ShapeReview
     /// 也就是说，**恰恰在拿到现场实测值那一天，报告开始说错话，而且不报错**。
     /// null 时退回默认值（保持旧行为），但调用方应当传真实那份。
     /// </param>
-    public static string Build(FinalDesign d, LineResult? r, FinalDesign? reference = null,
+    public static string Build(DesignSpec d, LineResult? r, DesignSpec? reference = null,
                                string sizerNote = "", DesignInputs? baseIn = null)
     {
         var sb = new StringBuilder();
@@ -128,9 +128,9 @@ public static class ShapeReview
         // ───────────────────────────────────────────────────────────
         double mass = r.TotalMassG;
         sb.AppendLine("二、优化后");
-        sb.AppendLine($"　 板厚 {FinalDesign.Fmt(d.TabThickMm, "0.00")}　" +
-                      $"舌保温 {FinalDesign.Fmt(d.TabInsulMm, "0.0")}　" +
-                      $"环倍率 {FinalDesign.Fmt(d.RingMul, "0.00")}");
+        sb.AppendLine($"　 板厚 {DesignSpec.Fmt(d.TabThickMm, "0.00")}　" +
+                      $"舌保温 {DesignSpec.Fmt(d.TabInsulMm, "0.0")}　" +
+                      $"环倍率 {DesignSpec.Fmt(d.RingMul, "0.00")}");
         sb.AppendLine($"　 **总铂 {mass:0} g**（管 {r.TubeMassG:0} + 法兰 {r.FlangeMassG:0}）");
         // ⚠ 「本形状就是参照档」时不要打一行 +0 g —— 那是**拿自己跟自己比**，
         //   看着像一条结论，实则零信息。这类空转的输出会稀释真正的发现。
@@ -140,7 +140,7 @@ public static class ShapeReview
                      && Math.Abs(d.TabHalfWidthMm - reference.TabHalfWidthMm) < 1e-6
                      && Math.Abs(d.WallMm - reference.WallMm) < 1e-6;
         if (isRef)
-            sb.AppendLine($"　 （本形状**就是当前定案档「{reference!.Name}」**，故不与自己比较）");
+            sb.AppendLine($"　 （本形状**就是当前设计记录「{reference!.Name}」**，故不与自己比较）");
         else if (reference is not null && reference.TotalMassG > 0)
         {
             double dm = mass - reference.TotalMassG;
@@ -197,7 +197,7 @@ public static class ShapeReview
                           "　依据：②″ = " + r.ValueOf(LineResult.Key.DiscTemp).ToString("0.00") +
                           " K（限 5）—— 孔周电流没有拥塞。");
         if (d.TabInsulMm.All(v => v <= 1.0))
-            sb.AppendLine("　 · **舌片几乎不用包保温**（" + FinalDesign.Fmt(d.TabInsulMm, "0.0") +
+            sb.AppendLine("　 · **舌片几乎不用包保温**（" + DesignSpec.Fmt(d.TabInsulMm, "0.0") +
                           " mm）⇒ 现场少一道工序，且这个旋钮不花铂。");
         sb.AppendLine();
 

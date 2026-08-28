@@ -9,7 +9,7 @@
 启动 `Pt_Optimize.exe`，按 **F1** 或点最后一个页签「使用说明」。
 
 那是一份**图文说明书**：界面地图、每个按钮做什么、判据表怎么读、限值出处、
-已知坑、现场还需确认的数，都在里面。图不是截图，是**按当前定案档实时画的 SVG** ——
+已知坑、现场还需确认的数，都在里面。图不是截图，是**按当前设计记录实时画的 SVG** ——
 换一档，图跟着变。
 
 **为什么不在这份 md 里也写一份：** 那就成了同一份内容存两处。
@@ -34,7 +34,7 @@ dotnet Pt_Optimize/bin/Release/net8.0-windows/Pt_Optimize.dll
 dotnet Pt_Optimize/bin/Release/net8.0-windows/Pt_Optimize.dll --cli --help
 ```
 
-`--help` 列出全部命令，并按 `FinalDesign.All` 实时列出定案档 ——
+`--help` 列出全部命令，并按 `DesignSpec.All` 实时列出设计记录 ——
 **那份清单不在本文件里维护**，改了代码它自己就变了。
 
 ---
@@ -69,7 +69,7 @@ dotnet build Pt_Optimize.sln -c Release
 
 | 文件 | 内容 |
 |---|---|
-| `定案_管壁0.8mm.3dm` / `定案_管壁0.6mm.3dm` | 整机几何（管 + 四片法兰 + 角焊缝 + 压接参考线） |
+| `设计记录_管壁0.8mm.3dm` / `设计记录_管壁0.6mm.3dm` | 整机几何（管 + 四片法兰 + 角焊缝 + 压接参考线） |
 | `*.spec.json` | 生成该 3DM 的规格（子进程的输入，可复现） |
 | `交付件-管壁0.8mm.html` / `-0.6mm.html` | 单页交付说明 |
 
@@ -89,7 +89,7 @@ dotnet Pt_Optimize/bin/Release/net8.0-windows/Pt_Optimize.dll --cli --make3dm
 | 东西 | 唯一来源 | 别处只准读 |
 |---|---|---|
 | 判定过 / 不过 | `Core/LineRunner.Judge` | 界面、命令行、报告 |
-| 定案几何 | `Core/FinalDesign` | 所有命令、3DM、说明书的图 |
+| 设计记录几何 | `Core/DesignSpec` | 所有命令、3DM、说明书的图 |
 | 板厚分布（含焊缝） | `Core/PlateCurrent2D.ThicknessAt` | `Pt_Optimize.Geom` 的 3DM、说明书的剖面图 |
 
 第三行是 2026-08-16 才补上的：焊缝在 FE 里算了很久，而 3DM 和说明书都没画它。

@@ -99,7 +99,7 @@ public sealed class SizerOptions
     // ════════════════════════════════════════════════════════════════════
     // ★★★★★ 可造性与裕度（2026-08-17 补，起因见下）
     //
-    // 病症：D8 第一版把 0.8 档解到 3512 g，写进 FinalDesign 前按图纸精度四舍五入
+    // 病症：D8 第一版把 0.8 档解到 3512 g，写进 DesignSpec 前按图纸精度四舍五入
     // （板厚 0.8697→0.87、舌保温 0.35→0.4），再复核一次 ——
     //     ②′ = **−0.6 W**（须 > 0）、③ = **10.2 K**（限 10）⇒ **两条都不过**。
     //
@@ -130,7 +130,7 @@ public sealed class SizerOptions
 public sealed class SizerResult
 {
     /// <summary>**最轻的那个全过点**的设计（板厚/保温/环倍率已写回）。不可行时是违反度最小的点。</summary>
-    public FinalDesign Design = null!;
+    public DesignSpec Design = null!;
     /// <summary>该点的完整复核结果（含升温 ①）。</summary>
     public LineResult? Best;
     public bool Feasible;
@@ -213,13 +213,13 @@ public static class Sizer
     }
 
 
-    public static SizerResult Solve(FinalDesign seed, DesignInputs baseIn, SizerOptions opt,
+    public static SizerResult Solve(DesignSpec seed, DesignInputs baseIn, SizerOptions opt,
                                     IProgress<string>? progress = null,
                                     CancellationToken cancel = default)
     {
         var res = new SizerResult();
         var d = seed.Clone();
-        // ★ 失效声明**绝不能被继承**：种子多半是从某个已失效的定案档克隆来的，
+        // ★ 失效声明**绝不能被继承**：种子多半是从某个已失效的设计记录克隆来的，
         //   而本次是**重新解出来的**设计，旧档为什么失效与它无关。
         //   带着别人的失效声明跑，自检门就会拿错的「声明之内」去放行真正的失败。
         d.Invalid = ""; d.InvalidChecks = Array.Empty<string>();
@@ -246,7 +246,7 @@ public static class Sizer
 
         double gamma = opt.GammaKPerW;
         double bestMass = double.MaxValue, bestBad = double.MaxValue;
-        FinalDesign? bestFeas = null, bestAny = null;
+        DesignSpec? bestFeas = null, bestAny = null;
         double[][] baseCache = Array.Empty<double[]>();
         // 相邻两轮的设计只差 0.1 mm 板厚 / 几 mm 保温 ⇒ 上一轮的不动点离这一轮很近。
         // 冷启动每轮都要从「抽热 = 0」爬回来，g≈0.96 下动辄上百轮（见 LineCase.WarmStart）。

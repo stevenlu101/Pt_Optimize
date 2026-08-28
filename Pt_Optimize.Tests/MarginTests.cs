@@ -6,12 +6,12 @@ namespace PtOptimize.Tests;
 /// <summary>
 /// 判据裕度的**方向**。
 ///
-/// 这个公式曾在四处各写一遍（FinalDesign.Margin、ShapeReview 两处、整线设计页判据表），
+/// 这个公式曾在四处各写一遍（DesignSpec.Margin、ShapeReview 两处、整线设计页判据表），
 /// 四处都写成 `(限−实)/|限|`、都没看 LessIsBetter ⇒ 对「须 ≥ 限」的判据符号是反的。
 /// 现形处：⑤ 舌片自由段 114.8 / 100 是**通过且富余 14.8**，判据表却显示「超 15 %」——
 /// 裕度列说越限、判定列打 ✓，同一行自相矛盾。
 ///
-/// 定案档上一直看不出来：舌长按「切点+压接+自由段下界」算出来，⑤ 恰好贴着 100 ⇒
+/// 设计记录上一直看不出来：舌长按「切点+压接+自由段下界」算出来，⑤ 恰好贴着 100 ⇒
 /// 裕度 0 %，符号错不错都是 0。**bug 躲在这个巧合后面，直到 .3dm 那条路把它暴露。**
 /// </summary>
 public class MarginTests
@@ -32,7 +32,7 @@ public class MarginTests
     /// </summary>
     [Theory]
     [InlineData(114.8, 100.0, 14.8)]   // ⑤ 自由段：正是现形的那一组
-    [InlineData(100.0, 100.0, 0.0)]    // 定案档恰好贴界 —— 旧 bug 就藏在这个 0 后面
+    [InlineData(100.0, 100.0, 0.0)]    // 设计记录恰好贴界 —— 旧 bug 就藏在这个 0 后面
     [InlineData(24.019, 100.0, -75.981)]  // 已作废档：真的不够
     public void GreaterIsBetter_PositiveWhenOverLimit(double a, double lim, double expect)
         => Assert.Equal(expect, C(a, lim, false).MarginPct, 6);

@@ -7,7 +7,7 @@ namespace PtOptimize.Tests;
 /// 圆盘焊接下界，以及「印出来的板厚 ≠ 进模型的板厚」这个坑。
 ///
 /// ★ 病灶（2026-08-25 查出）：`--cli --window` 那张表印的是 **基准 × 标度** 的**夹前**值，
-///   而模型真正用的是 <see cref="FinalDesign.Plate"/> 里的 max(板厚, 下界)。
+///   而模型真正用的是 <see cref="DesignSpec.Plate"/> 里的 max(板厚, 下界)。
 ///   默认标度表 {0.3, 0.5, 0.7, 1.0, 1.4, 2.0} 配 W08 的基准 {0.89, 2.45, 2.35, 0.73}，
 ///   在 R30（下界 0.6）上：出口片 0.30/0.50/0.70 三行算出 0.22/0.37/0.51，**全被夹成 0.60**
 ///   —— 表上看着三个不同的设计，其实是同一个几何，而整行的 ②′/③/②″/管J/合计g
@@ -19,9 +19,9 @@ namespace PtOptimize.Tests;
 /// </summary>
 public class DiscFloorTests
 {
-    private static FinalDesign At(double discR)
+    private static DesignSpec At(double discR)
     {
-        var d = FinalDesign.W08.Clone();
+        var d = DesignSpec.W08.Clone();
         d.DiscRadiusMm = discR;
         return d;
     }
@@ -59,7 +59,7 @@ public class DiscFloorTests
         var p = new DesignInputs();
         var d = At(30.0);
         double floor = d.DiscFloorMm(p);
-        double raw = FinalDesign.W08.TabThickMm[3] * 0.3;      // 出口片 × 最小标度
+        double raw = DesignSpec.W08.TabThickMm[3] * 0.3;      // 出口片 × 最小标度
         Assert.True(raw < floor, $"标度 0.3 的出口片应低于下界：{raw:0.000} vs {floor:0.00}");
     }
 
@@ -69,7 +69,7 @@ public class DiscFloorTests
         var p = new DesignInputs();
         var d = At(30.0);
         double floor = d.DiscFloorMm(p);
-        for (int j = 0; j < d.TabThickMm.Length; j++) d.TabThickMm[j] = FinalDesign.W08.TabThickMm[j] * 0.3;
+        for (int j = 0; j < d.TabThickMm.Length; j++) d.TabThickMm[j] = DesignSpec.W08.TabThickMm[j] * 0.3;
 
         double used = d.Plate(3, floor).ThicknessMm;
         Assert.Equal(floor, used, 6);                           // 夹后 = 下界

@@ -3,16 +3,16 @@
 namespace PtOptimize.Core;
 
 /// <summary>
-/// ★★★★★ **定案几何的唯一来源**（2026-08-15 建立，08-16 改为双档）。
+/// ★★★★★ **设计记录几何的唯一来源**（2026-08-15 建立，08-16 改为双档）。
 ///
-/// 为什么要有这个文件：定案值此前是**各命令各手抄一份**。
+/// 为什么要有这个文件：设计记录值此前是**各命令各手抄一份**。
 /// `--final2` 往前推进之后，`--hotspot` 与 `--busbarplan` 还钉着几代之前的几何
 /// （管壁 0.6、舌厚 {1.37,2.02,1.80,1.04}、管保温 10 mm、无管孔环），
 /// 它们照样跑得出漂亮的数 —— 但那是**另一个设计**的数。
 /// 这正是 HANDOVER §1.8「安静失败」家族的形状：不报错、格式正常、结论错。
 ///
 /// ⇒ 与判据收敛到 <c>LineRunner.Judge</c> 同理：**几何也只能有一个来源**。
-///   任何辅助命令要「对着定案构型量」，就从这里取，不许再抄。
+///   任何辅助命令要「对着设计记录构型量」，就从这里取，不许再抄。
 ///   `--final2` 是**唯一**有权更新这里的地方（它是定尺寸器）。
 ///
 /// ★★ 2026-08-16 改为**双档**：<see cref="W08"/> 与 <see cref="W06"/> 都全判据通过，
@@ -22,7 +22,7 @@ namespace PtOptimize.Core;
 /// ⚠ 改这里之前先想清楚：下面每个数都是某一轮实测收敛的结果，
 ///   不是可以随手调的参数。改了就要重跑 `--final2` 复核全判据。
 /// </summary>
-public sealed class FinalDesign
+public sealed class DesignSpec
 {
     // ── 标识与出处
     public string Name = "";
@@ -35,7 +35,7 @@ public sealed class FinalDesign
     /// ★★★★★ 非空 = **本档已失效，不得当作可交付结果引用**；内容说明为什么、下一步做什么。
     ///
     /// 为什么需要这个字段（2026-08-17）：判据 ⑤（舌片自由段 ≥ 100 mm）加进 <c>Judge</c> 之后，
-    /// 两档定案**当场就不过了**（自由段只有 24 mm，铜排压根装不上）。
+    /// 两档设计记录**当场就不过了**（自由段只有 24 mm，铜排压根装不上）。
     /// 而此处的 <see cref="Binding"/> 仍写着「无 —— 每条判据都有裕度」、
     /// <see cref="RampH"/> 等实测值仍是旧形状下的数 —— 判据变了，**记录没跟着变**。
     ///
@@ -104,11 +104,11 @@ public sealed class FinalDesign
     /// 重跑得到，checkRamp=true，两档均收敛且全过）。
     ///
     /// ⚠ 为什么放在这里而不是各处硬编码：说明书页此前自己抄了一份，而那一份是
-    ///   **定案当天（08-15）那次运行**的数 —— 收敛度量与 ②″ 限值都是在那之后才改的。
+    ///   **设计记录当天（08-15）那次运行**的数 —— 收敛度量与 ②″ 限值都是在那之后才改的。
     ///   复核发现 ②′ 与 ③ 两项与实算对不上，**且两档之间的大小关系是反的**
     ///   （抄的说 0.8 档 ③ 更小，实算是 0.8 档 ③ 更大）。
     ///   判定结论没变（两档仍全过、铂重不变），但「哪一档在 ③ 上更宽裕」这句话说反了。
-    ///   ⇒ 收敛到本处。要更新就点界面上的「▶ 复现定案」重跑一遍照抄。
+    ///   ⇒ 收敛到本处。要更新就点界面上的「▶ 复现设计记录」重跑一遍照抄。
     /// </summary>
     public double RampH, DiscOverK, HoleFluxW, FlangeDipK, TubeJ;
 
@@ -138,11 +138,11 @@ public sealed class FinalDesign
     /// <summary>
     /// 深拷贝 —— 供**参数扰动验证**用（`--vary`）：扰动必须作用在副本上，
     /// 否则 <see cref="W08"/>/<see cref="W06"/> 这两个 static 实例会被就地改掉，
-    /// 后面每一次「定案」都变成上一次扰动的结果（典型的静默污染）。
+    /// 后面每一次「设计记录」都变成上一次扰动的结果（典型的静默污染）。
     /// </summary>
-    public FinalDesign Clone()
+    public DesignSpec Clone()
     {
-        var c = (FinalDesign)MemberwiseClone();
+        var c = (DesignSpec)MemberwiseClone();
         c.SetpointC = (double[])SetpointC.Clone();
         c.TabThickMm = (double[])TabThickMm.Clone();
         c.TabInsulMm = (double[])TabInsulMm.Clone();
@@ -185,7 +185,7 @@ public sealed class FinalDesign
                 * (DiscRadiusMm - HoleRadiusMm) * baseInputs.WeldSafetyFactor,
             baseInputs.WeldMinThicknessMm);
 
-    /// <summary>按本定案构型造第 j 片（0=入口, 1=共用1, 2=共用2, 3=出口）。</summary>
+    /// <summary>按本设计记录构型造第 j 片（0=入口, 1=共用1, 2=共用2, 3=出口）。</summary>
     public FlangePlate Plate(int j, double discFloorMm)
     {
         double td = System.Math.Max(TabThickMm[j], discFloorMm);
@@ -204,7 +204,7 @@ public sealed class FinalDesign
     }
 
     /// <summary>
-    /// ★★★★★ 由本定案档**造出可直接求解的整线算例** —— 复现定案数字的唯一入口。
+    /// ★★★★★ 由本设计记录**造出可直接求解的整线算例** —— 复现设计记录数字的唯一入口。
     ///
     /// 为什么必须在这里：此前 `--busbarplan`、`--hotspot` 各手抄一份构造代码，
     /// 界面上则**根本没有**能复现的路径（页面控件表达不了渐变环与逐片舌保温）。
@@ -233,11 +233,11 @@ public sealed class FinalDesign
                 "管内径 " + baseInputs.TubeIdMm.ToString("0.0") + " mm（半径 "
               + (baseInputs.TubeIdMm * 0.5).ToString("0.0") + "）与**几何里写死的 25.0 mm** 对不上。"
               + System.Environment.NewLine
-              + "  FinalDesign.HoleRadiusMm 目前是 `WallMm + 25.0`，而求解器用的是 "
+              + "  DesignSpec.HoleRadiusMm 目前是 `WallMm + 25.0`，而求解器用的是 "
               + "`TubeIdMm*0.5 + WallMm` —— 改了管内径只有求解器跟着走，"
               + "几何、3DM 图纸与板厚工艺下界**都不会动**。"
               + System.Environment.NewLine
-              + "  ⇒ 要换管径，必须先把 TubeIdMm 接进 FinalDesign 的几何（铁律②），"
+              + "  ⇒ 要换管径，必须先把 TubeIdMm 接进 DesignSpec 的几何（铁律②），"
               + "而不是只改参数表。**宁可拒算，也不给一个一半对一半错的结果。**");
 
         var p = SegmentSolver.Clone(baseInputs);
@@ -291,8 +291,8 @@ public sealed class FinalDesign
         $"压接 {ClampLengthMm:0} 夹 {ClampTempC:0} °C　合计 {TotalMassG:0} g";
 
     // ════════════════════════════════════════════════════════════════════
-    // ★★★★★ 定案档（**全部重解**，2026-08-17 —— 这个日期是对的，
-    //   由 deliverable/定案_管壁0.8mm.3dm 的内容实证，详见 W08 的 Provenance）
+    // ★★★★★ 设计记录（**全部重解**，2026-08-17 —— 这个日期是对的，
+    //   由 deliverable/设计记录_管壁0.8mm.3dm 的内容实证，详见 W08 的 Provenance）
     //
     // 为什么重解：判据 ⑤（舌片自由段 ≥ 100 mm）加进来之后，原来两档当场不过 ——
     // 舌长 90 mm 的自由段只有 24 mm，铜排根本装不上。那不是余量不够，是**设计上不成立**。
@@ -316,17 +316,17 @@ public sealed class FinalDesign
     // ════════════════════════════════════════════════════════════════════
 
     /// <summary>留余量档：没有任何判据贴限值。</summary>
-    public static readonly FinalDesign W08 = new()
+    public static readonly DesignSpec W08 = new()
     {
         Name = "管壁 0.8 · 留余量",
         Provenance = "--shape + D8 定尺寸（Core/Sizer.cs）；60 轮，取最轻的**有裕度**的全过点。" +
                      "数值已按图纸精度量化（板厚 0.01／舌保温 0.1 mm）后复核，`--window` 逐条对上。" +
                      "★ 2026-08-25 把这条出处查清了（此前更正过一次，**那次说过头了**，一并纠正）：" +
-                     "**日期是对的**。deliverable/定案_管壁0.8mm.3dm 生成于 2026-08-17 13:45，" +
+                     "**日期是对的**。deliverable/设计记录_管壁0.8mm.3dm 生成于 2026-08-17 13:45，" +
                      "二进制里舌长 −140.0 出现 64 次、板厚 0.89/2.45/2.35/0.73 各 114 次，与本档逐位相同；" +
                      "作废档的 −90.0 与 2.11 一次都没有 ⇒ **本档的几何那天确实已经存在**。" +
                      "错的只是**工具归属**：`--shape`、`Core/Sizer.cs`、代号 D8 三样都是 2026-08-20 的" +
-                     "提交 09c8d9b 才写的（那次提交标题是「输出框改用 Excel 式对齐」，正文没提定案被换掉）" +
+                     "提交 09c8d9b 才写的（那次提交标题是「输出框改用 Excel 式对齐」，正文没提设计记录被换掉）" +
                      "—— 它们是**事后补写来固化**当天已得到的结果，不是当天跑出这组数的那个东西。" +
                      "推算过程多半发生在落库前的对话里，代码是事后补写的。" +
                      "⚠ 故这句出处**不能拿来复现**，而且这一条已经**实测**：用今天的 --shape 在同一形状上" +
@@ -345,12 +345,12 @@ public sealed class FinalDesign
     };
 
     /// <summary>底档：管壁压到焊接烧穿下界。</summary>
-    public static readonly FinalDesign W06 = new()
+    public static readonly DesignSpec W06 = new()
     {
         Name = "管壁 0.6 · 底档",
         Provenance = "--shape + D8 定尺寸（Core/Sizer.cs）；60 轮，取最轻的**有裕度**的全过点。" +
                      "数值已按图纸精度量化（板厚 0.01／舌保温 0.1 mm）后复核。" +
-                     "★ 2026-08-25 查清：日期**是对的**（deliverable/定案_管壁0.6mm.3dm 里板厚 " +
+                     "★ 2026-08-25 查清：日期**是对的**（deliverable/设计记录_管壁0.6mm.3dm 里板厚 " +
                      "0.64/1.86/1.73/0.62 各 114 次，与本档逐位相同），错的是工具归属。同 W08 那条，不再重复。" +
                      "⚠ 同样**不能拿来复现**：今天的 --shape 种子默认就是本档，用它重推等于从答案出发",
 
@@ -367,7 +367,7 @@ public sealed class FinalDesign
     // ── 已作废的两档：**留着**，不删。
     //   删掉就没人知道 3DM／论文／说明书里那些 3106 / 2388 g 是哪来的、为什么不能再用；
     //   而且自检门需要它们当**活样本**：⑤ 这条判据必须始终抓得住它们（见 --selfcheck A）。
-    public static readonly FinalDesign Retired08 = new()
+    public static readonly DesignSpec Retired08 = new()
     {
         Name = "（已作废）管壁 0.8 · 舌长 90",
         Provenance = "--final2 可行性阶梯 D7，2026-08-16",
@@ -385,7 +385,7 @@ public sealed class FinalDesign
         RampH = 0.057, DiscOverK = 1.050, HoleFluxW = 1.351, FlangeDipK = 5.522, TubeJ = 9.506,
     };
 
-    public static readonly FinalDesign Retired06 = new()
+    public static readonly DesignSpec Retired06 = new()
     {
         Name = "（已作废）管壁 0.6 · 舌长 90",
         Provenance = "--final2 可行性阶梯 D7，2026-08-16",
@@ -410,18 +410,18 @@ public sealed class FinalDesign
     /// 它们是守内核的回归基准：内核哪天算出别的数，--selfcheck A 段当场红。
     /// 测试只认这一组（文件档在磁盘上，会让测试结果依赖机器状态）。
     /// </summary>
-    public static readonly FinalDesign[] Builtin = { W08, W06, Retired08, Retired06 };
+    public static readonly DesignSpec[] Builtin = { W08, W06, Retired08, Retired06 };
 
     /// <summary>
     /// 内置档 + <c>finaldesigns/*.fd.json</c>。顺序：内置在前（下拉里先看到基准），文件档在后。
     ///
-    /// ⚠ 读档失败**不静默** —— 见 <see cref="FinalDesignStore.LoadErrors"/>，
+    /// ⚠ 读档失败**不静默** —— 见 <see cref="DesignSpecStore.LoadErrors"/>，
     ///   启动路径与 --selfcheck 都会把它当失败报出来。少一个档 = 少一组判据。
     /// </summary>
-    public static FinalDesign[] All { get; private set; } = Scan();
+    public static DesignSpec[] All { get; private set; } = Scan();
 
-    private static FinalDesign[] Scan()
-        => Builtin.Concat(FinalDesignStore.LoadAll(Builtin.Select(x => x.Name))).ToArray();
+    private static DesignSpec[] Scan()
+        => Builtin.Concat(DesignSpecStore.LoadAll(Builtin.Select(x => x.Name))).ToArray();
 
     /// <summary>
     /// 重扫 <c>finaldesigns/</c> 并重建 <see cref="All"/>，然后广播 <see cref="Reloaded"/>。
@@ -431,7 +431,7 @@ public sealed class FinalDesign
     /// 却在下拉里找不到它，工程师最可能的反应是再存一次（撞重名被拒），
     /// 或者以为没存上。
     ///
-    /// <see cref="FinalDesignStore.LoadAll"/> 每次进来先清 <c>LoadErrors</c>，
+    /// <see cref="DesignSpecStore.LoadAll"/> 每次进来先清 <c>LoadErrors</c>，
     /// 所以反复调不会把错误堆起来；但**新出现的读档错误会覆盖旧的**，
     /// 调用方要在调完之后再看 <c>LoadErrors</c>。
     /// </summary>
@@ -443,17 +443,17 @@ public sealed class FinalDesign
         Reloaded?.Invoke(null, System.EventArgs.Empty);
     }
 
-    /// <summary><see cref="All"/> 变过了。界面上每个列出定案档的下拉都该挂上来。</summary>
+    /// <summary><see cref="All"/> 变过了。界面上每个列出设计记录的下拉都该挂上来。</summary>
     public static event System.EventHandler? Reloaded;
 
     /// <summary>
     /// 当前生效的档。**默认取保守的 0.8** —— 业主尚未在两档间拍板，
     /// 而 0.6 把壁厚压在焊接下界上、管 J 只剩 9 %，这两条都属于现场判断，不属于计算。
     /// </summary>
-    public static FinalDesign Current = W08;
+    public static DesignSpec Current = W08;
 
     /// <summary>按管壁取档（命令行 `--wall 0.6`）。找不到返回 null —— **不要静默回退**。</summary>
-    public static FinalDesign? ByWall(double wallMm)
+    public static DesignSpec? ByWall(double wallMm)
     {
         foreach (var d in All)
             if (System.Math.Abs(d.WallMm - wallMm) < 1e-6) return d;
@@ -461,13 +461,13 @@ public sealed class FinalDesign
     }
 
     /// <summary>解析 `--wall &lt;mm&gt;`，缺省用 <see cref="Current"/>；给了但不认识就抛，不静默。</summary>
-    public static FinalDesign Select(string[] args)
+    public static DesignSpec Select(string[] args)
     {
         int i = System.Array.IndexOf(args, "--wall");
         if (i < 0 || i + 1 >= args.Length) return Current;
         if (!double.TryParse(args[i + 1], out double w))
             throw new System.ArgumentException($"--wall 的值解析不了：{args[i + 1]}");
         return ByWall(w) ?? throw new System.ArgumentException(
-            $"没有管壁 {w:0.0} mm 的定案档。现有：{string.Join("、", System.Linq.Enumerable.Select(All, d => d.WallMm.ToString("0.0")))}");
+            $"没有管壁 {w:0.0} mm 的设计记录。现有：{string.Join("、", System.Linq.Enumerable.Select(All, d => d.WallMm.ToString("0.0")))}");
     }
 }

@@ -24,7 +24,7 @@ public class LineSolverTests
         walls.Select((w, i) => new Segment
         {
             // ★ 取 1300/1250/1200：纯铂蠕变拟合区间是 1100–1400 °C。
-            //   实际定案的 1150/1080/1050 里有两段落在区间外 ⇒ 那两段本就是「无法判定」，
+            //   实际设计记录的 1150/1080/1050 里有两段落在区间外 ⇒ 那两段本就是「无法判定」，
             //   拿它们验「铂重为正」等于在验一条走不通的路。
             Name = $"HC{i + 1}", TSetC = 1300 - i * 50, TGlassInC = 1300,
             GlassHeadM = 0.3 + i * 0.3, LengthMm = 300, TubeIdMm = 50,

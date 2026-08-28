@@ -63,7 +63,7 @@ public class SingleSourceLimitTests
     }
 
     /// <summary>
-    /// 屈曲的无支撑宽度 b 必须用 <see cref="FinalDesign.HoleRadiusMm"/>，不许再出现字面量 26.0。
+    /// 屈曲的无支撑宽度 b 必须用 <see cref="DesignSpec.HoleRadiusMm"/>，不许再出现字面量 26.0。
     ///
     /// ★ 26.0 是**管壁 1.0 的旧构型**（PlateCurrent2D 注明「Ø52 = 管外径」），
     ///   而两个现役档是 25.6／25.8 ⇒ b 少算 0.2–0.4 mm，下界偏低 5–10 %，**偏在危险侧**。
@@ -72,8 +72,8 @@ public class SingleSourceLimitTests
     public void 屈曲宽度跟着管壁走_不是写死的26()
     {
         var p = new DesignInputs();
-        var a = FinalDesign.W08.Clone(); a.DiscRadiusMm = 60;   // 大盘 ⇒ 屈曲主导，看得出差别
-        var b = FinalDesign.W08.Clone(); b.DiscRadiusMm = 60; b.WallMm = 0.6;
+        var a = DesignSpec.W08.Clone(); a.DiscRadiusMm = 60;   // 大盘 ⇒ 屈曲主导，看得出差别
+        var b = DesignSpec.W08.Clone(); b.DiscRadiusMm = 60; b.WallMm = 0.6;
         // 管壁薄 ⇒ 孔小 ⇒ 无支撑宽度大 ⇒ 下界**更高**
         Assert.True(b.DiscFloorMm(p) > a.DiscFloorMm(p),
             $"壁 0.6 的下界应高于壁 0.8：{b.DiscFloorMm(p):0.000} vs {a.DiscFloorMm(p):0.000}");
@@ -91,7 +91,7 @@ public class SingleSourceLimitTests
     /// </code>
     ///
     /// ★ 也就是说：**旧代码在 0.6 档上允许了比抗屈曲极限更薄的板。**
-    ///   定案 W06 最薄一片是 0.62，仍在新下界之上 ⇒ **定案安全**，
+    ///   设计记录 W06 最薄一片是 0.62，仍在新下界之上 ⇒ **设计记录安全**，
     ///   但裕度从 0.020 mm 缩到 0.0106 mm。
     /// </summary>
     [Fact]
@@ -99,14 +99,14 @@ public class SingleSourceLimitTests
     {
         var p = new DesignInputs();
         // 0.8 档：屈曲支仍低于烧穿底 ⇒ 下界不变
-        Assert.Equal(p.WeldMinThicknessMm, FinalDesign.W08.DiscFloorMm(p), 6);
+        Assert.Equal(p.WeldMinThicknessMm, DesignSpec.W08.DiscFloorMm(p), 6);
         // 0.6 档：屈曲支反超 ⇒ 下界高于烧穿底
-        double f06 = FinalDesign.W06.DiscFloorMm(p);
+        double f06 = DesignSpec.W06.DiscFloorMm(p);
         Assert.True(f06 > p.WeldMinThicknessMm,
             $"0.6 档的下界应由屈曲主导：{f06:0.0000} vs 烧穿底 {p.WeldMinThicknessMm:0.000}");
         Assert.Equal(0.6094, f06, 4);   // 实测 0.60943
-        // ★ 定案 W06 仍造得出来 —— 这一条不过，就是这次修正把现役档判死了，必须当场知道
-        Assert.True(FinalDesign.W06.TabThickMm.Min() > f06,
-            $"定案 W06 最薄片 {FinalDesign.W06.TabThickMm.Min():0.000} 必须仍高于新下界 {f06:0.0000}");
+        // ★ 设计记录 W06 仍造得出来 —— 这一条不过，就是这次修正把现役档判死了，必须当场知道
+        Assert.True(DesignSpec.W06.TabThickMm.Min() > f06,
+            $"设计记录 W06 最薄片 {DesignSpec.W06.TabThickMm.Min():0.000} 必须仍高于新下界 {f06:0.0000}");
     }
 }

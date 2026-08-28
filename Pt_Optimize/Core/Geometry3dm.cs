@@ -89,15 +89,15 @@ public static class Geometry3dm
     /// <param name="scale">一个值 = 整片统一缩放；多个值 = 逐级独立
     /// （需各级在 .3dm 里是独立实体，否则子进程会明确报出来并退回统一缩放）</param>
     /// <summary>
-    /// 把**定案构型**（<see cref="FinalDesign"/>）整机写成 .3dm：
+    /// 把**设计记录构型**（<see cref="DesignSpec"/>）整机写成 .3dm：
     /// 三段铂管 + 四片法兰（板身 / 环外级 / 环内级）+ 压接段参考几何。
     ///
-    /// ★ 几何定义只在 <see cref="FinalDesign"/>。这里把它序列化成规格 JSON 交给子进程渲染，
-    ///   子进程**不持有任何定案值** —— 否则同一个数就在两个项目里各存一份，
+    /// ★ 几何定义只在 <see cref="DesignSpec"/>。这里把它序列化成规格 JSON 交给子进程渲染，
+    ///   子进程**不持有任何设计记录值** —— 否则同一个数就在两个项目里各存一份，
     ///   而「抄两处然后悄悄漂开」是本项目最常见的失效（HANDOVER §1.8）。
     /// </summary>
     /// <returns>子进程 stdout（JSON 回显，用于与规格逐项比对）</returns>
-    public static string WriteFinal3dm(FinalDesign fd, string outPath,
+    public static string WriteFinal3dm(DesignSpec fd, string outPath,
                                        double tubeIdMm = 50.0, double segLenMm = 300.0,
                                        int segCount = 3)
     {
@@ -151,7 +151,7 @@ public static class Geometry3dm
     /// 写一张**单图层、多级台阶**的法兰 .3dm（调 Geom 子进程的 steps 模式）。
     ///
     /// ★ 它补的是解析路径与 .3dm 路径之间**断掉的那一环**：
-    ///   现有的「导出本页/定案 3DM」走 <see cref="WriteFinal3dm"/>，写的是**多图层**
+    ///   现有的「导出本页/设计记录 3DM」走 <see cref="WriteFinal3dm"/>，写的是**多图层**
     ///   （板身 / 环外级 / 环内级 / 压接段 / 角焊缝），而 .3dm 的读取端
     ///   （<see cref="LoadThickness"/> + <see cref="PlateShapeAnalyzer"/>）要的是**单图层**
     ///   ⇒ **APP 导出的图，APP 自己读不回来**。
@@ -197,7 +197,7 @@ public static class Geometry3dm
             psi.ArgumentList.Add($"{slotRInMm.ToString("R")},{slotROutMm.ToString("R")}");
         else psi.ArgumentList.Add("0,0");          // 占位：舌型必须落在第 11 个参数上
         // 等宽舌 —— 与 FlangePlate.TabParallel 同口径。梯形是本模式的旧默认，
-        // 而定案几何早已不用梯形（见 Geom 的 RunSteps 注释）。
+        // 而设计记录几何早已不用梯形（见 Geom 的 RunSteps 注释）。
         psi.ArgumentList.Add("par");
 
         using var proc = Process.Start(psi) ?? throw new InvalidOperationException("无法启动 " + probe);
@@ -370,7 +370,7 @@ public static class Geometry3dm
         // ★★ 退出码 0 **不等于**成功（2026-08-25 实测）：Pt_Optimize.Geom 的六个模式
         //   此前都写成 finally { Environment.Exit(Environment.ExitCode); }，
         //   而那个属性默认恒 0 ⇒ 它精心返回的 4（图层无实体）／2（异常）**全被抹平**。
-        //   当时的表现：拿定案自己的图纸跑 thickness，stderr 明明写着「图层无实体：法兰」，
+        //   当时的表现：拿设计记录自己的图纸跑 thickness，stderr 明明写着「图层无实体：法兰」，
         //   退出码却是 0、stdout 为空，于是这里照旧往下走，崩在 System.Text.Json ——
         //   报出来的是「The input does not contain any JSON tokens」，与真因隔了三层。
         //   子进程那侧已经修好；这一侧**也要挡**：被叫方撒过一次谎，调用方就不该再只信退出码。
@@ -380,7 +380,7 @@ public static class Geometry3dm
                 + (stderr.Trim().Length > 0 ? stderr.Trim() : "（它什么也没说）")
                 + Environment.NewLine + "文件：" + path3dm
                 + Environment.NewLine + "图层：「" + layer + "」"
-                + "　—— 图层名对不上是最常见的一种：定案 3DM 由 WriteFinal3dm 写出，"
+                + "　—— 图层名对不上是最常见的一种：设计记录 3DM 由 WriteFinal3dm 写出，"
                 + "图层结构与分析器要的单图层不同。");
 
 

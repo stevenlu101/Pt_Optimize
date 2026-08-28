@@ -24,7 +24,7 @@ namespace PtOptimize.UI;
 /// </summary>
 public sealed class LineDesignPage : TabPage
 {
-    // ★ 默认取**当前定案档的壁厚 0.80**，不再是 0.40（2026-08-21）。
+    // ★ 默认取**当前设计记录的壁厚 0.80**，不再是 0.40（2026-08-21）。
     //   用户：「低于焊接工艺下界 0.6 mm —— 这是基本，**能造能用后才是优化铂金减重**」。
     //   0.40 低于工艺下界 0.6 ⇒ 开箱那一刻界面上摆的就是一个**焊不出来的构型**；
     //   第一次用的人直接点「核算整线」，会拿它跑几十秒，解发散到 5000 °C 以上、
@@ -35,18 +35,18 @@ public sealed class LineDesignPage : TabPage
     private readonly NumericUpDown _clamp = Num((decimal)StartPoint.ClampTempC, -1m, 1200m, 10m, 0);
 
     /// <summary>
-    /// 三个此前**只存在于定案档里**的几何/工艺量（2026-08-28 补成输入）。
+    /// 三个此前**只存在于设计记录里**的几何/工艺量（2026-08-28 补成输入）。
     ///
-    /// ★ 用户：「**我不要定档这种模式（这坑太大），要严格遵守第一性原理**」。
-    ///   定案档同时当「回归基准」与「计算起点/兜底」两个角色，一混就出了本轮查到的一串问题。
+    /// ★ 用户：「**我不要设计记录这种模式（这坑太大），要严格遵守第一性原理**」。
+    ///   设计记录同时当「回归基准」与「计算起点/兜底」两个角色，一混就出了本轮查到的一串问题。
     ///   补上这三个之后，**页面上每一个进计算的量都有输入来源**，
-    ///   FinalDesign 退回它唯一正当的角色：**回归基准**。
+    ///   DesignSpec 退回它唯一正当的角色：**回归基准**。
     /// </summary>
     private readonly NumericUpDown _fillet = Num((decimal)StartPoint.TabFilletMm, 0m, 20m, 0.5m, 1);
     private readonly NumericUpDown _ringW = Num((decimal)StartPoint.RingWidthMm, 0.5m, 20m, 0.5m, 1);
     private readonly NumericUpDown _clampLen = Num((decimal)StartPoint.ClampLengthMm, 3m, 200m, 5m, 0);
     /// <summary>
-    /// `.3dm` 模式下的舌保温 mm。解析模式不用它（那边逐片来自 FinalDesign.TabInsulMm）。
+    /// `.3dm` 模式下的舌保温 mm。解析模式不用它（那边逐片来自 DesignSpec.TabInsulMm）。
     /// 0 = 裸舌 —— 那是此前 .3dm 路径**写死**的行为。
     /// </summary>
     private readonly NumericUpDown _tabIns3dm = Num(0.0m, 0.0m, 5.0m, 0.05m, 2);
@@ -66,11 +66,11 @@ public sealed class LineDesignPage : TabPage
     /// 「板厚 / 舌保温 / 环倍率 / 管保温 / 夹持温度…优化程式需自己给出答案，
     ///  可以在 UI 输入框上给初始值」）。
     ///
-    /// ★ 此前本页**没有这两组控件**，于是 <see cref="PageToFinalDesign"/> 从
-    ///   <c>FinalDesign.Current</c> 里继承 —— 而 Current 全仓只在声明处赋过值（恒为 W08）。
-    ///   后果：点「载入定案」选 0.6 档，控件变成 0.6 的值，**舌保温却仍是 0.8 档的**
+    /// ★ 此前本页**没有这两组控件**，于是 <see cref="PageToDesignSpec"/> 从
+    ///   <c>DesignSpec.Current</c> 里继承 —— 而 Current 全仓只在声明处赋过值（恒为 W08）。
+    ///   后果：点「载入设计记录」选 0.6 档，控件变成 0.6 的值，**舌保温却仍是 0.8 档的**
     ///   （W08 是 0.4/0.4/**0.5**/**0.3**，W06 是 0.4/0.4/**0.4**/**0.6**）
-    ///   ⇒ 算的是「0.6 的管 + 0.8 的保温」，而界面还写着「点核算整线就能复现定案数字」。
+    ///   ⇒ 算的是「0.6 的管 + 0.8 的保温」，而界面还写着「点核算整线就能复现设计记录数字」。
     ///
     /// 初始值 = <see cref="SizerOptions.InsLoMm"/>（0.3 ≈ **裸舌**）：
     /// 它是旋钮自己的下界，也是一个**真实物理状态**，不是捏出来的数。
@@ -112,11 +112,11 @@ public sealed class LineDesignPage : TabPage
     /// 「◈ 图纸几何 → 参数」—— 把 .3dm 反推出来的几何交给**解析路**（用户 2026-08-25 要求接上）。
     ///
     /// 两条输入路线此前给不出接近的答案，本质只有一条：**.3dm 路改不了形状**，
-    /// 而定案的关键一步恰恰是改形状（Ø120 → Ø60）。反推参数这件事早就做到了
+    /// 而设计记录的关键一步恰恰是改形状（Ø120 → Ø60）。反推参数这件事早就做到了
     /// （PlateShapeAnalyzer 一直在印那几个数），缺的只是**把它交过去**。
     /// </summary>
     private readonly ToolStripButton _btnToAnalytic;
-    /// <summary>「另存为定案档」—— 把当前的解写成 finaldesigns/*.fd.json。</summary>
+    /// <summary>「另存为设计记录」—— 把当前的解写成 finaldesigns/*.fd.json。</summary>
     private readonly ToolStripButton _btnSaveFinal;
     private readonly ToolStripButton _btnShape;
 
@@ -130,7 +130,7 @@ public sealed class LineDesignPage : TabPage
     //   本项目最贵的两次错都是「数字看着正常」造成的 —— 预测值绝不能长得像解出来的。
     private readonly System.Windows.Forms.Timer _autoTimer = new() { Interval = 1500 };
     private bool _autoArmed;                 // 参数动过、还没解
-    private bool _suppressAuto;              // 程序化写控件时暂闭（载入定案等）
+    private bool _suppressAuto;              // 程序化写控件时暂闭（载入设计记录等）
     /// <summary>
     /// 首屏排版结束、可以把控件事件当「用户改参数」看了。
     /// 在此之前的 ValueChanged/CellValueChanged 都是**框架在排版**，不是人在改。
@@ -187,11 +187,11 @@ public sealed class LineDesignPage : TabPage
     }
 
     /// <summary>
-    /// 定尺寸器（D8）解出来的**舌保温**与**环倍率**。null = 尚未定尺寸，用定案值。
+    /// 定尺寸器（D8）解出来的**舌保温**与**环倍率**。null = 尚未定尺寸，用设计记录值。
     ///
     /// ★★★★★ 为什么必须由本页承载（2026-08-25 `--follow` 走查逼出来的）：
     ///   D8 用**三个**旋钮找可行解（板厚 / 舌保温 / 环倍率），而本页原先只承载板厚。
-    ///   于是「定尺寸 → 回 ③ 重解」这条路**必然退回失败**：重解时另外两个被丢回定案值，
+    ///   于是「定尺寸 → 回 ③ 重解」这条路**必然退回失败**：重解时另外两个被丢回设计记录值，
     ///   ②′ 立刻掉负 ⇒ 提示又指回定尺寸 ⇒ **两步一循环，永远走不到交付**。
     ///   实测：定尺寸后 3569 g 全过 → 重解 ②′ = −9.32 不过 → 再定尺寸 3565 g 全过 → …
     ///
@@ -213,11 +213,11 @@ public sealed class LineDesignPage : TabPage
     ///     · **最危险**：上一次解若是过的、而这一次把它调坏了，门会继续开着（假绿灯）。
     ///   逐处补第四次还会忘 —— 所以让它们**只能**从这一个入口接管。
     /// </summary>
-    private void AdoptSolvedDesign(FinalDesign d, LineResult? best)
+    private void AdoptSolvedDesign(DesignSpec d, LineResult? best)
     {
         // ★★ 2026-08-25：定尺寸的结果写回**控件**，控件是舌保温/环倍率的**唯一来源**。
-        //   此前另存一份 _sizerTabIns/_sizerRingMul，而 PageToFinalDesign 在它们为空时
-        //   回退到 FinalDesign.Current —— 那是「同一个数两处来源 + 定案档当起点」两个毛病叠一起。
+        //   此前另存一份 _sizerTabIns/_sizerRingMul，而 PageToDesignSpec 在它们为空时
+        //   回退到 DesignSpec.Current —— 那是「同一个数两处来源 + 设计记录当起点」两个毛病叠一起。
         //   （另一份仍保留，只为 CurrentSnap 的新鲜度比对，不再参与构造设计。）
         _suppressAuto = true;
         try
@@ -255,8 +255,8 @@ public sealed class LineDesignPage : TabPage
         Disc = (double)_discD.Value,
         TabLen = (double)_tabLen.Value,
         TabW = (double)_tabW.Value,
-        // ★★ 2026-08-25：改读**控件**。此前是 `_sizerX ?? FinalDesign.Current.X` ——
-        //   定尺寸没跑过时，快照记的是**定案档**的值，而实际计算用的也是它
+        // ★★ 2026-08-25：改读**控件**。此前是 `_sizerX ?? DesignSpec.Current.X` ——
+        //   定尺寸没跑过时，快照记的是**设计记录**的值，而实际计算用的也是它
         //   ⇒ 「参数没变」判得对，但两边一起错。现在控件是唯一来源，快照跟着控件走，
         //   工程师动一下舌保温/环倍率，上一次的解立刻不新鲜（本来就该如此）。
         Fillet = (double)_fillet.Value,
@@ -345,27 +345,27 @@ public sealed class LineDesignPage : TabPage
         // 1b 之后它导出的是**整机**（管 + 四片法兰）且几何与求解一致，故改名点明
         _btnExport = Btn("导出本页 3DM", (_, _) => Export());
 
-        // ★ 定案档：直接从 Core/FinalDesign 取，**不在 UI 里再抄一份数**。
+        // ★ 设计记录：直接从 Core/DesignSpec 取，**不在 UI 里再抄一份数**。
         //   两档都全判据通过，差别只在裕度与铂重（见各档的 Binding 说明）。
         RefillCaseBox();
-        FinalDesign.Reloaded += OnFinalDesignsReloaded;
-        _btnLoadCase = Btn("载入定案", (_, _) => LoadFinalDesign());
-        _btn3dm = Btn("导出定案 3DM", (_, _) => ExportFinal3dm());
+        DesignSpec.Reloaded += OnDesignSpecsReloaded;
+        _btnLoadCase = Btn("载入设计记录", (_, _) => LoadDesignSpec());
+        _btn3dm = Btn("导出设计记录 3DM", (_, _) => ExportFinal3dm());
         _btnAnalyze = Btn("分析几何变数", (_, _) => AnalyzeShape());
         _btnExportRead = Btn("导出可回读 3DM", (_, _) => ExportReadable3dm());
         _btnToAnalytic = Btn("◈ 图纸几何 → 参数", (_, _) => AdoptShapeToAnalytic());
-        _btnSaveFinal = Btn("另存为定案档", (_, _) => SaveAsFinalDesign());
+        _btnSaveFinal = Btn("另存为设计记录", (_, _) => SaveAsDesignSpec());
 
-        // ★★★ 复现定案：**界面上唯一能跑出定案数字的按钮**（2026-08-16 用户提出）。
+        // ★★★ 复现设计记录：**界面上唯一能跑出设计记录数字的按钮**（2026-08-16 用户提出）。
         //
         // 在此之前界面根本没有这条路：本页控件表达不了「管孔两级渐变环」与
-        // 「逐片舌保温」，所以「载入定案 → 核算整线」跑的是一个**缺两项的构型**，
+        // 「逐片舌保温」，所以「载入设计记录 → 核算整线」跑的是一个**缺两项的构型**，
         // 数字对不上，而它照样出一张漂亮的判据表 —— §1.8「安静失败」的形状。
-        // ⇒ 本按钮**完全绕过页面控件**，直接用 FinalDesign.BuildCase 造算例。
-        _btnRepro = Btn("▶ 复现定案", (_, _) => _ = ReproduceAsync());
+        // ⇒ 本按钮**完全绕过页面控件**，直接用 DesignSpec.BuildCase 造算例。
+        _btnRepro = Btn("▶ 复现设计记录", (_, _) => _ = ReproduceAsync());
         // ⚠ 不能写 `new Font(_btnRepro.Font, Bold)` —— 那会**在这一刻捕获**按钮当时的字体
         //   （默认 9 pt），从此这个按钮就不再跟着工具条的字体走了。
-        //   用户 2026-08-18 截图里「▶ 复现定案」比邻居明显小一号，就是这么来的。
+        //   用户 2026-08-18 截图里「▶ 复现设计记录」比邻居明显小一号，就是这么来的。
         _btnRepro.Font = UiScale.Ui(FontStyle.Bold);
 
         // ★★★★★ 搜形状（2026-08-17，用户指出「跑得久」该用**进度条**解决，不是把功能挡在 CLI 外）。
@@ -381,7 +381,7 @@ public sealed class LineDesignPage : TabPage
 
         // ★★ 2026-08-20 阶段轨：本页只留「③ 整线核算」这一格的命令。
         //
-        //   搬走的四个（自动定厚 / ◇ 搜形状 → ④；导出本页 3DM / 导出定案 3DM → ⑤）
+        //   搬走的四个（自动定厚 / ◇ 搜形状 → ④；导出本页 3DM / 导出设计记录 3DM → ⑤）
         //   **仍然由本页创建和持有** —— 只是挂到了 ④⑤ 页的工具条上（见
         //   BtnAutoThick 等几个属性）。
         //
@@ -389,8 +389,8 @@ public sealed class LineDesignPage : TabPage
         //   一整套运行时状态（跑起来变「取消」、互相禁用、finally 里恢复，见 RunAsync）。
         //   重建一套按钮就等于把那套状态**抄第二份**，而两份状态迟早会漂开。
         //   ToolStripItem 本来就能挂到任何一条工具条上，让它换个位置最省事、也最不会错。
-        // ★ 定案档那一组（下拉 / 复现 / 载入 / 另存 / 导出定案 3DM）**已搬到独立的
-        //   「定案档」页**（2026-08-23）。它们不读页面控件、不受阶段门禁，
+        // ★ 设计记录那一组（下拉 / 复现 / 载入 / 另存 / 导出设计记录 3DM）**已搬到独立的
+        //   「设计记录」页**（2026-08-23）。它们不读页面控件、不受阶段门禁，
         //   与「你手上这个设计走到哪一步」是正交的两根轴，混在同一条工具条上正是
         //   用户最初抱怨的「不知道自己在算什么」。控件仍归本页所有（载入要灌本页控件、
         //   另存要读本页的解），只是**摆在别处** —— 见 MainForm 装配。
@@ -432,13 +432,13 @@ public sealed class LineDesignPage : TabPage
 
         Head("管");
         // ⚠ 斜率一律**插值自 dDip_*／dJ_* 那组常数**，不再手抄一遍（2026-08-20）。
-        //   手抄的那版已经漂开过：常数早在 2026-08-17 换成新定案点的实测值，
+        //   手抄的那版已经漂开过：常数早在 2026-08-17 换成新设计记录点的实测值，
         //   而这三条提示还停在旧构型的 ③ +123／−221／+22.7 上 ——
         //   **同一个数存两处，迟早对不上账**（§7 头一条）。插值之后它不可能再漂。
         Row("壁厚 mm", _wall,
             "工艺下界 0.6 mm = **手工 TIG 烧穿下界**（自动 TIG 0.3、激光 0.1，差一个量级）。\n" +
             "另一条独立的界是管 J ≤ 12 A/mm²（现场给定：一般上限 15，壁 0.6 时 12 是极限）。\n" +
-            "定案两档正是被这两条同点咬住（0.6）与全都留有余量（0.8）。\n" +
+            "设计记录两档正是被这两条同点咬住（0.6）与全都留有余量（0.8）。\n" +
             $"实测斜率（--vary）：③ {dDip_dWall:+0.0;−0.0} K/mm　②″ +16.7 K/mm" +
             $"　管J {dJ_dWall:+0.00;−0.00}　管重 +3051 g/mm\n" +
             "⚠ ②″ 那条只在**这个工作点附近**成立：②″ 由两个竞争峰决定，符号会随构型翻。");
@@ -513,7 +513,7 @@ public sealed class LineDesignPage : TabPage
         Row("舌保温 mm（.3dm）", _tabIns3dm,
             "舌片自己的保温厚度。**0 = 裸舌**，那是本路径此前写死的行为。"
             + Environment.NewLine
-            + "它是守 ②′/③ 的主力旋钮：实测在定案几何上，0.4 mm ⇒ ③ = 5.2 K ✓，"
+            + "它是守 ②′/③ 的主力旋钮：实测在设计记录几何上，0.4 mm ⇒ ③ = 5.2 K ✓，"
             + "而 0（裸舌）⇒ 法兰 2986 °C、往管里灌 256 W。"
             + Environment.NewLine
             + "舌片裸露占端片散热的 90 % 以上 —— 一裸就净抽热、一全包又净倒灌，中间有零点。");
@@ -538,7 +538,7 @@ public sealed class LineDesignPage : TabPage
             "共用片承 √3 倍电流、发热 3 倍 ⇒ 必须比端片厚，四片等厚不是最优。";
         for (int i = 0; i < 4; i++) Row(names[i], _tPlate[i], tipPlate);
 
-        // ★ 舌保温与环倍率是**优化变量**，此前本页没有控件 ⇒ 只能从定案档继承（见 _tabIns 头注）。
+        // ★ 舌保温与环倍率是**优化变量**，此前本页没有控件 ⇒ 只能从设计记录继承（见 _tabIns 头注）。
         //   用户 2026-08-25 定：这两项由优化器给答案，UI 只给**初始值**。
         Head("舌保温 mm（优化变量，下界 0.3 = 裸舌）");
         // ⚠ 提示文字用 Environment.NewLine 拼，**不写反斜杠转义** ——
@@ -563,7 +563,7 @@ public sealed class LineDesignPage : TabPage
             "空冷即可，<0 = 无夹冷。★ 现场把自给率整定到位的唯一旋钮。\n" +
             "⚠ 压接段被铜排短接 ⇒ **那一段不发热**：舌片有效发热长度 = 舌长 − 压接长。\n" +
             "  90 mm 舌片扣掉 40 mm 只剩 50 mm —— 想靠缩短舌片省铂会先把发热段砍没。");
-        Head("几何/工艺（此前只在定案档里，2026-08-28 补成输入）");
+        Head("几何/工艺（此前只在设计记录里，2026-08-28 补成输入）");
         Row("舌根圆角 R mm", _fillet,
             "⚠ 网格 2 mm，**小于它的圆角在场里看不出来**（§1.8 的分辨率坑）—— 3 mm 只有 1.5 格。"
             + Environment.NewLine +
@@ -668,7 +668,7 @@ public sealed class LineDesignPage : TabPage
             "改任何一个参数，**会自动重算**（停手约 1.5 秒后开始，分钟级，随时可取消）。\r\n" +
             "改的当下会先给两样东西：解析量（精确）与线性外推的预测值（标「预测」），\r\n" +
             "真解跑完再覆盖它们。\r\n\r\n" +
-            "想直接看定案档：工具条上选「定案档 ▾」再点「▶ 复现定案」。\r\n" +
+            "想直接看设计记录：工具条上选「设计记录 ▾」再点「▶ 复现设计记录」。\r\n" +
             "按 F1 有图文说明书。";
         SyncGeomSource();
         HandleCreated += (_, _) => BeginInvoke(() =>
@@ -752,7 +752,7 @@ public sealed class LineDesignPage : TabPage
     /// 把**当前这个解**写成 <c>finaldesigns/*.fd.json</c>。
     ///
     /// ★ 用户 2026-08-22：「不想让工程师复制粘贴，感觉不靠谱」。
-    ///   此前落档要人工把十几个数抄进 FinalDesign.cs，其中五个判据值还得从判据表逐个读，
+    ///   此前落档要人工把十几个数抄进 DesignSpec.cs，其中五个判据值还得从判据表逐个读，
     ///   抄错一位要跑 8 分钟 --selfcheck 才知道。手抄正是「同一个数存两处」的入口。
     ///
     /// ⚠ 程序写这五个记录值**不削弱** --selfcheck：A 段验的从来不是「设计对不对」，
@@ -761,7 +761,7 @@ public sealed class LineDesignPage : TabPage
     /// ⚠ Name 由用户填、Binding 留空 —— 「什么咬住了它」是工程判断，不是程序能算的，
     ///   留空比替你猜一句更诚实。
     /// </summary>
-    private void SaveAsFinalDesign()
+    private void SaveAsDesignSpec()
     {
         if (Shared is not { Last: { } r } f || !f.Fresh || !r.AllOk)
         {
@@ -775,12 +775,12 @@ public sealed class LineDesignPage : TabPage
 
         string name = Microsoft.VisualBasic.Interaction.InputBox(
             "给这一档起个名（会成为文件名与下拉里的显示名）：",
-            "另存为定案档", $"管壁 {(double)_wall.Value:0.0} · 自定");
+            "另存为设计记录", $"管壁 {(double)_wall.Value:0.0} · 自定");
         if (string.IsNullOrWhiteSpace(name)) return;
 
-        var d = PageToFinalDesign();
+        var d = PageToDesignSpec();
         d.Name = name.Trim();
-        d.Provenance = $"由 APP「另存为定案档」写出；解出自「{(_srcAnalytic.Checked ? "解析形状" : "Rhino .3dm")}」路径";
+        d.Provenance = $"由 APP「另存为设计记录」写出；解出自「{(_srcAnalytic.Checked ? "解析形状" : "Rhino .3dm")}」路径";
         d.Binding = "";                       // ← 工程判断，留给人填
         d.TotalMassG = r.TotalMassG; d.TubeMassG = r.TubeMassG; d.FlangeMassG = r.FlangeMassG;
         // 五个回归基准值：**从本次解直接取**，不经人手
@@ -792,7 +792,7 @@ public sealed class LineDesignPage : TabPage
 
         try
         {
-            string path = FinalDesignStore.Save(d);
+            string path = DesignSpecStore.Save(d);
             MessageBox.Show(this,
                 $"已写出：{path}" + Environment.NewLine + Environment.NewLine
                 + "下一步（都要做）：" + Environment.NewLine
@@ -800,14 +800,14 @@ public sealed class LineDesignPage : TabPage
                 + "  2. 跑 --selfcheck，A 段这一档的差须为 0.000" + Environment.NewLine
                 + "  3. 提交进 git —— 档是回归基准，变更要被 diff 记录",
                 "已另存", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            // 重扫磁盘，让新档立刻出现在**每一个**定案档下拉里。
+            // 重扫磁盘，让新档立刻出现在**每一个**设计记录下拉里。
             // 少了这一句，界面会说「已写出」而下拉里找不到它 —— 工程师只能
             // 猜是没存上，于是再存一次（撞重名被拒），或者干脆不信这个功能。
-            FinalDesign.Reload();
-            if (FinalDesignStore.LoadErrors.Count > 0)
+            DesignSpec.Reload();
+            if (DesignSpecStore.LoadErrors.Count > 0)
                 MessageBox.Show(this,
                     "档已写出，但重扫 finaldesigns/ 时有档读不进来：" + Environment.NewLine
-                    + string.Join(Environment.NewLine, FinalDesignStore.LoadErrors) + Environment.NewLine
+                    + string.Join(Environment.NewLine, DesignSpecStore.LoadErrors) + Environment.NewLine
                     + Environment.NewLine + "少一个档 = 少一组回归基准，不要放着不管。",
                     "读档有错", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
@@ -818,10 +818,10 @@ public sealed class LineDesignPage : TabPage
     }
 
     /// <summary>
-    /// 把定案档下拉重填一遍，**按档名保住当前选中的那一档** —— 不能按下标，
+    /// 把设计记录下拉重填一遍，**按档名保住当前选中的那一档** —— 不能按下标，
     /// 新档追加在内置档后面，下标会移位。
     ///
-    /// 本页的下拉**没挂** SelectedIndexChanged（换档只是改选择，要点「载入定案」才生效），
+    /// 本页的下拉**没挂** SelectedIndexChanged（换档只是改选择，要点「载入设计记录」才生效），
     /// 所以重填不触发任何计算。哪天给它挂上了事件，这里必须同时加抑制位，
     /// 否则重扫一次就等于替用户按了一下载入。
     /// </summary>
@@ -829,13 +829,13 @@ public sealed class LineDesignPage : TabPage
     {
         string keep = _caseBox.SelectedItem as string ?? "";
         _caseBox.Items.Clear();
-        foreach (var fd in FinalDesign.All) _caseBox.Items.Add(fd.Name);
+        foreach (var fd in DesignSpec.All) _caseBox.Items.Add(fd.Name);
         int i = _caseBox.Items.IndexOf(keep);
-        if (i < 0) i = System.Array.IndexOf(FinalDesign.All, FinalDesign.Current);
+        if (i < 0) i = System.Array.IndexOf(DesignSpec.All, DesignSpec.Current);
         _caseBox.SelectedIndex = i < 0 ? 0 : i;
     }
 
-    private void OnFinalDesignsReloaded(object? sender, System.EventArgs e)
+    private void OnDesignSpecsReloaded(object? sender, System.EventArgs e)
     {
         if (IsDisposed) return;
         if (IsHandleCreated && InvokeRequired) { BeginInvoke(new System.Action(RefillCaseBox)); return; }
@@ -843,14 +843,14 @@ public sealed class LineDesignPage : TabPage
     }
 
     /// <summary>
-    /// ⚠ <see cref="FinalDesign.Reloaded"/> 是**静态**事件：不退订，这个页面就永远被它拿着。
+    /// ⚠ <see cref="DesignSpec.Reloaded"/> 是**静态**事件：不退订，这个页面就永远被它拿着。
     /// 真机上只有一个实例、无所谓，但 UiWiring 一个进程里反复造窗体 ——
     /// 旧实例的处理器会跟着累加，然后往**已销毁的控件**上写，
     /// 报出来的错跟真正的病因八竿子打不着。
     /// </summary>
     protected override void Dispose(bool disposing)
     {
-        if (disposing) FinalDesign.Reloaded -= OnFinalDesignsReloaded;
+        if (disposing) DesignSpec.Reloaded -= OnDesignSpecsReloaded;
         base.Dispose(disposing);
     }
 
@@ -1031,7 +1031,7 @@ public sealed class LineDesignPage : TabPage
         void Watch(Control c)
         {
             // ⚠ **工具条整条跳过**。ToolStripComboBox 内部宿主着一个真 ComboBox，
-            //   而它确实挂在 ToolStrip.Controls 上 ⇒ 递归会把「定案档 ▾」也当成参数，
+            //   而它确实挂在 ToolStrip.Controls 上 ⇒ 递归会把「设计记录 ▾」也当成参数，
             //   于是用户只是想换个档看看，就触发了一次分钟级的整线重算（实测抓到）。
             //   工具条上的东西是**命令**，不是参数。
             if (c is ToolStrip) return;
@@ -1055,7 +1055,7 @@ public sealed class LineDesignPage : TabPage
             // 与 MainForm.ApplyToolStripFont 的既定做法同源。
             //
             // ⚠ 上面那句 `if (c is ToolStrip) return;` 必须继续管用：ControlAdded 递归
-            //   同样会走到工具条上，而「定案档 ▾」被当成参数会让切档触发分钟级重算
+            //   同样会走到工具条上，而「设计记录 ▾」被当成参数会让切档触发分钟级重算
             //   （那个 bug 修过一次，接线测试第 1 项守着它）。
             c.ControlAdded += (_, e) => Watch(e.Control);
 
@@ -1077,7 +1077,7 @@ public sealed class LineDesignPage : TabPage
     /// 前两段是几何与工艺给的，第三段有下界（铜排装得下）。
     /// **加长只会多花铂、多发热**，所以最优解永远贴着这个下界。
     ///
-    /// 定案的 90 mm 之所以能长期存在，正是因为舌长在程序里是个独立常数，
+    /// 设计记录的 90 mm 之所以能长期存在，正是因为舌长在程序里是个独立常数，
     /// 从来没人拿盘径去核对过它。⇒ 现在让盘径/舌宽一动，舌长**自己跟上来**。
     /// </summary>
     private double TabLenFloorMm()
@@ -1085,7 +1085,7 @@ public sealed class LineDesignPage : TabPage
         double R = (double)_discD.Value * 0.5;
         double hw = Math.Min((double)_tabW.Value, R);
         double tangent = Math.Sqrt(Math.Max(0, R * R - hw * hw));
-        return tangent + FinalDesign.Current.ClampLengthMm + FreeTabMin;
+        return tangent + DesignSpec.Current.ClampLengthMm + FreeTabMin;
     }
 
     /// <summary>
@@ -1113,7 +1113,7 @@ public sealed class LineDesignPage : TabPage
         _suppressAuto = keep;
         return $"   ★ 舌长已由 {had:0} **自动顶到 {want:0} mm** —— 低于它铜排装不上（判据⑤）。\r\n" +
                $"     舌长 = 圆盘切点 {Math.Sqrt(Math.Max(0, Math.Pow((double)_discD.Value * 0.5, 2) - Math.Pow(Math.Min((double)_tabW.Value, (double)_discD.Value * 0.5), 2))):0.0}" +
-               $" + 压接段 {FinalDesign.Current.ClampLengthMm:0} + 自由段 {FreeTabMin:0}。\r\n" +
+               $" + 压接段 {DesignSpec.Current.ClampLengthMm:0} + 自由段 {FreeTabMin:0}。\r\n" +
                $"     想要更短的舌片，要改的是**盘径或铜排尺寸**，不是舌长本身。\r\n";
     }
 
@@ -1156,7 +1156,7 @@ public sealed class LineDesignPage : TabPage
         _ = RunAsync(false, byTimer: true);
     }
 
-    // ★ 实测雅可比（`--vary`，端点均已收敛，管壁 0.8 定案点附近）。
+    // ★ 实测雅可比（`--vary`，端点均已收敛，管壁 0.8 设计记录点附近）。
     //   ⚠ 只对**这个工作点附近**成立 —— ②″ 由两个竞争峰决定，符号会随构型变
     //     （已经栽过一次：拿另一构型的符号外推，判反了）。
     //   ⇒ 外推只用来给「大概会往哪边走」，绝不当结论；超出一步就不显示。
@@ -1166,7 +1166,7 @@ public sealed class LineDesignPage : TabPage
     //   换了形状照样外推。而斜率本身那句注释早就写着「符号会随构型变」。
     //   ⇒ 谁改斜率，就必须一起改这三个数；`ShowPrediction` 用它们判「本构型在不在范围内」。
     private const double JacDiscD = 60.0, JacTabLen = 140.0, JacTabW = 30.0;
-    // 2026-08-17 `--vary` 在**新定案点**（盘Ø60／舌140×60／板厚 0.89/2.45/2.35/0.73）重测：
+    // 2026-08-17 `--vary` 在**新设计记录点**（盘Ø60／舌140×60／板厚 0.89/2.45/2.35/0.73）重测：
     //
     // ★ 2026-08-20 起，参数提示框与外推的「驱动项」文字都**插值自这里**，不再各抄一份。
     //   起因：这几个常数 08-17 就换成了新值，而提示框里还挂着旧构型的
@@ -1180,7 +1180,7 @@ public sealed class LineDesignPage : TabPage
     //
     // 旧常数（另一个构型：舌 90×30、环 1.22、板厚约两倍）：
     //     ∂②″/∂管壁 = **+16.66**　∂②″/∂板厚 = **−14.59**
-    // 新定案点重测：
+    // 新设计记录点重测：
     //     ∂②″/∂管壁 = **−0.12**　∂②″/∂板厚 = **+0.14**
     // ⇒ **两个都翻了符号，量级掉了 100–140 倍。**
     //
@@ -1213,7 +1213,7 @@ public sealed class LineDesignPage : TabPage
         if (fixedTab.Length > 0) sb.Append(fixedTab);
         double tanNow = Math.Sqrt(Math.Max(0, Math.Pow((double)_discD.Value * 0.5, 2)
                         - Math.Pow(Math.Min((double)_tabW.Value, (double)_discD.Value * 0.5), 2)));
-        double freeNow = (double)_tabLen.Value - tanNow - FinalDesign.Current.ClampLengthMm;
+        double freeNow = (double)_tabLen.Value - tanNow - DesignSpec.Current.ClampLengthMm;
         // 解析层这四行是一张表：名称 / 值 / 单位 / 说明。
         // ⚠ 两条 ⚠ 告警**必须排在整张表之后**，不能夹在行与行中间：不带 \t 的整句
         //   会被当成普通句子，**把一张表断成两截**，两截各自量各自的列宽 ——
@@ -1291,7 +1291,7 @@ public sealed class LineDesignPage : TabPage
     /// 未收敛时的**一次性追问**：如果求解器判断是「慢」而不是「发散」，
     /// 就问一句要不要加轮数重跑。
     ///
-    /// 为什么值得做（2026-08-16 实测）：默认轮数上限 200 只够贴着定案点用。
+    /// 为什么值得做（2026-08-16 实测）：默认轮数上限 200 只够贴着设计记录点用。
     /// 稍一改参数，环路增益 g≈0.96 把扰动放大约 25 倍，200 轮就不够了 ——
     /// 实测「管保温 1 mm」那档 200 轮报未收敛（剩余误差 76.9 K），
     /// **只把上限提到 1000、其余一律不动，第 734 轮收敛，剩余误差 0.99 K**。
@@ -1336,14 +1336,14 @@ public sealed class LineDesignPage : TabPage
     }
 
     /// <summary>
-    /// ▶ 复现定案：按选中档的**完整几何**解一次，出判据表。
+    /// ▶ 复现设计记录：按选中档的**完整几何**解一次，出判据表。
     ///
     /// 与「核算整线」的区别，一句话：
     ///   · 核算整线 —— 读**页面上的控件**（可以随便改，用来试）
-    ///   · 复现定案 —— 读 <see cref="FinalDesign"/>，**完全不看页面**（用来复现交付数字）
+    ///   · 复现设计记录 —— 读 <see cref="DesignSpec"/>，**完全不看页面**（用来复现交付数字）
     ///
     /// ⚠ 1b（2026-08-17）之后，「核算整线」用的是**同一套几何构造器**，
-    ///   把定案参数填进页面也能复现定案值（界面接线测试第 16 项每次都验，差 0.000）。
+    ///   把设计记录参数填进页面也能复现设计记录值（界面接线测试第 16 项每次都验，差 0.000）。
     ///   那本条为什么还留着？——因为它**完全不读页面**：
     ///   用来排除「页面上某个控件被改过而自己没注意到」。
     ///   两条路给同一个数，才说明页面没被动过手脚；给不同的数，就该查页面。
@@ -1352,8 +1352,8 @@ public sealed class LineDesignPage : TabPage
     {
         if (_cts is not null) { _cts.Cancel(); return; }
         int i = _caseBox.SelectedIndex;
-        if (i < 0 || i >= FinalDesign.All.Length) return;
-        var fd = FinalDesign.All[i];
+        if (i < 0 || i >= DesignSpec.All.Length) return;
+        var fd = DesignSpec.All[i];
 
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
@@ -1363,7 +1363,7 @@ public sealed class LineDesignPage : TabPage
         // ★ 告诉阶段轨「正在跑哪条链」——右上角状态面板据此显示「正在算：…」，
         //   而且它**切到哪一页都看得见**（④ 页自己没有进度条）。
         //   同时它是互斥闸：SyncGates 会把所有会起算的命令禁掉。
-        Shared?.SetRunning(ChainId.C整线耦合, "复现定案");
+        Shared?.SetRunning(ChainId.C整线耦合, "复现设计记录");
         var prog = new Progress<string>(s => { _status.Text = s; Shared?.SetRunningNote(s); });
 
         try
@@ -1375,18 +1375,18 @@ public sealed class LineDesignPage : TabPage
             //   ⇒ **复现出一个全判据通过的解，④⑤ 一格都不开**，阶段轨当作什么都没发生。
             //   与 Snap 那个引用相等 bug 同族：界面状态不反映实际。
             //
-            // ① 先把定案值灌进页面控件 —— 让界面显示与档一致，CurrentSnap 才对得上。
-            LoadFinalDesignFrom(fd, quiet: true);
+            // ① 先把设计记录值灌进页面控件 —— 让界面显示与档一致，CurrentSnap 才对得上。
+            LoadDesignSpecFrom(fd, quiet: true);
 
             // ★ 快照取在**灌完控件、开解之前**这一刻（2026-08-24）。
             //   原来是解完再取 —— 复现要几分钟，这几分钟里控件可改，
             //   于是「解的那组」与「记下的那组」可以是两组，而 Fresh 判成 true。
-            //   ⚠ 必须在 LoadFinalDesignFrom **之后**：上一行刚把定案值灌进控件，
+            //   ⚠ 必须在 LoadDesignSpecFrom **之后**：上一行刚把设计记录值灌进控件，
             //     放到它前面记的就是用户原来那组，复现完会永远判成不新鲜。
             var snapAtStart = CurrentSnap();
 
-            // ② **仍从档解**，不走 PageToFinalDesign()。
-            //    保住这条独立路径是有代价换来的：PageToFinalDesign 是一段**搬运代码**，
+            // ② **仍从档解**，不走 PageToDesignSpec()。
+            //    保住这条独立路径是有代价换来的：PageToDesignSpec 是一段**搬运代码**，
             //    本项目已经栽过好几次（盘径直径/半径、压接段用了 3 mm 默认值、
             //    管孔渐变环整个漏掉）。复现对账的作用就是抓这类错 ——
             //    若复现也改走页面路径，就成了**用有嫌疑的那条路去验它自己**，
@@ -1398,10 +1398,10 @@ public sealed class LineDesignPage : TabPage
             _last = r;
             Show(r);
 
-            // 与 FinalDesign 记录值对账：不一致要**当场说出来**，不能等人自己发现
+            // 与 DesignSpec 记录值对账：不一致要**当场说出来**，不能等人自己发现
             var sb = new StringBuilder();
             sb.AppendLine();
-            sb.AppendLine("── 复现对账（本次实算 vs FinalDesign 记录值）");
+            sb.AppendLine("── 复现对账（本次实算 vs DesignSpec 记录值）");
             if (r.Ok)
             {
                 double mt = r.TubeMassG, mf = r.FlangeMassG, all = r.TotalMassG;
@@ -1425,7 +1425,7 @@ public sealed class LineDesignPage : TabPage
             sb.AppendLine("出处：" + fd.Provenance);
             sb.AppendLine("⚠ 这条路**完全不读页面上的控件**。");
             sb.AppendLine("   1b（2026-08-17）之后「核算整线」用的是同一套几何构造器 ——");
-            sb.AppendLine("   把定案参数填进页面，它也能给出上面这组数。两条路**应当一致**；");
+            sb.AppendLine("   把设计记录参数填进页面，它也能给出上面这组数。两条路**应当一致**；");
             sb.AppendLine("   不一致就说明页面上有控件被改过，查页面，别怀疑内核。");
             _out.Text += sb.ToString();
 
@@ -1433,7 +1433,7 @@ public sealed class LineDesignPage : TabPage
             //
             // ⚠ 「新鲜」这个断言必须**说真话**：Fresh 的含义是
             //    「页面上这组参数就是解出这个结果的那组」。
-            //    水头**不属于定案几何**（LoadFinalDesignFrom 故意不动它），
+            //    水头**不属于设计记录几何**（LoadDesignSpecFrom 故意不动它），
             //    而本按钮从档解、用的是 LineCase 的内核默认水头 —— 两者可能不同。
             //    此时页面参数并没有产生这个解，**不能假装 Fresh**，否则 ④ 会拿
             //    「页面工况的解」当起点，而它其实是「存档工况的解」。
@@ -1461,7 +1461,7 @@ public sealed class LineDesignPage : TabPage
                     + Environment.NewLine
                     + "   ⇒ 不把它记作「页面参数的解」，④ 仍需你点「核算整线」按页面工况重解一次。"
                     + Environment.NewLine
-                    + "   水头是工艺量、不属于定案几何，所以「载入定案」不会覆盖它 —— 这是有意的。";
+                    + "   水头是工艺量、不属于设计记录几何，所以「载入设计记录」不会覆盖它 —— 这是有意的。";
 
             _status.Text = "完成";
         }
@@ -1475,32 +1475,32 @@ public sealed class LineDesignPage : TabPage
         {
             _cts?.Dispose(); _cts = null;
             _prog.Visible = false;
-            _btnRepro.Text = "▶ 复现定案";
+            _btnRepro.Text = "▶ 复现设计记录";
             _btnRun.Enabled = _btnAuto.Enabled = true;
             Shared?.SetRunning(null);          // 清在 finally：异常/取消也必须解除互斥
         }
     }
 
     /// <summary>
-    /// 把选中的定案档灌进各控件。**值只从 <see cref="FinalDesign"/> 取**——
+    /// 把选中的设计记录灌进各控件。**值只从 <see cref="DesignSpec"/> 取**——
     /// UI 里再抄一份，就是「同一个数存两处然后悄悄漂开」（HANDOVER §1.8 最常见的失效）。
     /// </summary>
-    private void LoadFinalDesign()
+    private void LoadDesignSpec()
     {
         int i = _caseBox.SelectedIndex;
-        if (i < 0 || i >= FinalDesign.All.Length) return;
-        LoadFinalDesignFrom(FinalDesign.All[i], quiet: false);
+        if (i < 0 || i >= DesignSpec.All.Length) return;
+        LoadDesignSpecFrom(DesignSpec.All[i], quiet: false);
     }
 
     /// <summary>
-    /// 按**指定档**灌控件。<paramref name="quiet"/> = true 时**不写输出框** ——
-    /// 供「▶ 复现定案」复用：它自己要在输出框里写复现对账，
-    /// 不能被这里的「已载入定案档…」整段冲掉。
+    /// 按**指设计记录**灌控件。<paramref name="quiet"/> = true 时**不写输出框** ——
+    /// 供「▶ 复现设计记录」复用：它自己要在输出框里写复现对账，
+    /// 不能被这里的「已载入设计记录…」整段冲掉。
     ///
     /// 拆出来是为了让两个入口共用同一段灌值代码 ——
     /// 各抄一份就是「同一件事存两处然后悄悄漂开」。
     /// </summary>
-    private void LoadFinalDesignFrom(FinalDesign fd, bool quiet)
+    private void LoadDesignSpecFrom(DesignSpec fd, bool quiet)
     {
         decimal C(double v, NumericUpDown n) =>
             Math.Clamp((decimal)v, n.Minimum, n.Maximum);
@@ -1518,11 +1518,11 @@ public sealed class LineDesignPage : TabPage
         for (int j = 0; j < 4 && j < _tPlate.Length; j++)
             _tPlate[j].Value = C(fd.TabThickMm[j], _tPlate[j]);
         // ★★ 舌保温与环倍率也要灌进控件（2026-08-25）。
-        //   ⚠ 这**不是**「拿定案当起点」—— 工程师**明确点了「载入定案」**，
-        //     那是定案档的正当用途：**校正计算流程**（载入 → 核算 → 对得上说明链路没坏）。
-        //     被禁的是**静默继承**：没人要求的时候，PageToFinalDesign 自己去 Current 里捡。
+        //   ⚠ 这**不是**「拿设计记录当起点」—— 工程师**明确点了「载入设计记录」**，
+        //     那是设计记录的正当用途：**校正计算流程**（载入 → 核算 → 对得上说明链路没坏）。
+        //     被禁的是**静默继承**：没人要求的时候，PageToDesignSpec 自己去 Current 里捡。
         //   ⚠ 少了这两行，载入 0.6 档之后舌保温会停在控件默认的 0.3（裸舌），
-        //     「载入定案 → 核算整线」就复现不出该档的数 —— 那正是这道校正要验的东西。
+        //     「载入设计记录 → 核算整线」就复现不出该档的数 —— 那正是这道校正要验的东西。
         _clampLen.Value = C(fd.ClampLengthMm, _clampLen);
         _fillet.Value = C(fd.TabFilletMm, _fillet);
         _ringW.Value = C(fd.RingWidthMm, _ringW);
@@ -1533,7 +1533,7 @@ public sealed class LineDesignPage : TabPage
         // 定尺寸器上一次的解也一并作废 —— 否则跨档污染（换了档，旧解的旋钮还留着）
         _sizerTabIns = null; _sizerRingMul = null;
 
-        // 分段控温点：只改控温点，水头保持页面上原有的值（那是工艺量，不属于定案几何）
+        // 分段控温点：只改控温点，水头保持页面上原有的值（那是工艺量，不属于设计记录几何）
         string[] segNames = { "HC1", "HC2", "HC3" };
         for (int k = 0; k < fd.SetpointC.Length; k++)
         {
@@ -1545,29 +1545,29 @@ public sealed class LineDesignPage : TabPage
         if (quiet) { _suppressAuto = false; return; }
 
         _out.Text =
-            // ★ 失效告示必须在**最前面**：这一段是用户载入定案后唯一会读的文字，
+            // ★ 失效告示必须在**最前面**：这一段是用户载入设计记录后唯一会读的文字，
             //   把「本档已失效」写在第五行等于没写（§1.8：安静失败靠的就是没人看的位置）。
             (fd.Invalid.Length > 0
                 ? "═══ ★★★ 本档已失效，不可作为交付值 ★★★ ═══\r\n" + fd.Invalid + "\r\n" +
                   $"（自由段 {fd.FreeTabMm:0.0} mm）\r\n═══════════════════════════════\r\n\r\n"
                 : "") +
-            "已载入定案档：" + fd.Describe() + "\r\n" +
+            "已载入设计记录：" + fd.Describe() + "\r\n" +
             "咬住它的：" + fd.Binding + "\r\n" +
             "出处：" + fd.Provenance + "\r\n" +
             $"外层耦合剩余误差估计 {fd.ResidualK:0.00} K（不是步长；见 HANDOVER §1.85）\r\n\r\n" +
             // ★ 这段话 2026-08-17（1b）之前是「本页表达不了两项，核算整线算的是另一片法兰」。
-            //   1b 之后**不再成立**：解析模式与「复现定案」走同一个构造器，
-            //   界面接线测试第 16 项每次都验「页面路径复现定案记录值」（差 0.000）。
+            //   1b 之后**不再成立**：解析模式与「复现设计记录」走同一个构造器，
+            //   界面接线测试第 16 项每次都验「页面路径复现设计记录记录值」（差 0.000）。
             //   ⚠ 留着旧话比没有话更糟 —— 它会让人以为页面上的数不可信而绕开去用别的路径。
-            "本页控件**没有**下面这几项，但它们已按定案值参与求解（界面上看不到）：\r\n" +
-            $"   · 管孔渐变环 ×{FinalDesign.Fmt(fd.RingMul, "0.00")}" +
+            "本页控件**没有**下面这几项，但它们已按设计记录值参与求解（界面上看不到）：\r\n" +
+            $"   · 管孔渐变环 ×{DesignSpec.Fmt(fd.RingMul, "0.00")}" +
             (fd.RingMul[0] <= 1.001
                 ? "（=1.00 即**不需要环**）\r\n"
                 : $"，r ≤ 孔+{fd.RingWidthMm:0} 与 孔+{2 * fd.RingWidthMm:0} 两级\r\n") +
-            $"   · 逐片舌保温 {FinalDesign.Fmt(fd.TabInsulMm, "0.0")} mm（守 ②′/③ 的主力旋钮）\r\n" +
+            $"   · 逐片舌保温 {DesignSpec.Fmt(fd.TabInsulMm, "0.0")} mm（守 ②′/③ 的主力旋钮）\r\n" +
             $"   · 压接段 {fd.ClampLengthMm:0} mm　舌根圆角 R{fd.TabFilletMm:0}　等宽舌片　管孔两面角焊缝\r\n" +
-            "   ⇒ 现在点「核算整线」**就能**复现定案数字（与「▶ 复现定案」同一套几何）。\r\n" +
-            "     两者的区别只剩：本按钮用页面上的水头，「复现定案」用内核默认值。";
+            "   ⇒ 现在点「核算整线」**就能**复现设计记录数字（与「▶ 复现设计记录」同一套几何）。\r\n" +
+            "     两者的区别只剩：本按钮用页面上的水头，「复现设计记录」用内核默认值。";
         _suppressAuto = false;
     }
 
@@ -1577,24 +1577,24 @@ public sealed class LineDesignPage : TabPage
     /// 与 `--make3dm` 那条同根同源（用户当天发现新旧 3DM 一模一样）：
     /// 交付件不能是一个**自己声明不成立**的设计。而这条 UI 路径比 CLI 更危险 ——
     /// 下拉里作废档就排在现役档后面，隔一个位置，手一滑就选中了；
-    /// 默认文件名又是 `定案_管壁0.8mm.3dm`，与现役档**一字不差**，
+    /// 默认文件名又是 `设计记录_管壁0.8mm.3dm`，与现役档**一字不差**，
     /// 存到同一个目录就把好的那个盖掉，且**没有任何提示**。
     ///
     /// 单独抽成方法是为了能被界面接线测试直接调用（SaveFileDialog 是模态的，测不了）。
     /// </summary>
-    public static string ExportBlockedReason(FinalDesign fd) =>
+    public static string ExportBlockedReason(DesignSpec fd) =>
         fd.Invalid.Length == 0 ? "" :
         "★ 本档已声明失效，**不出图**。\r\n" + fd.Invalid + "\r\n" +
         $"（自由段 {fd.FreeTabMm:0.0} mm）\r\n\r\n" +
         "交付件不能是一个自己声明不成立的设计。要看它长什么样，请用「使用说明」页 —— " +
         "那里会连同失效原因一起画出来。";
 
-    /// <summary>导出选中定案档的整机 3DM（子进程渲染 + 写完从磁盘回读自校）。</summary>
+    /// <summary>导出选中设计记录的整机 3DM（子进程渲染 + 写完从磁盘回读自校）。</summary>
     private void ExportFinal3dm()
     {
         int i = _caseBox.SelectedIndex;
-        if (i < 0 || i >= FinalDesign.All.Length) return;
-        var fd = FinalDesign.All[i];
+        if (i < 0 || i >= DesignSpec.All.Length) return;
+        var fd = DesignSpec.All[i];
 
         string blocked = ExportBlockedReason(fd);
         if (blocked.Length > 0) { _out.Text = blocked; return; }
@@ -1603,7 +1603,7 @@ public sealed class LineDesignPage : TabPage
         {
             Filter = "Rhino 3DM|*.3dm",
             // 文件名带上档名：只按管壁命名时，两个同壁厚的档会写成同一个文件名而互相覆盖
-            FileName = $"定案_管壁{fd.WallMm:0.0}mm_舌{fd.TabLengthMm:0}x{2 * fd.TabHalfWidthMm:0}.3dm"
+            FileName = $"设计记录_管壁{fd.WallMm:0.0}mm_舌{fd.TabLengthMm:0}x{2 * fd.TabHalfWidthMm:0}.3dm"
         };
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
@@ -1636,48 +1636,48 @@ public sealed class LineDesignPage : TabPage
     /// 本页控件**表达不了**的法兰特征 —— 用来在输出里逐条列出来。
     ///
     /// ⚠ 我此前对用户说的是「有两项表达不了」，那是**低估**。实测本页旧的 MakePlate
-    ///   与 <see cref="FinalDesign.Plate"/> 逐字段比对，差的是**六项**：
+    ///   与 <see cref="DesignSpec.Plate"/> 逐字段比对，差的是**六项**：
     ///   两级渐变环、角焊缝、逐片舌保温、等宽舌片、舌根圆角、逐片独立厚度以外的分区。
-    ///   ⇒ 用本页参数「核算整线」解的是一个**结构上更简单的法兰**，不是定案那一片。
-    ///   判据仍然照实判（没有作假），但**不要拿它的数去和定案值比**。
-    ///   把差异**打出来**，比悄悄用定案默认值补上更安全：后者会让人以为自己在试
-    ///   定案构型，实际上试的是别的东西（§1.8 的形状）。
+    ///   ⇒ 用本页参数「核算整线」解的是一个**结构上更简单的法兰**，不是设计记录那一片。
+    ///   判据仍然照实判（没有作假），但**不要拿它的数去和设计记录值比**。
+    ///   把差异**打出来**，比悄悄用设计记录默认值补上更安全：后者会让人以为自己在试
+    ///   设计记录构型，实际上试的是别的东西（§1.8 的形状）。
     /// </summary>
     private static string PageVsFinal(FlangePlate pg)
     {
         var miss = new List<string>();
-        // ⚠ 定案值一律**现取**，不写字面量。这里原来硬编码「×1.22–1.24」，
-        //   而 2026-08-17 重解后定案的环倍率是 1.00（不需要环）—— 又一处会悄悄漂开的抄写。
+        // ⚠ 设计记录值一律**现取**，不写字面量。这里原来硬编码「×1.22–1.24」，
+        //   而 2026-08-17 重解后设计记录的环倍率是 1.00（不需要环）—— 又一处会悄悄漂开的抄写。
         if (pg.DiscStepRadiiMm.Length == 0)
-            miss.Add($"管孔两级渐变环（当前定案 ×{FinalDesign.Current.RingMul[0]:0.00}" +
-                     (FinalDesign.Current.RingMul[0] <= 1.001 ? "，即**不需要环**）" : "）"));
-        if (pg.WeldFilletLegMm <= 1e-9) miss.Add("管孔两面角焊缝（定案 焊脚 = max(板厚, 壁厚)）");
+            miss.Add($"管孔两级渐变环（当前设计记录 ×{DesignSpec.Current.RingMul[0]:0.00}" +
+                     (DesignSpec.Current.RingMul[0] <= 1.001 ? "，即**不需要环**）" : "）"));
+        if (pg.WeldFilletLegMm <= 1e-9) miss.Add("管孔两面角焊缝（设计记录 焊脚 = max(板厚, 壁厚)）");
         if (double.IsNaN(pg.TabInsulThickMm)) miss.Add("逐片舌保温");
-        if (!pg.TabParallel) miss.Add("等宽舌片（本页是**梯形**，定案是等宽）");
+        if (!pg.TabParallel) miss.Add("等宽舌片（本页是**梯形**，设计记录是等宽）");
         if (pg.TabFilletMm <= 1e-9) miss.Add("舌根过渡圆角（峰值电流拥塞就在这个凹角上）");
         return miss.Count == 0 ? "" : string.Join("\r\n         · ", miss);
     }
 
     /// <summary>
-    /// 1b 之后：解析模式解的**就是**定案那套几何，所以要报的不再是「表达不了什么」，
+    /// 1b 之后：解析模式解的**就是**设计记录那套几何，所以要报的不再是「表达不了什么」，
     /// 而是「**本页没有控件的那几项，这次实际用了什么值**」。
     ///
     /// 为什么必须报：这几项都会显著改变结果（舌保温是守 ②′/③ 的主力旋钮），
     /// 而它们在界面上看不见。看不见又在起作用的量，正是「安静失败」的温床 ——
     /// 与其藏起来，不如每次都摊开。
     /// </summary>
-    private static string AnalyticUsedWhat(FinalDesign d) =>
+    private static string AnalyticUsedWhat(DesignSpec d) =>
         $"   · 压接段 {d.ClampLengthMm:0} mm（决定判据⑤ 自由段与舌片有效发热长度）\r\n" +
-        $"   · 逐片舌保温 {FinalDesign.Fmt(d.TabInsulMm, "0.0")} mm（**守 ②′/③ 的主力旋钮**）\r\n" +
-        $"   · 管孔渐变环 ×{FinalDesign.Fmt(d.RingMul, "0.00")}" +
+        $"   · 逐片舌保温 {DesignSpec.Fmt(d.TabInsulMm, "0.0")} mm（**守 ②′/③ 的主力旋钮**）\r\n" +
+        $"   · 管孔渐变环 ×{DesignSpec.Fmt(d.RingMul, "0.00")}" +
         (d.RingMul[0] <= 1.001 ? "（=1.00 即不需要环）" : $"，环宽 {d.RingWidthMm:0} mm") + "\r\n" +
         $"   · 舌根圆角 R{d.TabFilletMm:0}　等宽舌片　管孔两面角焊缝（焊脚 = max(板厚, 壁厚)）\r\n" +
         $"   · 圆盘保温 {(d.FlangeInsulated ? $"{d.FlangeInsulMm:0} mm" : "不包")}（本页「法兰保温」控件）\r\n" +
         "   ⇒ 这几项本页没有控件；要改它们请用「自动定厚」/「◇ 搜形状」求解，" +
-        "或改 Core/FinalDesign。";
+        "或改 Core/DesignSpec。";
 
     // ★★★ 这里原来有个 `MakePlate(double)` —— 本页自己造 FlangePlate 的那个方法。
-    //   1b（2026-08-17）之后解析几何一律走 FinalDesign.Plate，它已经没有调用者。
+    //   1b（2026-08-17）之后解析几何一律走 DesignSpec.Plate，它已经没有调用者。
     //
     //   **删掉而不是留着**：一个长得就像「几何构造器」的私有方法留在页面里，
     //   下一个人（包括我）要加功能时会顺手用它 —— 第二个几何来源就是这么长回来的。
@@ -1688,21 +1688,21 @@ public sealed class LineDesignPage : TabPage
     /// ★★★★★ **1b：解析模式下，页面与内核共用同一个几何构造器**（2026-08-17）。
     ///
     /// 在此之前本页自己造 <c>FlangePlate</c>（旧的 MakePlate，已删），只填五个字段；
-    /// 而 <see cref="FinalDesign.Plate"/> 还填渐变环、角焊缝、逐片舌保温、等宽舌片、舌根圆角。
-    /// ⇒ 「核算整线」解的是**另一片法兰**，判据照实判，但那些数不能跟定案比。
+    /// 而 <see cref="DesignSpec.Plate"/> 还填渐变环、角焊缝、逐片舌保温、等宽舌片、舌根圆角。
+    /// ⇒ 「核算整线」解的是**另一片法兰**，判据照实判，但那些数不能跟设计记录比。
     ///
     /// 「几何只有一个来源」这条铁律，在页面这里一直是破的。而 2026-08-17 一天里
     /// 抓到的三条 bug 根都是同一句：**同一件事存了两处**
-    ///   · 压接段：页面用 3 mm 默认值，定案是 40（判据⑤ 因此判反）
+    ///   · 压接段：页面用 3 mm 默认值，设计记录是 40（判据⑤ 因此判反）
     ///   · 3DM：作废档与现役档同名，把现役档整个覆盖
-    ///   · 渐变环倍率：警告文字里硬编码「×1.22–1.24」，而定案早已是 1.00
-    /// ⇒ 把页面这一处拆掉：解析几何一律走 <see cref="PageToFinalDesign"/> → <c>BuildCase</c>。
+    ///   · 渐变环倍率：警告文字里硬编码「×1.22–1.24」，而设计记录早已是 1.00
+    /// ⇒ 把页面这一处拆掉：解析几何一律走 <see cref="PageToDesignSpec"/> → <c>BuildCase</c>。
     ///
     /// ⚠ **行为会变**：同样的页面参数，「核算整线」的数会与以前不同（现在带环、带焊缝、
     ///   带舌保温）。这是**修正**不是回归 —— 以前那组数解的是一片不存在的法兰。
     ///   输出里会逐条列出本次实际用了什么值。
     ///
-    /// ⚠ `.3dm` 那条路**保留旧路**：任意台阶几何 <c>FinalDesign</c> 表达不了。
+    /// ⚠ `.3dm` 那条路**保留旧路**：任意台阶几何 <c>DesignSpec</c> 表达不了。
     /// </summary>
     private LineCase BuildCase()
     {
@@ -1710,9 +1710,9 @@ public sealed class LineDesignPage : TabPage
 
         if (_srcAnalytic.Checked)
         {
-            // ★ 与「自动定厚」「搜形状」「复现定案」走**同一个构造器**，不再另造一片
-            var lcA = PageToFinalDesign().BuildCase(_base, checkRamp: true);
-            // 水头是**操作条件**不是几何，FinalDesign 不带它 ⇒ 在这里补上（页面表格里有）
+            // ★ 与「自动定厚」「搜形状」「复现设计记录」走**同一个构造器**，不再另造一片
+            var lcA = PageToDesignSpec().BuildCase(_base, checkRamp: true);
+            // 水头是**操作条件**不是几何，DesignSpec 不带它 ⇒ 在这里补上（页面表格里有）
             lcA.HeadM = rows.Select(s => s.水头m).ToArray();
             return lcA;
         }
@@ -1726,8 +1726,8 @@ public sealed class LineDesignPage : TabPage
         p.BusbarClampTempC = (double)_clamp.Value;
         // ★★★ BUG（2026-08-17 抓到）：本页从来没设过**压接段长度**，于是它一直用
         //   DesignInputs 的默认值 **3.0 mm** —— 而那个 3 mm 是 ShellMesh 自己注释里写明的
-        //   「**数值边界不是设计值**」，定案用的是 40 mm。
-        p.BusbarClampLengthMm = FinalDesign.Current.ClampLengthMm;
+        //   「**数值边界不是设计值**」，设计记录用的是 40 mm。
+        p.BusbarClampLengthMm = DesignSpec.Current.ClampLengthMm;
 
         var lc = new LineCase
         {
@@ -1785,7 +1785,7 @@ public sealed class LineDesignPage : TabPage
     }
 
     /// <summary>
-    /// ★★★★★ 把本页控件读成一个 <see cref="FinalDesign"/>（2026-08-17）。
+    /// ★★★★★ 把本页控件读成一个 <see cref="DesignSpec"/>（2026-08-17）。
     ///
     /// 为什么需要：「自动定厚」原来调的是 <see cref="FlangeAutoSizer"/> —— 它**只有板厚一个旋钮**，
     /// 靶是 ③，而且它自己的注释就写着「管不到 ②′/②″」。
@@ -1795,18 +1795,18 @@ public sealed class LineDesignPage : TabPage
     ///
     /// ⇒ 改调 D8（<see cref="Sizer"/>）：舌保温守抽热窗口、环倍率守 ②″、板厚只做接力与省铂。
     ///
-    /// ⚠ D8 工作在**定案那套完整几何**上（逐片舌保温、渐变环、等宽舌片、舌根圆角、角焊缝），
+    /// ⚠ D8 工作在**设计记录那套完整几何**上（逐片舌保温、渐变环、等宽舌片、舌根圆角、角焊缝），
     ///   而本页**没有这几项的控件**（见 <see cref="PageVsFinal"/>）。
     ///   ⚠ 2026-08-25 起：没有控件不等于本页不承载它们 ——
     ///     定尺寸算完会把舌保温与环倍率存进 <see cref="_sizerTabIns"/> / <see cref="_sizerRingMul"/>，
-    ///     后续 PageToFinalDesign 会带上 ⇒ 「回 ③ 重解」复现的是同一个设计。
+    ///     后续 PageToDesignSpec 会带上 ⇒ 「回 ③ 重解」复现的是同一个设计。
     ///     在那之前只带板厚回来，于是重解必然退回失败，指路与定尺寸两步死循环。
     ///   所以这里**明说**：自动定厚解的是完整构型，不是本页那片简化法兰。
-    ///   与其让两套几何各解各的（那是「同一个数存两处」的老毛病），不如统一到 FinalDesign 这一套。
+    ///   与其让两套几何各解各的（那是「同一个数存两处」的老毛病），不如统一到 DesignSpec 这一套。
     /// </summary>
-    private FinalDesign PageToFinalDesign()
+    private DesignSpec PageToDesignSpec()
     {
-        var seed = FinalDesign.Current;
+        var seed = DesignSpec.Current;
         var d = seed.Clone();
         d.Name = "本页参数";
         d.Provenance = "由「整线设计」页控件读入，D8 定尺寸";
@@ -1817,15 +1817,15 @@ public sealed class LineDesignPage : TabPage
         d.TabLengthMm = (double)_tabLen.Value;
         d.TabHalfWidthMm = (double)_tabW.Value;
         d.ClampTempC = (double)_clamp.Value;
-        // ★★★★★ 2026-08-28：这三个此前**只能取定案值**（「本页无控件」），
+        // ★★★★★ 2026-08-28：这三个此前**只能取设计记录值**（「本页无控件」），
         //   现在都有控件了 ⇒ **页面上每一个进计算的量都有输入来源**，
-        //   FinalDesign 不再是任何计算的起点或兜底，只剩回归基准这一个角色。
+        //   DesignSpec 不再是任何计算的起点或兜底，只剩回归基准这一个角色。
         d.ClampLengthMm = (double)_clampLen.Value;
         d.TabFilletMm = (double)_fillet.Value;
         d.RingWidthMm = (double)_ringW.Value;
         // ★★★★★ 舌保温与环倍率是**优化变量**，起点从**控件**读（用户 2026-08-25）。
-        //   此前这里是「定尺寸带回来的有就用，没有才用**定案值**」——
-        //   而 FinalDesign.Current 全仓只在声明处赋过值（恒为 W08）⇒ 载入 0.6 档之后，
+        //   此前这里是「定尺寸带回来的有就用，没有才用**设计记录值**」——
+        //   而 DesignSpec.Current 全仓只在声明处赋过值（恒为 W08）⇒ 载入 0.6 档之后，
         //   舌保温仍是 0.8 档的 0.4/0.4/0.5/0.3（W06 是 0.4/0.4/0.4/0.6）。
         //   现在定尺寸的结果由 AdoptSolvedDesign **写回控件**，控件是唯一来源。
         for (int i = 0; i < d.TabInsulMm.Length && i < _tabIns.Length; i++)
@@ -1918,7 +1918,7 @@ public sealed class LineDesignPage : TabPage
         var sb = new StringBuilder();
         sb.AppendLine("=== 搜形状（盘半径 × 舌宽；舌长按装配算）===");
         sb.AppendLine($"网格 {discs.Length}×{wFrac.Length} 个形状，先各筛 {screenRounds} 轮，再对胜出者跑 {finalRounds} 轮。");
-        sb.AppendLine($"自由段下界 {FreeTabMin:0} mm（判据⑤）　压接段 {FinalDesign.Current.ClampLengthMm:0} mm");
+        sb.AppendLine($"自由段下界 {FreeTabMin:0} mm（判据⑤）　压接段 {DesignSpec.Current.ClampLengthMm:0} mm");
         sb.AppendLine("★ 舌长不是搜出来的，是**算出来的**：切点 + 压接段 + 自由段。");
         sb.AppendLine("随时可以点「取消」——**已经算完的形状结果不会丢**。");
         sb.AppendLine();
@@ -1928,7 +1928,7 @@ public sealed class LineDesignPage : TabPage
         sb.AppendLine("盘Ø\t舌宽\t舌长\t合计 g\t判定");
         _out.Text = sb.ToString();
 
-        var rows = new List<(FinalDesign d, double mass, bool ok, string msg)>();
+        var rows = new List<(DesignSpec d, double mass, bool ok, string msg)>();
         try
         {
             // ★★★★★ **一轮 = 改一次形状（盘径/舌宽）+ 在它上面把梯度分布扫一遍**
@@ -1953,7 +1953,7 @@ public sealed class LineDesignPage : TabPage
                             $"跳过：管壁 {(double)_wall.Value:0.0} 时盘半径至少要 {minDisc:0.0}（判据⑥）\r\n");
                         return;
                     }
-                    var seed = PageToFinalDesign();
+                    var seed = PageToDesignSpec();
                     seed.DiscRadiusMm = R;
                     seed.TabHalfWidthMm = hw;
                     seed.TabLengthMm = Math.Sqrt(Math.Max(0, R * R - hw * hw))
@@ -2092,16 +2092,16 @@ public sealed class LineDesignPage : TabPage
 
             // 形状体检：搜出来的赢家也要说清楚它好在哪、代价在哪
             _out.AppendText("\r\n" + ShapeReview.Build(fin.Design, fin.Best,
-                                                       FinalDesign.Current, fin.Message, _base));
+                                                       DesignSpec.Current, fin.Message, _base));
             _out.AppendText("\r\n★ **最轻的全过形状**（已写回上面的盘径/舌宽/舌长/板厚）\r\n" +
                 $"   盘Ø{2 * fin.Design.DiscRadiusMm:0}／舌 {fin.Design.TabLengthMm:0}×{2 * fin.Design.TabHalfWidthMm:0}" +
                 $"／自由段 {fin.Design.FreeTabMm:0.0} mm\r\n" +
-                $"   板厚 {FinalDesign.Fmt(fin.Design.TabThickMm, "0.00")}" +
-                $"　舌保温 {FinalDesign.Fmt(fin.Design.TabInsulMm, "0.0")}" +
-                $"　环倍率 {FinalDesign.Fmt(fin.Design.RingMul, "0.00")}\r\n" +
+                $"   板厚 {DesignSpec.Fmt(fin.Design.TabThickMm, "0.00")}" +
+                $"　舌保温 {DesignSpec.Fmt(fin.Design.TabInsulMm, "0.0")}" +
+                $"　环倍率 {DesignSpec.Fmt(fin.Design.RingMul, "0.00")}\r\n" +
                 $"   合计 {fin.MassG:0} g　{fin.Message}\r\n\r\n" +
                 "     ★ 舌保温与环倍率本页没有控件，但**已由本页承载**（2026-08-25 起）：" + Environment.NewLine + "" +
-                "       它们跟着后续求解与出图走，不必再手抄进 Core/FinalDesign。" + Environment.NewLine + "" +
+                "       它们跟着后续求解与出图走，不必再手抄进 Core/DesignSpec。" + Environment.NewLine + "" +
                 "   ⚠ 筛选只跑了 " + screenRounds + " 轮，**是粗筛**：名次靠前几名接近时，" +
                 "把它们各自再跑一次足轮数才算数。\r\n");
             _status.Text = "完成";
@@ -2189,7 +2189,7 @@ public sealed class LineDesignPage : TabPage
                 // ★★★ .3dm 模式**没有分级**时必须**当场拒绝**，不许落进下面的 D8
                 //   （2026-08-21 用户看出来的）。原来这里是静默回退，后果不是
                 //   「换了个算法」，是**算了另一个零件**：
-                //     · D8 走 `Sizer.Solve(PageToFinalDesign(), …)`，
+                //     · D8 走 `Sizer.Solve(PageToDesignSpec(), …)`，
                 //       上面刚从 .3dm 造好的 `lc` **一眼都没看** ⇒ 图纸被静默丢弃；
                 //     · 盘径/舌长/舌半宽在 .3dm 模式下是**禁用**的，里面是上次的残值 ——
                 //       D8 拿这组残值当几何去优化；
@@ -2273,7 +2273,7 @@ public sealed class LineDesignPage : TabPage
                     //   靶是 ③，而 ③ 与 ②′ 是同一个抽热的两侧 ⇒ 它把 ③ 压下去的同时
                     //   把 ②′ 往负里推（热倒灌进管 = 烧断机理），且它自己管不到 ②′。
                     //   D8 用舌保温守抽热窗口、环倍率守 ②″、板厚只做接力与省铂。
-                    var seedD8 = PageToFinalDesign();
+                    var seedD8 = PageToDesignSpec();
                     var srD8 = await Task.Run(() => Sizer.Solve(seedD8, _base,
                                    new SizerOptions { MaxRounds = 40 }, prog, ct), ct);
                     _suppressAuto = true;
@@ -2301,19 +2301,19 @@ public sealed class LineDesignPage : TabPage
                     //     所以可以标成「已解且新鲜」，提示会直接指向出图。
                     //   （带回 + 发布 + 标新鲜四件事已经收进 AdoptSolvedDesign，上面那一行。）
                     _pendingReview = ShapeReview.Build(srD8.Design, srD8.Best,
-                                                       FinalDesign.Current, srD8.Message, _base);
+                                                       DesignSpec.Current, srD8.Message, _base);
                     Show(srD8.Best, autoNote:
                         "【D8 定尺寸】" + srD8.Message + "\r\n" +
-                        $"   板厚 {FinalDesign.Fmt(srD8.Design.TabThickMm, "0.00")}" +
-                        $"　舌保温 {FinalDesign.Fmt(srD8.Design.TabInsulMm, "0.0")}" +
-                        $"　环倍率 {FinalDesign.Fmt(srD8.Design.RingMul, "0.00")}" +
+                        $"   板厚 {DesignSpec.Fmt(srD8.Design.TabThickMm, "0.00")}" +
+                        $"　舌保温 {DesignSpec.Fmt(srD8.Design.TabInsulMm, "0.0")}" +
+                        $"　环倍率 {DesignSpec.Fmt(srD8.Design.RingMul, "0.00")}" +
                         $"　合计 {srD8.MassG:0} g\r\n" +
                         "   ★ 三个旋钮**都已带回本页工作设计**（2026-08-25 起）：\r\n" +
                         "     板厚写进控件；舌保温与环倍率本页无控件，但已由本页承载并参与后续求解\r\n" +
-                        "     ⇒「回 ③ 重解」会**复现这张表**，不会把它们丢回定案值。\r\n" +
+                        "     ⇒「回 ③ 重解」会**复现这张表**，不会把它们丢回设计记录值。\r\n" +
                         "     （在此之前只带板厚 ⇒ 重解必然退回失败 ⇒ 提示与定尺寸两步死循环。）\r\n" +
-                        $"   ⚠ 本次解的是**定案那套完整几何**（含渐变环/角焊缝/等宽舌片/舌根圆角），\r\n" +
-                        $"     ③ 页用的是**同一个几何构造器**（UiWiring §16 逐字段钉着），不是另一片简化法兰；压接段取定案值 {seedD8.ClampLengthMm:0} mm。");
+                        $"   ⚠ 本次解的是**设计记录那套完整几何**（含渐变环/角焊缝/等宽舌片/舌根圆角），\r\n" +
+                        $"     ③ 页用的是**同一个几何构造器**（UiWiring §16 逐字段钉着），不是另一片简化法兰；压接段取设计记录值 {seedD8.ClampLengthMm:0} mm。");
                 }
             }
             else
@@ -2334,13 +2334,13 @@ public sealed class LineDesignPage : TabPage
                         // 1b 之后正常不该再走到这里；留着是**兜底告警** ——
                         // 万一哪天构造器又被绕过去，这一段会立刻喊出来。
                         _out.Text +=
-                            "\r\n── ⚠⚠ 本次解的**不是**定案那套几何（1b 之后不应出现）\r\n" +
+                            "\r\n── ⚠⚠ 本次解的**不是**设计记录那套几何（1b 之后不应出现）\r\n" +
                             "   缺了：\r\n         · " + miss +
-                            "\r\n   ⇒ 说明有人绕过了 FinalDesign.Plate 这个唯一构造器，请查 BuildCase。\r\n";
+                            "\r\n   ⇒ 说明有人绕过了 DesignSpec.Plate 这个唯一构造器，请查 BuildCase。\r\n";
                     else
                         _out.Text +=
-                            "\r\n── 本次解的是**定案那套完整几何**（与「复现定案」同一个构造器）\r\n" +
-                            AnalyticUsedWhat(PageToFinalDesign()) + "\r\n";
+                            "\r\n── 本次解的是**设计记录那套完整几何**（与「复现设计记录」同一个构造器）\r\n" +
+                            AnalyticUsedWhat(PageToDesignSpec()) + "\r\n";
                 }
             }
             _status.Text = "完成";
@@ -2475,10 +2475,10 @@ public sealed class LineDesignPage : TabPage
         try
         {
             var plates = _srcAnalytic.Checked
-                ? PageToFinalDesign().BuildCase(_base, checkRamp: false).FlangePlates
+                ? PageToDesignSpec().BuildCase(_base, checkRamp: false).FlangePlates
                 : System.Array.Empty<FlangePlate>();
             f.GeomScreen = GeometryScreen.Judge(
-                plates, FinalDesign.Current.ClampLengthMm, FreeTabMin);
+                plates, DesignSpec.Current.ClampLengthMm, FreeTabMin);
         }
         catch { /* 几何还没填全（例如 .3dm 没选文件）时不该把界面拖垮 */ }
 
@@ -2513,7 +2513,7 @@ public sealed class LineDesignPage : TabPage
     internal ToolStripButton BtnSearchShape => _btnShape;
     internal ToolStripButton BtnExportPage3dm => _btnExport;
     internal ToolStripButton BtnExportFinal3dm => _btn3dm;
-    // ── 定案档那一组（2026-08-23 从 ③ 拆到独立页）。控件仍归本页所有 ——
+    // ── 设计记录那一组（2026-08-23 从 ③ 拆到独立页）。控件仍归本页所有 ——
     //    它们要读写本页的控件（载入=灌值、另存=读当前解），换个地方摆而已。
     internal ToolStripButton BtnReproduce => _btnRepro;
     internal ToolStripButton BtnLoadCase => _btnLoadCase;
@@ -2727,9 +2727,9 @@ public sealed class LineDesignPage : TabPage
         // 1b 让页面**求解**的是完整几何，如果导出仍走它，就成了
         // 「**算的是一个东西、导出的是另一个东西**」——正是今天反复在修的那类错，
         // 而且这一种最难发现：两边各自都自洽。
-        // ⇒ 改走 `WriteFinal3dm`（与「导出定案 3DM」同一个写入器，今天已验过
+        // ⇒ 改走 `WriteFinal3dm`（与「导出设计记录 3DM」同一个写入器，今天已验过
         //   逐件质量对账 +0.03 %），导出的就是刚才解的那套几何。
-        var dExp = PageToFinalDesign();
+        var dExp = PageToDesignSpec();
         using var dlg = new SaveFileDialog
         {
             Filter = "Rhino 3D 模型 (*.3dm)|*.3dm",
@@ -2810,13 +2810,13 @@ public sealed class LineDesignPage : TabPage
     /// 把本页的解析几何写成**单图层、多级台阶**的 .3dm —— 一张 **APP 自己读得回来**的图。
     ///
     /// ★ 它补的是解析路径与 .3dm 路径之间断掉的那一环：
-    ///   「导出本页/定案 3DM」走 <see cref="Geometry3dm.WriteFinal3dm"/>，写的是**多图层**
+    ///   「导出本页/设计记录 3DM」走 <see cref="Geometry3dm.WriteFinal3dm"/>，写的是**多图层**
     ///   （板身 / 环外级 / 环内级 / 压接段 / 角焊缝），而读取端要**单图层**
     ///   ⇒ APP 导出的图，APP 自己读不回来。于是
     ///   「解析里搜出方案 → 出图 → 去 Rhino 改轮廓/挪槽 → 读回来核算」这条路是断的。
     ///
     /// ⚠ 舌片写成**等宽**（与 <see cref="FlangePlate.TabParallel"/> 同口径）。
-    ///   Geom 的 steps 模式旧默认是梯形，而定案几何早就不用梯形了 ——
+    ///   Geom 的 steps 模式旧默认是梯形，而设计记录几何早就不用梯形了 ——
     ///   实测把梯形舌那张图读回来，等宽替身面积差 −12 %，保真门当场拒绝，
     ///   而它拒绝得对：错的是写入器写了 APP 已经不再设计的形状。
     ///
@@ -2838,7 +2838,7 @@ public sealed class LineDesignPage : TabPage
         using var dlg = new FolderBrowserDialog { Description = "选一个目录，四片各写一个 .3dm" };
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
-        var d = PageToFinalDesign();
+        var d = PageToDesignSpec();
         double floor = d.DiscFloorMm(_base);
         var sb = new StringBuilder();
         sb.AppendLine("=== 导出可回读 3DM（单图层 · 多级台阶 · 等宽舌）===");
@@ -2898,7 +2898,7 @@ public sealed class LineDesignPage : TabPage
     /// ★ 用户 2026-08-25：「3DM 只读几何数据（画网格的依据），为何不能带入计算？」
     ///   能。反推早就做到了（PlateShapeAnalyzer 一直在印那几个数），缺的只是这一步。
     ///   在此之前两条输入路线给不出接近的答案，本质原因只有一条：**.3dm 路改不了形状**，
-    ///   而定案的关键一步恰恰是改形状（Ø120 → Ø60）。
+    ///   而设计记录的关键一步恰恰是改形状（Ø120 → Ø60）。
     ///
     /// ⚠ 三条近似由 <see cref="ShapeToAnalytic"/> 生成并**原样呈现**，这里不许吞。
     /// ⚠ 第四条只有这里知道，必须自己说：**转过去之后几何不再跟图纸绑定**。

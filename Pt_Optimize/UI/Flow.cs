@@ -67,16 +67,16 @@ public enum ChainId
 ///   而那个口子迟早会被第二个、第三个例外挤大。它没有门（前一格 GateToUnlockNext 为 null）
 ///   ⇒ 天然永远解锁，正合「说明书任何时候都该能看」。
 /// </summary>
-public enum StageId { 定案档, 先决条件, 粗算, 整线核算, 定尺寸, 交付, 说明 }
+public enum StageId { 设计记录, 先决条件, 粗算, 整线核算, 定尺寸, 交付, 说明 }
 
 /// <summary>
 /// 命令的三组分法 —— 沿用说明书里已经教给用户的那套（ManualPage §2.3）。
-/// 那里写着：「「定案」两个字打头的那几个**不读页面上的控件**……中间三个**读页面控件**」。
+/// 那里写着：「「设计记录」两个字打头的那几个**不读页面上的控件**……中间三个**读页面控件**」。
 /// </summary>
 public enum CmdGroup
 {
-    /// <summary>「定案」打头：只认 FinalDesign，页面上改什么都影响不了它们 ⇒ **不受阶段门禁**</summary>
-    定案不读页面,
+    /// <summary>「设计记录」打头：只认 DesignSpec，页面上改什么都影响不了它们 ⇒ **不受阶段门禁**</summary>
+    设计记录不读页面,
     /// <summary>读当前页面控件：算的是你现在填的这组参数</summary>
     页面参数,
     /// <summary>工具：只测不调</summary>
@@ -117,7 +117,7 @@ public sealed record GateSpec(
 /// <param name="Id">稳定锚点（如 "core.runLine"）。测试与说明书按它引用，
 /// 于是**改中文名不会打破任何东西**。</param>
 /// <param name="Text">界面按钮上的字 —— 说明书按钮表用的是**同一个字符串**。</param>
-/// <param name="ReadsPageControls">false ⇒ 不受阶段门禁（「定案」那四个）。</param>
+/// <param name="ReadsPageControls">false ⇒ 不受阶段门禁（「设计记录」那四个）。</param>
 public sealed record CommandSpec(
     string Id,
     string Text,
@@ -210,7 +210,7 @@ public static class Flow
         // ── ③ 整线核算 ★ ──────────────────────────────────────────────
         new("core.runLine", "核算整线", StageId.整线核算, ChainId.C整线耦合,
             CmdGroup.页面参数, true, "分钟级，可取消",
-            "按页面参数解一次耦合场，出判据表。**几何用的是和定案完全同一套构造器**"),
+            "按页面参数解一次耦合场，出判据表。**几何用的是和设计记录完全同一套构造器**"),
         new("geom.analyze", "分析几何变数", StageId.整线核算, ChainId.C整线耦合,
             CmdGroup.工具, true, "分钟级", "报各几何量对判据的斜率（只测不调）"),
         new("geom.toanalytic", "◈ 图纸几何 → 参数", StageId.整线核算, ChainId.无,
@@ -223,12 +223,12 @@ public static class Flow
             "把本页解析几何写成**单图层多级台阶**的 .3dm —— 一张 APP 自己读得回来的图。" +
             "现有的出图是多图层，读取端要单图层，于是「出图 → 去 Rhino 改 → 读回来核算」这条路是断的。" +
             "写完立刻回读校验"),
-        new("final.reproduce", "▶ 复现定案", StageId.定案档, ChainId.C整线耦合,
-            CmdGroup.定案不读页面, false, "分钟级，可取消",
-            "**完全不读页面控件**，直接按定案档解一次。用来排除「页面上某个控件被改过而自己没注意到」"),
-        new("final.load", "载入定案", StageId.定案档, ChainId.无,
-            CmdGroup.定案不读页面, false, "即时",
-            "把 FinalDesign 的某一档灌进各控件。**已作废的档会在最前面自报失效**"),
+        new("final.reproduce", "▶ 复现设计记录", StageId.设计记录, ChainId.C整线耦合,
+            CmdGroup.设计记录不读页面, false, "分钟级，可取消",
+            "**完全不读页面控件**，直接按设计记录解一次。用来排除「页面上某个控件被改过而自己没注意到」"),
+        new("final.load", "载入设计记录", StageId.设计记录, ChainId.无,
+            CmdGroup.设计记录不读页面, false, "即时",
+            "把 DesignSpec 的某一档灌进各控件。**已作废的档会在最前面自报失效**"),
 
         // ── ④ 定尺寸 ──────────────────────────────────────────────────
         new("core.autoThick", "自动定厚", StageId.定尺寸, ChainId.C定尺寸,
@@ -245,8 +245,8 @@ public static class Flow
         new("export.page3dm", "导出本页 3DM", StageId.交付, ChainId.无,
             CmdGroup.导出, true, "十几秒",
             "**整机**（三段管 + 四片法兰），几何与刚才求解的**完全一致**"),
-        new("final.export3dm", "导出定案 3DM", StageId.定案档, ChainId.无,
-            CmdGroup.定案不读页面, false, "十几秒",
+        new("final.export3dm", "导出设计记录 3DM", StageId.设计记录, ChainId.无,
+            CmdGroup.设计记录不读页面, false, "十几秒",
             "整机几何 + 自校。**已声明失效的档一律拒绝出图**"),
         // ⚠ 这两个 ReadsPageControls **必须是 false**（2026-08-21 修）。
         //   它们读的是**左侧参数表**（DesignInputs），不是 ③ 页的控件，
@@ -257,7 +257,7 @@ public static class Flow
         //   而门禁的意义是拦住「拿不成立的解去出图」，不是拦住记事本。
         // 把当前的解写成 finaldesigns/*.fd.json。**读页面控件**（存的就是你手上这个解）
         // ⇒ 受适用性约束：AllOk + Fresh 才可用（见 LineDesignPage.CommandApplicable）。
-        new("final.save", "另存为定案档", StageId.定案档, ChainId.无,
+        new("final.save", "另存为设计记录", StageId.设计记录, ChainId.无,
             CmdGroup.导出, true, "即时",
             "把当前这个**全判据通过**的解写成档案文件。五个判据记录值由程序填 —— "
             + "手抄它们是本项目最常见的错源，而抄错要跑 8 分钟 --selfcheck 才知道"),
@@ -284,21 +284,21 @@ public static class Flow
     // 会把「工程师明明可以直接算整线」拦下来，那种门第二天就会被要求关掉。
     public static readonly StageSpec[] Stages =
     {
-        // ── 定案档：**不带编号**，因为它不是阶段轨的一格。
+        // ── 设计记录：**不带编号**，因为它不是阶段轨的一格。
         //
-        // 这几条命令早就带着同一个标记 CmdGroup.定案不读页面 —— 它们**不读页面控件**，
+        // 这几条命令早就带着同一个标记 CmdGroup.设计记录不读页面 —— 它们**不读页面控件**，
         // 也因此不受阶段门禁。而 ①→⑤ 说的是「你手上这个设计走到哪一步」。
         // 两根轴正交，此前被混在 ③ 的同一条工具条上（用户 2026-08-23 要求拆出来）。
         //
         // 放在**最前面**而不是最后：载入/复现会**灌页面控件**，是给 ③ 喂起点的。
         // 摆在 ⑤ 之后等于把入口放在出口。
         //
-        //   [定案档] 载入/复现 ─→ ① ② ③ ④ ⑤ ─→ [定案档] 另存/出图
+        //   [设计记录] 载入/复现 ─→ ① ② ③ ④ ⑤ ─→ [设计记录] 另存/出图
         //
         // GateToUnlockNext = null ⇒ 下一格（①）不受它约束，本页自己也永不上锁。
-        new(StageId.定案档, 0, "定案档",
+        new(StageId.设计记录, 0, "设计记录",
             "档里的数与你手上这一版是**两回事**。「载入」把档灌进页面当起点；"
-            + "「▶ 复现定案」完全不读页面控件，用来排除「页面被改过而不自知」。",
+            + "「▶ 复现设计记录」完全不读页面控件，用来排除「页面被改过而不自知」。",
             new[] { ChainId.C整线耦合 },
             GateToUnlockNext: null,
             new[] { "final.reproduce", "final.load", "final.save", "final.export3dm" },
@@ -386,7 +386,7 @@ public static class Flow
 
         // 没有门（上一格 GateToUnlockNext 为 null）⇒ 永远解锁。F1 直达。
         new(StageId.说明, 6, "使用说明",
-            "图按定案档实时生成 —— 换一档，图跟着变。",
+            "图按设计记录实时生成 —— 换一档，图跟着变。",
             new[] { ChainId.无 },
             GateToUnlockNext: null,
             new[] { "manual.openMd" },
@@ -413,7 +413,7 @@ public static class Flow
             new[] { ChainId.A单段解析, ChainId.B分段解析, ChainId.C整线耦合 }, ""),
         new("5 C 整线 — 管几何", new[] { ChainId.C整线耦合 }, ""),
         new("6 C 整线 — 法兰边界", new[] { ChainId.C整线耦合 }, ""),
-        new("8 ✗ 被页面/定案档接管（改了对整线链没用）", new[] { ChainId.A单段解析, ChainId.B分段解析 },
+        new("8 ✗ 被页面/设计记录接管（改了对整线链没用）", new[] { ChainId.A单段解析, ChainId.B分段解析 },
             "「③ 整线核算」页的同名控件"),
         new("9 ✗ 对整线链无效", new[] { ChainId.A单段解析 },
             "LineRunner 强制取值（整线链的壁厚由 LineCase.WallMm 定）"),
@@ -842,7 +842,7 @@ public static class Gate
     /// </summary>
     public static Block Blocks(CommandSpec cmd, FlowState st, Func<string, bool>? applicable = null)
     {
-        // 「不算东西」的命令（保存/读取/出图/载入定案）不受互斥牵连 ——
+        // 「不算东西」的命令（保存/读取/出图/载入设计记录）不受互斥牵连 ——
         // 门禁的意义是拦住「拿不成立的解去出图」，不是拦住记事本。
         if (st.Running is not null && cmd.Chain != ChainId.无) return Block.Busy;
         if (applicable is not null && !applicable(cmd.Id)) return Block.NotApplicable;

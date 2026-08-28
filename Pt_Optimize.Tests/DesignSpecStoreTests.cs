@@ -8,7 +8,7 @@ using Xunit;
 namespace PtOptimize.Tests;
 
 /// <summary>
-/// 定案档的**文件形态**：存出去、读回来，必须是同一个设计。
+/// 设计记录的**文件形态**：存出去、读回来，必须是同一个设计。
 ///
 /// ★ 为什么要有这一组（2026-08-23）：
 ///   第一版的 DTO **漏了七个几何字段**（tabFilletMm / ringWidthMm / clampLengthMm /
@@ -23,7 +23,7 @@ namespace PtOptimize.Tests;
 ///   ⇒ 真正的守卫是这里：**存→读往返，重建出的算例必须逐字段相同**。
 ///     它不依赖任何人记得「加字段时要同步 DTO」。
 /// </summary>
-public class FinalDesignStoreTests
+public class DesignSpecStoreTests
 {
     /// <summary>把 Save/LoadAll 换到临时目录跑，不碰仓库里的 finaldesigns/。</summary>
     private static string NewTempDir()
@@ -34,24 +34,24 @@ public class FinalDesignStoreTests
     }
 
     /// <summary>直接调私有 Parse，绕开目录查找 —— 本组要验的是「字段全不全」。</summary>
-    private static FinalDesign Parse(string json)
+    private static DesignSpec Parse(string json)
     {
-        var m = typeof(FinalDesignStore).GetMethod("Parse",
+        var m = typeof(DesignSpecStore).GetMethod("Parse",
             BindingFlags.NonPublic | BindingFlags.Static)!;
-        try { return (FinalDesign)m.Invoke(null, new object[] { json, "test.fd.json" })!; }
+        try { return (DesignSpec)m.Invoke(null, new object[] { json, "test.fd.json" })!; }
         // ⚠ 反射调用会把异常裹进 TargetInvocationException ⇒ 断言看到的是**外壳**的消息，
         //   而不是「缺 tabThickMm」这种真正有信息的那句。拆掉壳再抛。
         catch (TargetInvocationException ex) when (ex.InnerException is not null)
         { throw ex.InnerException; }
     }
 
-    private static string Serialize(FinalDesign fd)
+    private static string Serialize(DesignSpec fd)
     {
         string dir = NewTempDir();
         try
         {
             // Save 会按 fd.Name 起文件名，读回原文即可
-            string path = (string)typeof(FinalDesignStore)
+            string path = (string)typeof(DesignSpecStore)
                 .GetMethod("Save", BindingFlags.Public | BindingFlags.Static)!
                 .Invoke(null, new object[] { fd })!;
             return File.ReadAllText(path);
@@ -62,7 +62,7 @@ public class FinalDesignStoreTests
     /// <summary>
     /// ★★ 往返必须无损：内置四档各存一次、读回来，**BuildCase 造出的算例逐字段相同**。
     ///
-    /// 比的是 LineCase 而不是 FinalDesign 的字段 —— 因为真正决定结果的是它。
+    /// 比的是 LineCase 而不是 DesignSpec 的字段 —— 因为真正决定结果的是它。
     /// 漏字段、把导出量当本源存、单位搞错，都会在这里现形。
     /// </summary>
     [Theory]
@@ -72,7 +72,7 @@ public class FinalDesignStoreTests
     [InlineData(3)]
     public void RoundTrip_RebuildsIdenticalCase(int idx)
     {
-        var src = FinalDesign.Builtin[idx];
+        var src = DesignSpec.Builtin[idx];
         var p = new DesignInputs();
 
         // 存→读。Save 落在仓库的 finaldesigns/ 下会与真档打架 ⇒ 换个名字，用完删掉。
@@ -81,7 +81,7 @@ public class FinalDesignStoreTests
         string? written = null;
         try
         {
-            written = FinalDesignStore.Save(tmp);
+            written = DesignSpecStore.Save(tmp);
             var back = Parse(File.ReadAllText(written));
 
             var a = src.BuildCase(p, checkRamp: true);
@@ -118,14 +118,14 @@ public class FinalDesignStoreTests
     ///
     /// ★★ 这是本组的关键（2026-08-23 靠注入测试才发现）：
     ///   只拿内置四档做往返，是**测不出漏字段的**——
-    ///   内置档的 TabFilletMm 等好几项本来就等于 FinalDesign 的默认值，
+    ///   内置档的 TabFilletMm 等好几项本来就等于 DesignSpec 的默认值，
     ///   于是「读档时漏掉这一项」两边照样相等，断言照样打勾。
     ///   （实测：把 `fd.TabFilletMm = tf` 那行注掉，29 项全过。）
     ///   ⇒ 每个字段都必须与默认值**不同**，漏任何一个才会现形。
     /// </summary>
-    private static FinalDesign Distinctive()
+    private static DesignSpec Distinctive()
     {
-        var d = FinalDesign.Builtin[0].Clone();
+        var d = DesignSpec.Builtin[0].Clone();
         d.WallMm = 0.77;
         d.TubeInsulMm = 13.5;
         d.DiscRadiusMm = 33.0;
@@ -158,7 +158,7 @@ public class FinalDesignStoreTests
         string? w = null;
         try
         {
-            w = FinalDesignStore.Save(src);
+            w = DesignSpecStore.Save(src);
             var back = Parse(File.ReadAllText(w));
 
             // ★ 比**整份 LineCase 的序列化**，不是我手列的那几项。
@@ -177,7 +177,7 @@ public class FinalDesignStoreTests
             Assert.Equal(J(src.BuildCase(p, checkRamp: true)),
                          J(back.BuildCase(p, checkRamp: true)));
             // 顺带钉住「这个档确实偏离了默认」——否则本例又会退化成恒真
-            var def = new FinalDesign();
+            var def = new DesignSpec();
             Assert.NotEqual(def.TabFilletMm, src.TabFilletMm);
             Assert.NotEqual(def.RingWidthMm, src.RingWidthMm);
             Assert.NotEqual(def.ClampLengthMm, src.ClampLengthMm);
@@ -190,13 +190,13 @@ public class FinalDesignStoreTests
     [Fact]
     public void RoundTrip_KeepsRecordedChecks()
     {
-        var src = FinalDesign.Builtin[0];
+        var src = DesignSpec.Builtin[0];
         var tmp = src.Clone();
         tmp.Name = "★往返测试★ checks " + Guid.NewGuid().ToString("N")[..6];
         string? w = null;
         try
         {
-            w = FinalDesignStore.Save(tmp);
+            w = DesignSpecStore.Save(tmp);
             var back = Parse(File.ReadAllText(w));
             Assert.Equal(src.RampH, back.RampH, 12);
             Assert.Equal(src.DiscOverK, back.DiscOverK, 12);
@@ -220,12 +220,12 @@ public class FinalDesignStoreTests
     [InlineData("checks")]
     public void Parse_RejectsMissingRequired(string drop)
     {
-        var src = FinalDesign.Builtin[0].Clone();
+        var src = DesignSpec.Builtin[0].Clone();
         src.Name = "★往返测试★ drop-" + drop;
         string? w = null;
         try
         {
-            w = FinalDesignStore.Save(src);
+            w = DesignSpecStore.Save(src);
             string json = File.ReadAllText(w);
             // 把那一项改名 ⇒ 等价于「缺了它」
             string broken = json.Replace("\"" + drop + "\"", "\"__" + drop + "__\"");
@@ -239,12 +239,12 @@ public class FinalDesignStoreTests
     [Fact]
     public void Parse_RejectsWrongArrayLength()
     {
-        var src = FinalDesign.Builtin[0].Clone();
+        var src = DesignSpec.Builtin[0].Clone();
         src.Name = "★往返测试★ len " + Guid.NewGuid().ToString("N")[..6];
         string? w = null;
         try
         {
-            w = FinalDesignStore.Save(src);
+            w = DesignSpecStore.Save(src);
             string json = File.ReadAllText(w);
             var ex = Record.Exception(() => Parse(
                 System.Text.RegularExpressions.Regex.Replace(
@@ -259,13 +259,13 @@ public class FinalDesignStoreTests
     [Fact]
     public void Save_RefusesOverwrite()
     {
-        var src = FinalDesign.Builtin[0].Clone();
+        var src = DesignSpec.Builtin[0].Clone();
         src.Name = "★往返测试★ dup " + Guid.NewGuid().ToString("N")[..6];
         string? w = null;
         try
         {
-            w = FinalDesignStore.Save(src);
-            Assert.Throws<IOException>(() => FinalDesignStore.Save(src));
+            w = DesignSpecStore.Save(src);
+            Assert.Throws<IOException>(() => DesignSpecStore.Save(src));
         }
         finally { if (w is not null) { try { File.Delete(w); } catch { } } }
     }

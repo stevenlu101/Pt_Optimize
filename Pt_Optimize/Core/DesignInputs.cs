@@ -21,7 +21,7 @@ public enum Orientation
 public class DesignInputs
 {
     // ---------- 1 工艺 ----------
-    [Category("8 ✗ 被页面/定案档接管（改了对整线链没用）"), DisplayName("目标金属温度 [°C]"),
+    [Category("8 ✗ 被页面/设计记录接管（改了对整线链没用）"), DisplayName("目标金属温度 [°C]"),
      Description("⚠ 本项被「③ 整线核算」页的分段控温点表接管 —— 在这张表里改它，对「③ 整线核算」没有影响。　管中段控温点的金属温度设定值")]
     public double TSetC { get; set; } = 1300;
 
@@ -38,7 +38,7 @@ public class DesignInputs
     [Category("1 A·B 粗算 — 工艺"), DisplayName("玻璃进口温度 [°C]")]
     public double TGlassInC { get; set; } = 1300;
 
-    [Category("8 ✗ 被页面/定案档接管（改了对整线链没用）"), DisplayName("本段玻璃压力水头 [m]"),
+    [Category("8 ✗ 被页面/设计记录接管（改了对整线链没用）"), DisplayName("本段玻璃压力水头 [m]"),
      Description("⚠ 本项被「③ 整线核算」页的分段水头接管 —— 在这张表里改它，对「③ 整线核算」没有影响。　铂管为分段控制，每段的液柱高度不同 —— 按本段实际值填。" +
                  "决定管内压，进而决定环向应力 σθ = p·r/t")]
     public double GlassHeadM { get; set; } = 0.5;
@@ -77,7 +77,7 @@ public class DesignInputs
      Description("⚠ 本项被整线链只用来自 ③ 页控件的 LineCase.WallMm；本项只影响「② 粗算」的单段解接管 —— 在这张表里改它，对「③ 整线核算」没有影响。　校核模式用。设计模式下程序会给出电流密度所需的最小壁厚")]
     public double WallMm { get; set; } = 0.8;
 
-    [Category("8 ✗ 被页面/定案档接管（改了对整线链没用）"), DisplayName("最小可制造壁厚 [mm]"),
+    [Category("8 ✗ 被页面/设计记录接管（改了对整线链没用）"), DisplayName("最小可制造壁厚 [mm]"),
      Description("⚠ 本项被「③ 整线核算」页的「壁厚 mm」控件接管 —— 在这张表里改它，对「③ 整线核算」没有影响。　工艺/操作下限。设计壁厚 = max(电学所需, 本值)")]
     public double WallMinMm { get; set; } = 1.0;    // Pt_Heater.3dm 实测壁厚
 
@@ -222,7 +222,7 @@ public class DesignInputs
     // ★ 2026-08-10 按现场实况修正：纤维包覆厚度 **2–3 mm**（原设 10 mm，差 4 倍）。
     //   保温热阻几乎全部由纤维贡献（致密氧化铝 k≈9 W/m·K，其 5 mm 只占总热阻约 1 %），
     //   故这一项直接决定散热量级 —— 改动会连带影响电功率、法兰自给率 Φ 与升温核算。
-    [Category("8 ✗ 被页面/定案档接管（改了对整线链没用）"), DisplayName("① 内层（贴铂）"),
+    [Category("8 ✗ 被页面/设计记录接管（改了对整线链没用）"), DisplayName("① 内层（贴铂）"),
      Description("⚠ 本项被「③ 整线核算」页的「纤维保温 mm」控件接管 —— 在这张表里改它，对「③ 整线核算」没有影响。　现场实测包覆厚度 2–3 mm，取中值 2.5。热阻几乎全在这一层")]
     public InsulationLayer Layer1 { get; set; } = new()
     { Name = "高纯氧化铝纤维", ThicknessMm = 2.5, K0 = 0.04, K1 = 3.0e-4 };
@@ -249,7 +249,7 @@ public class DesignInputs
     //   随该模型一并删除（HANDOVER §5、§7）。
     //   本节现在只留**与几何无关的物理边界**：保温、吹风、夹持。
 
-    [Category("8 ✗ 被页面/定案档接管（改了对整线链没用）"), DisplayName("法兰有保温"),
+    [Category("8 ✗ 被页面/设计记录接管（改了对整线链没用）"), DisplayName("法兰有保温"),
      Description("⚠ 本项被「③ 整线核算」页的「法兰保温」下拉接管 —— 在这张表里改它，对「③ 整线核算」没有影响。　法兰双面包覆高纯氧化铝纤维。降低 q″ 会降低自给所需的厚度")]
     public bool FlangeInsulated { get; set; } = true;
 
@@ -257,7 +257,7 @@ public class DesignInputs
     //   此处按「同一材料同一工艺」外推到法兰。**待现场确认**（见 HANDOVER §6 待补数据 ⑦）。
     //   留 10 mm 而管子改 2.5 mm 会物理不自洽：管子保温薄 ⇒ 电流大 ⇒ 同一电流流过裹得厚的法兰
     //   ⇒ 法兰过热、Φ≫1 ⇒ 向管根倒灌，实测算出管根 2137 °C（超铂熔点 1768 °C）。
-    [Category("8 ✗ 被页面/定案档接管（改了对整线链没用）"), DisplayName("法兰保温厚 [mm]"),
+    [Category("8 ✗ 被页面/设计记录接管（改了对整线链没用）"), DisplayName("法兰保温厚 [mm]"),
      Description("⚠ 本项被「③ 整线核算」页的「法兰保温厚 mm」控件接管 —— 在这张表里改它，对「③ 整线核算」没有影响。　单面厚度，材料取内层①的 k(T)。按与铂管同一包覆工艺取 2.5，待现场确认")]
     public double FlangeInsulThickMm { get; set; } = 2.5;
 
@@ -271,21 +271,21 @@ public class DesignInputs
                  "此前写死 0.05 且**四处各存一份**（ShellThermal、DesignScreen×2、RampTwoNode），" +
                  "全都与几何脱钩 —— 而盘径与舌长正是被优化的变量。　" +
                  "⚠ 实测灵敏度**极高**：把它换成网格包围盒跨度（约 0.17 m），" +
-                 "定案 0.8 档的 ②′ 从 +1.123 W 翻成 **−1.880 W**（负 = 热往管里灌，烧断方向），" +
-                 "③ 从 +5.182 K 翻成 −0.643 K，两个定案档双双「自己不过判据」。　" +
+                 "设计记录 0.8 档的 ②′ 从 +1.123 W 翻成 **−1.880 W**（负 = 热往管里灌，烧断方向），" +
+                 "③ 从 +5.182 K 翻成 −0.643 K，两个设计记录双双「自己不过判据」。　" +
                  "⚠ 但 0.17 同样是**猜的**：Churchill–Chu 要的是**竖直板高度**，" +
                  "而这片板在现场怎么摆（舌片朝下 ⇒ ~170 mm；盘立舌横 ⇒ ~60 mm）**没有确认过**。　" +
                  "⇒ 保留 0.05 只是**保持现状**，不是有依据。**必须现场确认安装姿态与特征高度。**")]
     public double ConvCharLenM { get; set; } = 0.05;
 
-    [Category("8 ✗ 被页面/定案档接管（改了对整线链没用）"), DisplayName("铜排夹持温度 [°C]"),
+    [Category("8 ✗ 被页面/设计记录接管（改了对整线链没用）"), DisplayName("铜排夹持温度 [°C]"),
      Description("⚠ 本项被「③ 整线核算」页的「铜排夹持 °C」控件接管 —— 在这张表里改它，对「③ 整线核算」没有影响。　舌片末端整条边的强制温度。<0 = 无夹冷（自由辐射端）。" +
                  "空冷即可，不需要水冷 —— 400 °C 与 80 °C 的差别仅约 10 W。" +
                  "★ 这一项是现场把法兰自给率整定到位的**唯一可调旋钮**（HANDOVER §4.2v）")]
     public double BusbarClampTempC { get; set; } = -1;
 
-    [Category("8 ✗ 被页面/定案档接管（改了对整线链没用）"), DisplayName("铜排压接长度 [mm]"),
-     Description("⚠ 本项被**定案档**接管：整线链的两条路都强制取 FinalDesign.Current.ClampLengthMm（现为 40 mm，见 FinalDesign.cs 与 LineDesignPage.PageToFinalDesign）—— 在这张表里改它，对「③ 整线核算」没有影响。本表显示的 3 mm 只对「② 粗算」的单段解有效。　沿舌片方向的压接长度，即定温边界的深度。\n" +
+    [Category("8 ✗ 被页面/设计记录接管（改了对整线链没用）"), DisplayName("铜排压接长度 [mm]"),
+     Description("⚠ 本项被**设计记录**接管：整线链的两条路都强制取 DesignSpec.Current.ClampLengthMm（现为 40 mm，见 DesignSpec.cs 与 LineDesignPage.PageToDesignSpec）—— 在这张表里改它，对「③ 整线核算」没有影响。本表显示的 3 mm 只对「② 粗算」的单段解有效。　沿舌片方向的压接长度，即定温边界的深度。\n" +
                  "★ 早先在网格里硬编码为 3 mm —— 那是**数值边界，不是设计值**：\n" +
                  "  3 mm × 舌宽 40 mm = 120 mm² 接触面，共用片 1099 A ⇒ 界面电流密度约 9 A/mm²，\n" +
                  "  而铜排压接通常按 ≤1 A/mm² 量级设计，差一个数量级 —— 现场做不出来。\n" +
@@ -325,8 +325,8 @@ public class DesignInputs
                  "管子失去 Q0+2×ΣQ内+Qn，法兰只收到 ΣQ。　" +
                  "实测残差（--selfcheck A 段「热收支」）：0.8 档 +2.66 W、0.6 档 +3.74 W，四个档全非零。　" +
                  "打开后：端片（只属于一段）拿整份，内部共用片各半 ⇒ Q_L + Q_R = Q，严格守恒。　" +
-                 "⚠ 默认关：打开会改动定案的数（两档要重解、五个回归基准要重填）；" +
-                 "先跑对照、看清影响方向，再谈要不要重定案。　" +
+                 "⚠ 默认关：打开会改动设计记录的数（两档要重解、五个回归基准要重填）；" +
+                 "先跑对照、看清影响方向，再谈要不要重新跑一次。　" +
                  "⚠ 各半是领头阶正确解（两侧是同一根管、同样的导热）；" +
                  "更精细的做法是按两侧管端各自的导热通量加权 —— 那要动求解器，尚未做。")]
     public bool SplitSharedFlangeDraw { get; set; } = false;

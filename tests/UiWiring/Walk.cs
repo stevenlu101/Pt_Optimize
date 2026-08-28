@@ -239,7 +239,7 @@ static class Walk
                 double resid = r.Flanges.Max(f => Math.Abs(f.EnergyResidualW));
                 Console.WriteLine($"  最高温 {tmax:0.0} °C　能量残差 {resid:0.000} W");
                 OK("最高温未超铂熔点", tmax < Materials.PtMeltC, $"{tmax:0.0} °C");
-                // 容差按几何规模放宽：这张图的法兰面积是定案的四倍多，
+                // 容差按几何规模放宽：这张图的法兰面积是设计记录的四倍多，
                 // 残差 0.125 W 相对 71 W 的抽热是 0.2 % —— 不是发散。
                 // （--selfcheck B 段判发散用的是 50 W。）
                 OK("能量残差不发散（< 1 W）", resid < 1.0, $"{resid:0.000} W");
@@ -331,7 +331,7 @@ static class Walk
         {
             // 逐级定厚跑满 30 分钟没收敛（实测）。与其等它，不如**先量清楚**
             // 厚度这个旋钮对 ③ 有多大权限 —— 若整个可行区间都远在限值之外，
-            // 那就不是「迭代不够」，是**这个形状没有解**（§定案重解 里同一种判断）。
+            // 那就不是「迭代不够」，是**这个形状没有解**（§设计记录重解 里同一种判断）。
             var tp2 = (NumericUpDown[])F(line, "_tPlate")!;
             double[] ks = { 0.5, 1.0, 2.0, 3.0 };
             Console.WriteLine($"  {"厚度标度",10}{"③ 温降 K",12}{"②′ W",10}{"合计 g",12}{"最高温 °C",11}");
@@ -444,14 +444,14 @@ static class Walk
     }
 
     /// <summary>
-    /// `--tabins0`：拿**定案几何**（Ø60、舌 140）把舌保温逐档减到 0，看 ③ 怎么走。
+    /// `--tabins0`：拿**设计记录几何**（Ø60、舌 140）把舌保温逐档减到 0，看 ③ 怎么走。
     ///
     /// ★ 为什么要单独做这个实验（用户 2026-08-23 问「舌保温 0.3–0.5 如果不保温呢」）：
     ///   `.3dm` 路径按**舌片裸露**建模（LineRunner: tabInsulThickMm = NaN，
     ///   注释「沿用现场实况『仅圆盘保温、舌片裸露』」），
-    ///   而解析路径的定案用 0.3–0.5 mm 舌保温，APP 自己称它是「守 ②′/③ 的主力旋钮」。
+    ///   而解析路径的设计记录用 0.3–0.5 mm 舌保温，APP 自己称它是「守 ②′/③ 的主力旋钮」。
     ///   ⇒ Pt_Heater3 的 ③ = 341 K 到底是**裸舌片**造成的，还是**盘 Ø120 / 舌 200 太大**？
-    ///   把定案的舌保温减到 0，就把这两个病因分开了。
+    ///   把设计记录的舌保温减到 0，就把这两个病因分开了。
     ///
     /// ⚠ 本实验走**内核**（LineRunner.Run），不经界面 —— 它问的是物理，不是接线。
     /// </summary>
@@ -459,10 +459,10 @@ static class Walk
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         var p = new DesignInputs();
-        var fd = FinalDesign.Current;
+        var fd = DesignSpec.Current;
 
-        H($"舌保温 → ③：定案几何（{fd.Name}）　盘Ø{2 * fd.DiscRadiusMm:0}／舌 {fd.TabLengthMm:0}");
-        Console.WriteLine($"  定案舌保温 {FinalDesign.Fmt(fd.TabInsulMm, "0.0")} mm");
+        H($"舌保温 → ③：设计记录几何（{fd.Name}）　盘Ø{2 * fd.DiscRadiusMm:0}／舌 {fd.TabLengthMm:0}");
+        Console.WriteLine($"  设计记录舌保温 {DesignSpec.Fmt(fd.TabInsulMm, "0.0")} mm");
         Console.WriteLine();
         Console.WriteLine($"  {"舌保温",10}{"③ 温降 K",12}{"②′ W",10}{"②″ K",10}{"合计 g",11}{"法兰最高 °C",13}  判定");
 
@@ -474,7 +474,7 @@ static class Walk
             var lc = d.BuildCase(p, checkRamp: true);
             var r = LineRunner.Run(lc);
             if (!r.Ok) { Console.WriteLine($"  ×{m:0.00}　★ 解不出：{r.Message}"); continue; }
-            string tag = m == 0.0 ? "0（裸舌）" : FinalDesign.Fmt(d.TabInsulMm, "0.00");
+            string tag = m == 0.0 ? "0（裸舌）" : DesignSpec.Fmt(d.TabInsulMm, "0.00");
             Console.WriteLine($"  {tag,10}{r.ValueOf(LineResult.Key.FlangeDip),12:0.0}"
                             + $"{r.ValueOf(LineResult.Key.NetFlux),10:0.00}"
                             + $"{r.ValueOf(LineResult.Key.DiscTemp),10:0.00}"
@@ -498,7 +498,7 @@ static class Walk
     ///   · 只扫厚度（舌裸）：③ 最好 203 K，且 ×0.5 处 ②′ 已翻负；
     ///   · 只扫保温（×1.0）：②′ 全程 +71…+101 W，根本不过零。
     /// 但减薄会把舌片从「导热主导」推回「自发热主导」（截面 240 → 120 mm²，
-    /// 接近定案的 54 mm²），**那里保温才重新有效**。两个一起扫才看得见。
+    /// 接近设计记录的 54 mm²），**那里保温才重新有效**。两个一起扫才看得见。
     /// </summary>
     public static int Map3dm(string file)
     {
@@ -695,7 +695,7 @@ static class Walk
             Console.WriteLine($"  力学安全系数    {inputs.SafetyFactor:0.0}");
             Console.WriteLine($"  管许用 J        {inputs.TubeJAllowAPerMm2:0.0} A/mm²（现场给定）");
             Console.WriteLine($"  析晶裕度        {inputs.DevitMarginK:0} K　液相线 {inputs.TLiquidusC:0} °C");
-            Console.WriteLine($"  当前定案档      {FinalDesign.Current.Name}");
+            Console.WriteLine($"  当前设计记录      {DesignSpec.Current.Name}");
             OK("蠕变区间是实测范围而不是推定", g.RangeConfirmed,
                g.RangeConfirmed ? "" : "★ 推定区间不能用来出交付件");
         }
@@ -755,11 +755,11 @@ static class Walk
                wall0 >= inputs.WeldMinThicknessMm ? "" :
                $"★ 默认 {wall0:0.00} < 下界 {inputs.WeldMinThicknessMm:0.00} —— 开箱就是造不出来的构型");
 
-            // 按说明书教的用法走：载入定案 → 核算整线。
+            // 按说明书教的用法走：载入设计记录 → 核算整线。
             // 直接拿出厂默认去解，等于用一个自己都说造不出来的几何去跑分钟级耦合解。
-            Call(line, "LoadFinalDesign");
+            Call(line, "LoadDesignSpec");
             Pump(400);
-            Console.WriteLine($"  已载入定案「{FinalDesign.Current.Name}」⇒ 壁厚 {(double)w.Value:0.00} mm、"
+            Console.WriteLine($"  已载入设计记录「{DesignSpec.Current.Name}」⇒ 壁厚 {(double)w.Value:0.00} mm、"
                 + $"板厚 {string.Join("/", ((NumericUpDown[])F(line, "_tPlate")!).Select(x => ((double)x.Value).ToString("0.00")))}");
         }
 
@@ -813,9 +813,9 @@ static class Walk
             OK("不是安静失败（报全过同时给荒谬的数）",
                !(r3.Converged && r3.AllOk && (tmax > Materials.PtMeltC || resid > 50.0)));
 
-            // 与定案档对账：同一套输入，页面路径算出来的必须与记录一致
-            var fd = FinalDesign.Current;
-            OK("与定案档合计铂重对得上（±1 g）",
+            // 与设计记录对账：同一套输入，页面路径算出来的必须与记录一致
+            var fd = DesignSpec.Current;
+            OK("与设计记录合计铂重对得上（±1 g）",
                Math.Abs(r3.TotalMassG - fd.TotalMassG) < 1.0,
                $"实算 {r3.TotalMassG:0.0} g vs 记录 {fd.TotalMassG:0} g");
         }
@@ -853,7 +853,7 @@ static class Walk
                 tp[i].Value = Math.Max(tp[i].Minimum, (decimal)(t0Plate[i] * 0.75));
             Set(line, "_suppressAuto", false);
             var seed = tp.Select(x => (double)x.Value).ToArray();
-            Console.WriteLine($"  起点厚度 {string.Join("/", seed.Select(v => v.ToString("0.00")))}（定案 ×0.75）");
+            Console.WriteLine($"  起点厚度 {string.Join("/", seed.Select(v => v.ToString("0.00")))}（设计记录 ×0.75）");
 
             var t0 = Environment.TickCount64;
             Call(line, "RunAsync", true, false);
@@ -908,7 +908,7 @@ static class Walk
             //   ⇒ `true == true` **四条断言全部空转还打 ✓**，标签也一律印成「已声明失效」。
             //   典型的「空集通过的断言」（HANDOVER §7）—— 假绿灯比没有断言更坏。
             int pass = 0, block = 0;
-            foreach (var fd in FinalDesign.All)
+            foreach (var fd in DesignSpec.All)
             {
                 bool declaredInvalid = fd.Invalid.Length > 0;
                 bool blocked = ((string)Call(line, "ExportBlockedReason", fd)!).Length > 0;
@@ -1223,14 +1223,14 @@ static class Walk
             Set(line, "SearchDiscs", new double[] { 30 });
             Set(line, "SearchWFrac", new double[] { 1.00 });
             Set(line, "SearchMaxExtend", 1);
-            // ★ 从**定案**出发，而不是开箱默认。
+            // ★ 从**设计记录**出发，而不是开箱默认。
             //   头一版从开箱默认起跑：2 轮定不出可行解 ⇒ 网格里没有全过的形状 ⇒
             //   **外推循环根本没进去**，而那正是本次最想验的那段接线。
-            //   定案本身可行，且它的形状（盘Ø60／舌宽60）正好落在网格点上 ⇒
+            //   设计记录本身可行，且它的形状（盘Ø60／舌宽60）正好落在网格点上 ⇒
             //   低轮数也进得了外推。**这是为了走到那条路径，不是为了让它好看。**
-            typeof(LineDesignPage).GetMethod("LoadFinalDesignFrom",
+            typeof(LineDesignPage).GetMethod("LoadDesignSpecFrom",
                 BindingFlags.NonPublic | BindingFlags.Instance)!
-                .Invoke(line, new object[] { FinalDesign.Current, true });
+                .Invoke(line, new object[] { DesignSpec.Current, true });
             Pump(200);
             H("◇ 搜形状 · **接线验证**（每候选只筛 2 轮 ⇒ 分钟级）");
             Console.WriteLine("  ⚠ 本模式下**铂重没有意义**（2 轮定不出厚度）——只看流程走得对不对。");
@@ -1276,20 +1276,20 @@ static class Walk
     // ════════════════════════════════════════════════════════════════════
     //  `UiWiring.exe --repro <盘Ø> <舌长> <半宽> <管壁> [quick]`
     //
-    //  **从一个给定的起点几何出发，看 APP 自己能不能走到定案。**
+    //  **从一个给定的起点几何出发，看 APP 自己能不能走到设计记录。**
     //  用户 2026-08-25：「先用 Pt_Heater1.3dm 为例子复现出
-    //  定案_管壁0.6mm.3dm 与 定案_管壁0.8mm.3dm 的结果」。
+    //  设计记录_管壁0.6mm.3dm 与 设计记录_管壁0.8mm.3dm 的结果」。
     //
     //  这是本项目少有的**有已知答案**的验证：
     //    起点 Pt_Heater1.3dm（--geom 量得）：盘Ø120／舌长200／半宽60／板厚2.0 均匀／管壁1.0
-    //    终点 定案 0.8：盘Ø60／舌140×60／管壁0.8 ⇒ **3547 g**
-    //         定案 0.6：同形状／管壁0.6           ⇒ **2656 g**
+    //    终点 设计记录 0.8：盘Ø60／舌140×60／管壁0.8 ⇒ **3547 g**
+    //         设计记录 0.6：同形状／管壁0.6           ⇒ **2656 g**
     //  当年那条路是**人工**走的（回 Rhino 改环径 + 做阶梯厚度分布）；
     //  这里问的是：把起点几何交给 APP，它自己搜得回来吗。
     //
     //  ⚠ 走**解析路**而不是 .3dm 路：Pt_Heater1 分析出来是等厚板（1 级），
     //    「逐级定厚」没有可调的级（见 Flow.Next 里那条指路）。
-    //    而定案本身就是解析设计（阶梯/环倍率都是程序生成的），.3dm 只是它的产物。
+    //    而设计记录本身就是解析设计（阶梯/环倍率都是程序生成的），.3dm 只是它的产物。
     // ════════════════════════════════════════════════════════════════════
     public static int Repro(double discD, double tabLen, double halfW, double wall, bool quick)
     {
@@ -1307,7 +1307,7 @@ static class Walk
         Force(main); Pump(300);
 
         H($"复现：起点 盘Ø{discD:0}／舌长{tabLen:0}／半宽{halfW:0}／管壁{wall:0.0}");
-        Console.WriteLine("  终点（已知答案）：定案 0.8 = 3547 g　定案 0.6 = 2656 g");
+        Console.WriteLine("  终点（已知答案）：设计记录 0.8 = 3547 g　设计记录 0.6 = 2656 g");
         Console.WriteLine("  ⚠ 起点几何取自 Pt_Heater1.3dm 的 --geom 实测，不是页面默认。");
 
         Set(line, "_suppressAuto", true);
@@ -1346,7 +1346,7 @@ static class Walk
         if (r is not null)
         {
             double target = wall >= 0.7 ? 3547 : 2656;
-            Console.WriteLine($"  ★ 复现结果 {r.TotalMassG:0} g　vs 定案记录 {target:0} g"
+            Console.WriteLine($"  ★ 复现结果 {r.TotalMassG:0} g　vs 设计记录记录 {target:0} g"
                             + $"　差 {r.TotalMassG - target:+0;−0} g"
                             + $"（{100 * (r.TotalMassG - target) / target:+0.0;−0.0} %）");
             Console.WriteLine($"     全判据 {(r.AllOk ? "✓" : "✗")}"
