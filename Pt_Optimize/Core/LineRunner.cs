@@ -447,6 +447,9 @@ public sealed class LineResult
     /// </summary>
     public double DrawAppliedW;
 
+    /// <summary>入口片壳网格的单元数 —— 网格无关性验证的横轴，算了就要报得出来。</summary>
+    public int MeshCells;
+
     public SegmentOut[] Segments = Array.Empty<SegmentOut>();
     public FlangeOut[] Flanges = Array.Empty<FlangeOut>();
     public ConstraintOut[] Checks = Array.Empty<ConstraintOut>();
@@ -1179,6 +1182,7 @@ public static class LineRunner
                             c.Base.BusbarClampLengthMm);
             }
 
+            if (j == 0) res.MeshCells = mesh.CellCount;
             double iJoint = LineSolver.JointCurrentA(amps, j);
             var sc = ShellCurrent.Solve(mesh, iJoint,
                         Materials.PtResistivity(c.SetpointC[Math.Min(j, n - 1)]) * 1e3,

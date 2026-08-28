@@ -33,6 +33,18 @@ public sealed class LineDesignPage : TabPage
     private readonly NumericUpDown _wall = Num(0.80m, 0.10m, 5.00m, 0.05m, 2);
     private readonly NumericUpDown _tubeIns = Num((decimal)StartPoint.TubeInsulMm, 0.0m, 100.0m, 0.5m, 1);
     private readonly NumericUpDown _clamp = Num((decimal)StartPoint.ClampTempC, -1m, 1200m, 10m, 0);
+
+    /// <summary>
+    /// 三个此前**只存在于定案档里**的几何/工艺量（2026-08-28 补成输入）。
+    ///
+    /// ★ 用户：「**我不要定档这种模式（这坑太大），要严格遵守第一性原理**」。
+    ///   定案档同时当「回归基准」与「计算起点/兜底」两个角色，一混就出了本轮查到的一串问题。
+    ///   补上这三个之后，**页面上每一个进计算的量都有输入来源**，
+    ///   FinalDesign 退回它唯一正当的角色：**回归基准**。
+    /// </summary>
+    private readonly NumericUpDown _fillet = Num((decimal)StartPoint.TabFilletMm, 0m, 20m, 0.5m, 1);
+    private readonly NumericUpDown _ringW = Num((decimal)StartPoint.RingWidthMm, 0.5m, 20m, 0.5m, 1);
+    private readonly NumericUpDown _clampLen = Num((decimal)StartPoint.ClampLengthMm, 3m, 200m, 5m, 0);
     /// <summary>
     /// `.3dm` 模式下的舌保温 mm。解析模式不用它（那边逐片来自 FinalDesign.TabInsulMm）。
     /// 0 = 裸舌 —— 那是此前 .3dm 路径**写死**的行为。
@@ -170,6 +182,8 @@ public sealed class LineDesignPage : TabPage
         //   它们参与判据（舌保温是守 ②′/③ 的主力），却没有页面控件；
         //   不进快照就会「换了旋钮而 Fresh 不变」= 假新鲜。
         public double SizerTabIns, SizerRingMul;
+        /// <summary>2026-08-28 补：这三个也进快照 —— 它们现在是**输入**，改了就该让上一次的解不新鲜。</summary>
+        public double Fillet, RingW, ClampLen;
     }
 
     /// <summary>
@@ -245,6 +259,9 @@ public sealed class LineDesignPage : TabPage
         //   定尺寸没跑过时，快照记的是**定案档**的值，而实际计算用的也是它
         //   ⇒ 「参数没变」判得对，但两边一起错。现在控件是唯一来源，快照跟着控件走，
         //   工程师动一下舌保温/环倍率，上一次的解立刻不新鲜（本来就该如此）。
+        Fillet = (double)_fillet.Value,
+        RingW = (double)_ringW.Value,
+        ClampLen = (double)_clampLen.Value,
         SizerTabIns = _tabIns.Average(n => (double)n.Value),
         SizerRingMul = _ringMul.Average(n => (double)n.Value)
     };
@@ -546,6 +563,23 @@ public sealed class LineDesignPage : TabPage
             "空冷即可，<0 = 无夹冷。★ 现场把自给率整定到位的唯一旋钮。\n" +
             "⚠ 压接段被铜排短接 ⇒ **那一段不发热**：舌片有效发热长度 = 舌长 − 压接长。\n" +
             "  90 mm 舌片扣掉 40 mm 只剩 50 mm —— 想靠缩短舌片省铂会先把发热段砍没。");
+        Head("几何/工艺（此前只在定案档里，2026-08-28 补成输入）");
+        Row("舌根圆角 R mm", _fillet,
+            "⚠ 网格 2 mm，**小于它的圆角在场里看不出来**（§1.8 的分辨率坑）—— 3 mm 只有 1.5 格。"
+            + Environment.NewLine +
+            "而 ②″ 的峰**可能就落在舌根凹角**：也就是说优化器在调一个自己分辨不出来的几何。"
+            + Environment.NewLine +
+            "要真优化它，网格得先加密。");
+        Row("环宽 mm", _ringW,
+            "管孔渐变环的作用长度（两级台阶在 孔+w 与 孔+2w）。" + Environment.NewLine +
+            "⚠ 环**倍率**是 D8 三旋钮之一、每轮在线调，而这个**长度**此前是写死的。" + Environment.NewLine +
+            "孔边电流扰动按 (a/r)² 衰减（a = 孔半径 ≈ 25.8 mm）—— 3 既没对上那个尺度，也没对上分辨率。");
+        Row("压接段 mm", _clampLen,
+            "**这一个有依据**：早先网格里硬编码 3 mm 是**数值边界不是设计值** ——" + Environment.NewLine +
+            "3 mm × 舌宽 40 = 120 mm²、共用片 1099 A ⇒ 界面电流密度约 9 A/mm²，" + Environment.NewLine +
+            "而铜排压接通常按 ≤1 A/mm² 设计，**差一个数量级**。40 是按接触面反推的工程值。" + Environment.NewLine +
+            "⚠ 它直接进判据⑤（自由段 = 舌长 − 切点 − 压接段），铂重几乎线性跟着它走。");
+
 
         Head("分段控温点");
         _segGrid.Dock = DockStyle.Top;
@@ -1489,6 +1523,9 @@ public sealed class LineDesignPage : TabPage
         //     被禁的是**静默继承**：没人要求的时候，PageToFinalDesign 自己去 Current 里捡。
         //   ⚠ 少了这两行，载入 0.6 档之后舌保温会停在控件默认的 0.3（裸舌），
         //     「载入定案 → 核算整线」就复现不出该档的数 —— 那正是这道校正要验的东西。
+        _clampLen.Value = C(fd.ClampLengthMm, _clampLen);
+        _fillet.Value = C(fd.TabFilletMm, _fillet);
+        _ringW.Value = C(fd.RingWidthMm, _ringW);
         for (int j = 0; j < 4 && j < _tabIns.Length && j < fd.TabInsulMm.Length; j++)
             _tabIns[j].Value = C(fd.TabInsulMm[j], _tabIns[j]);
         for (int j = 0; j < 4 && j < _ringMul.Length && j < fd.RingMul.Length; j++)
@@ -1780,7 +1817,12 @@ public sealed class LineDesignPage : TabPage
         d.TabLengthMm = (double)_tabLen.Value;
         d.TabHalfWidthMm = (double)_tabW.Value;
         d.ClampTempC = (double)_clamp.Value;
-        d.ClampLengthMm = seed.ClampLengthMm;          // 本页无控件，取定案值（已在输出里注明）
+        // ★★★★★ 2026-08-28：这三个此前**只能取定案值**（「本页无控件」），
+        //   现在都有控件了 ⇒ **页面上每一个进计算的量都有输入来源**，
+        //   FinalDesign 不再是任何计算的起点或兜底，只剩回归基准这一个角色。
+        d.ClampLengthMm = (double)_clampLen.Value;
+        d.TabFilletMm = (double)_fillet.Value;
+        d.RingWidthMm = (double)_ringW.Value;
         // ★★★★★ 舌保温与环倍率是**优化变量**，起点从**控件**读（用户 2026-08-25）。
         //   此前这里是「定尺寸带回来的有就用，没有才用**定案值**」——
         //   而 FinalDesign.Current 全仓只在声明处赋过值（恒为 W08）⇒ 载入 0.6 档之后，

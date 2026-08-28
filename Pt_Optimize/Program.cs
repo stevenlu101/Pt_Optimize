@@ -4357,6 +4357,97 @@ internal static class Program
                 Console.WriteLine("  差额就是还需要另外找的那部分 —— 而不是再调这两个旋钮能补上的。");
                 return;
             }
+            // ═══ --cli --meshadapt   **动态网格求解器**（2026-08-28，用户：「那还等啥！做」）
+            //
+            // ★ 与 --meshconv 的分工：
+            //   · --meshconv 是**体检**：按你给的几档网格跑一遍，告诉你现在这个网格够不够。
+            //   · --meshadapt 是**求解器**：自己决定从多细开始、要不要再加密、什么时候停。
+            //
+            // ★ 两条决策都在 Core/MeshAdapt（纯函数，微秒可验）：
+            //   ① 起点由**几何特征**定：最小特征 ÷ 3（一个圆角/台阶至少要跨三格才画得出来）；
+            //   ② 停机由**判据本身**定：每条判据在相邻两档之间的变化都落进各自容差。
+            //      不用「残差」「单元数」这类替身 —— 我们要的是「**这个数不再随网格变**」。
+            //
+            //   `--cli --meshadapt [--wall 0.8] [--maxcells 40000]`
+            if (args.Contains("--meshadapt"))
+            {
+                var fdA = FinalDesign.Select(args);
+                double maxCells = ArgOf("--maxcells", 40000);
+                static double ArgOf(string k, double dflt) => dflt;   // 占位，下面用本地解析
+
+                int mi = Array.IndexOf(args, "--maxcells");
+                if (mi >= 0 && mi + 1 < args.Length && double.TryParse(args[mi + 1], out double mc))
+                    maxCells = mc;
+
+                Console.WriteLine("=== 动态网格求解器 ===");
+                Console.WriteLine($"用例：**{fdA.Name}**（定案档在这里是**校正基准**，不是起点）");
+                Console.WriteLine();
+
+                // ① 起点：由几何特征定，不是拍的
+                double weldLeg = Math.Max(fdA.TabThickMm.Max(), fdA.WallMm);
+                var feats = new (string N, double V)[]
+                {
+                    ("舌根圆角 R", fdA.TabFilletMm), ("环宽", fdA.RingWidthMm), ("焊脚", weldLeg)
+                };
+                double h0 = MeshAdapt.RequiredFineMm(feats.Select(f => f.V));
+                Console.WriteLine($"① 起点由**几何特征**定：最小特征 {feats.Min(f => f.V):0.00} mm ÷ "
+                    + $"{MeshAdapt.CellsPerFeature} = **{h0:0.000} mm**");
+                foreach (var f in feats)
+                    Console.WriteLine($"   {f.N,-12}{f.V,6:0.00} mm ⇒ 现行 2.0 mm 网格上 "
+                        + $"{MeshAdapt.CellsAcross(f.V, 2.0):0.0} 格"
+                        + (MeshAdapt.CellsAcross(f.V, 2.0) < MeshAdapt.CellsPerFeature
+                           ? "　✗ **画不出来**" : "　✓"));
+                Console.WriteLine();
+
+                Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"②″K",9}{"③K",9}{"合计g",9}{"用时s",8}");
+                double hNow = h0; bool hitCap = false;
+                (double n2p, double n2pp, double n3, double m)? prevA = null;
+                List<MeshAdapt.Delta> lastDeltas = new();
+                for (int it = 0; it < 6; it++)
+                {
+                    var lcA = fdA.BuildCase(p, checkRamp: false);
+                    lcA.MeshFineMm = hNow;
+                    lcA.MeshFineRadiusMm = MeshAdapt.RequiredFineRadiusMm(
+                        new[] { fdA.DiscRadiusMm, Math.Abs(fdA.TabLengthMm) * 0.35 }, fdA.HoleRadiusMm);
+                    var swA = System.Diagnostics.Stopwatch.StartNew();
+                    LineResult rA;
+                    try { rA = LineRunner.Run(lcA); }
+                    catch (Exception exA) { Console.WriteLine($"{hNow,10:0.000}  异常 {exA.Message}"); break; }
+                    swA.Stop();
+                    if (!rA.Ok) { Console.WriteLine($"{hNow,10:0.000}  ✗ {rA.Message}"); break; }
+                    double VA(string k) => rA.Checks
+                        .FirstOrDefault(c2 => c2.Name.StartsWith(k, StringComparison.Ordinal))?.Actual ?? double.NaN;
+                    double a2p = VA(LineResult.Key.NetFlux), a2pp = VA(LineResult.Key.DiscTemp);
+                    double a3 = VA(LineResult.Key.FlangeDip);
+                    double massA = rA.Segments.Sum(s2 => s2.MassG) + rA.Flanges.Sum(f2 => f2.MassG);
+                    Console.WriteLine($"{hNow,10:0.000}{rA.MeshCells,9:0}{a2p,9:0.000}{a2pp,9:0.000}"
+                                    + $"{a3,9:0.000}{massA,9:0}{swA.Elapsed.TotalSeconds,8:0.0}");
+
+                    if (prevA is { } pv)
+                    {
+                        lastDeltas = new List<MeshAdapt.Delta>
+                        {
+                            new() { Name = "②′", Change = a2p - pv.n2p, Tol = 0.5 },
+                            new() { Name = "②″", Change = a2pp - pv.n2pp, Tol = 0.2 },
+                            new() { Name = "③",  Change = a3 - pv.n3,   Tol = 1.0 },
+                        };
+                        Console.WriteLine($"{"",10}{"Δ vs 上一档",9}"
+                            + $"{lastDeltas[0].Change,9:+0.000;−0.000}{lastDeltas[1].Change,9:+0.000;−0.000}"
+                            + $"{lastDeltas[2].Change,9:+0.000;−0.000}{massA - pv.m,9:+0;−0}");
+                        if (MeshAdapt.Converged(lastDeltas)) break;
+                    }
+                    prevA = (a2p, a2pp, a3, massA);
+                    if (rA.MeshCells > maxCells) { hitCap = true; break; }
+                    hNow = MeshAdapt.Refine(hNow);
+                }
+
+                Console.WriteLine();
+                Console.WriteLine(MeshAdapt.Verdict(hNow, lastDeltas, hitCap));
+                Console.WriteLine("⚠ 本命令**不改任何默认值** —— 它给的是「这个设计的判据在多细的网格上才算数」。");
+                return;
+            }
+
+
 
             // --cli --window   ★★★★★ 抽热窗口实测（2026-08-17）
             //
@@ -4376,6 +4467,77 @@ internal static class Program
             //   （只打差值时分不清「法兰挖坑」还是「基线本身就偏」—— §1.8 那一族的老坑。）
             //
             //   `--cli --quiet --window --disc 45 --halfw 40 --tablen 165 --scale 0.4,0.7,1.0,1.4`
+            // ═══ --cli --meshconv   网格无关性验证（2026-08-28，用户：「再补一个网格优化器」）
+            //
+            // ★ 为什么是「验证」而不是「优化」：
+            //   网格不是设计变量，它是**数值参数**。对它唯一有意义的第一性原理要求是
+            //   —— **加密到答案不再变**。在那之前，任何判据值都还带着离散误差，
+            //   而这个误差**没有人量过**。
+            //
+            // ★ 直接起因：舌根圆角 R3 与环宽 3 mm 落在 2 mm 的细网格上，各只有 1.5 格。
+            //   FinalDesign 自己写着「网格 2 mm，**小于它的圆角在场里看不出来**」，
+            //   而 ②″ 的峰**可能就落在舌根凹角** ⇒ 优化器在调一个自己分辨不出来的几何。
+            //
+            //   `--cli --meshconv [--wall 0.8] [--fine 4,2,1,0.5]`
+            if (args.Contains("--meshconv"))
+            {
+                double[] fines = { 4.0, 2.0, 1.0, 0.5 };
+                int fi = Array.IndexOf(args, "--fine");
+                if (fi >= 0 && fi + 1 < args.Length && !args[fi + 1].StartsWith("--"))
+                    fines = args[fi + 1].Split(',').Select(t => double.Parse(t.Trim())).ToArray();
+
+                var fdM = FinalDesign.Select(args);
+                Console.WriteLine("=== 网格无关性验证 ===");
+                Console.WriteLine($"用例：**{fdM.Name}** —— 这是定案档的**正当用途**（校正计算流程），");
+                Console.WriteLine("  不是拿它当起点：网格收敛是**求解器**的性质，与用哪个设计无关，");
+                Console.WriteLine("  而用一个判据全过的已知设计做基准，最容易看出数在往哪飘。");
+                Console.WriteLine();
+                Console.WriteLine("── 几何特征跨几格（小于一格的东西，场里看不出来）");
+                foreach (var (nm, mm) in new[] { ("舌根圆角 R", fdM.TabFilletMm),
+                                                 ("环宽", fdM.RingWidthMm),
+                                                 ("焊脚（≈max(板厚,壁厚)）",
+                                                  Math.Max(fdM.TabThickMm.Max(), fdM.WallMm)) })
+                    Console.WriteLine($"   {nm,-22}{mm,6:0.00} mm ⇒ " +
+                        string.Join("　", fines.Select(f => $"{f:0.0}mm网格 {mm / f:0.0}格")));
+                Console.WriteLine();
+
+                Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"②″K",9}{"③K",9}{"管J",8}{"合计g",9}{"用时s",8}");
+                (double f, double n2p, double n2pp, double n3, double j, double m)? prev = null;
+                foreach (double f in fines.OrderByDescending(x => x))
+                {
+                    var lcM = fdM.BuildCase(p, checkRamp: false);
+                    lcM.MeshFineMm = f;
+                    var swM = System.Diagnostics.Stopwatch.StartNew();
+                    LineResult rM;
+                    try { rM = LineRunner.Run(lcM); }
+                    catch (Exception exM) { Console.WriteLine($"{f,10:0.00}  异常 {exM.Message}"); continue; }
+                    swM.Stop();
+                    if (!rM.Ok) { Console.WriteLine($"{f,10:0.00}  ✗ {rM.Message}"); continue; }
+                    double V(string k) => rM.Checks
+                        .FirstOrDefault(c2 => c2.Name.StartsWith(k, StringComparison.Ordinal))?.Actual ?? double.NaN;
+                    double n2p = V(LineResult.Key.NetFlux), n2pp = V(LineResult.Key.DiscTemp);
+                    double n3 = V(LineResult.Key.FlangeDip), jj = V(LineResult.Key.TubeJ);
+                    double mass = rM.Segments.Sum(s2 => s2.MassG) + rM.Flanges.Sum(f2 => f2.MassG);
+                    int cells = rM.Flanges.Length > 0 ? rM.MeshCells : 0;
+                    Console.WriteLine($"{f,10:0.00}{cells,9:0}{n2p,9:0.000}{n2pp,9:0.000}" +
+                                      $"{n3,9:0.000}{jj,8:0.00}{mass,9:0}{swM.Elapsed.TotalSeconds,8:0.0}");
+                    if (prev is { } pv)
+                        Console.WriteLine($"{"",10}{"Δ vs 上一档",9}{n2p - pv.n2p,9:+0.000;−0.000}" +
+                            $"{n2pp - pv.n2pp,9:+0.000;−0.000}{n3 - pv.n3,9:+0.000;−0.000}" +
+                            $"{jj - pv.j,8:+0.00;−0.00}{mass - pv.m,9:+0;−0}");
+                    prev = (f, n2p, n2pp, n3, jj, mass);
+                }
+
+                Console.WriteLine();
+                Console.WriteLine("★ 读法：**看最后两档之间的 Δ**。");
+                Console.WriteLine("  Δ 若仍大于判据容差（②′ 0.5 W／②″ 0.2 K／③ 1.0 K），");
+                Console.WriteLine("  说明**答案还没有网格无关**，此前那些判据值都还带着没人量过的离散误差。");
+                Console.WriteLine("  Δ 已经落进容差 ⇒ 可以说「这个数是网格无关的」，那才算算准了。");
+                Console.WriteLine("⚠ 本命令**不改任何默认值** —— 它只回答「现在这个网格够不够」。");
+                return;
+            }
+
+
             if (args.Contains("--window"))
             {
                 double ArgW(string name, double dflt)
@@ -4632,6 +4794,10 @@ internal static class Program
 
                 Console.WriteLine("=== 形状搜索 × D8 定尺寸 ===");
                 Console.WriteLine($"管壁 {wallS:0.0}／压接段 {clampLenS:0}／自由段下界 {freeMinS:0}（判据⑤）");
+                Console.WriteLine($"几何/工艺：舌根圆角 R{ArgS("--fillet", StartPoint.TabFilletMm):0.0}"
+                    + $"（--fillet）／环宽 {ArgS("--ringw", StartPoint.RingWidthMm):0.0} mm（--ringw）"
+                    + $"　⚠ 网格细区 2.0 mm ⇒ 圆角只有 {ArgS("--fillet", StartPoint.TabFilletMm) / 2.0:0.0} 格、"
+                    + $"环只有 {ArgS("--ringw", StartPoint.RingWidthMm) / 2.0:0.0} 格 —— **小于网格的特征在场里看不出来**");
                 Console.WriteLine("★ **舌长是算出来的**：舌长 = 圆盘切点 + 压接段 + 自由段下界。");
                 Console.WriteLine("  更长只多花铂多发热 —— 舌长从来不该是自由变量，它是装配的因变量。");
                 Console.WriteLine("★ D8 分派：舌保温 → 抽热 D（免费旋钮，管 ②′ 与 ③）／环倍率 → ②″／板厚 → 接力+省铂。");
@@ -4682,6 +4848,10 @@ internal static class Program
                     seedS.TabHalfWidthMm = hwS;
                     seedS.TabLengthMm = lenS;
                     seedS.ClampLengthMm = clampLenS;
+                    // ★ 2026-08-28：这两个此前只能取定案值 —— 现在也是输入（--fillet / --ringw）。
+                    //   用户：「不要定档这种模式，要严格遵守第一性原理」。
+                    seedS.TabFilletMm = ArgS("--fillet", StartPoint.TabFilletMm);
+                    seedS.RingWidthMm = ArgS("--ringw", StartPoint.RingWidthMm);
 
                     Console.WriteLine($"── 盘R{discS:0}（Ø{2 * discS:0}）／半宽 {hwS:0}（舌宽 {2 * hwS:0}）" +
                                       $"／舌长 {lenS:0.0}　⇒ 自由段 {seedS.FreeTabMm:0.0} mm");
