@@ -390,7 +390,7 @@ public sealed class DesignSpec
         TabInsulMm = new[] { 0.4, 0.4, 0.5, 0.3 },
         RingMul = new[] { 1.00, 1.00, 1.00, 1.00 },
         TotalMassG = 3547, TubeMassG = 2465, FlangeMassG = 1082, ResidualK = 0.5,
-        RampH = 0.058, DiscOverK = -0.208, HoleFluxW = 1.123, FlangeDipK = 5.182, TubeJ = 9.506,
+        RampH = 0.058, DiscOverK = -0.208, HoleFluxW = 1.123, FlangeDipK = 4.720, TubeJ = 9.506,
     };
 
     /// <summary>底档：管壁压到焊接烧穿下界。</summary>
@@ -410,7 +410,7 @@ public sealed class DesignSpec
         TabInsulMm = new[] { 0.4, 0.4, 0.4, 0.6 },
         RingMul = new[] { 1.00, 1.00, 1.00, 1.00 },
         TotalMassG = 2656, TubeMassG = 1841, FlangeMassG = 815, ResidualK = 0.5,
-        RampH = 0.073, DiscOverK = -0.284, HoleFluxW = 0.820, FlangeDipK = 6.478, TubeJ = 10.961,
+        RampH = 0.073, DiscOverK = -0.284, HoleFluxW = 0.820, FlangeDipK = 6.124, TubeJ = 10.961,
     };
 
     // ── 已作废的两档：**留着**，不删。
@@ -431,7 +431,7 @@ public sealed class DesignSpec
         TabInsulMm = new[] { 18.7, 1.6, 1.4, 3.9 },
         RingMul = new[] { 1.22, 1.22, 1.22, 1.22 },
         TotalMassG = 3106, TubeMassG = 2465, FlangeMassG = 641, ResidualK = 0.86,
-        RampH = 0.057, DiscOverK = 1.050, HoleFluxW = 1.351, FlangeDipK = 5.522, TubeJ = 9.506,
+        RampH = 0.057, DiscOverK = 1.050, HoleFluxW = 1.351, FlangeDipK = 5.517, TubeJ = 9.506,
     };
 
     public static readonly DesignSpec Retired06 = new()
@@ -447,7 +447,7 @@ public sealed class DesignSpec
         TabInsulMm = new[] { 18.7, 1.6, 1.4, 3.9 },
         RingMul = new[] { 1.20, 1.20, 1.20, 1.20 },
         TotalMassG = 2388, TubeMassG = 1841, FlangeMassG = 547, ResidualK = 0.37,
-        RampH = 0.078, DiscOverK = 1.186, HoleFluxW = 1.583, FlangeDipK = 5.965, TubeJ = 10.961,
+        RampH = 0.078, DiscOverK = 1.186, HoleFluxW = 1.583, FlangeDipK = 5.161, TubeJ = 10.961,
     };
 
     /// <summary>

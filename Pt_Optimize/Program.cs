@@ -178,11 +178,20 @@ internal static class Program
                 Console.WriteLine("⚠ --sigmat：电流场按 **σ(T)** 重解（冷区更导电）。"
                     + "默认是**关**的 —— 本次结果与设计记录**不可直接比较**。");
             }
-            if (args.Contains("--basetol"))
+            if (args.Contains("--basetol-legacy"))
             {
-                p.BaselineTolAmplified = true;
-                Console.WriteLine("⚠ --basetol：**基线**收敛判据改成与主环同口径（真残差 × 放大 25）。"
-                    + "默认是**关**的 —— 本次 ③ 与设计记录**不可直接比较**。");
+                p.BaselineTolAmplified = false;
+                Console.WriteLine("⚠ --basetol-legacy：基线收敛判据退回**历史口径**（欠松弛步直接比容差，没乘放大）。"
+                    + "只用于复现历史数字，**不得用于交付**。本次 ③ 会偏高约 0.5–1.0 K。");
+            }
+            else if (args.Contains("--basetol"))
+            {
+                // ★ 旧开关**必须报错**，不许静默无效：2026-08-28 起它已是默认。
+                //   静默接受一个不再有作用的旗标，正是「安静失败」的标准形态 ——
+                //   跑的人会以为自己开启了什么，其实什么也没发生。
+                throw new ArgumentException(
+                    "--basetol 已于 2026-08-28 **成为默认**（配对实测：细网格 ③ 10.539→9.572，判决翻转）。"
+                    + "去掉它即可；要复现历史数字请用 --basetol-legacy。");
             }
             if (args.Contains("--splitdraw"))
             {
@@ -4377,6 +4386,55 @@ internal static class Program
             //     本命令就是去量它。量不出单调，就得换别的确定性方法。
             //
             //   `--cli --monotone [--wall 0.8] [--pts 7]`
+            // ★ 网格无关复核：**判据以它为准**（导航网格上的「全过」可能是离散误差的假象）。
+            //   同一段输出被 --judge 与 --solve 共用 —— 两处各写一份就会「一处改了另一处没改」。
+            void VerifyMesh(DesignSpec dv, string tag)
+            {
+                int mcV = 40000;
+                int imcV = Array.IndexOf(args, "--maxcells");
+                if (imcV >= 0 && imcV + 1 < args.Length && int.TryParse(args[imcV + 1], out int mcv2)) mcV = mcv2;
+
+                Console.WriteLine();
+                Console.WriteLine($"── 网格无关复核：{tag}");
+                var mvv = MeshVerify.Run(dv, p, maxCells: mcV,
+                              progress: new Progress<string>(m3 => Console.WriteLine("     · " + m3)));
+                Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"②″K",9}{"③K",9}{"合计g",9}{"用时s",8}");
+                foreach (var tv in mvv.Trace)
+                    Console.WriteLine($"{tv.Fine,10:0.000}{tv.Cells,9:0}{tv.N2p,9:0.000}{tv.N2pp,9:0.000}"
+                                    + $"{tv.N3,9:0.000}{tv.MassG,9:0}{tv.Sec,8:0.0}");
+                Console.WriteLine();
+                Console.WriteLine("   " + mvv.Verdict);
+                if (mvv.Line is { } lvv && !lvv.AllOk)
+                    Console.WriteLine("✗ **在算得准的网格上，这个设计不过** —— "
+                        + "导航网格上的「全过」是离散误差造成的假象，不要拿它出图。");
+            }
+
+            if (args.Contains("--judge"))
+            {
+                // 同一份设计**只算一次**、把判据表原样打出来。
+                // 用途：做「只改一个开关」的对照（如 --basetol），别的变量一个不动。
+                var gj = DesignSpec.Select(args);
+                Console.WriteLine("=== 单次判定（同一设计，只看判据）===");
+                Console.WriteLine($"用例：{gj.Name}");
+                Console.WriteLine("基线收敛口径："
+                    + (p.BaselineTolAmplified ? "**与主环同口径**（真残差 × 放大 25）"
+                                              : "**历史口径**（欠松弛步直接比容差）"));
+                Console.WriteLine();
+
+                var rj = LineRunner.Run(gj.BuildCase(p, checkRamp: true));
+                if (!rj.Ok) { Console.WriteLine("✗ " + rj.Message); Environment.ExitCode = 1; return; }
+
+                foreach (var cj in rj.Checks)
+                    Console.WriteLine($"   {(cj.Undetermined ? "?" : cj.Ok ? "✓" : "✗")} "
+                        + $"{cj.Name,-26}{cj.Actual,12:0.000} {cj.Unit,-3} 限 {cj.Limit,9:0.000}   {cj.Where}");
+                Console.WriteLine();
+                foreach (var nt in rj.Notes) Console.WriteLine("   · " + nt);
+                Console.WriteLine($"   合计 {rj.Segments.Sum(sj => sj.MassG) + rj.Flanges.Sum(fj => fj.MassG):0.0} g"
+                    + $"　收敛 {(rj.Converged ? "✓" : "✗")}　全过 {(rj.AllOk ? "✓" : "✗")}");
+                if (args.Contains("--verifymesh")) VerifyMesh(gj, gj.Name);
+                Environment.ExitCode = rj.AllOk ? 0 : 1; return;
+            }
+
             if (args.Contains("--solve"))
             {
                 // ★ 求解器：从约束盒的下角求根，**不接受任何起点**。
@@ -4435,7 +4493,10 @@ internal static class Program
                 }
 
                 var r1 = RunOnce(geoS, "单次求解");
-                Console.WriteLine("★ 提醒：以上跑在**导航网格**上。判据以网格无关复核为准（--verifymesh）。");
+                if (args.Contains("--verifymesh") && r1.Design is not null)
+                    VerifyMesh(r1.Design, "求解器解出来的那一点");
+                else
+                    Console.WriteLine("★ 提醒：以上跑在**导航网格**上。判据以网格无关复核为准（--verifymesh）。");
                 Environment.ExitCode = r1.Feasible ? 0 : 1; return;
             }
 
@@ -5981,12 +6042,16 @@ internal static class Program
 
                 Console.WriteLine();
                 Console.WriteLine("── A 漂移对账：DesignSpec 记的数 vs 实算");
-                Console.WriteLine("   ⚠⚠ **这些记录不是「正确答案」**（2026-08-28 实测）：");
-                Console.WriteLine("     它们是在 **2 mm 导航网格**上跑出来的，而那个网格连舌根圆角、环宽、");
-                Console.WriteLine("     焊脚都画不出来（1.5 / 1.5 / 1.2 格）。`--meshadapt` 把同一个设计加密到");
-                Console.WriteLine("     **网格无关（0.408 mm）**后：③ 是 **10.539 / 10 —— 不过**，而记录写的是 5.182。");
-                Console.WriteLine("     几何没问题（铂重 3549 vs 3547 逐位对上），**错的是判定**。");
-                Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一份输入还给不给同一个数），");
+                Console.WriteLine("   ⚠⚠ **这些记录只是「同一份输入的上一次答案」**，不是物理真值：");
+                Console.WriteLine("     它们跑在 **2 mm 导航网格**上，而那个网格连舌根圆角、环宽、");
+                Console.WriteLine("     焊脚都画不出来（1.5 / 1.5 / 1.2 格）。网格无关（0.408 mm）后 ③ 会**大约翻倍**");
+                Console.WriteLine("     （0.8 档实测 4.720 → 9.572，限 10）。⇒ 拿导航网格的 ③ 当结论会**低估一半**。");
+                Console.WriteLine("   ★ 2026-08-28 **更正一条曾经写在这里的错话**：此前这里写着「细网格上 ③=10.539 不过」，");
+                Console.WriteLine("     并据此说设计记录**不合格**。配对实测（同代码、同网格、只差基线收敛口径）证明：");
+                Console.WriteLine("     那 10.539 是**收敛判据的 bug**——基线环拿欠松弛步比容差且漏乘不动点放大 25。");
+                Console.WriteLine("     修正后细网格 ③ = **9.572 / 10，过**；两个网格档的偏移一致（−0.966/−0.967），");
+                Console.WriteLine("     而 ②′/②″/铂重**逐位不变**。⇒ **这个设计从来没有真的不合格过。**");
+Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一份输入还给不给同一个数），");
                 Console.WriteLine("     **不是**「这个设计对不对」。后者要 `--shape --verifymesh`。");
                 for (int ia = 0; ia < DesignSpec.All.Length; ia++)
                 {

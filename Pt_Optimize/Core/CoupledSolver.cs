@@ -124,6 +124,18 @@ public static class CoupledSolver
             res.OuterDelta = Math.Abs(Dnew - D);
             lastD = D;
             D = D + 0.6 * (Dnew - D);          // 欠松弛
+            // ⚠⚠ **这条收敛判据是旧口径**（2026-08-28 普查标注，故意不改）：
+            //   它拿「相邻两轮之差」直接比容差，**没乘不动点放大** 1/(1−g)。
+            //   对慢收敛的不动点迭代，到真解的距离 ≈ δ×g/(1−g)，可以比 δ 大一两个量级。
+            //   LineRunner 的主环是对的（δ×放大、且真残差×放大都要过），
+            //   见 LineCase.FixedPointAmp 与 DesignInputs.BaselineTolAmplified。
+            //
+            // 为什么**不改**：本类**已被取代**（LineRunner 那条判据路根本不调它，
+            //   见 LineRunner 里「已被取代的 CoupledSolver」那条注释）。
+            //   它现在只服务 LineSolver 与几条 CLI 诊断。
+            //   在这里换口径既动不了交付数，又会改掉那些诊断的历史值 —— 净亏。
+            // ⇒ 但**必须留字**：谁把它接回判据路，就等于把旧口径也接回去了。
+            //   `CoupledSolverStaysOffJudgePathTests` 盯着这件事。
             if (res.OuterDelta < tolW) { res.Converged = true; it++; break; }
         }
         _ = lastD;

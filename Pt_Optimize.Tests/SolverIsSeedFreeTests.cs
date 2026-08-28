@@ -163,6 +163,8 @@ public class SolverIsSeedFreeTests
         Assert.Contains("解析路表达不了开孔／开槽", s);          // 开孔
         Assert.Contains("LevelScale[片][级]", s);              // 指出真逐级优化在哪条路
         Assert.Contains("面积加权平均压成一个数", s);            // ShapeToAnalytic 的陷阱
+        Assert.Contains("**根的位置是网格相关的**", s);          // 本类自己的缺陷，实测暴出
+        Assert.Contains("翻 2.03 倍", s);                       // 带着实测数，不是泛泛而谈
 
         // A⑤ 已拆：量化搬进求解过程里了，所以「未解决」清单里不该再有它，
         // 而**拆掉这件事本身**要留字，否则以后没人知道为什么解直接就在格子上。
