@@ -373,7 +373,18 @@ public static class ShellThermal
                 if (holeCell[i])
                     rHole = Math.Min(rHole, Math.Sqrt(m.Centroid[i].X * m.Centroid[i].X
                                                     + m.Centroid[i].Z * m.Centroid[i].Z));
-                if (tabCell[i])
+                // ★★★★★ 只有**真被按住**的格子才配当定温锚点（2026-08-28 修）。
+                //   原来只判 tabCell[i] —— 那仅表示「这一格带 TagTabEnd 标签」，
+                //   **与舌端是不是定温边界无关**：真正决定的是上面那句
+                //   `if (!busG && p.BusbarClampTempC >= 0)`。
+                //   舌端自由（ClampTempC < 0，如端片）或走**热导边界**（busG，见 --busg）时，
+                //   舌端根本不是定温面，却仍被当成锚点 ⇒ 舌尖附近 L 被算得极小
+                //   ⇒ J_stab 极大 ⇒ **裕度虚高**。而这条判据取的是**最小**裕度，
+                //   虚高会把真正最不稳定的那一格挤掉 —— 方向是**偏乐观**，本项目最忌的那一侧。
+                //   ⚠ 现役定案四片都夹 450 °C，所以此前不咬；是 --busg 把它激活的。
+                //   没有合格锚点时 xClamp 保持 NaN ⇒ toClamp = +∞ ⇒ 退回只看管孔
+                //   （管孔恒是定温边界），那是**保守**的退路。
+                if (tabCell[i] && isFixed[i])
                     xClamp = double.IsNaN(xClamp) ? m.Centroid[i].X
                                                   : Math.Max(xClamp, Math.Abs(m.Centroid[i].X)) * Math.Sign(m.Centroid[i].X);
             }
@@ -392,9 +403,14 @@ public static class ShellThermal
                     // 保温厚度跟 lossFor 用**同一个** insulated[] 判定，不另立一份
                     double insMm = insulated[i] ? p.FlangeInsulThickMm
                                  : (tabInsul ? tabInsulThickMm : 0.0);
-                    // lateralLenMm 传 NaN = **不计横向导热**，是 LocalStability 自己写明的保守侧。
-                    // 不猜每一格到定温边界的距离：猜错会把裕度算大（偏危险侧），
-                    // 而保守版若能过，设计就真的过得了。
+                    // ★★ 2026-08-28 更正：这段注释**描述的是一个已经不做了的做法**。
+                    //   它说「传 NaN = 不计横向导热…**不猜**每一格到定温边界的距离：
+                    //   猜错会把裕度算大（偏危险侧）」—— 而下一行传的正是 LatLen(i)，
+                    //   就是在猜那个距离。**注释警告的那件事，代码在做。**
+                    //   ⇒ 现在猜得**有依据**：锚点只取真被按住的格子（见上面 isFixed 那处），
+                    //     没有合格锚点就退回只看管孔（保守）。
+                    //   ⚠ 这仍是一个**估计**，不是精确解：它把「到最近定温边界的直线距离」
+                    //     当成横向导热长度。保守侧的做法（传 NaN）仍在 LocalStability 里可用。
                     var pt = LocalStability.Check(p, res.T[i], jMagAPerMm2[i], m.Thickness[i],
                                                   insMm, LatLen(i));
                     // ★★★★★ 超拟合区间的格子**不能只是跳过**（2026-08-24 修）。
