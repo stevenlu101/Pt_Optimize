@@ -334,6 +334,12 @@ public sealed class FlangeOut
     public string Name = "";
     public bool Shared;
     public double CurrentA, MassG, JMaxAPerMm2, Phi, QFromTubeW, TMaxC, TMinC, TTabEndC;
+    /// <summary>该片实际用的铜排热导 W/K（−1 = 走定温边界）。由该片电流算：G = k_Cu·(I/J许用)/L。</summary>
+    public double BusGWPerK = -1;
+    /// <summary>按**载流**需要的铜排截面 mm²（A = I/J许用）—— 不循环，可在解前定。</summary>
+    public double BusSectionForCurrentMm2;
+    /// <summary>按**导热**需要的铜排截面 mm²（A = Q·L/(k·ΔT)）—— 要解完才知道，用来对账。</summary>
+    public double BusSectionForHeatMm2;
     /// <summary>自身焦耳热与自身散热 W —— Φ = QGen/QLoss 的两个分子分母，判 §4.2k 时要看得见</summary>
     public double QGenW, QLossW;
     /// <summary>
@@ -1190,6 +1196,26 @@ public static class LineRunner
             var p2 = SegmentSolver.Clone(c.Base);
             p2.TSetC = c.SetpointC[Math.Min(j, n - 1)];
             if (j < c.ClampTempC.Length) p2.BusbarClampTempC = c.ClampTempC[j];
+            // ★★★★★ 逐片热导 G（2026-08-28，B 项）：**由该片自己的电流算出来**，不再靠人抄。
+            //
+            //   此前 --busg 要人手填「40,21.8,300」，那个 40×21.8 是从 `--cli --busbar`
+            //   选型表里**抄**过来的 —— 同一个数两处来源，而且抄的是**共用片**那一行。
+            //   可四片电流本来就不同（实测 685/1099/975/542 A），
+            //   共用片走 √3 倍电流 ⇒ 需要的铜排更粗 ⇒ **G 本来就该逐片不同**。
+            //
+            //   第一性原理链（不循环）：A_j = I_j / J许用 ⇒ G_j = k_Cu·A_j/L。
+            //   截面只依赖**载流**，不依赖夹持温度 —— 所以可以在解之前定下来。
+            //   ⚠ 选型表里「导热需截面」那一支要 heatW 与夹持温度，是**循环**的，
+            //     故不进这条链；它在解完之后作为**一致性检查**（见 BusbarConsistency）。
+            double busGThis = -1, busSecCurMm2 = 0;
+            if (c.Base.BusbarConductanceWPerK >= 0 && c.Base.BusbarJAllowAPerMm2 > 1e-9
+                && c.Base.BusbarLenToSinkMm > 1e-9)
+            {
+                double aMm2 = iJoint / c.Base.BusbarJAllowAPerMm2;
+                busSecCurMm2 = aMm2;
+                p2.BusbarConductanceWPerK = busGThis =
+                    BusbarSizing.CuK * (aMm2 * 1e-6) / (c.Base.BusbarLenToSinkMm * 1e-3);
+            }
             // 保温分界：解析几何用该片自己的分界（可为「全裸」= +∞ 之外），
             // .3dm 路径沿用现场实况「仅圆盘保温、舌片裸露」的切点。
             double insulX = analytic ? plate!.InsulBoundaryXResolved
@@ -1264,6 +1290,16 @@ public static class LineRunner
                 JMaxAPerMm2 = sc.JMaxAPerMm2,
                 Phi = th.PhiOverall,
                 QFromTubeW = th.QFromTubeW,
+                BusGWPerK = busGThis,
+                BusSectionForCurrentMm2 = busSecCurMm2,
+                // ★ 导热需要的截面：A = Q·L/(k·ΔT)。要解完才知道 Q 与夹持温度 ⇒ 不进 G 那条链
+                //   （那会循环），只作**一致性对账**：若它 > 载流需截面，说明按载流选的铜排
+                //   带不走热，现场那根要更粗 —— 而 G 也就该更大。
+                BusSectionForHeatMm2 = busGThis >= 0 && th.QToClampW > 1e-9
+                                       && th.TTabEndMeanC - c.Base.BusbarSinkTempC > 1e-6
+                    ? th.QToClampW * (c.Base.BusbarLenToSinkMm * 1e-3)
+                      / (BusbarSizing.CuK * (th.TTabEndMeanC - c.Base.BusbarSinkTempC)) * 1e6
+                    : 0,
                 QGenW = th.QGenW, QLossW = th.QLossW,
                 // ★ 改用壳解的**直接通量**，不再用恒等式反推 —— 否则对账是循环论证
                 QClampW = th.QToClampW,

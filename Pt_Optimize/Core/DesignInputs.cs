@@ -302,7 +302,19 @@ public class DesignInputs
                  "  §4.3c/§4.3d 的「端片自由端」结论正是建立在后者上。\n\n" +
                  "典型值：40×21.8 mm² 铜排、到冷端 300 mm ⇒ G = 385×873e-6/0.3 ≈ 1.1 W/K。\n" +
                  "把 G 当设计变量，接头温度就从**假设**变成**输出**，可以拿去对铜的许用温度。")]
-    public double BusbarConductanceWPerK { get; set; } = -1;
+    public double BusbarConductanceWPerK { get; set; } = -1;
+
+    [Category("6 C 整线 — 法兰边界"), DisplayName("铜排许用电流密度 [A/mm²]"),
+     Description("★ 铜排截面的第一性原理来源：A = I / J许用。自然对流 1.5–2，强制风冷 3–4。　" +
+                 "2.0 与 `--cli --busbar` 选型表用的是同一个数（此前那张表把它写死在调用里）。　" +
+                 "⚠ 它与「铜排到冷端长度」一起决定**逐片**热导 G = k_Cu·A/L —— " +
+                 "四片电流不同（实测 685/1099/975/542 A），G 本来就该逐片不同。")]
+    public double BusbarJAllowAPerMm2 { get; set; } = 2.0;
+
+    [Category("6 C 整线 — 法兰边界"), DisplayName("铜排到冷端长度 [mm]"),
+     Description("★ 从压接点到冷端（散热器/环境）的铜排长度。与许用电流密度一起定 G = k_Cu·A/L。　" +
+                 "300 与 `--cli --busbar` 选型表同源。**待现场确认**：实际走线长度决定它。")]
+    public double BusbarLenToSinkMm { get; set; } = 300.0;
 
     [Category("6 C 整线 — 法兰边界"), DisplayName("铜排冷端温度 [°C]")]
     public double BusbarSinkTempC { get; set; } = 25;

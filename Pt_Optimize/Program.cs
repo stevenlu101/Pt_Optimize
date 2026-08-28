@@ -124,23 +124,50 @@ internal static class Program
             //
             //   ⚠ G 不写成常数，由**真实铜排几何**算：G = k_Cu·A/L。
             //     截面 A 只依赖载流（A = I/J许用），不依赖夹持温度 ⇒ **没有循环**。
-            int iBusS = Array.IndexOf(args, "--busg");   // ⚠ 不能叫 --busbar：那已是顶层命令（铜排选型表），会被它先吃掉
-            if (iBusS >= 0 && iBusS + 1 < args.Length && !args[iBusS + 1].StartsWith("--"))
+            // ★★★★★ --busg：打开**物理上唯一自洽**的舌端边界（热导），2026-08-28 B 项改进。
+            //
+            //   ShellThermal 自己的定性：定温边界「假设铜排无论要带走多少热都能把接触点按住，
+            //   **等于假设结论**」；自由端实算舌端 1100–2400 °C 而铜熔点只有 1085。
+            //
+            //   ★ B 项修的是**来源**：此前要人手填 `--busg 40,21.8,300`，
+            //     那个 40×21.8 是从 `--cli --busbar` 选型表里**抄**的 —— 同一个数两处来源，
+            //     而且抄的是**共用片**那一行。四片电流本来就不同（685/1099/975/542 A），
+            //     共用片走 √3 倍电流 ⇒ **G 本来就该逐片不同**。
+            //   ⇒ 现在 `--busg`（不带参数）由**每片自己的电流**算：
+            //     A_j = I_j/J许用 ⇒ G_j = k_Cu·A_j/L。人不再抄任何数。
+            //   ⇒ `--busg 宽,厚,长` 仍保留：显式指定一根**具体**铜排（四片共用），
+            //     用于复现历史结果；此时关掉逐片推导。
+            int iBusS = Array.IndexOf(args, "--busg");
+            if (iBusS >= 0)
             {
-                var bsS = args[iBusS + 1].Split(',')
-                          .Select(t => double.Parse(t.Trim())).ToArray();
-                if (bsS.Length != 3)
-                    throw new ArgumentException("--busg 要三个数：宽,厚,长（mm），例如 40,21.8,300");
-                double aM2S = bsS[0] * bsS[1] * 1e-6;              // mm² → m²
-                double gBusS = BusbarSizing.CuK * aM2S / (bsS[2] * 1e-3);
-                p.BusbarConductanceWPerK = gBusS;
                 int iSinkG = Array.IndexOf(args, "--sink");
                 if (iSinkG >= 0 && iSinkG + 1 < args.Length
                     && double.TryParse(args[iSinkG + 1], out double sinkG))
                     p.BusbarSinkTempC = sinkG;
-                Console.WriteLine($"  舌端边界：**热导（唯一自洽）** G = k_Cu·A/L = {BusbarSizing.CuK:0}"
-                    + $"×({bsS[0]:0.#}×{bsS[1]:0.#} mm²)/{bsS[2]:0} mm = **{gBusS:0.000} W/K**"
-                    + $"　冷端 {p.BusbarSinkTempC:0} °C");
+
+                bool dims = iBusS + 1 < args.Length && !args[iBusS + 1].StartsWith("--");
+                if (dims)
+                {
+                    var bsS = args[iBusS + 1].Split(',').Select(t => double.Parse(t.Trim())).ToArray();
+                    if (bsS.Length != 3)
+                        throw new ArgumentException("--busg 要么不带参数（逐片按电流算），"
+                            + "要么给三个数：宽,厚,长（mm），例如 40,21.8,300");
+                    double gBusS = BusbarSizing.CuK * (bsS[0] * bsS[1] * 1e-6) / (bsS[2] * 1e-3);
+                    p.BusbarConductanceWPerK = gBusS;
+                    p.BusbarJAllowAPerMm2 = -1;          // 关掉逐片推导：显式指定优先
+                    Console.WriteLine($"  舌端边界：**热导（唯一自洽）**，四片**共用**一根 "
+                        + $"{bsS[0]:0.#}×{bsS[1]:0.#}×{bsS[2]:0} mm ⇒ G = **{gBusS:0.000} W/K**"
+                        + $"　冷端 {p.BusbarSinkTempC:0} °C");
+                    Console.WriteLine("    ⚠ 显式指定 ⇒ **逐片推导已关**。四片电流不同，共用一根是近似。");
+                }
+                else
+                {
+                    p.BusbarConductanceWPerK = 0;        // 仅作开关；真值逐片算
+                    Console.WriteLine("  舌端边界：**热导（唯一自洽）**，G **逐片由该片电流算**："
+                        + $"A = I/{p.BusbarJAllowAPerMm2:0.0} A/mm² ⇒ G = k_Cu·A/{p.BusbarLenToSinkMm:0} mm"
+                        + $"　冷端 {p.BusbarSinkTempC:0} °C");
+                    Console.WriteLine("    ⇒ **人不再抄任何数** —— 与 `--cli --busbar` 选型表同一套输入。");
+                }
                 Console.WriteLine("    ⇒ **夹持温度由求解给出，不再是输入**"
                     + "（定温那条不再生效，包括定案档里的 450 °C）。铜熔点 1085 °C 是它的硬顶。");
             }
@@ -4667,11 +4694,28 @@ internal static class Program
                     Console.WriteLine($"   停在第 {sr.RoundsUsed} 轮：{sr.StopWhy}");
                     // ★ 打开热导边界时，夹持温度是**输出** —— 必须报出来，否则等于没算
                     if (p.BusbarConductanceWPerK >= 0 && sr.Best is { Flanges.Length: > 0 })
+                    {
+                        // ★ 逐片铜排：G、载流需截面、以及**导热需截面**的对账（B 项）。
+                        //   导热那一支要解完才知道（Q 与夹持温度都是输出），所以它不进 G 的推导链，
+                        //   只在这里对账：若它 > 载流需截面，说明**按载流选的铜排带不走热**，
+                        //   现场那根要更粗 —— 而 G 也就该更大。不出声就等于让人照一根不够的铜排去做。
+                        foreach (var fb in sr.Best.Flanges)
+                        {
+                            if (fb.BusGWPerK < 0) continue;
+                            bool heatRules = fb.BusSectionForHeatMm2 > fb.BusSectionForCurrentMm2 + 1e-9;
+                            Console.WriteLine($"   铜排 {fb.Name}：G {fb.BusGWPerK:0.000} W/K"
+                                + $"　载流需 {fb.BusSectionForCurrentMm2:0} mm²"
+                                + $"　导热需 {fb.BusSectionForHeatMm2:0} mm²"
+                                + (heatRules
+                                   ? "　⚠ **导热是控制项** —— 按载流选的铜排带不走热，现场那根要更粗，G 也该更大"
+                                   : "　✓ 载流是控制项"));
+                        }
                         Console.WriteLine("   **算出来的舌端（夹持）温度** "
                             + string.Join(" / ", sr.Best.Flanges.Select(f2 => f2.TTabEndC.ToString("0") + " °C"))
                             + (sr.Best.Flanges.Max(f2 => f2.TTabEndC) > 1085
                                ? "　✗ **超铜熔点 1085 °C —— 该工况下接头不存在**"
                                : "　（铜熔点 1085 °C）"));
+                    }
                     if (sr.Design is not null)
                     {
                         // ★ 用户 2026-08-17：「有依据地告诉我 APP 发现了什么？这个法兰的
