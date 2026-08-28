@@ -69,6 +69,22 @@ public static class MeshVerify
     /// 起点由几何特征定（最小特征 ÷ 3），每轮对半加密，
     /// 停机由**判据本身**定（每条判据的变化落进各自容差），或撞上单元数上限。
     /// </summary>
+    /// <summary>
+    /// **这个几何要多细的网格** —— 由几何特征算出，不是挑的数。
+    ///
+    /// ★ 全程序只有这一份（2026-08-28 提出来）：<see cref="Solver"/> 的第二遍求根
+    ///   与本类的复核**必须用同一张网格**，否则「求根的网格」与「判决的网格」不是同一个，
+    ///   求出来的根照样不作数 —— 而那正是 A⑬ 要修的病。
+    /// </summary>
+    public static (double FineMm, double RadiusMm) RequiredMeshFor(DesignSpec d)
+    {
+        if (d is null) throw new ArgumentNullException(nameof(d));
+        double weldLeg = Math.Max(d.TabThickMm.Max(), d.WallMm);
+        return (MeshAdapt.RequiredFineMm(new[] { d.TabFilletMm, d.RingWidthMm, weldLeg }),
+                MeshAdapt.RequiredFineRadiusMm(
+                    new[] { d.DiscRadiusMm, Math.Abs(d.TabLengthMm) * 0.35 }, d.HoleRadiusMm));
+    }
+
     public static Result Run(DesignSpec d, DesignInputs baseIn,
                              int maxCells = 40000, int maxRounds = 6,
                              IProgress<string>? progress = null,
@@ -78,10 +94,8 @@ public static class MeshVerify
         var res = new Result();
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
-        double weldLeg = Math.Max(d.TabThickMm.Max(), d.WallMm);
-        double h = MeshAdapt.RequiredFineMm(new[] { d.TabFilletMm, d.RingWidthMm, weldLeg });
-        double radius = MeshAdapt.RequiredFineRadiusMm(
-            new[] { d.DiscRadiusMm, Math.Abs(d.TabLengthMm) * 0.35 }, d.HoleRadiusMm);
+        var (h0, radius) = RequiredMeshFor(d);
+        double h = h0;
 
         (double n2p, double n2pp, double n3, double m)? prev = null;
         for (int it = 0; it < maxRounds; it++)

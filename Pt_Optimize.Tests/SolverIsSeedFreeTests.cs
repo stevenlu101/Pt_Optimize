@@ -38,7 +38,7 @@ public class SolverIsSeedFreeTests
     {
         string s = Src("Solver.cs");
         int overwrite = s.IndexOf("d.TabThickMm[j] = tLo;", System.StringComparison.Ordinal);
-        int firstEval = s.IndexOf("Eval(d, baseIn, res, cancel)", System.StringComparison.Ordinal);
+        int firstEval = s.IndexOf("Eval(d, baseIn, ", System.StringComparison.Ordinal);
 
         Assert.True(overwrite > 0, "板厚没有被下界覆盖 —— 那就是拿传进来的值当起点了");
         Assert.True(firstEval > 0, "找不到求解调用");
@@ -78,7 +78,7 @@ public class SolverIsSeedFreeTests
         Assert.DoesNotContain("Math.Min(Get(d", s);
 
         // 二分收在「不违反那一侧」，再**向上**对齐到图纸格 —— 两步都只会往上
-        Assert.Contains("if (PlateSlack(Eval(d, baseIn, res, cancel), key, j, dipMax, discMax) >= 0) hi = mid; else lo = mid;", s);
+        Assert.Contains("if (PlateSlack(Eval(d, baseIn, opt, res, cancel), key, j, dipMax, discMax) >= 0) hi = mid; else lo = mid;", s);
         Assert.Contains("Math.Ceiling(hi / q - 1e-9) * q", s);
         Assert.DoesNotContain("Math.Floor(hi", s);      // 向下取整会把判据舍掉
     }
@@ -140,7 +140,7 @@ public class SolverIsSeedFreeTests
         Assert.Equal(3, Solver.Allocation.Select(a => a.Knob).Distinct().Count());
 
         string s = Src("Solver.cs");
-        Assert.Contains("RaiseUntil(d, baseIn, opt, j, knob, key", s);
+        Assert.Contains("RaiseUntil(d, baseIn, o, j, knob, key", s);
     }
 
     /// <summary>

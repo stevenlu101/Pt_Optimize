@@ -162,64 +162,95 @@ public static class Solver
 
         LineResult? last = null;
 
-        for (int round = 1; round <= opt.MaxRounds; round++)
+        // ★★ 求根**跑两遍，只有网格不同**（算法普查 A⑬）。
+        //   第一遍在导航网格上把根定位到附近（便宜）；
+        //   第二遍在细网格上重新求根 —— **判据以细网格为准**，而根的位置随网格移动
+        //   （实测 ③ 导航 4.720 → 细网格 9.572，翻 2.03 倍）。
+        //   ⚠ 第二遍**从第一遍的解出发**、且照样只增不减 ⇒
+        //     「收敛到最小可行点」与「与初值无关」两条都还成立
+        //     （第一遍本身与初值无关，第二遍是它的确定性函数）。
+        bool Rounds(SolverOptions o, string tag)
         {
-            cancel.ThrowIfCancellationRequested();
-            last = Eval(d, baseIn, res, cancel);
-            if (last is null) { res.StopWhy = "场解不收敛，判不了"; break; }
+            Log($"── {tag}" + (o.FineMm > 0 ? $"（细网格 {o.FineMm:0.000} mm）" : "（导航网格）"));
+            for (int round = 1; round <= o.MaxRounds; round++)
+            {
+                cancel.ThrowIfCancellationRequested();
+                last = Eval(d, baseIn, o, res, cancel);
+                if (last is null) { res.StopWhy = "场解不收敛，判不了"; break; }
 
-            double mass = MassOf(last);
-            Log($"第 {round,2} 轮　合计 {mass:0} g" +
-                $"　板厚 {Join(d.TabThickMm)}　舌保温 {Join(d.TabInsulMm)}　环倍率 {Join(d.RingMul)}");
+                double mass = MassOf(last);
+                Log($"第 {round,2} 轮　合计 {mass:0} g" +
+                    $"　板厚 {Join(d.TabThickMm)}　舌保温 {Join(d.TabInsulMm)}　环倍率 {Join(d.RingMul)}");
 
-            // ── 逐片逐条列违反
-            var todo = new List<(int J, Knob Knob, string Key)>();
-            for (int j = 0; j < np; j++)
-                foreach (var (key, knob) in Allocation)
-                {
-                    double sl = PlateSlack(last, key, j, dipMax, discMax);
-                    if (double.IsNaN(sl))
+                // ── 逐片逐条列违反
+                var todo = new List<(int J, Knob Knob, string Key)>();
+                for (int j = 0; j < np; j++)
+                    foreach (var (key, knob) in Allocation)
                     {
-                        res.StopWhy = $"第 {j} 片的「{key}」**判不了**（值是 NaN）—— 判不了不算过";
+                        double sl = PlateSlack(last, key, j, dipMax, discMax);
+                        if (double.IsNaN(sl))
+                        {
+                            res.StopWhy = $"第 {j} 片的「{key}」**判不了**（值是 NaN）—— 判不了不算过";
+                            res.HitBound = true;
+                            Log("  ✗ " + res.StopWhy);
+                            return false;   // 判不了 ⇒ 本遍失败；收尾统一交给 Solve 末尾
+                        }
+                        if (sl < 0)
+                        {
+                            todo.Add((j, knob, key));
+                            Log($"     片{j}「{key}」裕度 {sl:+0.000;-0.000} ⇒ 抬{KnobName(knob)}");
+                        }
+                    }
+
+                if (todo.Count == 0)
+                {
+                    // 三条逐片判据全过。还有**没有旋钮**的判据（⑥、⑤、①、管 J…）要看。
+                    var rest = Violations(last)
+                        .Where(c => !Allocation.Any(a => c.Name.StartsWith(a.Key, StringComparison.Ordinal)))
+                        .ToList();
+                    if (rest.Count == 0)
+                    {
+                        res.Feasible = true;
+                        res.StopWhy = $"第 {round} 轮全过；因为**只往上走过**，这就是最小的可行点";
+                    }
+                    else
+                    {
                         res.HitBound = true;
+                        res.StopWhy = "三条逐片判据都过了，但这些判据**没有旋钮能治**（要改形状）："
+                                    + string.Join("、", rest.Select(c => c.Name));
                         Log("  ✗ " + res.StopWhy);
-                        return Finish(res, d, last, baseIn, cancel);
                     }
-                    if (sl < 0)
-                    {
-                        todo.Add((j, knob, key));
-                        Log($"     片{j}「{key}」裕度 {sl:+0.000;-0.000} ⇒ 抬{KnobName(knob)}");
-                    }
+                    break;
                 }
 
-            if (todo.Count == 0)
-            {
-                // 三条逐片判据全过。还有**没有旋钮**的判据（⑥、⑤、①、管 J…）要看。
-                var rest = Violations(last)
-                    .Where(c => !Allocation.Any(a => c.Name.StartsWith(a.Key, StringComparison.Ordinal)))
-                    .ToList();
-                if (rest.Count == 0)
+                bool bad = false;
+                foreach (var (j, knob, key) in todo)
                 {
-                    res.Feasible = true;
-                    res.StopWhy = $"第 {round} 轮全过；因为**只往上走过**，这就是最小的可行点";
+                    var (ok, why) = RaiseUntil(d, baseIn, o, j, knob, key, dipMax, discMax, res, Log, cancel);
+                    if (!ok) { res.StopWhy = why; res.HitBound = true; Log("  ✗ " + why); bad = true; break; }
                 }
-                else
-                {
-                    res.HitBound = true;
-                    res.StopWhy = "三条逐片判据都过了，但这些判据**没有旋钮能治**（要改形状）："
-                                + string.Join("、", rest.Select(c => c.Name));
-                    Log("  ✗ " + res.StopWhy);
-                }
-                break;
+                if (bad) break;
             }
+            return res.Feasible;
+        }
 
-            bool bad = false;
-            foreach (var (j, knob, key) in todo)
-            {
-                var (ok, why) = RaiseUntil(d, baseIn, opt, j, knob, key, dipMax, discMax, res, Log, cancel);
-                if (!ok) { res.StopWhy = why; res.HitBound = true; Log("  ✗ " + why); bad = true; break; }
-            }
-            if (bad) break;
+        // 第一遍：导航网格
+        var navOpt = opt.Clone(); navOpt.FineMm = 0; navOpt.FineRadiusMm = 0;
+        bool okNav = Rounds(navOpt, "第一遍：导航网格上定位");
+
+        // 第二遍：细网格。第一遍没走通就不做 —— StopWhy 已经说明了原因。
+        if (okNav && opt.FineMm > 0)
+        {
+            res.Feasible = false; res.StopWhy = ""; res.HitBound = false;
+            bool okFine = Rounds(opt, "第二遍：细网格上重新求根（**判据以此为准**）");
+            res.FineRefined = true; res.FineMmUsed = opt.FineMm;
+            if (!okFine && res.StopWhy.Length == 0)
+                res.StopWhy = $"细网格第二遍跑满 {opt.MaxRounds} 轮仍未全过 —— **未收敛**，不作数";
+        }
+        else if (opt.FineMm <= 0)
+        {
+            Log("⚠ **没做第二遍**（FineMm = 0）—— 这个解只在导航网格上成立、**不可交付**："
+                + "实测 ③ 在两张网格上差 2.03 倍（A⑬）。");
         }
 
         if (res.StopWhy.Length == 0)
@@ -241,7 +272,7 @@ public static class Solver
         double hi = HiOf(opt, knob);
         string nm = $"片{j} {KnobName(knob)}";
 
-        double before = PlateSlack(Eval(d, baseIn, res, cancel), key, j, dipMax, discMax);
+        double before = PlateSlack(Eval(d, baseIn, opt, res, cancel), key, j, dipMax, discMax);
 
         // ★ 上一片抬完可能已经把这一片捎带治好了 —— 那就**不抬**（最小性）
         if (before >= 0)
@@ -254,7 +285,7 @@ public static class Solver
             return (false, $"**{nm} 已在上界 {hi:0.000}**，「{key}」仍不过 ⇒ 这组输入不可行（是证明，不是搜索失败）");
 
         Set(d, knob, j, hi);
-        double after = PlateSlack(Eval(d, baseIn, res, cancel), key, j, dipMax, discMax);
+        double after = PlateSlack(Eval(d, baseIn, opt, res, cancel), key, j, dipMax, discMax);
 
         // ★ 前提自检：抬到底也没让这一片的判据变好 ⇒ 这条分派对这一片是错的，**不许假装解出来**
         if (!(after > before + 1e-9))
@@ -278,7 +309,7 @@ public static class Solver
             cancel.ThrowIfCancellationRequested();
             double mid = 0.5 * (lo + hi);
             Set(d, knob, j, mid);
-            if (PlateSlack(Eval(d, baseIn, res, cancel), key, j, dipMax, discMax) >= 0) hi = mid; else lo = mid;
+            if (PlateSlack(Eval(d, baseIn, opt, res, cancel), key, j, dipMax, discMax) >= 0) hi = mid; else lo = mid;
         }
 
         // ★ 量化在**解之内**，不在解之后（算法普查 A⑤）。
@@ -313,11 +344,22 @@ public static class Solver
         return res;
     }
 
-    private static LineResult? Eval(DesignSpec d, DesignInputs baseIn, SolverResult res, CancellationToken cancel)
+    /// <summary>
+    /// 算一次。★ 网格从 <paramref name="o"/> 取 —— 求根**跑在哪张网格上**是本类的关键量
+    /// （见类注释 A⑬：根的位置随网格移动），不许由别处悄悄决定。
+    /// </summary>
+    private static LineResult? Eval(DesignSpec d, DesignInputs baseIn, SolverOptions o,
+                                    SolverResult res, CancellationToken cancel)
     {
         try
         {
-            var r = LineRunner.Run(d.BuildCase(baseIn, checkRamp: false), null, cancel);
+            var lc = d.BuildCase(baseIn, checkRamp: false);
+            if (o.FineMm > 0)
+            {
+                lc.MeshFineMm = o.FineMm;
+                if (o.FineRadiusMm > 0) lc.MeshFineRadiusMm = o.FineRadiusMm;
+            }
+            var r = LineRunner.Run(lc, null, cancel);
             res.Solves++;
             return r.Ok ? r : null;
         }
@@ -466,6 +508,15 @@ public sealed class SolverResult
     public int Solves;
     /// <summary>true = 某旋钮顶到上界／分派前提不成立 ⇒ **不可行的证明**，不是搜索没找到。</summary>
     public bool HitBound;
+
+    /// <summary>
+    /// **第二遍（细网格）求根做了没有**。false ⇒ 这个解只在导航网格上成立、
+    /// <b>不可交付</b> —— 实测 ③ 在两张网格上差 2.03 倍（A⑬）。调用方必须呈现，不许吞。
+    /// </summary>
+    public bool FineRefined;
+
+    /// <summary>第二遍用的细网格 mm（0 = 没做第二遍）。</summary>
+    public double FineMmUsed;
     public string StopWhy = "";
 }
 
@@ -497,4 +548,25 @@ public sealed class SolverOptions
     public int    BisectMaxIter = 14;
     /// <summary>逐片之后一轮要处理的抬升更多，轮数要给够。</summary>
     public int    MaxRounds     = 60;
+
+    // ══ 第二遍求根的网格（算法普查 A⑬）
+    //
+    // 病灶（2026-08-28 实测）：二分跑在导航网格，判据以网格无关复核为准。
+    // 同一份 0.8 档：③ 导航 2 mm = 4.720 → 细网格 0.408 mm = **9.572**（翻 2.03 倍）。
+    // ⇒ 只在导航网格上求根，给的是「**粗网格上的刚好**」，到细网格可能已越限。
+    //
+    // 修法：**同一个循环跑两遍，只有网格不同**。第二遍从第一遍的解出发、
+    // 仍然只增不减 ⇒「最小可行点」与「与初值无关」两条都还成立。
+
+    /// <summary>
+    /// 第二遍求根的细网格 mm。**0 = 不做第二遍**，那时结果只在导航网格上成立、
+    /// <b>不可交付</b>（<see cref="SolverResult.FineRefined"/> 为 false，调用方必须呈现）。
+    /// 该由 <see cref="MeshAdapt.RequiredFineMm"/> 从几何特征算出，不该手填。
+    /// </summary>
+    public double FineMm;
+
+    /// <summary>细网格的作用半径 mm。0 = 沿用 LineCase 的默认。</summary>
+    public double FineRadiusMm;
+
+    public SolverOptions Clone() => (SolverOptions)MemberwiseClone();
 }

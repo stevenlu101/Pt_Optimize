@@ -4442,6 +4442,22 @@ internal static class Program
                 var geoS = DesignSpec.Select(args);
                 var soOpt = new SolverOptions();
 
+                // ★ 第二遍求根的网格（A⑬）。**与 MeshVerify 同一个来源** ——
+                //   求根的网格和判决的网格必须是同一张，否则求出来的根照样不作数。
+                if (args.Contains("--fine"))
+                {
+                    var (fm, fr) = MeshVerify.RequiredMeshFor(geoS);
+                    int ifm = Array.IndexOf(args, "--fine");
+                    if (ifm >= 0 && ifm + 1 < args.Length
+                        && double.TryParse(args[ifm + 1], out double fmv) && fmv > 0) fm = fmv;
+                    soOpt.FineMm = fm; soOpt.FineRadiusMm = fr;
+                    Console.WriteLine($"★ 第二遍求根将跑在**细网格 {fm:0.000} mm**（半径 {fr:0.0} mm）—— "
+                        + "判据以它为准。这会显著变慢，但导航网格上的根**不可交付**。");
+                }
+                else
+                    Console.WriteLine("⚠ **只做第一遍**（导航网格）。实测 ③ 在两张网格上差 2.03 倍（A⑬），"
+                        + "所以本次结果**不可交付**；要可交付请加 `--fine`。");
+
                 Console.WriteLine("=== 求解器（不搜索，求根）===");
                 Console.WriteLine($"几何来源：{geoS.Name}　—— 只取形状与工况，**旋钮值一律丢弃**");
                 Console.WriteLine();
@@ -4453,6 +4469,9 @@ internal static class Program
                                           new Progress<string>(s => Console.WriteLine("   " + s)));
                     Console.WriteLine($"   ⇒ {(rr.Feasible ? "全过 ✓" : "不过 ✗")}　" +
                                       $"合计 {rr.MassG:0.0} g　场解 {rr.Solves} 次");
+                    Console.WriteLine(rr.FineRefined
+                        ? $"   ✓ 已做第二遍细网格求根（{rr.FineMmUsed:0.000} mm）⇒ 根是在**判决的那张网格**上求的"
+                        : "   ⚠ **没做第二遍** ⇒ 这个解只在导航网格上成立，**不可交付**（A⑬）");
                     Console.WriteLine($"   停因：{rr.StopWhy}");
                     if (rr.HitBound) Console.WriteLine("   ⚠ 这是**不可行的证明**（顶到上界或前提不成立），不是「没搜到」");
                     Console.WriteLine();
