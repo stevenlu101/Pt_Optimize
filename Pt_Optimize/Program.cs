@@ -4357,6 +4357,86 @@ internal static class Program
                 Console.WriteLine("  差额就是还需要另外找的那部分 —— 而不是再调这两个旋钮能补上的。");
                 return;
             }
+            // ═══ --cli --monotone   **单调性实测**（2026-08-28）
+            //
+            // ★ 为什么要测：用户「不能再用种子的形式，只能用 APP 自己第一性原理算出来的结果，
+            //   『用种子』这种方法绕了大弯路，要**杜绝病根**」。
+            //
+            //   病根是：Sizer 是**从一个起点做增量行走**（板厚 += dT），
+            //   而且交回去的是**已访问点集上的 argmin** ⇒ 按定义路径相关 ⇒ 必须有个「从哪走」。
+            //   杜绝它的办法是把「走」换成「**解**」：每个旋钮对自己的靶若**单调**，
+            //   就能二分求根，而**二分的解与初值无关** —— 种子这个概念就没有立足处。
+            //
+            //   ⚠ 但单调性**不能假设**，代码里那句「每个旋钮对自己的靶单调」从来没人量过。
+            //     本命令就是去量它。量不出单调，就得换别的确定性方法。
+            //
+            //   `--cli --monotone [--wall 0.8] [--pts 7]`
+            if (args.Contains("--monotone"))
+            {
+                var fdM2 = DesignSpec.Select(args);
+                int pts = 7;
+                int ip = Array.IndexOf(args, "--pts");
+                if (ip >= 0 && ip + 1 < args.Length && int.TryParse(args[ip + 1], out int pv2)) pts = pv2;
+
+                Console.WriteLine("=== 单调性实测（决定能不能把「走」换成「解」）===");
+                Console.WriteLine($"用例：{fdM2.Name}　每个旋钮扫 {pts} 点，其余不动");
+                Console.WriteLine();
+
+                var opt2 = new SizerOptions();
+                void Sweep(string knob, double lo, double hi, Action<DesignSpec, double> set)
+                {
+                    Console.WriteLine($"── 旋钮：**{knob}**　{lo:0.###} → {hi:0.###}");
+                    Console.WriteLine($"{"值",10}{"抽热D W",11}{"②′W",10}{"②″K",10}{"③K",10}{"合计g",9}");
+                    var ds = new List<double>(); var d3 = new List<double>(); var d2pp = new List<double>();
+                    for (int k = 0; k < pts; k++)
+                    {
+                        double v = lo + (hi - lo) * k / Math.Max(1, pts - 1);
+                        var dd = fdM2.Clone(); set(dd, v);
+                        LineResult rr;
+                        try { rr = LineRunner.Run(dd.BuildCase(p, checkRamp: false)); }
+                        catch (Exception ex2) { Console.WriteLine($"{v,10:0.###}  异常 {ex2.Message}"); continue; }
+                        if (!rr.Ok) { Console.WriteLine($"{v,10:0.###}  ✗ {rr.Message}"); continue; }
+                        double VV(string kk) => rr.Checks
+                            .FirstOrDefault(c3 => c3.Name.StartsWith(kk, StringComparison.Ordinal))?.Actual ?? double.NaN;
+                        double draw = rr.Flanges.Sum(f3 => f3.QFromTubeW);
+                        double m3 = rr.Segments.Sum(s3 => s3.MassG) + rr.Flanges.Sum(f3 => f3.MassG);
+                        Console.WriteLine($"{v,10:0.###}{draw,11:0.000}{VV(LineResult.Key.NetFlux),10:0.000}"
+                            + $"{VV(LineResult.Key.DiscTemp),10:0.000}{VV(LineResult.Key.FlangeDip),10:0.000}{m3,9:0}");
+                        ds.Add(draw); d3.Add(VV(LineResult.Key.FlangeDip)); d2pp.Add(VV(LineResult.Key.DiscTemp));
+                    }
+                    static string Mono(List<double> xs)
+                    {
+                        if (xs.Count < 3) return "点太少，判不了";
+                        int up = 0, dn = 0;
+                        for (int k = 1; k < xs.Count; k++)
+                        {
+                            double d = xs[k] - xs[k - 1];
+                            if (d > 1e-9) up++; else if (d < -1e-9) dn++;
+                        }
+                        return up == 0 || dn == 0
+                            ? $"✓ **单调**（{(dn == 0 ? "递增" : "递减")}）—— 可二分求根，解与初值无关"
+                            : $"✗ **不单调**（升 {up} 次、降 {dn} 次）—— 二分不适用，得换别的确定性方法";
+                    }
+                    Console.WriteLine($"   抽热 D：{Mono(ds)}");
+                    Console.WriteLine($"   ③    ：{Mono(d3)}");
+                    Console.WriteLine($"   ②″   ：{Mono(d2pp)}");
+                    Console.WriteLine();
+                }
+
+                Sweep("板厚（四片同倍率）", 0.6, 4.0,
+                      (dd, v) => { for (int k = 0; k < dd.TabThickMm.Length; k++) dd.TabThickMm[k] = v; });
+                Sweep("舌保温（四片同值）", opt2.InsLoMm, 8.0,
+                      (dd, v) => { for (int k = 0; k < dd.TabInsulMm.Length; k++) dd.TabInsulMm[k] = v; });
+                Sweep("环倍率（四片同值）", opt2.RingLo, opt2.RingHi,
+                      (dd, v) => { for (int k = 0; k < dd.RingMul.Length; k++) dd.RingMul[k] = v; });
+
+                Console.WriteLine("★ 读法：**每个旋钮对自己的靶单调**，才谈得上把「增量行走」换成「二分求根」；");
+                Console.WriteLine("  而二分的解**与初值无关** ⇒ 种子这个概念就没有立足处，病根才算断。");
+                Console.WriteLine("  哪一条报「不单调」，那一支就得换成别的确定性方法（例如在约束边界上直接求交点）。");
+                return;
+            }
+
+
             // ═══ --cli --meshadapt   **动态网格求解器**（2026-08-28，用户：「那还等啥！做」）
             //
             // ★ 与 --meshconv 的分工：
