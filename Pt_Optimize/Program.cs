@@ -113,6 +113,12 @@ internal static class Program
             // ★★ 能量守恒开关（2026-08-28）：--splitdraw 打开「内部共用片抽热两侧各半」。
             //   默认关 —— 打开会改动定案的数。见 DesignInputs.SplitSharedFlangeDraw。
             //   放在这里 ⇒ **所有 CLI 命令**都认它，不必逐条接线。
+            if (args.Contains("--sigmat"))
+            {
+                p.SigmaOfTCoupling = true;
+                Console.WriteLine("⚠ --sigmat：电流场按 **σ(T)** 重解（冷区更导电）。"
+                    + "默认是**关**的 —— 本次结果与定案档**不可直接比较**。");
+            }
             if (args.Contains("--splitdraw"))
             {
                 p.SplitSharedFlangeDraw = true;

@@ -304,7 +304,19 @@ public class DesignInputs
                  "先跑对照、看清影响方向，再谈要不要重定案。　" +
                  "⚠ 各半是领头阶正确解（两侧是同一根管、同样的导热）；" +
                  "更精细的做法是按两侧管端各自的导热通量加权 —— 那要动求解器，尚未做。")]
-    public bool SplitSharedFlangeDraw { get; set; } = false;
+    public bool SplitSharedFlangeDraw { get; set; } = false;
+
+    [Category("6 C 整线 — 法兰边界"), DisplayName("电流场按 σ(T) 重解"),
+     Description("★ 第一性原理开关（2026-08-28）。　" +
+                 "ShellCurrent.Solve 的 tempC 形参就是为 σ(T) 造的，机制写对了，" +
+                 "但全仓 12 个调用点没有一个传过它 ⇒ 交付用的整线链恒按等温解电流场。　" +
+                 "同一片法兰上管孔 1150 °C、压接段 450 °C、舌片可超 1400 °C，" +
+                 "ρe(450)/ρe(1150) ≈ 0.45 ⇒ 冷区更导电、电流往那头挤，等温模型看不见 —— " +
+                 "而 ②″ 判的正是局部电流拥塞造成的峰值。　" +
+                 "★ 项目做对过：已被取代的 CoupledSolver 每轮都用新温度场重解电流场" +
+                 "（注释：铂 700–1300 °C 间 ρe 变化 48 %），重写时丢掉了。　" +
+                 "⚠ 默认关：打开会改判据的数（②″ 与局部热稳定首当其冲）。")]
+    public bool SigmaOfTCoupling { get; set; } = false;
 
     // ---------- 6 玻璃物性 ----------
     [Category("4 A·B·C 共用 — 玻璃物性"), DisplayName("密度 [kg/m³]")]

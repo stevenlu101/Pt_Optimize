@@ -1198,12 +1198,39 @@ public static class LineRunner
             //   —— 与 ⑤⑥ 用的是同一组几何，不另立一套。
             //   没有等效片（没分析过）或没给厚度时，仍按裸舌走，行为与从前一致。
             var eq3 = !analytic && c.GeomForJudge is { Length: > 0 } ? c.GeomForJudge[0] : null;
-            var th = ShellThermal.Solve(mesh, sc.JMagAPerMm2, p2, tRoot, insulX,
-                                        symmetricInsul: analytic && plate!.TwoTabs,
-                                        tabBoundaryX: analytic ? plate!.Tangent().X
-                                                     : eq3?.Tangent().X ?? double.NaN,
-                                        tabInsulThickMm: analytic ? plate!.TabInsulThickMm
-                                                                  : c.TabInsul3dmMm);
+            ShellThermalResult Thermal(ShellCurrentResult cur) =>
+                ShellThermal.Solve(mesh, cur.JMagAPerMm2, p2, tRoot, insulX,
+                                   symmetricInsul: analytic && plate!.TwoTabs,
+                                   tabBoundaryX: analytic ? plate!.Tangent().X
+                                                : eq3?.Tangent().X ?? double.NaN,
+                                   tabInsulThickMm: analytic ? plate!.TabInsulThickMm
+                                                             : c.TabInsul3dmMm);
+            var th = Thermal(sc);
+
+            // ★★★★★ σ(T) 耦合（2026-08-28 第一性原理通查查出，默认**关**）。
+            //
+            //   ShellCurrent.Solve 的第五个形参 tempC 就是为 σ(T) 造的
+            //   （sig[i] = ρe(T_ref)/ρe(T_i)），但**全仓 12 个调用点没有一个传过它**
+            //   ⇒ 交付用的整线链恒按**等温**解电流场，J 分布只由厚度决定。
+            //
+            //   而同一片法兰上：管孔 1150 °C、压接段 450 °C（或算出来的 209–276）、
+            //   舌片可超 1400 °C。ρe(450)/ρe(1150) ≈ 0.45 ⇒ **冷区更导电、电流往那头挤**，
+            //   等温模型看不见这个挤 —— 而 ②″ 判的正是局部电流拥塞造成的峰值。
+            //
+            //   ★ 项目**做对过**：已被取代的 CoupledSolver 每轮都用新温度场重解电流场，
+            //     注释写着「铂 700–1300 °C 间 ρe 变化 48 %…等温 σ 会算偏 J 分布」。
+            //     重写成 ShellThermal/LineRunner 这条路时**丢掉了**。
+            //
+            //   ⚠ 默认关：打开会改判据的数（②″ 与局部热稳定首当其冲）。
+            //     两轮足够：J 对 T 的反馈是弱的（σ 只改分布、不改总电流）。
+            if (c.Base.SigmaOfTCoupling)
+                for (int itSig = 0; itSig < 2; itSig++)
+                {
+                    var sc2 = ShellCurrent.Solve(mesh, iJoint,
+                                  Materials.PtResistivity(c.SetpointC[Math.Min(j, n - 1)]) * 1e3,
+                                  c.SetpointC[Math.Min(j, n - 1)], tempC: th.T);
+                    sc = sc2; th = Thermal(sc2);
+                }
 
             // 逐级峰值温度：按单元厚度归级，取该级内的最高温
             double[] lvTmax = Array.Empty<double>(), lvTh = Array.Empty<double>();
