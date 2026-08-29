@@ -157,6 +157,7 @@ public static class MeshVerify
         double h = h0;
 
         (double n2p, double n2pp, double n3, double m)? prev = null;
+        List<MeshAdapt.Delta>? prevDeltas = null;     // 上一对差值 —— 判「变化在不在缩小」要它
         for (int it = 0; it < maxRounds; it++)
         {
             cancel.ThrowIfCancellationRequested();
@@ -248,8 +249,12 @@ public static class MeshVerify
                 };
                 // 差值也当场报 —— 「收没收敛」是读的人最想先知道的那一条
                 progress?.Report("   较上一档：" + string.Join("　", res.LastDeltas.Select(
-                    x => $"{x.Name} {x.Change:+0.000;-0.000}/{x.Tol:0.###}")));
-                if (MeshAdapt.Converged(res.LastDeltas)) { res.Converged = true; break; }
+                    x => $"{x.Name} {x.Change:+0.000;-0.000}/{x.Tol:0.###}")))
+                    ;
+                // ★★ 判据要**上一对**差值（趋势），只有一对时一律不算收敛 ——
+                //   2026-08-30 实测：一对差值小可能纯属两级跨在拐点两侧（见 MeshAdapt.Converged）。
+                if (MeshAdapt.Converged(res.LastDeltas, prevDeltas)) { res.Converged = true; break; }
+                prevDeltas = res.LastDeltas;
             }
             prev = (a2p, a2pp, a3, mass);
             if (r.MeshCells > maxCells) { res.HitCellCap = true; break; }

@@ -60,9 +60,21 @@ public class MeshAdaptTests
             new() { Name = "②″", Change = 0.002, Tol = 0.2 },
             new() { Name = "③",  Change = 0.444, Tol = 1.0 },
         };
-        Assert.True(MeshAdapt.Converged(ok));               // 实测那一组
+        // ★★ 2026-08-30 更正：这一条原来断言「一对差值都在容差内 ⇒ 收敛」。
+        //   那条规则被一次 4 小时 22 分的实测推翻了（见 FalseConvergenceTests）——
+        //   ③ 随网格**非单调**，一对差值小可能纯属两级跨在拐点两侧。
+        //   现在要「至少三档 + 变化在缩小」。本条改为验**判据本身仍是判据**这件事：
+        //   容差用的是判据自己的容差，不是残差、不是单元数。
+        var prev = new List<MeshAdapt.Delta>
+        {
+            new() { Name = "②′", Change = 0.480, Tol = 0.5 },
+            new() { Name = "②″", Change = 0.004, Tol = 0.2 },
+            new() { Name = "③",  Change = 0.900, Tol = 1.0 },
+        };
+        Assert.True(MeshAdapt.Converged(ok, prev));         // 实测那一组，且变化在缩小
+        Assert.False(MeshAdapt.Converged(ok));              // 只有一对 ⇒ 不算（新增的那条）
         ok[2].Change = 4.474;                               // --meshconv 量到的 2→1 mm
-        Assert.False(MeshAdapt.Converged(ok));
+        Assert.False(MeshAdapt.Converged(ok, prev));
     }
 
     [Fact]

@@ -148,11 +148,34 @@ public static class Solver
     ///    ⇒ 要加，先做**同一工作点、逐片、扰动量一致**的敏感度矩阵（清单第 13 件）。
     ///      13 因此从「可做」升级成「9 的前置」。
     /// </summary>
-    public static readonly (string Key, Knob Knob)[] Allocation =
+    /// ══ 2026-08-30：这张表从「一判据**一个**旋钮」改成「一判据**几个候选**」
+    ///
+    /// 起因是实测敏感度矩阵（<see cref="SensitivityMatrix"/>，`--sensmatrix`）在**设计点、逐片**
+    /// 上量到的 ②″：
+    /// <code>
+    ///   ∂②″裕度/∂旋钮（正 = 抬它有用）      片0      片1      片2      片3
+    ///   板厚                              −0.849   −0.130   −0.131   −1.012
+    ///   环倍率 t₁  ← **本表原来指的就是它**  −0.047   −0.013   −0.013   −0.048
+    ///   舌保温                            **+0.171  +0.047   +0.036   +0.206**
+    /// </code>
+    /// **四片一致：唯一治得住 ②″ 的是舌保温**，而表里指的是环倍率 —— 方向反的。
+    /// 而舌保温 <b>不花铂</b>（∂铂重/∂舌保温 实测恒为 0），且它同时把 ③ 的裕度拉正
+    /// （+570/+134/+104/+535 K/mm）⇒ 两条判据要它往**同一个**方向走，没有冲突。
+    ///
+    /// ⚠ 改法**不是换一个断言**（那只是把一个没依据的表换成另一个），而是：
+    ///   **表只提候选，选哪个由 <see cref="RaiseUntil"/> 当场实测决定** ——
+    ///   它本来就要跑一次「抬到上界看判据有没有变好」的前提自检，
+    ///   现在那道自检**同时充当选择器**：第一个候选没通过就试下一个，全不通过才报不可行。
+    ///   ⇒ 分配从此是**测出来的**，表退化成「按什么顺序试」，而顺序只影响成本、不影响对错。
+    ///
+    /// ⚠ 环倍率**留在候选里**，排在舌保温之后：灵敏度随形状变号（窄舌上曾测得 −1.4，
+    ///   即加环压得住 ②″）。留着它，换个形状时自检会自己把它选出来；
+    ///   删掉就等于用**这一个**形状的实测，去否掉**所有**形状。
+    public static readonly (string Key, Knob[] Knobs)[] Allocation =
     {
-        (LineResult.Key.NetFlux,   Knob.Thick),  // ②′ 管孔净流入：对板厚递增（实测）
-        (LineResult.Key.FlangeDip, Knob.Insul),  // ③  法兰增量温降：对舌保温递减（实测）
-        (LineResult.Key.DiscTemp,  Knob.Ring),   // ②″ 圆盘区最高温：**实测反向**，见上
+        (LineResult.Key.NetFlux,   new[] { Knob.Thick }),               // ②′ 对板厚递增（实测 +104…+62 W/mm）
+        (LineResult.Key.FlangeDip, new[] { Knob.Insul }),               // ③  对舌保温递增（实测 +570…+104 K/mm，且免费）
+        (LineResult.Key.DiscTemp,  new[] { Knob.Insul, Knob.Ring }),    // ②″ 实测只有舌保温治得住；环倍率留作换形状时的候选
     };
 
     public static SolverResult Solve(DesignSpec geometry, DesignInputs baseIn, SolverOptions opt,
@@ -238,9 +261,9 @@ public static class Solver
                     $"　板厚 {Join(d.TabThickMm)}　舌保温 {Join(d.TabInsulMm)}　环倍率 {Join(d.RingMul)}");
 
                 // ── 逐片逐条列违反
-                var todo = new List<(int J, Knob Knob, string Key)>();
+                var todo = new List<(int J, Knob[] Knobs, string Key)>();
                 for (int j = 0; j < np; j++)
-                    foreach (var (key, knob) in Allocation)
+                    foreach (var (key, knobs) in Allocation)
                     {
                         double sl = PlateSlack(last, key, j, dipMax, discMax);
                         if (double.IsNaN(sl))
@@ -252,8 +275,10 @@ public static class Solver
                         }
                         if (sl < 0)
                         {
-                            todo.Add((j, knob, key));
-                            Log($"     片{j}「{key}」裕度 {sl:+0.000;-0.000} ⇒ 抬{KnobName(knob)}");
+                            todo.Add((j, knobs, key));
+                            Log($"     片{j}「{key}」裕度 {sl:+0.000;-0.000} ⇒ 候选 "
+                                + string.Join(" / ", knobs.Select(KnobName))
+                                + (knobs.Length > 1 ? "（抬哪个由前提自检当场实测决定）" : ""));
                         }
                     }
 
@@ -286,10 +311,25 @@ public static class Solver
                 }
 
                 bool bad = false;
-                foreach (var (j, knob, key) in todo)
+                foreach (var (j, knobs, key) in todo)
                 {
-                    var (ok, why) = RaiseUntil(d, baseIn, o, j, knob, key, dipMax, discMax, res, Log, cancel, inner);
-                    if (!ok) { res.StopWhy = why; res.HitBound = true; Log("  ✗ " + why); bad = true; break; }
+                    // ★ 候选逐个试；前提自检就是选择器。全不通过才算不可行。
+                    var whys = new List<string>();
+                    bool done = false;
+                    foreach (var knob in knobs)
+                    {
+                        var (ok, why) = RaiseUntil(d, baseIn, o, j, knob, key, dipMax, discMax, res, Log, cancel, inner);
+                        if (ok) { done = true; break; }
+                        whys.Add(why);
+                        if (knobs.Length > 1)
+                            Log($"  · 候选「{KnobName(knob)}」不成立 ⇒ 试下一个");
+                    }
+                    if (!done)
+                    {
+                        res.StopWhy = whys.Count == 1 ? whys[0]
+                            : $"片{j}「{key}」**所有候选都不成立**：" + string.Join("；", whys);
+                        res.HitBound = true; Log("  ✗ " + res.StopWhy); bad = true; break;
+                    }
                 }
                 if (bad) break;
             }
@@ -517,7 +557,12 @@ public static class Solver
     /// ⚠ 方向与整体判据同一口径：②′ 须 ≥ 0（越大越好），③ 与 ②″ 越小越好。
     ///   写反会把「越限」读成「有余量」，二分就朝错的方向收 —— 本仓库出过这个错。
     /// </summary>
-    private static double PlateSlack(LineResult? r, string key, int j, double dipMax, double discMax)
+    /// <summary>
+    /// 第 j 片的第 key 条判据的**裕度**（正 = 过，越大越好）。
+    /// ★ 逐片判据读取**全程序只有这一份** —— <see cref="SensitivityMatrix"/> 也走它，
+    ///   不许另立一份「差不多的」读法（那正是本仓库栽过多次的形状）。
+    /// </summary>
+    public static double PlateSlack(LineResult? r, string key, int j, double dipMax, double discMax)
     {
         if (r is null) return double.NegativeInfinity;
 

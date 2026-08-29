@@ -114,8 +114,46 @@ public static class MeshAdapt
     /// ⚠ 空集不算收敛 —— 「没有判据可比」被当成「都通过了」是本项目记过案的
     ///   「空集恒真」那一型。
     /// </summary>
-    public static bool Converged(IReadOnlyList<Delta> deltas)
-        => deltas is { Count: > 0 } && deltas.All(d => d.Within);
+    /// <summary>
+    /// ★★★ **「变化小」不等于「收敛」**（2026-08-30 实测推翻了旧判据）。
+    ///
+    /// 旧判据是「**一对**相邻档的变化都落进容差」。实测：
+    /// <code>
+    ///   粗阶梯  1.000 ③ 8.573 → 0.500 ③ 7.685     变化 −0.888（&lt; 1.0）⇒ 判为收敛
+    ///   细阶梯  0.583 ③ 7.547 → 0.292 ③ 9.102 → 0.146 ③ 9.462
+    ///   ⇒ 真值 ≈ 9.46，粗阶梯那次错了 **1.777 K —— 比容差本身还大**
+    /// </code>
+    ///
+    /// 病因：③ 随网格**非单调**（先降后升）。粗阶梯那两级恰好跨在拐点两侧，
+    /// 差值小**纯属巧合**。这正是「碰巧两级之间没动」的假收敛。
+    ///
+    /// ⇒ 补两条，都是从「收敛」这个词本身推出来的，不是拍的：
+    /// <code>
+    ///   ① **至少三档**   —— 两个差值才谈得上「趋势」，一个差值只是一个数
+    ///   ② **变化在缩小** —— 收敛的定义就是余项趋零；不缩小就不是在收敛
+    /// </code>
+    ///
+    /// ⚠ 例外：两边都已**远小于**我们分辨得出的差别（≤ 容差的十分之一）时，
+    ///   比值就是在比噪声。那种情况直接算过，否则会为了噪声无限加密。
+    ///
+    /// ⚠ 代价要说清：粗阶梯从此至少三档。2026-08-29 那次 0.6 档「8 分钟跑完」里，
+    ///   **省下的时间有一部分是假收敛买来的**（CG 的 36× 是真的，起步粗一级不是）。
+    /// </summary>
+    /// <param name="deltas">最新一对相邻档的变化。</param>
+    /// <param name="prev">**上一对**的变化。null = 只跑过两档 ⇒ 一律不算收敛。</param>
+    public static bool Converged(IReadOnlyList<Delta> deltas, IReadOnlyList<Delta>? prev = null)
+    {
+        if (deltas is not { Count: > 0 }) return false;
+        if (!deltas.All(d => d.Within)) return false;
+        if (prev is not { Count: > 0 } || prev.Count != deltas.Count) return false;   // 只有两档 ⇒ 没有趋势
+        for (int i = 0; i < deltas.Count; i++)
+        {
+            double now = Math.Abs(deltas[i].Change), was = Math.Abs(prev[i].Change);
+            if (now <= 0.1 * deltas[i].Tol) continue;      // 都在噪声里，不比了
+            if (!(now < was)) return false;                // 没在缩小 ⇒ 不是收敛
+        }
+        return true;
+    }
 
     /// <summary>
     /// 细区半径 mm：必须**盖住峰所在的地方**，否则峰落在粗区，加密再多也没用。

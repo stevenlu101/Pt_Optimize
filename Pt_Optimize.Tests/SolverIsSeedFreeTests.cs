@@ -135,12 +135,27 @@ public class SolverIsSeedFreeTests
     {
         Assert.Equal(3, Solver.Allocation.Length);
         Assert.All(Solver.Allocation, a => Assert.False(string.IsNullOrWhiteSpace(a.Key)));
+        Assert.All(Solver.Allocation, a => Assert.NotEmpty(a.Knobs));
 
-        // 三个旋钮各配一条，不许两条判据抢同一个旋钮（那样二分的不变式会互相破坏）
-        Assert.Equal(3, Solver.Allocation.Select(a => a.Knob).Distinct().Count());
-
+        // ★★ 2026-08-30 更正：这一条原来断言「三个旋钮各配一条，**不许两条判据抢同一个旋钮**」。
+        //   实测敏感度矩阵（--sensmatrix，设计点、逐片）把那个前提推翻了：
+        //     ∂②″裕度/∂舌保温 = +0.171/+0.047/+0.036/+0.206　（四片都正 ⇒ 抬它有用）
+        //     ∂②″裕度/∂环倍率 = −0.047/−0.013/−0.013/−0.048　（四片都负 ⇒ 抬它有害）
+        //   ⇒ ②″ 与 ③ **都归舌保温**。共用之所以安全，不是因为「一般没事」，
+        //     而是因为**实测两条判据要它往同一个方向走**（③ 也是 +570…+104 K/mm）。
+        //   ⚠ 所以这里验的不再是「不许共用」，而是「共用时方向必须一致」——
+        //     方向一致由 RaiseUntil 每次实测，本门只保证那道自检真的在。
+        var shared = Solver.Allocation.SelectMany(a => a.Knobs)
+            .GroupBy(k => k).Where(g => g.Count() > 1).Select(g => g.Key).ToArray();
         string s = Src("Solver.cs");
+        foreach (var k in shared)
+            Assert.True(s.Contains("要它往**同一个**方向走"),
+                $"旋钮「{Solver.KnobName(k)}」被两条判据共用，却没写清为什么安全");
+
+        // ★ 候选是**逐个试**的，选择器就是前提自检 —— 没有这一段，候选表只是摆设
+        Assert.Contains("foreach (var knob in knobs)", s);
         Assert.Contains("RaiseUntil(d, baseIn, o, j, knob, key", s);
+        Assert.Contains("所有候选都不成立", s);
     }
 
     /// <summary>

@@ -77,8 +77,9 @@ public class MonotoneMeasuredTests
         Assert.Contains("灵敏度随形状变号", s);
         Assert.Contains("RaiseUntil", s);
         Assert.Contains("一次实测", s);
-        // 表项本身还在
-        Assert.Contains("(LineResult.Key.DiscTemp,  Knob.Ring)", s);
+        // 表项本身还在 —— 只是从「唯一指派」降为「候选之一」（2026-08-30）
+        Assert.Contains("Knob.Ring", s);
+        Assert.Contains("环倍率**留在候选里**", s);
     }
 
     /// <summary>

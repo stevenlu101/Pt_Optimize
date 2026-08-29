@@ -4444,8 +4444,26 @@ internal static class Program
                 if (mvv.MidBandConfirm is not null) Console.WriteLine("   " + mvv.MidBandConfirm);
                 if (mvv.PeakOutsideFine is not null) Console.WriteLine("   " + mvv.PeakOutsideFine);
                 if (mvv.Line is { } lvv && !lvv.AllOk)
+                {
                     Console.WriteLine("✗ **在算得准的网格上，这个设计不过** —— "
                         + "导航网格上的「全过」是离散误差造成的假象，不要拿它出图。");
+                    // ★★ 说了「不过」就必须说**是哪一条**（2026-08-30）。
+                    //   此前这里只有上面那一句：2026-08-29 那趟 0.6 档跑了 4 小时 22 分，
+                    //   末行报「不过」，而日志里**找不到任何一条判据的名字** ——
+                    //   表里印出来的 ②′/②″/③ 三条又都在限值内。读的人无从下手，
+                    //   只能把 4 小时再跑一遍。另一条路（--solve 的最终复核）是印全表的，
+                    //   两条路各印各的 —— 这才是病根。
+                    foreach (var ck in lvv.HardBlocked)
+                        Console.WriteLine($"   ✗ {ck.Name}　实测 {ck.Actual:0.###} {ck.Unit}"
+                            + $"　限值 {(ck.LessIsBetter ? "≤" : "≥")} {ck.Limit:0.###}"
+                            + (ck.Undetermined ? "　★ **判不了**（判不了不算过）" : "")
+                            + (ck.Where is { Length: > 0 } ? $"　@{ck.Where}" : ""));
+                    foreach (var miss in lvv.MissingChecks)
+                        Console.WriteLine($"   ✗ 判据 **{miss}** 整条缺席 —— 缺席不算通过");
+                    // 诊断用的 Notes 也印出来：场没解到位那一类只在这里说话
+                    foreach (var n in lvv.Notes.Where(x => x.StartsWith("✗", StringComparison.Ordinal)))
+                        Console.WriteLine("   " + n);
+                }
             }
 
             if (args.Contains("--cgbench"))
@@ -4660,6 +4678,79 @@ internal static class Program
                 else
                     Console.WriteLine("★ 提醒：以上跑在**导航网格**上。判据以网格无关复核为准（--verifymesh）。");
                 Environment.ExitCode = r1.Feasible ? 0 : 1; return;
+            }
+
+            if (args.Contains("--sensmatrix"))
+            {
+                // ★★ 实测敏感度矩阵（清单第 13 件）。与 --monotone 的分工：
+                //   --monotone   四片同步、大跨度  ⇒ 只答「单调吗（能不能二分）」
+                //   --sensmatrix 逐片、小扰动、同一工作点 ⇒ 答「抬哪个（取舍）」
+                //   前者的斜率绝对值不作依据，后者的才作。
+                var geoS13 = DesignSpec.Select(args);
+                var pS13 = new DesignInputs();
+
+                var picked = new List<SensitivityMatrix.Var>();
+                int iv = Array.IndexOf(args, "--vars");
+                if (iv >= 0 && iv + 1 < args.Length)
+                    foreach (var t in args[iv + 1].Split(',', StringSplitOptions.RemoveEmptyEntries))
+                        if (Enum.TryParse<SensitivityMatrix.Var>(t, true, out var pv)) picked.Add(pv);
+                var useVars = picked.Count > 0 ? picked : null;
+
+                Console.WriteLine("=== 实测敏感度矩阵（同一工作点 · 逐片 · **向上**单侧导数）===");
+                Console.WriteLine($"用例：{geoS13.Name}　盘 Ø{2 * geoS13.DiscRadiusMm:0}　" +
+                                  $"板厚 {string.Join("/", geoS13.TabThickMm.Select(x => x.ToString("0.00")))}");
+                Console.WriteLine("裕度口径：**正 = 过，越大越好**（Solver.PlateSlack，唯一来源）⇒ " +
+                                  "∂裕度/∂旋钮 > 0 就是「抬它有用」。");
+                IReadOnlyList<SensitivityMatrix.Var> vlist =
+                    useVars ?? (IReadOnlyList<SensitivityMatrix.Var>)Enum.GetValues<SensitivityMatrix.Var>();
+                Console.WriteLine("扰动步长　" + string.Join("　", vlist.Select(v =>
+                    $"{SensitivityMatrix.Name(v)} ±{SensitivityMatrix.Step(v):0.###}{SensitivityMatrix.Unit(v)}")));
+                Console.WriteLine($"预计 {vlist.Count * geoS13.TabThickMm.Length * 2 + 1} 次整线解。");
+                Console.WriteLine();
+
+                var mres = SensitivityMatrix.Measure(geoS13, pS13, useVars,
+                    new SyncProgress<string>(m => Console.WriteLine("  · " + m)));
+
+                if (mres.Baseline is null)
+                { Console.WriteLine(mres.Note); Environment.ExitCode = 1; return; }
+
+                Console.WriteLine();
+                Console.WriteLine($"基线：合计 {mres.BaselineMassG:0} g　（{mres.Solves} 次场解，" +
+                                  $"{ThrottledProgress.Fmt(TimeSpan.FromSeconds(mres.Seconds))}）");
+                Console.WriteLine();
+
+                for (int i = 0; i < SensitivityMatrix.Codes.Length; i++)
+                {
+                    Console.WriteLine($"── 判据 {SensitivityMatrix.Codes[i]}　∂裕度/∂旋钮（正 = 抬它有用）");
+                    Console.WriteLine($"{"旋钮",-16}{"片",4}{"∂裕度/∂x",13}{"两侧一致",10}{"∂铂重/∂x g",13}{"∂裕度/∂铂重",14}{"跨片最大",11}");
+                    foreach (var c in mres.Cells)
+                    {
+                        if (!c.Ok)
+                        {
+                            Console.WriteLine($"{SensitivityMatrix.Name(c.V),-16}{c.Plate,4}   ✗ {c.Note}");
+                            continue;
+                        }
+                        string agree = !c.DownInDomain ? "下侧出界" : c.SignAgree[i] ? "✓" : "★ 不一致";
+                        string perG = c.Free ? "免费（不花铂）"
+                                             : $"{c.PerGram(i),14:+0.0000;-0.0000}";
+                        Console.WriteLine($"{SensitivityMatrix.Name(c.V),-16}{c.Plate,4}"
+                            + $"{c.D[i],13:+0.0000;-0.0000}{agree,10}{c.DMassG,13:+0.000;-0.000}"
+                            + $"{perG,14}{c.DOff[i],11:0.0000}");
+                    }
+                    Console.WriteLine();
+                }
+
+                Console.WriteLine("★ 读法");
+                Console.WriteLine("  · **两侧一致** 打「不一致」的格子，中心差分**不可用** —— 那一点上导数没有意义，");
+                Console.WriteLine("    报一个数就是制造一个看起来正常的错数。");
+                Console.WriteLine("  · **∂裕度/∂铂重** 才是取舍要的量：同一条判据下，这个数最大的旋钮最划算。");
+                Console.WriteLine("    舌保温标「免费」—— 它不花铂（--monotone 实测：0.3→8 mm 整条扫描质量不动）。");
+                Console.WriteLine("  · **跨片最大** 若接近或超过对角项，「第 j 片的判据归第 j 片的旋钮管」就不成立，");
+                Console.WriteLine("    逐片二分会互相打架 —— Solver.RaiseUntil 里那道对角占优自检守的正是这条。");
+                Console.WriteLine("  ⚠ 本表只在**这个形状、这个工作点**上成立 —— 灵敏度**随形状变号**：");
+                Console.WriteLine("    同一条 d②″/d环倍率，窄舌上测得 −1.4（加环压得住），宽舌上 +0.056（方向相反）。");
+                Console.WriteLine("    换了形状就得重测一次。（门：SensitivitySignTests）");
+                return;
             }
 
             if (args.Contains("--monotone"))
