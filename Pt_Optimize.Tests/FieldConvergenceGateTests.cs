@@ -168,38 +168,95 @@ public class FieldConvergenceGateTests
     public void 残差用真散热不用线性化()
     {
         string s = Src("ShellThermal.cs");
-        int a = s.IndexOf("res.ResidualW = rMax;", System.StringComparison.Ordinal);
-        Assert.True(a > 0, "找不到残差块");
-        // 残差块往上 25 行就是它的算式
-        int lo = a;
-        for (int k = 0; k < 25 && lo > 0; k++) lo = s.LastIndexOf('\n', lo - 1);
-        string blk = s[lo..a];
+        // 2026-08-30：残差抽成了 ResidRel()，**全程序只此一份**（此前收尾处还内联着第二份）
+        int a = s.IndexOf("(double W, double Rel) ResidRel()", System.StringComparison.Ordinal);
+        Assert.True(a > 0, "找不到 ResidRel()");
+        int b = s.IndexOf("return (rMax,", a, System.StringComparison.Ordinal);
+        Assert.True(b > a);
+        string blk = s[a..b];
         Assert.Contains("double qs = lossFor[i].Eval(ti);", blk);
         Assert.DoesNotContain("Slope", blk);
+        // 收尾复用同一份，不许再内联
+        Assert.Contains("(res.ResidualW, res.ResidualRel) = ResidRel();", s);
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(s, @"bSum \+= Math\.Abs").Count);
     }
 
-    /// <summary>收敛 = 步长 **且** 残差；残差算不出来（NaN）**不算过**。</summary>
+    /// <summary>
+    /// ★★★ **收敛 = 真残差达标；步长不参与判定**（2026-08-30 起）。
+    ///
+    /// 前一版是「步长 **且** 残差」的合取。那一版比只判步长严，但仍然把**路径的性质**
+    /// 写进了**解的判定**。配对实测（`--thermcg`）证明它不够：
+    /// <code>
+    ///   步长容差 1e-4 K ⇒ GS 与 CG 停在同一个不动点附近，但相差 **0.132 K**
+    ///   步长容差 1e-6 K ⇒ 相差 0.00101 K          （线性下降 130 倍）
+    ///   ⇒ 不动点放大约 **1300 倍**，步长根本钉不住位置
+    /// </code>
+    /// ⇒ 判据换成方程本身：真残差。步长仍算出来放进 <c>res.Residual</c> 供诊断。
+    ///
+    /// ⚠ 残差算不出来（NaN）**不算过** —— 判不了不算过。
+    /// </summary>
     [Fact]
-    public void 收敛要两条且判不了不算过()
+    public void 收敛只判真残差不判步长()
     {
         string s = Src("ShellThermal.cs");
-        Assert.Contains("res.Converged = stepOk", s);
-        Assert.Contains("&& !double.IsNaN(res.ResidualRel)", s);
-        Assert.Contains("&& res.ResidualRel <= ResidualRelTol;", s);
+        Assert.Contains("res.Converged = !double.IsNaN(res.ResidualRel) && res.ResidualRel <= ResidualRelTol;", s);
+        Assert.DoesNotContain("res.Converged = stepOk", s);
+        // 循环也必须**停在残差上**，不是停在步长上
+        Assert.Contains("if (ResidRel().Rel <= ResidualRelTol) { it++; break; }", s);
+        Assert.Contains("if (it % 20 == 19 && ResidRel().Rel <= ResidualRelTol) { it++; break; }", s);
     }
 
     /// <summary>
     /// ★ 阈值必须**声明出处**，不许是拍的数。
     /// 本项目既定要求：限值要写得出它是从哪来的（HANDOVER「限值的出处」那张表）。
     /// </summary>
+    /// <summary>
+    /// ★ 阈值必须**由实测标定**，不是拍的数：
+    /// <c>场差 ≈ 5×10⁵ × 相对残差</c>（`--thermcg --ttol` 扫描得到）⇒
+    /// 要把场钉到 0.01 K（= ③ 那条 1.0 K 容差的 1%）⇒ 残差 ≤ 2e-8。
+    /// </summary>
     [Fact]
     public void 残差阈值有出处()
     {
         string s = Src("ShellThermal.cs");
-        Assert.Contains("public const double ResidualRelTol = 1e-5;", s);
-        Assert.Contains("1.58E-007", s);          // 实测值
-        Assert.Contains("--cli --shell", s);      // 复现命令
-        Assert.Equal(1e-5, ShellThermal.ResidualRelTol);
+        Assert.Contains("public const double ResidualRelTol = 2e-8;", s);
+        Assert.Contains("0.132 K", s);            // 步长 1e-4 时两条路的差
+        Assert.Contains("0.00101 K", s);          // 步长 1e-6 时
+        Assert.Contains("1300 倍", s);            // 不动点放大
+        Assert.Contains("--thermcg", s);          // 复现命令
+        Assert.Equal(2e-8, ShellThermal.ResidualRelTol);
+
+        // ⚠ 并且要说清它有多要紧：解算器噪声占 ③ 那条容差的多大比例
+        Assert.Contains("13%", s);
+    }
+
+    /// <summary>
+    /// ★★★ **换解法必须配对对账**（2026-08-30）。
+    ///
+    /// 这条不是形式：CG 版第一次写出来时 <c>UpdateG()</c> 没先跑，<c>gcond</c> 全是 0，
+    /// **一个自由单元都没挑出来、一格都没解** —— 而它照样跑完、照样报一整套判据值、
+    /// 还报「提速 2.4×」。配对对照当场量出温度场差 **697 K**。
+    ///
+    /// 第二次翻车：内层 CG 的收敛判据用 <c>max|rhs|</c> 归一，而 rhs 含定温边界项
+    /// （g·T_根，量级上万 W）⇒ 阈值比真残差还大，**CG 一轮都不跑**，外层空转 300 轮。
+    /// 两次都是「看起来正常的错数」，两次都是配对对照抓的。
+    /// </summary>
+    [Fact]
+    public void 换解法有配对对照且有跑空的保险()
+    {
+        string s = Src("ShellThermal.cs");
+        Assert.Contains("public static bool UseGaussSeidel;", s);
+        // 跑空保险：有可动单元却挑不出自由单元 ⇒ 当场炸
+        Assert.Contains("却一个自由单元都没挑出来", s);
+        Assert.Contains("throw new InvalidOperationException(", s);
+        // 内层归一化不许再用 max|rhs|
+        Assert.Contains("归一化**不能**用 max|rhs|", s);
+        Assert.Contains("0.1 * ResidualRelTol * Math.Max(jouleTotalW, 1e-12)", s);
+
+        string prog = System.IO.File.ReadAllText(System.IO.Path.Combine(
+            HandoverDoc.Root(), "Pt_Optimize", "Program.cs"));
+        Assert.Contains("--thermcg", prog);
+        Assert.Contains("逐单元温度场最大差", prog);
     }
 
     /// <summary>

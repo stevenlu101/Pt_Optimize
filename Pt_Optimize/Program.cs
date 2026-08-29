@@ -4680,6 +4680,94 @@ internal static class Program
                 Environment.ExitCode = r1.Feasible ? 0 : 1; return;
             }
 
+            if (args.Contains("--thermcg"))
+            {
+                // ★★ 配对对照：同一算例，温度场分别用 **GS 扫描** 与 **CG+Jacobi** 各解一次。
+                //   换解法这种事必须能逐位对账，否则「快了」和「答案变了」分不开。
+                //   （电位场 2026-08-29 那次就是这么证明「CG 买到的是速度不是精度」。）
+                var geoT = DesignSpec.Select(args);
+                var pT = new DesignInputs();
+                double hT = 2.0;
+                int ih = Array.IndexOf(args, "--tmesh");
+                if (ih >= 0 && ih + 1 < args.Length && double.TryParse(args[ih + 1], out double hv) && hv > 0) hT = hv;
+
+                Console.WriteLine("=== 温度场解法配对对照（GS 扫描 vs CG+Jacobi）===");
+                Console.WriteLine($"用例：{geoT.Name}　网格 {hT:0.000} mm");
+                Console.WriteLine("★ 不动点与内层怎么解**无关**（线性化式子在不动点处化回真非线性残差 = 0）");
+                Console.WriteLine("  ⇒ 收敛解必须逐位相同。下面就是验这句话。");
+                Console.WriteLine();
+
+                LineResult RunT(bool gs)
+                {
+                    ShellThermal.UseGaussSeidel = gs;
+                    try
+                    {
+                        var lcT = geoT.BuildCase(pT, checkRamp: false);
+                        lcT.MeshFineMm = hT;
+                        return LineRunner.Run(lcT);
+                    }
+                    finally { ShellThermal.UseGaussSeidel = false; }
+                }
+
+                int itl = Array.IndexOf(args, "--ttol");
+                if (itl >= 0 && itl + 1 < args.Length && double.TryParse(args[itl + 1], out double tv) && tv > 0)
+                {
+                    ShellThermal.StepTolOverride = tv;
+                    Console.WriteLine($"★ 步长判据覆写为 {tv:E1} K（容差扫描用）");
+                }
+
+                var swG = System.Diagnostics.Stopwatch.StartNew();
+                var rG = RunT(true);
+                swG.Stop();
+                var swC = System.Diagnostics.Stopwatch.StartNew();
+                var rC = RunT(false);
+                swC.Stop();
+
+                Console.WriteLine($"{"解法",-12}{"用时",10}{"单元",8}{"最高温 °C",12}{"②′W",10}{"②″K",10}{"③K",10}");
+                void RowT(string nm, LineResult r, TimeSpan el)
+                {
+                    double V(string k) => r.Checks
+                        .FirstOrDefault(c => c.Name.StartsWith(k, StringComparison.Ordinal))?.Actual ?? double.NaN;
+                    double tmax = r.Flanges.Length == 0 ? double.NaN : r.Flanges.Max(f => f.TMaxC);
+                    Console.WriteLine($"{nm,-12}{ThrottledProgress.Fmt(el),10}{r.MeshCells,8}"
+                        + $"{tmax,12:0.0000}{V(LineResult.Key.NetFlux),10:0.0000}"
+                        + $"{V(LineResult.Key.DiscTemp),10:0.0000}{V(LineResult.Key.FlangeDip),10:0.0000}");
+                }
+                RowT("GS 扫描", rG, swG.Elapsed);
+                RowT("CG+Jacobi", rC, swC.Elapsed);
+                Console.WriteLine();
+
+                // 逐片 T 场的最大差 —— 判据对得上还不够，**场**要对得上
+                double dT = 0;
+                for (int j = 0; j < Math.Min(rG.Flanges.Length, rC.Flanges.Length); j++)
+                {
+                    var a = rG.Flanges[j].TField; var b = rC.Flanges[j].TField;
+                    for (int i = 0; i < Math.Min(a.Length, b.Length); i++)
+                        dT = Math.Max(dT, Math.Abs(a[i] - b[i]));
+                }
+                Console.WriteLine($"逐单元温度场最大差　**{dT:E3} K**");
+                for (int j = 0; j < Math.Min(rG.Flanges.Length, rC.Flanges.Length); j++)
+                    Console.WriteLine($"  {rG.Flanges[j].Name,-10}"
+                        + $"GS {rG.Flanges[j].TMaxC:0.0000} °C（收敛 {rG.Flanges[j].FieldsConverged}）　"
+                        + $"CG {rC.Flanges[j].TMaxC:0.0000} °C（收敛 {rC.Flanges[j].FieldsConverged}）"
+                        + $"　残差 GS {rG.Flanges[j].FieldResidualRel:E2} / CG {rC.Flanges[j].FieldResidualRel:E2}"
+                        + $"　轮数 GS {rG.Flanges[j].FieldOuterIters} / CG 外 {rC.Flanges[j].FieldOuterIters} 内 {rC.Flanges[j].FieldInnerIters}");
+                Console.WriteLine();
+                // ★ 判定阈值不是拍的：实测标定 场差 ≈ 5×10⁵ × 相对残差（--ttol 扫描得到），
+                //   而停机容差是 ResidualRelTol ⇒ 两条路各自的位置不确定度约
+                //   5e5 × 2e-8 = 0.01 K，两条加起来取 5 倍余量 = 0.05 K。
+                //   写死一个比容差本身还严的阈值，只会让门永远红，那等于没有门。
+                double dTAllow = 5 * 2 * 5e5 * ShellThermal.ResidualRelTol;
+                Console.WriteLine($"允许差 = 5 × 2 × 5e5 × ResidualRelTol({ShellThermal.ResidualRelTol:E1})"
+                    + $" = **{dTAllow:0.###} K**（标定：场差 ≈ 5e5 × 相对残差）");
+                Console.WriteLine(dT < dTAllow
+                    ? $"✓ **答案没变**（场差 {dT:E2} K < {dTAllow:0.###} K）—— CG 买到的是速度，不是精度"
+                    : $"★★ **答案变了**（场差 {dT:E2} K ≥ {dTAllow:0.###} K）—— 换解法改了结果，必须查清楚再谈快慢");
+                if (swC.Elapsed.TotalSeconds > 0)
+                    Console.WriteLine($"提速 **{swG.Elapsed.TotalSeconds / swC.Elapsed.TotalSeconds:0.0}×**");
+                return;
+            }
+
             if (args.Contains("--sensmatrix"))
             {
                 // ★★ 实测敏感度矩阵（清单第 13 件）。与 --monotone 的分工：

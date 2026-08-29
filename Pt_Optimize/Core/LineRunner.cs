@@ -423,6 +423,12 @@ public sealed class FlangeOut
     /// </summary>
     public bool FieldsConverged = true;
 
+    /// <summary>温度场停机时的**真残差**（相对）—— 诊断用；步长不是残差。</summary>
+    public double FieldResidualRel = double.NaN;
+
+    /// <summary>诊断：温度场外层轮数 / 内层 CG 轮数。</summary>
+    public int FieldOuterIters, FieldInnerIters;
+
     /// <summary>没收敛时说清楚是哪个场、残差多少。空 = 收敛了。</summary>
     public string FieldNote = "";
 
@@ -1437,6 +1443,9 @@ public static class LineRunner
             // ★ 场没收敛 ⇒ **这一片的判据判不了**，不是「照报一个数」。
             var why = new List<string>();
             // ⚠ th.Residual 是**步长**不是残差 —— 两个都报，别再把步长叫成残差。
+            flanges[j].FieldResidualRel = th.ResidualRel;
+            flanges[j].FieldOuterIters = th.Iterations;
+            flanges[j].FieldInnerIters = th.InnerIterations;
             if (!th.Converged) why.Add($"温度场未收敛（步长 {th.Residual:E2} K，真残差 {th.ResidualW:E2} W／相对 {th.ResidualRel:E2}，{th.Iterations} 轮）");
             if (!curConverged) why.Add($"电位场未收敛（残差 {curResidual:E2}，{curIterations} 轮）");
             if (why.Count > 0)

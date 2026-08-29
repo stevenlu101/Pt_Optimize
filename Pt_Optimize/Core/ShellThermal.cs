@@ -96,6 +96,9 @@ public sealed class ShellThermalResult
     /// </summary>
     public double Residual;
 
+    /// <summary>诊断：内层线性解最后一次用了多少 CG 迭代（0 = 没走 CG 支）。</summary>
+    public int InnerIterations;
+
     /// <summary>
     /// ★★ **真残差**：稳态能量方程逐格的不闭合量，单位 **W**（2026-08-29 补）。
     ///
@@ -166,21 +169,49 @@ public static class ShellThermal
     /// 给它一个连续厚度，「端片能不能自给」才从一道是非题变成一个可解的方程。
     /// </param>
     /// <summary>
-    /// 真残差的相对阈值。**这个数是声明出来的，不是碰巧的**。
+    /// ★★★ **停机判据本身** —— 真残差的相对阈值。2026-08-30 起它不再只是事后校验。
     ///
-    /// 出处（2026-08-29 实测，`--cli --shell`，2727 单元）：
+    /// ══ 为什么换掉步长
+    ///
+    /// 步长小 ≠ 解到位。配对实测（`--thermcg`，0.8 档、1.0 mm 网格）把放大倍数量了出来：
     /// <code>
-    ///   步长判据停在   9.99E-005 K（tol 1e-4）
-    ///   此时真残差     1.18E-004 W　相对 **1.58E-007**
+    ///   步长容差   停机残差(相对)   GS 与 CG 的场差
+    ///   1e-4 K     ~2.5E-7          **0.132 K**
+    ///   1e-6 K     ~2.5E-9          **0.00101 K**
     /// </code>
-    /// 取 1e-5 = 实测值的 **63 倍**宽 ⇒ 现役算例上它**不会改变任何结果**
-    /// （合取只会更严，而这一条在现役算例上恒真）；同时又足够紧：
-    /// 相对残差到 1e-5 的场，逐格能量不闭合量已是焦耳热的十万分之一以下。
+    /// 两条路收敛到**同一个不动点**（场差随容差线性下降，130 倍），
+    /// 但步长 1e-4 K 只把位置钉到 **0.13 K** —— **不动点放大约 1300 倍**。
+    /// 这与基线循环那次的 25 倍、与线性解那次，是同一族的第四次。
     ///
-    /// ⚠ 若哪天有算例因它变成「判不了」，那**不是**该放宽它，
-    ///   而是那个算例的温度场**本来就没解到位** —— 步长判据只是没告诉你。
+    /// ⚠ 0.13 K 有多要紧：网格无关复核判 ③ 用的容差是 **1.0 K** ——
+    ///   也就是说**解算器自身的位置噪声占了那条容差的 13%**。
+    ///   拿它去判「判据还随不随网格变」，等于用一把自己在抖的尺子量抖动。
+    ///
+    /// ══ 阈值怎么定的（实测标定，不是拍的）
+    ///
+    /// 上表给出 <c>场差 ≈ 5×10⁵ × 相对残差</c>。要把场钉到 **0.01 K**
+    /// （= ③ 那条 1.0 K 容差的 1%，小到不会污染网格无关的判断）⇒ 残差 ≤ **2e-8**。
+    ///
+    /// ⚠ 代价：比原来的停机点紧约 12 倍。这正是把 GS 换成 CG 的理由 ——
+    ///   GS 在 47 567 单元上连 1e-4 的**步长**都到不了（60000 轮撞上限），
+    ///   而收紧只会让它更到不了。
     /// </summary>
-    public const double ResidualRelTol = 1e-5;
+    public const double ResidualRelTol = 2e-8;
+
+    /// <summary>
+    /// **退回旧的纯 Gauss–Seidel 扫描**（只为配对对照，默认关）。
+    ///
+    /// 与 <see cref="ShellCurrent"/> 同款：换解法这种事，**必须能把两条路各跑一次逐位对账**，
+    /// 否则「快了」和「答案变了」分不开。2026-08-29 电位场那次就是靠它证明
+    /// **CG 买到的是速度不是精度**（V 场差 ≤ 1.3e-5）。
+    /// </summary>
+    public static bool UseGaussSeidel;
+
+    /// <summary>
+    /// 步长判据的临时覆写（只给 `--thermcg` 做容差扫描用；&lt;=0 = 用调用方给的）。
+    /// ⚠ 不许在交付路径上用它 —— 这是量「解算器精度地板随容差怎么走」的探针。
+    /// </summary>
+    public static double StepTolOverride;
 
     public static ShellThermalResult Solve(ShellMesh m, double[] jMagAPerMm2, DesignInputs p,
                                            double tRootC, double insulBoundaryX,
@@ -303,45 +334,37 @@ public static class ShellThermal
             nbr[f.A].Add((f.B, k)); nbr[f.B].Add((f.A, k));
         }
 
-        // ── Picard 迭代：q″(T) 与 k(T) 用上一轮温度，欠松弛
+        if (StepTolOverride > 0) tol = StepTolOverride;
+        // 步长判据保留为**兜底**（防止残差算不出来时无限转），但它不再是停机的依据。
+
+        // ══ Picard 迭代：q″(T) 与 k(T) 用上一轮温度，欠松弛
+        //
+        // ★★★ 2026-08-30：内层由**一次 Gauss–Seidel 扫描**换成 **CG + Jacobi**。
+        //
+        // 病灶（实测，不是设想）：0.6 档网格无关复核跑到 0.125 mm（47 567 单元）时，
+        // 三片**全部撞上 60000 轮上限**（步长 9.69E-4 / 9.04E-4 / 1.78E-4，目标 1e-4）。
+        // ⇒ 铁律第 ③ 条生效，吃这些片的判据一律「判不了」⇒ 整趟 4 小时白跑。
+        //
+        // 病因是**复杂度**：GS 的迭代数随单元数线性涨 ⇒ 总功 O(n²)。
+        //   --shell   2 727 单元 → 5 805 轮
+        //   复核     47 567 单元 → 按 O(n) 外推需 ~100 000 轮 > 60 000
+        // 抬上限没用：抬到 15 万就是一档 5.7 小时。
+        //
+        // ⚠ **换解法不改答案**，这可以证明而不是指望：不动点处
+        //   (Σg + 2·slope·A + G)·T = ΣgT + (qv − 2(qs − slope·T))·A + G·T_冷端
+        //   两边的 slope·T 相消 ⇒ Σg(T_c − T) + (qv − 2qs)A + G(T_冷 − T) = 0，
+        //   正是**真非线性残差为零**。所以不动点与内层怎么解无关，
+        //   欠松弛也只影响路径不影响终点。⇒ 收敛解必须逐位相同（`--thermcg` 配对实测）。
         const double relax = 0.7;
         int it = 0; double maxd = 0;
-        for (; it < maxIter; it++)
-        {
-            if (it % 20 == 0) UpdateG();
-            maxd = 0;
-            for (int i = 0; i < n; i++)
-            {
-                if (isFixed[i]) continue;
-                double sumG = 0, sumGT = 0;
-                foreach (var (c, k) in nbr[i]) { sumG += gcond[k]; sumGT += gcond[k] * res.T[c]; }
-                if (sumG <= 0) continue;
 
-                double ti = res.T[i], t = m.Thickness[i], A = m.Area[i];
-                // 焦耳热 W：ρe[Ω·mm]·J²[A²/mm⁴]·t[mm]·A[mm²]
-                double qv = Materials.PtResistivity(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t;
-                var tab = lossFor[i];
-                double qs = tab.Eval(ti);                     // W/mm²，单面
-                double slope = Math.Max(0, tab.Slope(ti));    // 线性化散热，稳定迭代
-
-                // (Σg + 2·slope·A + G_铜排)·T = ΣgT + (qv − 2(qs − slope·ti))·A + G_铜排·T_冷端
-                double denom = sumG + 2 * slope * A + gBus[i];
-                double rhs = sumGT + (qv - 2 * (qs - slope * ti)) * A + gBus[i] * p.BusbarSinkTempC;
-                double tNew = rhs / denom;
-                double d = tNew - ti;
-                res.T[i] = ti + relax * d;
-                maxd = Math.Max(maxd, Math.Abs(d));
-            }
-            if (maxd < tol) { it++; break; }
-        }
-        res.Iterations = it; res.Residual = maxd;
-        bool stepOk = maxd < tol;          // ★ 只是**步长**判据；真正的判定在下面
-
-        // ★★ **真残差**（2026-08-29）：上面判的是**步长**，这里算的才是残差。
-        //   逐格代回稳态能量方程，用**真**散热 q_s(T_i)（不是迭代里线性化的那个）——
-        //   线性化只准出现在「怎么走」里，不准出现在「走到没有」里。
-        //   代价：一遍 O(n)，相对于上面几万轮可以忽略。
-        UpdateG();
+        /// <summary>
+        /// **真残差**（相对）：逐格代回稳态能量方程的不闭合量 / 自由格总焦耳热。
+        /// 用**真**散热 q_s(T)，不是迭代里为稳定做的线性化 ——
+        /// 线性化只准出现在「怎么走」里，不准出现在「走到没有」里。
+        /// ⚠ 调用前必须 UpdateG()：gcond 是它的一部分。
+        /// </summary>
+        (double W, double Rel) ResidRel()
         {
             double rMax = 0, bSum = 0;
             for (int i = 0; i < n; i++)
@@ -350,7 +373,6 @@ public static class ShellThermal
                 double sumG = 0, sumGT = 0;
                 foreach (var (c, k) in nbr[i]) { sumG += gcond[k]; sumGT += gcond[k] * res.T[c]; }
                 if (sumG <= 0) continue;
-
                 double ti = res.T[i], t = m.Thickness[i], A = m.Area[i];
                 double qv = Materials.PtResistivity(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t;
                 double qs = lossFor[i].Eval(ti);
@@ -359,16 +381,192 @@ public static class ShellThermal
                 rMax = Math.Max(rMax, Math.Abs(r));
                 bSum += Math.Abs(qv * A);
             }
-            res.ResidualW = rMax;
-            res.ResidualRel = bSum > 1e-12 ? rMax / bSum : double.NaN;
-
-            // ★★ **收敛 = 步长小 且 残差小**。两条都要，而不是只要步长。
-            //   合取只会让判定**更严**，不会更松 ⇒ 现役算例逐位不变（已实测，见下）。
-            //   ⚠ 残差算不出来（NaN，例如一格自由格都没有）时**不算过** —— 判不了不算过。
-            res.Converged = stepOk
-                         && !double.IsNaN(res.ResidualRel)
-                         && res.ResidualRel <= ResidualRelTol;
+            return (rMax, bSum > 1e-12 ? rMax / bSum : double.NaN);
         }
+
+        // 自由单元编号（固定单元的值搬到右端项）——与 ShellCurrent 同一套写法
+        //
+        // ★★ 先 UpdateG()：gcond 在它跑之前**全是 0**，而下面用 `Σg > 0` 挑自由单元 ——
+        //   不先算就一个都挑不出来，nFree = 0，CG 什么也没解，而外层看不出异常：
+        //   它照样跑完、照样报一整套判据值、还快了 2.4 倍。
+        //   2026-08-30 实测就是这样，被配对对照（--thermcg）当场抓住：温度场差 **697 K**。
+        //   ⇒ 换解法必须配对对账，这条不是形式。
+        UpdateG();
+        var freeC = new List<int>(n);
+        var idxC = new int[n];
+        for (int i = 0; i < n; i++)
+        {
+            idxC[i] = -1;
+            if (isFixed[i]) continue;
+            double sg = 0;
+            foreach (var (_, k) in nbr[i]) sg += gcond[k];
+            if (sg > 0) { idxC[i] = freeC.Count; freeC.Add(i); }
+        }
+        int nFree = freeC.Count;
+        // ★ 有自由单元却一个都没挑出来 = 上面那个 bug 又回来了。**当场炸**，不许静默跑空。
+        {
+            int movable = 0;
+            for (int i = 0; i < n; i++) if (!isFixed[i] && nbr[i].Count > 0) movable++;
+            if (movable > 0 && nFree == 0)
+                throw new InvalidOperationException(
+                    $"温度场：{movable} 个可动单元，却一个自由单元都没挑出来 —— "
+                    + "面导度还没算（UpdateG 没跑）。跑空的解会给出一整套看起来正常的错数。");
+        }
+        var diagC = new double[nFree];
+        var rhsC = new double[nFree];
+        var xC = new double[nFree];
+        var rC = new double[nFree]; var zC = new double[nFree];
+        var pC = new double[nFree]; var apC = new double[nFree];
+
+        /// 在当前 T 上把线性化系统装出来（对称正定：对角 = Σg + 2·slope·A + G，非对角 = −g）
+        void Assemble()
+        {
+            for (int a = 0; a < nFree; a++)
+            {
+                int i = freeC[a];
+                double sumG = 0, fixedPart = 0;
+                foreach (var (c, k) in nbr[i])
+                {
+                    sumG += gcond[k];
+                    if (idxC[c] < 0) fixedPart += gcond[k] * res.T[c];
+                }
+                double ti = res.T[i], t = m.Thickness[i], A = m.Area[i];
+                double qv = Materials.PtResistivity(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t;
+                var tab = lossFor[i];
+                double qs = tab.Eval(ti);
+                double slope = Math.Max(0, tab.Slope(ti));
+                diagC[a] = sumG + 2 * slope * A + gBus[i];
+                rhsC[a] = fixedPart + (qv - 2 * (qs - slope * ti)) * A + gBus[i] * p.BusbarSinkTempC;
+                xC[a] = ti;
+            }
+        }
+
+        void MatVec(double[] src, double[] dst)
+        {
+            for (int a = 0; a < nFree; a++)
+            {
+                int i = freeC[a];
+                double v = diagC[a] * src[a];
+                foreach (var (c, k) in nbr[i]) { int jj = idxC[c]; if (jj >= 0) v -= gcond[k] * src[jj]; }
+                dst[a] = v;
+            }
+        }
+
+        /// 内层线性解：CG + Jacobi。返回用了多少次矩阵乘。
+        int SolveLinear(double jouleTotalW)
+        {
+            // ★★ 归一化**不能**用 max|rhs|（2026-08-30 实测翻车）：
+            //   rhs 里含定温边界项 g·T_根（T_根 ≈ 1150 °C），量级上万 W；
+            //   而真残差只有 ~1e-2 W ⇒ `1e-7 × bNorm` 比残差还大，
+            //   **第一次检查就通过，CG 一轮都不跑**，xC 原地不动、外层空转 300 轮。
+            //   而它跑得飞快、报了一整套数 —— 又是「看起来正常的错数」。
+            //   ⇒ 归一化用与真残差**同一个**量：自由格总焦耳热。
+            MatVec(xC, rC);
+            for (int a = 0; a < nFree; a++) rC[a] = rhsC[a] - rC[a];
+            double r0 = 0;
+            for (int a = 0; a < nFree; a++) r0 = Math.Max(r0, Math.Abs(rC[a]));
+            // 不精确牛顿的强迫项：每一外层轮把线性残差压掉三个量级，
+            // 但不必比外层的目标还紧（那是白费）。
+            double target = Math.Max(1e-3 * r0, 0.1 * ResidualRelTol * Math.Max(jouleTotalW, 1e-12));
+            double rz = 0;
+            for (int a = 0; a < nFree; a++) { zC[a] = rC[a] / diagC[a]; pC[a] = zC[a]; rz += rC[a] * zC[a]; }
+            int k2 = 0;
+            for (; k2 < 2000; k2++)
+            {
+                double resid = 0;
+                for (int a = 0; a < nFree; a++) resid = Math.Max(resid, Math.Abs(rC[a]));
+                if (resid <= target) break;
+                MatVec(pC, apC);
+                double pap = 0;
+                for (int a = 0; a < nFree; a++) pap += pC[a] * apC[a];
+                if (!(Math.Abs(pap) > 1e-300)) break;
+                double alpha = rz / pap;
+                for (int a = 0; a < nFree; a++) { xC[a] += alpha * pC[a]; rC[a] -= alpha * apC[a]; }
+                double rzNew = 0;
+                for (int a = 0; a < nFree; a++) { zC[a] = rC[a] / diagC[a]; rzNew += rC[a] * zC[a]; }
+                double beta = rz > 1e-300 ? rzNew / rz : 0;
+                for (int a = 0; a < nFree; a++) pC[a] = zC[a] + beta * pC[a];
+                rz = rzNew;
+            }
+            return k2;
+        }
+
+        if (UseGaussSeidel)
+        {
+            for (; it < maxIter; it++)
+            {
+                if (it % 20 == 0) UpdateG();
+                maxd = 0;
+                for (int i = 0; i < n; i++)
+                {
+                    if (isFixed[i]) continue;
+                    double sumG = 0, sumGT = 0;
+                    foreach (var (c, k) in nbr[i]) { sumG += gcond[k]; sumGT += gcond[k] * res.T[c]; }
+                    if (sumG <= 0) continue;
+
+                    double ti = res.T[i], t = m.Thickness[i], A = m.Area[i];
+                    double qv = Materials.PtResistivity(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t;
+                    var tab = lossFor[i];
+                    double qs = tab.Eval(ti);
+                    double slope = Math.Max(0, tab.Slope(ti));
+                    double denom = sumG + 2 * slope * A + gBus[i];
+                    double rhs = sumGT + (qv - 2 * (qs - slope * ti)) * A + gBus[i] * p.BusbarSinkTempC;
+                    double tNew = rhs / denom;
+                    double d = tNew - ti;
+                    res.T[i] = ti + relax * d;
+                    maxd = Math.Max(maxd, Math.Abs(d));
+                }
+                // ★ 停机判**残差**，不判步长（步长小 ≠ 解到位，实测放大约 1300 倍）。
+                //   GS 每 20 轮算一次（与 UpdateG 同频）—— 每轮都算会把 GS 的成本翻倍，
+                //   而 GS 这一支现在只用于配对对照。
+                if (it % 20 == 19 && ResidRel().Rel <= ResidualRelTol) { it++; break; }
+            }
+        }
+        else
+        {
+            // 外层 Picard：装一次线性化系统 → CG 解到位 → 欠松弛更新 → 看步长
+            // ⚠ 外层轮数上限按**外层**给：内层已经把 O(n) 那一段吃掉了，
+            //   外层只处理非线性，轮数与网格大小基本无关。
+            int outerCap = Math.Max(200, maxIter / 200);
+            int lastInner = 0;
+            for (; it < outerCap; it++)
+            {
+                UpdateG();
+                Assemble();
+                double joule = 0;
+                for (int a = 0; a < nFree; a++)
+                {
+                    int i = freeC[a];
+                    joule += Math.Abs(Materials.PtResistivity(res.T[i]) * 1e3
+                           * jMagAPerMm2[i] * jMagAPerMm2[i] * m.Thickness[i] * m.Area[i]);
+                }
+                lastInner = SolveLinear(joule);
+                maxd = 0;
+                for (int a = 0; a < nFree; a++)
+                {
+                    int i = freeC[a];
+                    double d = xC[a] - res.T[i];
+                    res.T[i] += relax * d;
+                    maxd = Math.Max(maxd, Math.Abs(d));
+                }
+                // ★ 停机判**残差**。外层每轮都算得起：这一遍是 O(n)，
+                //   而同一轮里的 CG 内解是 O(n·√n)。
+                UpdateG();
+                if (ResidRel().Rel <= ResidualRelTol) { it++; break; }
+            }
+            res.InnerIterations = lastInner;
+        }
+        res.Iterations = it; res.Residual = maxd;
+        bool stepOk = maxd < tol;          // ★ 只是**步长**判据；真正的判定在下面
+
+        // 收尾：复用**同一个** ResidRel（不再内联第二份 —— 两份迟早漂开）
+        UpdateG();
+        (res.ResidualW, res.ResidualRel) = ResidRel();
+
+        // ★★ **收敛 = 真残差达标**。步长不再参与判定 —— 它是路径的性质，不是解的性质。
+        //   ⚠ 残差算不出来（NaN，例如一格自由格都没有）时**不算过** —— 判不了不算过。
+        res.Converged = !double.IsNaN(res.ResidualRel) && res.ResidualRel <= ResidualRelTol;
+        _ = stepOk;   // 仍算出来放进 res.Residual 供诊断；不参与判定
 
         // ── 汇总
         double gen = 0, loss = 0;
