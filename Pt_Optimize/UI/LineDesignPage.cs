@@ -88,6 +88,40 @@ public sealed class LineDesignPage : TabPage
     {
         Ring(), Ring(), Ring(), Ring(),
     };
+
+    /// <summary>
+    /// ★★★ **渐变环的形状**：内级外扩 r₁ / 外级外扩 r₂ / 外级倍率 t₂（逐片，2026-08-30 补控件）。
+    ///
+    /// ══ 补它的理由不是「多个输入方便」
+    ///
+    /// 本页早就立过一条规矩（2026-08-28）：
+    /// <code>
+    ///   页面上每一个进计算的量都有输入来源，
+    ///   DesignSpec 不再是任何计算的起点或兜底，只剩回归基准这一个角色。
+    /// </code>
+    /// 而这三个是**最后三个例外**：<see cref="PageToDesignSpec"/> 从
+    /// <c>DesignSpec.Current.Clone()</c> 起手，于是它们被**静默继承**自设计记录 ——
+    /// 正是那条规矩点名要禁的形态。
+    ///
+    /// ══ 默认「继承历史规则」怎么表达
+    ///
+    /// 三者的模型默认值是 <b>NaN = 用旧规则</b>（r₁ = 环宽、r₂ = 2×环宽、t₂ = 1+0.4(t₁−1)），
+    /// 而 NumericUpDown 表达不了 NaN。⇒ 用一个复选框切换：
+    /// **不勾**（默认）= 传 NaN，框子禁用但**照样把规则算出来的值显示出来**
+    /// （看得见的默认值才学得会那条规则）；**勾上** = 逐片自定，读框子。
+    ///
+    /// ⚠ 它们**不是求解器旋钮**（<see cref="Solver.Allocation"/> 里没有）——
+    ///   `--monotone` 实测三条全单调，但对 ③ 与 ②″ 都往坏走，只对 ②′ 往好走，
+    ///   而 ②′ 已经有板厚。「抬哪个」是取舍，不是查表 ⇒ 先做敏感度矩阵再说。
+    ///   所以这里是**工程师手动探索**用的，改了要自己重解。
+    /// </summary>
+    private readonly CheckBox _ringShapeCustom = new()
+    {
+        Text = "逐片自定（不勾 = 用旧规则）", AutoSize = true,
+    };
+    private readonly NumericUpDown[] _ringR1 = { RingR(), RingR(), RingR(), RingR() };
+    private readonly NumericUpDown[] _ringR2 = { RingR2(), RingR2(), RingR2(), RingR2() };
+    private readonly NumericUpDown[] _ringT2 = { Ring(), Ring(), Ring(), Ring() };
     // ⚠ 文字要短到**放得下**（2026-08-20 实测截图里这两行断在半个词上：
     //   「解析形状（圆盘 + 梯形舌片，程」「Rhino .3dm 文件（任意形状：阶」）。
     //   它们已经是 AutoSize + 跨两列了 —— 截断的原因是文字本身比左栏还宽，
@@ -184,6 +218,13 @@ public sealed class LineDesignPage : TabPage
         public double SizerTabIns, SizerRingMul;
         /// <summary>2026-08-28 补：这三个也进快照 —— 它们现在是**输入**，改了就该让上一次的解不新鲜。</summary>
         public double Fillet, RingW, ClampLen;
+        /// <summary>
+        /// 2026-08-30 补：渐变环形状也进快照。**不进就是假新鲜** ——
+        /// 它们直接进厚度分布、进判据，改了却让上一次的解还显示「新鲜」，
+        /// 那正是本记录类型存在的理由。
+        /// </summary>
+        public bool RingCustom;
+        public double RingR1, RingR2, RingT2;
     }
 
     /// <summary>
@@ -263,7 +304,11 @@ public sealed class LineDesignPage : TabPage
         RingW = (double)_ringW.Value,
         ClampLen = (double)_clampLen.Value,
         SizerTabIns = _tabIns.Average(n => (double)n.Value),
-        SizerRingMul = _ringMul.Average(n => (double)n.Value)
+        SizerRingMul = _ringMul.Average(n => (double)n.Value),
+        RingCustom = _ringShapeCustom.Checked,
+        RingR1 = _ringR1.Average(n => (double)n.Value),
+        RingR2 = _ringR2.Average(n => (double)n.Value),
+        RingT2 = _ringT2.Average(n => (double)n.Value)
     };
     private readonly ToolStripComboBox _caseBox =
         new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = UiScale.S(210) };
@@ -529,7 +574,14 @@ public sealed class LineDesignPage : TabPage
         Head("法兰形状（解析模式；四片同形状，厚度各自独立）");
         Row("圆盘直径 mm", _discD,
             "缩小它是本问题里少有的「三者同向」：省铂 + 放松焊接下界 + 改善端片热平衡。\n" +
-            "已缩到 Ø60。⚠ 再缩会让两级渐变环占满整个圆盘（环外半径已越过盘缘）。");
+            "⇒ **最优盘径就在下界上**，而下界是判据⑥，**算得出来、不用搜**：\n" +
+            "　　盘半径 ≥ 管孔半径 + 焊脚　　焊脚 = max(板厚, 壁厚)　管孔半径 = 壁厚 + 25\n" +
+            "　0.8 档、板厚解到 2.45 ⇒ 需要 R28.25（Ø56.5）；现在是 Ø60，还有 1.75 mm 余量。\n" +
+            "⚠ 下界**跟着板厚走** —— 求解器只往上抬板厚，抬一分焊脚长一分、⑥ 的余量掉一分。\n" +
+            "　解完盘径不够时，`Solver.CoverCheck` 会直接把该改到多少印出来（处方，不是抱怨）。\n" +
+            "⚠ 更正（2026-08-30）：此前这里写「再缩会让两级渐变环占满整个圆盘」——\n" +
+            "　那不是**硬**下界。渐变环按**离管轴的半径**分级，越过盘缘之后它继续作用在舌根，\n" +
+            "　不是失效。真正拦住你的是 ⑥。");
         Row("舌片长度 mm", _tabLen, "省铂宜短；但舌片越长形状数 Ψ 越小、局部越不易过热");
         Row("舌端半宽 mm", _tabW);
 
@@ -560,11 +612,35 @@ public sealed class LineDesignPage : TabPage
             "只压**管孔周围**的局部电流拥塞（判据 ②″），作用范围 r ≤ 孔+6 mm。" + Environment.NewLine +
             "⚠ **这个灵敏度随形状变号，别照抄任何一个数**（2026-08-28 实测）：" + Environment.NewLine +
             "　· 窄舌形状上曾测得 d②″/d倍率 ≈ **−1.4** K/单位（加环压得住）；" + Environment.NewLine +
-            "　· **现役宽舌形状**上实测（--monotone，0.8 档）：倍率 1.0→2.5 只把 ②″ 动了" + Environment.NewLine +
-            "　　**+0.08 K（方向相反）**，却多花 **137 g** 铂 —— 舌片宽了，孔周本来就不拥塞。" + Environment.NewLine +
+            "　· **现役宽舌形状**上，`--monotone` 全量程实测（0.8 档，2026-08-30 首次真跑）：" + Environment.NewLine +
+            "　　倍率 1.00→2.50 把 ②″ 从 **−0.208 挪到 −0.124**（限值 ≤5，越大越差）" + Environment.NewLine +
+            "　　⇒ **+0.084 K，方向相反**，却多花 **137 g** 铂 —— 舌片宽了，孔周本来就不拥塞。" + Environment.NewLine +
+            "　　⚠ 更正（2026-08-30）：这一行 08-29 写的时候标的也是 `--monotone`，" + Environment.NewLine +
+            "　　　但那时它**一次没跑过** —— 当时的 +0.08 是从别处测得的导数 +0.056 线性外推的。" + Environment.NewLine +
+            "　　　跑完之后两者对上了（+0.084），但**当时那个出处是假的**。" + Environment.NewLine +
             "⇒ 用 `--monotone` 对**你手上这个形状**实测，再决定动不动它。上限 2.5。" + Environment.NewLine +
             "初始值 1.00 = 无台阶（真实状态）。";
         for (int i = 0; i < 4; i++) Row(names[i], _ringMul[i], tipRing);
+
+        Head("管孔渐变环形状（r₁ / r₂ / t₂，2026-08-30 补成输入）");
+        string tipShape =
+            "★ 「外扩」是**从管轴量的半径**减去管孔半径，不是「画在盘上的一圈」。" + Environment.NewLine +
+            "　厚度按 r 分级：r ≤ 孔+r₁ 取 t₁×板厚；孔+r₁ < r ≤ 孔+r₂ 取 t₂×板厚；再外为板厚。" + Environment.NewLine +
+            "⚠ **超过盘半径之后它继续作用在舌片根部** —— 盘 Ø60 时盘面只到 孔+4.2 mm，" + Environment.NewLine +
+            "　r₂ 再往外加厚的是舌根。`--monotone` 把 r₂ 扫到 16 mm 仍持续见效，就是这个缘故。" + Environment.NewLine +
+            "── `--monotone` 实测（0.8 档，2026-08-30 首次跑）" + Environment.NewLine +
+            "　r₁ 1→10／r₂ 4→16／t₂ 1→2：三条对 抽热D、③、②″ **全单调** ⇒ 可二分。" + Environment.NewLine +
+            "　但方向是：只有 ②′ 变好，**③ 与 ②″ 都变坏** ⇒ 它们是「花铂换抽热」的旋钮，" + Environment.NewLine +
+            "　不是「治判据」的旋钮。所以**没有**进求解器的分配表（那要先做敏感度矩阵）。" + Environment.NewLine +
+            "⇒ 这三个是**给你手动探索**的：改完请自己重解，求解器不会替你动它们。";
+        Row("", _ringShapeCustom, tipShape);
+        for (int i = 0; i < 4; i++) Row($"{names[i]} r₁ mm", _ringR1[i], tipShape);
+        for (int i = 0; i < 4; i++) Row($"{names[i]} r₂ mm", _ringR2[i], tipShape);
+        for (int i = 0; i < 4; i++) Row($"{names[i]} t₂", _ringT2[i], tipShape);
+        _ringShapeCustom.CheckedChanged += (_, _) => SyncRingShape();
+        foreach (var n in _ringMul) n.ValueChanged += (_, _) => SyncRingShape();
+        _ringW.ValueChanged += (_, _) => SyncRingShape();
+        SyncRingShape();
 
         Head("保温与夹持");
         Row("法兰保温", _flIns, "包纤维会降低自给所需厚度；不包则法兰更凉但从管子抽热更多");
@@ -913,10 +989,49 @@ public sealed class LineDesignPage : TabPage
         Num((decimal)StartPoint.TabInsulMm, (decimal)SizerOptions.InsLoMmConst,
             (decimal)SizerOptions.InsHiMmConst, 0.1m, 1);
 
+    /// <summary>
+    /// **不勾「逐片自定」时，把旧规则算出来的值显示在框里**（并禁用）。
+    ///
+    /// ★ 为什么要显示而不是留空：本项目既定诉求是「不看说明书也能用」。
+    ///   一个空的、禁用的框只告诉人「这里不能改」，不告诉人「不改时是多少」——
+    ///   而**看不见又在起作用的量是安静失败的温床**（本页自己的原话）。
+    ///
+    /// 规则出自 <see cref="DesignSpec.RingRadiiOf"/> 与 <see cref="DesignSpec.RingMulOuter"/>，
+    /// 这里**只镜像不另立**；两边若漂开，门会红（RingShapeInputTests）。
+    /// </summary>
+    private void SyncRingShape()
+    {
+        bool custom = _ringShapeCustom.Checked;
+        bool old = _suppressAuto; _suppressAuto = true;
+        try
+        {
+            for (int j = 0; j < 4; j++)
+            {
+                _ringR1[j].Enabled = _ringR2[j].Enabled = _ringT2[j].Enabled = custom;
+                if (custom) continue;
+                decimal C(double v, NumericUpDown n) => Math.Clamp((decimal)v, n.Minimum, n.Maximum);
+                double w = (double)_ringW.Value, t1 = (double)_ringMul[j].Value;
+                _ringR1[j].Value = C(w, _ringR1[j]);
+                _ringR2[j].Value = C(2 * w, _ringR2[j]);
+                _ringT2[j].Value = C(1 + (t1 - 1) * 0.4, _ringT2[j]);
+            }
+        }
+        finally { _suppressAuto = old; }
+    }
+
     /// <summary>环倍率框：同上。</summary>
     private static NumericUpDown Ring() =>
         Num((decimal)StartPoint.RingMul, (decimal)SizerOptions.RingLoConst,
             (decimal)SizerOptions.RingHiConst, 0.05m, 2);
+
+    /// <summary>
+    /// 内级外扩 r₁ 框。范围取 `--monotone` **实测扫过的量程** 1→10 mm（2026-08-30），
+    /// 不是拍的数：那一段上三条判据都实测过单调，量程之外没有依据。
+    /// </summary>
+    private static NumericUpDown RingR() => Num((decimal)StartPoint.RingWidthMm, 1m, 10m, 0.5m, 1);
+
+    /// <summary>外级外扩 r₂ 框。同上，实测量程 4→16 mm。</summary>
+    private static NumericUpDown RingR2() => Num((decimal)(2 * StartPoint.RingWidthMm), 4m, 16m, 0.5m, 1);
 
     private static NumericUpDown Num(decimal v, decimal lo, decimal hi, decimal inc, int dec)
     {
@@ -1540,6 +1655,21 @@ public sealed class LineDesignPage : TabPage
             _tabIns[j].Value = C(fd.TabInsulMm[j], _tabIns[j]);
         for (int j = 0; j < 4 && j < _ringMul.Length && j < fd.RingMul.Length; j++)
             _ringMul[j].Value = C(fd.RingMul[j], _ringMul[j]);
+        // 渐变环形状：设计记录里**给了**（非 NaN）才勾自定并灌进去；
+        // 全是 NaN（现役两档都是）⇒ 不勾，SyncRingShape 会按旧规则把值显示出来。
+        bool anyRing = false;
+        for (int j = 0; j < 4; j++)
+            anyRing |= !double.IsNaN(fd.RingW1Mm[j]) || !double.IsNaN(fd.RingW2Mm[j])
+                    || !double.IsNaN(fd.RingMul2[j]);
+        _ringShapeCustom.Checked = anyRing;
+        if (anyRing)
+            for (int j = 0; j < 4; j++)
+            {
+                if (!double.IsNaN(fd.RingW1Mm[j])) _ringR1[j].Value = C(fd.RingW1Mm[j], _ringR1[j]);
+                if (!double.IsNaN(fd.RingW2Mm[j])) _ringR2[j].Value = C(fd.RingW2Mm[j], _ringR2[j]);
+                if (!double.IsNaN(fd.RingMul2[j])) _ringT2[j].Value = C(fd.RingMul2[j], _ringT2[j]);
+            }
+        SyncRingShape();
         // 定尺寸器上一次的解也一并作废 —— 否则跨档污染（换了档，旧解的旋钮还留着）
         _sizerTabIns = null; _sizerRingMul = null;
 
@@ -1842,6 +1972,15 @@ public sealed class LineDesignPage : TabPage
             d.TabInsulMm[i] = (double)_tabIns[i].Value;
         for (int i = 0; i < d.RingMul.Length && i < _ringMul.Length; i++)
             d.RingMul[i] = (double)_ringMul[i].Value;
+        // ★★★ 渐变环形状（2026-08-30）：这三个此前**没有控件**，于是被静默继承自
+        //   设计记录（`seed.Clone()` 带过来的）—— 本页那条「每一个进计算的量都有输入来源」
+        //   的规矩，剩的最后三个例外。不勾自定 ⇒ 写 NaN，模型按旧规则算（与此前逐位相同）。
+        for (int i = 0; i < 4; i++)
+        {
+            d.RingW1Mm[i] = _ringShapeCustom.Checked ? (double)_ringR1[i].Value : double.NaN;
+            d.RingW2Mm[i] = _ringShapeCustom.Checked ? (double)_ringR2[i].Value : double.NaN;
+            d.RingMul2[i] = _ringShapeCustom.Checked ? (double)_ringT2[i].Value : double.NaN;
+        }
         // 圆盘保温：本页**有**控件，接过去（BuildCase 里原来写死 20，已改成读字段）
         d.FlangeInsulated = _flIns.SelectedIndex != 0;
         d.FlangeInsulMm = d.FlangeInsulated ? (double)_flInsT.Value : 0;
