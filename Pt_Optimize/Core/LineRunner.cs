@@ -145,6 +145,20 @@ public sealed class LineCase
     // ── 网格
     public double MeshFineMm = 2.0, MeshCoarseMm = 11.0, MeshFineRadiusMm = 50.0;
 
+    /// <summary>
+    /// **内带**网格尺寸 mm（管孔 + 焊脚那一圈）。**0 = 不分内带**，与 2026-08-29 之前逐位一致。
+    ///
+    /// ★ 为什么要分（算法普查 A⑭）：此前只有一条细化带，而它的两个参数来自相反的两端 ——
+    ///   尺寸由**最小**特征（焊脚）定、范围由**最大**特征（盘径/舌长）定
+    ///   ⇒ 极细的格子被铺满整个大区域。实测 0.6 档复核 fine 收到 0.146 mm、
+    ///   细化半径约 68 mm ⇒ 约 8 万单元，**超过 maxCells 上限，跑了八小时没出数**。
+    /// </summary>
+    public double MeshInnerMm;
+
+    /// <summary>内带半径 mm（自管轴起算）。0 = 不分内带。</summary>
+    public double MeshInnerRadiusMm;
+
+
     // ── 玻璃与验证
     public double GlassInC = 1150, GlassOutMeasuredC = 1130;
 
@@ -521,6 +535,24 @@ public sealed class LineResult
         /// <summary>现场升温（温控 20 K/h）下「法兰温度 − 管温」的全程最大值 K</summary>
         public const string RampField = "· 升温期法兰−管峰值";
         public const string HeatBalance = "· 管↔法兰热收支";
+
+        // ★ 2026-08-29 补：这几条一直在输出里露面，却没有常量 ⇒ 代号对照表
+        //   （<see cref="Criteria"/>）没法从判据自己的名字派生，只能另抄一份名字。
+        //   「同一个名字两处来源」正是本仓库最常见的病，所以先补常量再建表。
+        /// <summary>④ 管强度利用率 —— 参考量（Pt 持久强度实测区间外时判不了）</summary>
+        public const string TubeStrength = "④ 管强度利用率";
+        /// <summary>· ② 法兰最高温 − 管温（整片，含舌片）—— 参考量</summary>
+        public const string FlangeTopTemp = "· ② 法兰最高温";
+        /// <summary>· 偏离本段控温点 —— 参考量（由控温点梯度决定，法兰管不着）</summary>
+        public const string SetpointDrift = "· 偏离本段控温点";
+        /// <summary>· 法兰自给率 Φ_max —— 参考量</summary>
+        public const string SelfSupply = "· 法兰自给率";
+        /// <summary>· 法兰 J_max —— 参考量（≠「· 局部热稳定」那条）</summary>
+        public const string FlangeJ = "· 法兰 J_max";
+        /// <summary>· 法兰热平衡残差 —— 参考量，应接近 0</summary>
+        public const string HeatResidual = "· 法兰热平衡残差";
+        /// <summary>· 玻璃温降 vs 实测 —— 参考量</summary>
+        public const string GlassDrop = "· 玻璃温降";
     }
 
     public ConstraintOut? Find(string keyPrefix)
@@ -1176,7 +1208,8 @@ public static class LineRunner
                 // 管孔必须跟着管外径走，否则法兰与管子对不上
                 plate!.HoleRadiusMm = holeR;
                 mesh = FlangeMesher.Build(plate, 0, c.MeshFineMm, c.MeshCoarseMm, c.MeshFineRadiusMm,
-                                          c.Base.BusbarClampLengthMm);
+                                          c.Base.BusbarClampLengthMm,
+                                          c.MeshInnerMm, c.MeshInnerRadiusMm);
             }
             else
             {
@@ -1225,7 +1258,7 @@ public static class LineRunner
 
             if (j == 0) res.MeshCells = mesh.CellCount;
             double iJoint = LineSolver.JointCurrentA(amps, j);
-            var sc = ShellCurrent.Solve(mesh, iJoint,
+            var sc = ShellCurrent.SolveFor(c, mesh, iJoint,
                         Materials.PtResistivity(c.SetpointC[Math.Min(j, n - 1)]) * 1e3,
                         c.SetpointC[Math.Min(j, n - 1)]);
 
@@ -1297,7 +1330,7 @@ public static class LineRunner
             if (c.Base.SigmaOfTCoupling)
                 for (int itSig = 0; itSig < 2; itSig++)
                 {
-                    var sc2 = ShellCurrent.Solve(mesh, iJoint,
+                    var sc2 = ShellCurrent.SolveFor(c, mesh, iJoint,
                                   Materials.PtResistivity(c.SetpointC[Math.Min(j, n - 1)]) * 1e3,
                                   c.SetpointC[Math.Min(j, n - 1)], tempC: th.T);
                     sc = sc2; th = Thermal(sc2);
@@ -1775,7 +1808,8 @@ public static class LineRunner
 
                 // 盘/舌面积按**切点**分 —— 与 DesignScreen.Extract 同一个口径，不另立标准
                 var mesh = FlangeMesher.Build(pl, 0, c.MeshFineMm, c.MeshCoarseMm,
-                                              c.MeshFineRadiusMm, c.Base.BusbarClampLengthMm);
+                                              c.MeshFineRadiusMm, c.Base.BusbarClampLengthMm,
+                                              c.MeshInnerMm, c.MeshInnerRadiusMm);
                 var sf = DesignScreen.Extract(mesh, 1000.0, 1050.0, pl.Tangent().X);
                 double tThick = double.IsNaN(pl.TabThicknessMm) ? pl.ThicknessMm : pl.TabThicknessMm;
 

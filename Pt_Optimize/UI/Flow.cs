@@ -49,9 +49,9 @@ public enum ChainId
     B分段法兰,
     /// <summary>★ 整线耦合解（LineRunner.Run）—— 判据的唯一来源，唯一可交付</summary>
     C整线耦合,
-    /// <summary>自动定厚（Sizer.Solve / FlangeAutoSizer.SolveByLevel）—— C 的外层</summary>
+    /// <summary>自动定厚（Solver.Solve / FlangeAutoSizer.SolveByLevel）—— C 的外层</summary>
     C定尺寸,
-    /// <summary>形状搜索（Sizer.Solve × N 个形状）—— C 的最外层</summary>
+    /// <summary>形状搜索（Solver.Solve × N 个形状）—— C 的最外层</summary>
     C形状搜索,
     /// <summary>升温可达性闭式快筛 —— 前置闸门，不调求解器</summary>
     D升温闸,
@@ -165,9 +165,9 @@ public static class Flow
         new(ChainId.C整线耦合, "C 整线耦合 ★", "**权威判据表**：能不能造、能不能用、要多少铂",
             "LineRunner.Run", "分钟级", true),
         new(ChainId.C定尺寸, "C′ 定尺寸", "自动调厚度，使判据过",
-            "Sizer.Solve", "更久", false),
+            "Solver.Solve", "更久", false),
         new(ChainId.C形状搜索, "C″ 形状搜索", "连盘径与舌宽一起搜，挑最轻的全过解",
-            "Sizer.Solve × N", "几十分钟", false),
+            "Solver.Solve × N", "几十分钟", false),
         new(ChainId.D升温闸, "D 升温闸", "① 空管能不能在期限内升到目标温度（闭式快筛）",
             "Insulation.CylinderLoss（闭式）", "毫秒", false),
         new(ChainId.无, "—", "不算东西：存档、载入、出图", "—", "即时", false),

@@ -944,7 +944,15 @@ public static class FlangeAutoSizer
     }
 
     /// <summary>浅拷贝算例，只换法兰几何 —— 不能直接改传入的 LineCase（界面还在用它）</summary>
-    private static LineCase CloneCase(LineCase c) => new()
+    /// <summary>
+    /// 浅拷一份 LineCase。**全程序只准有这一份**（2026-08-29 提为 public）：
+    /// <see cref="LevelSolver"/> 也要拷，各写一份就会出现
+    /// 「新加了字段，一处拷了另一处没拷」——
+    /// 而那种错误**不报错**，只是默默地用了默认值。
+    /// ⚠ 它是**逐字段手写**的：LineCase 新增字段时必须同步加到这里，
+    ///   `LineCaseCloneTests` 盯着这件事。
+    /// </summary>
+    public static LineCase CloneCase(LineCase c) => new()
     {
         TubeIdMm = c.TubeIdMm, WallMm = c.WallMm, SegLengthMm = c.SegLengthMm,
         GradeName = c.GradeName, SetpointC = c.SetpointC, HeadM = c.HeadM,
@@ -955,6 +963,7 @@ public static class FlangeAutoSizer
         ThicknessStepMm = c.ThicknessStepMm,
         MeshFineMm = c.MeshFineMm, MeshCoarseMm = c.MeshCoarseMm,
         MeshFineRadiusMm = c.MeshFineRadiusMm,
+        MeshInnerMm = c.MeshInnerMm, MeshInnerRadiusMm = c.MeshInnerRadiusMm,
         GlassInC = c.GlassInC, GlassOutMeasuredC = c.GlassOutMeasuredC,
         Base = c.Base, BaselineMassG = c.BaselineMassG, CheckRamp = c.CheckRamp
     };

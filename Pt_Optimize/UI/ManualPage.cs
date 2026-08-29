@@ -1219,6 +1219,10 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         //   活的 DesignInputs（管 J，拿不到时退回默认）、GeometryScreen 与 DesignInputs 的常数。
         var lim = new LineCase();
         var dfl = live ?? new DesignInputs();
+        // ★ 代号对照表**排在限值表之前**（2026-08-29，用户：说明书内不可以用代号说明）。
+        //   顺序有意义：读的人先知道 ③ 是什么，才谈得上看 ③ 的限值是多少。
+        //   ⚠ 表自己不含限值数字 —— 限值只有一个来源，就是紧接着的那张表。
+        sb.Append(Criteria.Html());
         sb.Append("<h3>限值的出处（每条都必须有）</h3><table class=\"nw\">" +
                   "<tr><th>判据</th><th>限值</th><th>出处</th></tr>" +
                   $"<tr><td>① 升温</td><td class=\"n\">{lim.RampHours:0} h</td><td>业主「≤ 3 天」</td></tr>" +

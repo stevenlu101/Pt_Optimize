@@ -91,19 +91,135 @@ public sealed class ShellMesh
                 else { edge[key] = c; edgeNodes[key] = (n0, n1); }
             }
         }
-        // 剩下的都是边界面
+        // ★★ 剩下的边**先做几何配对**，再论边界（2026-08-29，为局部加密铺路）。
+        //
+        //   上面那轮是**按节点索引对**配的，它只认协调网格。局部加密（四叉树）会产生
+        //   **悬挂节点**：粗单元的边是 (A,B)，两个细单元的边是 (A,M) 与 (M,B) ——
+        //   三条谁也配不上谁，于是**全被判成边界面**（B = −1）。
+        //   ⇒ **每一条加密界面都变成绝热墙。不报错，只是答案错。**
+        //     正是本项目最怕的形态，所以在写四叉树生成器之前先把这里补上。
+        //
+        //   做法：轴对齐的边按「所在直线」分组，组内按区间求重叠。
+        //   每个重叠出一个内部面，长度取**重叠段长**（部分面）——
+        //   两段部分面加起来正好铺满粗边 ⇒ **通量守恒**。
+        //   没被覆盖的残段才是真边界。
+        // 临时归因：关掉几何配对，退回「剩余边全当边界面」
+        if (DisableGeomPairing)
+        {
+            foreach (var kv in edge)
+            {
+                var (a0, a1) = edgeNodes[kv.Key];
+                AddBoundary(kv.Value, Nodes[a0], Nodes[a1], boundaryTagger);
+            }
+            return;
+        }
+        PairLeftoverEdges(edge, edgeNodes, boundaryTagger);
+    }
+
+    /// <summary>轴对齐边的几何配对容差 mm。网格坐标由累加生成，留一点浮点余量。</summary>
+    /// <summary>临时归因开关：关掉几何配对。</summary>
+    public static bool DisableGeomPairing;
+
+    private const double EdgeTolMm = 1e-7;
+
+    /// <summary>几何配对配出了几个面 —— **协调网格上应当是 0**。诊断用。</summary>
+    public int GeomPaired;
+
+    /// <summary>
+    /// 把「按节点索引配不上」的边做**几何**配对，剩下的才当边界面。
+    ///
+    /// ⚠ 自检：每条边必须满足 <b>已配长度 + 边界长度 = 边长</b>。
+    ///   对不上就说明配对逻辑漏了或重了 —— 而那会**静默**地改变通量，
+    ///   所以宁可当场炸，也不许放行。
+    /// </summary>
+    private void PairLeftoverEdges(Dictionary<(int, int), int> edge,
+                                   Dictionary<(int, int), (int n0, int n1)> edgeNodes,
+                                   Func<Vec3, int>? boundaryTagger)
+    {
+        // 收集：每条剩余边 → (单元, 是否竖直, 所在直线坐标, 区间[lo,hi], 两端点)
+        var segs = new List<(int Cell, bool Vert, double Line, double Lo, double Hi, Vec3 P0, Vec3 P1)>();
         foreach (var kv in edge)
         {
             var (n0, n1) = edgeNodes[kv.Key];
-            var mid = (Nodes[n0] + Nodes[n1]) * 0.5;
-            Faces.Add(new MeshFace
+            Vec3 p0 = Nodes[n0], p1 = Nodes[n1];
+            bool vert = Math.Abs(p0.X - p1.X) <= EdgeTolMm;
+            bool horz = Math.Abs(p0.Z - p1.Z) <= EdgeTolMm;
+            if (!vert && !horz)
             {
-                A = kv.Value, B = -1, Mid = mid,
-                Length = (Nodes[n1] - Nodes[n0]).Norm,
-                DistAB = (mid - Centroid[kv.Value]).Norm,
-                Tag = boundaryTagger?.Invoke(mid) ?? TagFree
-            });
+                // 非轴对齐边：本生成器不产生它。出现了就当边界（并保持旧行为），
+                // 但不许悄悄当成内部面。
+                AddBoundary(kv.Value, p0, p1, boundaryTagger);
+                continue;
+            }
+            double line = vert ? p0.X : p0.Z;
+            double a = vert ? p0.Z : p0.X, b = vert ? p1.Z : p1.X;
+            segs.Add((kv.Value, vert, line, Math.Min(a, b), Math.Max(a, b), p0, p1));
         }
+
+        // ★ 按「所在直线」分桶再组内扫描 —— 两两比对是 O(n²)，
+        //   3 万条边就是 10⁹ 次，实测直接把基准跑挂了（2026-08-29）。
+        //   同一条直线上的边才可能重叠 ⇒ 分桶后组内按起点排序，只比相邻的几条。
+        var byLine = new Dictionary<(bool, long), List<int>>();
+        for (int i = 0; i < segs.Count; i++)
+        {
+            var key = (segs[i].Vert, (long)Math.Round(segs[i].Line / EdgeTolMm));
+            if (!byLine.TryGetValue(key, out var lst)) byLine[key] = lst = new List<int>();
+            lst.Add(i);
+        }
+
+        var covered = new double[segs.Count];
+        foreach (var lst in byLine.Values)
+        {
+            lst.Sort((a, b) => segs[a].Lo.CompareTo(segs[b].Lo));
+            for (int ii = 0; ii < lst.Count; ii++)
+            for (int jj = ii + 1; jj < lst.Count; jj++)
+            {
+                int i = lst[ii], j = lst[jj];
+                if (segs[j].Lo >= segs[i].Hi - EdgeTolMm) break;   // 已排序 ⇒ 后面的更不可能重叠
+                var s = segs[i]; var t = segs[j];
+                if (s.Cell == t.Cell) continue;
+                double lo = Math.Max(s.Lo, t.Lo), hi = Math.Min(s.Hi, t.Hi);
+                double ov = hi - lo;
+                if (ov <= EdgeTolMm) continue;              // 只碰到端点不算面
+
+                double mc = 0.5 * (lo + hi);
+                var mid = s.Vert ? new Vec3(s.Line, s.P0.Y, mc) : new Vec3(mc, s.P0.Y, s.Line);
+                Faces.Add(new MeshFace
+                {
+                    A = s.Cell, B = t.Cell, Mid = mid, Length = ov,
+                    DistAB = (Centroid[t.Cell] - Centroid[s.Cell]).Norm,
+                    Tag = TagInterior
+                });
+                covered[i] += ov; covered[j] += ov;
+                GeomPaired++;   // 诊断：协调网格上这个数应当是 0
+            }
+        }
+
+        for (int i = 0; i < segs.Count; i++)
+        {
+            var s = segs[i];
+            double full = s.Hi - s.Lo;
+            double rest = full - covered[i];
+            if (rest > full + EdgeTolMm || covered[i] > full + EdgeTolMm)
+                throw new InvalidOperationException(
+                    $"面拓扑自检失败：单元 {s.Cell} 的一条边被配了 {covered[i]:0.######} mm，"
+                    + $"而边长只有 {full:0.######} mm —— 配重了。"
+                    + "重配会**静默**地放大通量，不许放行。");
+            if (rest > EdgeTolMm) AddBoundary(s.Cell, s.P0, s.P1, boundaryTagger, rest);
+        }
+    }
+
+    private void AddBoundary(int cell, Vec3 p0, Vec3 p1,
+                             Func<Vec3, int>? boundaryTagger, double? lengthOverride = null)
+    {
+        var mid = (p0 + p1) * 0.5;
+        Faces.Add(new MeshFace
+        {
+            A = cell, B = -1, Mid = mid,
+            Length = lengthOverride ?? (p1 - p0).Norm,
+            DistAB = (mid - Centroid[cell]).Norm,
+            Tag = boundaryTagger?.Invoke(mid) ?? TagFree
+        });
     }
 
     public (int interior, int boundary) FaceCounts()
@@ -165,25 +281,72 @@ public static class FlangeMesher
     /// 变步长坐标序列：[fineFrom, fineTo] 内步长 hFine，之外渐变到 hCoarse。
     /// 相邻步长比限制在 growth 以内，避免突变导致的格式精度损失。
     /// </summary>
+    /// <summary>
+    /// **一条细化带**：区间 [<see cref="From"/>, <see cref="To"/>] 上要求网格尺寸 <see cref="H"/>。
+    /// 多条带可以重叠，重叠处取**最细**的那条。
+    /// </summary>
+    public readonly record struct Band(double From, double To, double H);
+
+    /// <summary>
+    /// 单带版（保持旧调用不变）。
+    /// </summary>
     public static double[] GradedAxis(double min, double max,
                                       double fineFrom, double fineTo,
                                       double hFine, double hCoarse, double growth = 1.3)
+        => GradedAxis(min, max, new[] { new Band(fineFrom, fineTo, hFine) }, hCoarse, growth);
+
+    /// <summary>
+    /// **多带渐变轴**（2026-08-29，算法普查 A⑭）。
+    ///
+    /// ══ 病在哪
+    ///
+    /// 此前只有**一条**细化带，而它的两个参数来自**相反的两端**：
+    /// <code>
+    ///   尺寸 hFine     = min(舌根圆角, 环宽, 焊脚) / 3     ← 由**最小**特征定
+    ///   范围 fineRadius = max(盘半径, 舌长×0.35) + 10     ← 由**最大**特征定
+    /// </code>
+    /// ⇒ **由焊脚（最小）定出的极细尺寸，被铺满由盘径/舌长（最大）定出的整个大区域。**
+    ///
+    /// 实测（0.6 档网格无关复核，2026-08-29）：fine 收到 <b>0.146 mm</b>，
+    /// 而细化半径约 <b>68 mm</b> —— 68 mm 的区域全用 0.146 mm 的格子，
+    /// 估算约 8 万单元，**超过 maxCells = 40000 的上限**；实跑到八小时还没出数。
+    /// 而焊脚只在管孔外一圈几毫米宽的地方。
+    ///
+    /// ⇒ 用户 2026-08-29 提的正是这件事：「网格划分只对焊脚细分可以吗？
+    ///   衔接焊脚处往外的网格逐渐放大」。**渐变本来就有**（见 growth 与提前减速），
+    ///   缺的是**按特征分区**：每个特征只在**它自己所在的区域**要求它的网格。
+    ///
+    /// ⚠ 安全线：<b>②″ 的峰位是「输出」不是「输入」</b> —— 它可能落在孔边，
+    ///   也可能落在舌根凹角。峰若跑进粗区就会被算漏，**而算漏不会报错**，
+    ///   只会给一个偏低的 ②″。所以细化带必须覆盖所有已知峰位候选，
+    ///   并由 <see cref="MeshAdapt.PeakInsideFine"/> 事后核对峰位落在哪。
+    /// </summary>
+    public static double[] GradedAxis(double min, double max,
+                                      IReadOnlyList<Band> bands, double hCoarse,
+                                      double growth = 1.3)
     {
+        var bs = (bands ?? Array.Empty<Band>()).Where(b => b.H > 1e-9 && b.To > b.From).ToArray();
         var xs = new List<double> { min };
         double x = min, hPrev = hCoarse;
         while (x < max - 1e-9)
         {
-            bool inFine = x >= fineFrom - 1e-9 && x <= fineTo + 1e-9;
-            double hTarget = inFine ? hFine : hCoarse;
-            // 限制相邻步长比
+            // 落在哪几条带里就取**最细**的那条；都不落就取远场
+            double hTarget = hCoarse;
+            foreach (var b in bs)
+                if (x >= b.From - 1e-9 && x <= b.To + 1e-9) hTarget = Math.Min(hTarget, b.H);
+
             double h = Math.Clamp(hTarget, hPrev / growth, hPrev * growth);
-            // 提前减速：接近细化区时逐步收窄
-            if (!inFine && x < fineFrom)
-            {
-                double gap = fineFrom - x;
-                h = Math.Min(h, Math.Max(hFine, gap * (growth - 1) + hFine));
-            }
+
+            // 提前减速：朝**前方最近的那条带**收窄，免得一步跨进细区造成突变
+            foreach (var b in bs)
+                if (x < b.From)
+                {
+                    double gap = b.From - x;
+                    h = Math.Min(h, Math.Max(b.H, gap * (growth - 1) + b.H));
+                }
+
             h = Math.Min(h, max - x);
+            if (h <= 1e-12) break;              // 防呆：步长塌成 0 会死循环
             x += h; hPrev = h;
             xs.Add(x);
         }
@@ -198,14 +361,47 @@ public static class FlangeMesher
     /// <param name="fineRadius">细化半径 mm（自管轴起算）</param>
     /// <param name="clampLenMm">铜排压接长度 mm（沿舌片方向的定温边界深度）。
     /// 早先硬编码 3 mm —— 那是**数值边界不是设计值**，见 DesignInputs.BusbarClampLengthMm</param>
+    /// <param name="hInner">**内带**（管孔 + 焊脚那一圈）网格尺寸 mm。
+    /// ≤ 0 = 不分内带，退回单带（与 2026-08-29 之前逐位一致）。见 <see cref="Band"/> 的说明。</param>
+    /// <param name="innerRadius">内带半径 mm（自管轴起算）。</param>
     public static ShellMesh Build(FlangePlate g, double yPlane = 0,
                                   double hFine = 2.0, double hCoarse = 11.0,
-                                  double fineRadius = 45.0, double clampLenMm = 3.0)
+                                  double fineRadius = 45.0, double clampLenMm = 3.0,
+                                  double hInner = 0, double innerRadius = 0)
     {
         var m = new ShellMesh();
-        double[] xs = GradedAxis(g.TabTipXMm, g.DiscRadiusMm, -fineRadius, fineRadius, hFine, hCoarse);
+        // ★ 按特征分区（A⑭）：内带只覆盖孔+焊脚那一圈，中带覆盖盘与舌根。
+        //   重叠处取最细 ⇒ 内带自然嵌在中带里。
+        // ★ **逐轴分别定带**（2026-08-29）：x 与 z 的细区不必同宽。
+        //   z：板在 z 上只到 ±盘半径，而细化半径通常更大 ⇒ 整条 z 轴本来就全是细的，
+        //      收窄没有收益（实测 R30 / 细化半径 59 ⇒ ±30 全包）。
+        //   x：舌片一路伸到 TabTipX（实测 −140），而细化半径来自
+        //      max(盘半径, 舌长×0.35) —— 舌长那一项把细区拉到 −59，
+        //      其中 [−59, −46] 那段是**舌片这条简单窄条**，不需要那个分辨率。
+        //      ②″ 的峰候选在孔边与**舌根**（x ≈ −盘半径），收到「盘半径 + 2×圆角 + 余量」就够。
+        //   ⚠ 实测这一条只省约 **15 %**（89 mm → 76 mm 的细区）—— 记实数，不吹。
+        //     真正的大头是「焊脚该不该算几何特征」，见 MeshVerify.RequiredMeshFor。
+        // ★★ **逐轴收窄已撤销**（2026-08-29 归因之后的决定）。
+        //   它本身没错：x 细区 [−59,+30] 收到 [−46,+30]，单元少约 15 %。
+        //   但实测它把导航网格的 ③ 挪了 **4 K**（0.8 档 4.720 → 8.729），
+        //   ⇒ 四档回归基准全部要重填。
+        //   而真正的速度收益（电位场换 CG，实测 36×）已经拿到手 ——
+        //   **15 % 不值得动全部基准**。
+        //   ⚠ 归因过程里我错过一次：第一次测它得出「不是它」，原因是**跑了旧 exe**
+        //     （只 grep `error CS`，而「exe 被占、拷贝失败」报的是 MSB3027，恰好被滤掉）。
+        //     ⇒ 编译一律查全部 error 并核对 exe 时间戳。
+        double xFineLo = -fineRadius;
+        xFineLo = Math.Max(xFineLo, -fineRadius);        // 不放大，只收窄
+        var xBands = new List<Band> { new(xFineLo, fineRadius, hFine) };
+        var zBands = new List<Band> { new(-fineRadius, fineRadius, hFine) };
+        if (hInner > 1e-9 && innerRadius > 1e-9)
+        {
+            xBands.Add(new Band(-innerRadius, innerRadius, hInner));
+            zBands.Add(new Band(-innerRadius, innerRadius, hInner));
+        }
+        double[] xs = GradedAxis(g.TabTipXMm, g.DiscRadiusMm, xBands, hCoarse);
         double zMax = g.DiscRadiusMm;
-        double[] zs = GradedAxis(-zMax, zMax, -fineRadius, fineRadius, hFine, hCoarse);
+        double[] zs = GradedAxis(-zMax, zMax, zBands, hCoarse);
 
         // 节点网格（含全部候选点；未被单元引用的节点无害，仅占内存）
         int nx = xs.Length, nz = zs.Length;

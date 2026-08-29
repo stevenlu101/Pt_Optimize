@@ -1,0 +1,212 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+
+namespace PtOptimize.Core;
+
+/// <summary>
+/// **判据代号对照表**（2026-08-29，用户：「①②′②″ 这种代号要有对照表，
+/// APP 内任何一处讯息与 UI 说明书内**不可以用代号说明**」）。
+///
+/// ══ 病在哪
+///
+/// 代号是**给写的人省事的**，不是给读的人用的。实测扫描全仓：
+/// **197 行在判据语境里用了代号，其中 155 行没带自己的名字**。
+/// 最大一类是**表头**（`②′W`、`②″K`、`③K`）—— 那里确实放不下全名，
+/// 但那正是最需要图例的地方：一张全是代号的表，读的人得去别处查才看得懂，
+/// 而「得去别处查」在现场就等于「不查，猜」。
+///
+/// ══ 单一来源
+///
+/// ★ 本表**不另写一份名字**。判据自己的常量已经是「代号 + 名字」
+/// （<c>LineResult.Key.FlangeDip == "③ 法兰增量温降"</c>），本表从它**拆**出来。
+/// 判据改名 ⇒ 对照表跟着改，不可能脱节。
+/// 这也是 2026-08-29 先给 ④ 等几条补上 <c>Key</c> 常量的原因 ——
+/// 没有常量就只能抄一份名字，而「同一个名字两处来源」是本仓库最常见的病。
+///
+/// ══ **限值不在这里**
+///
+/// ⚠ 本表只给「代号 = 名字（单位，方向）」，**不给限值数字**。
+/// 限值只有一个来源：<c>LineCase</c>（判据自己带着 <c>Limit</c>）。
+/// 在这里再写一份 10 K / 5 K，就会出现「印出来的 ≠ 判的」——
+/// 本仓库为这件事栽过不止一次（见 `SingleSourceLimitTests`）。
+/// 要看限值就看判据表那一列。
+/// </summary>
+public static class Criteria
+{
+    /// <summary>一条判据在对照表里的样子。</summary>
+    public sealed class Entry
+    {
+        /// <summary>代号，如 <c>③</c>、<c>②′</c>；参考量为 <c>·</c> 开头或空。</summary>
+        public string Code = "";
+        /// <summary>去掉代号之后的名字，如「法兰增量温降」。</summary>
+        public string Name = "";
+        /// <summary>单位。</summary>
+        public string Unit = "";
+        /// <summary>方向：<c>≤</c> / <c>≥</c> / <c>&gt;</c>。</summary>
+        public string Dir = "";
+        /// <summary>一句话：它到底在管什么（给读的人，不是给写的人）。</summary>
+        public string Means = "";
+        /// <summary>true = 硬安全线（卡交付）；false = 参考量。</summary>
+        public bool Hard;
+        /// <summary>判据的完整名字（= <c>LineResult.Key</c> 里那个常量）。</summary>
+        public string Key = "";
+    }
+
+    private static Entry E(string key, string unit, string dir, string means, bool hard)
+    {
+        // 从 Key 里**拆**出代号与名字，不另写 —— 判据改名这里自动跟着改。
+        string k = key.Trim();
+        string code, name;
+        if (k.StartsWith("·", StringComparison.Ordinal))
+        {
+            name = k[1..].Trim();
+            // 「· ② 法兰最高温」这种：代号是 ·②
+            if (name.Length > 0 && "①②③④⑤⑥".Contains(name[0]))
+            {
+                code = "·" + name[0];
+                name = name[1..].Trim();
+            }
+            else
+            {
+                // ★ 没有圈号的参考量**本来就没有代号**（2026-08-29 修）。
+                //   此前它们全被塞成同一个「·」—— 那不是代号，是**分类标记**，
+                //   于是九条参考量共用一个「代号」，Of("·") 说不清指哪条。
+                //   ⇒ 空代号 = 明确表示「这条没有代号，按名字认」。
+                code = "";
+            }
+        }
+        else if (k.Length > 0 && "①②③④⑤⑥".Contains(k[0]))
+        {
+            int n = 1;
+            if (k.Length > 1 && (k[1] == '′' || k[1] == '″')) n = 2;
+            code = k[..n];
+            name = k[n..].Trim();
+        }
+        else { code = ""; name = k; }
+        return new Entry { Code = code, Name = name, Unit = unit, Dir = dir,
+                           Means = means, Hard = hard, Key = key };
+    }
+
+    /// <summary>
+    /// 全表。顺序 = 硬安全线在前、参考量在后，各自按代号。
+    /// ⚠ 「意思」那一列写的是**失效模式**，不是公式 —— 读的人要判的是「离哪个坏结果近」。
+    /// </summary>
+    public static readonly Entry[] All =
+    {
+        // ── 硬安全线（卡交付）
+        E(LineResult.Key.Ramp,      "h",     "≤", "空管升到目标温度要多久；太慢说明整线发热不够", true),
+        E(LineResult.Key.NetFlux,   "W",     ">", "热是从管子流进法兰（安全），还是倒灌进管子（**烧断的方向**）", true),
+        E(LineResult.Key.DiscTemp,  "K",     "≤", "贴着管孔那一圈盘面比管子热多少；热是孔周电流拥塞顶出来的尖峰", true),
+        E(LineResult.Key.FreeTab,   "mm",    "≥", "舌片伸出来、没被压接吃掉的那一段够不够长 —— 现场铜排装得下吗", true),
+        E(LineResult.Key.DiscCover, "mm",    "≥", "圆盘半径够不够盖住管孔加焊脚 —— 盖不住就焊不出来", true),
+        E(LineResult.Key.TubeJ,     "A/mm²", "≤", "管子自身的电流密度上限", true),
+
+        // ── 靶（列进「必须出现」名单，但不算硬安全线）
+        E(LineResult.Key.FlangeDip, "K",     "≤", "**法兰把管根拉冷了多少** —— 只算法兰的责任，不含控温点梯度", false),
+
+        // ── 参考量（印出来，不卡交付）
+        E(LineResult.Key.TubeStrength,  "—",     "≤", "管子的强度用掉了几成（Pt 持久强度实测区间外时**判不了**）", false),
+        E(LineResult.Key.FlangeTopTemp, "K",     "≤", "整片法兰（含舌片）最高温比管温高多少", false),
+        E(LineResult.Key.SetpointDrift, "K",     "≤", "管温偏离本段控温点多少 —— **由控温点梯度决定，法兰管不着**", false),
+        E(LineResult.Key.SelfSupply,    "—",     "≥", "法兰自身发热够不够养活自身散热", false),
+        E(LineResult.Key.FlangeJ,       "A/mm²", "≤", "法兰上的电流密度峰值（≠「局部热稳定」那条）", false),
+        E(LineResult.Key.FlangeStab,    "×",     "≥", "整片热稳定：散热随温度涨得比发热快多少倍", false),
+        E(LineResult.Key.LocalStab,     "×",     "≥", "局部热稳定：峰值点离热失控还有几倍余量", false),
+        E(LineResult.Key.RampField,     "K",     "≤", "现场升温过程中「法兰−管」温差的全程最大值", false),
+        E(LineResult.Key.HeatBalance,   "W",     "≈", "管子失去的热与法兰收到的热对不对得上（守恒对账）", false),
+        E(LineResult.Key.HeatResidual,  "W",     "≈", "单片法兰自己的热平衡残差，应接近 0", false),
+        E(LineResult.Key.GlassDrop,     "K",     "≤", "玻璃温降与现场实测差多少", false),
+    };
+
+    /// <summary>
+    /// 按代号找。找不到返回 null（**不要**编一个出来）。
+    ///
+    /// ⚠ 空串/空白**不是代号**，一律返回 null（2026-08-29 修）：
+    ///   没有圈号的参考量 <see cref="Entry.Code"/> 是空的，
+    ///   若不挡住，<c>Of("")</c> 会命中其中随便一条 —— 那是个说不清指哪条的答案，
+    ///   而它**看起来完全正常**。
+    /// </summary>
+    public static Entry? Of(string code) =>
+        string.IsNullOrWhiteSpace(code) ? null : All.FirstOrDefault(e => e.Code == code);
+
+    /// <summary>
+    /// 单个代号的展开，用在**散文**里：<c>③（法兰增量温降）</c>。
+    /// 找不到就原样返回代号 —— 不许编名字。
+    /// </summary>
+    public static string Explain(string code)
+    {
+        var e = Of(code);
+        return e is null ? code : $"{e.Code}（{e.Name}）";
+    }
+
+    /// <summary>
+    /// **表格图例**：用在拿代号当列头的表底下。
+    /// 只给「代号 = 名字（单位 方向）」，**不给限值数字**（限值只从判据读）。
+    /// </summary>
+    public static string Legend(params string[] codes)
+    {
+        var parts = new List<string>();
+        foreach (var c in codes)
+        {
+            var e = Of(c);
+            if (e is null) continue;
+            parts.Add($"{e.Code} = {e.Name}（{e.Unit}，{e.Dir}）");
+        }
+        return parts.Count == 0 ? "" : "　代号：" + string.Join("｜", parts) + "　限值见判据表";
+    }
+
+    /// <summary>
+    /// 说明书用的 HTML 表。**与 <see cref="Table"/> 同一份数据** ——
+    /// 文本一份、HTML 一份地各写各的，正是「同一件事两处来源」。
+    /// </summary>
+    public static string Html()
+    {
+        var sb = new StringBuilder();
+        sb.Append("<h3>判据代号对照表</h3>");
+        sb.Append("<p>代号是给写的人省事的，不是给读的人用的。");
+        sb.Append("本页任何一处出现 <b>①②′②″③④⑤⑥</b>，都回这张表查。</p>");
+        sb.Append("<p>⚠ <b>本表不含限值数字</b> —— 限值只有一个来源（判据自己）。");
+        sb.Append("要看限值请看下面「限值的出处」那张表，两张表不会打架。</p>");
+        foreach (var hard in new[] { true, false })
+        {
+            sb.Append(hard ? "<h4>硬安全线（不过就不能交付）</h4>"
+                           : "<h4>参考量 / 靶（印出来，不卡交付）</h4>");
+            // ★ 名字列显示 **APP 打印的那个字符串本身**（= LineResult.Key 的常量）。
+            //   读者要做的映射本来就是「屏幕上这行字 → 什么意思」，给拆过的名字反而对不上。
+            //   ⚠ 这也是 UiWiring 那条门要的：它反射 LineResult.Key 的每个常量，
+            //     要求该字符串**原样**出现在说明书里。拆成两列的话全名从没出现过 ⇒ 查不到。
+            sb.Append("<table class=\"nw\"><tr><th>代号</th><th>APP 里显示的名字</th><th>单位</th>"
+                    + "<th>方向</th><th>它在管什么</th></tr>");
+            foreach (var e in All.Where(x => x.Hard == hard))
+                sb.Append($"<tr><td><b>{(e.Code.Length == 0 ? "·" : e.Code)}</b></td><td>{e.Key}</td><td class=\"n\">{e.Unit}</td>"
+                        + $"<td class=\"n\">{e.Dir}</td><td>{e.Means}</td></tr>");
+            sb.Append("</table>");
+        }
+        sb.Append("<p>★ 代号里的 <b>′</b> 与 <b>″</b> 不是排版符号：");
+        sb.Append("<b>②′ 与 ②″ 是同一条安全线的两个视角</b> —— ");
+        sb.Append("②′ 从管子看热流方向，②″ 从法兰看圆盘区温度。</p>");
+        return sb.ToString();
+    }
+
+    /// <summary>完整对照表，给 `--glossary` 与说明书用。</summary>
+    public static string Table()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("=== 判据代号对照表 ===");
+        sb.AppendLine("⚠ 本表**不含限值数字** —— 限值只有一个来源：判据自己（LineCase）。");
+        sb.AppendLine("  在这里再抄一份，就会出现「印出来的 ≠ 判的」。要看限值就看判据表那一列。");
+        sb.AppendLine();
+        foreach (var group in new[] { true, false })
+        {
+            sb.AppendLine(group ? "── 硬安全线（不过就不能交付）" : "── 参考量 / 靶（印出来，不卡交付）");
+            foreach (var e in All.Where(x => x.Hard == group))
+                sb.AppendLine($"  {(e.Code.Length == 0 ? "·" : e.Code),-3} {e.Key,-22} {e.Unit,-6} {e.Dir,-2}  {e.Means}");
+            sb.AppendLine();
+        }
+        sb.AppendLine("★ 代号里的 ′ 与 ″ 不是次要标记：**②′ 与 ②″ 是同一条安全线的两个视角** ——");
+        sb.AppendLine("  ②′ 从管子看热流方向，②″ 从法兰看圆盘区温度。");
+        return sb.ToString();
+    }
+}

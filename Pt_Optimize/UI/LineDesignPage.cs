@@ -441,11 +441,13 @@ public sealed class LineDesignPage : TabPage
             "设计记录两档正是被这两条同点咬住（0.6）与全都留有余量（0.8）。\n" +
             $"实测斜率（--vary）：③ {dDip_dWall:+0.0;−0.0} K/mm　②″ +16.7 K/mm" +
             $"　管J {dJ_dWall:+0.00;−0.00}　管重 +3051 g/mm\n" +
+            Criteria.Legend("③", "②″") + Environment.NewLine +
             "⚠ ②″ 那条只在**这个工作点附近**成立：②″ 由两个竞争峰决定，符号会随构型翻。");
         Row("纤维保温 mm", _tubeIns,
             "无空间限制、不花铂 —— 但**不是免费的**：\n" +
             $"  ③ {dDip_dTubeIns:+0.0;−0.0} K/mm　②″ −3.1 K/mm" +
             $"　管J {dJ_dTubeIns:+0.00;−0.00} (A/mm²)/mm　（实测 --vary）\n" +
+            Criteria.Legend("③", "②″") + Environment.NewLine +
             "机理：保温厚 ⇒ 管散热少 ⇒ 电流小（利），但 β 变小而 ③=D/√(kAβ) 里 β 在分母（不利）。\n" +
             "现用的 5 mm 恰在拐点上 —— 这个值原本是没量过的默认值，碰巧是对的。");
 
@@ -458,7 +460,8 @@ public sealed class LineDesignPage : TabPage
             + "只有这个模式能用「◇ 搜形状」—— 形状是可搜索的自由度。");
         tipSrc.SetToolTip(_src3dm,
             "任意形状：阶梯厚度、开槽、异形轮廓，从 Rhino .3dm 读厚度场。" + Environment.NewLine
-            + "形状由图纸给定 ⇒ 判据 ⑤⑥ 拿不到解析量，会报「无法判定」（不等于通过）。");
+            + $"形状由图纸给定 ⇒ 判据 {Criteria.Explain("⑤")}{Criteria.Explain("⑥")} "
+            + "拿不到解析量，会报「无法判定」（不等于通过）。");
         _srcAnalytic.Checked = true;
         _srcAnalytic.CheckedChanged += (_, _) => SyncGeomSource();
         input.Controls.Add(_srcAnalytic); input.SetColumnSpan(_srcAnalytic, 2);
@@ -513,7 +516,8 @@ public sealed class LineDesignPage : TabPage
         Row("舌保温 mm（.3dm）", _tabIns3dm,
             "舌片自己的保温厚度。**0 = 裸舌**，那是本路径此前写死的行为。"
             + Environment.NewLine
-            + "它是守 ②′/③ 的主力旋钮：实测在设计记录几何上，0.4 mm ⇒ ③ = 5.2 K ✓，"
+            + $"它是守 {Criteria.Explain("②′")}/{Criteria.Explain("③")} 的主力旋钮："
+            + "实测在设计记录几何上，0.4 mm ⇒ ③ = 5.2 K ✓，"
             + "而 0（裸舌）⇒ 法兰 2986 °C、往管里灌 256 W。"
             + Environment.NewLine
             + "舌片裸露占端片散热的 90 % 以上 —— 一裸就净抽热、一全包又净倒灌，中间有零点。");
@@ -535,6 +539,7 @@ public sealed class LineDesignPage : TabPage
             $"  ③ {dDip_dPlate:+0.0;−0.0} K/mm　②″ −14.6 K/mm　法兰重 +264 g/mm\n" +
             "⚠ ③ 是**正号** —— 加厚会把 ③ 推向限值。「哪里热就加厚哪里」在这里是反的：\n" +
             "  加厚同时降单位面积发热（∝1/t）与增强横向导热（∝t），后者把热从管根抽走。\n" +
+            Criteria.Legend("③", "②″") + Environment.NewLine +
             "共用片承 √3 倍电流、发热 3 倍 ⇒ 必须比端片厚，四片等厚不是最优。";
         for (int i = 0; i < 4; i++) Row(names[i], _tPlate[i], tipPlate);
 
@@ -544,7 +549,8 @@ public sealed class LineDesignPage : TabPage
         // ⚠ 提示文字用 Environment.NewLine 拼，**不写反斜杠转义** ——
         //   本仓的写入链路会把转义序列改成真字符，字面量当场断掉（今天又踩了一次）。
         string tipIns =
-            "D8 里它是**免费旋钮**：主要动「从管子抽多少热」（判据 ②′ 与 ③），" + Environment.NewLine +
+            $"D8 里它是**免费旋钮**：主要动「从管子抽多少热」"
+            + $"（判据 {Criteria.Explain("②′")} 与 {Criteria.Explain("③")}），" + Environment.NewLine +
             "而对 ②″（圆盘区局部峰值）几乎不动 —— 所以它先调，板厚只做接力与省铂。" + Environment.NewLine +
             "初始值取下界 0.3（≈裸舌）：那是真实状态，不是捏的数。优化器会自己往上加。";
         for (int i = 0; i < 4; i++) Row(names[i], _tabIns[i], tipIns);
@@ -552,8 +558,12 @@ public sealed class LineDesignPage : TabPage
         Head("管孔渐变环倍率（优化变量，1.00 = 无台阶）");
         string tipRing =
             "只压**管孔周围**的局部电流拥塞（判据 ②″），作用范围 r ≤ 孔+6 mm。" + Environment.NewLine +
-            "实测 d②″/d倍率 ≈ −1.4 K/单位，上限 2.5。" + Environment.NewLine +
-            "初始值 1.00 = 无台阶（真实状态）。环到 2.5 仍压不住 ②″ 时，才轮到加厚该片板。";
+            "⚠ **这个灵敏度随形状变号，别照抄任何一个数**（2026-08-28 实测）：" + Environment.NewLine +
+            "　· 窄舌形状上曾测得 d②″/d倍率 ≈ **−1.4** K/单位（加环压得住）；" + Environment.NewLine +
+            "　· **现役宽舌形状**上实测（--monotone，0.8 档）：倍率 1.0→2.5 只把 ②″ 动了" + Environment.NewLine +
+            "　　**+0.08 K（方向相反）**，却多花 **137 g** 铂 —— 舌片宽了，孔周本来就不拥塞。" + Environment.NewLine +
+            "⇒ 用 `--monotone` 对**你手上这个形状**实测，再决定动不动它。上限 2.5。" + Environment.NewLine +
+            "初始值 1.00 = 无台阶（真实状态）。";
         for (int i = 0; i < 4; i++) Row(names[i], _ringMul[i], tipRing);
 
         Head("保温与夹持");
@@ -1111,7 +1121,7 @@ public sealed class LineDesignPage : TabPage
         _suppressAuto = true;                       // 这是程序在写控件，别再触发一轮
         _tabLen.Value = want;
         _suppressAuto = keep;
-        return $"   ★ 舌长已由 {had:0} **自动顶到 {want:0} mm** —— 低于它铜排装不上（判据⑤）。\r\n" +
+        return $"   ★ 舌长已由 {had:0} **自动顶到 {want:0} mm** —— 低于它铜排装不上（判据 {Criteria.Explain("⑤")}）。\r\n" +
                $"     舌长 = 圆盘切点 {Math.Sqrt(Math.Max(0, Math.Pow((double)_discD.Value * 0.5, 2) - Math.Pow(Math.Min((double)_tabW.Value, (double)_discD.Value * 0.5), 2))):0.0}" +
                $" + 压接段 {DesignSpec.Current.ClampLengthMm:0} + 自由段 {FreeTabMin:0}。\r\n" +
                $"     想要更短的舌片，要改的是**盘径或铜排尺寸**，不是舌长本身。\r\n";
@@ -1564,7 +1574,7 @@ public sealed class LineDesignPage : TabPage
             (fd.RingMul[0] <= 1.001
                 ? "（=1.00 即**不需要环**）\r\n"
                 : $"，r ≤ 孔+{fd.RingWidthMm:0} 与 孔+{2 * fd.RingWidthMm:0} 两级\r\n") +
-            $"   · 逐片舌保温 {DesignSpec.Fmt(fd.TabInsulMm, "0.0")} mm（守 ②′/③ 的主力旋钮）\r\n" +
+            $"   · 逐片舌保温 {DesignSpec.Fmt(fd.TabInsulMm, "0.0")} mm（守 {Criteria.Explain("②′")}/{Criteria.Explain("③")} 的主力旋钮）\r\n" +
             $"   · 压接段 {fd.ClampLengthMm:0} mm　舌根圆角 R{fd.TabFilletMm:0}　等宽舌片　管孔两面角焊缝\r\n" +
             "   ⇒ 现在点「核算整线」**就能**复现设计记录数字（与「▶ 复现设计记录」同一套几何）。\r\n" +
             "     两者的区别只剩：本按钮用页面上的水头，「复现设计记录」用内核默认值。";
@@ -1667,8 +1677,8 @@ public sealed class LineDesignPage : TabPage
     /// 与其藏起来，不如每次都摊开。
     /// </summary>
     private static string AnalyticUsedWhat(DesignSpec d) =>
-        $"   · 压接段 {d.ClampLengthMm:0} mm（决定判据⑤ 自由段与舌片有效发热长度）\r\n" +
-        $"   · 逐片舌保温 {DesignSpec.Fmt(d.TabInsulMm, "0.0")} mm（**守 ②′/③ 的主力旋钮**）\r\n" +
+        $"   · 压接段 {d.ClampLengthMm:0} mm（决定判据 {Criteria.Explain("⑤")}与舌片有效发热长度）\r\n" +
+        $"   · 逐片舌保温 {DesignSpec.Fmt(d.TabInsulMm, "0.0")} mm（**守 {Criteria.Explain("②′")}/{Criteria.Explain("③")} 的主力旋钮**）\r\n" +
         $"   · 管孔渐变环 ×{DesignSpec.Fmt(d.RingMul, "0.00")}" +
         (d.RingMul[0] <= 1.001 ? "（=1.00 即不需要环）" : $"，环宽 {d.RingWidthMm:0} mm") + "\r\n" +
         $"   · 舌根圆角 R{d.TabFilletMm:0}　等宽舌片　管孔两面角焊缝（焊脚 = max(板厚, 壁厚)）\r\n" +
@@ -1948,9 +1958,9 @@ public sealed class LineDesignPage : TabPage
                     if (R < minDisc - 1e-9)
                     {
                         done += screenRounds; _prog.Value = Math.Min(_prog.Maximum, done);
-                        Note($"跳过 盘Ø{2 * R:0}（判据⑥ 早筛）");
+                        Note($"跳过 盘Ø{2 * R:0}（判据 {Criteria.Explain("⑥")} 早筛）");
                         _out.AppendText($"{2 * R:0}\t—\t—\t—\t" +
-                            $"跳过：管壁 {(double)_wall.Value:0.0} 时盘半径至少要 {minDisc:0.0}（判据⑥）\r\n");
+                            $"跳过：管壁 {(double)_wall.Value:0.0} 时盘半径至少要 {minDisc:0.0}（判据 {Criteria.Explain("⑥")}）\r\n");
                         return;
                     }
                     var seed = PageToDesignSpec();
@@ -1960,15 +1970,19 @@ public sealed class LineDesignPage : TabPage
                                        + seed.ClampLengthMm + FreeTabMin;
                     string tag = $"盘Ø{2 * R:0}／舌宽{2 * hw:0}";
                     int baseDone = done;
+                    int seenRound = 0;
                     var prog2 = new Progress<string>(s =>
                     {
-                        // Sizer 每轮吐一行；用行首的轮号推进度条
-                        if (s.Length > 4 && int.TryParse(s.AsSpan(0, 4).Trim(), out int rd))
-                            _prog.Value = Math.Min(_prog.Maximum, baseDone + rd);
+                        // Solver 每轮吐「第 N 轮…」；数它推进度条
+                        if (s.StartsWith("第", StringComparison.Ordinal)) seenRound++;
+                        _prog.Value = Math.Min(_prog.Maximum, baseDone + seenRound);
                         Note($"{tag}　" + s.Split('\n')[0]);
                     });
-                    var sr = await Task.Run(() => Sizer.Solve(seed, _base,
-                                 new SizerOptions { MaxRounds = screenRounds }, prog2, ct), ct);
+                    // ★ 粗筛走 **Solver**（求根）而不是 Sizer（搜索）。
+                    //   ⚠ 粗筛不开第二遍（FineMm = 0）：它只负责**给方向**，
+                    //     胜出的那一个才做细网格求根（见下面「精算」）。
+                    var sr = await Task.Run(() => Solver.Solve(seed, _base,
+                                 new SolverOptions { MaxRounds = screenRounds }, prog2, ct), ct);
                     done = baseDone + screenRounds;
                     _prog.Value = Math.Min(_prog.Maximum, done);
                     Note($"{tag} 已完成　{(double.IsNaN(sr.MassG) ? "无解" : sr.MassG.ToString("0") + " g")}");
@@ -1980,7 +1994,7 @@ public sealed class LineDesignPage : TabPage
                         $"\t{(sr.Feasible ? "✓ " : "")}{sr.Message}" +
                         // ★ 粗筛只跑 SearchScreenRounds（16）轮，比 CLI 的 40 更容易被截断；
                         //   截断了却不说，就会被读成「这个形状不行」（2026-08-25）。
-                        (sr.HitRoundCap ? $"（⚠ {sr.StopWhy}）" : "") + "\r\n");
+                        (sr.HitBound ? $"（⚠ {sr.StopWhy}）" : "") + "\r\n");
             }
 
 
@@ -2094,12 +2108,19 @@ public sealed class LineDesignPage : TabPage
             }
 
             Note("精算胜出形状…");
-            var fin = await Task.Run(() => Sizer.Solve(win.d, _base,
-                          new SizerOptions { MaxRounds = finalRounds },
+            // ★★ 精算走 **Solver 两遍**：第一遍导航网格定位，
+            //   第二遍在**判据所在的那张网格**上重新求根（A⑬）。
+            //   否则给出的是「粗网格上的刚好」——实测 ③ 在两张网格上差 **2.03 倍**。
+            //   网格该多细与复核同一个来源（MeshVerify.RequiredMeshFor）。
+            var (finFine, finFineR) = MeshVerify.RequiredMeshFor(win.d);
+            int finRound = 0;
+            var fin = await Task.Run(() => Solver.Solve(win.d, _base,
+                          new SolverOptions { MaxRounds = finalRounds,
+                                              FineMm = finFine, FineRadiusMm = finFineR },
                           new Progress<string>(s =>
                           {
-                              if (s.Length > 4 && int.TryParse(s.AsSpan(0, 4).Trim(), out int rd))
-                                  _prog.Value = Math.Min(_prog.Maximum, done + rd);
+                              if (s.StartsWith("第", StringComparison.Ordinal)) finRound++;
+                              _prog.Value = Math.Min(_prog.Maximum, done + finRound);
                               Note("精算　" + s.Split('\n')[0]);
                           }), ct), ct);
             _prog.Value = _prog.Maximum;
@@ -2116,6 +2137,15 @@ public sealed class LineDesignPage : TabPage
             // ★ 统一入口（见 AdoptSolvedDesign）：此前这里只写 _last ⇒
             //   舌保温/环倍率丢掉、状态没发布，与「自动定厚」是同一个病的第三例。
             AdoptSolvedDesign(fin.Design, fin.Best);
+
+            // ★ 第二遍做没做，**必须当场说** —— 本项目的错误形态是
+            //   「看着正常的错数」：只在导航网格上成立的解，
+            //   数字长得和可交付的解一模一样。
+            _out.AppendText(Environment.NewLine + (fin.FineRefined
+                ? $"   ✓ 已做**第二遍细网格求根**（{fin.FineMmUsed:0.000} mm）"
+                  + "—— 根是在**判据所在的那张网格**上求的。"
+                : "   ⚠ **没做第二遍** ⇒ 这个解只在导航网格上成立，**不可交付**。")
+                + Environment.NewLine);
 
             // 形状体检：搜出来的赢家也要说清楚它好在哪、代价在哪
             _out.AppendText("\r\n" + ShapeReview.Build(fin.Design, fin.Best,
@@ -2216,7 +2246,7 @@ public sealed class LineDesignPage : TabPage
                 // ★★★ .3dm 模式**没有分级**时必须**当场拒绝**，不许落进下面的 D8
                 //   （2026-08-21 用户看出来的）。原来这里是静默回退，后果不是
                 //   「换了个算法」，是**算了另一个零件**：
-                //     · D8 走 `Sizer.Solve(PageToDesignSpec(), …)`，
+                //     · D8 走 `Solver.Solve(PageToDesignSpec(), …)`（求根，2026-08-29 从 Sizer 换过来），
                 //       上面刚从 .3dm 造好的 `lc` **一眼都没看** ⇒ 图纸被静默丢弃；
                 //     · 盘径/舌长/舌半宽在 .3dm 模式下是**禁用**的，里面是上次的残值 ——
                 //       D8 拿这组残值当几何去优化；
@@ -2301,8 +2331,11 @@ public sealed class LineDesignPage : TabPage
                     //   把 ②′ 往负里推（热倒灌进管 = 烧断机理），且它自己管不到 ②′。
                     //   D8 用舌保温守抽热窗口、环倍率守 ②″、板厚只做接力与省铂。
                     var seedD8 = PageToDesignSpec();
-                    var srD8 = await Task.Run(() => Sizer.Solve(seedD8, _base,
-                                   new SizerOptions { MaxRounds = 40 }, prog, ct), ct);
+                    // ★ 改走 **Solver**（求根，与初值无关）。Sizer 是搜索，必须有起点。
+                    //   ⚠ 这里**不开第二遍**（FineMm = 0）：按钮要等得起。
+                    //     结果只在导航网格上成立，下面会当场说出来。
+                    var srD8 = await Task.Run(() => Solver.Solve(seedD8, _base,
+                                   new SolverOptions { MaxRounds = 40 }, prog, ct), ct);
                     _suppressAuto = true;
                     for (int i = 0; i < _tPlate.Length && i < srD8.Design.TabThickMm.Length; i++)
                         _tPlate[i].Value = (decimal)Math.Clamp(srD8.Design.TabThickMm[i], 0.1, 8.0);
@@ -2314,6 +2347,11 @@ public sealed class LineDesignPage : TabPage
                     //   实测：定尺寸 3569 g 全过 → 重解 ②′ = −9.32 不过 → 再定尺寸 3565 g 全过 → …
                     //   带回来之后本页承载的就是 D8 那个**完整设计**，而 ③ 页与 D8 用的是
                     //   **同一个几何构造器**（UiWiring §16 逐字段钉着）⇒ 重解会复现这张表，路径收得了尾。
+                    if (!srD8.FineRefined)
+                        _out.AppendText(Environment.NewLine
+                            + "   ⚠ 本次**只在导航网格上求根**：实测 ③（法兰增量温降）"
+                            + "在导航与细网格上差 **2.03 倍**，所以这个解**未经复核、不可直接交付**。"
+                            + "要可交付请跑「搜形状」（它的精算会做第二遍）。" + Environment.NewLine);
                     AdoptSolvedDesign(srD8.Design, srD8.Best);   // 统一入口
                     // ★★★★★ 同上：必须发布，否则提示与门禁读的是冻住的旧解（见上一分支的长注释）。
                     //

@@ -347,7 +347,16 @@ public class DesignInputs
                  "而 ②′/②″/铂重**逐位不变**。　" +
                  "⇒ 「历史 0.8 档在算得准的网格上不合格」这个结论是**判据 bug**，不是物理。　" +
                  "关掉它（--basetol-legacy）只用于复现历史数字，不得用于交付。")]
-    public bool BaselineTolAmplified { get; set; } = true;
+    public bool BaselineTolAmplified { get; set; } = true;
+
+    [Category("6 C 整线 — 法兰边界"), DisplayName("电位场用旧的 Gauss–Seidel"),
+     Description("★ 只为**配对对照**（2026-08-29）。　" +
+                 "电位场已改用 **CG + Jacobi 预条件**：旧的 Gauss–Seidel 在泊松型问题上" +
+                 "迭代次数 ~ 条件数 ~ h⁻² ~ n ⇒ 总成本 ~ n²；实测单元 6.4× 而每轮耗时 96×。　" +
+                 "而且旧解的**收敛判据拿的是「步长」不是残差** —— 与基线耦合环、" +
+                 "CoupledSolver 那两处同一个错，慢收敛时步长很小而残差很大。　" +
+                 "⚠ 打开只用于搞清楚「哪一改动把 ③ 改了」，**不得用于交付**。")]
+    public bool LinearGaussSeidel { get; set; } = false;
 
     [Category("6 C 整线 — 法兰边界"), DisplayName("电流场按 σ(T) 重解"),
      Description("★ 第一性原理开关（2026-08-28）。　" +

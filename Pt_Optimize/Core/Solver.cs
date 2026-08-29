@@ -171,11 +171,15 @@ public static class Solver
         //     （第一遍本身与初值无关，第二遍是它的确定性函数）。
         bool Rounds(SolverOptions o, string tag)
         {
+            // 细网格那一遍才转内层进度：导航网格单次几秒，转了只是噪音。
+            var inner = o.FineMm > 0
+                      ? new ThrottledProgress(progress, 20, $"     · {o.FineMm:0.000} mm ")
+                      : null;
             Log($"── {tag}" + (o.FineMm > 0 ? $"（细网格 {o.FineMm:0.000} mm）" : "（导航网格）"));
             for (int round = 1; round <= o.MaxRounds; round++)
             {
                 cancel.ThrowIfCancellationRequested();
-                last = Eval(d, baseIn, o, res, cancel);
+                last = Eval(d, baseIn, o, res, cancel, inner);
                 if (last is null) { res.StopWhy = "场解不收敛，判不了"; break; }
 
                 double mass = MassOf(last);
@@ -226,7 +230,7 @@ public static class Solver
                 bool bad = false;
                 foreach (var (j, knob, key) in todo)
                 {
-                    var (ok, why) = RaiseUntil(d, baseIn, o, j, knob, key, dipMax, discMax, res, Log, cancel);
+                    var (ok, why) = RaiseUntil(d, baseIn, o, j, knob, key, dipMax, discMax, res, Log, cancel, inner);
                     if (!ok) { res.StopWhy = why; res.HitBound = true; Log("  ✗ " + why); bad = true; break; }
                 }
                 if (bad) break;
@@ -266,13 +270,14 @@ public static class Solver
     /// </summary>
     private static (bool Ok, string Why) RaiseUntil(
         DesignSpec d, DesignInputs baseIn, SolverOptions opt, int j, Knob knob, string key,
-        double dipMax, double discMax, SolverResult res, Action<string> Log, CancellationToken cancel)
+        double dipMax, double discMax, SolverResult res, Action<string> Log, CancellationToken cancel,
+        IProgress<string>? inner = null)
     {
         double lo = Get(d, knob, j);
         double hi = HiOf(opt, knob);
         string nm = $"片{j} {KnobName(knob)}";
 
-        double before = PlateSlack(Eval(d, baseIn, opt, res, cancel), key, j, dipMax, discMax);
+        double before = PlateSlack(Eval(d, baseIn, opt, res, cancel, inner), key, j, dipMax, discMax);
 
         // ★ 上一片抬完可能已经把这一片捎带治好了 —— 那就**不抬**（最小性）
         if (before >= 0)
@@ -285,7 +290,7 @@ public static class Solver
             return (false, $"**{nm} 已在上界 {hi:0.000}**，「{key}」仍不过 ⇒ 这组输入不可行（是证明，不是搜索失败）");
 
         Set(d, knob, j, hi);
-        double after = PlateSlack(Eval(d, baseIn, opt, res, cancel), key, j, dipMax, discMax);
+        double after = PlateSlack(Eval(d, baseIn, opt, res, cancel, inner), key, j, dipMax, discMax);
 
         // ★ 前提自检：抬到底也没让这一片的判据变好 ⇒ 这条分派对这一片是错的，**不许假装解出来**
         if (!(after > before + 1e-9))
@@ -309,7 +314,7 @@ public static class Solver
             cancel.ThrowIfCancellationRequested();
             double mid = 0.5 * (lo + hi);
             Set(d, knob, j, mid);
-            if (PlateSlack(Eval(d, baseIn, opt, res, cancel), key, j, dipMax, discMax) >= 0) hi = mid; else lo = mid;
+            if (PlateSlack(Eval(d, baseIn, opt, res, cancel, inner), key, j, dipMax, discMax) >= 0) hi = mid; else lo = mid;
         }
 
         // ★ 量化在**解之内**，不在解之后（算法普查 A⑤）。
@@ -349,7 +354,8 @@ public static class Solver
     /// （见类注释 A⑬：根的位置随网格移动），不许由别处悄悄决定。
     /// </summary>
     private static LineResult? Eval(DesignSpec d, DesignInputs baseIn, SolverOptions o,
-                                    SolverResult res, CancellationToken cancel)
+                                    SolverResult res, CancellationToken cancel,
+                                    IProgress<string>? inner = null)
     {
         try
         {
@@ -359,7 +365,9 @@ public static class Solver
                 lc.MeshFineMm = o.FineMm;
                 if (o.FineRadiusMm > 0) lc.MeshFineRadiusMm = o.FineRadiusMm;
             }
-            var r = LineRunner.Run(lc, null, cancel);
+            // ★ 细网格那一遍单次可能跑 ~900 s；不转内层进度就是几十分钟静默，
+            //   看不出「慢」和「挂了」的区别（用户 2026-08-29）。
+            var r = LineRunner.Run(lc, inner, cancel);
             res.Solves++;
             return r.Ok ? r : null;
         }

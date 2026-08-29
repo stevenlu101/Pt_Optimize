@@ -59,6 +59,38 @@ public static class MeshAdapt
         return fs.Min() / CellsPerFeature;
     }
 
+    /// <summary>
+    /// **内带半径** mm（算法普查 A⑭）：孔 + 焊脚那一圈，加一点余量。
+    ///
+    /// 只有这一圈需要「按焊脚定的」那种极细网格；此前它被铺满整个细化区
+    /// （范围由盘径/舌长定），于是最小特征的尺寸 × 最大特征的范围 —— 单元数爆掉。
+    /// </summary>
+    public static double InnerRadiusFor(double holeRadiusMm, double weldLegMm, double marginMm = 3.0)
+    {
+        if (!(holeRadiusMm > 0))
+            throw new ArgumentOutOfRangeException(nameof(holeRadiusMm),
+                "孔半径必须为正 —— 内带是**绕着孔**的，没有孔就没有内带。");
+        return holeRadiusMm + 2.0 * Math.Max(0, weldLegMm) + Math.Max(0, marginMm);
+    }
+
+    /// <summary>
+    /// ★★ **峰位落在哪** —— 分区之后必须核对的一条安全线。
+    ///
+    /// ②″ 的峰位是**输出**不是输入：它可能落在孔边，也可能落在舌根凹角。
+    /// 峰若跑进粗区就会被算漏，**而算漏不会报错**，只会给一个偏低的 ②″ ——
+    /// 正是本项目最怕的形态。
+    ///
+    /// 返回 null = 峰在细区里，没问题；否则返回**该原样呈现给人**的一句话。
+    /// </summary>
+    public static string? PeakVerdict(double peakRadiusMm, double innerRadiusMm, double fineRadiusMm)
+    {
+        if (double.IsNaN(peakRadiusMm)) return null;          // 没峰位可查，不编
+        if (peakRadiusMm <= fineRadiusMm + 1e-9) return null; // 在细区（含中带）里
+        return $"★★ **②″ 的峰落在粗区**（峰位 r={peakRadiusMm:0.0} mm > 细化半径 {fineRadiusMm:0.0} mm）"
+             + " ⇒ **这次的 ②″ 不算数**：粗网格分辨不出那个尖峰，报出来的值会偏低。"
+             + $"（内带半径 {innerRadiusMm:0.0} mm）⇒ 请把细化半径放大到覆盖峰位再复核。";
+    }
+
     /// <summary>某个特征在给定网格上跨几格（&lt; 1 就是看不出来）。</summary>
     public static double CellsAcross(double featureMm, double fineMm) =>
         fineMm > 1e-12 ? featureMm / fineMm : double.PositiveInfinity;

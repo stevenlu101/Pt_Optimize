@@ -186,11 +186,19 @@ internal static class Program
                 Console.WriteLine("⚠ --sigmat：电流场按 **σ(T)** 重解（冷区更导电）。"
                     + "默认是**关**的 —— 本次结果与设计记录**不可直接比较**。");
             }
+            if (args.Contains("--nogeompair")) ShellMesh.DisableGeomPairing = true;
+            if (args.Contains("--gslinear"))
+            {
+                p.LinearGaussSeidel = true;
+                Console.WriteLine("⚠ --gslinear：电位场用**旧的 Gauss–Seidel**（判据是步长）。"
+                    + "只用于配对对照，**不得用于交付**。");
+            }
             if (args.Contains("--basetol-legacy"))
             {
                 p.BaselineTolAmplified = false;
                 Console.WriteLine("⚠ --basetol-legacy：基线收敛判据退回**历史口径**（欠松弛步直接比容差，没乘放大）。"
-                    + "只用于复现历史数字，**不得用于交付**。本次 ③ 会偏高约 0.5–1.0 K。");
+                    + "只用于复现历史数字，**不得用于交付**。本次 "
+                    + Criteria.Explain("③") + " 会偏高约 0.5–1.0 K。");
             }
             else if (args.Contains("--basetol"))
             {
@@ -198,7 +206,8 @@ internal static class Program
                 //   静默接受一个不再有作用的旗标，正是「安静失败」的标准形态 ——
                 //   跑的人会以为自己开启了什么，其实什么也没发生。
                 throw new ArgumentException(
-                    "--basetol 已于 2026-08-28 **成为默认**（配对实测：细网格 ③ 10.539→9.572，判决翻转）。"
+                    "--basetol 已于 2026-08-28 **成为默认**（配对实测：细网格 "
+                    + Criteria.Explain("③") + " 10.539→9.572，判决翻转）。"
                     + "去掉它即可；要复现历史数字请用 --basetol-legacy。");
             }
             if (args.Contains("--splitdraw"))
@@ -4404,17 +4413,138 @@ internal static class Program
 
                 Console.WriteLine();
                 Console.WriteLine($"── 网格无关复核：{tag}");
-                var mvv = MeshVerify.Run(dv, p, maxCells: mcV,
+                // --noweldfeature：把焊脚从「几何特征」表里拿掉做对照。
+                //   焊缝是**平滑的厚度场**不是几何边界 ⇒「3 格/特征」这条规则对它不适用。
+                //   ⚠ 默认**不改**：判据差在容差内才准改默认（见 RequiredMeshFor 的注释）。
+                // ★ 焊脚**默认不算几何特征**（2026-08-29 翻转）：它是加在 ThicknessAt 上的
+                //   平滑厚度场，不是几何边界；「3 格/特征」这条规则对它不适用。
+                //   本开关只改**阶梯从哪级起步**，不改任何给定网格上的物理 ——
+                //   守门人是收敛判据，不是起步网格。--weldfeature 退回旧口径做对照。
+                bool weldFeat = args.Contains("--weldfeature");
+                if (args.Contains("--noweldfeature"))
+                    throw new ArgumentException(
+                        "--noweldfeature 已于 2026-08-29 **成为默认**（焊脚是平滑厚度场，不是几何边界）。"
+                        + "去掉它即可；要退回旧口径请用 --weldfeature。");
+                if (weldFeat)
+                    Console.WriteLine("⚠ --weldfeature：焊脚**算几何特征**（旧口径）—— 起始网格更细、更慢。"
+                        + "只用于对照。");
+                var mvv = MeshVerify.Run(dv, p, maxCells: mcV, weldAsGeometricFeature: weldFeat,
                               progress: new SyncProgress<string>(m3 => Console.WriteLine("     · " + m3)));
                 Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"②″K",9}{"③K",9}{"合计g",9}{"用时s",8}");
                 foreach (var tv in mvv.Trace)
                     Console.WriteLine($"{tv.Fine,10:0.000}{tv.Cells,9:0}{tv.N2p,9:0.000}{tv.N2pp,9:0.000}"
                                     + $"{tv.N3,9:0.000}{tv.MassG,9:0}{tv.Sec,8:0.0}");
+                Console.WriteLine(Criteria.Legend("②′", "②″", "③"));
                 Console.WriteLine();
                 Console.WriteLine("   " + mvv.Verdict);
+                // ★ 两条安全线的结论必须印 —— 不印等于没做（A⑭）
+                if (mvv.MidBandConfirm is not null) Console.WriteLine("   " + mvv.MidBandConfirm);
+                if (mvv.PeakOutsideFine is not null) Console.WriteLine("   " + mvv.PeakOutsideFine);
                 if (mvv.Line is { } lvv && !lvv.AllOk)
                     Console.WriteLine("✗ **在算得准的网格上，这个设计不过** —— "
                         + "导航网格上的「全过」是离散误差造成的假象，不要拿它出图。");
+            }
+
+            if (args.Contains("--cgbench"))
+            {
+                // 只解**电位场**、逐网格档计时 —— CG 换 GS 的收益只在大网格上显形，
+                // 而 --judge 跑在导航网格（几百单元/片）上根本量不出来。
+                var gc = DesignSpec.Select(args);
+                var (hFeatC, radC) = MeshVerify.RequiredMeshFor(gc);
+                double weldC = Math.Max(gc.TabThickMm.Max(), gc.WallMm);
+                double innerRc = MeshAdapt.InnerRadiusFor(gc.HoleRadiusMm, weldC);
+                var plateC = gc.Plate(1, gc.DiscFloorMm(p));   // 共用片：单元最多
+                double rhoC = Materials.PtResistivity(1300);
+
+                Console.WriteLine("=== 电位场线性解：Gauss–Seidel vs CG（同一网格，只差解法）===");
+                Console.WriteLine($"用例：{gc.Name}　片1（共用片）");
+                Console.WriteLine();
+                Console.WriteLine($"{"内带mm",9}{"单元",9}{"GS轮",8}{"GS ms",9}{"CG轮",8}{"CG ms",9}{"快",8}{"V差",11}");
+
+                double hc = hFeatC;
+                for (int lv = 0; lv < 5; lv++)
+                {
+                    var mc = FlangeMesher.Build(plateC, 0, hFeatC, 11.0, radC,
+                                                p.BusbarClampLengthMm, hc, innerRc);
+                    var s1 = System.Diagnostics.Stopwatch.StartNew();
+                    var rGs = ShellCurrent.Solve(mc, 1000.0, rhoC, 1300, null, 200000, 1e-9, true);
+                    s1.Stop();
+                    var s2 = System.Diagnostics.Stopwatch.StartNew();
+                    var rCg = ShellCurrent.Solve(mc, 1000.0, rhoC, 1300, null, 200000, 1e-9, false);
+                    s2.Stop();
+                    double dv = 0;
+                    for (int i = 0; i < mc.CellCount; i++) dv = Math.Max(dv, Math.Abs(rGs.V[i] - rCg.V[i]));
+                    double sp = s2.ElapsedMilliseconds > 0
+                              ? s1.ElapsedMilliseconds / (double)s2.ElapsedMilliseconds : double.NaN;
+                    Console.WriteLine($"{hc,9:0.000}{mc.CellCount,9}{rGs.Iterations,8}{s1.ElapsedMilliseconds,9}"
+                        + $"{rCg.Iterations,8}{s2.ElapsedMilliseconds,9}{sp,7:0.#}×{dv,11:0.00e+0}");
+                    hc *= 0.5;
+                }
+                Console.WriteLine();
+                Console.WriteLine("★ 「V差」是两解的最大电位差 —— 它必须小，否则两条路算的不是同一个场。");
+                Console.WriteLine("  「快」是 GS 用时 ÷ CG 用时。理论：GS 迭代 ~n、CG ~√n ⇒ 网格越细优势越大。");
+                return;
+            }
+
+            if (args.Contains("--quadbench"))
+            {
+                // 只建网格、不解场 —— 量的是「同一个分区规则下，四叉树比张量网格省多少单元」。
+                var gq = DesignSpec.Select(args);
+                var (hFeat, radQ) = MeshVerify.RequiredMeshFor(gq);
+                double weldQ = Math.Max(gq.TabThickMm.Max(), gq.WallMm);
+                double innerRq = MeshAdapt.InnerRadiusFor(gq.HoleRadiusMm, weldQ);
+                var plateQ = gq.Plate(0, gq.DiscFloorMm(p));
+
+                Console.WriteLine("=== 四叉树 vs 张量网格（同一分区规则，只建网格不解场）===");
+                Console.WriteLine($"用例：{gq.Name}　中带 {hFeat:0.000} mm/半径 {radQ:0.0}");
+                Console.WriteLine($"张量内带：**圆盘** r ≤ {innerRq:0.0} mm（区间表达只能到这）");
+                Console.WriteLine($"四叉内带：**环** r ∈ [{Math.Max(0, gq.HoleRadiusMm - 1.0):0.0}, "
+                    + $"{gq.HoleRadiusMm + 2.0 * Math.Max(gq.TabThickMm.Max(), gq.WallMm) + 3.0:0.0}] mm"
+                    + "（真正需要极细的只有焊缝那一圈）");
+                Console.WriteLine();
+                Console.WriteLine($"{"内带mm",9}{"张量单元",11}{"四叉树单元",12}{"省",9}{"张量ms",9}{"四叉ms",9}");
+
+                double hq = hFeat;
+                for (int lv = 0; lv < 5; lv++)
+                {
+                    double hIn = hq;
+                    var sw1 = System.Diagnostics.Stopwatch.StartNew();
+                    var mt = FlangeMesher.Build(plateQ, 0, hFeat, 11.0, radQ,
+                                                p.BusbarClampLengthMm, hIn, innerRq);
+                    sw1.Stop();
+                    // ★★ 四叉树用**环形**内带 —— 这才是它能而张量网格不能的那件事。
+                    //   真正需要极细网格的是**焊缝那一圈**（r ∈ [孔−1, 孔+2×焊脚+3]，约 3–4 mm 宽），
+                    //   不是半径 32 mm 的整个圆盘。张量网格表达不了环，只能整块方区都细。
+                    //   ⚠ 上一版基准给四叉树的是**同样的圆盘**，等于把它的优势抹掉了 ——
+                    //     那时它必输，因为张量积是**各向异性**的（细 x 线 × 粗 z 线 = 细长格），
+                    //     而四叉树一劈四、两个方向一起细。
+                    double rIn0 = Math.Max(0, gq.HoleRadiusMm - 1.0);
+                    double rIn1 = gq.HoleRadiusMm + 2.0 * weldQ + 3.0;
+                    var sw2 = System.Diagnostics.Stopwatch.StartNew();
+                    var mq = QuadMesher.Build(plateQ, 0,
+                        (x, z) =>
+                        {
+                            double rr = Math.Sqrt(x * x + z * z);
+                            if (rr >= rIn0 && rr <= rIn1) return hIn;   // 焊缝那一圈
+                            if (rr <= radQ) return hFeat;
+                            return 11.0;
+                        }, 16.0, p.BusbarClampLengthMm);
+                    sw2.Stop();
+                    double save = 100.0 * (1.0 - mq.CellCount / (double)Math.Max(1, mt.CellCount));
+                    Console.WriteLine($"{hIn,9:0.000}{mt.CellCount,11}{mq.CellCount,12}"
+                                    + $"{save,8:0.#}%{sw1.ElapsedMilliseconds,9}{sw2.ElapsedMilliseconds,9}");
+                    hq *= 0.5;
+                }
+                Console.WriteLine();
+                Console.WriteLine("★ 读法：内带越细，四叉树的优势越大 —— 因为张量网格是**整条轴**跟着细，");
+                Console.WriteLine("  而四叉树只有孔周那一圈细。这正是「收敛点的成本」能不能降下来的关键。");
+                return;
+            }
+
+            if (args.Contains("--glossary"))
+            {
+                Console.Write(Criteria.Table());
+                return;
             }
 
             if (args.Contains("--judge"))
@@ -4562,6 +4692,7 @@ internal static class Program
                             + $"{VV(LineResult.Key.DiscTemp),10:0.000}{VV(LineResult.Key.FlangeDip),10:0.000}{m3,9:0}");
                         ds.Add(draw); d3.Add(VV(LineResult.Key.FlangeDip)); d2pp.Add(VV(LineResult.Key.DiscTemp));
                     }
+                    Console.WriteLine(Criteria.Legend("②′", "②″", "③"));
                     static string Mono(List<double> xs)
                     {
                         if (xs.Count < 3) return "点太少，判不了";
@@ -4613,6 +4744,15 @@ internal static class Program
                 RingShape("环外级倍率 t₂（原 = 1+**0.4**(μ−1)，写死）", 1.0, 2.0,
                           (dd, v) => { for (int k = 0; k < dd.RingMul2.Length; k++) dd.RingMul2[k] = v; });
 
+                Console.WriteLine();
+                Console.WriteLine("⚠⚠ **本表的斜率不可拿去和仓库里那些「逐片灵敏度」对账**（2026-08-28 声明）：");
+                Console.WriteLine("   本命令是**四片同步**扫的，且跨度远大于设计点附近；");
+                Console.WriteLine("   而 `FlangeAutoSizer` 的 dD/d板厚 = 62–107 W/mm、∂③/∂板厚 = +149 K/mm 等");
+                Console.WriteLine("   是**逐片、设计点附近**的数。两者量纲相同但**不是同一个量**，");
+                Console.WriteLine("   直接比大小会得出错的结论。");
+                Console.WriteLine("   ⇒ 本表只回答一件事：**这个旋钮对它自己的靶单调吗**（能不能二分）。");
+                Console.WriteLine("     斜率的**绝对值不作依据**，只有**符号与单调性**作依据。");
+                Console.WriteLine();
                 Console.WriteLine("★ 读法：**每个旋钮对自己的靶单调**，才谈得上把「增量行走」换成「二分求根」；");
                 Console.WriteLine("  而二分的解**与初值无关** ⇒ 种子这个概念就没有立足处，病根才算断。");
                 Console.WriteLine("  哪一条报「不单调」，那一支就得换成别的确定性方法（例如在约束边界上直接求交点）。");

@@ -109,10 +109,10 @@ public class SolverFineRootTests
     public void 网格该多细只有一处来源()
     {
         string mv = Core("MeshVerify.cs");
-        Assert.Contains("public static (double FineMm, double RadiusMm) RequiredMeshFor(DesignSpec d)", mv);
+        Assert.Contains("RequiredMeshFor(DesignSpec d", mv);
 
         // MeshVerify 自己也得走这个方法，不许留一份旧的内联算法
-        Assert.Contains("var (h0, radius) = RequiredMeshFor(d);", mv);
+        Assert.Contains("var (h0, radius) = RequiredMeshFor(d, weldAsGeometricFeature);", mv);
         Assert.Single(Regex.Matches(mv, @"MeshAdapt\.RequiredFineMm\("));
 
         // 命令行取网格也走同一份

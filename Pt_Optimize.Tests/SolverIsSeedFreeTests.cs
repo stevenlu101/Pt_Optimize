@@ -78,7 +78,7 @@ public class SolverIsSeedFreeTests
         Assert.DoesNotContain("Math.Min(Get(d", s);
 
         // 二分收在「不违反那一侧」，再**向上**对齐到图纸格 —— 两步都只会往上
-        Assert.Contains("if (PlateSlack(Eval(d, baseIn, opt, res, cancel), key, j, dipMax, discMax) >= 0) hi = mid; else lo = mid;", s);
+        Assert.Contains("if (PlateSlack(Eval(d, baseIn, opt, res, cancel, inner), key, j, dipMax, discMax) >= 0) hi = mid; else lo = mid;", s);
         Assert.Contains("Math.Ceiling(hi / q - 1e-9) * q", s);
         Assert.DoesNotContain("Math.Floor(hi", s);      // 向下取整会把判据舍掉
     }

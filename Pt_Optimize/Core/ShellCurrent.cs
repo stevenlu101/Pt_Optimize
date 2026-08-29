@@ -26,7 +26,13 @@ public sealed class ShellCurrentResult
     public int JMaxCell = -1;
     public double TotalGenW;
     public int Iterations;
+    /// <summary>**真残差** ‖Ax−b‖∞（不是步长）。见 Solve 里的说明。</summary>
     public double Residual;
+    /// <summary>
+    /// 线性解**收敛了没有**。false ⇒ 电位场没解到位，**下游一切都不作数**。
+    /// ⚠ 2026-08-29 之前没有这个字段：不收敛时静默返回一个半成品。
+    /// </summary>
+    public bool Converged;
 }
 
 public static class ShellCurrent
@@ -37,10 +43,22 @@ public static class ShellCurrent
     /// </summary>
     /// <param name="rhoRefOhmMm">参考电阻率 Ω·mm（= Ω·m × 1000）</param>
     /// <param name="tempC">可选单元温度，用于 σ(T)；null 则等温</param>
+    /// <summary>
+    /// 按算例的开关选解法。**开关只在这一处读** —— 各调用点自己判会漏掉一处，
+    /// 而漏掉的那处会静默用另一种解法，两边的数对不上却没人知道是为什么。
+    /// </summary>
+    public static ShellCurrentResult SolveFor(LineCase c, ShellMesh m, double totalCurrentA,
+                                              double rhoRefOhmMm, double tRefC = 1300,
+                                              double[]? tempC = null,
+                                              int maxIter = 20000, double tol = 1e-9)
+        => Solve(m, totalCurrentA, rhoRefOhmMm, tRefC, tempC, maxIter, tol,
+                 useGaussSeidel: c?.Base?.LinearGaussSeidel ?? false);
+
     public static ShellCurrentResult Solve(ShellMesh m, double totalCurrentA,
                                            double rhoRefOhmMm, double tRefC = 1300,
                                            double[]? tempC = null,
-                                           int maxIter = 20000, double tol = 1e-9)
+                                           int maxIter = 20000, double tol = 1e-9,
+                                           bool useGaussSeidel = false)
     {
         int n = m.CellCount;
         var res = new ShellCurrentResult { V = new double[n], JMagAPerMm2 = new double[n] };
@@ -74,7 +92,23 @@ public static class ShellCurrent
             g[k] = sf * f.Length / f.DistAB;
         }
 
-        // Gauss–Seidel + SOR。n 约数千，直接迭代足够；换更大网格再上 CG。
+        // ★★ **共轭梯度 + Jacobi 预条件**（2026-08-29 换）。
+        //
+        // 此前是 Gauss–Seidel + SOR，注释写着「n 约数千，直接迭代足够；**换更大网格再上 CG**」。
+        // **那个条件已经满足了**：网格无关复核现在要 34000+ 单元，而当时是「约数千」。
+        //
+        // 为什么非换不可（实测，不是理论）：
+        //   GS 在泊松型问题上迭代次数 ~ 条件数 ~ h⁻² ~ n ⇒ 总成本 ~ n²。
+        //   实测 0.6 档：**单元 6.4× → 每轮外层耦合耗时 96×**（≈ n^2.5，含外层 Picard）。
+        //   0.146 mm 那一档因此**跑不完**（3 轮走了 2 时 26 分）。
+        //   CG + 对角预条件：迭代 ~ √条件数 ~ √n ⇒ 成本 ~ n^1.5。
+        //
+        // ⚠ 矩阵是带 Dirichlet 的**加权图拉普拉斯**，对称正定 ⇒ CG 适用且无需对称化。
+        //
+        // ★★ 顺带修掉同一族的第三个病：**旧的收敛判据拿的是「步长」不是「残差」**
+        //   （`resid = max|ΔV|`）。慢收敛时步长可以很小而残差很大 ——
+        //   与基线耦合环、CoupledSolver 那两处**同一个错**。
+        //   现在判的是真残差 ‖Ax−b‖∞ 相对 ‖b‖∞，且**不收敛要说出来**（Converged）。
         var diag = new double[n];
         var nbr = new List<(int cell, int face)>[n];
         for (int i = 0; i < n; i++) nbr[i] = new List<(int, int)>();
@@ -86,25 +120,101 @@ public static class ShellCurrent
             diag[f.A] += g[k]; diag[f.B] += g[k];
         }
 
-        const double omega = 1.7;
-        double resid = 0;
-        int it = 0;
-        for (; it < maxIter; it++)
+        if (useGaussSeidel)
+        {
+            // ── 旧解法：Gauss–Seidel + SOR，**判据是「步长」不是残差**。
+            //   只保留做**配对对照**用（--gslinear）：换 CG 的同时今天还改过网格，
+            //   两个变量混在一起就说不清是谁把 ③ 改了。**不得用于交付。**
+            const double omegaGs = 1.7;
+            double residGs = 0; int itGs = 0;
+            for (; itGs < maxIter; itGs++)
+            {
+                residGs = 0;
+                for (int i = 0; i < n; i++)
+                {
+                    if (isFixed[i] || diag[i] <= 0) continue;
+                    double s = 0;
+                    foreach (var (c, k) in nbr[i]) s += g[k] * res.V[c];
+                    double d = s / diag[i] - res.V[i];
+                    res.V[i] += omegaGs * d;
+                    residGs = Math.Max(residGs, Math.Abs(d));
+                }
+                if (residGs < tol) { itGs++; break; }
+            }
+            res.Iterations = itGs; res.Residual = residGs; res.Converged = residGs < tol;
+            goto scale;
+        }
+
+        // 只在**自由**单元上解；固定单元的值搬到右端项
+        var free = new List<int>(n);
+        var idx = new int[n];
+        for (int i = 0; i < n; i++)
+        {
+            idx[i] = -1;
+            if (!isFixed[i] && diag[i] > 0) { idx[i] = free.Count; free.Add(i); }
+        }
+        int nf = free.Count;
+        var x = new double[nf];
+        var b = new double[nf];
+        for (int a = 0; a < nf; a++)
+        {
+            int i = free[a];
+            x[a] = res.V[i];
+            double rhs = 0;
+            foreach (var (c, k) in nbr[i]) if (idx[c] < 0) rhs += g[k] * res.V[c];
+            b[a] = rhs;
+        }
+
+        void MatVec(double[] src, double[] dst)
+        {
+            for (int a = 0; a < nf; a++)
+            {
+                int i = free[a];
+                double s = diag[i] * src[a];
+                foreach (var (c, k) in nbr[i]) { int j = idx[c]; if (j >= 0) s -= g[k] * src[j]; }
+                dst[a] = s;
+            }
+        }
+
+        double bNorm = 0;
+        for (int a = 0; a < nf; a++) bNorm = Math.Max(bNorm, Math.Abs(b[a]));
+        if (bNorm <= 0) bNorm = 1;
+
+        var rv = new double[nf]; var z = new double[nf];
+        var pv = new double[nf]; var ap = new double[nf];
+        MatVec(x, rv);
+        for (int a = 0; a < nf; a++) rv[a] = b[a] - rv[a];
+
+        double Precond(int a) => 1.0 / diag[free[a]];      // Jacobi
+        double rz = 0;
+        for (int a = 0; a < nf; a++) { z[a] = rv[a] * Precond(a); pv[a] = z[a]; rz += rv[a] * z[a]; }
+
+        double resid = 0; int it = 0;
+        for (; it < maxIter && nf > 0; it++)
         {
             resid = 0;
-            for (int i = 0; i < n; i++)
-            {
-                if (isFixed[i] || diag[i] <= 0) continue;
-                double s = 0;
-                foreach (var (c, k) in nbr[i]) s += g[k] * res.V[c];
-                double vNew = s / diag[i];
-                double d = vNew - res.V[i];
-                res.V[i] += omega * d;
-                resid = Math.Max(resid, Math.Abs(d));
-            }
-            if (resid < tol) { it++; break; }
+            for (int a = 0; a < nf; a++) resid = Math.Max(resid, Math.Abs(rv[a]));
+            if (resid <= tol * bNorm) break;
+
+            MatVec(pv, ap);
+            double pap = 0;
+            for (int a = 0; a < nf; a++) pap += pv[a] * ap[a];
+            if (!(Math.Abs(pap) > 1e-300)) break;          // 退化：不再前进
+            double alpha = rz / pap;
+            for (int a = 0; a < nf; a++) { x[a] += alpha * pv[a]; rv[a] -= alpha * ap[a]; }
+
+            double rzNew = 0;
+            for (int a = 0; a < nf; a++) { z[a] = rv[a] * Precond(a); rzNew += rv[a] * z[a]; }
+            double beta = rz > 1e-300 ? rzNew / rz : 0;
+            for (int a = 0; a < nf; a++) pv[a] = z[a] + beta * pv[a];
+            rz = rzNew;
         }
+        for (int a = 0; a < nf; a++) res.V[free[a]] = x[a];
+
         res.Iterations = it; res.Residual = resid;
+        res.Converged = nf == 0 || resid <= tol * bNorm;
+
+    scale:
 
         // 归一化电位下的总电流，用来把面通量定标到实际安培
         double inSum = 0, outSum = 0;
