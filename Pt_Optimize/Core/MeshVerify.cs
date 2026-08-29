@@ -230,7 +230,12 @@ public static class MeshVerify
 
             res.Line = r; res.FineMm = h; res.Cells = r.MeshCells;
             res.Trace.Add((h, r.MeshCells, a2p, a2pp, a3, mass, swOne.Elapsed.TotalSeconds));
-            progress?.Report($"网格无关复核：{h:0.000} mm 完成 —— {r.MeshCells} 单元，用时 {ThrottledProgress.Fmt(swOne.Elapsed)}（累计 {ThrottledProgress.Fmt(sw.Elapsed)}）");
+            // ★★ 判据值**当场就报**。此前这一行只报单元数与耗时，判据值要等整趟跑完
+            //   才随表印出来 —— 于是 2026-08-29 那趟：阶梯三档全部算完、已跑 4 时 22 分，
+            //   而**日志里一个判据数字都没有**，被 kill 掉就等于四小时全丢。
+            //   「看得出还活着」只解决了一半；另一半是**中间结果要落地**。
+            progress?.Report($"网格无关复核：{h:0.000} mm 完成 —— {r.MeshCells} 单元，用时 {ThrottledProgress.Fmt(swOne.Elapsed)}（累计 {ThrottledProgress.Fmt(sw.Elapsed)}）"
+                + $"　②′ {a2p:0.000} W　②″ {a2pp:0.000} K　③ {a3:0.000} K　合计 {mass:0} g");
 
             if (prev is { } pv)
             {
@@ -241,6 +246,9 @@ public static class MeshVerify
                     new() { Name = tol[1].Name, Change = a2pp - pv.n2pp, Tol = tol[1].Tol },
                     new() { Name = tol[2].Name, Change = a3 - pv.n3,     Tol = tol[2].Tol },
                 };
+                // 差值也当场报 —— 「收没收敛」是读的人最想先知道的那一条
+                progress?.Report("   较上一档：" + string.Join("　", res.LastDeltas.Select(
+                    x => $"{x.Name} {x.Change:+0.000;-0.000}/{x.Tol:0.###}")));
                 if (MeshAdapt.Converged(res.LastDeltas)) { res.Converged = true; break; }
             }
             prev = (a2p, a2pp, a3, mass);
@@ -254,18 +262,36 @@ public static class MeshVerify
         // ★★ **中带确认**（A⑭ 的安全线）：只加密内带的话，判据可能收敛到一个
         //   **由中带的粗糙度决定**的错值上 —— 而「内带加密判据不动」这个证据
         //   **看不出**这件事。所以收敛之后额外做一次「中带也减半」的对照。
-        //   代价：一次场解。相对于分区省下的几小时，可以忽略。
+        //   ⚠ 代价**不是**「可以忽略」—— 这句话原先是拿粗阶梯那一趟（8 分钟）
+        //     当了普适结论。2026-08-29 实测：0.6 档细阶梯（--weldfeature）上，
+        //     内带 0.146 mm 那一档 39618 单元用了 **3 时 43 分**，而中带减半会**再加**
+        //     一批单元（中带面积远大于内带）⇒ 这一步是整趟里**最贵的单步**。
+        //     所以它必须报进度、必须给估时 —— 这两样它此前一样都没有。
         if (res.Line is { Ok: true } && res.Trace.Count > 0)
         {
             try
             {
-                progress?.Report($"中带确认：把中带 {hMid:0.000} → {hMid * 0.5:0.000} mm 再算一次，看判据动不动…");
+                // ★ 单元只增不减 ⇒ 上一档的**实测**耗时是这一步的**下界**，不是估计。
+                //   报下界的好处：错也只会错成「比说的久」，不会错成「比说的短」——
+                //   后者才是会让人去 kill 掉一个正常任务的那一种错。
+                string floorC = ThrottledProgress.Fmt(TimeSpan.FromSeconds(res.Trace[^1].Sec));
+                progress?.Report($"中带确认：把中带 {hMid:0.000} → {hMid * 0.5:0.000} mm 再算一次，看判据动不动"
+                    + $"（单元只增不减 ⇒ **至少 {floorC}**；这是下界，不是估计）…");
                 var lcC = d.BuildCase(baseIn, checkRamp: true);
                 lcC.MeshFineMm = hMid * 0.5;
                 lcC.MeshFineRadiusMm = radius;
                 lcC.MeshInnerMm = res.FineMm;
                 lcC.MeshInnerRadiusMm = innerR;
-                var rc = LineRunner.Run(lcC, null, cancel);
+                // ★★ 此前这里传 null，内层进度被**整个扔掉**。2026-08-29 实测：
+                //   0.6 档细阶梯跑到这一步，日志**静默 29 分钟**没有一行输出 ——
+                //   正是用户点名的那个病（「跑这么长时间…容易误认死机」）。
+                //   当时的门写成匹配变量名 `lc`，而这一处叫 `lcC`，**从缝里漏了过去**；
+                //   门已改成不认变量名（见 LongRunProgressTests）。
+                var swC = System.Diagnostics.Stopwatch.StartNew();
+                var innerC = new ThrottledProgress(progress, 20, "     · 中带确认 ");
+                var rc = LineRunner.Run(lcC, innerC, cancel);
+                swC.Stop();
+                progress?.Report($"中带确认：场解完成 —— 用时 {ThrottledProgress.Fmt(swC.Elapsed)}");
                 if (!rc.Ok) res.MidBandConfirm = "⚠ 中带确认解不出来：" + rc.Message + " ⇒ **这一条没验到**";
                 else
                 {

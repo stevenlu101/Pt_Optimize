@@ -241,13 +241,15 @@ public static class Solver
         // 第一遍：导航网格
         var navOpt = opt.Clone(); navOpt.FineMm = 0; navOpt.FineRadiusMm = 0;
         bool okNav = Rounds(navOpt, "第一遍：导航网格上定位");
+        // ★ 终局复核必须跑在**最后一遍求根所用的那张网格**上（见 Finish）。
+        var lastOpt = navOpt;
 
         // 第二遍：细网格。第一遍没走通就不做 —— StopWhy 已经说明了原因。
         if (okNav && opt.FineMm > 0)
         {
             res.Feasible = false; res.StopWhy = ""; res.HitBound = false;
             bool okFine = Rounds(opt, "第二遍：细网格上重新求根（**判据以此为准**）");
-            res.FineRefined = true; res.FineMmUsed = opt.FineMm;
+            res.FineRefined = true; res.FineMmUsed = opt.FineMm; lastOpt = opt;
             if (!okFine && res.StopWhy.Length == 0)
                 res.StopWhy = $"细网格第二遍跑满 {opt.MaxRounds} 轮仍未全过 —— **未收敛**，不作数";
         }
@@ -260,7 +262,7 @@ public static class Solver
         if (res.StopWhy.Length == 0)
             res.StopWhy = $"跑满 {opt.MaxRounds} 轮仍未全过 —— 结果**未收敛**，不作数";
 
-        return Finish(res, d, last, baseIn, cancel);
+        return Finish(res, d, last, baseIn, lastOpt, cancel, progress);
     }
 
     /// <summary>
@@ -329,12 +331,38 @@ public static class Solver
         return (true, "");
     }
 
+    /// <summary>
+    /// 终局复核：把升温 ① 带上再算一次（导航时为省时关掉的那条）。
+    ///
+    /// ★★ <b>必须跑在最后一遍求根所用的那张网格上</b>（<paramref name="lastOpt"/>）。
+    /// 2026-08-29 之前这里是 <c>d.BuildCase(baseIn, checkRamp: true)</c> 后**什么都不设**,
+    /// 于是悄悄退回 <see cref="LineCase.MeshFineMm"/> 的默认值 <b>2.0 mm</b>：
+    /// <code>
+    ///   第二遍求根  → 细网格（如 0.146 mm）上把旋钮抬到全过
+    ///   Finish     → 回到 2.0 mm 重算，**并用它覆盖 res.Best**
+    ///   ⇒ res.Feasible / 所有印出来的判据值 = 粗网格的数
+    /// </code>
+    /// 而本类自己的 <see cref="Eval"/> 就写着「根的位置随网格移动」、实测 ③ 在两张网格上
+    /// **差 2.03 倍**（A⑬）。⇒ 求解器会出现「第二遍说全过、终局说不可行」这种自相矛盾，
+    /// 而两边**都不报错**。正是本项目最怕的错误形态：看起来正常的错数。
+    ///
+    /// ⚠ 只在 <c>--fine</c>（opt.FineMm &gt; 0）时发作；FineMm = 0 的跑法两边同为默认网格,
+    ///   所以历史上那些 <c>--solve --verifymesh</c> 的结论**不受影响**。
+    /// </summary>
     private static SolverResult Finish(SolverResult res, DesignSpec d, LineResult? last,
-                                       DesignInputs baseIn, CancellationToken cancel)
+                                       DesignInputs baseIn, SolverOptions lastOpt,
+                                       CancellationToken cancel, IProgress<string>? progress = null)
     {
         res.Design = d;
-        // 终局复核带上升温 ①（导航时为省时关掉的那条）
-        try { res.Best = LineRunner.Run(d.BuildCase(baseIn, checkRamp: true), null, cancel); res.Solves++; }
+        var lcF = d.BuildCase(baseIn, checkRamp: true);
+        if (lastOpt.FineMm > 0)
+        {
+            lcF.MeshFineMm = lastOpt.FineMm;
+            if (lastOpt.FineRadiusMm > 0) lcF.MeshFineRadiusMm = lastOpt.FineRadiusMm;
+        }
+        // 细网格上带 ① 的这一次可能跑很久 —— 不转进度就是几十分钟静默。
+        var innerF = new ThrottledProgress(progress, 20, "     · 终局复核 ");
+        try { res.Best = LineRunner.Run(lcF, innerF, cancel); res.Solves++; }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) { res.Message = "终局复核失败：" + ex.Message; res.Best = last; }
 

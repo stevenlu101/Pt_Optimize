@@ -120,4 +120,41 @@ public class SolverFineRootTests
             HandoverDoc.Root(), "Pt_Optimize", "Program.cs"));
         Assert.Contains("MeshVerify.RequiredMeshFor(geoS)", prog);
     }
+
+    /// <summary>
+    /// ★★ **终局复核也必须跑在那张网格上** —— 2026-08-29 抓到的漏洞。
+    ///
+    /// <c>Finish</c> 原先是 <c>d.BuildCase(baseIn, checkRamp: true)</c> 之后**什么都不设**，
+    /// 于是悄悄退回 <see cref="LineCase.MeshFineMm"/> 的默认 <b>2.0 mm</b>，
+    /// 并**用它覆盖 res.Best**：
+    /// <code>
+    ///   第二遍求根 → 0.146 mm 上把旋钮抬到全过
+    ///   Finish    → 2.0 mm 重算 ⇒ res.Feasible 与所有印出来的判据值都成了粗网格的数
+    /// </code>
+    /// 上面那段类注释里 ③ **差 2.03 倍**的实测，说的就是这两张网格。
+    /// ⇒ 会出现「第二遍说全过、终局说不可行」的自相矛盾，而**两边都不报错**。
+    ///
+    /// ⚠ 这条与「求根的网格由选项决定」是**同一条不变量的两半**。只守前一半的门，
+    ///   挡不住后一半 —— 本仓库为「门只挡得住自己当初那一行」栽过不止一次。
+    /// </summary>
+    [Fact]
+    public void 终局复核跑在最后一遍求根的网格上()
+    {
+        string s = Core("Solver.cs");
+
+        // Finish 必须**收得到**最后一遍用的选项 —— 收不到就无从谈起
+        Assert.Contains("DesignInputs baseIn, SolverOptions lastOpt,", s);
+        Assert.Contains("Finish(res, d, last, baseIn, lastOpt, cancel, progress);", s);
+
+        // 而且真的把网格设上去了
+        Assert.Contains("lcF.MeshFineMm = lastOpt.FineMm;", s);
+        Assert.Contains("if (lastOpt.FineRadiusMm > 0) lcF.MeshFineRadiusMm = lastOpt.FineRadiusMm;", s);
+
+        // ★ lastOpt 要随第二遍**改过去**；不改就永远是导航网格，等于没修
+        Assert.Contains("lastOpt = opt;", s);
+
+        // ★★ 不许再有「建完 case 直接丢给 LineRunner、一个网格字段都不设」的写法
+        Assert.DoesNotContain(
+            "LineRunner.Run(d.BuildCase(baseIn, checkRamp: true), null, cancel)", s);
+    }
 }

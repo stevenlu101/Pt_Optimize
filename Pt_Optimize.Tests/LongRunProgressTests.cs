@@ -41,7 +41,13 @@ public class LongRunProgressTests
         foreach (var f in new[] { "MeshVerify.cs", "Solver.cs" })
         {
             string s = Core(f);
-            Assert.DoesNotContain("LineRunner.Run(lc, null, cancel)", s);
+            // ★★ 门**不许认变量名**：2026-08-29 中带确认那一处叫 `lcC`，
+            //   写死 `lc` 的门就从缝里漏了过去 —— 实测静默 29 分钟没有一行输出。
+            //   一条只挡得住自己当初那一行的门，等于没有门。
+            var m = System.Text.RegularExpressions.Regex.Match(
+                s, @"LineRunner\.Run\(\s*\w+\s*,\s*null\s*[,)]");
+            Assert.False(m.Success,
+                $"{f} 里还有把内层进度扔掉的调用：{m.Value} —— 几小时的任务会整段静默");
             Assert.Contains("ThrottledProgress", s);
         }
     }
@@ -110,6 +116,37 @@ public class LongRunProgressTests
         Assert.Contains("按上两档实测耗时比 ×", s); Assert.Contains("**偏乐观**", s);
         Assert.Contains("完成 ——", s);
         Assert.Contains("ThrottledProgress.Fmt(swOne.Elapsed)", s);
+    }
+
+    /// <summary>
+    /// ★★ **中间结果要落地** —— 每档的判据值当场就报，不许攒到整趟结束。
+    ///
+    /// 2026-08-29 实测：0.6 档细阶梯三档全部算完、已跑 4 时 22 分，
+    /// 而日志里**一个判据数字都没有**（只有单元数与耗时）—— 被 kill 掉就是四小时全丢。
+    /// 「看得出还活着」只解决了一半；另一半是**算出来的东西要立刻落地**。
+    /// </summary>
+    [Fact]
+    public void 每档的判据值当场落地()
+    {
+        string s = Core("MeshVerify.cs");
+        Assert.Contains("②′ {a2p:0.000} W", s);
+        Assert.Contains("②″ {a2pp:0.000} K", s);
+        Assert.Contains("③ {a3:0.000} K", s);
+        Assert.Contains("较上一档：", s);
+    }
+
+    /// <summary>
+    /// ★ 中带确认是整趟里**最贵的单步**（实测 ≥ 3 时 43 分），
+    /// 它必须报进度、必须给下界估时 —— 此前两样都没有，实测静默 29 分钟。
+    /// </summary>
+    [Fact]
+    public void 中带确认有进度也有估时()
+    {
+        string s = Core("MeshVerify.cs");
+        Assert.Contains("var rc = LineRunner.Run(lcC, innerC, cancel);", s);
+        Assert.Contains("**至少 {floorC}**", s);
+        Assert.Contains("这是下界，不是估计", s);
+        Assert.Contains("中带确认：场解完成 —— 用时", s);
     }
 
     private sealed class Sink : IProgress<string>
