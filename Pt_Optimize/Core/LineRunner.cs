@@ -1436,7 +1436,8 @@ public static class LineRunner
                               $"{Materials.PtFitMaxC:0} °C，数值系外推");
             // ★ 场没收敛 ⇒ **这一片的判据判不了**，不是「照报一个数」。
             var why = new List<string>();
-            if (!th.Converged) why.Add($"温度场未收敛（残差 {th.Residual:E2}，{th.Iterations} 轮）");
+            // ⚠ th.Residual 是**步长**不是残差 —— 两个都报，别再把步长叫成残差。
+            if (!th.Converged) why.Add($"温度场未收敛（步长 {th.Residual:E2} K，真残差 {th.ResidualW:E2} W／相对 {th.ResidualRel:E2}，{th.Iterations} 轮）");
             if (!curConverged) why.Add($"电位场未收敛（残差 {curResidual:E2}，{curIterations} 轮）");
             if (why.Count > 0)
             {

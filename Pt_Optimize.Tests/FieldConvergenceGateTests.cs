@@ -124,4 +124,93 @@ public class FieldConvergenceGateTests
         // 判的是**真残差**相对右端项，不是步长
         Assert.Contains("resid <= tol * bNorm", Src("ShellCurrent.cs"));
     }
+
+    /// <summary>
+    /// ★★ **温度场那一半：Picard 的停机判据原本也是「步长」**（2026-08-29 补）。
+    ///
+    /// <code>
+    ///   if (maxd &lt; tol) break;          maxd = 一轮里最大的温度改动 K
+    ///   res.Converged = maxd &lt; tol;
+    /// </code>
+    ///
+    /// 与线性解那一半、与基线循环那一次，是**同一族**：步长小 ≠ 解对。
+    /// 收缩因子 g 时，到不动点的距离 ≈ 步长 / (1 − g)。
+    /// **同一个病在本仓库出现三次**，前两次都是撞出来的。
+    ///
+    /// ══ 实测（`--cli --shell`，2727 单元，2026-08-29）
+    ///
+    /// <code>
+    ///   步长判据停在   9.99E-005 K（tol 1e-4）
+    ///   此时真残差     1.18E-004 W　相对 1.58E-007      ← 这次**碰巧是保守的**
+    /// </code>
+    ///
+    /// ⚠ 「碰巧对」不是判据。改法：收敛 = 步长小 **且** 真残差小。
+    ///   合取只会更严 ⇒ 现役算例逐位不变（同一条命令重跑，5805 轮、两个数都没动），
+    ///   而未来收缩变慢的算例不会再悄悄放行。
+    /// </summary>
+    [Fact]
+    public void 温度场也报得出真残差()
+    {
+        string s = Src("ShellThermal.cs");
+        Assert.Contains("public double ResidualW;", s);
+        Assert.Contains("public double ResidualRel;", s);
+        // 步长不许再自己定收敛
+        Assert.DoesNotContain("res.Converged = maxd < tol;", s);
+        Assert.Contains("bool stepOk = maxd < tol;", s);
+    }
+
+    /// <summary>
+    /// ★★ 残差必须用**真**散热 q_s(T)，不是迭代里为稳定做的线性化 ——
+    /// 线性化只准出现在「怎么走」里，不准出现在「走到没有」里。
+    /// 用线性化算残差，等于拿近似去验近似，残差会**系统性偏小**。
+    /// </summary>
+    [Fact]
+    public void 残差用真散热不用线性化()
+    {
+        string s = Src("ShellThermal.cs");
+        int a = s.IndexOf("res.ResidualW = rMax;", System.StringComparison.Ordinal);
+        Assert.True(a > 0, "找不到残差块");
+        // 残差块往上 25 行就是它的算式
+        int lo = a;
+        for (int k = 0; k < 25 && lo > 0; k++) lo = s.LastIndexOf('\n', lo - 1);
+        string blk = s[lo..a];
+        Assert.Contains("double qs = lossFor[i].Eval(ti);", blk);
+        Assert.DoesNotContain("Slope", blk);
+    }
+
+    /// <summary>收敛 = 步长 **且** 残差；残差算不出来（NaN）**不算过**。</summary>
+    [Fact]
+    public void 收敛要两条且判不了不算过()
+    {
+        string s = Src("ShellThermal.cs");
+        Assert.Contains("res.Converged = stepOk", s);
+        Assert.Contains("&& !double.IsNaN(res.ResidualRel)", s);
+        Assert.Contains("&& res.ResidualRel <= ResidualRelTol;", s);
+    }
+
+    /// <summary>
+    /// ★ 阈值必须**声明出处**，不许是拍的数。
+    /// 本项目既定要求：限值要写得出它是从哪来的（HANDOVER「限值的出处」那张表）。
+    /// </summary>
+    [Fact]
+    public void 残差阈值有出处()
+    {
+        string s = Src("ShellThermal.cs");
+        Assert.Contains("public const double ResidualRelTol = 1e-5;", s);
+        Assert.Contains("1.58E-007", s);          // 实测值
+        Assert.Contains("--cli --shell", s);      // 复现命令
+        Assert.Equal(1e-5, ShellThermal.ResidualRelTol);
+    }
+
+    /// <summary>
+    /// ★ 不许再把**步长**叫成「残差」—— 读的人会据此判断解到位没有，
+    /// 而那两个数可以差好几个量级。
+    /// </summary>
+    [Fact]
+    public void 不许再把步长叫残差()
+    {
+        string s = Src("LineRunner.cs");
+        Assert.DoesNotContain("温度场未收敛（残差 {th.Residual:E2}", s);
+        Assert.Contains("温度场未收敛（步长 {th.Residual:E2} K，真残差 {th.ResidualW:E2} W", s);
+    }
 }

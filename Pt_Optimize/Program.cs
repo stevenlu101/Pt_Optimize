@@ -655,8 +655,11 @@ internal static class Program
 
                 Console.WriteLine();
                 Console.WriteLine($"=== 温度场（按 HC3 实际段电流 {iSeg:0} A 定标，管根定温 {tRoot:0} °C）===");
-                Console.WriteLine($"  {th.Iterations} 次迭代，残差 {th.Residual:E2}  " +
-                                  $"{(th.Converged ? "✓ 收敛" : "✗ 未收敛")}");
+                Console.WriteLine($"  {th.Iterations} 次迭代，**步长** {th.Residual:E2} K  " +
+                                  $"{(th.Converged ? "✓ 步长判据过" : "✗ 步长判据没过")}");
+                // ★ 步长不是残差（2026-08-29）。真残差是逐格代回稳态能量方程的不闭合量。
+                Console.WriteLine($"  **真残差** {th.ResidualW:E2} W　相对 {th.ResidualRel:E2}" +
+                                  "　（= 最大格残差 / 自由格总焦耳热）");
                 Console.WriteLine($"  J_max（实际电流下）{sc.JMaxAPerMm2 * iSeg / current:0.00} A/mm²");
                 Console.WriteLine($"  温度 最高 {th.TMaxC:0.0} / 最低 {th.TMinC:0.0} °C");
                 Console.WriteLine($"  自身发热 {th.QGenW:0.0} W   表面散热 {th.QLossW:0.0} W   " +

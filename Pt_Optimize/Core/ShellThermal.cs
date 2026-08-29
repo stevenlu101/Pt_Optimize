@@ -89,7 +89,42 @@ public sealed class ShellThermalResult
                   DiscMaxRMm = double.NaN, DiscMaxJAPerMm2 = double.NaN,
                   DiscMaxThickMm = double.NaN;
     public int Iterations;
+    /// <summary>
+    /// ⚠ 这是**步长**（Picard 一轮里最大的温度改动 K），**不是残差**。
+    /// 名字保留是为了不动既有读者；真正的残差见 <see cref="ResidualW"/>。
+    /// 步长小 ≠ 解对：收缩因子 g 时，到不动点的距离 ≈ 步长 / (1 − g)。
+    /// </summary>
     public double Residual;
+
+    /// <summary>
+    /// ★★ **真残差**：稳态能量方程逐格的不闭合量，单位 **W**（2026-08-29 补）。
+    ///
+    /// <code>
+    ///   r_i = Σ_k g_k (T_c − T_i) + q_v·A − 2·q_s(T_i)·A + G_铜排 (T_冷端 − T_i)
+    /// </code>
+    ///
+    /// ⚠ 用的是**真**散热 q_s(T_i)，不是迭代里为稳定而做的线性化 ——
+    ///   线性化只准出现在「怎么走」里，不准出现在「走到没有」里。
+    ///
+    /// ══ 为什么补这个
+    ///
+    /// 收敛判据原本只有 <c>maxd &lt; tol</c>，而 maxd 是**步长**。这与 2026-08-28
+    /// 在基线循环里抓到的是同一族错误（那次少乘了 25 倍的不动点放大，
+    /// 直接推翻了「历史设计 ③ 不合格」这个结论），也与同月 ShellCurrent 那次同族。
+    /// **同一个病在本仓库出现三次，前两次都是靠实测撞出来的。**
+    ///
+    /// ⚠ 本次先**只测不判**：算出来、报出来、留在结果里，但不改停机条件。
+    ///   改停机条件会动到全部回归基准，那必须先有数据支撑 —— 见 <see cref="ResidualRel"/>。
+    /// </summary>
+    public double ResidualW;
+
+    /// <summary>
+    /// 真残差的**相对**口径：<c>ResidualW / 自由格总焦耳热</c>（与 ShellCurrent 同形）。
+    /// 这才是能定阈值的那个数 —— 绝对瓦数随算例大小变，相对值不变。
+    /// </summary>
+    public double ResidualRel;
+
+    /// <summary>步长判据的结论。⚠ 它**不**保证解到位，见 <see cref="ResidualW"/>。</summary>
     public bool Converged;
 
     /// <summary>场里有金属越过铂熔点 ⇒ **该解不存在**，不管能量账闭合得多好。</summary>
@@ -130,6 +165,23 @@ public static class ShellThermal
     /// 它一裸就把端片推成净抽热、一全包又过冲成净倒灌 —— 中间必然存在一个零点。
     /// 给它一个连续厚度，「端片能不能自给」才从一道是非题变成一个可解的方程。
     /// </param>
+    /// <summary>
+    /// 真残差的相对阈值。**这个数是声明出来的，不是碰巧的**。
+    ///
+    /// 出处（2026-08-29 实测，`--cli --shell`，2727 单元）：
+    /// <code>
+    ///   步长判据停在   9.99E-005 K（tol 1e-4）
+    ///   此时真残差     1.18E-004 W　相对 **1.58E-007**
+    /// </code>
+    /// 取 1e-5 = 实测值的 **63 倍**宽 ⇒ 现役算例上它**不会改变任何结果**
+    /// （合取只会更严，而这一条在现役算例上恒真）；同时又足够紧：
+    /// 相对残差到 1e-5 的场，逐格能量不闭合量已是焦耳热的十万分之一以下。
+    ///
+    /// ⚠ 若哪天有算例因它变成「判不了」，那**不是**该放宽它，
+    ///   而是那个算例的温度场**本来就没解到位** —— 步长判据只是没告诉你。
+    /// </summary>
+    public const double ResidualRelTol = 1e-5;
+
     public static ShellThermalResult Solve(ShellMesh m, double[] jMagAPerMm2, DesignInputs p,
                                            double tRootC, double insulBoundaryX,
                                            bool symmetricInsul = false,
@@ -282,10 +334,43 @@ public static class ShellThermal
             }
             if (maxd < tol) { it++; break; }
         }
-        res.Iterations = it; res.Residual = maxd; res.Converged = maxd < tol;
+        res.Iterations = it; res.Residual = maxd;
+        bool stepOk = maxd < tol;          // ★ 只是**步长**判据；真正的判定在下面
+
+        // ★★ **真残差**（2026-08-29）：上面判的是**步长**，这里算的才是残差。
+        //   逐格代回稳态能量方程，用**真**散热 q_s(T_i)（不是迭代里线性化的那个）——
+        //   线性化只准出现在「怎么走」里，不准出现在「走到没有」里。
+        //   代价：一遍 O(n)，相对于上面几万轮可以忽略。
+        UpdateG();
+        {
+            double rMax = 0, bSum = 0;
+            for (int i = 0; i < n; i++)
+            {
+                if (isFixed[i]) continue;
+                double sumG = 0, sumGT = 0;
+                foreach (var (c, k) in nbr[i]) { sumG += gcond[k]; sumGT += gcond[k] * res.T[c]; }
+                if (sumG <= 0) continue;
+
+                double ti = res.T[i], t = m.Thickness[i], A = m.Area[i];
+                double qv = Materials.PtResistivity(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t;
+                double qs = lossFor[i].Eval(ti);
+                double r = sumGT - sumG * ti + (qv - 2 * qs) * A
+                         + gBus[i] * (p.BusbarSinkTempC - ti);
+                rMax = Math.Max(rMax, Math.Abs(r));
+                bSum += Math.Abs(qv * A);
+            }
+            res.ResidualW = rMax;
+            res.ResidualRel = bSum > 1e-12 ? rMax / bSum : double.NaN;
+
+            // ★★ **收敛 = 步长小 且 残差小**。两条都要，而不是只要步长。
+            //   合取只会让判定**更严**，不会更松 ⇒ 现役算例逐位不变（已实测，见下）。
+            //   ⚠ 残差算不出来（NaN，例如一格自由格都没有）时**不算过** —— 判不了不算过。
+            res.Converged = stepOk
+                         && !double.IsNaN(res.ResidualRel)
+                         && res.ResidualRel <= ResidualRelTol;
+        }
 
         // ── 汇总
-        UpdateG();
         double gen = 0, loss = 0;
         for (int i = 0; i < n; i++)
         {
