@@ -1895,7 +1895,17 @@ public sealed class LineDesignPage : TabPage
                 // ★ 网格的最低点必须**造得出来**：写死的 25 对两个现役档（壁 0.6/0.8）
                 //   都会被判据⑥ 跳过 ⇒ 第 1 轮实际只探了 R30/R35（2026-08-25 查出）。
                 //   抬到下界上，网格才是三个点。
-                double minDiscAll = 25.0 + 2 * (double)_wall.Value;
+                //   ⚠ 2026-08-29：这里原本手写 `25.0 + 2 * 壁厚`，与 ⑥ 的实现各写各的。
+                //     数值上今天恰好相同（管孔 = 壁+25，焊脚下界 = max(烧穿 0.6, 壁)），
+                //     但**没有任何东西保证明天还相同** —— 改走 ⑥ 自己的闭式反解。
+                //   ⚠ 这只是**真下界**，不是最紧的下界：焊脚 = max(板厚, 壁厚)，
+                //     而板厚要解完才知道，解出来通常是 1.6～2.5 mm（远大于壁厚）。
+                //     最紧的那个由求解器在解完当场给（Solver.CoverCheck）。
+                double wall6 = (double)_wall.Value;
+                double minDiscAll = GeometryScreen.MinDiscRadiusMm(
+                    holeRadiusMm: wall6 + 25.0,
+                    thickMm: _base.WeldMinThicknessMm,
+                    wallMm: wall6);
                 double[] discs = ShapeSearchPlan.LiveDiscs(SearchDiscs, minDiscAll);
         double[] wFrac = SearchWFrac;
         // ★ 不是 const：走查器要能把它压到极小，好在**分钟级**验「接线对不对」
@@ -1951,10 +1961,16 @@ public sealed class LineDesignPage : TabPage
             {
                     ct.ThrowIfCancellationRequested();
                     // ★ 早筛「造不出来」的盘径（判据⑥ 会兜底，但那要先白跑十几轮）。
-                    //   焊脚 = max(板厚, 壁厚) ≥ 壁厚 ⇒ 盘半径至少要 孔半径 + 壁厚 = 25 + 2×壁厚。
                     //   2026-08-17 实测：盘 R25 + 管壁 0.8 时孔半径 25.8 > 盘半径，孔比盘还大，
                     //   而这种几何**料最少**，不拦住它就会排在最前面。
-                    double minDisc = 25.0 + 2 * (double)_wall.Value;
+                    //   ⚠ 2026-08-29：原本手写 `25.0 + 2 × 壁厚`，与 ⑥ 的实现各写各的
+                    //     （而且同一个式子在本文件里有**两份**，只差变量名）⇒ 改走 ⑥ 的闭式反解。
+                    //   ⚠ 这是**真下界，不是可行下界**：焊脚 = max(板厚, 壁厚)，板厚要解完才知道。
+                    //     实测 0.8 档解出来最厚 2.45 ⇒ 真正需要 28.25，比这个下界高 1.65 mm。
+                    //     最紧的那个由 Solver.CoverCheck 在解完当场给（连处方一起）。
+                    double wall6b = (double)_wall.Value;
+                    double minDisc = GeometryScreen.MinDiscRadiusMm(
+                        holeRadiusMm: wall6b + 25.0, thickMm: _base.WeldMinThicknessMm, wallMm: wall6b);
                     if (R < minDisc - 1e-9)
                     {
                         done += screenRounds; _prog.Value = Math.Min(_prog.Maximum, done);

@@ -160,6 +160,27 @@ public static class Solver
             "这就是「与初值无关」的实现方式。");
         Log($"限值只从 LineCase 读：③ ≤ {dipMax:0.0} K　②″ ≤ {discMax:0.0} K");
 
+        // ★★ **⑥ 排在第一次场解之前**（2026-08-29）。它是闭式的、零成本 ——
+        //   几何造不出来就不必解场。此前它排在场解之后，代价不只是白烧一次解：
+        //   实测盘半径 27.0（孔 25.8 ⇒ 盘环只剩 1.2 mm）时，导航网格**一格都落不进圆盘区**，
+        //   于是先被「②″ 判不了（NaN）」挡下 —— 报出来的是「算不出来」，
+        //   而真正的毛病是「**盘太小**」，且那句话还带着能直接照做的处方。
+        //   ⚠ 判据本身没错（判不了不算过是对的），错的是**顺序**：
+        //     一条不解场就能回答的判据，不该让一条要解场的判据先替它开口。
+        //   ⚠ 这里用的是**起点板厚**（盒的下角）⇒ 只挡「怎么解都造不出来」的几何。
+        //     抬板厚之后才越界的那一类，由 RaiseUntil 里那道当场检查接住。
+        var (pre6Ok, pre6Why) = CoverCheck(d, baseIn);
+        if (!pre6Ok)
+        {
+            res.Design = d; res.Feasible = false; res.HitBound = true;
+            res.StopWhy = pre6Why
+                + "　（在**任何场解之前**就判定：⑥ 是闭式的，且这里用的是**起点板厚**"
+                + "—— 抬旋钮只会让焊脚更长，救不回来。）";
+            res.Message = res.StopWhy;
+            Log("  ✗ " + res.StopWhy);
+            return res;
+        }
+
         LineResult? last = null;
 
         // ★★ 求根**跑两遍，只有网格不同**（算法普查 A⑬）。
@@ -222,6 +243,13 @@ public static class Solver
                         res.HitBound = true;
                         res.StopWhy = "三条逐片判据都过了，但这些判据**没有旋钮能治**（要改形状）："
                                     + string.Join("、", rest.Select(c => c.Name));
+                        // ★ 只报名字等于把活推回给人。⑥ 是闭式的 —— 处方当场就能算出来。
+                        if (rest.Any(c => c.Name.StartsWith(LineResult.Key.DiscCover,
+                                                            StringComparison.Ordinal)))
+                        {
+                            var (_, why6) = CoverCheck(d, baseIn);
+                            if (why6.Length > 0) res.StopWhy += "　" + why6;
+                        }
                         Log("  ✗ " + res.StopWhy);
                     }
                     break;
@@ -328,7 +356,49 @@ public static class Solver
         double snapped = Math.Min(Math.Ceiling(hi / q - 1e-9) * q, HiOf(opt, knob));
         Set(d, knob, j, snapped);
         Log($"  ↑ {nm} → {snapped:0.000}（二分求根 {hi:0.0000} → 向上对齐到图纸格 {q:0.###}）");
+
+        // ★★ 上面那句「抬高可能让别的判据变差 —— 由外层下一轮再抬它自己的旋钮补上」
+        //   对 **⑥ 不成立**：⑥ 没有旋钮可补。而抬板厚会一对一地吃掉它的裕度
+        //   （焊脚 = max(板厚, 壁厚)）⇒ 这里必须**当场**验一次。
+        //   闭式、零成本、不用解场；不验的话要等三条逐片判据全过才发现，
+        //   而那时已经白抬了一整轮的板厚。
+        if (knob == Knob.Thick)
+        {
+            var (coverOk, coverWhy) = CoverCheck(d, baseIn);
+            if (!coverOk) { Log("  ✗ " + coverWhy); return (false, coverWhy); }
+        }
         return (true, "");
+    }
+
+    /// <summary>
+    /// **⑥ 圆盘盖得住管孔＋焊脚** —— 闭式、零成本，抬板厚之后必须当场验。
+    ///
+    /// 不过时给的是**处方**（盘径要改到多大），不是抱怨。这一点是本条的要点：
+    /// ⑥ 没有旋钮，但它**不需要搜索** —— 反解一次就得到确切的盘径
+    /// （<see cref="GeometryScreen.MinDiscRadiusMm(System.Collections.Generic.IReadOnlyList{FlangePlate})"/>）。
+    ///
+    /// ⚠ 求解器**自己不改盘径**：盘径是形状，不是它的变量。改了就不再是
+    ///   「这个形状下的最小可行点」，而是另一个形状的解 —— 那会把
+    ///   「解与初值无关」和「最小可行点」两句话同时说不清。它只负责把处方交出去。
+    /// </summary>
+    public static (bool Ok, string Why) CoverCheck(DesignSpec d, DesignInputs baseIn)
+    {
+        double floor = d.DiscFloorMm(baseIn);
+        var plates = new FlangePlate[d.TabThickMm.Length];
+        for (int j = 0; j < plates.Length; j++) plates[j] = d.Plate(j, floor);
+
+        double need = GeometryScreen.MinDiscRadiusMm(plates);
+        if (double.IsNaN(need))
+            return (false, "**⑥ 判不了**：一片法兰都没有 —— 判不了不算过");
+        if (d.DiscRadiusMm >= need - 1e-9) return (true, "");
+
+        double leg = plates.Max(q => Math.Max(q.WeldFilletLegMm, 0));
+        return (false,
+            $"**⑥ 圆盘盖不住管孔＋焊脚**：盘半径 {d.DiscRadiusMm:0.000} mm ＜ 需要 {need:0.000} mm"
+          + $"（缺 {need - d.DiscRadiusMm:0.000} mm；管孔 {d.HoleRadiusMm:0.000} + 焊脚 {leg:0.000}）。"
+          + " ⑥ **没有旋钮能治** —— 抬板厚只会让焊脚更长、⑥ 更差。"
+          + $"　【处方】盘半径改到 ≥ {need:0.000} mm 再解。"
+          + "这是 ⑥ 的**闭式反解**，不是搜出来的 —— 不用试，就是这个数。");
     }
 
     /// <summary>

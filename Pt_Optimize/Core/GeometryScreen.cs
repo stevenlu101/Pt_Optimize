@@ -35,6 +35,57 @@ public static class GeometryScreen
     public const double FreeTabMinDefaultMm = 100.0;
 
     /// <summary>
+    /// ★★ **判据⑥ 的闭式反解**：这一片要盖得住管孔＋焊脚，盘半径至少得多大。
+    ///
+    /// <code>
+    ///   ⑥ 正解： ringW = 盘半径 − 管孔半径 − 焊脚 ≥ 0        （见 Judge）
+    ///   本函数： 盘半径 ≥ 管孔半径 + 焊脚
+    /// </code>
+    /// **同一个式子的两种写法，放在同一处** —— 各写各的就是本仓库栽过多次的
+    /// 「同一个数两处来源」。
+    ///
+    /// ══ 为什么必须有它（2026-08-29）
+    ///
+    /// 焊脚 = <c>max(板厚, 壁厚)</c>（<see cref="DesignSpec.Plate"/>），
+    /// 而**板厚正是求解器只往上抬的那个旋钮**：
+    /// <code>
+    ///   抬板厚（治 ②′）→ 焊脚变长 → ⑥ 的裕度**一对一地掉**
+    /// </code>
+    /// 而 ⑥ **没有旋钮能治**。<see cref="Solver"/> 里那句「抬高可能让别的判据变差，
+    /// 由外层下一轮再抬它自己的旋钮补上」对 ⑥ **不成立** —— 它没有旋钮可补。
+    ///
+    /// ⇒ 求解器必须能在抬完板厚的**当场**说出「盘径要多大」。而这是闭式的：
+    /// 零成本，不用解场，也**不用搜索**。这就是「求解器 ↔ 搜形状」该有的联动 ——
+    /// 不是把求解器接进形状搜索的循环，是**直接把答案算出来**。
+    /// </summary>
+    public static double MinDiscRadiusMm(FlangePlate p) =>
+        p is null ? throw new ArgumentNullException(nameof(p))
+                  : p.HoleRadiusMm + Math.Max(p.WeldFilletLegMm, 0);
+
+    /// <summary>
+    /// 整组片里**最严的那一片**说了算 —— 与 <see cref="Judge"/> 取 worst 同口径。
+    ///
+    /// ⚠ 口径声明：各片盘半径相同时（解析路一律如此，同取 <c>DesignSpec.DiscRadiusMm</c>），
+    ///   「盘半径 ≥ 本函数」与「⑥ ≥ 0」是**充要**的；各片盘半径不同则只是必要条件。
+    /// 空数组返回 NaN —— <b>不返回 0</b>：0 会被读成「任何盘径都够」，那是恒真判据。
+    /// </summary>
+    public static double MinDiscRadiusMm(System.Collections.Generic.IReadOnlyList<FlangePlate> plates)
+    {
+        if (plates is null || plates.Count == 0) return double.NaN;
+        double need = double.NegativeInfinity;
+        foreach (var q in plates) need = Math.Max(need, MinDiscRadiusMm(q));
+        return need;
+    }
+
+    /// <summary>
+    /// 标量版：几何还没造出来时（例如**形状搜索建网格**的时候）用得上。
+    /// <paramref name="thickMm"/> 传**板厚下界**即可 —— 板厚只增不减，
+    /// 所以下界给出的是一个**真下界**（不是最紧的那个：解完板厚才知道最紧的）。
+    /// </summary>
+    public static double MinDiscRadiusMm(double holeRadiusMm, double thickMm, double wallMm) =>
+        holeRadiusMm + Math.Max(thickMm, wallMm);
+
+    /// <summary>
     /// 出 ⑥ 与 ⑤（外加可能的参考量）。顺序与原 Judge 中一致：先 ⑥ 后 ⑤。
     /// </summary>
     /// <param name="plates">解析几何的四片法兰。**空数组 = .3dm 模式** ⇒ 两条都返回
