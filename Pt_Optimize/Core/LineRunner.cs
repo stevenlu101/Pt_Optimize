@@ -408,6 +408,24 @@ public sealed class FlangeOut
                   LocalStabTempC = double.NaN, LocalStabJAPerMm2 = double.NaN, LocalStabLatLenMm = double.NaN;
     public bool LocalStabOnTab;
 
+    /// <summary>
+    /// ★★ 这一片的**场解（电位 + 温度）收敛了没有**（2026-08-29 补）。
+    ///
+    /// 病灶：三条铁律第 ③ 条是「判据只能过 / 不过 / **判不了**，判不了不算过」，
+    /// 但这条在**线性解这一层根本没有执行**：
+    ///   · <c>ShellCurrent.Converged</c> —— 加了字段却**没有任何人读**；
+    ///   · <c>ShellThermal.Converged</c> —— 有人读，但**只记一条 Note，不拦结果**。
+    /// ⇒ 场没解到位时，判据照样报出一个数，而那个数**看起来完全正常**。
+    ///
+    /// 现在：只要这一片的任一场没收敛，凡是**吃这一片的场**的判据一律标成
+    /// <see cref="ConstraintOut.Undetermined"/> —— 而 <see cref="LineResult.AllOk"/>
+    /// 把「判不了」当阻断，铁律于是真的生效。
+    /// </summary>
+    public bool FieldsConverged = true;
+
+    /// <summary>没收敛时说清楚是哪个场、残差多少。空 = 收敛了。</summary>
+    public string FieldNote = "";
+
     public double DiscMaxXMm = double.NaN, DiscMaxZMm = double.NaN,
                   DiscMaxRMm = double.NaN, DiscMaxJAPerMm2 = double.NaN,
                   DiscMaxThickMm = double.NaN;
@@ -581,13 +599,13 @@ public sealed class LineResult
     /// </summary>
     public static readonly (string Prefix, CheckKind Kind, bool NeedsRamp)[] Required =
     {
-        (Key.Ramp,      CheckKind.HardSafety, true),   // CheckRamp=false 时**合法缺席**
-        (Key.NetFlux,   CheckKind.HardSafety, false),
-        (Key.DiscTemp,  CheckKind.HardSafety, false),
+        (LineResult.Key.Ramp,      CheckKind.HardSafety, true),   // CheckRamp=false 时**合法缺席**
+        (LineResult.Key.NetFlux,   CheckKind.HardSafety, false),
+        (LineResult.Key.DiscTemp,  CheckKind.HardSafety, false),
         (Key.FreeTab,   CheckKind.HardSafety, false),
         (Key.DiscCover, CheckKind.HardSafety, false),
         (Key.TubeJ,     CheckKind.HardSafety, false),
-        (Key.FlangeDip, CheckKind.Target,     false),
+        (LineResult.Key.FlangeDip, CheckKind.Target,     false),
     };
 
     /// <summary>该出现却没出现的判据。**缺席 ≠ 通过。**</summary>
@@ -1261,6 +1279,10 @@ public static class LineRunner
             var sc = ShellCurrent.SolveFor(c, mesh, iJoint,
                         Materials.PtResistivity(c.SetpointC[Math.Min(j, n - 1)]) * 1e3,
                         c.SetpointC[Math.Min(j, n - 1)]);
+            // ★ 电位场的收敛此前**没有任何人读**（2026-08-29 补）。σ(T) 内循环会重解，
+            //   所以取**最后一次**的收敛状态 —— 中间那次不收敛而末次收敛，场是好的。
+            bool curConverged = sc.Converged;
+            double curResidual = sc.Residual; int curIterations = sc.Iterations;
 
             // 管根温度取相邻段中较高者（保守：抽热更大）
             // ⚠ 每片法兰贴的是**具体哪一端**，不能笼统取 TRootC（那原本恒是左端）：
@@ -1334,6 +1356,8 @@ public static class LineRunner
                                   Materials.PtResistivity(c.SetpointC[Math.Min(j, n - 1)]) * 1e3,
                                   c.SetpointC[Math.Min(j, n - 1)], tempC: th.T);
                     sc = sc2; th = Thermal(sc2);
+                    curConverged = sc2.Converged;
+                    curResidual = sc2.Residual; curIterations = sc2.Iterations;
                 }
 
             // 逐级峰值温度：按单元厚度归级，取该级内的最高温
@@ -1410,8 +1434,17 @@ public static class LineRunner
             else if (th.OverFitRange)
                 res.Notes.Add($"⚠ {flanges[j].Name}：峰值 {th.TMaxC:0} °C 超出电阻率拟合区 " +
                               $"{Materials.PtFitMaxC:0} °C，数值系外推");
-            if (!th.Converged)
-                res.Notes.Add($"{flanges[j].Name}：温度场未收敛（残差 {th.Residual:E2}）");
+            // ★ 场没收敛 ⇒ **这一片的判据判不了**，不是「照报一个数」。
+            var why = new List<string>();
+            if (!th.Converged) why.Add($"温度场未收敛（残差 {th.Residual:E2}，{th.Iterations} 轮）");
+            if (!curConverged) why.Add($"电位场未收敛（残差 {curResidual:E2}，{curIterations} 轮）");
+            if (why.Count > 0)
+            {
+                flanges[j].FieldsConverged = false;
+                flanges[j].FieldNote = string.Join("；", why);
+                res.Notes.Add($"✗ {flanges[j].Name}：{flanges[j].FieldNote}"
+                            + " ⇒ **吃这一片场的判据一律判不了**（判不了不算过）");
+            }
         }
         res.Flanges = flanges;
 
@@ -1432,6 +1465,7 @@ public static class LineRunner
         //   而**同一件事有多个来源**正是本项目连错四次的结构性根源。
         if (baseline is not null) ApplyBaseline(res, baseline);
         res.Checks = Judge(c, res, segs, flanges, segParams);
+        MarkUndeterminedIfFieldsFailed(res, flanges);
         return res;
     }
 
@@ -1465,6 +1499,48 @@ public static class LineRunner
     ///   （后者由 CriteriaTableTests 对着代码核）。本段只讲**为什么**这么判，不再列清单 ——
     ///   第三份需要人工同步的判据描述，注定还会漂。
     /// </summary>
+    /// <summary>
+    /// ★★★ **场没解到位 ⇒ 吃它的判据一律「判不了」**（2026-08-29 补）。
+    ///
+    /// 三条铁律第 ③ 条：「判据只能过 / 不过 / **判不了**，判不了不算过」。
+    /// 而这条此前在**线性解这一层根本没有执行**：
+    ///   · <c>ShellCurrent.Converged</c> —— 字段有，**没有任何人读**；
+    ///   · <c>ShellThermal.Converged</c> —— 有人读，但**只记一条 Note，不拦结果**。
+    /// ⇒ 场没解到位时判据照样报一个数，而那个数**看起来完全正常** ——
+    ///   正是本项目最怕的错误形态。
+    ///
+    /// 做成**后置一遍**而不是散落在每条判据里：散着写就会「补一条漏一条」，
+    /// 本仓库为「判据缺席」栽过三次，最后也是靠一份**名单**解决的（见 LineResult.Required）。
+    ///
+    /// ⚠ 只标**吃法兰场**的那些。纯几何（⑤⑥）与纯管子的（管 J、④）不受影响 ——
+    ///   把它们一并标成判不了是**过度**，会掩盖真正该看的东西。
+    /// </summary>
+    private static void MarkUndeterminedIfFieldsFailed(LineResult res, FlangeOut[] flanges)
+    {
+        var bad = flanges.Where(f => f is not null && !f.FieldsConverged).ToArray();
+        if (bad.Length == 0) return;
+
+        // 吃法兰场的判据名单。**加判据时要同步加这里** —— 不加的后果是它在场没解到位时
+        // 照样报数，而那正是本方法要挡的事。
+        string[] dependsOnFlangeFields =
+        {
+            LineResult.Key.NetFlux, LineResult.Key.DiscTemp, LineResult.Key.FlangeDip, LineResult.Key.Ramp,
+            LineResult.Key.FlangeStab, LineResult.Key.LocalStab, LineResult.Key.RampField, LineResult.Key.HeatBalance,
+            LineResult.Key.FlangeTopTemp, LineResult.Key.SelfSupply, LineResult.Key.FlangeJ, LineResult.Key.HeatResidual,
+        };
+        string who = string.Join("、", bad.Select(f => $"{f.Name}（{f.FieldNote}）"));
+
+        foreach (var ck in res.Checks)
+            if (dependsOnFlangeFields.Any(k => ck.Name.StartsWith(k, StringComparison.Ordinal)))
+            {
+                ck.Undetermined = true;
+                ck.Ok = false;
+                ck.Note = "★ **无法判定**：这条判据吃法兰的场，而场没解到位 —— " + who
+                        + "。**判不了不算过。** 原值仅供诊断，不得引用。"
+                        + (string.IsNullOrEmpty(ck.Note) ? "" : "　（原注：" + ck.Note + "）");
+            }
+    }
+
     private static ConstraintOut[] Judge(LineCase c, LineResult res, SegmentOut[] segs,
                                          FlangeOut[] flanges, DesignInputs[] segParams)
     {
