@@ -195,10 +195,17 @@ public static class Criteria
     /// 单个代号的展开，用在**散文**里：<c>③（法兰增量温降）</c>。
     /// 找不到就原样返回代号 —— 不许编名字。
     /// </summary>
+    /// ★★ 2026-08-30 起**只给名字，不给代号**（用户：「工程师看不懂」）。
+    ///   此前返回「⑤（舌片自由段）」—— 那是 08-29 那版「代号必须带解释」的做法。
+    ///   改这一处，所有调用点跟着对。
+    ///   ⚠ 代号本身仍在 Entry.Code 上，命令行与文档照常用。
+    ///   ⚠⚠ 判据的 Key 常数（LineResult.Key.NetFlux = "②′管孔净流入"）**绝不能动** ——
+    ///     它是识别用的唯一来源。2026-08-30 我用正则全仓替换时把它也改了，
+    ///     变成「管孔净流入管孔净流入」，四条门当场红。剥壳只准在显示层做。
     public static string Explain(string code)
     {
         var e = Of(code);
-        return e is null ? code : $"{e.Code}（{e.Name}）";
+        return e is null ? code : e.Name;
     }
 
     /// <summary>
