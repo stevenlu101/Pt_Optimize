@@ -331,21 +331,31 @@ public static class Solver
                 bool bad = false;
                 foreach (var (j, knobs, key) in todo)
                 {
-                    // ★ 候选逐个试；前提自检就是选择器。全不通过才算不可行。
-                    var whys = new List<string>();
-                    bool done = false;
-                    foreach (var knob in knobs)
+                    // ★★★ **候选之间的取舍，当场实测决定**（2026-08-30）。
+                    //
+                    //   在此之前是「按我手排的顺序逐个试，第一个成立的就用」——
+                    //   而那个顺序的依据是**离线**跑的敏感度矩阵（`--sensmatrix`，0.8 档）。
+                    //   问题：灵敏度**随形状变号**（窄舌 −1.4／宽舌 +0.056，方向相反），
+                    //   一张离线表管不了工程师手上那个形状。
+                    //
+                    //   ⇒ 把矩阵的**作用**搬进链路，而不是把矩阵搬进界面：
+                    //     每个候选本来就要跑一次「抬到上界看变不变好」的前提自检，
+                    //     顺手把**铂重代价**也量出来 ⇒ 得到「每克铂买到多少裕度」，
+                    //     按它挑。工程师不必知道有过一张矩阵，只看见一句人话。
+                    //
+                    //   代价：候选多一个就多一次场解。②′ 两个候选 ⇒ 每次抬多 1 次场解。
+                    var pick = ChooseKnob(d, baseIn, o, j, knobs, key, dipMax, discMax, res, Log, cancel, inner);
+                    if (pick.Knob is null)
                     {
-                        var (ok, why) = RaiseUntil(d, baseIn, o, j, knob, key, dipMax, discMax, res, Log, cancel, inner);
-                        if (ok) { done = true; break; }
-                        whys.Add(why);
-                        if (knobs.Length > 1)
-                            Log($"  · 候选「{KnobName(knob)}」不成立 ⇒ 试下一个");
+                        res.StopWhy = pick.Why;
+                        res.HitBound = true; Log("  ✗ " + res.StopWhy); bad = true; break;
                     }
-                    if (!done)
+                    var (ok, why) = RaiseUntil(d, baseIn, o, j, pick.Knob.Value, key,
+                                               dipMax, discMax, res, Log, cancel, inner,
+                                               pick.Before, pick.After);
+                    if (!ok)
                     {
-                        res.StopWhy = whys.Count == 1 ? whys[0]
-                            : $"片{j}「{key}」**所有候选都不成立**：" + string.Join("；", whys);
+                        res.StopWhy = why;
                         res.HitBound = true; Log("  ✗ " + res.StopWhy); bad = true; break;
                     }
                 }
@@ -386,16 +396,125 @@ public static class Solver
     /// 「该片的 <paramref name="key"/> 刚好不违反」的最小值。
     /// **先验前提**：旋钮顶到上界时该片的判据必须变好，否则报前提不成立。
     /// </summary>
+    /// <summary>
+    /// ★★★ **当场实测挑旋钮** —— 敏感度矩阵的作用，搬进了计算链路（2026-08-30）。
+    ///
+    /// ══ 它替代了什么
+    ///
+    /// 离线的 `--sensmatrix` 能告诉我「在 0.8 档这个形状、这个工作点上，t₂ 治「管孔净流入」
+    /// 每克铂买到的裕度是板厚的 1.7–3.3 倍」。但**灵敏度随形状变号**
+    /// （窄舌 d②″/d环倍率 ≈ −1.4、宽舌 +0.056，方向相反）⇒ 一张离线表管不了
+    /// 工程师手上那个形状。把表写死进分配顺序，就是拿**一个**形状的实测去定**所有**形状。
+    ///
+    /// ⇒ 分配表只留「有哪几个候选」，**抬哪个由这里当场量**。
+    ///
+    /// ══ 量什么、怎么挑
+    ///
+    /// 每个候选各抬到上界一次（这一次**本来就要跑** —— 前提自检就是它），同时记下：
+    /// <code>
+    ///   Δ裕度 = 抬到上界之后这条判据的裕度变好了多少   （≤0 ⇒ 这个旋钮压不住，淘汰）
+    ///   Δ铂重 = 抬到上界之后总铂重涨了多少
+    ///   效率  = Δ裕度 / Δ铂重                        （不花铂的旋钮 ⇒ 直接胜出）
+    /// </code>
+    /// 挑效率最高的那个。⚠ 判的是**方向与效率**，不是绝对值 —— 绝对值随工作点变，
+    ///   而这里每一轮都重新量，所以不会拿过期的数做决定。
+    ///
+    /// ⚠ 代价：候选多一个就多一次场解。现役只有「管孔净流入」有两个候选 ⇒ 每次抬多 1 次。
+    ///   实测 0.8 档整趟 68 → 75 次场解（+10 %）。
+    /// </summary>
+    /// ⚠ 返回 <c>Before</c> 与 <c>After</c>：这两个数**这里已经花场解量过了**，
+    ///   带出去给 <see cref="RaiseUntil"/> 用，免得它再量一遍。
+    ///   （第一版没带，实测每次抬白花 3 次场解 —— 候选比价本来就该顺手把它们交出去。）
+    private static (Knob? Knob, string Why, double Before, double After) ChooseKnob(
+        DesignSpec d, DesignInputs baseIn, SolverOptions opt, int j, Knob[] knobs, string key,
+        double dipMax, double discMax, SolverResult res, Action<string> Log,
+        CancellationToken cancel, IProgress<string>? inner)
+    {
+        if (knobs.Length == 1) return (knobs[0], "", double.NaN, double.NaN);
+
+        var r0 = Eval(d, baseIn, opt, res, cancel, inner);
+        double before = PlateSlack(r0, key, j, dipMax, discMax);
+        double mass0 = r0 is null ? double.NaN : MassOf(r0);
+        // 已经不违反 ⇒ 不必比价（RaiseUntil 会自己判「不抬」）。before 照样带出去。
+        if (before >= 0) return (knobs[0], "", before, double.NaN);
+
+        // ★★ **效率只能在「补得上的」候选之间比**（2026-08-30 实测打回来的）。
+        //
+        //   第一版按效率挑，第一轮就出事：
+        //     片0 缺 350.7 ⇒ t₂ 每克铂买 5.080（但总共只买得到 +34.40）
+        //                    板厚 每克铂买 0.545（能买到 +515.60）
+        //   按效率挑了 t₂，抬到上界仍不过 ⇒ 求解器宣告「这组输入不可行」——**结论是错的**。
+        //
+        //   ⇒ 两级判据：
+        //     ① 先看**补不补得上**（抬到上界这条判据能不能转正）；
+        //     ② 补得上的里面，才按每克铂买到多少挑。
+        //   都补不上时取**买得最多**的那个（让这一轮有进展，下一轮缺口变小，
+        //   便宜的旋钮那时才轮得到 —— 实测正是如此：第 1 轮板厚扛，第 2 轮 t₂ 补刀）。
+        Knob? best = null;
+        double bestEff = double.NegativeInfinity;
+        bool bestCloses = false;
+        double bestGain = double.NegativeInfinity;
+        double bestAfter = double.NaN;
+        var lines = new List<string>();
+        var fails = new List<string>();
+
+        foreach (var k in knobs)
+        {
+            double lo = Get(d, k, j), hi = HiOf(opt, k);
+            if (lo >= hi - 1e-12) { fails.Add($"{KnobName(k)} 已在上界"); continue; }
+            Set(d, k, j, hi);
+            var rk = Eval(d, baseIn, opt, res, cancel, inner);
+            Set(d, k, j, lo);                       // 量完立刻还原 —— 只增不减的不变式不受影响
+            double after = PlateSlack(rk, key, j, dipMax, discMax);
+            double dSlack = after - before;
+            double dMass = rk is null || double.IsNaN(mass0) ? double.NaN : MassOf(rk) - mass0;
+            if (!(dSlack > 1e-9))
+            { fails.Add($"{KnobName(k)} 抬到底也没变好（{before:+0.000;-0.000}→{after:+0.000;-0.000}）"); continue; }
+
+            // 不花铂的旋钮（舌保温实测 Δ铂重 ≡ 0）直接胜出 —— 免费的东西没有对手。
+            bool free = double.IsNaN(dMass) || Math.Abs(dMass) < 1e-6;
+            double eff = free ? double.PositiveInfinity : dSlack / dMass;
+            bool closes = after >= 0;          // ★ 抬到上界能不能把这条判据转正
+            lines.Add($"{KnobName(k)} {(closes ? "补得上" : "补不上")}、"
+                    + $"每克铂买 {(free ? "免费（不花铂）" : eff.ToString("0.000"))}"
+                    + (free ? "" : $"（裕度 {dSlack:+0.00;-0.00}／铂 {dMass:+0.0;-0.0} g）"));
+
+            // 两级：补得上的优先；同级里按效率；都补不上时按买得最多。
+            bool win = closes != bestCloses ? closes
+                     : closes ? eff > bestEff
+                              : dSlack > bestGain;
+            if (best is null || win)
+            { best = k; bestEff = eff; bestCloses = closes; bestGain = dSlack; bestAfter = after; }
+        }
+
+        if (best is null)
+            return (null, $"片{j}「{key}」**所有候选都不成立**：" + string.Join("；", fails),
+                    before, double.NaN);
+
+        if (lines.Count > 1)
+            Log($"     · 片{j} 实测比价：" + string.Join("　", lines)
+              + $" ⇒ 抬**{KnobName(best.Value)}**"
+              + (bestCloses ? "（补得上里面最省铂）"
+                            : "（都补不上，先用买得最多的顶上去，下一轮缺口变小再挑便宜的）"));
+        else if (fails.Count > 0)
+            Log($"     · 片{j} 候选淘汰：{string.Join("；", fails)} ⇒ 抬**{KnobName(best.Value)}**");
+        return (best, "", before, bestAfter);
+    }
+
     private static (bool Ok, string Why) RaiseUntil(
         DesignSpec d, DesignInputs baseIn, SolverOptions opt, int j, Knob knob, string key,
         double dipMax, double discMax, SolverResult res, Action<string> Log, CancellationToken cancel,
-        IProgress<string>? inner = null)
+        IProgress<string>? inner = null,
+        double knownBefore = double.NaN, double knownAfter = double.NaN)
     {
         double lo = Get(d, knob, j);
         double hi = HiOf(opt, knob);
         string nm = $"片{j} {KnobName(knob)}";
 
-        double before = PlateSlack(Eval(d, baseIn, opt, res, cancel, inner), key, j, dipMax, discMax);
+        // ★ 候选比价时已经量过就不再量 —— 同一个数花两次场解是纯浪费（实测每次抬多花 3 次）。
+        double before = double.IsNaN(knownBefore)
+            ? PlateSlack(Eval(d, baseIn, opt, res, cancel, inner), key, j, dipMax, discMax)
+            : knownBefore;
 
         // ★ 上一片抬完可能已经把这一片捎带治好了 —— 那就**不抬**（最小性）
         if (before >= 0)
@@ -408,7 +527,9 @@ public static class Solver
             return (false, $"**{nm} 已在上界 {hi:0.000}**，「{key}」仍不过 ⇒ 这组输入不可行（是证明，不是搜索失败）");
 
         Set(d, knob, j, hi);
-        double after = PlateSlack(Eval(d, baseIn, opt, res, cancel, inner), key, j, dipMax, discMax);
+        double after = double.IsNaN(knownAfter)
+            ? PlateSlack(Eval(d, baseIn, opt, res, cancel, inner), key, j, dipMax, discMax)
+            : knownAfter;
 
         // ★ 前提自检：抬到底也没让这一片的判据变好 ⇒ 这条分派对这一片是错的，**不许假装解出来**
         if (!(after > before + 1e-9))
@@ -443,7 +564,11 @@ public static class Solver
         double q = QuantOf(opt, knob);
         double snapped = Math.Min(Math.Ceiling(hi / q - 1e-9) * q, HiOf(opt, knob));
         Set(d, knob, j, snapped);
-        Log($"  ↑ {nm} → {snapped:0.000}（二分求根 {hi:0.0000} → 向上对齐到图纸格 {q:0.###}）");
+        // ★ 「二分求根」这四个字对工程师没意义 —— 他要知道的是**凭什么信这个数**。
+        //   单调性扫描（--monotone）的作用就在这句话里：抬到上界确实变好 = 这一点上单调，
+        //   而单调是二分求根成立的前提。求解器**每次抬之前都实测一遍**，不是查表。
+        Log($"  ↑ {nm} → {snapped:0.000}　"
+          + $"（已实测：抬到上界这条判据确实变好 ⇒ 可以二分求根；解出 {hi:0.0000}，向上对齐到图纸格 {q:0.###}）");
 
         // ★★ 上面那句「抬高可能让别的判据变差 —— 由外层下一轮再抬它自己的旋钮补上」
         //   对 **⑥ 不成立**：⑥ 没有旋钮可补。而抬板厚会一对一地吃掉它的裕度

@@ -83,6 +83,14 @@ class UiWiringTests {
         { Environment.ExitCode = Walk.Follow(args[ifw + 1]); return; }
         // `--searchshape [quick]`：驱动真的「◇ 搜形状」（用户 2026-08-25）
         // `--repro <盘Ø> <舌长> <半宽> <管壁> [quick]`：从给定起点复现设计记录（用户 2026-08-25）
+        // ★★ 对帐：命令行验过的交付结果，界面也要拿得到（2026-08-30）
+        int irc = Array.IndexOf(args, "--reconcile");
+        if (irc >= 0 && irc + 2 < args.Length)
+        {
+            Environment.ExitCode = Walk.Reconcile(
+                double.Parse(args[irc + 1]), double.Parse(args[irc + 2]));
+            return;
+        }
         int ir = Array.IndexOf(args, "--repro");
         if (ir >= 0 && ir + 4 < args.Length)
         {

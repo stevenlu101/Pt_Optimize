@@ -1291,6 +1291,86 @@ static class Walk
     //    「逐级定厚」没有可调的级（见 Flow.Next 里那条指路）。
     //    而设计记录本身就是解析设计（阶梯/环倍率都是程序生成的），.3dm 只是它的产物。
     // ════════════════════════════════════════════════════════════════════
+    /// <summary>
+    /// ★★★ **对帐：命令行验过的交付结果，工程师从界面也要拿得到**（2026-08-30 用户拍板）。
+    ///
+    /// 用户原话：「能跑的功能所得的结果（对话时验证的交付结果），工程师使用 APP（UI 操作）
+    /// 跑时，也要能得到对话时验证的交付结果。（**必须验证才能算提交**）」
+    ///
+    /// ══ 为什么这条会不成立
+    ///
+    /// 两条路**传给求解器的东西不是同一个对象**：
+    /// <code>
+    ///   命令行 --solve   Solver.Solve(DesignSpec.Select(args), …)   ← 直接拿设计记录
+    ///   界面 自动定厚    Solver.Solve(PageToDesignSpec(), …)        ← 拿页面控件搬运出来的
+    /// </code>
+    /// 只有当「载入设计记录」把每一个进计算的量都灌准了，两者才等价。
+    /// 而本页的历史正是**一路在补这些漏**（舌保温、环倍率、压接段、舌根圆角、环宽、
+    /// 以及 2026-08-30 才补的 r₁/r₂/t₂）—— 每补一个之前，两条路都在算**不同的零件**。
+    ///
+    /// ⇒ 这不是「应该一样」，是**必须每次跑出来比一遍**。
+    /// </summary>
+    public static int Reconcile(double wall, double expectG)
+    {
+        Console.OutputEncoding = System.Text.Encoding.UTF8;
+        Application.EnableVisualStyles();
+
+        var main = new MainForm();
+        main.CreateControl();
+        var tabs = (TabControl)F(main, "_tabs")!;
+        var line = tabs.TabPages.OfType<LineDesignPage>().First();
+        typeof(Form).GetMethod("OnLoad", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(main, new object?[] { EventArgs.Empty });
+        Pump(1200);
+        void Force(Control c) { _ = c.Handle; foreach (Control k in c.Controls) Force(k); }
+        Force(main); Pump(300);
+
+        H($"对帐：管壁 {wall:0.0} 档 —— 界面跑出来的，要等于命令行验过的 {expectG:0.0} g");
+        Console.WriteLine("  命令行那一边：--cli --quiet --solve --wall " + wall.ToString("0.0"));
+        Console.WriteLine("  界面这一边　：载入设计记录 → 自动定厚（两者都走 Solver.Solve，求根、与初值无关）");
+
+        // ── 一、载入设计记录（工程师的第一个动作）
+        var box = (ToolStripComboBox)F(line, "_caseBox")!;
+        int pick = -1;
+        for (int i = 0; i < box.Items.Count; i++)
+            if ((box.Items[i]?.ToString() ?? "").Contains(wall.ToString("0.0"), StringComparison.Ordinal))
+            { pick = i; break; }
+        OK("下拉里找得到这一档", pick >= 0,
+           pick >= 0 ? box.Items[pick]!.ToString()!
+                     : "★ 下拉里没有管壁 " + wall.ToString("0.0") + " 的档 —— 工程师无从开始");
+        if (pick < 0) return _bad;
+        box.SelectedIndex = pick; Pump(200);
+        Call(line, "LoadDesignSpec"); Pump(400);
+
+        var wallBox = (NumericUpDown)F(line, "_wall")!;
+        OK("载入之后壁厚控件对得上", Math.Abs((double)wallBox.Value - wall) < 1e-9,
+           $"控件 {wallBox.Value} vs 档 {wall:0.0}");
+
+        // ── 二、点「自动定厚」（这一步就是命令行的 --solve）
+        Console.WriteLine("  ⇒ 点「自动定厚」…（分钟级）");
+        Call(line, "RunAsync", true, false);
+        bool fin = Wait(() => F(line, "_cts") is null, 3_600_000);
+        OK("自动定厚在预算内跑完", fin, fin ? "" : "★ 超时");
+        if (!fin) return _bad;
+
+        // ── 三、比数
+        var last = (LineResult?)F(line, "_last");
+        OK("界面这边解出来了", last is { Ok: true }, last?.Message ?? "(null)");
+        if (last is not { Ok: true }) return _bad;
+
+        double got = last.Segments.Sum(x => x.MassG) + last.Flanges.Sum(x => x.MassG);
+        Console.WriteLine();
+        Console.WriteLine($"  命令行验过 {expectG:0.0} g　　界面跑出 {got:0.0} g　　差 {got - expectG:+0.0;-0.0} g");
+        DumpChecks(line, "界面这一边的判据表");
+
+        // ⚠ 容差取 1 g：图纸格量化之下，同一个解不该差到 1 g。
+        //   差得更多**不是「差不多」**，是两条路在算不同的东西 —— 那正是本条要抓的。
+        OK("★★ 界面与命令行给出同一个交付结果", Math.Abs(got - expectG) <= 1.0,
+           Math.Abs(got - expectG) <= 1.0 ? ""
+             : $"★ 差 {got - expectG:+0.0;-0.0} g —— 两条路传给求解器的不是同一个零件");
+        return _bad;
+    }
+
     public static int Repro(double discD, double tabLen, double halfW, double wall, bool quick)
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;

@@ -152,10 +152,23 @@ public class SolverIsSeedFreeTests
             Assert.True(s.Contains("要它往**同一个**方向走"),
                 $"旋钮「{Solver.KnobName(k)}」被两条判据共用，却没写清为什么安全");
 
-        // ★ 候选是**逐个试**的，选择器就是前提自检 —— 没有这一段，候选表只是摆设
-        Assert.Contains("foreach (var knob in knobs)", s);
-        Assert.Contains("RaiseUntil(d, baseIn, o, j, knob, key", s);
+        // ★★ 2026-08-30 又强化了一次：候选原先是「按我手排的顺序**逐个试**，
+        //   第一个成立的就用」。那个顺序的依据是**离线**跑的敏感度矩阵（0.8 档），
+        //   而灵敏度随形状变号 ⇒ 一张离线表管不了工程师手上那个形状。
+        //   现在改成 ChooseKnob：**每个候选各实测一次**，按「补不补得上 + 每克铂买多少裕度」挑。
+        //   ⇒ 敏感度矩阵的**作用**进了链路，而不是它的**结论**被抄成了顺序。
+        Assert.Contains("private static (Knob? Knob, string Why, double Before, double After) ChooseKnob(", s);
+        Assert.Contains("var pick = ChooseKnob(", s);
         Assert.Contains("所有候选都不成立", s);
+
+        // ★★★ 两级判据：**先看补不补得上**，补得上的里面才比价。
+        //   只按效率挑会出错 —— 实测：t₂ 每克铂买 5.080 但总共只买得到 +34.40，
+        //   而缺口是 350.7；选了它抬到上界仍不过 ⇒ 求解器宣告「不可行」，**结论是错的**。
+        Assert.Contains("bool closes = after >= 0;", s);
+        Assert.Contains("补得上", s);
+
+        // ★ 量过的数要带给 RaiseUntil，不许同一个数花两次场解
+        Assert.Contains("double knownBefore = double.NaN, double knownAfter = double.NaN", s);
     }
 
     /// <summary>
