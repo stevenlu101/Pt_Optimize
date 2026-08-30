@@ -128,6 +128,66 @@ public static class Criteria
     ///   若不挡住，<c>Of("")</c> 会命中其中随便一条 —— 那是个说不清指哪条的答案，
     ///   而它**看起来完全正常**。
     /// </summary>
+    /// <summary>
+    /// ★★★ **界面用的判据名：把代号剥掉**（2026-08-30，用户原话「工程师看不懂」）。
+    ///
+    /// ══ 为什么代号会流到界面上
+    ///
+    /// 判据的 <see cref="LineResult.Key"/> 常数**自己就带着代号**：
+    /// <code>
+    ///   NetFlux   = "②′管孔净流入"
+    ///   DiscTemp  = "②″圆盘区最高温"
+    ///   FlangeDip = "③ 法兰增量温降"
+    /// </code>
+    /// 而判据表直接印 <c>ConstraintOut.Name</c> ⇒ 代号是**从内核流到界面上**的，
+    /// 散落在各处提示语里的那些只是支流。
+    ///
+    /// ══ 为什么不改 Key
+    ///
+    /// Key 是全仓**唯一来源**：门（<c>Flow.RequiredChecks</c>）、判据匹配
+    /// （<c>Name.StartsWith(key)</c>）、命令行、测试、交接文档都靠它。
+    /// 改它等于同时改识别与显示两件事 —— 而只有显示要改。
+    /// ⇒ **内部身份不动，显示层剥壳**，剥壳只有这一个函数。
+    ///
+    /// ══ 为什么代号必须走干净，而不是「带上解释就行」
+    ///
+    /// 2026-08-29 做过一版「代号必须带解释」（对照表 + 展开 12 处）。**不够**：
+    /// 判据代号 ⑤（舌片自由段）与页签上的**阶段号** ⑤（交付）**形状相同、含义无关**，
+    /// 摆在同一个界面上必然误读。⇒ 界面侧根本不出现代号。
+    /// 对照表留着给**命令行与文档**用 —— 那两处的读者是开发者。
+    /// </summary>
+    /// <param name="nameOrKey">判据名或 Key（<c>ConstraintOut.Name</c> 直接传进来即可）。</param>
+    public static string Plain(string? nameOrKey)
+    {
+        if (string.IsNullOrWhiteSpace(nameOrKey)) return "";
+        string k = nameOrKey.Trim();
+
+        // 「· ② 法兰最高温」这种：先剥分类标记，再剥代号
+        if (k.StartsWith("·", StringComparison.Ordinal)) k = k[1..].TrimStart();
+        if (k.Length > 0 && "①②③④⑤⑥".Contains(k[0]))
+        {
+            int n = 1;
+            if (k.Length > 1 && (k[1] == '′' || k[1] == '″')) n = 2;
+            k = k[n..].TrimStart();
+        }
+        return k;
+    }
+
+    /// <summary>
+    /// 界面里出现代号就是违规 —— 给门用的判定（<c>true</c> = 这段文字里有代号）。
+    /// ⚠ 只认**判据代号**：圈号后面跟 ′ ″ 的，或圈号紧贴汉字的。
+    ///   页签上的阶段号带全名（「① 先决条件（能造·能升温）」）是导航编号，不在此列 ——
+    ///   但那种写法里圈号后面是空格加中文，与判据代号形状一样，
+    ///   所以门只扫**判据相关**的字符串，不做全局正则。见 UiNoCodeTests。
+    /// </summary>
+    public static bool HasCode(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return false;
+        for (int i = 0; i < text.Length; i++)
+            if ("①②③④⑤⑥".Contains(text[i])) return true;
+        return false;
+    }
+
     public static Entry? Of(string code) =>
         string.IsNullOrWhiteSpace(code) ? null : All.FirstOrDefault(e => e.Code == code);
 

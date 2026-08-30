@@ -104,13 +104,21 @@ namespace PtOptimize.Core;
 public static class Solver
 {
     /// <summary>三个可解旋钮。每个都只往上走。</summary>
-    public enum Knob { Thick, Insul, Ring }
+    /// <summary>
+    /// 求解器可以动的量。<see cref="RingT2"/> 是 2026-08-30（第 9 件）加的第四个。
+    ///
+    /// ⚠ **r₁ / r₂ 没有加**，而且不是「暂时不加」：现役两档 t₁ = t₂ = 1.00 ⇒
+    ///   三段厚度全相等、**台阶不存在** ⇒ 挪它们的半径**结构性无效**（不是「不敏感」）。
+    ///   要让它们有意义，得先有台阶 —— 而造台阶正是 t₂ 干的事。
+    /// </summary>
+    public enum Knob { Thick, Insul, Ring, RingT2 }
 
     public static string KnobName(Knob k) => k switch
     {
         Knob.Thick => "板厚",
         Knob.Insul => "舌保温",
-        Knob.Ring  => "环倍率",
+        Knob.Ring  => "环倍率 t₁",
+        Knob.RingT2 => "外级倍率 t₂",
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 
@@ -173,7 +181,13 @@ public static class Solver
     ///   删掉就等于用**这一个**形状的实测，去否掉**所有**形状。
     public static readonly (string Key, Knob[] Knobs)[] Allocation =
     {
-        (LineResult.Key.NetFlux,   new[] { Knob.Thick }),               // ②′ 对板厚递增（实测 +104…+62 W/mm）
+        // ②′：**t₂ 排在板厚前面** —— 实测每克铂买到的裕度是板厚的 1.7–3.3 倍，
+        //     而每单位 ②′ 的 ③ 代价几乎相同（2.3–2.4 K/W，同一个物理：都往孔边加金属）。
+        //     ⚠ 候选是**各自独立求根**的（RaiseUntil 失败时会退回原值，不叠加）⇒
+        //       t₂ 一个人补不上的大缺口会退回去、由板厚全包；
+        //       而**最后一公里的小缺口**正是板厚最浪费的地方（168 g/mm，图纸格 0.01 起步就 1.7 g）。
+        //       实测那一步：0.8 档第 2 轮片1 缺 0.321 W ⇒ 板厚 +29 g，t₂ 只要 **+0.43 g**。
+        (LineResult.Key.NetFlux,   new[] { Knob.RingT2, Knob.Thick }),  // ②′ 实测 t₂ +13.8 W/单位、板厚 +62…+104 W/mm
         (LineResult.Key.FlangeDip, new[] { Knob.Insul }),               // ③  对舌保温递增（实测 +570…+104 K/mm，且免费）
         (LineResult.Key.DiscTemp,  new[] { Knob.Insul, Knob.Ring }),    // ②″ 实测只有舌保温治得住；环倍率留作换形状时的候选
     };
@@ -201,6 +215,9 @@ public static class Solver
             d.TabThickMm[j] = tLo;
             d.TabInsulMm[j] = opt.InsLoMm;
             d.RingMul[j]    = opt.RingLo;
+            // ★ t₂ 也是盒的下角，且必须**显式**写成 1.00 而不是留 NaN：
+            //   NaN 的含义是「跟着 t₁ 走」，那样它就有两处来源、还会随 t₁ 悄悄变。
+            d.RingMul2[j]   = opt.RingLo;
         }
 
         // ★ 限值**只从 LineCase 读**（判据的唯一来源）。求解器不许自带第二份。
@@ -208,7 +225,8 @@ public static class Solver
         double dipMax = lc.RootDeltaMaxK, discMax = lc.DiscOverTempMaxK;
 
         Log($"起点 = **约束盒的下角**（不是种子）：板厚 {tLo:0.00} mm（焊接屈曲/烧穿下界）／" +
-            $"舌保温 {opt.InsLoMm:0.00} mm（裸舌）／环倍率 {opt.RingLo:0.00}（无台阶）　× {np} 片");
+            $"舌保温 {opt.InsLoMm:0.00} mm（裸舌）／环倍率 t₁ {opt.RingLo:0.00}／" +
+            $"外级倍率 t₂ {opt.RingLo:0.00}（都=无台阶）　× {np} 片");
         Log($"传进来的旋钮值**一个都没用**（板厚 {string.Join("/", geometry.TabThickMm.Select(x => x.ToString("0.00")))} 被丢弃）—— " +
             "这就是「与初值无关」的实现方式。");
         Log($"限值只从 LineCase 读：③ ≤ {dipMax:0.0} K　②″ ≤ {discMax:0.0} K");
@@ -637,6 +655,10 @@ public static class Solver
         Knob.Thick => d.TabThickMm[j],
         Knob.Insul => d.TabInsulMm[j],
         Knob.Ring  => d.RingMul[j],
+        // ★ 模型默认是 **NaN = 用旧规则**（t₂ = 1 + 0.4(t₁−1)）。作为旋钮读它时必须
+        //   把那个规则**坐实成数值** —— 否则同一个量有两处来源（规则 与 旋钮），
+        //   而且它会跟着 t₁ 悄悄变，二分的不变式当场失效。
+        Knob.RingT2 => double.IsNaN(d.RingMul2[j]) ? d.RingMulOuter(j) : d.RingMul2[j],
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 
@@ -647,6 +669,7 @@ public static class Solver
             case Knob.Thick: d.TabThickMm[j] = v; break;
             case Knob.Insul: d.TabInsulMm[j] = v; break;
             case Knob.Ring:  d.RingMul[j]    = v; break;
+            case Knob.RingT2: d.RingMul2[j]  = v; break;
             default: throw new ArgumentOutOfRangeException(nameof(k));
         }
     }
@@ -656,6 +679,7 @@ public static class Solver
         Knob.Thick => o.ThickHiMm,
         Knob.Insul => o.InsHiMm,
         Knob.Ring  => o.RingHi,
+        Knob.RingT2 => o.RingHi,     // 与 t₁ 同一条上界（同类量：厚度倍率）
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 
@@ -665,6 +689,7 @@ public static class Solver
         Knob.Thick => o.QuantThickMm,
         Knob.Insul => o.QuantInsulMm,
         Knob.Ring  => o.QuantRing,
+        Knob.RingT2 => o.QuantRing,
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 
@@ -673,6 +698,7 @@ public static class Solver
         Knob.Thick => o.BisectTolMm,
         Knob.Insul => o.BisectTolMm,
         Knob.Ring  => o.BisectTolRing,
+        Knob.RingT2 => o.BisectTolRing,
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 }

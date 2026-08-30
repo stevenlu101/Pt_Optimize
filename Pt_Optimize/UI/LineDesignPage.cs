@@ -111,8 +111,8 @@ public sealed class LineDesignPage : TabPage
     /// （看得见的默认值才学得会那条规则）；**勾上** = 逐片自定，读框子。
     ///
     /// ⚠ 它们**不是求解器旋钮**（<see cref="Solver.Allocation"/> 里没有）——
-    ///   `--monotone` 实测三条全单调，但对 ③ 与 ②″ 都往坏走，只对 ②′ 往好走，
-    ///   而 ②′ 已经有板厚。「抬哪个」是取舍，不是查表 ⇒ 先做敏感度矩阵再说。
+    ///   `--monotone` 实测三条全单调，但对 ③ 与 圆盘区最高温 都往坏走，只对 管孔净流入 往好走，
+    ///   而 管孔净流入 已经有板厚。「抬哪个」是取舍，不是查表 ⇒ 先做敏感度矩阵再说。
     ///   所以这里是**工程师手动探索**用的，改了要自己重解。
     /// </summary>
     private readonly CheckBox _ringShapeCustom = new()
@@ -189,7 +189,7 @@ public sealed class LineDesignPage : TabPage
     /// ★ 形状是 2026-08-17 补的，起因是一个真空档：原来 `tooFar` 只管
     ///   「离上次已解的点走了多远」，**从不问「现在这个形状是不是雅可比测过的那个形状」**。
     ///   而雅可比那几个常数自己的注释就写着「只对这个工作点附近成立，
-    ///   ②″ 由两个竞争峰决定，**符号会随构型变**（已经栽过一次：拿另一构型的符号外推，判反了）」。
+    ///   圆盘区最高温 由两个竞争峰决定，**符号会随构型变**（已经栽过一次：拿另一构型的符号外推，判反了）」。
     ///   ⇒ 换了盘径/舌长/舌宽之后再解一次，然后微调板厚，预测照样显示 ——
     ///     而它用的是**另一个构型**的斜率。这正是那条注释警告过的事，只是没人拦。
     /// </summary>
@@ -213,7 +213,7 @@ public sealed class LineDesignPage : TabPage
         public double Wall, Plate, TubeIns;
         public double Disc, TabLen, TabW;
         // ★ 定尺寸器带回来的另外两个旋钮（2026-08-25）。**必须进快照** ——
-        //   它们参与判据（舌保温是守 ②′/③ 的主力），却没有页面控件；
+        //   它们参与判据（舌保温是守 管孔净流入/③ 的主力），却没有页面控件；
         //   不进快照就会「换了旋钮而 Fresh 不变」= 假新鲜。
         public double SizerTabIns, SizerRingMul;
         /// <summary>2026-08-28 补：这三个也进快照 —— 它们现在是**输入**，改了就该让上一次的解不新鲜。</summary>
@@ -233,8 +233,8 @@ public sealed class LineDesignPage : TabPage
     /// ★★★★★ 为什么必须由本页承载（2026-08-25 `--follow` 走查逼出来的）：
     ///   D8 用**三个**旋钮找可行解（板厚 / 舌保温 / 环倍率），而本页原先只承载板厚。
     ///   于是「定尺寸 → 回 ③ 重解」这条路**必然退回失败**：重解时另外两个被丢回设计记录值，
-    ///   ②′ 立刻掉负 ⇒ 提示又指回定尺寸 ⇒ **两步一循环，永远走不到交付**。
-    ///   实测：定尺寸后 3569 g 全过 → 重解 ②′ = −9.32 不过 → 再定尺寸 3565 g 全过 → …
+    ///   管孔净流入 立刻掉负 ⇒ 提示又指回定尺寸 ⇒ **两步一循环，永远走不到交付**。
+    ///   实测：定尺寸后 3569 g 全过 → 重解 管孔净流入 = −9.32 不过 → 再定尺寸 3565 g 全过 → …
     ///
     ///   ⚠ 它们没有控件，所以**必须在输出里印出来**（本项目规矩：
     ///     「看不见又在起作用的量是安静失败的温床」），并且**必须进 Snap**。
@@ -267,8 +267,27 @@ public sealed class LineDesignPage : TabPage
                 _tabIns[j].Value = Math.Clamp((decimal)d.TabInsulMm[j], _tabIns[j].Minimum, _tabIns[j].Maximum);
             for (int j = 0; j < _ringMul.Length && j < d.RingMul.Length; j++)
                 _ringMul[j].Value = Math.Clamp((decimal)d.RingMul[j], _ringMul[j].Minimum, _ringMul[j].Maximum);
+
+            // ★★★ 2026-08-30（第 9 件）：t₂ 现在是**求解器旋钮**（Solver.Allocation 里 管孔净流入 的
+            //   首选候选）⇒ 解出来的值必须回到控件，**并且要把「逐片自定」勾上**。
+            //
+            //   不勾的后果是静默的：PageToDesignSpec 在没勾时给这三个写 **NaN**（= 用旧规则）
+            //   ⇒ 求解器解出 t₂ → 页面读回来时把它丢掉 → 重解得到**另一个答案**。
+            //   本仓库为「传进来的旋钮值被丢弃」这一族栽过多次，这里是同一个形状。
+            bool anyT2 = false;
+            for (int j = 0; j < 4 && j < d.RingMul2.Length; j++)
+                anyT2 |= !double.IsNaN(d.RingMul2[j]);
+            if (anyT2)
+            {
+                _ringShapeCustom.Checked = true;
+                for (int j = 0; j < 4 && j < d.RingMul2.Length; j++)
+                    if (!double.IsNaN(d.RingMul2[j]))
+                        _ringT2[j].Value = Math.Clamp((decimal)d.RingMul2[j],
+                                                      _ringT2[j].Minimum, _ringT2[j].Maximum);
+            }
         }
         finally { _suppressAuto = false; }
+        SyncRingShape();
         _sizerTabIns = (double[])d.TabInsulMm.Clone();
         _sizerRingMul = (double[])d.RingMul.Clone();
         _last = best;
@@ -484,16 +503,14 @@ public sealed class LineDesignPage : TabPage
             "工艺下界 0.6 mm = **手工 TIG 烧穿下界**（自动 TIG 0.3、激光 0.1，差一个量级）。\n" +
             "另一条独立的界是管 J ≤ 12 A/mm²（现场给定：一般上限 15，壁 0.6 时 12 是极限）。\n" +
             "设计记录两档正是被这两条同点咬住（0.6）与全都留有余量（0.8）。\n" +
-            $"实测斜率（--vary）：③ {dDip_dWall:+0.0;−0.0} K/mm　②″ +16.7 K/mm" +
+            $"实测斜率（--vary）：法兰增量温降 {dDip_dWall:+0.0;−0.0} K/mm　圆盘区最高温 +16.7 K/mm" +
             $"　管J {dJ_dWall:+0.00;−0.00}　管重 +3051 g/mm\n" +
-            Criteria.Legend("③", "②″") + Environment.NewLine +
-            "⚠ ②″ 那条只在**这个工作点附近**成立：②″ 由两个竞争峰决定，符号会随构型翻。");
+            "⚠ 圆盘区最高温 那条只在**这个工作点附近**成立：圆盘区最高温 由两个竞争峰决定，符号会随构型翻。");
         Row("纤维保温 mm", _tubeIns,
             "无空间限制、不花铂 —— 但**不是免费的**：\n" +
-            $"  ③ {dDip_dTubeIns:+0.0;−0.0} K/mm　②″ −3.1 K/mm" +
+            $"  法兰增量温降 {dDip_dTubeIns:+0.0;−0.0} K/mm　圆盘区最高温 −3.1 K/mm" +
             $"　管J {dJ_dTubeIns:+0.00;−0.00} (A/mm²)/mm　（实测 --vary）\n" +
-            Criteria.Legend("③", "②″") + Environment.NewLine +
-            "机理：保温厚 ⇒ 管散热少 ⇒ 电流小（利），但 β 变小而 ③=D/√(kAβ) 里 β 在分母（不利）。\n" +
+            "机理：保温厚 ⇒ 管散热少 ⇒ 电流小（利），但 β 变小而 法兰增量温降=D/√(kAβ) 里 β 在分母（不利）。\n" +
             "现用的 5 mm 恰在拐点上 —— 这个值原本是没量过的默认值，碰巧是对的。");
 
         Head("法兰几何来源");
@@ -561,8 +578,8 @@ public sealed class LineDesignPage : TabPage
         Row("舌保温 mm（.3dm）", _tabIns3dm,
             "舌片自己的保温厚度。**0 = 裸舌**，那是本路径此前写死的行为。"
             + Environment.NewLine
-            + $"它是守 {Criteria.Explain("②′")}/{Criteria.Explain("③")} 的主力旋钮："
-            + "实测在设计记录几何上，0.4 mm ⇒ ③ = 5.2 K ✓，"
+            + $"它是守 {Criteria.Explain("管孔净流入")}/{Criteria.Explain("③")} 的主力旋钮："
+            + "实测在设计记录几何上，0.4 mm ⇒ 法兰增量温降 = 5.2 K ✓，"
             + "而 0（裸舌）⇒ 法兰 2986 °C、往管里灌 256 W。"
             + Environment.NewLine
             + "舌片裸露占端片散热的 90 % 以上 —— 一裸就净抽热、一全包又净倒灌，中间有零点。");
@@ -574,7 +591,7 @@ public sealed class LineDesignPage : TabPage
         Head("法兰形状（解析模式；四片同形状，厚度各自独立）");
         Row("圆盘直径 mm", _discD,
             "缩小它是本问题里少有的「三者同向」：省铂 + 放松焊接下界 + 改善端片热平衡。\n" +
-            "⇒ **最优盘径就在下界上**，而下界是判据⑥，**算得出来、不用搜**：\n" +
+            "⇒ **最优盘径就在下界上**，而下界是判据「圆盘盖得住管孔」，**算得出来、不用搜**：\n" +
             "　　盘半径 ≥ 管孔半径 + 焊脚　　焊脚 = max(板厚, 壁厚)　管孔半径 = 壁厚 + 25\n" +
             "　0.8 档、板厚解到 2.45 ⇒ 需要 R28.25（Ø56.5）；现在是 Ø60，还有 1.75 mm 余量。\n" +
             "⚠ 下界**跟着板厚走** —— 求解器只往上抬板厚，抬一分焊脚长一分、⑥ 的余量掉一分。\n" +
@@ -588,10 +605,9 @@ public sealed class LineDesignPage : TabPage
         Head("法兰厚度 mm / 厚度标度（可点「自动定厚」求解）");
         string tipPlate =
             "**最强的旋钮**，实测（--vary，端点均已收敛）：\n" +
-            $"  ③ {dDip_dPlate:+0.0;−0.0} K/mm　②″ −14.6 K/mm　法兰重 +264 g/mm\n" +
+            $"  法兰增量温降 {dDip_dPlate:+0.0;−0.0} K/mm　圆盘区最高温 −14.6 K/mm　法兰重 +264 g/mm\n" +
             "⚠ ③ 是**正号** —— 加厚会把 ③ 推向限值。「哪里热就加厚哪里」在这里是反的：\n" +
             "  加厚同时降单位面积发热（∝1/t）与增强横向导热（∝t），后者把热从管根抽走。\n" +
-            Criteria.Legend("③", "②″") + Environment.NewLine +
             "共用片承 √3 倍电流、发热 3 倍 ⇒ 必须比端片厚，四片等厚不是最优。";
         for (int i = 0; i < 4; i++) Row(names[i], _tPlate[i], tipPlate);
 
@@ -602,18 +618,18 @@ public sealed class LineDesignPage : TabPage
         //   本仓的写入链路会把转义序列改成真字符，字面量当场断掉（今天又踩了一次）。
         string tipIns =
             $"D8 里它是**免费旋钮**：主要动「从管子抽多少热」"
-            + $"（判据 {Criteria.Explain("②′")} 与 {Criteria.Explain("③")}），" + Environment.NewLine +
-            "而对 ②″（圆盘区局部峰值）几乎不动 —— 所以它先调，板厚只做接力与省铂。" + Environment.NewLine +
+            + $"（判据 {Criteria.Explain("管孔净流入")} 与 {Criteria.Explain("③")}），" + Environment.NewLine +
+            "而对 圆盘区最高温（圆盘区局部峰值）几乎不动 —— 所以它先调，板厚只做接力与省铂。" + Environment.NewLine +
             "初始值取下界 0.3（≈裸舌）：那是真实状态，不是捏的数。优化器会自己往上加。";
         for (int i = 0; i < 4; i++) Row(names[i], _tabIns[i], tipIns);
 
         Head("管孔渐变环倍率（优化变量，1.00 = 无台阶）");
         string tipRing =
-            "只压**管孔周围**的局部电流拥塞（判据 ②″），作用范围 r ≤ 孔+6 mm。" + Environment.NewLine +
+            "只压**管孔周围**的局部电流拥塞（判据 圆盘区最高温），作用范围 r ≤ 孔+6 mm。" + Environment.NewLine +
             "⚠ **这个灵敏度随形状变号，别照抄任何一个数**（2026-08-28 实测）：" + Environment.NewLine +
-            "　· 窄舌形状上曾测得 d②″/d倍率 ≈ **−1.4** K/单位（加环压得住）；" + Environment.NewLine +
+            "　· 窄舌形状上曾测得 d圆盘区最高温/d倍率 ≈ **−1.4** K/单位（加环压得住）；" + Environment.NewLine +
             "　· **现役宽舌形状**上，`--monotone` 全量程实测（0.8 档，2026-08-30 首次真跑）：" + Environment.NewLine +
-            "　　倍率 1.00→2.50 把 ②″ 从 **−0.208 挪到 −0.124**（限值 ≤5，越大越差）" + Environment.NewLine +
+            "　　倍率 1.00→2.50 把 圆盘区最高温 从 **−0.208 挪到 −0.124**（限值 ≤5，越大越差）" + Environment.NewLine +
             "　　⇒ **+0.084 K，方向相反**，却多花 **137 g** 铂 —— 舌片宽了，孔周本来就不拥塞。" + Environment.NewLine +
             "　　⚠ 更正（2026-08-30）：这一行 08-29 写的时候标的也是 `--monotone`，" + Environment.NewLine +
             "　　　但那时它**一次没跑过** —— 当时的 +0.08 是从别处测得的导数 +0.056 线性外推的。" + Environment.NewLine +
@@ -629,10 +645,15 @@ public sealed class LineDesignPage : TabPage
             "⚠ **超过盘半径之后它继续作用在舌片根部** —— 盘 Ø60 时盘面只到 孔+4.2 mm，" + Environment.NewLine +
             "　r₂ 再往外加厚的是舌根。`--monotone` 把 r₂ 扫到 16 mm 仍持续见效，就是这个缘故。" + Environment.NewLine +
             "── `--monotone` 实测（0.8 档，2026-08-30 首次跑）" + Environment.NewLine +
-            "　r₁ 1→10／r₂ 4→16／t₂ 1→2：三条对 抽热D、③、②″ **全单调** ⇒ 可二分。" + Environment.NewLine +
-            "　但方向是：只有 ②′ 变好，**③ 与 ②″ 都变坏** ⇒ 它们是「花铂换抽热」的旋钮，" + Environment.NewLine +
+            "　r₁ 1→10／r₂ 4→16／t₂ 1→2：三条对 抽热D、③、圆盘区最高温 **全单调** ⇒ 可二分。" + Environment.NewLine +
+            "　但方向是：只有 管孔净流入 变好，**③ 与 圆盘区最高温 都变坏** ⇒ 它们是「花铂换抽热」的旋钮，" + Environment.NewLine +
             "　不是「治判据」的旋钮。所以**没有**进求解器的分配表（那要先做敏感度矩阵）。" + Environment.NewLine +
-            "⇒ 这三个是**给你手动探索**的：改完请自己重解，求解器不会替你动它们。";
+            "── 谁在动它们（2026-08-30 起变了）" + Environment.NewLine +
+            "　**t₂ 是求解器旋钮**：它是判据 管孔净流入 的**首选**候选，排在板厚前面 ——" + Environment.NewLine +
+            "　实测每克铂买到的裕度是板厚的 **1.7–3.3 倍**，而每单位 管孔净流入 的 ③ 代价几乎相同。" + Environment.NewLine +
+            "　「自动定厚」解完会把 t₂ 写回这里并自动勾上「逐片自定」。" + Environment.NewLine +
+            "　**r₁ / r₂ 不是**求解器旋钮：t₁ = t₂ = 1.00 时台阶根本不存在，挪半径无效。" + Environment.NewLine +
+            "　要让它们有意义，先把 t₁ 或 t₂ 抬离 1.00。";
         Row("", _ringShapeCustom, tipShape);
         for (int i = 0; i < 4; i++) Row($"{names[i]} r₁ mm", _ringR1[i], tipShape);
         for (int i = 0; i < 4; i++) Row($"{names[i]} r₂ mm", _ringR2[i], tipShape);
@@ -653,7 +674,7 @@ public sealed class LineDesignPage : TabPage
         Row("舌根圆角 R mm", _fillet,
             "⚠ 网格 2 mm，**小于它的圆角在场里看不出来**（§1.8 的分辨率坑）—— 3 mm 只有 1.5 格。"
             + Environment.NewLine +
-            "而 ②″ 的峰**可能就落在舌根凹角**：也就是说优化器在调一个自己分辨不出来的几何。"
+            "而 圆盘区最高温 的峰**可能就落在舌根凹角**：也就是说优化器在调一个自己分辨不出来的几何。"
             + Environment.NewLine +
             "要真优化它，网格得先加密。");
         Row("环宽 mm", _ringW,
@@ -664,7 +685,7 @@ public sealed class LineDesignPage : TabPage
             "**这一个有依据**：早先网格里硬编码 3 mm 是**数值边界不是设计值** ——" + Environment.NewLine +
             "3 mm × 舌宽 40 = 120 mm²、共用片 1099 A ⇒ 界面电流密度约 9 A/mm²，" + Environment.NewLine +
             "而铜排压接通常按 ≤1 A/mm² 设计，**差一个数量级**。40 是按接触面反推的工程值。" + Environment.NewLine +
-            "⚠ 它直接进判据⑤（自由段 = 舌长 − 切点 − 压接段），铂重几乎线性跟着它走。");
+            "⚠ 它直接进判据「舌片自由段」（自由段 = 舌长 − 切点 − 压接段），铂重几乎线性跟着它走。");
 
 
         Head("分段控温点");
@@ -735,7 +756,7 @@ public sealed class LineDesignPage : TabPage
         // 一算就对上了：默认 盘Ø60(R30)／半宽20／舌长50／压接40 ⇒
         //   自由段 = 50 − 40 − √(30²−20²) = 50 − 40 − 22.36 = **−12.36**
         // 也就是压接块伸进圆盘里 —— 这个构型根本装不上铜排，
-        // 而 ③=599.5 只是这个退化几何的下游噪声，不是热学结论。
+        // 而 法兰增量温降=599.5 只是这个退化几何的下游噪声，不是热学结论。
         //
         // 为什么顶高逻辑没救它：EnforceTabLenFloor 挂在 ShowPrediction 上，
         // 而 ShowPrediction 只由 ParamChanged 调，ParamChanged 又被**首屏闸门**
@@ -1282,7 +1303,7 @@ public sealed class LineDesignPage : TabPage
     }
 
     // ★ 实测雅可比（`--vary`，端点均已收敛，管壁 0.8 设计记录点附近）。
-    //   ⚠ 只对**这个工作点附近**成立 —— ②″ 由两个竞争峰决定，符号会随构型变
+    //   ⚠ 只对**这个工作点附近**成立 —— 圆盘区最高温 由两个竞争峰决定，符号会随构型变
     //     （已经栽过一次：拿另一构型的符号外推，判反了）。
     //   ⇒ 外推只用来给「大概会往哪边走」，绝不当结论；超出一步就不显示。
     //
@@ -1301,20 +1322,20 @@ public sealed class LineDesignPage : TabPage
     private const double dDip_dPlate = +194.5;
     private const double dDip_dTubeIns = +34.0, dJ_dTubeIns = -0.57;
 
-    // ★★★★★ **②″ 的外推被撤掉了**（2026-08-17），这是有实测依据的决定，不是省事。
+    // ★★★★★ **圆盘区最高温 的外推被撤掉了**（2026-08-17），这是有实测依据的决定，不是省事。
     //
     // 旧常数（另一个构型：舌 90×30、环 1.22、板厚约两倍）：
-    //     ∂②″/∂管壁 = **+16.66**　∂②″/∂板厚 = **−14.59**
+    //     ∂圆盘区最高温/∂管壁 = **+16.66**　∂圆盘区最高温/∂板厚 = **−14.59**
     // 新设计记录点重测：
-    //     ∂②″/∂管壁 = **−0.12**　∂②″/∂板厚 = **+0.14**
+    //     ∂圆盘区最高温/∂管壁 = **−0.12**　∂圆盘区最高温/∂板厚 = **+0.14**
     // ⇒ **两个都翻了符号，量级掉了 100–140 倍。**
     //
-    // 物理上说得通：舌片加宽一倍之后孔周电流不再拥塞，②″ = −0.21 K 而限值是 +5 ——
+    // 物理上说得通：舌片加宽一倍之后孔周电流不再拥塞，圆盘区最高温 = −0.21 K 而限值是 +5 ——
     // 这条判据在本构型上**根本不活跃**，所以什么都推不动它。
     //
     // ⇒ 对一个「不动的量」做线性外推，最好的情况是噪声，最坏的情况是拿**反号**的斜率
     //   告诉用户「往那边走会更好」。两者都不该发生 ⇒ 不推，只在真解里报它的实测值。
-    //   这正是那句注释警告过的事：「②″ 由两个竞争峰决定，符号会随构型变」——
+    //   这正是那句注释警告过的事：「圆盘区最高温 由两个竞争峰决定，符号会随构型变」——
     //   以前只是写着，现在有两组数把它坐实了。
 
     /// <summary>
@@ -1343,7 +1364,7 @@ public sealed class LineDesignPage : TabPage
         // ⚠ 两条 ⚠ 告警**必须排在整张表之后**，不能夹在行与行中间：不带 \t 的整句
         //   会被当成普通句子，**把一张表断成两截**，两截各自量各自的列宽 ——
         //   于是「自由段」那行的数值列与下面三行错开，而错的时机偏偏是告警触发的时候。
-        sb.AppendLine($"   自由段\t{freeNow:0.0}\tmm\t解析（判据⑤ 下界 {FreeTabMin:0}）" +
+        sb.AppendLine($"   自由段\t{freeNow:0.0}\tmm\t解析（判据「舌片自由段」 下界 {FreeTabMin:0}）" +
                       (freeNow >= FreeTabMin - 1e-9 ? "　✓ 铜排装得下" : "　✗ **装不下**"));
         sb.AppendLine($"   管截面\t{area:0.0}\tmm²\t解析");
         sb.AppendLine($"   管铂重\t{tubeG:0}\tg\t解析（三段）");
@@ -1367,7 +1388,7 @@ public sealed class LineDesignPage : TabPage
             double dI = now.TubeIns - _solvedSnap.TubeIns;
             bool tooFar = Math.Abs(dW) > 0.25 || Math.Abs(dP) > 0.4 || Math.Abs(dI) > 3.0;
             // ★ 还要问一句：**当前形状是不是雅可比测过的那个形状**（2026-08-17 补）。
-            //   步长小不等于可以外推 —— 换个构型，②″ 的符号都可能翻。
+            //   步长小不等于可以外推 —— 换个构型，圆盘区最高温 的符号都可能翻。
             bool offShape = Math.Abs(now.Disc - JacDiscD) > 1e-6
                          || Math.Abs(now.TabLen - JacTabLen) > 1e-6
                          || Math.Abs(now.TabW - JacTabW) > 1e-6;
@@ -1380,7 +1401,7 @@ public sealed class LineDesignPage : TabPage
                 sb.AppendLine($"   （**本构型不在雅可比的适用范围** —— 那组斜率是在 " +
                               $"盘Ø{JacDiscD:0}／舌 {JacTabLen:0}×{2 * JacTabW:0} 上实测的，" +
                               $"而现在是 盘Ø{now.Disc:0}／舌 {now.TabLen:0}×{2 * now.TabW:0}。" +
-                              "②″ 的符号会随构型翻 ⇒ **不给预测**，等真解。）");
+                              "圆盘区最高温 的符号会随构型翻 ⇒ **不给预测**，等真解。）");
             else if (tooFar)
                 sb.AppendLine("   （改动已超出实测雅可比的适用范围 ⇒ **不给预测**，等真解）");
             else
@@ -1399,7 +1420,7 @@ public sealed class LineDesignPage : TabPage
                 P("管J", V("管 J"), V("管 J") + dJ_dWall * dW + dJ_dTubeIns * dI, 12.0,
                   $"管壁 {dJ_dWall:+0.00;−0.00}　管保温 {dJ_dTubeIns:+0.00;−0.00}");
                 // ⚠ 列数必须与 P 完全一致，否则它会自成一张表、和上面两行对不齐
-                sb.AppendLine($"   ②″\t{V("②″"):0.00}\t**不外推**\t/ 5.0\t" +
+                sb.AppendLine($"   圆盘区最高温\t{V("圆盘区最高温"):0.00}\t**不外推**\t/ 5.0\t" +
                               "本构型上它不活跃（实测各斜率 |·| ≤ 0.15，且符号与旧构型相反）");
                 sb.AppendLine("   ⚠ 预测是**线性外推**，只说方向与量级，不是答案。");
             }
@@ -1704,7 +1725,7 @@ public sealed class LineDesignPage : TabPage
             (fd.RingMul[0] <= 1.001
                 ? "（=1.00 即**不需要环**）\r\n"
                 : $"，r ≤ 孔+{fd.RingWidthMm:0} 与 孔+{2 * fd.RingWidthMm:0} 两级\r\n") +
-            $"   · 逐片舌保温 {DesignSpec.Fmt(fd.TabInsulMm, "0.0")} mm（守 {Criteria.Explain("②′")}/{Criteria.Explain("③")} 的主力旋钮）\r\n" +
+            $"   · 逐片舌保温 {DesignSpec.Fmt(fd.TabInsulMm, "0.0")} mm（守 {Criteria.Explain("管孔净流入")}/{Criteria.Explain("③")} 的主力旋钮）\r\n" +
             $"   · 压接段 {fd.ClampLengthMm:0} mm　舌根圆角 R{fd.TabFilletMm:0}　等宽舌片　管孔两面角焊缝\r\n" +
             "   ⇒ 现在点「核算整线」**就能**复现设计记录数字（与「▶ 复现设计记录」同一套几何）。\r\n" +
             "     两者的区别只剩：本按钮用页面上的水头，「复现设计记录」用内核默认值。";
@@ -1802,13 +1823,13 @@ public sealed class LineDesignPage : TabPage
     /// 1b 之后：解析模式解的**就是**设计记录那套几何，所以要报的不再是「表达不了什么」，
     /// 而是「**本页没有控件的那几项，这次实际用了什么值**」。
     ///
-    /// 为什么必须报：这几项都会显著改变结果（舌保温是守 ②′/③ 的主力旋钮），
+    /// 为什么必须报：这几项都会显著改变结果（舌保温是守 管孔净流入/③ 的主力旋钮），
     /// 而它们在界面上看不见。看不见又在起作用的量，正是「安静失败」的温床 ——
     /// 与其藏起来，不如每次都摊开。
     /// </summary>
     private static string AnalyticUsedWhat(DesignSpec d) =>
         $"   · 压接段 {d.ClampLengthMm:0} mm（决定判据 {Criteria.Explain("⑤")}与舌片有效发热长度）\r\n" +
-        $"   · 逐片舌保温 {DesignSpec.Fmt(d.TabInsulMm, "0.0")} mm（**守 {Criteria.Explain("②′")}/{Criteria.Explain("③")} 的主力旋钮**）\r\n" +
+        $"   · 逐片舌保温 {DesignSpec.Fmt(d.TabInsulMm, "0.0")} mm（**守 {Criteria.Explain("管孔净流入")}/{Criteria.Explain("③")} 的主力旋钮**）\r\n" +
         $"   · 管孔渐变环 ×{DesignSpec.Fmt(d.RingMul, "0.00")}" +
         (d.RingMul[0] <= 1.001 ? "（=1.00 即不需要环）" : $"，环宽 {d.RingWidthMm:0} mm") + "\r\n" +
         $"   · 舌根圆角 R{d.TabFilletMm:0}　等宽舌片　管孔两面角焊缝（焊脚 = max(板厚, 壁厚)）\r\n" +
@@ -1833,7 +1854,7 @@ public sealed class LineDesignPage : TabPage
     ///
     /// 「几何只有一个来源」这条铁律，在页面这里一直是破的。而 2026-08-17 一天里
     /// 抓到的三条 bug 根都是同一句：**同一件事存了两处**
-    ///   · 压接段：页面用 3 mm 默认值，设计记录是 40（判据⑤ 因此判反）
+    ///   · 压接段：页面用 3 mm 默认值，设计记录是 40（判据「舌片自由段」 因此判反）
     ///   · 3DM：作废档与现役档同名，把现役档整个覆盖
     ///   · 渐变环倍率：警告文字里硬编码「×1.22–1.24」，而设计记录早已是 1.00
     /// ⇒ 把页面这一处拆掉：解析几何一律走 <see cref="PageToDesignSpec"/> → <c>BuildCase</c>。
@@ -1928,12 +1949,12 @@ public sealed class LineDesignPage : TabPage
     /// ★★★★★ 把本页控件读成一个 <see cref="DesignSpec"/>（2026-08-17）。
     ///
     /// 为什么需要：「自动定厚」原来调的是 <see cref="FlangeAutoSizer"/> —— 它**只有板厚一个旋钮**，
-    /// 靶是 ③，而且它自己的注释就写着「管不到 ②′/②″」。
-    /// 问题在于 ③ 与 ②′ 是**同一个抽热 D 的两侧**（实测 ③ = 2.40·D）：
-    /// 把 ③ 往下压 = 把 D 往下压 = **把 ②′ 往负里推**，也就是往「热倒灌进管子」那个方向走
-    /// —— 那正是现场烧断的机理。旧器只会在事后让判据表去说「②′ 没过」。
+    /// 靶是 ③，而且它自己的注释就写着「管不到 管孔净流入/圆盘区最高温」。
+    /// 问题在于 ③ 与 管孔净流入 是**同一个抽热 D 的两侧**（实测 法兰增量温降 = 2.40·D）：
+    /// 把 ③ 往下压 = 把 D 往下压 = **把 管孔净流入 往负里推**，也就是往「热倒灌进管子」那个方向走
+    /// —— 那正是现场烧断的机理。旧器只会在事后让判据表去说「管孔净流入 没过」。
     ///
-    /// ⇒ 改调 D8（<see cref="Sizer"/>）：舌保温守抽热窗口、环倍率守 ②″、板厚只做接力与省铂。
+    /// ⇒ 改调 D8（<see cref="Sizer"/>）：舌保温守抽热窗口、环倍率守 圆盘区最高温、板厚只做接力与省铂。
     ///
     /// ⚠ D8 工作在**设计记录那套完整几何**上（逐片舌保温、渐变环、等宽舌片、舌根圆角、角焊缝），
     ///   而本页**没有这几项的控件**（见 <see cref="PageVsFinal"/>）。
@@ -2032,7 +2053,7 @@ public sealed class LineDesignPage : TabPage
 
         // 网格：盘半径 × 半宽比例。半宽 > 盘半径没有切点（等宽舌片与圆盘接不上），故按比例取。
                 // ★ 网格的最低点必须**造得出来**：写死的 25 对两个现役档（壁 0.6/0.8）
-                //   都会被判据⑥ 跳过 ⇒ 第 1 轮实际只探了 R30/R35（2026-08-25 查出）。
+                //   都会被判据「圆盘盖得住管孔」 跳过 ⇒ 第 1 轮实际只探了 R30/R35（2026-08-25 查出）。
                 //   抬到下界上，网格才是三个点。
                 //   ⚠ 2026-08-29：这里原本手写 `25.0 + 2 * 壁厚`，与 ⑥ 的实现各写各的。
                 //     数值上今天恰好相同（管孔 = 壁+25，焊脚下界 = max(烧穿 0.6, 壁)），
@@ -2077,7 +2098,7 @@ public sealed class LineDesignPage : TabPage
         var sb = new StringBuilder();
         sb.AppendLine("=== 搜形状（盘半径 × 舌宽；舌长按装配算）===");
         sb.AppendLine($"网格 {discs.Length}×{wFrac.Length} 个形状，先各筛 {screenRounds} 轮，再对胜出者跑 {finalRounds} 轮。");
-        sb.AppendLine($"自由段下界 {FreeTabMin:0} mm（判据⑤）　压接段 {DesignSpec.Current.ClampLengthMm:0} mm");
+        sb.AppendLine($"自由段下界 {FreeTabMin:0} mm（判据「舌片自由段」）　压接段 {DesignSpec.Current.ClampLengthMm:0} mm");
         sb.AppendLine("★ 舌长不是搜出来的，是**算出来的**：切点 + 压接段 + 自由段。");
         sb.AppendLine("随时可以点「取消」——**已经算完的形状结果不会丢**。");
         sb.AppendLine();
@@ -2099,7 +2120,7 @@ public sealed class LineDesignPage : TabPage
             async Task EvalShape(double R, double hw)
             {
                     ct.ThrowIfCancellationRequested();
-                    // ★ 早筛「造不出来」的盘径（判据⑥ 会兜底，但那要先白跑十几轮）。
+                    // ★ 早筛「造不出来」的盘径（判据「圆盘盖得住管孔」 会兜底，但那要先白跑十几轮）。
                     //   2026-08-17 实测：盘 R25 + 管壁 0.8 时孔半径 25.8 > 盘半径，孔比盘还大，
                     //   而这种几何**料最少**，不拦住它就会排在最前面。
                     //   ⚠ 2026-08-29：原本手写 `25.0 + 2 × 壁厚`，与 ⑥ 的实现各写各的
@@ -2436,8 +2457,8 @@ public sealed class LineDesignPage : TabPage
                 {
                     // 逐级定厚（.3dm 任意形状）：D8 只在解析几何上工作，管不了任意台阶，
                     // 所以这条路仍用 FlangeAutoSizer。
-                    // ⚠ 它**只有板厚一个旋钮**、靶是 ③，管不到 ②′/②″（它自己的注释写着）。
-                    //   ⇒ 用完必须看判据表，尤其 ②′ 净流入是不是仍为正。
+                    // ⚠ 它**只有板厚一个旋钮**、靶是 ③，管不到 管孔净流入/圆盘区最高温（它自己的注释写着）。
+                    //   ⇒ 用完必须看判据表，尤其 管孔净流入 净流入是不是仍为正。
                     var lvl = _levels;
                     var lockMask = LockedMask();
 
@@ -2477,14 +2498,14 @@ public sealed class LineDesignPage : TabPage
                     { _solvedRes = r.Line; _solvedSnap = CurrentSnap(); }
                     PushFlow();
                     Show(r.Line, autoNote: r.Message + (r.Converged ? "" : "　⚠ 未收敛，下面的数不可引用") +
-                        "\r\n   ⚠ 本器**只调板厚**，管不到 ②′ 净流入与 ②″ 圆盘峰 —— 请自行看判据表。" + floorNote);
+                        "\r\n   ⚠ 本器**只调板厚**，管不到 管孔净流入 净流入与 圆盘区最高温 圆盘峰 —— 请自行看判据表。" + floorNote);
                 }
                 else
                 {
                     // ★★★ 解析几何走 **D8**（Core/Sizer）。旧的 FlangeAutoSizer 只有板厚一个旋钮、
-                    //   靶是 ③，而 ③ 与 ②′ 是同一个抽热的两侧 ⇒ 它把 ③ 压下去的同时
-                    //   把 ②′ 往负里推（热倒灌进管 = 烧断机理），且它自己管不到 ②′。
-                    //   D8 用舌保温守抽热窗口、环倍率守 ②″、板厚只做接力与省铂。
+                    //   靶是 ③，而 ③ 与 管孔净流入 是同一个抽热的两侧 ⇒ 它把 ③ 压下去的同时
+                    //   把 管孔净流入 往负里推（热倒灌进管 = 烧断机理），且它自己管不到 管孔净流入。
+                    //   D8 用舌保温守抽热窗口、环倍率守 圆盘区最高温、板厚只做接力与省铂。
                     var seedD8 = PageToDesignSpec();
                     // ★ 改走 **Solver**（求根，与初值无关）。Sizer 是搜索，必须有起点。
                     //   ⚠ 这里**不开第二遍**（FineMm = 0）：按钮要等得起。
@@ -2498,8 +2519,8 @@ public sealed class LineDesignPage : TabPage
                     _suppressAuto = false;
                     // ★★★★★ **把 D8 的三个旋钮都带回本页**（2026-08-25）。
                     //   只写板厚是不够的：舌保温与环倍率也是这个解的一部分，
-                    //   丢掉它们再重解，②′ 会掉负 ⇒ 提示指回定尺寸 ⇒ **两步死循环**。
-                    //   实测：定尺寸 3569 g 全过 → 重解 ②′ = −9.32 不过 → 再定尺寸 3565 g 全过 → …
+                    //   丢掉它们再重解，管孔净流入 会掉负 ⇒ 提示指回定尺寸 ⇒ **两步死循环**。
+                    //   实测：定尺寸 3569 g 全过 → 重解 管孔净流入 = −9.32 不过 → 再定尺寸 3565 g 全过 → …
                     //   带回来之后本页承载的就是 D8 那个**完整设计**，而 ③ 页与 D8 用的是
                     //   **同一个几何构造器**（UiWiring §16 逐字段钉着）⇒ 重解会复现这张表，路径收得了尾。
                     if (!srD8.FineRefined)
@@ -2513,7 +2534,7 @@ public sealed class LineDesignPage : TabPage
                     // ⚠ 但**不能**像上一分支那样标成「新鲜」：D8 的解含**舌保温**与**环倍率**，
                     //   而本页**没有这两个控件** ⇒ 页面状态代表不了这个解。
                     //   标成新鲜就等于宣称「照本页参数出图能得到这张表」——
-                    //   而照本页参数出的是**另一个设计**（少了守 ②′/③ 的主力旋钮）。**那是假绿灯。**
+                    //   而照本页参数出的是**另一个设计**（少了守 管孔净流入/③ 的主力旋钮）。**那是假绿灯。**
                     //   ⇒ 只发布 Last（让判据表与提示说真话），不动 _solvedSnap；
                     //     板厚写回已经改了 CurrentSnap ⇒ Fresh 自然为 false，
                     //     提示会说「参数在上次求解之后又动过了 —— 回 ③ 重解」，这是实话。

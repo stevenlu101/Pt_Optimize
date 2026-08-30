@@ -34,3 +34,10 @@ figs/
 
 # 编辑器/系统临时文件
 新建 文字文件.txt
+
+# 会话里临时的构建输出（-o 到仓内是为了让测试的「往上找仓根」还能找到）
+.tmpb/
+.tmpcg/
+.tmprun/
+.tmprun2/
+.tmpverify/

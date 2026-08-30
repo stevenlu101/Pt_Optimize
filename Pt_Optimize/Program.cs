@@ -4828,6 +4828,22 @@ internal static class Program
                     Console.WriteLine();
                 }
 
+                // ★★★ 逐片二分会不会打架 —— 一条判据、一个旋钮，收成一个数（行和）
+                Console.WriteLine("── 逐片二分的收敛条件（行和 ρ = max_j Σ_{k≠j} |M[k][j]| / |M[j][j]|）");
+                Console.WriteLine("   ρ < 1 ⇒ 逐片各调各的会收敛；ρ ≥ 1 ⇒ 「逐片独立求根」这个前提没有依据了。");
+                Console.WriteLine("   「有害向」只算把别片裕度往**下**推的那部分 —— 推**好**了不会引起震荡。");
+                Console.WriteLine($"{"旋钮",-16}{"判据",6}{"ρ 全部",12}{"ρ 有害向",12}{"判",8}");
+                foreach (var v in vlist)
+                    for (int i = 0; i < SensitivityMatrix.Codes.Length; i++)
+                    {
+                        var (all, harm) = SensitivityMatrix.RowSum(mres.Cells, v, i, geoS13.TabThickMm.Length);
+                        if (double.IsNaN(all)) continue;
+                        string verdict = harm < 1 ? "✓" : "★ ≥1";
+                        Console.WriteLine($"{SensitivityMatrix.Name(v),-16}{SensitivityMatrix.Codes[i],6}"
+                            + $"{all,12:0.000}{harm,12:0.000}{verdict,8}");
+                    }
+                Console.WriteLine();
+
                 Console.WriteLine("★ 读法");
                 Console.WriteLine("  · **两侧一致** 打「不一致」的格子，中心差分**不可用** —— 那一点上导数没有意义，");
                 Console.WriteLine("    报一个数就是制造一个看起来正常的错数。");

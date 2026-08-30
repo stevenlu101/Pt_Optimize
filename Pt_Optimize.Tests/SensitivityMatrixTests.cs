@@ -173,4 +173,73 @@ public class SensitivityMatrixTests
         Assert.Contains("--monotone   四片同步、大跨度", prog);
         Assert.Contains("--sensmatrix 逐片、小扰动、同一工作点", prog);
     }
+
+    /// <summary>
+    /// ★★★ **跨片项必须带符号**（2026-08-30，第 9 件）。
+    ///
+    /// 第一版把跨片项取了绝对值：<c>off = Math.Max(off, Math.Abs(...))</c>。
+    /// 而「逐片二分会不会打架」问的正是**符号** ——
+    /// 抬第 j 片的旋钮让别片**变好**是无害的（只增不减的求解器不会因此震荡），
+    /// **变坏**才会螺旋：j 抬 → k 变差 → k 抬 → j 变差 → …
+    ///
+    /// 取了绝对值，这个问题就**在数据层面被答没了**：两种完全相反的情形收成同一个数。
+    /// </summary>
+    [Fact]
+    public void 跨片项整列都留且带符号()
+    {
+        string s = Core("SensitivityMatrix.cs");
+        Assert.Contains("public double[][] DCross", s);
+        Assert.Contains("c.DCross[i] = col;", s);
+        // 整列存的是**有符号**的斜率；只有 DOff 那个诊断量才取绝对值
+        Assert.Contains("col[k] = (double.IsNaN(a) || double.IsNaN(e)) ? double.NaN : (a - e) / c.StepUp;", s);
+    }
+
+    /// <summary>
+    /// ★★★ 「会不会打架」要有一个**能判的判据**，不是「2.9 倍够不够」这种感觉。
+    ///
+    /// 逐片不动点迭代收敛的充分条件是行和：
+    /// <code>
+    ///   ρ = max_j  Σ_{k≠j} |M[k][j]| / |M[j][j]|   &lt; 1
+    /// </code>
+    /// 三个邻片各 0.4 倍，行和就是 1.2 &gt; 1 —— 单看「每个都不到一半」会得出反的结论。
+    /// </summary>
+    [Fact]
+    public void 行和判据算得对()
+    {
+        // 造一张 4 片的假矩阵：对角 10，三个邻片各 4 ⇒ 行和 = 12/10 = 1.2
+        var cells = new System.Collections.Generic.List<SensitivityMatrix.Cell>();
+        for (int j = 0; j < 4; j++)
+        {
+            var c = new SensitivityMatrix.Cell { V = SensitivityMatrix.Var.RingT2, Plate = j, Ok = true };
+            var col = new double[4];
+            for (int k = 0; k < 4; k++) col[k] = k == j ? 10.0 : -4.0;   // 别片被推**坏**
+            c.DCross[0] = col;
+            cells.Add(c);
+        }
+        var (all, harm) = SensitivityMatrix.RowSum(cells, SensitivityMatrix.Var.RingT2, 0, 4);
+        Assert.Equal(1.2, all, 9);
+        Assert.Equal(1.2, harm, 9);     // 三个都是有害向
+
+        // ★ 同样的量级，但别片被推**好** ⇒ 有害向行和为 0（不会引起震荡）
+        foreach (var c in cells)
+            for (int k = 0; k < 4; k++) if (k != c.Plate) c.DCross[0][k] = +4.0;
+        (all, harm) = SensitivityMatrix.RowSum(cells, SensitivityMatrix.Var.RingT2, 0, 4);
+        Assert.Equal(1.2, all, 9);
+        Assert.Equal(0.0, harm, 9);
+
+        // 对角为 0（这个量在此处不起作用）⇒ 判不了，返回 NaN，**不许返回 0 或 ∞**
+        foreach (var c in cells) c.DCross[0][c.Plate] = 0;
+        (all, harm) = SensitivityMatrix.RowSum(cells, SensitivityMatrix.Var.RingT2, 0, 4);
+        Assert.True(double.IsNaN(all) && double.IsNaN(harm));
+    }
+
+    /// <summary>★ 行和表要印出来 —— 算了不印等于没算。</summary>
+    [Fact]
+    public void 行和表印得出来()
+    {
+        string prog = File.ReadAllText(Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "Program.cs"));
+        Assert.Contains("逐片二分的收敛条件（行和", prog);
+        Assert.Contains("ρ 有害向", prog);
+        Assert.Contains("推**好**了不会引起震荡", prog);
+    }
 }

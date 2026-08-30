@@ -83,21 +83,86 @@ public class MonotoneMeasuredTests
     }
 
     /// <summary>
-    /// ★★ 表里仍然只有三条 —— r₁/r₂/t₂ **没有**被顺手加进去。
-    /// 加它们是个**决定**，不是个改动；决定的依据（第 13 件）还没有。
+    /// ★★★ **第 9 件的决定**（2026-08-30，依据是第 13 件的实测矩阵）：
+    ///
+    /// <code>
+    ///   t₂     ⇒ **加**，而且排在板厚**前面**（②′ 的首选候选）
+    ///   r₁/r₂  ⇒ **不加**，且不是「暂时」—— 结构性无效
+    /// </code>
+    ///
+    /// 三条依据，缺一条都不该加：
+    /// ① **单调**（第 8 件，`--monotone` 全量程）⇒ 二分适用；
+    /// ② **省铂**（第 13 件）：每克铂买到的 ②′ 裕度是板厚的 **1.7–3.3 倍**，
+    ///    而每单位 ②′ 的 ③ 代价几乎相同（2.3–2.4 K/W）；
+    /// ③ **逐片二分收敛**（第 9 件）：行和 ρ_有害向(t₂, ②′) = **0.023** &lt; 1,
+    ///    比现役的环倍率（0.219）还安全一个数量级。
+    ///
+    /// ⚠ ③ 这一条差点被我自己判反：矩阵第一版把跨片项取了**绝对值**，
+    ///   看着是「对角只占 2.4–2.9 倍」很危险；带上符号才看清那些耦合**几乎全是有益的**
+    ///   （ρ 全部 0.685、有害向只有 0.023）。见 SensitivityMatrixTests。
     /// </summary>
     [Fact]
-    public void 分配表仍然只有三条()
+    public void 分配表按第9件的决定长成了这样()
     {
+        // 判据仍是三条（一条判据一行），但 ②′ 有两个候选
         Assert.Equal(3, Solver.Allocation.Length);
-        Assert.Equal(3, Enum.GetValues<Solver.Knob>().Length);
-
-        // 三条各治一条判据，不重不漏
         var keys = Solver.Allocation.Select(a => a.Key).ToArray();
         Assert.Equal(keys.Length, keys.Distinct().Count());
         Assert.Contains(LineResult.Key.NetFlux, keys);
         Assert.Contains(LineResult.Key.FlangeDip, keys);
         Assert.Contains(LineResult.Key.DiscTemp, keys);
+
+        // ★★ t₂ 是旋钮，且是 ②′ 的**首选**（顺序不是随意的：先试便宜的那个）
+        var netflux = Solver.Allocation.First(a => a.Key == LineResult.Key.NetFlux).Knobs;
+        Assert.Equal(Solver.Knob.RingT2, netflux[0]);
+        Assert.Equal(Solver.Knob.Thick,  netflux[1]);
+
+        // ★★ r₁/r₂ **没有**成为旋钮 —— 枚举里就不该有它们
+        Assert.Equal(4, Enum.GetValues<Solver.Knob>().Length);
+        Assert.DoesNotContain("RingR1", Enum.GetNames<Solver.Knob>());
+        Assert.DoesNotContain("RingR2", Enum.GetNames<Solver.Knob>());
+
+        // 三条依据都要写在代码里 —— 少一条，下一个人就无从判断这个决定还成不成立
+        string s = Core("Solver.cs");
+        Assert.Contains("1.7–3.3 倍", s);        // 省铂
+        Assert.Contains("2.3–2.4 K/W", s);       // ③ 的代价相同
+        Assert.Contains("结构性无效", s);         // r₁/r₂ 为什么不加
+    }
+
+    /// <summary>
+    /// ★★ t₂ 作为旋钮，**起点必须显式钉在盒的下角**，不许留 NaN。
+    ///
+    /// 模型里 <c>RingMul2 = NaN</c> 的含义是「跟着 t₁ 走」（t₂ = 1+0.4(t₁−1)）。
+    /// 留着它当旋钮的起点，等于同一个量有**两处来源**，而且它会随 t₁ 悄悄变 ——
+    /// 二分的不变式（lo 违反、hi 不违反）当场失效，而且**不报错**。
+    /// </summary>
+    [Fact]
+    public void t2的起点显式钉在盒下角()
+    {
+        string s = Core("Solver.cs");
+        Assert.Contains("d.RingMul2[j]   = opt.RingLo;", s);
+        Assert.Contains("NaN 的含义是「跟着 t₁ 走」", s);
+        // 读的时候也要把规则坐实，不许把 NaN 直接当数用
+        Assert.Contains("Knob.RingT2 => double.IsNaN(d.RingMul2[j]) ? d.RingMulOuter(j) : d.RingMul2[j],", s);
+    }
+
+    /// <summary>
+    /// ★★★ **界面必须把解出来的 t₂ 收回去** —— 不收就是静默丢弃。
+    ///
+    /// <c>PageToDesignSpec</c> 在「逐片自定」没勾时给这三个写 <b>NaN</b>（= 用旧规则）⇒
+    /// 求解器解出 t₂ → 页面读回来时把它丢掉 → **重解得到另一个答案**。
+    /// 本仓库为「传进来的旋钮值被丢弃」这一族栽过多次，这是同一个形状。
+    /// </summary>
+    [Fact]
+    public void 界面把解出来的t2收回去并勾上逐片自定()
+    {
+        string ui = File.ReadAllText(Path.Combine(
+            HandoverDoc.Root(), "Pt_Optimize", "UI", "LineDesignPage.cs"));
+        Assert.Contains("_ringShapeCustom.Checked = true;", ui);
+        Assert.Contains("_ringT2[j].Value = Math.Clamp((decimal)d.RingMul2[j],", ui);
+        // ★ 那句「求解器不会替你动它们」现在是**假话**，必须已经改掉
+        Assert.DoesNotContain("求解器不会替你动它们", ui);
+        Assert.Contains("**t₂ 是求解器旋钮**", ui);
     }
 
     /// <summary>

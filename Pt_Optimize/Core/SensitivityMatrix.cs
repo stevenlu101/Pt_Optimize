@@ -219,6 +219,21 @@ public static class SensitivityMatrix
         /// </summary>
         public double[] DOff = new double[3];
 
+        /// <summary>
+        /// ★★★ **带符号的整列跨片项**：<c>DCross[i][k] = ∂(第 k 片的第 i 条判据的裕度)/∂(本片的这个量)</c>。
+        ///
+        /// ⚠ 2026-08-30：<see cref="DOff"/> 取了**绝对值**，而「逐片二分会不会打架」问的正是**符号** ——
+        /// 抬第 j 片的旋钮让别片**变好**是无害的（只增不减的求解器不会因此震荡），
+        /// **变坏**才会螺旋：j 抬 → k 变差 → k 抬 → j 变差 → …
+        ///
+        /// 而且判据不是「几倍够不够」的感觉。逐片不动点迭代收敛的充分条件是**行和**：
+        /// <code>
+        ///   max_j  Σ_{k≠j} |M[k][j]| / |M[j][j]|  &lt; 1        （M[k][j] = ∂裕度_k/∂旋钮_j）
+        /// </code>
+        /// 三个邻片各 0.4 倍，行和就是 1.2 &gt; 1 —— 不收敛。所以必须把**整列**留下来。
+        /// </summary>
+        public double[][] DCross = { new double[0], new double[0], new double[0] };
+
         public bool Ok;
         public string Note = "";
 
@@ -229,6 +244,46 @@ public static class SensitivityMatrix
         public double PerGram(int i) => Free ? double.NaN : D[i] / DMassG;
 
         public bool Free => Math.Abs(DMassG) < 1e-9;
+    }
+
+    /// <summary>
+    /// ★★★ **逐片二分会不会打架** —— 对一条判据、一个旋钮，把整张 4×4 的耦合矩阵
+    /// <c>M[k][j] = ∂裕度_k/∂旋钮_j</c> 收成一个数：
+    /// <code>
+    ///   行和 ρ = max_j  Σ_{k≠j} |M[k][j]| / |M[j][j]|
+    /// </code>
+    /// <c>ρ &lt; 1</c> ⇒ 逐片各调各的会收敛（Jacobi 迭代的充分条件）。
+    /// <c>ρ ≥ 1</c> ⇒ **可能不收敛** —— 一片抬完把别片推坏，别片抬完又把这片推坏。
+    ///
+    /// ⚠ 这是**充分条件**，不是必要条件：ρ ≥ 1 不等于一定发散，
+    ///   但它意味着「逐片独立求根」这个前提**没有依据**了，不能再默认它成立。
+    ///
+    /// ⚠ 只在**同号会互相推坏**时才要紧。若跨片项让别片**变好**，抬一片顺带帮了别片，
+    ///   只增不减的求解器不会因此震荡 —— 所以另报一份「只算有害方向」的行和。
+    /// </summary>
+    public static (double All, double Harmful) RowSum(IReadOnlyList<Cell> cells, Var v, int crit, int np)
+    {
+        double worstAll = 0, worstHarm = 0;
+        for (int j = 0; j < np; j++)
+        {
+            var cj = cells.FirstOrDefault(c => c.V == v && c.Plate == j);
+            if (cj is null || !cj.Ok || cj.DCross[crit].Length != np) return (double.NaN, double.NaN);
+            double diag = cj.DCross[crit][j];
+            if (double.IsNaN(diag) || Math.Abs(diag) < 1e-12) return (double.NaN, double.NaN);
+            double sAll = 0, sHarm = 0;
+            for (int k = 0; k < np; k++)
+            {
+                if (k == j) continue;
+                double x = cj.DCross[crit][k];
+                if (double.IsNaN(x)) continue;
+                sAll += Math.Abs(x);
+                // 「有害」= 把别片的裕度往**下**推（裕度口径：越大越好）
+                if (x < 0) sHarm += -x;
+            }
+            worstAll = Math.Max(worstAll, sAll / Math.Abs(diag));
+            worstHarm = Math.Max(worstHarm, sHarm / Math.Abs(diag));
+        }
+        return (worstAll, worstHarm);
     }
 
     public sealed class Result
@@ -360,16 +415,18 @@ public static class SensitivityMatrix
                     }
                     else { c.DLo[i] = double.NaN; c.SignAgree[i] = true; }
 
-                    // 跨片：同一条判据在别的片上被带动多少（同样只看向上那一侧）
+                    // 跨片：同一条判据在别的片上被带动多少（同样只看向上那一侧）。
+                    // ★ **整列都留**，带符号 —— 只留一个绝对值最大的数，就答不了「会不会打架」。
+                    var col = new double[np];
                     double off = 0;
                     for (int k = 0; k < np; k++)
                     {
-                        if (k == j) continue;
                         double a = Solver.PlateSlack(rHi, Keys[i], k, dipMax, discMax);
                         double e = Solver.PlateSlack(b, Keys[i], k, dipMax, discMax);
-                        if (double.IsNaN(a) || double.IsNaN(e)) continue;
-                        off = Math.Max(off, Math.Abs((a - e) / c.StepUp));
+                        col[k] = (double.IsNaN(a) || double.IsNaN(e)) ? double.NaN : (a - e) / c.StepUp;
+                        if (k != j && !double.IsNaN(col[k])) off = Math.Max(off, Math.Abs(col[k]));
                     }
+                    c.DCross[i] = col;
                     c.DOff[i] = off;
                 }
                 c.DMassG = (Mass(rHi) - res.BaselineMassG) / c.StepUp;
