@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using PtOptimize.Core;
+using PtOptimize.UI;
 using Xunit;
 
 namespace PtOptimize.Tests;
@@ -147,6 +148,89 @@ public class LongRunProgressTests
         Assert.Contains("**至少 {floorC}**", s);
         Assert.Contains("这是下界，不是估计", s);
         Assert.Contains("中带确认：场解完成 —— 用时", s);
+    }
+
+    /// <summary>
+    /// ★★★ **状态面板的进度条要说得出「跑到哪了」**（2026-08-30，用户抓图问出来的）。
+    ///
+    /// `SetRunningNote(note, pct)` 是进度通道，而此前**只有「搜形状」传了 pct**，
+    /// 「自动定厚」「核算整线」「复现」都只传文字 ⇒ 面板永远画走马灯。
+    /// 而信息一直都有：求解器每轮报「第 N 轮」，耦合器报「外层耦合 n/600」。
+    /// **只是没人把它接到进度条上** —— 又一次「造好了没接线」。
+    /// </summary>
+    [Fact]
+    public void 进度条说得出跑到哪了()
+    {
+        string ui = File.ReadAllText(Path.Combine(
+            HandoverDoc.Root(), "Pt_Optimize", "UI", "LineDesignPage.cs"));
+        // 翻译器在，且两处进度都带上了百分比与已跑时长
+        Assert.Contains("private static int PctOf(string line, int maxRounds)", ui);
+        Assert.DoesNotContain("Shared?.SetRunningNote(s); });", ui);
+        Assert.Contains("PctOf(s, 40)", ui);
+        Assert.Contains("已跑 {clockR.Elapsed.TotalMinutes:0.0} 分", ui);
+    }
+
+    /// <summary>
+    /// ★ 解析不出轮数时必须回 −1（走马灯）——
+    /// **不许拿一根不动的空条冒充「有进度」**（那比走马灯更误导）。
+    /// </summary>
+    [Theory]
+    [InlineData("第  2 轮　合计 3480 g", 40, 5)]
+    [InlineData("外层耦合 3/600（ω=0.35）", 40, 0)]
+    [InlineData("外层耦合 300/600", 40, 50)]
+    [InlineData("正在装配几何…", 40, -1)]
+    public void 解析不出轮数就走马灯(string line, int max, int want)
+    {
+        var m = typeof(PtOptimize.UI.LineDesignPage).GetMethod("PctOf",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.NotNull(m);
+        Assert.Equal(want, (int)m!.Invoke(null, new object[] { line, max })!);
+    }
+
+    /// <summary>
+    /// ★★★ **验的是「面板真的显示出来」，不是「代码里传了」**（2026-08-30）。
+    ///
+    /// 前两条门验的是接线（PctOf 在、调用点传了 pct）。但接线对 ≠ 屏幕上看得见 ——
+    /// 今天已经栽过一次：复核按钮造好了、方法接好了、门也要求它了，
+    /// **就是没挂到工具条上**。所以这一条直接问面板：条子露出来没有、值对不对。
+    /// </summary>
+    [Fact]
+    public void 面板真的把进度画出来()
+    {
+        var st = new FlowState();
+        // ★★ **真的造一个面板**，问它屏幕上写了什么、条子露没露 ——
+        //   只验状态通道等于只验「我传了」，而今天已经栽过一次「传了但没挂上屏」。
+        var panel = new StagePanel(st);
+
+        // 走 Flow 的通道设进度（不是直接改字段 —— 那样验的是我自己写的赋值）
+        st.SetRunning(ChainId.C定尺寸, "自动定厚");
+        st.SetRunningNote("已跑 1.5 分　第  2 轮　合计 3480 g", 5);
+        Assert.Equal(5, st.RunningPct);
+        Assert.Contains("已跑 1.5 分", st.RunningNote);
+
+        panel.SetStage(StageId.定尺寸);   // 内含 Refresh2
+        var bar = (System.Windows.Forms.ProgressBar)typeof(StagePanel)
+            .GetField("_bar", System.Reflection.BindingFlags.NonPublic
+                            | System.Reflection.BindingFlags.Instance)!.GetValue(panel)!;
+        var input = (System.Windows.Forms.Label)typeof(StagePanel)
+            .GetField("_input", System.Reflection.BindingFlags.NonPublic
+                              | System.Reflection.BindingFlags.Instance)!.GetValue(panel)!;
+        Assert.True(bar.Visible, "★ 条子没露出来 —— 传了进度但屏幕上看不见");
+        Assert.Equal(System.Windows.Forms.ProgressBarStyle.Continuous, bar.Style);
+        Assert.Equal(5, bar.Value);
+        Assert.Contains("已跑 1.5 分", input.Text);
+        Assert.Contains("第  2 轮", input.Text);
+        // ★ 条子要够高才看得见（10 px 那版夹在两行字中间等于没有）
+        Assert.True(bar.Height >= 14, $"条子只有 {bar.Height} px（Size={bar.Size}）—— FlowLayoutPanel 会拿首选高度盖掉直接设的 Height，要用 MinimumSize");
+
+        // 说不出百分比时必须回 −1（面板据此画走马灯，而不是一根不动的空条）
+        st.SetRunningNote("正在装配几何…", -1);
+        Assert.Equal(-1, st.RunningPct);
+
+        // 跑完之后不许残留假进度
+        st.SetRunning(null);
+        st.SetRunningNote("这条不该进去", 50);
+        Assert.Equal(-1, st.RunningPct);
     }
 
     private sealed class Sink : IProgress<string>

@@ -286,7 +286,7 @@ public static class Solver
                         double sl = PlateSlack(last, key, j, dipMax, discMax);
                         if (double.IsNaN(sl))
                         {
-                            res.StopWhy = $"第 {j} 片的「{key}」**判不了**（值是 NaN）—— 判不了不算过";
+                            res.StopWhy = $"第 {j} 片的「{Criteria.Plain(key)}」**判不了**（值是 NaN）—— 判不了不算过";
                             res.HitBound = true;
                             Log("  ✗ " + res.StopWhy);
                             return false;   // 判不了 ⇒ 本遍失败；收尾统一交给 Solve 末尾
@@ -294,7 +294,8 @@ public static class Solver
                         if (sl < 0)
                         {
                             todo.Add((j, knobs, key));
-                            Log($"     片{j}「{key}」裕度 {sl:+0.000;-0.000} ⇒ 候选 "
+                            // ★ 界面上不出现判据代号 —— key 是内部身份，显示要剥壳
+                            Log($"     片{j}「{Criteria.Plain(key)}」裕度 {sl:+0.000;-0.000} ⇒ 候选 "
                                 + string.Join(" / ", knobs.Select(KnobName))
                                 + (knobs.Length > 1 ? "（抬哪个由前提自检当场实测决定）" : ""));
                         }
@@ -488,7 +489,7 @@ public static class Solver
         }
 
         if (best is null)
-            return (null, $"片{j}「{key}」**所有候选都不成立**：" + string.Join("；", fails),
+            return (null, $"片{j}「{Criteria.Plain(key)}」**所有候选都不成立**：" + string.Join("；", fails),
                     before, double.NaN);
 
         if (lines.Count > 1)
@@ -519,12 +520,12 @@ public static class Solver
         // ★ 上一片抬完可能已经把这一片捎带治好了 —— 那就**不抬**（最小性）
         if (before >= 0)
         {
-            Log($"  · {nm}：上一步之后「{key}」已经不违反（裕度 {before:+0.000;-0.000}）⇒ **不抬**");
+            Log($"  · {nm}：上一步之后「{Criteria.Plain(key)}」已经不违反（裕度 {before:+0.000;-0.000}）⇒ **不抬**");
             return (true, "");
         }
 
         if (lo >= hi - 1e-12)
-            return (false, $"**{nm} 已在上界 {hi:0.000}**，「{key}」仍不过 ⇒ 这组输入不可行（是证明，不是搜索失败）");
+            return (false, $"**{nm} 已在上界 {hi:0.000}**，「{Criteria.Plain(key)}」仍不过 ⇒ 这组输入不可行（是证明，不是搜索失败）");
 
         Set(d, knob, j, hi);
         double after = double.IsNaN(knownAfter)
@@ -537,14 +538,14 @@ public static class Solver
             Set(d, knob, j, lo);
             return (false,
                 $"**分派前提不成立**：{nm} 从 {lo:0.000} 抬到上界 {hi:0.000}，" +
-                $"「{key}」的裕度 {before:+0.000;-0.000} → {after:+0.000;-0.000}（**没变好**）" +
+                $"「{Criteria.Plain(key)}」的裕度 {before:+0.000;-0.000} → {after:+0.000;-0.000}（**没变好**）" +
                 " ⇒ 这个旋钮压不住这一片的这条判据，二分不适用");
         }
 
         if (after < 0)
         {
             Set(d, knob, j, lo);
-            return (false, $"**{nm} 抬到上界 {hi:0.000} 仍不过**「{key}」⇒ 这组输入不可行");
+            return (false, $"**{nm} 抬到上界 {hi:0.000} 仍不过**「{Criteria.Plain(key)}」⇒ 这组输入不可行");
         }
 
         // 二分：找「刚好不违反」的最小值。不变式：lo 违反、hi 不违反。

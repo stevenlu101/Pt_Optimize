@@ -1524,7 +1524,13 @@ public sealed class LineDesignPage : TabPage
         //   而且它**切到哪一页都看得见**（④ 页自己没有进度条）。
         //   同时它是互斥闸：SyncGates 会把所有会起算的命令禁掉。
         Shared?.SetRunning(ChainId.C整线耦合, "复现设计记录");
-        var prog = new Progress<string>(s => { _status.Text = s; Shared?.SetRunningNote(s); });
+        // ★ 带上百分比与已跑时长 —— 否则状态面板只会转圈（见 PctOf 的说明）。
+        var clockR = System.Diagnostics.Stopwatch.StartNew();
+        var prog = new Progress<string>(s =>
+        {
+            _status.Text = s;
+            Shared?.SetRunningNote($"已跑 {clockR.Elapsed.TotalMinutes:0.0} 分　{s}", PctOf(s, 40));
+        });
 
         try
         {
@@ -1798,6 +1804,35 @@ public sealed class LineDesignPage : TabPage
                             MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally { Cursor = Cursors.Default; }
+    }
+
+    /// <summary>
+    /// ★★★ **把求解器报的话翻成看得见的进度**（2026-08-30）。
+    ///
+    /// 病灶：`SetRunningNote(note, pct)` 是进度通道，而**只有「搜形状」传了 pct**；
+    /// 「自动定厚」「核算整线」「复现」都只传文字 ⇒ 状态面板永远画**走马灯**，
+    /// 说不出「跑到哪了」。而信息其实一直都有 —— 求解器每轮都在报「第 N 轮」，
+    /// 外层耦合报「外层耦合 n/600」。**只是没人把它接到进度条上。**
+    ///
+    /// 用户 2026-08-30 抓图问「这页为何没有进度条」，实物就是这个：
+    /// 条子在（状态面板里，切到哪一页都看得见），但它转圈转到底。
+    ///
+    /// ⚠ 解析不出轮数时返回 −1（走马灯）——**不许拿一根不动的空条冒充「有进度」**。
+    /// </summary>
+    /// <param name="line">求解器/耦合器报上来的原话</param>
+    /// <param name="maxRounds">这一段的轮数上限（求解器的 MaxRounds）</param>
+    private static int PctOf(string line, int maxRounds)
+    {
+        // 「第  2 轮　合计 …」——求解器每轮开头都报
+        var m = System.Text.RegularExpressions.Regex.Match(line, @"第\s*(\d+)\s*轮");
+        if (m.Success && maxRounds > 0 && int.TryParse(m.Groups[1].Value, out int r))
+            return (int)Math.Clamp(100.0 * r / maxRounds, 0, 99);
+        // 「外层耦合 3/600（ω=0.35）」——一次场解内部的进度
+        m = System.Text.RegularExpressions.Regex.Match(line, @"外层耦合\s*(\d+)\s*/\s*(\d+)");
+        if (m.Success && int.TryParse(m.Groups[1].Value, out int a)
+                      && int.TryParse(m.Groups[2].Value, out int b) && b > 0)
+            return (int)Math.Clamp(100.0 * a / b, 0, 99);
+        return -1;
     }
 
     private static ToolStripButton Btn(string t, EventHandler h)
@@ -2397,7 +2432,13 @@ public sealed class LineDesignPage : TabPage
         //   ⇒ **自动重算从此永久死掉，且一声不吭**。
         //   实测复现：点一下「Rhino .3dm 文件」单选钮（还没填文件）就中招。
         LineCase lc;
-        var prog = new Progress<string>(s => { _status.Text = s; Shared?.SetRunningNote(s); });
+        // ★ 带上百分比与已跑时长 —— 否则状态面板只会转圈（见 PctOf 的说明）。
+        var clockR = System.Diagnostics.Stopwatch.StartNew();
+        var prog = new Progress<string>(s =>
+        {
+            _status.Text = s;
+            Shared?.SetRunningNote($"已跑 {clockR.Elapsed.TotalMinutes:0.0} 分　{s}", PctOf(s, 40));
+        });
 
         // ★★★★★ 装配下界要在**求解路径上**也顶一次（2026-08-24）。
         //

@@ -77,7 +77,11 @@ public class RequiredChecksTests
         Assert.False(r.AllOk, $"拿掉「{key}」之后仍报全过 —— 判据消失被当成了通过");
         // 光让 AllOk 变 false 不够：界面要打「✗」后面跟原因，
         // 否则就是「不过，但说不出哪儿不过」，比不报还难查。
-        Assert.Contains(r.Failed, f => f.Contains(key) && f.Contains("缺席"));
+        // ★ 2026-08-30：Failed 印出来的名字**剥掉了判据代号**（界面严禁代号），
+        //   所以这里按剥壳后的名字比 —— key 本身（内部身份）没变，仍在 MissingChecks 里。
+        string plain = Criteria.Plain(key);
+        Assert.Contains(r.Failed, f => f.Contains(plain) && f.Contains("缺席"));
+        Assert.DoesNotContain(r.Failed, f => f.Contains("②′") || f.Contains("②″"));
     }
 
     /// <summary>硬安全线缺一条 ⇒ HardOk 也必须为 false（形状体检那一关读的是它）。</summary>

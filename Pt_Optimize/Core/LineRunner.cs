@@ -650,14 +650,19 @@ public sealed class LineResult
         .All(c => c.Ok && !c.Undetermined);
 
     /// <summary>没过的判据（含**无法判定**，标注区分）。供报告直接引用，不要另行拼装。</summary>
+    /// ★★★ 2026-08-30：名字走 <see cref="Criteria.Plain"/> **剥掉判据代号**
+    ///   （用户：「UI 内严禁使用 ②′ 这类的表示，工程师看不懂」）。
+    ///   这一条是代号流到**状态面板**的出口 —— 用户抓图里那行
+    ///   「判定：✗ 2 条没过　②″圆盘区最高温 − 管温 292.1/5.0」就是它拼的。
+    ///   ⚠ 只改**显示**：`c.Name` 本身（= LineResult.Key）是全仓唯一来源，不动。
     public string[] Failed => Checks
         .Where(c => c.Kind is CheckKind.HardSafety or CheckKind.Target && (!c.Ok || c.Undetermined))
         .Select(c => c.Undetermined
-                   ? $"{c.Name} **无法判定**"
-                   : $"{c.Name} {c.Actual:0.0}/{c.Limit:0.0}")
+                   ? $"{Criteria.Plain(c.Name)} **无法判定**"
+                   : $"{Criteria.Plain(c.Name)} {c.Actual:0.0}/{c.Limit:0.0}")
         // 缺席的也要报出来 —— 否则 AllOk 为 false 而 Failed 是空的，
         // 界面上就是「✗」后面什么都不写，比不报还难查。
-        .Concat(MissingChecks.Select(k => $"{k} **判据缺席**（该出现却整条没出现）"))
+        .Concat(MissingChecks.Select(k => $"{Criteria.Plain(k)} **判据缺席**（该出现却整条没出现）"))
         .ToArray();
 }
 

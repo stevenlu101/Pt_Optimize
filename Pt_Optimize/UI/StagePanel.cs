@@ -105,8 +105,16 @@ public sealed class StagePanel : Panel
         }
 
         // 进度条插在「正在算」那一行之后
-        _bar.Height = UiScale.S(10);
-        _bar.Width = UiScale.S(320);
+        // ★ 2026-08-30：从 10 px 加高到 16 px。用户抓图问「这页为何没有进度条」——
+        //   条子其实在，但 10 px 高的浅色细线夹在两行字中间，等于没有。
+        //   一个看不见的进度指示，与没有进度指示是同一件事。
+        // ⚠⚠ 用 **MinimumSize** 而不是 Height：`_stack` 是 FlowLayoutPanel，
+        //   它会拿子控件的**首选高度**盖掉直接设的 Height ——
+        //   2026-08-30 实测（真造一个面板去问它）：`_bar.Height = S(16)` 之后读回来是 **0**。
+        //   也就是说此前那个 `Height = S(10)` **一直没生效**，条子高度是布局给的，
+        //   而那正是用户看不见它的原因。MinimumSize 布局压不掉。
+        _bar.MinimumSize = new Size(UiScale.S(320), UiScale.S(16));
+        _bar.Size = _bar.MinimumSize;
         _bar.MarqueeAnimationSpeed = 30;
         _bar.Margin = new Padding(0, 0, 0, UiScale.S(5));
         _bar.Visible = false;
