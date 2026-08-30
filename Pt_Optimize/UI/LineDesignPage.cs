@@ -139,6 +139,15 @@ public sealed class LineDesignPage : TabPage
     private readonly ToolStripProgressBar _prog = new() { Visible = false, Maximum = 1000 };
     private readonly ToolStripLabel _status = new("");
     private readonly ToolStripButton _btnRun, _btnAuto, _btnExport, _btnLoadCase, _btn3dm, _btnRepro;
+
+    /// <summary>
+    /// ★★★ **网格无关复核**（2026-08-30 补）。在此之前它只有命令行有。
+    /// 见 <see cref="FlowState.MeshVerified"/> 那段说明：
+    /// 没有它，工程师可以拿导航网格上的数直接出图，而那个数实测能差 1.8 K。
+    /// </summary>
+    private readonly ToolStripButton _btnVerify;
+    private MeshVerify.Result? _meshVerify;
+    private object? _verifiedSnap;
     /// <summary>「分析几何变数」——只在 .3dm 模式且入口片已选时可用，由 SyncGeomSource 控。</summary>
     private readonly ToolStripButton _btnAnalyze;
     private readonly ToolStripButton _btnExportRead;
@@ -406,6 +415,7 @@ public sealed class LineDesignPage : TabPage
         var tool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, Font = UiScale.Ui() };
         _btnRun = Btn("核算整线", (_, _) => _ = RunAsync(false));
         _btnAuto = Btn("自动定厚", (_, _) => _ = RunAsync(true));
+        _btnVerify = Btn("◆ 网格无关复核", (_, _) => _ = VerifyMeshAsync());
         // 1b 之后它导出的是**整机**（管 + 四片法兰）且几何与求解一致，故改名点明
         _btnExport = Btn("导出本页 3DM", (_, _) => Export());
 
@@ -461,6 +471,10 @@ public sealed class LineDesignPage : TabPage
         //
         // 本页现在只剩「关于当前这个设计」的两个命令。
         tool.Items.Add(_btnRun);
+        // ★★★ 2026-08-30：差点又栽在上面那条警告上 —— 复核按钮造好了、方法接好了、
+        //   门也要求它了，**就是没加这一行** ⇒ 它不在屏幕上，工程师点不到。
+        //   摆在「核算整线」旁边：解完就该复核，两件事是同一页上的先后。
+        tool.Items.Add(_btnVerify);
         tool.Items.Add(_btnAnalyze);
         // ⚠ Btn() **只造不挂** —— 忘了这一行，按钮就成了「造好了没接线」（本项目头号敌人）。
         tool.Items.Add(_btnToAnalytic);
@@ -2705,12 +2719,81 @@ public sealed class LineDesignPage : TabPage
     /// 把本页的当前状态推给阶段轨。**只搬运，不计算判据** ——
     /// ⑤⑥ 一律经 <see cref="GeometryScreen"/> 出，与整线解跑的是同一段代码。
     /// </summary>
+    /// <summary>
+    /// ★★★ **网格无关复核** —— 把网格一档档加密，直到判据不再变（2026-08-30 补）。
+    ///
+    /// ══ 为什么它必须在界面上
+    ///
+    /// 命令行早有 `--solve --verifymesh`，而 <c>MeshVerify.Run</c> 在 UI 里的调用次数是 **0**。
+    /// ⇒ 对话里跑得漂亮、工程师点按钮却碰不到 —— 而 ⑤ 交付的门也不要求它，
+    ///   于是「收敛✓全过✓新鲜✓ → 出图」这条路上，**没有任何一处问过这些数准不准**。
+    ///
+    /// 实测那个差有多大（0.6 档，同一个设计）：
+    /// <code>
+    ///   导航网格 2 mm    法兰增量温降 8.6 K
+    ///   加密到 0.125 mm  法兰增量温降 **9.5 K**      限值 10
+    /// </code>
+    /// 而中间那一档更坏：0.5 mm 上是 7.7 K，看着余量很宽 —— **那是假收敛**。
+    ///
+    /// ⚠ 它跑 10–40 分钟。这不是缺陷，是这件事本身的代价：判据要网格无关才算数。
+    ///   随时可取消，已经跑完的档照样印出来。
+    /// </summary>
+    private async Task VerifyMeshAsync()
+    {
+        if (_cts is not null) { _cts.Cancel(); return; }
+        if (_last is not { Ok: true } || !Equals(_solvedSnap, CurrentSnap()))
+        {
+            _out.AppendText(Environment.NewLine + "⚠ 先在本页点「核算整线」解出一个**当前参数的**解 —— "
+                + "复核验的是「这个解在更细的网格上还成不成立」，没有解就无从验起。" + Environment.NewLine);
+            return;
+        }
+
+        var d = PageToDesignSpec();
+        var snapAtStart = CurrentSnap();
+        _cts = new CancellationTokenSource();
+        _btnVerify.Text = "取消";
+        _btnRun.Enabled = _btnAuto.Enabled = _btnRepro.Enabled = false;
+        Shared?.SetRunning(ChainId.C整线耦合, "网格无关复核");
+        _out.AppendText(Environment.NewLine + "◆ **网格无关复核**开始 —— 把网格一档档加密，直到判据不再变。" + Environment.NewLine
+            + "　　10～40 分钟。随时可点「取消」，已跑完的档照样留下。" + Environment.NewLine);
+
+        var prog = new Progress<string>(m => _out.AppendText("　" + m + Environment.NewLine));
+        try
+        {
+            var res = await Task.Run(() => MeshVerify.Run(d, _base, progress: prog, cancel: _cts.Token),
+                                     _cts.Token);
+            _meshVerify = res;
+            _verifiedSnap = res.Converged ? snapAtStart : null;
+            _out.AppendText(Environment.NewLine + res.Verdict + Environment.NewLine);
+            if (res.MidBandConfirm is { Length: > 0 }) _out.AppendText("　" + res.MidBandConfirm + Environment.NewLine);
+            if (!res.Converged)
+                _out.AppendText("⚠ **没验过** —— 判据还在随网格变，这个设计现在不能出图。" + Environment.NewLine);
+        }
+        catch (OperationCanceledException)
+        { _out.AppendText(Environment.NewLine + "◆ 复核已取消 —— **没验过就是没验过**，出图的门仍然关着。" + Environment.NewLine); }
+        catch (Exception ex)
+        { _out.AppendText(Environment.NewLine + "◆ 复核出错：" + ex.Message + Environment.NewLine); }
+        finally
+        {
+            _cts = null;
+            _btnVerify.Text = "◆ 网格无关复核";
+            _btnRun.Enabled = _btnAuto.Enabled = _btnRepro.Enabled = true;
+            Shared?.SetRunning(null);
+            PushFlow();
+        }
+    }
+
     private void PushFlow()
     {
         if (Shared is not { } f) return;
         f.CurrentSnap = CurrentSnap();
         f.SolvedSnap = _solvedSnap;
         f.Last = _last;
+        // ★ 复核状态与解一样要发布。⚠ 快照单独记：改完参数还挂着上一次的复核结论
+        //   是**假绿灯**，比没复核更坏（会让人以为验过了）。
+        f.MeshVerified = _meshVerify is { Converged: true };
+        f.VerifiedSnap = _verifiedSnap;
+        f.VerifyNote = _meshVerify?.Verdict ?? "";
 
         // 几何闭式判据：解析模式才有解析量；.3dm 模式下 GeometryScreen 会返回两条「无法判定」
         try
@@ -2804,7 +2887,13 @@ public sealed class LineDesignPage : TabPage
             string vd = c.Kind == CheckKind.Reference ? "—" : c.Undetermined ? "?" : c.Ok ? "✓" : "✗";
 
             // 判据名里那个手写的「· 」前缀是给纯文本用的，表格里有「类别」列了，去掉
-            string nm = c.Name.StartsWith("· ", StringComparison.Ordinal) ? c.Name[2..] : c.Name;
+            // ★★★ **界面上不许出现判据代号**（用户 2026-08-30：「工程师看不懂」）。
+            //   代号是从内核流过来的：LineResult.Key 自己就带着它（NetFlux = "②′管孔净流入"），
+            //   判据表直接印 ConstraintOut.Name 就把它带上了屏。
+            //   ⚠ 更要紧的是形状冲突：判据代号 ⑤（舌片自由段）与页签上的阶段号 ⑤（交付）
+            //     长得一样、含义无关，摆在同一个界面上必然误读。
+            //   ⇒ 显示层剥壳，只此一处；Key 本身不动（它是识别用的唯一来源）。
+            string nm = Criteria.Plain(c.Name);
             int i = _checks.Rows.Add(kind, nm, act, lim, mg, vd, c.Where);
             var row = _checks.Rows[i];
             // 行上色：不过=淡红、无法判定=淡黄、参考量=灰字。颜色只是**重复**判定，不产生判定。
@@ -2865,10 +2954,12 @@ public sealed class LineDesignPage : TabPage
             else
             {
                 sb.AppendLine($"✗ **{bads.Length} 条判据没过**：" +
-                              string.Join("；", bads.Select(c => $"{c.Name.Split(' ')[0]} " +
+                              // ★ 原来是 Split(' ')[0] —— 对「③ 法兰增量温降」取出来的是
+                              //   光秃秃一个「③」，工程师看到的是「✗ 2 条判据没过：③ 9.5/10.0」。
+                              string.Join("；", bads.Select(c => $"{Criteria.Plain(c.Name)} " +
                                   (c.Undetermined ? "无法判定" : $"{c.Actual:0.0}/{c.Limit:0.0}"))));
                 var first = bads[0];
-                sb.AppendLine($"　先解决这一条 ⇒ **{first.Name}**（{first.Where}）");
+                sb.AppendLine($"　先解决这一条 ⇒ **{Criteria.Plain(first.Name)}**（{first.Where}）");
                 // Note 里带着「【下一步】…」，把那一段单独拎出来，不让它埋在长注里
                 int k = first.Note.IndexOf("【下一步】", StringComparison.Ordinal);
                 if (k >= 0) sb.AppendLine("　" + first.Note[k..].Replace("；", "；\r\n　　"));

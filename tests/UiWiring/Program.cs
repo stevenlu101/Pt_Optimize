@@ -1650,10 +1650,24 @@ class UiWiringTests {
             Check("解了但没收敛 → 仍指向「核算整线」",
                   Flow.Next(st)?.CmdId == "core.runLine", Flow.Next(st)?.Why ?? "");
 
-            // 收敛 + 全过 + 新鲜 ⇒ 出图
+            // ★★★ 收敛 + 全过 + 新鲜 ⇒ 先**复核**，不是直接出图（2026-08-30）。
+            //   在此之前这里就直接指出图 —— 而那些判据是在**导航网格**上判的。
+            //   实测 0.6 档：粗网格「法兰增量温降」7.7 K（限值 10，看着很宽），
+            //   加密到位 9.5 K。差 1.8 K，足以把「过」变成「不过」。
             st.Last = Mk(true, C2("③ 法兰增量温降 ≤ 上限", true));
-            Check("收敛且判据全过 → 指向「导出本页 3DM」",
+            Check("收敛且判据全过、但没复核 → 指向「网格无关复核」",
+                  Flow.Next(st)?.CmdId == "core.verifyMesh", Flow.Next(st)?.Why ?? "");
+
+            // 复核过了才指出图
+            st.MeshVerified = true; st.VerifiedSnap = snap;
+            Check("复核过了 → 指向「导出本页 3DM」",
                   Flow.Next(st)?.CmdId == "export.page3dm", Flow.Next(st)?.Why ?? "");
+
+            // ★ 复核之后又改参数 ⇒ 复核作废（假绿灯比没复核更坏）
+            st.CurrentSnap = new object();
+            Check("改过参数 → 复核作废，不许照旧结论放行",
+                  Flow.Next(st)?.CmdId != "export.page3dm", Flow.Next(st)?.Why ?? "");
+            st.CurrentSnap = snap;
 
             // 参数改过 ⇒ 必须先重解（这一条要排在 AllOk 前面，否则会照着过期结论指路）
             st.CurrentSnap = new object();
@@ -1955,6 +1969,10 @@ class UiWiringTests {
                     .Invoke(page, new object?[] { r31, null });
                 Pump(200);
 
+                // ★★ 2026-08-30：判据表的「判据」列现在印**全名不带代号**
+                //   （用户：「UI 内严禁使用 ②′ 这类的表示，工程师看不懂」）。
+                //   ⇒ 这里按名字找行时也不能再带代号。走查按老名字查，当场红了 ——
+                //     **门抓到的是真后果**，不是误报。
                 string Cell(string namePart, int col)
                 {
                     foreach (DataGridViewRow row in chk.Rows)
@@ -1983,8 +2001,8 @@ class UiWiringTests {
 
                 // ── ② 裕度符号：⑤ 是「须 ≥ 限」，通过时裕度列必须是**正**的
                 //    改之前显示成「超 15 %」而同一行判定是 ✓ —— 两列自相矛盾。
-                string v5 = Cell("⑤ 舌片自由段", 5), m5 = Cell("⑤ 舌片自由段", 4);
-                Check("⑤ 这一行在表上", v5.Length > 0, $"实际 {Cell("⑤ 舌片自由段", 2)} / 限 {Cell("⑤ 舌片自由段", 3)}　判定 {v5}　裕度 {m5}　舌长控件 {((NumericUpDown)F(page, "_tabLen")!).Value}");
+                string v5 = Cell("舌片自由段", 5), m5 = Cell("舌片自由段", 4);
+                Check("舌片自由段这一行在表上", v5.Length > 0, $"实际 {Cell("舌片自由段", 2)} / 限 {Cell("舌片自由段", 3)}　判定 {v5}　裕度 {m5}　舌长控件 {((NumericUpDown)F(page, "_tabLen")!).Value}");
                 if (v5 == "✓")
                     Check("⑤ 通过时裕度列不是「超 …%」（方向没判反）",
                           !m5.StartsWith("超", StringComparison.Ordinal),

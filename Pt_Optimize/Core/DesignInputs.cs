@@ -100,6 +100,15 @@ public class DesignInputs
     ///
     /// （若现场经验恰好也是 0.6，显示成「默认」无害 —— 数是同一个。）
     /// </summary>
+    // ★★★ 2026-08-30：以下三项**从工程师的参数表里藏起来**（[Browsable(false)]）。
+    //
+    //   它们是**开发者开关**，而且自己的说明里就写着「不得用于交付」「打开会改判据的数」。
+    //   把这种东西摆在工程师面前是**在界面上放一个陷阱**：勾了照样出数、照样解锁出图，
+    //   而算出来的是另一套判据。用户 2026-08-30：「让工程师尽量傻瓜式 UI 操作」。
+    //
+    //   ⚠ 功能一点没少：三个都由命令行开关设（--sigmat / --gslinear / --basetol-legacy），
+    //     做配对对照时照常用。今天给热场加同类开关时用的就是 static 字段（不进参数表）——
+    //     那才是这类东西该待的地方。
     [Browsable(false)]
     public string WeldMinSource =>
         Math.Abs(WeldMinThicknessMm - WeldMinDefaultMm) < 1e-9
@@ -347,6 +356,7 @@ public class DesignInputs
                  "而 ②′/②″/铂重**逐位不变**。　" +
                  "⇒ 「历史 0.8 档在算得准的网格上不合格」这个结论是**判据 bug**，不是物理。　" +
                  "关掉它（--basetol-legacy）只用于复现历史数字，不得用于交付。")]
+    [Browsable(false)]
     public bool BaselineTolAmplified { get; set; } = true;
 
     [Category("6 C 整线 — 法兰边界"), DisplayName("电位场用旧的 Gauss–Seidel"),
@@ -356,6 +366,7 @@ public class DesignInputs
                  "而且旧解的**收敛判据拿的是「步长」不是残差** —— 与基线耦合环、" +
                  "CoupledSolver 那两处同一个错，慢收敛时步长很小而残差很大。　" +
                  "⚠ 打开只用于搞清楚「哪一改动把 ③ 改了」，**不得用于交付**。")]
+    [Browsable(false)]
     public bool LinearGaussSeidel { get; set; } = false;
 
     [Category("6 C 整线 — 法兰边界"), DisplayName("电流场按 σ(T) 重解"),
@@ -368,6 +379,7 @@ public class DesignInputs
                  "★ 项目做对过：已被取代的 CoupledSolver 每轮都用新温度场重解电流场" +
                  "（注释：铂 700–1300 °C 间 ρe 变化 48 %），重写时丢掉了。　" +
                  "⚠ 默认关：打开会改判据的数（②″ 与局部热稳定首当其冲）。")]
+    [Browsable(false)]
     public bool SigmaOfTCoupling { get; set; } = false;
 
     // ---------- 6 玻璃物性 ----------

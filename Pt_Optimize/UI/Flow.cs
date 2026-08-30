@@ -112,7 +112,13 @@ public sealed record GateSpec(
     bool RequireAllOk,
     bool RequireFresh,
     string LockedTitle,
-    string LockedWhy);
+    string LockedWhy,
+    /// <summary>
+    /// ★★★ 还要求**判据经过网格无关复核**（2026-08-30）。
+    /// 只加在 ④→⑤ 那道门上：出图是唯一「把数交出去」的动作，
+    /// 而在此之前那道门只问「解出来了吗」，不问「这个数可不可信」。
+    /// </summary>
+    bool RequireMeshVerified = false);
 
 /// <param name="Id">稳定锚点（如 "core.runLine"）。测试与说明书按它引用，
 /// 于是**改中文名不会打破任何东西**。</param>
@@ -229,6 +235,14 @@ public static class Flow
         new("final.load", "载入设计记录", StageId.设计记录, ChainId.无,
             CmdGroup.设计记录不读页面, false, "即时",
             "把 DesignSpec 的某一档灌进各控件。**已作废的档会在最前面自报失效**"),
+
+        // ★★★ 网格无关复核（2026-08-30 补）。
+        //   在此之前它**只有命令行有**（`--solve --verifymesh`），界面上一次都调不到 ——
+        //   `MeshVerify.Run` 在 UI 里的调用次数是 0。而 ⑤ 交付的门也不要求它。
+        //   ⇒ 工程师可以拿一个导航网格上的数直接出图，而那个数实测能差 1.8 K。
+        new("core.verifyMesh", "◆ 网格无关复核", StageId.整线核算, ChainId.C整线耦合,
+            CmdGroup.页面参数, true, "10～40 分钟，可取消",
+            "把网格一档档加密，直到判据不再变。**判据可不可信由它说了算** —— 出图前必须过这一关"),
 
         // ── ④ 定尺寸 ──────────────────────────────────────────────────
         new("core.autoThick", "自动定厚", StageId.定尺寸, ChainId.C定尺寸,
@@ -361,7 +375,7 @@ public static class Flow
                 RequireConverged: true, RequireAllOk: false, RequireFresh: true,
                 LockedTitle: "④ 定尺寸 —— 还没解锁",
                 LockedWhy: "定尺寸器每轮都要跑一次整线解，起点必须是一个**解得出来且收敛**的构型。"),
-            new[] { "core.runLine", "geom.analyze", "geom.toanalytic", "geom.export3dm" },
+            new[] { "core.runLine", "core.verifyMesh", "geom.analyze", "geom.toanalytic", "geom.export3dm" },
             new[] { "C 整线", "A·B·C 共用" }),
 
         new(StageId.定尺寸, 4, "④ 定尺寸 / 搜形状",
@@ -373,7 +387,9 @@ public static class Flow
                 Array.Empty<string>(),
                 RequireConverged: true, RequireAllOk: true, RequireFresh: true,
                 LockedTitle: "⑤ 交付 —— 还没解锁",
-                LockedWhy: "交付件不能是一个自己声明不成立的设计。"),
+                LockedWhy: "交付件不能是一个自己声明不成立的设计，"
+                         + "**也不能是一个没人验过准不准的数**。",
+                RequireMeshVerified: true),
             new[] { "core.autoThick", "shape.search", "scan.thickness" },
             Array.Empty<string>()),
 
@@ -532,7 +548,7 @@ public static class Flow
             //     「3DM 只读几何数据，为何不能带入计算？」—— 能，只是一直没接上。
             if (st.SizerNoLevels)
                 return new("geom.toanalytic",
-                      "卡的是热-电量（③／②′／②″／管 J），厚度正是它们的旋钮 —— "
+                      "卡的是热-电量（法兰增量温降／管孔净流入／圆盘区最高温／管电流密度），厚度正是它们的旋钮 —— "
                     + "但**这张图纸是等厚板（只有一级）**，「自动定厚」走的是逐级定厚，没有可调的级。"
                     + "⇒ 点「◈ 图纸几何 → 参数」：把图纸的几何交给**解析路**，"
                     + "那条路能改**形状**（盘径／舌宽）—— 而形状往往才是真正卡住的那一维"
@@ -541,7 +557,15 @@ public static class Flow
             return new("core.autoThick", "判据没全过，卡的是热-电量 —— 用「自动定厚」把厚度调到过");
         }
 
-        return new("export.page3dm", "判据全过且是当前参数的解 —— 可以出图了");
+        // ★★★ 全过 ≠ 可信。判据是在**导航网格**上判的，先验一次它准不准（2026-08-30）。
+        if (!(st.MeshVerified && st.VerifiedFresh))
+            return new("core.verifyMesh",
+                  "判据全过且是当前参数的解 —— 但这些数是在**导航网格**上算的，还没验过准不准。"
+                + "先点「◆ 网格无关复核」：它把网格一档档加密，直到判据不再变。"
+                + "　⚠ 值得等：0.6 档那个设计，粗网格算出「法兰增量温降 7.7 K」（限值 10，看着很宽），"
+                + "加密到位是 **9.5 K** —— 差 1.8 K，而这个差足以把「过」变成「不过」。");
+
+        return new("export.page3dm", "判据全过、是当前参数的解、且已通过网格无关复核 —— 可以出图了");
     }
 
     // ═══ 查询 ═════════════════════════════════════════════════════════════
@@ -630,6 +654,40 @@ public sealed class FlowState
 
     /// <summary>正在跑的链（null = 空闲）。状态面板据此显示「正在算…」。</summary>
     public ChainId? Running;
+
+    /// <summary>
+    /// ★★★ **这一次的解经过网格无关复核了吗**（2026-08-30 补）。
+    ///
+    /// ══ 为什么非有它不可
+    ///
+    /// 在此之前，⑤ 交付的门只要求「收敛 + 全过 + 新鲜」——**没有一条要求判据可信**。
+    /// 而判据是在**导航网格（2 mm）**上判的，实测那个数能差多少：
+    /// <code>
+    ///   0.6 档「法兰增量温降」  粗网格 7.685 K   →   加密到位 9.453 K   差 1.777 K
+    /// </code>
+    /// 限值是 10 K ⇒ **「全过」这个判定本身可能是假的**。
+    /// 于是工程师可以：点核算整线 → 收敛✓全过✓新鲜✓ → ⑤ 解锁 → 出图，
+    /// 而那张图背后的数没有任何人验过。
+    ///
+    /// ⚠ 命令行早就有这道复核（`--solve --verifymesh`），**界面上一次都调不到** ——
+    ///   `MeshVerify.Run` 在 UI 里的调用次数是 **0**。
+    ///   对话里跑得漂亮、工程师点按钮却碰不到，正是本项目最怕的那种落差。
+    /// </summary>
+    public bool MeshVerified;
+
+    /// <summary>复核那一刻的参数快照 —— 与 <see cref="CurrentSnap"/> 不等就作废。</summary>
+    public object? VerifiedSnap;
+
+    /// <summary>复核的结论原话（供状态面板与提示直接印）。空 = 没复核过。</summary>
+    public string VerifyNote = "";
+
+    /// <summary>
+    /// 复核**还算不算数**：复核那一刻的参数与现在一致才算。
+    /// ⚠ 与 <see cref="Fresh"/> 同一个道理 —— 改完参数还挂着上一次的复核结论，
+    ///   那是**假绿灯**，比没有复核更坏（它会让人以为验过了）。
+    /// </summary>
+    public bool VerifiedFresh =>
+        VerifiedSnap is not null && CurrentSnap is not null && VerifiedSnap.Equals(CurrentSnap);
 
     /// <summary>
     /// `.3dm` 模式、图纸已选、但**还没「分析几何变数」**。
@@ -811,6 +869,19 @@ public static class Gate
         if (gate.RequireFresh && !st.Fresh)
             return new Status(stage, bypassed, bypassed, gate.LockedWhy,
                               "参数在上次求解之后又动过了 —— 回到「③ 整线核算」重解一次。", null);
+
+        // ★★★ 判据可不可信（2026-08-30）。排在最后：前面几条不成立时，
+        //   先说更根本的原因（还没解出来就谈不上「这个数准不准」）。
+        if (gate.RequireMeshVerified && !(st.MeshVerified && st.VerifiedFresh))
+            return new Status(stage, bypassed, bypassed, gate.LockedWhy,
+                st.MeshVerified
+                    ? "参数在复核之后又动过了 —— 回「整线核算」页再点一次「网格无关复核」。"
+                    : "判据是在**导航网格**上判的，还没验过它准不准。"
+                      + "回「整线核算」页点「网格无关复核」——"
+                      + "它会把网格一档档加密，直到判据不再变（实测 10–40 分钟，随时可取消）。"
+                      + "　⚠ 不验就出图的风险是实打实的：0.6 档那个设计，"
+                      + "粗网格算出「法兰增量温降 7.7 K」（限值 10，看着很宽），"
+                      + "加密到位是 **9.5 K** —— 差 1.8 K，而这个差足以把「过」变成「不过」。", null);
 
         return new Status(stage, true, bypassed, "", "", null);
     }
