@@ -148,6 +148,28 @@ public sealed class DesignSpec
     /// </summary>
     public double RampH, DiscOverK, HoleFluxW, FlangeDipK, TubeJ;
 
+    /// <summary>
+    /// ★★★ **网格无关复核之后的值**（2026-08-30 补）。<c>NaN</c> = 这一档还没复核过。
+    ///
+    /// ══ 为什么要单独立一组，而不是把上面那组改掉
+    ///
+    /// 上面那组是**导航网格（2 mm）**上的数 —— 它是**历史记录**，记的是当天那次运行。
+    /// 而实测：同一个设计，加密到判据不再变之后，「法兰增量温降」会大出 3 K 以上：
+    /// <code>
+    ///   0.8 档   记录 4.720 K   复核 7.950 K（0.250 mm，14982 单元）
+    ///   0.6 档   记录 6.124 K   复核 9.453 K（0.125 mm，47567 单元）
+    /// </code>
+    /// 限值是 10 ⇒ 记录说「余量 53 %」，复核说「余量 20 %」。**说明书照原样显示记录值，
+    /// 而工程师无从知道那是粗网格上的数** —— 这正是「对话的知识没落到 APP 上」那一族。
+    ///
+    /// ⚠ **不覆盖**原记录：改记录是「落档」——那是有正式流程的动作，不该顺手做。
+    ///   ⇒ 两组并存，界面**两个都显示并标明口径**。
+    ///
+    /// ⚠ 复现命令：<c>--cli --quiet --solve --verifymesh --wall &lt;壁厚&gt;</c>
+    /// </summary>
+    public double VerifiedMeshMm = double.NaN, VerifiedFlangeDipK = double.NaN,
+                  VerifiedHoleFluxW = double.NaN, VerifiedDiscOverK = double.NaN;
+
     // ================================================================
     // ★★★★★ 2026-08-16 第二次修正：**旧板厚是优化器停早了一轮的结果**。
     //
@@ -391,6 +413,9 @@ public sealed class DesignSpec
         RingMul = new[] { 1.00, 1.00, 1.00, 1.00 },
         TotalMassG = 3547, TubeMassG = 2465, FlangeMassG = 1082, ResidualK = 0.5,
         RampH = 0.058, DiscOverK = -0.208, HoleFluxW = 1.123, FlangeDipK = 4.720, TubeJ = 9.506,
+        // 网格无关复核（2026-08-30，--solve --verifymesh --wall 0.8，收敛在 0.250 mm / 14982 单元）
+        VerifiedMeshMm = 0.250, VerifiedFlangeDipK = 7.950,
+        VerifiedHoleFluxW = 2.628, VerifiedDiscOverK = -0.004,
     };
 
     /// <summary>底档：管壁压到焊接烧穿下界。</summary>
@@ -411,6 +436,10 @@ public sealed class DesignSpec
         RingMul = new[] { 1.00, 1.00, 1.00, 1.00 },
         TotalMassG = 2656, TubeMassG = 1841, FlangeMassG = 815, ResidualK = 0.5,
         RampH = 0.073, DiscOverK = -0.284, HoleFluxW = 0.820, FlangeDipK = 6.124, TubeJ = 10.961,
+        // 网格无关复核（2026-08-30，--solve --verifymesh --wall 0.6，收敛在 0.125 mm / 47567 单元）
+        // ⚠ 两条**互相独立**的阶梯交叉验证过：粗阶梯 0.125 给 9.453，细阶梯 0.146 给 9.462，差 0.009 K。
+        VerifiedMeshMm = 0.125, VerifiedFlangeDipK = 9.453,
+        VerifiedHoleFluxW = 1.595, VerifiedDiscOverK = -0.004,
     };
 
     // ── 已作废的两档：**留着**，不删。

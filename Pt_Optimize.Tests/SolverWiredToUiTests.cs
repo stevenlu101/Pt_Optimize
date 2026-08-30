@@ -87,9 +87,16 @@ public class SolverWiredToUiTests
         Assert.Contains("**没做第二遍**", s);
         // 自动定厚按钮：没做，必须说
         Assert.Contains("if (!srD8.FineRefined)", s);
-        Assert.Contains("**未经复核、不可直接交付**", s);
-        // 都要带上「2.03 倍」这个实测依据，不许只说「可能不准」
-        Assert.Contains("2.03 倍", s);
+        // ★★ 2026-08-30 改口径：原来这里说「未经复核、不可直接交付。要可交付请跑「搜形状」」——
+        //   **后半句是错的**：第二遍求根（在一张固定细网格上重解）≠ 网格无关复核
+        //   （一档档加密到判据不再变）。而正牌按钮当天已经补上了。
+        //   ⇒ 现在必须指向那个按钮，而且要带**实测的代价**，不许只说「可能不准」。
+        Assert.Contains("这些数还没验过准不准", s);
+        Assert.Contains("◆ 网格无关复核", s);
+        Assert.DoesNotContain("要可交付请跑「搜形状」", s);
+        // 实测依据：粗网格 7.7 → 加密到位 9.5，差 1.8 K
+        Assert.Contains("差 1.8 K", s);
+        Assert.Contains("2.03 倍", s);   // 精算那一支仍然用它
     }
 
     /// <summary>流程图上的文字也要跟着改 —— 它是给用户看的，不是注释。</summary>

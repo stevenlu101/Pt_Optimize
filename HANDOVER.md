@@ -106,14 +106,21 @@ MeshVerify.Run（网格无关复核 —— 判据可不可信的唯一准绳）
 
 ### 「必须验证才能算提交」
 
+**每一个现役交付档都要有一条**（`CliUiParityTests.每个交付档都列了对帐命令` 盯着，少一条就红）：
+
 ```bash
-UiWiring.exe --reconcile 0.8 3480.7
+UiWiring.exe --reconcile 0.8 3480.7      # 2026-08-30 实测：界面 3480.7 g，差 0.0 g，全判据 ✓
+UiWiring.exe --reconcile 0.6 2613.8      # 底档，余量只有 5.5 %（0.8 有 20 %）
 ```
-真的载入设计记录、真的点自动定厚，与命令行验过的数逐克比。2026-08-30 首次实测：
+
+真的载入设计记录、真的点自动定厚，与命令行验过的数逐克比。2026-08-30 首次实测（0.8 档）：
 
 ```
 命令行验过 3480.7 g　　界面跑出 3480.7 g　　差 0.0 g　　全判据 ✓
 ```
+
+⚠ 期望值**要跟着代码走**：换了求解器的机制（如 2026-08-30 把候选比价接进链路），
+  两边的数会一起动 —— 那时要**重新取一次命令行基准**再对帐，不能拿旧数当期望。
 
 ⚠ 这条不是形式：两条路**传给求解器的不是同一个对象**（命令行拿 `DesignSpec`，
 界面拿 `PageToDesignSpec()` 控件搬运）。只有当「载入设计记录」把每一个进计算的量都灌准了
@@ -2028,7 +2035,7 @@ git clone <本仓库>
 cd Pt_Optimize
 dotnet restore --disable-parallel   # 见下，务必串行
 dotnet build
-dotnet test          # 应为 468/468 通过（这个数由 HandoverGateCountTests 自己盯着）
+dotnet test          # 应为 469/469 通过（这个数由 HandoverGateCountTests 自己盯着）
 dotnet run --project Pt_Optimize
 ```
 
@@ -5118,7 +5125,7 @@ Pt_Optimize.Tests/ · tests/UiWiring/ · Pt_Optimize.Geom/ · .githooks/   ← �
 > 改 `.githooks/` 改的是「门跑不跑」。这两类原本都不在名单里 ⇒
 > **唯一能让所有门失效的改动，恰恰是唯一不触发门的改动**。
 
-`dotnet test` 应为 **468/468**。
+`dotnet test` 应为 **469/469**。
 
 > 这个数**不用人记得改**了：`HandoverGateCountTests` 反射数出程序集里的用例数
 > （`[Fact]` 一条、`[Theory]` 按 `[InlineData]` 行数），再回头读本文件里的「应为 N/N」比对，

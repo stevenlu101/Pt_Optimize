@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using PtOptimize.Core;
 using Xunit;
 
 namespace PtOptimize.Tests;
@@ -156,6 +157,33 @@ public class CliUiParityTests
             Assert.True(solver.Contains(head, StringComparison.Ordinal),
                 $"「{c.Cli}」说界面会印「{head}…」，而 Solver.cs 里找不到这句 —— "
                 + "接了不说话，工程师不知道凭什么信这个数");
+        }
+    }
+
+    /// <summary>
+    /// ★★★ **每一个交付档都要有一条对帐命令** —— 不是「我记得跑」，是名单上写着。
+    ///
+    /// 对帐本身跑不进单元测试（一次要分钟级的整线解），但**该跑哪几档**可以钉住：
+    /// 现役有几档设计记录，就该有几条 `--reconcile`。少一条 = 那一档从没验过
+    /// 「界面拿不拿得到命令行验过的数」。
+    ///
+    /// ⚠ 0.6 是**底档**（管壁压到焊接烧穿下界），余量只有 5.5 %（0.8 有 20 %）——
+    ///   越薄的余量越经不起「两条路算的不是同一个零件」。
+    /// </summary>
+    [Fact]
+    public void 每个交付档都列了对帐命令()
+    {
+        // 现役设计记录（不含已作废的）
+        var live = DesignSpec.All.Where(d => d.Invalid.Length == 0).ToArray();
+        Assert.NotEmpty(live);
+
+        string doc = File.ReadAllText(Path.Combine(HandoverDoc.Root(), "HANDOVER.md"));
+        foreach (var d in live)
+        {
+            string cmd = $"--reconcile {d.WallMm:0.0}";
+            Assert.True(doc.Contains(cmd, StringComparison.Ordinal),
+                $"档「{d.Name}」（管壁 {d.WallMm:0.0}）没有对帐命令 —— "
+                + $"HANDOVER 里找不到「{cmd}」。那一档从没验过界面拿不拿得到命令行的数。");
         }
     }
 

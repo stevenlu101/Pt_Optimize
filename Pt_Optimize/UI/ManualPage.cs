@@ -707,15 +707,19 @@ public sealed class ManualPage : TabPage
         double weldLegM = Math.Max(fd.TabThickMm.Max(), fd.WallMm);
         // 末位 less = 判据方向：true 是「≤ 限值」，false 是「≥ 下界」。
         // ⚠ 方向必须逐条写明 —— ⑤ 是唯一一条「越大越好」的，漏了就会把更安全的设计显示成违规。
+        // ★★★ 2026-08-30：**去掉判据代号**（用户：「UI 内严禁使用 ②′ 这类的表示，
+        //   工程师看不懂」）。此前这张表逐行带着 ①②′②″③⑤⑥ —— 而页签上的**阶段号**
+        //   也是 ①–⑤，形状相同、含义无关（判据 ⑤ 是舌片自由段，阶段 ⑤ 是交付），
+        //   摆在同一个界面上必然误读。
         var crit = new (string n, string k, double a, double l, string u, bool less)[]
         {
-            ("① 升温 空管到目标",      "硬判据", fd.RampH,      72,    "h",      true),
-            ("②″ 圆盘区最高温 − 管温", "硬判据", fd.DiscOverK,  5.00,  "K",      true),
-            ("②′ 管孔净流入 须为正",   "硬判据", fd.HoleFluxW,  0,     "W",      false),
-            ("③ 法兰增量温降",         "目标",   fd.FlangeDipK, 10.00, "K",      true),
+            ("升温 空管到目标",        "硬判据", fd.RampH,      72,    "h",      true),
+            ("圆盘区最高温 − 管温",    "硬判据", fd.DiscOverK,  5.00,  "K",      true),
+            ("管孔净流入 须为正",      "硬判据", fd.HoleFluxW,  0,     "W",      false),
+            ("法兰增量温降",           "目标",   fd.FlangeDipK, 10.00, "K",      true),
             ("管 J 电流密度",          "硬判据", fd.TubeJ,      12.00, "A/mm²",  true),
-            ("⑤ 舌片自由段 ≥ 下界",    "硬判据", fd.FreeTabMm,  100.0, "mm",     false),
-            ("⑥ 圆盘盖得住管孔＋焊脚",  "硬判据",
+            ("舌片自由段 ≥ 下界",      "硬判据", fd.FreeTabMm,  100.0, "mm",     false),
+            ("圆盘盖得住管孔＋焊脚",    "硬判据",
                 fd.DiscRadiusMm - fd.HoleRadiusMm - weldLegM, 0, "mm",          false),
         };
 
@@ -1171,12 +1175,45 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                      "它也正是守住「抽热窗口」的主力。") + "</p>");
 
         sb.Append("<h2>5. 判据表怎么读</h2>");
-        sb.Append("<table><tr><th>判据</th><th>类别</th><th>实际</th><th>限值</th><th>裕度</th></tr>");
+
+        // ★★★ 2026-08-30：加「网格无关复核」这一列。
+        //   原来只有一列「实际」，而那是**导航网格（2 mm）**上的数 —— 工程师无从知道。
+        //   实测：0.8 档记录 4.720 K、复核 7.950 K；0.6 档记录 6.124 K、复核 9.453 K。
+        //   限值 10 ⇒ 记录说「余量 53 %」，复核说「余量 20 %」。
+        //   **一张不标口径的判据表，比没有判据表更坏** —— 它有排版、有裕度条，看起来就是答案。
+        double VerifOf(string name) => name.StartsWith("法兰增量温降", StringComparison.Ordinal) ? fd.VerifiedFlangeDipK
+                                     : name.StartsWith("管孔净流入", StringComparison.Ordinal) ? fd.VerifiedHoleFluxW
+                                     : name.StartsWith("圆盘区最高温", StringComparison.Ordinal) ? fd.VerifiedDiscOverK
+                                     : double.NaN;
+        bool anyVerif = !double.IsNaN(fd.VerifiedMeshMm);
+
+        sb.Append("<table><tr><th>判据</th><th>类别</th><th>记录值<br><span class=\"m\">导航网格 2 mm</span></th>"
+                + (anyVerif ? $"<th>网格无关复核<br><span class=\"m\">加密到 {fd.VerifiedMeshMm:0.000} mm</span></th>" : "")
+                + "<th>限值</th><th>裕度<br><span class=\"m\">按复核值</span></th></tr>");
         foreach (var (n, k, a, l, u, less) in crit)
+        {
+            double v = VerifOf(n);
+            bool hasV = !double.IsNaN(v);
+            // ★ 裕度条按**复核值**画（有的话）—— 裕度是给人做决定的，就该用可信的那个数。
+            double forBar = hasV ? v : a;
             sb.Append($"<tr><td>{n}</td><td>{k}</td><td class=\"n\">{a:0.000} {u}</td>" +
+                      (anyVerif ? $"<td class=\"n\"><b>{(hasV ? v.ToString("0.000") + " " + u : "—")}</b></td>" : "") +
                       $"<td class=\"n\">{(Math.Abs(l) < 1e-9 ? "> 0" : (less ? "≤ " : "≥ ") + l.ToString("0.00"))}</td>" +
-                      $"<td>{Bar(a, l, less)}</td></tr>");
+                      $"<td>{Bar(forBar, l, less)}</td></tr>");
+        }
         sb.Append("</table>");
+        if (anyVerif)
+            sb.Append("<div class=\"note\"><b>两列的口径不一样，要看右边那列。</b>" +
+                      "「记录值」是<b>导航网格（2 mm）</b>上算的 —— 它是当天那次运行的历史记录；" +
+                      $"「复核值」是把网格一档档加密到<b>{fd.VerifiedMeshMm:0.000} mm</b>、直到判据不再变之后的数。<br>" +
+                      $"本档实测差多少：法兰增量温降 <b>{fd.FlangeDipK:0.000} → {fd.VerifiedFlangeDipK:0.000} K</b>" +
+                      "（限值 10）。粗网格看着余量很宽，加密之后并不宽 —— " +
+                      "<b>这个差足以把「过」变成「不过」</b>，所以出图前必须点「◆ 网格无关复核」。<br>" +
+                      "空着「—」的那几条是<b>闭式判据</b>（几何算出来的），不随网格变，没有复核值。</div>");
+        else
+            sb.Append("<div class=\"note\">⚠ <b>本档还没做过网格无关复核</b> —— 表里的数是" +
+                      "<b>导航网格（2 mm）</b>上算的。实测同类设计粗细网格能差 3 K 以上（限值 10），" +
+                      "<b>不复核就不知道这张表准不准</b>。到「整线核算」页点「◆ 网格无关复核」。</div>");
         sb.Append("<div class=\"note\"><b>裕度这一列比「✓」有用。</b>" +
                   "本项目最常见的错就是<b>贴着限值判过与不过</b>——" +
                   "曾用 0.02–0.08 K 的差别决定了 700 g 铂金，而那点温差只对应 <b>14 mW</b>、" +
