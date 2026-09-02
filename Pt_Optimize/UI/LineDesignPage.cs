@@ -423,7 +423,9 @@ public sealed class LineDesignPage : TabPage
         //   所以在 Form 上设 Font 对工具条一点用都没有 —— 用户 2026-08-18 反馈
         //   「下排的字还是太小」，指的就是这一排。必须逐个显式设。
         var tool = _tool;   // 第一排＝主线（MainForm 会往里插自动定厚/搜形状）
-        _btnRun = Btn("核算整线", (_, _) => _ = RunAsync(false));
+        // ★ 一键跑到底（2026-09-02 用户拍板）：解 → 定厚 →（搜形状）→ 加密复算
+        //   → 停在「可以出图」。决策不新写，照 Flow.Next 一直走（见 RunPipelineAsync）。
+        _btnRun = Btn("核算整线", (_, _) => _ = RunPipelineAsync());
         _btnAuto = Btn("自动定厚", (_, _) => _ = RunAsync(true));
         _btnVerify = Btn("◆ 加密复算（算到数不再变）", (_, _) => _ = VerifyMeshAsync());
         // 1b 之后它导出的是**整机**（管 + 四片法兰）且几何与求解一致，故改名点明
@@ -1584,6 +1586,113 @@ public sealed class LineDesignPage : TabPage
     ///   用来排除「页面上某个控件被改过而自己没注意到」。
     ///   两条路给同一个数，才说明页面没被动过手脚；给不同的数，就该查页面。
     /// </summary>
+    /// <summary>取消/出错时置起：流水线看到它就停，不再往下一步走。</summary>
+    private bool _pipeAborted;
+
+    /// <summary>流水线当前跑到第几步（进度文字的前缀）。空 = 不在流水线里。</summary>
+    private string _pipeStep = "";
+
+    /// <summary>
+    /// ★★★★★ **【核算整线】一键跑到底**（2026-09-02 用户拍板）。
+    ///
+    /// 用户原话：「自动定厚 / ◇ 搜形状 / ◆ 加密复算，能自动吗？全整到核算整线」，
+    /// 并选定「搜形状也自动跑，一路跑到底」，附加「要有进度条 + 状态说明，
+    /// 蓝色指示保留（说明要改）」。
+    ///
+    /// ══ 不新造决策逻辑
+    ///
+    /// 「下一步该干什么」<see cref="Flow.Next"/> 早就在回答了（蓝色指示读的就是它）。
+    /// 一键 = **照它一直走**，走到它说「可以出图」为止。
+    /// ⇒ 自动跑与手动点走的是**同一条判断**，不会出现「链路说 A、一键做 B」。
+    ///
+    /// ══ 三条护栏
+    ///
+    /// ① **取消要断整条**：任一步被取消/出错就停，不再往下走（<see cref="_pipeAborted"/>）。
+    /// ② **原地打转要停**：指纹（判据实测值 + 总铂）两轮不变就停 ——
+    ///    「做了等于没做」而提示继续指同一个按钮，是走查器抓过的死循环形状。
+    /// ③ **上限**：最多 8 步。撞上限要**说出来**，不许静默停在半路。
+    ///
+    /// ⚠ .3dm 那条路上「◈ 图纸几何 → 参数」是**改几何来源**的决定，不自动做 ——
+    ///   它把设计从图纸路搬到解析路，那是人的决定，不是一步计算。
+    /// </summary>
+    private async Task RunPipelineAsync()
+    {
+        if (_cts is not null) { _cts.Cancel(); return; }   // 再点一次 = 取消
+        _pipeAborted = false;
+        string lastFinger = "";
+        int repeat = 0;
+
+        bool App(string id) => CommandApplicable(id);
+        string Finger() => _last is null ? "" :
+            string.Join("|", _last.Checks.Where(c => c.Kind != CheckKind.Reference)
+                                         .Select(c => c.Name + "=" + c.Actual.ToString("0.000")))
+            + "|g=" + _last.TotalMassG.ToString("0.00");
+
+        // 第 1 步永远是解一次 —— 没有解就谈不上任何判断
+        _pipeStep = "第 1 步／解一次整线";
+        await RunAsync(autoSize: false);
+
+        for (int step = 2; step <= 8 && !_pipeAborted; step++)
+        {
+            var ns = Flow.Next(Shared!, App);
+            if (ns is null) break;
+
+            if (ns.CmdId == "export.page3dm")
+            {
+                _out.AppendText(Environment.NewLine
+                    + "★ 算完了：判据全过、是当前参数的解、而且已经加密复算到数不再变。"
+                    + "可以到「② 交付」页出图。" + Environment.NewLine);
+                break;
+            }
+
+            string what = ns.CmdId switch
+            {
+                "core.autoThick"  => "自动定厚",
+                "shape.search"    => "搜形状（会改盘径与舌宽）",
+                "core.verifyMesh" => "加密复算（算到数不再变）",
+                "core.runLine"    => "重解一次",
+                _ => "",
+            };
+            if (what.Length == 0)
+            {
+                // 指到「分析几何变数 / ◈ 图纸几何 → 参数」这类**要人决定**的，停下来说清楚
+                _out.AppendText(Environment.NewLine + "■ 自动到此为止 —— 下一步要你决定："
+                    + Environment.NewLine + "   " + ns.Why + Environment.NewLine);
+                break;
+            }
+
+            _pipeStep = $"第 {step} 步／{what}";
+            _out.AppendText(Environment.NewLine + "▸ " + _pipeStep + " —— " + ns.Why + Environment.NewLine);
+
+            switch (ns.CmdId)
+            {
+                case "core.autoThick": await RunAsync(autoSize: true); break;
+                case "core.runLine":   await RunAsync(autoSize: false); break;
+                case "shape.search":   await SearchShapeAsync(); break;
+                case "core.verifyMesh": await VerifyMeshAsync(); break;
+            }
+            if (_pipeAborted) break;
+
+            // ★ 原地打转：做了等于没做，而指路会继续指同一个按钮 —— 停
+            string f = Finger();
+            repeat = (f.Length > 0 && f == lastFinger) ? repeat + 1 : 0;
+            lastFinger = f;
+            if (repeat >= 1)
+            {
+                _out.AppendText(Environment.NewLine
+                    + "■ 停在这里：上一步跑完，判据表与总铂**逐字未变** —— 再走下去是死循环。"
+                    + Environment.NewLine);
+                break;
+            }
+            if (step == 8)
+                _out.AppendText(Environment.NewLine
+                    + "■ 走满 8 步仍没到「可以出图」—— 停下来，别让它无限跑。"
+                    + Environment.NewLine);
+        }
+        _pipeStep = "";
+        PushFlow();
+    }
+
     private async Task ReproduceAsync()
     {
         if (_cts is not null) { _cts.Cancel(); return; }
@@ -1605,7 +1714,10 @@ public sealed class LineDesignPage : TabPage
         var prog = new Progress<string>(s =>
         {
             _status.Text = s;
-            Shared?.SetRunningNote($"已跑 {clockR.Elapsed.TotalMinutes:0.0} 分　{s}", PctOf(s, 40));
+            // ★ 流水线里要说清「第几步／在做什么」—— 否则跑一小时只看到一行滚动的轮数
+            Shared?.SetRunningNote(
+                (_pipeStep.Length > 0 ? _pipeStep + "　" : "")
+                + $"已跑 {clockR.Elapsed.TotalMinutes:0.0} 分　{s}", PctOf(s, 40));
         });
 
         try
@@ -1707,10 +1819,11 @@ public sealed class LineDesignPage : TabPage
 
             _status.Text = "完成";
         }
-        catch (OperationCanceledException) { _status.Text = "已取消"; }
+        catch (OperationCanceledException) { _status.Text = "已取消"; _pipeAborted = true; }
         catch (Exception ex)
         {
             _status.Text = "失败";
+            _pipeAborted = true;   // 出错同样停整条
             MessageBox.Show(this, ex.Message, "复现失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
@@ -2467,11 +2580,13 @@ public sealed class LineDesignPage : TabPage
         catch (OperationCanceledException)
         {
             _status.Text = "已取消";
+            _pipeAborted = true;   // 取消一步 = 停整条流水线
             _out.AppendText("\r\n（已取消。上面已经算完的形状结果仍然有效。）\r\n");
         }
         catch (Exception ex)
         {
             _status.Text = "失败";
+            _pipeAborted = true;   // 出错同样停整条
             _out.AppendText("\r\n✗ " + ex.Message + "\r\n");
         }
         finally
@@ -2513,7 +2628,10 @@ public sealed class LineDesignPage : TabPage
         var prog = new Progress<string>(s =>
         {
             _status.Text = s;
-            Shared?.SetRunningNote($"已跑 {clockR.Elapsed.TotalMinutes:0.0} 分　{s}", PctOf(s, 40));
+            // ★ 流水线里要说清「第几步／在做什么」—— 否则跑一小时只看到一行滚动的轮数
+            Shared?.SetRunningNote(
+                (_pipeStep.Length > 0 ? _pipeStep + "　" : "")
+                + $"已跑 {clockR.Elapsed.TotalMinutes:0.0} 分　{s}", PctOf(s, 40));
         });
 
         // ★★★★★ 装配下界要在**求解路径上**也顶一次（2026-08-24）。
@@ -2725,10 +2843,11 @@ public sealed class LineDesignPage : TabPage
             }
             _status.Text = "完成";
         }
-        catch (OperationCanceledException) { _status.Text = "已取消"; }
+        catch (OperationCanceledException) { _status.Text = "已取消"; _pipeAborted = true; }
         catch (Exception ex)
         {
             _status.Text = "失败";
+            _pipeAborted = true;   // 出错同样停整条
             // ⚠ 自动触发的那次**不弹模态框**：用户可能只是点了个单选钮就走开，
             //   回来看到一个卡住整个界面的弹窗，比看到一行说明糟得多。
             if (byTimer)
@@ -2929,7 +3048,8 @@ public sealed class LineDesignPage : TabPage
                 _out.AppendText("⚠ **没验过** —— 判据还在随网格变，这个设计现在不能出图。" + Environment.NewLine);
         }
         catch (OperationCanceledException)
-        { _out.AppendText(Environment.NewLine + "◆ 复核已取消 —— **没验过就是没验过**，出图的门仍然关着。" + Environment.NewLine); }
+        { _pipeAborted = true;   // 取消一步 = 停整条流水线
+          _out.AppendText(Environment.NewLine + "◆ 加密复算已取消 —— **没验过就是没验过**。存档或出图时会把这件事列给你看。" + Environment.NewLine); }
         catch (Exception ex)
         { _out.AppendText(Environment.NewLine + "◆ 复核出错：" + ex.Message + Environment.NewLine); }
         finally
@@ -3708,6 +3828,7 @@ public sealed class LineDesignPage : TabPage
         {
             MessageBox.Show(this, ex.Message, "解析失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             _status.Text = "失败";
+            _pipeAborted = true;   // 出错同样停整条
         }
         finally { Cursor = Cursors.Default; }
     }
