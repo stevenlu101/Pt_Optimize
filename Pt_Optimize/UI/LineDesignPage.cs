@@ -60,6 +60,9 @@ public sealed class LineDesignPage : TabPage
     //   （SegmentCount => SetpointC.Length，FlangeCount = n+1）⇒ 算的是另一个零件。
     //   用户 2026-09-02：「UI 段数是必须可调整的」。
     //   ⇒ 改由 RebuildPlateRows() 按当前段数生成；段表一动就重建。
+    /// <summary>上一次真正画出来的片数。排版事件不改它 —— 见 SegsChanged。</summary>
+    private int _plateCountShown = -1;
+
     /// <summary>逐片输入的容器。段数一变就整块清空重建 —— 见 <see cref="RebuildPlateRows"/>。</summary>
     /// <summary>工具条第二排：图纸路与工具。主线在第一排。</summary>
     /// <summary>工具条第一排：主线。</summary>
@@ -703,7 +706,15 @@ public sealed class LineDesignPage : TabPage
         var textSplit = new SplitContainer
         { Dock = DockStyle.Fill, Orientation = System.Windows.Forms.Orientation.Horizontal };
         textSplit.Panel1.Controls.Add(_checks);
+        // 输出区：正文 + 顶上一条开关（明细 / 诊断，默认收起）
+        var outSwitches = new FlowLayoutPanel
+        { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(UiScale.S(6), 2, 0, 2) };
+        outSwitches.Controls.Add(_showDetail);
+        outSwitches.Controls.Add(_showDiag);
+        _showDetail.CheckedChanged += (_, _) => Show(_last);
+        _showDiag.CheckedChanged += (_, _) => Show(_last);
         textSplit.Panel2.Controls.Add(_out);
+        textSplit.Panel2.Controls.Add(outSwitches);
 
         var rightSplit = new SplitContainer
         { Dock = DockStyle.Fill, Orientation = System.Windows.Forms.Orientation.Horizontal };
@@ -1298,12 +1309,37 @@ public sealed class LineDesignPage : TabPage
         //   而界面只有 4 片 ⇒ 算的是另一个零件。用户：「UI 段数是必须可调整的」。
         //   ⚠ 三个事件都要挂：改名（CellValueChanged）、删行（RowsRemoved）、
         //     加行（RowsAdded）—— 只挂前两个的话「加一段」正好漏掉。
-        void SegsChanged() { RebuildPlateRows(); ParamChanged(); }
+        // ★★★★★ **片数真的变了才算「参数动了」**（2026-09-02 对帐红了才查出来）。
+        //
+        //   `RowsAdded` 是本次为了「加一段」新挂的，而 _segGrid 在**首次绑定/排版**时
+        //   也会抛它 —— 于是排版事件被当成用户改参数，ParamChanged 里的
+        //   `_cts?.Cancel()` 把**正在跑的整线解掐掉**，`_last` 永远是 null。
+        //   实测后果：--reconcile 0.8 报「界面这边解出来了 (null)」，
+        //   而输出框写着「参数已改…正在后台重算」——看起来像解不出来，其实是被掐了。
+        //   ⚠ 这一族代码里早有记录（原注释说的是 CellValueChanged 在排版时抛），
+        //     我加 RowsAdded 时没想到它也在同一条路上。
+        // ★★★★★ **片数真的变了才动**（2026-09-02，探针取证之后才修对）。
+        //
+        //   `RowsAdded` 是为了「加一段」新挂的，而 DataGridView 在**排版/换列**时
+        //   也会走 AddNewRow → RowsAdded（探针实测：10 次未被抑制的 ParamChanged
+        //   全部来自这一条，调用栈是 OnColumnCollectionChanged_PostNotification）。
+        //   ⇒ 排版被当成「用户改了参数」，而 ParamChanged 里有 `_cts?.Cancel()`
+        //     **把正在跑的整线解掐掉** ⇒ `_last` 永远 null，
+        //     而输出框写着「参数已改…正在后台重算」——看起来像解不出来，其实是被掐了。
+        //
+        //   ⚠ 我先修过一版「重建了才算参数变」，**没堵住** —— 那一版靠 _plateBox.Controls
+        //     的状态判断，而排版期它是会变的。改成记住片数：只有这个数变了才是真的变了。
+        void SegsChanged()
+        {
+            int n = PlateNames().Length;
+            if (n == _plateCountShown) return;      // 排版事件：什么都没变
+            _plateCountShown = n;
+            RebuildPlateRows();
+            ParamChanged();                          // 段数真的变了 ⇒ 上一次的解作废
+        }
         _segGrid.CellValueChanged += (_, _) => SegsChanged();
         _segGrid.RowsRemoved += (_, _) => SegsChanged();
         _segGrid.RowsAdded += (_, _) => SegsChanged();
-        // 加一段是真的会改变段数与法兰片数 —— 与删一段同等重要，此前只挂了删。
-        _segGrid.RowsAdded += (_, _) => ParamChanged();
     }
 
     /// <summary>
@@ -1586,6 +1622,20 @@ public sealed class LineDesignPage : TabPage
     ///   用来排除「页面上某个控件被改过而自己没注意到」。
     ///   两条路给同一个数，才说明页面没被动过手脚；给不同的数，就该查页面。
     /// </summary>
+    /// <summary>
+    /// 输出区的两个开关：**明细**与**求解器诊断**默认收起（2026-09-02 用户：
+    /// 「输出也可以简化，只保留场图与前后尺寸比较与其它你觉得重要的计算结果」）。
+    /// ⚠ 收起 ≠ 删除：未收敛时诊断**强制展开**（那时它就是最重要的信息）。
+    /// </summary>
+    private readonly CheckBox _showDetail = new()
+    { Text = "逐段 / 逐片明细", AutoSize = true, Margin = new Padding(0, 2, 12, 2) };
+    private readonly CheckBox _showDiag = new()
+    { Text = "求解器诊断", AutoSize = true, Margin = new Padding(0, 2, 0, 2) };
+
+    /// <summary>流水线开跑那一刻的尺寸与铂重 —— 用来印「这次改了什么（前 → 后）」。</summary>
+    private Snap? _beforeSnap;
+    private double _beforeMassG = double.NaN;
+
     /// <summary>取消/出错时置起：流水线看到它就停，不再往下一步走。</summary>
     private bool _pipeAborted;
 
@@ -1631,6 +1681,10 @@ public sealed class LineDesignPage : TabPage
         // 第 1 步永远是解一次 —— 没有解就谈不上任何判断
         _pipeStep = "第 1 步／解一次整线";
         await RunAsync(autoSize: false);
+        // ★ 记下「前」——「这次改了什么」比的是**流水线动过什么**，
+        //   所以基准取第 1 步解完那一刻，不是点按钮那一刻。
+        _beforeSnap = CurrentSnap();
+        _beforeMassG = _last?.TotalMassG ?? double.NaN;
 
         for (int step = 2; step <= 8 && !_pipeAborted; step++)
         {
@@ -1711,14 +1765,14 @@ public sealed class LineDesignPage : TabPage
         Shared?.SetRunning(ChainId.C整线耦合, "复现设计记录");
         // ★ 带上百分比与已跑时长 —— 否则状态面板只会转圈（见 PctOf 的说明）。
         var clockR = System.Diagnostics.Stopwatch.StartNew();
-        var prog = new Progress<string>(s =>
+        var prog = new Progress<string>(s => OnUi(() =>
         {
             _status.Text = s;
             // ★ 流水线里要说清「第几步／在做什么」—— 否则跑一小时只看到一行滚动的轮数
             Shared?.SetRunningNote(
                 (_pipeStep.Length > 0 ? _pipeStep + "　" : "")
                 + $"已跑 {clockR.Elapsed.TotalMinutes:0.0} 分　{s}", PctOf(s, 40));
-        });
+        }));
 
         try
         {
@@ -2244,7 +2298,16 @@ public sealed class LineDesignPage : TabPage
         d.FlangeInsulated = _flIns.SelectedIndex != 0;
         d.FlangeInsulMm = d.FlangeInsulated ? (double)_flInsT.Value : 0;
         var rows = _segs.Where(s => !string.IsNullOrWhiteSpace(s.名称)).ToList();
-        if (rows.Count > 0) d.SetpointC = rows.Select(s => s.控温C).ToArray();
+        if (rows.Count > 0)
+        {
+            d.SetpointC = rows.Select(s => s.控温C).ToArray();
+            // ★★★★★ 段数变了，逐片数组必须跟着变长/变短（2026-09-02 补）。
+            //   `d` 是从别处克隆来的，它的逐片数组还是**旧段数**那个长度；
+            //   段表加一段之后 FlangeCount 变 n+1，而数组仍是 n ——
+            //   `DesignSpec.Plate(j)` 按下标取，会**越界或算出另一个零件**。
+            //   ⚠ 补/删在倒数第二个位置（首=入口、末=出口），与 Fit 同一个规则。
+            d.Fit();
+        }
         // 起点：板厚用页面上的值。
         // ★★ 2026-08-25 更正：此处原写「起点只影响轮数，**不影响解**：每个旋钮对自己的靶单调」。
         //   **那句话是错的，已被实测推翻。** 同一形状（R30）只换板厚起点：
@@ -2385,13 +2448,13 @@ public sealed class LineDesignPage : TabPage
                     string tag = $"盘Ø{2 * R:0}／舌宽{2 * hw:0}";
                     int baseDone = done;
                     int seenRound = 0;
-                    var prog2 = new Progress<string>(s =>
+                    var prog2 = new Progress<string>(s => OnUi(() =>
                     {
                         // Solver 每轮吐「第 N 轮…」；数它推进度条
                         if (s.StartsWith("第", StringComparison.Ordinal)) seenRound++;
                         _prog.Value = Math.Min(_prog.Maximum, baseDone + seenRound);
                         Note($"{tag}　" + s.Split('\n')[0]);
-                    });
+                    }));
                     // ★ 粗筛走 **Solver**（求根）而不是 Sizer（搜索）。
                     //   ⚠ 粗筛不开第二遍（FineMm = 0）：它只负责**给方向**，
                     //     胜出的那一个才做细网格求根（见下面「精算」）。
@@ -2531,12 +2594,12 @@ public sealed class LineDesignPage : TabPage
             var fin = await Task.Run(() => Solver.Solve(win.d, _base,
                           new SolverOptions { MaxRounds = finalRounds,
                                               FineMm = finFine, FineRadiusMm = finFineR },
-                          new Progress<string>(s =>
+                          new Progress<string>(s => OnUi(() =>
                           {
                               if (s.StartsWith("第", StringComparison.Ordinal)) finRound++;
                               _prog.Value = Math.Min(_prog.Maximum, done + finRound);
                               Note("精算　" + s.Split('\n')[0]);
-                          }), ct), ct);
+                          })), ct), ct);
             _prog.Value = _prog.Maximum;
 
             // 把胜出形状写回控件（这是「自动改变盘径与舌长」真正落地的地方）
@@ -2625,14 +2688,14 @@ public sealed class LineDesignPage : TabPage
         LineCase lc;
         // ★ 带上百分比与已跑时长 —— 否则状态面板只会转圈（见 PctOf 的说明）。
         var clockR = System.Diagnostics.Stopwatch.StartNew();
-        var prog = new Progress<string>(s =>
+        var prog = new Progress<string>(s => OnUi(() =>
         {
             _status.Text = s;
             // ★ 流水线里要说清「第几步／在做什么」—— 否则跑一小时只看到一行滚动的轮数
             Shared?.SetRunningNote(
                 (_pipeStep.Length > 0 ? _pipeStep + "　" : "")
                 + $"已跑 {clockR.Elapsed.TotalMinutes:0.0} 分　{s}", PctOf(s, 40));
-        });
+        }));
 
         // ★★★★★ 装配下界要在**求解路径上**也顶一次（2026-08-24）。
         //
@@ -3001,7 +3064,7 @@ public sealed class LineDesignPage : TabPage
         _out.AppendText(Environment.NewLine + "◆ **加密复算**开始 —— 把网格一档档加密，直到这个数不再变为止。" + Environment.NewLine
             + "　　10～40 分钟。随时可点「取消」，已跑完的档照样留下。" + Environment.NewLine);
 
-        var prog = new Progress<string>(m => _out.AppendText("　" + m + Environment.NewLine));
+        var prog = new Progress<string>(m => OnUi(() => _out.AppendText("　" + m + Environment.NewLine)));
         try
         {
             var res = await Task.Run(() => MeshVerify.Run(d, _base, progress: prog, cancel: _cts.Token),
@@ -3073,11 +3136,12 @@ public sealed class LineDesignPage : TabPage
     /// ⚠ 旧值按下标搬过来：加一段时新出现的那片沿用**上一片共用片**的值，
     ///   与 <see cref="DesignSpec.Fit"/> 的补法一致（别让两处各补各的）。
     /// </summary>
-    private void RebuildPlateRows()
+    /// <returns>true = 真的重建了（片数变了）；false = 片数没变，只换了标签。</returns>
+    private bool RebuildPlateRows()
     {
         var names = PlateNames();
         int n = names.Length;
-        if (_tPlate.Length == n && _plateBox.Controls.Count > 0) { RenamePlateRows(names); return; }
+        if (_tPlate.Length == n && _plateBox.Controls.Count > 0) { RenamePlateRows(names); return false; }
 
         double[] Keep(NumericUpDown[] old, double dflt)
         {
@@ -3095,6 +3159,19 @@ public sealed class LineDesignPage : TabPage
         var vI = Keep(_tabIns, 0.4); var vR = Keep(_ringMul, 1.0);
         var v1 = Keep(_ringR1, 1.0); var v2 = Keep(_ringR2, 6.0); var vT2 = Keep(_ringT2, 1.0);
 
+        // ★★★★★ **重建期间必须关掉自动重算**（2026-09-02 走查超时抓到）。
+        //
+        //   Watch 给每个容器挂了 `ControlAdded += Watch(e.Control)`，而 Watch 给
+        //   NumericUpDown 挂 `ValueChanged += ParamChanged()` ⇒ 下面每给一个新控件
+        //   赋一次 .Value，就排一次**分钟级的整线重算**；六组 × n 片就是几十次。
+        //   实测后果：走查在「核算整线」上**跑满 15 分钟预算超时**，
+        //   而 `_last` 一直是 null —— 看起来像「解不出来」，其实是被自己刷爆了。
+        //   ⚠ 本页原来每一处写回控件都用 _suppressAuto 包着（AdoptSolvedDesign、
+        //     LoadDesignSpec、EnforceTabLenFloor 都是），我新写这段时漏了这一条。
+        bool keepSuppress = _suppressAuto;
+        _suppressAuto = true;
+        try
+        {
         _plateBox.SuspendLayout();
         foreach (Control c in _plateBox.Controls.Cast<Control>().ToArray()) c.Dispose();
         _plateBox.Controls.Clear();
@@ -3189,11 +3266,14 @@ public sealed class LineDesignPage : TabPage
         for (int i = 0; i < n; i++) Row($"{names[i]} t₂", _ringT2[i], tipShape);
 
         _plateBox.ResumeLayout();
+        }
+        finally { _suppressAuto = keepSuppress; }
         // ★ 新造的控件**自动接上**自动重算：构造函数里的 Watch 给每个容器挂了
         //   `c.ControlAdded += (_, e) => Watch(e.Control)` ⇒ 往 _plateBox 里 Add 就会被监听。
         //   （靠这条而不是自己再调一次 Watch —— 那是构造函数里的局部函数，够不到。
         //     这条依赖有门盯着：见 SegmentCountTests。）
         SyncRingShape();
+        return true;
     }
 
     /// <summary>把一组「按 4 片写的」默认值调到 n 片 —— 与 DesignSpec.Fit 同一个补法。</summary>
@@ -3242,6 +3322,30 @@ public sealed class LineDesignPage : TabPage
         foreach (string suffix in new[] { "", "", "", " r₁ mm", " r₂ mm", " t₂" })
             for (int i = 0; i < names.Length && k < labs.Length; i++, k++)
                 labs[k].Text = names[i] + suffix;
+    }
+
+    /// <summary>
+    /// ★★★★★ **回到 UI 线程再动控件**（2026-09-02 二分时抓到）。
+    ///
+    /// 实况：对帐跑到一半整个进程带着这条栈崩掉 ——
+    /// <code>
+    ///   ToolStripItem.OnTextChanged
+    ///     at LineDesignPage.&lt;RunAsync&gt;b__0(String s)      ← 进度回调
+    ///     at System.Progress`1.InvokeHandlers
+    ///     at ThreadPoolWorkQueue.Dispatch                  ← **线程池线程**
+    /// </code>
+    /// <c>Progress&lt;T&gt;</c> 只在**构造时** <c>SynchronizationContext.Current</c> 非空才回主线程；
+    /// 取不到就退到线程池 —— 于是 `_status.Text = s` 变成跨线程动 UI。
+    ///
+    /// ⚠ 这不是测试环境专有：它取决于构造那一刻的同步上下文，**在工程师机器上同样会随机崩**。
+    ///   而且崩在进度回调里 —— 看起来像「算着算着自己没了」，最难查的那一种。
+    /// ⇒ 所有进度回调一律走这里：需要就 Invoke 回去，不需要就直接跑。
+    /// </summary>
+    private void OnUi(Action a)
+    {
+        if (IsDisposed) return;
+        if (InvokeRequired) { try { BeginInvoke(a); } catch (ObjectDisposedException) { } }
+        else a();
     }
 
     private void PushFlow()
@@ -3441,38 +3545,91 @@ public sealed class LineDesignPage : TabPage
         // ⚠ 表头不再有「挤进 8 个字」这条约束（列宽跟着内容走），所以单位写全：
         //   以前的「控温」「管 J」「J_max」不看文档不知道单位，那是省版面省出来的坑。
         //   但**只补单位，不改叫法**：「衔接温差 K」本来就是全名，缩成「衔接 ΔT」是往回走。
-        sb.AppendLine("段\t控温 °C\t电流 A\t管 J A/mm²\t管根 °C\t衔接温差 K\t管重 g");
-        foreach (var s in r.Segments)
-            sb.AppendLine($"{s.Name}\t{s.SetpointC:0}\t{s.CurrentA:0}\t{s.TubeJAPerMm2:0.00}\t" +
-                          $"{s.TRootC:0.0}\t{s.RootDeltaK.ToString("+0.0;-0.0")}\t{s.MassG:0}");
-        sb.AppendLine();
-
-        sb.AppendLine("法兰\t电流 A\tJ_max A/mm²\tΦ\t抽热 W\t最高 °C\t铂重 g");
-        foreach (var f in r.Flanges)
-            sb.AppendLine($"{f.Name}\t{f.CurrentA:0}\t{f.JMaxAPerMm2:0.00}\t{f.Phi:0.000}\t" +
-                          $"{f.QFromTubeW.ToString("+0;-0")}\t{f.TMaxC:0.0}\t{f.MassG:0}");
-        sb.AppendLine();
-        // ★ 收敛情况必须**跟判据一起看**：判据是在解上判的，解没收敛判据就没意义。
-        //   剩余误差是「距不动点」的估计，不是「相邻两轮变化」——后者曾把没收敛的解报成收敛（§1.85）。
-        foreach (var nt in r.Notes)
-            if (nt.Contains("耦合") || nt.Contains("基线")) sb.AppendLine("  ⓘ " + nt);
-        if (!r.Converged) sb.AppendLine("  ⚠ **未收敛 ⇒ 下面每个数都不可引用**");
-        sb.AppendLine();
-
-        // ⚠ 标记别用 ★ / ○：等宽字体（Consolas）没有这些字形，Windows 会回落到另一套字体，
-        //   实测渲染成一个**黑色旗子状的方块**，而且宽度也对不上、把整列推歪。
-        //   ⇒ 改用中文字：CJK 字体里一定有，宽度恰好是两个字宽（TextFmt 也按 2 算），
-        //     而且不用看图例就知道什么意思。
-        // ★★★ 判据表已改成**真表格控件**（_checks，见 FillChecks）——
-        //   这里不再用文字排它。文字排不出来的根因写在 _checks 的注释上：
-        //   判据名宽度差太远，一超预留宽度就把整行的列全推走。
+        // ═══ 结论：工程师的四个问题，按他问的顺序 ═════════════════
+        //   过没过 → 多少铂 → 这个数准不准 → 这次改了什么
+        //   ★ 2026-09-02 重排（用户：「输出也可以简化，只保留场图与前后尺寸比较
+        //     与其它你觉得重要的计算结果」）。明细与求解器内部状态收进两个开关。
         sb.AppendLine("判据表见上方表格：不过的行标红，注释在鼠标悬停里。");
         sb.AppendLine();
-        sb.AppendLine($"★ 整线总铂 {r.TotalMassG:0} g（管 {r.TubeMassG:0} + 法兰 {r.FlangeMassG:0}）" +
-                      $"　基准 {r.BaselineMassG:0} g　省 {r.SavingPct:0.0} %");
-        sb.AppendLine($"  玻璃温降 模型 {r.GlassDropModelK:0.0} / 实测 {r.GlassDropMeasuredK:0.0} K" +
-                      "　（模型唯一的现场验证点）");
-        foreach (var n in r.Notes) sb.AppendLine("  " + n);
+        sb.AppendLine($"★ 整线总铂 {r.TotalMassG:0} g（管 {r.TubeMassG:0} + 法兰 {r.FlangeMassG:0}）"
+                    + $"　基准 {r.BaselineMassG:0} g　省 {r.SavingPct:0.0} %");
+        sb.AppendLine($"  玻璃温降 模型 {r.GlassDropModelK:0.0} / 实测 {r.GlassDropMeasuredK:0.0} K"
+                    + "　（模型唯一的现场验证点）");
+
+        // ★ 收敛只留**一句结论**；细节（ω / Anderson / 步长×放大）进「求解器诊断」。
+        //   ⚠ 未收敛时**必须说**，而且不受开关控制 —— 那时它是最重要的信息。
+        if (!r.Converged)
+            sb.AppendLine("  ⚠ **未收敛 ⇒ 上面每个数都不可引用**");
+        else
+        {
+            var cpl = r.Notes.FirstOrDefault(x => x.Contains("外层耦合", StringComparison.Ordinal));
+            if (cpl is not null)
+            {
+                int p = cpl.IndexOf("（", StringComparison.Ordinal);
+                sb.AppendLine("  收敛　" + (p > 0 ? cpl[..p] : cpl));
+            }
+        }
+
+        // ═══ 这次改了什么（前 → 后）═══════════════════════════════
+        //   工程师点一次「核算整线」，程序可能动了厚度、保温、环倍率、甚至盘径与舌宽。
+        //   **动了他填的数就必须说** —— 不说就是静默改输入。
+        if (_beforeSnap is { } b0)
+        {
+            var now = CurrentSnap();
+            var rows = new List<(string Name, double A, double B, string U)>
+            {
+                ("管壁", b0.Wall, now.Wall, "mm"),
+                ("板厚", b0.Plate, now.Plate, "mm"),
+                ("管保温", b0.TubeIns, now.TubeIns, "mm"),
+                ("盘径", 2 * b0.Disc, 2 * now.Disc, "mm"),
+                ("舌长", b0.TabLen, now.TabLen, "mm"),
+                ("舌端半宽", b0.TabW, now.TabW, "mm"),
+                ("舌保温", b0.SizerTabIns, now.SizerTabIns, "mm"),
+                ("环倍率", b0.SizerRingMul, now.SizerRingMul, ""),
+            };
+            var moved = rows.Where(x => !double.IsNaN(x.A) && !double.IsNaN(x.B)
+                                        && Math.Abs(x.A - x.B) > 1e-9).ToArray();
+            sb.AppendLine();
+            if (moved.Length == 0 && !(Math.Abs(r.TotalMassG - _beforeMassG) > 0.05))
+                sb.AppendLine("◆ 这次没改动你填的任何一个数（第一次解就已经全过）。");
+            else
+            {
+                sb.AppendLine("◆ **这次改了什么**（前 → 后）");
+                foreach (var (nm, x, y, u) in moved)
+                    sb.AppendLine($"　{nm}	{x:0.###} → {y:0.###} {u}	{y - x:+0.###;-0.###}");
+                if (!double.IsNaN(_beforeMassG))
+                    sb.AppendLine($"　⇒ 整线总铂 {_beforeMassG:0.0} → {r.TotalMassG:0.0} g"
+                                + $"（{r.TotalMassG - _beforeMassG:+0.0;-0.0} g）");
+            }
+        }
+
+        // ═══ 明细：默认收起 ═══════════════════════════════════════
+        if (_showDetail.Checked)
+        {
+            sb.AppendLine();
+            // ⚠ 两张表**必须被一个空行隔开**：连着写会被认成同一张表、列宽合并计算，
+            //   两组毫不相干的量（控温 °C 与 Φ）从此互相顶着走。
+            sb.AppendLine("段	控温 °C	电流 A	管 J A/mm²	管根 °C	衔接温差 K	管重 g");
+            foreach (var sg in r.Segments)
+                sb.AppendLine($"{sg.Name}	{sg.SetpointC:0}	{sg.CurrentA:0}	{sg.TubeJAPerMm2:0.00}	"
+                            + $"{sg.TRootC:0.0}	{sg.RootDeltaK.ToString("+0.0;-0.0")}	{sg.MassG:0}");
+            sb.AppendLine();
+            sb.AppendLine("法兰	电流 A	J_max A/mm²	Φ	抽热 W	最高 °C	铂重 g");
+            foreach (var f in r.Flanges)
+                sb.AppendLine($"{f.Name}	{f.CurrentA:0}	{f.JMaxAPerMm2:0.00}	{f.Phi:0.000}	"
+                            + $"{f.QFromTubeW.ToString("+0;-0")}	{f.TMaxC:0.0}	{f.MassG:0}");
+        }
+
+        // ═══ 求解器诊断：默认收起；**未收敛时强制展开** ══════════
+        //   ⚠ 折叠不许把坏消息藏起来。
+        if (_showDiag.Checked || !r.Converged)
+        {
+            sb.AppendLine();
+            sb.AppendLine("── 求解器诊断" + (r.Converged ? "" : "（未收敛，已强制展开）"));
+            // ⚠ 这里是 Notes 的**唯一**打印点。2026-08 起「外层耦合…」那一行被印了两次
+            //   （一次带 ⓘ、一次在这个 foreach 里），逐字相同 —— 收敛那句已经上移到结论区。
+            foreach (var n in r.Notes) sb.AppendLine("  " + n);
+        }
         // 照常写文本即可：排版（逐表制表位、`**…**` 加粗）由构造函数里挂的
         // TextFmt.Hook 接管 —— 与本页其余几十处写输出的地方走同一条路。
         _out.Text = sb.ToString();

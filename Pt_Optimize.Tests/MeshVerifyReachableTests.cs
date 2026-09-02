@@ -116,7 +116,9 @@ public class MeshVerifyReachableTests
     {
         string s = Ui("LineDesignPage.cs");
         Assert.Contains("if (_cts is not null) { _cts.Cancel(); return; }", s);
-        Assert.Contains("new Progress<string>(m => _out.AppendText", s);
+        // ⚠ 2026-09-02：进度回调改成回 UI 线程（Progress 取不到同步上下文会退到线程池，
+        //   跨线程动 UI 会随机崩）⇒ 形态变成 `m => OnUi(() => _out.AppendText(...))`。
+        Assert.Contains("new Progress<string>(m => OnUi(() => _out.AppendText", s);
         // ⚠ 2026-09-02：门已经不拦「没验过」了（用户拍板：结果如何就如何，风险由工程师判断）
         //   ⇒ 这句话原来的后半「出图的门仍然关着」已经变成假话，改成说实话。
         Assert.Contains("**没验过就是没验过**。存档或出图时会把这件事列给你看", s);

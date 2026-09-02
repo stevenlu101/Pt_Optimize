@@ -1443,7 +1443,19 @@ static class Walk
         // ── 三、比数
         var last = (LineResult?)F(line, "_last");
         OK("界面这边解出来了", last is { Ok: true }, last?.Message ?? "(null)");
-        if (last is not { Ok: true }) return _bad;
+        if (last is not { Ok: true })
+        {
+            // ★ 解不出来时**把输出框整段打出来** —— APP 自己会说为什么。
+            //   2026-09-02 加：只报一句 "(null)" 时我只能猜，猜了两次都不对。
+            if (F(line, "_out") is Control ob2)
+            {
+                Console.WriteLine("  ── 输出框全文 ──");
+                foreach (var ln in ob2.Text.Replace(((char)13).ToString(), "")
+                                          .Split((char)10))
+                    Console.WriteLine("     " + ln);
+            }
+            return _bad;
+        }
 
         double got = last.Segments.Sum(x => x.MassG) + last.Flanges.Sum(x => x.MassG);
         Console.WriteLine();

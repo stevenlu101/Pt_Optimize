@@ -46,7 +46,8 @@ public class RingShapeInputTests
         //   所以这里改成钉「字段在、且由重建方法造」，不再钉那个已经不该存在的形态。
         foreach (var f in new[] { "_ringR1", "_ringR2", "_ringT2" })
             Assert.Contains($"private NumericUpDown[] {f} = System.Array.Empty<NumericUpDown>();", s);
-        Assert.Contains("private void RebuildPlateRows()", s);
+        // 2026-09-02：加了返回值（true = 片数真的变了）
+        Assert.Contains("private bool RebuildPlateRows()", s);
     }
 
     /// <summary>
