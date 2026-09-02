@@ -206,3 +206,60 @@ public class MarginBarTests
         Assert.Contains("方向安全", Bar(1.12, 0.0, false));         // 净流入为正
     }
 }
+
+/// <summary>
+/// ★★★★★ **储存结果这一步：程序不替工程师否决，但必须把风险记下来**（2026-09-02 用户拍板）。
+///
+/// 用户原话：「计算结果是如何就如何，超标就显示提醒，最终让工程师判断合格与否
+/// （风险由工程师判断）；若工程师判断可承担风险，工程师就可储存计算结果与出图」。
+///
+/// 改之前：`"final.save" =&gt; Fresh &amp;&amp; AllOk`，而 `Blocks` 里 `NotApplicable` 排在门禁之前
+/// ⇒ 连「我知道风险，越关进入」都绕不过 ⇒ **超标的结果连存都存不下来**。
+/// </summary>
+public class SaveRiskTests
+{
+    private static string Ui(string f) => System.IO.File.ReadAllText(
+        System.IO.Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "UI", f));
+
+    [Fact]
+    public void 另存不再要求判据全过()
+    {
+        string s = Ui("LineDesignPage.cs");
+        Assert.Contains("\"final.save\" => Shared is { Fresh: true },", s);
+        // 反面：旧条件不许回来
+        Assert.DoesNotContain("\"final.save\" => Shared is { Fresh: true, Last.AllOk: true }", s);
+    }
+
+    /// <summary>★ 仍要硬拦「参数动过了」—— 那不是风险判断，是**错**（存的会是上一组参数的解）。</summary>
+    [Fact]
+    public void 参数动过仍然硬拦()
+    {
+        string s = Ui("LineDesignPage.cs");
+        Assert.Contains("if (Shared is not { Last: { } r } f || !f.Fresh)", s);
+        Assert.Contains("存下去的会是**上一组参数**的解", s);
+    }
+
+    /// <summary>★★ 超标要**列出来**并要一次明确确认，默认按钮是「否」。</summary>
+    [Fact]
+    public void 超标要列清楚并要明确确认()
+    {
+        string s = Ui("LineDesignPage.cs");
+        Assert.Contains("要不要存，由你判断 —— 风险你承担。", s);
+        Assert.Contains("MessageBoxButtons.YesNo", s);
+        Assert.Contains("MessageBoxDefaultButton.Button2", s);   // 默认「否」，不许手滑
+        Assert.Contains("条判据没过", s);
+        // 没加密复算过也要说 —— 那是「这个数准不准」，与超没超标是两件事
+        Assert.Contains("还没加密复算", s);
+    }
+
+    /// <summary>★★★ 本条是「风险由工程师判断」成立的前提：**风险要被写进档**。</summary>
+    [Fact]
+    public void 有问题时把话写进档()
+    {
+        string s = Ui("LineDesignPage.cs");
+        Assert.Contains("d.VerifiedNote = over.Length > 0 || !verified", s);
+        Assert.Contains("由工程师判断后仍决定保存", s);
+        // 加密复算过的话，口径也要一起存（判据值是哪张网格上的）
+        Assert.Contains("d.VerifiedMeshMm      = mv.FineMm;", s);
+    }
+}

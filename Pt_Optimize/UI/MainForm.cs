@@ -337,18 +337,50 @@ public sealed class MainForm : Form
     }
 
     /// <summary>页顶横幅 —— 文字来自 Flow.StageSpec.Banner，本处不另写一份。</summary>
-    private static Label Banner(string text) => new()
+    /// <summary>
+    /// 页顶横幅。**按内容自己长高**（2026-09-02 抓图抓到两次才对）。
+    ///
+    /// ① 原来是 <c>AutoSize=false + Height=S(34)</c>（**一行**的高度）⇒ 任何超过一行的
+    ///    横幅都被**静默切掉**。改「设计记录」那条（三行）之后，屏幕上停在
+    ///    「由 APP 自己解出来，不」—— 句子断在半截，而看的人不知道后面还有话。
+    /// ② 第一次改成 <c>AutoSize=true</c> **还是错的**：Label 的 AutoSize 按**单行首选宽度**
+    ///    算，于是长成一条很宽的单行，横向被容器裁掉 —— 抓图看到第一行断在「不从…」。
+    ///    Label 不会因为 Dock 就自动折行。
+    ///
+    /// ⇒ 正解：<c>AutoSize=false</c>，按**当前宽度**量出折行后需要的高度再设。
+    ///   与「把不过画成还过」同一族：只显示一部分真话，比不显示更坏。
+    /// </summary>
+    private static Label Banner(string text)
     {
-        Text = text.Replace("**", ""),   // 横幅是 Label，不走 TextFmt 的加粗
-        Dock = DockStyle.Top,
-        AutoSize = false,
-        Height = UiScale.S(34),
-        Padding = new Padding(UiScale.S(8), UiScale.S(6), UiScale.S(8), UiScale.S(6)),
-        BackColor = Color.FromArgb(255, 250, 225),
-        ForeColor = Color.FromArgb(90, 70, 0),
-        Font = UiScale.Ui(),
-        Visible = text.Length > 0,
-    };
+        var lab = new Label
+        {
+            Text = text.Replace("**", ""),   // 横幅是 Label，不走 TextFmt 的加粗
+            Dock = DockStyle.Top,
+            AutoSize = false,
+            AutoEllipsis = false,
+            Height = UiScale.S(34),
+            Padding = new Padding(UiScale.S(8), UiScale.S(6), UiScale.S(8), UiScale.S(6)),
+            BackColor = Color.FromArgb(255, 250, 225),
+            ForeColor = Color.FromArgb(90, 70, 0),
+            Font = UiScale.Ui(),
+            Visible = text.Length > 0,
+        };
+
+        void Fit()
+        {
+            int w = lab.Width - lab.Padding.Horizontal;
+            if (w <= 0) return;
+            int need = TextRenderer.MeasureText(lab.Text, lab.Font,
+                           new Size(w, int.MaxValue), TextFormatFlags.WordBreak).Height
+                       + lab.Padding.Vertical + UiScale.S(4);
+            int want = Math.Max(UiScale.S(34), need);
+            // ⚠ 必须先比再设：在 SizeChanged 里无条件设 Height 会自己触发自己。
+            if (lab.Height != want) lab.Height = want;
+        }
+        lab.SizeChanged += (_, _) => Fit();
+        lab.TextChanged += (_, _) => Fit();
+        return lab;
+    }
 
     /// <summary>
     /// ④⑤ 这类薄页的正文：说明本页的输入**来自上一格的解**，不是新的输入。

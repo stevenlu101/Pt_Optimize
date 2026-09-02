@@ -68,11 +68,47 @@ public static class DesignSpecStore
         public double[]? tabThickMm { get; set; }
         public double[]? tabInsulMm { get; set; }
         public double[]? ringMul { get; set; }
+        // ★★★★★ A3（2026-09-02）：**这三个 2026-08-30 就成了设计的一部分，而档一直没存**。
+        //   ringMul2（t₂）尤其要命 —— 它是求解器治「管孔净流入」的**首选**旋钮
+        //   （每克铂买到的裕度是板厚的 1.7–3.3 倍，排在板厚前面）。
+        //   ⇒ 求解器解出一个含 t₂ 的设计 → 点存档 → t₂ 丢掉 →
+        //     下次载入算出来的是**另一个设计**。「储存计算结果」存的不是那个结果。
+        //   ⚠ 上面那条警告（「漏一个，档就造出另一个零件」）说的正是这件事，
+        //     而它没拦住 —— 因为拦它的那条测试的**样本**（Distinctive）停在 08-23，
+        //     新加的字段本来就等于默认值，漏读照样相等。样本烂了，门就空转。
+        //   ⚠ 类型是 double?[]：这三项用 **NaN 当哨兵**（= 该片不逐片自定），
+        //     而 JSON 写不了 NaN。逐片映射 NaN ↔ null —— 部分设定（只有某片有 t₂）也存得准。
+        //     给整个 Opt 开 AllowNamedFloatingPointLiterals 会往档里写 "NaN" 字符串，不干净。
+        public double?[]? ringW1Mm { get; set; }
+        public double?[]? ringW2Mm { get; set; }
+        public double?[]? ringMul2 { get; set; }
         public double? totalMassG { get; set; }
         public double? tubeMassG { get; set; }
         public double? flangeMassG { get; set; }
         public double? residualK { get; set; }
         public Checks? checks { get; set; }
+
+        /// <summary>
+        /// ★★★★★ A2（2026-09-02 用户拍板）：**判据值要带口径**。
+        ///
+        /// checks 里那五个数是存的，但**没说它们是在哪张网格上算的**。而同一个设计：
+        /// <code>
+        ///   粗网格（导航 2 mm）      法兰增量温降  4.720 K   看着余量 53 %
+        ///   加密复算到数不再变        法兰增量温降 10.329 K   越限
+        /// </code>
+        /// 同一个字段名，差的就是这个口径。不存它，档自己说不清拿的是哪一个 ——
+        /// 而现役两档的记录值正是这么来的。
+        /// </summary>
+        public Verified? verified { get; set; }
+
+        public sealed class Verified
+        {
+            public double? meshMm { get; set; }
+            public double? flangeDipK { get; set; }
+            public double? holeFluxW { get; set; }
+            public double? discOverK { get; set; }
+            public string? note { get; set; }
+        }
 
         public sealed class Checks
         {
@@ -147,6 +183,15 @@ public static class DesignSpecStore
         return outp;
     }
 
+    /// <summary>NaN 存成 null —— 「没这个数」与「这个数是 0」必须分得开。</summary>
+    private static double? Nz(double v) => double.IsNaN(v) ? null : v;
+
+    /// <summary>整组 NaN ⇒ 整项不写（省得档里一排 null）；否则逐片 NaN ↔ null。</summary>
+    private static double?[]? NzA(double[] a) =>
+        a is null || a.All(double.IsNaN) ? null : a.Select(Nz).ToArray();
+
+    private static double[] NaA(double?[] a) => a.Select(x => x ?? double.NaN).ToArray();
+
     private static DesignSpec? Parse(string json, string file)
     {
         var d = JsonSerializer.Deserialize<Dto>(json, Opt)
@@ -197,6 +242,19 @@ public static class DesignSpecStore
         if (d.flangeInsulMm is { } fi) fd.FlangeInsulMm = fi;
         if (d.flangeInsulated is { } fe) fd.FlangeInsulated = fe;
         if (d.clampLengthMm is { } cl) fd.ClampLengthMm = cl;
+        // A3：渐变环那三个（缺省即 NaN 哨兵 = 不逐片自定，与 DesignSpec 的默认一致）
+        if (d.ringW1Mm is { Length: 4 } r1) fd.RingW1Mm = NaA(r1);
+        if (d.ringW2Mm is { Length: 4 } r2) fd.RingW2Mm = NaA(r2);
+        if (d.ringMul2 is { Length: 4 } t2) fd.RingMul2 = NaA(t2);
+        // A2：口径。没有这一段就是「没做过加密复算」，保持 NaN。
+        if (d.verified is { } v && v.meshMm is { } mm)
+        {
+            fd.VerifiedMeshMm = mm;
+            fd.VerifiedFlangeDipK = v.flangeDipK ?? double.NaN;
+            fd.VerifiedHoleFluxW  = v.holeFluxW  ?? double.NaN;
+            fd.VerifiedDiscOverK  = v.discOverK  ?? double.NaN;
+            fd.VerifiedNote = v.note ?? "";
+        }
         return fd;
     }
 
@@ -234,6 +292,9 @@ public static class DesignSpecStore
             tabThickMm = fd.TabThickMm,
             tabInsulMm = fd.TabInsulMm,
             ringMul = fd.RingMul,
+            ringW1Mm = NzA(fd.RingW1Mm),
+            ringW2Mm = NzA(fd.RingW2Mm),
+            ringMul2 = NzA(fd.RingMul2),
             totalMassG = fd.TotalMassG,
             tubeMassG = fd.TubeMassG,
             flangeMassG = fd.FlangeMassG,
@@ -242,6 +303,16 @@ public static class DesignSpecStore
             {
                 rampH = fd.RampH, discOverK = fd.DiscOverK, holeFluxW = fd.HoleFluxW,
                 flangeDipK = fd.FlangeDipK, tubeJ = fd.TubeJ,
+            },
+            // ⚠ 没做过加密复算时整组是 NaN ⇒ 存成 null，不是 0。
+            //   存 0 会让「没验过」看起来像「验过且是 0」。
+            verified = double.IsNaN(fd.VerifiedMeshMm) ? null : new Dto.Verified
+            {
+                meshMm = fd.VerifiedMeshMm,
+                flangeDipK = Nz(fd.VerifiedFlangeDipK),
+                holeFluxW  = Nz(fd.VerifiedHoleFluxW),
+                discOverK  = Nz(fd.VerifiedDiscOverK),
+                note = fd.VerifiedNote.Length > 0 ? fd.VerifiedNote : null,
             },
         };
         File.WriteAllText(path, JsonSerializer.Serialize(dto, Opt), new UTF8Encoding(false));

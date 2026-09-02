@@ -100,3 +100,65 @@ public class StagePanelPlainTextTests
         Assert.Contains("-883.8", banner);       // 而且带着实测值
     }
 }
+
+/// <summary>
+/// ★★★★ **页顶横幅不许把话说一半**（2026-09-02 抓图抓到，改了两次才对）。
+///
+/// ① 原来 <c>AutoSize=false + Height=S(34)</c>（**一行**的高度）⇒ 超过一行的横幅被**静默切掉**。
+///    实况：改「设计记录」那条（三行）之后，屏幕上停在「由 APP 自己解出来，不」。
+/// ② 第一次改成 <c>AutoSize=true</c> **还是错的** —— Label 的 AutoSize 按单行首选宽度算，
+///    长成一条很宽的单行、横向被容器裁掉；抓图看到第一行断在「不从…」。
+///
+/// 两次都只有**抓图**才看得见：源码里写着「AutoSize=true」，看不出它横向会被裁。
+/// 本门是那张图的自动化版本 —— 真造一个横幅，给它一个宽度，问它够不够高。
+/// </summary>
+public class BannerFitsTests
+{
+    private static System.Windows.Forms.Label Make(string text)
+    {
+        var m = typeof(PtOptimize.UI.MainForm).GetMethod("Banner",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(m);
+        return (System.Windows.Forms.Label)m!.Invoke(null, new object[] { text })!;
+    }
+
+    [Fact]
+    public void 长横幅会自己长高而不是被切掉()
+    {
+        const string longText =
+            "这一页不是设计的起点。设计从「整线核算」页开始 —— 那里有两个入口：填 UI 参数，" +
+            "或读一张 .3dm 图纸。厚度、保温、环倍率这些由 APP 自己解出来，不从档里抄。" +
+            "本页是校正与存档：拿已归档的设计复算一遍，看计算流程还准不准；" +
+            "以及把当前这个全过的解存成新档。";
+
+        var one = Make("短的一行");
+        var many = Make(longText);
+        // 给同一个宽度（Dock 之后的真实宽度由容器给，这里手动设以触发 Fit）
+        one.Width = many.Width = 900;
+
+        Assert.True(many.Height > one.Height,
+            $"长横幅没有长高（长 {many.Height} px vs 短 {one.Height} px）—— 它会被静默切掉半句话");
+
+        // ★ 关键：高度要够放下**折行之后**的全部文字，不能只多一点
+        int need = System.Windows.Forms.TextRenderer.MeasureText(
+            many.Text, many.Font,
+            new System.Drawing.Size(many.Width - many.Padding.Horizontal, int.MaxValue),
+            System.Windows.Forms.TextFormatFlags.WordBreak).Height;
+        Assert.True(many.Height >= need + many.Padding.Vertical,
+            $"高度 {many.Height} px 放不下折行后需要的 {need + many.Padding.Vertical} px");
+    }
+
+    /// <summary>★ 自证：短横幅的观感不变（别把门修成「所有横幅都变高」）。</summary>
+    [Fact]
+    public void 自证_短横幅仍是一行的高度()
+    {
+        var one = Make("短的一行");
+        one.Width = 900;
+        // UiScale 是 internal ⇒ 反射取，别在测试里另抄一个 34（那就是「同一个数两处来源」）
+        var t = typeof(PtOptimize.UI.Flow).Assembly.GetType("PtOptimize.UI.UiScale");
+        Assert.NotNull(t);
+        int oneLine = (int)t!.GetMethod("S", BindingFlags.Public | BindingFlags.Static)!
+                              .Invoke(null, new object[] { 34 })!;
+        Assert.Equal(oneLine, one.Height);
+    }
+}

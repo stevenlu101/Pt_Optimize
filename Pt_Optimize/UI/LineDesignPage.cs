@@ -895,14 +895,59 @@ public sealed class LineDesignPage : TabPage
     /// </summary>
     private void SaveAsDesignSpec()
     {
-        if (Shared is not { Last: { } r } f || !f.Fresh || !r.AllOk)
+        // ★★★★★ A1（2026-09-02 用户拍板）：**程序不再替工程师否决**。
+        //
+        //   用户原话：「计算结果是如何就如何，超标就显示提醒，最终让工程师判断合格与否
+        //   （风险由工程师判断）；若工程师判断可承担风险，工程师就可储存计算结果与出图」。
+        //
+        //   改之前这里硬拦「判据全过」，而且 CommandApplicable 里那条 AllOk 连
+        //   「我知道风险，越关进入」都绕不过（Blocks 里 NotApplicable 排在门禁之前）
+        //   ⇒ 工程师算出一个超标的结果，**连存都存不下来**。
+        //   而「储存计算结果」是 输入 → 计算 → 储存 这条链的最后一步，不该由程序否决。
+        //
+        //   ⚠ 仍然硬拦的只有一条：**参数动过了**。那不是风险判断 ——
+        //     存下去的会是**上一组参数**的解，与他看到的那张表对不上。这是错，不是风险。
+        if (Shared is not { Last: { } r } f || !f.Fresh)
         {
             MessageBox.Show(this,
-                "只有**判据全过**且**参数没再动过**的解才能落档。" + Environment.NewLine
-                + "不成立的设计不该有一个「能落档」的形态；参数动过之后存下去的，"
-                + "是上一组参数的解。",
+                "参数在上次求解之后又动过了。" + Environment.NewLine + Environment.NewLine
+                + "现在存下去的会是**上一组参数**的解 —— 与你眼前这张表对不上。"
+                + "先点「核算整线」按现在这组重解一次。",
                 "还不能另存", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
+        }
+
+        // ── 超标 / 没算准：说清楚，让人自己判断 ────────────────────────────
+        var over = r.Checks.Where(c => (c.Kind is CheckKind.HardSafety or CheckKind.Target)
+                                       && (!c.Ok || c.Undetermined)).ToArray();
+        bool verified = _meshVerify is { Converged: true } && Equals(_verifiedSnap, CurrentSnap());
+        if (over.Length > 0 || !verified)
+        {
+            var sbW = new System.Text.StringBuilder();
+            sbW.AppendLine("这一版有下面的问题。要不要存，由你判断 —— 风险你承担。");
+            sbW.AppendLine();
+            if (over.Length > 0)
+            {
+                sbW.AppendLine($"■ {over.Length} 条判据没过：");
+                foreach (var c in over)
+                    sbW.AppendLine(c.Undetermined
+                        ? $"    {Criteria.Plain(c.Name)}　**判不了**（{c.Where}）"
+                        : $"    {Criteria.Plain(c.Name)}　{c.Actual:0.000} / 限 {c.Limit:0.000}　（{c.Where}）");
+                sbW.AppendLine();
+            }
+            sbW.AppendLine(verified
+                ? "■ 这些数已经加密复算过（算到不再变），可以按它们判断。"
+                : "■ 这些数是在**粗网格**上算的，还没加密复算 —— **可能偏乐观**。" + Environment.NewLine
+                  + "    实测同一个设计：粗网格 法兰增量温降 4.72 K（看着余量 53 %），" + Environment.NewLine
+                  + "    加密到数不再变是 10.33 K —— 已经越限。");
+            sbW.AppendLine();
+            sbW.AppendLine("存下来的档会**带着这段话**，下一个人打开就看得见。");
+            sbW.AppendLine();
+            sbW.Append("要存吗？");
+            if (MessageBox.Show(this, sbW.ToString(), "这一版有问题 —— 要存吗？",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
+                    MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                return;
         }
 
         string name = Microsoft.VisualBasic.Interaction.InputBox(
@@ -921,6 +966,29 @@ public sealed class LineDesignPage : TabPage
         d.HoleFluxW = r.ValueOf(LineResult.Key.NetFlux);
         d.FlangeDipK = r.ValueOf(LineResult.Key.FlangeDip);
         d.TubeJ = r.ValueOf(LineResult.Key.TubeJ);
+
+        // ★★ A2：**判据值要带口径** —— 上面那五个数是在哪张网格上算的，必须一起存。
+        //   同一个设计：粗网格 4.720 K（看着余量 53 %）／加密复算后 10.329 K（越限）。
+        //   不存口径，档自己说不清拿的是哪一个 —— 现役两档的记录值正是这么来的。
+        if (verified && _meshVerify is { Line: { } ml } mv)
+        {
+            d.VerifiedMeshMm      = mv.FineMm;
+            d.VerifiedFlangeDipK  = ml.ValueOf(LineResult.Key.FlangeDip);
+            d.VerifiedHoleFluxW   = ml.ValueOf(LineResult.Key.NetFlux);
+            d.VerifiedDiscOverK   = ml.ValueOf(LineResult.Key.DiscTemp);
+        }
+        // ⚠ 有问题就把话写进档 —— 「风险由工程师判断」的前提是**风险被记录下来**，
+        //   否则下一个人打开时，它跟一个真正合格的设计长得一模一样。
+        d.VerifiedNote = over.Length > 0 || !verified
+            ? "⚠ 存档时这一版**有已知问题**，由工程师判断后仍决定保存："
+              + (over.Length > 0
+                    ? "　**越限/判不了**：" + string.Join("；", over.Select(c => c.Undetermined
+                        ? Criteria.Plain(c.Name) + " 判不了"
+                        : $"{Criteria.Plain(c.Name)} {c.Actual:0.000}/限 {c.Limit:0.000}"))
+                    : "")
+              + (verified ? "　（数已加密复算到不再变）"
+                          : "　⚠ **这些数是粗网格上算的，没有加密复算，可能偏乐观**。")
+            : "";
 
         try
         {
@@ -1019,10 +1087,13 @@ public sealed class LineDesignPage : TabPage
         //   ⚠ 条件与 VerifyMeshAsync 的前置**同一套**：有解、且解对应当前参数。
         //     两处不一致的话，要么灰着却能跑，要么亮着却拒绝 —— 都在骗人。
         "core.verifyMesh" => Shared is { Fresh: true, Last: { Ok: true } },
-        // 另存：存的是**当前这个解**，所以必须「判据全过」且「参数没再动过」。
-        //   不成立的设计不该有一个「能落档」的形态；
-        //   参数动过之后存下去的，是**上一组参数**的解 —— 那是最坏的一种档。
-        "final.save" => Shared is { Fresh: true, Last.AllOk: true },
+        // 另存：存的是**当前这个解**，所以「参数没再动过」是硬条件。
+        //   ⚠ 「判据全过」**不再是条件**（2026-09-02 改）。旧注释写着
+        //     「不成立的设计不该有一个能落档的形态」—— 那是程序替工程师做判断。
+        //     用户拍板：结果如何就如何，超标显示提醒，风险由工程师判断。
+        // ★ A1（2026-09-02）：**去掉 AllOk** —— 程序不替工程师否决，超标由他判断（见 SaveAsDesignSpec）。
+        //   仍要 Fresh：参数动过之后存下去的是上一组参数的解，那是错，不是风险。
+        "final.save" => Shared is { Fresh: true },
         _ => true,
     };
 
