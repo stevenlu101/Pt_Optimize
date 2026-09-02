@@ -676,11 +676,32 @@ public sealed class ManualPage : TabPage
     private static string Bar(double actual, double limit, bool lessIsBetter = true)
     {
         double raw = lessIsBetter ? limit - actual : actual - limit;
-        double pct = Math.Abs(limit) < 1e-9 ? 60
-                   : Math.Clamp(raw / Math.Abs(limit) * 100, 2, 99);
+
+        // ★★★★★ 2026-09-02：**越限必须画成越限**，不许被 Clamp 抹成「余量 2 %」。
+        //
+        //   原来两行都会把「不过」渲染成「看起来还过」：
+        //     ① Math.Clamp(raw/limit*100, 2, 99) —— ③ = 10.33 / 限 10 ⇒ raw = −0.33
+        //        ⇒ Clamp(−3.3, 2, 99) = **2** ⇒ 画出一根小条子写「2 %」，
+        //        读起来是「很紧但还过」，而实际是不过。
+        //     ② 限值为 0 那一支（管孔净流入 须为正）**根本不看 actual**，一律 60 % +
+        //        「方向安全」⇒ 净流入为负（热往管里灌，正是烧断方向）时，
+        //        说明书照样写着「方向安全」。
+        //   两条都是同一种病：**把失败渲染成通过**。而这张表有排版、有裕度条，
+        //   看起来就是答案 —— 越像答案的东西，说错话的代价越大。
+        if (raw < 0)
+            return "<span class=\"bar tight\"><i style=\"width:100%\"></i></span>" +
+                   "<span class=\"pct\"><b>越限</b></span>";
+
+        // ★★ 条子宽度要下限（太窄就看不见），**数字不要** —— 2026-09-02 抓图抓到：
+        //   舌片自由段 100.000 / 下界 100.00 真实余量是 **0**，而 Clamp 把标签也夹成了
+        //   「余量 2 %」。那是「刚好贴着下界」被说成「还有一点」——同一族的粉饰。
+        //   ⇒ 宽度用夹过的，印出来的百分比用**真值**。
+        double truePct = Math.Abs(limit) < 1e-9 ? double.NaN
+                       : raw / Math.Abs(limit) * 100;
+        double pct = Math.Abs(limit) < 1e-9 ? 60 : Math.Clamp(truePct, 2, 99);
         string cls = pct < 15 ? "bar tight" : "bar";
         return $"<span class=\"{cls}\"><i style=\"width:{pct:0}%\"></i></span>" +
-               $"<span class=\"pct\">{(Math.Abs(limit) < 1e-9 ? "方向安全" : pct.ToString("0") + " %")}</span>";
+               $"<span class=\"pct\">{(double.IsNaN(truePct) ? "方向安全" : truePct.ToString("0") + " %")}</span>";
     }
 
     /// <summary>
@@ -1189,8 +1210,11 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
 
         sb.Append("<table><tr><th>判据</th><th>类别</th><th>记录值<br><span class=\"m\">导航网格 2 mm</span></th>"
                 + (anyVerif
+                    // ⚠ 2026-09-02：这里原来写死「⚠ 待复测」——note 非空就印。
+                    //   而 note 改成说「越限」之后，列头就在说一件**已经不成立**的事
+                    //   （它已经复测过了）。列头不许替 note 猜结论，只负责指过去。
                     ? $"<th>网格无关复核<br><span class=\"m\">加密到 {fd.VerifiedMeshMm:0.000} mm"
-                      + (fd.VerifiedNote.Length > 0 ? "　⚠ 待复测" : "") + "</span></th>"
+                      + (fd.VerifiedNote.Length > 0 ? "　⚠ 见表下说明" : "") + "</span></th>"
                     : "")
                 + "<th>限值</th><th>裕度<br><span class=\"m\">按复核值</span></th></tr>");
         foreach (var (n, k, a, l, u, less) in crit)

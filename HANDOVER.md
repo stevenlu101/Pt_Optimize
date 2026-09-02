@@ -2035,7 +2035,7 @@ git clone <本仓库>
 cd Pt_Optimize
 dotnet restore --disable-parallel   # 见下，务必串行
 dotnet build
-dotnet test          # 应为 490/490 通过（这个数由 HandoverGateCountTests 自己盯着）
+dotnet test          # 应为 499/499 通过（这个数由 HandoverGateCountTests 自己盯着）
 dotnet run --project Pt_Optimize
 ```
 
@@ -5125,7 +5125,7 @@ Pt_Optimize.Tests/ · tests/UiWiring/ · Pt_Optimize.Geom/ · .githooks/   ← �
 > 改 `.githooks/` 改的是「门跑不跑」。这两类原本都不在名单里 ⇒
 > **唯一能让所有门失效的改动，恰恰是唯一不触发门的改动**。
 
-`dotnet test` 应为 **490/490**。
+`dotnet test` 应为 **499/499**。
 
 > 这个数**不用人记得改**了：`HandoverGateCountTests` 反射数出程序集里的用例数
 > （`[Fact]` 一条、`[Theory]` 按 `[InlineData]` 行数），再回头读本文件里的「应为 N/N」比对，

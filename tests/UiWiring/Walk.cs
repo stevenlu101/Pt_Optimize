@@ -1179,6 +1179,30 @@ static class Walk
                     if (!Wait(() => F(line, "_cts") is null, 2_700_000))
                     { OK("网格无关复核在 45 分钟预算内跑完", false, "★ 超时"); return _bad; }
                     Console.WriteLine($"     复核用时 {swV.Elapsed.TotalMinutes:0.0} 分");
+                    // ★ 2026-09-02：把复核**自己那句结论**印出来（含收敛在哪个网格、多少单元）。
+                    //   此前只印用时，而下面「输出框前 6 行」把结论截掉了 ⇒
+                    //   走完之后我手上有判据值却**没有它是在哪个网格上得到的** ——
+                    //   一个没有网格口径的复核值，没法跟档里存的那个比。
+                    if (F(line, "_meshVerify") is MeshVerify.Result mv)
+                    {
+                        Console.WriteLine($"     收敛网格 {mv.FineMm:0.000} mm　{mv.Cells} 单元　"
+                                        + $"收敛 {(mv.Converged ? "✓" : "✗")}");
+                        Console.WriteLine("     结论：" + mv.Verdict.Replace("**", ""));
+                        // ★ 直接从**复核解那个对象**印，3 位小数 —— 档里的格式就是 3 位。
+                        //   走查那张判据表印 2 位，拿它往档里抄就是「再抄一份精度不足的数」，
+                        //   而本档今天出的事正是抄数抄出来的。
+                        if (mv.Line is { } ml)
+                            foreach (string k in new[] { LineResult.Key.FlangeDip,
+                                                         LineResult.Key.NetFlux,
+                                                         LineResult.Key.DiscTemp })
+                            {
+                                var c0 = ml.Checks.FirstOrDefault(x => x.Name == k);
+                                if (c0 is not null)
+                                    Console.WriteLine($"     落档用　{Criteria.Plain(k)}"
+                                                    + $"	{c0.Actual:0.000}	/ {c0.Limit:0.000}"
+                                                    + $"	{(c0.Ok ? "过" : "**不过**")}");
+                            }
+                    }
                     // 复核跑完 ≠ 验过。判据仍随网格变时 MeshVerified 是 false，
                     // 出图的门照样关着 —— 那是 APP 对的，但跟着提示走的人到不了终点。
                     OK($"第 {step} 步：复核之后出图的门认账了",
