@@ -75,7 +75,7 @@ public class CliUiParityTests
         new("--solve",       "交付量",
             "按钮「自动定厚」（同一个 Solver.Solve）—— UiWiring --reconcile 逐克对过帐"),
         new("--verifymesh",  "交付量",
-            "按钮「◆ 网格无关复核」，且 ⑤ 交付的门 RequireMeshVerified 要求它"),
+            $"按钮「{PtOptimize.UI.Flow.Cmd("core.verifyMesh").Text}」，且 ⑤ 交付的门 RequireMeshVerified 要求它"),
         new("--monotone",    "决定依据",
             "接进链路：抬旋钮前实测方向，界面印「已实测：抬到上界这条判据确实变好 ⇒ 可以二分求根」"),
         new("--sensmatrix",  "决定依据",

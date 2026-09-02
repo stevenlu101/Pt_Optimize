@@ -88,8 +88,8 @@ public class MeshAdaptTests
     public void 没收敛必须明说_而且要分清是不是撞了上限()
     {
         var bad = new List<MeshAdapt.Delta> { new() { Name = "③", Change = 4.474, Tol = 1.0 } };
-        Assert.Contains("尚未网格无关", MeshAdapt.Verdict(1.0, bad, hitCap: false));
-        Assert.Contains("加密到上限仍未收敛", MeshAdapt.Verdict(0.2, bad, hitCap: true));
+        Assert.Contains("数还在变", MeshAdapt.Verdict(1.0, bad, hitCap: false));
+        Assert.Contains("加密到上限，数仍在变", MeshAdapt.Verdict(0.2, bad, hitCap: true));
         // 两句必须不同 —— 「还能再加密」与「加密到头了还在动」是两回事
         Assert.NotEqual(MeshAdapt.Verdict(1.0, bad, false), MeshAdapt.Verdict(0.2, bad, true));
     }

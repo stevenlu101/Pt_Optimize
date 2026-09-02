@@ -415,7 +415,7 @@ public sealed class LineDesignPage : TabPage
         var tool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, Font = UiScale.Ui() };
         _btnRun = Btn("核算整线", (_, _) => _ = RunAsync(false));
         _btnAuto = Btn("自动定厚", (_, _) => _ = RunAsync(true));
-        _btnVerify = Btn("◆ 网格无关复核", (_, _) => _ = VerifyMeshAsync());
+        _btnVerify = Btn("◆ 加密复算（算到数不再变）", (_, _) => _ = VerifyMeshAsync());
         // 1b 之后它导出的是**整机**（管 + 四片法兰）且几何与求解一致，故改名点明
         _btnExport = Btn("导出本页 3DM", (_, _) => Export());
 
@@ -833,6 +833,13 @@ public sealed class LineDesignPage : TabPage
         //   而 SyncGates 在切页签/状态变化时**后跑** ⇒ 它把这里的禁用又打开了。
         //   同一个按钮两处控制 —— 正是本项目反复栽的那一类。
         //   ⇒ 本页只回答「适不适用」（CommandApplicable），Enabled 只由 SyncGates 一处设。
+        // ★ 灰掉必须说清为什么 —— 灰着不解释就是哑谜（2026-09-02 与适用性一起补）。
+        _btnVerify.ToolTipText =
+            Shared is { Fresh: true, Last: { Ok: true } }
+                ? "把网格一档档加密，直到这个数不再变为止。10～40 分钟，随时可取消。"
+                : Shared?.Last is { Ok: true }
+                    ? "参数在上次求解之后又动过了 —— 先点「核算整线」按现在这组重解。"
+                    : "还没解过 —— 先点「核算整线」。没有解就无从谈「这个数准不准」。";
         _btnAnalyze.ToolTipText = an
             ? "只在「Rhino .3dm 文件」模式下可用 —— 解析形状是程序生成的，没有图纸需要反推。"
             : hasEntry
@@ -1005,6 +1012,13 @@ public sealed class LineDesignPage : TabPage
         "shape.search" => _srcAnalytic.Checked,
         // 图纸几何 → 参数：**得先分析过**（否则没有形状可交），且只在 .3dm 模式下才谈得上
         "geom.toanalytic" => !_srcAnalytic.Checked && _shape is not null,
+        // ★★ 加密复算：**没有当前参数的解就不适用**（2026-09-02 抓图抓到）。
+        //   实况：开箱进来「结果：还没解过」，而这个按钮是黑的、点得下去 ——
+        //   点了只弹一句「先在本页点核算整线」。而本方法自己的说明写着：
+        //   「能点但点了只弹一句『请先切到…』」正是用户最初抱怨的那个形状。
+        //   ⚠ 条件与 VerifyMeshAsync 的前置**同一套**：有解、且解对应当前参数。
+        //     两处不一致的话，要么灰着却能跑，要么亮着却拒绝 —— 都在骗人。
+        "core.verifyMesh" => Shared is { Fresh: true, Last: { Ok: true } },
         // 另存：存的是**当前这个解**，所以必须「判据全过」且「参数没再动过」。
         //   不成立的设计不该有一个「能落档」的形态；
         //   参数动过之后存下去的，是**上一组参数**的解 —— 那是最坏的一种档。
@@ -2594,7 +2608,7 @@ public sealed class LineDesignPage : TabPage
                             + "同一个设计实测：粗网格算出 法兰增量温降 7.7 K（限值 10，看着很宽），"
                             + "加密到位是 **9.5 K** —— 差 1.8 K，足以把「过」变成「不过」。"
                             + Environment.NewLine
-                            + "   ⇒ **下一步点「◆ 网格无关复核」**（本页工具条，10～40 分钟，可取消）。"
+                            + "   ⇒ **下一步点「◆ 加密复算（算到数不再变）」**（本页工具条，10～40 分钟，可取消）。"
                             + "没过这一关，⑤ 交付的门不会开。" + Environment.NewLine);
                     AdoptSolvedDesign(srD8.Design, srD8.Best);   // 统一入口
                     // ★★★★★ 同上：必须发布，否则提示与门禁读的是冻住的旧解（见上一分支的长注释）。
@@ -2807,8 +2821,8 @@ public sealed class LineDesignPage : TabPage
         _cts = new CancellationTokenSource();
         _btnVerify.Text = "取消";
         _btnRun.Enabled = _btnAuto.Enabled = _btnRepro.Enabled = false;
-        Shared?.SetRunning(ChainId.C整线耦合, "网格无关复核");
-        _out.AppendText(Environment.NewLine + "◆ **网格无关复核**开始 —— 把网格一档档加密，直到判据不再变。" + Environment.NewLine
+        Shared?.SetRunning(ChainId.C整线耦合, "加密复算");
+        _out.AppendText(Environment.NewLine + "◆ **加密复算**开始 —— 把网格一档档加密，直到这个数不再变为止。" + Environment.NewLine
             + "　　10～40 分钟。随时可点「取消」，已跑完的档照样留下。" + Environment.NewLine);
 
         var prog = new Progress<string>(m => _out.AppendText("　" + m + Environment.NewLine));
@@ -2848,7 +2862,7 @@ public sealed class LineDesignPage : TabPage
             {
                 _last = res.Line;
                 _out.AppendText(Environment.NewLine
-                    + $"◆ 判据表已换成**网格无关复核**（{res.FineMm:0.000} mm）上的值 —— "
+                    + $"◆ 判据表已换成**加密复算后**（{res.FineMm:0.000} mm）的值 —— "
                     + "此前显示的是导航网格（2 mm）上的数。" + Environment.NewLine);
                 Show(_last);
             }
@@ -2864,7 +2878,7 @@ public sealed class LineDesignPage : TabPage
         finally
         {
             _cts = null;
-            _btnVerify.Text = "◆ 网格无关复核";
+            _btnVerify.Text = "◆ 加密复算（算到数不再变）";
             _btnRun.Enabled = _btnAuto.Enabled = _btnRepro.Enabled = true;
             Shared?.SetRunning(null);
             PushFlow();

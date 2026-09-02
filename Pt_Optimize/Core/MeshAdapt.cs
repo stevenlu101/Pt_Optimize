@@ -179,9 +179,9 @@ public static class MeshAdapt
             return "**说不出是否收敛** —— 一条判据都没比到（空集不算通过）";
         var bad = deltas.Where(d => !d.Within).ToArray();
         if (bad.Length == 0)
-            return $"✓ **网格无关**：在 {fineMm:0.00} mm 上，每条判据的变化都落进各自容差 "
+            return $"✓ **数已经不再变了**：加密到 {fineMm:0.00} mm，每条判据的变化都落进各自容差 "
                  + $"（{string.Join("／", deltas.Select(d => $"{d.Name} {d.Change:+0.000;−0.000}/{d.Tol:0.###}"))}）";
-        return (hitCap ? "✗ **加密到上限仍未收敛**" : "✗ **尚未网格无关**")
+        return (hitCap ? "✗ **加密到上限，数仍在变**" : "✗ **数还在变，没算到头**")
              + $"：{string.Join("／", bad.Select(d => $"{d.Name} 动了 {d.Change:+0.000;−0.000}（容差 {d.Tol:0.###}）"))}"
              + "　⇒ 这些判据值**还带着离散误差**，不能当作算准了的数";
     }

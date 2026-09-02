@@ -197,7 +197,7 @@ public static class MeshVerify
                 eta = $"（{how}，上一档 {ThrottledProgress.Fmt(TimeSpan.FromSeconds(lastT.Sec))}"
                     + $" ⇒ 本档估 **~{ThrottledProgress.Fmt(TimeSpan.FromSeconds(lastT.Sec * grow))}**）";
             }
-            progress?.Report($"网格无关复核：{h:0.000} mm（第 {it + 1} 档）{eta}…");
+            progress?.Report($"加密复算：{h:0.000} mm（第 {it + 1} 档）{eta}…");
             var lc = d.BuildCase(baseIn, checkRamp: true);
             lc.MeshFineMm = hMid;                 // 中带：固定在特征尺寸
             lc.MeshFineRadiusMm = radius;
@@ -235,7 +235,7 @@ public static class MeshVerify
             //   才随表印出来 —— 于是 2026-08-29 那趟：阶梯三档全部算完、已跑 4 时 22 分，
             //   而**日志里一个判据数字都没有**，被 kill 掉就等于四小时全丢。
             //   「看得出还活着」只解决了一半；另一半是**中间结果要落地**。
-            progress?.Report($"网格无关复核：{h:0.000} mm 完成 —— {r.MeshCells} 单元，用时 {ThrottledProgress.Fmt(swOne.Elapsed)}（累计 {ThrottledProgress.Fmt(sw.Elapsed)}）"
+            progress?.Report($"加密复算：{h:0.000} mm 完成 —— {r.MeshCells} 单元，用时 {ThrottledProgress.Fmt(swOne.Elapsed)}（累计 {ThrottledProgress.Fmt(sw.Elapsed)}）"
                 + $"　②′ {a2p:0.000} W　②″ {a2pp:0.000} K　③ {a3:0.000} K　合计 {mass:0} g");
 
             if (prev is { } pv)
@@ -318,7 +318,7 @@ public static class MeshVerify
                         ? $"✓ 中带确认通过：中带减半后判据变化都在容差内（{detail}）"
                           + " ⇒ **分区没有把判据算偏**。"
                         : $"★★ **中带确认没过**（{detail}）⇒ 只加密内带**不够**："
-                          + "判据还受中带粗糙度影响，本次网格无关结论**不成立**。";
+                          + "判据还受中带粗糙度影响，本次「数已经不再变」的结论**不成立**。";
                 }
             }
             catch (OperationCanceledException) { throw; }

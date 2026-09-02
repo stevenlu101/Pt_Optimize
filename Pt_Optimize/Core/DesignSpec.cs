@@ -435,7 +435,7 @@ public sealed class DesignSpec
         //   同一组数（③ 10.33、②′ 3.39、②″ −0.00、3548 g、0.250 mm/15055 单元）。
         VerifiedMeshMm = 0.250, VerifiedFlangeDipK = 10.329,
         VerifiedHoleFluxW = 3.386, VerifiedDiscOverK = -0.004,
-        VerifiedNote = "⚠ **本档这个设计在网格无关的网格上是不过的**：法兰增量温降 "
+        VerifiedNote = "⚠ **本档这个设计加密复算到数不再变之后是不过的**：法兰增量温降 "
                      + "10.329 K，**越限**（上限 10）。上面「记录值」那一列（4.720 K）是"
                      + "**导航网格 2 mm** 上的数，粗网格把孔边与焊脚那一圈的梯度抹平了。"
                      + "　⚠ 2026-09-02 之前这里填的是 7.950/2.628 —— 那组数**不是本档的**，"
@@ -470,7 +470,7 @@ public sealed class DesignSpec
         //   ⚠ 单路测量（0.8 档另有界面那条路交叉验证过，本档只跑了命令行这一条）。
         VerifiedMeshMm = 0.125, VerifiedFlangeDipK = 10.859,
         VerifiedHoleFluxW = 2.134, VerifiedDiscOverK = -0.003,
-        VerifiedNote = "⚠ **本档这个设计在网格无关的网格上是不过的**：法兰增量温降 "
+        VerifiedNote = "⚠ **本档这个设计加密复算到数不再变之后是不过的**：法兰增量温降 "
                      + "10.859 K，**越限**（上限 10）。上面「记录值」那一列（6.124 K）是"
                      + "**导航网格 2 mm** 上的数。"
                      + "　⚠ 2026-09-02 之前这里填的是 9.453/1.595 —— 那组数**不是本档的**，"

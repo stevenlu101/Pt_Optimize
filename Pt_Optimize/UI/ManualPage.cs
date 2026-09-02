@@ -1213,7 +1213,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                     // ⚠ 2026-09-02：这里原来写死「⚠ 待复测」——note 非空就印。
                     //   而 note 改成说「越限」之后，列头就在说一件**已经不成立**的事
                     //   （它已经复测过了）。列头不许替 note 猜结论，只负责指过去。
-                    ? $"<th>网格无关复核<br><span class=\"m\">加密到 {fd.VerifiedMeshMm:0.000} mm"
+                    ? $"<th>加密复算后的值<br><span class=\"m\">加密到 {fd.VerifiedMeshMm:0.000} mm"
                       + (fd.VerifiedNote.Length > 0 ? "　⚠ 见表下说明" : "") + "</span></th>"
                     : "")
                 + "<th>限值</th><th>裕度<br><span class=\"m\">按复核值</span></th></tr>");
@@ -1242,12 +1242,12 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                       $"「复核值」是把网格一档档加密到<b>{fd.VerifiedMeshMm:0.000} mm</b>、直到判据不再变之后的数。<br>" +
                       $"本档实测差多少：法兰增量温降 <b>{fd.FlangeDipK:0.000} → {fd.VerifiedFlangeDipK:0.000} K</b>" +
                       "（限值 10）。粗网格看着余量很宽，加密之后并不宽 —— " +
-                      "<b>这个差足以把「过」变成「不过」</b>，所以出图前必须点「◆ 网格无关复核」。<br>" +
+                      "<b>这个差足以把「过」变成「不过」</b>，所以出图前必须点「◆ 加密复算（算到数不再变）」。<br>" +
                       "空着「—」的那几条是<b>闭式判据</b>（几何算出来的），不随网格变，没有复核值。</div>");
         else
-            sb.Append("<div class=\"note\">⚠ <b>本档还没做过网格无关复核</b> —— 表里的数是" +
+            sb.Append("<div class=\"note\">⚠ <b>本档还没做过加密复算</b> —— 表里的数是" +
                       "<b>导航网格（2 mm）</b>上算的。实测同类设计粗细网格能差 3 K 以上（限值 10），" +
-                      "<b>不复核就不知道这张表准不准</b>。到「整线核算」页点「◆ 网格无关复核」。</div>");
+                      "<b>不算到数不再变，就不知道这张表准不准</b>。到「整线核算」页点「◆ 加密复算（算到数不再变）」。</div>");
         sb.Append("<div class=\"note\"><b>裕度这一列比「✓」有用。</b>" +
                   "本项目最常见的错就是<b>贴着限值判过与不过</b>——" +
                   "曾用 0.02–0.08 K 的差别决定了 700 g 铂金，而那点温差只对应 <b>14 mW</b>、" +

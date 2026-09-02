@@ -50,7 +50,11 @@ public class MeshVerifyReachableTests
         Assert.Contains("MeshVerify.Run(d, _base, progress: prog, cancel: _cts.Token)", s);
         Assert.Contains("private async Task VerifyMeshAsync()", s);
         // 有按钮，且按钮接到这个方法上（造好了没接线是本仓栽过多次的形状）
-        Assert.Contains("_btnVerify = Btn(\"◆ 网格无关复核\", (_, _) => _ = VerifyMeshAsync());", s);
+        // ⚠ 名字从 Flow 读，不在这里再抄一份 —— 2026-09-02 改名「◆ 加密复算（算到数不再变）」时，
+        //   全仓有 5 条测试因为各自抄了一份名字而同时红。名字只该有一个来源。
+        string btn = Flow.Cmd("core.verifyMesh").Text;
+        Assert.Contains("_btnVerify = Btn(" + (char)34 + btn + (char)34
+                      + ", (_, _) => _ = VerifyMeshAsync());", s);
     }
 
     /// <summary>
@@ -82,6 +86,29 @@ public class MeshVerifyReachableTests
         Assert.Contains("_last = res.Line;", s);
         // 只在收敛时接管 —— 没收敛就是没验过，那组数不该顶替任何东西
         Assert.Contains("res.Converged && res.Line", s);
+    }
+
+    /// <summary>
+    /// ★★ **没有解的时候，「加密复算」必须是灰的**（2026-09-02 抓图抓到）。
+    ///
+    /// 实况：开箱进 ③ 页，右上角写着「结果：还没解过」，而这个按钮是**黑的、点得下去** ——
+    /// 点了只弹一句「先在本页点核算整线」。而 <c>CommandApplicable</c> 自己的说明写着：
+    /// 「能点但点了只弹一句『请先切到…』」正是用户最初抱怨的那个形状。
+    ///
+    /// ⚠ 适用性条件与 <c>VerifyMeshAsync</c> 的前置必须**同一套**：
+    /// 两处不一致的话，要么灰着却能跑、要么亮着却拒绝 —— 都在骗人。
+    /// </summary>
+    [Fact]
+    public void 没有当前参数的解时加密复算是灰的()
+    {
+        string s = Ui("LineDesignPage.cs");
+        // 适用性表里真的有这一条（落到 `_ => true` 就等于永远可点）
+        Assert.Contains("\"core.verifyMesh\" => Shared is { Fresh: true, Last: { Ok: true } }", s);
+        // 灰掉要说清为什么 —— 灰着不解释就是哑谜
+        Assert.Contains("_btnVerify.ToolTipText", s);
+        Assert.Contains("还没解过 —— 先点「核算整线」", s);
+        // 与方法自己的前置对齐（VerifyMeshAsync 用 _last / _solvedSnap 判同一件事）
+        Assert.Contains("_last is not { Ok: true } || !Equals(_solvedSnap, CurrentSnap())", s);
     }
 
     [Fact]
@@ -135,7 +162,7 @@ public class MeshVerifyReachableTests
     {
         string s = Ui("Flow.cs");
         int v = s.IndexOf("return new(\"core.verifyMesh\",", System.StringComparison.Ordinal);
-        int e = s.IndexOf("return new(\"export.page3dm\", \"判据全过、是当前参数的解、且已通过网格无关复核",
+        int e = s.IndexOf("return new(\"export.page3dm\", \"判据全过、是当前参数的解、而且已经加密复算",
                           System.StringComparison.Ordinal);
         Assert.True(v > 0 && e > v, "复核那一支必须排在出图之前");
     }

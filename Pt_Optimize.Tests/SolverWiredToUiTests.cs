@@ -92,7 +92,7 @@ public class SolverWiredToUiTests
         //   （一档档加密到判据不再变）。而正牌按钮当天已经补上了。
         //   ⇒ 现在必须指向那个按钮，而且要带**实测的代价**，不许只说「可能不准」。
         Assert.Contains("这些数还没验过准不准", s);
-        Assert.Contains("◆ 网格无关复核", s);
+        Assert.Contains(PtOptimize.UI.Flow.Cmd("core.verifyMesh").Text, s);   // 名字从 Flow 读，别再抄
         Assert.DoesNotContain("要可交付请跑「搜形状」", s);
         // 实测依据：粗网格 7.7 → 加密到位 9.5，差 1.8 K
         Assert.Contains("差 1.8 K", s);
