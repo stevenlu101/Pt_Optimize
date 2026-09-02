@@ -457,6 +457,25 @@ public sealed class MainForm : Form
         t.Start();
     }
 
+    /// <summary>
+    /// 按 <see cref="StageSpec.ParamCategoryPrefixes"/> 折叠/展开参数表的类别。
+    /// 命中的展开，其余折叠 —— 包括那两类「✗ 改了不起作用」的。
+    /// </summary>
+    private void FoldParams(StageId stage)
+    {
+        var want = Flow.Stage(stage).ParamCategoryPrefixes;
+        if (want.Length == 0) return;                 // 没登记就不动它
+        var root = _grid.SelectedGridItem;
+        if (root is null) return;                     // 网格还没铺好（首屏），下次切页再来
+        while (root.Parent is not null) root = root.Parent;
+        foreach (GridItem cat in root.GridItems)
+        {
+            if (cat.GridItemType != GridItemType.Category) continue;
+            bool hit = want.Any(p => cat.Label?.Contains(p, StringComparison.Ordinal) == true);
+            if (cat.Expanded != hit) cat.Expanded = hit;
+        }
+    }
+
     private void SyncGates()
     {
         if (_stagePanel is null) return;
@@ -477,6 +496,20 @@ public sealed class MainForm : Form
         // 该点哪个 —— 规则在 Flow.Next，这里只负责把它画出来。
         string nextId = Flow.Next(_flow,
             id => _linePage?.CommandApplicable(id) ?? true)?.CmdId ?? "";
+
+        // ★★★★★ 左边那面墙：**按当前这一格折叠无关的参数类别**（2026-09-02）。
+        //
+        //   实测：参数表 53 项同等字重铺开，其中 10 项属「✗ 被页面接管」「✗ 对整线链无效」
+        //   两类 —— **改了不起作用**，却和管用的长得一模一样。
+        //   而 StageSpec.ParamCategoryPrefixes 这个字段 2026-08-20 就建好了，
+        //   **一直没有消费者**，且填的值与真实类别名对不上（写「C 整线」，实际「5 C 整线 — 管几何」）
+        //   —— 写好没接线 + 数据是错的，两个毛病叠在一起，所以错了两周没人知道。
+        //
+        //   ⚠ **折叠，不是隐藏**：类别标题还在，点一下就开。
+        //     用 BrowsableAttributes 过滤会让没标注到的属性静默消失，
+        //     而「看不见又在起作用」正是本项目反复栽的那一类。
+        if (_tabs.SelectedTab is { } t0 && _stageOf.TryGetValue(t0, out var st0))
+            FoldParams(st0);
 
         if (_tabs.SelectedTab is { } tab && _stageOf.TryGetValue(tab, out var cur))
             _stagePanel.SetStage(cur);

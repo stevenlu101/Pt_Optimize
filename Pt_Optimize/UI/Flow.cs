@@ -158,6 +158,14 @@ public sealed record StageSpec(
     ChainId[] Chains,
     GateSpec? GateToUnlockNext,
     string[] CommandIds,
+    /// <param name="ParamCategoryPrefixes">
+    /// 本格**用得上**的参数类别（按 <c>Contains</c> 匹配 <c>[Category]</c> 的名字）。
+    /// 切到这一格时，命中的类别展开、其余折叠。
+    ///
+    /// ⚠ **折叠，不是隐藏**：类别标题还在，点一下就开。用 PropertyGrid 的
+    ///   BrowsableAttributes 过滤会让**没标注到的**属性静默消失，而「看不见又在起作用」
+    ///   正是本项目反复栽的那一类。
+    /// </param>
     string[] ParamCategoryPrefixes);
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -341,7 +349,10 @@ public static class Flow
                          + "但「没解出来」和「参数动过了」不是风险，是对不上。"),
             new[] { "core.runLine", "core.autoThick", "shape.search", "core.verifyMesh",
                     "geom.analyze", "geom.toanalytic", "geom.export3dm", "scan.thickness" },
-            new[] { "C 整线", "A·B·C 共用" }),
+            // ⚠ 这里是**类别名的片段**，按 Contains 匹配（不是 StartsWith）——
+            //   真实类别名带编号前缀（「5 C 整线 — 管几何」），写「C 整线」用前缀匹配永远不中。
+            //   2026-08-20 建这个字段时就写错了，而它**一直没有消费者**，所以错了两周没人知道。
+            new[] { "A·B·C 共用", "C 整线", "数值" }),
 
         new(StageId.交付, 2, "② 交付（出图 / 存档）",
             "把这一版交出去：出图纸、存成设计记录。有问题会先列给你看，由你决定存不存。",
@@ -365,7 +376,7 @@ public static class Flow
                     "calc.segment", "sweep.insul", "sweep.eps", "export.csv",
                     "line.runAll", "line.bestGrade", "line.minWalls", "line.flanges",
                     "final.reproduce", "final.load", "final.export3dm" },
-            new[] { "A·B 快筛", "D 闸门" }),
+            new[] { "A·B 粗算", "A·B·C 共用" }),
 
         new(StageId.说明, 4, "使用说明",
             "图按设计记录实时生成 —— 换一档，图跟着变。",
