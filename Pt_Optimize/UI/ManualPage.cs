@@ -1047,7 +1047,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                 + "<b>只有判据全过、且参数没再动过时才可用</b>——"
                 + "不成立的设计不该有一个「能落档」的形态。<br>"
                 + "存完还要做三件事：① 把 <code>binding</code> 填上（什么咬住了它，那是工程判断，程序算不出）；"
-                + "② 跑 <code>--cli --selfcheck</code>，A 段这一档的差须为 0.000；"
+                + "② 让我这边跑一次全档自检（A 段这一档的差须为 0.000）；"
                 + "③ 提交进 git——档是回归基准，变更要被 diff 记录。<br>"
                 + "存完新档<b>立刻</b>出现在两个页面的设计记录下拉里，不用重启"
                 + "（2026-08-23 之前要重启——界面说「已写出」而下拉里找不到它，"
@@ -1188,7 +1188,10 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         bool anyVerif = !double.IsNaN(fd.VerifiedMeshMm);
 
         sb.Append("<table><tr><th>判据</th><th>类别</th><th>记录值<br><span class=\"m\">导航网格 2 mm</span></th>"
-                + (anyVerif ? $"<th>网格无关复核<br><span class=\"m\">加密到 {fd.VerifiedMeshMm:0.000} mm</span></th>" : "")
+                + (anyVerif
+                    ? $"<th>网格无关复核<br><span class=\"m\">加密到 {fd.VerifiedMeshMm:0.000} mm"
+                      + (fd.VerifiedNote.Length > 0 ? "　⚠ 待复测" : "") + "</span></th>"
+                    : "")
                 + "<th>限值</th><th>裕度<br><span class=\"m\">按复核值</span></th></tr>");
         foreach (var (n, k, a, l, u, less) in crit)
         {
@@ -1202,6 +1205,13 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                       $"<td>{Bar(forBar, l, less)}</td></tr>");
         }
         sb.Append("</table>");
+        // ★★★ 2026-09-02：复核值**是哪一版代码测的**必须印出来。
+        //   实物：0.8 档那组是 08-30 换 CG 之前跑的，而当天下午我把它填进档、
+        //   本表当作「加密到位、可信」那一列显示，口径一个字没标 ——
+        //   源码注释救不了，工程师看不到源码。这一段就是那个口径。
+        if (anyVerif && fd.VerifiedNote.Length > 0)
+            sb.Append("<div class=\"note\" style=\"border-left-width:6px\">"
+                    + Md(fd.VerifiedNote) + "</div>");
         if (anyVerif)
             sb.Append("<div class=\"note\"><b>两列的口径不一样，要看右边那列。</b>" +
                       "「记录值」是<b>导航网格（2 mm）</b>上算的 —— 它是当天那次运行的历史记录；" +
@@ -1286,7 +1296,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   //   而本节的标题就是「每条都必须有」。
                   $"<tr><td>· 整片热稳定</td><td class=\"n\">&gt; 1.0 ×</td>" +
                   "<td>精确物理：dQ_散热/dT ÷ dP_发热/dT ≤ 1 时正反馈失控。" +
-                  "<b>现为参考量，不卡交付</b> —— `--stabscan` 沿三条轴实测，" +
+                  "<b>现为参考量，不卡交付</b> —— 沿三条轴实测过，" +
                   "②′ 管孔净流入永远先红，升成硬判据改变不了任何一个判定</td></tr>" +
                   $"<tr><td>· 局部热稳定</td><td class=\"n\">&gt; 1.0 ×</td>" +
                   "<td>精确物理：J_stab ÷ J_实际（逐格取**最不稳定**点，不是最热点）。" +
@@ -1320,7 +1330,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "界面在判据表上方打这一行；<b>未收敛时会打「下面每个数都不可引用」——那是字面意思。</b></p>");
 
         sb.Append("<h2>7. 设计记录 3DM</h2>");
-        sb.Append("<p>「导出设计记录 3DM」或命令行 <code>--cli --make3dm</code>。" +
+        sb.Append("<p>「设计记录」页点<b>「导出设计记录 3DM」</b>。" +
                   "内容：三段铂管 + 四片法兰（板身 / 环外级 / 环内级 / <b>角焊缝</b>）+ 压接段参考线。<br>" +
                   "<b>图层按片分，不按类型分</b> —— 交付件要能单独调出某一片；" +
                   "更硬的理由是厚度探针沿 Y 打射线，而四片正是沿 Y 排成一列，" +
@@ -1361,15 +1371,14 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         sb.Append("<div class=\"note\"><b>共同点：不报错、输出格式正常、数值看着合理 —— 但结论是错的。</b><br>" +
                   "唯一可靠的抓法是<b>交叉核对</b>：任何「通过」的结论，用另一个独立的数验一遍。</div>");
 
-        sb.Append("<h2>10. 常用命令行</h2><table><tr><th>命令</th><th>用途</th></tr>" +
-                  "<tr><td class=\"n\">--cli --final2</td><td>可行性阶梯：管壁从宽到窄逐档定尺寸</td></tr>" +
-                  "<tr><td class=\"n\">--cli --busbarplan --wall 0.6</td><td>铜排尺寸与位置（自检整线是否全过）</td></tr>" +
-                  "<tr><td class=\"n\">--cli --make3dm</td><td>两档设计记录 3DM + round-trip 校验</td></tr>" +
-                  "<tr><td class=\"n\">--cli --hotspot --wall 0.6</td><td>峰值位置实测（坐标、局部 J、局部厚度）</td></tr>" +
-                  "<tr><td class=\"n\">--cli --manual [目录]</td><td>不开 GUI 导出本说明书 HTML（每档一份，样式与图全内嵌，可跨版本 diff）</td></tr>" +
-                  "</table><p style=\"font-size:.88rem\"><code>--wall</code> 给了不认识的值会<b>抛异常</b>，不会静默回退。</p>");
-
-        sb.Append("<h2>11. 现场还需确认的数</h2>");
+        // ★★★ 2026-09-02 **整节删除**：原来这里是「§10 常用命令行」，
+        //   一张教现场工程师敲 --cli --final2 / --busbarplan / --hotspot 的表。
+        //   用户拍板：「APP 不要有命令行形式操作，所需必要的计算全由 APP 程序操控」
+        //   「这个 APP 不是给程序员用的是给现场工程师的」。
+        //   ⇒ 说明书里教命令行，等于承认那几件事界面做不到。做得到的就该在界面上，
+        //     做不到的就该去把它接上 —— 而不是把开关名印给工程师。
+        //   （这些开关本身留着，它们是**我的**工装；只是不再出现在他的说明书里。）
+        sb.Append("<h2>10. 现场还需确认的数</h2>");
         sb.Append("<table class=\"nw\"><tr><th>量</th><th>现状</th><th>一旦不同，影响多大</th></tr>" +
                   "<tr><td>法兰 J 的许用值</td><td><b>无依据</b>（现取 10，已降为参考量）</td>" +
                   "<td>法兰 J 实测 34。这条一旦成为硬判据，结论大幅改变</td></tr>" +

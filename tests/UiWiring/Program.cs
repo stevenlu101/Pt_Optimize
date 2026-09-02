@@ -102,7 +102,18 @@ class UiWiringTests {
         }
         if (args.Contains("--searchshape"))
         { Environment.ExitCode = Walk.SearchShape(args.Contains("quick")); return; }
-        if (args.Contains("--follow")) { Environment.ExitCode = Walk.Follow(); return; }
+        // `--follow [壁厚]`：不给壁厚 = 从**开箱默认**出发（答「从零开始提示带不带得动人」）；
+        // 给了壁厚 = **先载入那一档设计记录再走**（答「工程师的真实路径走不走得通」）。
+        // 后者是 2026-09-02 补的：开箱默认那条两次都在自动定厚超时，
+        // 于是链路后半段（网格无关复核 → 出图）一次都没被走到过。
+        int ifo = Array.IndexOf(args, "--follow");
+        if (ifo >= 0)
+        {
+            double fw = ifo + 1 < args.Length && double.TryParse(args[ifo + 1], out var fv)
+                        ? fv : double.NaN;
+            Environment.ExitCode = Walk.Follow(null, fw);
+            return;
+        }
         if (args.Contains("--tabins0")) { Environment.ExitCode = Walk.TabIns0(); return; }
         int ie = Array.IndexOf(args, "--export3dm");
         if (ie >= 0 && ie + 1 < args.Length)
@@ -2353,16 +2364,32 @@ class UiWiringTests {
                     foreach (Match f in Regex.Matches(m.Value, "--[a-z0-9]+"))
                         if (f.Value != "--cli") adv.Add(f.Value);
 
-                // 自证：一个都没抓到不是「没问题」（空集恒真是本项目的老毛病）
-                Check("从说明书里抓得到被宣传的 CLI 旗标（自证）", adv.Count >= 4,
-                      string.Join(" ", adv));
+                // ★★★★★ 2026-09-02 **这条检查的前提反过来了**。
+                //
+                //   它原来的自证是「从说明书里抓得到被宣传的旗标（≥4 个）」——
+                //   用途是防止下一条「宣传的旗标都真的存在」变成空转。
+                //   而用户当天拍板：「APP 不要有命令行形式操作」「这个 APP 不是给程序员用的，
+                //   是给现场工程师的」⇒ 说明书那节「§10 常用命令行」整节删掉，
+                //   于是抓到 0 个，这条自证当场红。
+                //
+                //   **它红得对**：前提变了，检查就该跟着倒过来 ——
+                //   不再是「宣传的必须存在」，而是**一个都不许宣传**。
+                //   ⚠ 旗标本身留着，它们是开发侧的验收工装；禁的是把它们印给工程师。
+                //     界面其余部分由 Pt_Optimize.Tests 的 NoCliFlagInUiTests 盯着。
                 Check("Program.cs 里认得的旗标数合理（自证：读错档会让下一条恒真）",
                       real.Count >= 50, $"{real.Count} 个");
-                var ghost = adv.Where(a => !real.Contains(a)).ToArray();
-                Check("说明书宣传的每个 CLI 旗标都真的存在", ghost.Length == 0,
-                      ghost.Length == 0 ? string.Join(" ", adv)
-                                        : "★ 程式不认得：" + string.Join(" ", ghost));
-                Check("★ --manual 已经是真的了（本轮补的）", real.Contains("--manual"));
+                Check("★ 说明书里**一个命令行旗标都不宣传**（工程师不开命令行）",
+                      adv.Count == 0,
+                      adv.Count == 0 ? "0 个"
+                                     : "★ 还在教工程师敲：" + string.Join(" ", adv));
+                // 自证：抓取器本身没坏 —— 拿一段假文本喂它，必须抓得出来。
+                //   否则「抓到 0 个」可能只是正则失灵，而不是说明书真的干净了。
+                var probe = new SortedSet<string>(StringComparer.Ordinal);
+                foreach (Match m in Regex.Matches("跑 --cli --selfcheck --wall 0.6 看看", "--cli(?:[ ]+--[a-z0-9]+)+"))
+                    foreach (Match f in Regex.Matches(m.Value, "--[a-z0-9]+"))
+                        if (f.Value != "--cli") probe.Add(f.Value);
+                Check("自证：抓取器真的抓得到旗标（否则上一条是空转）", probe.Count == 2,
+                      string.Join(" ", probe));
             }
 
         }

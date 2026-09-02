@@ -246,13 +246,19 @@ public sealed class StagePanel : Panel
         // 门禁横幅：锁住时说清「为什么 / 现在什么状态 / 怎么解锁」
         if (!gate.Unlocked)
         {
+            // *** 2026-09-02 抓图抓到的两个 bug，都在这条门禁横幅上，
+            //   而本类别处每一处都规矩地走了 Plain()——只有这里漏了：
+            //     (1) 加粗标记原样露出来（截图：「设计，**也不能是一个没人验过准不准的数**。」）
+            //         Label 不认 Markdown，本类的 Plain() 就是干这个的。
+            //     (2) b.Name 是判据的 Key（如「②′管孔净流入」）=> **判据代号漏进界面**。
+            //   两条读源码都看不出来（源码写的是 {gate.Why}，看不出里面有星号）。
             string now = gate.Blocking is { } b
-                ? $"\r\n现在的状态：{b.Name} = {b.Actual:0.0} / 限 {b.Limit:0.0}"
+                ? $"\r\n现在的状态：{Criteria.Plain(b.Name)} = {b.Actual:0.0} / 限 {b.Limit:0.0}"
                   + (b.Where.Length > 0 ? $"　位置：{b.Where}" : "")
                 : "";
             _banner.Text = $"🔒 {st.Title} —— 还没解锁"
-                         + $"\r\n为什么：{gate.Why}{now}"
-                         + (gate.How.Length > 0 ? $"\r\n怎么解锁：{gate.How}" : "");
+                         + $"\r\n为什么：{Plain(gate.Why)}{now}"
+                         + (gate.How.Length > 0 ? $"\r\n怎么解锁：{Plain(gate.How)}" : "");
             _banner.Visible = true;
 
             _bypass.Visible = true;

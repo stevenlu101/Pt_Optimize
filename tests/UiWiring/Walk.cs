@@ -947,7 +947,20 @@ static class Walk
     //      提示要是指到点不了的按钮、原地打转、或者漏掉必经步骤，跟着走的人一定撞上。
     //      —— 写死顺序的走查器**永远发现不了这一类**：它根本没在读提示。
     // ════════════════════════════════════════════════════════════════════
-    public static int Follow(string? file3dm = null)
+    /// <summary>
+    /// ★★★ <paramref name="loadWall"/>：**先载入这一档设计记录再走**（2026-09-02 补）。
+    ///
+    /// 病灶：本走查一直只从**开箱默认**出发，而那个几何很坏
+    /// （实测 管孔净流入 −883.8 W、圆盘区最高温 292.1 K）⇒ 自动定厚磨很久，
+    /// 2026-08-30 与 09-02 两次都在这一步**超时**，于是链路后半段
+    /// （网格无关复核 → 出图）**一次都没被走到过**。
+    ///
+    /// 而工程师的真实第一步就是「载入设计记录」（跑单第 ① 条就是这么写的）。
+    /// ⇒ 补这条不是放水，是把走查对准他真正走的那条路。
+    /// 开箱默认那条仍然留着（不传参即是），它答的是另一个问题：
+    /// 「从零开始，提示带不带得动人」。
+    /// </summary>
+    public static int Follow(string? file3dm = null, double loadWall = double.NaN)
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         Application.EnableVisualStyles();
@@ -990,6 +1003,23 @@ static class Walk
 
         H("从**开箱默认**出发，完全照链路提示走");
         Console.WriteLine("  规则：每一步只问「提示说该点哪个」，然后就点它。不看攻略、不抄近路。");
+
+        // ── 先载入设计记录（可选）。与 Reconcile 的第一步是同一套动作。
+        if (!double.IsNaN(loadWall))
+        {
+            var box = (ToolStripComboBox)F(line, "_caseBox")!;
+            int pick = -1;
+            for (int i = 0; i < box.Items.Count; i++)
+                if ((box.Items[i]?.ToString() ?? "").Contains(loadWall.ToString("0.0"), StringComparison.Ordinal))
+                { pick = i; break; }
+            OK($"下拉里找得到管壁 {loadWall:0.0} 那一档", pick >= 0,
+               pick >= 0 ? box.Items[pick]!.ToString()! : "★ 没有这一档 —— 工程师无从开始");
+            if (pick < 0) return _bad;
+            box.SelectedIndex = pick; Pump(200);
+            Call(line, "LoadDesignSpec"); Pump(400);
+            Call(main, "SyncGates"); Pump(150);
+            H($"起点：已载入设计记录（管壁 {loadWall:0.0}）—— 这是工程师的第一个动作");
+        }
 
         var hist = new List<string>();
         string lastId = "";
@@ -1113,7 +1143,9 @@ static class Walk
                     break;
                 case "core.autoThick":
                     Call(line, "RunAsync", true, false);
-                    if (!Wait(() => F(line, "_cts") is null, 1_800_000))
+                    // ⚠ 60 分钟，与 Reconcile 对齐（2026-09-02）。原来是 30 分钟 ——
+                    //   一个随手写的数，而它正是让链路后半段**从没被走到过**的原因。
+                    if (!Wait(() => F(line, "_cts") is null, 3_600_000))
                     { OK("自动定厚在预算内跑完", false, "★ 超时"); return _bad; }
                     break;
                 case "geom.analyze":
@@ -1123,6 +1155,37 @@ static class Walk
                     if (!Wait(() => F(line, "_cts") is null, 600_000))
                     { OK("分析几何变数在预算内跑完", false, "★ 超时"); return _bad; }
                     break;
+                // ★★★★★ 2026-09-02 补。在此之前 switch 里**没有这一条** ——
+                //   链路一指向「◆ 网格无关复核」就落进 default「走查器没实作这个命令」
+                //   然后返回。⇒ **端到端从来没有走到过出图**，而我先前把这件事
+                //   报成「在自动定厚超时」。那是错的：不是慢，是**结构性走不到**。
+                //
+                //   ⚠ 不许缩水成「跑两档就算」：⑤ 交付的门信的就是这一步，
+                //     糊弄它等于把门拆了。复核该跑多久就跑多久（实测 10–40 分钟）。
+                case "core.verifyMesh":
+                {
+                    var swV = System.Diagnostics.Stopwatch.StartNew();
+                    Call(line, "VerifyMeshAsync");
+                    // ⚠ VerifyMeshAsync 在前置不满足时（没解 / 解不新鲜）**直接 return
+                    //   且不设 _cts** ⇒ 只等「_cts 变空」会把「根本没起跑」误判成「跑完了」。
+                    //   而 _cts 是在第一个 await 之前同步赋的 ⇒ Call 返回时就该已经非空。
+                    if (F(line, "_cts") is null)
+                    {
+                        OK($"第 {step} 步：复核真的起跑了", false,
+                           "★ 它当场返回了 —— 多半是「先解出一个**当前参数**的解」那条前置没满足。"
+                           + "　提示指了一个点下去没反应的按钮，那是指路的错");
+                        return _bad;
+                    }
+                    if (!Wait(() => F(line, "_cts") is null, 2_700_000))
+                    { OK("网格无关复核在 45 分钟预算内跑完", false, "★ 超时"); return _bad; }
+                    Console.WriteLine($"     复核用时 {swV.Elapsed.TotalMinutes:0.0} 分");
+                    // 复核跑完 ≠ 验过。判据仍随网格变时 MeshVerified 是 false，
+                    // 出图的门照样关着 —— 那是 APP 对的，但跟着提示走的人到不了终点。
+                    OK($"第 {step} 步：复核之后出图的门认账了",
+                       flow.MeshVerified && flow.VerifiedFresh,
+                       flow.MeshVerified ? "" : "★ 判据还在随网格变 ⇒ **没验过**，门仍然关着");
+                    break;
+                }
                 case "shape.search":
                     Console.WriteLine("     ⚠ 提示指向「◇ 搜形状」——**几十分钟**，本走查不跑。");
                     Console.WriteLine("        这本身是一条结论：开箱默认走到这里就需要改几何，");

@@ -170,6 +170,19 @@ public sealed class DesignSpec
     public double VerifiedMeshMm = double.NaN, VerifiedFlangeDipK = double.NaN,
                   VerifiedHoleFluxW = double.NaN, VerifiedDiscOverK = double.NaN;
 
+    /// <summary>
+    /// ★★★ **这组复核值是什么时候、用哪一版代码测的**（2026-09-02 补）。空串 = 与当前代码同版。
+    ///
+    /// 为什么必须有它：0.8 档那组数（7.950 K）是 2026-08-30 **换 CG 之前**跑的，
+    /// 而 CG 那一改把停机判据从「步长」换成了「真残差」，解的位置微移过。
+    /// 0.6 档已用新代码重跑（9.453，全过），0.8 档还没有。
+    ///
+    /// ⚠⚠ 而当天下午我把这组**旧代码的数**填进来、说明书当作「加密到位、可信」那一列显示，
+    ///   口径一个字没标 —— **我刚立的规则，自己当天就犯了一次**。
+    ///   源码注释救不了这件事：工程师看不到源码。⇒ 立成字段，说明书**必须**印出来。
+    /// </summary>
+    public string VerifiedNote = "";
+
     // ================================================================
     // ★★★★★ 2026-08-16 第二次修正：**旧板厚是优化器停早了一轮的结果**。
     //
@@ -414,8 +427,12 @@ public sealed class DesignSpec
         TotalMassG = 3547, TubeMassG = 2465, FlangeMassG = 1082, ResidualK = 0.5,
         RampH = 0.058, DiscOverK = -0.208, HoleFluxW = 1.123, FlangeDipK = 4.720, TubeJ = 9.506,
         // 网格无关复核（2026-08-30，--solve --verifymesh --wall 0.8，收敛在 0.250 mm / 14982 单元）
+        // ⚠ 这一趟是**换 CG 之前**跑的 —— 见 VerifiedNote。
         VerifiedMeshMm = 0.250, VerifiedFlangeDipK = 7.950,
         VerifiedHoleFluxW = 2.628, VerifiedDiscOverK = -0.004,
+        VerifiedNote = "⚠ 这组复核值是 2026-08-30 **换 CG 之前**跑的。之后停机判据从「步长」"
+                     + "换成了「真残差」，解的位置微移过 —— 本档尚未用新代码重跑，"
+                     + "这三个数应当视为**待复测**。（0.6 档已重跑过。）",
     };
 
     /// <summary>底档：管壁压到焊接烧穿下界。</summary>

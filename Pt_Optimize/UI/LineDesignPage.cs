@@ -517,13 +517,13 @@ public sealed class LineDesignPage : TabPage
             "工艺下界 0.6 mm = **手工 TIG 烧穿下界**（自动 TIG 0.3、激光 0.1，差一个量级）。\n" +
             "另一条独立的界是管 J ≤ 12 A/mm²（现场给定：一般上限 15，壁 0.6 时 12 是极限）。\n" +
             "设计记录两档正是被这两条同点咬住（0.6）与全都留有余量（0.8）。\n" +
-            $"实测斜率（--vary）：法兰增量温降 {dDip_dWall:+0.0;−0.0} K/mm　圆盘区最高温 +16.7 K/mm" +
+            $"参考斜率（0.8 档 2026-08 离线实测，**会随形状变**）：法兰增量温降 {dDip_dWall:+0.0;−0.0} K/mm　圆盘区最高温 +16.7 K/mm" +
             $"　管J {dJ_dWall:+0.00;−0.00}　管重 +3051 g/mm\n" +
             "⚠ 圆盘区最高温 那条只在**这个工作点附近**成立：圆盘区最高温 由两个竞争峰决定，符号会随构型翻。");
         Row("纤维保温 mm", _tubeIns,
             "无空间限制、不花铂 —— 但**不是免费的**：\n" +
             $"  法兰增量温降 {dDip_dTubeIns:+0.0;−0.0} K/mm　圆盘区最高温 −3.1 K/mm" +
-            $"　管J {dJ_dTubeIns:+0.00;−0.00} (A/mm²)/mm　（实测 --vary）\n" +
+            $"　管J {dJ_dTubeIns:+0.00;−0.00} (A/mm²)/mm　（0.8 档 2026-08 离线实测）\n" +
             "机理：保温厚 ⇒ 管散热少 ⇒ 电流小（利），但 β 变小而 法兰增量温降=D/√(kAβ) 里 β 在分母（不利）。\n" +
             "现用的 5 mm 恰在拐点上 —— 这个值原本是没量过的默认值，碰巧是对的。");
 
@@ -618,7 +618,7 @@ public sealed class LineDesignPage : TabPage
 
         Head("法兰厚度 mm / 厚度标度（可点「自动定厚」求解）");
         string tipPlate =
-            "**最强的旋钮**，实测（--vary，端点均已收敛）：\n" +
+            "**最强的旋钮**（0.8 档 2026-08 离线实测，端点均已收敛）：\n" +
             $"  法兰增量温降 {dDip_dPlate:+0.0;−0.0} K/mm　圆盘区最高温 −14.6 K/mm　法兰重 +264 g/mm\n" +
             "⚠ ③ 是**正号** —— 加厚会把 ③ 推向限值。「哪里热就加厚哪里」在这里是反的：\n" +
             "  加厚同时降单位面积发热（∝1/t）与增强横向导热（∝t），后者把热从管根抽走。\n" +
@@ -642,13 +642,17 @@ public sealed class LineDesignPage : TabPage
             "只压**管孔周围**的局部电流拥塞（判据 圆盘区最高温），作用范围 r ≤ 孔+6 mm。" + Environment.NewLine +
             "⚠ **这个灵敏度随形状变号，别照抄任何一个数**（2026-08-28 实测）：" + Environment.NewLine +
             "　· 窄舌形状上曾测得 d圆盘区最高温/d倍率 ≈ **−1.4** K/单位（加环压得住）；" + Environment.NewLine +
-            "　· **现役宽舌形状**上，`--monotone` 全量程实测（0.8 档，2026-08-30 首次真跑）：" + Environment.NewLine +
+            // ★ 2026-09-02：原文在这几行里直接印命令行开关名 `--monotone` 给现场工程师看。
+            //   用户拍板：APP 不留命令行形式的操作，界面上也不该出现我的工装词汇。
+            //   实测结论保留（它是真的、有日期、有数），只是不再报是哪个开关跑的。
+            "　· **现役宽舌形状**上，全量程实测（0.8 档，2026-08-30 首次真跑）：" + Environment.NewLine +
             "　　倍率 1.00→2.50 把 圆盘区最高温 从 **−0.208 挪到 −0.124**（限值 ≤5，越大越差）" + Environment.NewLine +
             "　　⇒ **+0.084 K，方向相反**，却多花 **137 g** 铂 —— 舌片宽了，孔周本来就不拥塞。" + Environment.NewLine +
-            "　　⚠ 更正（2026-08-30）：这一行 08-29 写的时候标的也是 `--monotone`，" + Environment.NewLine +
-            "　　　但那时它**一次没跑过** —— 当时的 +0.08 是从别处测得的导数 +0.056 线性外推的。" + Environment.NewLine +
+            "　　⚠ 更正（2026-08-30）：这一行 08-29 写的时候也标着「实测」，" + Environment.NewLine +
+            "　　　但那时**一次没跑过** —— 当时的 +0.08 是从别处测得的导数 +0.056 线性外推的。" + Environment.NewLine +
             "　　　跑完之后两者对上了（+0.084），但**当时那个出处是假的**。" + Environment.NewLine +
-            "⇒ 用 `--monotone` 对**你手上这个形状**实测，再决定动不动它。上限 2.5。" + Environment.NewLine +
+            "⇒ **你不必自己判断动不动它**：求解器每轮会对你手上这个形状当场量一次，" + Environment.NewLine +
+            "　抬它有没有用、值不值那点铂，比价结果印在输出框里。上限 2.5。" + Environment.NewLine +
             "初始值 1.00 = 无台阶（真实状态）。";
         for (int i = 0; i < 4; i++) Row(names[i], _ringMul[i], tipRing);
 
@@ -657,8 +661,8 @@ public sealed class LineDesignPage : TabPage
             "★ 「外扩」是**从管轴量的半径**减去管孔半径，不是「画在盘上的一圈」。" + Environment.NewLine +
             "　厚度按 r 分级：r ≤ 孔+r₁ 取 t₁×板厚；孔+r₁ < r ≤ 孔+r₂ 取 t₂×板厚；再外为板厚。" + Environment.NewLine +
             "⚠ **超过盘半径之后它继续作用在舌片根部** —— 盘 Ø60 时盘面只到 孔+4.2 mm，" + Environment.NewLine +
-            "　r₂ 再往外加厚的是舌根。`--monotone` 把 r₂ 扫到 16 mm 仍持续见效，就是这个缘故。" + Environment.NewLine +
-            "── `--monotone` 实测（0.8 档，2026-08-30 首次跑）" + Environment.NewLine +
+            "　r₂ 再往外加厚的是舌根。实测把 r₂ 扫到 16 mm 仍持续见效，就是这个缘故。" + Environment.NewLine +
+            "── 单调性实测（0.8 档，2026-08-30 首次跑）" + Environment.NewLine +
             "　r₁ 1→10／r₂ 4→16／t₂ 1→2：三条对 抽热D、③、圆盘区最高温 **全单调** ⇒ 可二分。" + Environment.NewLine +
             "　但方向是：只有 管孔净流入 变好，**③ 与 圆盘区最高温 都变坏** ⇒ 它们是「花铂换抽热」的旋钮，" + Environment.NewLine +
             "　不是「治判据」的旋钮。所以**没有**进求解器的分配表（那要先做敏感度矩阵）。" + Environment.NewLine +
@@ -916,10 +920,11 @@ public sealed class LineDesignPage : TabPage
             string path = DesignSpecStore.Save(d);
             MessageBox.Show(this,
                 $"已写出：{path}" + Environment.NewLine + Environment.NewLine
-                + "下一步（都要做）：" + Environment.NewLine
-                + "  1. 把 binding 填上 —— 什么咬住了它（余量最小的那条）" + Environment.NewLine
-                + "  2. 跑 --selfcheck，A 段这一档的差须为 0.000" + Environment.NewLine
-                + "  3. 提交进 git —— 档是回归基准，变更要被 diff 记录",
+                + "下一步：" + Environment.NewLine
+                + "  · 把「binding」填上 —— 什么咬住了它（余量最小的那条）。" + Environment.NewLine
+                + "    这是工程判断，程序算不出来，只有你知道。" + Environment.NewLine
+                + Environment.NewLine
+                + "  （落档的回归自检与版本记录由开发侧完成，你不必操作。）",
                 "已另存", MessageBoxButtons.OK, MessageBoxIcon.Information);
             // 重扫磁盘，让新档立刻出现在**每一个**设计记录下拉里。
             // 少了这一句，界面会说「已写出」而下拉里找不到它 —— 工程师只能
@@ -2813,6 +2818,40 @@ public sealed class LineDesignPage : TabPage
                                      _cts.Token);
             _meshVerify = res;
             _verifiedSnap = res.Converged ? snapAtStart : null;
+
+            // ★★★★★ **把复核解出来的那组判据接过来**（2026-09-02，`--follow 0.8` 走查抓到）。
+            //
+            // ══ 实物
+            //
+            // MeshVerify.Result.Line 这个字段自己的说明写着：
+            //     「**网格无关的**那一次解 —— 判据以它为准，不是以导航网格那次为准」
+            // 而本方法**从来没碰过它**：只读了 Converged / Verdict / MidBandConfirm 三样。
+            // ⇒ 复核跑完、门开了、可以出图了，而判据表里躺着的还是**导航网格（2 mm）**那组数。
+            //
+            // 实测这一档的差（0.8）：
+            //     法兰增量温降   导航网格 4.72 K（余量 53 %）  →  复核 7.95 K（余量 21 %）
+            //     管孔净流入     1.12 W                        →  2.63 W
+            // 工程师点完复核、看着 4.72 出图 —— 而**复核本身刚刚证明那个数不可信**。
+            //
+            // ══ 怎么发现的
+            //
+            // 走查器有一条「这一步起作用了吗」的指纹（判据实测值 + 总铂）。
+            // 它报了 ✗：「core.verifyMesh 跑完，判据表与总铂**逐字未变**」。
+            // 我原以为那是走查器的误报（复核本来就不改解），一查才发现**反了** ——
+            // 它抓到的是真的：APP 算出了权威的那组数，然后**把它扔了**。
+            //
+            // 这正是本项目最怕那一族的极端形态：不是数错了，是**算对了却没送到人手上**。
+            //
+            // ⚠ 只在**收敛**时接管：没收敛就是没验过，那组数不该顶替任何东西
+            //   （而门也照样关着，见 GateSpec.RequireMeshVerified）。
+            if (res.Converged && res.Line is { Ok: true })
+            {
+                _last = res.Line;
+                _out.AppendText(Environment.NewLine
+                    + $"◆ 判据表已换成**网格无关复核**（{res.FineMm:0.000} mm）上的值 —— "
+                    + "此前显示的是导航网格（2 mm）上的数。" + Environment.NewLine);
+                Show(_last);
+            }
             _out.AppendText(Environment.NewLine + res.Verdict + Environment.NewLine);
             if (res.MidBandConfirm is { Length: > 0 }) _out.AppendText("　" + res.MidBandConfirm + Environment.NewLine);
             if (!res.Converged)

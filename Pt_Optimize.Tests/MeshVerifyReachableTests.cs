@@ -57,6 +57,33 @@ public class MeshVerifyReachableTests
     /// ★★ 长任务的三件套：**进度、可取消、取消了不算过**。
     /// 复核要跑 10–40 分钟，没有这三样它在界面上就是不可用的。
     /// </summary>
+    /// <summary>
+    /// ★★★★★ **复核算出来的那组判据必须被用上**（2026-09-02，`--follow 0.8` 走查抓到）。
+    ///
+    /// 上一条只验「按钮点得到」。点得到之后呢 —— <c>MeshVerify.Result.Line</c> 那个字段
+    /// 自己的说明写着「**网格无关的**那一次解 —— 判据以它为准，不是以导航网格那次为准」，
+    /// 而界面**从来没碰过它**（只读 Converged / Verdict / MidBandConfirm 三样）。
+    ///
+    /// ⇒ 复核跑完、门开了、可以出图，而判据表里躺着的还是导航网格（2 mm）那组数：
+    /// <code>
+    ///   0.8 档   法兰增量温降   表上 4.72 K（余量 53 %）   实际 7.95 K（余量 21 %）
+    ///            管孔净流入     表上 1.12 W               实际 2.63 W
+    /// </code>
+    /// **算对了却没送到人手上** —— 本项目最怕那一族的极端形态。
+    ///
+    /// 走查器那条「这一步起作用了吗」的指纹报了 ✗（判据表逐字未变）。
+    /// 我原以为是它误报，一查发现**反了**：它抓到的是真的。
+    /// </summary>
+    [Fact]
+    public void 复核解出来的判据被接管()
+    {
+        string s = Ui("LineDesignPage.cs");
+        Assert.Contains("res.Line is { Ok: true }", s);
+        Assert.Contains("_last = res.Line;", s);
+        // 只在收敛时接管 —— 没收敛就是没验过，那组数不该顶替任何东西
+        Assert.Contains("res.Converged && res.Line", s);
+    }
+
     [Fact]
     public void 复核可取消且取消不算过()
     {

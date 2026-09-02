@@ -606,8 +606,11 @@ public sealed class MainForm : Form
                     + $"（{_segs.Count} 段 → n+1 片，段间共用），厚度由电流密度定，");
         sb.AppendLine("  不随管壁减薄同比例变薄 —— 点「核算法兰」把它算进来，那才是可交付的总铂。");
         sb.AppendLine();
-        sb.AppendLine("注：本页强度与质量核算是解析的（即时）。电流密度与析晶需耦合热解，");
-        sb.AppendLine("    请用 --cli --matrix / --save 等批处理模式。");
+        // ★ 2026-09-02：原来这里写「请用 --cli --matrix / --save 等批处理模式」——
+        //   把现场工程师指去开命令行。用户拍板：APP 不留命令行形式的操作。
+        //   而那件事**界面本来就做得到**，就在下一页。
+        sb.AppendLine("注：本页强度与质量核算是解析的（即时）。电流密度与析晶要解耦合温度场，");
+        sb.AppendLine("    到「整线核算」页点「核算整线」——那一页才是可交付的判据来源。");
         // ⚠ 这里**直接调 Write**，不靠 TextFmt.Hook 的事件（2026-08-21）。
         //   RunLine 在 MainForm.Load 里就跑一次，那时本框在 ② 页的内层页签里、
         //   句柄还没建 ⇒ `.Text =` **不触发 TextChanged**（原生控件没窗口就没有
