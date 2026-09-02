@@ -38,6 +38,9 @@ public sealed class MainForm : Form
 
     /// <summary>给 UiShot 逐页出图用（--cli --uishot）。</summary>
     internal TabControl Tabs => _tabs;
+    /// <summary>参考工具那两个按钮与输出/图的所有者。2026-09-02 起它不再是一个页签。</summary>
+    private readonly AnalysisPage _toolsOwner;
+
     private readonly Dictionary<TabPage, StageId> _stageOf = new();
     /// <summary>每一格的门禁横幅，SyncGates 按锁态显示/隐藏。</summary>
     private readonly Dictionary<StageId, Label> _banners = new();
@@ -105,73 +108,72 @@ public sealed class MainForm : Form
         _segOut.BackColor = Color.FromArgb(252, 252, 250);
         TextFmt.Hook(_segOut);
 
-        // ── ③ 整线核算 / ① 闸门：两页各自持有自己的控件与按钮
+        // ── 两页各自持有自己的控件与按钮
         var linePage = new LineDesignPage(_in) { Shared = _flow };
-        var gatePage = new AnalysisPage(_in) { Shared = _flow };
+        var toolsOwner = new AnalysisPage(_in) { Shared = _flow };
+        _toolsOwner = toolsOwner;   // 它不再是页签，但控件被借出去了 —— 引用要留住
         _linePage = linePage;
 
-        // ── ② 快筛：把原来散在「分段核算」「轴向剖面」与**主窗口右上**的三块并成一页。
+        // ═══════════════════════════════════════════════════════════════
+        //  阶段轨（2026-09-02 重排：七格 → 四格）
+        // ═══════════════════════════════════════════════════════════════
         //
-        // ★ 把单段报告 `_out` 从常驻右上搬进这一页，是本次重排里最要紧的一刀：
-        //   一个**不含法兰的单段解**长期占着主视野的三分之一，
-        //   正是「不知道自己在算什么」的根源之一。
-        var screenTool = NewTool();
-        screenTool.Items.Add(Btn("计算 (F5)", (_, _) => Run()));
-        screenTool.Items.Add(Btn("扫描：保温厚度", (_, _) => Sweep("insul", 0, 50, 11, "内层保温厚度 [mm]")));
-        screenTool.Items.Add(Btn("扫描：铂发射率", (_, _) => Sweep("eps", 0.10, 0.30, 9, "铂表面发射率 ε")));
-        screenTool.Items.Add(Btn("导出 CSV", (_, _) => ExportCsv()));
-        screenTool.Items.Add(new ToolStripSeparator());
-        screenTool.Items.Add(Btn("核算全线", (_, _) => RunLine()));
-        screenTool.Items.Add(Btn("为各段选最省牌号", (_, _) => AutoGrade()));
-        screenTool.Items.Add(Btn("按强度取最小壁厚", (_, _) => MinWalls()));
+        //   ① 整线核算 ★ ──→ ② 交付        主线，两格
+        //   参考工具 / 使用说明             不带编号，永远进得去
+        //
+        // 依据是实测：Flow.Next 在全部分支里只指 7 条命令，而原 ①② 两页的 9 条
+        // **一条都不在里面** —— 工程师一路点蓝色走完全程，那两页不会被访问，
+        // 而阶段轨却把它们编成 ①② 摆在最前面。功能一条没删，全部搬进「参考工具」。
+
+        // ── 参考工具：原 ①（升温趋势）+ 原 ②（解析粗看）+ 设计记录那一组校正命令
+        var refTool = NewTool();
+        refTool.Items.Add(new ToolStripLabel("设计记录"));
+        refTool.Items.Add(linePage.CaseBox);
+        refTool.Items.Add(linePage.BtnReproduce);
+        refTool.Items.Add(linePage.BtnLoadCase);
+        refTool.Items.Add(linePage.BtnExportFinal3dm);
+        refTool.Items.Add(new ToolStripSeparator());
+        refTool.Items.Add(toolsOwner.BtnRampGate);
+        refTool.Items.Add(new ToolStripSeparator());
+        refTool.Items.Add(Btn("计算 (F5)", (_, _) => Run()));
+        refTool.Items.Add(Btn("扫描：保温厚度", (_, _) => Sweep("insul", 0, 50, 11, "内层保温厚度 [mm]")));
+        refTool.Items.Add(Btn("扫描：铂发射率", (_, _) => Sweep("eps", 0.10, 0.30, 9, "铂表面发射率 ε")));
+        refTool.Items.Add(Btn("导出 CSV", (_, _) => ExportCsv()));
+        refTool.Items.Add(new ToolStripSeparator());
+        refTool.Items.Add(Btn("核算全线", (_, _) => RunLine()));
+        refTool.Items.Add(Btn("为各段选最省牌号", (_, _) => AutoGrade()));
+        refTool.Items.Add(Btn("按强度取最小壁厚", (_, _) => MinWalls()));
         _flangeBtn = Btn("核算法兰（分钟级）", (_, _) => _ = RunFlangesAsync());
-        screenTool.Items.Add(_flangeBtn);
+        refTool.Items.Add(_flangeBtn);
         _segProg.Size = new Size(UiScale.S(180), UiScale.S(16));
-        screenTool.Items.Add(_segProg);
-        screenTool.Items.Add(_segStatus);
+        refTool.Items.Add(_segProg);
+        refTool.Items.Add(_segStatus);
 
-        var screenInner = new TabControl { Dock = DockStyle.Fill };
-        screenInner.TabPages.Add(TabWith("分段核算",
-            SplitH(_segGrid, SplitH(_segResult, _segOut))));
-        screenInner.TabPages.Add(TabWith("单段报告", _out));
-        screenInner.TabPages.Add(TabWith("轴向剖面", _pAxial));
+        var refInner = new TabControl { Dock = DockStyle.Fill };
+        refInner.TabPages.Add(TabWith("升温可达性趋势", SplitH(toolsOwner.OutBox, toolsOwner.PlotBox)));
+        refInner.TabPages.Add(TabWith("分段核算", SplitH(_segGrid, SplitH(_segResult, _segOut))));
+        refInner.TabPages.Add(TabWith("单段报告", _out));
+        refInner.TabPages.Add(TabWith("轴向剖面", _pAxial));
 
-        var screenPage = new TabPage(Flow.Stage(StageId.粗算).Title) { Padding = new Padding(2) };
-        screenPage.Controls.Add(screenInner);
-        screenPage.Controls.Add(Banner(Flow.Stage(StageId.粗算).Banner));
-        screenPage.Controls.Add(screenTool);
+        var refPage = new TabPage(Flow.Stage(StageId.参考工具).Title) { Padding = new Padding(2) };
+        refPage.Controls.Add(refInner);
+        refPage.Controls.Add(Banner(Flow.Stage(StageId.参考工具).Banner));
+        refPage.Controls.Add(refTool);
 
-        // ── ④ 定尺寸 / ⑤ 交付：**薄页**。
-        //   它们的输入就是 ③ 的解，不是新的输入 —— 所以只放命令与只读摘要。
-        //   把这些按钮塞回 ③ 的工具条，正是今天「十个按钮一横排」的病因。
-        var sizeTool = NewTool();
-        sizeTool.Items.Add(linePage.BtnAutoThick);
-        sizeTool.Items.Add(linePage.BtnSearchShape);
-        sizeTool.Items.Add(new ToolStripSeparator());
-        sizeTool.Items.Add(gatePage.BtnThicknessScan);
-        var sizePage = new TabPage(Flow.Stage(StageId.定尺寸).Title) { Padding = new Padding(2) };
-        sizePage.Controls.Add(StageHint(StageId.定尺寸));
-        sizePage.Controls.Add(Banner(Flow.Stage(StageId.定尺寸).Banner));
-        sizePage.Controls.Add(sizeTool);
+        // ★★★★★ 主线那三个按钮挂回「① 整线核算」页（2026-09-02 抓图抓到）。
+        //   阶段轨重排时原 ④ 页被删掉，而 自动定厚／◇搜形状／厚度灵敏度扫描
+        //   原来是挂在那一页的工具条上 ⇒ **造好了没挂上屏**，本仓头号敌人。
+        //   ⚠ 分两排：主线四个在上，图纸路与工具在下（一排塞八个正是当初拆页的病因）。
+        // 主线：解 → 定厚 → 搜形状 → 复核，都在第一排
+        linePage.MountMainRow(new ToolStripItem[]
+        { linePage.BtnAutoThick, linePage.BtnSearchShape });
+        // 工具：只测不调，压在第二排
+        linePage.MountSecondRow(new ToolStripItem[] { toolsOwner.BtnThicknessScan });
 
-        // ── 设计记录：**不带编号的一页**，放在 ① 之前。
-        //   载入/复现会灌页面控件、是给 ③ 喂起点的 ⇒ 它是入口，不是尾巴。
-        //   这几条命令都 ReadsPageControls=false（另存除外），本来就豁免阶段门禁。
-        var caseTool = NewTool();
-        caseTool.Items.Add(new ToolStripLabel("设计记录"));
-        caseTool.Items.Add(linePage.CaseBox);
-        caseTool.Items.Add(linePage.BtnReproduce);
-        caseTool.Items.Add(linePage.BtnLoadCase);
-        caseTool.Items.Add(new ToolStripSeparator());
-        caseTool.Items.Add(linePage.BtnSaveFinal);
-        caseTool.Items.Add(linePage.BtnExportFinal3dm);
-        var casePage = new TabPage(Flow.Stage(StageId.设计记录).Title) { Padding = new Padding(2) };
-        casePage.Controls.Add(StageHint(StageId.设计记录));
-        casePage.Controls.Add(Banner(Flow.Stage(StageId.设计记录).Banner));
-        casePage.Controls.Add(caseTool);
-
+        // ── ② 交付：储存结果报告与图档。用户的模型第三步就是这一格。
         var shipTool = NewTool();
         shipTool.Items.Add(linePage.BtnExportPage3dm);
+        shipTool.Items.Add(linePage.BtnSaveFinal);
         shipTool.Items.Add(new ToolStripSeparator());
         shipTool.Items.Add(Btn("保存", (_, _) => Save()));
         shipTool.Items.Add(Btn("读取", (_, _) => LoadCase()));
@@ -180,23 +182,16 @@ public sealed class MainForm : Form
         shipPage.Controls.Add(Banner(Flow.Stage(StageId.交付).Banner));
         shipPage.Controls.Add(shipTool);
 
-        // ── 按 Flow 的顺序装轨
-        gatePage.Text = Flow.Stage(StageId.先决条件).Title;
+        // ── 装轨
         linePage.Text = Flow.Stage(StageId.整线核算).Title;
-        _tabs.TabPages.Add(casePage);
-        _tabs.TabPages.Add(gatePage);
-        _tabs.TabPages.Add(screenPage);
         _tabs.TabPages.Add(linePage);
-        _tabs.TabPages.Add(sizePage);
         _tabs.TabPages.Add(shipPage);
+        _tabs.TabPages.Add(refPage);
         _tabs.TabPages.Add(new ManualPage(_in));   // 说明书里的限值要跟着参数表走
 
-        _stageOf[casePage] = StageId.设计记录;
-        _stageOf[gatePage] = StageId.先决条件;
-        _stageOf[screenPage] = StageId.粗算;
         _stageOf[linePage] = StageId.整线核算;
-        _stageOf[sizePage] = StageId.定尺寸;
         _stageOf[shipPage] = StageId.交付;
+        _stageOf[refPage] = StageId.参考工具;
 
         // ── 状态面板：接替原来右上那块单段报告的位置
         var right = new SplitContainer

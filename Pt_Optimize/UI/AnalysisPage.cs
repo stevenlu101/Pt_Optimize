@@ -35,8 +35,8 @@ public sealed class AnalysisPage : TabPage
         Padding = new Padding(2);
 
         var tool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, Font = UiScale.Ui() };
-        _btnGate = Btn("① 升温可达性", (_, _) => _ = RunAsync(true));
-        _btnScan = Btn("② 厚度灵敏度", (_, _) => _ = RunAsync(false));
+        _btnGate = Btn("升温可达性趋势", (_, _) => _ = RunAsync(true));
+        _btnScan = Btn("厚度灵敏度扫描", (_, _) => _ = RunAsync(false));
         // ★ 2026-08-20 阶段轨：本页是「① 闸门」，只留升温可达性这一条闭式快筛。
         //   「② 厚度灵敏度」搬到「④ 定尺寸」—— 它逐点跑 LineRunner.Run，
         //   每一点都是**权威解**，属于 C 链的工具，从来就不该和闭式快筛并排。
@@ -62,7 +62,7 @@ public sealed class AnalysisPage : TabPage
         split.Panel1.Controls.Add(_out);
         split.Panel2.Controls.Add(_plot);
 
-        FieldPlots.DrawEmpty(_plot, "点「① 升温可达性」开始");
+        FieldPlots.DrawEmpty(_plot, "点「升温可达性趋势」开始");
         Controls.Add(split);
         Controls.Add(tool);
         HandleCreated += (_, _) => BeginInvoke(() => split.SplitterDistance = (int)(split.Height * 0.55));
@@ -70,6 +70,13 @@ public sealed class AnalysisPage : TabPage
 
     /// <summary>归「④ 定尺寸」托管的按钮 —— 所有权仍在本页，只是挂到那边的工具条上。</summary>
     internal ToolStripButton BtnThicknessScan => _btnScan;
+
+    // ★ 2026-09-02 阶段轨重排：本页不再是一个页签（原「① 先决条件」），
+    //   它的两个按钮与输出/图分别挂到「① 整线核算」与「参考工具」上。
+    //   控件仍归本页所有（跑起来改文字、互相禁用那套状态只有一份）。
+    internal ToolStripButton BtnRampGate => _btnGate;
+    internal Control OutBox => _out;
+    internal Control PlotBox => _plot;
 
     private static ToolStripButton Btn(string t, EventHandler h)
     {
@@ -115,7 +122,8 @@ public sealed class AnalysisPage : TabPage
             _prog.Visible = false;
             _btnGate.Enabled = _btnScan.Enabled = true;
             // 按钮名要还原 —— 否则取消之后它永远顶着「取消」二字
-            _btnGate.Text = "① 升温可达性"; _btnScan.Text = "② 厚度灵敏度";
+            // ⚠ 这两句是 finally 里的**还原** —— 漏改就会「取消一次之后按钮永远顶着取消」
+            _btnGate.Text = "升温可达性趋势"; _btnScan.Text = "厚度灵敏度扫描";
             Shared?.SetRunning(null);          // 清在 finally：异常/取消也必须解除互斥
         }
     }

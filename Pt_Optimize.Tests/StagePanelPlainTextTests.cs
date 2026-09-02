@@ -43,25 +43,18 @@ public class StagePanelPlainTextTests
     /// 但**判据没全过** ⇒ Gate 会走到 RequireAllOk 那一支，
     /// 把 <c>LockedWhy</c>（含加粗标记）与 <c>Worst</c>（判据 Key，含代号）都拼进横幅。
     /// </summary>
+    /// <summary>
+    /// 造一个「进不去交付」的真实状态。
+    ///
+    /// ⚠ 2026-09-02 改口径：交付的门**不再要求判据全过**（用户拍板「结果如何就如何，
+    ///   超标显示提醒，风险由工程师判断」）⇒ 用「判据没过」已经锁不住这一格了。
+    ///   现在锁得住的只有「没解出来」与「参数动过了」—— 那不是风险，是对不上。
+    /// </summary>
     private static StagePanel LockedAtDelivery()
     {
         var st = new FlowState();
-        var res = new LineResult
-        {
-            Ok = true,
-            Converged = true,
-            Checks = new[]
-            {
-                new ConstraintOut
-                {
-                    Name = LineResult.Key.NetFlux,   // "②′管孔净流入 须为正" —— 带代号
-                    Kind = CheckKind.HardSafety,
-                    Actual = -883.8, Limit = 0.0, Ok = false, Where = "HC1|HC2",
-                },
-            },
-        };
-        st.Last = res;
-        st.CurrentSnap = st.SolvedSnap = "同一个快照";   // ⇒ Fresh = true
+        st.Last = new LineResult { Ok = true, Converged = false };   // 没收敛 ⇒ 门关着
+        st.CurrentSnap = st.SolvedSnap = "同一个快照";
         var panel = new StagePanel(st);
         panel.SetStage(StageId.交付);
         return panel;
@@ -75,29 +68,35 @@ public class StagePanelPlainTextTests
         Assert.DoesNotContain("**", banner);
     }
 
+    /// <summary>
+    /// ★ 判据代号那条**现在走不到了**，但守卫要留着。
+    ///
+    /// `b.Name` 只在 `gate.Blocking` 非空时进横幅，而那要求门带 RequiredChecks 或
+    /// RequireAllOk —— 2026-09-02 重排之后**没有任何一道门带这两样**（原 ①→② 那道门
+    /// 随阶段一起没了，交付的门也按用户拍板去掉了 AllOk）⇒ 运行时构造不出那个状态。
+    ///
+    /// ⚠ 所以这里改成钉**源码**：剥壳那一步必须在。哪天再加一道带判据的门，
+    ///   代号就会从这条路漏出去 —— 那时守卫已经在位，而不是要等人想起来补。
+    /// </summary>
     [Fact]
-    public void 门禁横幅上不出现判据代号()
+    public void 门禁横幅剥判据代号的那一步还在()
     {
-        string banner = Label(LockedAtDelivery(), "_banner");
-        Assert.NotEqual("", banner);
-        Assert.DoesNotContain("②′", banner);
-        Assert.DoesNotContain("②″", banner);
-        // 名字本身要留着 —— 剥的是代号，不是把话删掉
-        Assert.Contains("管孔净流入", banner);
+        string src = System.IO.File.ReadAllText(System.IO.Path.Combine(
+            HandoverDoc.Root(), "Pt_Optimize", "UI", "StagePanel.cs"));
+        Assert.Contains("Criteria.Plain(b.Name)", src);
+        Assert.Contains("Plain(gate.Why)", src);
+        Assert.Contains("Plain(gate.How)", src);
     }
 
     /// <summary>
-    /// ★ 自证：横幅真的被拼出来了、而且确实处在「锁着」的状态。
-    /// 否则上面两条断言面对的是一个空字符串，会一直报通过。
+    /// ★ 自证：这个状态下门确实是锁着的。否则上面那条面对的是空字符串，会一直报通过。
     /// </summary>
     [Fact]
     public void 自证_这个状态下门确实是锁着的()
     {
-        var panel = LockedAtDelivery();
-        string banner = Label(panel, "_banner");
+        string banner = Label(LockedAtDelivery(), "_banner");
         Assert.Contains("还没解锁", banner);
-        Assert.Contains("现在的状态", banner);   // Blocking 那一段真的进来了
-        Assert.Contains("-883.8", banner);       // 而且带着实测值
+        Assert.Contains("解得出来", banner);   // LockedWhy 真的进来了
     }
 }
 

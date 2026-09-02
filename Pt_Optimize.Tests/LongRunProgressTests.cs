@@ -208,7 +208,7 @@ public class LongRunProgressTests
         Assert.Equal(5, st.RunningPct);
         Assert.Contains("已跑 1.5 分", st.RunningNote);
 
-        panel.SetStage(StageId.定尺寸);   // 内含 Refresh2
+        panel.SetStage(StageId.整线核算);   // 内含 Refresh2
         var bar = (System.Windows.Forms.ProgressBar)typeof(StagePanel)
             .GetField("_bar", System.Reflection.BindingFlags.NonPublic
                             | System.Reflection.BindingFlags.Instance)!.GetValue(panel)!;

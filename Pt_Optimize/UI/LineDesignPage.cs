@@ -55,11 +55,27 @@ public sealed class LineDesignPage : TabPage
     private readonly NumericUpDown _discD = Num(60m, 30m, 300m, 2m, 0);
     private readonly NumericUpDown _tabLen = Num(50m, 20m, 400m, 5m, 0);
     private readonly NumericUpDown _tabW = Num(20m, 5m, 150m, 1m, 0);
-    private readonly NumericUpDown[] _tPlate =
+    // ★★★★★ 2026-09-02：这六个逐片数组原来都是**写死四个**的 readonly 字段。
+    //   用户实测：段表加到 HC4（4 段）之后界面仍只有 4 片，而核心要 5 片
+    //   （SegmentCount => SetpointC.Length，FlangeCount = n+1）⇒ 算的是另一个零件。
+    //   用户 2026-09-02：「UI 段数是必须可调整的」。
+    //   ⇒ 改由 RebuildPlateRows() 按当前段数生成；段表一动就重建。
+    /// <summary>逐片输入的容器。段数一变就整块清空重建 —— 见 <see cref="RebuildPlateRows"/>。</summary>
+    /// <summary>工具条第二排：图纸路与工具。主线在第一排。</summary>
+    /// <summary>工具条第一排：主线。</summary>
+    private readonly ToolStrip _tool = new()
+    { GripStyle = ToolStripGripStyle.Hidden, Font = UiScale.Ui(), Dock = DockStyle.Top };
+
+    private readonly ToolStrip _tool2 = new()
+    { GripStyle = ToolStripGripStyle.Hidden, Font = UiScale.Ui(), Dock = DockStyle.Top };
+
+    private readonly TableLayoutPanel _plateBox = new()
     {
-        Num(0.516m, 0.10m, 8.0m, 0.02m, 3), Num(0.855m, 0.10m, 8.0m, 0.02m, 3),
-        Num(0.776m, 0.10m, 8.0m, 0.02m, 3), Num(0.426m, 0.10m, 8.0m, 0.02m, 3),
+        ColumnCount = 2, AutoSize = true, Dock = DockStyle.Top,
+        AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0),
     };
+
+    private NumericUpDown[] _tPlate = System.Array.Empty<NumericUpDown>();
 
     /// <summary>
     /// 舌保温 mm（逐片）—— **优化变量**（用户 2026-08-25：
@@ -75,19 +91,13 @@ public sealed class LineDesignPage : TabPage
     /// 初始值 = <see cref="SizerOptions.InsLoMm"/>（0.3 ≈ **裸舌**）：
     /// 它是旋钮自己的下界，也是一个**真实物理状态**，不是捏出来的数。
     /// </summary>
-    private readonly NumericUpDown[] _tabIns =
-    {
-        Ins(), Ins(), Ins(), Ins(),
-    };
+    private NumericUpDown[] _tabIns = System.Array.Empty<NumericUpDown>();
 
     /// <summary>
     /// 管孔渐变环倍率（逐片）—— **优化变量**。初始值 = <see cref="SizerOptions.RingLo"/>
     /// （1.00 = **无台阶**，同样是真实状态）。上界 2.5 与 SizerOptions.RingHi 一致。
     /// </summary>
-    private readonly NumericUpDown[] _ringMul =
-    {
-        Ring(), Ring(), Ring(), Ring(),
-    };
+    private NumericUpDown[] _ringMul = System.Array.Empty<NumericUpDown>();
 
     /// <summary>
     /// ★★★ **渐变环的形状**：内级外扩 r₁ / 外级外扩 r₂ / 外级倍率 t₂（逐片，2026-08-30 补控件）。
@@ -119,9 +129,9 @@ public sealed class LineDesignPage : TabPage
     {
         Text = "逐片自定（不勾 = 用旧规则）", AutoSize = true,
     };
-    private readonly NumericUpDown[] _ringR1 = { RingR(), RingR(), RingR(), RingR() };
-    private readonly NumericUpDown[] _ringR2 = { RingR2(), RingR2(), RingR2(), RingR2() };
-    private readonly NumericUpDown[] _ringT2 = { Ring(), Ring(), Ring(), Ring() };
+    private NumericUpDown[] _ringR1 = System.Array.Empty<NumericUpDown>();
+    private NumericUpDown[] _ringR2 = System.Array.Empty<NumericUpDown>();
+    private NumericUpDown[] _ringT2 = System.Array.Empty<NumericUpDown>();
     // ⚠ 文字要短到**放得下**（2026-08-20 实测截图里这两行断在半个词上：
     //   「解析形状（圆盘 + 梯形舌片，程」「Rhino .3dm 文件（任意形状：阶」）。
     //   它们已经是 AutoSize + 跨两列了 —— 截断的原因是文字本身比左栏还宽，
@@ -412,7 +422,7 @@ public sealed class LineDesignPage : TabPage
         // ⚠ ToolStrip **不继承父窗体的字体**（它用 ToolStripManager 的默认字体）。
         //   所以在 Form 上设 Font 对工具条一点用都没有 —— 用户 2026-08-18 反馈
         //   「下排的字还是太小」，指的就是这一排。必须逐个显式设。
-        var tool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, Font = UiScale.Ui() };
+        var tool = _tool;   // 第一排＝主线（MainForm 会往里插自动定厚/搜形状）
         _btnRun = Btn("核算整线", (_, _) => _ = RunAsync(false));
         _btnAuto = Btn("自动定厚", (_, _) => _ = RunAsync(true));
         _btnVerify = Btn("◆ 加密复算（算到数不再变）", (_, _) => _ = VerifyMeshAsync());
@@ -470,19 +480,23 @@ public sealed class LineDesignPage : TabPage
         //   另存要读本页的解），只是**摆在别处** —— 见 MainForm 装配。
         //
         // 本页现在只剩「关于当前这个设计」的两个命令。
+        // ── 第一排：**主线**。工程师照蓝色指示走的就是这几个，按先后排。
+        //   ⚠ Btn() **只造不挂** —— 忘了 Items.Add，按钮就成了「造好了没接线」（本仓头号敌人）。
+        //     2026-09-02 阶段轨重排时又栽了一次：原 ④ 页删掉，而自动定厚/搜形状/厚度灵敏度
+        //     原来挂在那一页 ⇒ 三个按钮当场从屏幕上消失。抓图才看出来。
         tool.Items.Add(_btnRun);
-        // ★★★ 2026-08-30：差点又栽在上面那条警告上 —— 复核按钮造好了、方法接好了、
-        //   门也要求它了，**就是没加这一行** ⇒ 它不在屏幕上，工程师点不到。
-        //   摆在「核算整线」旁边：解完就该复核，两件事是同一页上的先后。
         tool.Items.Add(_btnVerify);
-        tool.Items.Add(_btnAnalyze);
-        // ⚠ Btn() **只造不挂** —— 忘了这一行，按钮就成了「造好了没接线」（本项目头号敌人）。
-        tool.Items.Add(_btnToAnalytic);
-        tool.Items.Add(_btnExportRead);
-        tool.Items.Add(new ToolStripSeparator());
         _prog.Size = new Size(UiScale.S(160), UiScale.S(16));
         tool.Items.Add(_prog);
         tool.Items.Add(_status);
+
+        // ── 第二排：**图纸路与工具**。主线之外的东西压在下面一排，
+        //   一排塞八个正是 2026-08-20 拆页的病因。
+        //   （自动定厚/搜形状/厚度灵敏度由 MainForm 插到这一排的最前面 —— 见 MountSecondRow）
+        _tool2.Items.Add(new ToolStripSeparator());
+        _tool2.Items.Add(_btnAnalyze);
+        _tool2.Items.Add(_btnToAnalytic);
+        _tool2.Items.Add(_btnExportRead);
 
         // ── 输入面板
         var input = _inputPanel = new TableLayoutPanel
@@ -602,7 +616,7 @@ public sealed class LineDesignPage : TabPage
             "勾上的级厚度锁死，优化器只调其余级。典型用法：外圈勾上 = 外圈不动、只调内圈。" +
             "先点「分析几何变数」才会列出各级。");
 
-        Head("法兰形状（解析模式；四片同形状，厚度各自独立）");
+        Head($"法兰形状（解析模式；{PlateNames().Length} 片同形状，厚度各自独立）");
         Row("圆盘直径 mm", _discD,
             "缩小它是本问题里少有的「三者同向」：省铂 + 放松焊接下界 + 改善端片热平衡。\n" +
             "⇒ **最优盘径就在下界上**，而下界是判据「圆盘盖得住管孔」，**算得出来、不用搜**：\n" +
@@ -616,70 +630,13 @@ public sealed class LineDesignPage : TabPage
         Row("舌片长度 mm", _tabLen, "省铂宜短；但舌片越长形状数 Ψ 越小、局部越不易过热");
         Row("舌端半宽 mm", _tabW);
 
-        Head("法兰厚度 mm / 厚度标度（可点「自动定厚」求解）");
-        string tipPlate =
-            "**最强的旋钮**（0.8 档 2026-08 离线实测，端点均已收敛）：\n" +
-            $"  法兰增量温降 {dDip_dPlate:+0.0;−0.0} K/mm　圆盘区最高温 −14.6 K/mm　法兰重 +264 g/mm\n" +
-            "⚠ ③ 是**正号** —— 加厚会把 ③ 推向限值。「哪里热就加厚哪里」在这里是反的：\n" +
-            "  加厚同时降单位面积发热（∝1/t）与增强横向导热（∝t），后者把热从管根抽走。\n" +
-            "共用片承 √3 倍电流、发热 3 倍 ⇒ 必须比端片厚，四片等厚不是最优。";
-        for (int i = 0; i < 4; i++) Row(names[i], _tPlate[i], tipPlate);
-
-        // ★ 舌保温与环倍率是**优化变量**，此前本页没有控件 ⇒ 只能从设计记录继承（见 _tabIns 头注）。
-        //   用户 2026-08-25 定：这两项由优化器给答案，UI 只给**初始值**。
-        Head("舌保温 mm（优化变量，下界 0.3 = 裸舌）");
-        // ⚠ 提示文字用 Environment.NewLine 拼，**不写反斜杠转义** ——
-        //   本仓的写入链路会把转义序列改成真字符，字面量当场断掉（今天又踩了一次）。
-        string tipIns =
-            $"D8 里它是**免费旋钮**：主要动「从管子抽多少热」"
-            + $"（判据 {Criteria.Explain("管孔净流入")} 与 {Criteria.Explain("③")}），" + Environment.NewLine +
-            "而对 圆盘区最高温（圆盘区局部峰值）几乎不动 —— 所以它先调，板厚只做接力与省铂。" + Environment.NewLine +
-            "初始值取下界 0.3（≈裸舌）：那是真实状态，不是捏的数。优化器会自己往上加。";
-        for (int i = 0; i < 4; i++) Row(names[i], _tabIns[i], tipIns);
-
-        Head("管孔渐变环倍率（优化变量，1.00 = 无台阶）");
-        string tipRing =
-            "只压**管孔周围**的局部电流拥塞（判据 圆盘区最高温），作用范围 r ≤ 孔+6 mm。" + Environment.NewLine +
-            "⚠ **这个灵敏度随形状变号，别照抄任何一个数**（2026-08-28 实测）：" + Environment.NewLine +
-            "　· 窄舌形状上曾测得 d圆盘区最高温/d倍率 ≈ **−1.4** K/单位（加环压得住）；" + Environment.NewLine +
-            // ★ 2026-09-02：原文在这几行里直接印命令行开关名 `--monotone` 给现场工程师看。
-            //   用户拍板：APP 不留命令行形式的操作，界面上也不该出现我的工装词汇。
-            //   实测结论保留（它是真的、有日期、有数），只是不再报是哪个开关跑的。
-            "　· **现役宽舌形状**上，全量程实测（0.8 档，2026-08-30 首次真跑）：" + Environment.NewLine +
-            "　　倍率 1.00→2.50 把 圆盘区最高温 从 **−0.208 挪到 −0.124**（限值 ≤5，越大越差）" + Environment.NewLine +
-            "　　⇒ **+0.084 K，方向相反**，却多花 **137 g** 铂 —— 舌片宽了，孔周本来就不拥塞。" + Environment.NewLine +
-            "　　⚠ 更正（2026-08-30）：这一行 08-29 写的时候也标着「实测」，" + Environment.NewLine +
-            "　　　但那时**一次没跑过** —— 当时的 +0.08 是从别处测得的导数 +0.056 线性外推的。" + Environment.NewLine +
-            "　　　跑完之后两者对上了（+0.084），但**当时那个出处是假的**。" + Environment.NewLine +
-            "⇒ **你不必自己判断动不动它**：求解器每轮会对你手上这个形状当场量一次，" + Environment.NewLine +
-            "　抬它有没有用、值不值那点铂，比价结果印在输出框里。上限 2.5。" + Environment.NewLine +
-            "初始值 1.00 = 无台阶（真实状态）。";
-        for (int i = 0; i < 4; i++) Row(names[i], _ringMul[i], tipRing);
-
-        Head("管孔渐变环形状（r₁ / r₂ / t₂，2026-08-30 补成输入）");
-        string tipShape =
-            "★ 「外扩」是**从管轴量的半径**减去管孔半径，不是「画在盘上的一圈」。" + Environment.NewLine +
-            "　厚度按 r 分级：r ≤ 孔+r₁ 取 t₁×板厚；孔+r₁ < r ≤ 孔+r₂ 取 t₂×板厚；再外为板厚。" + Environment.NewLine +
-            "⚠ **超过盘半径之后它继续作用在舌片根部** —— 盘 Ø60 时盘面只到 孔+4.2 mm，" + Environment.NewLine +
-            "　r₂ 再往外加厚的是舌根。实测把 r₂ 扫到 16 mm 仍持续见效，就是这个缘故。" + Environment.NewLine +
-            "── 单调性实测（0.8 档，2026-08-30 首次跑）" + Environment.NewLine +
-            "　r₁ 1→10／r₂ 4→16／t₂ 1→2：三条对 抽热D、③、圆盘区最高温 **全单调** ⇒ 可二分。" + Environment.NewLine +
-            "　但方向是：只有 管孔净流入 变好，**③ 与 圆盘区最高温 都变坏** ⇒ 它们是「花铂换抽热」的旋钮，" + Environment.NewLine +
-            "　不是「治判据」的旋钮。所以**没有**进求解器的分配表（那要先做敏感度矩阵）。" + Environment.NewLine +
-            "── 谁在动它们（2026-08-30 起变了）" + Environment.NewLine +
-            "　**t₂ 是求解器旋钮**：它是判据 管孔净流入 的**首选**候选，排在板厚前面 ——" + Environment.NewLine +
-            "　实测每克铂买到的裕度是板厚的 **1.7–3.3 倍**，而每单位 管孔净流入 的 ③ 代价几乎相同。" + Environment.NewLine +
-            "　「自动定厚」解完会把 t₂ 写回这里并自动勾上「逐片自定」。" + Environment.NewLine +
-            "　**r₁ / r₂ 不是**求解器旋钮：t₁ = t₂ = 1.00 时台阶根本不存在，挪半径无效。" + Environment.NewLine +
-            "　要让它们有意义，先把 t₁ 或 t₂ 抬离 1.00。";
-        Row("", _ringShapeCustom, tipShape);
-        for (int i = 0; i < 4; i++) Row($"{names[i]} r₁ mm", _ringR1[i], tipShape);
-        for (int i = 0; i < 4; i++) Row($"{names[i]} r₂ mm", _ringR2[i], tipShape);
-        for (int i = 0; i < 4; i++) Row($"{names[i]} t₂", _ringT2[i], tipShape);
-        _ringShapeCustom.CheckedChanged += (_, _) => SyncRingShape();
-        foreach (var n in _ringMul) n.ValueChanged += (_, _) => SyncRingShape();
-        _ringW.ValueChanged += (_, _) => SyncRingShape();
-        SyncRingShape();
+        // ★★★★★ 逐片输入：**行数按段数生成**（2026-09-02）。
+        //   原来是四段写死的 `for i < 4`。用户实测段表加到 HC4 之后界面仍只有 4 片，
+        //   而核心要 5 片 ⇒ 算的是另一个零件。用户：「UI 段数是必须可调整的」。
+        //   ⇒ 全部塞进一个可清空重建的容器，段表一动就重建（见 RebuildPlateRows）。
+        input.Controls.Add(_plateBox);
+        input.SetColumnSpan(_plateBox, 2);
+        RebuildPlateRows();
 
         Head("保温与夹持");
         Row("法兰保温", _flIns, "包纤维会降低自给所需厚度；不包则法兰更凉但从管子抽热更多");
@@ -756,6 +713,9 @@ public sealed class LineDesignPage : TabPage
         main.Panel2.Controls.Add(rightSplit);
 
         Controls.Add(main);
+        // ⚠ Dock=Top 的加入顺序是**倒着**的：后加的在上面。要「主线在上、工具在下」，
+        //   就得先加第二排、再加第一排。
+        Controls.Add(_tool2);
         Controls.Add(tool);
 
         // 首屏三张图先摆空态 —— 开箱看到的不该是三个 −10…10 的空坐标轴
@@ -785,16 +745,21 @@ public sealed class LineDesignPage : TabPage
 
         _out.Text =
             (bootFloor.Length > 0
-             ? "★ 开箱默认的舌长装不下铜排，已按装配下界顶高：" + Environment.NewLine
+             ? "★ 舌长装不下铜排，已顶到装配下界：" + Environment.NewLine
                + bootFloor
-               + "  （舌长不是自由旋钮：它 = 圆盘切点 + 压接段 + 自由段。"
-               + "想要更短的舌片要改盘径或铜排尺寸。）" + Environment.NewLine + Environment.NewLine
+               + Environment.NewLine
              : "") +
-            "改任何一个参数，**会自动重算**（停手约 1.5 秒后开始，分钟级，随时可取消）。\r\n" +
-            "改的当下会先给两样东西：解析量（精确）与线性外推的预测值（标「预测」），\r\n" +
-            "真解跑完再覆盖它们。\r\n\r\n" +
-            "想直接看设计记录：工具条上选「设计记录 ▾」再点「▶ 复现设计记录」。\r\n" +
-            "按 F1 有图文说明书。";
+            // ★ 2026-09-02 首屏说明大幅缩短（用户：「对工程师不必要的说明可以消除」）。
+            //   删掉的是「自动重算怎么触发」「预测值怎么来」这类**程序内部机制**
+            //   —— 工程师改完参数会看到它自己重算，不必先读一段说明。
+            //   留下的那条是**程序改了他填的数**：舌长被顶高了，不说就是静默改输入。
+            "填好左边的参数（或选一张 .3dm 图纸），点「核算整线」。";
+        // ★★★ 2026-09-02 抓图抓到：首屏这段的 `**` **原样露在屏幕上**。
+        //   病因与 MainForm 里记着的那条同源 —— 本框此刻**句柄还没建**，
+        //   `.Text =` 不触发 TextChanged（原生控件没窗口就没有 EN_CHANGE 通知）
+        //   ⇒ TextFmt.Hook 的事件永远不会跑到这一段。
+        //   ⇒ 这里**直接调一次**，不押在事件时机上。
+        TextFmt.Write(_out, _out.Text);
         SyncGeomSource();
         HandleCreated += (_, _) => BeginInvoke(() =>
         {
@@ -1076,8 +1041,7 @@ public sealed class LineDesignPage : TabPage
     {
         // 读 .3dm 反推台阶 —— 解析形状是程序生成的，没有图纸可反推
         "geom.analyze" => !_srcAnalytic.Checked && !string.IsNullOrWhiteSpace(_file3dm[0].Text),
-        // 形状搜索只在解析模式有意义：.3dm 的形状由图纸给定，不是可搜索的自由度
-        "shape.search" => _srcAnalytic.Checked,
+        // 形状搜索只在解析模式有意义：.3dm 的形状由图纸给定，不是可搜索的自由度（见下）
         // 图纸几何 → 参数：**得先分析过**（否则没有形状可交），且只在 .3dm 模式下才谈得上
         "geom.toanalytic" => !_srcAnalytic.Checked && _shape is not null,
         // ★★ 加密复算：**没有当前参数的解就不适用**（2026-09-02 抓图抓到）。
@@ -1087,6 +1051,21 @@ public sealed class LineDesignPage : TabPage
         //   ⚠ 条件与 VerifyMeshAsync 的前置**同一套**：有解、且解对应当前参数。
         //     两处不一致的话，要么灰着却能跑，要么亮着却拒绝 —— 都在骗人。
         "core.verifyMesh" => Shared is { Fresh: true, Last: { Ok: true } },
+
+        // ★★★★★ 原 ③→④ 那道门**降级到这里**（2026-09-02 阶段轨合并）。
+        //
+        //   那道门的条件是「解得出来且收敛 + 参数没动过」，理由写在 Flow.cs：
+        //   「定尺寸器每轮都要跑一次整线解，起点必须是一个解得出来且收敛的构型」
+        //   —— 否则几十分钟全烧在一个坏几何上。
+        //
+        //   ⚠ 合并阶段时这道门**真的消失过**：接线测试当场报
+        //   「④ 未解锁时它是禁用的　Enabled=True」。计划里我自己把它标成
+        //   「本次唯一真风险」，然后还是漏了 —— 是门抓住的，不是我记得。
+        //   ⚠ 这不是风险判断（那类由工程师定，见 SaveAsDesignSpec），
+        //     是**没有起点就没法开始**。
+        "core.autoThick" => Shared is { Fresh: true, Last: { Ok: true, Converged: true } },
+        "shape.search" => _srcAnalytic.Checked
+                          && Shared is { Fresh: true, Last: { Ok: true, Converged: true } },
         // 另存：存的是**当前这个解**，所以「参数没再动过」是硬条件。
         //   ⚠ 「判据全过」**不再是条件**（2026-09-02 改）。旧注释写着
         //     「不成立的设计不该有一个能落档的形态」—— 那是程序替工程师做判断。
@@ -1312,8 +1291,15 @@ public sealed class LineDesignPage : TabPage
             foreach (Control k in c.Controls) Watch(k);
         }
         foreach (Control c in Controls) Watch(c);
-        _segGrid.CellValueChanged += (_, _) => ParamChanged();
-        _segGrid.RowsRemoved += (_, _) => ParamChanged();
+        // ★★★★★ 段表一动，**逐片输入要跟着重建**（2026-09-02，用户点出的 bug）。
+        //   片数 = 段数 + 1。此前界面写死四片：段表加到 HC4 之后核心要 5 片，
+        //   而界面只有 4 片 ⇒ 算的是另一个零件。用户：「UI 段数是必须可调整的」。
+        //   ⚠ 三个事件都要挂：改名（CellValueChanged）、删行（RowsRemoved）、
+        //     加行（RowsAdded）—— 只挂前两个的话「加一段」正好漏掉。
+        void SegsChanged() { RebuildPlateRows(); ParamChanged(); }
+        _segGrid.CellValueChanged += (_, _) => SegsChanged();
+        _segGrid.RowsRemoved += (_, _) => SegsChanged();
+        _segGrid.RowsAdded += (_, _) => SegsChanged();
         // 加一段是真的会改变段数与法兰片数 —— 与删一段同等重要，此前只挂了删。
         _segGrid.RowsAdded += (_, _) => ParamChanged();
     }
@@ -2954,6 +2940,188 @@ public sealed class LineDesignPage : TabPage
             Shared?.SetRunning(null);
             PushFlow();
         }
+    }
+
+    /// <summary>
+    /// ★★★★★ **按当前段数重建逐片输入**（2026-09-02，用户点出的 bug）。
+    ///
+    /// 片数 = 段数 + 1（<c>LineSolver.FlangeCount</c>）。首片是**入口**、末片是**出口**，
+    /// 中间是共用片，名字跟着段表走（HC1|HC2 这种）。
+    ///
+    /// ⚠ 重建会**新造控件**，所以每次都要重挂 <c>Watch</c>（自动重算的监听）——
+    ///   忘了就变成「改了逐片值而不会重算」，是本仓最怕的安静失败。
+    /// ⚠ 旧值按下标搬过来：加一段时新出现的那片沿用**上一片共用片**的值，
+    ///   与 <see cref="DesignSpec.Fit"/> 的补法一致（别让两处各补各的）。
+    /// </summary>
+    private void RebuildPlateRows()
+    {
+        var names = PlateNames();
+        int n = names.Length;
+        if (_tPlate.Length == n && _plateBox.Controls.Count > 0) { RenamePlateRows(names); return; }
+
+        double[] Keep(NumericUpDown[] old, double dflt)
+        {
+            var v = old.Select(x => (double)x.Value).ToArray();
+            if (v.Length == 0) return Enumerable.Repeat(dflt, n).ToArray();
+            var list = new List<double>(v);
+            while (list.Count < n) list.Insert(list.Count - 1, list[Math.Max(0, list.Count - 2)]);
+            while (list.Count > n && list.Count > 2) list.RemoveAt(list.Count - 2);
+            return list.ToArray();
+        }
+        // ⚠ 开箱默认必须是原来那四个值 —— 2026-09-02 我第一版用单一兜底 0.8 填满，
+        //   抓图看到四片全成了 0.800：**开箱默认的设计被悄悄换掉了**。
+        double[] vT = _tPlate.Length > 0 ? Keep(_tPlate, 0.8)
+                    : FitDefault(new[] { 0.516, 0.855, 0.776, 0.426 }, n);
+        var vI = Keep(_tabIns, 0.4); var vR = Keep(_ringMul, 1.0);
+        var v1 = Keep(_ringR1, 1.0); var v2 = Keep(_ringR2, 6.0); var vT2 = Keep(_ringT2, 1.0);
+
+        _plateBox.SuspendLayout();
+        foreach (Control c in _plateBox.Controls.Cast<Control>().ToArray()) c.Dispose();
+        _plateBox.Controls.Clear();
+
+        _tPlate  = Enumerable.Range(0, n).Select(i => Num((decimal)vT[i], 0.10m, 8.0m, 0.02m, 3)).ToArray();
+        _tabIns  = Enumerable.Range(0, n).Select(i => Ins()).ToArray();
+        _ringMul = Enumerable.Range(0, n).Select(i => Ring()).ToArray();
+        _ringR1  = Enumerable.Range(0, n).Select(i => RingR()).ToArray();
+        _ringR2  = Enumerable.Range(0, n).Select(i => RingR2()).ToArray();
+        _ringT2  = Enumerable.Range(0, n).Select(i => Ring()).ToArray();
+        for (int i = 0; i < n; i++)
+        {
+            _tabIns[i].Value  = (decimal)Math.Clamp(vI[i],  (double)_tabIns[i].Minimum,  (double)_tabIns[i].Maximum);
+            _ringMul[i].Value = (decimal)Math.Clamp(vR[i],  (double)_ringMul[i].Minimum, (double)_ringMul[i].Maximum);
+            _ringR1[i].Value  = (decimal)Math.Clamp(v1[i],  (double)_ringR1[i].Minimum,  (double)_ringR1[i].Maximum);
+            _ringR2[i].Value  = (decimal)Math.Clamp(v2[i],  (double)_ringR2[i].Minimum,  (double)_ringR2[i].Maximum);
+            _ringT2[i].Value  = (decimal)Math.Clamp(vT2[i], (double)_ringT2[i].Minimum,  (double)_ringT2[i].Maximum);
+        }
+
+        void Head(string t)
+        {
+            var l = new Label
+            {
+                Text = t, AutoSize = true, Margin = new Padding(0, 10, 0, 4),
+                Font = UiScale.Ui(FontStyle.Bold), ForeColor = Color.FromArgb(40, 90, 140),
+            };
+            _plateBox.Controls.Add(l); _plateBox.SetColumnSpan(l, 2);
+        }
+        void Row(string label, Control c, string? tip = null)
+        {
+            var l = new Label
+            { Text = label, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 4, 0) };
+            // ⚠ 提示语里装着**实测**（单调性、随形状变号、每克铂买到的裕度）——
+            //   2026-09-02 我重建这一区时把它们整段删掉过一次，那是把已经落进 APP 的知识又弄丢。
+            if (tip is not null) new ToolTip().SetToolTip(l, tip);
+            _plateBox.Controls.Add(l);
+            _plateBox.Controls.Add(c);
+        }
+
+        string tipPlate =
+            "**最强的旋钮**（0.8 档 2026-08 离线实测，端点均已收敛）：\n" +
+            $"  法兰增量温降 {dDip_dPlate:+0.0;−0.0} K/mm　圆盘区最高温 −14.6 K/mm　法兰重 +264 g/mm\n" +
+            "⚠ ③ 是**正号** —— 加厚会把 ③ 推向限值。「哪里热就加厚哪里」在这里是反的：\n" +
+            "  加厚同时降单位面积发热（∝1/t）与增强横向导热（∝t），后者把热从管根抽走。\n" +
+            "共用片承 √3 倍电流、发热 3 倍 ⇒ 必须比端片厚，四片等厚不是最优。";
+        string tipIns =
+            $"D8 里它是**免费旋钮**：主要动「从管子抽多少热」"
+            + $"（判据 {Criteria.Explain("管孔净流入")} 与 {Criteria.Explain("③")}），" + Environment.NewLine +
+            "而对 圆盘区最高温（圆盘区局部峰值）几乎不动 —— 所以它先调，板厚只做接力与省铂。" + Environment.NewLine +
+            "初始值取下界 0.3（≈裸舌）：那是真实状态，不是捏的数。优化器会自己往上加。";
+        string tipRing =
+            "只压**管孔周围**的局部电流拥塞（判据 圆盘区最高温），作用范围 r ≤ 孔+6 mm。" + Environment.NewLine +
+            "⚠ **这个灵敏度随形状变号，别照抄任何一个数**（2026-08-28 实测）：" + Environment.NewLine +
+            "　· 窄舌形状上曾测得 d圆盘区最高温/d倍率 ≈ **−1.4** K/单位（加环压得住）；" + Environment.NewLine +
+            // ★ 2026-09-02：原文在这几行里直接印命令行开关名 `--monotone` 给现场工程师看。
+            //   用户拍板：APP 不留命令行形式的操作，界面上也不该出现我的工装词汇。
+            //   实测结论保留（它是真的、有日期、有数），只是不再报是哪个开关跑的。
+            "　· **现役宽舌形状**上，全量程实测（0.8 档，2026-08-30 首次真跑）：" + Environment.NewLine +
+            "　　倍率 1.00→2.50 把 圆盘区最高温 从 **−0.208 挪到 −0.124**（限值 ≤5，越大越差）" + Environment.NewLine +
+            "　　⇒ **+0.084 K，方向相反**，却多花 **137 g** 铂 —— 舌片宽了，孔周本来就不拥塞。" + Environment.NewLine +
+            "　　⚠ 更正（2026-08-30）：这一行 08-29 写的时候也标着「实测」，" + Environment.NewLine +
+            "　　　但那时**一次没跑过** —— 当时的 +0.08 是从别处测得的导数 +0.056 线性外推的。" + Environment.NewLine +
+            "　　　跑完之后两者对上了（+0.084），但**当时那个出处是假的**。" + Environment.NewLine +
+            "⇒ **你不必自己判断动不动它**：求解器每轮会对你手上这个形状当场量一次，" + Environment.NewLine +
+            "　抬它有没有用、值不值那点铂，比价结果印在输出框里。上限 2.5。" + Environment.NewLine +
+            "初始值 1.00 = 无台阶（真实状态）。";
+        string tipShape =
+            "★ 「外扩」是**从管轴量的半径**减去管孔半径，不是「画在盘上的一圈」。" + Environment.NewLine +
+            "　厚度按 r 分级：r ≤ 孔+r₁ 取 t₁×板厚；孔+r₁ < r ≤ 孔+r₂ 取 t₂×板厚；再外为板厚。" + Environment.NewLine +
+            "⚠ **超过盘半径之后它继续作用在舌片根部** —— 盘 Ø60 时盘面只到 孔+4.2 mm，" + Environment.NewLine +
+            "　r₂ 再往外加厚的是舌根。实测把 r₂ 扫到 16 mm 仍持续见效，就是这个缘故。" + Environment.NewLine +
+            "── 单调性实测（0.8 档，2026-08-30 首次跑）" + Environment.NewLine +
+            "　r₁ 1→10／r₂ 4→16／t₂ 1→2：三条对 抽热D、③、圆盘区最高温 **全单调** ⇒ 可二分。" + Environment.NewLine +
+            "　但方向是：只有 管孔净流入 变好，**③ 与 圆盘区最高温 都变坏** ⇒ 它们是「花铂换抽热」的旋钮，" + Environment.NewLine +
+            "　不是「治判据」的旋钮。所以**没有**进求解器的分配表（那要先做敏感度矩阵）。" + Environment.NewLine +
+            "── 谁在动它们（2026-08-30 起变了）" + Environment.NewLine +
+            "　**t₂ 是求解器旋钮**：它是判据 管孔净流入 的**首选**候选，排在板厚前面 ——" + Environment.NewLine +
+            "　实测每克铂买到的裕度是板厚的 **1.7–3.3 倍**，而每单位 管孔净流入 的 ③ 代价几乎相同。" + Environment.NewLine +
+            "　「自动定厚」解完会把 t₂ 写回这里并自动勾上「逐片自定」。" + Environment.NewLine +
+            "　**r₁ / r₂ 不是**求解器旋钮：t₁ = t₂ = 1.00 时台阶根本不存在，挪半径无效。" + Environment.NewLine +
+            "　要让它们有意义，先把 t₁ 或 t₂ 抬离 1.00。";
+
+        Head($"法兰厚度 mm（{n} 片＝{n - 1} 段＋1；可点「自动定厚」求解）");
+        for (int i = 0; i < n; i++) Row(names[i], _tPlate[i], tipPlate);
+        Head("逐片舌保温 mm（不花铂的旋钮）");
+        for (int i = 0; i < n; i++) Row(names[i], _tabIns[i], tipIns);
+        Head("管孔渐变环倍率（1.00 = 无台阶）");
+        for (int i = 0; i < n; i++) Row(names[i], _ringMul[i], tipRing);
+        Head("管孔渐变环形状 r₁ / r₂ / t₂");
+        for (int i = 0; i < n; i++) Row($"{names[i]} r₁ mm", _ringR1[i], tipShape);
+        for (int i = 0; i < n; i++) Row($"{names[i]} r₂ mm", _ringR2[i], tipShape);
+        for (int i = 0; i < n; i++) Row($"{names[i]} t₂", _ringT2[i], tipShape);
+
+        _plateBox.ResumeLayout();
+        // ★ 新造的控件**自动接上**自动重算：构造函数里的 Watch 给每个容器挂了
+        //   `c.ControlAdded += (_, e) => Watch(e.Control)` ⇒ 往 _plateBox 里 Add 就会被监听。
+        //   （靠这条而不是自己再调一次 Watch —— 那是构造函数里的局部函数，够不到。
+        //     这条依赖有门盯着：见 SegmentCountTests。）
+        SyncRingShape();
+    }
+
+    /// <summary>把一组「按 4 片写的」默认值调到 n 片 —— 与 DesignSpec.Fit 同一个补法。</summary>
+    private static double[] FitDefault(double[] a, int n)
+    {
+        var list = new List<double>(a);
+        while (list.Count < n) list.Insert(list.Count - 1, list[list.Count - 2]);
+        while (list.Count > n && list.Count > 2) list.RemoveAt(list.Count - 2);
+        return list.ToArray();
+    }
+
+    /// <summary>
+    /// 主线工具条的**第二排**。一排塞八个正是 2026-08-20 拆页的病因 ——
+    /// 阶段轨收成两格之后按钮回到同一页，用两排分开「主线」与「图纸路/工具」。
+    /// </summary>
+    /// <summary>主线按钮插到**第一排**「核算整线」之后 —— 它们是工程师照蓝链走的那几个。</summary>
+    internal void MountMainRow(ToolStripItem[] items)
+    {
+        int at = _tool.Items.IndexOf(_btnVerify);   // 摆在「加密复算」之前：解 → 定厚 → 复核
+        foreach (var it in items) _tool.Items.Insert(at++, it);
+    }
+
+    /// <summary>工具按钮追加到第二排。</summary>
+    internal void MountSecondRow(ToolStripItem[] items)
+    {
+        foreach (var it in items) _tool2.Items.Add(it);
+    }
+
+    /// <summary>片名：首=入口、末=出口，中间按段表拼「HC1|HC2」。</summary>
+    private string[] PlateNames()
+    {
+        var segs = _segs.Where(x => !string.IsNullOrWhiteSpace(x.名称)).Select(x => x.名称).ToArray();
+        if (segs.Length == 0) segs = new[] { "HC1", "HC2", "HC3" };
+        var r = new List<string> { "入口" };
+        for (int i = 0; i + 1 < segs.Length; i++) r.Add($"{segs[i]}|{segs[i + 1]}");
+        r.Add("出口");
+        return r.ToArray();
+    }
+
+    /// <summary>段数没变、只是段改名时，只换标签，不重建控件（免得把值与监听都丢了）。</summary>
+    private void RenamePlateRows(string[] names)
+    {
+        var labs = _plateBox.Controls.Cast<Control>().OfType<Label>()
+                            .Where(l => l.Font.Bold == false).ToArray();
+        int k = 0;
+        foreach (string suffix in new[] { "", "", "", " r₁ mm", " r₂ mm", " t₂" })
+            for (int i = 0; i < names.Length && k < labs.Length; i++, k++)
+                labs[k].Text = names[i] + suffix;
     }
 
     private void PushFlow()

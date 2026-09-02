@@ -371,7 +371,7 @@ static class Walk
         H("④ 逐级定厚（.3dm 走 FlangeAutoSizer.SolveByLevel）");
         {
             Call(main, "SyncGates"); Pump(150);
-            var g4 = Gate.Evaluate(StageId.定尺寸, flow);
+            var g4 = Gate.Evaluate(StageId.交付, flow);
             OK("③ 收敛之后 ④ 解锁", g4.Unlocked, g4.Unlocked ? "" : "★ " + g4.Why);
             if (!g4.Unlocked) return Done();
 
@@ -738,7 +738,7 @@ static class Walk
             OK("无法判定的段利用率不塞假数字", rs.All(x => !x.Unknown || double.IsNaN(x.Utilization)));
 
             // ★ 拓扑：② 是末端，不该解锁任何东西
-            bool s4 = Gate.Evaluate(StageId.定尺寸, flow).Unlocked;
+            bool s4 = Gate.Evaluate(StageId.交付, flow).Unlocked;
             OK("② 跑完之后 ④ 仍然锁着（② 是末端分支）", !s4,
                s4 ? "★ ② 不该解锁任何阶段" : "");
         }
@@ -830,7 +830,7 @@ static class Walk
             Pump(200);
             Console.WriteLine($"  FlowState: Last={(flow.Last is null ? "null" : "有")}"
                 + $"　Ok={flow.Last?.Ok}　Converged={flow.Last?.Converged}　Fresh={flow.Fresh}");
-            var g4 = Gate.Evaluate(StageId.定尺寸, flow);
+            var g4 = Gate.Evaluate(StageId.交付, flow);
             OK("③ 收敛之后 ④ 解锁", g4.Unlocked, g4.Unlocked ? "" : "★ " + g4.Why);
             var gs4 = Flow.Stage(StageId.整线核算).GateToUnlockNext!;
             OK("④ 的门是「收敛」而不是「判据全过」",
@@ -885,7 +885,7 @@ static class Walk
             Call(main, "SyncGates");
             Pump(200);
             var g5 = Gate.Evaluate(StageId.交付, flow);
-            var gs5 = Flow.Stage(StageId.定尺寸).GateToUnlockNext!;
+            var gs5 = Flow.Stage(StageId.整线核算).GateToUnlockNext!;
             OK("④→⑤ 的门是「判据全过」", gs5.RequireAllOk, $"RequireAllOk={gs5.RequireAllOk}");
             var rr = (LineResult?)F(line, "LastResult");
             bool ok = rr?.AllOk == true;

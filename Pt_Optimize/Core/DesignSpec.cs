@@ -221,6 +221,49 @@ public sealed class DesignSpec
     /// 否则 <see cref="W08"/>/<see cref="W06"/> 这两个 static 实例会被就地改掉，
     /// 后面每一次「设计记录」都变成上一次扰动的结果（典型的静默污染）。
     /// </summary>
+    /// <summary>
+    /// 法兰片数 = 段数 + 1（<c>LineSolver.FlangeCount</c> 的口径，别在别处再算一遍）。
+    /// </summary>
+    public int FlangeCount => SetpointC.Length + 1;
+
+    /// <summary>
+    /// ★★★★★ **把逐片数组调成当前段数该有的长度**（2026-09-02 用户：「UI 段数是必须可调整的」）。
+    ///
+    /// 病灶：核心一直是 n 段的（<c>SegmentCount => SetpointC.Length</c>、<c>FlangeCount = n+1</c>），
+    /// 而**逐片数组一律写死四个**，存档也写死 <c>NeedA(..., 4)</c>，界面写死 <c>for i &lt; 4</c>。
+    /// ⇒ 段表加一段（用户实测加到 HC4），核心要 5 片而这些只有 4 片 ——
+    /// 要么当场崩，要么算的是**另一个零件**。
+    ///
+    /// ⚠ 补/删的位置**不是末尾**：这几个数组的第一个是**入口片**、最后一个是**出口片**，
+    /// 中间才是共用片。加一段加的是**共用片**，所以从倒数第二个位置增删，
+    /// 新的那片沿用上一片共用片的值。往末尾加会把「出口片」挤成共用片，
+    /// 而出口片的厚度/保温与共用片差着一倍以上 —— 那是静默换零件。
+    /// </summary>
+    public DesignSpec Fit()
+    {
+        int n = FlangeCount;
+        TabThickMm = FitArr(TabThickMm, n);
+        TabInsulMm = FitArr(TabInsulMm, n);
+        RingMul    = FitArr(RingMul,    n);
+        RingW1Mm   = FitArr(RingW1Mm,   n);
+        RingW2Mm   = FitArr(RingW2Mm,   n);
+        RingMul2   = FitArr(RingMul2,   n);
+        return this;
+    }
+
+    /// <summary>在**倒数第二个**位置增删，保住「首=入口、末=出口」。</summary>
+    private static double[] FitArr(double[] a, int n)
+    {
+        a ??= System.Array.Empty<double>();
+        if (a.Length == n) return a;
+        if (a.Length < 2) return System.Linq.Enumerable.Repeat(
+            a.Length == 1 ? a[0] : 0.0, n).ToArray();
+        var list = new System.Collections.Generic.List<double>(a);
+        while (list.Count < n) list.Insert(list.Count - 1, list[list.Count - 2]);
+        while (list.Count > n && list.Count > 2) list.RemoveAt(list.Count - 2);
+        return list.ToArray();
+    }
+
     public DesignSpec Clone()
     {
         var c = (DesignSpec)MemberwiseClone();

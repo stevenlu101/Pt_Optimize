@@ -67,7 +67,14 @@ public enum ChainId
 ///   而那个口子迟早会被第二个、第三个例外挤大。它没有门（前一格 GateToUnlockNext 为 null）
 ///   ⇒ 天然永远解锁，正合「说明书任何时候都该能看」。
 /// </summary>
-public enum StageId { 设计记录, 先决条件, 粗算, 整线核算, 定尺寸, 交付, 说明 }
+/// <summary>
+/// 阶段轨。★★★★★ 2026-09-02 由七格收成四格（原：设计记录/①先决条件/②粗算/③整线核算/
+/// ④定尺寸/⑤交付/说明）。依据是**实测**，不是审美 —— 见 <see cref="Flow.Stages"/> 上的说明。
+///
+/// 主线两格，直接对应用户说的模型：**输入 → 计算 → 储存结果报告与图档**。
+/// 「参考工具」与「使用说明」不带编号、永远进得去。
+/// </summary>
+public enum StageId { 整线核算, 交付, 参考工具, 说明 }
 
 /// <summary>
 /// 命令的三组分法 —— 沿用说明书里已经教给用户的那套（ManualPage §2.3）。
@@ -187,30 +194,30 @@ public static class Flow
     public static readonly CommandSpec[] Commands =
     {
         // ── ① 闸门 ─────────────────────────────────────────────────────
-        new("gate.ramp", "① 升温可达性", StageId.先决条件, ChainId.D升温闸,
+        new("gate.ramp", "升温可达性趋势", StageId.参考工具, ChainId.D升温闸,
             CmdGroup.页面参数, true, "毫秒",
             "5 档保温 × 4 档壁厚，闭式算升温时间与电流密度。**这是快筛，① 的交付判定在「③ 整线核算」给**"),
 
         // ── ② 快筛（解析·不可交付）──────────────────────────────────────
-        new("calc.segment", "计算 (F5)", StageId.粗算, ChainId.A单段解析,
+        new("calc.segment", "计算 (F5)", StageId.参考工具, ChainId.A单段解析,
             CmdGroup.页面参数, true, "秒级",
             "按左侧参数表解一次单段。**不含法兰** —— 报告里没有法兰的任何一项"),
-        new("sweep.insul", "扫描：保温厚度", StageId.粗算, ChainId.A单段扫描,
+        new("sweep.insul", "扫描：保温厚度", StageId.参考工具, ChainId.A单段扫描,
             CmdGroup.页面参数, true, "秒级", "内层保温 0–50 mm 扫 11 点"),
         // ⚠ 这里曾有第三个扫描「扫描：法兰厚度」，2026-08-20 删除：
         //   它传的量名 "flangeTf" 在 SegmentSolver.Sweep 里不存在，11 行全是同一个基准解。
         //   A 链结构上不含法兰 ⇒ 补 case 只能是假的。权威答案是 ④ 的「② 厚度灵敏度」。
-        new("sweep.eps", "扫描：铂发射率", StageId.粗算, ChainId.A单段扫描,
+        new("sweep.eps", "扫描：铂发射率", StageId.参考工具, ChainId.A单段扫描,
             CmdGroup.页面参数, true, "秒级", "铂表面发射率 0.10–0.30 扫 9 点"),
-        new("export.csv", "导出 CSV", StageId.粗算, ChainId.A单段解析,
+        new("export.csv", "导出 CSV", StageId.参考工具, ChainId.A单段解析,
             CmdGroup.导出, true, "即时", "导单段解的轴向温度分布"),
-        new("line.runAll", "核算全线", StageId.粗算, ChainId.B分段解析,
+        new("line.runAll", "核算全线", StageId.参考工具, ChainId.B分段解析,
             CmdGroup.页面参数, true, "即时", "逐段解析强度与铂重"),
-        new("line.bestGrade", "为各段选最省牌号", StageId.粗算, ChainId.B分段解析,
+        new("line.bestGrade", "为各段选最省牌号", StageId.参考工具, ChainId.B分段解析,
             CmdGroup.页面参数, true, "即时", "逐段试各牌号，取最省的那个"),
-        new("line.minWalls", "按强度取最小壁厚", StageId.粗算, ChainId.B分段解析,
+        new("line.minWalls", "按强度取最小壁厚", StageId.参考工具, ChainId.B分段解析,
             CmdGroup.页面参数, true, "即时", "把强度反算出的最小壁厚写回段表"),
-        new("line.flanges", "核算法兰（分钟级）", StageId.粗算, ChainId.B分段法兰,
+        new("line.flanges", "核算法兰（分钟级）", StageId.参考工具, ChainId.B分段法兰,
             CmdGroup.页面参数, true, "分钟级", "逐段一次耦合解，把法兰算进总铂"),
 
         // ── ③ 整线核算 ★ ──────────────────────────────────────────────
@@ -229,10 +236,10 @@ public static class Flow
             "把本页解析几何写成**单图层多级台阶**的 .3dm —— 一张 APP 自己读得回来的图。" +
             "现有的出图是多图层，读取端要单图层，于是「出图 → 去 Rhino 改 → 读回来核算」这条路是断的。" +
             "写完立刻回读校验"),
-        new("final.reproduce", "▶ 复现设计记录", StageId.设计记录, ChainId.C整线耦合,
+        new("final.reproduce", "▶ 复现设计记录", StageId.参考工具, ChainId.C整线耦合,
             CmdGroup.设计记录不读页面, false, "分钟级，可取消",
             "**完全不读页面控件**，直接按设计记录解一次。用来排除「页面上某个控件被改过而自己没注意到」"),
-        new("final.load", "载入设计记录", StageId.设计记录, ChainId.无,
+        new("final.load", "载入设计记录", StageId.参考工具, ChainId.无,
             CmdGroup.设计记录不读页面, false, "即时",
             "把 DesignSpec 的某一档灌进各控件。**已作废的档会在最前面自报失效**"),
 
@@ -245,13 +252,13 @@ public static class Flow
             "把网格一档档加密，直到判据不再变。**判据可不可信由它说了算** —— 出图前必须过这一关"),
 
         // ── ④ 定尺寸 ──────────────────────────────────────────────────
-        new("core.autoThick", "自动定厚", StageId.定尺寸, ChainId.C定尺寸,
+        new("core.autoThick", "自动定厚", StageId.整线核算, ChainId.C定尺寸,
             CmdGroup.页面参数, true, "数分钟～半小时，可取消",
             "解析几何走 D8 定尺寸；.3dm 几何走逐级定厚。结束后附一份「形状体检」"),
-        new("shape.search", "◇ 搜形状", StageId.定尺寸, ChainId.C形状搜索,
+        new("shape.search", "◇ 搜形状", StageId.整线核算, ChainId.C形状搜索,
             CmdGroup.页面参数, true, "几十分钟",
             "**自动改盘径与舌宽**（舌长按装配算出来），逐个定尺寸并挑最轻的全过解。⚠ 只在解析几何模式可用"),
-        new("scan.thickness", "② 厚度灵敏度", StageId.定尺寸, ChainId.C整线耦合,
+        new("scan.thickness", "厚度灵敏度扫描", StageId.整线核算, ChainId.C整线耦合,
             CmdGroup.页面参数, true, "很久",
             "10 个壁厚点各跑一次整线耦合解。**这是 C 链的工具，不是「分析」** —— 它的每一点都是权威解"),
 
@@ -259,7 +266,7 @@ public static class Flow
         new("export.page3dm", "导出本页 3DM", StageId.交付, ChainId.无,
             CmdGroup.导出, true, "十几秒",
             "**整机**（三段管 + 四片法兰），几何与刚才求解的**完全一致**"),
-        new("final.export3dm", "导出设计记录 3DM", StageId.设计记录, ChainId.无,
+        new("final.export3dm", "导出设计记录 3DM", StageId.参考工具, ChainId.无,
             CmdGroup.设计记录不读页面, false, "十几秒",
             "整机几何 + 自校。**已声明失效的档一律拒绝出图**"),
         // ⚠ 这两个 ReadsPageControls **必须是 false**（2026-08-21 修）。
@@ -271,7 +278,7 @@ public static class Flow
         //   而门禁的意义是拦住「拿不成立的解去出图」，不是拦住记事本。
         // 把当前的解写成 finaldesigns/*.fd.json。**读页面控件**（存的就是你手上这个解）
         // ⇒ 受适用性约束：AllOk + Fresh 才可用（见 LineDesignPage.CommandApplicable）。
-        new("final.save", "另存为设计记录", StageId.设计记录, ChainId.无,
+        new("final.save", "另存为设计记录", StageId.交付, ChainId.无,
             CmdGroup.导出, true, "即时",
             "把当前这个**全判据通过**的解写成档案文件。五个判据记录值由程序填 —— "
             + "手抄它们是本项目最常见的错源，而抄错要等一次 8 分钟的全档自检才查得出来"),
@@ -289,129 +296,73 @@ public static class Flow
 
     // ═══ 阶段 ═════════════════════════════════════════════════════════════
     //
-    // 轨是线性的（左到右＝阅读顺序），但门禁是**依赖图**：
+    // ★★★★★ 2026-09-02 重排：七格 → 四格。依据是**实测**，不是审美。
     //
-    //     ① 闸门 ──┬──→ ② 快筛（末端，不解锁任何东西）
-    //              └──→ ③ 整线核算 ★ ──→ ④ 定尺寸 ──→ ⑤ 交付
+    //   Flow.Next（蓝色指示的唯一来源）在全部分支里只会指向 7 条命令，而
+    //   `gate.ramp`（原 ① 页）与原 ② 粗算那 8 条**一条都不在里面** ——
+    //   工程师一路点蓝色走完全程，那两页从头到尾不会被访问，
+    //   而阶段轨却把它们编成 ①②、摆在最前面。**导航在说谎。**
+    //   原 ④ 定尺寸页更直接：它没有任何自己的内容，三个按钮的所有者都是别的页。
     //
-    // ② **不是** ③ 的前提 —— 快筛只是可选的粗看。为了对称而给 ②→③ 加门，
-    // 会把「工程师明明可以直接算整线」拦下来，那种门第二天就会被要求关掉。
+    //   新轨直接对应用户 2026-09-02 说的模型：**输入 → 计算 → 储存结果报告与图档**。
+    //
+    //     ① 整线核算 ★ ──→ ② 交付           （主线，两格）
+    //     参考工具 / 使用说明                 （不带编号，永远进得去）
+    //
+    //   ⚠ 功能一个没删：原 ①② 的九条命令、以及「设计记录」那一组校正命令，
+    //     全部搬进「参考工具」。降级的是**编号与位置**，不是能力。
     public static readonly StageSpec[] Stages =
     {
-        // ── 设计记录：**不带编号**，因为它不是阶段轨的一格。
-        //
-        // 这几条命令早就带着同一个标记 CmdGroup.设计记录不读页面 —— 它们**不读页面控件**，
-        // 也因此不受阶段门禁。而 ①→⑤ 说的是「你手上这个设计走到哪一步」。
-        // 两根轴正交，此前被混在 ③ 的同一条工具条上（用户 2026-08-23 要求拆出来）。
-        //
-        // 放在**最前面**而不是最后：载入/复现会**灌页面控件**，是给 ③ 喂起点的。
-        // 摆在 ⑤ 之后等于把入口放在出口。
-        //
-        //   [设计记录] 载入/复现 ─→ ① ② ③ ④ ⑤ ─→ [设计记录] 另存/出图
-        //
-        // GateToUnlockNext = null ⇒ 下一格（①）不受它约束，本页自己也永不上锁。
-        new(StageId.设计记录, 0, "设计记录",
-            // ★★★★★ 2026-09-02 用户重申：「工程师使用的 APP **只有 3DM 与 UI 输入**
-            //   这两个入口，后续全靠 APP 自己算出结果。之前已经禁掉『档载入、seeds』的方式」。
-            //   而这条横幅此前写着「「载入」把档灌进页面**当起点**」——「当起点」四个字
-            //   就印在工程师看得到的地方，与 HANDOVER §⑬（2026-08-25 用户拍板：
-            //   「把种子这种方法彻底禁掉，设计记录是用来**校正计算流程**」）直接冲突。
-            //   ⇒ 改成说清它到底是干什么的：**校正**，不是起点。
-            "**这一页不是设计的起点。** 设计从「整线核算」页开始 —— 那里有两个入口：" +
-            "填 UI 参数，或读一张 .3dm 图纸。厚度、保温、环倍率这些由 APP 自己解出来，" +
-            "不从档里抄。" + Environment.NewLine +
-            "本页是**校正与存档**：拿已归档的设计复算一遍，看计算流程还准不准；" +
-            "以及把当前这个全过的解存成新档。" +
-            "「▶ 复现设计记录」完全不读页面控件，用来排除「页面被改过而不自知」。",
-            new[] { ChainId.C整线耦合 },
-            GateToUnlockNext: null,
-            new[] { "final.reproduce", "final.load", "final.save", "final.export3dm" },
-            Array.Empty<string>()),
-
-        new(StageId.先决条件, 1, "① 先决条件（能造 · 能升温）",
-            "先决条件先答：能不能造、能不能用是一个 yes/no 闸门。**不过闸就到此为止 —— 不谈铂重、不谈优点。**",
-            new[] { ChainId.D升温闸 },
-            // 解锁 **② 粗算**：几何可造（⑤⑥）+ 升温快筛（①）不判死。
-            // 三条都是**闭式**的，毫秒可得 ⇒ 不必先跑分钟级的整线解就能开门。
+        new(StageId.整线核算, 1, "① 整线核算 ★",
+            "两个入口：填左边的参数，或读一张 .3dm 图纸。厚度、保温、环倍率这些由 APP 自己解出来。",
+            new[] { ChainId.C整线耦合, ChainId.C定尺寸, ChainId.C形状搜索 },
+            // ★★★ 进「交付」的门只留一条：**有一个当前参数的收敛解**。
             //
-            // ⚠⚠ 这道门管的是 **②**，不是 ③（2026-08-24 更正，UiWiring §33 挖出来的）。
-            //   Gate.Evaluate 取「Order 比目标小的**最近**那一格」的门：
-            //     先决条件(1) → 粗算(2) → 整线核算(3)
-            //   而 粗算 的 GateToUnlockNext 是 null（末端节点）⇒ **③ 恒开**。
-            //   在那之前 LockedTitle 写着「③ 整线核算 —— 还没解锁」——
-            //   **拦的是 ②，说的却是 ③**，两年来没人对过。
+            //   用户 2026-09-02：「计算结果是如何就如何，超标就显示提醒，
+            //   最终让工程师判断合格与否（风险由工程师判断）；若判断可承担风险，
+            //   工程师就可储存计算结果与出图」。
+            //   ⇒ 「过没过」「验没验过」**不再是拦**，改成动作当下弹确认
+            //     （见 LineDesignPage 的另存与出图）。拿掉的是拦，**不是指路** ——
+            //     Flow.Next 照旧建议「先加密复算再出图」。
             //
-            //   为什么不干脆改成真拦 ③（用户 2026-08-24 拍板保持现状）：
-            //   .3dm 模式下 ⑤⑥ 是「无法判定」，而解开它们的「分析几何变数」按钮
-            //   **就在 ③ 页上**（见下面 整线核算 的 CommandIds）⇒ 真拦 ③ 会把那条路锁死。
-            //   几何不成立时 ③ 的判据表会当场把 ⑤⑥ 标红，④⑤ 的门照样关着，
-            //   所以「不谈铂重」这条承诺仍由下游的门兑现，只是不在这一格兑现。
-            //
-            // ⚠ ① 是 2026-08-24 才真的放进来的。在那之前这段注释就写着「+ 升温快筛不判死」，
-            //   而 RequiredChecks 里**只有 ⑤⑥**；更彻底的是 FlowState.RampScreen 那个栏位
-            //   一处赋值都没有，RampScreen.Judge 在生产路径上从未被调用过。
-            //   现已在 LineDesignPage.PushFlow 里与 ⑤⑥ 同处算出。
-            //   ⇒ 顺序仍是「权威优先」：③ 解出来之后 Judge 的 ① 覆盖快筛的 ①，
-            //     见 Flow.FindCheck —— 快筛不能成为绕过权威判据的通行证。
-            new GateSpec(
-                new[] { LineResult.Key.FreeTab, LineResult.Key.DiscCover, LineResult.Key.Ramp },
-                RequireConverged: false, RequireAllOk: false, RequireFresh: false,
-                LockedTitle: "② 粗算 —— 还没解锁",
-                LockedWhy: "先决条件还没答：几何要造得出来（⑤⑥），升温要够得着（① 快筛）。"
-                         + "业主 2026-08-17：「前提还是要能造能用，省铂金是在这个前提下讨论的」。"
-                         + "　⚠ 本闸只管 ②；**③ 整线核算仍然进得去** —— "
-                         + ".3dm 模式下 ⑤⑥ 要靠 ③ 页上的「分析几何变数」才判得了，拦住 ③ 会把那条路锁死。"
-                         + "几何不成立时 ③ 会在判据表上直接把 ⑤⑥ 标红，④⑤ 的门照样关着。"),
-            new[] { "gate.ramp" },
-            new[] { "D 闸门" }),
-
-        new(StageId.粗算, 2, "② 粗算（解析 · 不可交付）",
-            "**本区是解析粗算，不解温度场；判据与交付数一律以「③ 整线核算」页为准。**"
-            + "　⚠ 本页段表与 ③ 页段表**互不同步**。",
-            new[] { ChainId.A单段解析, ChainId.A单段扫描, ChainId.B分段解析, ChainId.B分段法兰 },
-            GateToUnlockNext: null,   // 末端节点，不解锁任何东西
-            new[] { "calc.segment", "sweep.insul", "sweep.eps", "export.csv",
-                    "line.runAll", "line.bestGrade", "line.minWalls", "line.flanges" },
-            new[] { "A·B 快筛" }),
-
-        new(StageId.整线核算, 3, "③ 整线核算 ★",
-            "**唯一可交付的一条链。** 判据表由 LineRunner.Judge 给 —— 全程只有这一个来源。",
-            new[] { ChainId.C整线耦合 },
-            // 解锁 ④ 的门是「解得出来且收敛」，**不是「判据全过」**。
-            // ④ 的用途就是把不过的判据调过来 —— 用 AllOk 当门会把正常用法整个锁死。
-            // 但起点必须能解：否则 Sizer 的几十分钟全烧在一个坏几何上。
+            //   ⚠ 仍然拦「没解出来 / 参数动过了」：那不是风险判断，是**错** ——
+            //     没有解就无从交付；参数动过之后交出去的是**上一组参数**的东西。
             new GateSpec(
                 Array.Empty<string>(),
                 RequireConverged: true, RequireAllOk: false, RequireFresh: true,
-                LockedTitle: "④ 定尺寸 —— 还没解锁",
-                LockedWhy: "定尺寸器每轮都要跑一次整线解，起点必须是一个**解得出来且收敛**的构型。"),
-            new[] { "core.runLine", "core.verifyMesh", "geom.analyze", "geom.toanalytic", "geom.export3dm" },
+                LockedTitle: "② 交付 —— 还没解锁",
+                LockedWhy: "交付要有一个**当前参数的、解得出来的**解。"
+                         + "过没过、准不准由你判断（存或出图时会把问题列给你看）—— "
+                         + "但「没解出来」和「参数动过了」不是风险，是对不上。"),
+            new[] { "core.runLine", "core.autoThick", "shape.search", "core.verifyMesh",
+                    "geom.analyze", "geom.toanalytic", "geom.export3dm", "scan.thickness" },
             new[] { "C 整线", "A·B·C 共用" }),
 
-        new(StageId.定尺寸, 4, "④ 定尺寸 / 搜形状",
-            "④ 的输入就是 ③ 的解，**不是新的输入** —— 本页只有命令与 ③ 结果的只读摘要。",
-            new[] { ChainId.C定尺寸, ChainId.C形状搜索 },
-            // 解锁 ⑤ 的门是 AllOk。理由现成：ExportBlockedReason 已确立
-            // 「交付件不能是一个自己声明不成立的设计」。
-            new GateSpec(
-                Array.Empty<string>(),
-                RequireConverged: true, RequireAllOk: true, RequireFresh: true,
-                LockedTitle: "⑤ 交付 —— 还没解锁",
-                LockedWhy: "交付件不能是一个自己声明不成立的设计，"
-                         + "**也不能是一个没人验过准不准的数**。",
-                RequireMeshVerified: true),
-            new[] { "core.autoThick", "shape.search", "scan.thickness" },
-            Array.Empty<string>()),
-
-        new(StageId.交付, 5, "⑤ 交付（出图 / 存档）",
-            "出图前请核对输出里的**逐件质量对账**（差应在 ±1 % 内，对不上就别出图）。",
+        new(StageId.交付, 2, "② 交付（出图 / 存档）",
+            "把这一版交出去：出图纸、存成设计记录。有问题会先列给你看，由你决定存不存。",
             new[] { ChainId.无 },
             GateToUnlockNext: null,
-            new[] { "export.page3dm", "case.save", "case.load" },
+            new[] { "export.page3dm", "final.save", "case.save", "case.load" },
             Array.Empty<string>()),
 
-        // 没有门（上一格 GateToUnlockNext 为 null）⇒ 永远解锁。F1 直达。
-        new(StageId.说明, 6, "使用说明",
+        // ── 不带编号的两格：永远进得去（前一格 GateToUnlockNext 为 null）。
+        new(StageId.参考工具, 3, "参考工具",
+            "**这一页不是设计的起点。** 设计从「① 整线核算」页开始 —— 那里有两个入口：" +
+            "填 UI 参数，或读一张 .3dm 图纸。厚度、保温、环倍率这些由 APP 自己解出来，不从档里抄。" +
+            Environment.NewLine +
+            "本页是**解析粗看与校正**，不可交付：粗看用来快速比趋势；" +
+            "「▶ 复现设计记录」拿已归档的设计复算一遍，看计算流程还准不准。" +
+            "判据与交付数一律以「① 整线核算」页为准。",
+            new[] { ChainId.D升温闸, ChainId.A单段解析, ChainId.A单段扫描,
+                    ChainId.B分段解析, ChainId.B分段法兰, ChainId.C整线耦合 },
+            GateToUnlockNext: null,
+            new[] { "gate.ramp",
+                    "calc.segment", "sweep.insul", "sweep.eps", "export.csv",
+                    "line.runAll", "line.bestGrade", "line.minWalls", "line.flanges",
+                    "final.reproduce", "final.load", "final.export3dm" },
+            new[] { "A·B 快筛", "D 闸门" }),
+
+        new(StageId.说明, 4, "使用说明",
             "图按设计记录实时生成 —— 换一档，图跟着变。",
             new[] { ChainId.无 },
             GateToUnlockNext: null,

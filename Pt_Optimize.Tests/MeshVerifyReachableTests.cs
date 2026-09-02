@@ -121,16 +121,25 @@ public class MeshVerifyReachableTests
     }
 
     /// <summary>
-    /// ★★★ 门必须**真的要求**它。少了这一条，上面一切都只是多了个按钮，
-    /// 而工程师照样能绕过去出图。
+    /// ★★★★★ **出图的门不再拦「没复核」——改成动作当下提醒**（2026-09-02 用户拍板）。
+    ///
+    /// 用户原话：「计算结果是如何就如何，超标就显示提醒，最终让工程师判断合格与否
+    /// （风险由工程师判断）；若工程师判断可承担风险，工程师就可储存计算结果与出图」。
+    ///
+    /// ⇒ 门只留「有一个当前参数的、解得出来的解」（没解出来/参数动过了不是风险，是对不上）。
+    ///   「过没过、验没验过」在**存档与出图当下**列给工程师看，由他决定。
+    ///   ⚠ 拿掉的是**拦**，不是**指路**：Flow.Next 照旧建议先加密复算再出图（下一条钉着）。
     /// </summary>
     [Fact]
-    public void 出图的门要求复核过()
+    public void 出图的门只拦没解出来或参数动过()
     {
-        string s = Ui("Flow.cs");
-        Assert.Contains("bool RequireMeshVerified = false);", s);
-        Assert.Contains("RequireMeshVerified: true),", s);
-        Assert.Contains("if (gate.RequireMeshVerified && !(st.MeshVerified && st.VerifiedFresh))", s);
+        var g = Flow.Stage(StageId.整线核算).GateToUnlockNext;
+        Assert.NotNull(g);
+        Assert.True(g!.RequireConverged, "没解出来就无从交付 —— 这条要留");
+        Assert.True(g.RequireFresh, "参数动过之后交出去的是上一组参数的东西 —— 这条要留");
+        Assert.False(g.RequireAllOk, "★ 判据过没过由工程师判断，不该由门否决");
+        Assert.False(g.RequireMeshVerified, "★ 验没验过同上 —— 改成动作当下提醒");
+        Assert.Empty(g.RequiredChecks);
     }
 
     /// <summary>
@@ -200,9 +209,13 @@ public class MeshVerifyReachableTests
         Assert.NotEmpty(made);
         foreach (var b in made)
         {
-            bool mounted = s.Contains($"tool.Items.Add({b});")
-                        || System.Text.RegularExpressions.Regex.IsMatch(
-                               s, @"=>\s*" + b + @"\s*;");   // 交给 MainForm 挂
+            // ⚠ 2026-09-02 放宽的是**模式**，不是标准：主线工具条拆成两排（_tool / _tool2）
+            //   之后，只认 `tool.Items.Add` 会把挂在第二排的按钮误判成「没挂」。
+            //   认三种挂法：任一条工具条 Add、Insert、或作为属性交给 MainForm 挂。
+            bool mounted =
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    s, @"_?tool2?\.Items\.(Add|Insert)\([^)]*" + b + @"")
+             || System.Text.RegularExpressions.Regex.IsMatch(s, @"=>\s*" + b + @"\s*;");
             Assert.True(mounted,
                 $"「{b}」造出来了却没挂 —— Btn() 只造不挂，忘了 tool.Items.Add 它就不在屏幕上");
         }

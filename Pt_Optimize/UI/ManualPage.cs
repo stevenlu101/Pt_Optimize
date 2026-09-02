@@ -816,22 +816,21 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         // ════════════════════════════════════════════════════════════════
         sb.Append("<h2>1. 上手：三件最常做的事</h2>");
         sb.Append("<table><tr><th>你想做什么</th><th>怎么做</th><th>看哪里</th></tr>" +
-                  "<tr><td><b>看设计记录长什么样、用多少铂</b></td>" +
-                  $"<td>{Pg(StageId.设计记录)}页 → 选<b>设计记录 ▾</b> → 点{B("final.load")}"
-                  + $" →{Pg(StageId.整线核算)}页点{B("core.runLine")}</td>" +
+                  "<tr><td><b>算一个设计要多少铂、过不过</b></td>" +
+                  $"<td>{Pg(StageId.整线核算)}页填参数（或选一张 .3dm）→ 点{B("core.runLine")}</td>" +
                   "<td>下方判据表（先看<b>裕度</b>列）</td></tr>" +
                   "<tr><td><b>出图纸交给加工</b></td>" +
-                  $"<td>{Pg(StageId.设计记录)}页选设计记录 → 点{B("final.export3dm")}（同一页）</td>" +
+                  $"<td>{Pg(StageId.交付)}页点{B("export.page3dm")}</td>" +
                   "<td>输出框里的 round-trip 与质量对账</td></tr>" +
                   "<tr><td><b>改个参数试试</b></td>" +
                   "<td>改左侧参数表或本页控件 → <b>核算整线</b>（分钟级，可取消）</td>" +
                   "<td>判据表 + 三张场图</td></tr>" +
                   "<tr><td><b>给一个形状，让 APP 自己优化并说出好坏</b></td>" +
                   $"<td>{Pg(StageId.整线核算)}页填盘径/舌宽（舌长会<b>自己顶到装配下界</b>）"
-                  + $" →{Pg(StageId.定尺寸)}页点{B("core.autoThick")}</td>" +
+                  + $" → 同一页点{B("core.autoThick")}</td>" +
                   "<td><b>形状体检报告</b>（见 §5.1）：能不能造能不能用、优点、缺点、代价</td></tr>" +
                   "<tr><td><b>连盘径都让 APP 去搜</b></td>" +
-                  $"<td>{Pg(StageId.定尺寸)}页点{B("shape.search")}（有进度条，随时可取消）</td>" +
+                  $"<td>{Pg(StageId.整线核算)}页点{B("shape.search")}（有进度条，随时可取消）</td>" +
                   "<td>逐个形状一行结果；结束后最轻的那个<b>写回控件</b></td></tr></table>");
         // ★ 2026-08-17（1b）改写。原文说「有两项控件表达不了、核算整线算的是另一片法兰」——
         //   1b 之后解析模式与「复现设计记录」走同一个几何构造器，界面接线测试每次都验
@@ -1119,7 +1118,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "「核算法兰」把法兰算进来才是可交付的总铂</td></tr>" +
                   "<tr><td><b>轴向剖面</b></td><td>单段解的温度沿轴分布（随 F5 刷新）</td></tr>" +
                   "<tr><td><b>使用说明</b></td><td>本页。工具条上可切设计记录，图跟着重画</td></tr></table>");
-        sb.Append($"<div class=\"note\"><b>{Pg(StageId.粗算)}是解析粗算，{Pg(StageId.整线核算)}是耦合数值解。</b>" +
+        sb.Append($"<div class=\"note\"><b>{Pg(StageId.参考工具)}页上的是解析粗看，{Pg(StageId.整线核算)}是耦合数值解。</b>" +
                   $"两者数不一样很正常 —— 前者不解温度场。<b>可交付的数以{Pg(StageId.整线核算)}为准。</b></div>");
 
         sb.Append("<h2>3. 整线布置</h2>");

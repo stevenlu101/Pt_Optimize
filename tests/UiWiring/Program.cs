@@ -182,8 +182,11 @@ class UiWiringTests {
               "★ 没人碰它就自己排上了一次分钟级的解");
         Set(page, "_userReady", true);          // 此后按「用户在操作」对待
 
+        // ⚠ 2026-09-02 首屏说明按用户要求大幅缩短（「对工程师不必要的说明可以消除」）——
+        //   「自动重算怎么触发」那段删了。验的仍是同一件事：**首屏是说明，不是预测块**。
         Check("首屏是说明而不是预测块",
-              outBox.Text.Contains("自动重算") && !outBox.Text.Contains("参数已改"));
+              outBox.Text.Contains("点「核算整线」") && !outBox.Text.Contains("参数已改"),
+              outBox.Text.Length > 60 ? outBox.Text[..60] : outBox.Text);
         Check("四个页签都在", tabs.TabPages.Count >= 4, $"（{tabs.TabPages.Count} 个）");
 
         // ★★★★★ 开箱那一刻摆在界面上的几何，**必须是造得出来的**（2026-08-24）。
@@ -872,10 +875,14 @@ class UiWiringTests {
                 //   不是接线错了，是断言又抄了一份会过期的清单（同一个教训第二次）。
                 //   现在只问一件不会过期的事：**每一页工具条上的按钮，与 Flow 为
                 //   那一页登记的命令一致**；谁搬到哪页都不必改测试。
-                Check("本页分成了不止一组（分隔线确实在分组）", nonEmpty.Count >= 2,
-                      $"实际 {nonEmpty.Count} 组");
+                // ⚠ 2026-09-02：主线页的分组从「一条工具条 + 分隔线」改成**两排工具条**
+                //   （主线在上、图纸路与工具在下）⇒ 单条工具条内不再需要分隔线。
+                //   验的仍是同一件事：**按钮有分组，不是十个一横排**。
+                Check("本页的按钮是分了组的（分隔线或分排）",
+                      nonEmpty.Count >= 2 || page.Controls.OfType<ToolStrip>().Count() >= 2,
+                      $"实际 {nonEmpty.Count} 组 / {page.Controls.OfType<ToolStrip>().Count()} 排");
 
-                foreach (var sid in new[] { StageId.整线核算, StageId.设计记录 })
+                foreach (var sid in new[] { StageId.整线核算, StageId.参考工具 })
                 {
                     var tp = tabs.TabPages.OfType<TabPage>()
                         .FirstOrDefault(x => x.Text.Contains(Flow.Stage(sid).Title, StringComparison.Ordinal));
@@ -903,7 +910,7 @@ class UiWiringTests {
                 // 分组的**含义**仍要守住：不读页面控件的那些，不能与读页面的混在一组 ——
                 // 说明书就是按这条教用户的（「设计记录两个字打头的那几个不读页面控件」）。
                 // 现在它们各在一页，这条自然成立；仍然断言一次，防止有人把它们搬回去。
-                var mixed = Flow.Stage(StageId.设计记录).CommandIds
+                var mixed = Flow.Stage(StageId.参考工具).CommandIds
                     .Select(Flow.Cmd)
                     .Where(c => c.Group == CmdGroup.设计记录不读页面 && c.ReadsPageControls)
                     .Select(c => c.Text).ToList();
@@ -1025,8 +1032,15 @@ class UiWiringTests {
             Check("③→④ 的门是「收敛」而不是「判据全过」",
                   g3.RequireConverged && !g3.RequireAllOk,
                   $"RequireConverged={g3.RequireConverged} RequireAllOk={g3.RequireAllOk}");
-            var g4 = Flow.Stage(StageId.定尺寸).GateToUnlockNext!;
-            Check("④→⑤ 的门是「判据全过」", g4.RequireAllOk);
+            var g4 = Flow.Stage(StageId.整线核算).GateToUnlockNext!;
+            // ★ 2026-09-02 用户拍板：交付的门**不再**要求判据全过 ——
+            //   「结果如何就如何，超标显示提醒，风险由工程师判断」。
+            //   拿掉的是拦，不是指路（Flow.Next 照旧先指加密复算）。
+            Check("进交付的门只拦「没解出来 / 参数动过了」",
+                  g4.RequireConverged && g4.RequireFresh
+                  && !g4.RequireAllOk && !g4.RequireMeshVerified,
+                  $"Converged={g4.RequireConverged} Fresh={g4.RequireFresh} "
+                  + $"AllOk={g4.RequireAllOk} Mesh={g4.RequireMeshVerified}");
 
             // ── 「设计记录」那四个不读页面控件 ⇒ 不受阶段门禁
             var caseCmds = Flow.Commands.Where(c => c.Group == CmdGroup.设计记录不读页面).ToList();
@@ -1042,7 +1056,9 @@ class UiWiringTests {
             // 而 LineDesignPage/AnalysisPage 在构造时拿到的是引用且字段是 readonly ⇒
             // 换完之后参数表指向新方案，那两页仍算旧方案，**没有任何提示**。
             var inMain = F(main, "_in")!;
-            var anal = tabs.TabPages.OfType<AnalysisPage>().First();
+            // ⚠ 2026-09-02 起 AnalysisPage **不再是页签**（阶段轨收成四格，
+            //   它的按钮与输出/图被借到「① 整线核算」与「参考工具」上）⇒ 从字段取。
+            var anal = (AnalysisPage)F(main, "_toolsOwner")!;
             Check("整线设计页与主窗口共用同一个参数对象",
                   ReferenceEquals(F(page, "_base"), inMain));
             Check("分析页与主窗口共用同一个参数对象",
@@ -1608,10 +1624,20 @@ class UiWiringTests {
             // ── 切回解析 ⇒ 又该禁，且「◇ 搜形状」回来
             Mode(analytic: true);
             Check("切回解析后又被禁（状态是跟着走的，不是一次性的）", !btnAn.Enabled);
-            Check("切回解析后「◇ 搜形状」适用了",
-                  (bool)typeof(LineDesignPage).GetMethod("CommandApplicable",
-                      BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public)!
-                      .Invoke(lp, new object[] { "shape.search" })!);
+            // ⚠ 2026-09-02：「◇ 搜形状」的适用性现在是**两条**——
+            //   几何来源是解析（形状才是可搜索的自由度），**且**手上有一个当前参数的收敛解
+            //   （原 ③→④ 那道门随阶段合并降级到这里：定尺寸器每轮跑一次整线解，
+            //    没有起点就会几十分钟烧在一个坏几何上）。
+            //   本节只造了几何来源、没解过 ⇒ 这里验的是**几何来源那一半**：
+            //   切回解析之后不再因为「模式不对」被拒。
+            bool App(string id) => (bool)typeof(LineDesignPage).GetMethod("CommandApplicable",
+                BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public)!
+                .Invoke(lp, new object[] { id })!;
+            Check("切回解析后「◇ 搜形状」不再因为模式被拒（另一半是「要有解」）",
+                  !App("shape.search"),   // 没解过 ⇒ 仍不适用，但原因换成了「没有起点」
+                  "没解过时仍不适用 —— 这是对的：定尺寸器需要一个收敛的起点");
+            Check("而 .3dm 模式下它一定不适用（形状由图纸给定）",
+                  !App("shape.search"));
 
             // ★ 关键：SyncGates 跑一遍之后**不许把它重新打开**
             typeof(MainForm).GetMethod("SyncGates",
@@ -2041,9 +2067,9 @@ class UiWiringTests {
                 //   越关是在**旧参数**上批的，参数一动它就不该再算数。
                 //   此前 Invalidate 只清 Last/SolvedSnap，**Bypassed 一直留着** ⇒
                 //   工程师改完参数还站在一个「当初批准进来的」页面上，而理由已经没了。
-                fl31.Bypassed.Add(StageId.定尺寸);
+                fl31.Bypassed.Add(StageId.交付);
                 Check("先造出「越过关」这个状态（否则下一条空转）",
-                      fl31.Bypassed.Contains(StageId.定尺寸));
+                      fl31.Bypassed.Contains(StageId.交付));
 
                 page.GetType().GetMethod("MarkParamsChanged", BindingFlags.NonPublic | BindingFlags.Instance)!
                     .Invoke(page, new object?[] { "控温点" });
@@ -2051,14 +2077,14 @@ class UiWiringTests {
                 Check("参数表改一项之后就**不新鲜**了", !fl31.Fresh,
                       fl31.Fresh ? "★ 改了参数还说「参数未变」⇒ ④⑤ 会开在旧结论上" : "");
                 Check("④ 定尺寸的门随之关上",
-                      !Gate.Evaluate(StageId.定尺寸, fl31).Unlocked);
+                      !Gate.Evaluate(StageId.交付, fl31).Unlocked);
                 Check("⑤ 交付的门随之关上",
                       !Gate.Evaluate(StageId.交付, fl31).Unlocked);
                 Check("并且告诉了人为什么",
                       ((RichTextBox)F(page, "_out")!).Text.Contains("参数表改了"));
                 Check("越关也随之作废（不能拿旧参数批的通行证继续走）",
-                      !fl31.Bypassed.Contains(StageId.定尺寸),
-                      fl31.Bypassed.Contains(StageId.定尺寸)
+                      !fl31.Bypassed.Contains(StageId.交付),
+                      fl31.Bypassed.Contains(StageId.交付)
                           ? "★ 改了参数，越关还留着 ⇒ 那道门是靠旧理由开着的" : "");
                 // ★ 「参数一动」要有**一次性**弹窗告知（2026-08-24 用户要求）。
                 //   只验接线与一次性，不验它真的弹出来 —— 本测试从不 Show 窗体，
@@ -2183,100 +2209,54 @@ class UiWiringTests {
             var lp33 = tabs.TabPages.OfType<LineDesignPage>().First();
             var f33 = (FlowState)F(main, "_flow")!;
 
-            // ① 名单：注释说的那三条，RequiredChecks 里必须真有三条
-            var g33 = Flow.Stage(StageId.先决条件).GateToUnlockNext;
-            Check("① 那一格有解锁下一格的门", g33 is not null);
-            Check("门的名单里有「① 升温」（注释说了就得做到）",
-                  g33!.RequiredChecks.Contains(LineResult.Key.Ramp),
-                  string.Join("、", g33.RequiredChecks));
-            Check("⑤⑥ 也还在名单里（别修一条弄丢两条）",
-                  g33.RequiredChecks.Contains(LineResult.Key.FreeTab)
-                  && g33.RequiredChecks.Contains(LineResult.Key.DiscCover));
+            // ★★★★★ 2026-09-02 阶段轨七格→四格：**①→② 那道门整个不存在了**。
+            //   原来这一段验的是「先决条件那道门管的是 ②，不是文案说的 ③」——
+            //   而 ① 先决条件、② 粗算 两格已降级成不带编号的「参考工具」（蓝链从不指它们）。
+            //   ⇒ 那几条断言失去了对象。删掉，改成钉住**现在真实的结构**。
+            Check("阶段轨是四格", Flow.Stages.Length == 4,
+                  string.Join("／", Flow.Stages.OrderBy(x => x.Order).Select(x => x.Title)));
+            Check("只有「整线核算」那一格有门（主线两格之间）",
+                  Flow.Stages.Count(x => x.GateToUnlockNext is not null) == 1
+                  && Flow.Stage(StageId.整线核算).GateToUnlockNext is not null);
 
-            // ② 栏位真被填上 —— 这是「造好了没接线」那一族的唯一防线
-            typeof(LineDesignPage).GetMethod("PushFlow",
-                BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(lp33, null);
-            Pump(60);
-            Check("PushFlow 之后 FlowState.RampScreen 不再是 null",
-                  f33.RampScreen is not null,
-                  f33.RampScreen is null ? "★ 仍然没有人给它赋值" : f33.RampScreen.Name);
-            Check("它的名字以 LineResult.Key.Ramp 打头（门禁按前缀找）",
-                  f33.RampScreen?.Name.StartsWith(LineResult.Key.Ramp, StringComparison.Ordinal) == true,
-                  f33.RampScreen?.Name ?? "(null)");
-            Check("它给得出实数裕度，不是 NaN",
-                  f33.RampScreen is { } rs33 && !double.IsNaN(rs33.Actual),
-                  f33.RampScreen is null ? "(null)" : $"{f33.RampScreen.Actual:0.00}（限 {f33.RampScreen.Limit:0.00}）");
+            // ★ 交付的门只留「有一个当前参数的收敛解」（2026-09-02 用户拍板）：
+            //   过没过、验没验过由工程师判断（存/出图时列给他看）——
+            //   拿掉的是**拦**，不是**指路**（下面那条钉着 Flow.Next 照旧先指复核）。
+            var gShip = Flow.Stage(StageId.整线核算).GateToUnlockNext!;
+            Check("交付的门不拦「判据没全过」", !gShip.RequireAllOk);
+            Check("交付的门不拦「没加密复算」", !gShip.RequireMeshVerified);
+            Check("交付的门仍拦「没解出来 / 参数动过了」",
+                  gShip.RequireConverged && gShip.RequireFresh);
+            Check("没有任何一道门带判据名单（原 ①→② 那道随阶段一起没了）",
+                  Flow.Stages.All(x => x.GateToUnlockNext is null
+                                    || x.GateToUnlockNext.RequiredChecks.Length == 0));
 
-            // ③ 门禁真按它开关 —— 两个方向都验，否则上面几条只是「有这么个东西」。
-            //
-            // ⚠⚠ 这里踩到一个更深的东西（2026-08-24，靠本节的自证挖出来）：
-            //   Gate.Evaluate 取的是「Order 比目标小的**最近**那一格」的门。
-            //     先决条件(1) → 粗算(2) → 整线核算(3)
-            //   而 粗算 的 GateToUnlockNext 是 **null**（它自称「末端节点，不解锁任何东西」）
-            //   ⇒ **③ 恒开，没有任何前置闸门**；
-            //   而 先决条件 那道门（⑤⑥ + ①）实际拦的是 **② 粗算**，
-            //   它的 LockedTitle 却写着「③ 整线核算 —— 还没解锁」。**拦错格，还说错话。**
-            //
-            //   ⇒ 本节按**实际**受管的那一格（② 粗算）验开关，并把「③ 恒开」也钉住 ——
-            //     它不是笔误可以随手改的：.3dm 模式下 ⑤⑥ 是「无法判定」，
-            //     而解开它的「分析几何变数」按钮**就在 ③ 页上**
-            //     （见 Flow 里 整线核算 的 CommandIds）⇒ 真拦 ③ 会死锁。
-            //     文案该怎么改、③ 要不要另设前置闸门，是工作流决定，记在 §8 已知缺口。
-            var keepLast = f33.Last; var keepScreen = f33.RampScreen;
-            f33.Last = null;                       // 没有权威解 ⇒ 只能靠快筛
-            var okNow = Gate.Evaluate(StageId.粗算, f33);
-            Check("快筛通过时 ② 开着（自证：否则下一条恒成立）", okNow.Unlocked,
-                  okNow.Unlocked ? "" : "★ " + okNow.Why + " / " + okNow.How);
-            Check("★ 先决条件那道门管的是 ②，不是它文案里说的 ③（③ 恒开）",
-                  Gate.Evaluate(StageId.整线核算, f33).Unlocked
-                  && Flow.Stage(StageId.粗算).GateToUnlockNext is null,
-                  "粗算.GateToUnlockNext = "
-                  + (Flow.Stage(StageId.粗算).GateToUnlockNext is null ? "null" : "有门"));
-
-            f33.RampScreen = new ConstraintOut
+            // ★ 指路仍然先指加密复算、再指出图 —— 门松了，建议没松
+            var fShip = new FlowState
             {
-                Name = LineResult.Key.Ramp + " 可达性（快筛）", Unit = "—",
-                Kind = CheckKind.HardSafety, Actual = 0.5, Limit = 1.0,
-                LessIsBetter = false, Ok = false, Where = "注入",
+                Last = new LineResult
+                {
+                    Ok = true, Converged = true, RampChecked = true,
+                    Checks = LineResult.Required.Select(q => new ConstraintOut
+                    { Name = q.Prefix, Kind = q.Kind, Ok = true, Actual = 1, Limit = 2 }).ToArray(),
+                },
             };
-            var blocked33 = Gate.Evaluate(StageId.粗算, f33);
-            Check("快筛判死时 ② 被拦住", !blocked33.Unlocked,
-                  blocked33.Unlocked ? "★ 名单里有它，门却不读它" : blocked33.How);
-            Check("拦住时指得出是哪一条", blocked33.Blocking?.Name.StartsWith(
-                      LineResult.Key.Ramp, StringComparison.Ordinal) == true,
-                  blocked33.Blocking?.Name ?? "(没说是哪条)");
+            fShip.CurrentSnap = fShip.SolvedSnap = "同一个快照";
+            Check("全过但没复核时，指路指的是「加密复算」而不是出图",
+                  Flow.Next(fShip)?.CmdId == "core.verifyMesh",
+                  Flow.Next(fShip)?.CmdId ?? "(没指)");
+            // ⑤ 锁住时的文案：说的必须是它**真的**拦的那件事。
+            //   （原来这里验的是「说 ② 不说 ③」—— 那道门 2026-09-02 随阶段一起没了。
+             //   现在验的是新的那道：它只拦「没解出来 / 参数动过了」，文案就得这么说，
+             //   不许再写成「判据全过才准出图」——那已经不是它拦的事了。）
+            Check("锁住时说的是「解得出来」，不是「判据全过」",
+                  gShip.LockedWhy.Contains("解得出来", StringComparison.Ordinal)
+                  && !gShip.LockedWhy.Contains("判据全过", StringComparison.Ordinal),
+                  gShip.LockedWhy);
+            Check("并且说清了「过没过由你判断」（免得人以为被拦死了）",
+                  gShip.LockedWhy.Contains("由你判断", StringComparison.Ordinal),
+                  gShip.LockedWhy);
 
-            // ④ 权威优先：③ 解出来之后，Judge 的 ① 必须盖过快筛的 ①
-            f33.Last = new LineResult
-            {
-                Ok = true, Converged = true, RampChecked = true,
-                Checks = LineResult.Required
-                    .Select(q => new ConstraintOut
-                    {
-                        Name = q.Prefix + " 权威", Kind = q.Kind,
-                        Ok = true, Actual = 1, Limit = 2,
-                    }).ToArray(),
-            };
-            var authoritative = Gate.Evaluate(StageId.粗算, f33);
-            Check("有权威解时，Judge 的 ① 盖过快筛的 ①（快筛不是绕过权威的通行证）",
-                  authoritative.Unlocked,
-                  authoritative.Unlocked ? "" : "★ " + authoritative.How);
-
-            // ⑤ 文案必须说的是它**真的**拦的那一格。
-            //   改文案这件事只有断言盯着才不会再漂 —— 上一次漂了两年没人对。
-            Check("锁住时的标题说的是 ②（它真拦的那一格），不是 ③",
-                  g33.LockedTitle.Contains("②", StringComparison.Ordinal)
-                  && !g33.LockedTitle.Contains("③", StringComparison.Ordinal),
-                  g33.LockedTitle);
-            Check("锁住时的说明讲清了「③ 仍然进得去」（否则人会以为被拦死了）",
-                  g33.LockedWhy.Contains("③", StringComparison.Ordinal)
-                  && g33.LockedWhy.Contains("进得去", StringComparison.Ordinal),
-                  g33.LockedWhy);
-            Check("说明里给出了不拦 ③ 的**理由**（.3dm 那条路会死锁）",
-                  g33.LockedWhy.Contains(".3dm", StringComparison.Ordinal),
-                  g33.LockedWhy);
-
-            f33.Last = keepLast; f33.RampScreen = keepScreen;   // 收干净，别泄漏给后面的节
         }
 
         Head("34 使用说明里的限值：**不许自己抄一份**，且每条判据都得有出处");

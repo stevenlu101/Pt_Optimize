@@ -94,7 +94,7 @@ public class EntryPointsTests
     [Fact]
     public void 设计记录页自己说清不是起点()
     {
-        string banner = Flow.Stage(StageId.设计记录).Banner;
+        string banner = Flow.Stage(StageId.参考工具).Banner;
         Assert.NotEqual("", banner);
         Assert.Contains("不是设计的起点", banner);
         // 而且要指出真正的两个入口

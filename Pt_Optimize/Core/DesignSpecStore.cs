@@ -209,6 +209,9 @@ public static class DesignSpecStore
 
         var c = d.checks ?? throw new InvalidDataException("缺 checks（五个判据记录值）—— 没有它就无法回归对账");
 
+        // 片数 = 段数 + 1。setpointC 缺省时按 DesignSpec 的默认段数（3 段 ⇒ 4 片）。
+        int nPlate = (d.setpointC is { Length: > 0 } sp ? sp.Length : new DesignSpec().SetpointC.Length) + 1;
+
         var fd = new DesignSpec
         {
             Name = Need(d.name, "name"),
@@ -221,9 +224,11 @@ public static class DesignSpecStore
             DiscRadiusMm = NeedD(d.discRadiusMm, "discRadiusMm"),
             TabLengthMm = NeedD(d.tabLengthMm, "tabLengthMm"),
             TabHalfWidthMm = NeedD(d.tabHalfWidthMm, "tabHalfWidthMm"),
-            TabThickMm = NeedA(d.tabThickMm, "tabThickMm", 4),
-            TabInsulMm = NeedA(d.tabInsulMm, "tabInsulMm", 4),
-            RingMul = NeedA(d.ringMul, "ringMul", 4),
+            // ★★★ 2026-09-02：片数**由段数决定**（n 段 → n+1 片），不再写死 4。
+            //   段数可调是硬要求；写死 4 会让「4 段的档」当场被拒或悄悄少一片。
+            TabThickMm = NeedA(d.tabThickMm, "tabThickMm", nPlate),
+            TabInsulMm = NeedA(d.tabInsulMm, "tabInsulMm", nPlate),
+            RingMul = NeedA(d.ringMul, "ringMul", nPlate),
             TotalMassG = NeedD(d.totalMassG, "totalMassG"),
             TubeMassG = d.tubeMassG ?? 0,
             FlangeMassG = d.flangeMassG ?? 0,
@@ -243,9 +248,12 @@ public static class DesignSpecStore
         if (d.flangeInsulated is { } fe) fd.FlangeInsulated = fe;
         if (d.clampLengthMm is { } cl) fd.ClampLengthMm = cl;
         // A3：渐变环那三个（缺省即 NaN 哨兵 = 不逐片自定，与 DesignSpec 的默认一致）
-        if (d.ringW1Mm is { Length: 4 } r1) fd.RingW1Mm = NaA(r1);
-        if (d.ringW2Mm is { Length: 4 } r2) fd.RingW2Mm = NaA(r2);
-        if (d.ringMul2 is { Length: 4 } t2) fd.RingMul2 = NaA(t2);
+        if (d.ringW1Mm is { Length: > 0 } r1) fd.RingW1Mm = NaA(r1);
+        if (d.ringW2Mm is { Length: > 0 } r2) fd.RingW2Mm = NaA(r2);
+        if (d.ringMul2 is { Length: > 0 } t2) fd.RingMul2 = NaA(t2);
+        // ★ 最后统一按段数对齐 —— 档里存的片数与 setpointC 对不上时（旧档、手改过的档），
+        //   这里补齐/裁掉，而不是让它带着一个错长度进计算。
+        fd.Fit();
         // A2：口径。没有这一段就是「没做过加密复算」，保持 NaN。
         if (d.verified is { } v && v.meshMm is { } mm)
         {
