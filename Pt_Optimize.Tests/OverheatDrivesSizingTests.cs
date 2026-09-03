@@ -46,9 +46,12 @@ public class OverheatDrivesSizingTests
     {
         string s = Sizer();
         Assert.Contains("hottestC > opt.OverheatRaiseFromC", s);
-        Assert.Contains("先试加厚", s);
-        // 绝对加厚：整体倍数乘进这一片的各级
-        Assert.Contains("probe[jh][m] *= k;", s);
+        Assert.Contains("先加厚这一级", s);
+        // ★★★ 2026-09-03 用户更正：**局部**过热要加**局部**截面 ——
+        //   只动过热的那一级，不是整片乘一个倍数。
+        //   整片加厚等于替不热的级也花铂，违反「能用且铂最省」。
+        Assert.Contains("if (!Locked(jh, mh)) probe[jh][mh] *= k;", s);
+        Assert.DoesNotContain("for (int m = 0; m < probe[jh].Length; m++)", s);
     }
 
     /// <summary>
@@ -72,6 +75,7 @@ public class OverheatDrivesSizingTests
     {
         string s = Sizer();
         Assert.Contains("二分找**最小**够用的倍数（最省铂）", s);
+        Assert.Contains("哪一级热就加哪一级", s);
         Assert.Contains("if (HotAt(mid) <= opt.OverheatRaiseFromC) hi = mid; else lo = mid;", s);
     }
 

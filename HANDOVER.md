@@ -234,6 +234,65 @@ $$\min\; m_{\text{Pt}}^{\text{整线}} \;=\; \sum_{i=1}^{n} m_{\text{管},i} \;+
 | **X4** | 管**厚度** | 数值 | |
 | **X5** | **保温方案** | 数值 + 分界 | 管与法兰**分别**：哪些部位保、保多厚（如「管全保温、法兰盘不保温」）。法兰侧已有 `FlangePlate.InsulBoundaryXMm` 这个分界变量 |
 
+### ★★★★★ 0.0.3 自由度对帐：总纲说的 vs 代码**真搜的**（2026-09-03）
+
+> 用户 2026-09-03：「如果逻辑不对，整个 APP 的开发就没有任何意义」。
+> §0.0 的目标函数与 X1–X6 是 2026-08-11 定的**意图**；这一节记的是**实况**。
+> 两者会漂 —— 漂了就是「APP 在解一个和总纲不同的问题」，而且看不出来。
+> ⇒ 配门 `OptimizationModelReconcileTests`：代码加了旋钮而这张表没改，当场红。
+
+#### 目标与约束（重申，每一步都受它管）
+
+```
+min  总铂 = Σ 管 + Σ 法兰        法兰铂 = ∫ 厚度 dA（FlangeMassG = mesh.VolumeMm3 × 密度）
+s.t. 判据全过（含**无局部熔化**）
+```
+
+⚠ **「最省」不是收尾工序**：每一根旋钮抬多少，都要按「**每克铂买到多少裕度/降温**」比价。
+  只求「能用」会给出一个又重又能用的解 —— 那不是交付物。
+
+#### 两条输入路径（几何来源不同，其余应当共用）
+
+```mermaid
+flowchart TD
+  UI["UI 参数输入"] --> SPEC["DesignSpec<br/>程序生成几何"]
+  DWG[".3dm 图纸"] --> ANA["PlateShapeAnalyzer<br/>反推厚度场 → 各级"]
+  SPEC --> SOLVER["Solver.Solve<br/>从制造下界求根 · 逐片"]
+  ANA --> BYLEVEL["FlangeAutoSizer.SolveByLevel<br/>增量行走 + 归一化 · 只缩放已有级"]
+  SOLVER --> JUDGE["LineRunner.Judge<br/>判据唯一来源"]
+  BYLEVEL --> JUDGE
+  JUDGE --> OUT["判据表 / 出图 / 存档"]
+
+  classDef gap fill:#fee,stroke:#c33
+  class BYLEVEL gap
+```
+
+**共用的应当是**：级模型（逐片 × 逐级）、求解论证（从制造下界求根、只增不减）、
+目标（min 铂）、比价规则。**该分开的只有**：级的**初值**从哪来，以及出图能不能回原图。
+现在两条路是**两个引擎**（红框那个还停在增量行走 + 归一化）。
+
+#### 对帐表
+
+| 总纲自由度 | 代码里真能搜吗 | 在哪 |
+|---|---|---|
+| **X1** 法兰厚度（**可阶梯分布**） | ◐ **只搜已有级的缩放**。逐片基厚 = `Knob.Thick`；环倍率 t₁ = `Knob.Ring`、t₂ = `Knob.RingT2` | `Solver.Allocation` |
+| ↳ **新增一级**（孔边加一圈厚环） | ✗ **完全没有**。`.3dm` 只缩放图纸已有级；解析路写死 2 环 | — |
+| ↳ 各级**半径** r₁…rₙ | ✗ **不是旋钮**。`DesignSpec.RingRadiiOf` 返回定长 `{r1,r2}` | — |
+| **X2** 法兰形状 | ◐ 只搜**盘半径 × 舌半宽**，且**网格枚举**、四片同形状、非求根 | `LineDesignPage.SearchShapeAsync` |
+| **X3** 升温速率 | ✗ 未作为搜索变量 | — |
+| **X4** 管厚度 | ◐ 界面输入，`Solver` 不搜 | — |
+| **X5** 保温方案 | ◐ 舌保温 = `Knob.Insul`；圆盘保温不搜 | `Solver.Allocation` |
+| **X6** 舌片长度 | ✗ 由装配下界反算，不搜 | `EnforceTabLenFloor` |
+
+⚠ 几何/物理层**不缺**：`FlangePlate.DiscStepRadiiMm[] / DiscStepThicknessMm[]` 本来就支持
+**任意级数**。缺口全在「把什么当自由变量去搜」这一层。
+
+#### ⚠ 一个尚未确认的瓶颈
+
+**新增的级出得了 `.3dm` 图吗？** `Geometry3dm.ScalePlate3dm` 只按级**缩放**，
+源几何里没有那条带就加不出来。这条不通的话，「新增一级」只在解析路成立，
+图纸路只能提示工程师回 Rhino 加环 —— **算得出方案却交不出图**，那不算交付。
+
 ### 边界条件（2026-08-11 用户补齐，全部是**软**边界）
 
 | 项 | 用户答复 | 对搜索的含义 |
@@ -2035,7 +2094,7 @@ git clone <本仓库>
 cd Pt_Optimize
 dotnet restore --disable-parallel   # 见下，务必串行
 dotnet build
-dotnet test          # 应为 590/590 通过（这个数由 HandoverGateCountTests 自己盯着）
+dotnet test          # 应为 596/596 通过（这个数由 HandoverGateCountTests 自己盯着）
 dotnet run --project Pt_Optimize
 ```
 
@@ -5125,7 +5184,7 @@ Pt_Optimize.Tests/ · tests/UiWiring/ · Pt_Optimize.Geom/ · .githooks/   ← �
 > 改 `.githooks/` 改的是「门跑不跑」。这两类原本都不在名单里 ⇒
 > **唯一能让所有门失效的改动，恰恰是唯一不触发门的改动**。
 
-`dotnet test` 应为 **590/590**。
+`dotnet test` 应为 **596/596**。
 
 > 这个数**不用人记得改**了：`HandoverGateCountTests` 反射数出程序集里的用例数
 > （`[Fact]` 一条、`[Theory]` 按 `[InlineData]` 行数），再回头读本文件里的「应为 N/N」比对，

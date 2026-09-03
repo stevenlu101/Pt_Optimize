@@ -882,9 +882,13 @@ public static class FlangeAutoSizer
             //     两层互相打架，人看到的是「跑很久、数不动」。
             if (hottestPlate >= 0 && hottestC > opt.OverheatRaiseFromC)
             {
-                int jh = hottestPlate;
-                double curK = 1.0;                       // 相对当前 scale 的整体倍数
-                double hiK = MaxRaiseK(scale[jh], levelThicknessMm[jh], opt.MaxThickMm);
+                // ★★★★★ 2026-09-03 更正（用户指出）：**局部过热要加的是局部截面**，
+                //   不是整片乘一个倍数。过热是逐级算出来的（LevelTMaxC[m]），
+                //   哪一级热就加哪一级 —— 整片加厚等于替不热的那些级也花铂，违反「最省」。
+                int jh = hottestPlate, mh = hottestLevel;
+                double curK = 1.0;                       // 相对**这一级**当前厚度的倍数
+                double curMm = levelThicknessMm[jh][mh] * scale[jh][mh];
+                double hiK = curMm > 1e-9 ? Math.Max(1.0, opt.MaxThickMm / curMm) : 1.0;
 
                 if (hiK <= 1.0 + 1e-9)
                 {
@@ -892,14 +896,13 @@ public static class FlangeAutoSizer
                 }
                 else
                 {
-                    progress?.Report($"第 {jh + 1} 片第 {hottestLevel + 1} 级 {hottestC:0} °C 过热 ⇒ "
-                                   + $"**先试加厚**（截面 ∝ 厚，加厚降电流密度）：一路加到 ×{hiK:0.00}…");
+                    progress?.Report($"第 {jh + 1} 片第 {mh + 1} 级 {hottestC:0} °C 过热（电流密度过大）⇒ "
+                                   + $"**先加厚这一级**（局部截面 ∝ 厚）：一路加到 ×{hiK:0.00}…");
 
                     double HotAt(double k)
                     {
                         var probe = scale.Select(a => (double[])a.Clone()).ToArray();
-                        for (int m = 0; m < probe[jh].Length; m++)
-                            if (!Locked(jh, m)) probe[jh][m] *= k;
+                        if (!Locked(jh, mh)) probe[jh][mh] *= k;    // ★ 只动过热的那一级
                         var r = EvalScale(baseCase, levelThicknessMm, probe, cancel, inner: null);
                         if (r is null || jh >= r.Flanges.Length) return double.PositiveInfinity;
                         var ff = r.Flanges[jh];
@@ -915,10 +918,10 @@ public static class FlangeAutoSizer
                         // ★ **实测**：加到工艺上界仍压不住 ⇒ 厚度这根走到头，换增宽
                         last.Terminal = true;
                         last.TerminalWhy =
-                            $"第 {jh + 1} 片加厚到工艺上界 ×{hiK:0.00}（{opt.MaxThickMm:0.00} mm）"
+                            $"第 {jh + 1} 片第 {mh + 1} 级加厚到工艺上界 ×{hiK:0.00}（{opt.MaxThickMm:0.00} mm）"
                           + $"，最热处 {hottestC:0} → {hotHi:0} °C，仍压不住"
-                          + " ⇒ **厚度这根旋钮走到头了**（实测，不是估的）。下一根是**增宽**："
-                          + "缩小盘径 / 加宽过流带（「◇ 搜形状」）。";
+                          + " ⇒ **加厚这一级救不了它**（实测，不是估的）。"
+                          + "下一根是**加宽这一级的过流带**（半径分布）——「◇ 搜形状」。";
                         progress?.Report("  ✗ " + last.TerminalWhy);
                     }
                     else
@@ -931,13 +934,11 @@ public static class FlangeAutoSizer
                             if (HotAt(mid) <= opt.OverheatRaiseFromC) hi = mid; else lo = mid;
                         }
                         curK = hi;
-                        for (int m = 0; m < scale[jh].Length; m++)
-                            if (!Locked(jh, m)) scale[jh][m] *= curK;
-                        // 只增不减：记成这一片的下界，外层以后不许削到它以下
-                        for (int m = 0; m < scale[jh].Length; m++)
-                            overheatFloor[jh][m] = Math.Max(overheatFloor[jh][m], scale[jh][m]);
-                        progress?.Report($"  ✓ 加厚 ×{curK:0.00} 压住了（最小够用的那一档，"
-                                       + "再薄就过热）—— 这是本片的厚度下界，之后不再削到它以下");
+                        if (!Locked(jh, mh)) scale[jh][mh] *= curK;
+                        // 只增不减：**这一级**的下界，外层与内层以后都不许削到它以下
+                        overheatFloor[jh][mh] = Math.Max(overheatFloor[jh][mh], scale[jh][mh]);
+                        progress?.Report($"  ✓ 第 {mh + 1} 级加厚 ×{curK:0.00} 压住了（最小够用的那一档，"
+                                       + "再薄就过热）—— 这是**这一级**的厚度下界，之后不再削到它以下");
                         continue;      // 这一轮的判定作废，按新厚度重来
                     }
                 }
