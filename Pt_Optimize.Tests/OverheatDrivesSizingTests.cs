@@ -135,6 +135,86 @@ public class OverheatDrivesSizingTests
         Assert.Contains("走到头", ns.Why);
     }
 
+    /// <summary>
+    /// ★★★★ **试探的成本要钉住**（2026-09-03，第一版当场超时）。
+    ///
+    /// 第一版每次试探是一次**完整整线解**（分钟级）：
+    /// <code>
+    ///   探上界 1 次 + 二分 8 步 = 9 次全解／轮 × 最多 6 轮 = 多出 54 次全解
+    /// </code>
+    /// ⇒ 自动定厚在 60 分钟预算内跑不完（deliverable/F_改后_加厚试探超时.txt）。
+    /// **逻辑对、实现太贵** —— 而「贵」在这个项目里等于「工程师用不了」。
+    ///
+    /// 三样一起改：粗网格试探 / 二分 4 步 / 每次求解只试一轮。
+    /// 这条门盯着它们别被「顺手」改回去 —— 改回去的表现是**静默超时**，
+    /// 不报错、不红，只是永远出不来结果。
+    /// </summary>
+    [Fact]
+    public void 试探的成本被钉住了()
+    {
+        string s = Sizer();
+
+        // ① 试探走粗网格，但**只放粗平坦区** —— 焊缝环只有 leg ~1-2.5 mm 宽，
+        //    把细网格也粗化会判错「哪一级最热」，那是加厚加到错的级上（用户点出）。
+        Assert.Contains("inner: null, coarse: true", s);
+        Assert.Contains("lc.MeshCoarseMm = Math.Max(lc.MeshCoarseMm, 20.0);", s);
+        Assert.DoesNotContain("lc.MeshFineMm = Math.Max", s);
+        Assert.DoesNotContain("lc.MeshFineRadiusMm = Math.Min", s);
+
+        // ② 二分 4 步（8 步的精度远细于图纸 0.01 mm 的格，白花四次解）
+        Assert.Contains("for (int it = 0; it < 4 && hi - lo > 0.05; it++)", s);
+        Assert.DoesNotContain("for (int it = 0; it < 8", s);
+
+        // ③ 试探按（片,级）记**次数**，不是 bool。
+        //    全局 bool 的后果实测过：第 1 轮加厚成功 continue，第 2 轮被跳过，
+        //    仍然过热时落回老熔点闸判死刑 —— 省成本的那一刀把功能本身砍掉了。
+        Assert.Contains("var raiseTries =", s);
+        Assert.Contains("raiseTries[hottestPlate][hottestLevel] < MaxRaiseTries", s);
+        Assert.DoesNotContain("raisedOnce", s);
+        Assert.DoesNotContain("raisedAt", s);
+
+        // ④ 否定分支要在**原网格**复核一次再下结论 —— 只在否定时多花这一次解
+        Assert.Contains("原网格复核", s);
+        Assert.Contains("inner: null, coarse: false", s);
+    }
+
+    /// <summary>
+    /// ★★★★★ **每一条「厚度救不了」的出口都必须是量出来的**（2026-09-03）。
+    ///
+    /// 熔点闸原文是一句**没量过**的断言：
+    ///   「该级太薄、电流被挤在窄带上，局部发热物理上就下不来 ⇒ 回 Rhino…」
+    /// 加了实测试探之后，它仍然从**两条出口**漏出来（实测 F_改后3.txt 第 3 步）：
+    ///   · `hiK <= 1`（已在工艺上界）只报了句进度，**没设 Terminal** ⇒ 落回老文案
+    ///   · 试探次数用尽 ⇒ 同样落回老文案
+    /// 两条都是「其实量过了，却把没量过的话印出来」。
+    ///
+    /// ⇒ 本门钉：这三条出口都要设 Terminal，并且 TerminalWhy 里带**实测温度**。
+    /// </summary>
+    [Fact]
+    public void 每条出口都带实测结论()
+    {
+        string s = Sizer();
+
+        // 三条出口：加不动 / 加了仍不凉 / 次数用尽
+        Assert.Contains("加厚这一级已经加不动了", s);
+        Assert.Contains("加厚这一级救不了它", s);
+        Assert.Contains("已试加厚 ", s);
+
+        // 每一条都要真的置位，而不是只报一句进度
+        Assert.True(s.Split("last.Terminal = true").Length - 1 >= 3,
+            "「厚度救不了」的出口少于三条置位 —— 漏掉的那条会把没量过的断言印给工程师");
+
+        // ★ 老那句没量过的断言**仍然合法地留着当兜底**（试探没触发时熔点闸照旧要说话）。
+        //   真正的不变量不是「它不许存在」，而是「**量过了就不许印它**」——
+        //   即熔点闸必须让 Terminal 的实测结论**覆盖**掉它。
+        //   ⚠ 我先前把门写成「代码里不许出现这句话」，两次假红：
+        //     一次扫到注释、一次扫到这条合法兜底。**门要钉不变量，不要钉字面。**
+        Assert.Contains("if (last.Terminal && last.TerminalWhy.Length > 0)", s);
+        int ov = s.IndexOf("if (last.Terminal && last.TerminalWhy.Length > 0)", StringComparison.Ordinal);
+        int old = s.IndexOf("局部发热物理上就下不来", ov, StringComparison.Ordinal);
+        Assert.True(old > ov, "实测结论没有排在老断言前面 —— 覆盖不到就等于没覆盖");
+    }
+
     /// <summary>★ 自证：触发点取的是铂熔点，不是随手挑的一个数。</summary>
     [Fact]
     public void 自证_触发点是铂熔点()
