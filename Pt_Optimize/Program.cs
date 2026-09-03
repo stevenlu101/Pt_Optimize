@@ -2775,7 +2775,7 @@ internal static class Program
                                 var er = rA.Segments.Select(x => x.RootDeltaK - 5.0).ToArray();
                                 if (er.Max(Math.Abs) < 2.0) break;
                                 int pin = 0;
-                                for (int j = 0; j < 4; j++)
+                                for (int j = 0; j < er.Length; j++)
                                 {
                                     double e = j == 0 ? er[0] : j >= 3 ? er[2] : 0.5 * (er[j - 1] + er[j]);
                                     double want = t4[j] * Math.Exp(Math.Clamp(-0.6 * e / 800, -0.35, 0.35));
@@ -3204,8 +3204,8 @@ internal static class Program
 
                 LineCase MakeF9(double[] ins, double[] tab)
                 {
-                    var plates = new FlangePlate[4];
-                    for (int j = 0; j < 4; j++)
+                    var plates = new FlangePlate[tab.Length];
+                    for (int j = 0; j < tab.Length; j++)
                     {
                         // 等厚：圆盘随舌片走（但不得低于焊接下界）；阶梯：圆盘钉在下界
                         double tDisc = uniformF9 ? Math.Max(tab[j], p.WeldMinThicknessMm) : 0.5;
@@ -3270,7 +3270,7 @@ internal static class Program
                     var nIns = (double[])insF9.Clone();
                     var nTab = (double[])tabF9.Clone();
                     bool moved = false;
-                    for (int j = 0; j < 4; j++)
+                    for (int j = 0; j < dt.Length; j++)
                     {
                         double e = 0; int c = 0;
                         if (j - 1 >= 0 && j - 1 < dt.Length) { e += dt[j - 1] - targetF9; c++; }
@@ -3396,7 +3396,7 @@ internal static class Program
 
                     // 法兰发热 ∝ I² ∝ 壁厚，而发热 ∝ 1/t_tab ⇒ 等发热要求 t_tab ∝ 壁厚
                     double sc = wallW9 / prevWall;
-                    for (int j = 0; j < 4; j++) tabW9[j] = Math.Clamp(tabW9[j] * sc, 0.3, 4.0);
+                    for (int j = 0; j < tabW9.Length; j++) tabW9[j] = Math.Clamp(tabW9[j] * sc, 0.3, 4.0);
                     prevWall = wallW9;
 
                     var pW9 = SegmentSolver.Clone(p);
@@ -3413,8 +3413,8 @@ internal static class Program
 
                     LineCase MakeW9(double[] ins, double[] tab)
                     {
-                        var plates = new FlangePlate[4];
-                        for (int j = 0; j < 4; j++)
+                        var plates = new FlangePlate[tab.Length];
+                        for (int j = 0; j < tab.Length; j++)
                         {
                             double tDisc = Math.Max(tab[j], discFloor);
                             plates[j] = new FlangePlate
@@ -3455,7 +3455,7 @@ internal static class Program
                         var nIns = (double[])insW9.Clone();
                         var nTab = (double[])tabW9.Clone();
                         bool moved = false;
-                        for (int j = 0; j < 4; j++)
+                        for (int j = 0; j < dt.Length; j++)
                         {
                             double e = 0; int c = 0;
                             if (j - 1 >= 0 && j - 1 < dt.Length) { e += dt[j - 1] - targetW9; c++; }
@@ -3617,8 +3617,8 @@ internal static class Program
                         foreach (double decay in new[] { 0.55, 0.70, 0.85 })
                         {
                             var rr2 = new[] { 29.0, 32.0, 35.0, 38.0 };
-                            var tt = new double[4];
-                            for (int q = 0; q < 4; q++)
+                            var tt = new double[rr2.Length];      // 级数跟着半径表走
+                            for (int q = 0; q < tt.Length; q++)
                                 tt[q] = Math.Max(tBaseT, t0 * Math.Pow(decay, q));
                             var res = Row($"四级 起{t0:0.0} 衰减{decay:0.00}", rr2, tt);
                             if (res.peak <= 0 && res.gen > bestGen)
@@ -3660,8 +3660,8 @@ internal static class Program
                 pU.FlangeInsulThickMm = 20; pU.FlangeInsulated = true;
                 pU.BusbarClampLengthMm = clampLenU; pU.BusbarClampTempC = clampU;
 
-                var platesU = new FlangePlate[4];
-                for (int j = 0; j < 4; j++)
+                var platesU = new FlangePlate[tabU.Length];
+                for (int j = 0; j < tabU.Length; j++)
                 {
                     double td = Math.Max(tabU[j], discFloorU);
                     platesU[j] = new FlangePlate
@@ -4004,8 +4004,8 @@ internal static class Program
                 //   否则「最优档」重算时会用**最后一轮**的环去配**最优轮**的板厚（安静的不一致，§1.8 家族）。
                 LineCase MakeF2(double[] tab, double[] ins, double[] ringMul, bool ramp)
                 {
-                    var plates = new FlangePlate[4];
-                    for (int j = 0; j < 4; j++)
+                    var plates = new FlangePlate[tab.Length];
+                    for (int j = 0; j < tab.Length; j++)
                     {
                         double td = Math.Max(tab[j], discFloorF2);
                         plates[j] = new FlangePlate
@@ -4070,9 +4070,11 @@ internal static class Program
                 // 两个旋钮各自的割线状态：
                 //   slopeEst  = d③/d板厚（**正**，实测 149 K/mm）—— 内环
                 //   slope2Est = d②″/d保温（**负**，串级等效 −0.011 K/mm）—— 外环
-                var prevTab = new double[4]; var prevErr = new double[4]; var slopeEst = new double[4];
-                var prevIns = new double[4]; var prev2 = new double[4]; var slope2Est = new double[4];
-                for (int j = 0; j < 4; j++)
+                // 逐片的迭代状态：长度跟着**本次真的有几片**走
+                int nPl4 = tabF2.Length;      // 本块的逐片数组说了算
+                var prevTab = new double[nPl4]; var prevErr = new double[nPl4]; var slopeEst = new double[nPl4];
+                var prevIns = new double[nPl4]; var prev2 = new double[nPl4]; var slope2Est = new double[nPl4];
+                for (int j = 0; j < nPl4; j++)
                 {
                     prevTab[j] = double.NaN; prevErr[j] = 0; slopeEst[j] = 150.0;   // dB/d板厚 W/mm
                     prevIns[j] = double.NaN; prev2[j] = 0; slope2Est[j] = -0.011;
@@ -4176,7 +4178,7 @@ internal static class Program
                     //   三角系统不打架：先定 ②″，再让保温去追 ③。
                                         const double insLoF2 = 0.3, insHiF2 = 80.0;   // 用户：管外纤维无空间限制
                     bool moved = false;
-                    for (int j = 0; j < 4; j++)
+                    for (int j = 0; j < rr.Flanges.Length; j++)
                     {
                         double fj = rr.Flanges[j].QFromTubeW;
 
@@ -5621,8 +5623,8 @@ internal static class Program
                     double[][] baseCacheK2 = Array.Empty<double[]>();
                     LineCase MakeK2(double[] ins)
                     {
-                        var plates = new FlangePlate[4];
-                        for (int j = 0; j < 4; j++)
+                        var plates = new FlangePlate[tabK2.Length];
+                        for (int j = 0; j < tabK2.Length; j++)
                         {
                             double td = Math.Max(tabK2[j], discFloorK2);
                             plates[j] = new FlangePlate
@@ -5734,8 +5736,8 @@ internal static class Program
                     double[][] baseCache9 = Array.Empty<double[]>();
                     LineCase Make9(double mul, double wid)
                     {
-                        var plates = new FlangePlate[4];
-                        for (int j = 0; j < 4; j++)
+                        var plates = new FlangePlate[tab9.Length];
+                        for (int j = 0; j < tab9.Length; j++)
                         {
                             double td = Math.Max(tab9[j], discFloor9);
                             plates[j] = new FlangePlate
@@ -5851,8 +5853,8 @@ internal static class Program
                         pT9.FlangeInsulThickMm = 20; pT9.FlangeInsulated = true;
                         pT9.BusbarClampLengthMm = clampLenT9; pT9.BusbarClampTempC = clampT9;
 
-                        var plates = new FlangePlate[4];
-                        for (int j = 0; j < 4; j++)
+                        var plates = new FlangePlate[tabT9.Length];
+                        for (int j = 0; j < tabT9.Length; j++)
                         {
                             double td = Math.Max(tabT9[j], discFloorT9);
                             double mu = ringT9[j];
@@ -6014,8 +6016,8 @@ internal static class Program
                 LineResult? lastC = null;
                 for (int round = 0; round < 16; round++)
                 {
-                    var plates = new FlangePlate[4];
-                    for (int j = 0; j < 4; j++)
+                    var plates = new FlangePlate[tab2.Length];
+                    for (int j = 0; j < tab2.Length; j++)
                     {
                         double td = Math.Max(tab2[j], discFloorC9);
                         // 环厚按「相对基板的倍率」跟着走，否则舌片一变薄环就成了巨大台阶
@@ -6040,7 +6042,7 @@ internal static class Program
                     if (dt.All(d => d > 0 && d <= 10.0)) break;
 
                     bool moved = false;
-                    for (int j = 0; j < 4; j++)
+                    for (int j = 0; j < dt.Length; j++)
                     {
                         double e = 0; int c = 0;
                         if (j - 1 >= 0 && j - 1 < dt.Length) { e += dt[j - 1] - 5.0; c++; }
@@ -7223,14 +7225,14 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
                         double rho = Materials.PtDensity * 1e-6;          // g/mm³
                         double discFloorM = WeldDistortion.ForPt(1.0, kb: WeldDistortion.PlateBucklingKFreeEdge).SlopePerB
                                             * (fd.DiscRadiusMm - 26.0) * p.WeldSafetyFactor;
-                        var vol3d = new double[4]; double volTube3d = 0;
+                        var vol3d = new double[fd.FlangeCount]; double volTube3d = 0;
                         foreach (var e in rt.EnumerateArray())
                         {
                             if (e.GetProperty("vol").ValueKind == System.Text.Json.JsonValueKind.Null) continue;
                             double v = e.GetProperty("vol").GetDouble();
                             string ly = e.GetProperty("layer").GetString() ?? "";
                             if (ly == "铂管") { volTube3d += v; continue; }
-                            for (int j = 0; j < 4; j++)
+                            for (int j = 0; j < pnames.Length; j++)
                                 if (ly.StartsWith(pnames[j] + "-", StringComparison.Ordinal)) vol3d[j] += v;
                         }
 
@@ -7241,7 +7243,7 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
                         double s3 = volTube3d * rho, sf = feTube;
                         Console.WriteLine($"      {"铂管",-7}{volTube3d * rho,9:0.0}g{feTube,11:0.0}g"
                                         + $"{(volTube3d * rho - feTube) / feTube * 100,8:+0.00;−0.00}%");
-                        for (int j = 0; j < 4; j++)
+                        for (int j = 0; j < vol3d.Length; j++)
                         {
                             var pl = fd.Plate(j, discFloorM);
                             pl.HoleRadiusMm = fd.HoleRadiusMm;
@@ -7434,8 +7436,8 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
                     double scl = wl / 0.60;
                     double[] tabL = { 1.37 * scl, 2.02 * scl, 1.80 * scl, 1.04 * scl };
                     double[] insL = { 16.5, 0.9, 1.1, 2.9 };
-                    var platesL = new FlangePlate[4];
-                    for (int j = 0; j < 4; j++)
+                    var platesL = new FlangePlate[tabL.Length];
+                    for (int j = 0; j < tabL.Length; j++)
                     {
                         double tD = Math.Max(tabL[j], discFloorL9);
                         platesL[j] = new FlangePlate
@@ -7538,8 +7540,8 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
 
                     LineCase MakeT9(double[] ins, double[] tab)
                     {
-                        var plates = new FlangePlate[4];
-                        for (int j = 0; j < 4; j++)
+                        var plates = new FlangePlate[tab.Length];
+                        for (int j = 0; j < tab.Length; j++)
                         {
                             double tDisc = Math.Max(tab[j], discFloorT9);
                             plates[j] = new FlangePlate
@@ -7579,7 +7581,7 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
                         var nIns = (double[])insT9.Clone();
                         var nTab = (double[])tabT9.Clone();
                         bool moved = false;
-                        for (int j = 0; j < 4; j++)
+                        for (int j = 0; j < dt.Length; j++)
                         {
                             double e = 0; int c = 0;
                             if (j - 1 >= 0 && j - 1 < dt.Length) { e += dt[j - 1] - targetT9; c++; }

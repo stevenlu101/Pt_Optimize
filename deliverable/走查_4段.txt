@@ -41,3 +41,5 @@
   ✓ 第 2 步：蓝键切得到「整线核算」那一页
   ✓ 第 2 步：蓝键闪得到「自动定厚」这个按钮　在：① 整线核算 ★
   ⇒ 点「自动定厚」…
+  ✗ 自动定厚在预算内跑完　★ 超时
+[0903/124041.794:ERROR:ui\gfx\win\window_impl.cc:172] Failed to unregister class Chrome_WidgetWin_0. Error = 1412
