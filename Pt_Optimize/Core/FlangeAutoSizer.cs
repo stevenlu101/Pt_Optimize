@@ -772,7 +772,14 @@ public static class FlangeAutoSizer
         //     所以会自然停）。写成 bool 的后果实测过：第 1 轮加厚成功 continue，
         //     第 2 轮被挡掉 ⇒ 落回老熔点闸那句**没量过**的「回 Rhino」。
         var raiseTries = scale.Select(a => new int[a.Length]).ToArray();
-        const int MaxRaiseTries = 2;      // 每级最多试两次，成本可控
+        // ★★★ 每级只试**一次**（2026-09-04 实测定的）。
+        //   放到 2 次 + 原网格复核 + 孔边保细之后，自动定厚**又超时了**
+        //   （deliverable/F_改后4.txt）。功能上真正要紧的是「出口都带实测结论」，
+        //   不是试几次 —— 试一次已经能给出「加厚有用／没用」这个判断。
+        //   ⚠ 试探用的是**整线解**，一次就是分钟级。想再省只有一条路：
+        //     只解**那一片**的场（过热是单片问题）—— 但那要重建管根温/电流/保温分界，
+        //     等于把边界条件抄第二份，正是本仓最忌的「同一个数多处来源」。⇒ 不走。
+        const int MaxRaiseTries = 1;
 
         Result last = new();
         // 每轮的内层残差（各级峰值超管根 K）。用来分「轮数不够」和「已经在原地打转」。
@@ -962,7 +969,15 @@ public static class FlangeAutoSizer
                     //   ⚠ 只在**否定**时多花这一次解；肯定分支不加成本。
                     if (!(hotHi < hottestC - 1e-9) || hotHi > opt.OverheatRaiseFromC)
                     {
-                        var probeF = scale.Select(a => (double[])a.Clone()).ToArray();
+                        // ★ 只在**差一点**时才复核（粗算给的值落在阈值 1.3 倍以内）。
+                        //   差得远的（如 4530 °C vs 1768 °C）粗细网格都救不回来，
+                        //   多花一次整线解只是把超时买回来 —— 实测 F_改后4.txt。
+                        bool nearMiss = hotHi <= opt.OverheatRaiseFromC * 1.3;
+                        var probeF = nearMiss
+                            ? scale.Select(a => (double[])a.Clone()).ToArray()
+                            : null;
+                        if (probeF is not null)
+                        {
                         if (!Locked(jh, mh)) probeF[jh][mh] *= hiK;
                         var rf = EvalScale(baseCase, levelThicknessMm, probeF, cancel,
                                            inner: null, coarse: false);
@@ -975,6 +990,7 @@ public static class FlangeAutoSizer
                                     hotF = Math.Max(hotF, ffF.LevelTMaxC[m2]);
                             progress?.Report($"     粗算说加不凉（{hotHi:0} °C）=> 原网格复核：{hotF:0} °C");
                             hotHi = hotF;
+                        }
                         }
                     }
                     if (!(hotHi < hottestC - 1e-9) || hotHi > opt.OverheatRaiseFromC)
@@ -994,7 +1010,7 @@ public static class FlangeAutoSizer
                         double lo = 1.0, hi = hiK;
                         // ★ 4 步够了（2026-09-03）：每步都是一次解，8 步的精度
                         //   （倍数 ±0.4 %）远细于图纸 0.01 mm 的格，白花四次解。
-                        for (int it = 0; it < 4 && hi - lo > 0.05; it++)
+                        for (int it = 0; it < 3 && hi - lo > 0.08; it++)
                         {
                             double mid = 0.5 * (lo + hi);
                             if (HotAt(mid) <= opt.OverheatRaiseFromC) hi = mid; else lo = mid;

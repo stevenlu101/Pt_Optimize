@@ -162,8 +162,11 @@ public class OverheatDrivesSizingTests
         Assert.DoesNotContain("lc.MeshFineRadiusMm = Math.Min", s);
 
         // ② 二分 4 步（8 步的精度远细于图纸 0.01 mm 的格，白花四次解）
-        Assert.Contains("for (int it = 0; it < 4 && hi - lo > 0.05; it++)", s);
+        Assert.Contains("for (int it = 0; it < 3 && hi - lo > 0.08; it++)", s);
         Assert.DoesNotContain("for (int it = 0; it < 8", s);
+        // ★ 复核只在「差一点」时做 —— 差得远的粗细网格都救不回来，
+        //   多花一次整线解只是把超时买回来（实测 F_改后4.txt）。
+        Assert.Contains("bool nearMiss =", s);
 
         // ③ 试探按（片,级）记**次数**，不是 bool。
         //    全局 bool 的后果实测过：第 1 轮加厚成功 continue，第 2 轮被跳过，
