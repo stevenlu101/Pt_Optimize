@@ -1197,7 +1197,9 @@ public sealed class LineDesignPage : TabPage
         // ⚠ 这里**不许写 null** —— 字段是非可空 string，Show 直接 .Length。
         //   2026-09-03 跑图纸路时整个进程带栈崩在这上面（详见 ParamChangedThenShowTests）。
         _pendingReview = "";                                  // 待插入的形状体检同理
-        _sizerInfeasible = false;      // 上一次那句「不可行」是关于**上一组输入**的，不再适用
+        // 上一次那句「不可行」与上一次的推理过程，都是关于**上一组输入**的 ⇒ 一起作废
+        _sizerInfeasible = false;
+        _lastTrace = System.Array.Empty<string>();
         PushFlow();
         NoteUserInputChanged(what);      // ★ 唯一入口：越关作废 + 一次性告知
         _out.Text = $"⚠ 参数表改了「{what}」—— 上一次的解**不再对应当前参数**。" + Environment.NewLine
@@ -1425,6 +1427,7 @@ public sealed class LineDesignPage : TabPage
         // ★ 同 MarkParamsChanged：参数真的动了 ⇒ 上一次那句「这组输入不可行」失效。
         //   （「搜形状」改盘径/舌宽也走这条路 ⇒ 换了形状之后厚度那条路重新可试。）
         _sizerInfeasible = false;
+        _lastTrace = System.Array.Empty<string>();
 
         _autoArmed = true;
         // ⚠ **立刻**取消在跑的那次，不要等防抖到期（实测发现的：原来放在 TryAutoRun 里，
@@ -2873,6 +2876,7 @@ public sealed class LineDesignPage : TabPage
                     //     本支唯一那次 PushFlow 藏在 AdoptSolvedDesign 里，位写晚了就赶不上，
                     //     后面再没有第二次发布。我 2026-09-03 连栽两次：先放错函数，再放错位置。
                     _sizerInfeasible = srD8.HitBound && !srD8.Feasible;
+                    _lastTrace = srD8.Trace.ToArray();     // ★ 比价等推理过程带回界面
                     _suppressAuto = true;
                     for (int i = 0; i < _tPlate.Length && i < srD8.Design.TabThickMm.Length; i++)
                         _tPlate[i].Value = (decimal)Math.Clamp(srD8.Design.TabThickMm[i], 0.1, 8.0);
@@ -3001,6 +3005,13 @@ public sealed class LineDesignPage : TabPage
     ///   参数一动、或按新参数重解一次，上一次那句「不可行」就不再是关于这组输入的结论了。
     /// </summary>
     private bool _sizerInfeasible;
+
+    /// <summary>
+    /// 上一次求解器跑完留下的推理过程（<c>SolverResult.Trace</c>）。
+    /// 在「求解器诊断」勾上时印出来 —— 里面装着**每轮的比价**（每克铂买到多少裕度）。
+    /// ⚠ 参数一动就清：它是关于**上一组参数**的推理，留着会张冠李戴。
+    /// </summary>
+    private string[] _lastTrace = System.Array.Empty<string>();
 
     /// <summary>
     /// ★★★★★ 判据表改成**真表格**（2026-08-18，用户：「类似 Excel 也行」）。
@@ -3814,6 +3825,29 @@ public sealed class LineDesignPage : TabPage
             // ⚠ 这里是 Notes 的**唯一**打印点。2026-08 起「外层耦合…」那一行被印了两次
             //   （一次带 ⓘ、一次在这个 foreach 里），逐字相同 —— 收敛那句已经上移到结论区。
             foreach (var n in r.Notes) sb.AppendLine("  " + n);
+
+            // ★★★★★ **求解器自己的推理过程**（2026-09-03 接上）。
+            //
+            //   在此之前 SolverResult.Trace **一次都没到过界面** —— 它只进
+            //   progress 回调，而那条路的终点是状态栏**一行、被下一行盖掉**。
+            //   于是求解器每轮当场量出来的「比价」：
+            //       板厚 补得上、每克铂买 0.545（裕度 +515.60／铂 +945.3 g）
+            //       环倍率 补不上、每克铂买 5.080（裕度 +34.40／铂 +6.8 g）
+            //   工程师**一次也没看见过** —— 而环倍率那个输入框的提示语上
+            //   写着「抬它有没有用、值不值那点铂，比价结果**印在输出框里**」。
+            //   说了没做到，比没说更坏。
+            //
+            //   ⚠ 放在诊断开关下面：它是**为什么这么调**，不是判定；
+            //     判定在上面的结论区，两者不许混。
+            if (_lastTrace.Length > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("  ── 每一轮为什么这么调（求解器当场量的）");
+                const int cap = 200;
+                foreach (var t in _lastTrace.Take(cap)) sb.AppendLine("  " + t);
+                if (_lastTrace.Length > cap)
+                    sb.AppendLine($"  …（还有 {_lastTrace.Length - cap} 行，已略）");
+            }
         }
         // 照常写文本即可：排版（逐表制表位、`**…**` 加粗）由构造函数里挂的
         // TextFmt.Hook 接管 —— 与本页其余几十处写输出的地方走同一条路。

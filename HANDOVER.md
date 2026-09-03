@@ -17,11 +17,11 @@
 |---|---|---|
 | 7 | 求解器 ↔ 搜形状联动（⑥ 没旋钮，只能靠改盘径解） | ✅ §㉗ |
 | 8 | `--monotone` 扫 r₁/r₂/t₂ 单调性（代码早接好，一次没跑） | ✅ §㉙ |
-| **9** | **依 8 的结果，决定要不要把 r₁/r₂/t₂ 加进 `Solver.Allocation`** | ⏳ **进行中** |
+| **9** | **依 8 的结果，把旋钮加进 `Solver.Allocation`** | ◐ **t₁/t₂ 已加**（②″ 用 t₁、②′ 用 t₂，带实测依据）；**r₁/r₂ 不是旋钮**（环的半径，`Knob` 里没有它们）—— 要不要升成旋钮，缺一次每克铂比价 |
 | 10 | 界面给 r₁/r₂/t₂ 输入框 | ✅ §㉚ |
 | 12 | 理想化无关性对账（解析路 vs `.3dm`，逐条判据） | ❌ 未做 |
 | 13 | A① 改成「实测敏感度矩阵定分配」 | ✅ §㉛ |
-| A⑫ | `LevelSolver` 首次数值验证（**写好了一次没跑**） | ❌ 未做 |
+| A⑫ | `LevelSolver` 首次数值验证（**写好了一次没跑**） | ❌ 未做。2026-09-03 查清：它**零调用点**（330 行只在一句注释里被提到），而它要替换的正是 `.3dm` 逐级定厚 —— F 撞死的那条。**接不接是决定，不是我该自己拍的** |
 | 15 | `Pt_Heater1.3dm` 端到端 + `--verifymesh` | ❌ 未做 |
 | ★ | ShellThermal 的 Picard 判据也是「步长」 | ✅ §㉜ |
 | ★ | 四叉树的**各向异性**版（现在的各向同性版实测输了） | ❌ 未做 |
@@ -2035,7 +2035,7 @@ git clone <本仓库>
 cd Pt_Optimize
 dotnet restore --disable-parallel   # 见下，务必串行
 dotnet build
-dotnet test          # 应为 572/572 通过（这个数由 HandoverGateCountTests 自己盯着）
+dotnet test          # 应为 577/577 通过（这个数由 HandoverGateCountTests 自己盯着）
 dotnet run --project Pt_Optimize
 ```
 
@@ -5125,7 +5125,7 @@ Pt_Optimize.Tests/ · tests/UiWiring/ · Pt_Optimize.Geom/ · .githooks/   ← �
 > 改 `.githooks/` 改的是「门跑不跑」。这两类原本都不在名单里 ⇒
 > **唯一能让所有门失效的改动，恰恰是唯一不触发门的改动**。
 
-`dotnet test` 应为 **572/572**。
+`dotnet test` 应为 **577/577**。
 
 > 这个数**不用人记得改**了：`HandoverGateCountTests` 反射数出程序集里的用例数
 > （`[Fact]` 一条、`[Theory]` 按 `[InlineData]` 行数），再回头读本文件里的「应为 N/N」比对，
