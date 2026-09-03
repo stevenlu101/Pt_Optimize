@@ -103,7 +103,32 @@ public sealed record ChainSpec(
     string Answers,
     string EntryPoint,
     string Cost,
-    bool Deliverable);
+    bool Deliverable)
+{
+    /// <summary>
+    /// ★★★ 去掉链代号的名字：<c>"C′ 定尺寸"</c> → <c>"定尺寸"</c>（2026-09-03）。
+    ///
+    /// 链代号 A/B/C/D 与 ′ ″ 是**给写的人分类用的**，工程师看不懂 ——
+    /// 与判据代号 ②′②″③ 是同一条规矩（用户 2026-08-30：「工程师看不懂」），
+    /// 只是当时没人扫到状态面板这一行。
+    ///
+    /// ⚠ <see cref="Name"/> 本身不动：命令行、HANDOVER、测试都按它认链。剥壳只在显示层。
+    /// </summary>
+    public string PlainName
+    {
+        get
+        {
+            string n = Name.Trim();
+            if (n.Length > 0 && n[0] is >= 'A' and <= 'D')
+            {
+                int k = 1;
+                if (k < n.Length && (n[k] == '′' || n[k] == '″')) k++;
+                if (k < n.Length && n[k] == ' ') n = n[(k + 1)..];
+            }
+            return n.Replace("★", "").Trim();
+        }
+    }
+}
 
 /// <summary>
 /// 解锁**下一关**的条件。
@@ -189,7 +214,7 @@ public static class Flow
             "Solver.Solve", "更久", false),
         new(ChainId.C形状搜索, "C″ 形状搜索", "连盘径与舌宽一起搜，挑最轻的全过解",
             "Solver.Solve × N", "几十分钟", false),
-        new(ChainId.D升温闸, "D 升温闸", "① 空管能不能在期限内升到目标温度（闭式快筛）",
+        new(ChainId.D升温闸, "D 升温闸", "空管能不能在期限内升到目标温度（闭式快筛）",
             "Insulation.CylinderLoss（闭式）", "毫秒", false),
         new(ChainId.无, "—", "不算东西：存档、载入、出图", "—", "即时", false),
     };
@@ -204,7 +229,7 @@ public static class Flow
         // ── ① 闸门 ─────────────────────────────────────────────────────
         new("gate.ramp", "升温可达性趋势", StageId.参考工具, ChainId.D升温闸,
             CmdGroup.页面参数, true, "毫秒",
-            "5 档保温 × 4 档壁厚，闭式算升温时间与电流密度。**这是快筛，① 的交付判定在「③ 整线核算」给**"),
+            "5 档保温 × 4 档壁厚，闭式算升温时间与电流密度。**这是快筛，升温的交付判定在「整线核算」页给**"),
 
         // ── ② 快筛（解析·不可交付）──────────────────────────────────────
         new("calc.segment", "计算 (F5)", StageId.参考工具, ChainId.A单段解析,
@@ -290,11 +315,14 @@ public static class Flow
         //   存参数和「这一版几何算没算通」是两件毫不相干的事，
         //   而门禁的意义是拦住「拿不成立的解去出图」，不是拦住记事本。
         // 把当前的解写成 finaldesigns/*.fd.json。**读页面控件**（存的就是你手上这个解）
-        // ⇒ 受适用性约束：AllOk + Fresh 才可用（见 LineDesignPage.CommandApplicable）。
+        // ⚠ 适用性只剩 Fresh（2026-09-02 用户拍板：过没过由工程师判断，程序不替他否决）。
+        //   ★ 这条提示原来写「全判据**通过**的解」+「手抄记录值／8 分钟全档自检」——
+        //     前半句与现在的行为**相反**（超标也存得下，只是会先把问题列给你看），
+        //     后半句是给开发者的话。两处都是抓图抓到的（2026-09-03）。
         new("final.save", "另存为设计记录", StageId.交付, ChainId.无,
             CmdGroup.导出, true, "即时",
-            "把当前这个**全判据通过**的解写成档案文件。五个判据记录值由程序填 —— "
-            + "手抄它们是本项目最常见的错源，而抄错要等一次 8 分钟的全档自检才查得出来"),
+            "把当前这个解连同判据值一起存成档案。**超标也存得下** —— "
+            + "存之前会把超标的项列给你看，由你决定存不存；存下来的档会记着你担了这个风险。"),
 
         new("case.save", "保存", StageId.交付, ChainId.无,
             CmdGroup.工具, false, "即时", "把参数表存成 .json"),
@@ -352,7 +380,10 @@ public static class Flow
             // ⚠ 这里是**类别名的片段**，按 Contains 匹配（不是 StartsWith）——
             //   真实类别名带编号前缀（「5 C 整线 — 管几何」），写「C 整线」用前缀匹配永远不中。
             //   2026-08-20 建这个字段时就写错了，而它**一直没有消费者**，所以错了两周没人知道。
-            new[] { "A·B·C 共用", "C 整线", "数值" }),
+            // ⚠ 2026-09-03 参数表类别改成人话（原来带链代号 A·B·C / C 整线，工程师看不懂）
+            //   ⇒ 这份名单必须同步。ParamFoldTests 盯着「每条前缀都要匹配到真类别」。
+            new[] { ParamCat.电气, ParamCat.保温与表面, ParamCat.玻璃物性,
+                    ParamCat.管几何, ParamCat.法兰与铜排, ParamCat.数值 }),
 
         new(StageId.交付, 2, "② 交付（出图 / 存档）",
             "把这一版交出去：出图纸、存成设计记录。有问题会先列给你看，由你决定存不存。",
@@ -376,7 +407,8 @@ public static class Flow
                     "calc.segment", "sweep.insul", "sweep.eps", "export.csv",
                     "line.runAll", "line.bestGrade", "line.minWalls", "line.flanges",
                     "final.reproduce", "final.load", "final.export3dm" },
-            new[] { "A·B 粗算", "A·B·C 共用" }),
+            new[] { ParamCat.工艺条件, ParamCat.电气,
+                    ParamCat.保温与表面, ParamCat.玻璃物性 }),
 
         new(StageId.说明, 4, "使用说明",
             "图按设计记录实时生成 —— 换一档，图跟着变。",
@@ -397,20 +429,20 @@ public static class Flow
     //   宁可看得见但明写着「无效」。
     public static readonly ParamScope[] Params =
     {
-        new("1 A·B 粗算 — 工艺", new[] { ChainId.A单段解析, ChainId.B分段解析 }, ""),
-        new("2 A·B·C 共用 — 电气",
+        new(ParamCat.工艺条件, new[] { ChainId.A单段解析, ChainId.B分段解析 }, ""),
+        new(ParamCat.电气,
             new[] { ChainId.A单段解析, ChainId.B分段解析, ChainId.C整线耦合 }, ""),
-        new("3 A·B·C 共用 — 保温与表面",
+        new(ParamCat.保温与表面,
             new[] { ChainId.A单段解析, ChainId.B分段解析, ChainId.C整线耦合 }, ""),
-        new("4 A·B·C 共用 — 玻璃物性",
+        new(ParamCat.玻璃物性,
             new[] { ChainId.A单段解析, ChainId.B分段解析, ChainId.C整线耦合 }, ""),
-        new("5 C 整线 — 管几何", new[] { ChainId.C整线耦合 }, ""),
-        new("6 C 整线 — 法兰边界", new[] { ChainId.C整线耦合 }, ""),
-        new("8 ✗ 被页面/设计记录接管（改了对整线链没用）", new[] { ChainId.A单段解析, ChainId.B分段解析 },
-            "「③ 整线核算」页的同名控件"),
-        new("9 ✗ 对整线链无效", new[] { ChainId.A单段解析 },
-            "LineRunner 强制取值（整线链的壁厚由 LineCase.WallMm 定）"),
-        new("7 数值", new[] { ChainId.A单段解析, ChainId.C整线耦合 }, ""),
+        new(ParamCat.管几何, new[] { ChainId.C整线耦合 }, ""),
+        new(ParamCat.法兰与铜排, new[] { ChainId.C整线耦合 }, ""),
+        new(ParamCat.页面接管, new[] { ChainId.A单段解析, ChainId.B分段解析 },
+            "「整线核算」页的同名控件"),
+        new(ParamCat.程序算出, new[] { ChainId.A单段解析 },
+            "整线核算自己定（管壁由「整线核算」页上的壁厚控件决定）"),
+        new(ParamCat.数值, new[] { ChainId.A单段解析, ChainId.C整线耦合 }, ""),
     };
 
     /// <param name="CmdId">该点的那个命令（Flow.Commands 里的 Id）。空串 = 没有下一步可指。</param>
@@ -446,7 +478,7 @@ public static class Flow
         if (st.GeomAnalysisPending)
             return new("geom.analyze",
                 "本页是 **Rhino .3dm 模式**，图纸还没反推成几何变数 —— "
-                + "先点它，⑤⑥ 才判得了（否则解完仍是「无法判定」，白跑一次分钟级的解）");
+                + "先点它，「舌片自由段」与「圆盘盖得住管孔」才判得了（否则解完仍是「无法判定」，白跑一次分钟级的解）");
 
         if (st.Last is null)
             return new("core.runLine",
@@ -460,7 +492,7 @@ public static class Flow
         // ⚠ 这一条必须排在 AllOk 前面：参数改过之后，AllOk 说的是**上一组参数**的事，
         //   拿它去指路等于让人照着过期结论走下一步。
         if (!st.Fresh)
-            return new("core.runLine", "参数在上次求解之后又动过了 —— 回 ③ 按现在这组重解");
+            return new("core.runLine", "参数在上次求解之后又动过了 —— 回「整线核算」按现在这组重解");
 
         if (!st.Last.AllOk)
         {
@@ -495,12 +527,12 @@ public static class Flow
             {
                 if (applicable("geom.toanalytic"))
                     return new("geom.toanalytic",
-                          "几何判据在本模式下**判不了**（形状由 .3dm 给定，⑤⑥ 无从判起）—— "
+                          "几何判据在本模式下**判不了**（形状由 .3dm 给定，「舌片自由段」与「圆盘盖得住管孔」无从判起）—— "
                         + "⇒ 点「◈ 图纸几何 → 参数」：把图纸反推出来的几何（盘径／舌长／舌半宽／"
-                        + "管壁／板厚）交给**解析路**。那条路能改**形状**，⑤⑥ 也就判得了。"
-                        + "　实测：盘Ø120 即便板厚顶到工艺下界，②″ 与 ③ 仍差一个数量级 —— "
+                        + "管壁／板厚）交给**解析路**。那条路能改**形状**，那两条也就判得了。"
+                        + "　实测：盘Ø120 即便板厚顶到工艺下界，圆盘区最高温与法兰增量温降仍差一个数量级 —— "
                         + "**卡住的往往是形状，不是厚度**。"
-                        + "　想留在图纸上也行：那就只能调厚度，改完回 ③ 重解，或回 Rhino 改图。");
+                        + "　想留在图纸上也行：那就只能调厚度，改完回「整线核算」重解，或回 Rhino 改图。");
                 return new("geom.analyze",
                       "几何判据在本模式下**判不了**（形状由 .3dm 给定）—— "
                     + "先点「分析几何变数」把图纸的几何读出来；读出来之后才谈得上"
@@ -532,8 +564,32 @@ public static class Flow
                     + "但**这张图纸是等厚板（只有一级）**，「自动定厚」走的是逐级定厚，没有可调的级。"
                     + "⇒ 点「◈ 图纸几何 → 参数」：把图纸的几何交给**解析路**，"
                     + "那条路能改**形状**（盘径／舌宽）—— 而形状往往才是真正卡住的那一维"
-                    + "（实测：盘Ø120 即便板厚顶到工艺下界，②″ 与 ③ 仍差一个数量级）。"
-                    + "　另两条出路：改本页的**厚度标度 k** 再回 ③ 重解；或回 Rhino 给圆盘分级。");
+                    + "（实测：盘Ø120 即便板厚顶到工艺下界，圆盘区最高温与法兰增量温降仍差一个数量级）。"
+                    + "　另两条出路：改本页的**厚度标度 k** 再回「整线核算」重解；或回 Rhino 给圆盘分级。");
+            // ★★★★★ 指「自动定厚」之前，先问它**上一次是不是已经宣告不可行**（2026-09-03）。
+            //   见 FlowState.SizerProvedInfeasible 的说明：走查实测连指 3 次 = 死循环。
+            //   厚度这条路已经走到头 ⇒ 换下一根杠杆，而不是把人推回同一个按钮。
+            if (st.SizerProvedInfeasible)
+            {
+                if (applicable is not null && applicable("shape.search"))
+                    return new("shape.search",
+                          "**厚度这条路已经走到头** —— 上一次「自动定厚」把旋钮抬到上界仍不过，"
+                        + "那是**不可行的证明**，再点一次会得到同一句话。"
+                        + "⇒ 下一根杠杆是**形状**：点「◇ 搜形状」，它会改盘径与舌宽"
+                        + "（导热截面 ∝ 宽×厚，缩小盘径 / 收窄舌片才动得了法兰抽走的热）。"
+                        + "　几十分钟，随时可取消。");
+                if (applicable is not null && applicable("geom.toanalytic"))
+                    return new("geom.toanalytic",
+                          "**厚度这条路已经走到头** —— 上一次「自动定厚」把旋钮抬到上界仍不过。"
+                        + "本页是 .3dm 模式，改不了形状 ⇒ 点「◈ 图纸几何 → 参数」"
+                        + "把几何交给解析路，那条路才搜得了盘径与舌宽。");
+                // 两根自动杠杆都用尽 ⇒ **老实说没有自动的下一步了**，别再指一个必然无效的按钮。
+                return new("core.runLine",
+                      "**自动的招用完了** —— 厚度顶到上界仍不过，形状也搜过了。"
+                    + "接下来要你改输入：控温点、管径/管壁、铂牌号，或放宽这一段的工况。"
+                    + "改完点「核算整线」按新的这组重解。"
+                    + "　（也可以就这样交付 —— 超标项会列给你，风险由你判断。）");
+            }
             return new("core.autoThick", "判据没全过，卡的是热-电量（厚度正是它们的旋钮）—— "
                 + "点「核算整线」，它会自己往下调厚度，不用你决定调哪个、调多少");
         }
@@ -699,6 +755,28 @@ public sealed class FlowState
     ///   这正是本项目反复栽的形态。倒过来写之后，默认 false = 正常。
     public bool SizerNoLevels;
 
+    /// <summary>
+    /// ★★★★★ **定尺寸器已经证明「这组输入不可行」**（2026-09-03，跑 F 时抓到）。
+    ///
+    /// 实况（Pt_Heater1.3dm，图纸几何交给解析路之后）：
+    /// <code>
+    ///   自动定厚 → 「片0 舌保温 抬到上界 20.000 仍不过『法兰增量温降』⇒ 这组输入不可行」
+    ///   判据表逐字不变 → 指路仍指「自动定厚」 → 再点 → 同一句话 → …
+    ///   走查器实测：**连指 3 次**。
+    /// </code>
+    ///
+    /// 病灶与 <see cref="SizerNoLevels"/> **完全同形**：引擎自己说了「不可行」，
+    /// 而指路只看「判据过没过」⇒ 继续指同一个按钮。那一处堵的是「等厚板」这个入口，
+    /// 这一处堵的是「旋钮顶到上界」这个入口 —— 同一个坑的两个洞，当时只补了一个。
+    ///
+    /// ⚠ 「不可行」是 <see cref="PtOptimize.Core.SolverResult.HitBound"/> 的语义：
+    ///   **顶到上界 = 不可行的证明**，不是「搜索没搜到」。两者不能混：
+    ///   没搜到该再搜，证明了不可行再搜多少次都是同一句话。
+    ///
+    /// ⚠ 同样写成「例外才为真」（见上一条的教训）：默认 false = 正常。
+    /// </summary>
+    public bool SizerProvedInfeasible;
+
     /// <summary>进度文字，取自各页已有的 Progress&lt;string&gt;。</summary>
     public string RunningNote = "";
 
@@ -768,7 +846,7 @@ public sealed class FlowState
     ///
     /// 作废的是一切「已经过了」的**凭据**，而不是数字本身：
     ///   · <see cref="SolvedSnap"/> = null ⇒ Fresh 变 false ⇒ ④⑤ 两道门关上，
-    ///     指路回到「回 ③ 按现在这组重解」；
+    ///     指路回到「回「整线核算」按现在这组重解」；
     ///   · <see cref="Bypassed"/> 清空 —— ★ 这一条此前**漏了**：
     ///     越关是在**旧参数**上批的，参数一动它就不该再算数。
     ///     不清它，工程师改完参数还站在一个「当初批准进来的」页面上，
@@ -838,7 +916,7 @@ public static class Gate
 
         if (gate.RequireConverged && st.Last is not { Ok: true, Converged: true })
             return new Status(stage, bypassed, bypassed, gate.LockedWhy,
-                              "回到「③ 整线核算」点「核算整线」；若它提示「残差仍在收缩 —— 是慢不是发散」，"
+                              "回到「整线核算」点「核算整线」；若它提示「残差仍在收缩 —— 是慢不是发散」，"
                               + "答应把轮数上限提上去。", null);
 
         if (gate.RequireAllOk && st.Last?.AllOk != true)
@@ -849,7 +927,7 @@ public static class Gate
 
         if (gate.RequireFresh && !st.Fresh)
             return new Status(stage, bypassed, bypassed, gate.LockedWhy,
-                              "参数在上次求解之后又动过了 —— 回到「③ 整线核算」重解一次。", null);
+                              "参数在上次求解之后又动过了 —— 回到「整线核算」重解一次。", null);
 
         // ★★★ 判据可不可信（2026-08-30）。排在最后：前面几条不成立时，
         //   先说更根本的原因（还没解出来就谈不上「这个数准不准」）。

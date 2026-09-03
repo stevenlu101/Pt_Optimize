@@ -250,8 +250,9 @@ class UiWiringTests {
               fdM.Invalid.Length == 0 ? "" : "★ DesignSpec.W08 自己带着失效声明");
         // ★ 说明书必须跟上界面与判据（2026-08-17）。说明书落后比程序落后更难发现：
         //   它有排版、有图、有判据表，看起来就是答案。
-        Check("判据表含 ⑤ 自由段", html.Contains("⑤ 舌片自由段"));
-        Check("判据表含 ⑥ 盘盖住孔", html.Contains("⑥ 圆盘盖得住管孔"));
+        // ⚠ 2026-09-03 起说明书里**没有判据代号**（用户：「工程师看不懂 ②′」）⇒ 查全名。
+        Check("判据表含 舌片自由段", html.Contains("舌片自由段"));
+        Check("判据表含 圆盘盖得住管孔", html.Contains("圆盘盖得住管孔"));
         Check("按钮表含「◇ 搜形状」", html.Contains("◇ 搜形状"));
         // ★★ 2026-08-23：说明书的「逐个按钮」表以前是**手写**的，而它自己的注释就警告过
         //   「一旦落后，用户会去点一个不存在的按钮」——事实是它**已经落后了**：
@@ -1845,9 +1846,17 @@ class UiWiringTests {
                                   $"最差 {fid3.Worst * 100:0.0} %");
                         }
                         var outT = ((RichTextBox)F(lp3, "_out")!).Text;
-                        Check("输出框把「替身不可用」说给人看", outT.Contains("解析替身不可用"),
-                              "★ 只在内部拦掉、不告诉人，等于让人猜 ④ 为什么慢");
-                        Check("并且说了是开槽的缘故", outT.Contains("开槽"));
+                        // ⚠ 2026-09-03 起输出框会**折行**（长正文行原来要横向拉 500 字）⇒
+                        //   查之前先把换行去掉，否则一句话被折断就查不到 —— 那是查法的问题，
+                        //   不是 APP 少说了话。
+                        // ⚠ 不写反斜杠转义：本仓的钩子会把它改成真的换行，字面量当场断掉
+                        string flat = outT.Replace(((char)13).ToString(), "")
+                                          .Replace(((char)10).ToString(), "");
+                        Check("输出框把「替身不可用」说给人看", flat.Contains("解析替身不可用"),
+                              flat.Contains("解析替身不可用") ? ""
+                              : "★ 只在内部拦掉、不告诉人，等于让人猜为什么慢"
+                                + "　实际输出框开头：" + flat[..Math.Min(220, flat.Length)]);
+                        Check("并且说了是开槽的缘故", flat.Contains("开槽"));
                     }
                     var n2 = Flow.Next(fl, AppL);
                     Check("分析之后不再指「分析几何变数」", n2?.CmdId != "geom.analyze",
@@ -2284,7 +2293,12 @@ class UiWiringTests {
             foreach (var fi in typeof(LineResult.Key).GetFields(
                          BindingFlags.Public | BindingFlags.Static))
             {
-                string key = (string)fi.GetValue(null)!;
+                // ★★★ 2026-09-03：查的是 **Plain(key)**，不是 key 原文。
+                //   说明书按用户要求把判据代号全清了（「工程师看不懂 ②′」），
+                //   而 APP 判据表画到屏幕上时走的也是 Criteria.Plain ⇒
+                //   查剥壳后的名字，才是在查「工程师看得见的那行字查不查得到」。
+                //   查 key 原文只会钉住一个**屏幕上根本不出现**的字串。
+                string key = Criteria.Plain((string)fi.GetValue(null)!);
                 Check($"说明书里有「{key}」的出处", mn.Contains(Norm(key), StringComparison.Ordinal),
                       mn.Contains(Norm(key), StringComparison.Ordinal)
                           ? "" : "★ APP 判据表里露脸、说明书里查不到 —— 本节标题写的是「每条都必须有」");
@@ -2294,10 +2308,10 @@ class UiWiringTests {
             var limM = new LineCase();
             (string What, string Must)[] wants =
             {
-                ("① 升温期限",  $"{limM.RampHours:0} h"),
-                ("②″ 圆盘峰",   $"{limM.DiscOverTempMaxK:0} K"),
-                ("③ 增量温降",  $"{limM.RootDeltaMaxK:0} K"),
-                ("⑤ 自由段下界", $"{GeometryScreen.FreeTabMinDefaultMm:0} mm"),
+                ("升温期限",  $"{limM.RampHours:0} h"),
+                ("圆盘区最高温",   $"{limM.DiscOverTempMaxK:0} K"),
+                ("法兰增量温降",  $"{limM.RootDeltaMaxK:0} K"),
+                ("舌片自由段下界", $"{GeometryScreen.FreeTabMinDefaultMm:0} mm"),
                 ("管壁下界",    $"{DesignInputs.WeldMinDefaultMm:0.0} mm"),
             };
             foreach (var (what, must) in wants)

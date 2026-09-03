@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Drawing;
 using System.Collections.Generic;
 using System.Linq;
@@ -131,6 +131,78 @@ internal static class TextFmt
     /// 带 `\t` 的当然算；**纯横线**若紧挨着带 `\t` 的行也算 ——
     /// 否则一条手写的分隔线就把表断成两截（各自算列宽 ⇒ 前后对不上）。
     /// </summary>
+    /// <summary>
+    /// ★★★★★ **把过长的正文行折开**（2026-09-03 抓图抓到）。
+    ///
+    /// 实况：输出框 <c>WordWrap = false</c>（表格靠制表位对齐，折行会散），
+    /// 而「【下一步】…」那条处置建议实测 <b>703 个字宽</b>，框只有 ~170 ⇒
+    /// 横向滚动条的滑块只占 1/4 —— **工程师最该读的那一行，正是要向右拉 500 字的那一行**。
+    ///
+    /// ⇒ 只折**没有制表符**的行（表格行原样放过），在这一个咽喉处理，
+    ///   上游谁写的都盖得住。
+    ///
+    /// ⚠ 必须认得 <c>**粗体**</c>：<see cref="AppendMarkup"/> 是**逐行**解析标记的，
+    ///   把一对 <c>**</c> 对切开会让两半各留一个孤立标记，屏幕上直接露出星号。
+    ///   ⇒ 断行时若正处在粗体里，就**收尾一个 `**`、下一行再开一个**。
+    /// ⚠ 断点优先挑标点后面；挑不到才硬断。
+    /// </summary>
+    private static string[] WrapProse(RichTextBox box, string[] lines)
+    {
+        int avail = box.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 8;
+        var font = box.Font;
+        int W(string t) => TextRenderer.MeasureText(
+            t.Replace("**", ""), font, new Size(int.MaxValue, int.MaxValue),
+            TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix).Width;
+        // ★★★ 窄到放不下 30 个汉字就**一个字都不折**（2026-09-03，门当场抓到）。
+        //   上一版下限写的是 120 px —— 一个 200 px 宽的框照样进来折，
+        //   结果把正文折成「★ ／ 舌长装不下 ／ 铜排， ／ 已顶到装配」这种 4~5 字一行，
+        //   **比横向滚动难读得多**。框还没被布局给宽度时也是这个情形。
+        //   ⚠ 宽度稍后由 ClientSizeChanged 补排（见 Hook），所以这里跳过是安全的。
+        if (avail < W(new string('中', 30))) return lines;
+
+        const string BreakAfter = "，。；：、）」』】？！…·　 ";
+        var outp = new List<string>();
+        foreach (var line in lines)
+        {
+            if (HasTab(line) || line.Length == 0 || W(line) <= avail) { outp.Add(line); continue; }
+
+            // 续行跟着首行的缩进走，读起来才是一段
+            int ind = 0;
+            while (ind < line.Length && (line[ind] == ' ' || line[ind] == '　')) ind++;
+            string indent = line[..ind];
+
+            var cur = new StringBuilder();
+            bool boldOpen = false;
+            int lastGood = -1;              // cur 里「可以在此断」的长度
+            bool lastGoodBold = false;
+            for (int i = ind; i < line.Length; )
+            {
+                if (i + 1 < line.Length && line[i] == '*' && line[i + 1] == '*')
+                { cur.Append("**"); boldOpen = !boldOpen; i += 2; continue; }
+
+                cur.Append(line[i]);
+                if (W(indent + cur) > avail && cur.Length > 1)
+                {
+                    int cut = lastGood > 0 ? lastGood : cur.Length - 1;
+                    bool cutBold = lastGood > 0 ? lastGoodBold : boldOpen;
+                    string head = cur.ToString(0, cut);
+                    string tail = cur.ToString(cut, cur.Length - cut);
+                    outp.Add(indent + head + (cutBold ? "**" : ""));
+                    cur.Clear();
+                    if (cutBold) cur.Append("**");
+                    cur.Append(tail);
+                    lastGood = -1;
+                    // 断点之后 boldOpen 不变：head 补的 `**` 与新行开头的 `**` 相抵
+                }
+                else if (BreakAfter.IndexOf(line[i]) >= 0)
+                { lastGood = cur.Length; lastGoodBold = boldOpen; }
+                i++;
+            }
+            if (cur.Length > 0) outp.Add(indent + cur);
+        }
+        return outp.ToArray();
+    }
+
     private static bool IsTableLine(string[] lines, int i) =>
         HasTab(lines[i]) ||
         (IsRuleOnly(lines[i]) && ((i > 0 && HasTab(lines[i - 1])) ||
@@ -302,8 +374,55 @@ internal static class TextFmt
         // （挂钩没参与）就绕过了闸门 —— 每写一段又触发一次 Write，层层套下去。
         // ⇒ 闸门按「哪个框正在被写」记，Write 与 Hook 共用同一份。
         if (!_writing.Add(box)) return;
-        try { WriteCore(box, text, append); }
+        try
+        {
+            // ★★★ 记住**没折过的原文**（2026-09-03）。
+            //   折行要按框的宽度来，而框在**构造时还没有宽度**（布局还没跑）⇒
+            //   那一次必然折不了；等布局给了宽度，手上只剩已经折过的文本，
+            //   再折一次既不能变宽也不能还原。⇒ 原文留着，尺寸一变就按新宽度重排。
+            _rawText[box] = append && _rawText.TryGetValue(box, out var old)
+                          ? old + text : text;
+            WriteCore(box, text, append);
+        }
         finally { _writing.Remove(box); }
+    }
+
+    /// <summary>每个输出框最后一次写进去的**原文**（带 `**`、未折行）。</summary>
+    private static readonly Dictionary<RichTextBox, string> _rawText = new();
+
+    /// <summary>
+    /// ★★★★★ **这个框此刻该以谁为准**（2026-09-03，界面接线测试当场抓到）。
+    ///
+    /// 加了「原文缓存 + 尺寸一变就重排」之后，输出框就有了**两个写入者**：
+    /// 上游的 <c>box.Text = 新内容</c>，和我这个 ClientSizeChanged 处理器。
+    /// 而赋值本身会改变滚动条 ⇒ **触发 ClientSizeChanged** ⇒ 处理器拿着
+    /// 上一次的 <c>_rawText</c> 把刚写进去的内容**整段盖回去**。
+    ///
+    /// 实测被盖掉的是「分析几何变数」的整份报告（含「解析替身不可用 / 开槽」），
+    /// 屏幕上只剩上一条「读取了新方案…」—— 人会以为分析什么都没算出来。
+    ///
+    /// ⇒ 判断依据：框里显示的，是不是就是 <c>_rawText</c> 渲染出来的那一份
+    ///   （去掉 `**`、换行与空白之后逐字相同）。不是的话，**外面改过 ⇒ 以框为准**。
+    /// </summary>
+    private static string RawOf(RichTextBox box)
+    {
+        string shown = box.Text;
+        if (_rawText.TryGetValue(box, out var raw) && Flat(raw) == Flat(shown)) return raw;
+        _rawText[box] = shown;
+        return shown;
+    }
+
+    /// <summary>去掉标记与所有空白 —— 只比「说了哪些字」，不比怎么排的。</summary>
+    private static string Flat(string s)
+    {
+        var sb = new StringBuilder(s.Length);
+        for (int i = 0; i < s.Length; i++)
+        {
+            if (s[i] == '*' && i + 1 < s.Length && s[i + 1] == '*') { i++; continue; }
+            if (s[i] is '\r' or '\n' or '\t' or ' ' or '　') continue;
+            sb.Append(s[i]);
+        }
+        return sb.ToString();
     }
 
     /// <summary>正在被写的输出框。只在 UI 线程上进出，不需要加锁。</summary>
@@ -317,7 +436,8 @@ internal static class TextFmt
         var normal = box.Font;
         using var bold = new Font(normal, FontStyle.Bold);
 
-        var lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        var lines = WrapProse(box,
+            text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'));
 
         // 每张表记下「在控件里的起止 + 它自己的制表位」。
         // ★ 起止取自 box.TextLength ——**控件自己的下标**，
@@ -396,14 +516,34 @@ internal static class TextFmt
         //
         // ⇒ 句柄建好的那一刻补排一次。两个入口合起来才真正覆盖「所有写入路径」。
         box.HandleCreated += (_, _) => Reformat(box);
+
+        // ★★★ 宽度一变就按新宽度重折（2026-09-03 抓图抓到）。
+        //   构造时框还没有宽度 ⇒ 首屏那次写入折不了行，而在此之前**没有任何一处会再排**
+        //   （Reformat 见到没有 `\t` 也没有 `**` 就直接返回）⇒ 首屏永远是不折行的。
+        //   工程师拉窗口时同理：折出来的行宽该跟着窗口走。
+        //   ⚠ 必须从**原文**重排，不能拿框里已经折过的文本再折 —— 那样只会越折越窄。
+        box.ClientSizeChanged += (_, _) =>
+        {
+            if (_writing.Contains(box)) return;
+            string raw = RawOf(box);          // ⚠ 不能直接用缓存：外面可能刚改过（见 RawOf）
+            if (raw.Length > 0) Write(box, raw);
+        };
     }
 
     /// <summary>内容里还带着 `\t` 或 `**` 就整框重排一次；正在写的时候不插手。</summary>
     private static void Reformat(RichTextBox box)
     {
         if (_writing.Contains(box)) return;
-        string t = box.Text;
-        if (t.IndexOf('\t') < 0 && t.IndexOf("**", StringComparison.Ordinal) < 0) return;
+        // ★★★ 能走到这里 = **有人直接给 `.Text` 赋值**（没走 Write，`_writing` 是空的）
+        //   ⇒ 框里这份就是新的原文，必须**当场认下**。
+        //   ⚠ 上一版这里优先读 `_rawText`，而那份是上一次 Write 存的旧文 ⇒
+        //     直接赋值进来的新内容会被旧文**整段盖掉**。实测被吞掉的正是
+        //     「⚠ 参数表改了「控温点 HC1」—— 上一次的解不再对应当前参数」这条警告
+        //     （MarkParamsChanged 用的就是 `_out.Text = 警告 + _out.Text`）。
+        //     ——「把话说了却没送到」是本项目最贵的一类错，门当场抓到。
+        string t = RawOf(box);
+        if (t.IndexOf('\t') < 0 && t.IndexOf("**", StringComparison.Ordinal) < 0
+            && t.Split('\n').All(l => l.Length < 200)) return;
         Write(box, t);
     }
 

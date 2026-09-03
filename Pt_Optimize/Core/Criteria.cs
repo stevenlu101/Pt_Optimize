@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -188,6 +188,27 @@ public static class Criteria
         return false;
     }
 
+    /// <summary>
+    /// 判据的单位，按**名字**查（<c>ConstraintOut.Name</c> 直接传进来即可）。
+    ///
+    /// 用户 2026-09-02 那句「代号全换成全名（<b>+单位</b>）」的后半截：
+    /// 判据表原来只印「429.580 / 限 10.000」，**没有一个字说这是 K 还是 W** ——
+    /// 而 ③ 是 K、②′ 是 W、⑤⑥ 是 mm、管 J 是 A/mm²，四种单位混在同一张表里。
+    ///
+    /// ⚠ 先按全名精确匹配，匹配不上再按前缀 —— <c>Name</c> 往往比 <c>Key</c> 长
+    ///   （如「③ 法兰增量温降 ≤ 上限」）。<b>找不到就返回空字符串，绝不编一个单位。</b>
+    /// ⚠ 单位是「—」的（无量纲比值）不算单位，也返回空 —— 印出来只是噪音。
+    /// </summary>
+    public static string UnitOf(string? nameOrKey)
+    {
+        string p = Plain(nameOrKey);
+        if (p.Length == 0) return "";
+        var hit = All.FirstOrDefault(e => Plain(e.Key) == p)
+               ?? All.FirstOrDefault(e => p.StartsWith(Plain(e.Key), StringComparison.Ordinal));
+        string u = hit?.Unit ?? "";
+        return u == "—" ? "" : u;
+    }
+
     public static Entry? Of(string code) =>
         string.IsNullOrWhiteSpace(code) ? null : All.FirstOrDefault(e => e.Code == code);
 
@@ -231,29 +252,31 @@ public static class Criteria
     public static string Html()
     {
         var sb = new StringBuilder();
-        sb.Append("<h3>判据代号对照表</h3>");
-        sb.Append("<p>代号是给写的人省事的，不是给读的人用的。");
-        sb.Append("本页任何一处出现 <b>①②′②″③④⑤⑥</b>，都回这张表查。</p>");
+        sb.Append("<h3>判据全表</h3>");
+        sb.Append("<p>这是 APP 会判、会印出来的<b>全部</b>判据。名字与单位跟屏幕上一模一样 —— ");
+        sb.Append("判据表里那行字长什么样，这里就长什么样，不用换算、不用对照。</p>");
         sb.Append("<p>⚠ <b>本表不含限值数字</b> —— 限值只有一个来源（判据自己）。");
         sb.Append("要看限值请看下面「限值的出处」那张表，两张表不会打架。</p>");
         foreach (var hard in new[] { true, false })
         {
             sb.Append(hard ? "<h4>硬安全线（不过就不能交付）</h4>"
                            : "<h4>参考量 / 靶（印出来，不卡交付）</h4>");
-            // ★ 名字列显示 **APP 打印的那个字符串本身**（= LineResult.Key 的常量）。
-            //   读者要做的映射本来就是「屏幕上这行字 → 什么意思」，给拆过的名字反而对不上。
-            //   ⚠ 这也是 UiWiring 那条门要的：它反射 LineResult.Key 的每个常量，
-            //     要求该字符串**原样**出现在说明书里。拆成两列的话全名从没出现过 ⇒ 查不到。
-            sb.Append("<table class=\"nw\"><tr><th>代号</th><th>APP 里显示的名字</th><th>单位</th>"
+            // ★★★ 2026-09-03：名字列改印 **Plain(Key)**，不再印 Key 本身。
+            //   Key 自带代号（"②′管孔净流入"），而**判据表画到屏幕上时走的就是 Plain**
+            //   （LineDesignPage 三处都是 Criteria.Plain(c.Name)）⇒ 印 Key 反而与屏幕对不上。
+            //   ⚠ 连带改了 UiWiring 那条「说明书里查得到」的门：它原来找 Key 原文，
+            //     现在找 Plain(Key) —— 找的是**工程师真的看得见的那个字串**，比原来更准。
+            //   ⚠⚠ Key 常量本身一个字都没动（它是识别用的唯一来源）。
+            sb.Append("<table class=\"nw\"><tr><th>判据（APP 里显示的名字）</th><th>单位</th>"
                     + "<th>方向</th><th>它在管什么</th></tr>");
             foreach (var e in All.Where(x => x.Hard == hard))
-                sb.Append($"<tr><td><b>{(e.Code.Length == 0 ? "·" : e.Code)}</b></td><td>{e.Key}</td><td class=\"n\">{e.Unit}</td>"
+                sb.Append($"<tr><td><b>{Plain(e.Key)}</b></td><td class=\"n\">{e.Unit}</td>"
                         + $"<td class=\"n\">{e.Dir}</td><td>{e.Means}</td></tr>");
             sb.Append("</table>");
         }
-        sb.Append("<p>★ 代号里的 <b>′</b> 与 <b>″</b> 不是排版符号：");
-        sb.Append("<b>②′ 与 ②″ 是同一条安全线的两个视角</b> —— ");
-        sb.Append("②′ 从管子看热流方向，②″ 从法兰看圆盘区温度。</p>");
+        sb.Append("<p>★ <b>「管孔净流入」与「圆盘区最高温」是同一条安全线的两个视角</b> —— ");
+        sb.Append("前者从管子看热流方向（热该往法兰走，不该往管里灌），");
+        sb.Append("后者从法兰看圆盘区温度。两条一起看才判得准，缺一条就会漏掉一个失效方向。</p>");
         return sb.ToString();
     }
 

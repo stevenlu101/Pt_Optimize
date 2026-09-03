@@ -28,6 +28,8 @@ public sealed class StagePanel : Panel
 {
     private readonly Label _title = new();
     private readonly Label _chain = new();
+    /// <summary>开发者那份（链代号 + 求解器入口 + 耗时）挪到这里 —— 要 grep 的人停一下鼠标就有。</summary>
+    private readonly ToolTip _chainTip = new() { AutoPopDelay = 20000 };
     private readonly Label _input = new();
     private readonly Label _fresh = new();
     private readonly Label _verdict = new();
@@ -185,13 +187,25 @@ public sealed class StagePanel : Panel
 
         _title.Text = "现在算的是：" + st.Title;
 
-        // 链：名字 + 求解器入口 + 耗时。入口方法名直接印出来，
-        // 让「我在算什么」有一个可以拿去 grep 的答案。
+        // ★★★★★ 2026-09-03：这一行**原来是给开发者的**。
+        //
+        //   原样：「链：C 整线耦合 ★（LineRunner.Run·分钟级）　C′ 定尺寸（Solver.Solve·更久）
+        //          　C″ 形状搜索（Solver.Solve × N·几十分钟）　★ 可交付」
+        //   —— 链代号 C/C′/C″ 加 .NET 方法名，原注释自己写着「有一个可以拿去 grep 的答案」。
+        //   工程师看到的应该是「这一格会做什么、算出来的数能不能交付」。
+        //
+        //   ⚠ 开发者那份没删，挪进 ToolTip：要 grep 的人把鼠标停上去就有。
+        //   ⚠ 链代号剥壳走 ChainSpec.PlainName，与判据代号走 Criteria.Plain 是同一条规矩。
         var chains = st.Chains.Where(x => x != ChainId.无).Select(Flow.Chain).ToArray();
         _chain.Text = Plain(chains.Length == 0
-            ? "链：—（不算东西：存档 / 出图）"
-            : "链：" + string.Join("　", chains.Select(c => $"{c.Name}（{c.EntryPoint}·{c.Cost}）"))
-                    + (chains.Any(c => c.Deliverable) ? "　★ 可交付" : "　⚠ 不可交付"));
+            ? "这一格不算东西 —— 只出图与存档。"
+            : "这一格会做：" + string.Join(" → ", chains.Select(c => c.PlainName))
+                    + "　" + (chains.Any(c => c.Deliverable)
+                              ? "★ 这里算出来的数**可以拿去交付**"
+                              : "⚠ 这里的数只能参考，**不能拿去交付**"));
+        _chainTip.SetToolTip(_chain, chains.Length == 0 ? "（本格不跑求解器）"
+            : string.Join(Environment.NewLine,
+                chains.Select(c => $"{c.Name}　{c.EntryPoint}　{c.Cost}")));
 
         // 正在跑什么 —— 取各页已有的进度文字，不另起一套
         if (_state.Running is { } run)

@@ -156,7 +156,10 @@ public static class FieldPlots
         plot.Axes.SetLimits(0, 1, 0, 1);
         var t = plot.Add.Text(hint, 0.5, 0.5);
         t.Alignment = Alignment.MiddleCenter;
-        t.LabelFontSize = 14;
+        // ★ 跟着 DPI 走（2026-09-03 抓图）：写死 14 的话，在高 DPI 屏上这行字
+        //   小到几乎看不清 —— 而它占的是首屏**最大的一块空白**，
+        //   看不清就等于那块地方什么都没说。
+        t.LabelFontSize = UiScale.S(15);
         t.LabelFontColor = new Color(120, 120, 120);
         // ⚠ **必须显式设中文字体**：NewPlot() 只给坐标轴与标题设了 Microsoft YaHei，
         //   Text 标注走的是另一套默认字体，中文会整串渲染成豆腐块 □□□。

@@ -351,8 +351,12 @@ public sealed class LineDesignPage : TabPage
         RingR2 = _ringR2.Average(n => (double)n.Value),
         RingT2 = _ringT2.Average(n => (double)n.Value)
     };
+    // ★★★ AutoSize = false **必须写**：ToolStripComboBox 的 Width 在 AutoSize 开着时
+    //   会被工具条布局覆盖成默认宽（~100 px）⇒ 设了等于没设。
+    //   实测（2026-09-03 抓图）：档名「管壁 0.8 · 留余量」被切成「管壁 0.」——
+    //   工程师看不出选中的是 0.8 还是 0.6 档，而这个下拉决定的正是**算哪一档**。
     private readonly ToolStripComboBox _caseBox =
-        new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = UiScale.S(210) };
+        new() { DropDownStyle = ComboBoxStyle.DropDownList, AutoSize = false, Width = UiScale.S(210) };
     private readonly TabControl _plots = new() { Dock = DockStyle.Fill };
     private readonly ScottPlot.WinForms.FormsPlot _pT = FieldPlots.NewPlot();
     private readonly ScottPlot.WinForms.FormsPlot _pJ = FieldPlots.NewPlot();
@@ -627,11 +631,11 @@ public sealed class LineDesignPage : TabPage
             "⇒ **最优盘径就在下界上**，而下界是判据「圆盘盖得住管孔」，**算得出来、不用搜**：\n" +
             "　　盘半径 ≥ 管孔半径 + 焊脚　　焊脚 = max(板厚, 壁厚)　管孔半径 = 壁厚 + 25\n" +
             "　0.8 档、板厚解到 2.45 ⇒ 需要 R28.25（Ø56.5）；现在是 Ø60，还有 1.75 mm 余量。\n" +
-            "⚠ 下界**跟着板厚走** —— 求解器只往上抬板厚，抬一分焊脚长一分、⑥ 的余量掉一分。\n" +
+            "⚠ 下界**跟着板厚走** —— 求解器只往上抬板厚，抬一分焊脚长一分、「圆盘盖得住管孔」的余量掉一分。\n" +
             "　解完盘径不够时，`Solver.CoverCheck` 会直接把该改到多少印出来（处方，不是抱怨）。\n" +
             "⚠ 更正（2026-08-30）：此前这里写「再缩会让两级渐变环占满整个圆盘」——\n" +
             "　那不是**硬**下界。渐变环按**离管轴的半径**分级，越过盘缘之后它继续作用在舌根，\n" +
-            "　不是失效。真正拦住你的是 ⑥。");
+            "　不是失效。真正拦住你的是「圆盘盖得住管孔」。");
         Row("舌片长度 mm", _tabLen, "省铂宜短；但舌片越长形状数 Ψ 越小、局部越不易过热");
         Row("舌端半宽 mm", _tabW);
 
@@ -703,8 +707,7 @@ public sealed class LineDesignPage : TabPage
 
         // 判据表（Excel 式）在上、散文说明在下 —— 表归表、话归话
         InitChecksGrid();
-        var textSplit = new SplitContainer
-        { Dock = DockStyle.Fill, Orientation = System.Windows.Forms.Orientation.Horizontal };
+        var textSplit = _textSplit;
         textSplit.Panel1.Controls.Add(_checks);
         // 输出区：正文 + 顶上一条开关（明细 / 诊断，默认收起）
         var outSwitches = new FlowLayoutPanel
@@ -776,9 +779,12 @@ public sealed class LineDesignPage : TabPage
         SyncGeomSource();
         HandleCreated += (_, _) => BeginInvoke(() =>
         {
-            main.SplitterDistance = Math.Min(UiScale.S(330), Math.Max(UiScale.S(240), main.Width / 3));
+            // ★ 输入这一栏是工程师**真正要填**的东西，原来卡在 330 ⇒ 最重要的一栏最窄，
+            //   还得滚动才看得到最后几片。放宽到 430（仍随窗口走，小窗口不会挤爆右边）。
+            main.SplitterDistance =
+                Math.Min(UiScale.S(430), Math.Max(UiScale.S(260), main.Width * 2 / 5));
             rightSplit.SplitterDistance = (int)(rightSplit.Height * 0.66);
-            textSplit.SplitterDistance = (int)(textSplit.Height * 0.46);   // 判据表 : 说明 ≈ 46:54
+            SyncTextSplit();
         });
     }
 
@@ -910,7 +916,10 @@ public sealed class LineDesignPage : TabPage
                 foreach (var c in over)
                     sbW.AppendLine(c.Undetermined
                         ? $"    {Criteria.Plain(c.Name)}　**判不了**（{c.Where}）"
-                        : $"    {Criteria.Plain(c.Name)}　{c.Actual:0.000} / 限 {c.Limit:0.000}　（{c.Where}）");
+                        // ★ 带单位（用户 2026-09-02：「全名 + 单位」）。同一张表里
+                        //   K / W / mm / A/mm² 四种单位混着，不写单位就读不出量级。
+                        : $"    {Criteria.Plain(c.Name)}　{c.Actual:0.000} / 限 {c.Limit:0.000}"
+                        + $" {Criteria.UnitOf(c.Name)}　（{c.Where}）");
                 sbW.AppendLine();
             }
             sbW.AppendLine(verified
@@ -962,7 +971,7 @@ public sealed class LineDesignPage : TabPage
               + (over.Length > 0
                     ? "　**越限/判不了**：" + string.Join("；", over.Select(c => c.Undetermined
                         ? Criteria.Plain(c.Name) + " 判不了"
-                        : $"{Criteria.Plain(c.Name)} {c.Actual:0.000}/限 {c.Limit:0.000}"))
+                        : $"{Criteria.Plain(c.Name)} {c.Actual:0.000}/限 {c.Limit:0.000} {Criteria.UnitOf(c.Name)}"))
                     : "")
               + (verified ? "　（数已加密复算到不再变）"
                           : "　⚠ **这些数是粗网格上算的，没有加密复算，可能偏乐观**。")
@@ -1183,12 +1192,15 @@ public sealed class LineDesignPage : TabPage
         if (_solvedSnap is null && _last is null) return;    // 本来就没有可作废的
         _solvedSnap = null;                                   // ⇒ Fresh = false，门关上
         _solvedRes = null;                                    // 外推基准也作废（它是另一组参数的解）
-        _pendingReview = null;                                // 待插入的形状体检同理
+        // ⚠ 这里**不许写 null** —— 字段是非可空 string，Show 直接 .Length。
+        //   2026-09-03 跑图纸路时整个进程带栈崩在这上面（详见 ParamChangedThenShowTests）。
+        _pendingReview = "";                                  // 待插入的形状体检同理
+        _sizerInfeasible = false;      // 上一次那句「不可行」是关于**上一组输入**的，不再适用
         PushFlow();
         NoteUserInputChanged(what);      // ★ 唯一入口：越关作废 + 一次性告知
         _out.Text = $"⚠ 参数表改了「{what}」—— 上一次的解**不再对应当前参数**。" + Environment.NewLine
                   + "   判据表留在下面供对照，但它是**上一组参数**的结论；" + Environment.NewLine
-                  + "   ④ 定尺寸与 ⑤ 交付已经关上，请点「核算整线」按现在这组重解。"
+                  + "   「交付」那一格已经关上，请点「核算整线」按现在这组重解。"
                   + Environment.NewLine + Environment.NewLine + _out.Text;
     }
 
@@ -1249,10 +1261,10 @@ public sealed class LineDesignPage : TabPage
             $"你刚改了「{what}」。从这一刻起：" + Environment.NewLine + Environment.NewLine
             + "  · 上一次的解**不再对应当前参数** —— 判据表留着给你对照，" + Environment.NewLine
             + "    但它是**上一组参数**的结论；" + Environment.NewLine
-            + "  · ④ 定尺寸 与 ⑤ 交付 两道门已经关上；" + Environment.NewLine
+            + "  ·「交付」那一格的门已经关上；" + Environment.NewLine
             + "  · 之前若「越关」进过某一格，那张通行证也一并作废" + Environment.NewLine
             + "    （它是按旧参数批的）。" + Environment.NewLine + Environment.NewLine
-            + "要拿到当前这组参数的结论，请回「③ 整线核算」重解一次。"
+            + "要拿到当前这组参数的结论，请回「整线核算」重解一次。"
             + Environment.NewLine + Environment.NewLine
             + "（本提示只出现这一次；之后由右上角状态面板持续提醒。）",
             "参数一动 —— 整条链要从头再走一遍",
@@ -1407,6 +1419,9 @@ public sealed class LineDesignPage : TabPage
         //   但**越关**不会自己失效 —— 它是在**旧参数**上批的。
         //   放在首屏闸门之后：程序写控件、排版期的事件都不算「用户改了参数」。
         NoteUserInputChanged("页面参数");
+        // ★ 同 MarkParamsChanged：参数真的动了 ⇒ 上一次那句「这组输入不可行」失效。
+        //   （「搜形状」改盘径/舌宽也走这条路 ⇒ 换了形状之后厚度那条路重新可试。）
+        _sizerInfeasible = false;
 
         _autoArmed = true;
         // ⚠ **立刻**取消在跑的那次，不要等防抖到期（实测发现的：原来放在 TryAutoRun 里，
@@ -1543,9 +1558,15 @@ public sealed class LineDesignPage : TabPage
                     sb.AppendLine($"   {nm}\t{base0:0.00}\t预测 {pred:0.00}\t/ {limit:0.0}\t{verdict}{drivers}");
                 }
                 // 驱动项的数值同样插值自常数 —— 与提示框、与外推用的斜率是**同一个来源**
-                P("③", V("③"), V("③") + dDip_dWall * dW + dDip_dPlate * dP + dDip_dTubeIns * dI, 10.0,
+                // ⚠ 查找键与显示名是**两件事**：键走 LineResult.Key 常量（判据改名编译期就断），
+                //   显示走 Criteria.Plain（剥掉代号）。原来两处都写字面量 "③" ——
+                //   于是代号从这里漏到屏幕上，而且判据一改名它会**悄悄查不到**（返回 0）。
+                P(Criteria.Plain(LineResult.Key.FlangeDip),
+                  V(LineResult.Key.FlangeDip),
+                  V(LineResult.Key.FlangeDip) + dDip_dWall * dW + dDip_dPlate * dP + dDip_dTubeIns * dI, 10.0,
                   $"板厚 {dDip_dPlate:+0;−0} K/mm　管壁 {dDip_dWall:+0;−0}　管保温 {dDip_dTubeIns:+0;−0}");
-                P("管J", V("管 J"), V("管 J") + dJ_dWall * dW + dJ_dTubeIns * dI, 12.0,
+                P(Criteria.Plain(LineResult.Key.TubeJ),
+                  V(LineResult.Key.TubeJ), V(LineResult.Key.TubeJ) + dJ_dWall * dW + dJ_dTubeIns * dI, 12.0,
                   $"管壁 {dJ_dWall:+0.00;−0.00}　管保温 {dJ_dTubeIns:+0.00;−0.00}");
                 // ⚠ 列数必须与 P 完全一致，否则它会自成一张表、和上面两行对不齐
                 sb.AppendLine($"   圆盘区最高温\t{V("圆盘区最高温"):0.00}\t**不外推**\t/ 5.0\t" +
@@ -1695,7 +1716,7 @@ public sealed class LineDesignPage : TabPage
             {
                 _out.AppendText(Environment.NewLine
                     + "★ 算完了：判据全过、是当前参数的解、而且已经加密复算到数不再变。"
-                    + "可以到「② 交付」页出图。" + Environment.NewLine);
+                    + "可以到「交付」页出图。" + Environment.NewLine);
                 break;
             }
 
@@ -1867,7 +1888,7 @@ public sealed class LineDesignPage : TabPage
                     + string.Join("/", headPage.Select(v => v.ToString("0.0"))) + " m，存档 "
                     + string.Join("/", headCase.Select(v => v.ToString("0.0"))) + " m）。"
                     + Environment.NewLine
-                    + "   ⇒ 不把它记作「页面参数的解」，④ 仍需你点「核算整线」按页面工况重解一次。"
+                    + "   ⇒ 不把它记作「页面参数的解」，仍需你点「核算整线」按页面工况重解一次。"
                     + Environment.NewLine
                     + "   水头是工艺量、不属于设计记录几何，所以「载入设计记录」不会覆盖它 —— 这是有意的。";
 
@@ -2757,7 +2778,7 @@ public sealed class LineDesignPage : TabPage
                            ? "   图纸**还没反推**成几何变数 —— 请先点「**分析几何变数**」，再回来定厚。" + nl
                            : "   图纸已经分析过了，但反推出来只有**一级厚度（等厚板）** ——" + nl
                              + "   「自动定厚」是**逐级**定厚，没有可调的级，再点一次分析也不会有台阶。" + nl
-                             + "   ⇒ 两条出路：① 直接改本页的**厚度标度 k** 再回 ③ 重解；" + nl
+                             + "   ⇒ 两条出路：① 直接改本页的**厚度标度 k** 再回「整线核算」重解；" + nl
                              + "      ② 回 Rhino 给圆盘分级（做出台阶），再重新「分析几何变数」。" + nl)
                         + "   ⚠ 不能替你用 D8：D8 优化的是**解析形状**（圆盘＋舌片），" + nl
                         + "      它不读你的 .3dm，盘径/舌长在本模式下又是禁用的残值 ——" + nl
@@ -2824,6 +2845,13 @@ public sealed class LineDesignPage : TabPage
                     //     结果只在导航网格上成立，下面会当场说出来。
                     var srD8 = await Task.Run(() => Solver.Solve(seedD8, _base,
                                    new SolverOptions { MaxRounds = 40 }, prog, ct), ct);
+                    // ★★★ 顶到上界 = **不可行的证明** ⇒ 记下来，指路才不会把人推回同一个按钮。
+                    //   ⚠ 只有 HitBound 才算证明；Feasible=false 但 HitBound=false 是「没搜到」，
+                    //     那种再点一次是有意义的，不能一并堵掉。
+                    //   ⚠⚠ **必须写在这里（求解一返回就写）**，不能写在下面 ——
+                    //     本支唯一那次 PushFlow 藏在 AdoptSolvedDesign 里，位写晚了就赶不上，
+                    //     后面再没有第二次发布。我 2026-09-03 连栽两次：先放错函数，再放错位置。
+                    _sizerInfeasible = srD8.HitBound && !srD8.Feasible;
                     _suppressAuto = true;
                     for (int i = 0; i < _tPlate.Length && i < srD8.Design.TabThickMm.Length; i++)
                         _tPlate[i].Value = (decimal)Math.Clamp(srD8.Design.TabThickMm[i], 0.1, 8.0);
@@ -2847,7 +2875,7 @@ public sealed class LineDesignPage : TabPage
                             + "加密到位是 **9.5 K** —— 差 1.8 K，足以把「过」变成「不过」。"
                             + Environment.NewLine
                             + "   ⇒ **下一步点「◆ 加密复算（算到数不再变）」**（本页工具条，10～40 分钟，可取消）。"
-                            + "没过这一关，⑤ 交付的门不会开。" + Environment.NewLine);
+                            + "没过这一关，「交付」的门不会开。" + Environment.NewLine);
                     AdoptSolvedDesign(srD8.Design, srD8.Best);   // 统一入口
                     // ★★★★★ 同上：必须发布，否则提示与门禁读的是冻住的旧解（见上一分支的长注释）。
                     //
@@ -2871,10 +2899,10 @@ public sealed class LineDesignPage : TabPage
                         $"　合计 {srD8.MassG:0} g\r\n" +
                         "   ★ 三个旋钮**都已带回本页工作设计**（2026-08-25 起）：\r\n" +
                         "     板厚写进控件；舌保温与环倍率本页无控件，但已由本页承载并参与后续求解\r\n" +
-                        "     ⇒「回 ③ 重解」会**复现这张表**，不会把它们丢回设计记录值。\r\n" +
+                        "     ⇒「回「整线核算」重解」会**复现这张表**，不会把它们丢回设计记录值。\r\n" +
                         "     （在此之前只带板厚 ⇒ 重解必然退回失败 ⇒ 提示与定尺寸两步死循环。）\r\n" +
                         $"   ⚠ 本次解的是**设计记录那套完整几何**（含渐变环/角焊缝/等宽舌片/舌根圆角），\r\n" +
-                        $"     ③ 页用的是**同一个几何构造器**（UiWiring §16 逐字段钉着），不是另一片简化法兰；压接段取设计记录值 {seedD8.ClampLengthMm:0} mm。");
+                        $"     「整线核算」页用的是**同一个几何构造器**（UiWiring §16 逐字段钉着），不是另一片简化法兰；压接段取设计记录值 {seedD8.ClampLengthMm:0} mm。");
                 }
             }
             else
@@ -2934,7 +2962,24 @@ public sealed class LineDesignPage : TabPage
     /// <see cref="Show"/> 取用后清空 —— 放在**判定之后、明细之前**，
     /// 那是用户读完「过没过」之后最想知道「为什么、代价是什么」的位置。
     /// </summary>
+    /// <summary>
+    /// 判据表 / 说明 的上下分栏。存成字段是为了**按有没有结果调比例**：
+    /// 还没解过时判据表是空的，却占着 46 % 的高度 —— 开箱第一眼看到的是一张空格子，
+    /// 而该看的「怎么开始」被挤在下面。⇒ 没结果就把地方让给说明（2026-09-03 抓图）。
+    /// </summary>
+    private readonly SplitContainer _textSplit = new()
+    { Dock = DockStyle.Fill, Orientation = System.Windows.Forms.Orientation.Horizontal };
+
     private string _pendingReview = "";
+
+    /// <summary>
+    /// 定尺寸器上一次跑完是不是**证明了**这组输入不可行（旋钮顶到上界仍不过）。
+    /// <c>SolverResult.HitBound</c> 的语义就是「不可行的证明」，不是「没搜到」。
+    ///
+    /// ⚠ 生命周期只有一条规矩：**只有「自动定厚」跑完才写，别处一律清**。
+    ///   参数一动、或按新参数重解一次，上一次那句「不可行」就不再是关于这组输入的结论了。
+    /// </summary>
+    private bool _sizerInfeasible;
 
     /// <summary>
     /// ★★★★★ 判据表改成**真表格**（2026-08-18，用户：「类似 Excel 也行」）。
@@ -3198,7 +3243,24 @@ public sealed class LineDesignPage : TabPage
                 Text = t, AutoSize = true, Margin = new Padding(0, 10, 0, 4),
                 Font = UiScale.Ui(FontStyle.Bold), ForeColor = Color.FromArgb(40, 90, 140),
             };
+            // ★★★ AutoSize 的 Label 按**单行**首选宽度算 ⇒ 比容器宽就被**静默横向裁掉**。
+            //   实测（2026-09-03 抓图）：「法兰厚度 mm（4 片＝3 段＋1；可点「自动定厚」求解）」
+            //   在屏幕上停在「…；可点」，括号都没闭合。
+            //   ⚠ 与 MainForm.Banner 栽的是同一个坑，那边已经用「给最大宽度让它折行」修过。
+            //   ⚠ 宽度取**父容器**的：_plateBox 自己是 AutoSize，拿它的宽度会绕回来。
+            void Fit()
+            {
+                var host = _plateBox.Parent;
+                if (host is null) return;
+                int w = host.ClientSize.Width - _plateBox.Margin.Horizontal - l.Margin.Horizontal;
+                if (w <= 0) return;
+                var want = new Size(w, 0);
+                if (l.MaximumSize != want) l.MaximumSize = want;   // 必须先比再设，否则布局抖
+            }
+            l.ParentChanged += (_, _) => Fit();
             _plateBox.Controls.Add(l); _plateBox.SetColumnSpan(l, 2);
+            Fit();
+            if (_plateBox.Parent is { } p0) p0.SizeChanged += (_, _) => Fit();
         }
         void Row(string label, Control c, string? tip = null)
         {
@@ -3214,7 +3276,7 @@ public sealed class LineDesignPage : TabPage
         string tipPlate =
             "**最强的旋钮**（0.8 档 2026-08 离线实测，端点均已收敛）：\n" +
             $"  法兰增量温降 {dDip_dPlate:+0.0;−0.0} K/mm　圆盘区最高温 −14.6 K/mm　法兰重 +264 g/mm\n" +
-            "⚠ ③ 是**正号** —— 加厚会把 ③ 推向限值。「哪里热就加厚哪里」在这里是反的：\n" +
+            "⚠ 法兰增量温降是**正号** —— 加厚会把它推向限值。「哪里热就加厚哪里」在这里是反的：\n" +
             "  加厚同时降单位面积发热（∝1/t）与增强横向导热（∝t），后者把热从管根抽走。\n" +
             "共用片承 √3 倍电流、发热 3 倍 ⇒ 必须比端片厚，四片等厚不是最优。";
         string tipIns =
@@ -3244,12 +3306,12 @@ public sealed class LineDesignPage : TabPage
             "⚠ **超过盘半径之后它继续作用在舌片根部** —— 盘 Ø60 时盘面只到 孔+4.2 mm，" + Environment.NewLine +
             "　r₂ 再往外加厚的是舌根。实测把 r₂ 扫到 16 mm 仍持续见效，就是这个缘故。" + Environment.NewLine +
             "── 单调性实测（0.8 档，2026-08-30 首次跑）" + Environment.NewLine +
-            "　r₁ 1→10／r₂ 4→16／t₂ 1→2：三条对 抽热D、③、圆盘区最高温 **全单调** ⇒ 可二分。" + Environment.NewLine +
-            "　但方向是：只有 管孔净流入 变好，**③ 与 圆盘区最高温 都变坏** ⇒ 它们是「花铂换抽热」的旋钮，" + Environment.NewLine +
+            "　r₁ 1→10／r₂ 4→16／t₂ 1→2：三条对 抽热D、法兰增量温降、圆盘区最高温 **全单调** ⇒ 可二分。" + Environment.NewLine +
+            "　但方向是：只有 管孔净流入 变好，**法兰增量温降与圆盘区最高温都变坏** ⇒ 它们是「花铂换抽热」的旋钮，" + Environment.NewLine +
             "　不是「治判据」的旋钮。所以**没有**进求解器的分配表（那要先做敏感度矩阵）。" + Environment.NewLine +
             "── 谁在动它们（2026-08-30 起变了）" + Environment.NewLine +
             "　**t₂ 是求解器旋钮**：它是判据 管孔净流入 的**首选**候选，排在板厚前面 ——" + Environment.NewLine +
-            "　实测每克铂买到的裕度是板厚的 **1.7–3.3 倍**，而每单位 管孔净流入 的 ③ 代价几乎相同。" + Environment.NewLine +
+            "　实测每克铂买到的裕度是板厚的 **1.7–3.3 倍**，而每单位管孔净流入的法兰增量温降代价几乎相同。" + Environment.NewLine +
             "　「自动定厚」解完会把 t₂ 写回这里并自动勾上「逐片自定」。" + Environment.NewLine +
             "　**r₁ / r₂ 不是**求解器旋钮：t₁ = t₂ = 1.00 时台阶根本不存在，挪半径无效。" + Environment.NewLine +
             "　要让它们有意义，先把 t₁ 或 t₂ 抬离 1.00。";
@@ -3356,6 +3418,11 @@ public sealed class LineDesignPage : TabPage
         f.Last = _last;
         // ★ 复核状态与解一样要发布。⚠ 快照单独记：改完参数还挂着上一次的复核结论
         //   是**假绿灯**，比没复核更坏（会让人以为验过了）。
+        // ★★★ 定尺寸器上一次有没有宣告「这组输入不可行」。见 FlowState.SizerProvedInfeasible。
+        //   ⚠ **必须放在 PushFlow，不能放在 SyncAnalysisPending** —— 后者只在两处被调
+        //     （首屏、分析几何变数跑完），**解完之后一次都不会调** ⇒ 位永远推不上去。
+        //     我 2026-09-03 第一版就放错了地方，走查照旧连指「自动定厚」，看起来像没修。
+        f.SizerProvedInfeasible = _sizerInfeasible;
         f.MeshVerified = _meshVerify is { Converged: true };
         f.VerifiedSnap = _verifiedSnap;
         f.VerifyNote = _meshVerify?.Verdict ?? "";
@@ -3430,10 +3497,27 @@ public sealed class LineDesignPage : TabPage
                   + "请点「核算整线」重新求解。\r\n";
     }
 
+    /// <summary>
+    /// 判据表 : 说明 的高度比 —— **按有没有结果调**。
+    ///
+    /// 还没解过时判据表一行都没有，却占着近一半高度；工程师开箱第一眼落在一张空格子上，
+    /// 而「填好左边的参数，点核算整线」被挤在下面。⇒ 没结果时收到 14 %，有结果再放到 46 %。
+    /// ⚠ 只在**比例真的要变**时设，否则每次 Show 都会让分隔条跳一下。
+    /// </summary>
+    private void SyncTextSplit()
+    {
+        if (_textSplit.Height <= 0) return;
+        int want = (int)(_textSplit.Height * (_checks.Rows.Count > 0 ? 0.46 : 0.14));
+        want = Math.Max(_textSplit.Panel1MinSize + 1,
+               Math.Min(want, _textSplit.Height - _textSplit.Panel2MinSize - _textSplit.SplitterWidth - 1));
+        if (Math.Abs(_textSplit.SplitterDistance - want) > UiScale.S(8))
+            _textSplit.SplitterDistance = want;
+    }
+
     private void FillChecks(LineResult? r)
     {
         _checks.Rows.Clear();
-        if (r is null || !r.Ok) return;
+        if (r is null || !r.Ok) { SyncTextSplit(); return; }
         foreach (var c in r.Checks)
         {
             string kind = c.Kind == CheckKind.HardSafety ? "硬"
@@ -3459,6 +3543,12 @@ public sealed class LineDesignPage : TabPage
             //     长得一样、含义无关，摆在同一个界面上必然误读。
             //   ⇒ 显示层剥壳，只此一处；Key 本身不动（它是识别用的唯一来源）。
             string nm = Criteria.Plain(c.Name);
+            // ★ 单位跟在判据名后面（用户 2026-09-02：「全名 + 单位」）。
+            //   ⚠ 放在**名字**列而不是数值列：数值列是右对齐的，掺进单位就对不齐，
+            //     而且「实际」与「限值」两格会把同一个单位印两遍。
+            //   ⚠ 查不到单位就什么都不加（UnitOf 找不到返回空，绝不编）。
+            string u = Criteria.UnitOf(c.Name);
+            if (u.Length > 0) nm += "（" + u + "）";
             int i = _checks.Rows.Add(kind, nm, act, lim, mg, vd, c.Where);
             var row = _checks.Rows[i];
             // 行上色：不过=淡红、无法判定=淡黄、参考量=灰字。颜色只是**重复**判定，不产生判定。
@@ -3476,6 +3566,7 @@ public sealed class LineDesignPage : TabPage
                 foreach (DataGridViewCell cell in row.Cells)
                     cell.ToolTipText = TextFmt.Strip(c.Note);
         }
+        SyncTextSplit();     // 有结果了 ⇒ 判据表放回 46 %
     }
 
     private void Show(LineResult? r, string? autoNote = null)

@@ -101,7 +101,7 @@ public sealed class AnalysisPage : TabPage
         // ★ 报给阶段轨：右上角状态面板切到哪一页都看得见，
         //   而「② 厚度灵敏度」的按钮在 ④ 页、进度条却在本页 ⇒ 不接上就完全没有提示。
         Shared?.SetRunning(gate ? ChainId.D升温闸 : ChainId.C整线耦合,
-                           gate ? "① 升温可达性" : "② 厚度灵敏度（10 点，每点一次整线解）");
+                           gate ? "升温可达性" : "厚度灵敏度（10 点，每点一次整线解）");
         try
         {
             string txt = gate
@@ -133,7 +133,7 @@ public sealed class AnalysisPage : TabPage
     {
         const double tTarget = RampScreen.TargetC;   // 目标温度也归 RampScreen，别在界面再写一个 1150
         var sb = new StringBuilder();
-        sb.AppendLine("=== ① 升温可达性（管侧）===");
+        sb.AppendLine("=== 升温可达性（管侧）===");
         sb.AppendLine($"目标 {tTarget:0} °C　空管口径（升温时管内无玻璃）");
         sb.AppendLine("温控功率下升温是准静态的 ⇒「能不能到」= 该温度的稳态工作点要多大电流");
         sb.AppendLine();
@@ -186,7 +186,7 @@ public sealed class AnalysisPage : TabPage
     {
         var ts = new[] { 0.40, 0.55, 0.70, 0.85, 1.00, 1.30, 1.60, 2.00, 2.60, 3.20 };
         var sb = new StringBuilder();
-        sb.AppendLine("=== ② 厚度灵敏度（每点一次整线耦合解）===");
+        sb.AppendLine("=== 厚度灵敏度（每点一次整线耦合解）===");
         sb.AppendLine("形状 Ø60/舌50/半宽20；共用片厚 = 端片厚 × √3；管壁 0.4、纤维 10、法兰全包 20、夹持 300 °C");
         sb.AppendLine();
         sb.AppendLine("端片 t mm\tHC1 ΔT\tHC2 ΔT\tHC3 ΔT\t法兰最高 °C\t总铂 g\t收敛");

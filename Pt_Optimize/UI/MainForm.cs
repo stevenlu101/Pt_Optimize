@@ -394,8 +394,12 @@ public sealed class MainForm : Form
         var sb = new StringBuilder();
         sb.AppendLine(spec.Title);
         sb.AppendLine();
-        sb.AppendLine("本页的输入是「③ 整线核算」解出来的那个构型 —— 不是新的一组参数。");
-        sb.AppendLine("要改参数请回 ③；本页只负责在那个解的基础上继续。");
+        // ⚠ 阶段名从 Flow 读，**不写死** —— 2026-09-02 阶段轨由七格收成四格之后，
+        //   这两行还写着「③ 整线核算」「回 ③」，把工程师指向一个已经不存在的页号。
+        //   （抓图抓到的：E 那一轮清过 23 处，扫描器漏了 MainForm.cs 这一档。）
+        string main = Flow.Stage(StageId.整线核算).Title;
+        sb.AppendLine($"本页的输入是「{main}」解出来的那个构型 —— 不是新的一组参数。");
+        sb.AppendLine($"要改参数请回「{main}」；本页只负责在那个解的基础上继续。");
         sb.AppendLine();
         sb.AppendLine("本页命令：");
         foreach (var c in spec.CommandIds.Select(Flow.Cmd))

@@ -1210,12 +1210,33 @@ static class Walk
                        flow.MeshVerified ? "" : "★ 判据还在随网格变 ⇒ **没验过**，门仍然关着");
                     break;
                 }
+                // ★★★ 2026-09-03 补。在此之前这一格是**主动拒绝**（印一段话然后 return _bad）——
+                //   理由写的是「几十分钟」。但图纸路（.3dm）交给解析路之后，**搜形状正是那条路唯一
+                //   改得了的那一维** ⇒ 拒绝它等于图纸路永远走不到头。改成真跑，预算 90 分钟。
                 case "shape.search":
-                    Console.WriteLine("     ⚠ 提示指向「◇ 搜形状」——**几十分钟**，本走查不跑。");
-                    Console.WriteLine("        这本身是一条结论：开箱默认走到这里就需要改几何，");
-                    Console.WriteLine("        而提示确实把人指到了对的那个按钮（厚度救不了几何判据）。");
-                    DumpChecks(line, "停在这一步时的判据表");
-                    return _bad;
+                {
+                    Console.WriteLine("     （搜形状：会改盘径与舌宽，实测几十分钟）");
+                    var swS = System.Diagnostics.Stopwatch.StartNew();
+                    Call(line, "SearchShapeAsync");
+                    if (!Wait(() => F(line, "_cts") is null, 5_400_000))
+                    { OK("搜形状在预算内跑完", false, "★ 超时"); return _bad; }
+                    Console.WriteLine($"     搜形状耗时 {swS.Elapsed.TotalMinutes:0.0} 分钟");
+                    break;
+                }
+                // ★★★★ 2026-09-03 补。图纸路走到第 3 步就停在这里（落进 default）⇒
+                //   **.3dm 端到端从来没被走完过**。APP 那边没错：按钮在、点得动、指路也对。
+                //
+                //   ⚠ 它是「要人决定」的一步（一键流水线故意停在它）—— 但蓝色指示就指着它，
+                //     工程师照指示就会点。走查器点它 = 工程师点它，不是拄过一道门。
+                //   ⚠ 过了这一步，算的**就不再是那张图** ⇒ 下面把保真度那几行原样抓出来。
+                case "geom.toanalytic":
+                    Call(line, "AdoptShapeToAnalytic");   // 同步，不起解
+                    Pump(300);
+                    if (F(line, "_out") is Control ao)
+                        foreach (var t in ao.Text.Replace(((char)13).ToString(), "")
+                                          .Split((char)10).Where(x => x.Trim().Length > 0).Take(10))
+                            Console.WriteLine("     │ " + t.Trim());
+                    break;
                 default:
                     OK($"第 {step} 步：本走查认得「{ns.CmdId}」怎么点", false,
                        "★ 走查器没实作这个命令 —— 不是 APP 的错，是本走查覆盖不到");
@@ -1235,7 +1256,15 @@ static class Walk
                 foreach (var t in tail) Console.WriteLine("     " + t.Trim());
             }
             string finger = Finger(line);
-            if (finger.Length > 0 && finger == lastFinger)
+            // ⚠ 「◈ 图纸几何 → 参数」改的是**参数**，判据表本来就不该变（它连解都不起）。
+            //   拿「判据表变没变」去判它等于误报 ⇒ 它自己的「起作用了」是**几何来源真的切过去了**。
+            if (ns.CmdId == "geom.toanalytic")
+            {
+                OK($"第 {step} 步：这一步**起作用了**（几何来源切到解析路）",
+                   F(line, "_srcAnalytic") is RadioButton rb && rb.Checked,
+                   "★ 点完仍停在 .3dm 模式 —— 那么「搜形状」还是灰的，链路会原地打转");
+            }
+            else if (finger.Length > 0 && finger == lastFinger)
                 OK($"第 {step} 步：这一步**起作用了**", false,
                    $"★「{ns.CmdId}」跑完，判据表与总铂**逐字未变** —— "
                    + "做了等于没做，而提示只看「过没过」，会继续指同一个按钮");

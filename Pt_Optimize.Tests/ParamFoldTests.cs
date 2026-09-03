@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -77,12 +77,30 @@ public class ParamFoldTests
         Assert.DoesNotContain("_grid.BrowsableAttributes =", s);
     }
 
-    /// <summary>★ 主线那一格要展开它真正用得上的那几类（否则折叠成了碍事）。</summary>
-    [Fact]
-    public void 主线那一格展开的是它用得上的()
+    /// <summary>
+    /// ★★ 主线那一格要展开它真正用得上的那几类（否则折叠成了碍事）。
+    ///
+    /// ⚠ 钉的是**真实类别有没有被展开**，不是前缀字面量。
+    ///   上一版写死了 <c>Assert.Contains("C 整线", p)</c> —— 那是**链代号**，
+    ///   2026-09-03 把类别改成人话（工程师看不懂 A·B·C / 整线链）时它当场假红：
+    ///   界面明明更好了，门却说坏了。**门要钉意图，不钉当时的措辞。**
+    /// </summary>
+    [Theory]
+    [InlineData("管几何")]
+    [InlineData("法兰")]
+    [InlineData("电气")]
+    [InlineData("保温")]
+    [InlineData("玻璃")]
+    [InlineData("数值")]
+    public void 主线那一格展开的是它用得上的(string need)
     {
-        var p = Flow.Stage(StageId.整线核算).ParamCategoryPrefixes;
-        Assert.Contains("C 整线", p);          // 管几何 + 法兰边界
-        Assert.Contains("A·B·C 共用", p);      // 电气 / 保温 / 玻璃
+        var prefixes = Flow.Stage(StageId.整线核算).ParamCategoryPrefixes;
+        var hit = Categories()
+            .Where(c => c.Contains(need, StringComparison.Ordinal)
+                     && !c.Contains("✗", StringComparison.Ordinal))
+            .ToArray();
+        Assert.True(hit.Length > 0, $"参数表里根本没有「{need}」这一类 —— 这条是空转");
+        Assert.True(hit.Any(c => prefixes.Any(p => c.Contains(p, StringComparison.Ordinal))),
+            $"「{string.Join("、", hit)}」在主线那一格是折起来的 —— 那正是整线核算要填的东西");
     }
 }
