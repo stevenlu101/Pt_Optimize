@@ -35,6 +35,16 @@ public static class FlangeAutoSizer
         public int MaxIterations = 25;
         /// <summary>灵敏度 d(ΔT)/d(ln t)，K。由 --tscan 的斜率估得</summary>
         public double SensitivityK = 800.0;
+
+        /// <summary>
+        /// ★★★ **过热到这个温度就去加厚**（℃，2026-09-03）。
+        ///
+        /// 用户 2026-09-03：「过热（严重烧毁）表示电流密度过大，应该加大电流的截面积」。
+        /// 默认取铂熔点 —— 那是**物理上不可谈判**的那条线；
+        /// 比它低的过热由原有的「各级比例」层去摊，比它高就必须真的加厚。
+        /// ⚠ 这不是判据，是**动手的触发点**；判据仍只有 LineRunner.Judge 那一份。
+        /// </summary>
+        public double OverheatRaiseFromC = Materials.PtMeltC;
         /// <summary>阻尼系数。1 = 全牛顿步（会振荡），0.6 实测稳定</summary>
         public double Damping = 0.6;
         public double MinThickMm = 0.4, MaxThickMm = 6.0;
@@ -142,6 +152,28 @@ public static class FlangeAutoSizer
         public readonly List<double> History = new();
         /// <summary>逐级定厚的结果：`[片][级]` 的厚度倍数（仅 SolveByLevel 填）</summary>
         public double[][]? LevelScale;
+
+        /// <summary>
+        /// ★★★★★ **这次停下来是「证明」，不是「迭代不够」**（2026-09-03 补）。
+        ///
+        /// 与 <c>SolverResult.HitBound</c> 同一个语义。没有它的时候，界面只看得到
+        /// <c>Converged = false</c> —— 而「没收敛」和「再跑也是这个数」是两件事：
+        /// 前者该再点一次，后者再点多少次都是同一句话。
+        ///
+        /// 实测（2026-09-03，Pt_Heater1.3dm 等厚板）：熔点闸停机之后，
+        /// 指路继续指「自动定厚」，第二次跑完**判据表与总铂逐字未变** ——
+        /// 工程师跟着蓝色指示会一直点下去。这已经是同一个死循环的**第三个入口**
+        /// （前两个：等厚板被拒、解析路旋钮顶到上界）。
+        ///
+        /// 置为 true 的三处都是**结构性**的停：
+        ///   · 熔点闸（局部发热物理上就下不来）
+        ///   · 连续几轮越调越差（方向是错的）
+        ///   · 残差进平台（再跑也是这个数）
+        /// </summary>
+        public bool Terminal;
+
+        /// <summary>结构性停机的那一句话（给指路用，不必再从 Message 里抠）。</summary>
+        public string TerminalWhy = "";
     }
 
     /// <summary>
@@ -538,6 +570,44 @@ public static class FlangeAutoSizer
     /// 两个雷都只会让优化器对着**别的板**求解，输出照样是一张漂亮的判据表。
     /// 循环本身要跑真解、验不动；这个函数是纯的，一条断言几微秒。
     /// </summary>
+    /// <summary>
+    /// 这一片还能整体加厚多少倍才碰到工艺上界。
+    /// ⚠ 取**各级里最先碰界**的那一个 —— 有一级碰界就不能再整体乘了。
+    /// </summary>
+    private static double MaxRaiseK(double[] scaleJ, double[] levelJ, double maxThickMm)
+    {
+        double k = double.PositiveInfinity;
+        for (int m = 0; m < scaleJ.Length && m < levelJ.Length; m++)
+        {
+            double cur = levelJ[m] * scaleJ[m];
+            if (cur <= 1e-9) continue;
+            k = Math.Min(k, maxThickMm / cur);
+        }
+        return double.IsInfinity(k) ? 1.0 : Math.Max(1.0, k);
+    }
+
+    /// <summary>
+    /// 给一组各级倍数，算一次整线 —— **只算不调**（加厚试探用）。
+    /// ⚠ 与 <see cref="LevelSolver"/> 的 Eval 同一条路：拷贝走 CloneCase，
+    ///   解走 LineRunner.Run。判据永远只有那一份来源。
+    /// </summary>
+    private static LineResult? EvalScale(LineCase bc, double[][] levelThicknessMm,
+                                         double[][] scale, CancellationToken cancel,
+                                         IProgress<string>? inner)
+    {
+        try
+        {
+            var lc = CloneCase(bc);
+            lc.LevelThicknessMm = levelThicknessMm;
+            lc.LevelScale = scale;
+            var r = LineRunner.Run(lc, inner, cancel);
+            return r.Ok ? r : null;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch { return null; }
+    }
+
+
     public static double[] LevelThicknessFor(IReadOnlyList<double[]> baseLevels,
                                              IReadOnlyList<double[]> scale,
                                              int plateIdx, double k)
@@ -671,6 +741,10 @@ public static class FlangeAutoSizer
             scale[j] = new double[levelThicknessMm[j].Length];
             for (int m = 0; m < scale[j].Length; m++) scale[j][m] = 1.0;
         }
+        // ★ 过热驱动的**厚度下界**（只增不减）。外层按抽热误差削薄时不许削到它以下 ——
+        //   否则这一轮为压过热加的厚，下一轮就被抹掉，两层互相打架（人看到的是「跑很久、数不动」）。
+        // ⚠ 必须放在 scale[j] 分配**之后**：放前面时 scale[j] 全是 null，当场 NRE。
+        var overheatFloor = scale.Select(a => new double[a.Length]).ToArray();
 
         Result last = new();
         // 每轮的内层残差（各级峰值超管根 K）。用来分「轮数不够」和「已经在原地打转」。
@@ -719,7 +793,10 @@ public static class FlangeAutoSizer
             {
                 double kj = j < last.ThicknessMm.Length ? last.ThicknessMm[j] : 1.0;
                 for (int m = 0; m < scale[j].Length; m++)
-                    if (!Locked(j, m)) scale[j][m] *= kj;
+                    if (!Locked(j, m))
+                        // ★ 不许削到**过热下界**以下（2026-09-03）：那条界是为了压住
+                        //   局部熔化才加上去的，抽热误差没资格把它抹掉。
+                        scale[j][m] = Math.Max(scale[j][m] * kj, overheatFloor[j][m]);
             }
 
             // ── 内层：按各级峰值温度重新分配比例（总平均厚度不变）
@@ -754,7 +831,8 @@ public static class FlangeAutoSizer
                 {
                     if (Locked(j, m)) continue;
                     scale[j][m] = Math.Clamp(scale[j][m] * adj[m] / norm,
-                                             opt.MinThickMm / Math.Max(1e-6, levelThicknessMm[j][m]),
+                                             Math.Max(overheatFloor[j][m],
+                                                      opt.MinThickMm / Math.Max(1e-6, levelThicknessMm[j][m])),
                                              opt.MaxThickMm / Math.Max(1e-6, levelThicknessMm[j][m]));
                 }
             }
@@ -774,6 +852,97 @@ public static class FlangeAutoSizer
             progress?.Report($"第 {round + 1} 轮 · 内层：各级峰值最高超管根 {worstOver:0.0} K" +
                              (hottestPlate >= 0 ? $"（第 {hottestPlate + 1} 片第 {hottestLevel + 1} 级 {hottestC:0} °C）" : "") + dirMark);
 
+            // ═══════════════════════════════════════════════════════════════
+            // ★★★★★ **过热要能驱动加厚**（用户 2026-09-03）
+            //
+            //   用户原话：「过热（严重烧毁）表示电流密度过大，应该加大电流的截面积、
+            //   降电流密度，所以可能是增厚或增宽…APP 要提供一个首先能用的且铂金用量
+            //   最少的方案出来，而不是一句话就判死刑结案了」。
+            //
+            //   ══ 在此之前这条通路是**断的**
+            //
+            //   本器两层，而**没有一层会因为「过热」去加厚**：
+            //     外层 t[j]：由 errW[j]（抽热误差 ②′/③）驱动 —— 不看局部温度。
+            //                ③ 抽太多时它的倾向反而是**削薄**。
+            //     内层 scale[j][m]：只改**比例**，调完做几何平均归一化（adj[m]/norm）
+            //                ⇒ 加厚一级必然削薄另一级，**整片平均厚度不变**；
+            //                  而等厚板（1 级）连挪都没得挪（norm ≡ adj[0]）。
+            //   于是一超熔点就只剩「判死刑」这一条路。
+            //
+            //   ══ 现在：先**实测**加厚有没有用，再决定
+            //
+            //   加厚到工艺上界评一次：
+            //     · 凉下来了 ⇒ 厚度这根旋钮**有用** ⇒ 二分求**最小**的够用厚度
+            //       （最小 = 最省铂，符合「能用且铂最少」）
+            //     · 仍不凉   ⇒ 这是**实测**出来的「厚度救不了」，不是断言
+            //       ⇒ 交给下一根旋钮：增宽（搜形状）。指路读 Terminal 转过去。
+            //
+            //   ⚠ 加厚是**只增不减**的下界（overheatFloor）：外层下一轮按抽热误差
+            //     去削薄时不许削到它以下 —— 否则这一轮加的厚下一轮就被抹掉，
+            //     两层互相打架，人看到的是「跑很久、数不动」。
+            if (hottestPlate >= 0 && hottestC > opt.OverheatRaiseFromC)
+            {
+                int jh = hottestPlate;
+                double curK = 1.0;                       // 相对当前 scale 的整体倍数
+                double hiK = MaxRaiseK(scale[jh], levelThicknessMm[jh], opt.MaxThickMm);
+
+                if (hiK <= 1.0 + 1e-9)
+                {
+                    progress?.Report($"第 {jh + 1} 片已经贴着工艺上界 {opt.MaxThickMm:0.00} mm，加不动了");
+                }
+                else
+                {
+                    progress?.Report($"第 {jh + 1} 片第 {hottestLevel + 1} 级 {hottestC:0} °C 过热 ⇒ "
+                                   + $"**先试加厚**（截面 ∝ 厚，加厚降电流密度）：一路加到 ×{hiK:0.00}…");
+
+                    double HotAt(double k)
+                    {
+                        var probe = scale.Select(a => (double[])a.Clone()).ToArray();
+                        for (int m = 0; m < probe[jh].Length; m++)
+                            if (!Locked(jh, m)) probe[jh][m] *= k;
+                        var r = EvalScale(baseCase, levelThicknessMm, probe, cancel, inner: null);
+                        if (r is null || jh >= r.Flanges.Length) return double.PositiveInfinity;
+                        var ff = r.Flanges[jh];
+                        double hot = double.NegativeInfinity;
+                        for (int m = 0; m < ff.LevelTMaxC.Length; m++)
+                            if (!double.IsNaN(ff.LevelTMaxC[m])) hot = Math.Max(hot, ff.LevelTMaxC[m]);
+                        return hot;
+                    }
+
+                    double hotHi = HotAt(hiK);
+                    if (!(hotHi < hottestC - 1e-9) || hotHi > opt.OverheatRaiseFromC)
+                    {
+                        // ★ **实测**：加到工艺上界仍压不住 ⇒ 厚度这根走到头，换增宽
+                        last.Terminal = true;
+                        last.TerminalWhy =
+                            $"第 {jh + 1} 片加厚到工艺上界 ×{hiK:0.00}（{opt.MaxThickMm:0.00} mm）"
+                          + $"，最热处 {hottestC:0} → {hotHi:0} °C，仍压不住"
+                          + " ⇒ **厚度这根旋钮走到头了**（实测，不是估的）。下一根是**增宽**："
+                          + "缩小盘径 / 加宽过流带（「◇ 搜形状」）。";
+                        progress?.Report("  ✗ " + last.TerminalWhy);
+                    }
+                    else
+                    {
+                        // ★ 加厚有用 ⇒ 二分找**最小**够用的倍数（最省铂）
+                        double lo = 1.0, hi = hiK;
+                        for (int it = 0; it < 8 && hi - lo > 0.01; it++)
+                        {
+                            double mid = 0.5 * (lo + hi);
+                            if (HotAt(mid) <= opt.OverheatRaiseFromC) hi = mid; else lo = mid;
+                        }
+                        curK = hi;
+                        for (int m = 0; m < scale[jh].Length; m++)
+                            if (!Locked(jh, m)) scale[jh][m] *= curK;
+                        // 只增不减：记成这一片的下界，外层以后不许削到它以下
+                        for (int m = 0; m < scale[jh].Length; m++)
+                            overheatFloor[jh][m] = Math.Max(overheatFloor[jh][m], scale[jh][m]);
+                        progress?.Report($"  ✓ 加厚 ×{curK:0.00} 压住了（最小够用的那一档，"
+                                       + "再薄就过热）—— 这是本片的厚度下界，之后不再削到它以下");
+                        continue;      // 这一轮的判定作废，按新厚度重来
+                    }
+                }
+            }
+
             // ★★★★★ 熔点闸（2026-08-17 加）。
             //
             // 实测（Pt_Heater3.3dm，孔边最薄且该处还开槽）：内层「各级峰值超管根」
@@ -788,8 +957,21 @@ public static class FlangeAutoSizer
             {
                 last.Converged = false;
                 last.LevelScale = scale;
+                // ★★★ 2026-09-03：上面那一段**已经实测过加厚**了。
+                //   若它已经判了「厚度这根走到头」（Terminal + TerminalWhy），
+                //   这里就**不许覆盖**那句实测结论 —— 覆盖回去等于把量出来的证据
+                //   换成一句没量过的断言（原文是「局部发热物理上就下不来」）。
+                if (last.Terminal && last.TerminalWhy.Length > 0)
+                {
+                    last.Message = "★ " + last.TerminalWhy;
+                    return last;
+                }
+                // 结构性停机：再点一次是同一句话（见 Result.Terminal）
+                last.Terminal = true;
+                last.TerminalWhy = $"第 {hottestPlate + 1} 片第 {hottestLevel + 1} 级峰值 "
+                                 + $"{hottestC:0} °C，超铂熔点 —— 局部发热物理上就下不来";
                 last.Message =
-                    $"★ 第 {hottestPlate + 1} 片第 {hottestLevel + 1} 级峰值 {hottestC:0} °C，" +
+                    $"★ 第 {hottestPlate + 1} 片第 {hottestLevel + 1} 级峰值 {hottestC:0} °C," +
                     $"**已超铂熔点 {Materials.PtMeltC:0} °C** —— 停止迭代。" +
                     " 这不是迭代不够：该级太薄、电流被挤在窄带上，局部发热物理上就下不来。" +
                     " 常见成因：厚度梯度画反（孔边最薄），或该级恰好被开槽削掉过流截面。" +
@@ -823,12 +1005,16 @@ public static class FlangeAutoSizer
                     + $"（超管根 {hist[hist.Count - 1 - worsen]:0.0} → {worstOver:0.0} K）。"
                     + " 厚度这个旋钮在这张图上救不了 ③ ——"
                     + " ⇒ 回 Rhino 改梯度分布（孔边加厚、削薄外缘），或改环径。";
+                last.Terminal = true;
+                last.TerminalWhy = "连续几轮越调越差 —— 厚度这个旋钮在这张图上救不了它";
                 break;
             }
             if (TrendOf(hist) == Trend.已停滞 && round < outerRounds - 1)
             {
                 stalledAt = round + 1;
                 progress?.Report($"残差进平台（{worstOver:0.0} K），提前收工 —— 再跑也是这个数");
+                last.Terminal = true;
+                last.TerminalWhy = "残差进平台 —— 再跑也是这个数";
                 break;
             }
         }

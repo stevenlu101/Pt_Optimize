@@ -146,6 +146,36 @@ public class SizerDeadLoopTests
     }
 
     /// <summary>
+    /// ★★★★ **`.3dm` 那个器的结构性停机也要接上**（2026-09-03，同一个死循环的第三个入口）。
+    ///
+    /// 实测（Pt_Heater1.3dm 等厚板，熔点闸停机）：
+    /// <code>
+    ///   【自动定厚】★ 第 2 片第 1 级峰值 3860 °C，已超铂熔点 1768 °C —— 停止迭代。
+    ///     这不是迭代不够：该级太薄、电流被挤在窄带上，局部发热物理上就下不来。
+    ///   → 指路仍指「自动定厚」→ 再点 → 判据表与总铂**逐字未变**
+    /// </code>
+    /// 引擎把话说得很清楚了，而指路只看「判据过没过」⇒ 继续推人去点同一个按钮。
+    ///
+    /// ⚠ 三个入口同形，前两个补过了（等厚板被拒、解析路旋钮顶到上界），这是第三个。
+    ///   ⇒ 别再等第四个：任何「结构性停机」都必须能被指路读到。
+    /// </summary>
+    [Fact]
+    public void 图纸路的结构性停机也接进了指路()
+    {
+        string page = File.ReadAllText(Path.Combine(
+            HandoverDoc.Root(), "Pt_Optimize", "UI", "LineDesignPage.cs"));
+        Assert.Contains("_sizerInfeasible = r.Terminal;", page);
+
+        // 引擎那一侧：三处结构性停机都要置位（熔点 / 越调越差 / 残差进平台）
+        string sizer = File.ReadAllText(Path.Combine(
+            HandoverDoc.Root(), "Pt_Optimize", "Core", "FlangeAutoSizer.cs"));
+        Assert.True(sizer.Split("Terminal = true").Length - 1 >= 3,
+            "结构性停机少于三处置位 —— 漏掉的那一种会变成死循环的下一个入口");
+        // 而且要说得出**为什么**停（指路要拿它给人看）
+        Assert.Contains("TerminalWhy", sizer);
+    }
+
+    /// <summary>
     /// ★★ 只有**顶到上界**才算「不可行的证明」。<c>Feasible=false</c> 但没顶到上界
     /// 是「这一轮没搜到」—— 那种再点一次是有意义的，不许一并堵掉。
     /// </summary>

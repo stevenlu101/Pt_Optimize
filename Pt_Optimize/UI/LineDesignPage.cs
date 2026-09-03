@@ -1055,10 +1055,18 @@ public sealed class LineDesignPage : TabPage
             !_srcAnalytic.Checked
             && !string.IsNullOrWhiteSpace(_file3dm[0].Text)
             && _shape is null;
-        // ★ 逐级定厚有没有可调的级（≥2 级）。判据与「自动定厚」的拒绝条件**同一处**：
-        //   拒绝写在 RunAsync 里，而指路要提前知道，否则会指着一个必被拒的按钮（2026-08-25）。
-        f.SizerNoLevels = !_srcAnalytic.Checked
-                        && !(_levels is { Length: > 0 } && _levels[0].Length > 1);
+        // ★★★★★ 2026-09-03 放宽：**1 级（等厚板）不再拒**。
+        //
+        //   原来要求 ≥2 级，于是 Pt_Heater1.3dm 这种等厚板整个被拒在门外
+        //   （F 端到端就是撞死在这里）。查清之后发现那道闸卡错了地方：
+        //   `SolveByLevel` 是**两层**的 ——
+        //     外层：每片一个整体厚度 t[j]，靶是抽热误差（②′ 抽不够 ⇒ 加厚；③ 抽太多 ⇒ 削薄）
+        //     内层：每片各级的**相对比例**，压局部过热
+        //   1 级时**只有内层**失效（归一化 adj/norm ≡ 1，比例永远不动），
+        //   **外层照样能调整片厚度** ⇒ 拒绝整个功能是把能用的那一半也砍了。
+        //
+        //   ⚠ 现在只剩一种拒绝：**还没分析**（没有厚度场，无从算起）。
+        f.SizerNoLevels = !_srcAnalytic.Checked && _levels is not { Length: > 0 };
     }
 
     internal bool CommandApplicable(string cmdId) => cmdId switch
@@ -2786,27 +2794,22 @@ public sealed class LineDesignPage : TabPage
                 //     · `_tPlate` 在 .3dm 模式下含义是**厚度标度 k**，D8 当**毫米**读、
                 //       算完又把毫米数写回去 ⇒ 标度字段被覆盖坏。
                 //   而输出照旧是「【D8 定尺寸】板厚 … 合计 … g」，看起来完全正常。
-                if (!_srcAnalytic.Checked && !(_levels is { Length: > 0 } && _levels[0].Length > 1))
+                // ★★★★★ 2026-09-03：只有**还没分析**才拒。等厚板（1 级）放行。
+                //   理由见 SyncAnalysisPending 里那段：SolveByLevel 是两层的，
+                //   1 级只让**内层**（各级比例）失效，外层（整片厚度，靶抽热误差）照常能调。
+                //   原来一并拒掉，等于把能用的那一半也砍了 —— F 端到端就撞死在这。
+                if (!_srcAnalytic.Checked && _levels is not { Length: > 0 })
                 {
                     // ⚠ 用 Environment.NewLine 拼，不写反斜杠转义 ——
                     //   本仓的钩子会把转义序列改成真字符，字面量当场断掉。
                     string nl = Environment.NewLine;
                     Show(_last, autoNote:
-                        // ⚠ 必须分清**两种**拒绝（2026-08-25 `--follow3dm` 抓到）：
-                        //   ① 还没分析 ⇒ 指「分析几何变数」是对的；
-                        //   ② 分析过了、但这张图是**等厚板（1 级）** ⇒ 再点分析也不会有台阶。
-                        //   原来两种混成一句「请先点分析几何变数」，把已经点过的人指回同一个按钮，
-                        //   而判据表逐字不变 ⇒ 他会一直点下去。**指回一个按过的按钮，比不给指引更坏。**
-                        ("【自动定厚：已拒绝】本页是 **Rhino .3dm 模式**，" + nl
-                        + (_shape is null
-                           ? "   图纸**还没反推**成几何变数 —— 请先点「**分析几何变数**」，再回来定厚。" + nl
-                           : "   图纸已经分析过了，但反推出来只有**一级厚度（等厚板）** ——" + nl
-                             + "   「自动定厚」是**逐级**定厚，没有可调的级，再点一次分析也不会有台阶。" + nl
-                             + "   ⇒ 两条出路：① 直接改本页的**厚度标度 k** 再回「整线核算」重解；" + nl
-                             + "      ② 回 Rhino 给圆盘分级（做出台阶），再重新「分析几何变数」。" + nl)
-                        + "   ⚠ 不能替你用 D8：D8 优化的是**解析形状**（圆盘＋舌片），" + nl
-                        + "      它不读你的 .3dm，盘径/舌长在本模式下又是禁用的残值 ——" + nl
-                        + "      那样算出来的是**另一个零件**的厚度，数字却看不出异样。"));
+                        "【自动定厚：做不了】本页是 **Rhino .3dm 模式**，" + nl
+                      + "   图纸**还没反推**成几何变数 —— 请先点「**分析几何变数**」。" + nl
+                      + "   ⚠ 不能替你用解析路的定尺寸：那条优化的是**解析形状**（圆盘＋舌片），"
+                      + nl
+                      + "      它不读你的 .3dm，盘径/舌长在本模式下又是禁用的残值 ——" + nl
+                      + "      那样算出来的是**另一个零件**的厚度，数字却看不出异样。");
                     return;
                 }
 
@@ -2832,6 +2835,11 @@ public sealed class LineDesignPage : TabPage
                     var r = await Task.Run(() => FlangeAutoSizer.SolveByLevel(
                         lc, lvl, new FlangeAutoSizer.Options(), prog, ct, 6, lockMask, mkLevel), ct);
                     _levelScale = r.LevelScale;
+                    // ★★★ 结构性停机 = **不可行的证明**，与解析路的 HitBound 同一个语义。
+                    //   不接这一位，指路会继续指「自动定厚」，而再点一次是同一句话 ——
+                    //   2026-09-03 实测（Pt_Heater1.3dm 熔点闸停机）判据表与总铂**逐字未变**。
+                    //   这是同一个死循环的**第三个入口**（前两个：等厚板被拒、旋钮顶到上界）。
+                    _sizerInfeasible = r.Terminal;
                     // ⚠ 这是**程序**在把刚解出来的厚度写回控件。不闭掉自动重算的话，
                     //   「自动定厚」一结束就会立刻再排一次整线重算 —— 算的还是它自己刚给的答案。
                     _suppressAuto = true;
@@ -2854,8 +2862,18 @@ public sealed class LineDesignPage : TabPage
                     if (r.Line is { Ok: true, Converged: true })
                     { _solvedRes = r.Line; _solvedSnap = CurrentSnap(); }
                     PushFlow();
+                    // ★ 等厚板（1 级）要**说清只有外层在动**（2026-09-03 放行 1 级之后）。
+                    //   不说的话，工程师会以为逐级比例也在被优化，而 1 级时内层恒等于没动。
+                    bool oneLevel = lvl is { Length: > 0 } && lvl[0].Length == 1;
                     Show(r.Line, autoNote: r.Message + (r.Converged ? "" : "　⚠ 未收敛，下面的数不可引用") +
-                        "\r\n   ⚠ 本器**只调板厚**，管不到 管孔净流入 净流入与 圆盘区最高温 圆盘峰 —— 请自行看判据表。" + floorNote);
+                        (oneLevel
+                         ? Environment.NewLine
+                           + "   ★ 这张图是**等厚板（只有一级）** ⇒ 本次只有**整片厚度**在调"
+                           + "（各级比例无从调起，那需要图纸上有台阶）。"
+                           + Environment.NewLine
+                           + "   　想让它也能逐级调，回 Rhino 给圆盘分级，再重新「分析几何变数」。"
+                         : "") +
+                        Environment.NewLine + "   ⚠ 本器**只调板厚**，管不到 管孔净流入 净流入与 圆盘区最高温 圆盘峰 —— 请自行看判据表。" + floorNote);
                 }
                 else
                 {
