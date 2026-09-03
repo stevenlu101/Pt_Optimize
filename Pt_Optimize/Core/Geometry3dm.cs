@@ -116,7 +116,8 @@ public static class Geometry3dm
         sb.Append($"\"filletR\":{R(fd.TabFilletMm)},\"clampLenMm\":{R(fd.ClampLengthMm)},");
         sb.Append($"\"ringR\":[{R(fd.RingRadiiMm[0])},{R(fd.RingRadiiMm[1])}],");
         sb.Append("\"plates\":[");
-        for (int j = 0; j < 4; j++)
+        // ★ 按实际片数（用户 2026-09-03：段数由 UI 决定）—— 写死 4 会让出图**少画片**
+        for (int j = 0; j < fd.TabThickMm.Length; j++)
         {
             double t = fd.TabThickMm[j];
             if (j > 0) sb.Append(',');

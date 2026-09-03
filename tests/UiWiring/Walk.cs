@@ -960,6 +960,42 @@ static class Walk
     /// 开箱默认那条仍然留着（不传参即是），它答的是另一个问题：
     /// 「从零开始，提示带不带得动人」。
     /// </summary>
+    /// <summary>`--segs N` 给的段数；0 = 不动（保持页面默认的三段）。</summary>
+    public static int Segments;
+
+    /// <summary>
+    /// ★★★ **验证时把段数调到 N**（用户 2026-09-03：「以后『验证』时就跑两段，减少计算时间」）。
+    ///
+    /// 段数直接决定一次整线解要解几段场 —— 三段砍到两段，验证时间少三分之一，
+    /// 而链路、判据、门禁一条都不少走。
+    ///
+    /// ⚠ **不改默认**：已归档的对帐基准（如 0.8 档 3481 g）是三段的数，
+    ///   默认改掉等于把基准悄悄换了。要两段就显式给 `--segs 2`。
+    /// ⚠ 走的是**工程师的那条路**：直接改段表（BindingList），由 DataGridView 的
+    ///   RowsAdded/RowsRemoved 触发页面自己的 SegsChanged —— 而不是绕过界面写内部数组。
+    ///   绕过去就验不到「段数一变，界面与图纸文件行跟不跟着变」。
+    /// </summary>
+    private static void SetSegments(object line, int n)
+    {
+        if (n <= 0) return;
+        if (F(line, "_segs") is not System.Collections.IList segs)
+        { Console.WriteLine("  ⚠ 找不到段表，段数保持原样"); return; }
+
+        var rowT = typeof(LineDesignPage).GetNestedType("SegRow")!;
+        while (segs.Count > n) segs.RemoveAt(segs.Count - 1);
+        while (segs.Count < n)
+        {
+            var r = System.Activator.CreateInstance(rowT)!;
+            rowT.GetProperty("名称")!.SetValue(r, "HC" + (segs.Count + 1));
+            rowT.GetProperty("控温C")!.SetValue(r, 1050.0);
+            rowT.GetProperty("水头m")!.SetValue(r, 1.0);
+            rowT.GetProperty("直接加热管长mm")!.SetValue(r, 300.0);
+            segs.Add(r);
+        }
+        Pump(400);
+        Console.WriteLine($"  （本次验证按 **{n} 段** 跑 —— 用户 2026-09-03：验证跑两段省时间）");
+    }
+
     public static int Follow(string? file3dm = null, double loadWall = double.NaN)
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
@@ -973,6 +1009,7 @@ static class Walk
         typeof(Form).GetMethod("OnLoad", BindingFlags.NonPublic | BindingFlags.Instance)!
             .Invoke(main, new object?[] { EventArgs.Empty });
         Pump(1200);
+        if (Segments > 0) SetSegments(line, Segments);
         void Force(Control c) { _ = c.Handle; foreach (Control k in c.Controls) Force(k); }
         Force(main); Pump(300);
 
@@ -1438,6 +1475,14 @@ static class Walk
         typeof(Form).GetMethod("OnLoad", BindingFlags.NonPublic | BindingFlags.Instance)!
             .Invoke(main, new object?[] { EventArgs.Empty });
         Pump(1200);
+        // ★★★ `--segs` 在**对帐**这条路上不适用，而且不说就是静默失效（2026-09-03 实测）：
+        //   对帐第一步是「载入设计记录」，段数由**档**决定，随后会把段表覆盖回去。
+        //   头一版照样在这里调 SetSegments，屏幕上印着「按 2 段跑」，
+        //   结果两段跑出来 3481 g —— 与三段**逐字相同**，因为根本没按两段跑。
+        //   ⇒ 宁可明说「这条路不吃这个开关」，也不要让人以为验过了两段。
+        if (Segments > 0)
+            Console.WriteLine($"  ⚠ 本次忽略 --segs {Segments}：对帐比的是**设计记录**，"
+                            + "段数由档决定（要按 N 段验请用 --follow --segs N）。");
         void Force(Control c) { _ = c.Handle; foreach (Control k in c.Controls) Force(k); }
         Force(main); Pump(300);
 

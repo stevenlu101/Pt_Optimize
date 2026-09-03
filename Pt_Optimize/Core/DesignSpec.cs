@@ -70,6 +70,12 @@ public sealed class DesignSpec
     public double TubeInsulMm = 5.0;
     public double[] SetpointC = { 1150.0, 1080.0, 1050.0 };
 
+    /// <summary>
+    /// ★★★ **每段直接加热铂金管的长度 mm**，逐段（用户 2026-09-03）。
+    /// 长度不足段数时由 <c>LineRunner.Normalize</c> 按参数表铺满 —— 兜底只有那一处。
+    /// </summary>
+    public double[] SegLengthMm = { 300.0, 300.0, 300.0 };
+
     // ── 法兰（四片：入口 / 共用1 / 共用2 / 出口）
     public double DiscRadiusMm = 30.0;
     public double TabLengthMm = 90.0;
@@ -224,6 +230,9 @@ public sealed class DesignSpec
     /// <summary>
     /// 法兰片数 = 段数 + 1（<c>LineSolver.FlangeCount</c> 的口径，别在别处再算一遍）。
     /// </summary>
+    /// <summary>段数 —— 只有一个口径：控温点的个数。</summary>
+    public int SegmentCount => SetpointC.Length;
+
     public int FlangeCount => SetpointC.Length + 1;
 
     /// <summary>
@@ -248,6 +257,10 @@ public sealed class DesignSpec
         RingW1Mm   = FitArr(RingW1Mm,   n);
         RingW2Mm   = FitArr(RingW2Mm,   n);
         RingMul2   = FitArr(RingMul2,   n);
+        // ★ 逐段长度是**按段**的（n-1），不是按片 —— 别跟上面六个混在一起。
+        //   ⚠ 新增的段插在**倒数第二**（同 FitArr 的理由：首段/末段有各自的边界），
+        //     所以这里也走同一个函数，只是长度不同。
+        SegLengthMm = FitArr(SegLengthMm, SegmentCount);
         return this;
     }
 
@@ -268,6 +281,7 @@ public sealed class DesignSpec
     {
         var c = (DesignSpec)MemberwiseClone();
         c.SetpointC = (double[])SetpointC.Clone();
+        c.SegLengthMm = (double[])SegLengthMm.Clone();
         c.TabThickMm = (double[])TabThickMm.Clone();
         c.TabInsulMm = (double[])TabInsulMm.Clone();
         c.RingMul = (double[])RingMul.Clone();
@@ -389,9 +403,14 @@ public sealed class DesignSpec
             UseMeasuredCurrent = false,      // 由控温反算 —— 第一性
             CheckRamp = checkRamp,
             SetpointC = SetpointC,
-            FlangePlates = new[] { Plate(0, discFloor), Plate(1, discFloor),
-                                   Plate(2, discFloor), Plate(3, discFloor) },
-            ClampTempC = new[] { ClampTempC, ClampTempC, ClampTempC, ClampTempC }
+            SegLengthMm = SegLengthMm,
+            // ★★★ 按**实际片数**造（用户 2026-09-03：段数由 UI 决定）。
+            //   原来是写死的 Plate(0..3) 与四个 ClampTempC —— 分 4 段（5 片）时
+            //   第 5 片根本不进 LineCase，而判据表照样出数：**算的是另一个零件**。
+            //   ⚠ 扫「循环 <4」抓不到这两行：它们是字面枚举，不是循环。
+            FlangePlates = Enumerable.Range(0, FlangeCount)
+                                     .Select(j => Plate(j, discFloor)).ToArray(),
+            ClampTempC = Enumerable.Repeat(ClampTempC, FlangeCount).ToArray()
         };
     }
 

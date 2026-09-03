@@ -28,7 +28,19 @@ public sealed class LineCase
     //     保留「可覆盖」这个能力，只是默认改成「跟着参数表走」。
     public double TubeIdMm = double.NaN;
     public double WallMm = 1.0;
-    public double SegLengthMm = double.NaN;
+    /// <summary>
+    /// ★★★★★ **每段直接加热铂金管的长度，逐段单独设定**（用户 2026-09-03）。
+    ///
+    /// 原来是**一个标量**（所有段同一个长度，取自参数表的「段长 L」）。
+    /// 用户：「每段直接加热铂金管的长度必须是可以单独设定的」——
+    /// 现场三段的加热长度本来就可以不一样，一个数按不住。
+    ///
+    /// ⚠ 空数组 = 还没给 ⇒ <see cref="Normalize"/> 按 <c>Base.TubeLengthMm</c> 铺满。
+    ///   **不要在别处补默认**：一个数两处来源，迟早对不上（本仓栽过多次）。
+    /// ⚠ 它同时是**支承跨距**（SupportSpanMm）与**该段铂重**的长度，
+    ///   所以逐段化之后各段铂重不再等分 —— 报告里的分段铂重会跟着变。
+    /// </summary>
+    public double[] SegLengthMm = System.Array.Empty<double>();
     public string GradeName = "";
 
     /// <summary>各段控温点 °C（控温点在每段中点）。长度即段数。</summary>
@@ -690,7 +702,16 @@ public static class LineRunner
     private static void Normalize(LineCase c)
     {
         if (double.IsNaN(c.TubeIdMm)) c.TubeIdMm = c.Base.TubeIdMm;
-        if (double.IsNaN(c.SegLengthMm)) c.SegLengthMm = c.Base.TubeLengthMm;
+        // ★ 逐段长度：没给或给少了，按参数表的「直接加热铂金管的长度」铺满。
+        //   给多了不截断 —— 段数是 SetpointC 说了算，多出来的不参与。
+        if (c.SegLengthMm.Length < c.SegmentCount)
+        {
+            var len = new double[c.SegmentCount];
+            for (int i = 0; i < len.Length; i++)
+                len[i] = i < c.SegLengthMm.Length && c.SegLengthMm[i] > 0
+                       ? c.SegLengthMm[i] : c.Base.TubeLengthMm;
+            c.SegLengthMm = len;
+        }
         if (string.IsNullOrEmpty(c.GradeName)) c.GradeName = c.Base.GradeName;
     }
 
@@ -1156,8 +1177,8 @@ public static class LineRunner
             progress?.Report($"段 {i + 1}/{n}：{(c.UseMeasuredCurrent ? "按实测电流求解" : "反算电流")}…");
 
             var p = SegmentSolver.Clone(c.Base);
-            p.TubeIdMm = c.TubeIdMm; p.WallMinMm = c.WallMm; p.TubeLengthMm = c.SegLengthMm;
-            p.SupportSpanMm = c.SegLengthMm; p.GradeName = c.GradeName;
+            p.TubeIdMm = c.TubeIdMm; p.WallMinMm = c.WallMm; p.TubeLengthMm = c.SegLengthMm[i];
+            p.SupportSpanMm = c.SegLengthMm[i]; p.GradeName = c.GradeName;
             p.TSetC = c.SetpointC[i]; p.TGlassInC = tg;
             p.GlassHeadM = i < c.HeadM.Length ? c.HeadM[i] : 0;
             p.SizeWall = false;
@@ -1208,7 +1229,7 @@ public static class LineRunner
                            ? c.SetpointC[i] - sr.TFlangeAC : c.SetpointC[i] - sr.TFlangeBC,
                 GlassInC = tg,
                 GlassOutC = sr.TGlassOutC,
-                MassG = area * c.SegLengthMm * Materials.PtDensity * 1e-6,
+                MassG = area * c.SegLengthMm[i] * Materials.PtDensity * 1e-6,
                 X = sr.X, TMetal = sr.TMetal, TGlass = sr.TGlass
             };
             tg = sr.TGlassOutC;

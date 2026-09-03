@@ -627,12 +627,30 @@ public sealed class ManualPage : TabPage
         return sb.ToString();
     }
 
-    /// <summary>整线布置：三段管 + 四片法兰（侧视，管轴 = Y）。</summary>
+    /// <summary>
+    /// 整线布置：**n 段管 + n+1 片法兰**（侧视，管轴 = Y）。
+    ///
+    /// ⚠ 2026-09-03 改：原来整段写死「三段 300 mm、四片、HC1 1150/HC2 1080/HC3 1050」——
+    ///   连控温点都是**字面量**。段数可调、每段长度可单独设定之后，这张图会**画错**：
+    ///   分 4 段时它照旧画三段，而说明书是最容易被当成结论直接引用的一份东西。
+    ///   ⇒ 段数、每段长度、控温点、片厚全部从 <see cref="DesignSpec"/> 读。
+    /// </summary>
     private static string SvgLine(DesignSpec fd)
     {
-        const double segLen = 300, tubeId = 50;
+        const double tubeId = 50;
+        int nSeg = fd.SegmentCount, nPl = fd.FlangeCount;
+        // 每段各自的长度（逐段，用户 2026-09-03）。缺就按第一段补，别让图裂开。
+        double[] segLen = new double[nSeg];
+        for (int i = 0; i < nSeg; i++)
+            segLen[i] = i < fd.SegLengthMm.Length && fd.SegLengthMm[i] > 0
+                      ? fd.SegLengthMm[i] : 300.0;
+        // 每片法兰的轴向位置 = 前面各段长度之和
+        double[] at = new double[nPl];
+        for (int j = 1; j < nPl; j++) at[j] = at[j - 1] + segLen[j - 1];
+        double total = at[nPl - 1];
+
         double ro = tubeId / 2 + fd.WallMm, R = fd.DiscRadiusMm, L = fd.TabLengthMm;
-        double y0 = -30, y1 = 3 * segLen + 30;
+        double y0 = -30, y1 = total + 30;
         double s = 620.0 / (y1 - y0);
         double H = (2 * (R + L * 0.12) + 40) * s + 46;
         double mid = H / 2;
@@ -641,27 +659,35 @@ public sealed class ManualPage : TabPage
 
         var sb = new StringBuilder();
         sb.Append($"<svg viewBox=\"0 0 620 {H:0}\" width=\"100%\" style=\"max-width:620px\">");
-        for (int i = 0; i < 3; i++)
-            sb.Append($"<rect x=\"{PX(i * segLen)}\" y=\"{PY(ro)}\" width=\"{segLen * s:0.0}\" " +
+        for (int i = 0; i < nSeg; i++)
+            sb.Append($"<rect x=\"{PX(at[i])}\" y=\"{PY(ro)}\" width=\"{segLen[i] * s:0.0}\" " +
                       $"height=\"{2 * ro * s:0.0}\" fill=\"var(--tube)\" stroke=\"var(--ink)\" stroke-width=\"1\"/>");
-        string[] nm = { "入口", "共用1", "共用2", "出口" };
-        for (int j = 0; j < 4; j++)
+
+        for (int j = 0; j < nPl; j++)
         {
-            double y = j * segLen, t = fd.TabThickMm[j];
+            // 片名与页面同一个口径：首=入口、末=出口、中间共用k
+            string nm = j == 0 ? "入口" : j == nPl - 1 ? "出口" : "共用" + j;
+            double t = j < fd.TabThickMm.Length ? fd.TabThickMm[j] : 0;
             double wPx = Math.Max(3, t * s * 6);          // 法兰厚度放大以便看清
-            double xPx = (y - y0) * s - wPx / 2;
+            double xPx = (at[j] - y0) * s - wPx / 2;
             sb.Append($"<rect x=\"{xPx:0.0}\" y=\"{PY(R)}\" " +
                       $"width=\"{wPx:0.0}\" height=\"{2 * R * s:0.0}\" " +
                       "fill=\"var(--pt)\" stroke=\"var(--ink)\" stroke-width=\"1\"/>");
-            sb.Append($"<text x=\"{PX(y)}\" y=\"{mid - R * s - 8:0.0}\" " +
-                      $"text-anchor=\"middle\" class=\"lbl\">{nm[j]} t{t:0.00}</text>");
+            sb.Append($"<text x=\"{PX(at[j])}\" y=\"{mid - R * s - 8:0.0}\" " +
+                      $"text-anchor=\"middle\" class=\"lbl\">{nm} t{t:0.00}</text>");
         }
-        string[] seg = { "HC1 1150 °C", "HC2 1080 °C", "HC3 1050 °C" };
-        for (int i = 0; i < 3; i++)
-            sb.Append($"<text x=\"{PX(i * segLen + segLen / 2)}\" y=\"{mid + 4:0.0}\" " +
-                      $"text-anchor=\"middle\" class=\"lbl onTube\">{seg[i]}</text>");
-        sb.Append($"<text x=\"{PX(1.5 * segLen)}\" y=\"{H - 8:0.0}\" text-anchor=\"middle\" class=\"lbl dim\">" +
-                  $"管 Ø{tubeId:0} × 壁 {fd.WallMm:0.0}　三段各 {segLen:0} mm　（法兰厚度已放大以便看清）</text>");
+
+        for (int i = 0; i < nSeg; i++)
+            sb.Append($"<text x=\"{PX(at[i] + segLen[i] / 2)}\" y=\"{mid + 4:0.0}\" " +
+                      $"text-anchor=\"middle\" class=\"lbl onTube\">HC{i + 1} {fd.SetpointC[i]:0} °C</text>");
+
+        // 段长：全一样就说一个数，不一样就逐段列 —— 别把「各段可以不同」这件事藏起来
+        bool same = segLen.All(x => Math.Abs(x - segLen[0]) < 1e-9);
+        string lenTxt = same
+            ? $"{nSeg} 段各 {segLen[0]:0} mm"
+            : $"{nSeg} 段：" + string.Join(" / ", segLen.Select(x => x.ToString("0"))) + " mm";
+        sb.Append($"<text x=\"{PX(total / 2)}\" y=\"{H - 8:0.0}\" text-anchor=\"middle\" class=\"lbl dim\">" +
+                  $"管 Ø{tubeId:0} × 壁 {fd.WallMm:0.0}　{lenTxt}　（法兰厚度已放大以便看清）</text>");
         sb.Append("</svg>");
         return sb.ToString();
     }
@@ -1182,11 +1208,13 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   $"是环内级的 {(fd.TabThickMm[0] * fd.RingMul[0] + 2 * Math.Max(fd.TabThickMm[0], fd.WallMm)) / (fd.TabThickMm[0] * fd.RingMul[0]):0.0} 倍。" +
                   $"这一段 FE 一直算着、交付 3DM 里也画着，只是这张图之前漏了。</div></div>");
 
-        sb.Append("<h3>四片各不相同</h3><table><tr><th>片</th><th>板厚 mm</th>" +
+        // ⚠ 2026-09-03：标题与片名**按实际片数生成**。原来写死「四片」+ 四个名字 ⇒
+        //   分 4 段（5 片）时说明书少列一片，而它是最容易被直接引用的一份东西。
+        sb.Append($"<h3>{fd.FlangeCount} 片各不相同</h3><table><tr><th>片</th><th>板厚 mm</th>" +
                   "<th>环内级</th><th>环外级</th><th>舌片保温 mm</th></tr>");
-        string[] nm = { "入口", "共用1", "共用2", "出口" };
-        for (int j = 0; j < 4; j++)
-            sb.Append($"<tr><td>{nm[j]}</td><td class=\"n\">{fd.TabThickMm[j]:0.00}</td>" +
+        string Nm(int j) => j == 0 ? "入口" : j == fd.FlangeCount - 1 ? "出口" : "共用" + j;
+        for (int j = 0; j < fd.FlangeCount && j < fd.TabThickMm.Length; j++)
+            sb.Append($"<tr><td>{Nm(j)}</td><td class=\"n\">{fd.TabThickMm[j]:0.00}</td>" +
                       $"<td class=\"n\">{fd.TabThickMm[j] * fd.RingMul[j]:0.00}</td>" +
                       $"<td class=\"n\">{fd.TabThickMm[j] * fd.RingMulOuter(j):0.00}</td>" +
                       $"<td class=\"n\">{fd.TabInsulMm[j]:0.0}</td></tr>");

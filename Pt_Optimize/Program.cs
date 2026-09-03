@@ -5240,7 +5240,7 @@ internal static class Program
                 foreach (double imW in insMulsW)
                 {
                     var dW = shapeW.Clone();
-                    for (int j = 0; j < 4; j++)
+                    for (int j = 0; j < dW.TabThickMm.Length; j++)
                     {
                         dW.TabThickMm[j] = baseThickW[j] * sW;
                         dW.TabInsulMm[j] = Math.Clamp(shapeW.TabInsulMm[j] * imW, 0.3, 80.0);
@@ -6164,7 +6164,7 @@ internal static class Program
 
                 Sweep("板厚倍率（截面 ↓ ⇒ J ↑ 且散热 ↓，两头一起恶化）",
                       new[] { 1.00, 0.90, 0.80, 0.75, 0.70, 0.65, 0.60 },
-                      (fd, k) => { for (int i = 0; i < 4; i++) fd.TabThickMm[i] *= k; return fd; });
+                      (fd, k) => { for (int i = 0; i < fd.TabThickMm.Length; i++) fd.TabThickMm[i] *= k; return fd; });
 
                 // ⚠ 这里原来写成「把四片的舌保温**统一设成** v mm」。那不是沿一个轴扰动，
                 //   是**跳到另一个族**：设计记录的舌保温高度不均匀（18.7 / 1.6 / 1.4 / 3.9），
@@ -6173,7 +6173,7 @@ internal static class Program
                 //     就在喊「这个设置不对」，但它长得像一张正常的扫描表。）⇒ 改成倍率。
                 Sweep("舌保温倍率（只把片子捂热，不动电流路径）",
                       new[] { 1.00, 1.50, 2.00, 3.00, 5.00, 8.00 },
-                      (fd, k) => { for (int i = 0; i < 4; i++) fd.TabInsulMm[i] *= k; return fd; });
+                      (fd, k) => { for (int i = 0; i < fd.TabInsulMm.Length; i++) fd.TabInsulMm[i] *= k; return fd; });
 
                 // 第三条轴：舌片变窄 ⇒ 舌片里的 J 直接变大，而管孔那侧的热平衡受影响较小
                 //   —— 前两条轴上 ②′ 都抢先变红，这条是给热稳定「最公平的一次机会」。
@@ -6351,7 +6351,7 @@ internal static class Program
                     //   照样打 ✓，却什么都没试。空转的检查比没有检查更糟：它给人「验过了」的错觉。
                     //   ⇒ 换成一条真正会翻判据的：把舌长改回 90（即旧设计记录那个装不下铜排的值）。
                     ("舌长退回 90",  f => { f.TabLengthMm = 90.0; return f; }),
-                    ("板厚 ×0.5",    f => { for (int k = 0; k < 4; k++) f.TabThickMm[k] *= 0.5; return f; }),
+                    ("板厚 ×0.5",    f => { for (int k = 0; k < f.TabThickMm.Length; k++) f.TabThickMm[k] *= 0.5; return f; }),
                     ("管保温 1 mm",  f => { f.TubeInsulMm = 1.0; return f; }),
                 };
 
@@ -6956,7 +6956,7 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
                 });
 
                 Sweep("板厚", "±0.1 mm", (f, d) =>
-                { for (int k = 0; k < 4; k++) f.TabThickMm[k] += d; return f; }, 0.1, new[]
+                { for (int k = 0; k < f.TabThickMm.Length; k++) f.TabThickMm[k] += d; return f; }, 0.1, new[]
                 {
                     ("③", Dip,   1, 0.3,  "实测雅可比 ∂③/∂板厚 = +149 K/mm（正号）"),
                     ("②″", C2,  -1, 0.05, "实测雅可比 ∂②″/∂板厚 = −1.6 K/mm"),
@@ -6964,7 +6964,7 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
                 }, isRef: true);        // ★ 板厚是参照旋钮：「≈0」类预言按它的 1/20 判
 
                 Sweep("环倍率", "±0.05", (f, d) =>
-                { for (int k = 0; k < 4; k++) f.RingMul[k] += d; return f; }, 0.05, new[]
+                { for (int k = 0; k < f.RingMul.Length; k++) f.RingMul[k] += d; return f; }, 0.05, new[]
                 {
                     ("②″", C2,  -1, 0.05, "环4 实测：μ 1.00→1.30 时 ②″ +0.24→−0.03"),
                     ("③", Dip,   1, 0.3,  "环5：环加厚⇒导热截面↑⇒抽热 D↑⇒式(4.3) ③↑"),
@@ -6972,7 +6972,7 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
                 });
 
                 Sweep("舌保温", "±1 mm", (f, d) =>
-                { for (int k = 0; k < 4; k++) f.TabInsulMm[k] = Math.Max(0.2, f.TabInsulMm[k] + d); return f; }, 1.0, new[]
+                { for (int k = 0; k < f.TabInsulMm.Length; k++) f.TabInsulMm[k] = Math.Max(0.2, f.TabInsulMm[k] + d); return f; }, 1.0, new[]
                 {
                     ("③", Dip,  -1, 0.3,  "环3 实测：保温↑⇒③ 41.9→0.0"),
                     ("②″", C2,   0, 0.05, "环3：80 倍扫描 ②″ 恒为 −0.04 ⇒ 弱于板厚 20 倍以上才算「不是控它的旋钮」"),
@@ -7042,15 +7042,15 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
                       "预期：管 J 越界 ⇒ 应判✗");
                 Probe("管壁 2.0（远高于设计记录）", f => { f.WallMm = 2.0; return f; },
                       "预期：判据宽松但很重");
-                Probe("板厚 ×2", f => { for (int k = 0; k < 4; k++) f.TabThickMm[k] *= 2; return f; },
+                Probe("板厚 ×2", f => { for (int k = 0; k < f.TabThickMm.Length; k++) f.TabThickMm[k] *= 2; return f; },
                       "预期：③ 被 +149 K/mm 推爆 ⇒ 应判✗");
-                Probe("板厚 ×0.5", f => { for (int k = 0; k < 4; k++) f.TabThickMm[k] *= 0.5; return f; },
+                Probe("板厚 ×0.5", f => { for (int k = 0; k < f.TabThickMm.Length; k++) f.TabThickMm[k] *= 0.5; return f; },
                       "预期：②″ 或 ②′ 出问题");
-                Probe("环关掉（μ=1.0）", f => { for (int k = 0; k < 4; k++) f.RingMul[k] = 1.0; return f; },
+                Probe("环关掉（μ=1.0）", f => { for (int k = 0; k < f.RingMul.Length; k++) f.RingMul[k] = 1.0; return f; },
                       "预期：②″ 变差（环4 的机理）");
-                Probe("舌保温全 0.2 mm", f => { for (int k = 0; k < 4; k++) f.TabInsulMm[k] = 0.2; return f; },
+                Probe("舌保温全 0.2 mm", f => { for (int k = 0; k < f.TabInsulMm.Length; k++) f.TabInsulMm[k] = 0.2; return f; },
                       "预期：③ 变小、②′ 变大（环3）");
-                Probe("舌保温全 60 mm", f => { for (int k = 0; k < 4; k++) f.TabInsulMm[k] = 60; return f; },
+                Probe("舌保温全 60 mm", f => { for (int k = 0; k < f.TabInsulMm.Length; k++) f.TabInsulMm[k] = 60; return f; },
                       "预期：②′ 转负（法兰倒灌）");
                 Probe("管保温 1 mm", f => { f.TubeInsulMm = 1; return f; },
                       "预期：③ 变差、②′ 大幅变化（环7）");
@@ -7145,7 +7145,7 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
                     // ⇒ 它的判据不能再是「Y 跨度 = 板厚」（那会一直判 0.000 ✗），
                     //   改判「Y 跨度 = 0 且贴在板面上」——线一旦被误画成体，这条同样会露馅。
                     var wantCurveY = new Dictionary<string, double>();
-                    for (int j = 0; j < 4; j++)
+                    for (int j = 0; j < fd.TabThickMm.Length; j++)
                     {
                         double tj = fd.TabThickMm[j];
                         want[$"{pnames[j]}-板身"] = tj;

@@ -70,7 +70,12 @@ public class DesignInputs
     [Category(ParamCat.管几何), DisplayName("内径 ID [mm]")]
     public double TubeIdMm { get; set; } = 50.0;   // Pt_Heater.3dm: Ø52/Ø50
 
-    [Category(ParamCat.管几何), DisplayName("段长 L [mm]"), Description("两法兰之间的加热段长度")]
+    // ★★★ 2026-09-03：每段的长度改成在**段表里逐段填**（用户：「每段直接加热铂金管的
+    //   长度必须是可以单独设定的」）⇒ 本项降级成「新段的默认值」，不再是所有段的长度。
+    //   名字与段表那一列对齐，免得工程师以为是两个不同的量。
+    [Category(ParamCat.管几何), DisplayName("直接加热铂金管的长度 [mm]（新段默认值）"),
+     Description("新加一段时这一段的默认长度。**每段真正用的长度在下面「分段」表里逐段填** —— "
+               + "两者不一样时以段表为准。")]
     public double TubeLengthMm { get; set; } = 300;  // Pt_Heater.3dm
 
     [Category(ParamCat.程序算出), DisplayName("壁厚 [mm]"),

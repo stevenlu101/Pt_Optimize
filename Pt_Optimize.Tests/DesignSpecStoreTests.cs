@@ -90,7 +90,9 @@ public class DesignSpecStoreTests
 
             Assert.Equal(a.WallMm, b.WallMm, 12);
             Assert.Equal(a.TubeIdMm, b.TubeIdMm, 12);
-            Assert.Equal(a.SegLengthMm, b.SegLengthMm, 12);
+            // ⚠ 2026-09-03 起 SegLengthMm 是**逐段数组**（用户：每段长度可单独设定）⇒
+            //   不能再按标量比。整段比 —— 少一段、错一段都要红。
+            Assert.Equal(a.SegLengthMm, b.SegLengthMm);
             Assert.Equal(a.ClampTempC.Length, b.ClampTempC.Length);
             Assert.Equal(a.SetpointC, b.SetpointC);
             Assert.Equal(a.FlangePlates.Length, b.FlangePlates.Length);
@@ -128,6 +130,9 @@ public class DesignSpecStoreTests
     {
         var d = DesignSpec.Builtin[0].Clone();
         d.WallMm = 0.77;
+        // ★ 2026-09-03 新增：每段长度各不相同 —— 三个都一样的话，
+        //   「按下标错位」这类漏法在往返里看不出来（本样本存在的意义就是不许有这种盲区）。
+        d.SegLengthMm = new[] { 231.0, 317.0, 428.0 };
         d.TubeInsulMm = 13.5;
         d.DiscRadiusMm = 33.0;
         d.TabLengthMm = 151.0;

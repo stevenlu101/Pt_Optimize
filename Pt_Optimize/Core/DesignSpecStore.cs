@@ -65,6 +65,8 @@ public static class DesignSpecStore
         public bool? flangeInsulated { get; set; }
         public double? clampLengthMm { get; set; }
         public double[]? setpointC { get; set; }
+        /// <summary>每段直接加热铂金管的长度 mm（逐段，用户 2026-09-03）。缺省 ⇒ 按段数铺默认值。</summary>
+        public double[]? segLengthMm { get; set; }
         public double[]? tabThickMm { get; set; }
         public double[]? tabInsulMm { get; set; }
         public double[]? ringMul { get; set; }
@@ -241,6 +243,7 @@ public static class DesignSpecStore
             FromFile = file,
         };
         if (d.setpointC is { Length: > 0 }) fd.SetpointC = d.setpointC;
+        if (d.segLengthMm is { Length: > 0 }) fd.SegLengthMm = d.segLengthMm;
         if (d.clampTempC is { } ct) fd.ClampTempC = ct;
         if (d.tabFilletMm is { } tf) fd.TabFilletMm = tf;
         if (d.ringWidthMm is { } rw) fd.RingWidthMm = rw;
@@ -292,6 +295,7 @@ public static class DesignSpecStore
             tabHalfWidthMm = fd.TabHalfWidthMm,
             clampTempC = fd.ClampTempC,
             setpointC = fd.SetpointC,
+            segLengthMm = fd.SegLengthMm,
             tabFilletMm = fd.TabFilletMm,
             ringWidthMm = fd.RingWidthMm,
             flangeInsulMm = fd.FlangeInsulMm,

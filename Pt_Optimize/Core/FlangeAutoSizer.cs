@@ -954,7 +954,11 @@ public static class FlangeAutoSizer
     /// </summary>
     public static LineCase CloneCase(LineCase c) => new()
     {
-        TubeIdMm = c.TubeIdMm, WallMm = c.WallMm, SegLengthMm = c.SegLengthMm,
+        // ⚠ SegLengthMm 现在是**逐段数组**（用户 2026-09-03）。这里必须 Clone ——
+        //   与 SetpointC/HeadM 共享引用是本类原有的写法，但那两个没人改；
+        //   长度会被定尺寸改吗？不会。仍复制一份，免得将来有人改了却改到了原件。
+        TubeIdMm = c.TubeIdMm, WallMm = c.WallMm,
+        SegLengthMm = (double[])c.SegLengthMm.Clone(),
         GradeName = c.GradeName, SetpointC = c.SetpointC, HeadM = c.HeadM,
         UseMeasuredCurrent = c.UseMeasuredCurrent, MeasuredCurrentA = c.MeasuredCurrentA,
         FlangeLayer = c.FlangeLayer, FlangePlaneY = c.FlangePlaneY,

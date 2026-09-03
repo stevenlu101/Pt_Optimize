@@ -77,6 +77,12 @@ class UiWiringTests {
         // `--walk`：①→⑤ 全程走通并逐步核对（用户 2026-08-21）。
         // 与接线测试分开跑：那个验「接线对不对」，这个验「整条流程跑得完、数对不对」。
         if (args.Contains("--walk")) { Environment.ExitCode = Walk.Run(); return; }
+        // `--segs N`：验证时把段数调到 N（用户 2026-09-03：「以后『验证』时就跑两段」）。
+        //   ⚠ 不改默认 —— 已归档的对帐基准是三段的数，默认换掉等于把基准悄悄改了。
+        int isg = Array.IndexOf(args, "--segs");
+        if (isg >= 0 && isg + 1 < args.Length && int.TryParse(args[isg + 1], out var sgN))
+            Walk.Segments = sgN;
+
         // `--follow`：完全照链路提示走一遍（用户 2026-08-25 验收）
         int ifw = Array.IndexOf(args, "--follow3dm");
         if (ifw >= 0 && ifw + 1 < args.Length)

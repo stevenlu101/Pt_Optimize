@@ -144,8 +144,18 @@ public sealed class LineDesignPage : TabPage
     { Text = "解析形状（程序生成）", AutoSize = true };
     private readonly RadioButton _src3dm = new()
     { Text = "Rhino .3dm 文件", AutoSize = true };
-    private readonly TextBox[] _file3dm = { new(), new(), new(), new() };
-    private readonly Control[] _row3dm = new Control[4];
+    // ★★★★★ **段数由 UI 输入框决定，图纸路也要跟着变**（用户 2026-09-03）。
+    //   原来这两个是**定长 4**（= 写死 3 段）：分 4 段时逐片输入变成 5 片，
+    //   而 .3dm 那边仍只有 4 个文件框 ⇒ 第 5 片没有图纸，算的是**另一个零件**。
+    //   这正是用户 2026-09-02 在解析路点出的同一个 bug —— 当时只修了解析路那半边。
+    private TextBox[] _file3dm = System.Array.Empty<TextBox>();
+    private Control[] _row3dm = System.Array.Empty<Control>();
+    /// <summary>.3dm 逐片文件行的容器 —— 段数一变就整块重建（同 <see cref="_plateBox"/>）。</summary>
+    private readonly TableLayoutPanel _file3dmBox = new()
+    {
+        ColumnCount = 2, AutoSize = true, Dock = DockStyle.Top,
+        AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0),
+    };
     private readonly TextBox _layer3dm = new() { Text = "法兰", Width = UiScale.S(96) };
     private readonly DataGridView _segGrid = new();
     private readonly RichTextBox _out = new();
@@ -364,9 +374,12 @@ public sealed class LineDesignPage : TabPage
 
     private readonly BindingList<SegRow> _segs = new()
     {
-        new SegRow { 名称 = "HC1", 控温C = 1150, 水头m = 0.3 },
-        new SegRow { 名称 = "HC2", 控温C = 1080, 水头m = 0.6 },
-        new SegRow { 名称 = "HC3", 控温C = 1050, 水头m = 1.0 },
+        // 长度默认取 DesignInputs.TubeLengthMm 的出厂值（300）——
+        // ⚠ 这里写字面量 300 是**第二处来源**，但 BindingList 的初始化器拿不到实例字段；
+        //   真正的兜底在 LineRunner.Normalize（长度 ≤ 0 就按参数表铺满），见那里的说明。
+        new SegRow { 名称 = "HC1", 直接加热管长mm = 300, 控温C = 1150, 水头m = 0.3 },
+        new SegRow { 名称 = "HC2", 直接加热管长mm = 300, 控温C = 1080, 水头m = 0.6 },
+        new SegRow { 名称 = "HC3", 直接加热管长mm = 300, 控温C = 1050, 水头m = 1.0 },
     };
     private CancellationTokenSource? _cts;
     private LineResult? _last;
@@ -406,10 +419,30 @@ public sealed class LineDesignPage : TabPage
 
     /// <summary>段的可编辑行。★ 控温点默认 1150/1080/1050 —— 沿流向**递减**，
     /// 是用户给的真实工况；早先示例值 1150/1200/1250 递增，曾被当成实测（§7）。</summary>
+    /// <summary>
+    /// 段表一行 = **一段加热**。这是两种几何来源（UI 参数 / .3dm 图纸）**共用**的输入群：
+    /// 分几段、每段多长、每段控到多少度 —— 与几何怎么来无关，两条路都要给
+    /// （用户 2026-09-03：「不同几何方式统一的输入参数群可以统一，该分开还是要分开」）。
+    /// </summary>
     public sealed class SegRow
     {
         public string 名称 { get; set; } = "";
+
+        /// <summary>
+        /// ★★★★★ **每段可以不一样**（用户 2026-09-03：「每段直接加热铂金管的长度
+        /// 必须是可以单独设定的」）。原来所有段共用参数表里那一个「段长 L」。
+        ///
+        /// ⚠ 名字是用户指定的：界面上就叫「直接加热铂金管的长度」——
+        ///   它指的是**这一段真正通电发热的那段管**，不是法兰到法兰的外形尺寸。
+        /// ⚠ 它同时是该段的**支承跨距**与**该段铂重**的长度。
+        /// </summary>
+        [DisplayName("直接加热铂金管的长度 mm")]
+        public double 直接加热管长mm { get; set; }
+
+        [DisplayName("控温点 °C")]
         public double 控温C { get; set; }
+
+        [DisplayName("玻璃水头 m")]
         public double 水头m { get; set; }
     }
 
@@ -568,50 +601,10 @@ public sealed class LineDesignPage : TabPage
 
         // .3dm 模式：每片一个文件（可重复同一文件），厚度由图纸决定，
         // 「自动定厚」求的是厚度**整体标度 k**，即「这张图要整体 ×k」。
-        var names = new[] { "入口", "HC1|HC2", "HC2|HC3", "出口" };
-        for (int i = 0; i < 4; i++)
-        {
-            int idx = i;
-
-            // ⚠ 这一行**必须按列宽自适应**，不能用「固定宽文本框 + 固定宽按钮」硬拼
-            //   （2026-08-21 用户报「3DM 输入入口不见了」，实测就是这么丢的）：
-            //
-            //   旧写法是 FlowLayoutPanel{WrapContents=false} 里塞 S(150) 文本框 + S(30) 按钮。
-            //   在 K=1.6 的屏上那是 240+48≈300 px，而本表第二列只有
-            //   （中间栏宽 − 第一列 S(188)）≈ 220 px ⇒ **「…」按钮整个被父容器裁掉**。
-            //   父表是 TableLayoutPanel，第二列是 Percent 100 ——
-            //   单元格不会为超宽内容变宽，也**不会给出横向滚动条** ⇒ 按钮永远够不到，
-            //   而选文件只有这一个入口 ⇒ .3dm 模式**整条链无法使用**。
-            //   文本框是只读的，看起来一切正常 —— 又一次「安静地不可用」。
-            //
-            //   改成两列表格：文本框 Percent 100 + Dock Fill（栏窄它就窄），
-            //   按钮 AutoSize（永远画得下）。这样任何缩放、任何分栏宽度都不会再丢入口。
-            var pnl = new TableLayoutPanel
-            {
-                ColumnCount = 2, RowCount = 1, AutoSize = true,
-                Dock = DockStyle.Fill, Margin = new Padding(0),
-            };
-            pnl.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            pnl.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-
-            _file3dm[idx].ReadOnly = true;
-            _file3dm[idx].Dock = DockStyle.Fill;
-            _file3dm[idx].Margin = new Padding(0, 2, 2, 2);
-            // 路径通常比栏宽长得多：鼠标停上去看全名，否则只看得见开头几个字符
-            new ToolTip().SetToolTip(_file3dm[idx], "点右边「…」选 .3dm 文件");
-
-            var b = new Button
-            {
-                Text = "…", AutoSize = true, Margin = new Padding(0, 2, 0, 2),
-                MinimumSize = new Size(UiScale.S(28), UiScale.S(22)),
-            };
-            b.Click += (_, _) => PickFile(idx);
-
-            pnl.Controls.Add(_file3dm[idx], 0, 0);
-            pnl.Controls.Add(b, 1, 0);
-            _row3dm[idx] = pnl;
-            Row(names[idx] + " .3dm", pnl);
-        }
+        // ⚠ 行数**跟着段数走**，所以整块塞进一个可重建的容器（见 RebuildFile3dmRows）。
+        input.Controls.Add(_file3dmBox);
+        input.SetColumnSpan(_file3dmBox, 2);
+        RebuildFile3dmRows();
         Row("舌保温 mm（.3dm）", _tabIns3dm,
             "舌片自己的保温厚度。**0 = 裸舌**，那是本路径此前写死的行为。"
             + Environment.NewLine
@@ -677,6 +670,15 @@ public sealed class LineDesignPage : TabPage
         _segGrid.Height = UiScale.S(110);
         _segGrid.AutoGenerateColumns = true;
         _segGrid.AllowUserToAddRows = true;
+        // ★ 工程师在段表末尾加一段时，长度先给参数表里那个默认值 ——
+        //   留 0 的话 LineRunner.Normalize 会兜底成同一个数，但**界面上显示 0**，
+        //   人会以为这一段长度是 0（「显示的 ≠ 算的」正是本项目反复栽的形态）。
+        _segGrid.DefaultValuesNeeded += (_, e) =>
+        {
+            e.Row.Cells[nameof(SegRow.直接加热管长mm)].Value = _base.TubeLengthMm;
+            e.Row.Cells[nameof(SegRow.控温C)].Value = _segs.Count > 0
+                ? _segs[^1].控温C : 1050.0;
+        };
         _segGrid.DataSource = _segs;
         _segGrid.DataError += (_, e) => e.ThrowException = false;
         input.Controls.Add(_segGrid);
@@ -1131,7 +1133,7 @@ public sealed class LineDesignPage : TabPage
         bool old = _suppressAuto; _suppressAuto = true;
         try
         {
-            for (int j = 0; j < 4; j++)
+            for (int j = 0; j < _ringR1.Length; j++)   // ★ 按实际片数，不写死 4
             {
                 _ringR1[j].Enabled = _ringR2[j].Enabled = _ringT2[j].Enabled = custom;
                 if (custom) continue;
@@ -1347,6 +1349,7 @@ public sealed class LineDesignPage : TabPage
             if (n == _plateCountShown) return;      // 排版事件：什么都没变
             _plateCountShown = n;
             RebuildPlateRows();
+            RebuildFile3dmRows();      // ★ 图纸路的文件行同样按段数走（用户 2026-09-03）
             ParamChanged();                          // 段数真的变了 ⇒ 上一次的解作废
         }
         _segGrid.CellValueChanged += (_, _) => SegsChanged();
@@ -1963,12 +1966,12 @@ public sealed class LineDesignPage : TabPage
         // 渐变环形状：设计记录里**给了**（非 NaN）才勾自定并灌进去；
         // 全是 NaN（现役两档都是）⇒ 不勾，SyncRingShape 会按旧规则把值显示出来。
         bool anyRing = false;
-        for (int j = 0; j < 4; j++)
+        for (int j = 0; j < fd.RingW1Mm.Length; j++)
             anyRing |= !double.IsNaN(fd.RingW1Mm[j]) || !double.IsNaN(fd.RingW2Mm[j])
                     || !double.IsNaN(fd.RingMul2[j]);
         _ringShapeCustom.Checked = anyRing;
         if (anyRing)
-            for (int j = 0; j < 4; j++)
+            for (int j = 0; j < fd.RingW1Mm.Length && j < _ringR1.Length; j++)
             {
                 if (!double.IsNaN(fd.RingW1Mm[j])) _ringR1[j].Value = C(fd.RingW1Mm[j], _ringR1[j]);
                 if (!double.IsNaN(fd.RingW2Mm[j])) _ringR2[j].Value = C(fd.RingW2Mm[j], _ringR2[j]);
@@ -1979,12 +1982,25 @@ public sealed class LineDesignPage : TabPage
         _sizerTabIns = null; _sizerRingMul = null;
 
         // 分段控温点：只改控温点，水头保持页面上原有的值（那是工艺量，不属于设计记录几何）
-        string[] segNames = { "HC1", "HC2", "HC3" };
-        for (int k = 0; k < fd.SetpointC.Length; k++)
+        // ⚠ 名字**按段数生成**：原来是写死的 { "HC1","HC2","HC3" } ⇒ 档里有 4 段时
+        //   `segNames[k]` 当场 IndexOutOfRange，程序崩在「载入设计记录」上（2026-09-03 查出）。
+        // ⚠ 长度也要带过来（用户 2026-09-03：每段直接加热管长可单独设定）——
+        //   只带控温点的话，载入之后长度还是页面上一组，**存进去和读出来不是同一个设计**。
+        // ⚠ 档里段数比页面少 ⇒ 多出来的行要删掉，否则会挂着上一个设计的段。
+        int nSeg = fd.SetpointC.Length;
+        for (int k = 0; k < nSeg; k++)
         {
-            if (k < _segs.Count) { _segs[k].名称 = segNames[k]; _segs[k].控温C = fd.SetpointC[k]; }
-            else _segs.Add(new SegRow { 名称 = segNames[k], 控温C = fd.SetpointC[k] });
+            double len = k < fd.SegLengthMm.Length ? fd.SegLengthMm[k] : _base.TubeLengthMm;
+            if (k < _segs.Count)
+            {
+                _segs[k].名称 = "HC" + (k + 1);
+                _segs[k].控温C = fd.SetpointC[k];
+                _segs[k].直接加热管长mm = len;
+            }
+            else _segs.Add(new SegRow
+            { 名称 = "HC" + (k + 1), 控温C = fd.SetpointC[k], 直接加热管长mm = len });
         }
+        while (_segs.Count > nSeg) _segs.RemoveAt(_segs.Count - 1);
         _segGrid.Refresh();
 
         if (quiet) { _suppressAuto = false; return; }
@@ -2188,6 +2204,7 @@ public sealed class LineDesignPage : TabPage
             var lcA = PageToDesignSpec().BuildCase(_base, checkRamp: true);
             // 水头是**操作条件**不是几何，DesignSpec 不带它 ⇒ 在这里补上（页面表格里有）
             lcA.HeadM = rows.Select(s => s.水头m).ToArray();
+            lcA.SegLengthMm = rows.Select(s => s.直接加热管长mm).ToArray();
             return lcA;
         }
 
@@ -2210,6 +2227,8 @@ public sealed class LineDesignPage : TabPage
             UseMeasuredCurrent = false,          // 由控温反算 —— 第一性
             SetpointC = rows.Select(s => s.控温C).ToArray(),
             HeadM = rows.Select(s => s.水头m).ToArray(),
+            // ★ 每段的直接加热管长（用户 2026-09-03）。≤0 的交给 Normalize 兜底。
+            SegLengthMm = rows.Select(s => s.直接加热管长mm).ToArray(),
             CheckRamp = true,
         };
         {
@@ -2309,7 +2328,8 @@ public sealed class LineDesignPage : TabPage
         // ★★★ 渐变环形状（2026-08-30）：这三个此前**没有控件**，于是被静默继承自
         //   设计记录（`seed.Clone()` 带过来的）—— 本页那条「每一个进计算的量都有输入来源」
         //   的规矩，剩的最后三个例外。不勾自定 ⇒ 写 NaN，模型按旧规则算（与此前逐位相同）。
-        for (int i = 0; i < 4; i++)
+        // ★ 按实际片数（用户 2026-09-03：段数由 UI 决定）—— 写死 4 会让第 5 片保持默认值
+        for (int i = 0; i < d.RingW1Mm.Length && i < _ringR1.Length; i++)
         {
             d.RingW1Mm[i] = _ringShapeCustom.Checked ? (double)_ringR1[i].Value : double.NaN;
             d.RingW2Mm[i] = _ringShapeCustom.Checked ? (double)_ringR2[i].Value : double.NaN;
@@ -2322,6 +2342,7 @@ public sealed class LineDesignPage : TabPage
         if (rows.Count > 0)
         {
             d.SetpointC = rows.Select(s => s.控温C).ToArray();
+            d.SegLengthMm = rows.Select(s => s.直接加热管长mm).ToArray();
             // ★★★★★ 段数变了，逐片数组必须跟着变长/变短（2026-09-02 补）。
             //   `d` 是从别处克隆来的，它的逐片数组还是**旧段数**那个长度；
             //   段表加一段之后 FlangeCount 变 n+1，而数组仍是 n ——
@@ -3182,6 +3203,79 @@ public sealed class LineDesignPage : TabPage
     ///   与 <see cref="DesignSpec.Fit"/> 的补法一致（别让两处各补各的）。
     /// </summary>
     /// <returns>true = 真的重建了（片数变了）；false = 片数没变，只换了标签。</returns>
+    /// <summary>
+    /// ★★★★★ **.3dm 逐片文件行按段数重建**（用户 2026-09-03：
+    /// 「不论是 UI 或是 3DM 输入，需几段加热都由 UI 输入框输入」）。
+    ///
+    /// 原来 <c>_file3dm</c> 是定长 4 的字段、行在构造函数里建一次 ⇒ 图纸路**永远是 3 段**。
+    /// 分 4 段时逐片输入有 5 片、文件框只有 4 个 ⇒ 第 5 片没有图纸，
+    /// 而判据表照样出数 —— **算的是另一个零件，数字却看不出异样**。
+    ///
+    /// ⚠ 已经选好的路径要留住：按**片名**留（不是按下标）。片是在倒数第二个位置增删的
+    ///   （见 DesignSpec.FitArr：首=入口、末=出口），按下标留会把出口的图纸挪给共用片。
+    /// </summary>
+    private void RebuildFile3dmRows()
+    {
+        var names = PlateNames();
+        // 旧值按**片名**记下来
+        var keep = new Dictionary<string, string>();
+        for (int i = 0; i < _file3dm.Length && i < _row3dmName.Length; i++)
+            if (!string.IsNullOrWhiteSpace(_file3dm[i].Text)) keep[_row3dmName[i]] = _file3dm[i].Text;
+
+        _file3dmBox.SuspendLayout();
+        foreach (Control c in _file3dmBox.Controls.Cast<Control>().ToArray()) c.Dispose();
+        _file3dmBox.Controls.Clear();
+        _file3dmBox.RowStyles.Clear();
+        _file3dmBox.ColumnStyles.Clear();
+        _file3dmBox.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, UiScale.S(188)));
+        _file3dmBox.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+        _file3dm = new TextBox[names.Length];
+        _row3dm = new Control[names.Length];
+        _row3dmName = names;
+
+        for (int i = 0; i < names.Length; i++)
+        {
+            int idx = i;
+            var tb = new TextBox { ReadOnly = true, Dock = DockStyle.Fill,
+                                   Margin = new Padding(0, 2, 2, 2) };
+            if (keep.TryGetValue(names[i], out var old)) tb.Text = old;
+            new ToolTip().SetToolTip(tb, "点右边「…」选 .3dm 文件");
+            _file3dm[idx] = tb;
+
+            // ⚠ 这一行**必须按列宽自适应**，不能用「固定宽文本框 + 固定宽按钮」硬拼
+            //   （2026-08-21 用户报「3DM 输入入口不见了」，实测就是这么丢的）：
+            //   旧写法在 K=1.6 的屏上按钮整个被父容器裁掉，而选文件只有这一个入口
+            //   ⇒ .3dm 模式**整条链无法使用**，文本框只读、看起来一切正常。
+            //   改成两列表格：文本框 Percent 100 + Dock Fill，按钮 AutoSize（永远画得下）。
+            var pnl = new TableLayoutPanel
+            {
+                ColumnCount = 2, RowCount = 1, AutoSize = true,
+                Dock = DockStyle.Fill, Margin = new Padding(0),
+            };
+            pnl.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            pnl.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            var b = new Button
+            {
+                Text = "…", AutoSize = true, Margin = new Padding(0, 2, 0, 2),
+                MinimumSize = new Size(UiScale.S(28), UiScale.S(22)),
+            };
+            b.Click += (_, _) => PickFile(idx);
+            pnl.Controls.Add(tb, 0, 0);
+            pnl.Controls.Add(b, 1, 0);
+            _row3dm[idx] = pnl;
+
+            var lab = new Label { Text = names[i] + " .3dm", AutoSize = true,
+                                  Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 4, 0) };
+            _file3dmBox.Controls.Add(lab);
+            _file3dmBox.Controls.Add(pnl);
+        }
+        _file3dmBox.ResumeLayout();
+    }
+
+    /// <summary>上一次建行时用的片名 —— 重建时按名字（不是下标）留住已选路径。</summary>
+    private string[] _row3dmName = System.Array.Empty<string>();
+
     private bool RebuildPlateRows()
     {
         var names = PlateNames();
@@ -3819,7 +3913,7 @@ public sealed class LineDesignPage : TabPage
         try
         {
             Cursor = Cursors.WaitCursor;
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < _file3dm.Length && i < _tPlate.Length; i++)
             {
                 string src = _file3dm[i].Text.Trim();
                 if (string.IsNullOrEmpty(src)) continue;
@@ -3892,7 +3986,7 @@ public sealed class LineDesignPage : TabPage
         try
         {
             Cursor = Cursors.WaitCursor;
-            for (int j = 0; j < 4; j++)
+            for (int j = 0; j < d.TabThickMm.Length; j++)
             {
                 double td = Math.Max(d.TabThickMm[j], floor);
                 var radii = d.RingRadiiMm.Concat(new[] { d.DiscRadiusMm }).ToArray();
