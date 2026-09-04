@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using PtOptimize.Core;
@@ -115,12 +115,32 @@ public class MonotoneMeasuredTests
         // ★★ t₂ 是旋钮，且是 ②′ 的**首选**（顺序不是随意的：先试便宜的那个）
         var netflux = Solver.Allocation.First(a => a.Key == LineResult.Key.NetFlux).Knobs;
         Assert.Equal(Solver.Knob.RingT2, netflux[0]);
-        Assert.Equal(Solver.Knob.Thick,  netflux[1]);
+        Assert.Equal(Solver.Knob.Thick,  netflux[^1]);   // 板厚永远排最后（最贵）
 
-        // ★★ r₁/r₂ **没有**成为旋钮 —— 枚举里就不该有它们
-        Assert.Equal(4, Enum.GetValues<Solver.Knob>().Length);
-        Assert.DoesNotContain("RingR1", Enum.GetNames<Solver.Knob>());
-        Assert.DoesNotContain("RingR2", Enum.GetNames<Solver.Knob>());
+        // ★★★★★ 2026-09-05 决定变了：r₁/r₂ **成了旋钮**，与 t₁/t₂ 成对。
+        //
+        //   用户 2026-09-04：「自动定厚应该有 t₁/t₂ 的结果，要与搜形状的 r₁/r₂ 是配对的」。
+        //   一个台阶 = (半径, 厚度) 两个数；只搜厚度等于在搜「一条别人定了宽度的带」。
+        //
+        //   2026-08-30 不做它的理由是「现役档 t₁=t₂=1.00 ⇒ 台阶不存在 ⇒ 挪半径结构性无效」。
+        //   那个理由**在当时成立**，现在仍然成立 —— 但它不该由一条 if 写死，
+        //   而该由**实测**筛掉：ChooseKnob 会把每个旋钮抬到上界量一次，
+        //   t=1 时挪半径量不出改善 ⇒ 自动淘汰，并报「这一级还是平的，没有台阶可挪」。
+        //   ⇒ 门从「禁止它存在」改成「**必须与配对的 t 同排**」。
+        Assert.Equal(6, Enum.GetValues<Solver.Knob>().Length);
+        Assert.Contains("RingR1", Enum.GetNames<Solver.Knob>());
+        Assert.Contains("RingR2", Enum.GetNames<Solver.Knob>());
+
+        // ★ 成对：r₂ 要和 t₂ 在同一条判据行上；r₁ 要和 t₁ 在同一条上
+        Assert.Contains(Solver.Knob.RingR2, netflux);
+        var disc = Solver.Allocation.First(x => x.Key == LineResult.Key.DiscTemp).Knobs;
+        Assert.Contains(Solver.Knob.Ring,   disc);
+        Assert.Contains(Solver.Knob.RingR1, disc);
+
+        // ★ 「没有台阶就没得挪」这句话必须在代码里说得出来，不能只报「没变好」
+        string src = System.IO.File.ReadAllText(System.IO.Path.Combine(
+            HandoverDoc.Root(), "Pt_Optimize", "Core", "Solver.cs"));
+        Assert.Contains("没有台阶可挪", src);
 
         // 三条依据都要写在代码里 —— 少一条，下一个人就无从判断这个决定还成不成立
         string s = Core("Solver.cs");

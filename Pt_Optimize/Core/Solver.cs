@@ -111,7 +111,7 @@ public static class Solver
     ///   三段厚度全相等、**台阶不存在** ⇒ 挪它们的半径**结构性无效**（不是「不敏感」）。
     ///   要让它们有意义，得先有台阶 —— 而造台阶正是 t₂ 干的事。
     /// </summary>
-    public enum Knob { Thick, Insul, Ring, RingT2 }
+    public enum Knob { Thick, Insul, Ring, RingT2, RingR1, RingR2 }
 
     public static string KnobName(Knob k) => k switch
     {
@@ -119,6 +119,8 @@ public static class Solver
         Knob.Insul => "舌保温",
         Knob.Ring  => "环倍率 t₁",
         Knob.RingT2 => "外级倍率 t₂",
+        Knob.RingR1 => "内级半径 r₁",
+        Knob.RingR2 => "外级半径 r₂",
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 
@@ -187,9 +189,16 @@ public static class Solver
         //       t₂ 一个人补不上的大缺口会退回去、由板厚全包；
         //       而**最后一公里的小缺口**正是板厚最浪费的地方（168 g/mm，图纸格 0.01 起步就 1.7 g）。
         //       实测那一步：0.8 档第 2 轮片1 缺 0.321 W ⇒ 板厚 +29 g，t₂ 只要 **+0.43 g**。
-        (LineResult.Key.NetFlux,   new[] { Knob.RingT2, Knob.Thick }),  // ②′ 实测 t₂ +13.8 W/单位、板厚 +62…+104 W/mm
+        // ★★★ 2026-09-05：半径与厚度**成对**入表（用户 2026-09-04：
+        //   「自动定厚应该有 t₁/t₂ 的结果，要与搜形状的 r₁/r₂ 是配对的」）。
+        //   一个台阶 = (半径, 厚度) 两个数；此前只搜厚度，等于在搜「一条别人
+        //   定了宽度的带」的厚度 —— 只有半对。
+        //   ⚠ **不另加判定**：t = 1（没台阶）时挪半径本来就不会变好，
+        //     下面那个「抬到上界量一次、没变好就淘汰」的循环会自己筛掉它。
+        //     这比写死一条 if 更硬 —— 它是**量出来的**，不是我断言的。
+        (LineResult.Key.NetFlux,   new[] { Knob.RingT2, Knob.RingR2, Knob.Thick }),  // ②′ 实测 t₂ +13.8 W/单位、板厚 +62…+104 W/mm
         (LineResult.Key.FlangeDip, new[] { Knob.Insul }),               // ③  对舌保温递增（实测 +570…+104 K/mm，且免费）
-        (LineResult.Key.DiscTemp,  new[] { Knob.Insul, Knob.Ring }),    // ②″ 实测只有舌保温治得住；环倍率留作换形状时的候选
+        (LineResult.Key.DiscTemp,  new[] { Knob.Insul, Knob.Ring, Knob.RingR1 }),    // ②″ 实测只有舌保温治得住；环倍率留作换形状时的候选
     };
 
     public static SolverResult Solve(DesignSpec geometry, DesignInputs baseIn, SolverOptions opt,
@@ -470,8 +479,17 @@ public static class Solver
             double dSlack = after - before;
             double dMass = rk is null || double.IsNaN(mass0) ? double.NaN : MassOf(rk) - mass0;
             if (!(dSlack > 1e-9))
-            { fails.Add($"{KnobName(k)} 抬到底也没变好（{before:+0.000;-0.000}→{after:+0.000;-0.000}）"); continue; }
-
+            {
+                // ★ 说清**为什么**没用：t = 1 时这一级还是平的，没有台阶可挪。
+                //   只报「没变好」等于让人猜；而这句话正是当初不做 r 的理由。
+                bool flat = (k == Knob.RingR1 && Math.Abs(Get(d, Knob.Ring, j) - 1.0) < 1e-9)
+                         || (k == Knob.RingR2 && Math.Abs(Get(d, Knob.RingT2, j) - 1.0) < 1e-9);
+                fails.Add($"{KnobName(k)} 抬到底也没变好"
+                        + $"（{before:+0.000;-0.000}→{after:+0.000;-0.000}）"
+                        + (flat ? " —— 这一级还是**平的**（倍率 = 1），没有台阶可挪；"
+                                + "先让倍率把台阶造出来，半径才有意义" : ""));
+                continue;
+            }
             // 不花铂的旋钮（舌保温实测 Δ铂重 ≡ 0）直接胜出 —— 免费的东西没有对手。
             bool free = double.IsNaN(dMass) || Math.Abs(dMass) < 1e-6;
             double eff = free ? double.PositiveInfinity : dSlack / dMass;
@@ -789,6 +807,11 @@ public static class Solver
         //   把那个规则**坐实成数值** —— 否则同一个量有两处来源（规则 与 旋钮），
         //   而且它会跟着 t₁ 悄悄变，二分的不变式当场失效。
         Knob.RingT2 => double.IsNaN(d.RingMul2[j]) ? d.RingMulOuter(j) : d.RingMul2[j],
+        // ★ 半径读的是**环宽**（离孔多远），不是绝对半径 —— 绝对半径随管壁变，
+        //   而旋钮要的是一个与管壁无关的自由量。RingRadiiOf 会把它加回孔半径。
+        //   NaN = 用默认规则 ⇒ 与 t₂ 同理，读它时把规则**坐实成数值**。
+        Knob.RingR1 => double.IsNaN(d.RingW1Mm[j]) ? d.RingWidthMm : d.RingW1Mm[j],
+        Knob.RingR2 => double.IsNaN(d.RingW2Mm[j]) ? 2 * d.RingWidthMm : d.RingW2Mm[j],
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 
@@ -800,6 +823,8 @@ public static class Solver
             case Knob.Insul: d.TabInsulMm[j] = v; break;
             case Knob.Ring:  d.RingMul[j]    = v; break;
             case Knob.RingT2: d.RingMul2[j]  = v; break;
+            case Knob.RingR1: d.RingW1Mm[j]  = v; break;
+            case Knob.RingR2: d.RingW2Mm[j]  = v; break;
             default: throw new ArgumentOutOfRangeException(nameof(k));
         }
     }
@@ -810,6 +835,8 @@ public static class Solver
         Knob.Insul => o.InsHiMm,
         Knob.Ring  => o.RingHi,
         Knob.RingT2 => o.RingHi,     // 与 t₁ 同一条上界（同类量：厚度倍率）
+        Knob.RingR1 => o.RingR1HiMm,
+        Knob.RingR2 => o.RingR2HiMm,
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 
@@ -820,6 +847,8 @@ public static class Solver
         Knob.Insul => o.QuantInsulMm,
         Knob.Ring  => o.QuantRing,
         Knob.RingT2 => o.QuantRing,
+        Knob.RingR1 => o.QuantThickMm,   // 半径也是长度量，走同一张图纸格
+        Knob.RingR2 => o.QuantThickMm,
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 
@@ -829,6 +858,8 @@ public static class Solver
         Knob.Insul => o.BisectTolMm,
         Knob.Ring  => o.BisectTolRing,
         Knob.RingT2 => o.BisectTolRing,
+        Knob.RingR1 => o.BisectTolMm,
+        Knob.RingR2 => o.BisectTolMm,
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 }
@@ -863,6 +894,19 @@ public sealed class SolverOptions
     public double ThickHiMm = 6.0;
     public double InsHiMm   = 20.0;
     public double RingHi    = 2.5;
+
+    /// <summary>
+    /// ★★★ 环**宽**的上界 mm（离孔多远，不是绝对半径）。2026-09-05 加，配对 t₁/t₂。
+    ///
+    /// 用户 2026-09-04：「自动定厚应该有 t₁/t₂ 的结果，要与搜形状的 r₁/r₂ 是配对的」。
+    /// 一个台阶 = **(半径, 厚度)** 两个数；此前只搜厚度、半径由默认规则或人手填 ⇒
+    /// 等于在搜「一条别人定了宽度的带」的厚度，只有半对。
+    ///
+    /// 上界取实测扫过的量程（2026-08-30 `--monotone`）：r₁ 1→10、r₂ 4→16 全程单调 ⇒
+    /// 二分适用。再往外就要顶到盘缘，而那由 ⑥ 与盘径自己管。
+    /// </summary>
+    public double RingR1HiMm = 10.0;
+    public double RingR2HiMm = 16.0;
 
     // ── 盒的**下界**：每个都有第一性原理来源，不是挑出来的起点。
     /// <summary>

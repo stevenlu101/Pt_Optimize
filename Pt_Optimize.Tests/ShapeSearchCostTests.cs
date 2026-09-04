@@ -81,6 +81,43 @@ public class ShapeSearchCostTests
     }
 
     /// <summary>
+    /// ★★★★★ **盘径不用搜 —— 判据 ⑥ 有闭式反解**（2026-09-04）。
+    ///
+    /// 原来是 3×2 网格，每点一次完整求解。实测单点差 30 倍
+    /// （不可行 1 分钟 / 可行 20–33 分钟），光网格就 ~80 分钟。
+    /// **二分也救不了**：二分同样要落在若干可行点上，每个仍是 20–30 分钟。
+    ///
+    /// 真正的杠杆是：卡住小盘径的那条判据本身是闭式的 ——
+    /// <c>Solver.CoverCheck</c> 自己写着「这是 ⑥ 的闭式反解，不是搜出来的，
+    /// 不用试，就是这个数」。⇒ 解一次拿板厚 → ⑥ 当场给最紧下界 → 在那里再解一次。
+    ///
+    /// ⚠⚠ 本门守的是那条红线：**闭式只用来「选在哪里解」，不许代替解**。
+    ///    判据与质量必须是真解出来的（走 EvalShape），
+    ///    否则就成了「用一个估算冒充判据」—— 本项目最贵的那类错。
+    /// </summary>
+    [Fact]
+    public void 盘径下界用闭式反解而不是网格枚举()
+    {
+        string s = Src("Pt_Optimize", "UI", "LineDesignPage.cs");
+
+        // 用的是判据 ⑥ 自己那份实现，不另写一份
+        Assert.Contains("GeometryScreen.MinDiscRadiusMm(plates)", s);
+        // 不动点迭代（板厚随盘径变），有上限
+        Assert.Contains("for (int fix = 0; fix < 3; fix++)", s);
+        // ★ 红线：算出下界之后**仍然照常求解**那一点
+        int at = s.IndexOf("GeometryScreen.MinDiscRadiusMm(plates)", StringComparison.Ordinal);
+        Assert.True(at > 0);
+        Assert.Contains("await EvalShape(Rnext, Rnext * fWide);", s[at..]);
+
+        // 反面：原来的 3×2 盘径网格枚举不许再在（那是被替掉的东西）
+        var code = s.Split(((char)10).ToString())
+                    .Where(l => { var t = l.TrimStart();
+                                  return !t.StartsWith("//", StringComparison.Ordinal)
+                                      && !t.StartsWith("*", StringComparison.Ordinal); });
+        Assert.DoesNotContain(code, l => l.Contains("foreach (double R in discs)", StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// ★★★★ **按钮名字只许有一份来源：Flow**（2026-09-04 撞到）。
     ///
     /// 我在 Flow 里把两颗按钮改名「（手动分步）」，而 LineDesignPage 里

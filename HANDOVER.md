@@ -277,8 +277,9 @@ flowchart TD
 |---|---|---|
 | **X1** 法兰厚度（**可阶梯分布**） | ◐ **只搜已有级的缩放**。逐片基厚 = `Knob.Thick`；环倍率 t₁ = `Knob.Ring`、t₂ = `Knob.RingT2` | `Solver.Allocation` |
 | ↳ **新增一级**（孔边加一圈厚环） | ✗ **完全没有**。`.3dm` 只缩放图纸已有级；解析路写死 2 环 | — |
-| ↳ 各级**半径** r₁…rₙ | ✗ **不是旋钮**。`DesignSpec.RingRadiiOf` 返回定长 `{r1,r2}` | — |
-| **X2** 法兰形状 | ◐ 只搜**盘半径 × 舌半宽**，且**网格枚举**、四片同形状、非求根 | `LineDesignPage.SearchShapeAsync` |
+| ↳ 各级**半径** r₁…rₙ | ◐ **r₁/r₂ 已是旋钮**（2026-09-05，`Knob.RingR1`／`Knob.RingR2`，与 t₁/t₂ 成对）。仍只有两级 | `Solver.Allocation` |
+| ↳ **舌板开孔**（孔位／孔径／该处厚度） | ✗ **完全没有**（2026-09-05 用户提出）。`FlangePlate` 只有圆盘开槽（`slotCount`），舌片上没有孔这个概念 | — |
+| **X2** 法兰形状 | ◐ 盘半径由判据「圆盘盖得住管孔＋焊脚」**闭式定下界**、不可行则二分（2026-09-05 起，不再网格枚举）；舌半宽仍是少数几个比例；四片同形状 | `LineDesignPage.SearchShapeAsync` |
 | **X3** 升温速率 | ✗ 未作为搜索变量 | — |
 | **X4** 管厚度 | ◐ 界面输入，`Solver` 不搜 | — |
 | **X5** 保温方案 | ◐ 舌保温 = `Knob.Insul`；圆盘保温不搜 | `Solver.Allocation` |
@@ -2094,7 +2095,7 @@ git clone <本仓库>
 cd Pt_Optimize
 dotnet restore --disable-parallel   # 见下，务必串行
 dotnet build
-dotnet test          # 应为 604/604 通过（这个数由 HandoverGateCountTests 自己盯着）
+dotnet test          # 应为 605/605 通过（这个数由 HandoverGateCountTests 自己盯着）
 dotnet run --project Pt_Optimize
 ```
 
@@ -5184,7 +5185,7 @@ Pt_Optimize.Tests/ · tests/UiWiring/ · Pt_Optimize.Geom/ · .githooks/   ← �
 > 改 `.githooks/` 改的是「门跑不跑」。这两类原本都不在名单里 ⇒
 > **唯一能让所有门失效的改动，恰恰是唯一不触发门的改动**。
 
-`dotnet test` 应为 **604/604**。
+`dotnet test` 应为 **605/605**。
 
 > 这个数**不用人记得改**了：`HandoverGateCountTests` 反射数出程序集里的用例数
 > （`[Fact]` 一条、`[Theory]` 按 `[InlineData]` 行数），再回头读本文件里的「应为 N/N」比对，

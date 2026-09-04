@@ -2479,7 +2479,7 @@ public sealed class LineDesignPage : TabPage
 
         var sb = new StringBuilder();
         sb.AppendLine("=== 搜形状（盘半径 × 舌宽；舌长按装配算）===");
-        sb.AppendLine($"网格 {discs.Length}×{wFrac.Length} 个形状，先各筛 {screenRounds} 轮，再对胜出者跑 {finalRounds} 轮。");
+        sb.AppendLine($"盘径由判据「圆盘盖得住管孔＋焊脚」**闭式定下界**（不用搜）；下界不可行就二分。每点先筛 {screenRounds} 轮，胜出者跑 {finalRounds} 轮。");
         sb.AppendLine($"自由段下界 {FreeTabMin:0} mm（判据「舌片自由段」）　压接段 {DesignSpec.Current.ClampLengthMm:0} mm");
         sb.AppendLine("★ 舌长不是搜出来的，是**算出来的**：切点 + 压接段 + 自由段。");
         sb.AppendLine("随时可以点「取消」——**已经算完的形状结果不会丢**。");
@@ -2582,9 +2582,88 @@ public sealed class LineDesignPage : TabPage
                     await EvalShape(R0now, Math.Min(hw0now, R0now));
                 }
             }
-            foreach (double R in discs)
-                foreach (double f in wFrac)
-                    await EvalShape(R, R * f);
+            // ══════════════════════════════════════════════════════════════════
+            // ★★★★★ **盘径不用搜，⑥ 有闭式反解**（2026-09-04，用户要求「改求根」）
+            //
+            //   ══ 为什么原来那个 3×2 网格贵
+            //
+            //   实测每点计时（deliverable/F_测搜形状耗时.txt）：
+            //     不可行的点 1 分钟就退出，**可行的点 20–33 分钟** —— 单点差 30 倍。
+            //   网格 6 点里 3 个可行 ⇒ 光网格就 ~80 分钟，预算全耗在这里。
+            //   ⚠ 二分也救不了：二分同样要落在若干**可行点**上，每个仍是 20–30 分钟。
+            //
+            //   ══ 真正的杠杆：卡住小盘径的那条判据，本身是闭式的
+            //
+            //   实测卡住的是「⑥ 圆盘盖得住管孔＋焊脚」：
+            //     盘半径 27.500 mm ＜ 需要 29.023 mm
+            //   而 Solver.CoverCheck 自己写着：「这是 ⑥ 的**闭式反解**，不是搜出来的
+            //   —— 不用试，就是这个数」。need = 管孔 + 焊脚，焊脚 = max(板厚, 壁厚)。
+            //
+            //   ⇒ 解一次拿到板厚 → ⑥ 当场给出**最紧的**盘径下界 → 在那里再解一次。
+            //     板厚随盘径变，所以是个不动点迭代，实测一两步就收敛。
+            //
+            //   ⚠ 这不是「猜下界」：need 由 GeometryScreen.MinDiscRadiusMm(plates) 算，
+            //     与判据 ⑥ **同一份实现**（2026-08-29 已经把手写的那份合并掉了）。
+            //   ⚠ 收敛之后仍**照常评估**该点（走 EvalShape），判据与质量都是真解出来的，
+            //     闭式只用来**选在哪里解**，不用来代替解。
+            double fWide = wFrac.Max();          // 舌宽先取最宽（贴着盘径），窄的稍后在最优盘径上试
+            double Rsafe = discs[^1];            // 网格最大的那个盘径：先在这里解一次拿板厚
+            _out.AppendText("① 先在盘Ø" + (2 * Rsafe).ToString("0")
+                          + " 解一次，拿到板厚 —— 判据「圆盘盖得住管孔＋焊脚」"
+                          + "据此给出**最紧的盘径下界**（闭式，不用搜）" + Environment.NewLine);
+            await EvalShape(Rsafe, Rsafe * fWide);
+
+            double Rbest = Rsafe;
+            for (int fix = 0; fix < 3; fix++)
+            {
+                var lastD = rows.Count > 0 ? rows[^1].d : null;
+                if (lastD is null) break;
+                double floorMm = lastD.DiscFloorMm(_base);
+                var plates = new FlangePlate[lastD.TabThickMm.Length];
+                for (int j2 = 0; j2 < plates.Length; j2++) plates[j2] = lastD.Plate(j2, floorMm);
+                double need = GeometryScreen.MinDiscRadiusMm(plates);
+                if (double.IsNaN(need) || need <= 0) break;
+                double Rnext = Math.Max(need, minDiscAll);
+                // 已经贴着下界（或反而更大）⇒ 不动点到了
+                if (Rnext >= Rbest - 0.05) break;
+                _out.AppendText($"② 判据下界给出 盘半径 ≥ {need:0.000} mm ⇒ 在盘Ø{2 * Rnext:0.0} 再解一次"
+                              + Environment.NewLine);
+                _prog.Maximum += screenRounds;
+                await EvalShape(Rnext, Rnext * fWide);
+                if (rows.Count == 0 || !rows[^1].ok)
+                {
+                    // ★★★★★ 闭式下界处**不可行** ⇒ 真正卡住的不是 ⑥，是别的判据。
+                    //   实测（deliverable/F_求根后.txt）：⑥ 给出 R ≥ 27.253，
+                    //   而盘Ø55 上「圆盘区最高温」**判不了（NaN）** —— 盘太小，
+                    //   圆盘区与孔/焊缝分不开了。
+                    //
+                    //   ⇒ 现在两端都是**实测**出来的：下界不可行、Rbest 可行。
+                    //     这才是二分该出场的时候（此前二分是没有依据的猜）。
+                    //   ⚠ 不用爬山：爬山每步只挪 ±5 mm 且不认方向，实测它从 70 走到 60
+                    //     中间还绕去 70/53（3034 g，更重）。二分 3 步就到。
+                    double bLo = Rnext, bHi = Rbest;      // bLo 不可行、bHi 可行
+                    for (int bi = 0; bi < 3 && bHi - bLo > 1.0; bi++)
+                    {
+                        double mid = 0.5 * (bLo + bHi);
+                        _out.AppendText($"③ 二分：{2 * bLo:0.0} 不可行 / {2 * bHi:0.0} 可行 ⇒ 试盘Ø{2 * mid:0.0}"
+                                      + Environment.NewLine);
+                        _prog.Maximum += screenRounds;
+                        await EvalShape(mid, mid * fWide);
+                        if (rows.Count > 0 && rows[^1].ok) { bHi = mid; Rbest = mid; }
+                        else bLo = mid;
+                    }
+                    break;
+                }
+                Rbest = Rnext;
+            }
+
+            // ③ 在最优盘径上把其余舌宽比例各试一次（舌宽是另一维，不由 ⑥ 决定）
+            foreach (double f in wFrac)
+                if (Math.Abs(f - fWide) > 1e-9)
+                {
+                    _prog.Maximum += screenRounds;
+                    await EvalShape(Rbest, Rbest * f);
+                }
 
             // ── 之后每一轮：从当前最好点出发，试四个邻点（盘径 ±5、舌宽比例 ±0.125）。
             //    有更好的就搬过去继续；**一个都没更好就停** —— 这正是用户 2026-08-25 要的
