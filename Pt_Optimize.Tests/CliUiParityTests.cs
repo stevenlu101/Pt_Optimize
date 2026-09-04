@@ -73,7 +73,7 @@ public class CliUiParityTests
     private static readonly Cap[] Table =
     {
         new("--solve",       "交付量",
-            "按钮「自动定厚」（同一个 Solver.Solve）—— UiWiring --reconcile 逐克对过帐"),
+            $"按钮「{PtOptimize.UI.Flow.Cmd("core.autoThick").Text}」（同一个 Solver.Solve）—— UiWiring --reconcile 逐克对过帐"),
         new("--verifymesh",  "交付量",
             $"按钮「{PtOptimize.UI.Flow.Cmd("core.verifyMesh").Text}」，且 ⑤ 交付的门 RequireMeshVerified 要求它"),
         new("--monotone",    "决定依据",

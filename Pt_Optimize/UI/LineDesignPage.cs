@@ -331,6 +331,30 @@ public sealed class LineDesignPage : TabPage
     internal int SearchScreenRounds = 16, SearchFinalRounds = 40;
 
     /// <summary>
+    /// ★★★ 粗筛用的平坦区网格 mm。**默认 0 = 关掉**（2026-09-04 实测之后）。
+    ///
+    /// ══ 试过了，不成立 —— 省不到钱，却动了答案
+    ///
+    /// 先量到「贵的是可行点」（失败 1 分钟 / 可行 20–33 分钟），于是想照
+    /// 过热试探那一招把平坦区放粗（MeshCoarseMm 11 → 20）。实测两条都不利：
+    ///
+    ///   · **省不到**：MeshFineRadiusMm = 50，而搜的盘半径只有 27.5–35 mm ⇒
+    ///     **整个圆盘都在细网格区里**，圆盘上根本没有「粗区」可放粗。
+    ///     实测可行点 19.8–33.0 → 23.7–26.3 分钟，没降。
+    ///   · **却改答案**：粗区实际落在**舌片**上（舌长 158 mm，远超 r = 50）。
+    ///     放粗它改的是舌片电阻与发热 ⇒ 盘Ø55/舌41 从「判不了（NaN）」
+    ///     变成「⑥ 盘盖不住，17.2 分钟」。
+    ///
+    /// ⇒ 这张图上**没有便宜的粗化空间**。降本只能靠**减少可行点的求解次数**
+    ///   （即改求根），不能靠粗化网格。
+    ///
+    /// 选项与门都留着：哪天几何变了（盘大、舌短）它会重新成立，
+    /// 而那时「精算不许用粗网格」那道门已经在位。
+    /// ⚠ 不是 const：走查要能调它。
+    /// </summary>
+    internal double SearchScreenCoarseMm = 0;
+
+    /// <summary>
     /// 搜形状的网格与外推上限。**只有走查器会改它们**。
     /// ⚠ 每一「轮」都是一次完整整线解（分钟级）—— 所以压轮数还不够快，
     ///   要把**网格点数**也压下来，接线验证才回得到分钟级。
@@ -466,7 +490,11 @@ public sealed class LineDesignPage : TabPage
         // ★ 一键跑到底（2026-09-02 用户拍板）：解 → 定厚 →（搜形状）→ 加密复算
         //   → 停在「可以出图」。决策不新写，照 Flow.Next 一直走（见 RunPipelineAsync）。
         _btnRun = Btn("核算整线", (_, _) => _ = RunPipelineAsync());
-        _btnAuto = Btn("自动定厚", (_, _) => _ = RunAsync(true));
+        // ★★★ 按钮名字**从 Flow 读**（2026-09-04）。写死一份的后果当场就撞上了：
+        //   我在 Flow 里把它改成「自动定厚（手动分步）」，而这里还写着旧名 ⇒
+        //   界面接线测试五项红（Flow 登记的命令界面上找不到、界面上的按钮 Flow 没登记）。
+        //   Flow 是命令表的唯一来源，名字也该只有那一份。
+        _btnAuto = Btn(Flow.Cmd("core.autoThick").Text, (_, _) => _ = RunAsync(true));
         _btnVerify = Btn("◆ 加密复算（算到数不再变）", (_, _) => _ = VerifyMeshAsync());
         // 1b 之后它导出的是**整机**（管 + 四片法兰）且几何与求解一致，故改名点明
         _btnExport = Btn("导出本页 3DM", (_, _) => Export());
@@ -503,7 +531,7 @@ public sealed class LineDesignPage : TabPage
         // ⚠ 这是本轮**唯一**新增的控件，与「UI 已经够复杂不要再加」是有冲突的，所以说明理由：
         //   功能需要一个触发点；藏成快捷键或修饰键（Shift+自动定厚）会直接违反
         //   「不看说明书也能用」。⇒ 宁可多一个**名字说得清**的按钮。
-        _btnShape = Btn("◇ 搜形状", (_, _) => _ = SearchShapeAsync());
+        _btnShape = Btn(Flow.Cmd("shape.search").Text, (_, _) => _ = SearchShapeAsync());
 
         // ★★ 2026-08-20 阶段轨：本页只留「③ 整线核算」这一格的命令。
         //
@@ -1736,7 +1764,7 @@ public sealed class LineDesignPage : TabPage
 
             string what = ns.CmdId switch
             {
-                "core.autoThick"  => "自动定厚",
+                "core.autoThick"  => Flow.Cmd("core.autoThick").Text,
                 "shape.search"    => "搜形状（会改盘径与舌宽）",
                 "core.verifyMesh" => "加密复算（算到数不再变）",
                 "core.runLine"    => "重解一次",
@@ -2459,7 +2487,7 @@ public sealed class LineDesignPage : TabPage
         // ⚠ 表头必须是 sb 的**最后一行**，后面不能垫空行：下面的数据行是随算随
         //   AppendText 贴上来的，只有与表头**连续**才会被认成同一张表；
         //   一旦断开，表头和数据各自算各自的列宽，就再也对不上了。
-        sb.AppendLine("盘Ø\t舌宽\t舌长\t合计 g\t判定");
+        sb.AppendLine("盘Ø\t舌宽\t舌长\t耗时 分	合计 g\t判定");
         _out.Text = sb.ToString();
 
         var rows = new List<(DesignSpec d, double mass, bool ok, string msg)>();
@@ -2511,8 +2539,15 @@ public sealed class LineDesignPage : TabPage
                     // ★ 粗筛走 **Solver**（求根）而不是 Sizer（搜索）。
                     //   ⚠ 粗筛不开第二遍（FineMm = 0）：它只负责**给方向**，
                     //     胜出的那一个才做细网格求根（见下面「精算」）。
+                    // ★ 计时（2026-09-04）：搜形状实测 90 分钟跑不完，而**时间花在哪没人量过** ——
+                    //   网格 6 点之后还有一段邻域爬山，两者都可能是大头。
+                    //   先量再改：不量就动，等于又一次「没算成本就下手」。
+                    var swPt = System.Diagnostics.Stopwatch.StartNew();
                     var sr = await Task.Run(() => Solver.Solve(seed, _base,
-                                 new SolverOptions { MaxRounds = screenRounds }, prog2, ct), ct);
+                                 new SolverOptions { MaxRounds = screenRounds,
+                                                     ScreenCoarseMm = SearchScreenCoarseMm },
+                                 prog2, ct), ct);
+                    swPt.Stop();
                     done = baseDone + screenRounds;
                     _prog.Value = Math.Min(_prog.Maximum, done);
                     Note($"{tag} 已完成　{(double.IsNaN(sr.MassG) ? "无解" : sr.MassG.ToString("0") + " g")}");
@@ -2520,6 +2555,7 @@ public sealed class LineDesignPage : TabPage
                     // ★ 算完一个贴一个：中途取消也留得住已有结果
                     _out.AppendText(
                         $"{2 * R:0}\t{2 * hw:0}\t{sr.Design.TabLengthMm:0}\t" +
+                        $"{swPt.Elapsed.TotalMinutes:0.0}	" +
                         (double.IsNaN(sr.MassG) ? "—" : sr.MassG.ToString("0")) +
                         $"\t{(sr.Feasible ? "✓ " : "")}{sr.Message}" +
                         // ★ 粗筛只跑 SearchScreenRounds（16）轮，比 CLI 的 40 更容易被截断；
@@ -2708,7 +2744,7 @@ public sealed class LineDesignPage : TabPage
         finally
         {
             _prog.Visible = false; _prog.Style = ProgressBarStyle.Marquee;
-            _btnShape.Text = "◇ 搜形状";
+            _btnShape.Text = Flow.Cmd("shape.search").Text;
             _btnRun.Enabled = _btnAuto.Enabled = _btnRepro.Enabled = true;
             _cts?.Dispose(); _cts = null;
             Shared?.SetRunning(null);
@@ -2731,7 +2767,7 @@ public sealed class LineDesignPage : TabPage
         // ★ 「自动定厚」在 ④ 页，而进度条与状态标签都长在 ③ 上 ⇒ ④ 那边一动不动。
         //   接上状态面板（右上角，切到哪一页都看得见）才有动态提示。
         Shared?.SetRunning(autoSize ? ChainId.C定尺寸 : ChainId.C整线耦合,
-                           autoSize ? "自动定厚" : "核算整线");
+                           Flow.Cmd(autoSize ? "core.autoThick" : "core.runLine").Text);
 
         // ⚠⚠ BuildCase() **必须在 try 里面**。它会抛（如「.3dm 模式但文件没填」）——
         //   放在外面时异常越过 finally ⇒ _cts 不清、按钮不恢复、进度条一直转，
@@ -2995,7 +3031,10 @@ public sealed class LineDesignPage : TabPage
             _cts?.Dispose(); _cts = null;
             _prog.Visible = false;
             _btnRun.Enabled = _btnAuto.Enabled = true;
-            _btnRun.Text = "核算整线"; _btnAuto.Text = "自动定厚";
+            // ★ 跑完把名字**从 Flow 读回来**，不写死 —— 写死的那一份会在改名时
+            //   把按钮悄悄改回旧名（跑一次之后界面才对不上，比构造时更难查）。
+            _btnRun.Text = Flow.Cmd("core.runLine").Text;
+            _btnAuto.Text = Flow.Cmd("core.autoThick").Text;
             Shared?.SetRunning(null);          // 清在 finally：异常/取消也必须解除互斥
         }
     }

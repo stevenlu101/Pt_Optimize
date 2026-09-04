@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -677,6 +677,10 @@ public static class Solver
                 lc.MeshFineMm = o.FineMm;
                 if (o.FineRadiusMm > 0) lc.MeshFineRadiusMm = o.FineRadiusMm;
             }
+            // ★ 粗筛：只放粗**平坦区**（MeshCoarseMm），孔边与台阶那圈一格不动。
+            //   同 FlangeAutoSizer 的过热试探 —— 陡梯度处粗化会判错，省不得。
+            else if (o.ScreenCoarseMm > 0)
+                lc.MeshCoarseMm = Math.Max(lc.MeshCoarseMm, o.ScreenCoarseMm);
             // ★ 细网格那一遍单次可能跑 ~900 s；不转内层进度就是几十分钟静默，
             //   看不出「慢」和「挂了」的区别（用户 2026-08-29）。
             var r = LineRunner.Run(lc, inner, cancel);
@@ -861,6 +865,20 @@ public sealed class SolverOptions
     public double RingHi    = 2.5;
 
     // ── 盒的**下界**：每个都有第一性原理来源，不是挑出来的起点。
+    /// <summary>
+    /// ★★★ **粗筛用的底层网格** mm（0 = 不改，用 LineCase 的默认 11 mm）。
+    ///
+    /// <see cref="FineMm"/> 管的是「第二遍细网格」，粗筛本来就把它关掉（= 0）。
+    /// 但**底层线网格仍是默认的 2/11 mm** —— 实测（2026-09-04，Pt_Heater1.3dm
+    /// 搜形状每点计时）：**不可行的点 1 分钟就退出，可行的点要 20–33 分钟**。
+    /// 也就是说贵的不是「点数」，是「把一个可行点真的解出来」。
+    ///
+    /// ⇒ 粗筛阶段把**平坦区**的网格放粗（孔边与台阶不动，见 FlangeAutoSizer
+    ///   那条焊缝环的说明），只用来分「这个形状值不值得细算」。
+    /// ⚠ 终点的精算**不许**用它 —— 交付数只能出自原网格。
+    /// </summary>
+    public double ScreenCoarseMm = 0;
+
     /// <summary>裸舌 —— 舌片上什么都不缠时的等效保温厚度。</summary>
     public double InsLoMm = 0.3;
     /// <summary>无台阶 —— 环不加厚。</summary>

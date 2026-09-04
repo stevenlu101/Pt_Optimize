@@ -1256,7 +1256,36 @@ static class Walk
                     var swS = System.Diagnostics.Stopwatch.StartNew();
                     Call(line, "SearchShapeAsync");
                     if (!Wait(() => F(line, "_cts") is null, 5_400_000))
-                    { OK("搜形状在预算内跑完", false, "★ 超时"); return _bad; }
+                    {
+                        // ★ 超时也要把**量到的东西**倒出来（2026-09-04）。
+                        //   搜形状每点现在带耗时列；不倒出来就等于量了看不见 ——
+                        //   今天已经栽过一次「拿坏仪器取证」。
+                        if (F(line, "_out") is Control ob2)
+                        {
+                            Console.WriteLine("     ── 搜形状输出框（超时前已完成的点）──");
+                            foreach (var t in ob2.Text.Replace(((char)13).ToString(), "")
+                                              .Split((char)10).Where(x => x.Trim().Length > 0))
+                                Console.WriteLine("     │ " + t.Trim());
+                        }
+                        // ★★★★★ 2026-09-04：超时**不等于没有答案**。
+                        //   实测（deliverable/F_测搜形状耗时.txt）：网格阶段已经找到
+                        //   盘Ø60／舌宽60 = 2584 g **全判据过**（原图 4660 g 且 ③ 超限 42 倍），
+                        //   预算是切在**后续爬山**上的。而本走查照旧报「✗ 超时」⇒
+                        //   我据此对用户说了「APP 交不出方案」——**那是假的失败结论**。
+                        //   ⚠ 真界面上工程师点「取消」这些结果不会丢（代码本来就这么设计）。
+                        //     是走查把「预算到了」渲染成了「做不到」。
+                        bool anyOk = false;
+                        if (F(line, "_out") is Control ob3)
+                            foreach (var t in ob3.Text.Replace(((char)13).ToString(), "")
+                                              .Split((char)10))
+                                if (t.Contains("✓", StringComparison.Ordinal)
+                                    && t.Contains("全过", StringComparison.Ordinal)) anyOk = true;
+                        OK("搜形状在预算内跑完", false,
+                           anyOk ? "★ 预算到点时**已经找到全过的形状**（见上表）—— "
+                                 + "算得更久只是想再省一点铂，不是「做不到」"
+                                 : "★ 超时，且**还没有任何全过的形状**");
+                        return _bad;
+                    }
                     Console.WriteLine($"     搜形状耗时 {swS.Elapsed.TotalMinutes:0.0} 分钟");
                     break;
                 }
