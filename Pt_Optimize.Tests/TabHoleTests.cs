@@ -32,6 +32,15 @@ public class TabHoleTests
         TabHoles = holes,
     };
 
+    /// <summary>按**行优先**读同一个场 —— 用来分清「孔没切」和「我索引读错了」。</summary>
+    private static double RowMajor(ThicknessField f, double x, double z)
+    {
+        int i = (int)Math.Round((x - f.X0) / f.Step), j = (int)Math.Round((z - f.Z0) / f.Step);
+        if (i < 0 || j < 0 || i >= f.Nx || j >= f.Nz) return -1;
+        int k = j * f.Nx + i;
+        return k >= 0 && k < f.T.Length ? f.T[k] : -1;
+    }
+
     [Fact]
     public void 孔里不算金属()
     {
@@ -156,24 +165,52 @@ public class TabHoleTests
         string? probe = Geometry3dm.FindProbe();
         if (probe is null) return;                 // 没有探针：跳过（见摘要）
 
-        string tmp = Path.Combine(Path.GetTempPath(), "孔回读_" + Guid.NewGuid().ToString("N")[..6] + ".3dm");
+        string tmp = Path.Combine(HandoverDoc.Root(), "deliverable", "tmp",
+                "孔回读_" + Guid.NewGuid().ToString("N")[..6] + ".3dm");
+            Directory.CreateDirectory(Path.GetDirectoryName(tmp)!);
         try
         {
             Geometry3dm.WriteStepped3dm(tmp, holeRadiusMm: 26,
                 radiiMm: new[] { 31.0, 36.0, 60.0 }, thickMm: new[] { 2.4, 2.0, 1.8 },
                 tabEndXMm: -120, tabHalfWidthMm: 30, tabThickMm: 1.8,
-                slotCount: 0, tabHoleXMm: -60, tabHoleRMm: 8);
+                slotCount: 0, tabHoleXMm: -90, tabHoleRMm: 8);
             Assert.True(File.Exists(tmp), "图没写出来");
 
-            var f = Geometry3dm.LoadThickness(tmp, "法兰", double.NaN, 0.5);
-            double At(double x, double z)
-            {
-                int i = (int)Math.Round((x - f.X0) / f.Step), j = (int)Math.Round((z - f.Z0) / f.Step);
-                if (i < 0 || j < 0 || i >= f.Nx || j >= f.Nz) return 0;
-                return f.T[j * f.Nx + i];          // 一维铺开：行优先
-            }
-            Assert.True(At(-60, 0) <= 1e-6, $"孔心还有材料（厚 {At(-60, 0):0.000} mm）—— 孔没写进图");
-            Assert.True(At(-60, 20) > 0.5, $"孔外没有材料（厚 {At(-60, 20):0.000} mm）—— 这条是空转");
+            var f = Geometry3dm.LoadThickness(tmp, "法兰", double.NaN, 1.0);
+            // ★★★★★ `ThicknessField.At(x, z)` 收的是**坐标**，不是下标。
+            //   我第一版先自己把坐标换算成 i/j，再把 i/j 喂进 At —— **换算了两次**，
+            //   于是材料看起来全挤在网格一角（2321 格），而探针对同一个文件量出 12708 格、
+            //   孔也在。我却据此三轮都在改**写入端**（孔其实一开始就切对了）。
+            //   ⇒ 正是我自己写在清单上的那条：**同一个数两处来源**。
+            //   ⚠ 教训：调别人的换算之前，先确认它收的是什么单位。
+            double At(double x, double z) => f.At(x, z);
+
+            // ★ 先证明**场本身不是空的** —— 否则下面全是空转（第一版就这么假红了一轮）
+            int solidCells = 0;
+            for (int i2 = 0; i2 < f.Nx; i2++)
+                for (int j2 = 0; j2 < f.Nz; j2++)
+                    if (f.At(f.X0 + i2 * f.Step, f.Z0 + j2 * f.Step) > 1e-6) solidCells++;
+            Assert.True(solidCells > 5000,
+                $"读回来的厚度场几乎是空的（{solidCells} 格有材料）—— 问题不在孔，在读取本身");
+            string where = $"有料 {solidCells} 格";
+
+            // ★ 扫**区域**不钉某一格：格子随步长落在不同位置，钉单点会随网格假红。
+            int inHole = 0, inHoleSolid = 0, ring = 0, ringSolid = 0;
+            for (double dx = -14; dx <= 14; dx += 1)
+                for (double dz = -14; dz <= 14; dz += 1)
+                {
+                    double r = Math.Sqrt(dx * dx + dz * dz);
+                    double t = At(-90 + dx, dz);
+                    if (r <= 6) { inHole++; if (t > 1e-6) inHoleSolid++; }
+                    else if (r >= 10 && r <= 13) { ring++; if (t > 1e-6) ringSolid++; }
+                }
+            Assert.True(inHole > 20 && ring > 20, "扫描退化了 —— 下面是空转。" + where);
+            Assert.True(inHoleSolid == 0,
+                $"孔内还有 {inHoleSolid}/{inHole} 格材料（孔半径 8，只扫 r≤6）——"
+              + $" 孔没切出来。{where}　孔心={At(-90, 0):0.00} 孔缘内={At(-86, 0):0.00}"
+              + $" 孔外={At(-90, 12):0.00} 舌片={At(-100, 0):0.00}");
+            Assert.True(ringSolid > ring * 0.8,
+                $"孔外那一圈只有 {ringSolid}/{ring} 格有材料 —— 这条是空转（或者孔挖过头了）。" + where);
         }
         finally { if (File.Exists(tmp)) File.Delete(tmp); }
     }

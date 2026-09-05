@@ -389,9 +389,26 @@ public sealed class DesignSpec
     public double TabHoleRMaxMm(double minBridgeMm = 4.0)
         => System.Math.Max(0, TabHalfWidthMm - minBridgeMm);
 
-    /// <summary>孔心位置：没给就取舌片自由段中点（避开压接段与盘缘切点）。</summary>
+    /// <summary>
+    /// ★★★★★ 孔心位置：默认落在**舌片自由段**的中点。
+    ///
+    /// ⚠ 第一版写 `-舌长/2`，在 舌长 120／盘半径 60 上正好压到**圆盘**上 ——
+    ///   而孔只从舌片实体上切，圆盘那块料还在 ⇒ 出图上看起来「孔被削掉一半」。
+    ///   实测：z 向孔宽 17 mm（对的，2r），x 向只有 ~11 mm。
+    ///   这不是测试问题，是**默认孔位压在圆盘上**。
+    ///
+    /// ⇒ 自由段 = 从盘缘切点到舌端，再去掉压接段（那里要夹铜排，不能开孔）。
+    ///   取它的中点。
+    /// </summary>
     public double TabHoleCenterXMm()
-        => double.IsNaN(TabHoleXMm) ? -(TabLengthMm * 0.5) : TabHoleXMm;
+    {
+        if (!double.IsNaN(TabHoleXMm)) return TabHoleXMm;
+        // 盘缘切点（等宽舌）：|x| = √(R² − 半宽²)；舌片在 −x 侧
+        double hw = System.Math.Min(TabHalfWidthMm, DiscRadiusMm);
+        double xTan = -System.Math.Sqrt(System.Math.Max(0, DiscRadiusMm * DiscRadiusMm - hw * hw));
+        double xClamp = -TabLengthMm + ClampLengthMm;      // 压接段占住舌端那一截
+        return 0.5 * (xTan + xClamp);
+    }
 
     /// <summary>槽的内外半径 mm。默认取「管孔外缘 + 一点」到盘径的 2/3 —— 与实测最优带一致。</summary>
     public double SlotRInMm = double.NaN, SlotROutMm = double.NaN;

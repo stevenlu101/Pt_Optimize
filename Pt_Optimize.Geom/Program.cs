@@ -1262,6 +1262,17 @@ internal static class GeomProbe
                         }
                         if (cutters.Count > 0)
                         {
+                            // ★★★★★ **法向朝内的实体，布尔差会原样退回且不报错**（2026-09-05 实测）。
+                            //   CreateExtrusion 造出来的实体是 Inward。不摆正就切：
+                            //   CreateBooleanDifference 返回 1 个 brep、面数**仍是 6**（该有 9），
+                            //   `实体数 4` 照常打印，**一句警告都没有** —— 写出的图上没有孔，
+                            //   而计算里有孔 ⇒ 工程师拿到一张与计算不符的图。
+                            //   是回读门（TabHoleTests.孔真的写进了图也读得回来）抓到的：孔心仍有 1.8 mm 材料。
+                            //   ⚠ 圆盘开槽那段是同样的写法 —— 它的唯一调用方一直传 slotCount:0，
+                            //     所以这个雷在那边**从没响过**。现在一并摆正。
+                            if (tab.SolidOrientation == BrepSolidOrientation.Inward) tab.Flip();
+                            foreach (var cq in cutters)
+                                if (cq.SolidOrientation == BrepSolidOrientation.Inward) cq.Flip();
                             var diff = Brep.CreateBooleanDifference(new[] { tab }, cutters, tol);
                             if (diff != null && diff.Length > 0) tab = diff[0];
                             else Console.Error.WriteLine("⚠ 舌孔布尔差失败，写出的是**没有孔**的舌片");
