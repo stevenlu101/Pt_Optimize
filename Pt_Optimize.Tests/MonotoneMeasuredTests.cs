@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Linq;
 using PtOptimize.Core;
@@ -105,7 +105,14 @@ public class MonotoneMeasuredTests
     public void 分配表按第9件的决定长成了这样()
     {
         // 判据仍是三条（一条判据一行），但 ②′ 有两个候选
-        Assert.Equal(3, Solver.Allocation.Length);
+        // ⚠ 不钉个数（门 A）：加一条判据的分派是**变好**，不该让门红。
+        //   钉的是不变量：每条判据都要有分派，且分派里的旋钮都真实存在。
+        Assert.NotEmpty(Solver.Allocation);
+        Assert.All(Solver.Allocation, a =>
+        {
+            Assert.False(string.IsNullOrWhiteSpace(a.Key));
+            Assert.NotEmpty(a.Knobs);
+        });
         var keys = Solver.Allocation.Select(a => a.Key).ToArray();
         Assert.Equal(keys.Length, keys.Distinct().Count());
         Assert.Contains(LineResult.Key.NetFlux, keys);
@@ -127,7 +134,16 @@ public class MonotoneMeasuredTests
         //   而该由**实测**筛掉：ChooseKnob 会把每个旋钮抬到上界量一次，
         //   t=1 时挪半径量不出改善 ⇒ 自动淘汰，并报「这一级还是平的，没有台阶可挪」。
         //   ⇒ 门从「禁止它存在」改成「**必须与配对的 t 同排**」。
-        Assert.Equal(6, Enum.GetValues<Solver.Knob>().Length);
+        // ⚠ **不钉个数**（2026-09-05）。这里原来写 Assert.Equal(6, …)，
+        //   而这已经是同一天第四次「门钉的是当时的数量/措辞，不是不变量」——
+        //   加一根旋钮就假红，红的却不是能力变坏，是门过期了。
+        //   ⇒ 钉真不变量：每根旋钮都要有**独一无二的名字**（新旋钮不许无名溜进来），
+        //     成对关系另由下面几条钉。个数由 OptimizationModelReconcileTests 与
+        //     HANDOVER §0.0.3 对帐表把关 —— 那里改了才算「记下来了」。
+        var allKnobs = Enum.GetValues<Solver.Knob>();
+        var names = allKnobs.Select(Solver.KnobName).ToArray();
+        Assert.All(names, n => Assert.False(string.IsNullOrWhiteSpace(n)));
+        Assert.Equal(names.Length, names.Distinct().Count());
         Assert.Contains("RingR1", Enum.GetNames<Solver.Knob>());
         Assert.Contains("RingR2", Enum.GetNames<Solver.Knob>());
 

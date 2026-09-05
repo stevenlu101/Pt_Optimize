@@ -84,6 +84,19 @@ public static class DesignSpecStore
         public double?[]? ringW1Mm { get; set; }
         public double?[]? ringW2Mm { get; set; }
         public double?[]? ringMul2 { get; set; }
+
+        /// <summary>
+        /// ★★★ 圆盘背侧减重槽的张角（逐片，度；0 = 不开槽）。2026-09-05 加。
+        /// 不存它的后果与 ringMul2 那次一样：**存下来的档少了一根旋钮**，
+        /// 复算时槽消失、抽热多出四成，而判据表照样出数、看不出异样。
+        /// </summary>
+        public double[]? slotSpanDeg { get; set; }
+        public double? slotRInMm { get; set; }
+
+        /// <summary>舌板开孔孔径（逐片，半径 mm；0 = 无孔）与孔心位置。2026-09-05 加（用户要求 R5）。</summary>
+        public double[]? tabHoleRMm { get; set; }
+        public double? tabHoleXMm { get; set; }
+        public double? slotROutMm { get; set; }
         public double? totalMassG { get; set; }
         public double? tubeMassG { get; set; }
         public double? flangeMassG { get; set; }
@@ -251,6 +264,11 @@ public static class DesignSpecStore
         if (d.flangeInsulated is { } fe) fd.FlangeInsulated = fe;
         if (d.clampLengthMm is { } cl) fd.ClampLengthMm = cl;
         // A3：渐变环那三个（缺省即 NaN 哨兵 = 不逐片自定，与 DesignSpec 的默认一致）
+        if (d.slotSpanDeg is { Length: > 0 } slotArr) fd.SlotSpanDeg = (double[])slotArr.Clone();
+        if (d.slotRInMm is { } sri) fd.SlotRInMm = sri;
+        if (d.tabHoleRMm is { Length: > 0 } holeArr) fd.TabHoleRMm = (double[])holeArr.Clone();
+        if (d.tabHoleXMm is { } thx) fd.TabHoleXMm = thx;
+        if (d.slotROutMm is { } sro) fd.SlotROutMm = sro;
         if (d.ringW1Mm is { Length: > 0 } r1) fd.RingW1Mm = NaA(r1);
         if (d.ringW2Mm is { Length: > 0 } r2) fd.RingW2Mm = NaA(r2);
         if (d.ringMul2 is { Length: > 0 } t2) fd.RingMul2 = NaA(t2);
@@ -307,6 +325,11 @@ public static class DesignSpecStore
             ringW1Mm = NzA(fd.RingW1Mm),
             ringW2Mm = NzA(fd.RingW2Mm),
             ringMul2 = NzA(fd.RingMul2),
+            slotSpanDeg = fd.SlotSpanDeg.Any(v => v > 0.5) ? fd.SlotSpanDeg : null,
+            slotRInMm = double.IsNaN(fd.SlotRInMm) ? null : fd.SlotRInMm,
+            tabHoleRMm = fd.TabHoleRMm.Any(v => v > 0.05) ? fd.TabHoleRMm : null,
+            tabHoleXMm = double.IsNaN(fd.TabHoleXMm) ? null : fd.TabHoleXMm,
+            slotROutMm = double.IsNaN(fd.SlotROutMm) ? null : fd.SlotROutMm,
             totalMassG = fd.TotalMassG,
             tubeMassG = fd.TubeMassG,
             flangeMassG = fd.FlangeMassG,

@@ -140,8 +140,19 @@ internal static class GeomProbe
             catch (Exception e) { Console.Error.WriteLine("Resolver 失败：" + e.Message); return 1; }
             // 第 11 个参数：舌型（par = 等宽，与 FlangePlate.TabParallel 同口径；缺省梯形，保持旧行为）
             bool sPar = args.Length > 11 && args[11].Equals("par", StringComparison.OrdinalIgnoreCase);
+            // ★ 第 12 个参数：舌孔「孔心x,孔半径」（2026-09-05，用户要求 R5）
+            var sHoles = new System.Collections.Generic.List<(double X, double Z, double R)>();
+            if (args.Length > 12)
+            {
+                var hp = args[12].Split(',');
+                if (hp.Length == 2
+                    && double.TryParse(hp[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double hX)
+                    && double.TryParse(hp[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double hR)
+                    && hR > 1e-6)
+                    sHoles.Add((hX, 0, hR));
+            }
             int rc;
-            try { rc = RunSteps(sOut, sHole, sR, sT, sTabX, sTabHW, sTabT, sN, sDeg, sSlotIn, sSlotOut, sPar); }
+            try { rc = RunSteps(sOut, sHole, sR, sT, sTabX, sTabHW, sTabT, sN, sDeg, sSlotIn, sSlotOut, sPar, sHoles); }
             catch (Exception e) { Console.Error.WriteLine(e.GetType().Name + ": " + e.Message); rc = 2; }
             Bye(rc);      // ★ 带上**真正的**返回码退出
             return rc;    // 到不了，编译器要
@@ -1237,11 +1248,16 @@ internal static class GeomProbe
                         foreach (var (hx, hz, hr) in tabHoles)
                         {
                             if (!(hr > 1e-6)) continue;
-                            var cc = new Circle(pl, new Point3d(hx, 0, hz), hr).ToNurbsCurve();
+                            // ★★★ 圆心要**沉到板下面**（y = −1），不能放在 y = 0。
+                            //   放 y = 0 时切柱底面与舌片底面**共面**，布尔差在共面处
+                            //   失效 —— 而且 Rhino **不报错**：diff 返回非空、实体数照样是 4，
+                            //   写出来的图上却没有孔。2026-09-05 回读门抓到的就是这个
+                            //   （孔心仍有 1.800 mm 材料）。
+                            var cc = new Circle(pl, new Point3d(hx, -1.0, hz), hr).ToNurbsCurve();
                             var cf = Brep.CreatePlanarBreps(new Curve[] { cc }, tol);
                             if (cf == null || cf.Length == 0) continue;
                             var cyl = cf[0].Faces[0].CreateExtrusion(
-                                new LineCurve(new Point3d(0, -1, 0), new Point3d(0, tabT + 1, 0)), true);
+                                new LineCurve(Point3d.Origin, new Point3d(0, tabT + 2, 0)), true);
                             if (cyl != null) cutters.Add(cyl);
                         }
                         if (cutters.Count > 0)

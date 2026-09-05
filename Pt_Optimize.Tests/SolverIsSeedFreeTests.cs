@@ -133,7 +133,8 @@ public class SolverIsSeedFreeTests
     [Fact]
     public void 分派表每条都要经过前提自检()
     {
-        Assert.Equal(3, Solver.Allocation.Length);
+        // ⚠ 同上（门 A）：钉不变量，不钉个数。
+        Assert.NotEmpty(Solver.Allocation);
         Assert.All(Solver.Allocation, a => Assert.False(string.IsNullOrWhiteSpace(a.Key)));
         Assert.All(Solver.Allocation, a => Assert.NotEmpty(a.Knobs));
 

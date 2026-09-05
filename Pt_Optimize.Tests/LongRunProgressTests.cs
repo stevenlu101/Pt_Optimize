@@ -203,7 +203,7 @@ public class LongRunProgressTests
         var panel = new StagePanel(st);
 
         // 走 Flow 的通道设进度（不是直接改字段 —— 那样验的是我自己写的赋值）
-        st.SetRunning(ChainId.C定尺寸, "自动定厚");
+        st.SetRunning(ChainId.C定尺寸, PtOptimize.UI.Flow.Cmd("core.autoThick").Text);
         st.SetRunningNote("已跑 1.5 分　第  2 轮　合计 3480 g", 5);
         Assert.Equal(5, st.RunningPct);
         Assert.Contains("已跑 1.5 分", st.RunningNote);

@@ -35,7 +35,7 @@ public class DesignSpecStoreTests
     }
 
     /// <summary>直接调私有 Parse，绕开目录查找 —— 本组要验的是「字段全不全」。</summary>
-    private static DesignSpec Parse(string json)
+    internal static DesignSpec Parse(string json)
     {
         var m = typeof(DesignSpecStore).GetMethod("Parse",
             BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -153,6 +153,13 @@ public class DesignSpecStoreTests
         d.RingW1Mm = new[] { 1.5, 2.5, 3.5, 4.5 };
         d.RingW2Mm = new[] { 5.5, 6.5, 7.5, 8.5 };
         d.RingMul2 = new[] { 1.11, 1.22, 1.33, 1.44 };
+        // ★ 圆盘背侧减重槽（2026-09-05）。四片给**四个不同的数** ——
+        //   给一样的数时「按下标错位」这类漏法在往返里看不出来。
+        d.SlotSpanDeg = new[] { 30.0, 60.0, 90.0, 120.0 };
+        d.SlotRInMm = 28.5; d.SlotROutMm = 41.5;
+        // ★ 舌板开孔孔径（用户要求 R5）。四片四个不同的数 —— 理由同上。
+        d.TabHoleRMm = new[] { 2.5, 3.5, 4.5, 5.5 };
+        d.TabHoleXMm = -77.0;
         d.ResidualK = 0.75;
         return d;
     }

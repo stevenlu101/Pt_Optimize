@@ -170,7 +170,8 @@ public static class Geometry3dm
                                          IReadOnlyList<double> radiiMm, IReadOnlyList<double> thickMm,
                                          double tabEndXMm, double tabHalfWidthMm, double tabThickMm,
                                          int slotCount = 0, double slotWidthDeg = 20,
-                                         double slotRInMm = double.NaN, double slotROutMm = double.NaN)
+                                         double slotRInMm = double.NaN, double slotROutMm = double.NaN,
+                                         double tabHoleXMm = double.NaN, double tabHoleRMm = 0)
     {
         string probe = FindProbe()
             ?? throw new FileNotFoundException($"找不到 {ProbeName}.exe。先构建 {ProbeName}（需本机装 Rhino 8）。");
@@ -200,6 +201,11 @@ public static class Geometry3dm
         // 等宽舌 —— 与 FlangePlate.TabParallel 同口径。梯形是本模式的旧默认，
         // 而设计记录几何早已不用梯形（见 Geom 的 RunSteps 注释）。
         psi.ArgumentList.Add("par");
+        // ★★★ 舌板开孔（2026-09-05，用户要求 R5）。第 12 个参数：孔心x,孔半径。
+        //   ⚠ 孔径变了图上必须跟着变 —— 求解器调了孔而图没改，
+        //     工程师拿到的就是一张**与计算不符**的图。那比不开孔更糟。
+        if (tabHoleRMm > 0.05 && !double.IsNaN(tabHoleXMm))
+            psi.ArgumentList.Add($"{tabHoleXMm.ToString("R")},{tabHoleRMm.ToString("R")}");
 
         using var proc = Process.Start(psi) ?? throw new InvalidOperationException("无法启动 " + probe);
         string stdout = proc.StandardOutput.ReadToEnd();

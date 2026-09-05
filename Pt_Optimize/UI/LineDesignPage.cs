@@ -135,6 +135,24 @@ public sealed class LineDesignPage : TabPage
     private NumericUpDown[] _ringR1 = System.Array.Empty<NumericUpDown>();
     private NumericUpDown[] _ringR2 = System.Array.Empty<NumericUpDown>();
     private NumericUpDown[] _ringT2 = System.Array.Empty<NumericUpDown>();
+
+    /// <summary>
+    /// ★★★ 圆盘背侧减重槽的张角（逐片，度；0 = 不开槽）。2026-09-05 加。
+    ///
+    /// 位置由**场**定（deliverable/移除优先级.txt）：管孔外缘、背对舌片那一侧
+    /// —— 电流基本不走那半圈，热却照样从那里抽走。
+    /// 实测 27–40 mm / 180° ⇒ 抽热 −42.2 %，峰值电流密度只 +2.9 %。
+    /// 与另外六个旋钮同排，工程师看得见、求解器写得回。
+    /// </summary>
+    private NumericUpDown[] _slotDeg = System.Array.Empty<NumericUpDown>();
+
+    /// <summary>
+    /// ★★★ 舌板开孔孔径（逐片，半径 mm；0 = 无孔）。2026-09-05，用户要求 R5：
+    /// 「舌板开孔，尺寸、**孔径**、厚度也都要能优化」。
+    /// ⚠ 我一度以「实测不划算」把它降级成非旋钮 —— 那是把「不划算」当成「不需要」。
+    ///   工程师图上本来就有孔，APP 要回答的是「**这个孔该多大**」。
+    /// </summary>
+    private NumericUpDown[] _holeR = System.Array.Empty<NumericUpDown>();
     // ⚠ 文字要短到**放得下**（2026-08-20 实测截图里这两行断在半个词上：
     //   「解析形状（圆盘 + 梯形舌片，程」「Rhino .3dm 文件（任意形状：阶」）。
     //   它们已经是 AutoSize + 跨两列了 —— 截断的原因是文字本身比左栏还宽，
@@ -248,6 +266,15 @@ public sealed class LineDesignPage : TabPage
         //   它们参与判据（舌保温是守 管孔净流入/③ 的主力），却没有页面控件；
         //   不进快照就会「换了旋钮而 Fresh 不变」= 假新鲜。
         public double SizerTabIns, SizerRingMul;
+        /// <summary>
+        /// ★★★ 2026-09-05：圆盘背侧减重槽的张角也**必须进快照**。
+        ///   它是求解器治「③ 法兰增量温降」的新旋钮（实测抽热 −42 %），
+        ///   与舌保温同类：参与判据、却没有页面控件。
+        ///   不进快照 = **换了旋钮而 Fresh 不变** = 假新鲜。
+        /// </summary>
+        public double SizerSlotDeg;
+        /// <summary>舌板开孔孔径（2026-09-05）。同 SizerSlotDeg：参与判据，不进快照就是假新鲜。</summary>
+        public double SizerHoleR;
         /// <summary>2026-08-28 补：这三个也进快照 —— 它们现在是**输入**，改了就该让上一次的解不新鲜。</summary>
         public double Fillet, RingW, ClampLen;
         /// <summary>
@@ -380,6 +407,8 @@ public sealed class LineDesignPage : TabPage
         ClampLen = (double)_clampLen.Value,
         SizerTabIns = _tabIns.Average(n => (double)n.Value),
         SizerRingMul = _ringMul.Average(n => (double)n.Value),
+        SizerSlotDeg = _slotDeg.Length > 0 ? _slotDeg.Max(n => (double)n.Value) : 0,
+        SizerHoleR = _holeR.Length > 0 ? _holeR.Max(n => (double)n.Value) : 0,
         RingCustom = _ringShapeCustom.Checked,
         RingR1 = _ringR1.Average(n => (double)n.Value),
         RingR2 = _ringR2.Average(n => (double)n.Value),
@@ -1196,6 +1225,12 @@ public sealed class LineDesignPage : TabPage
 
     /// <summary>外级外扩 r₂ 框。同上，实测量程 4→16 mm。</summary>
     private static NumericUpDown RingR2() => Num((decimal)(2 * StartPoint.RingWidthMm), 4m, 16m, 0.5m, 1);
+
+    /// <summary>圆盘背侧减重槽张角（度）。0 = 不开槽 —— 开箱默认，行为与从前逐位相同。</summary>
+    private static NumericUpDown Slot() => Num(0m, 0m, 340m, 5m, 0);
+
+    /// <summary>舌板开孔孔径（半径 mm）。0 = 无孔 —— 开箱默认，行为与从前逐位相同。</summary>
+    private static NumericUpDown Hole() => Num(0m, 0m, 30m, 0.5m, 2);
 
     private static NumericUpDown Num(decimal v, decimal lo, decimal hi, decimal inc, int dec)
     {
@@ -2373,6 +2408,12 @@ public sealed class LineDesignPage : TabPage
             d.RingW1Mm[i] = _ringShapeCustom.Checked ? (double)_ringR1[i].Value : double.NaN;
             d.RingW2Mm[i] = _ringShapeCustom.Checked ? (double)_ringR2[i].Value : double.NaN;
             d.RingMul2[i] = _ringShapeCustom.Checked ? (double)_ringT2[i].Value : double.NaN;
+            // ★ 槽张角不受「自定义环形状」那个开关管 —— 它是独立的一根旋钮，
+            //   求解器会自己调它来治「③ 法兰增量温降」。控件不写进设计 = 控件是摆设。
+            if (i < d.SlotSpanDeg.Length && i < _slotDeg.Length)
+                d.SlotSpanDeg[i] = (double)_slotDeg[i].Value;
+            if (i < d.TabHoleRMm.Length && i < _holeR.Length)
+                d.TabHoleRMm[i] = (double)_holeR[i].Value;
         }
         // 圆盘保温：本页**有**控件，接过去（BuildCase 里原来写死 20，已改成读字段）
         d.FlangeInsulated = _flIns.SelectedIndex != 0;
@@ -3479,6 +3520,8 @@ public sealed class LineDesignPage : TabPage
                     : FitDefault(new[] { 0.516, 0.855, 0.776, 0.426 }, n);
         var vI = Keep(_tabIns, 0.4); var vR = Keep(_ringMul, 1.0);
         var v1 = Keep(_ringR1, 1.0); var v2 = Keep(_ringR2, 6.0); var vT2 = Keep(_ringT2, 1.0);
+        var vS = Keep(_slotDeg, 0.0);      // 圆盘背侧减重槽张角，0 = 不开槽
+        var vH = Keep(_holeR, 0.0);        // 舌板开孔孔径，0 = 无孔
 
         // ★★★★★ **重建期间必须关掉自动重算**（2026-09-02 走查超时抓到）。
         //
@@ -3503,6 +3546,8 @@ public sealed class LineDesignPage : TabPage
         _ringR1  = Enumerable.Range(0, n).Select(i => RingR()).ToArray();
         _ringR2  = Enumerable.Range(0, n).Select(i => RingR2()).ToArray();
         _ringT2  = Enumerable.Range(0, n).Select(i => Ring()).ToArray();
+        _slotDeg = Enumerable.Range(0, n).Select(i => Slot()).ToArray();
+        _holeR   = Enumerable.Range(0, n).Select(i => Hole()).ToArray();
         for (int i = 0; i < n; i++)
         {
             _tabIns[i].Value  = (decimal)Math.Clamp(vI[i],  (double)_tabIns[i].Minimum,  (double)_tabIns[i].Maximum);
@@ -3510,6 +3555,8 @@ public sealed class LineDesignPage : TabPage
             _ringR1[i].Value  = (decimal)Math.Clamp(v1[i],  (double)_ringR1[i].Minimum,  (double)_ringR1[i].Maximum);
             _ringR2[i].Value  = (decimal)Math.Clamp(v2[i],  (double)_ringR2[i].Minimum,  (double)_ringR2[i].Maximum);
             _ringT2[i].Value  = (decimal)Math.Clamp(vT2[i], (double)_ringT2[i].Minimum,  (double)_ringT2[i].Maximum);
+            _slotDeg[i].Value = (decimal)Math.Clamp(vS[i],  (double)_slotDeg[i].Minimum,  (double)_slotDeg[i].Maximum);
+            _holeR[i].Value   = (decimal)Math.Clamp(vH[i],  (double)_holeR[i].Minimum,   (double)_holeR[i].Maximum);
         }
 
         void Head(string t)
@@ -3602,6 +3649,37 @@ public sealed class LineDesignPage : TabPage
         for (int i = 0; i < n; i++) Row($"{names[i]} r₁ mm", _ringR1[i], tipShape);
         for (int i = 0; i < n; i++) Row($"{names[i]} r₂ mm", _ringR2[i], tipShape);
         for (int i = 0; i < n; i++) Row($"{names[i]} t₂", _ringT2[i], tipShape);
+
+        // ★★★ 圆盘背侧减重槽（2026-09-05）。位置由**场**定，不是拍的：
+        //   移除优先级 = 导热贡献 ÷ 电流密度，最高处在管孔外缘、背对舌片那一侧。
+        //   实测 27–40 mm / 180° ⇒ 抽热 −42.2 %，峰值电流密度只 +2.9 %，体积 −5.9 %。
+        //   同样的料挖在舌片上只换到 −0.5 % —— 每 1 % 体积的收益差 60 倍。
+        Head("圆盘背侧减重槽（度；0 = 不开槽）");
+        string tipSlot =
+            "开在管孔外缘、**背对舌片**那半圈 —— 电流从舌片进来绕过管孔，基本不走那里，"
+          + "而热照样从那里被抽走。挖掉它等于**只减抽热、几乎不增电流密度**。"
+          + Environment.NewLine
+          + "实测（盘Ø120 构型）：180° ⇒ 法兰抽热 −37 %，峰值电流密度 +2.3 %。"
+          + Environment.NewLine
+          + "★ 判据「法兰增量温降」不过时，求解器会**自己调它**（与舌保温同排比价）。"
+          + Environment.NewLine
+          + "⚠ 上界由几何闭式定：内桥、外桥、周向桥都要留够，开过头会把圆盘割断。";
+        for (int i = 0; i < n; i++) Row($"{names[i]} 槽", _slotDeg[i], tipSlot);
+
+        // ★★★ 舌板开孔（2026-09-05，用户要求 R5）
+        Head("舌板开孔孔径（半径 mm；0 = 无孔）");
+        string tipHole =
+            "工程师图上本来就有的孔（装配／工艺／走线）—— APP 回答的是「**这个孔该多大**」。"
+          + Environment.NewLine
+          + "孔越大：导热截面↓（少抽热，利于「法兰增量温降」），过流截面↓（该处电流密度↑）。"
+          + Environment.NewLine
+          + "★ 判据不过时求解器会**自己调它**，与舌保温、圆盘槽**同排按每克铂比价**。"
+          + Environment.NewLine
+          + "⚠ 实测（盘Ø120 构型）舌孔换到的抽热远少于圆盘槽 —— 划不划算由求解器当场比，"
+          + "不预先替它删掉这个候选。"
+          + Environment.NewLine
+          + "⚠ 上界闭式：孔缘到舌边要留够桥宽。";
+        for (int i = 0; i < n; i++) Row($"{names[i]} 孔", _holeR[i], tipHole);
 
         _plateBox.ResumeLayout();
         }
@@ -3953,6 +4031,9 @@ public sealed class LineDesignPage : TabPage
                 ("舌端半宽", b0.TabW, now.TabW, "mm"),
                 ("舌保温", b0.SizerTabIns, now.SizerTabIns, "mm"),
                 ("环倍率", b0.SizerRingMul, now.SizerRingMul, ""),
+                // ★ 程序自己开了槽就必须说 —— 不说等于静默改了工程师的零件。
+                ("圆盘背侧减重槽", b0.SizerSlotDeg, now.SizerSlotDeg, "°"),
+                ("舌板开孔孔径", b0.SizerHoleR, now.SizerHoleR, "mm"),
             };
             var moved = rows.Where(x => !double.IsNaN(x.A) && !double.IsNaN(x.B)
                                         && Math.Abs(x.A - x.B) > 1e-9).ToArray();
@@ -4200,7 +4281,16 @@ public sealed class LineDesignPage : TabPage
                     $"可回读_{pn[j]}_壁{d.WallMm:0.0}.3dm");
 
                 Geometry3dm.WriteStepped3dm(file, d.HoleRadiusMm, radii, thick,
-                    -d.TabLengthMm, d.TabHalfWidthMm, td, slotCount: 0);
+                    -d.TabLengthMm, d.TabHalfWidthMm, td,
+                    // ★★★ 槽要真的写进图（2026-09-05）。写死 slotCount: 0 的话，
+                    //   求解器开了槽、判据按有槽算，而**出的图上没有槽** ——
+                    //   工程师拿着一张与计算不符的图去加工。那比不开槽更糟。
+                    slotCount: d.SlotSpanDeg[j] > 0.5 ? 1 : 0,
+                    slotWidthDeg: d.SlotSpanDeg[j],
+                    slotRInMm: d.SlotBandMm(Math.Max(td, d.WallMm)).RIn,
+                    slotROutMm: d.SlotBandMm(Math.Max(td, d.WallMm)).ROut,
+                    tabHoleXMm: d.TabHoleCenterXMm(),
+                    tabHoleRMm: j < d.TabHoleRMm.Length ? d.TabHoleRMm[j] : 0);
 
                 // ── 回读校验：走的是**读取端那条路**，不是自己再算一遍
                 var f = Geometry3dm.LoadThickness(file, "法兰", double.NaN, 0.5);

@@ -257,6 +257,10 @@ public sealed class DesignSpec
         RingW1Mm   = FitArr(RingW1Mm,   n);
         RingW2Mm   = FitArr(RingW2Mm,   n);
         RingMul2   = FitArr(RingMul2,   n);
+        // ★ 槽张角也是**逐片**的 —— 漏了它，改段数之后 Plate(j) 会越界或读到别片的槽。
+        //   （逐片数组少接一个的坑，2026-09-03 已经栽过一次：ringW1/W2/Mul2 那批。）
+        SlotSpanDeg = FitArr(SlotSpanDeg, n);
+        TabHoleRMm  = FitArr(TabHoleRMm,  n);
         // ★ 逐段长度是**按段**的（n-1），不是按片 —— 别跟上面六个混在一起。
         //   ⚠ 新增的段插在**倒数第二**（同 FitArr 的理由：首段/末段有各自的边界），
         //     所以这里也走同一个函数，只是长度不同。
@@ -340,8 +344,103 @@ public sealed class DesignSpec
             TabThicknessMm = double.NaN,
             InsulBoundaryXMm = double.NaN, TabInsulThickMm = TabInsulMm[j],
             TabParallel = true, TabFilletMm = TabFilletMm,
-            WeldFilletLegMm = System.Math.Max(td, WallMm)
+            WeldFilletLegMm = System.Math.Max(td, WallMm),
+            DiscSlots = SlotsOf(j, System.Math.Max(td, WallMm)),
+            TabHoles = HolesOf(j),
         };
+    }
+
+    /// <summary>
+    /// ★★★ **圆盘背侧减重槽**：张角 0 = 不开槽（开箱默认，行为与从前逐位相同）。
+    ///
+    /// 位置不是拍的，是**场算出来的**（2026-09-05，deliverable/移除优先级.txt）：
+    /// 移除优先级 = 导热贡献 ÷ 电流密度，最高的单元全部落在管孔外缘、**背对舌片**那侧
+    /// （舌片在 −x，所以槽心取 +x 方向 = 0°）。电流从舌片进来绕过管孔基本不走那半圈，
+    /// 而热照样从那里抽走 ⇒ 「只抽热、不导电」的死重。
+    ///
+    /// 实测效果（deliverable/按场开槽_效果.txt）：27–40 mm / 180° ⇒
+    /// **抽热 −42.2 %**，峰值电流密度只 +2.9 %，体积 −5.9 %。
+    /// 同样的料挖在舌片上只换到抽热 −0.5 % —— **每 1 % 体积的收益差 60 倍**。
+    /// </summary>
+    public double[] SlotSpanDeg = new double[4];
+
+    /// <summary>
+    /// ★★★ **舌板开孔的孔径**（逐片，半径 mm；0 = 无孔）。2026-09-05 用户要求：
+    /// 「3DM 输入要能实现舌板开孔，**尺寸、孔径、厚度也都要能优化**」。
+    ///
+    /// ⚠ 我一度把它降级成「算得对但不当旋钮」，理由是实测**不划算**
+    /// （挖同样的料，舌片只换到抽热 −0.5 %，圆盘 −37 %）。那是把
+    /// **「不划算」当成了「不需要」—— 两件事**：
+    ///   · 不划算 = 拿它当**省铂手段**时，圆盘槽好 60 倍
+    ///   · 但工程师图上**本来就有孔**（装配、工艺、走线要求）⇒
+    ///     APP 必须回答的是「**这个孔该多大**」，而不是「要不要开孔」
+    /// ⇒ 孔径是旋钮：下界 = 用途要求的最小孔，上界 = 桥宽闭式反解。
+    /// </summary>
+    public double[] TabHoleRMm = new double[4];
+
+    /// <summary>孔心沿舌轴的位置 mm（负向为舌端）。NaN = 取舌片中点。</summary>
+    public double TabHoleXMm = double.NaN;
+
+    /// <summary>
+    /// ★★★★★ **孔径的闭式上界** —— 开过头孔缘会咬到舌边。
+    /// 与「圆盘盖得住管孔＋焊脚」「槽张角」同一个套路：闭式反解，不用试。
+    /// 桥宽 = 舌半宽 − 孔半径 ≥ minBridgeMm。
+    /// </summary>
+    public double TabHoleRMaxMm(double minBridgeMm = 4.0)
+        => System.Math.Max(0, TabHalfWidthMm - minBridgeMm);
+
+    /// <summary>孔心位置：没给就取舌片自由段中点（避开压接段与盘缘切点）。</summary>
+    public double TabHoleCenterXMm()
+        => double.IsNaN(TabHoleXMm) ? -(TabLengthMm * 0.5) : TabHoleXMm;
+
+    /// <summary>槽的内外半径 mm。默认取「管孔外缘 + 一点」到盘径的 2/3 —— 与实测最优带一致。</summary>
+    public double SlotRInMm = double.NaN, SlotROutMm = double.NaN;
+
+    private FlangePlate.TabHole[] HolesOf(int j)
+    {
+        double r = j < TabHoleRMm.Length ? TabHoleRMm[j] : 0;
+        if (!(r > 0.05)) return System.Array.Empty<FlangePlate.TabHole>();
+        return new[] { new FlangePlate.TabHole(TabHoleCenterXMm(), 0, r) };
+    }
+
+    private FlangePlate.DiscSlot[] SlotsOf(int j, double weldLegMm)
+    {
+        double span = j < SlotSpanDeg.Length ? SlotSpanDeg[j] : 0;
+        if (!(span > 0.5)) return System.Array.Empty<FlangePlate.DiscSlot>();
+        var (rin, rout) = SlotBandMm(weldLegMm);
+        if (!(rout > rin)) return System.Array.Empty<FlangePlate.DiscSlot>();
+        return new[] { new FlangePlate.DiscSlot(rin, rout, CenterDeg: 0, SpanDeg: span) };
+    }
+
+    /// <summary>槽带 [r内, r外]。NaN 时按默认规则给 —— 规则只有这一份。</summary>
+    public (double RIn, double ROut) SlotBandMm(double weldLegMm)
+    {
+        double rin = double.IsNaN(SlotRInMm) ? HoleRadiusMm + weldLegMm + 1.0 : SlotRInMm;
+        double rout = double.IsNaN(SlotROutMm) ? DiscRadiusMm * (2.0 / 3.0) : SlotROutMm;
+        return (rin, rout);
+    }
+
+    /// <summary>
+    /// ★★★★★ **张角的闭式上界** —— 开过头会把圆盘割断。
+    ///
+    /// 实测（2026-09-05）：27–55 mm / 180° 那条槽几乎割断圆盘 ⇒ 电流没有回路、
+    /// 解发散，**测试宿主当场崩掉，一行结果都没留下**。
+    /// ⇒ 与判据「圆盘盖得住管孔＋焊脚」同一个套路：**闭式反解，不用试**。
+    ///
+    /// 三道桥都要留够（minBridgeMm）：
+    ///   内桥 = r内 − (管孔 + 焊脚)      —— 槽与管孔之间
+    ///   外桥 = 盘半径 − r外              —— 槽与盘缘之间
+    ///   周向桥 = (360 − 张角)/360 × 2π·r内 —— 电流绕过去的那条路
+    /// 返回的是**周向桥**反解出来的张角上界（另两道由 SlotBandMm 的取值保证）。
+    /// </summary>
+    public double SlotSpanMaxDeg(double weldLegMm, double minBridgeMm = 6.0)
+    {
+        var (rin, rout) = SlotBandMm(weldLegMm);
+        if (rin - (HoleRadiusMm + weldLegMm) < minBridgeMm * 0.5) return 0;   // 内桥不够 ⇒ 不许开
+        if (DiscRadiusMm - rout < minBridgeMm * 0.5) return 0;                 // 外桥不够 ⇒ 不许开
+        double arc = 2 * System.Math.PI * rin;
+        if (!(arc > minBridgeMm)) return 0;
+        return System.Math.Max(0, 360.0 * (1.0 - minBridgeMm / arc));
     }
 
     /// <summary>

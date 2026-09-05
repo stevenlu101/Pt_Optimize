@@ -111,7 +111,7 @@ public static class Solver
     ///   三段厚度全相等、**台阶不存在** ⇒ 挪它们的半径**结构性无效**（不是「不敏感」）。
     ///   要让它们有意义，得先有台阶 —— 而造台阶正是 t₂ 干的事。
     /// </summary>
-    public enum Knob { Thick, Insul, Ring, RingT2, RingR1, RingR2 }
+    public enum Knob { Thick, Insul, Ring, RingT2, RingR1, RingR2, SlotSpan, TabHoleR }
 
     public static string KnobName(Knob k) => k switch
     {
@@ -121,6 +121,8 @@ public static class Solver
         Knob.RingT2 => "外级倍率 t₂",
         Knob.RingR1 => "内级半径 r₁",
         Knob.RingR2 => "外级半径 r₂",
+        Knob.SlotSpan => "圆盘背侧减重槽张角",
+        Knob.TabHoleR => "舌板开孔孔径",
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 
@@ -197,7 +199,15 @@ public static class Solver
         //     下面那个「抬到上界量一次、没变好就淘汰」的循环会自己筛掉它。
         //     这比写死一条 if 更硬 —— 它是**量出来的**，不是我断言的。
         (LineResult.Key.NetFlux,   new[] { Knob.RingT2, Knob.RingR2, Knob.Thick }),  // ②′ 实测 t₂ +13.8 W/单位、板厚 +62…+104 W/mm
-        (LineResult.Key.FlangeDip, new[] { Knob.Insul }),               // ③  对舌保温递增（实测 +570…+104 K/mm，且免费）
+        // ★★★ ③ 法兰增量温降 = 抽热太多。此前只有舌保温一根旋钮（让法兰变热、少抽），
+        //   而实测圆盘背侧开槽直接把抽热砍掉 42 %（峰值电流密度只 +2.9 %）——
+        //   那是对 ③ 最对症、代价最低的一根。见 deliverable/按场开槽_效果.txt。
+        // ★ 舌板开孔也进 ③ 这一排（2026-09-05，用户要求 R5）。
+        //   ⚠ 实测在 Pt_Heater1 上它**不划算**（圆盘槽好 60 倍）——
+        //     但那是**实测结论**，不是关闭要求的理由：工程师图上本来就有孔，
+        //     APP 要回答的是「这个孔该多大」。划不划算由 ChooseKnob 的
+        //     **每克铂比价**当场决定，不由我预先替它删掉候选。
+        (LineResult.Key.FlangeDip, new[] { Knob.Insul, Knob.SlotSpan, Knob.TabHoleR }),               // ③  对舌保温递增（实测 +570…+104 K/mm，且免费）
         (LineResult.Key.DiscTemp,  new[] { Knob.Insul, Knob.Ring, Knob.RingR1 }),    // ②″ 实测只有舌保温治得住；环倍率留作换形状时的候选
     };
 
@@ -470,7 +480,7 @@ public static class Solver
 
         foreach (var k in knobs)
         {
-            double lo = Get(d, k, j), hi = HiOf(opt, k);
+            double lo = Get(d, k, j), hi = HiOfFor(d, baseIn, opt, k, j);
             if (lo >= hi - 1e-12) { fails.Add($"{KnobName(k)} 已在上界"); continue; }
             Set(d, k, j, hi);
             var rk = Eval(d, baseIn, opt, res, cancel, inner);
@@ -527,7 +537,7 @@ public static class Solver
         double knownBefore = double.NaN, double knownAfter = double.NaN)
     {
         double lo = Get(d, knob, j);
-        double hi = HiOf(opt, knob);
+        double hi = HiOfFor(d, baseIn, opt, knob, j);
         string nm = $"片{j} {KnobName(knob)}";
 
         // ★ 候选比价时已经量过就不再量 —— 同一个数花两次场解是纯浪费（实测每次抬多花 3 次）。
@@ -581,7 +591,7 @@ public static class Solver
         //   抬高可能让**别的**判据变差 —— 那由外层下一轮再抬它自己的旋钮补上，
         //   「只增不减」的不变式不受影响。
         double q = QuantOf(opt, knob);
-        double snapped = Math.Min(Math.Ceiling(hi / q - 1e-9) * q, HiOf(opt, knob));
+        double snapped = Math.Min(Math.Ceiling(hi / q - 1e-9) * q, HiOfFor(d, baseIn, opt, knob, j));
         Set(d, knob, j, snapped);
         // ★ 「二分求根」这四个字对工程师没意义 —— 他要知道的是**凭什么信这个数**。
         //   单调性扫描（--monotone）的作用就在这句话里：抬到上界确实变好 = 这一点上单调，
@@ -812,6 +822,8 @@ public static class Solver
         //   NaN = 用默认规则 ⇒ 与 t₂ 同理，读它时把规则**坐实成数值**。
         Knob.RingR1 => double.IsNaN(d.RingW1Mm[j]) ? d.RingWidthMm : d.RingW1Mm[j],
         Knob.RingR2 => double.IsNaN(d.RingW2Mm[j]) ? 2 * d.RingWidthMm : d.RingW2Mm[j],
+        Knob.SlotSpan => j < d.SlotSpanDeg.Length ? d.SlotSpanDeg[j] : 0,
+        Knob.TabHoleR => j < d.TabHoleRMm.Length ? d.TabHoleRMm[j] : 0,
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 
@@ -825,8 +837,30 @@ public static class Solver
             case Knob.RingT2: d.RingMul2[j]  = v; break;
             case Knob.RingR1: d.RingW1Mm[j]  = v; break;
             case Knob.RingR2: d.RingW2Mm[j]  = v; break;
+            case Knob.SlotSpan: if (j < d.SlotSpanDeg.Length) d.SlotSpanDeg[j] = v; break;
+            case Knob.TabHoleR: if (j < d.TabHoleRMm.Length) d.TabHoleRMm[j] = v; break;
             default: throw new ArgumentOutOfRangeException(nameof(k));
         }
+    }
+
+    /// <summary>
+    /// ★★★★★ **有几何依赖的上界走这里**（2026-09-05）。
+    ///
+    /// 大多数旋钮的上界是常数（工艺上界）。但**槽张角不是** ——
+    /// 开过头会把圆盘割断，而「割断」由几何决定：内桥、外桥、周向桥都要留够。
+    /// 实测代价：27–55 mm / 180° 那条槽让电流没有回路、解发散，**测试宿主当场崩**。
+    ///
+    /// ⇒ 与判据「圆盘盖得住管孔＋焊脚」同一个套路：**闭式反解，不用试**。
+    /// ⚠ 所有取上界的地方都要走这一个函数 —— 漏一处就会有旋钮被抬进无效几何，
+    ///   而那不会报错，只会解不出来。
+    /// </summary>
+    private static double HiOfFor(DesignSpec d, DesignInputs baseIn, SolverOptions o, Knob k, int j)
+    {
+        // ★ 孔径：桥宽闭式反解（孔缘到舌边要留够）
+        if (k == Knob.TabHoleR) return Math.Min(HiOf(o, k), d.TabHoleRMaxMm());
+        if (k != Knob.SlotSpan) return HiOf(o, k);
+        double td = Math.Max(j < d.TabThickMm.Length ? d.TabThickMm[j] : 0, d.DiscFloorMm(baseIn));
+        return Math.Min(HiOf(o, k), d.SlotSpanMaxDeg(Math.Max(td, d.WallMm)));
     }
 
     private static double HiOf(SolverOptions o, Knob k) => k switch
@@ -837,6 +871,11 @@ public static class Solver
         Knob.RingT2 => o.RingHi,     // 与 t₁ 同一条上界（同类量：厚度倍率）
         Knob.RingR1 => o.RingR1HiMm,
         Knob.RingR2 => o.RingR2HiMm,
+        // ★ 槽张角的上界**不是常数** —— 开过头会把圆盘割断（实测：解发散、宿主崩）。
+        //   这里返回一个安全占位；真正的上界由 HiOfFor(d, ...) 按闭式反解给。
+        Knob.SlotSpan => 360.0,
+        // ★ 孔径上界也**不是常数** —— 孔缘会咬到舌边。真正的上界由 HiOfFor 闭式给。
+        Knob.TabHoleR => 1e9,
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 
@@ -849,6 +888,8 @@ public static class Solver
         Knob.RingT2 => o.QuantRing,
         Knob.RingR1 => o.QuantThickMm,   // 半径也是长度量，走同一张图纸格
         Knob.RingR2 => o.QuantThickMm,
+        Knob.SlotSpan => 1.0,            // 角度落在 1° 的格上（图纸也是这么标的）
+        Knob.TabHoleR => o.QuantThickMm, // 孔径是长度量，走同一张图纸格
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 
@@ -860,6 +901,8 @@ public static class Solver
         Knob.RingT2 => o.BisectTolRing,
         Knob.RingR1 => o.BisectTolMm,
         Knob.RingR2 => o.BisectTolMm,
+        Knob.SlotSpan => 1.0,
+        Knob.TabHoleR => o.BisectTolMm,
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 }

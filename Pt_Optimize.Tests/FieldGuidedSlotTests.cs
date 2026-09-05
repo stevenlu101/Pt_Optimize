@@ -61,6 +61,72 @@ public class FieldGuidedSlotTests
         catch (Exception ex) { return (0, 0, 0, 0, ex.GetType().Name + "：" + ex.Message); }
     }
 
+    /// <summary>
+    /// ★★★★★ **必须落到 APP 上，不许停在对话里**（用户 2026-09-05 原话）。
+    ///
+    /// 这是本仓最大的坑（HANDOVER §0.-3）：「CLI 验过的东西工程师点不到」。
+    /// 槽这根旋钮走完整条链才算数：
+    ///   旋钮（Solver.Knob.SlotSpan）→ 求解（DesignSpec.Plate → BuildCase）
+    ///   → **界面控件**（逐片，与另外六个旋钮同排）→ 出图 → 存档 → 变更清单
+    ///
+    /// ⚠ 槽控件在输入栏底部，抓图时被滚动挡住 ⇒ --uishot 看不到它。
+    ///   这条门就是那张抓不到的图的替代：**真造一个页面，问它有没有那些控件**。
+    /// </summary>
+    [Fact]
+    public void 槽这根旋钮真的落到界面上()
+    {
+        var page = new PtOptimize.UI.LineDesignPage(new DesignInputs());
+        var tabs = new System.Windows.Forms.TabControl { Dock = System.Windows.Forms.DockStyle.Fill };
+        tabs.TabPages.Add(page);
+        var form = new System.Windows.Forms.Form { Width = 1100, Height = 900 };
+        form.Controls.Add(tabs);
+        form.CreateControl();
+        System.Windows.Forms.Application.DoEvents();
+
+        var fld = typeof(PtOptimize.UI.LineDesignPage).GetField("_slotDeg",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Assert.NotNull(fld);
+        var arr = (System.Windows.Forms.NumericUpDown[])fld!.GetValue(page)!;
+        Assert.True(arr.Length >= 4, $"槽控件只有 {arr.Length} 个 —— 应当逐片各一个");
+        Assert.All(arr, n => Assert.Equal(0m, n.Value));      // 开箱 0 = 不开槽
+
+        // 标题与逐片行都要在屏幕上（文字由 Head/Row 生成）
+        var labels = page.Controls.Cast<System.Windows.Forms.Control>()
+            .SelectMany(Flatten).OfType<System.Windows.Forms.Label>()
+            .Select(l => l.Text).ToArray();
+        Assert.Contains(labels, t => t.Contains("圆盘背侧减重槽", StringComparison.Ordinal));
+        Assert.Contains(labels, t => t.EndsWith(" 槽", StringComparison.Ordinal));
+    }
+
+    private static System.Collections.Generic.IEnumerable<System.Windows.Forms.Control>
+        Flatten(System.Windows.Forms.Control c)
+    {
+        yield return c;
+        foreach (System.Windows.Forms.Control k in c.Controls)
+            foreach (var x in Flatten(k)) yield return x;
+    }
+
+    /// <summary>★ 存档要带得走 —— 少一根旋钮的档，复算时槽会消失而判据表照样出数。</summary>
+    [Fact]
+    public void 槽存得进档也读得回来()
+    {
+        var d = DesignSpec.Builtin[0].Clone();
+        d.Name = "★槽往返★ " + Guid.NewGuid().ToString("N")[..6];
+        d.SlotSpanDeg = new[] { 15.0, 45.0, 75.0, 105.0 };
+        d.SlotRInMm = 29.0; d.SlotROutMm = 42.0;
+        string? written = null;
+        try
+        {
+            written = DesignSpecStore.Save(d);
+            var back = DesignSpecStoreTests.Parse(File.ReadAllText(written));
+            Assert.NotNull(back);
+            Assert.Equal(d.SlotSpanDeg, back!.SlotSpanDeg);
+            Assert.Equal(29.0, back.SlotRInMm);
+            Assert.Equal(42.0, back.SlotROutMm);
+        }
+        finally { if (written is not null && File.Exists(written)) File.Delete(written); }
+    }
+
     [Fact]
     public void 按场开槽的效果()
     {
