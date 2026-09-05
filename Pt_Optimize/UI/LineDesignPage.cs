@@ -2652,6 +2652,41 @@ public sealed class LineDesignPage : TabPage
                         if (rows.Count > 0 && rows[^1].ok) { bHi = mid; Rbest = mid; }
                         else bLo = mid;
                     }
+
+                    // ★★★★★ **可行边界不是最轻点**（2026-09-05 实测推翻了我的前提）
+                    //
+                    //   我原以为「可行区里盘径越小越轻」，于是二分到边界就收工。
+                    //   实测（deliverable/F_成对后.txt）四个可行点：
+                    //       盘Ø70 → 2848 g   盘Ø62 → 2619 g
+                    //       盘Ø58 → 2590 g   盘Ø56 → 2611 g   ← 更小反而**更重**
+                    //   ⇒ 最轻点在**区间内部**（≈58），不在边界（56）上。
+                    //   先前那个「随盘径递增」是从**三个网格点**归纳出来的 —— 样本太少。
+                    //
+                    //   ⇒ 二分的职责改成**定可行区间**；区间内再按**质量**找极小。
+                    //   用黄金分割：单峰假设下 4 个点把区间缩到 ~15 %，
+                    //   而每个点仍是真解（质量与判据都不是估的）。
+                    //   ⚠ 不假设严格单峰：取的是**已算过的所有可行点里最轻的那个**，
+                    //     黄金分割只决定「下一个点试哪里」。多峰时最多是没找到全局最优，
+                    //     不会给出一个没验过的答案。
+                    double gLo = bLo, gHi = Math.Min(bHi + 6.0, Rsafe);   // 往可行侧留一点余地
+                    const double Phi = 0.6180339887;
+                    for (int gi = 0; gi < 4 && gHi - gLo > 1.0; gi++)
+                    {
+                        double x1 = gHi - Phi * (gHi - gLo), x2 = gLo + Phi * (gHi - gLo);
+                        double probe = (gi % 2 == 0) ? x1 : x2;
+                        if (rows.Any(r2 => r2.d is not null
+                                        && Math.Abs(r2.d.DiscRadiusMm - probe) < 0.5)) { gLo += 0.5; continue; }
+                        _out.AppendText($"④ 找最轻：区间 盘Ø{2 * gLo:0.0}–{2 * gHi:0.0} ⇒ 试盘Ø{2 * probe:0.0}"
+                                      + Environment.NewLine);
+                        _prog.Maximum += screenRounds;
+                        await EvalShape(probe, probe * fWide);
+                        // 缩区间：往**当前最轻**的那一侧收
+                        var okRows = rows.Where(r2 => r2.ok && r2.d is not null && !double.IsNaN(r2.mass)).ToList();
+                        if (okRows.Count == 0) break;
+                        double Rmin = okRows.OrderBy(r2 => r2.mass).First().d!.DiscRadiusMm;
+                        if (probe < Rmin) gLo = probe; else gHi = probe;
+                        Rbest = Rmin;
+                    }
                     break;
                 }
                 Rbest = Rnext;

@@ -73,6 +73,47 @@ public sealed class FlangePlate
     public bool TwoTabs = false;
 
     /// <summary>
+    /// 舌片上的一个圆孔。<paramref name="XMm"/> 沿舌轴（舌片在负 x 侧），
+    /// <paramref name="ZMm"/> 横向，<paramref name="RMm"/> 半径。
+    /// </summary>
+    public readonly record struct TabHole(double XMm, double ZMm, double RMm);
+
+    /// <summary>
+    /// ★★★ **舌板开孔**（2026-09-05 用户提出）。孔里没有金属，电流绕行 ⇒
+    /// 过流截面变小、该处电流密度升高、舌片电阻升高（发热升高）。
+    ///
+    /// 用户口径：「3DM 提供舌板开孔，尺寸、孔径、厚度也都要能优化」，
+    /// 并在扩 steps 出图之后**UI 输入也要有**。
+    ///
+    /// ⚠ 孔只从 <see cref="Inside"/> 一处生效 —— 别在别处再判一次「是不是孔」。
+    /// </summary>
+    public TabHole[] TabHoles = Array.Empty<TabHole>();
+
+    /// <summary>
+    /// 圆盘上的一条**扇形槽**：半径 [RInMm, ROutMm]、中心角 CenterDeg、张角 SpanDeg。
+    /// 角度以 +x 轴为 0°、逆时针为正（与 <see cref="Inside"/> 里的 Atan2(z, x) 同一口径）。
+    /// </summary>
+    public readonly record struct DiscSlot(double RInMm, double ROutMm,
+                                           double CenterDeg, double SpanDeg);
+
+    /// <summary>
+    /// ★★★ **圆盘开槽**（2026-09-05）。位置与大小**由场算出来**，不是拍的。
+    ///
+    /// 实测依据（deliverable/移除优先级.txt，Pt_Heater1 构型）：
+    ///   移除优先级 = 导热贡献 q ÷ 电流密度 J
+    ///   舌片 0.61　圆盘 6.81　**圆盘背侧（x&gt;0）8.14**
+    ///   优先级最高的 12 个单元全部落在 r ≈ 27–31 mm、背对舌片那一侧。
+    /// 物理：电流从舌片进来绕过管孔，**基本不走背侧**（J = 0.18）；
+    /// 而热从管子向四面八方传，背侧照样抽 ⇒ 那半圈是「只抽热、不导电」的死重。
+    ///
+    /// ★ 印证：Pt_Heater3.3dm 上工程师实际开的槽是 R31.0–R35.9 —— **同一圈**。
+    ///   经验与场算出来的答案落在一起，这条判据站得住。
+    ///
+    /// ⚠ 与 <see cref="TabHoles"/> 一样，只从 <see cref="Inside"/> 一处生效。
+    /// </summary>
+    public DiscSlot[] DiscSlots = Array.Empty<DiscSlot>();
+
+    /// <summary>
     /// **等宽（矩形）舌片**：自与圆盘的交界起就保持 <see cref="TabEndHalfWidthMm"/> 不变，
     /// 不再从切点的半宽（≈盘半径）线性收到末端。
     ///
@@ -314,7 +355,34 @@ public sealed class FlangePlate
     public bool Inside(double x, double z)
     {
         if (x < TabTipXMm || x > DiscRadiusMm) return false;
-        return Math.Abs(z) <= HalfWidth(x) && x * x + z * z >= HoleRadiusMm * HoleRadiusMm;
+        if (!(Math.Abs(z) <= HalfWidth(x) && x * x + z * z >= HoleRadiusMm * HoleRadiusMm))
+            return false;
+        // ★★★ 舌板开孔（2026-09-05 用户要求）：孔里没有金属，电流绕行。
+        //   扣在**这一处**就够 —— Inside 是「板在不在这里」的唯一判据，
+        //   2D 电流解（PlateCurrent2D.Solve）与壳网格（ShellMesh）都走它。
+        //   ⚠ 另写一份「哪里是孔」就会有两个来源，而两者迟早不一致。
+        for (int q = 0; q < TabHoles.Length; q++)
+        {
+            var hq = TabHoles[q];
+            double dx = x - hq.XMm, dz = z - hq.ZMm;
+            if (dx * dx + dz * dz <= hq.RMm * hq.RMm) return false;
+        }
+        // ★ 圆盘扇形槽：半径落在 [RIn, ROut] 且角度落在张角内 ⇒ 挖掉
+        if (DiscSlots.Length > 0)
+        {
+            double rr = Math.Sqrt(x * x + z * z);
+            double deg = Math.Atan2(z, x) * 180.0 / Math.PI;
+            for (int q = 0; q < DiscSlots.Length; q++)
+            {
+                var sl = DiscSlots[q];
+                if (rr < sl.RInMm || rr > sl.ROutMm) continue;
+                double d = deg - sl.CenterDeg;
+                while (d > 180) d -= 360;
+                while (d < -180) d += 360;
+                if (Math.Abs(d) <= sl.SpanDeg * 0.5) return false;
+            }
+        }
+        return true;
     }
 }
 

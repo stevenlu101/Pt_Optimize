@@ -1121,8 +1121,10 @@ internal static class GeomProbe
     private static int RunSteps(string outPath, double holeR, double[] rs, double[] ts,
                                 double tabX, double tabHW, double tabT,
                                 int slotN, double slotDeg, double slotRin, double slotRout,
-                                bool tabParallel = false)
+                                bool tabParallel = false,
+                                System.Collections.Generic.List<(double X, double Z, double R)>? tabHolesIn = null)
     {
+        var tabHoles = tabHolesIn ?? new System.Collections.Generic.List<(double X, double Z, double R)>();
         using (new RhinoCore(new[] { "/NOSPLASH" }, WindowStyle.Hidden))
         {
             var doc = RhinoDoc.CreateHeadless(null);
@@ -1225,6 +1227,30 @@ internal static class GeomProbe
                 {
                     var tab = tf2[0].Faces[0].CreateExtrusion(
                         new LineCurve(Point3d.Origin, new Point3d(0, tabT, 0)), true);
+                    // ★★★★★ **舌板开孔**（2026-09-05 用户要求）。
+                    //   与圆盘开槽走**同一条路**：造截面 → 拉成柱 → BooleanDifference 挖掉。
+                    //   ⚠ 柱要比板厚长一截（−1 … tabT+1），否则布尔差在两个面上共面，
+                    //     Rhino 会给出不封闭的结果 —— 圆盘开槽那段已经这么干了。
+                    if (tab != null && tabHoles.Count > 0)
+                    {
+                        var cutters = new System.Collections.Generic.List<Brep>();
+                        foreach (var (hx, hz, hr) in tabHoles)
+                        {
+                            if (!(hr > 1e-6)) continue;
+                            var cc = new Circle(pl, new Point3d(hx, 0, hz), hr).ToNurbsCurve();
+                            var cf = Brep.CreatePlanarBreps(new Curve[] { cc }, tol);
+                            if (cf == null || cf.Length == 0) continue;
+                            var cyl = cf[0].Faces[0].CreateExtrusion(
+                                new LineCurve(new Point3d(0, -1, 0), new Point3d(0, tabT + 1, 0)), true);
+                            if (cyl != null) cutters.Add(cyl);
+                        }
+                        if (cutters.Count > 0)
+                        {
+                            var diff = Brep.CreateBooleanDifference(new[] { tab }, cutters, tol);
+                            if (diff != null && diff.Length > 0) tab = diff[0];
+                            else Console.Error.WriteLine("⚠ 舌孔布尔差失败，写出的是**没有孔**的舌片");
+                        }
+                    }
                     if (tab != null)
                     {
                         var att2 = new Rhino.DocObjects.ObjectAttributes { LayerIndex = layer };

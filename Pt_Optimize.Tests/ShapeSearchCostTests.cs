@@ -118,6 +118,35 @@ public class ShapeSearchCostTests
     }
 
     /// <summary>
+    /// ★★★★★ **可行边界不是最轻点**（2026-09-05 实测推翻的前提）。
+    ///
+    /// 我原以为「可行区里盘径越小越轻」，于是二分到边界就收工。实测四个可行点：
+    /// <code>
+    ///   盘Ø70 → 2848 g    盘Ø62 → 2619 g
+    ///   盘Ø58 → 2590 g    盘Ø56 → 2611 g   ← 更小反而**更重**
+    /// </code>
+    /// 最轻点在**区间内部**（≈58），不在边界（56）上。
+    /// 先前那个「随盘径递增」是从**三个网格点**归纳出来的 —— 样本太少。
+    ///
+    /// ⇒ 二分只负责**定可行区间**；区间内必须再按质量找极小。
+    ///   这条门就是钉「找最轻」那一段还在 —— 少了它，搜形状会交出一个
+    ///   **可行但更重**的解，而目标函数是 min 铂（HANDOVER §0.0）。
+    /// </summary>
+    [Fact]
+    public void 二分之后还要在区间内找最轻()
+    {
+        string s = Src("Pt_Optimize", "UI", "LineDesignPage.cs");
+        Assert.Contains("④ 找最轻", s);
+        Assert.Contains("Phi = 0.6180339887", s);          // 黄金分割
+        // 取的是**已算过的可行点里最轻的**，不是相信单峰
+        Assert.Contains("okRows.OrderBy(r2 => r2.mass).First()", s);
+        // 而且每个候选点都是真解（走 EvalShape），不是估的
+        int at = s.IndexOf("④ 找最轻", StringComparison.Ordinal);
+        Assert.True(at > 0);
+        Assert.Contains("await EvalShape(probe, probe * fWide);", s[at..]);
+    }
+
+    /// <summary>
     /// ★★★★ **按钮名字只许有一份来源：Flow**（2026-09-04 撞到）。
     ///
     /// 我在 Flow 里把两颗按钮改名「（手动分步）」，而 LineDesignPage 里
