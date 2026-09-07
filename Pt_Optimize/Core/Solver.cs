@@ -806,8 +806,11 @@ public static class Solver
         //   代码自己写着「表内所有数值一律不可引用」的场。
         //   前两条错法是更厚更重（多花铂）；这一条的错法是**叫人放弃这个方案**。
         if (beforeUnknown)
+        {
+            Log("     " + BranchMarks.UndeterminedBefore);
             return (false, $"**{nm} 处场解不收敛 ⇒ 判不了**（不是「不可行的证明」）—— "
                          + "这一步的每个数都不可引用，先修上界或几何再谈可行性", false);
+        }
 
         // ★ 上一片抬完可能已经把这一片捎带治好了 —— 那就**不抬**（最小性）
         if (before >= 0)
@@ -828,6 +831,7 @@ public static class Solver
             {
                 // 判不了 ⇒ 不许印成「分派前提不成立…没变好」（那是「这旋钮没用」的意思）
                 Set(d, knob, j, lo);
+                Log("     " + BranchMarks.UndeterminedAtHi);
                 return (false, $"**{nm} 抬到上界 {hi:0.000} 时场解不收敛 ⇒ 判不了** —— "
                              + "不是「这根旋钮没用」，是**上界存疑**（多半把几何抬坏了）", false);
             }
@@ -887,6 +891,7 @@ public static class Solver
                 //   而原来 −∞ 会走 else 分支 ⇒ lo = mid **往上推**，
                 //   推得越高越不收敛 ⇒ 正反馈，一路顶到上界。
                 Set(d, knob, j, lo);
+                Log("     " + BranchMarks.UndeterminedBisect);
                 return (false, $"**{nm} 在 {mid:0.000} 处场解不收敛 ⇒ 二分中止**（上界存疑）—— "
                              + "不许拿判不了的点当「不过」往上推", false);
             }

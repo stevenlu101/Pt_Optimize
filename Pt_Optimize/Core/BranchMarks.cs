@@ -1,0 +1,51 @@
+namespace PtOptimize.Core;
+
+/// <summary>
+/// ★★★★★ **「走到过」的痕迹** —— 让难以构造的分支自己留下可断言的一句话（2026-09-08）。
+///
+/// ══ 为什么要有这个
+///
+/// 2026-09-07 一天里加了三处修复，**没有一处被实测走过**：
+/// <code>
+///   熔化「只抬最热那一片」   自检 E 段 6 轮正常收敛，没触发
+///   二分 mid 判不了 ⇒ 中止   0.8 档那 72 次场解全收敛，没踩到
+///   抬前/上界 判不了          同上
+/// </code>
+/// 而 <c>dotnet test</c> 674/674 绿、自检通过，**对这三处一个字都没说** ——
+/// 它们是「**在空集上恒对**」，与「门在空集上恒过」是同一个病，只是从测试挪到了代码。
+///
+/// ══ 手段：断言「走到了」，不是断言「结果好」
+///
+/// 造一个会熔/会不收敛的算例去验**结果**很贵也很难；
+/// 但只要那条分支被**执行**过，它就能往轨迹里写一句话，门断言那句话出现即可。
+/// **不必让它真熔，只要让那条分支被走到。**
+///
+/// ══ 为什么是常数不是字面
+///
+/// 门引的是**符号**（<c>BranchMarks.MeltRaiseHottest</c>），不是字面串 ——
+/// 改文案不会让门静默失效，改符号名编译就断。这与本仓「不许钉措辞」是一致的：
+/// 钉的是「这条分支必须留痕」这个**约定**，不是那句话怎么写。
+///
+/// ⚠ 这些字会出现在工程师的输出框里，所以必须是**人话**（见 HANDOVER「界面不许出现代号」）。
+///
+/// ⚠ 登记规矩：本类每多一个常数，<c>BranchMarksAreCoveredTests</c> 就要求
+///   ① Core 里真的有人发它　② 有测试真的断言过它。少一样就红 —— 防的正是
+///   「加了痕迹却没人看」这一族（「造好了没接线」）。
+/// </summary>
+public static class BranchMarks
+{
+    /// <summary>FlangeAutoSizer.Solve：熔化 ⇒ 只抬**最热那一片**的厚度（不是整片乘）。</summary>
+    public const string MeltRaiseHottest = "★ 走到了「熔化 ⇒ 只抬最热那一片」";
+
+    /// <summary>FlangeAutoSizer.Solve：厚度到顶仍熔 ⇒ **交棒**给增宽/搜形状（不是判无解）。</summary>
+    public const string MeltHandOff = "★ 走到了「厚度到顶 ⇒ 交棒给增宽」";
+
+    /// <summary>Solver.RaiseUntil：**抬之前**那一点就判不了（场解不收敛/不存在）。</summary>
+    public const string UndeterminedBefore = "★ 走到了「抬前判不了」";
+
+    /// <summary>Solver.RaiseUntil：抬到**上界**那一点判不了 ⇒ 上界存疑。</summary>
+    public const string UndeterminedAtHi = "★ 走到了「上界判不了」";
+
+    /// <summary>Solver.RaiseUntil：**二分中点**判不了 ⇒ 中止二分（不许当「不过」往上推）。</summary>
+    public const string UndeterminedBisect = "★ 走到了「二分中点判不了 ⇒ 中止」";
+}

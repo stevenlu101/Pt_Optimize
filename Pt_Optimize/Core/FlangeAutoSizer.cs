@@ -150,6 +150,13 @@ public static class FlangeAutoSizer
         public string Message = "";
         /// <summary>每轮的最大误差，供界面画收敛曲线或诊断振荡</summary>
         public readonly List<double> History = new();
+
+        /// <summary>
+        /// ★★★★★ **走过哪些分支的痕迹**（2026-09-08，见 <see cref="BranchMarks"/>）。
+        /// <c>Message</c> 每轮都被覆盖，留不住「第 2 轮走过熔化那一支」这种事实；
+        /// 而那正是难构造的分支唯一能被断言的东西 —— 断言**走到了**，不是断言结果好。
+        /// </summary>
+        public readonly List<string> Trace = new();
         /// <summary>逐级定厚的结果：`[片][级]` 的厚度倍数（仅 SolveByLevel 填）</summary>
         public double[][]? LevelScale;
 
@@ -434,7 +441,10 @@ public static class FlangeAutoSizer
                     double next = Math.Min(opt.MaxThickMm, t[jh] * 1.5);
                     if (next > t[jh] + HalfQuantMm)
                     {
+                        double prev = t[jh];
                         t[jh] = next;
+                        res.Trace.Add($"{BranchMarks.MeltRaiseHottest}：第 {jh + 1} 片 {hot:0} °C，"
+                                    + $"厚 {prev:0.00} → {next:0.00} mm");
                         res.Message = $"第 {it + 1} 轮**熔化**（第 {jh + 1} 片 {hot:0} °C）⇒ 该处过流截面不够，"
                                     + $"**只加这一片**的厚度到 {next:0.00} mm 再试"
                                     + "（截面 A = 厚 × 宽，本层只有「厚」这一根）";
@@ -443,6 +453,9 @@ public static class FlangeAutoSizer
                 }
 
                 // 厚度到顶 —— 这**只**证明厚度救不了，不是无解。
+                res.Trace.Add(BranchMarks.MeltHandOff
+                            + $"：{(jh >= 0 ? $"第 {jh + 1} 片 {hot:0} °C" : "各片")}，"
+                            + $"厚度已在上界 {opt.MaxThickMm:0.00} mm");
                 res.Terminal = true;
                 res.TerminalWhy =
                     (jh >= 0 ? $"第 {jh + 1} 片 {hot:0} °C 熔化，其厚度已在工艺上界 {opt.MaxThickMm:0.00} mm 上"

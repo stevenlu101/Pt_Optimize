@@ -5434,7 +5434,7 @@ Pt_Optimize.Tests/ · tests/UiWiring/ · Pt_Optimize.Geom/ · .githooks/   ← �
 > 改 `.githooks/` 改的是「门跑不跑」。这两类原本都不在名单里 ⇒
 > **唯一能让所有门失效的改动，恰恰是唯一不触发门的改动**。
 
-`dotnet test` 应为 **684/684**（2026-09-07 由 HandoverGateCountTests 反射数出；+2 = MeltRaisesCrossSectionTests，熔化处置的登记门与交棒门）。
+`dotnet test` 应为 **687/687**（2026-09-08 由 HandoverGateCountTests 反射数出；+3 = BranchMarksAreReachedTests，「断言走到了」那三条）。
 
 > 这个数**不用人记得改**了：`HandoverGateCountTests` 反射数出程序集里的用例数
 > （`[Fact]` 一条、`[Theory]` 按 `[InlineData]` 行数），再回头读本文件里的「应为 N/N」比对，
