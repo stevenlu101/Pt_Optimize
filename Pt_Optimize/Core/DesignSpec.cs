@@ -306,6 +306,11 @@ public sealed class DesignSpec
         c.SlotSpanDeg = (double[])SlotSpanDeg.Clone();
         c.TabHoleRMm = (double[])TabHoleRMm.Clone();
         c.TabHoleAspect = (double[])TabHoleAspect.Clone();
+        // ★ InvalidChecks 也是栏位（2026-09-07 督导 ② 抓到）。
+        //   目前**无害** —— 全仓没有一处就地改它的元素（只有宣告 + 两处整体赋值，
+        //   换引用不伤原件），督导也没实测到污染。补上不是因为它现在坏了，
+        //   而是「哪天有人写一句 InvalidChecks[0] = …」这件事不该由运气决定。
+        c.InvalidChecks = (string[])InvalidChecks.Clone();
         return c;
     }
 
