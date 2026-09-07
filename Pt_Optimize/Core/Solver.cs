@@ -761,7 +761,11 @@ public static class Solver
         }
 
         if (best is null)
-            return (null, $"片{j}「{Criteria.Plain(key)}」**所有候选都不成立**：" + string.Join("；", fails),
+            // ★ 范围是对的（**这一片这条判据**的候选确实穷尽了），但读者会读成「治不了」。
+            //   补一句交棒，说清还剩哪条路 —— 督导第 11 封。
+            return (null, $"片{j}「{Criteria.Plain(key)}」**法兰侧候选都不成立**：" + string.Join("；", fails)
+                        + "。⇒ 这是**法兰侧九根旋钮**的穷尽，不是整个设计的判决；"
+                        + "下一根杠杆是**盘径与舌半宽**（「◇ 搜形状」）",
                     before, double.NaN);
 
         if (lines.Count > 1)
@@ -819,8 +823,16 @@ public static class Solver
             return (true, "", false);
         }
 
+        // ★★★★★ **一个出口只能对它自己有的旋钮下结论**（2026-09-08，督导第 11 封）。
+        //   原文写的是「这组输入**不可行**（是证明，不是搜索失败）」——
+        //   而此处只是**一根**旋钮、**一片**、**一条**判据走到了上界。
+        //   求解器手上只有法兰侧九根旋钮；盘径与舌半宽（正是 R3 里「增宽」那条路）
+        //   归 LineDesignPage.SearchShapeAsync。拿**局部穷尽**下**全局判决**，
+        //   与 2026-09-07 在 FlangeAutoSizer.Solve 写「厚度到顶 ⇒ 无解」是同一个错。
+        //   照 809 行那句「判不了 —— **不是**『不可行的证明』」的口径改。
         if (lo >= hi - 1e-12)
-            return (false, $"**{nm} 已在上界 {hi:0.000}**，「{Criteria.Plain(key)}」仍不过 ⇒ 这组输入不可行（是证明，不是搜索失败）", false);
+            return (false, $"**{nm} 已在上界 {hi:0.000}**，「{Criteria.Plain(key)}」仍不过 ⇒ **这根旋钮到顶了** "
+                         + "—— 求解器手上只有**法兰侧**九根旋钮；**盘径与舌半宽**（R3 里「增宽」那条路）不在它手里，归「◇ 搜形状」。**一个出口只能对它自己有的旋钮下结论。**", false);
 
         Set(d, knob, j, hi);
         double after;
@@ -873,7 +885,9 @@ public static class Solver
                   + "下一轮缺口变小再挑别的（不退回 —— 退回就永远凑不出组合）");
             else
                 Set(d, knob, j, lo);        // 一点没变好 ⇒ 白花铂，退回
-            return (false, $"**{nm} 抬到上界 {hi:0.000} 仍不过**「{Criteria.Plain(key)}」⇒ 这组输入不可行", kept);
+            // ★ 同上：抬到顶的是**这一根**旋钮，不是「这组输入」。
+            return (false, $"**{nm} 抬到上界 {hi:0.000} 仍不过**「{Criteria.Plain(key)}」⇒ **这根旋钮到顶了** "
+                         + "—— 求解器手上只有**法兰侧**九根旋钮；**盘径与舌半宽**（R3 里「增宽」那条路）不在它手里，归「◇ 搜形状」。**一个出口只能对它自己有的旋钮下结论。**", kept);
         }
 
         // 二分：找「刚好不违反」的最小值。不变式：lo 违反、hi 不违反。

@@ -102,7 +102,9 @@ public class SolverIsSeedFreeTests
         string s = Src("Solver.cs");
         Assert.Contains("分派前提不成立", s);
         Assert.Contains("after > before", s);      // 抬到上界必须让判据变好
-        Assert.Contains("HitBound", s);            // 且要标成「不可行的证明」
+        Assert.Contains("HitBound", s);            // 且要标成结构性停机（再点一次同一句话）
+                                                   // ⚠ 2026-09-08：HitBound ≠「这组输入不可行」，
+                                                   //   它只说法兰侧旋钮到顶了，下一根是搜形状。
     }
 
     /// <summary>判不了 = 不算过（三条铁律第 ③ 条）。求解器不能靠「判据消失」来收敛。</summary>
@@ -166,7 +168,20 @@ public class SolverIsSeedFreeTests
         //   ⇒ 敏感度矩阵的**作用**进了链路，而不是它的**结论**被抄成了顺序。
         Assert.Contains("private static (Knob? Knob, string Why, double Before, double After) ChooseKnob(", s);
         Assert.Contains("var pick = ChooseKnob(", s);
-        Assert.Contains("所有候选都不成立", s);
+        // ★★★★★ 2026-09-08 改：原来钉的是「所有候选都不成立」这**句字面**。
+        //   当天把它改准（「**法兰侧**候选都不成立…⇒ 下一根杠杆是盘径与舌半宽」）之后本条就红了 ——
+        //   **红的原因是话说得更准了**，正是 BrittleAssertionTests 要禁的那种断言。
+        //   改成钉**不变式**：候选全被淘汰时必须有出口回报，且回报里要带上**逐个候选的淘汰理由**
+        //   （只说「不行」等于让人猜，那正是当初「r₁/r₂ 完全没有优化」查不出来的原因）。
+        int bn = s.IndexOf("if (best is null)", StringComparison.Ordinal);
+        Assert.True(bn > 0, "ChooseKnob 里没有「候选全淘汰」那一支 —— 全淘汰会**静默**");
+        int rt = s.IndexOf("return (null,", bn, StringComparison.Ordinal);
+        Assert.True(rt > bn && rt - bn < 600,
+            "「候选全淘汰」那一支没有紧跟着的回报出口 —— 淘汰了却不说，调用方只看到 null");
+        string blk = s[bn..(s.IndexOf(");", rt, StringComparison.Ordinal) + 2)];
+        Assert.True(blk.Contains("fails", StringComparison.Ordinal),
+            "候选全淘汰的回报里没有带上 fails（逐个候选被淘汰的理由）—— "
+          + "只说「都不成立」的话，工程师查不出是「旋钮死了」还是「真的没用」。");
 
         // ★★★ 两级判据：**先看补不补得上**，补得上的里面才比价。
         //   只按效率挑会出错 —— 实测：t₂ 每克铂买 5.080 但总共只买得到 +34.40，
