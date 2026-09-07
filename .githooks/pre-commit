@@ -34,6 +34,28 @@ BIN="$ROOT/Pt_Optimize/bin/Release/net8.0-windows"
 
 # ⚠ 必须先编译。否则门验的是**上一次的二进制** —— 那比不验更危险：
 #   它会给这次的改动发一张不属于它的通过证。
+# ============================================================================
+#  ★★★★★ 编译前先清掉**锁住输出档的残留进程**（2026-09-08）
+#
+#  真事，一晚上两次：
+#    · 提交时 testhost(11156) 锁住 Pt_Optimize.dll ⇒ MSB3027 ⇒ **编译失败、提交中止**
+#    · 督导那边 Pt_Optimize.Geom.exe(8916) 锁住自己 ⇒ **那一次 Geom 没编成**
+#
+#  ⚠ 第二种比第一种危险得多：它**不会让提交中止**，只是那一个子项目没编上 ⇒
+#    后面的门（探针、出图往返）拿的是**上一次的二进制**。
+#    与本档第 35 行「否则门验的是上一次的二进制」是同一族，只是从主程序挪到了子程序。
+#
+#  ⇒ 不靠记性，靠这一步。只杀本仓自己的产物进程，不碰别的。
+# ============================================================================
+echo "── 清残留进程（testhost / Pt_Optimize.Geom / Pt_Optimize）"
+for proc in testhost Pt_Optimize.Geom Pt_Optimize; do
+  # tasklist 找得到才杀，避免每次都打一堆红字
+  if tasklist //FI "IMAGENAME eq $proc.exe" 2>/dev/null | grep -qi "$proc.exe"; then
+    echo "     残留 $proc.exe ⇒ 结束它（否则它锁住的那个子项目会**静默地不重编**）"
+    taskkill //F //IM "$proc.exe" //T > /dev/null 2>&1 || true
+  fi
+done
+
 echo "── 先编译（Release）"
 if ! dotnet build "$ROOT/Pt_Optimize.sln" -c Release -v q --nologo > /tmp/pt_build.log 2>&1; then
     echo "✗ 编译失败，提交中止："

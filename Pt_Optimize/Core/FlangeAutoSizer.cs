@@ -206,6 +206,20 @@ public static class FlangeAutoSizer
     /// </summary>
     private const double HalfQuantMm = 0.005;
 
+    /// <summary>
+    /// ★★★★★ **一个出口只能对它自己有的旋钮下结论**（2026-09-08，督导第 11/12 封）。
+    ///
+    /// 本类的 <c>Solve</c>/<c>SolveAuto</c> 手上**只有厚度**（<c>opt</c> 里只有
+    /// <c>Min/MaxThickMm</c>，宽由调用方的 <c>makePlate</c> 定死）⇒ 厚度顶到界时
+    /// 只能说「厚度这条路走到头了」，**不能说「这个几何无解」** —— 宽度一次都没动过。
+    ///
+    /// ⚠ 写成一处常量而不是在三个出口各写一遍：同一句话三个来源，早晚漂成三种说法
+    ///   （本仓「判据只有一个来源」的同一条）。
+    /// </summary>
+    private const string HandOffHint =
+        "本层只有**厚度**这一根旋钮（宽由调用方的 makePlate 定死），"
+      + "下一根是**增宽过流带**（盘径 / 舌半宽），归「◇ 搜形状」";
+
     public static Result SolveAuto(LineCase baseCase, Func<double, int, FlangePlate>? makePlate,
                                    double[] initialThicknessMm, Options? opt = null,
                                    IProgress<string>? progress = null,
@@ -266,7 +280,10 @@ public static class FlangeAutoSizer
                     + "）⇒ 停止升级。"
                     + (atLo > 0 ? $" {atLo} 片顶在厚度**下界 {cur.MinThickMm:0.00} mm** 上 —— "
                                   + "被界咬住时步长是被截掉的，不是冲过头，**降阻尼动不了它**。"
-                                  + " 要么放宽下界（工艺上能不能做更薄？），要么这个几何在此电流下就是无解。"
+                                  + " 要么放宽下界（工艺上能不能做更薄？），要么**厚度这条路走到头了**。"
+                                  // ★ 2026-09-08：原文写「这个几何在此电流下就是**无解**」——
+                                  //   而顶到界的只有**厚度**。一个出口只能对它自己有的旋钮下结论。
+                                  + "（不是「这个几何无解」：" + HandOffHint + "）"
                       : atHi > 0 ? $" {atHi} 片顶在厚度**上界 {cur.MaxThickMm:0.00} mm** 上 —— 同理。"
                       : " 落点不在界上却纹丝不动，多半是靶函数在此处平坦（梯度≈0）——"
                         + "换起点或改几何，继续升级没有意义。")
@@ -611,7 +628,9 @@ public static class FlangeAutoSizer
                 res.Message = $"{it + 1} 轮后全部厚度顶在" +
                               (tooThin ? $"上界 {opt.MaxThickMm:0.00}" : $"下界 {opt.MinThickMm:0.00}") +
                               $" mm 仍进不了抽热窗口（最大偏差 {worst:0.0} W）—— " +
-                              "**该几何在此工况下无解，不是迭代不够**。\r\n" +
+                              // ★ 2026-09-08：标题原写「该几何在此工况下**无解**」，而穷尽的只有厚度；
+                              //   底下那两句本来就已经在指「更大的过流断面 / 缩小法兰」——**标题比正文说大了**。
+                              "**厚度这条路走到头了，不是迭代不够**（" + HandOffHint + "）。\r\n" +
                               (tooThin
                                ? "  还想加厚 = 抽热不够 = 法兰太热、热在往管里灌（②′<0）⇒ 需要更大的过流断面或更少的发热。"
                                : "  还想削薄 = 抽热太多 = 把管根抽出深坑（③ 超限）⇒ 需要缩小法兰或加保温。");
@@ -620,7 +639,9 @@ public static class FlangeAutoSizer
         }
 
         res.Message = $"{opt.MaxIterations} 轮未收敛（抽热最大偏差 {res.History.LastOrDefault():0.0} W）。" +
-                      "可能是某片已顶到厚度上下界，或该形状在此电流下无解。";
+                      // ★ 2026-09-08：原文「或该形状在此电流下**无解**」—— 带了「可能/或」也仍是
+                      //   替**形状**下结论，而形状不在本层手里。
+                      "可能是某片已顶到厚度上下界，或**该形状要改** —— " + HandOffHint + "。";
         return res;
     }
 
