@@ -786,9 +786,28 @@ public static class Solver
         string nm = $"片{j} {KnobName(knob)}";
 
         // ★ 候选比价时已经量过就不再量 —— 同一个数花两次场解是纯浪费（实测每次抬多花 3 次）。
-        double before = double.IsNaN(knownBefore)
-            ? PlateSlack(Eval(d, baseIn, opt, res, cancel, inner), key, j, dipMax, discMax)
-            : knownBefore;
+        // ★★★★★ **判不了 ≠ 不过**（2026-09-07 B，督导第 4 封）。
+        //   `PlateSlack` 用一个 double 同时表达「裕度多少」和「算不出来」，
+        //   把 −∞ 塞进「非常不过」那一格 ⇒ 每个读它的人都自动把**判不了**读成**很不过**。
+        //   S1 之前 null 只来自硬失败、这条路踩不到；S1 把 null 变成常见路径之后它就活了。
+        double before;
+        bool beforeUnknown = false;
+        if (double.IsNaN(knownBefore))
+        {
+            var r0 = Eval(d, baseIn, opt, res, cancel, inner);
+            beforeUnknown = r0 is null;
+            before = PlateSlack(r0, key, j, dipMax, discMax);
+        }
+        else before = knownBefore;
+
+        // ⚠ 判不了就**不许往下走**：下面第 11 行那条会输出
+        //   「这组输入不可行（**是证明**，不是搜索失败）」——
+        //   全仓少数几个对工程师说「别再试了」的地方，依据却是一份
+        //   代码自己写着「表内所有数值一律不可引用」的场。
+        //   前两条错法是更厚更重（多花铂）；这一条的错法是**叫人放弃这个方案**。
+        if (beforeUnknown)
+            return (false, $"**{nm} 处场解不收敛 ⇒ 判不了**（不是「不可行的证明」）—— "
+                         + "这一步的每个数都不可引用，先修上界或几何再谈可行性", false);
 
         // ★ 上一片抬完可能已经把这一片捎带治好了 —— 那就**不抬**（最小性）
         if (before >= 0)
@@ -801,9 +820,20 @@ public static class Solver
             return (false, $"**{nm} 已在上界 {hi:0.000}**，「{Criteria.Plain(key)}」仍不过 ⇒ 这组输入不可行（是证明，不是搜索失败）", false);
 
         Set(d, knob, j, hi);
-        double after = double.IsNaN(knownAfter)
-            ? PlateSlack(Eval(d, baseIn, opt, res, cancel, inner), key, j, dipMax, discMax)
-            : knownAfter;
+        double after;
+        if (double.IsNaN(knownAfter))
+        {
+            var rHi = Eval(d, baseIn, opt, res, cancel, inner);
+            if (rHi is null)
+            {
+                // 判不了 ⇒ 不许印成「分派前提不成立…没变好」（那是「这旋钮没用」的意思）
+                Set(d, knob, j, lo);
+                return (false, $"**{nm} 抬到上界 {hi:0.000} 时场解不收敛 ⇒ 判不了** —— "
+                             + "不是「这根旋钮没用」，是**上界存疑**（多半把几何抬坏了）", false);
+            }
+            after = PlateSlack(rHi, key, j, dipMax, discMax);
+        }
+        else after = knownAfter;
 
         // ★ 前提自检：抬到底也没让这一片的判据变好 ⇒ 这条分派对这一片是错的，**不许假装解出来**
         if (!(after > before + 1e-9))
@@ -848,7 +878,19 @@ public static class Solver
             cancel.ThrowIfCancellationRequested();
             double mid = 0.5 * (lo + hi);
             Set(d, knob, j, mid);
-            if (PlateSlack(Eval(d, baseIn, opt, res, cancel, inner), key, j, dipMax, discMax) >= 0) hi = mid; else lo = mid;
+            var rMid = Eval(d, baseIn, opt, res, cancel, inner);
+            if (rMid is null)
+            {
+                // ★★★★★ 判不了 ⇒ **中止二分**，不许 lo = mid（2026-09-07 B）。
+                //   理由不是保守：二分的不变式是「lo 违反、hi 不违反」，
+                //   mid 判不了时这个不变式**已经破了** —— 往任何一侧推都是拿假设当数据。
+                //   而原来 −∞ 会走 else 分支 ⇒ lo = mid **往上推**，
+                //   推得越高越不收敛 ⇒ 正反馈，一路顶到上界。
+                Set(d, knob, j, lo);
+                return (false, $"**{nm} 在 {mid:0.000} 处场解不收敛 ⇒ 二分中止**（上界存疑）—— "
+                             + "不许拿判不了的点当「不过」往上推", false);
+            }
+            if (PlateSlack(rMid, key, j, dipMax, discMax) >= 0) hi = mid; else lo = mid;
         }
 
         // ★ 量化在**解之内**，不在解之后（算法普查 A⑤）。

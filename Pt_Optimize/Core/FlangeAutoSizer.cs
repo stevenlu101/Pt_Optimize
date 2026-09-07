@@ -402,6 +402,34 @@ public static class FlangeAutoSizer
                 res.Iterations = it;
                 return res;
             }
+            // ★★★★★ **熔化不是「算不出来」，是「太薄了」**（2026-09-07，用户选 1）。
+            //
+            //   A（熔化的解不算解）落地后，本器从偏薄起点出发**必然路过**熔化状态，
+            //   于是第一次求解就 Ok=false ⇒ 偏差 NaN ⇒ 一步都动不了
+            //   （自检 E 段实测：入口峰值 3323 °C，升级 1 次后落点纹丝不动）。
+            //
+            //   但熔化本来就**不该**当成「一个很差的解」：熔点之上电阻率拟合已反号，
+            //   那些数是垃圾，读它才是错的。它携带的唯一可信信息是**方向**：
+            //   这一处截面太小、发热下不来 ⇒ **加厚**。
+            //   ⇒ 按下界一步步顶上去，直到走出熔化区；顶到上界还熔 ⇒ 那才是真无解。
+            if (!lr.Ok && lr.OverMelt)
+            {
+                bool moved = false;
+                for (int q = 0; q < t.Length; q++)
+                {
+                    double next = Math.Min(opt.MaxThickMm, t[q] * 1.5);
+                    if (next > t[q] + HalfQuantMm) { t[q] = next; moved = true; }
+                }
+                if (moved)
+                {
+                    res.Message = $"第 {it + 1} 轮**熔化** ⇒ 判为「太薄」，各片加厚 1.5 倍再试"
+                                + $"（{lr.Message}）";
+                    continue;
+                }
+                res.Message = "**顶到厚度上界仍熔化** ⇒ 这个几何在此电流下无解（不是搜索失败，是证明）："
+                            + lr.Message;
+                res.Iterations = it; return res;
+            }
             if (!lr.Ok) { res.Message = lr.Message; res.Iterations = it; return res; }
             baseA = lc.BaselineRootC;                       // 基线只随管几何变，可无条件复用
             if (lr.Converged) warmA = lc.WarmStart;         // 抽热/端温只在收敛时才是不动点

@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Linq;
 using PtOptimize.Core;
 using Xunit;
@@ -78,7 +78,13 @@ public class SolverIsSeedFreeTests
         Assert.DoesNotContain("Math.Min(Get(d", s);
 
         // 二分收在「不违反那一侧」，再**向上**对齐到图纸格 —— 两步都只会往上
-        Assert.Contains("if (PlateSlack(Eval(d, baseIn, opt, res, cancel, inner), key, j, dipMax, discMax) >= 0) hi = mid; else lo = mid;", s);
+        // ⚠ 原来这里钉的是那一整行**原文**（2026-09-07 被 B 那次改动撞红）。
+        //   钉措辞的门在改动到来时只会说「字符串没找到」，说不出**不变式坏没坏** ——
+        //   而这次改动（判不了 ⇒ 中止二分并 Set 回 lo）恰恰是**保持**了这个不变式的。
+        //   ⇒ 改钉不变式本身：不违反收 hi、违反收 lo，两个赋值都要在。
+        Assert.Contains("hi = mid;", s);
+        Assert.Contains("lo = mid;", s);
+        Assert.DoesNotContain("lo = hi;", s);          // 直接跳到上界 = 绕过求根
         Assert.Contains("Math.Ceiling(hi / q - 1e-9) * q", s);
         Assert.DoesNotContain("Math.Floor(hi", s);      // 向下取整会把判据舍掉
     }

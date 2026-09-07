@@ -538,6 +538,15 @@ public sealed class LineResult
     public bool Ok = true;
     /// <summary>段↔法兰外层耦合是否收敛。**为 false 时表内所有数值一律不可引用。**</summary>
     public bool Converged;
+
+    /// <summary>
+    /// ★ 本次解**越过了铂熔点** ⇒ <see cref="Ok"/> 为 false（2026-09-07 A）。
+    ///   单独立一个位而不是让调用方去 match 讯息文字：
+    ///   「熔化」与别的失败**处置完全不同** —— 别的失败是「算不出来」，
+    ///   熔化是**方向信息**：这一处太薄了，加厚就能走出去。
+    ///   定尺寸器靠它把「没解」变成「往加厚那边走」，而不是拿到 NaN 卡死。
+    /// </summary>
+    public bool OverMelt;
     public string Message = "";
 
     // ────────────────────────────────────────────────────────────────
@@ -1461,8 +1470,29 @@ public static class LineRunner
                 res.Notes.Add($"{flanges[j].Name}：电流守恒误差 {sc.ConservationError:E2}，偏大");
             // ★ 熔点护栏：拟合到 3392 °C 才反号，求解器会给出 2900 °C 的「可行解」并闭合能量账
             if (th.OverMelt)
-                res.Notes.Add($"✗ {flanges[j].Name}：峰值 {th.TMaxC:0} °C 已越过铂熔点 " +
-                              $"{Materials.PtMeltC:0} —— **该解不存在**");
+            {
+                // ★★★★★ **代码自己说「该解不存在」，就不许把它当解交出去**（2026-09-07 A）。
+                //
+                //   在此之前这里**只加一条 Note**：Ok 与 Converged 都留 true，
+                //   而 AllOk 只看 Converged + Checks，熔点又不是 Check
+                //   ⇒ 一份峰值 2900 °C 的解可以**全绿交付**。
+                //   实测（督导 12:47）：OverMelt 之后置 Ok/Converged=false 的次数 **0**；
+                //   Criteria 里与「熔」有关的条目 **0**。
+                //
+                //   ⚠ ②″ 挡不住它：②″ 判的是**圆盘**峰值（TDiscMaxC），
+                //     而这里的 TMaxC 是**整片**峰值 —— 舌片、压接段的热点不在 ②″ 口径里。
+                //   ⚠ 这不是假想：旧路 FlangeAutoSizer 专门为它写过一道中止闸
+                //     （「该级太薄、电流被挤在窄带上，局部发热物理上就下不来」）,
+                //     换代到 Solver 之后没了 —— 与 S1 丢掉 Converged 那道闸是同一形状。
+                //
+                //   ⚠⚠ 督导原话照记：他**没有**造出「现役判据全过却熔化」的算例，
+                //     证明的是「没有任何东西挡着它」。两句话不一样，不夸大。
+                res.Ok = false;
+                res.OverMelt = true;
+                res.Message = $"{flanges[j].Name}：峰值 {th.TMaxC:0} °C 已越过铂熔点 "
+                            + $"{Materials.PtMeltC:0} °C —— **该解不存在**（不是「不够好」，是物理上不成立）";
+                res.Notes.Add("✗ " + res.Message);
+            }
             else if (th.OverFitRange)
                 res.Notes.Add($"⚠ {flanges[j].Name}：峰值 {th.TMaxC:0} °C 超出电阻率拟合区 " +
                               $"{Materials.PtFitMaxC:0} °C，数值系外推");
@@ -1824,13 +1854,34 @@ public static class LineRunner
             Note = "参考：仅在舌片末端绝热时才等价于 ②；夹冷时 Φ 偏高但更安全"
         });
 
-        // ── 参考量：J 只报数不判（§4.2k）
+        // ★★★★★ **法兰 J：从「参考量」改成硬判据里的「判不了」**（2026-09-07 C1，用户拍板）。
+        //
+        //   用户 2026-08-25：「给予铂金实际的电流密度最大为 10」。而现况是：
+        //     管侧   TubeJ   在 Required、HardSafety           ✅ 有门
+        //     法兰侧 FlangeJ Kind = Reference                  ❌ 没门
+        //   而**挖孔恰恰挖在舌片上**，②″ 只判圆盘峰值（TDiscMaxC），
+        //   舌片峰值（TTabMaxC）与 FlangeTopTemp 也都是参考量 ⇒ 舌片那一侧两头都没门。
+        //
+        //   为什么不直接判「≤ 10」：这个数**现在不可信**。
+        //   实测（deliverable/孔的网格分辨率.txt）孔那一带的网格从未细化过，
+        //   同一个孔 7.920 → 10.068 且**仍在上升、没有收敛平台**；
+        //   README 自己写着「现值是**下界**，+3.5 % 网格敏感」。
+        //   拿一个未收敛的数去判，红绿都是假的。
+        //
+        //   ⇒ 走第三条路：**判不了（Undetermined）**。按仓库铁律「判不了不算过」，
+        //     它会挡住交付，直到孔那一带的网格修好、这个数收敛为止。
+        //   ⚠ 这是有代价的、用户明知并拍板的：**在网格修好之前，交付被挡住。**
+        //     另两条路都被否掉了 —— 提成「≤10」会拿假数判；留作参考量则等于判据消失，
+        //     而「判据绝不允许消失」是本项目的铁律。
         var worstJf = flanges.OrderByDescending(f => f.JMaxAPerMm2).First();
         checks.Add(new ConstraintOut
         {
-            Name = "· 法兰 J_max", Unit = "A/mm²", Kind = CheckKind.Reference, Ok = true,
+            Name = "· 法兰 J_max", Unit = "A/mm²", Kind = CheckKind.HardSafety,
+            Ok = false, Undetermined = true,
             Actual = worstJf.JMaxAPerMm2, Limit = c.Base.JAllowAPerMm2, Where = worstJf.Name,
-            Note = "参考：J_allow=10 的物理依据待定（§4.2i），且 §4.2j 已证高 J 不等于局部过热"
+            Note = "**判不了**：孔那一带网格从未细化，这个数是**下界**且未收敛"
+                 + "（实测同一孔 7.920 → 10.068 仍在上升）。修好网格之前不下结论 —— "
+                 + "判不了不算过。"
         });
         var worstJt = segs.OrderByDescending(s => s.TubeJAPerMm2).First();
         checks.Add(new ConstraintOut

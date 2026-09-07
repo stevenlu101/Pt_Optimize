@@ -6465,12 +6465,19 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
                             // 声明里点名了哪几条，就只准坏那几条（比对的是 InvalidChecks 这个
                             // **独立字段**，不是 Invalid 正文 —— 正文里写着「①②′②″③管J 仍全过」，
                             // 拿它做子串匹配会每条都命中，门就成了摆设）
+                            // ★ 「法兰 J 判不了」是 C1 的**已知阻塞**，对每一份档都成立，
+                            //   不是这一档「新出现的」问题 ⇒ 不计进 unexpected。
+                            //   ⚠ 但那个**数照印**（下面的 foreach 会印）—— 它是真信号，
+                            //     只是依据（未细化的网格）不可信，所以不拿它判。
                             var unexpected = failed.Where(c =>
-                                !fd.InvalidChecks.Any(k => c.Name.StartsWith(k, StringComparison.Ordinal))).ToArray();
+                                !c.Name.Contains("法兰 J")
+                                && !fd.InvalidChecks.Any(k => c.Name.StartsWith(k, StringComparison.Ordinal))).ToArray();
                             foreach (var c in failed)
                                 Console.WriteLine($"      {(unexpected.Contains(c) ? "✗" : "·")} " +
                                     $"{c.Name} {c.Actual:0.000} / {c.Limit:0.000}　{c.Where}" +
-                                    (unexpected.Contains(c) ? "　★ **声明之外的失败**" : "　（声明之内）"));
+                                    (unexpected.Contains(c) ? "　★ **声明之外的失败**"
+                                     : c.Name.Contains("法兰 J") ? "　（**判不了** —— C1 已知阻塞；这个数依据未收敛，只报不判）"
+                                     : "　（声明之内）"));
                             if (unexpected.Length > 0)
                             {
                                 bad++;
@@ -6480,10 +6487,25 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
                     }
                     else if (!rc.AllOk)
                     {
-                        bad++;
-                        Console.WriteLine("      ✗ **设计记录自己不过判据** —— 这是最严重的一种：");
-                        foreach (var c in failed)
-                            Console.WriteLine($"         {c.Name} {c.Actual:0.000} / {c.Limit:0.000}　{c.Where}");
+                        // ★★★★★ C1 之后「法兰 J 判不了」会挡住**每一份**设计记录
+                        //   （2026-09-07，用户拍板）。孔那一带的网格从未细化，
+                        //   那个数是下界且未收敛 ⇒ 一律判不了，按铁律「判不了不算过」。
+                        //
+                        //   ⚠ 处置不是把这条门放宽 —— 那等于判据消失。
+                        //   而是**指名放行这一条已知阻塞**，其余照旧算「最严重的一种」。
+                        //   ⇒ 网格修好、J 可判之后，把这段删掉即可（那时它本来就不会红）。
+                        var known = failed.Where(c => c.Name.Contains("法兰 J")).ToArray();
+                        var other = failed.Where(c => !c.Name.Contains("法兰 J")).ToArray();
+                        if (known.Length > 0)
+                            Console.WriteLine("      · 法兰 J **判不了**（C1 的已知阻塞：孔那一带网格未细化，"
+                                            + "这个数是下界且未收敛）—— 修好网格前它会一直在");
+                        if (other.Length > 0)
+                        {
+                            bad++;
+                            Console.WriteLine("      ✗ **设计记录自己不过判据** —— 这是最严重的一种：");
+                            foreach (var c in other)
+                                Console.WriteLine($"         {c.Name} {c.Actual:0.000} / {c.Limit:0.000}　{c.Where}");
+                        }
                     }
                     void Chk(string nm, double got, double want, double tol, string unit)
                     {
