@@ -402,34 +402,59 @@ public static class FlangeAutoSizer
                 res.Iterations = it;
                 return res;
             }
-            // ★★★★★ **熔化不是「算不出来」，是「太薄了」**（2026-09-07，用户选 1）。
+            // ★★★★★ **熔化 =「这一处过流截面不够」，不是「太薄了」**（2026-09-07 用户当场纠正）。
             //
-            //   A（熔化的解不算解）落地后，本器从偏薄起点出发**必然路过**熔化状态，
-            //   于是第一次求解就 Ok=false ⇒ 偏差 NaN ⇒ 一步都动不了
-            //   （自检 E 段实测：入口峰值 3323 °C，升级 1 次后落点纹丝不动）。
+            //   已定口径（用户 2026-09-03，已落在 SolveByLevel 921 行、门 OverheatDrivesSizingTests）：
+            //     「过热（严重烧毁）表示电流密度过大，应该加大电流的**截面积**、降电流密度，
+            //       所以可能是**增厚或增宽**（这时就需透过搜形状／搜厚度来解决）。」
+            //   截面积 A = 厚 × 宽，**厚只是其中一个因子**。
             //
-            //   但熔化本来就**不该**当成「一个很差的解」：熔点之上电阻率拟合已反号，
-            //   那些数是垃圾，读它才是错的。它携带的唯一可信信息是**方向**：
-            //   这一处截面太小、发热下不来 ⇒ **加厚**。
-            //   ⇒ 按下界一步步顶上去，直到走出熔化区；顶到上界还熔 ⇒ 那才是真无解。
+            //   我第一版在这里写成「各片加厚 1.5 倍」，两处都违背上面那一条：
+            //     ① 整片乘 ⇒ 替不热的片也花铂（违反「能用且铂最省」）。
+            //        只有**最热那一片**的截面不够，就只加那一片 ——
+            //        与 SolveByLevel「哪一级热就加哪一级」同一条口径，只是本层最小粒度是片。
+            //     ② 顶到厚度上界就写「这个几何在此电流下无解（是证明）」——
+            //        厚度到顶只证明**厚度**救不了，**宽度这根旋钮一次都没动过**。
+            //        那正是 2026-09-03 用户叫停的「一句话判死刑结案」。
+            //
+            //   ⚠ 本层（Solve，解析几何路）**只有厚度这一根旋钮** ——
+            //     宽／形状由调用方的 makePlate 定死，opt 里也只有 Min/MaxThickMm。
+            //     所以这里能做的只有「加厚最热那一片」；加不动时**必须如实交棒**，
+            //     指向真有宽度旋钮的那两处（SolveByLevel 的搜形状 / Solver 的槽·孔·环宽），
+            //     而不是替它们下「无解」的结论。
             if (!lr.Ok && lr.OverMelt)
             {
-                bool moved = false;
-                for (int q = 0; q < t.Length; q++)
+                // 只加**最热那一片**（本层没有「级」，最小粒度就是片）
+                int jh = -1; double hot = double.NegativeInfinity;
+                for (int q = 0; q < lr.Flanges.Length && q < t.Length; q++)
+                    if (lr.Flanges[q].TMaxC > hot) { hot = lr.Flanges[q].TMaxC; jh = q; }
+
+                if (jh >= 0)
                 {
-                    double next = Math.Min(opt.MaxThickMm, t[q] * 1.5);
-                    if (next > t[q] + HalfQuantMm) { t[q] = next; moved = true; }
+                    double next = Math.Min(opt.MaxThickMm, t[jh] * 1.5);
+                    if (next > t[jh] + HalfQuantMm)
+                    {
+                        t[jh] = next;
+                        res.Message = $"第 {it + 1} 轮**熔化**（第 {jh + 1} 片 {hot:0} °C）⇒ 该处过流截面不够，"
+                                    + $"**只加这一片**的厚度到 {next:0.00} mm 再试"
+                                    + "（截面 A = 厚 × 宽，本层只有「厚」这一根）";
+                        continue;
+                    }
                 }
-                if (moved)
-                {
-                    res.Message = $"第 {it + 1} 轮**熔化** ⇒ 判为「太薄」，各片加厚 1.5 倍再试"
-                                + $"（{lr.Message}）";
-                    continue;
-                }
-                res.Message = "**顶到厚度上界仍熔化** ⇒ 这个几何在此电流下无解（不是搜索失败，是证明）："
-                            + lr.Message;
+
+                // 厚度到顶 —— 这**只**证明厚度救不了，不是无解。
+                res.Terminal = true;
+                res.TerminalWhy =
+                    (jh >= 0 ? $"第 {jh + 1} 片 {hot:0} °C 熔化，其厚度已在工艺上界 {opt.MaxThickMm:0.00} mm 上"
+                             : $"熔化，各片厚度均已在工艺上界 {opt.MaxThickMm:0.00} mm 上")
+                  + " ⇒ **加厚这根旋钮到顶了**。截面 A = 厚 × 宽，"
+                  + "下一根是**增宽过流带**（半径分布 / 舌半宽 / 少挖孔）—— "
+                  + "本层没有那根旋钮，要走「◇ 搜形状」或求解器的槽·孔·环宽。"
+                  + "**不是无解**：宽度一次都还没动过。";
+                res.Message = res.TerminalWhy + "（" + lr.Message + "）";
                 res.Iterations = it; return res;
             }
+
             if (!lr.Ok) { res.Message = lr.Message; res.Iterations = it; return res; }
             baseA = lc.BaselineRootC;                       // 基线只随管几何变，可无条件复用
             if (lr.Converged) warmA = lc.WarmStart;         // 抽热/端温只在收敛时才是不动点
