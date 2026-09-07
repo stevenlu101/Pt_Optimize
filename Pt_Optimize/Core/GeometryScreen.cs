@@ -63,6 +63,32 @@ public static class GeometryScreen
                   : p.HoleRadiusMm + Math.Max(p.WeldFilletLegMm, 0);
 
     /// <summary>
+    /// ★★★★★ **舌片得从圆盘上长出来：盘半径 ≥ 舌半宽**（2026-09-06 用户看图抓到）。
+    ///
+    /// 盘R35 &lt; 舌半宽40 时零件退化成一块开了孔的矩形板：解析侧 <c>HalfWidth(x)</c>
+    /// 恒返回舌半宽（圆盘从不进入计算），出图侧 <c>BodyOutline</c> 的分支判据
+    /// <c>discR &gt; w</c> 为假、走错分支 —— 两边各自都自洽地算/画了两个不同的错东西。
+    ///
+    /// ⚠⚠ **不许把它并进 <see cref="MinDiscRadiusMm(FlangePlate)"/>**（2026-09-07 督导 S⑤ 抓到）。
+    ///   我第一版就是那么干的，理由是「判据只有一个来源」。错在：⑥ 的含义是
+    ///   **「盖得住管孔＋焊脚」**，并进去之后处方会说「⑥ 盖不住，要 30」，
+    ///   而真正咬住的是舌宽（管孔那条只要 28.25）—— **把两个不同的理由印成同一个原因**，
+    ///   正是最高准则禁止的「搞混」。约束是真的，位置错了。
+    ///   ⇒ 各判各的，各说各的处方。
+    /// </summary>
+    public static double MinDiscRadiusForTabMm(FlangePlate p) =>
+        p is null ? throw new ArgumentNullException(nameof(p))
+                  : Math.Max(p.TabEndHalfWidthMm, 0);
+
+    public static double MinDiscRadiusForTabMm(System.Collections.Generic.IReadOnlyList<FlangePlate> plates)
+    {
+        if (plates is null || plates.Count == 0) return double.NaN;
+        double need = double.NegativeInfinity;
+        foreach (var q in plates) need = Math.Max(need, MinDiscRadiusForTabMm(q));
+        return need;
+    }
+
+    /// <summary>
     /// 整组片里**最严的那一片**说了算 —— 与 <see cref="Judge"/> 取 worst 同口径。
     ///
     /// ⚠ 口径声明：各片盘半径相同时（解析路一律如此，同取 <c>DesignSpec.DiscRadiusMm</c>），

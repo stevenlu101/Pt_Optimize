@@ -1538,9 +1538,22 @@ static class Walk
 
         // ── 二、点「自动定厚」（这一步就是命令行的 --solve）
         Console.WriteLine("  ⇒ 点「自动定厚」…（分钟级）");
+        // ★★★★★ **预算按实测重定，并且一定要把耗时打出来**（2026-09-06）。
+        //
+        //   旧值 3,600,000 ms（60 分钟）是随手写的，而实测（deliverable/对帐超时_单次成本.txt）：
+        //       单次整场解 58.7 s　×　整趟 72 次场解 = **70 分钟，仅导航网格那一遍**
+        //   ⇒ 再加细网格第二遍，60 分钟**从来就不够**。
+        //     于是「★ 超时」这四个字连着几次拦下来的是预算，不是退化 ——
+        //     而它把「答案对不对」整个盖住了：轨迹实测答案是 3480.7 g，**逐字没变**。
+        //
+        //   ⚠ 绿的时候也要打耗时。不打，下一次逼近预算边缘时同样只会看到「超时」两个字，
+        //     照样分不清是慢了还是错了。
+        long t0Auto = Environment.TickCount64;
         Call(line, "RunAsync", true, false);
-        bool fin = Wait(() => F(line, "_cts") is null, 3_600_000);
-        OK("自动定厚在预算内跑完", fin, fin ? "" : "★ 超时");
+        bool fin = Wait(() => F(line, "_cts") is null, 10_800_000);
+        double minAuto = (Environment.TickCount64 - t0Auto) / 60000.0;
+        OK("自动定厚在预算内跑完", fin,
+           fin ? $"{minAuto:0.0} 分钟" : $"★ 超时（跑了 {minAuto:0.0} 分钟，预算 180）");
         if (!fin) return _bad;
 
         // ── 三、比数

@@ -153,6 +153,9 @@ public sealed class LineDesignPage : TabPage
     ///   工程师图上本来就有孔，APP 要回答的是「**这个孔该多大**」。
     /// </summary>
     private NumericUpDown[] _holeR = System.Array.Empty<NumericUpDown>();
+
+    /// <summary>孔的顺流拉长比（逐片；1 = 圆）。实测 3:1 顺流时峰值电流密度 -10.6 %。</summary>
+    private NumericUpDown[] _holeAsp = System.Array.Empty<NumericUpDown>();
     // ⚠ 文字要短到**放得下**（2026-08-20 实测截图里这两行断在半个词上：
     //   「解析形状（圆盘 + 梯形舌片，程」「Rhino .3dm 文件（任意形状：阶」）。
     //   它们已经是 AutoSize + 跨两列了 —— 截断的原因是文字本身比左栏还宽，
@@ -275,6 +278,8 @@ public sealed class LineDesignPage : TabPage
         public double SizerSlotDeg;
         /// <summary>舌板开孔孔径（2026-09-05）。同 SizerSlotDeg：参与判据，不进快照就是假新鲜。</summary>
         public double SizerHoleR;
+        /// <summary>孔的顺流拉长比 —— 同上：参与判据、没有独立快照就是假新鲜。</summary>
+        public double SizerHoleAsp;
         /// <summary>2026-08-28 补：这三个也进快照 —— 它们现在是**输入**，改了就该让上一次的解不新鲜。</summary>
         public double Fillet, RingW, ClampLen;
         /// <summary>
@@ -322,6 +327,10 @@ public sealed class LineDesignPage : TabPage
         _suppressAuto = true;
         try
         {
+            // 9 根旋钮都从这里回控件 —— 缺一根就是「解出来的和画出来的不是同一件」。
+            for (int j = 0; j < _tPlate.Length && j < d.TabThickMm.Length; j++)
+                _tPlate[j].Value = Math.Clamp((decimal)d.TabThickMm[j],
+                                              _tPlate[j].Minimum, _tPlate[j].Maximum);
             for (int j = 0; j < _tabIns.Length && j < d.TabInsulMm.Length; j++)
                 _tabIns[j].Value = Math.Clamp((decimal)d.TabInsulMm[j], _tabIns[j].Minimum, _tabIns[j].Maximum);
             for (int j = 0; j < _ringMul.Length && j < d.RingMul.Length; j++)
@@ -336,6 +345,10 @@ public sealed class LineDesignPage : TabPage
             bool anyT2 = false;
             for (int j = 0; j < 4 && j < d.RingMul2.Length; j++)
                 anyT2 |= !double.IsNaN(d.RingMul2[j]);
+            // ★ r₁/r₂ 与 t₁/t₂ 是**成对**的旋钮（用户 2026-09-05「自由度成对」）——
+            //   同一个勾控制这四个，只回填一半等于把另一半丢掉。
+            for (int j = 0; j < 4 && j < d.RingW1Mm.Length; j++)
+                anyT2 |= !double.IsNaN(d.RingW1Mm[j]) || !double.IsNaN(d.RingW2Mm[j]);
             if (anyT2)
             {
                 _ringShapeCustom.Checked = true;
@@ -343,7 +356,39 @@ public sealed class LineDesignPage : TabPage
                     if (!double.IsNaN(d.RingMul2[j]))
                         _ringT2[j].Value = Math.Clamp((decimal)d.RingMul2[j],
                                                       _ringT2[j].Minimum, _ringT2[j].Maximum);
+                for (int j = 0; j < 4 && j < d.RingW1Mm.Length && j < _ringR1.Length; j++)
+                {
+                    if (!double.IsNaN(d.RingW1Mm[j]))
+                        _ringR1[j].Value = Math.Clamp((decimal)d.RingW1Mm[j],
+                                                      _ringR1[j].Minimum, _ringR1[j].Maximum);
+                    if (!double.IsNaN(d.RingW2Mm[j]))
+                        _ringR2[j].Value = Math.Clamp((decimal)d.RingW2Mm[j],
+                                                      _ringR2[j].Minimum, _ringR2[j].Maximum);
+                }
             }
+
+            // ★★★★★ **圆盘背侧减重槽 / 舌板开孔 / 孔的顺流拉长比也要回填**（2026-09-05）。
+            //
+            //   这三根是 Solver.Allocation 里治「法兰增量温降」「圆盘超温」的现役旋钮，
+            //   而本方法此前**一个都没写回**。后果是静默的，而且要到出图才看得见：
+            //
+            //     求解器解出 圆盘槽 120°／孔径 36 → 控件仍是 0／0
+            //       → PageToDesignSpec 读控件 → 导出的 .3dm **既没有槽也没有孔**
+            //       → 工程师看到的是一张原始几何，却以为那就是优化结果
+            //
+            //   本仓库为「传进来的旋钮值被丢弃」这一族栽过多次（t₂ 是上一次），
+            //   这里是同一个形状 —— 赋了值 ≠ 用它的人读得到。
+            //   ⇒ 门：ExportShowsSolvedKnobsTests。
+            for (int j = 0; j < _slotDeg.Length && j < d.SlotSpanDeg.Length; j++)
+                _slotDeg[j].Value = Math.Clamp((decimal)d.SlotSpanDeg[j],
+                                               _slotDeg[j].Minimum, _slotDeg[j].Maximum);
+            for (int j = 0; j < _holeR.Length && j < d.TabHoleRMm.Length; j++)
+                _holeR[j].Value = Math.Clamp((decimal)d.TabHoleRMm[j],
+                                             _holeR[j].Minimum, _holeR[j].Maximum);
+            for (int j = 0; j < _holeAsp.Length && j < d.TabHoleAspect.Length; j++)
+                if (d.TabHoleAspect[j] > 0)
+                    _holeAsp[j].Value = Math.Clamp((decimal)d.TabHoleAspect[j],
+                                                   _holeAsp[j].Minimum, _holeAsp[j].Maximum);
         }
         finally { _suppressAuto = false; }
         SyncRingShape();
@@ -409,6 +454,7 @@ public sealed class LineDesignPage : TabPage
         SizerRingMul = _ringMul.Average(n => (double)n.Value),
         SizerSlotDeg = _slotDeg.Length > 0 ? _slotDeg.Max(n => (double)n.Value) : 0,
         SizerHoleR = _holeR.Length > 0 ? _holeR.Max(n => (double)n.Value) : 0,
+        SizerHoleAsp = _holeAsp.Length > 0 ? _holeAsp.Max(n => (double)n.Value) : 1,
         RingCustom = _ringShapeCustom.Checked,
         RingR1 = _ringR1.Average(n => (double)n.Value),
         RingR2 = _ringR2.Average(n => (double)n.Value),
@@ -1231,6 +1277,9 @@ public sealed class LineDesignPage : TabPage
 
     /// <summary>舌板开孔孔径（半径 mm）。0 = 无孔 —— 开箱默认，行为与从前逐位相同。</summary>
     private static NumericUpDown Hole() => Num(0m, 0m, 30m, 0.5m, 2);
+
+    /// <summary>孔的顺流拉长比。1 = 圆；>1 = 顺着电流拉长的椭圆。</summary>
+    private static NumericUpDown HoleAsp() => Num(1m, 1m, 3m, 0.1m, 1);
 
     private static NumericUpDown Num(decimal v, decimal lo, decimal hi, decimal inc, int dec)
     {
@@ -2414,6 +2463,8 @@ public sealed class LineDesignPage : TabPage
                 d.SlotSpanDeg[i] = (double)_slotDeg[i].Value;
             if (i < d.TabHoleRMm.Length && i < _holeR.Length)
                 d.TabHoleRMm[i] = (double)_holeR[i].Value;
+            if (i < d.TabHoleAspect.Length && i < _holeAsp.Length)
+                d.TabHoleAspect[i] = (double)_holeAsp[i].Value;
         }
         // 圆盘保温：本页**有**控件，接过去（BuildCase 里原来写死 20，已改成读字段）
         d.FlangeInsulated = _flIns.SelectedIndex != 0;
@@ -3522,6 +3573,7 @@ public sealed class LineDesignPage : TabPage
         var v1 = Keep(_ringR1, 1.0); var v2 = Keep(_ringR2, 6.0); var vT2 = Keep(_ringT2, 1.0);
         var vS = Keep(_slotDeg, 0.0);      // 圆盘背侧减重槽张角，0 = 不开槽
         var vH = Keep(_holeR, 0.0);        // 舌板开孔孔径，0 = 无孔
+        var vA = Keep(_holeAsp, 1.0);      // 孔的顺流拉长比，1 = 圆
 
         // ★★★★★ **重建期间必须关掉自动重算**（2026-09-02 走查超时抓到）。
         //
@@ -3548,6 +3600,7 @@ public sealed class LineDesignPage : TabPage
         _ringT2  = Enumerable.Range(0, n).Select(i => Ring()).ToArray();
         _slotDeg = Enumerable.Range(0, n).Select(i => Slot()).ToArray();
         _holeR   = Enumerable.Range(0, n).Select(i => Hole()).ToArray();
+        _holeAsp = Enumerable.Range(0, n).Select(i => HoleAsp()).ToArray();
         for (int i = 0; i < n; i++)
         {
             _tabIns[i].Value  = (decimal)Math.Clamp(vI[i],  (double)_tabIns[i].Minimum,  (double)_tabIns[i].Maximum);
@@ -3680,6 +3733,15 @@ public sealed class LineDesignPage : TabPage
           + Environment.NewLine
           + "⚠ 上界闭式：孔缘到舌边要留够桥宽。";
         for (int i = 0; i < n; i++) Row($"{names[i]} 孔", _holeR[i], tipHole);
+        string tipAsp =
+            "1 = 圆孔；>1 = **顺着电流拉长**的椭圆（长轴顺流）。"
+            + Environment.NewLine
+            + "等面积实测：3:1 顺流 ⇒ 峰值电流密度 **-10.6 %** —— 挖了料，电流反而更顺。"
+            + Environment.NewLine
+            + "⚠ 横着挡电流则相反：同样面积把峰值顶高 29 %。所以只让它顺流拉长，不给转角。"
+            + Environment.NewLine
+            + "★ 判据「圆盘区最高温」不过时，求解器会**自己调它**，与舌保温、环倍率同排比价。";
+        for (int i = 0; i < n; i++) Row($"{names[i]} 孔拉长", _holeAsp[i], tipAsp);
 
         _plateBox.ResumeLayout();
         }
@@ -4034,6 +4096,7 @@ public sealed class LineDesignPage : TabPage
                 // ★ 程序自己开了槽就必须说 —— 不说等于静默改了工程师的零件。
                 ("圆盘背侧减重槽", b0.SizerSlotDeg, now.SizerSlotDeg, "°"),
                 ("舌板开孔孔径", b0.SizerHoleR, now.SizerHoleR, "mm"),
+                ("舌板开孔顺流拉长比", b0.SizerHoleAsp, now.SizerHoleAsp, ""),
             };
             var moved = rows.Where(x => !double.IsNaN(x.A) && !double.IsNaN(x.B)
                                         && Math.Abs(x.A - x.B) > 1e-9).ToArray();

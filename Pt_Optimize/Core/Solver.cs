@@ -111,7 +111,47 @@ public static class Solver
     ///   三段厚度全相等、**台阶不存在** ⇒ 挪它们的半径**结构性无效**（不是「不敏感」）。
     ///   要让它们有意义，得先有台阶 —— 而造台阶正是 t₂ 干的事。
     /// </summary>
-    public enum Knob { Thick, Insul, Ring, RingT2, RingR1, RingR2, SlotSpan, TabHoleR }
+    public enum Knob { Thick, Insul, Ring, RingT2, RingR1, RingR2, SlotSpan, TabHoleR, TabHoleAspect }
+
+    /// <summary>
+    /// 一个候选抬到上界之后量到的三件事。**纯数据**，不含任何几何。
+    /// </summary>
+    /// <param name="DSlack">Δ裕度：这条判据变好了多少（&gt;0 才有资格）</param>
+    /// <param name="DMass">Δ铂重 g：**可以是负的** —— 挖料旋钮会省铂</param>
+    /// <param name="Closes">抬到上界能不能把这条判据转正</param>
+    public readonly record struct Cand(double DSlack, double DMass, bool Closes)
+    {
+        /// <summary>不花铂（舌保温实测 ≡ 0），或者**还省铂**（圆盘槽、舌板孔）。</summary>
+        public bool Gratis => double.IsNaN(DMass) || DMass < 1e-6;
+
+        /// <summary>每克铂买到多少裕度。**只对花铂的候选有意义** —— 分母为负时它是反的。</summary>
+        public double Eff => Gratis ? double.PositiveInfinity : DSlack / DMass;
+    }
+
+    /// <summary>
+    /// ★★★★★ **两个候选谁更该被抬** —— 抽成纯函数，因为它曾经错得很贵。
+    ///
+    /// 原来只有两级「补得上优先／同级按 Δ裕度÷Δ铂重」，而后一句对**省铂**的旋钮
+    /// 符号是反的（分母为负）⇒ **省得越多排得越后**：
+    /// <code>
+    ///   圆盘槽 27–40 mm 180°   抽热 −47.6 %、体积 −6.4 %  ⇒ 47.6/(−6.4) = −7.44
+    ///   舌片圆孔 R10           抽热 − 0.5 %、体积 −1.3 %  ⇒  0.5/(−1.3) = −0.38
+    ///                                                       −0.38 > −7.44 ⇒ **孔赢**
+    /// </code>
+    /// 实测这两个差 90 倍（deliverable/按场开槽_效果.txt），
+    /// 后果就是交付件上「舌片一个大洞、圆盘一条槽都没有」。
+    ///
+    /// 现在是三级：
+    ///   ① **补得上**的优先（补不上的一律按买得最多，让这一轮有进展）
+    ///   ② 同级里 **不花铂／还省铂**的优先 —— 白捡的没有对手，它们之间按买得多少排
+    ///   ③ 都要花铂时，才轮到「每克铂买多少」
+    /// </summary>
+    public static bool Better(Cand a, Cand b) =>
+          a.Closes != b.Closes ? a.Closes
+        : !a.Closes            ? a.DSlack > b.DSlack
+        : a.Gratis != b.Gratis ? a.Gratis
+        : a.Gratis             ? a.DSlack > b.DSlack
+                               : a.Eff > b.Eff;
 
     public static string KnobName(Knob k) => k switch
     {
@@ -123,6 +163,7 @@ public static class Solver
         Knob.RingR2 => "外级半径 r₂",
         Knob.SlotSpan => "圆盘背侧减重槽张角",
         Knob.TabHoleR => "舌板开孔孔径",
+        Knob.TabHoleAspect => "舌板开孔顺流拉长比",
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 
@@ -207,7 +248,14 @@ public static class Solver
         //     但那是**实测结论**，不是关闭要求的理由：工程师图上本来就有孔，
         //     APP 要回答的是「这个孔该多大」。划不划算由 ChooseKnob 的
         //     **每克铂比价**当场决定，不由我预先替它删掉候选。
-        (LineResult.Key.FlangeDip, new[] { Knob.Insul, Knob.SlotSpan, Knob.TabHoleR }),               // ③  对舌保温递增（实测 +570…+104 K/mm，且免费）
+        // ★★★★ **孔拉长归这一排，不是 ②″**（2026-09-05 实测改回来的）。
+        //   我原来放 ②″，理由写的是「顺流拉长实测同时降峰值电流密度（3:1 时 −10.6 %）」——
+        //   **那个理由是错的**：−10.6 % 说的是**舌片的电流密度**，不是圆盘区最高温。
+        //   实测代价（deliverable/优化后出图.txt）：抬到底把 ②″ 从 −81.30 拖到 −1293.74，
+        //   方向完全相反 ⇒ 前提自检当场淘汰它，于是这根旋钮**在任何地方都轮不到**。
+        //   正确的归属：孔面积 = π·R²·拉长比 ⇒ 拉长就是**顺着电流方向把孔加大**，
+        //   挖掉的料变多 ⇒ 治的是 ③（抽热），与孔径同排；而且同样面积下它比加大 R 更省 J。
+        (LineResult.Key.FlangeDip, new[] { Knob.Insul, Knob.SlotSpan, Knob.TabHoleR, Knob.TabHoleAspect }),               // ③  对舌保温递增（实测 +570…+104 K/mm，且免费）
         (LineResult.Key.DiscTemp,  new[] { Knob.Insul, Knob.Ring, Knob.RingR1 }),    // ②″ 实测只有舌保温治得住；环倍率留作换形状时的候选
     };
 
@@ -287,6 +335,22 @@ public static class Solver
                       ? new ThrottledProgress(progress, 20, $"     · {o.FineMm:0.000} mm ")
                       : null;
             Log($"── {tag}" + (o.FineMm > 0 ? $"（细网格 {o.FineMm:0.000} mm）" : "（导航网格）"));
+
+            // ★★★★★ **「补不上但留着」要能续轮，组合才攒得出来**（2026-09-05）。
+            //
+            //   只把值留下来还不够 —— 留完就 `break`，等于全程只动了**一根**旋钮。
+            //   实测（deliverable/优化后出图_修前.txt → 优化后出图.txt）：
+            //     修前 全退回 ⇒ 11582 g，圆盘槽 0°、孔径 0.0（原始几何）
+            //     只留不续轮 ⇒ 11168 g，**只有片0 拿到孔径 36**，其余三片一根没动
+            //   ⇒ 差的正是「下一轮换根旋钮接着补」这一步。
+            //
+            //   终止保证（两道，缺一不可）：
+            //     ① 缺口必须**真的比上一轮小**，否则当场停 —— 防原地打转
+            //     ② 续轮次数封顶 MaxPartialRounds —— 防「每轮只小一点点」磨到天荒地老
+            double prevGap = double.PositiveInfinity;
+            bool   partialLast = false;
+            int    partialUsed = 0;
+
             for (int round = 1; round <= o.MaxRounds; round++)
             {
                 cancel.ThrowIfCancellationRequested();
@@ -294,8 +358,23 @@ public static class Solver
                 if (last is null) { res.StopWhy = "场解不收敛，判不了"; break; }
 
                 double mass = MassOf(last);
+                // ★★★★★ **九根旋钮全印，一根都不许省**（2026-09-07 督导 S8）。
+                //
+                //   在此之前表头只印 板厚／舌保温／环倍率 三根 ⇒
+                //   **一份被污染的 W08（带 R32.71×3 巨孔 + 120° 槽）在轨迹上和干净的长得一模一样。**
+                //   2026-09-06 那一整轮弯路（3480.7 → 3104.4「退化」、裕度「差 2.03 倍」、
+                //   裕度爆到 1e102）根源都是它：**看不见的旋钮 = 看不见的几何**。
+                //   最后是靠文件时间戳才把它钉在 Clone 漏拷上 —— 表头补齐，一眼就能看出来。
+                //
+                //   ⚠ 轨迹是求解过程**唯一**的可回溯记录；它印不全，每一轮的起点就无从复核。
                 Log($"第 {round,2} 轮　合计 {mass:0} g" +
-                    $"　板厚 {Join(d.TabThickMm)}　舌保温 {Join(d.TabInsulMm)}　环倍率 {Join(d.RingMul)}");
+                    $"　板厚 {Join(d.TabThickMm)}　舌保温 {Join(d.TabInsulMm)}" +
+                    $"　环倍率t₁ {Join(d.RingMul)}　外级t₂ {JoinF(np, q => d.RingMulOuter(q))}" +
+                    $"　内级r₁ {JoinW(d.RingW1Mm, d.RingWidthMm)}" +
+                    $"　外级r₂ {JoinW(d.RingW2Mm, 2 * d.RingWidthMm)}" +
+                    $"　圆盘槽 {JoinF(np, q => q < d.SlotSpanDeg.Length ? d.SlotSpanDeg[q] : 0)}°" +
+                    $"　孔径 {JoinF(np, q => q < d.TabHoleRMm.Length ? d.TabHoleRMm[q] : 0)}" +
+                    $"　孔拉长 {JoinF(np, q => q < d.TabHoleAspect.Length ? d.TabHoleAspect[q] : 1)}");
 
                 // ── 逐片逐条列违反
                 var todo = new List<(int J, Knob[] Knobs, string Key)>();
@@ -319,6 +398,27 @@ public static class Solver
                                 + (knobs.Length > 1 ? "（抬哪个由前提自检当场实测决定）" : ""));
                         }
                     }
+
+                // ★ 续轮的闸：上一轮是「补不上但留着」收的场 ⇒ 这一轮必须看到缺口变小
+                if (partialLast)
+                {
+                    double gapNow = todo.Sum(t => -PlateSlack(last, t.Key, t.J, dipMax, discMax));
+                    if (!(gapNow < prevGap - 1e-6))
+                    {
+                        res.HitBound = true;
+                        res.StopWhy += $"；又抬了一根，**缺口没再变小**（{prevGap:0.000} → {gapNow:0.000}）⇒ 停";
+                        Log("  ✗ " + res.StopWhy);
+                        return false;
+                    }
+                    Log($"     · 上一轮补不上但缺口 {prevGap:0.000} → {gapNow:0.000} ⇒ "
+                      + $"续第 {partialUsed}/{o.MaxPartialRounds} 轮，换根旋钮接着补");
+                    prevGap = gapNow;
+                    partialLast = false;
+                }
+                else if (todo.Count > 0)
+                {
+                    prevGap = todo.Sum(t => -PlateSlack(last, t.Key, t.J, dipMax, discMax));
+                }
 
                 if (todo.Count == 0)
                 {
@@ -348,7 +448,15 @@ public static class Solver
                     break;
                 }
 
-                bool bad = false;
+                // ★★★★★ **一片卡住，不许把其余几片一起拖下水**（2026-09-05 用户：
+                //   「4 组法兰等厚…完全没有优化」）。
+                //
+                //   原来 todo 里任何一条失败就 `break` 整个循环 ⇒ 片0 一卡，
+                //   片1/2/3 **这一轮一次都没被走到**，永远停在开箱值。
+                //   而四片承的电流与热边界本来就不同，**本该长得不一样**。
+                //   ⇒ 记下失败、接着做完其余片，**收场留到这一轮结束**。
+                bool bad = false, partial = false, anyOk = false;
+                string? firstBadWhy = null;
                 foreach (var (j, knobs, key) in todo)
                 {
                     // ★★★ **候选之间的取舍，当场实测决定**（2026-08-30）。
@@ -367,19 +475,68 @@ public static class Solver
                     var pick = ChooseKnob(d, baseIn, o, j, knobs, key, dipMax, discMax, res, Log, cancel, inner);
                     if (pick.Knob is null)
                     {
-                        res.StopWhy = pick.Why;
-                        res.HitBound = true; Log("  ✗ " + res.StopWhy); bad = true; break;
+                        firstBadWhy ??= pick.Why;
+                        bad = true; Log("  ✗ " + pick.Why + "　⇒ 这一条治不了，**先把其余片做完**再收场");
+                        continue;
                     }
-                    var (ok, why) = RaiseUntil(d, baseIn, o, j, pick.Knob.Value, key,
-                                               dipMax, discMax, res, Log, cancel, inner,
-                                               pick.Before, pick.After);
+                    var (ok, why, kept) = RaiseUntil(d, baseIn, o, j, pick.Knob.Value, key,
+                                                     dipMax, discMax, res, Log, cancel, inner,
+                                                     pick.Before, pick.After);
                     if (!ok)
                     {
-                        res.StopWhy = why;
-                        res.HitBound = true; Log("  ✗ " + res.StopWhy); bad = true; break;
+                        Log("  ✗ " + why);
+                        // ★ 补不上、但值**留下来了** ⇒ 记一笔「还有进展」，这一轮照做其余片。
+                        if (kept) { partial = true; continue; }
+                        firstBadWhy ??= why;
+                        bad = true;
+                        Log("     ⇒ 这一条治不了，**先把其余片做完**再收场");
+                        continue;
                     }
+                    anyOk = true;        // ★ 这一轮有旋钮**正常抬起来了**
                 }
-                if (bad) break;
+
+                // ★ 收场统一放到**整轮做完之后** —— 每一片都拿到过自己的机会。
+                if (bad)
+                {
+                    res.HitBound = true;
+                    res.StopWhy = firstBadWhy ?? res.StopWhy;
+                    Log("  ✗ " + res.StopWhy);
+                    break;
+                }
+
+                // ★★★★★ **续轮预算只在「整轮一根都没正常抬起来」时才花**（2026-09-06 修）。
+                //
+                //   头一版写成「只要有一根是『补不上但留着』就续轮」，代价是实测出来的：
+                //   `UiWiring.exe --reconcile 0.8 3480.7` 从「跑得完、3480.7 g 全过」
+                //   变成 **60 分钟预算跑满超时** —— 连答案都没跑到，更谈不上对不对。
+                //
+                //   原因：0.8 档是**解得出来的**构型，每一轮本来就有旋钮正常抬起来；
+                //   只要四片里任何一片、任何一条判据处在「补不上但还在变好」的状态，
+                //   就白白多烧一整遍场解，而下一轮那些正常抬起来的旋钮**本来就会**
+                //   把缺口带小 —— 续轮在这里纯属重复劳动。
+                //
+                //   ⇒ 续轮这套机制是给「**整轮一根都抬不动**」那种僵局准备的（Pt_Heater1
+                //     那种 ③ = 427 K / 限 10 的构型）。有正常进展时，走普通下一轮就够了。
+                if (anyOk)
+                {
+                    partialLast = false;        // 有正常进展 ⇒ 普通下一轮，不动续轮预算
+                    continue;
+                }
+                if (partial && partialUsed < o.MaxPartialRounds)
+                {
+                    partialUsed++;              // 全卡住、但有旋钮留着变好了 ⇒ 换根再补
+                    partialLast = true;
+                    continue;
+                }
+                if (partial)
+                {
+                    res.HitBound = true;
+                    res.StopWhy = $"整轮没有一根旋钮抬得动，只有「补不上但留着」的，"
+                                + $"且已续满 {o.MaxPartialRounds} 轮（每轮一整遍场解）⇒ 停";
+                    Log("  ✗ " + res.StopWhy);
+                    break;
+                }
+                partialLast = false;
             }
             return res.Feasible;
         }
@@ -471,8 +628,9 @@ public static class Solver
         //   都补不上时取**买得最多**的那个（让这一轮有进展，下一轮缺口变小，
         //   便宜的旋钮那时才轮得到 —— 实测正是如此：第 1 轮板厚扛，第 2 轮 t₂ 补刀）。
         Knob? best = null;
-        double bestEff = double.NegativeInfinity;
+        double bestMass = double.PositiveInfinity;   // 花铂花到最多 ⇒ 任何候选都赢得了它
         bool bestCloses = false;
+        bool bestGratis = false;
         double bestGain = double.NegativeInfinity;
         double bestAfter = double.NaN;
         var lines = new List<string>();
@@ -481,13 +639,81 @@ public static class Solver
         foreach (var k in knobs)
         {
             double lo = Get(d, k, j), hi = HiOfFor(d, baseIn, opt, k, j);
-            if (lo >= hi - 1e-12) { fails.Add($"{KnobName(k)} 已在上界"); continue; }
+            // ★★★★★ **可证明空转的候选，直接跳过 —— 不花场解，也不改答案**（2026-09-06）。
+            //
+            //   代价是实测出来的：0.8 档对帐从「跑得完、3480.7 g」变成 **60 分钟跑满超时**。
+            //   查历史（3ad2403，最后一次绿）：
+            //       FlangeDip → { 舌保温 }                      ← **1 个候选**
+            //       现在      → { 舌保温, 圆盘槽, 孔径, 孔拉长 }  ← 4 个
+            //   而 ChooseKnob 只有一个候选时**直接短路、零场解**（knobs.Length == 1）；
+            //   四个候选就要 1 + 4 次整场解，**每片每轮**。四片 × 细网格 ⇒ 那 60 分钟。
+            //
+            //   ⚠ 不能用「首个免费候选就收工」来省 —— Better 的第二级在免费候选之间
+            //     **按 Δ裕度排**，早退会挑到另一个旋钮，**答案会变**。
+            //   ⇒ 只跳过那些**在数学上不可能有任何作用**的：跳了以后每一步逐位相同。
+            string? noop = k switch
+            {
+                // 孔都没有，拉长比作用在空集上 —— HolesOf 在 r ≤ 0.05 时返回空数组。
+                //   实测印证（R60 那一跑）：抬到底 −118.877 → −118.877，**一位没变**。
+                Knob.TabHoleAspect when !(Get(d, Knob.TabHoleR, j) > 0.05)
+                    => "还没有孔，拉长比作用在空集上",
+                // 倍率 = 1 ⇒ 这一级是平的，半径挪到哪儿都是同一块板。
+                //   原来要花一次场解才发现，而这是闭式可判的。
+                Knob.RingR1 when Math.Abs(Get(d, Knob.Ring, j) - 1.0) < 1e-9
+                    => "内级还是**平的**（倍率 = 1），没有台阶可挪；先让倍率造出台阶",
+                Knob.RingR2 when Math.Abs(Get(d, Knob.RingT2, j) - 1.0) < 1e-9
+                    => "外级还是**平的**（倍率 = 1），没有台阶可挪；先让倍率造出台阶",
+                _ => null,
+            };
+            if (noop is not null) { fails.Add($"{KnobName(k)} {noop}"); continue; }
+
+            if (lo >= hi - 1e-12)
+            {
+                // ★ 「已在上界」这句话对**上界本身就是 0** 的旋钮是误导的 ——
+                //   工程师读到的是「这根旋钮用满了」，实情是「这根旋钮**根本开不出来**」。
+                //   2026-09-06 实测：盘R35 时槽带内径 33.2 > 外径 29（盘缘往里退一个桥宽），
+                //   带子是负宽的 ⇒ 上界 0 ⇒ 报表印「圆盘背侧减重槽张角 已在上界」，
+                //   而真相是「盘太小，装不下槽」。两句话指向完全不同的处置。
+                string why0 = "已在上界";
+                if (k == Knob.SlotSpan && hi <= 1e-9)
+                {
+                    var (rin0, rout0) = d.SlotBandMm(Math.Max(Get(d, Knob.Thick, j), d.WallMm));
+                    why0 = rout0 > rin0
+                         ? $"**开不出槽**（槽带 r{rin0:0.0}–{rout0:0.0} 宽 {rout0 - rin0:0.0} mm，"
+                           + "但周向留不出桥）"
+                         : $"**开不出槽**：槽带内径 {rin0:0.0} > 外径 {rout0:0.0} mm ——"
+                           + $" 盘半径 {d.DiscRadiusMm:0.0} 太小，管孔+焊脚+桥宽之外没有余地";
+                }
+                else if (hi <= 1e-9)
+                    why0 = "**上界就是 0**（这根旋钮在当前几何下开不出来）";
+                fails.Add($"{KnobName(k)} {why0}");
+                continue;
+            }
             Set(d, k, j, hi);
             var rk = Eval(d, baseIn, opt, res, cancel, inner);
             Set(d, k, j, lo);                       // 量完立刻还原 —— 只增不减的不变式不受影响
             double after = PlateSlack(rk, key, j, dipMax, discMax);
             double dSlack = after - before;
             double dMass = rk is null || double.IsNaN(mass0) ? double.NaN : MassOf(rk) - mass0;
+
+            // ★★★★★ **场解不收敛 ≠ 这根旋钮没用**（2026-09-05 用户指出 r₁/r₂ 没被优化）。
+            //
+            //   `PlateSlack(null, …)` 返回 −∞ ⇒ dSlack = −∞ ⇒ 落进下面「没变好」那一支，
+            //   报表于是印出「内级半径 r₁ 抬到底也没变好（−81.296→−∞）」。
+            //   **那不是没变好，那是几何被抬坏了、场根本没解出来。**
+            //   两者的处置完全相反：
+            //     没用     ⇒ 淘汰这个候选，对
+            //     不收敛   ⇒ **上界给错了**，要修的是上界，不是放弃这根旋钮
+            //   把不收敛渲染成「没用」= 安静失败：用户看到的「r₁/r₂ 完全没有优化」就是后果。
+            if (rk is null)
+            {
+                fails.Add($"{KnobName(k)} 抬到上界 {hi:0.###} 时**场解不收敛**"
+                        + "（不是「没用」—— 多半是这一级被抬到把网格/回路搞坏了，"
+                        + "该修的是这根旋钮的上界）");
+                res.Trace.Add($"     ⚠ 片{j} {KnobName(k)} 上界 {hi:0.###} 处场解不收敛 —— 上界存疑");
+                continue;
+            }
+
             if (!(dSlack > 1e-9))
             {
                 // ★ 说清**为什么**没用：t = 1 时这一级还是平的，没有台阶可挪。
@@ -500,20 +726,38 @@ public static class Solver
                                 + "先让倍率把台阶造出来，半径才有意义" : ""));
                 continue;
             }
-            // 不花铂的旋钮（舌保温实测 Δ铂重 ≡ 0）直接胜出 —— 免费的东西没有对手。
-            bool free = double.IsNaN(dMass) || Math.Abs(dMass) < 1e-6;
-            double eff = free ? double.PositiveInfinity : dSlack / dMass;
+            // ★★★★★ **「每克铂买多少裕度」对省铂的旋钮是反的**（2026-09-05 用户看图抓到）。
+            //
+            //   这个式子是给**加料**旋钮写的（板厚、环倍率：Δ铂重 > 0）。
+            //   而挖料旋钮（圆盘槽、舌板孔）的 **Δ铂重 < 0** ⇒ 效率算出来是负数，
+            //   排序于是整个翻过来 —— **省得越多、排得越后**：
+            //
+            //     圆盘槽 27–40 mm 180°   抽热 −47.6 %、体积 −6.4 %  ⇒ 47.6/(−6.4) = −7.44
+            //     舌片圆孔 R10           抽热 − 0.5 %、体积 −1.3 %  ⇒  0.5/(−1.3) = −0.38
+            //                                                        −0.38 > −7.44
+            //     ⇒ 求解器挑了**几乎不管用的那个**（实测差 90 倍，见 deliverable/按场开槽_效果.txt）
+            //
+            //   交付件 deliverable/优化后3dm/整机.3dm 上看到的就是这个后果：
+            //   舌片一个 R36 的大洞（抽热只降 0.5 %），圆盘背侧一条槽都没有（本可降 47.6 %）。
+            //
+            //   ⇒ 「又管用、又省铂」是白捡的，没有对手 —— 与「免费」归同一等级；
+            //     同级里按**买到多少裕度**排（效率在这一级没有意义：分母是负的）。
             bool closes = after >= 0;          // ★ 抬到上界能不能把这条判据转正
-            lines.Add($"{KnobName(k)} {(closes ? "补得上" : "补不上")}、"
-                    + $"每克铂买 {(free ? "免费（不花铂）" : eff.ToString("0.000"))}"
-                    + (free ? "" : $"（裕度 {dSlack:+0.00;-0.00}／铂 {dMass:+0.0;-0.0} g）"));
+            var cand = new Cand(dSlack, dMass, closes);
+            bool free = double.IsNaN(dMass) || Math.Abs(dMass) < 1e-6;
+            string price = free        ? "免费（不花铂）"
+                         : cand.Gratis ? $"**还省铂 {-dMass:0.0} g**"
+                                       : $"每克铂买 {cand.Eff:0.000}";
+            lines.Add($"{KnobName(k)} {(closes ? "补得上" : "补不上")}、{price}"
+                    + $"（裕度 {dSlack:+0.00;-0.00}"
+                    + (free ? "" : $"／铂 {dMass:+0.0;-0.0} g") + "）");
 
-            // 两级：补得上的优先；同级里按效率；都补不上时按买得最多。
-            bool win = closes != bestCloses ? closes
-                     : closes ? eff > bestEff
-                              : dSlack > bestGain;
-            if (best is null || win)
-            { best = k; bestEff = eff; bestCloses = closes; bestGain = dSlack; bestAfter = after; }
+            // ★ 排序规则**只有一份**：Solver.Better（纯函数，见它的说明）。
+            if (best is null || Better(cand, new Cand(bestGain, bestMass, bestCloses)))
+            {
+                best = k; bestCloses = closes; bestGain = dSlack;
+                bestAfter = after; bestGratis = cand.Gratis; bestMass = dMass;
+            }
         }
 
         if (best is null)
@@ -523,14 +767,15 @@ public static class Solver
         if (lines.Count > 1)
             Log($"     · 片{j} 实测比价：" + string.Join("　", lines)
               + $" ⇒ 抬**{KnobName(best.Value)}**"
-              + (bestCloses ? "（补得上里面最省铂）"
+              + (bestCloses ? (bestGratis ? "（补得上、而且不花铂或还省铂 —— 白捡的）"
+                                          : "（补得上里面最省铂）")
                             : "（都补不上，先用买得最多的顶上去，下一轮缺口变小再挑便宜的）"));
         else if (fails.Count > 0)
             Log($"     · 片{j} 候选淘汰：{string.Join("；", fails)} ⇒ 抬**{KnobName(best.Value)}**");
         return (best, "", before, bestAfter);
     }
 
-    private static (bool Ok, string Why) RaiseUntil(
+    private static (bool Ok, string Why, bool Kept) RaiseUntil(
         DesignSpec d, DesignInputs baseIn, SolverOptions opt, int j, Knob knob, string key,
         double dipMax, double discMax, SolverResult res, Action<string> Log, CancellationToken cancel,
         IProgress<string>? inner = null,
@@ -549,11 +794,11 @@ public static class Solver
         if (before >= 0)
         {
             Log($"  · {nm}：上一步之后「{Criteria.Plain(key)}」已经不违反（裕度 {before:+0.000;-0.000}）⇒ **不抬**");
-            return (true, "");
+            return (true, "", false);
         }
 
         if (lo >= hi - 1e-12)
-            return (false, $"**{nm} 已在上界 {hi:0.000}**，「{Criteria.Plain(key)}」仍不过 ⇒ 这组输入不可行（是证明，不是搜索失败）");
+            return (false, $"**{nm} 已在上界 {hi:0.000}**，「{Criteria.Plain(key)}」仍不过 ⇒ 这组输入不可行（是证明，不是搜索失败）", false);
 
         Set(d, knob, j, hi);
         double after = double.IsNaN(knownAfter)
@@ -567,13 +812,34 @@ public static class Solver
             return (false,
                 $"**分派前提不成立**：{nm} 从 {lo:0.000} 抬到上界 {hi:0.000}，" +
                 $"「{Criteria.Plain(key)}」的裕度 {before:+0.000;-0.000} → {after:+0.000;-0.000}（**没变好**）" +
-                " ⇒ 这个旋钮压不住这一片的这条判据，二分不适用");
+                " ⇒ 这个旋钮压不住这一片的这条判据，二分不适用", false);
         }
 
         if (after < 0)
         {
-            Set(d, knob, j, lo);
-            return (false, $"**{nm} 抬到上界 {hi:0.000} 仍不过**「{Criteria.Plain(key)}」⇒ 这组输入不可行");
+            // ★★★★★ **抬到上界仍不过 ⇒ 留着，不退回**（2026-09-05 修）。
+            //
+            //   原来这里 `Set(d, knob, j, lo)` 把它退回原值，而 ChooseKnob 明写着
+            //   「都补不上时…**先用买得最多的顶上去**，下一轮缺口变小再挑便宜的」——
+            //   **两者互相矛盾**：每轮挑出来、抬上去、又退回去，什么都不累积。
+            //
+            //   实测代价（deliverable/优化后出图.txt）：Pt_Heater1 构型 ③ = 427 K / 限 10，
+            //   任何单根旋钮都补不上（槽最狠也只砍 42 % 抽热）⇒ 全部退回 ⇒
+            //   **交出来的就是原始几何**，圆盘槽 0°、孔径 0.0，白算 14 分钟。
+            //
+            //   用户 2026-09-05：「最有效的那根旋钮（举例：可能是圆盘槽 + 舌板椭圆孔），
+            //   要各种在不同位置的孔形状**组合**所得出」——
+            //   留着不退回，组合就在**跨轮累积**里自然形成。
+            //
+            //   ⚠ 只在「补不上」这一支留着。二分成功那一支仍取**刚好够**的最小值（最省铂）。
+            //   ⚠ 判据仍然不过 ⇒ 返回 false 不变，调用方照样知道没解决。
+            bool kept = after > before + 1e-9;
+            if (kept)
+                Log($"     · {nm} 抬到上界仍不过，但**把缺口从 {before:0.00} 拉到 {after:0.00}** ⇒ 留着，"
+                  + "下一轮缺口变小再挑别的（不退回 —— 退回就永远凑不出组合）");
+            else
+                Set(d, knob, j, lo);        // 一点没变好 ⇒ 白花铂，退回
+            return (false, $"**{nm} 抬到上界 {hi:0.000} 仍不过**「{Criteria.Plain(key)}」⇒ 这组输入不可行", kept);
         }
 
         // 二分：找「刚好不违反」的最小值。不变式：lo 违反、hi 不违反。
@@ -607,9 +873,9 @@ public static class Solver
         if (knob == Knob.Thick)
         {
             var (coverOk, coverWhy) = CoverCheck(d, baseIn);
-            if (!coverOk) { Log("  ✗ " + coverWhy); return (false, coverWhy); }
+            if (!coverOk) { Log("  ✗ " + coverWhy); return (false, coverWhy, false); }
         }
-        return (true, "");
+        return (true, "", false);
     }
 
     /// <summary>
@@ -629,18 +895,37 @@ public static class Solver
         var plates = new FlangePlate[d.TabThickMm.Length];
         for (int j = 0; j < plates.Length; j++) plates[j] = d.Plate(j, floor);
 
-        double need = GeometryScreen.MinDiscRadiusMm(plates);
-        if (double.IsNaN(need))
+        // ★★★★★ **两条下界各判各的，都违反就都说**（2026-09-07 督导 S⑤ 两次打回来的）。
+        //
+        //   第一版：把「不比舌片窄」并进 MinDiscRadiusMm ⇒ 处方说「⑥ 盖不住，要 30」，
+        //           而管孔那条其实只要 28.25 —— **两个理由印成同一个原因**。
+        //   第二版：拆开之后让舌宽那条先返回 ⇒ 它把 ⑥ 整个**遮住**了
+        //           （实测两条门红：字符串里只剩「舌片长不出圆盘」）。
+        //           那还是「只说一个原因」，工程师改完舌宽会再撞上 ⑥。
+        //   ⇒ 两条都真就两条都列，处方取**两者的大者**（改到那个数，两条一起过）。
+        double needBore = GeometryScreen.MinDiscRadiusMm(plates);
+        double needTab  = GeometryScreen.MinDiscRadiusForTabMm(plates);
+        if (double.IsNaN(needBore))
             return (false, "**⑥ 判不了**：一片法兰都没有 —— 判不了不算过");
-        if (d.DiscRadiusMm >= need - 1e-9) return (true, "");
 
         double leg = plates.Max(q => Math.Max(q.WeldFilletLegMm, 0));
-        return (false,
-            $"**⑥ 圆盘盖不住管孔＋焊脚**：盘半径 {d.DiscRadiusMm:0.000} mm ＜ 需要 {need:0.000} mm"
-          + $"（缺 {need - d.DiscRadiusMm:0.000} mm；管孔 {d.HoleRadiusMm:0.000} + 焊脚 {leg:0.000}）。"
-          + " ⑥ **没有旋钮能治** —— 抬板厚只会让焊脚更长、⑥ 更差。"
-          + $"　【处方】盘半径改到 ≥ {need:0.000} mm 再解。"
-          + "这是 ⑥ 的**闭式反解**，不是搜出来的 —— 不用试，就是这个数。");
+        var why = new List<string>();
+        if (d.DiscRadiusMm < needBore - 1e-9)
+            why.Add($"**⑥ 圆盘盖不住管孔＋焊脚**：盘半径 {d.DiscRadiusMm:0.000} mm ＜ 需要 {needBore:0.000} mm"
+                  + $"（缺 {needBore - d.DiscRadiusMm:0.000} mm；管孔 {d.HoleRadiusMm:0.000} + 焊脚 {leg:0.000}）。"
+                  + " ⑥ **没有旋钮能治** —— 抬板厚只会让焊脚更长、⑥ 更差。");
+        if (!double.IsNaN(needTab) && d.DiscRadiusMm < needTab - 1e-9)
+            why.Add($"**舌片长不出圆盘**：盘半径 {d.DiscRadiusMm:0.000} mm ＜ 舌半宽 {needTab:0.000} mm"
+                  + "（圆盘整个藏在舌片宽度里，零件退化成一块开了孔的矩形板）。"
+                  + "⚠ 这时解析侧 HalfWidth(x) 恒返回舌半宽、**圆盘从不进入计算**，"
+                  + "而出图侧走错分支画出坏图 —— 两边各自都自洽，最难发现。");
+        if (why.Count == 0) return (true, "");
+
+        double need = Math.Max(needBore, double.IsNaN(needTab) ? double.NegativeInfinity : needTab);
+        return (false, string.Join("　", why)
+              + $"　【处方】盘半径改到 ≥ {need:0.000} mm 再解"
+              + (why.Count > 1 ? "（两条一起过的那个数）" : "")
+              + "。这是**闭式反解**，不是搜出来的 —— 不用试，就是这个数。");
     }
 
     /// <summary>
@@ -808,6 +1093,17 @@ public static class Solver
 
     private static string Join(double[] v) => string.Join("/", v.Select(x => x.ToString("0.00")));
 
+    /// <summary>逐片取值印成一行（S8：九根旋钮都要看得见）。</summary>
+    private static string JoinF(int n, Func<int, double> get) =>
+        string.Join("/", Enumerable.Range(0, n).Select(j => get(j).ToString("0.##")));
+
+    /// <summary>
+    /// 环宽专用：NaN 表示「走默认规则」，印**默认值加星号**而不是 NaN ——
+    /// 印 NaN 会让人以为算坏了，而它其实是「这一片没自定，用的是规则值」。
+    /// </summary>
+    private static string JoinW(double[] w, double dflt) =>
+        string.Join("/", w.Select(x => double.IsNaN(x) ? dflt.ToString("0.##") + "*" : x.ToString("0.##")));
+
     private static double Get(DesignSpec d, Knob k, int j) => k switch
     {
         Knob.Thick => d.TabThickMm[j],
@@ -824,6 +1120,7 @@ public static class Solver
         Knob.RingR2 => double.IsNaN(d.RingW2Mm[j]) ? 2 * d.RingWidthMm : d.RingW2Mm[j],
         Knob.SlotSpan => j < d.SlotSpanDeg.Length ? d.SlotSpanDeg[j] : 0,
         Knob.TabHoleR => j < d.TabHoleRMm.Length ? d.TabHoleRMm[j] : 0,
+        Knob.TabHoleAspect => j < d.TabHoleAspect.Length ? d.TabHoleAspect[j] : 1.0,
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 
@@ -839,6 +1136,7 @@ public static class Solver
             case Knob.RingR2: d.RingW2Mm[j]  = v; break;
             case Knob.SlotSpan: if (j < d.SlotSpanDeg.Length) d.SlotSpanDeg[j] = v; break;
             case Knob.TabHoleR: if (j < d.TabHoleRMm.Length) d.TabHoleRMm[j] = v; break;
+            case Knob.TabHoleAspect: if (j < d.TabHoleAspect.Length) d.TabHoleAspect[j] = v; break;
             default: throw new ArgumentOutOfRangeException(nameof(k));
         }
     }
@@ -876,6 +1174,9 @@ public static class Solver
         Knob.SlotSpan => 360.0,
         // ★ 孔径上界也**不是常数** —— 孔缘会咬到舌边。真正的上界由 HiOfFor 闭式给。
         Knob.TabHoleR => 1e9,
+        // ★ 顺流拉长比。上界 3：实测 3:1 时峰值 J 已降 10.6 %，再拉长收益递减，
+        //   而孔会长到舌片装不下（桥宽由 TabHoleRMaxMm 另管）。
+        Knob.TabHoleAspect => 3.0,
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 
@@ -890,6 +1191,7 @@ public static class Solver
         Knob.RingR2 => o.QuantThickMm,
         Knob.SlotSpan => 1.0,            // 角度落在 1° 的格上（图纸也是这么标的）
         Knob.TabHoleR => o.QuantThickMm, // 孔径是长度量，走同一张图纸格
+        Knob.TabHoleAspect => 0.1,       // 长短轴比落在 0.1 的格上
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 
@@ -903,6 +1205,7 @@ public static class Solver
         Knob.RingR2 => o.BisectTolMm,
         Knob.SlotSpan => 1.0,
         Knob.TabHoleR => o.BisectTolMm,
+        Knob.TabHoleAspect => 0.1,
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 }
@@ -986,6 +1289,18 @@ public sealed class SolverOptions
     public int    BisectMaxIter = 14;
     /// <summary>逐片之后一轮要处理的抬升更多，轮数要给够。</summary>
     public int    MaxRounds     = 60;
+
+    /// <summary>
+    /// ★ **「补不上但把缺口拉小了」允许再续几轮**（2026-09-05）。
+    ///
+    /// 单根旋钮抬到上界仍不过时，值**留着不退回**，下一轮换根旋钮接着补 ——
+    /// 「圆盘槽 + 舌板椭圆孔」这类组合就是这么攒出来的。
+    ///
+    /// ⚠ 这是**纯成本项**：每续一轮 = 一整轮场解（实测 Pt_Heater1 构型约 15 分钟）。
+    ///   续轮还有一道更硬的闸：缺口必须真的比上一轮小，否则当场停。
+    ///   上限 6 是「最多多花 1.5 小时」这个工程约束定的，不是算法需要。
+    /// </summary>
+    public int    MaxPartialRounds = 6;
 
     // ══ 第二遍求根的网格（算法普查 A⑬）
     //

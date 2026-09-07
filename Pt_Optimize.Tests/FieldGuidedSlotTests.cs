@@ -106,6 +106,31 @@ public class FieldGuidedSlotTests
             foreach (var x in Flatten(k)) yield return x;
     }
 
+    /// <summary>
+    /// ★★★★★ **槽的默认带必须让槽真的开得出来**（2026-09-05 出图时抓到）。
+    ///
+    /// 内边距原来写死 1 mm。焊脚 = max(板厚, 管壁)，板厚解到 4.71 mm 时
+    /// 内桥只剩 1.0 mm &lt; 下限 ⇒ `SlotSpanMaxDeg` 返回 0 ⇒
+    /// **槽这根旋钮被自己的默认带卡死**，而它是治「法兰增量温降」最有效的一根。
+    /// 表现极隐蔽：求解器照常报「不可行」，**只字不提「槽根本没得开」**。
+    /// </summary>
+    [Theory]
+    [InlineData(0.6)]      // 薄板：焊脚 = 管壁
+    [InlineData(2.0)]
+    [InlineData(4.71)]     // 出图那次解出来的板厚 —— 就是它把槽卡死的
+    [InlineData(8.0)]      // 工艺上界
+    public void 任何板厚下槽都开得出来(double plateMm)
+    {
+        var d = DesignSpec.Builtin[0].Clone();
+        d.DiscRadiusMm = 60; d.WallMm = 1.0;
+        for (int j = 0; j < d.TabThickMm.Length; j++) d.TabThickMm[j] = plateMm;
+        double weldLeg = Math.Max(plateMm, d.WallMm);
+        double maxSpan = d.SlotSpanMaxDeg(weldLeg);
+        Assert.True(maxSpan > 30,
+            $"板厚 {plateMm} mm（焊脚 {weldLeg:0.00}）时槽的张角上界只有 {maxSpan:0.0}° "
+          + $"—— 槽这根旋钮被默认带卡死了。带 = {d.SlotBandMm(weldLeg)}");
+    }
+
     /// <summary>★ 存档要带得走 —— 少一根旋钮的档，复算时槽会消失而判据表照样出数。</summary>
     [Fact]
     public void 槽存得进档也读得回来()
@@ -175,6 +200,23 @@ public class FieldGuidedSlotTests
                         + $"\t{r.VolMm3:0}\t{100 * (r.VolMm3 / b.VolMm3 - 1):+0.0;-0.0} %"
                         + $"\t{r.TMax:0}");
         }
+
+        // ══ 弯椭圆 vs 尖角扇形（用户 2026-09-05：「再加个弯椭圆（用于圆盘）」）
+        sb.AppendLine();
+        sb.AppendLine("── 弯椭圆（沿中弧的胶囊形，两端半圆）vs 尖角扇形 ──");
+        sb.AppendLine("同一条带（27–40 mm）、同一张角，只差两端要不要圆。");
+        foreach (double span in new[] { 90.0, 150.0 })
+            foreach (bool round in new[] { false, true })
+            {
+                var g = Heater1(new FlangePlate.DiscSlot(27, 40, 0, span, RoundEnds: round));
+                var r = Run(g);
+                if (r.Err.Length > 0) { sb.AppendLine($"{span:0}° {(round ? "弯椭圆" : "尖角扇形")}	✗ {r.Err}"); continue; }
+                sb.AppendLine($"{span:0}° {(round ? "弯椭圆" : "尖角扇形")}"
+                            + $"	{r.QFromTube:0.0}	{100 * (r.QFromTube / b.QFromTube - 1):+0.0;-0.0} %"
+                            + $"	{r.JPeak:0.000}	{100 * (r.JPeak / b.JPeak - 1):+0.0;-0.0} %"
+                            + $"	{r.VolMm3:0}	{100 * (r.VolMm3 / b.VolMm3 - 1):+0.0;-0.0} %"
+                            + $"	{r.TMax:0}");
+            }
 
         string outDir = Path.Combine(HandoverDoc.Root(), "deliverable");
         Directory.CreateDirectory(outDir);

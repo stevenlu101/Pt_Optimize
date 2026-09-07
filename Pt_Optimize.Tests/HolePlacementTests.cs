@@ -53,6 +53,71 @@ public class HolePlacementTests
         catch (Exception ex) { return (0, 0, 0, ex.GetType().Name + "：" + ex.Message); }
     }
 
+    private static FlangePlate WithHole(FlangePlate.TabHole h) => new()
+    {
+        DiscRadiusMm = 60, HoleRadiusMm = 26,
+        TabEndXMm = -199.5, TabEndHalfWidthMm = 40,
+        ThicknessMm = 2.0, ThickenedMm = 2.0, TabThicknessMm = 2.0,
+        TabParallel = false, WeldFilletLegMm = 0,
+        TabHoles = new[] { h },
+    };
+
+    /// <summary>
+    /// ★★★★★ **形状不只是孔径**（用户 2026-09-05：「例如可以是类圆角三角形」「或者是椭圆形」）。
+    ///
+    /// 圆孔在电流场里未必最优：绕流的挤压程度跟轮廓走向有关。
+    /// 把形状参数化成「正 N 边形 ⊕ 圆角，再按长短轴比拉伸，再转角」之后，
+    /// 每个参数都是**可二分的标量**，于是「哪个形状好」变成可以量的问题。
+    ///
+    /// 本门**等面积**比：面积都对齐到 R8 圆（≈201 mm²），只变形状与朝向。
+    /// ⚠ 只测不判。
+    /// </summary>
+    [Fact]
+    public void 等面积下哪个孔形最划算()
+    {
+        const double x0 = -50;                    // 用上一条量出来的最优位置
+        var b = Run(Heater1(0, 0));
+        Assert.True(b.Err.Length == 0 && b.Vol > 1000, "基准算不出来：" + b.Err);
+        double target = Math.PI * 8 * 8;          // 对齐面积
+
+        var sb = new StringBuilder();
+        sb.AppendLine("═══ 等面积孔形对比（面积都 ≈ " + target.ToString("0") + " mm²，孔心 x=-50）═══");
+        sb.AppendLine("电流沿舌轴（x）流。转角 0° = 长轴顺着电流；90° = 横着挡电流。");
+        sb.AppendLine();
+        sb.AppendLine("孔形	面积 mm²	抽热 W	较基准	峰值 J	较基准	体积	每 1% 体积换到的抽热降");
+        sb.AppendLine($"（无孔）	—	{b.Q:0.0}	—	{b.JPeak:0.000}	—	{b.Vol:0}	—");
+
+        var cands = new (string Name, FlangePlate.TabHole H)[]
+        {
+            ("圆 R8",            new FlangePlate.TabHole(x0, 0, 8)),
+            ("椭圆 2:1 顺流",    new FlangePlate.TabHole(x0, 0, 8 / Math.Sqrt(2), 0, 1.0, 0,  2.0)),
+            ("椭圆 2:1 横挡",    new FlangePlate.TabHole(x0, 0, 8 / Math.Sqrt(2), 0, 1.0, 90, 2.0)),
+            ("椭圆 3:1 顺流",    new FlangePlate.TabHole(x0, 0, 8 / Math.Sqrt(3), 0, 1.0, 0,  3.0)),
+            ("圆角三角 0°",      new FlangePlate.TabHole(x0, 0, 8, 3, 0.35, 0)),
+            ("圆角三角 60°",     new FlangePlate.TabHole(x0, 0, 8, 3, 0.35, 60)),
+            ("圆角三角 180°",    new FlangePlate.TabHole(x0, 0, 8, 3, 0.35, 180)),
+            ("圆角方 0°",        new FlangePlate.TabHole(x0, 0, 8, 4, 0.30, 0)),
+            ("圆角方 45°",       new FlangePlate.TabHole(x0, 0, 8, 4, 0.30, 45)),
+        };
+
+        foreach (var (name, h0) in cands)
+        {
+            // 等面积：按面积比缩放外接半径
+            double k = Math.Sqrt(target / Math.Max(1e-9, h0.AreaMm2));
+            var h = h0 with { RMm = h0.RMm * k };
+            var r = Run(WithHole(h));
+            if (r.Err.Length > 0) { sb.AppendLine($"{name}	—	✗ {r.Err}"); continue; }
+            double dQ = 100 * (r.Q / b.Q - 1), dV = 100 * (r.Vol / b.Vol - 1);
+            sb.AppendLine($"{name}	{h.AreaMm2:0}	{r.Q:0.0}	{dQ:+0.00;-0.00} %"
+                        + $"	{r.JPeak:0.000}	{100 * (r.JPeak / b.JPeak - 1):+0.0;-0.0} %"
+                        + $"	{r.Vol:0}	{(Math.Abs(dV) > 1e-9 ? (dQ / dV).ToString("0.00") : "—")}");
+        }
+
+        string outDir = Path.Combine(HandoverDoc.Root(), "deliverable");
+        Directory.CreateDirectory(outDir);
+        File.WriteAllText(Path.Combine(outDir, "孔形对比.txt"), sb.ToString());
+    }
+
     [Fact]
     public void 孔开在舌片哪一段最划算()
     {

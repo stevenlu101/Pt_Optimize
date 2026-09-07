@@ -1124,7 +1124,7 @@ public static class LineRunner
                           $"步长 {delta:0.0} K，真残差 {resKLast:0.000} K，ω={omega:0.00}）—— 本次结果的每个数都不可用。");
             res.Notes.Add(shrinking
                 ? $"★ 残差**仍在单调收缩** ⇒ 是「慢」不是「发散」：加轮数上限即可{need}" +
-                  "（LineCase.CoupleMaxRounds，默认 200）。"
+                  $"（LineCase.CoupleMaxRounds，本次 {c.CoupleMaxRounds}）。"
                 : "★ 残差**没有在收缩** ⇒ 加轮数大概率没用：该工况可能真的热失控，或迭代进了极限环。");
             res.Message = "段↔法兰耦合未收敛（" + (shrinking ? "慢，加轮数可解" : "未收缩，疑似失控") + "）";
         }

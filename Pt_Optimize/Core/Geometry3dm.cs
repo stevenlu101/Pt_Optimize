@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using System;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 
@@ -122,7 +123,20 @@ public static class Geometry3dm
             double t = fd.TabThickMm[j];
             if (j > 0) sb.Append(',');
             sb.Append($"{{\"name\":\"{names[j]}\",\"t\":{R(t)},");
-            sb.Append($"\"ring\":[{R(t * fd.RingMul[j])},{R(t * fd.RingMulOuter(j))}]}}");
+            sb.Append($"\"ring\":[{R(t * fd.RingMul[j])},{R(t * fd.RingMulOuter(j))}],");
+            // ★★★★★ **槽与孔必须跟着走**（2026-09-05）。
+            //   在此之前这份 spec 只有 t 和 ring ⇒ APP 自己的出图器**画不出**
+            //   圆盘背侧减重槽与舌板开孔，而它们正是求解器现役的旋钮。
+            //   后果：求解器解出 120° 槽 + 36 mm 孔，导出的图上一个都没有 ——
+            //   「算的是一个东西、导出的是另一个东西」，两边各自都自洽，最难发现。
+            //   槽带按**本片**焊脚算（焊脚 = max(板厚, 管壁)），与 DesignSpec.SlotBandMm 同一份规则。
+            var (rin, rout) = fd.SlotBandMm(Math.Max(t, fd.WallMm));
+            double span = j < fd.SlotSpanDeg.Length ? fd.SlotSpanDeg[j] : 0;
+            double hR = j < fd.TabHoleRMm.Length ? fd.TabHoleRMm[j] : 0;
+            double hA = j < fd.TabHoleAspect.Length && fd.TabHoleAspect[j] > 0
+                      ? fd.TabHoleAspect[j] : 1.0;
+            sb.Append($"\"slotDeg\":{R(span)},\"slotRIn\":{R(rin)},\"slotROut\":{R(rout)},");
+            sb.Append($"\"holeX\":{R(fd.TabHoleCenterXMm())},\"holeR\":{R(hR)},\"holeAsp\":{R(hA)}}}");
         }
         sb.Append("]}");
 
@@ -145,7 +159,84 @@ public static class Geometry3dm
         proc.WaitForExit();
         if (proc.ExitCode != 0)
             throw new InvalidOperationException($"{ProbeName} final 退出码 {proc.ExitCode}：{se}{so}");
+
+        // ★★★★★ **出图自检：把刚写出来的文件读回来，管腔里不许有料**（2026-09-06）。
+        //
+        //   用户 2026-09-06 开 Rhino 看出来的：法兰**实心穿过铂金管**
+        //   （探针实测板身最内半径 0.000 mm，5810 个点落在管外径 R26 以内），
+        //   而判据表照样全绿 —— 因为场那一侧走的是 FlangePlate.Inside(x,z)，
+        //   它明写着 `r ≥ 孔半径`，**从来没见过那块料**。
+        //
+        //   根因不是某一个布尔失败，而是**算和画是两套几何、中间一道检查都没有**：
+        //     DesignSpec ─┬─ Inside(x,z) ──→ 网格 ──→ 场 ──→ 判据表
+        //                 └─ Geom/RunFinal 曲线布尔 ──→ .3dm
+        //   ⇒ 补的就是这一道。它不依赖我猜对是哪个布尔坏了 —— **任何机制**导致的
+        //     「图上有料而算上无料」都会被这里逮住。
+        //
+        //   成本：每次出图多跑几次探针（秒级），相对一次 70 分钟的求解可以忽略。
+        //   ⚠ 只查最硬的那一条（管腔）。逐点全比对在 Export3dmMatchesSolvedTests 里，
+        //     那里有解析几何可比；这里只有 spec，查得起的就是这一条。
+        BoreSelfCheck(probe, outPath, fd, names);
         return so.Trim();
+    }
+
+    /// <summary>
+    /// 出图自检：逐片逐部位读回来，**管外径以内一点料都不许有**。
+    /// 法兰伸进铂金管 = 装不进去，比任何判据都直接。
+    /// </summary>
+    private static void BoreSelfCheck(string probe, string outPath, DesignSpec fd, string[] names)
+    {
+        double holeR = fd.HoleRadiusMm;
+        var bad = new List<string>();
+        for (int j = 0; j < fd.TabThickMm.Length && j < names.Length; j++)
+            foreach (string part in new[] { "板身", "环外级", "环内级" })
+            {
+                var psi = new ProcessStartInfo(probe)
+                {
+                    RedirectStandardOutput = true, RedirectStandardError = true,
+                    StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
+                    UseShellExecute = false, CreateNoWindow = true,
+                };
+                foreach (var a in new[] { "thickness", outPath, names[j] + "-" + part,
+                                          (j * 300.0).ToString("R"), "1" })
+                    psi.ArgumentList.Add(a);
+                using var pr = Process.Start(psi);
+                if (pr is null) continue;
+                string txt = pr.StandardOutput.ReadToEnd();
+                pr.StandardError.ReadToEnd();
+                pr.WaitForExit();
+                if (pr.ExitCode != 0) continue;      // 这一级没实体（倍率=1 时环是平的）
+
+                try
+                {
+                    using var jd = System.Text.Json.JsonDocument.Parse(txt);
+                    var R = jd.RootElement;
+                    int nx = R.GetProperty("nx").GetInt32(), nz = R.GetProperty("nz").GetInt32();
+                    double st = R.GetProperty("step").GetDouble();
+                    double x0 = R.GetProperty("x0").GetDouble(), z0 = R.GetProperty("z0").GetDouble();
+                    var T = R.GetProperty("thickness").EnumerateArray().Select(e => e.GetDouble()).ToArray();
+                    int nIn = 0; double rMin = double.MaxValue;
+                    for (int i = 0; i < nx; i++)
+                        for (int k = 0; k < nz; k++)
+                            if (T[i * nz + k] > 1e-9)
+                            {
+                                double xx = x0 + i * st, zz = z0 + k * st;
+                                double r = Math.Sqrt(xx * xx + zz * zz);
+                                if (r < rMin) rMin = r;
+                                if (r < holeR - 1e-6) nIn++;
+                            }
+                    if (nIn > 0)
+                        bad.Add($"{names[j]}-{part}：{nIn} 个点落在管外径 R{holeR:0.#} 以内"
+                              + $"（最内 {rMin:0.000} mm）");
+                }
+                catch { /* 读不回来不在本检查的职责里 */ }
+            }
+
+        if (bad.Count > 0)
+            throw new InvalidOperationException(
+                "出图自检失败 —— **法兰伸进铂金管**，这张图装不进去：" + Environment.NewLine
+              + string.Join(Environment.NewLine, bad.Select(x => "  · " + x)) + Environment.NewLine
+              + "（图已写到 " + outPath + "，可以打开看病灶，但它不是可用的交付件。）");
     }
 
     /// <summary>

@@ -724,6 +724,9 @@ internal static class GeomProbe
                 return merged;
             }
 
+            // ★ 曲线布尔「相交却挖不出来」的记录 —— 非空 ⇒ 整张图判失败（见 RunFinal 末尾）
+            var boolFailed = new List<string>();
+
             // 把闭合曲线裁到板身轮廓内（环按半径生效，会越过盘缘伸到轮廓外的空处）
             Curve[] ClipToBody(Curve c, Curve bodyOutline)
             {
@@ -731,14 +734,41 @@ internal static class GeomProbe
                 return (r == null || r.Length == 0) ? new[] { c } : r;
             }
             // 区域 = 外圈（已裁）减内圈
+            // ★★★★★ **「挖失败」不许当成「不用挖」**（2026-09-06 用户看图抓到）。
+            //
+            //   老写法：布尔差返回空 ⇒ `else acc.Add(o)` 把**没挖的原轮廓**原样放回去。
+            //   本意是「内圈完全在外轮廓之外 ⇒ 本来就不用挖」，但它把**真失败**也吞了：
+            //
+            //     盘R35 < 舌半宽40 ⇒ BodyOutline 走错分支、算出**自交**的轮廓
+            //       ⇒ CreateBooleanDifference 在自交曲线上失败、返回空
+            //       ⇒ 兜底把没挖的实心轮廓写进 .3dm
+            //       ⇒ **法兰实心穿过铂金管**（探针实测：板身最内半径 0.000 mm，
+            //          5810 个采样点落在管外径 R26 以内），而**一句警告都没有**。
+            //
+            //   ⇒ 两种情况必须分开判，判据是闭式的、不用猜：
+            //     · 内圈与外轮廓**根本不相交** ⇒ 真的不用挖，保留 o（合法）
+            //     · 相交却挖不出来          ⇒ **几何有病**，当场喊出来并让整张图失败
             Curve[] RegionMinus(Curve[] outer, Curve inner)
             {
                 var acc = new List<Curve>();
                 foreach (var o in outer)
                 {
                     var d = Curve.CreateBooleanDifference(o, inner, tol);
-                    if (d != null && d.Length > 0) acc.AddRange(d);
-                    else acc.Add(o);
+                    if (d != null && d.Length > 0) { acc.AddRange(d); continue; }
+
+                    // 挖不出来 —— 先问「本来就不用挖」还是「挖失败」
+                    var ix = Rhino.Geometry.Intersect.Intersection.CurveCurve(o, inner, tol, tol);
+                    var bo = o.GetBoundingBox(true);
+                    var bi = inner.GetBoundingBox(true);
+                    bool overlap = bo.Min.X <= bi.Max.X && bi.Min.X <= bo.Max.X
+                                && bo.Min.Z <= bi.Max.Z && bi.Min.Z <= bo.Max.Z;
+                    bool touches = (ix != null && ix.Count > 0) || overlap;
+                    if (!touches) { acc.Add(o); continue; }      // 真的不用挖
+
+                    boolFailed.Add($"内圈与外轮廓相交（交点 {(ix?.Count ?? 0)} 个、包围盒重叠 {overlap}）"
+                                 + $"，但布尔差挖不出来 —— 轮廓多半自交/不闭合"
+                                 + $"（外轮廓闭合 {o.IsClosed}、内圈闭合 {inner.IsClosed}）");
+                    acc.Add(o);   // 仍放回去，好让人打开文件看见病灶；但整张图会被判失败
                 }
                 return acc.ToArray();
             }
@@ -808,6 +838,65 @@ internal static class GeomProbe
 
             var body = BodyOutline();
             if (!body.IsClosed) { Console.Error.WriteLine("板身轮廓未闭合"); return 6; }
+            // ★ 轮廓自交 = 后面每一次曲线布尔都会静默失败 ⇒ 当场拦，别写出一张坏图
+            {
+                var self = Rhino.Geometry.Intersect.Intersection.CurveSelf(body, tol);
+                if (self != null && self.Count > 0)
+                {
+                    Console.Error.WriteLine($"板身轮廓**自交** {self.Count} 处 —— "
+                        + $"盘半径 {discR:0.0} vs 舌半宽 {tabHW:0.0}："
+                        + (discR < tabHW ? "**盘比舌还窄**，BodyOutline 的分支假设不成立"
+                                         : "轮廓参数异常")
+                        + "。继续画下去，管孔与台阶的布尔差都会静默失败（实测：法兰实心穿过铂金管）。");
+                    return 7;
+                }
+            }
+
+            // ══ 槽与孔的裁剪曲线 ═══════════════════════════════════════════════
+            //  ★ 形状必须与 Core/PlateCurrent2D 的 DiscSlot/TabHole.Contains **逐字对应** ——
+            //    求解器是按那两个判据算的裕度，画成别的形状就是「算一个、画另一个」。
+            //
+            //  弯椭圆槽 = 到中弧（半径 rm、张角 span）的距离 ≤ 半宽 hw
+            //    ⇒ 边界 = 外弧(rm+hw) + 端半圆(hw) + 内弧(rm−hw) + 端半圆(hw)
+            //    两端是半圆而不是尖角：尖角在电流场里是尖点，在加工上也是裂纹源。
+            Curve SlotCurve(double rin, double rout, double centerDeg, double spanDeg)
+            {
+                double rm = 0.5 * (rin + rout), hw = 0.5 * (rout - rin);
+                if (hw <= 1e-9 || spanDeg <= 0.5) return null;
+                double c = centerDeg * Math.PI / 180.0, half = spanDeg * 0.5 * Math.PI / 180.0;
+                Point3d P(double r, double th) => new(r * Math.Cos(th), 0, r * Math.Sin(th));
+                // 端帽的最外点：沿中弧切向再走 hw
+                Point3d Cap(double th, int sg) =>
+                    new(rm * Math.Cos(th) - sg * hw * Math.Sin(th), 0,
+                        rm * Math.Sin(th) + sg * hw * Math.Cos(th));
+                double a0 = c - half, a1 = c + half;
+                var pc = new PolyCurve();
+                pc.Append(new ArcCurve(new Arc(P(rm + hw, a0), P(rm + hw, c), P(rm + hw, a1))));
+                pc.Append(new ArcCurve(new Arc(P(rm + hw, a1), Cap(a1, +1), P(rm - hw, a1))));
+                pc.Append(new ArcCurve(new Arc(P(rm - hw, a1), P(rm - hw, c), P(rm - hw, a0))));
+                pc.Append(new ArcCurve(new Arc(P(rm - hw, a0), Cap(a0, -1), P(rm + hw, a0))));
+                pc.MakeClosed(tol);
+                return pc.IsClosed ? pc : null;
+            }
+
+            //  舌板孔 = 椭圆，长轴**顺流**（沿 X）。AspectXZ = 长/短，1 = 正圆。
+            //    与 TabHole.Contains 的 (dx/(R·asp))² + (dz/R)² ≤ 1 一致。
+            Curve HoleCurve(double cx, double r, double asp)
+            {
+                if (r <= 0.05) return null;
+                var pl = new Plane(new Point3d(cx, 0, 0),
+                                   new Vector3d(1, 0, 0), new Vector3d(0, 0, 1));
+                return new Ellipse(pl, r * Math.Max(asp, 1e-6), r).ToNurbsCurve();
+            }
+
+            //  逐条从区域里减掉。**三级板身都要减** —— 槽带可能压在环上，
+            //  而 Inside() 是「槽里就没有料」，不分级。
+            Curve[] CutAll(Curve[] region, List<Curve> cutters)
+            {
+                var acc = region;
+                foreach (var cu in cutters) acc = RegionMinus(acc, cu);
+                return acc;
+            }
             var weldChk = new List<object>();
 
             for (int j = 0; j < plates.Length; j++)
@@ -823,14 +912,27 @@ internal static class GeomProbe
                 int lyRingO = Ly(pn + "-环外级", System.Drawing.Color.Orange);
                 int lyRingI = Ly(pn + "-环内级", System.Drawing.Color.OrangeRed);
                 int lyClamp = Ly(pn + "-压接段", System.Drawing.Color.DarkCyan);
-                // 板身 = 轮廓 − 环外边界（环外边界可能越过盘缘，故用曲线布尔差）
-                Add(Solid(RegionMinus(new[] { body }, Circ(ringR[1])), t, y0, pn + "板身"),
+                // ★ 本片的槽与孔（spec 里没有这几项 = 老档，按「不开」处理，行为与从前逐位相同）
+                double PD(string k, double dflt) =>
+                    P.TryGetProperty(k, out var v) ? v.GetDouble() : dflt;
+                var cutters = new List<Curve>();
+                var sc = SlotCurve(PD("slotRIn", 0), PD("slotROut", 0), 0, PD("slotDeg", 0));
+                if (sc != null) cutters.Add(sc);
+                var hc = HoleCurve(PD("holeX", double.NaN), PD("holeR", 0), PD("holeAsp", 1));
+                if (hc != null && !double.IsNaN(PD("holeX", double.NaN))) cutters.Add(hc);
+                if (cutters.Count > 0)
+                    Console.Error.WriteLine($"[final] {pn}：切 {cutters.Count} 个"
+                        + $"（槽 {PD("slotDeg", 0):0}° r{PD("slotRIn", 0):0.0}-{PD("slotROut", 0):0.0}"
+                        + $"，孔 R{PD("holeR", 0):0.0}×{PD("holeAsp", 1):0.0} @x{PD("holeX", 0):0.0}）");
+
+                // 板身 = 轮廓 − 环外边界（环外边界可能越过盘缘，故用曲线布尔差）− 槽/孔
+                Add(Solid(CutAll(RegionMinus(new[] { body }, Circ(ringR[1])), cutters), t, y0, pn + "板身"),
                     lyBody, pn + "_板身_t" + t.ToString("0.00"));
                 // 环：外圈**裁到轮廓内**，否则盘缘之外会凭空长出一整圈料
-                Add(Solid(RegionMinus(ClipToBody(Circ(ringR[1]), body), Circ(ringR[0])), ring[1], y0, pn + "环外级"),
+                Add(Solid(CutAll(RegionMinus(ClipToBody(Circ(ringR[1]), body), Circ(ringR[0])), cutters), ring[1], y0, pn + "环外级"),
                     lyRingO, pn + "_环外级_r" + ringR[0].ToString("0.0") + "-" + ringR[1].ToString("0.0")
                        + "_t" + ring[1].ToString("0.00"));
-                Add(Solid(RegionMinus(ClipToBody(Circ(ringR[0]), body), Circ(holeR)), ring[0], y0, pn + "环内级"),
+                Add(Solid(CutAll(RegionMinus(ClipToBody(Circ(ringR[0]), body), Circ(holeR)), cutters), ring[0], y0, pn + "环内级"),
                     lyRingI, pn + "_环内级_r" + holeR.ToString("0.0") + "-" + ringR[0].ToString("0.0")
                        + "_t" + ring[0].ToString("0.00"));
 
@@ -971,6 +1073,18 @@ internal static class GeomProbe
                 weldCheck = weldChk,
                 roundTrip = rt
             }));
+
+            // ★★★★★ 曲线布尔「相交却挖不出来」⇒ **整张图判失败**（2026-09-06）。
+            //   写在最后而不是当场 return：文件已经写出来了，让人能打开看见病灶，
+            //   但返回码非 0 ⇒ 调用方（Geometry3dm.WriteFinal3dm）会抛，
+            //   **绝不会有人拿着这张图当成功的交付件**。
+            if (boolFailed.Count > 0)
+            {
+                Console.Error.WriteLine($"曲线布尔失败 {boolFailed.Count} 处 —— 这张图**不可用**：");
+                foreach (var w in boolFailed.Distinct().Take(8)) Console.Error.WriteLine("  · " + w);
+                Console.Error.WriteLine("  典型后果：管孔没挖成，法兰实心穿过铂金管。");
+                return 8;
+            }
             return 0;
         }
     }

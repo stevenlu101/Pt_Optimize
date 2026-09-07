@@ -160,6 +160,7 @@ public class DesignSpecStoreTests
         // ★ 舌板开孔孔径（用户要求 R5）。四片四个不同的数 —— 理由同上。
         d.TabHoleRMm = new[] { 2.5, 3.5, 4.5, 5.5 };
         d.TabHoleXMm = -77.0;
+        d.TabHoleAspect = new[] { 1.2, 1.5, 1.8, 2.1 };
         d.ResidualK = 0.75;
         return d;
     }

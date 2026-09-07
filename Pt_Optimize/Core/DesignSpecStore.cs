@@ -95,6 +95,8 @@ public static class DesignSpecStore
 
         /// <summary>舌板开孔孔径（逐片，半径 mm；0 = 无孔）与孔心位置。2026-09-05 加（用户要求 R5）。</summary>
         public double[]? tabHoleRMm { get; set; }
+        /// <summary>孔的顺流拉长比（逐片；1 = 圆）。2026-09-05。</summary>
+        public double[]? tabHoleAspect { get; set; }
         public double? tabHoleXMm { get; set; }
         public double? slotROutMm { get; set; }
         public double? totalMassG { get; set; }
@@ -267,6 +269,7 @@ public static class DesignSpecStore
         if (d.slotSpanDeg is { Length: > 0 } slotArr) fd.SlotSpanDeg = (double[])slotArr.Clone();
         if (d.slotRInMm is { } sri) fd.SlotRInMm = sri;
         if (d.tabHoleRMm is { Length: > 0 } holeArr) fd.TabHoleRMm = (double[])holeArr.Clone();
+        if (d.tabHoleAspect is { Length: > 0 } aspArr) fd.TabHoleAspect = (double[])aspArr.Clone();
         if (d.tabHoleXMm is { } thx) fd.TabHoleXMm = thx;
         if (d.slotROutMm is { } sro) fd.SlotROutMm = sro;
         if (d.ringW1Mm is { Length: > 0 } r1) fd.RingW1Mm = NaA(r1);
@@ -328,6 +331,7 @@ public static class DesignSpecStore
             slotSpanDeg = fd.SlotSpanDeg.Any(v => v > 0.5) ? fd.SlotSpanDeg : null,
             slotRInMm = double.IsNaN(fd.SlotRInMm) ? null : fd.SlotRInMm,
             tabHoleRMm = fd.TabHoleRMm.Any(v => v > 0.05) ? fd.TabHoleRMm : null,
+            tabHoleAspect = fd.TabHoleAspect.Any(v => Math.Abs(v - 1.0) > 1e-9) ? fd.TabHoleAspect : null,
             tabHoleXMm = double.IsNaN(fd.TabHoleXMm) ? null : fd.TabHoleXMm,
             slotROutMm = double.IsNaN(fd.SlotROutMm) ? null : fd.SlotROutMm,
             totalMassG = fd.TotalMassG,

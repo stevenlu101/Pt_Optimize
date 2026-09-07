@@ -76,7 +76,87 @@ public sealed class FlangePlate
     /// 舌片上的一个圆孔。<paramref name="XMm"/> 沿舌轴（舌片在负 x 侧），
     /// <paramref name="ZMm"/> 横向，<paramref name="RMm"/> 半径。
     /// </summary>
-    public readonly record struct TabHole(double XMm, double ZMm, double RMm);
+    /// <summary>
+    /// 舌片上的一个孔。<paramref name="XMm"/> 沿舌轴（舌片在负 x 侧），
+    /// <paramref name="ZMm"/> 横向，<paramref name="RMm"/> **外接半径**。
+    ///
+    /// ★★★ 形状不只是孔径（用户 2026-09-05：「例如可以是类圆角三角形」）。
+    /// 用「**正 N 边形 ⊕ 圆角**」这一族参数化 —— 它同时覆盖圆、圆角三角、
+    /// 圆角方、圆角六边，而且每个参数都是**可二分的标量**：
+    /// <code>
+    ///   Sides    0 或 &lt;3 = 圆；3 = 三角；4 = 方；6 = 六边…
+    ///   CornerFrac 圆角占外接半径的比例 0…1（=1 时退化成圆）
+    ///   RotDeg   相对电流方向的转角 —— 同一个形状转个方向，绕流代价可能差很多
+    /// </code>
+    /// 几何上是「核心多边形 ⊕ 半径 r 的圆」（Minkowski 和）：
+    /// 点在孔内 ⟺ 到核心多边形的距离 ≤ r。圆角因此是**真圆角**，不是倒角。
+    /// </summary>
+    public readonly record struct TabHole(double XMm, double ZMm, double RMm,
+                                          int Sides = 0, double CornerFrac = 1.0,
+                                          double RotDeg = 0, double AspectXZ = 1.0)
+    {
+        /// <summary>孔的面积 mm²（等面积比形状时要用它）。</summary>
+        public double AreaMm2
+        {
+            get
+            {
+                double a = Math.Max(1e-9, AspectXZ);
+                if (Sides < 3 || CornerFrac >= 0.999) return Math.PI * RMm * RMm * a;
+                double r = RMm * Math.Clamp(CornerFrac, 0, 1), rc = RMm - r;
+                int n = Sides;
+                // 正 n 边形面积 + 周长×r + πr²（Minkowski 和的面积公式）
+                double poly = 0.5 * n * rc * rc * Math.Sin(2 * Math.PI / n);
+                double per = 2 * n * rc * Math.Sin(Math.PI / n);
+                return (poly + per * r + Math.PI * r * r) * a;
+            }
+        }
+
+        /// <summary>点 (x,z) 在不在这个孔里。</summary>
+        public bool Contains(double x, double z)
+        {
+            double dx = x - XMm, dz = z - ZMm;
+
+            // ★ 先转到孔的本地坐标，再按长短轴比**压回各向同性** ——
+            //   这样椭圆、拉长的圆角三角都由同一段判定覆盖（用户 2026-09-05：
+            //   「或者是椭圆形」）。AspectXZ = 本地 x 向的拉伸倍数，1 = 各向同性。
+            double a0 = -RotDeg * Math.PI / 180.0;
+            double lx = (dx * Math.Cos(a0) - dz * Math.Sin(a0)) / Math.Max(1e-9, AspectXZ);
+            double lz = dx * Math.Sin(a0) + dz * Math.Cos(a0);
+
+            if (Sides < 3 || CornerFrac >= 0.999)          // 圆 / 椭圆
+                return lx * lx + lz * lz <= RMm * RMm;
+
+            double r = RMm * Math.Clamp(CornerFrac, 0.0, 1.0);   // 圆角半径
+            double rc = RMm - r;                                  // 核心多边形外接半径
+            if (rc <= 1e-9) return lx * lx + lz * lz <= RMm * RMm;
+
+            // 到核心正 N 边形的距离 ≤ r ⇒ 在孔内
+            return DistToRegularPolygon(lx, lz, rc, Sides) <= r;
+        }
+
+        /// <summary>点到「以原点为心、外接半径 rc 的正 n 边形」的距离；在内部为 0。</summary>
+        private static double DistToRegularPolygon(double x, double z, double rc, int n)
+        {
+            double best = double.PositiveInfinity;
+            bool inside = true;
+            for (int k = 0; k < n; k++)
+            {
+                double a1 = 2 * Math.PI * k / n + Math.PI / 2;        // 一个顶点朝 +z
+                double a2 = 2 * Math.PI * (k + 1) / n + Math.PI / 2;
+                double x1 = rc * Math.Cos(a1), z1 = rc * Math.Sin(a1);
+                double x2 = rc * Math.Cos(a2), z2 = rc * Math.Sin(a2);
+                // 外法向的符号：凸多边形，全部在内侧才算 inside
+                double cross = (x2 - x1) * (z - z1) - (z2 - z1) * (x - x1);
+                if (cross < 0) inside = false;
+                // 到这条边（线段）的距离
+                double ex = x2 - x1, ez = z2 - z1;
+                double t = Math.Clamp(((x - x1) * ex + (z - z1) * ez) / (ex * ex + ez * ez), 0, 1);
+                double px = x1 + t * ex - x, pz = z1 + t * ez - z;
+                best = Math.Min(best, Math.Sqrt(px * px + pz * pz));
+            }
+            return inside ? 0 : best;
+        }
+    }
 
     /// <summary>
     /// ★★★ **舌板开孔**（2026-09-05 用户提出）。孔里没有金属，电流绕行 ⇒
@@ -94,7 +174,41 @@ public sealed class FlangePlate
     /// 角度以 +x 轴为 0°、逆时针为正（与 <see cref="Inside"/> 里的 Atan2(z, x) 同一口径）。
     /// </summary>
     public readonly record struct DiscSlot(double RInMm, double ROutMm,
-                                           double CenterDeg, double SpanDeg);
+                                           double CenterDeg, double SpanDeg,
+                                           bool RoundEnds = true)
+    {
+        /// <summary>
+        /// ★★★ **弯椭圆**（用户 2026-09-05：「再加个弯椭圆（用于圆盘）」）。
+        ///
+        /// 圆盘上的料要沿**圆周**挖 —— 直的椭圆放不进环带，而尖角扇形槽
+        /// 在两端会形成应力与电流的尖点。弯椭圆 = 沿中弧的**胶囊形**：
+        /// 到中弧（半径 Rm、张角 Span）的距离 ≤ 半宽 ⇒ 在槽内。
+        /// 两端自然是半圆，既好加工、又不制造尖点。
+        ///
+        /// <c>RoundEnds = false</c> 退回原来的尖角扇形（保留旧行为的出口）。
+        /// </summary>
+        public bool Contains(double x, double z)
+        {
+            double rr = Math.Sqrt(x * x + z * z);
+            double deg = Math.Atan2(z, x) * 180.0 / Math.PI;
+            double d = deg - CenterDeg;
+            while (d > 180) d -= 360;
+            while (d < -180) d += 360;
+            double half = SpanDeg * 0.5;
+
+            if (!RoundEnds)
+                return rr >= RInMm && rr <= ROutMm && Math.Abs(d) <= half;
+
+            double rm = 0.5 * (RInMm + ROutMm), hw = 0.5 * (ROutMm - RInMm);
+            if (hw <= 1e-9) return false;
+            if (Math.Abs(d) <= half) return Math.Abs(rr - rm) <= hw;   // 弧身：径向距离
+            // 弧端：到端点的直线距离（这就是那两个半圆帽）
+            // 点到端点的距离：两点极坐标 (rr, |d|) 与 (rm, half)，用余弦定理
+            double dth = (Math.Abs(d) - half) * Math.PI / 180.0;
+            double dist2 = rr * rr + rm * rm - 2 * rr * rm * Math.Cos(dth);
+            return dist2 <= hw * hw;
+        }
+    }
 
     /// <summary>
     /// ★★★ **圆盘开槽**（2026-09-05）。位置与大小**由场算出来**，不是拍的。
@@ -363,24 +477,13 @@ public sealed class FlangePlate
         //   ⚠ 另写一份「哪里是孔」就会有两个来源，而两者迟早不一致。
         for (int q = 0; q < TabHoles.Length; q++)
         {
-            var hq = TabHoles[q];
-            double dx = x - hq.XMm, dz = z - hq.ZMm;
-            if (dx * dx + dz * dz <= hq.RMm * hq.RMm) return false;
+            if (TabHoles[q].Contains(x, z)) return false;
         }
         // ★ 圆盘扇形槽：半径落在 [RIn, ROut] 且角度落在张角内 ⇒ 挖掉
         if (DiscSlots.Length > 0)
         {
-            double rr = Math.Sqrt(x * x + z * z);
-            double deg = Math.Atan2(z, x) * 180.0 / Math.PI;
             for (int q = 0; q < DiscSlots.Length; q++)
-            {
-                var sl = DiscSlots[q];
-                if (rr < sl.RInMm || rr > sl.ROutMm) continue;
-                double d = deg - sl.CenterDeg;
-                while (d > 180) d -= 360;
-                while (d < -180) d += 360;
-                if (Math.Abs(d) <= sl.SpanDeg * 0.5) return false;
-            }
+                if (DiscSlots[q].Contains(x, z)) return false;
         }
         return true;
     }

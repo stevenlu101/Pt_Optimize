@@ -261,6 +261,7 @@ public sealed class DesignSpec
         //   （逐片数组少接一个的坑，2026-09-03 已经栽过一次：ringW1/W2/Mul2 那批。）
         SlotSpanDeg = FitArr(SlotSpanDeg, n);
         TabHoleRMm  = FitArr(TabHoleRMm,  n);
+        TabHoleAspect = FitArr(TabHoleAspect, n);
         // ★ 逐段长度是**按段**的（n-1），不是按片 —— 别跟上面六个混在一起。
         //   ⚠ 新增的段插在**倒数第二**（同 FitArr 的理由：首段/末段有各自的边界），
         //     所以这里也走同一个函数，只是长度不同。
@@ -292,6 +293,19 @@ public sealed class DesignSpec
         c.RingW1Mm = (double[])RingW1Mm.Clone();
         c.RingW2Mm = (double[])RingW2Mm.Clone();
         c.RingMul2 = (double[])RingMul2.Clone();
+        // ★★★★★ **形状那三根也必须逐份拷**（2026-09-06 被出图对账门抓到）。
+        //   漏了它们 ⇒ MemberwiseClone 按引用共享 ⇒ 改一个副本的孔径，
+        //   会**就地改掉 DesignSpec.Builtin[0] 那个 static 实例**，
+        //   之后每一次 Clone 都带着污染。
+        //   实测现场：一条测试把孔设成 R32.71×3，下一条测试拿「干净的 Builtin[0]」
+        //   出图，出来的图**法兰实心穿过铂金管** —— 而它自己一个孔都没设过。
+        //   ⚠ 本仓库为这个形状栽过（见 Clone 上方 --vary 那段注释：
+        //     「扰动必须作用在副本上，否则 W08/W06 这两个 static 实例会被就地改掉」）。
+        //     同一个坑，新字段又踩一次 ⇒ 配反射门 CloneCopiesEveryArrayTests，
+        //     以后**任何**新加的数组字段漏拷都会当场红。
+        c.SlotSpanDeg = (double[])SlotSpanDeg.Clone();
+        c.TabHoleRMm = (double[])TabHoleRMm.Clone();
+        c.TabHoleAspect = (double[])TabHoleAspect.Clone();
         return c;
     }
 
@@ -378,6 +392,26 @@ public sealed class DesignSpec
     /// </summary>
     public double[] TabHoleRMm = new double[4];
 
+    /// <summary>
+    /// ★★★ **孔的长短轴比**（逐片；1 = 圆，>1 = 顺着电流拉长的椭圆）。2026-09-05。
+    ///
+    /// 用户：「优化孔的形状不只是孔径，例如可以是类圆角三角形」「或者是椭圆形」。
+    /// 等面积实测（deliverable/孔形对比.txt，孔心 x=-50）：
+    /// <code>
+    ///   椭圆 2:1 横挡   抽热 -3.00 %   峰值 J **+28.9 %**   ← 挖得多但电流挤爆
+    ///   圆 R8           抽热 -2.22 %   峰值 J  -0.4 %
+    ///   椭圆 2:1 顺流   抽热 -2.03 %   峰值 J  **-7.6 %**
+    ///   椭圆 3:1 顺流   抽热 -1.76 %   峰值 J **-10.6 %**  ← 挖了料，峰值反而更低
+    /// </code>
+    /// ⇒ **顺流拉长能一边挖料一边降峰值电流密度** —— 同面积下峰值 J 的跨度达 40 个百分点，
+    ///   比孔径本身的影响大得多。所以它必须是**旋钮**，不是写死的默认。
+    ///
+    /// ⚠ 转角固定 0°（顺流）：横挡方向实测把峰值 J 顶高 29 %，那是纯粹的害处，
+    ///   不该让求解器有机会选它。离散的形状（圆角三角/方）已量过、暂不入旋钮，
+    ///   理由记在 HANDOVER 要求登记表 R6 备注里 —— **撤不撤由用户定**。
+    /// </summary>
+    public double[] TabHoleAspect = System.Linq.Enumerable.Repeat(1.0, 4).ToArray();
+
     /// <summary>孔心沿舌轴的位置 mm（负向为舌端）。NaN = 取舌片中点。</summary>
     public double TabHoleXMm = double.NaN;
 
@@ -417,7 +451,9 @@ public sealed class DesignSpec
     {
         double r = j < TabHoleRMm.Length ? TabHoleRMm[j] : 0;
         if (!(r > 0.05)) return System.Array.Empty<FlangePlate.TabHole>();
-        return new[] { new FlangePlate.TabHole(TabHoleCenterXMm(), 0, r) };
+        double asp = j < TabHoleAspect.Length && TabHoleAspect[j] > 0 ? TabHoleAspect[j] : 1.0;
+        return new[] { new FlangePlate.TabHole(TabHoleCenterXMm(), 0, r,
+                                               Sides: 0, CornerFrac: 1.0, RotDeg: 0, AspectXZ: asp) };
     }
 
     private FlangePlate.DiscSlot[] SlotsOf(int j, double weldLegMm)
@@ -432,8 +468,20 @@ public sealed class DesignSpec
     /// <summary>槽带 [r内, r外]。NaN 时按默认规则给 —— 规则只有这一份。</summary>
     public (double RIn, double ROut) SlotBandMm(double weldLegMm)
     {
-        double rin = double.IsNaN(SlotRInMm) ? HoleRadiusMm + weldLegMm + 1.0 : SlotRInMm;
-        double rout = double.IsNaN(SlotROutMm) ? DiscRadiusMm * (2.0 / 3.0) : SlotROutMm;
+        // ★★★★★ 内边距不能是写死的 1 mm（2026-09-05 出图时抓到）。
+        //   焊脚 = max(板厚, 管壁)，板厚解到 4.71 mm 时 rin = 26+4.71+1 = 31.71，
+        //   内桥只剩 1.0 mm < 下限 ⇒ SlotSpanMaxDeg 返回 0 ⇒ **槽这根旋钮被自己的默认带卡死**。
+        //   而它是治「法兰增量温降」最有效的一根（实测抽热 −42 %）。
+        //   表现极隐蔽：求解器照常报「不可行」，只字不提「槽根本没得开」。
+        //   ⇒ 内边距按**桥宽下限**给，与 SlotSpanMaxDeg 用的是同一个数。
+        const double MinBridgeMm = 6.0;
+        double rin = double.IsNaN(SlotRInMm)
+                   ? HoleRadiusMm + weldLegMm + MinBridgeMm
+                   : SlotRInMm;
+        // 外边也要留够桥：盘缘往里退一个桥宽
+        double rout = double.IsNaN(SlotROutMm)
+                    ? System.Math.Max(rin + 2.0, DiscRadiusMm - MinBridgeMm)
+                    : SlotROutMm;
         return (rin, rout);
     }
 
