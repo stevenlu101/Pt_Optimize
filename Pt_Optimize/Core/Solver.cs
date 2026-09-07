@@ -998,7 +998,36 @@ public static class Solver
             //   看不出「慢」和「挂了」的区别（用户 2026-08-29）。
             var r = LineRunner.Run(lc, inner, cancel);
             res.Solves++;
-            return r.Ok ? r : null;
+
+            // ★★★★★ **不收敛的场，一个数都不许拿去做决定**（2026-09-07 督导 S1）。
+            //
+            //   LineResult.Converged 自己的说明写着「**为 false 时表内所有数值一律不可引用**」，
+            //   而这里原来只看 r.Ok。外层耦合不收敛时 res.Ok **仍是 true**
+            //   （LineRunner 那一支只 Notes.Add「本次结果的每个数都不可用」，从不设 Ok=false）
+            //   ⇒ 坏场照样往下走。
+            //
+            //   而 Solver.PlateSlack 直接读逐片原始量（Flanges[j].QFromTubeW / TDiscMaxC），
+            //   **绕过 Checks，也就绕过了 Undetermined 那套铁律** ⇒
+            //   坏数据被拿去决定「抬哪根旋钮、二分到哪个值」，再把这个由坏数据挑出来的设计
+            //   送进终局复核，终局老实报「不可行」。
+            //   **表现不是报错，是答案变差而且看起来有理有据。**
+            //
+            //   终局本来就是护住的（LineResult.AllOk 的定义带 Converged）——
+            //   没护住的一直是**搜索过程**。这与 HANDOVER「场没解到位 ⇒ 吃它的判据一律判不了」
+            //   是同一条铁律；那次补的是线性解那一层，外层耦合这一层从来没补过。
+            //
+            //   对照组：旧路 FlangeAutoSizer 读 Converged **21 处**，并据此拒绝把没收敛的状态
+            //   当热启动（`if (lr.Converged) warmA = ...`）。Sizer→Solver 换代时这道闸丢了。
+            //
+            //   ⚠ 返回 null 而不是抛：调用方（ChooseKnob / RaiseUntil）对 null 已有专门的一支，
+            //     会印「场解不收敛 —— 不是『没用』，该修的是这根旋钮的上界」。
+            if (!r.Ok) return null;
+            if (!r.Converged)
+            {
+                res.Trace.Add("     ⚠ 外层耦合**未收敛** ⇒ 本次场解的每个数都不可引用，当作没解出来");
+                return null;
+            }
+            return r;
         }
         catch (OperationCanceledException) { throw; }
         catch { res.Solves++; return null; }

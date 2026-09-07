@@ -6680,7 +6680,14 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
                 {
                     var fd0 = DesignSpec.Current;
                     var lcCold = fd0.BuildCase(p, checkRamp: false);
+                    // ★ 冷启动**也要计时**（2026-09-07 督导指出）。
+                    //   原来只给热启动计时 ⇒ 「冷比热慢多少」得靠 D 段总时减出来
+                    //   （督导那次：47 s − 12.3 s ≈ 34.7 s，2.8 倍）。**推出来的数不是印出来的数**，
+                    //   而我 09-06 自己定过规矩：有预算的检查绿的时候也要打耗时。
+                    //   这条证据自己缺一半，补上它 —— 加个 Stopwatch 的事。
+                    var swC = System.Diagnostics.Stopwatch.StartNew();
                     var rCold = LineRunner.Run(lcCold);            // 冷启动，并留下收敛状态
+                    swC.Stop();
                     var lcWarm = fd0.BuildCase(p, checkRamp: false);
                     lcWarm.WarmStart = lcCold.WarmStart;           // 用它去热启动同一个算例
                     var swW = System.Diagnostics.Stopwatch.StartNew();
@@ -6699,7 +6706,9 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
                         bool same = dDip < 1.0 && dFx < 0.5 && dM < 1.0;
                         if (!same) bad++;
                         Console.WriteLine($"   {(same ? "✓" : "✗")} ③ 差 {dDip:0.000} K／②′ 差 {dFx:0.000} W／" +
-                                          $"合计差 {dM:0.00} g　（热启动耗时 {swW.Elapsed.TotalSeconds:0.0} s）");
+                                          $"合计差 {dM:0.00} g　（冷启动 {swC.Elapsed.TotalSeconds:0.0} s ／ " +
+                                          $"热启动 {swW.Elapsed.TotalSeconds:0.0} s ⇒ " +
+                                          $"热的快 {swC.Elapsed.TotalSeconds / Math.Max(swW.Elapsed.TotalSeconds, 1e-9):0.0} 倍）");
                         if (!same)
                             Console.WriteLine("      ★ 起点渗进了答案 ⇒ 迭代里有带记忆的环节（限幅/棘轮/离散翻转）。" +
                                               "在找到它之前，**热启动不可用**（LineCase.WarmStart 置空即回到冷启动）。");

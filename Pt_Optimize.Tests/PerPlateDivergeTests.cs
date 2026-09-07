@@ -1,6 +1,8 @@
-using System;
+﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Text;
 using PtOptimize.Core;
 using Xunit;
@@ -90,34 +92,71 @@ public class PerPlateDivergeTests
     }
 
     /// <summary>
-    /// ★★★★★ **场解不收敛，不许报成「这根旋钮没变好」**。
+    /// ★★★★★ **爆炸不许被印成「这根旋钮没用」** —— 行为门（2026-09-07 督导 S2）。
     ///
-    /// 交付件的停机理由里有这一句：
+    /// ⚠ 本门原来是**贴源码字面**的：`Assert.Contains("场解不收敛", body)`
+    ///   加一句「ChooseKnob 里要出现 rk is null」。它只验代码**提到过**这个词，
+    ///   **结构上就拦不住爆炸** —— 爆出来的是有限数（实测 −8.0e26、−2.6e102），
+    ///   `rk` 不为 null，于是从第二支 `!(dSlack > 1e-9)` 走掉，印成「抬到底也没变好」。
+    ///   我自己立过「不许钉措辞」的规矩，这条门就是反面教材，现在换成真跑。
+    ///
+    /// 实物（deliverable/对帐超时_轨迹.txt，09-06）：
     /// <code>
-    ///   内级半径 r₁ 抬到底也没变好（-81.296→-∞）
+    ///   片2 候选：外级倍率 t₂ 抬到底也没变好（-1267 → -8.0e26）
+    ///             板厚      抬到底也没变好（-1267 → -2.6e102）
     /// </code>
-    /// −∞ 是 <c>PlateSlack(null, …)</c> 的返回值 ——「**场解压根没收敛**」，
-    /// 不是「抬了没用」。两者的处置完全不同：
-    ///   · 没用   ⇒ 淘汰这个候选，对
-    ///   · 不收敛 ⇒ 上界给错了／几何被抬坏了，**要修的是上界，不是放弃这根旋钮**
     ///
-    /// 把不收敛渲染成「没用」，正是「安静失败」那一族 ——
-    /// 用户看到的「r₁/r₂ 完全没有优化」就是它的后果。
+    /// 构型不是编的：就是当时那份被污染的 W08（巨型椭圆孔吃掉管孔那一圈）。
+    /// 断言只钉一条**不变式**，不钉任何措辞或数字：
+    /// **轨迹里凡是说「没变好」的那一行，括号里的数必须是个像样的物理量。**
+    /// 说不出话来（场没解出来）就得说「不收敛」，那是另一条处置路径。
     /// </summary>
+    [Trait("速度", "慢")]   // 真跑求解器
     [Fact]
-    public void 不收敛不许报成没变好()
+    public void 爆炸不许被印成没变好()
     {
-        string s = File.ReadAllText(Path.Combine(
-            HandoverDoc.Root(), "Pt_Optimize", "Core", "Solver.cs"));
-        int at = s.IndexOf("private static (Knob? Knob, string Why, double Before, double After) ChooseKnob",
-                           StringComparison.Ordinal);
-        Assert.True(at > 0, "找不到 ChooseKnob");
-        int end = s.IndexOf("\n    /// <summary>", at, StringComparison.Ordinal);
-        string body = end > at ? s[at..end] : s[at..];
+        var d = DesignSpec.Builtin[0].Clone();
+        d.Name = "爆炸构型（09-06 被污染的 W08 逐位复现）";
+        d.TabHoleXMm = -79.75;
+        for (int j = 0; j < d.TabThickMm.Length; j++)
+        {
+            if (j < d.TabHoleRMm.Length) d.TabHoleRMm[j] = 32.71;      // 巨孔，吃掉管孔那一圈
+            if (j < d.TabHoleAspect.Length) d.TabHoleAspect[j] = 3.0;  // 顺流拉长 3 ⇒ 长半轴 98
+            if (j < d.SlotSpanDeg.Length) d.SlotSpanDeg[j] = 120;
+        }
 
-        Assert.Contains("场解不收敛", body);
-        Assert.True(body.IndexOf("rk is null", StringComparison.Ordinal) > 0,
-            "ChooseKnob 没有单独判 rk is null ⇒ 不收敛与「没变好」还是同一条路，"
-          + "报表照样把「几何被抬坏了」写成「这根旋钮没用」。");
+        var sr = Solver.Solve(d, new DesignInputs(), new SolverOptions
+        {
+            // ⚠ 轮数不能设太紧：第一版写 MaxRounds=2 / MaxPartialRounds=0，
+            //   求解器在「整轮没有一根抬得动」就收摊，**一行「没变好」都没印**
+            //   ⇒ 门在**空集上恒过**（正是督导点过的那一族）。见下面那道防空转的断言。
+            FineMm = 0, FineRadiusMm = 0, MaxRounds = 15, MaxPartialRounds = 2,
+        });
+
+        // 「没变好（a→b）」里的 b：必须是个像样的物理量。
+        //   判据不含阈值 —— 用**限值本身**当尺度：裕度是 limit − actual，
+        //   而限值是 O(10)（③ ≤ 10 K、②″ ≤ 5 K）。差到 10^6 倍以上的不是裕度，是数值爆炸。
+        var rx = new Regex(@"没变好（\s*([-+0-9.eE]+)\s*→\s*([-+0-9.eE]+)\s*）");
+        var bad = new List<string>();
+        foreach (var line in sr.Trace)
+            foreach (Match m in rx.Matches(line))
+                if (double.TryParse(m.Groups[2].Value, System.Globalization.NumberStyles.Float,
+                                    System.Globalization.CultureInfo.InvariantCulture, out double after)
+                 && (!double.IsFinite(after) || Math.Abs(after) > 1e7))
+                    bad.Add($"{after:0.###e+0}：{line.Trim()}");
+
+        // ★★★★★ **门不许什么都没验到**（2026-09-07 当场栽的）。
+        //   第一版这条门是绿的，而轨迹里**一行「没变好」都没有** —— 它在空集上恒过。
+        //   把 S1 临时关掉它照样绿，我才发现。⇒ 先证明这一跑确实走到了那条分支。
+        int sawNoImprove = sr.Trace.Count(l => l.Contains("没变好"));
+        Assert.True(sawNoImprove > 0,
+            "本门这一跑**一条「没变好」都没印**，等于什么都没验到（空集恒真）。"
+          + $"轨迹 {sr.Trace.Count} 行，停在：{sr.StopWhy}　"
+          + "—— 要么构型没走到那条分支，要么轮数设得太紧。门必须先证明自己有活干。");
+
+        Assert.True(bad.Count == 0,
+            "轨迹把**数值爆炸**印成了「这根旋钮没变好」——"
+          + "两者的处置完全相反（没用 ⇒ 淘汰候选；爆炸 ⇒ 场没解出来，该修的是上界或几何）。"
+          + string.Join(" ｜ ", bad.Take(4)));
     }
 }
