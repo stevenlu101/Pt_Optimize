@@ -829,9 +829,53 @@ internal static class GeomProbe
                 return b;
             }
             int made = 0;
-            void Add(Brep b, int layer, string nm)
+            // ★★★★★ **管腔里一点料都不许有 —— 在这里当场验，不要事后开 12 个进程去读**
+            //   （2026-09-07：我第一版把这个自检写在 C# 侧 Geometry3dm.BoreSelfCheck，
+            //     它对每片每部位各起一次探针 = **每次出图多起 12 个 Rhino 进程**。
+            //     那是加在**生产路径**上的成本：工程师每点一次「导出本页 3DM」都要付。
+            //     几何此刻就在内存里，验它是零成本的 —— 事后再读回来纯属绕远路。）
+            //
+            //   判据：在板面上沿管腔取一圈采样点，只要有一点落在实体**内部**，
+            //   就说明管孔没挖成（2026-09-06 实测过这个后果：法兰实心穿过铂金管）。
+            var boreHits = new List<string>();
+            void BoreCheck(Brep b, string nm, double y0)
+            {
+                if (b == null || holeR <= 0) return;
+
+                // ★★★★★ **IsPointInside 在 Inward 实体上返回的是反的**（2026-09-07 实测打脸）。
+                //   第一版没判朝向，结果 r29–32 的**环**被报成「r=9.1 处有料」——
+                //   一个环不可能在 9.1 有料，那是朝向翻了之后「内外互换」。
+                //   仓库里早有同一个坑的记录：Brep.CreateBooleanDifference 对 Inward 实体**静默失效**。
+                //   ⚠ 幸好它错在**安全那一侧**（把好图判红）；若错在另一侧，
+                //     这道门就成了摆设 —— 所以朝向必须显式归一，不能碰运气。
+                var solid = b;
+                if (solid.SolidOrientation == BrepSolidOrientation.Inward)
+                { solid = solid.DuplicateBrep(); solid.Flip(); }
+                if (solid.SolidOrientation != BrepSolidOrientation.Outward)
+                {
+                    // 朝向判不出来（不闭合/不是实体）⇒ **不下结论**，但要说出来，
+                    // 免得「没报错」被读成「验过了」。
+                    Console.Error.WriteLine($"[final] {nm} 朝向判不出（{solid.SolidOrientation}）⇒ 管腔自检跳过这一件");
+                    return;
+                }
+
+                foreach (double rr in new[] { holeR * 0.35, holeR * 0.7, holeR * 0.92 })
+                    for (int a = 0; a < 12; a++)
+                    {
+                        double th = a * Math.PI / 6.0;
+                        var pt = new Point3d(rr * Math.Cos(th), y0, rr * Math.Sin(th));
+                        bool inside;
+                        try { inside = solid.IsPointInside(pt, tol, false); } catch { continue; }
+                        if (!inside) continue;
+                        boreHits.Add($"{nm} 在 r={rr:0.0} mm、θ={a * 30}° 处**有料**（管外径 R{holeR:0.#}）");
+                        return;                      // 一处就够，别刷屏
+                    }
+            }
+
+            void Add(Brep b, int layer, string nm, double y0 = double.NaN)
             {
                 if (b == null) { Console.Error.WriteLine("实体创建失败：" + nm); return; }
+                if (!double.IsNaN(y0)) BoreCheck(b, nm, y0);
                 var att = new Rhino.DocObjects.ObjectAttributes { LayerIndex = layer, Name = nm };
                 if (doc.Objects.AddBrep(b, att) != Guid.Empty) made++;
             }
@@ -927,14 +971,14 @@ internal static class GeomProbe
 
                 // 板身 = 轮廓 − 环外边界（环外边界可能越过盘缘，故用曲线布尔差）− 槽/孔
                 Add(Solid(CutAll(RegionMinus(new[] { body }, Circ(ringR[1])), cutters), t, y0, pn + "板身"),
-                    lyBody, pn + "_板身_t" + t.ToString("0.00"));
+                    lyBody, pn + "_板身_t" + t.ToString("0.00"), y0);
                 // 环：外圈**裁到轮廓内**，否则盘缘之外会凭空长出一整圈料
                 Add(Solid(CutAll(RegionMinus(ClipToBody(Circ(ringR[1]), body), Circ(ringR[0])), cutters), ring[1], y0, pn + "环外级"),
                     lyRingO, pn + "_环外级_r" + ringR[0].ToString("0.0") + "-" + ringR[1].ToString("0.0")
-                       + "_t" + ring[1].ToString("0.00"));
+                       + "_t" + ring[1].ToString("0.00"), y0);
                 Add(Solid(CutAll(RegionMinus(ClipToBody(Circ(ringR[0]), body), Circ(holeR)), cutters), ring[0], y0, pn + "环内级"),
                     lyRingI, pn + "_环内级_r" + holeR.ToString("0.0") + "-" + ringR[0].ToString("0.0")
-                       + "_t" + ring[0].ToString("0.00"));
+                       + "_t" + ring[0].ToString("0.00"), y0);
 
                 // 角焊缝：焊脚 a 可能**跨过台阶边界**（a 最大 3.40，而环内级只有 3 mm 宽），
                 // 故按分区切段，每段坐在**自己那一级的板面**上 —— 否则跨界那一小片焊肉会
@@ -1078,6 +1122,13 @@ internal static class GeomProbe
             //   写在最后而不是当场 return：文件已经写出来了，让人能打开看见病灶，
             //   但返回码非 0 ⇒ 调用方（Geometry3dm.WriteFinal3dm）会抛，
             //   **绝不会有人拿着这张图当成功的交付件**。
+            if (boreHits.Count > 0)
+            {
+                Console.Error.WriteLine("出图自检失败 —— **法兰伸进铂金管**，这张图装不进去：");
+                foreach (var w in boreHits.Take(8)) Console.Error.WriteLine("  · " + w);
+                Console.Error.WriteLine("  （图已写出，可以打开看病灶，但它不是可用的交付件。）");
+                return 9;
+            }
             if (boolFailed.Count > 0)
             {
                 Console.Error.WriteLine($"曲线布尔失败 {boolFailed.Count} 处 —— 这张图**不可用**：");

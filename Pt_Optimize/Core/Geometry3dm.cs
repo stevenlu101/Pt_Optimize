@@ -98,6 +98,43 @@ public static class Geometry3dm
     ///   而「抄两处然后悄悄漂开」是本项目最常见的失效（HANDOVER §1.8）。
     /// </summary>
     /// <returns>子进程 stdout（JSON 回显，用于与规格逐项比对）</returns>
+
+    /// <summary>
+    /// ★★★★★ **子进程等待必须有上限**（2026-09-07 督导 S9）。
+    ///
+    /// 全仓 9 处 <c>WaitForExit()</c> 一处上限都没有，其中 **7 处在生产路径上** ——
+    /// 工程师点「分析几何变数」「导出本页 3DM」走的就是它。
+    /// Rhino 子进程一挂，APP 就**无限期等下去、一句话不说**。
+    /// ⚠ 督导写得准：「我没有实测触发过它，我只证明了没有任何东西挡着它发生」——
+    ///   这两句不一样，我照原样记下来，不夸大成「已复现」。
+    ///   （同一形状我自己刚栽过：一条 `cat &gt; /tmp/chk.csx` 在读 stdin，
+    ///     阻塞 13.52 小时、产出为零。那是我的命令，不是产品，但病是同一种。）
+    ///
+    /// 本方法同时修掉**第二个雷**：原来是先 <c>ReadToEnd(stdout)</c> 再
+    /// <c>ReadToEnd(stderr)</c> —— 子进程把 stderr 缓冲区写满时，父进程正卡在读 stdout，
+    /// 双方互等，**这是经典死锁**，而且它同样表现为「APP 卡住不说话」。
+    /// ⇒ 两条管道都改成异步收。
+    ///
+    /// ⚠ 超时后**必须杀掉子进程并明说是超时**。只加个数字然后静默返回，
+    ///   等于把无限等待换成静默错误 —— 那更糟。
+    ///   （督导引了「几何子进程必须有能力报告失败」那一节，我查了四份文档都没有该节号，
+    ///     所以只留原则、不留指不到的出处 —— 凭空的出处比没有出处更坏。）
+    /// </summary>
+    private const int ProbeTimeoutMs = 10 * 60 * 1000;   // 10 分钟：实测最慢的一次出图 ~1 分钟，留一个量级
+
+    private static void WaitOrKill(Process proc, int timeoutMs, string what)
+    {
+        if (proc.WaitForExit(timeoutMs)) { proc.WaitForExit(); return; }   // 无参那次让异步读收尾
+        string pid = "?";
+        try { pid = proc.Id.ToString(); } catch { }
+        try { proc.Kill(entireProcessTree: true); } catch { }
+        try { proc.WaitForExit(5000); } catch { }
+        throw new TimeoutException(
+            $"{what}：几何子进程（PID {pid}）等了 {timeoutMs / 1000.0:0} 秒还没返回，**已强制结束**。"
+          + " 常见原因：本机 Rhino 8 授权过期／弹了对话框／模型过大。"
+          + " ⚠ 这条是**超时**，不是「算不出来」—— 两者处置不同，别当成几何有问题。");
+    }
+
     public static string WriteFinal3dm(DesignSpec fd, string outPath,
                                        double tubeIdMm = 50.0, double segLenMm = 300.0,
                                        int segCount = 3)
@@ -155,8 +192,10 @@ public static class Geometry3dm
         psi.ArgumentList.Add(outPath);
 
         using var proc = Process.Start(psi) ?? throw new InvalidOperationException("无法启动 " + probe);
-        string so = proc.StandardOutput.ReadToEnd(), se = proc.StandardError.ReadToEnd();
-        proc.WaitForExit();
+        var aOut = proc.StandardOutput.ReadToEndAsync();
+        var aErr = proc.StandardError.ReadToEndAsync();
+        WaitOrKill(proc, ProbeTimeoutMs, "写整机 3DM");
+        string so = aOut.GetAwaiter().GetResult(), se = aErr.GetAwaiter().GetResult();
         if (proc.ExitCode != 0)
             throw new InvalidOperationException($"{ProbeName} final 退出码 {proc.ExitCode}：{se}{so}");
 
@@ -176,68 +215,13 @@ public static class Geometry3dm
         //   成本：每次出图多跑几次探针（秒级），相对一次 70 分钟的求解可以忽略。
         //   ⚠ 只查最硬的那一条（管腔）。逐点全比对在 Export3dmMatchesSolvedTests 里，
         //     那里有解析几何可比；这里只有 spec，查得起的就是这一条。
-        BoreSelfCheck(probe, outPath, fd, names);
+        // ★ 管腔自检**已挪进 Geom 的 final 模式**（退出码 9）—— 几何在那边就在内存里，
+        //   零额外进程。此处只要不吞它的退出码即可（上面那个 ExitCode != 0 的 throw）。
+        //   （原来在这里对每片每部位各起一次探针 = 每次出图多 12 个 Rhino 进程，
+        //     而这是工程师每点一次「导出本页 3DM」都要付的成本。）
         return so.Trim();
     }
 
-    /// <summary>
-    /// 出图自检：逐片逐部位读回来，**管外径以内一点料都不许有**。
-    /// 法兰伸进铂金管 = 装不进去，比任何判据都直接。
-    /// </summary>
-    private static void BoreSelfCheck(string probe, string outPath, DesignSpec fd, string[] names)
-    {
-        double holeR = fd.HoleRadiusMm;
-        var bad = new List<string>();
-        for (int j = 0; j < fd.TabThickMm.Length && j < names.Length; j++)
-            foreach (string part in new[] { "板身", "环外级", "环内级" })
-            {
-                var psi = new ProcessStartInfo(probe)
-                {
-                    RedirectStandardOutput = true, RedirectStandardError = true,
-                    StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
-                    UseShellExecute = false, CreateNoWindow = true,
-                };
-                foreach (var a in new[] { "thickness", outPath, names[j] + "-" + part,
-                                          (j * 300.0).ToString("R"), "1" })
-                    psi.ArgumentList.Add(a);
-                using var pr = Process.Start(psi);
-                if (pr is null) continue;
-                string txt = pr.StandardOutput.ReadToEnd();
-                pr.StandardError.ReadToEnd();
-                pr.WaitForExit();
-                if (pr.ExitCode != 0) continue;      // 这一级没实体（倍率=1 时环是平的）
-
-                try
-                {
-                    using var jd = System.Text.Json.JsonDocument.Parse(txt);
-                    var R = jd.RootElement;
-                    int nx = R.GetProperty("nx").GetInt32(), nz = R.GetProperty("nz").GetInt32();
-                    double st = R.GetProperty("step").GetDouble();
-                    double x0 = R.GetProperty("x0").GetDouble(), z0 = R.GetProperty("z0").GetDouble();
-                    var T = R.GetProperty("thickness").EnumerateArray().Select(e => e.GetDouble()).ToArray();
-                    int nIn = 0; double rMin = double.MaxValue;
-                    for (int i = 0; i < nx; i++)
-                        for (int k = 0; k < nz; k++)
-                            if (T[i * nz + k] > 1e-9)
-                            {
-                                double xx = x0 + i * st, zz = z0 + k * st;
-                                double r = Math.Sqrt(xx * xx + zz * zz);
-                                if (r < rMin) rMin = r;
-                                if (r < holeR - 1e-6) nIn++;
-                            }
-                    if (nIn > 0)
-                        bad.Add($"{names[j]}-{part}：{nIn} 个点落在管外径 R{holeR:0.#} 以内"
-                              + $"（最内 {rMin:0.000} mm）");
-                }
-                catch { /* 读不回来不在本检查的职责里 */ }
-            }
-
-        if (bad.Count > 0)
-            throw new InvalidOperationException(
-                "出图自检失败 —— **法兰伸进铂金管**，这张图装不进去：" + Environment.NewLine
-              + string.Join(Environment.NewLine, bad.Select(x => "  · " + x)) + Environment.NewLine
-              + "（图已写到 " + outPath + "，可以打开看病灶，但它不是可用的交付件。）");
-    }
 
     /// <summary>
     /// 写一张**单图层、多级台阶**的法兰 .3dm（调 Geom 子进程的 steps 模式）。
@@ -299,9 +283,11 @@ public static class Geometry3dm
             psi.ArgumentList.Add($"{tabHoleXMm.ToString("R")},{tabHoleRMm.ToString("R")}");
 
         using var proc = Process.Start(psi) ?? throw new InvalidOperationException("无法启动 " + probe);
-        string stdout = proc.StandardOutput.ReadToEnd();
-        string stderr = proc.StandardError.ReadToEnd();
-        proc.WaitForExit();
+        var cOut = proc.StandardOutput.ReadToEndAsync();
+        var cErr = proc.StandardError.ReadToEndAsync();
+        WaitOrKill(proc, ProbeTimeoutMs, "几何子进程");
+        string stdout = cOut.GetAwaiter().GetResult();
+        string stderr = cErr.GetAwaiter().GetResult();
         if (proc.ExitCode != 0)
             throw new InvalidOperationException($"{ProbeName} steps 退出码 {proc.ExitCode}。{stderr.Trim()}");
         return stdout;
@@ -328,9 +314,11 @@ public static class Geometry3dm
         if (!double.IsNaN(planeY)) psi.ArgumentList.Add(planeY.ToString("R"));
 
         using var proc = Process.Start(psi) ?? throw new InvalidOperationException("无法启动 " + probe);
-        string stdout = proc.StandardOutput.ReadToEnd();
-        string stderr = proc.StandardError.ReadToEnd();
-        proc.WaitForExit();
+        var cOut = proc.StandardOutput.ReadToEndAsync();
+        var cErr = proc.StandardError.ReadToEndAsync();
+        WaitOrKill(proc, ProbeTimeoutMs, "几何子进程");
+        string stdout = cOut.GetAwaiter().GetResult();
+        string stderr = cErr.GetAwaiter().GetResult();
         if (proc.ExitCode != 0)
             throw new InvalidOperationException($"{ProbeName} scale 退出码 {proc.ExitCode}。{stderr.Trim()}");
         return stdout;
@@ -359,9 +347,11 @@ public static class Geometry3dm
         psi.ArgumentList.Add(stepMm.ToString("R"));
 
         using var proc = Process.Start(psi) ?? throw new InvalidOperationException("无法启动 " + probe);
-        string stdout = proc.StandardOutput.ReadToEnd();
-        string stderr = proc.StandardError.ReadToEnd();
-        proc.WaitForExit();
+        var cOut = proc.StandardOutput.ReadToEndAsync();
+        var cErr = proc.StandardError.ReadToEndAsync();
+        WaitOrKill(proc, ProbeTimeoutMs, "几何子进程");
+        string stdout = cOut.GetAwaiter().GetResult();
+        string stderr = cErr.GetAwaiter().GetResult();
         if (proc.ExitCode != 0)
             throw new InvalidOperationException($"{ProbeName} thickness 退出码 {proc.ExitCode}。{stderr.Trim()}");
 
@@ -403,9 +393,11 @@ public static class Geometry3dm
             ?? throw new InvalidOperationException("无法启动 " + probe);
 
         // 先读完再等待：子进程输出可能填满管道缓冲区而卡死
-        string stdout = proc.StandardOutput.ReadToEnd();
-        string stderr = proc.StandardError.ReadToEnd();
-        proc.WaitForExit();
+        var cOut = proc.StandardOutput.ReadToEndAsync();
+        var cErr = proc.StandardError.ReadToEndAsync();
+        WaitOrKill(proc, ProbeTimeoutMs, "几何子进程");
+        string stdout = cOut.GetAwaiter().GetResult();
+        string stderr = cErr.GetAwaiter().GetResult();
 
         if (proc.ExitCode != 0)
             throw new InvalidOperationException(
@@ -460,9 +452,11 @@ public static class Geometry3dm
         psi.ArgumentList.Add(step.ToString("R"));
 
         using var proc = Process.Start(psi) ?? throw new InvalidOperationException("无法启动 " + probe);
-        string stdout = proc.StandardOutput.ReadToEnd();
-        string stderr = proc.StandardError.ReadToEnd();
-        proc.WaitForExit();
+        var cOut = proc.StandardOutput.ReadToEndAsync();
+        var cErr = proc.StandardError.ReadToEndAsync();
+        WaitOrKill(proc, ProbeTimeoutMs, "几何子进程");
+        string stdout = cOut.GetAwaiter().GetResult();
+        string stderr = cErr.GetAwaiter().GetResult();
         if (proc.ExitCode != 0)
             throw new InvalidOperationException($"厚度场提取失败（退出码 {proc.ExitCode}）：{stderr.Trim()}");
         // ★★ 退出码 0 **不等于**成功（2026-08-25 实测）：Pt_Optimize.Geom 的六个模式

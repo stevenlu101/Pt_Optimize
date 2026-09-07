@@ -206,9 +206,18 @@ public class Export3dmMatchesSolvedTests
         foreach (var a in new[] { "thickness", file, layer, planeY.ToString("R"), "1" })
             psi.ArgumentList.Add(a);
         using var pr = Process.Start(psi)!;
-        string so = pr.StandardOutput.ReadToEnd();
-        pr.StandardError.ReadToEnd();
-        pr.WaitForExit();
+        // ★ 上限 + 异步收管道，理由同 Geometry3dm.WaitOrKill（督导 S9）：
+        //   裸 WaitForExit() 会无限期挂住，而先 stdout 后 stderr 的同步读会死锁。
+        var aOut = pr.StandardOutput.ReadToEndAsync();
+        var aErr = pr.StandardError.ReadToEndAsync();
+        if (!pr.WaitForExit(10 * 60 * 1000))
+        {
+            try { pr.Kill(entireProcessTree: true); } catch { }
+            throw new TimeoutException("出图对账门读回厚度场：探针 10 分钟没返回，已强制结束");
+        }
+        pr.WaitForExit();   // 收尾：让上面两条异步读跑完（超时那支已在上面 return 掉）
+        string so = aOut.GetAwaiter().GetResult();
+        aErr.GetAwaiter().GetResult();
         if (pr.ExitCode != 0) return null;
 
         using var jd = JsonDocument.Parse(so);
