@@ -271,7 +271,7 @@ public static class Solver
         if (baseIn   is null) throw new ArgumentNullException(nameof(baseIn));
         if (opt      is null) throw new ArgumentNullException(nameof(opt));
 
-        var res = new SolverResult();
+        var res = new SolverResult { Progress = progress };
         void Log(string s) { res.Trace.Add(s); progress?.Report(s); }
 
         // 只留几何与工况；**五个旋钮一律丢掉**，改用盒的下角。
@@ -732,7 +732,7 @@ public static class Solver
                 continue;
             }
             Set(d, k, j, hi);
-            var rk = Eval(d, baseIn, opt, res, cancel, inner);
+            var rk = EvalProbe(d, baseIn, opt, res, cancel, inner);   // 临时态：邻片熔了在副本上抬，代价计入本候选
             Set(d, k, j, lo);                       // 量完立刻还原 —— 只增不减的不变式不受影响
             double after = PlateSlack(rk, key, j, dipMax, discMax);
             double dSlack = after - before;
@@ -880,7 +880,7 @@ public static class Solver
         double after;
         if (double.IsNaN(knownAfter))
         {
-            var rHi = Eval(d, baseIn, opt, res, cancel, inner);
+            var rHi = EvalProbe(d, baseIn, opt, res, cancel, inner);   // 临时态
             if (rHi is null)
             {
                 // 判不了 ⇒ 不许印成「分派前提不成立…没变好」（那是「这旋钮没用」的意思）
@@ -938,7 +938,7 @@ public static class Solver
             cancel.ThrowIfCancellationRequested();
             double mid = 0.5 * (lo + hi);
             Set(d, knob, j, mid);
-            var rMid = Eval(d, baseIn, opt, res, cancel, inner);
+            var rMid = EvalProbe(d, baseIn, opt, res, cancel, inner);   // 临时态：中点上邻片熔了在副本上抬
             if (rMid is null)
             {
                 // ★★★★★ 判不了 ⇒ **中止二分**，不许 lo = mid（2026-09-07 B）。
@@ -1081,12 +1081,81 @@ public static class Solver
     /// 算一次。★ 网格从 <paramref name="o"/> 取 —— 求根**跑在哪张网格上**是本类的关键量
     /// （见类注释 A⑬：根的位置随网格移动），不许由别处悄悄决定。
     /// </summary>
+    /// <summary>
+    /// ★★★★★ **熔化是随状态变的约束，不只是起点的一次性约束**（2026-09-08 下午，0.8 档对帐第 1 轮收场的病灶）。
+    ///
+    /// 下角把片1/片2 抬到「刚好不熔」（零裕度）之后，候选探针「抬到上界看变不变好」（板厚探 6 mm、t₂ 探 2.5）
+    /// 让抽热猛增 ⇒ 保持控温点的电流↑ ⇒ 邻片落回熔化区（1770／1790／1798 °C）⇒ 探针一律「解不出来」
+    /// ⇒ 片1 三个候选全败 ⇒ 第 1 轮就收场，3257.7 g 不可行。6f191b2 能到 3480.7 是因为那时熔化只记 Note、探针照用坏数。
+    ///
+    /// 修法：片 k 熔 = 片 k 的一条判据，旋钮 = 片 k 的板厚（与旧路「先加厚这一级」同口径）。
+    /// 任何评估里邻片熔了 ⇒ **先把熔的片按布尔抬到不熔，再量判据**：
+    ///   · 已提交态（轮首、候选比价的基准、RaiseUntil 的起点）⇒ <see cref="Eval"/>：**落地**并留痕 `★ 下角因熔化上抬`
+    ///   · 临时态（探针、上界验、二分中点）⇒ <see cref="EvalProbe"/>：在**副本**上做，不落进模型；
+    ///     那份厚度算进该候选的 Δ铂重（MassOf 读的是副本的解），留痕 `★ 探针态邻片熔 ⇒ 副本上先抬到不熔再量`
+    /// 单调性不破（板厚只增）；最小性可能偏保守（临时态上抬的厚度不落地，落地的只有已提交态那次）。
+    /// 便宜的替代（把探针上界缩到熔化极限）会假交棒：3480.7 那个解（片2 更厚）存在，却报「候选都不成立」。
+    /// </summary>
     private static LineResult? Eval(DesignSpec d, DesignInputs baseIn, SolverOptions o,
                                     SolverResult res, CancellationToken cancel,
                                     IProgress<string>? inner = null)
+        => EvalMelt(d, baseIn, o, res, cancel, inner, persist: true);
+
+    /// <summary>临时态（探针／上界验／二分中点）的评估：邻片熔了在**副本**上抬，不落进模型。</summary>
+    private static LineResult? EvalProbe(DesignSpec d, DesignInputs baseIn, SolverOptions o,
+                                         SolverResult res, CancellationToken cancel,
+                                         IProgress<string>? inner = null)
+        => EvalMelt(d, baseIn, o, res, cancel, inner, persist: false);
+
+    private static LineResult? EvalMelt(DesignSpec d, DesignInputs baseIn, SolverOptions o,
+                                        SolverResult res, CancellationToken cancel,
+                                        IProgress<string>? inner, bool persist)
     {
         var r = EvalRaw(d, baseIn, o, res, cancel, inner);
-        return r is null ? null : Gate(r, res);
+        if (r is null) return null;
+        if (!r.OverMelt) return Gate(r, res);
+
+        // 熔了 ⇒ 先把熔的片抬到不熔再量。落地与否由调用方的态决定，不由这里猜。
+        var target = persist ? d : d.Clone();
+        int np = d.TabThickMm.Length;
+        if (!persist && res.ProbeFloor is { } hint)
+        {
+            // ★ 先试上次副本抬到的厚度（只对**这次熔的**片）—— 一次场解就不熔的话，整段二分都省了。
+            //   要**迭代**：实测套上片2 的缓存之后换成片1 熔，片1 的缓存没被套 ⇒ 白做一遍二分（6 分钟）。
+            //   每套一次多解一次；一片最多套一次 ⇒ 至多 np 次。
+            int used = 0;
+            for (int guard = 0; guard < np; guard++)
+            {
+                bool bumped = false;
+                for (int j = 0; j < np && j < r.Flanges.Length; j++)
+                    if (r.Flanges[j].OverMelt && hint[j] > target.TabThickMm[j] + 1e-12) { target.TabThickMm[j] = hint[j]; bumped = true; }
+                if (!bumped) break;
+                used++;
+                var r2 = EvalRaw(target, baseIn, o, res, cancel, inner);
+                if (r2 is null) return null;
+                r = r2;
+                if (!r2.OverMelt)
+                {
+                    string m = BranchMarks.MeltProbeRaised + $"：按上次副本抬到的厚度 {Join(target.TabThickMm)} 套 {used} 次就不熔（代价计入本候选）";
+                    res.Trace.Add("     " + m); res.Progress?.Report("     " + m);
+                    return Gate(r2, res);
+                }
+            }
+        }
+        var (ok, handOff, why, last) = MeltFloor(target, baseIn, o, res, cancel, res.Progress, inner,
+                                                 persist, first: r);
+        if (!persist)
+        {
+            res.ProbeFloor ??= new double[np];
+            for (int j = 0; j < np; j++) res.ProbeFloor[j] = Math.Max(res.ProbeFloor[j], target.TabThickMm[j]);
+        }
+        if (!ok || last is null)
+        {
+            res.NullWhy = (handOff ? "邻片熔化且板厚抬到工艺上界仍熔 —— " : "熔化处置未完成 —— ") + why;
+            res.Trace.Add("     ✗ " + res.NullWhy);
+            return null;
+        }
+        return Gate(last, res);
     }
 
     /// <summary>
@@ -1171,11 +1240,15 @@ public static class Solver
     public static (bool Ok, bool HandOff, string Why, LineResult? Last) MeltFloor(
         DesignSpec d, DesignInputs baseIn, SolverOptions o, SolverResult res,
         CancellationToken cancel = default, IProgress<string>? progress = null,
-        IProgress<string>? inner = null)
+        IProgress<string>? inner = null, bool persist = true, LineResult? first = null)
     {
-        void Log(string s) { res.Trace.Add(s); progress?.Report(s); }
+        // persist=false ⇒ 临时态的副本：不发「★ 下角因熔化上抬」（那是落地的痕），行首标「（副本）」
+        void Log(string s) { string t = persist ? s : "     · （副本）" + s.TrimStart(); res.Trace.Add(t); progress?.Report(t); }
+        var raisedProbe = new List<string>();
         int np = d.TabThickMm.Length;
-        double q = QuantOf(o, Knob.Thick), tol = TolOf(o, Knob.Thick), hiT = HiOf(o, Knob.Thick);
+        double q = QuantOf(o, Knob.Thick), hiT = HiOf(o, Knob.Thick);
+        // 副本（探针）只要「不熔」，不要「刚好不熔」：容差 0.05 mm，二分 3–4 次；落地的那次才用图纸格级容差
+        double tol = persist ? TolOf(o, Knob.Thick) : Math.Max(TolOf(o, Knob.Thick), 0.05);
         // 遍数封顶：最多**抬** MaxPasses−1 遍，第 MaxPasses 遍**只验不抬** —— 每一次上抬都要被下一遍验过，
         //   不许把一次没验过的上抬交出去。每遍至少把一片抬高一格、且有工艺上界 ⇒ 本来就必停；封顶只防磨太久。
         //   实测（2026-09-08，W08 导航网格）要 3 遍：第一遍按熔化区里（段解还没吃回灌）的布尔二分出阈值，
@@ -1191,7 +1264,7 @@ public static class Solver
         //   实测三遍 19.6 分钟。第一遍熔化区里的解便宜（第一次 RunOnce 就返回），括号放宽些；
         //   后面各遍每次解都是完整耦合（贵），括号收窄到 ×1.25。
         //   ⚠ 括号只是**搜索提示**，决定仍只看布尔：在这一点熔 ⇒ 它成为新的 lo；不熔 ⇒ 它是 hi。
-        double grow = 1.5;
+        double grow = persist ? 1.5 : 1.1;      // 副本只要「不熔」：括号窄、二分少（实测 ×1.5 要 4–5 次，~6 分钟一个探针）
         string HandOff(IEnumerable<int> js) =>
             $"片{string.Join("/", js)} 板厚抬到工艺上界 {hiT:0.00} mm **仍熔** ⇒ **厚度这条路走到头了**"
           + "（实测，不是估的）—— 求解器手上只有法兰侧旋钮；下一根是**增宽**：盘径与舌半宽（「◇ 搜形状」）。"
@@ -1202,7 +1275,8 @@ public static class Solver
         {
             cancel.ThrowIfCancellationRequested();
             var start = (double[])d.TabThickMm.Clone();    // 本遍起点：判不了时退回这里
-            var r = EvalRaw(d, baseIn, o, res, cancel, inner);
+            var r = first ?? EvalRaw(d, baseIn, o, res, cancel, inner);   // 调用方刚解过就不重解
+            first = null;
             if (r is null) return (false, false, $"验下角时场解未返回 ⇒ 判不了（{res.NullWhy}）", null);
             if (!r.OverMelt)
             {
@@ -1212,6 +1286,11 @@ public static class Solver
                 Log(pass == 1
                     ? $"   · 验下角：板厚 {Join(d.TabThickMm)} mm 处 {np} 片都不熔（场已收敛）⇒ 不必上抬"
                     : $"   · 验下角（第 {pass} 遍）：板厚 {Join(d.TabThickMm)} mm 处 {np} 片都不熔（场已收敛）⇒ 出了熔化区");
+                if (!persist && raisedProbe.Count > 0)
+                {
+                    string mark = BranchMarks.MeltProbeRaised + "：" + string.Join("、", raisedProbe) + "（代价计入本候选）";
+                    res.Trace.Add("     " + mark); progress?.Report("     " + mark);
+                }
                 return (true, false, "", r);
             }
 
@@ -1226,7 +1305,7 @@ public static class Solver
                                     + $" ⇒ 判不了（本方法最多抬 {MaxPasses - 1} 遍；板厚留在最后一次验过的值 {Join(d.TabThickMm)} 上）", null);
             Log($"   · 验下角（第 {pass} 遍）：板厚 {Join(d.TabThickMm)} mm 处 片{string.Join("/", melting)} **熔化**"
               + "（只用「熔/不熔」这个判断；温度数值是熔化区里的外推值，一个都不引用）"
-              + (pass == 1 ? " ⇒ 「不熔化」是下角漏掉的第三条约束，逐片二分抬板厚到刚好不熔"
+              + (pass == 1 ? " ⇒ 逐片二分抬板厚到刚好不熔（治熔化的旋钮就是那一片的板厚）"
                            : " ⇒ 耦合展开后电流变了，再抬一点"));
 
             var lo = new double[np]; var hi = new double[np];
@@ -1296,11 +1375,17 @@ public static class Solver
             {
                 double t = Math.Min(Math.Ceiling(hi[j] / q - 1e-9) * q, hiT);
                 d.TabThickMm[j] = t;
-                Log($"{BranchMarks.MeltFloorRaised}：片{j} {start[j]:0.00} → {t:0.00} mm"
-                  + $"（第 {pass} 遍；只按「熔/不熔」二分 {iters} 次，解出 {hi[j]:0.0000}，向上对齐到图纸格 {q:0.###}"
-                  + (pass > 1 ? $"；自闭式下角 {from[j]:0.00} 起累计" : "") + "）");
+                if (persist)
+                    Log($"{BranchMarks.MeltFloorRaised}：片{j} {start[j]:0.00} → {t:0.00} mm"
+                      + $"（第 {pass} 遍；只按「熔/不熔」二分 {iters} 次，解出 {hi[j]:0.0000}，向上对齐到图纸格 {q:0.###}"
+                      + (pass > 1 ? $"；自闭式下角 {from[j]:0.00} 起累计" : "") + "）");
+                else
+                {
+                    Log($"片{j} {start[j]:0.00} → {t:0.00} mm（临时态；二分 {iters} 次，不落地）");
+                    raisedProbe.Add($"片{j} {start[j]:0.00}→{t:0.00}");
+                }
             }
-            grow = 1.25;    // 后面各遍是耦合展开后的修正，括号收窄
+            grow = persist ? 1.25 : 1.1;    // 后面各遍是耦合展开后的修正，括号收窄
         }
         return (false, false, "验下角循环意外退出 ⇒ 判不了（程序错）", null);    // MaxPasses ≥ 1 时到不了
     }
@@ -1596,6 +1681,16 @@ public sealed class SolverResult
     ///   每个印「解不出来」的出口都要带上它，不许自己猜一个原因印上去。
     /// </summary>
     public string NullWhy = "";
+
+    /// <summary>Solve 传进来的进度接收器；MeltFloor 从 Eval 里被调时借它往界面报，没有就只进 Trace。</summary>
+    internal IProgress<string>? Progress;
+
+    /// <summary>
+    /// ★ 探针副本上**上次**把各片抬到的厚度（逐片，只增）。下一个探针又让同一片熔时先直接试它：
+    ///   多数时候一次场解就不熔，省掉整段二分（2026-09-08 实测：每个熔化探针做完整二分 ⇒ 0.8 档 2.5 小时还没跑完）。
+    ///   只是搜索提示，不进模型、不进答案：落地的厚度仍由已提交态那次 MeltFloor(persist) 决定。
+    /// </summary>
+    internal double[]? ProbeFloor;
 }
 
 public sealed class SolverOptions

@@ -63,4 +63,10 @@ public static class BranchMarks
 
     /// <summary>Solver.MeltFloor：板厚抬到工艺上界**仍熔** ⇒ 交棒给增宽（不是判无解）。</summary>
     public const string MeltFloorHandOff = "★ 走到了「下角抬到厚度上界仍熔 ⇒ 交棒给增宽」";
+
+    /// <summary>
+    /// Solver.EvalProbe：探针／二分中点这种**临时态**上邻片熔了 ⇒ 在**副本**上把熔化的片抬到不熔再量判据，
+    /// 那份厚度算进该候选的代价，但不落进模型（2026-09-08，0.8 档第 1 轮收场的病灶）。
+    /// </summary>
+    public const string MeltProbeRaised = "★ 探针态邻片熔 ⇒ 副本上先抬到不熔再量（不落地）";
 }
