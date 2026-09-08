@@ -17,14 +17,19 @@ namespace PtOptimize.Core;
 ///   · 圆盘：绕管孔的每一圈 r（周长 × 该级厚度），减重槽带扣掉槽的弧长
 /// 截面电流密度 J = I_设计 / A_截面，**闭式、与网格无关** ⇒ 当场判得了。
 ///
+/// ══ 舌片厚度**不是旋钮**（用户 2026-09-08 纠正，R11）
+/// 「舌片厚度是截面积 I/10 ÷ 舌宽」⇒ 舌片厚 = I /(J_设计 × 舌片最窄有效宽)，闭式一步（<see cref="TongueThickMm"/>），
+/// 与圆盘基板、各级台阶**解耦**：圆盘各级按各自的截面（各圈周长 × 厚）定，舌片按自己的截面定。
+/// 在此之前舌片厚 = 圆盘基板厚，一根旋钮管两处 ⇒ 舌片截面把整片圆盘一起抬厚（W08 共用片要 4.26 mm ⇒ ⑥ 盖不住）。
+///
 /// ══ 它推翻了什么（按用户第 8 条：可以推翻不当的逻辑，要说出来）
 /// 前任把「法兰 J」定义成电流场的**逐点峰值**（凹角处 37 A/mm²，随网格涨、无收敛平台），追网格到收敛才肯判
 /// ⇒ 永远「判不了」，挡住每一档交付。逐点峰值是局部发热问题，由温度场（含横向导热）与熔化门管；
 /// 尺寸规则看的是截面。场峰值现在降为诊断量，给第 ③ 步（电流密度低处定孔）用。
 ///
 /// ══ 单调性
-/// 所有截面积都正比于板厚（舌片 t、各级 t×倍率、弦 t）⇒ 给定电流，J 对板厚严格递减 ⇒
-/// 板厚下界 = 当前厚度 × max_截面(J/10)，闭式一步到位，是约束盒下角的一个来源。
+/// 所有截面积都正比于所在部位的厚度（舌片 t_舌、各级 t×倍率、弦 t）⇒ 给定电流，J 对厚度严格递减 ⇒
+/// 圆盘基板下界 = 当前厚度 × max_圆盘侧截面(J/10)，舌片厚 = I/(10·w_min)，都闭式一步到位，是约束盒下角的来源。
 /// 孔径与槽张角**减小**截面 ⇒ 它们的上界也由这里给（比桥宽那条更紧的那个生效）。
 /// </summary>
 public static class SectionSizing
@@ -34,8 +39,57 @@ public static class SectionSizing
     /// <summary>终验限值 A/mm²（用户 2026-09-08：全体必须小于 11）。</summary>
     public const double JCheckAPerMm2 = 11.0;
 
-    /// <summary>一个截面：在哪、面积、电流密度。</summary>
-    public readonly record struct Cut(string Where, double AreaMm2, double JAPerMm2);
+    /// <summary>一个截面：在哪、面积、电流密度；<paramref name="OnTab"/> = 在舌片上（随舌片厚变，不随基板变）。</summary>
+    public readonly record struct Cut(string Where, double AreaMm2, double JAPerMm2, bool OnTab = false);
+
+    /// <summary>
+    /// 舌片沿 x 的**有效宽度**（扣掉孔的弦；压接段不算）。返回 (x, 宽)，宽 ≤ 0 表示被孔切断。
+    /// 舌片截面与舌片厚度两处都从这一份采样取，不各写一遍。
+    /// </summary>
+    public static List<(double X, double WidthMm)> TabWidths(FlangePlate g, double clampLenMm = 0)
+    {
+        var res = new List<(double, double)>();
+        var (xT, _) = g.Tangent();
+        double x0 = g.TabTipXMm + Math.Max(0, clampLenMm), x1 = xT;
+        if (!(x1 > x0 + 1e-9)) return res;
+        var xs = new SortedSet<double>();
+        const int N = 240;
+        for (int i = 0; i <= N; i++) xs.Add(x0 + (x1 - x0) * i / N);
+        foreach (var h in g.TabHoles) xs.Add(Math.Clamp(h.XMm, x0, x1));
+        foreach (double x in xs)
+        {
+            double w = 2 * g.HalfWidth(x);
+            foreach (var h in g.TabHoles)
+            {
+                double rx = h.RMm * Math.Max(1e-9, h.AspectXZ);          // 顺流拉长在 x 方向
+                double dx = (x - h.XMm) / rx;
+                if (Math.Abs(dx) < 1) w -= 2 * h.RMm * Math.Sqrt(1 - dx * dx);   // 扣掉孔的弦
+            }
+            res.Add((x, w));
+        }
+        return res;
+    }
+
+    /// <summary>舌片最窄的有效宽度 mm（压接段之外；没有舌片段时 NaN）。</summary>
+    public static double TabMinWidthMm(FlangePlate g, double clampLenMm = 0)
+    {
+        var ws = TabWidths(g, clampLenMm);
+        return ws.Count == 0 ? double.NaN : ws.Min(p => p.WidthMm);
+    }
+
+    /// <summary>
+    /// ★★★★★ **舌片厚度**（用户 2026-09-08：不是旋钮，= I/10 ÷ 舌宽）：
+    /// t_舌 = I_设计 /(J_设计 × 舌片最窄有效宽)。闭式；开孔把弦扣掉之后宽变窄，舌片就得更厚。
+    /// 电流为 0 或没有舌片段时返回 NaN（不给一个看起来正常的数）。
+    /// </summary>
+    public static double TongueThickMm(FlangePlate g, double currentA, double clampLenMm = 0,
+                                       double jDesign = JDesignAPerMm2)
+    {
+        if (!(currentA > 0)) return double.NaN;
+        double wMin = TabMinWidthMm(g, clampLenMm);
+        if (double.IsNaN(wMin) || wMin <= 1e-9) return double.PositiveInfinity;   // 被孔切断：多厚都不够
+        return currentA / (jDesign * wMin);
+    }
 
     /// <summary>
     /// 全部必经截面。<paramref name="currentA"/> 是这一片的设计电流（共用片已矢量合成）。
@@ -49,29 +103,14 @@ public static class SectionSizing
         var (xT, hwT) = g.Tangent();
 
         // ── 舌片：从压接段末端到切点，沿 x 采样（孔心处必采）
-        double x0 = g.TabTipXMm + Math.Max(0, clampLenMm), x1 = xT;
-        if (x1 > x0 + 1e-9)
+        foreach (var (x, w) in TabWidths(g, clampLenMm))
         {
-            var xs = new SortedSet<double>();
-            const int N = 240;
-            for (int i = 0; i <= N; i++) xs.Add(x0 + (x1 - x0) * i / N);
-            foreach (var h in g.TabHoles) { xs.Add(Math.Clamp(h.XMm, x0, x1)); }
-            foreach (double x in xs)
-            {
-                double w = 2 * g.HalfWidth(x);
-                foreach (var h in g.TabHoles)
-                {
-                    double rx = h.RMm * Math.Max(1e-9, h.AspectXZ);          // 顺流拉长在 x 方向
-                    double dx = (x - h.XMm) / rx;
-                    if (Math.Abs(dx) < 1) w -= 2 * h.RMm * Math.Sqrt(1 - dx * dx);   // 扣掉孔的弦
-                }
-                if (w <= 1e-9) { cuts.Add(new Cut($"舌片 x={x:0.#}（被孔切断）", 0, double.PositiveInfinity)); continue; }
-                double a = w * tTab;
-                cuts.Add(new Cut($"舌片 x={x:0.#}", a, currentA / a));
-            }
+            if (w <= 1e-9) { cuts.Add(new Cut($"舌片 x={x:0.#}（被孔切断）", 0, double.PositiveInfinity, true)); continue; }
+            double a = w * tTab;
+            cuts.Add(new Cut($"舌片 x={x:0.#}", a, currentA / a, true));
         }
 
-        // ── 舌盘交界：切点处的弦
+        // ── 舌盘交界：切点处的弦（圆盘侧厚度）
         {
             double a = 2 * hwT * Math.Max(g.ThicknessAt(xT, 0), 1e-9);
             cuts.Add(new Cut($"舌盘交界弦 x={xT:0.#}", a, currentA / a));
@@ -112,13 +151,19 @@ public static class SectionSizing
     }
 
     /// <summary>
-    /// 板厚下界（按 J = 10）：截面积都正比于板厚 ⇒ t_min = t_now × max_截面(J/10)。
+    /// 圆盘**基板**厚下界（按 J = 10）：截面积都正比于板厚 ⇒ t_min = t_now × max_截面(J/10)。
     /// 返回值已是**基板厚**（各级倍率保持不变时，环的截面随基板同比例长）。
+    /// ★ 舌片已解耦（<see cref="FlangePlate.TabThicknessMm"/> 非 NaN）时**不看舌片截面**：
+    ///   舌片截面随舌片厚变、不随基板变，抬基板治不了它 —— 它由 <see cref="TongueThickMm"/> 管。
+    ///   舌片与基板同厚（NaN，旧口径）时舌片截面照旧算进来。
     /// </summary>
     public static double PlateThickFloorMm(FlangePlate g, double tNowMm, double currentA, double clampLenMm = 0,
                                            double jDesign = JDesignAPerMm2)
     {
-        var w = Worst(g, currentA, clampLenMm);
+        bool decoupled = !double.IsNaN(g.TabThicknessMm);
+        var cuts = Cuts(g, currentA, clampLenMm).Where(c => !(decoupled && c.OnTab)).ToList();
+        if (cuts.Count == 0) return tNowMm;
+        var w = cuts.OrderByDescending(c => c.JAPerMm2).First();
         if (double.IsNaN(w.JAPerMm2) || double.IsInfinity(w.JAPerMm2)) return tNowMm;
         return tNowMm * w.JAPerMm2 / jDesign;
     }

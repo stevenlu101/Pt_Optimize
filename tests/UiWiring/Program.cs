@@ -112,6 +112,9 @@ class UiWiringTests {
                 args.Contains("quick"));
             return;
         }
+        int ibg = Array.IndexOf(args, "--budget");
+        if (ibg >= 0 && ibg + 1 < args.Length && int.TryParse(args[ibg + 1], out var bgMin) && bgMin > 0)
+            Walk.SearchBudgetMin = bgMin;
         if (args.Contains("--searchshape"))
         { Environment.ExitCode = Walk.SearchShape(args.Contains("quick")); return; }
         // `--follow [壁厚]`：不给壁厚 = 从**开箱默认**出发（答「从零开始提示带不带得动人」）；

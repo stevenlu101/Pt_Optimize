@@ -84,6 +84,8 @@ public static class DesignSpecStore
         public double?[]? ringW1Mm { get; set; }
         public double?[]? ringW2Mm { get; set; }
         public double?[]? ringMul2 { get; set; }
+        /// <summary>★ 舌片厚（逐片，R11 2026-09-08：= I/(J·舌宽) 闭式）。NaN ↔ null（= 与基板同厚，旧档）。</summary>
+        public double?[]? tongueThickMm { get; set; }
 
         /// <summary>
         /// ★★★ 圆盘背侧减重槽的张角（逐片，度；0 = 不开槽）。2026-09-05 加。
@@ -275,6 +277,7 @@ public static class DesignSpecStore
         if (d.ringW1Mm is { Length: > 0 } r1) fd.RingW1Mm = NaA(r1);
         if (d.ringW2Mm is { Length: > 0 } r2) fd.RingW2Mm = NaA(r2);
         if (d.ringMul2 is { Length: > 0 } t2) fd.RingMul2 = NaA(t2);
+        if (d.tongueThickMm is { Length: > 0 } tg) fd.TongueThickMm = NaA(tg);
         // ★ 最后统一按段数对齐 —— 档里存的片数与 setpointC 对不上时（旧档、手改过的档），
         //   这里补齐/裁掉，而不是让它带着一个错长度进计算。
         fd.Fit();
@@ -328,6 +331,7 @@ public static class DesignSpecStore
             ringW1Mm = NzA(fd.RingW1Mm),
             ringW2Mm = NzA(fd.RingW2Mm),
             ringMul2 = NzA(fd.RingMul2),
+            tongueThickMm = NzA(fd.TongueThickMm),
             slotSpanDeg = fd.SlotSpanDeg.Any(v => v > 0.5) ? fd.SlotSpanDeg : null,
             slotRInMm = double.IsNaN(fd.SlotRInMm) ? null : fd.SlotRInMm,
             tabHoleRMm = fd.TabHoleRMm.Any(v => v > 0.05) ? fd.TabHoleRMm : null,

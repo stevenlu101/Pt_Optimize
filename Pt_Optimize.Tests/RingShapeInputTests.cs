@@ -107,9 +107,12 @@ public class RingShapeInputTests
     public void 量程取自实测扫过的区间()
     {
         string s = Ui();
-        Assert.Contains("RingR() => Num((decimal)StartPoint.RingWidthMm, 1m, 10m", s);   // r₁ 1→10
-        Assert.Contains("RingR2() => Num((decimal)(2 * StartPoint.RingWidthMm), 4m, 16m", s); // r₂ 4→16
+        // ★ 2026-09-08（R8／R14）：控件范围放宽到装得下图纸（Pt_Heater3 r₁ = 孔+10、r₂ = 孔+20），
+        //   否则「图纸几何 → 参数」会被控件静默夹住 = 静默换零件。求解器自己的上界仍在 SolverOptions（10／16）。
+        Assert.Contains("RingR() => Num((decimal)StartPoint.RingWidthMm, 0.5m, 30m", s);   // r₁ 0.5→30
+        Assert.Contains("RingR2() => Num((decimal)(2 * StartPoint.RingWidthMm), 1m, 40m", s); // r₂ 1→40
         Assert.Contains("实测扫过的量程", s);
+        Assert.Contains("装得下图纸", s);
     }
 
     /// <summary>

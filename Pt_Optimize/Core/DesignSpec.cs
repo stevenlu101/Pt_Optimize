@@ -85,6 +85,14 @@ public sealed class DesignSpec
     public double[] TabThickMm = new double[4];
     public double[] TabInsulMm = { 18.7, 1.6, 1.4, 3.9 };
 
+    /// <summary>
+    /// ★★★★★ **舌片自己的厚度 mm**（逐片；R11，用户 2026-09-08：「舌片厚度不是旋钮，是截面积 I/10 ÷ 舌宽」）。
+    /// 由 <see cref="SizeTongues"/> 闭式给：t_舌 = I_设计 /(J_设计 × 舌片最窄有效宽)，与圆盘基板 <see cref="TabThickMm"/>
+    /// 及各级台阶**解耦**。NaN = 与基板同厚（四份内置记录早于这条规则，只报不判）。
+    /// ⚠ 名字里的「Tab」历史上指整片板（<see cref="TabThickMm"/> 其实是基板厚），所以这里用 Tongue 区分。
+    /// </summary>
+    public double[] TongueThickMm = { double.NaN, double.NaN, double.NaN, double.NaN };
+
     // ── 管孔渐变环：**相对量**（绝对值写法已两次造成安静失败，见 §1.8 ⑥⑦）
     /// <summary>环宽 mm，相对管孔外扩；两级台阶在 孔+w 与 孔+2w</summary>
     public double RingWidthMm = 3.0;
@@ -253,6 +261,7 @@ public sealed class DesignSpec
         int n = FlangeCount;
         TabThickMm = FitArr(TabThickMm, n);
         TabInsulMm = FitArr(TabInsulMm, n);
+        TongueThickMm = FitArr(TongueThickMm, n);
         RingMul    = FitArr(RingMul,    n);
         RingW1Mm   = FitArr(RingW1Mm,   n);
         RingW2Mm   = FitArr(RingW2Mm,   n);
@@ -289,6 +298,7 @@ public sealed class DesignSpec
         c.SegLengthMm = (double[])SegLengthMm.Clone();
         c.TabThickMm = (double[])TabThickMm.Clone();
         c.TabInsulMm = (double[])TabInsulMm.Clone();
+        c.TongueThickMm = (double[])TongueThickMm.Clone();
         c.RingMul = (double[])RingMul.Clone();
         c.RingW1Mm = (double[])RingW1Mm.Clone();
         c.RingW2Mm = (double[])RingW2Mm.Clone();
@@ -360,7 +370,7 @@ public sealed class DesignSpec
             ThicknessMm = td,
             DiscStepRadiiMm = RingRadiiOf(j),
             DiscStepThicknessMm = new[] { td * RingMul[j], td * RingMulOuter(j) },
-            TabThicknessMm = double.NaN,
+            TabThicknessMm = j < TongueThickMm.Length ? TongueThickMm[j] : double.NaN,   // R11：舌片自己的厚度（NaN = 与基板同）
             InsulBoundaryXMm = double.NaN, TabInsulThickMm = TabInsulMm[j],
             TabParallel = true, TabFilletMm = TabFilletMm,
             WeldFilletLegMm = System.Math.Max(td, WallMm),
@@ -583,6 +593,32 @@ public sealed class DesignSpec
         };
     }
 
+    /// <summary>
+    /// ★★★★★ **舌片厚度按截面定**（用户 2026-09-08，R11）：「舌片厚度不是旋钮，是截面积 I/10 ÷ 舌宽」。
+    /// 逐片：t_舌 = I_设计(该片) /(J_设计 × 舌片最窄有效宽)，向上落图纸格，不低于板料下限（烧穿 <see cref="DesignInputs.WeldMinThicknessMm"/>）。
+    /// 设计电流由 20 °C/h 空管升温算（<see cref="DesignCurrent"/>），只与管、保温、工况有关 ⇒ 舌片厚**不随圆盘板厚变**，与圆盘各级解耦。
+    /// 谁调用：求解器每轮开头（<c>Solver.ApplySectionFloor</c>）、页面读控件成设计时（照图纸核算也按这条）。
+    /// 电流为 0（没有段）时该片留 NaN，不给一个看起来正常的数。
+    /// </summary>
+    public double[] SizeTongues(DesignInputs baseIn, LineResult? last = null,
+                                double jDesign = SectionSizing.JDesignAPerMm2, double quantMm = 0.01)
+    {
+        var dc = DesignCurrent.ForLine(this, baseIn, last);
+        double floorD = DiscFloorMm(baseIn);
+        int n = FlangeCount;
+        if (TongueThickMm.Length != n) TongueThickMm = FitArr(TongueThickMm, n);
+        for (int j = 0; j < n; j++)
+        {
+            double iA = j < dc.PlateA.Length ? dc.PlateA[j] : 0;
+            double t = SectionSizing.TongueThickMm(Plate(j, floorD), iA, ClampLengthMm, jDesign);
+            if (double.IsNaN(t) || double.IsInfinity(t)) { TongueThickMm[j] = double.NaN; continue; }
+            t = System.Math.Max(t, baseIn.WeldMinThicknessMm);
+            t = System.Math.Ceiling(t / quantMm - 1e-9) * quantMm;
+            TongueThickMm[j] = t;
+        }
+        return TongueThickMm;
+    }
+
     /// <summary>自由段 = 舌长 − 圆盘切点 − 压接段。判据 ⑤ 判的就是它。</summary>
     public double FreeTabMm =>
         TabLengthMm
@@ -594,13 +630,17 @@ public sealed class DesignSpec
     public static string Fmt(double[] a, string f) =>
         string.Join("/", System.Linq.Enumerable.Select(a, v => v.ToString(f)));
 
+    /// <summary>舌片厚逐片格式化：NaN 印「=板」（与基板同厚，旧口径），不印 NaN。</summary>
+    public static string FmtT(double[] a) =>
+        string.Join("/", System.Linq.Enumerable.Select(a, v => double.IsNaN(v) ? "=板" : v.ToString("0.00")));
+
     public string Describe() =>
         (Invalid.Length > 0 ? "★ **已失效** " : "") +
         $"[{Name}] 管壁 {WallMm:0.0}／管保温 {TubeInsulMm:0}／盘Ø{2 * DiscRadiusMm:0}／" +
         // ⚠ 必须逐个格式化。`string.Join("/", double[])` 打出来的是
         //   「1.3600000000000003/2.55656893078647」这种二进制残渣，而它会**直接进报告**——
         //   读的人无从分辨那是「算出来的精度」还是「忘了格式化」。（2026-08-17 实际发生。）
-        $"舌 {TabLengthMm:0}×{2 * TabHalfWidthMm:0}／板厚 {Fmt(TabThickMm, "0.00")}／" +
+        $"舌 {TabLengthMm:0}×{2 * TabHalfWidthMm:0}／板厚 {Fmt(TabThickMm, "0.00")}／舌片厚 {FmtT(TongueThickMm)}／" +
         $"舌保温 {Fmt(TabInsulMm, "0.0")}／" +
         $"环 r≤孔+{RingWidthMm:0}→×{Fmt(RingMul, "0.00")}／舌根圆角 R{TabFilletMm:0}／" +
         $"压接 {ClampLengthMm:0} 夹 {ClampTempC:0} °C　合计 {TotalMassG:0} g";

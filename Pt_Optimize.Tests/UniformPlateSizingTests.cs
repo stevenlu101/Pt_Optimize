@@ -63,11 +63,14 @@ public class UniformPlateSizingTests
     }
 
     /// <summary>
-    /// ★★ 指路不再把等厚板的人推去「◈ 图纸几何 → 参数」。
-    /// 那一步是**改几何来源**的决定，把它当成等厚板的唯一出路是错的。
+    /// ★★ 2026-09-03 版：指路不再把等厚板的人推去「◈ 图纸几何 → 参数」（那时把它当成「改几何来源的决定」）。
+    /// ★★★★★ 2026-09-08 R19（用户：3DM 路要能进第 ② 步搜形状）**推翻上一句**：3DM 是输入的一种，
+    ///   优化本来就要改形状（按 J=10 定 r₁/t₁、r₂/t₂ 与盘径舌宽），所以图纸照原样解过一次（改前基准）之后，
+    ///   下一步就是交给解析路 —— 不管那次过没过；留在图纸路调厚度是旧搜索路，不是求根。
+    ///   本条改钉新口径；「等厚板不被拒」那件事仍由下一条（还没分析时指去分析）与 SizerNoLevels 的语义守着。
     /// </summary>
     [Fact]
-    public void 指路不再因为等厚板就把人推走()
+    public void 等厚板_照图纸解过之后指交接_不再留在图纸路调厚度()
     {
         var st = new FlowState
         {
@@ -90,7 +93,11 @@ public class UniformPlateSizingTests
 
         var ns = Flow.Next(st, c => c is "core.autoThick" or "core.runLine" or "geom.toanalytic");
         Assert.NotNull(ns);
-        Assert.Equal("core.autoThick", ns!.CmdId);     // 指的是自动定厚，不是换几何来源
+        Assert.Equal("geom.toanalytic", ns!.CmdId);     // R19：照图纸解过一次就交给解析路（那条路才改得了形状）
+        Assert.Contains("形状", ns.Why);
+        // 而解析模式（交接不适用）下照旧指自动定厚 —— 厚度那条路没有被拿掉
+        var ns2 = Flow.Next(st, c => c is "core.autoThick" or "core.runLine");
+        Assert.Equal("core.autoThick", ns2!.CmdId);
     }
 
     /// <summary>

@@ -159,6 +159,12 @@ public static class ShapeSeed
         c.Seed.DiscRadiusMm = k.DiscDiameterMm * 0.5;
         c.Seed.TabHalfWidthMm = k.TabHalfWidthMm;
         c.Seed.TabLengthMm = k.TabLengthMm;
+        // ★ R8／R14（2026-09-08）：台阶**半径**是几何，来自图纸；倍率是优化变量，由 Choose 给起点（求解器也会重置）
+        for (int j = 0; j < c.Seed.RingW1Mm.Length; j++)
+        {
+            c.Seed.RingW1Mm[j] = k.HasRing ? k.RingW1Mm : double.NaN;
+            c.Seed.RingW2Mm[j] = k.HasRing ? k.RingW2Mm : double.NaN;
+        }
         c.FromDrawing = true;
         // ★★ 2026-08-25 更正：此处原本**整段覆盖** Choose 的申报，写的是
         //   「来自设计记录（图纸给不了）：舌保温／环倍率／管保温／控温点／压接段」——
@@ -172,7 +178,9 @@ public static class ShapeSeed
           + "　舌长 " + k.TabLengthMm.ToString("0.0")
           + "　舌半宽 " + k.TabHalfWidthMm.ToString("0.0")
           + "　管壁 " + k.WallMm.ToString("0.00")
-          + "　板厚 " + k.PlateThickMm.ToString("0.00") + " mm" + Environment.NewLine
+          + "　基板厚 " + k.PlateThickMm.ToString("0.00") + " mm"
+          + (k.HasRing ? "　台阶 r₁ = 孔+" + k.RingW1Mm.ToString("0.0") + "／r₂ = 孔+" + k.RingW2Mm.ToString("0.0") + " mm（半径来自图纸；倍率是优化变量）" : "")
+          + Environment.NewLine
           + k.Note + Environment.NewLine
           + c.Note;
         return c;

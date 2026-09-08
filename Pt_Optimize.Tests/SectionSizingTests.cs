@@ -61,6 +61,30 @@ public class SectionSizingTests
         Assert.Equal((2 * Math.PI - 600.0 / (10 * 27)) * 180 / Math.PI, SectionSizing.SlotSpanMaxByJDeg(g, 27, 29, 600), 3);
     }
 
+    /// <summary>★ R11（用户 2026-09-08）：舌片厚不是旋钮，= I/(J·舌片最窄有效宽)。</summary>
+    [Fact]
+    public void 舌片厚闭式_等于电流除以J乘最窄有效宽()
+    {
+        Assert.Equal(1.0, SectionSizing.TongueThickMm(Plate(1.0), 600), 9);                       // 600/(10×60)
+        Assert.Equal(1.5, SectionSizing.TongueThickMm(Plate(1.0, new FlangePlate.TabHole(-100, 0, 10)), 600), 9);   // 孔处宽 40
+        Assert.Equal(1.0, SectionSizing.TongueThickMm(Plate(1.0, new FlangePlate.TabHole(-100, 0, 10)), 600, clampLenMm: 60), 9); // 压接段盖住孔
+        Assert.True(double.IsNaN(SectionSizing.TongueThickMm(Plate(1.0), 0)));                      // 没电流 ⇒ 不给数
+        Assert.Equal(1.0, SectionSizing.TongueThickMm(Plate(2.0), 600), 9);                       // 与基板无关：基板加倍它不变
+    }
+
+    /// <summary>★ R11：舌片解耦后，基板下界只看圆盘侧截面（交界弦／各圈）；终验仍看全体。</summary>
+    [Fact]
+    public void 舌片解耦后_基板下界只看圆盘侧截面()
+    {
+        var g = Plate(1.0, new FlangePlate.TabHole(-100, 0, 10));   // 舌片最紧 J=15；舌盘交界弦 60×1 ⇒ J=10；圆盘整圈 J=3.7
+        Assert.Equal(1.5, SectionSizing.PlateThickFloorMm(g, 1.0, 600), 6);           // 同厚（旧口径）：舌片截面算进来
+        g.TabThicknessMm = 1.5;                                                        // 解耦：舌片自己 1.5
+        Assert.Equal(1.0, SectionSizing.PlateThickFloorMm(g, 1.0, 600), 6);           // 基板只看交界弦与圆盘：J=10 ⇒ 1.0
+        Assert.All(SectionSizing.Cuts(g, 600).Where(c => c.Where.StartsWith("舌片")), c => Assert.True(c.OnTab));
+        Assert.All(SectionSizing.Cuts(g, 600).Where(c => !c.Where.StartsWith("舌片")), c => Assert.False(c.OnTab));
+        Assert.Equal(600.0 / 40.0 / 1.5, SectionSizing.Worst(g, 600).JAPerMm2, 6);   // 终验仍看全体：舌片孔处 600/(40×1.5) = 10
+    }
+
     [Fact]
     public void 常数就是用户给的数()
     {

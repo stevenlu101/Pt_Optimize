@@ -63,22 +63,29 @@ public class ReconcileTraceTests
         Console.WriteLine($"耗时 {sw.Elapsed.TotalMinutes:0.0} 分钟　场解 {sr.Solves} 次");
         Assert.True(sr.Trace.Count > 0, "轨迹是空的 —— Trace 没在记");
 
-        // ★★★★★ 2026-09-08 晚，用户设计因果链落地后这条门的**意思变了**：
-        //   0.8 档（W08：盘 R30、舌宽 60）在「20 °C/h 升温设计电流 ⇒ 按 J=10 定截面」下，共用片要 4.26 mm，
-        //   焊脚随之 4.26 ⇒ 盘 R30 盖不住管孔（要 30.06）⇒ **第一次场解之前就按 ⑥ 停、给处方**。
-        //   这在新链下是对的答案：这个形状太小，该走第 ② 步「搜形状」（真实路径：UiWiring --segs 2 --searchshape）。
-        //   本门钉：① 设计电流印出来了；② J=10 下角抬了；③ 零场解、⑥ 处方且处方数可闭式复算；④ 停因不是「判不了／不收敛」。
-        //   固定形状 3480.7 g 那套口径已作废：那份解舌根 J_max 37、热点 +99 K，用户 09-08：完全不可用。
+        // ★★★★★ 2026-09-08 晚，用户设计因果链落地后这条门的**意思变了两次**：
+        //   R18 第一阶段（舌片与圆盘同厚）：共用片舌片截面要 4.26 mm ⇒ 焊脚 4.26 ⇒ 盘 R30 盖不住 ⇒ ⑥ 前停（曾钉零场解）。
+        //   R11（舌片厚 = I/(10·舌宽) 与圆盘解耦）之后：舌片自己 2.03/3.51/2.03 mm，圆盘基板只按圆盘侧截面定
+        //   ⇒ 焊脚不再被舌片抬高 ⇒ ⑥ 过 ⇒ 真解：**可行 2911.4 g**（2 段 3 片，2 轮 48 次场解 17.4 分钟，
+        //   停因「第 2 轮全过；只往上走过 ⇒ 最小可行点」）。deliverable/对帐超时_轨迹.txt 留痕。
+        //   本门钉：① 设计电流印出来了；② 舌片厚按 I/(J·舌宽) 定的痕在；③ 解出可行、场解 > 0、铂重是正数；
+        //   ④ 舌片截面 J ≤ 10（进模型的舌片厚就是算出来的那个）；⑤ 停因不是「判不了／不收敛／⑥」。
+        //   固定形状 3480.7 g（3 段）那套口径已作废：那份解舌根 J_max 37、热点 +99 K，用户 09-08：完全不可用。
         Assert.Contains(sr.Trace, s => s.Contains("设计电流", StringComparison.Ordinal));
-        Assert.Contains(sr.Trace, s => s.TrimStart().StartsWith(BranchMarks.JFloorRaised, StringComparison.Ordinal));
+        Assert.Contains(sr.Trace, s => s.TrimStart().StartsWith("★ 舌片厚按 I/(J·舌宽) 定", StringComparison.Ordinal));
         Assert.NotNull(sr.DesignCurrent);
-        Assert.Equal(0, sr.Solves);
-        Assert.Contains("⑥", sr.StopWhy);
-        var mNeed = System.Text.RegularExpressions.Regex.Match(sr.StopWhy, @"需要 ([0-9.]+) mm");
-        Assert.True(mNeed.Success, "⑥ 处方里没有「需要 X mm」：" + sr.StopWhy);
-        double need = double.Parse(mNeed.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
-        Assert.Equal(d.HoleRadiusMm + Math.Max(sr.Design.TabThickMm.Max(), d.WallMm), need, 2);
+        Assert.True(sr.Solves > 0, "R11 之后这个形状该真解，不该零场解就停");
+        Assert.True(sr.Feasible, "R11 之后 W08 固定形状（2 段）应可行：" + sr.StopWhy);
+        Assert.InRange(sr.MassG, 1000, 6000);
+        for (int j = 0; j < sr.Design.FlangeCount; j++)
+        {
+            Assert.False(double.IsNaN(sr.Design.TongueThickMm[j]), $"片{j} 舌片厚没定");
+            double iA = sr.DesignCurrent!.PlateA[j];
+            var tabCuts = SectionSizing.Cuts(sr.Design.Plate(j, 0), iA, sr.Design.ClampLengthMm).Where(c => c.OnTab);
+            Assert.All(tabCuts, c => Assert.True(c.JAPerMm2 <= 10.0 + 1e-9, $"片{j} {c.Where} J={c.JAPerMm2:0.00}"));
+        }
         Assert.False(sr.StopWhy.Contains("判不了", StringComparison.Ordinal), $"停因不该是判不了：{sr.StopWhy}");
         Assert.False(sr.StopWhy.Contains("不收敛", StringComparison.Ordinal), $"停因不该是不收敛：{sr.StopWhy}");
+        Assert.False(sr.StopWhy.Contains("⑥", StringComparison.Ordinal), $"R11 之后不该再卡 ⑥：{sr.StopWhy}");
     }
 }

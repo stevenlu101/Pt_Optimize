@@ -102,7 +102,9 @@ public class FlowDeadEndTests
     public void 解析模式不受影响_仍然指搜形状()
     {
         // 自证的另一半：若上面那条无条件返回 geom.toanalytic，本条会红。
-        var n = Flow.Next(Dot3dmState(), _ => true);
+        // ⚠ 解析模式下「图纸几何 → 参数」**不适用**（CommandApplicable：要 .3dm 模式且分析过）——
+        //   夹具照实给，否则等于造了一个真机上不存在的状态（2026-09-08 R19 后这一位有分支读它）。
+        var n = Flow.Next(Dot3dmState(), id => id != "geom.toanalytic");
         Assert.NotNull(n);
         Assert.Equal("shape.search", n!.CmdId);
     }

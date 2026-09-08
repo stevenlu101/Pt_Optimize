@@ -1300,8 +1300,35 @@ static class Walk
                     Pump(300);
                     if (F(line, "_out") is Control ao)
                         foreach (var t in ao.Text.Replace(((char)13).ToString(), "")
-                                          .Split((char)10).Where(x => x.Trim().Length > 0).Take(10))
+                                          .Split((char)10).Where(x => x.Trim().Length > 0).Take(12))
                             Console.WriteLine("     │ " + t.Trim());
+                    // ★ R19 验收（2026-09-08）：交接后**能改盘径/舌宽**（搜形状的两根旋钮解禁）
+                    {
+                        var dD = (NumericUpDown)F(line, "_discD")!; var tW = (NumericUpDown)F(line, "_tabW")!;
+                        OK("交接后盘径与舌宽控件解禁（搜形状能改形状）", dD.Enabled && tW.Enabled,
+                           $"盘径 Enabled={dD.Enabled}　舌宽 Enabled={tW.Enabled}");
+                    }
+                    // ★ R8／R14 验收：图纸各级**逐级**进了 r₁/t₁、r₂/t₂ 控件，不压平均
+                    if (F(line, "_shape") is PlateShapeAnalyzer.Shape shA)
+                    {
+                        var kA = ShapeToAnalytic.From(shA);
+                        var tP = (NumericUpDown[])F(line, "_tPlate")!;
+                        var rM = (NumericUpDown[])F(line, "_ringMul")!;
+                        var r1 = (NumericUpDown[])F(line, "_ringR1")!; var r2 = (NumericUpDown[])F(line, "_ringR2")!;
+                        var t2 = (NumericUpDown[])F(line, "_ringT2")!;
+                        var custom = (CheckBox)F(line, "_ringShapeCustom")!;
+                        bool near(NumericUpDown n, double v, double tol) => Math.Abs((double)n.Value - v) <= tol;
+                        OK($"基板厚进了控件（图纸 {kA.LevelCount} 级，基板 {kA.PlateThickMm:0.00} mm，不是平均）",
+                           near(tP[0], kA.PlateThickMm, 0.005), $"控件 {tP[0].Value}");
+                        if (kA.HasRing)
+                            OK($"各级进了 r₁/t₁、r₂/t₂ 控件（r₁ 孔+{kA.RingW1Mm:0.0}×{kA.RingMul:0.000}　r₂ 孔+{kA.RingW2Mm:0.0}×{kA.RingMul2:0.000}）",
+                               custom.Checked && near(r1[0], kA.RingW1Mm, 0.05) && near(rM[0], kA.RingMul, 0.005)
+                               && near(r2[0], kA.RingW2Mm, 0.05) && near(t2[0], kA.RingMul2, 0.005),
+                               $"自定={custom.Checked} r₁={r1[0].Value} t₁={rM[0].Value} r₂={r2[0].Value} t₂={t2[0].Value}");
+                        else
+                            OK("图纸只有一级 ⇒ 环倍率 1.00（无台阶）", near(rM[0], 1.0, 0.005) && !custom.Checked,
+                               $"自定={custom.Checked} t₁={rM[0].Value}");
+                    }
                     break;
                 default:
                     OK($"第 {step} 步：本走查认得「{ns.CmdId}」怎么点", false,
@@ -1380,6 +1407,9 @@ static class Walk
     //     ⚠ quick 模式下**答案没有意义**（2 轮定不出厚度），只看流程 ——
     //       这一点必须说清楚，否则下一个人会拿 quick 的铂重去汇报。
     // ════════════════════════════════════════════════════════════════════
+    /// <summary>搜形状走查的预算（分钟），由 <c>--budget N</c> 给；默认 180。</summary>
+    public static int SearchBudgetMin = 180;
+
     public static int SearchShape(bool quick)
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
@@ -1392,8 +1422,12 @@ static class Walk
         typeof(Form).GetMethod("OnLoad", BindingFlags.NonPublic | BindingFlags.Instance)!
             .Invoke(main, new object?[] { EventArgs.Empty });
         Pump(1200);
+        // ★ 2026-09-08 抓到：`--segs 2` 只在 Follow 里生效，搜形状一直按默认 3 段跑 ——
+        //   三趟搜形状全是 4 片的数，而单点轨迹（ShapePointTraceTests）是 3 片的，两边对不上。
+        if (Segments > 0) SetSegments(line, Segments);
         void Force(Control c) { _ = c.Handle; foreach (Control k in c.Controls) Force(k); }
         Force(main); Pump(300);
+        if (Segments > 0) Console.WriteLine($"  （本次搜形状按 **{Segments} 段** 跑）");
 
         if (quick)
         {
@@ -1422,15 +1456,32 @@ static class Walk
 
         var clock = System.Diagnostics.Stopwatch.StartNew();
         Call(line, "SearchShapeAsync");
-        bool fin = Wait(() => F(line, "_cts") is null, quick ? 1_800_000 : 10_800_000);
-        OK("搜形状在预算内跑完", fin, $"用时 {clock.Elapsed.TotalMinutes:0.0} 分");
-        if (!fin) return _bad;
+        // ★ 边跑边把输出框**新增的行**打出来（2026-09-08）：第二趟真跑 180 分钟超时后一行结果都没留下 ——
+        //   算完的形状在输出框里躺着，走查却一个字不印。预算由 --budget 分钟给（默认 真跑 180 / quick 30）。
+        long budgetMs = (quick ? Math.Min(SearchBudgetMin, 30) : SearchBudgetMin) * 60_000L;
+        var t0 = Environment.TickCount64; long nextEcho = 0; int echoed = 0;
+        bool fin = false;
+        while (Environment.TickCount64 - t0 < budgetMs)
+        {
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(50);
+            if (F(line, "_cts") is null) { fin = true; break; }
+            if (Environment.TickCount64 - t0 >= nextEcho)
+            {
+                nextEcho = Environment.TickCount64 - t0 + 60_000;
+                var lines = ((F(line, "_out") as Control)?.Text ?? "").Replace(((char)13).ToString(), "").Split((char)10);
+                for (; echoed < lines.Length - 1; echoed++)     // 最后一行可能还没写完，留到下次
+                    if (lines[echoed].Trim().Length > 0) Console.WriteLine($"  [{clock.Elapsed.TotalMinutes,6:0.0} 分] " + lines[echoed].TrimEnd());
+            }
+        }
+        OK("搜形状在预算内跑完", fin, $"用时 {clock.Elapsed.TotalMinutes:0.0} 分（预算 {budgetMs / 60_000} 分）");
 
         string text = (F(line, "_out") as Control)?.Text ?? "";
         Console.WriteLine();
-        Console.WriteLine("──── 输出框原文（工程师看到的就是这些）────");
+        Console.WriteLine(fin ? "──── 输出框原文（工程师看到的就是这些）────" : "──── 输出框原文（**超时，只是算到一半的**）────");
         foreach (var l in text.Replace(((char)13).ToString(), "").Split((char)10))
             if (l.Trim().Length > 0) Console.WriteLine("  " + l.TrimEnd());
+        if (!fin) return _bad;
 
         // ── 接线断言：这几条只看**流程**，与轮数无关
         Console.WriteLine();

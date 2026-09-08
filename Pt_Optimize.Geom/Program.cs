@@ -948,6 +948,9 @@ internal static class GeomProbe
                 var P = plates[j];
                 string pn = P.GetProperty("name").GetString() ?? ("片" + (j + 1));
                 double t = P.GetProperty("t").GetDouble();
+                // ★ R11（2026-09-08）：舌片自己的厚度；spec 没有这一项（老档）⇒ 与板身同厚，行为逐位如前
+                double tabT = P.TryGetProperty("tabT", out var tabTe) ? tabTe.GetDouble() : t;
+                bool splitTab = Math.Abs(tabT - t) > 1e-9;
                 var ring = P.GetProperty("ring").EnumerateArray().Select(e => e.GetDouble()).ToArray();
                 double y0 = j * segLen;
 
@@ -970,13 +973,49 @@ internal static class GeomProbe
                         + $"，孔 R{PD("holeR", 0):0.0}×{PD("holeAsp", 1):0.0} @x{PD("holeX", 0):0.0}）");
 
                 // 板身 = 轮廓 − 环外边界（环外边界可能越过盘缘，故用曲线布尔差）− 槽/孔
-                Add(Solid(CutAll(RegionMinus(new[] { body }, Circ(ringR[1])), cutters), t, y0, pn + "板身"),
+                // ★ R11：舌片与圆盘不同厚时，沿**切点竖线** x = −√(R²−w²) 把板身切成圆盘侧（厚 t）与舌片侧（厚 tabT），
+                //   与 Core/PlateCurrent2D.ThicknessAt 的 onTab 判据（x < Tangent().X）同一条线；环也只裁到圆盘侧
+                //   （Core 里 onTab 先判 ⇒ 舌片上没有环）。同厚时走原路，逐位如前。
+                Curve ringClip = body;
+                Curve[] bodyDiscRegion = new[] { body };
+                if (splitTab)
+                {
+                    double wS = Math.Min(tabHW, discR);
+                    double xi = -Math.Sqrt(Math.Max(0, discR * discR - wS * wS));
+                    double big = Math.Abs(tabX) + discR + 50;
+                    Curve Rect(double xa, double xb)
+                    {
+                        var pc = new PolyCurve();
+                        pc.Append(new LineCurve(new Point3d(xa, 0, -big), new Point3d(xb, 0, -big)));
+                        pc.Append(new LineCurve(new Point3d(xb, 0, -big), new Point3d(xb, 0, big)));
+                        pc.Append(new LineCurve(new Point3d(xb, 0, big), new Point3d(xa, 0, big)));
+                        pc.Append(new LineCurve(new Point3d(xa, 0, big), new Point3d(xa, 0, -big)));
+                        pc.MakeClosed(tol);
+                        return pc;
+                    }
+                    var discSide = Curve.CreateBooleanIntersection(body, Rect(xi, discR + 10), tol);
+                    var tabSide = Curve.CreateBooleanIntersection(body, Rect(tabX - 10, xi), tol);
+                    if (discSide == null || discSide.Length != 1 || tabSide == null || tabSide.Length == 0)
+                    {
+                        Console.Error.WriteLine($"[final] {pn}：板身按切点 x={xi:0.00} 切不开（盘侧 {discSide?.Length ?? 0} 块、舌侧 {tabSide?.Length ?? 0} 块）"
+                            + $"⇒ 退回整片同厚 t={t:0.00}，**舌片厚 {tabT:0.00} 没画进去**");
+                    }
+                    else
+                    {
+                        ringClip = discSide[0];
+                        bodyDiscRegion = discSide;
+                        int lyTab = Ly(pn + "-舌片", System.Drawing.Color.Goldenrod);
+                        Add(Solid(CutAll(tabSide, cutters), tabT, y0, pn + "舌片"),
+                            lyTab, pn + "_舌片_t" + tabT.ToString("0.00"));
+                    }
+                }
+                Add(Solid(CutAll(RegionMinus(bodyDiscRegion, Circ(ringR[1])), cutters), t, y0, pn + "板身"),
                     lyBody, pn + "_板身_t" + t.ToString("0.00"), y0);
                 // 环：外圈**裁到轮廓内**，否则盘缘之外会凭空长出一整圈料
-                Add(Solid(CutAll(RegionMinus(ClipToBody(Circ(ringR[1]), body), Circ(ringR[0])), cutters), ring[1], y0, pn + "环外级"),
+                Add(Solid(CutAll(RegionMinus(ClipToBody(Circ(ringR[1]), ringClip), Circ(ringR[0])), cutters), ring[1], y0, pn + "环外级"),
                     lyRingO, pn + "_环外级_r" + ringR[0].ToString("0.0") + "-" + ringR[1].ToString("0.0")
                        + "_t" + ring[1].ToString("0.00"), y0);
-                Add(Solid(CutAll(RegionMinus(ClipToBody(Circ(ringR[0]), body), Circ(holeR)), cutters), ring[0], y0, pn + "环内级"),
+                Add(Solid(CutAll(RegionMinus(ClipToBody(Circ(ringR[0]), ringClip), Circ(holeR)), cutters), ring[0], y0, pn + "环内级"),
                     lyRingI, pn + "_环内级_r" + holeR.ToString("0.0") + "-" + ringR[0].ToString("0.0")
                        + "_t" + ring[0].ToString("0.00"), y0);
 
@@ -1044,7 +1083,7 @@ internal static class GeomProbe
                 // ⚠ 压接段只是**标出铜排夹在哪**，不是一块料。
                 //   第一版把它拉伸成实体，与舌片同位同厚 ⇒ 两块料占同一处空间（用户实测发现）。
                 //   ⇒ 改成画在板面上的**闭合曲线**，不增加任何体积。
-                cl.Translate(new Vector3d(0, y0 + t / 2, 0));
+                cl.Translate(new Vector3d(0, y0 + tabT / 2, 0));   // 压接段参考线画在**舌片**板面上（R11：舌片有自己的厚度）
                 var attC = new Rhino.DocObjects.ObjectAttributes { LayerIndex = lyClamp };
                 attC.Name = pn + "_压接段" + clampLen.ToString("0") + "mm_参考线";
                 if (doc.Objects.AddCurve(cl, attC) != Guid.Empty) made++;

@@ -102,6 +102,17 @@ public sealed class LineDesignPage : TabPage
     /// </summary>
     private NumericUpDown[] _ringMul = System.Array.Empty<NumericUpDown>();
 
+    /// <summary>★ 舌片厚 mm（逐片，**只显示**）：= I/(J·舌宽) 闭式（用户 2026-09-08 R11：不是旋钮）。</summary>
+    private NumericUpDown[] _tongue = System.Array.Empty<NumericUpDown>();
+
+    /// <summary>
+    /// ★★ 本页此刻代表的是**一份完整的设计**（载入设计记录／求解器解完写回）时，它的舌片厚**原样带着**，
+    /// 核算就复现那份设计；工程师改了任何参数就清掉 ⇒ 舌片厚回到 I/(J·舌宽) 规则重新定。
+    /// 没有它，「载入 0.8 档 → 核算」会把舌片按新规则改厚 ⇒ 复现不出记录（2026-09-08 UiWiring「页面路径复现设计记录」抓到）——
+    /// 而设计记录的用途正是校正计算流程（载入 → 核算 → 对得上）。NaN = 与基板同（早于 R11 的记录）。
+    /// </summary>
+    private double[]? _tongueFixed;
+
     /// <summary>
     /// ★★★ **渐变环的形状**：内级外扩 r₁ / 外级外扩 r₂ / 外级倍率 t₂（逐片，2026-08-30 补控件）。
     ///
@@ -331,6 +342,8 @@ public sealed class LineDesignPage : TabPage
             for (int j = 0; j < _tPlate.Length && j < d.TabThickMm.Length; j++)
                 _tPlate[j].Value = Math.Clamp((decimal)d.TabThickMm[j],
                                               _tPlate[j].Minimum, _tPlate[j].Maximum);
+            ShowTongues(d);      // R11：舌片厚是算出来的，解完照样回显示框
+            _tongueFixed = (double[])d.TongueThickMm.Clone();   // 解出来的设计是完整的一份：核算复现它，不再重定舌片
             for (int j = 0; j < _tabIns.Length && j < d.TabInsulMm.Length; j++)
                 _tabIns[j].Value = Math.Clamp((decimal)d.TabInsulMm[j], _tabIns[j].Minimum, _tabIns[j].Maximum);
             for (int j = 0; j < _ringMul.Length && j < d.RingMul.Length; j++)
@@ -1259,18 +1272,33 @@ public sealed class LineDesignPage : TabPage
     }
 
     /// <summary>环倍率框：同上。</summary>
+    /// <summary>
+    /// 环倍率框。下界 0.20（不是求解器的 1.00）：图纸上孔边那一级可以比基板**薄**
+    /// （Pt_Heater3.3dm 就是 1.0／2.0／3.0 mm），「图纸几何 → 参数」要装得下它才叫照图纸算。
+    /// 求解器自己的盒仍从 1.00（无台阶）起只增不减，两者是两回事。
+    /// </summary>
     private static NumericUpDown Ring() =>
-        Num((decimal)StartPoint.RingMul, (decimal)SizerOptions.RingLoConst,
+        Num((decimal)StartPoint.RingMul, 0.20m,
             (decimal)SizerOptions.RingHiConst, 0.05m, 2);
+
+    /// <summary>舌片厚显示框（只读）：值由 <see cref="DesignSpec.SizeTongues"/> 算出，工程师改不了 —— 它不是旋钮。</summary>
+    private static NumericUpDown Tongue()
+    {
+        var n = Num(0m, 0m, 30m, 0.01m, 2);
+        n.Enabled = false;
+        return n;
+    }
 
     /// <summary>
     /// 内级外扩 r₁ 框。范围取 `--monotone` **实测扫过的量程** 1→10 mm（2026-08-30），
     /// 不是拍的数：那一段上三条判据都实测过单调，量程之外没有依据。
     /// </summary>
-    private static NumericUpDown RingR() => Num((decimal)StartPoint.RingWidthMm, 1m, 10m, 0.5m, 1);
+    /// ★ 2026-09-08 上界放到 30、下界 0.5：范围原按实测量程给，但「图纸几何 → 参数」要装得下图纸
+    ///   （Pt_Heater3 内级 r₁ = 孔+10.0、外级 r₂ = 孔+20.0），装不下就是静默换零件。求解器的上界另在 SolverOptions。
+    private static NumericUpDown RingR() => Num((decimal)StartPoint.RingWidthMm, 0.5m, 30m, 0.5m, 1);
 
     /// <summary>外级外扩 r₂ 框。同上，实测量程 4→16 mm。</summary>
-    private static NumericUpDown RingR2() => Num((decimal)(2 * StartPoint.RingWidthMm), 4m, 16m, 0.5m, 1);
+    private static NumericUpDown RingR2() => Num((decimal)(2 * StartPoint.RingWidthMm), 1m, 40m, 0.5m, 1);
 
     /// <summary>圆盘背侧减重槽张角（度）。0 = 不开槽 —— 开箱默认，行为与从前逐位相同。</summary>
     private static NumericUpDown Slot() => Num(0m, 0m, 340m, 5m, 0);
@@ -1311,6 +1339,7 @@ public sealed class LineDesignPage : TabPage
     /// </summary>
     internal void MarkParamsChanged(string what)
     {
+        _tongueFixed = null;                                  // R11：参数动过 ⇒ 舌片厚回到 I/(J·舌宽) 规则（放在早退之前）
         if (_solvedSnap is null && _last is null) return;    // 本来就没有可作废的
         _solvedSnap = null;                                   // ⇒ Fresh = false，门关上
         _solvedRes = null;                                    // 外推基准也作废（它是另一组参数的解）
@@ -1538,6 +1567,7 @@ public sealed class LineDesignPage : TabPage
         //   抓图里状态面板全程写着「正在算：核算整线」而结果是「还没解过」，就是它。
         //   ⚠ 接线测试没抓到，因为它只 CreateControl 不 Show —— 排版路径根本没走。
         if (!_userReady) return;
+        _tongueFixed = null;                 // R11：用户改了页面参数 ⇒ 舌片厚回到 I/(J·舌宽) 规则
 
         // ★ 页面控件动了同样要「从头走一遍」（2026-08-24 用户要求）。
         //   新鲜度那一侧本来就自动成立（Snap 变了 ⇒ Fresh 变 false），
@@ -1852,11 +1882,18 @@ public sealed class LineDesignPage : TabPage
                 "shape.search"    => "搜形状（会改盘径与舌宽）",
                 "core.verifyMesh" => "加密复算（算到数不再变）",
                 "core.runLine"    => "重解一次",
+                // ★★★★★ R19（用户 2026-09-08）：3DM 路要能进第 ② 步搜形状。
+                //   三步流程「UI 或 3DM 输入 → 法兰优化 → 结果与出图」里，3DM 是**输入**的一种；
+                //   优化本来就要改形状（② 按 J=10 定 r₁/t₁、r₂/t₂ = 搜形状），所以把图纸反推成参数
+                //   不是「要人决定」，是读入图纸的方式 —— 流水线自己做，做完照常往下走。
+                //   ⚠ 照图纸解的那一次（第 1 步）仍先跑：那是「改前」的基准，出图时对照用。
+                "geom.analyze"    => "分析图纸（反推几何变数）",
+                "geom.toanalytic" => "图纸几何 → 参数（交给解析路，形状从此可改）",
                 _ => "",
             };
             if (what.Length == 0)
             {
-                // 指到「分析几何变数 / ◈ 图纸几何 → 参数」这类**要人决定**的，停下来说清楚
+                // 指到流水线不会做的命令（要人决定的），停下来说清楚
                 _out.AppendText(Environment.NewLine + "■ 自动到此为止 —— 下一步要你决定："
                     + Environment.NewLine + "   " + ns.Why + Environment.NewLine);
                 break;
@@ -1871,8 +1908,20 @@ public sealed class LineDesignPage : TabPage
                 case "core.runLine":   await RunAsync(autoSize: false); break;
                 case "shape.search":   await SearchShapeAsync(); break;
                 case "core.verifyMesh": await VerifyMeshAsync(); break;
+                case "geom.analyze":   AnalyzeShape(); break;            // 同步（起 Geom 子进程，秒级）
+                case "geom.toanalytic": AdoptShapeToAnalytic(); break;   // 同步，不起解；改的是参数
             }
             if (_pipeAborted) break;
+            // ★ 这两步改的是**参数**，不起解 ⇒ 判据表本来就不该变，拿指纹判它会误报「打转」
+            if (ns.CmdId is "geom.analyze" or "geom.toanalytic")
+            {
+                if (ns.CmdId == "geom.toanalytic" && !_srcAnalytic.Checked)
+                {
+                    _out.AppendText(Environment.NewLine + "■ 停在这里：图纸几何没能交给解析路（见上面的原因）。" + Environment.NewLine);
+                    break;
+                }
+                continue;
+            }
 
             // ★ 原地打转：做了等于没做，而指路会继续指同一个按钮 —— 停
             string f = Finger();
@@ -2103,6 +2152,9 @@ public sealed class LineDesignPage : TabPage
         SyncRingShape();
         // 定尺寸器上一次的解也一并作废 —— 否则跨档污染（换了档，旧解的旋钮还留着）
         _sizerTabIns = null; _sizerRingMul = null;
+        // R11：这份记录的舌片厚原样带着（NaN = 与基板同），核算复现的就是它；工程师一改参数就回到规则
+        _tongueFixed = (double[])fd.TongueThickMm.Clone();
+        ShowTongues(fd);
 
         // 分段控温点：只改控温点，水头保持页面上原有的值（那是工艺量，不属于设计记录几何）
         // ⚠ 名字**按段数生成**：原来是写死的 { "HC1","HC2","HC3" } ⇒ 档里有 4 段时
@@ -2490,7 +2542,35 @@ public sealed class LineDesignPage : TabPage
         //   ⇒ 起点是**会影响答案**的输入。详见 Core/ShapeSeed.cs 与 HANDOVER §0.0.3 ⑦。
         for (int i = 0; i < d.TabThickMm.Length && i < _tPlate.Length; i++)
             d.TabThickMm[i] = (double)_tPlate[i].Value;
+        // ★★★★★ R11（用户 2026-09-08）：舌片厚**不是旋钮**，读完全部输入后按 I/(J·舌宽) 闭式定，并显示回只读框。
+        //   照图纸核算也按这条 —— 图纸上舌片多厚只作对照（ShapeToAnalytic 的说明里写着）。
+        try
+        {
+            if (_tongueFixed is { } tf && tf.Length == d.TongueThickMm.Length)
+                d.TongueThickMm = (double[])tf.Clone();      // 复现一份完整设计：舌片厚原样（NaN = 与基板同，早于 R11 的记录）
+            else
+                d.SizeTongues(_base);
+            ShowTongues(d);
+        }
+        catch (Exception ex) { _status.Text = "舌片厚算不出：" + ex.Message; }
         return d;
+    }
+
+    /// <summary>把算出来的舌片厚写进只读框（不触发重算）。</summary>
+    private void ShowTongues(DesignSpec d)
+    {
+        bool old = _suppressAuto; _suppressAuto = true;
+        try
+        {
+            for (int i = 0; i < _tongue.Length && i < d.TongueThickMm.Length; i++)
+            {
+                // NaN = 与基板同厚（早于 R11 的记录）⇒ 显示基板厚，别让框里留着旧数
+                double v = double.IsNaN(d.TongueThickMm[i])
+                    ? (i < d.TabThickMm.Length ? d.TabThickMm[i] : 0) : d.TongueThickMm[i];
+                _tongue[i].Value = Math.Clamp((decimal)v, _tongue[i].Minimum, _tongue[i].Maximum);
+            }
+        }
+        finally { _suppressAuto = old; }
     }
 
     /// <summary>
@@ -3604,6 +3684,7 @@ public sealed class LineDesignPage : TabPage
         _slotDeg = Enumerable.Range(0, n).Select(i => Slot()).ToArray();
         _holeR   = Enumerable.Range(0, n).Select(i => Hole()).ToArray();
         _holeAsp = Enumerable.Range(0, n).Select(i => HoleAsp()).ToArray();
+        _tongue  = Enumerable.Range(0, n).Select(i => Tongue()).ToArray();
         for (int i = 0; i < n; i++)
         {
             _tabIns[i].Value  = (decimal)Math.Clamp(vI[i],  (double)_tabIns[i].Minimum,  (double)_tabIns[i].Maximum);
@@ -3697,6 +3778,13 @@ public sealed class LineDesignPage : TabPage
 
         Head($"法兰厚度 mm（{n} 片＝{n - 1} 段＋1；可点「自动定厚」求解）");
         for (int i = 0; i < n; i++) Row(names[i], _tPlate[i], tipPlate);
+        // ★★★★★ R11（用户 2026-09-08）：舌片厚**不是旋钮**，只显示 —— 改舌宽/开孔/工况它才变，改圆盘板厚它不变
+        Head("舌片厚 mm（算出来的，不是旋钮）");
+        string tipTongue =
+            "舌片厚 = 设计电流 ÷ (J 10 A/mm² × 舌片最窄有效宽)，闭式（用户 2026-09-08：舌片厚度是截面积 I/10 ÷ 舌宽）。" + Environment.NewLine +
+            "设计电流由 20 °C/h 空管升温算出，只与管、管保温、工况有关 ⇒ 改舌宽、开孔、改工况它才变，改圆盘板厚它不变。" + Environment.NewLine +
+            "不低于板料下限（烧穿 0.6 mm）；向上落到图纸格 0.01 mm。";
+        for (int i = 0; i < n; i++) Row(names[i], _tongue[i], tipTongue);
         Head("逐片舌保温 mm（不花铂的旋钮）");
         for (int i = 0; i < n; i++) Row(names[i], _tabIns[i], tipIns);
         Head("管孔渐变环倍率（1.00 = 无台阶）");
@@ -4343,11 +4431,13 @@ public sealed class LineDesignPage : TabPage
                 double td = Math.Max(d.TabThickMm[j], floor);
                 var radii = d.RingRadiiMm.Concat(new[] { d.DiscRadiusMm }).ToArray();
                 var thick = new[] { td * d.RingMul[j], td * d.RingMulOuter(j), td };
+                // R11：舌片自己的厚度（NaN = 与基板同）
+                double tt = j < d.TongueThickMm.Length && !double.IsNaN(d.TongueThickMm[j]) ? Math.Max(d.TongueThickMm[j], floor) : td;
                 string file = Path.Combine(dlg.SelectedPath,
                     $"可回读_{pn[j]}_壁{d.WallMm:0.0}.3dm");
 
                 Geometry3dm.WriteStepped3dm(file, d.HoleRadiusMm, radii, thick,
-                    -d.TabLengthMm, d.TabHalfWidthMm, td,
+                    -d.TabLengthMm, d.TabHalfWidthMm, tt,
                     // ★★★ 槽要真的写进图（2026-09-05）。写死 slotCount: 0 的话，
                     //   求解器开了槽、判据按有槽算，而**出的图上没有槽** ——
                     //   工程师拿着一张与计算不符的图去加工。那比不开槽更糟。
@@ -4362,8 +4452,10 @@ public sealed class LineDesignPage : TabPage
                 var f = Geometry3dm.LoadThickness(file, "法兰", double.NaN, 0.5);
                 var sh = PlateShapeAnalyzer.Analyze(f);
                 var got = sh.Levels.Select(x => x.ThicknessMm).ToArray();
-                bool ok = got.Length == thick.Length
-                       && got.Zip(thick).All(t => Math.Abs(t.First - t.Second) < 0.05)
+                // ★ R11：舌片另有厚度时读回来会多一级（舌片那级）⇒ 按**集合**比：写入的每个厚度都读得到，读到的每级都是写入的
+                var expect = Math.Abs(tt - td) > 1e-9 ? thick.Concat(new[] { tt }).ToArray() : thick;
+                bool ok = expect.All(v => got.Any(g2 => Math.Abs(g2 - v) < 0.05))
+                       && got.All(g2 => expect.Any(v => Math.Abs(g2 - v) < 0.05))
                        && Math.Abs(sh.DiscRadiusMm - d.DiscRadiusMm) < 0.5;
                 if (!ok) bad++;
                 sb.AppendLine($"{pn[j]}	{Path.GetFileName(file)}	"
@@ -4423,24 +4515,56 @@ public sealed class LineDesignPage : TabPage
                  + "转过去之后算的**不是原图**。仍放行（形状本来就要改），但这句话得记住。")
             : "· ⚠ 没量到替身保真度 ⇒ **不知道**解析模型像不像这张图。";
 
-        decimal Clamp(NumericUpDown n, double v) =>
-            Math.Clamp((decimal)v, n.Minimum, n.Maximum);
+        // ★★ 控件范围夹住了就**说出来**（2026-09-08）：图纸是真实输入，被夹住等于静默换了零件。
+        //   夹住的每一项都列在交接说明里；工程师看得见，才谈得上决定要不要放宽范围。
+        var clamped = new List<string>();
+        decimal Clamp(NumericUpDown n, double v, string name = "")
+        {
+            var c = Math.Clamp((decimal)v, n.Minimum, n.Maximum);
+            if (name.Length > 0 && Math.Abs((double)c - v) > 1e-9)
+                clamped.Add($"{name} 图纸 {v:0.###} → 控件只到 {c:0.###}");
+            return c;
+        }
 
         _suppressAuto = true;
         try
         {
-            _discD.Value = Clamp(_discD, k.DiscDiameterMm);
-            _tabLen.Value = Clamp(_tabLen, k.TabLengthMm);
-            _tabW.Value = Clamp(_tabW, k.TabHalfWidthMm);
-            _wall.Value = Clamp(_wall, k.WallMm);
-            for (int i2 = 0; i2 < _tPlate.Length; i2++)
-                _tPlate[i2].Value = Clamp(_tPlate[i2], k.PlateThickMm);
+            _discD.Value = Clamp(_discD, k.DiscDiameterMm, "盘Ø");
+            _tabLen.Value = Clamp(_tabLen, k.TabLengthMm, "舌长");
+            _tabW.Value = Clamp(_tabW, k.TabHalfWidthMm, "舌半宽");
+            _wall.Value = Clamp(_wall, k.WallMm, "管壁");
+            // ★★★★★ R8／R14（用户 2026-09-08）：图纸的各级厚度**逐级**进 r₁/t₁、r₂/t₂ 控件，不压平均。
+            //   四个是**成对**的自由度，同一个勾管着；有台阶就勾「逐片自定」并全写，
+            //   没台阶就不勾（t₁ = t₂ = 1.00 ⇒ 台阶不存在，半径无意义）。
+            _ringShapeCustom.Checked = k.HasRing;
+            for (int i2 = 0; i2 < _ringMul.Length; i2++)
+            {
+                _ringMul[i2].Value = Clamp(_ringMul[i2], k.HasRing ? k.RingMul : 1.0, i2 == 0 ? "内级倍率 t₁" : "");
+                if (i2 < _ringR1.Length) _ringR1[i2].Value = Clamp(_ringR1[i2], k.HasRing ? k.RingW1Mm : (double)_ringW.Value, i2 == 0 ? "内级外扩 r₁" : "");
+                if (i2 < _ringR2.Length) _ringR2[i2].Value = Clamp(_ringR2[i2], k.HasRing ? k.RingW2Mm : 2 * (double)_ringW.Value, i2 == 0 ? "外级外扩 r₂" : "");
+                if (i2 < _ringT2.Length) _ringT2[i2].Value = Clamp(_ringT2[i2], k.HasRing ? k.RingMul2 : 1.0, i2 == 0 ? "外级倍率 t₂" : "");
+            }
             _srcAnalytic.Checked = true;      // 切到解析 ⇒ 三个几何控件解禁、搜形状可用
+            // ★★ 基板厚必须在**切到解析模式之后**才写（2026-09-08 走查抓到：写在前面被 0.516 盖掉）。
+            //   _tPlate 在两个模式下是两个物理量（解析 = 板厚 mm；.3dm = 厚度标度 k），
+            //   SyncGeomSource 切模式时整组交换 —— 切换前写进去的板厚会被换成留着的旧值。
+            SyncGeomSource();
+            for (int i2 = 0; i2 < _tPlate.Length; i2++)
+                _tPlate[i2].Value = Clamp(_tPlate[i2], k.PlateThickMm, i2 == 0 ? "基板厚" : "");
         }
         finally { _suppressAuto = false; }
-        SyncGeomSource();
+        SyncRingShape();
         // 参数确实变了 ⇒ 上一次的解与「越关」一律作废（否则门会开在别组参数的判据表上）
         MarkParamsChanged("图纸几何 → 参数");
+
+        string ringLine = k.HasRing
+            ? "管孔台阶：r₁ = 孔+" + k.RingW1Mm.ToString("0.0") + " mm × t₁ " + k.RingMul.ToString("0.000")
+              + "　r₂ = 孔+" + k.RingW2Mm.ToString("0.0") + " mm × t₂ " + k.RingMul2.ToString("0.000")
+              + "（图纸 " + k.LevelCount + " 级，逐级带过来，不取平均）"
+            : "管孔台阶：无（图纸只有一级）";
+        string clampLine = clamped.Count == 0 ? ""
+            : "⚠ **控件范围夹住了图纸的数**：" + string.Join("；", clamped)
+              + " —— 现在算的不是原图那片，要么放宽控件范围，要么回 Rhino 改图。" + nl2;
 
         Show(_last,
             "【图纸几何 → 参数：已交接】" + nl2
@@ -4448,7 +4572,9 @@ public sealed class LineDesignPage : TabPage
           + "　舌长 " + k.TabLengthMm.ToString("0.0")
           + "　舌半宽 " + k.TabHalfWidthMm.ToString("0.0")
           + "　管壁 " + k.WallMm.ToString("0.00")
-          + "　板厚 " + k.PlateThickMm.ToString("0.00") + " mm" + nl2 + nl2
+          + "　基板厚 " + k.PlateThickMm.ToString("0.00") + " mm" + nl2
+          + ringLine + nl2 + nl2
+          + clampLine
           + k.Note + nl2
           + fidNote + nl2
           + "· ★ **从这一刻起几何不再跟图纸绑定** —— 这正是目的：解析路能改形状，"

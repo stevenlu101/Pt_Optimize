@@ -289,7 +289,10 @@ public static class Solver
             // ★ t₂ 也是盒的下角，且必须**显式**写成 1.00 而不是留 NaN：
             //   NaN 的含义是「跟着 t₁ 走」，那样它就有两处来源、还会随 t₁ 悄悄变。
             d.RingMul2[j]   = opt.RingLo;
+            // ★ R11：舌片厚**不是旋钮**，由 ApplySectionFloor 按 I/(J·舌宽) 闭式定 —— 传进来的一样丢掉
+            if (j < d.TongueThickMm.Length) d.TongueThickMm[j] = double.NaN;
         }
+        if (d.TongueThickMm.Length != np) d.TongueThickMm = Enumerable.Repeat(double.NaN, np).ToArray();
 
         // ★ 限值**只从 LineCase 读**（判据的唯一来源）。求解器不许自带第二份。
         var lc = d.BuildCase(baseIn, checkRamp: false);
@@ -302,7 +305,8 @@ public static class Solver
         Log(res.DesignCurrent!.Describe());
         // ★ 印出来的必须和进模型的一致（督导第 16 封）：下角有四个来源，其中「不熔化」要解场才知道
         //   ⇒ 这里只印**闭式部分**，真正的起点在每遍开头验完「不熔化」之后才印（见 Rounds）。
-        Log($"下角的闭式部分：板厚 {Join(d.TabThickMm)} mm（逐片；= max(焊接屈曲/烧穿 {tLo:0.00}, 按 J=10 的截面 {Join(jFloor)})）／" +
+        Log($"下角的闭式部分：板厚 {Join(d.TabThickMm)} mm（逐片；= max(焊接屈曲/烧穿 {tLo:0.00}, 按 J=10 的圆盘侧截面 {Join(jFloor)})）／" +
+            $"舌片厚 {DesignSpec.FmtT(d.TongueThickMm)} mm（= I/(J·舌宽)，闭式，不是旋钮）／" +
             $"舌保温 {opt.InsLoMm:0.00} mm（裸舌）／环倍率 t₁ {opt.RingLo:0.00}／" +
             $"外级倍率 t₂ {opt.RingLo:0.00}（都=无台阶）　× {np} 片　" +
             "—— 「**不熔化**」是下角的第四个来源，要解场才知道：每遍开头在那遍的网格上验一次，验完才印真正的起点");
@@ -1220,9 +1224,30 @@ public static class Solver
         int np = d.TabThickMm.Length;
         var floors = new double[np];
         bool raised = false;
+        if (d.TongueThickMm.Length != np) d.TongueThickMm = Enumerable.Repeat(double.NaN, np).ToArray();
         for (int j = 0; j < np; j++)
         {
             double iA = j < dc.PlateA.Length ? dc.PlateA[j] : 0;
+            // ★★★★★ R11（用户 2026-09-08）：舌片厚**不是旋钮**，= I/(J_设计 × 舌片最窄有效宽)，闭式；与圆盘各级解耦。
+            //   先定舌片，再按**圆盘侧**截面定基板下界（舌片截面不再算进基板：抬基板治不了舌片）。
+            //   只增不减：设计电流只会随法兰变重略升，开孔只会让有效宽变窄。
+            {
+                var g0 = d.Plate(j, floorD);
+                double wMin = SectionSizing.TabMinWidthMm(g0, d.ClampLengthMm);
+                double tt = SectionSizing.TongueThickMm(g0, iA, d.ClampLengthMm, jDesign);
+                if (!double.IsNaN(tt) && !double.IsInfinity(tt))
+                {
+                    tt = Math.Max(tt, baseIn.WeldMinThicknessMm);
+                    tt = Math.Ceiling(tt / q - 1e-9) * q;
+                    double ttOld = d.TongueThickMm[j];
+                    if (double.IsNaN(ttOld) || tt > ttOld + 1e-12)
+                    {
+                        log?.Invoke($"★ 舌片厚按 I/(J·舌宽) 定：片{j} {(double.IsNaN(ttOld) ? "—" : ttOld.ToString("0.00"))} → {tt:0.00} mm"
+                                  + $"（设计电流 {iA:0} A ÷ (J {jDesign:0} × 舌片最窄有效宽 {wMin:0.#} mm)，向上落图纸格 {q:0.00}，不低于板料 {baseIn.WeldMinThicknessMm:0.00}）");
+                        d.TongueThickMm[j] = tt;
+                    }
+                }
+            }
             var g = d.Plate(j, floorD);
             double tNow = Math.Max(d.TabThickMm[j], floorD);        // Plate() 就是这么夹的
             double tF = SectionSizing.PlateThickFloorMm(g, tNow, iA, d.ClampLengthMm, jDesign);

@@ -159,7 +159,9 @@ public static class Geometry3dm
         {
             double t = fd.TabThickMm[j];
             if (j > 0) sb.Append(',');
-            sb.Append($"{{\"name\":\"{names[j]}\",\"t\":{R(t)},");
+            // ★ R11（2026-09-08）：舌片自己的厚度（I/(J·舌宽)）；旧档 NaN ⇒ 与板厚同（Geom 侧缺省也是 t）
+            double tt = j < fd.TongueThickMm.Length && !double.IsNaN(fd.TongueThickMm[j]) ? fd.TongueThickMm[j] : t;
+            sb.Append($"{{\"name\":\"{names[j]}\",\"t\":{R(t)},\"tabT\":{R(tt)},");
             sb.Append($"\"ring\":[{R(t * fd.RingMul[j])},{R(t * fd.RingMulOuter(j))}],");
             // ★★★★★ **槽与孔必须跟着走**（2026-09-05）。
             //   在此之前这份 spec 只有 t 和 ring ⇒ APP 自己的出图器**画不出**

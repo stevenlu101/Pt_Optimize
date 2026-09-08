@@ -417,6 +417,10 @@ public sealed class ManualPage : TabPage
     /// </summary>
     // ⚠ 格式串只许用 0/# 作占位符。写 "0.1" 时 .NET 把 1 当**字面量**、
     //   小数点被吃掉：0.8 打成 "11"、31.6 打成 "321"。这个错今天犯了三次。
+    /// <summary>舌片厚：R11（2026-09-08）起有自己的值（I/(J·舌宽)）；旧档 NaN ⇒ 与板厚同。</summary>
+    private static double TongueOf(DesignSpec fd, int j) =>
+        j < fd.TongueThickMm.Length && !double.IsNaN(fd.TongueThickMm[j]) ? fd.TongueThickMm[j] : fd.TabThickMm[j];
+
     private static string SvgIso(DesignSpec fd, int plate)
     {
         double h = fd.HoleRadiusMm, R = fd.DiscRadiusMm, wall = fd.WallMm;
@@ -435,6 +439,7 @@ public sealed class ManualPage : TabPage
         //   第一版在 P() 里对 y 统一乘 MAG，结果管长 40 mm 被当成板厚放大 5 倍 = 200 mm，
         //   直接顶出画布、糊成一整块矩形。
         //   ⇒ 投影用真实 y；只把**板厚**在传入前乘 MAG。
+        double tt = TongueOf(fd, plate) * MAG;   // 舌片自己的厚度（R11）
         ti *= MAG; to *= MAG; t *= MAG;
 
         double OX = 330, OY = 230;
@@ -480,9 +485,9 @@ public sealed class ManualPage : TabPage
 
         // ② 舌片（板身）：一块厚 t 的板，从盘缘伸到 x=−L
         //    先画顶面，再画近侧长边侧壁，形成板的厚度感
-        string TabTop = $"M {P(-L, t / 2, w)} L {P(0, t / 2, w)} L {P(0, t / 2, -w)} L {P(-L, t / 2, -w)} Z";
-        string TabSide = $"M {P(-L, t / 2, -w)} L {P(0, t / 2, -w)} L {P(0, -t / 2, -w)} L {P(-L, -t / 2, -w)} Z";
-        string TabEnd = $"M {P(-L, t / 2, w)} L {P(-L, t / 2, -w)} L {P(-L, -t / 2, -w)} L {P(-L, -t / 2, w)} Z";
+        string TabTop = $"M {P(-L, tt / 2, w)} L {P(0, tt / 2, w)} L {P(0, tt / 2, -w)} L {P(-L, tt / 2, -w)} Z";
+        string TabSide = $"M {P(-L, tt / 2, -w)} L {P(0, tt / 2, -w)} L {P(0, -tt / 2, -w)} L {P(-L, -tt / 2, -w)} Z";
+        string TabEnd = $"M {P(-L, tt / 2, w)} L {P(-L, tt / 2, -w)} L {P(-L, -tt / 2, -w)} L {P(-L, -tt / 2, w)} Z";
         sb.Append($"<path d=\"{TabSide}\" fill=\"var(--ptDark)\" stroke=\"var(--ink)\" stroke-width=\"0.7\"/>");
         sb.Append($"<path d=\"{TabEnd}\" fill=\"var(--ptDark)\" stroke=\"var(--ink)\" stroke-width=\"0.7\"/>");
         sb.Append($"<path d=\"{TabTop}\" fill=\"var(--pt)\" stroke=\"var(--ink)\" stroke-width=\"0.7\"/>");
@@ -544,10 +549,11 @@ public sealed class ManualPage : TabPage
         //   图上却只有 ti —— 图与所交付的件、与 FE 实际算的厚度**三者不一致**。
         //   那次就是「同一个式子存三处然后悄悄漂开」的实例，所以这次不留第二份。
         double aw = Math.Max(t, wall);
-        double Zone(double r) => r <= r1 ? ti : r <= r2 ? to : t;
+        double tt = TongueOf(fd, plate);
+        double Zone(double r) => r <= r1 ? ti : r <= r2 ? to : r <= R ? t : tt;   // 盘缘之外是舌片：R11 起舌片有自己的厚度
         double Hw(double d) => FlangePlate.WeldFilletHeightMm(d, aw);
 
-        double tMax = Math.Max(ti + 2 * aw, Math.Max(ti, Math.Max(to, t)));
+        double tMax = Math.Max(ti + 2 * aw, Math.Max(ti, Math.Max(to, Math.Max(t, tt))));
         // ⚠ 比例必须**按宽度定**，不能按厚度定。
         //   按厚度定时 s=200/2.62=76 px/mm ⇒ 原生宽度 1206 px，
         //   而显示宽度限死 620 ⇒ 整张被压到 51 %，11 px 的字缩成 5.6 px 看不清。
@@ -1210,11 +1216,12 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
 
         // ⚠ 2026-09-03：标题与片名**按实际片数生成**。原来写死「四片」+ 四个名字 ⇒
         //   分 4 段（5 片）时说明书少列一片，而它是最容易被直接引用的一份东西。
-        sb.Append($"<h3>{fd.FlangeCount} 片各不相同</h3><table><tr><th>片</th><th>板厚 mm</th>" +
+        sb.Append($"<h3>{fd.FlangeCount} 片各不相同</h3><table><tr><th>片</th><th>板厚 mm</th><th>舌片厚 mm</th>" +
                   "<th>环内级</th><th>环外级</th><th>舌片保温 mm</th></tr>");
         string Nm(int j) => j == 0 ? "入口" : j == fd.FlangeCount - 1 ? "出口" : "共用" + j;
         for (int j = 0; j < fd.FlangeCount && j < fd.TabThickMm.Length; j++)
             sb.Append($"<tr><td>{Nm(j)}</td><td class=\"n\">{fd.TabThickMm[j]:0.00}</td>" +
+                      $"<td class=\"n\">{TongueOf(fd, j):0.00}</td>" +
                       $"<td class=\"n\">{fd.TabThickMm[j] * fd.RingMul[j]:0.00}</td>" +
                       $"<td class=\"n\">{fd.TabThickMm[j] * fd.RingMulOuter(j):0.00}</td>" +
                       $"<td class=\"n\">{fd.TabInsulMm[j]:0.0}</td></tr>");
