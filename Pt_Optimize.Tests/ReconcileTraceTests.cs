@@ -51,5 +51,20 @@ public class ReconcileTraceTests
                           sb.ToString());
         Console.WriteLine($"耗时 {sw.Elapsed.TotalMinutes:0.0} 分钟　场解 {sr.Solves} 次");
         Assert.True(sr.Trace.Count > 0, "轨迹是空的 —— Trace 没在记");
+
+        // ★★★★★ **仪器变成门**（2026-09-08 督导第 15/16 封）。
+        //   慢门跑完 0.8 档从 3480.7 g 变成 NaN，而本测试报「已通过」—— 它只 dump 轨迹，
+        //   对答案零断言，放在慢门道里永远不会红。
+        //   钉的是「**解得出**」，**不钉 3480.7** —— 那会因为变好（更省铂）而红，犯门 A。
+        Assert.True(double.IsFinite(sr.MassG),
+            $"0.8 档合计是 NaN ⇒ 求解器没解出来。停在：{sr.StopWhy}");
+        Assert.False(sr.StopWhy.Contains("判不了", StringComparison.Ordinal),
+            $"0.8 档在第一步就停了：{sr.StopWhy}");
+        // ★ 第三条（2026-09-08 我加的，不在督导给的两条里）：**0.8 档必须解得出且全过**。
+        //   实测：下角补进「不熔化」之后，上面两条都过了，但可行 False（3257.7 g，第 1 轮就收场：
+        //   候选探到上界时邻片熔 ⇒ 探针一律「解不出来」⇒ 片1 三个候选全败）。
+        //   两条绿着而交不出东西 = 「让人以为的和事实不一样」。这条只会因为变差而红，不犯门 A。
+        Assert.True(sr.Feasible,
+            $"0.8 档解出来了但**不可行**（合计 {sr.MassG:0.0} g）：{sr.StopWhy}");
     }
 }

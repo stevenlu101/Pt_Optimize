@@ -27,12 +27,16 @@ namespace PtOptimize.Core;
 ///
 ///   那一点怎么到达？——**从约束盒的下角出发，只许往上走**：
 ///
-///     板厚   t 起于 t_lo = <see cref="DesignSpec.DiscFloorMm"/>（焊接屈曲 / 烧穿下界）
+///     板厚   t 起于 t_lo = max(<see cref="DesignSpec.DiscFloorMm"/>（焊接屈曲 / 烧穿下界）, **不熔化**)
+///                          —— 第三个来源要解场才知道，逐片，见 <see cref="MeltFloor"/>（2026-09-08 补）
 ///     舌保温 s 起于 s_lo = 0.3 mm（裸舌）
 ///     环倍率 r 起于 r_lo = 1.0（无台阶）
 ///
 ///   ★ 这三个下界**不是种子**：它们是约束集自己的角点，每一个都有第一性原理来源
-///     （屈曲、烧穿、裸露、无台阶）。种子是「随便挑一个内点」，这里没有那个动作。
+///     （屈曲、烧穿、不熔化、裸露、无台阶）。种子是「随便挑一个内点」，这里没有那个动作。
+///   ★ 2026-09-08 实测教训：下角漏掉「不熔化」时，0.8 档的起点 0.60 mm **必熔**，
+///     S1 把熔化的场判为不可信 ⇒ 第一次场解就停、合计 NaN。**起点本来就在可行域外**，
+///     修的是下角的定义，不是把 S1 放松。
 ///
 ///     每轮：对每条**违反**的判据，把**它自己的旋钮**二分抬到刚好不违反，一点不多；
 ///     任何旋钮**只增不减**。
@@ -291,9 +295,12 @@ public static class Solver
         var lc = d.BuildCase(baseIn, checkRamp: false);
         double dipMax = lc.RootDeltaMaxK, discMax = lc.DiscOverTempMaxK;
 
-        Log($"起点 = **约束盒的下角**（不是种子）：板厚 {tLo:0.00} mm（焊接屈曲/烧穿下界）／" +
+        // ★ 印出来的必须和进模型的一致（督导第 16 封）：下角有三个来源，其中「不熔化」要解场才知道
+        //   ⇒ 这里只印**闭式部分**，真正的起点在每遍开头验完「不熔化」之后才印（见 Rounds）。
+        Log($"下角的闭式部分：板厚 ≥ {tLo:0.00} mm（焊接屈曲/烧穿）／" +
             $"舌保温 {opt.InsLoMm:0.00} mm（裸舌）／环倍率 t₁ {opt.RingLo:0.00}／" +
-            $"外级倍率 t₂ {opt.RingLo:0.00}（都=无台阶）　× {np} 片");
+            $"外级倍率 t₂ {opt.RingLo:0.00}（都=无台阶）　× {np} 片　" +
+            "—— 「**不熔化**」是下角的第三个来源，要解场才知道：每遍开头在那遍的网格上验一次，验完才印真正的起点");
         Log($"传进来的旋钮值**一个都没用**（板厚 {string.Join("/", geometry.TabThickMm.Select(x => x.ToString("0.00")))} 被丢弃）—— " +
             "这就是「与初值无关」的实现方式。");
         Log($"限值只从 LineCase 读：③ ≤ {dipMax:0.0} K　②″ ≤ {discMax:0.0} K");
@@ -336,6 +343,33 @@ public static class Solver
                       : null;
             Log($"── {tag}" + (o.FineMm > 0 ? $"（细网格 {o.FineMm:0.000} mm）" : "（导航网格）"));
 
+            // ★★★★★ **下角的第三个来源「不熔化」，每遍开头在这遍的网格上验一次**（2026-09-08）。
+            //   细网格上峰值更高，导航网格上不熔的下角到细网格可能又熔；只增不减跨遍照样成立。
+            //   验下角那次场解若解出来了，就当这遍第 1 轮的场解用（逐位相同，省一次）。
+            var (mfOk, mfHandOff, mfWhy, mfLast) = MeltFloor(d, baseIn, o, res, cancel, progress, inner);
+            if (!mfOk)
+            {
+                res.HitBound = mfHandOff;        // 交棒 = 结构性停机；判不了不是「不可行的证明」
+                res.StopWhy = mfWhy;
+                Log("  ✗ " + mfWhy);
+                return false;
+            }
+            // 板厚抬过 ⇒ 焊脚跟着长，⑥ 要当场再验一次（闭式、零成本；与 RaiseUntil 抬板厚后同一道）
+            var (cov6, cov6Why) = CoverCheck(d, baseIn);
+            if (!cov6)
+            {
+                res.HitBound = true;
+                res.StopWhy = cov6Why + "　（下角因熔化上抬之后才越界：更薄会熔、更厚盖不住 —— 这个形状要改盘径）";
+                Log("  ✗ " + res.StopWhy);
+                return false;
+            }
+            if (o.FineMm <= 0)
+                Log($"起点 = **约束盒的下角**（不是种子）：板厚 {Join(d.TabThickMm)} mm" +
+                    "（逐片；= max(焊接屈曲, 烧穿, 不熔化)）／" +
+                    $"舌保温 {opt.InsLoMm:0.00} mm（裸舌）／环倍率 t₁ {opt.RingLo:0.00}／" +
+                    $"外级倍率 t₂ {opt.RingLo:0.00}（都=无台阶）　× {np} 片");
+            LineResult? pre = mfLast;
+
             // ★★★★★ **「补不上但留着」要能续轮，组合才攒得出来**（2026-09-05）。
             //
             //   只把值留下来还不够 —— 留完就 `break`，等于全程只动了**一根**旋钮。
@@ -354,8 +388,16 @@ public static class Solver
             for (int round = 1; round <= o.MaxRounds; round++)
             {
                 cancel.ThrowIfCancellationRequested();
-                last = Eval(d, baseIn, o, res, cancel, inner);
-                if (last is null) { res.StopWhy = "场解不收敛，判不了"; break; }
+                // 验下角那次场解解出来了就直接用（逐位相同，省一次）；否则照常解
+                if (pre is not null) { last = Gate(pre, res); pre = null; }
+                else last = Eval(d, baseIn, o, res, cancel, inner);
+                if (last is null)
+                {
+                    // ★ 原来这里一律印「场解不收敛」——而 0.8 档的真相是起点熔化（督导第 15 封）。
+                    //   原因由 Gate 记在 NullWhy 里，这里只转述，不猜。
+                    res.StopWhy = $"场解解不出来 ⇒ 判不了（{res.NullWhy}）";
+                    break;
+                }
 
                 double mass = MassOf(last);
                 // ★★★★★ **九根旋钮全印，一根都不许省**（2026-09-07 督导 S8）。
@@ -707,10 +749,10 @@ public static class Solver
             //   把不收敛渲染成「没用」= 安静失败：用户看到的「r₁/r₂ 完全没有优化」就是后果。
             if (rk is null)
             {
-                fails.Add($"{KnobName(k)} 抬到上界 {hi:0.###} 时**场解不收敛**"
+                fails.Add($"{KnobName(k)} 抬到上界 {hi:0.###} 时**解不出来**（{res.NullWhy}）"
                         + "（不是「没用」—— 多半是这一级被抬到把网格/回路搞坏了，"
                         + "该修的是这根旋钮的上界）");
-                res.Trace.Add($"     ⚠ 片{j} {KnobName(k)} 上界 {hi:0.###} 处场解不收敛 —— 上界存疑");
+                res.Trace.Add($"     ⚠ 片{j} {KnobName(k)} 上界 {hi:0.###} 处解不出来（{res.NullWhy}）—— 上界存疑");
                 continue;
             }
 
@@ -812,7 +854,7 @@ public static class Solver
         if (beforeUnknown)
         {
             Log("     " + BranchMarks.UndeterminedBefore);
-            return (false, $"**{nm} 处场解不收敛 ⇒ 判不了**（不是「不可行的证明」）—— "
+            return (false, $"**{nm} 处场解解不出来 ⇒ 判不了**（{res.NullWhy}；不是「不可行的证明」）—— "
                          + "这一步的每个数都不可引用，先修上界或几何再谈可行性", false);
         }
 
@@ -844,7 +886,7 @@ public static class Solver
                 // 判不了 ⇒ 不许印成「分派前提不成立…没变好」（那是「这旋钮没用」的意思）
                 Set(d, knob, j, lo);
                 Log("     " + BranchMarks.UndeterminedAtHi);
-                return (false, $"**{nm} 抬到上界 {hi:0.000} 时场解不收敛 ⇒ 判不了** —— "
+                return (false, $"**{nm} 抬到上界 {hi:0.000} 时解不出来 ⇒ 判不了**（{res.NullWhy}）—— "
                              + "不是「这根旋钮没用」，是**上界存疑**（多半把几何抬坏了）", false);
             }
             after = PlateSlack(rHi, key, j, dipMax, discMax);
@@ -906,7 +948,7 @@ public static class Solver
                 //   推得越高越不收敛 ⇒ 正反馈，一路顶到上界。
                 Set(d, knob, j, lo);
                 Log("     " + BranchMarks.UndeterminedBisect);
-                return (false, $"**{nm} 在 {mid:0.000} 处场解不收敛 ⇒ 二分中止**（上界存疑）—— "
+                return (false, $"**{nm} 在 {mid:0.000} 处解不出来 ⇒ 二分中止**（{res.NullWhy}；上界存疑）—— "
                              + "不许拿判不了的点当「不过」往上推", false);
             }
             if (PlateSlack(rMid, key, j, dipMax, discMax) >= 0) hi = mid; else lo = mid;
@@ -1043,6 +1085,18 @@ public static class Solver
                                     SolverResult res, CancellationToken cancel,
                                     IProgress<string>? inner = null)
     {
+        var r = EvalRaw(d, baseIn, o, res, cancel, inner);
+        return r is null ? null : Gate(r, res);
+    }
+
+    /// <summary>
+    /// **原始场解，不套 S1 的闸** —— 只给 <see cref="MeltFloor"/> 用：它只读布尔「熔/不熔」
+    /// （方向可信），一个数值都不读。其余一律走 <see cref="Eval"/>。
+    /// </summary>
+    private static LineResult? EvalRaw(DesignSpec d, DesignInputs baseIn, SolverOptions o,
+                                       SolverResult res, CancellationToken cancel,
+                                       IProgress<string>? inner = null)
+    {
         try
         {
             var lc = d.BuildCase(baseIn, checkRamp: false);
@@ -1059,39 +1113,251 @@ public static class Solver
             //   看不出「慢」和「挂了」的区别（用户 2026-08-29）。
             var r = LineRunner.Run(lc, inner, cancel);
             res.Solves++;
-
-            // ★★★★★ **不收敛的场，一个数都不许拿去做决定**（2026-09-07 督导 S1）。
-            //
-            //   LineResult.Converged 自己的说明写着「**为 false 时表内所有数值一律不可引用**」，
-            //   而这里原来只看 r.Ok。外层耦合不收敛时 res.Ok **仍是 true**
-            //   （LineRunner 那一支只 Notes.Add「本次结果的每个数都不可用」，从不设 Ok=false）
-            //   ⇒ 坏场照样往下走。
-            //
-            //   而 Solver.PlateSlack 直接读逐片原始量（Flanges[j].QFromTubeW / TDiscMaxC），
-            //   **绕过 Checks，也就绕过了 Undetermined 那套铁律** ⇒
-            //   坏数据被拿去决定「抬哪根旋钮、二分到哪个值」，再把这个由坏数据挑出来的设计
-            //   送进终局复核，终局老实报「不可行」。
-            //   **表现不是报错，是答案变差而且看起来有理有据。**
-            //
-            //   终局本来就是护住的（LineResult.AllOk 的定义带 Converged）——
-            //   没护住的一直是**搜索过程**。这与 HANDOVER「场没解到位 ⇒ 吃它的判据一律判不了」
-            //   是同一条铁律；那次补的是线性解那一层，外层耦合这一层从来没补过。
-            //
-            //   对照组：旧路 FlangeAutoSizer 读 Converged **21 处**，并据此拒绝把没收敛的状态
-            //   当热启动（`if (lr.Converged) warmA = ...`）。Sizer→Solver 换代时这道闸丢了。
-            //
-            //   ⚠ 返回 null 而不是抛：调用方（ChooseKnob / RaiseUntil）对 null 已有专门的一支，
-            //     会印「场解不收敛 —— 不是『没用』，该修的是这根旋钮的上界」。
-            if (!r.Ok) return null;
-            if (!r.Converged)
-            {
-                res.Trace.Add("     ⚠ 外层耦合**未收敛** ⇒ 本次场解的每个数都不可引用，当作没解出来");
-                return null;
-            }
             return r;
         }
         catch (OperationCanceledException) { throw; }
-        catch { res.Solves++; return null; }
+        catch (Exception ex)
+        {
+            res.Solves++;
+            res.NullWhy = "场解抛出异常 —— " + ex.Message;
+            res.Trace.Add("     ✗ 场解抛出异常 ⇒ 判不了：" + ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// ★★★★★ **约束盒下角的第三个来源：不熔化**（2026-09-08，督导第 15/16 封）。
+    ///
+    /// ══ 病
+    /// 下角原来只由 max(焊接屈曲, 烧穿) 定义 = 0.60 mm。而 0.8 档在 0.60 mm 全片**必熔**
+    /// （轨迹原话：「HC2|HC3：峰值 6260 °C 已越过铂熔点 1768 °C」）。S1 之后熔化 ⇒ Ok=false
+    /// ⇒ Eval 回 null ⇒ 第一轮第一次场解就停：**2 次场解、合计 NaN**，屏幕上却印「场解不收敛」。
+    /// 正确的说法不是「熔化不该停机」（那会削弱 S1），是**下角算漏了一条约束**：
+    /// 「不熔化」比屈曲、烧穿都硬，却不在下角的定义里 ⇒ 起点本来就落在可行域之外。
+    ///
+    /// ══ 修法：把「不熔化」补进下角
+    /// 起点熔就逐片把板厚二分抬到**刚好不熔**，那个厚度才是真正的下角。
+    /// 单调、确定、**与初值无关** —— 下角是由约束算出来的，不是传进来的种子；
+    /// 与旧路 FlangeAutoSizer 的 OverheatRaiseFromC 同一口径（它自己写着「不是判据，是动手的触发点」）。
+    /// ⚠ 本方法只许读**此刻的**板厚（调用时 = 闭式下角），**不许读设计记录里的板厚**。
+    ///
+    /// ══ ★ 护栏：**只用布尔「熔/不熔」，绝不用温度数值**（督导第 16 封）
+    /// 「抬到走出熔化区」要解场，而熔化区里的场正是 S1 说不可信的那些：
+    /// 6260 °C 是拟合外推的垃圾（电阻率拟合到 3392 °C 才反号）。但「有没有越过熔点」这个
+    /// **判断**的方向可信 —— 拟合再坏也不会把「远超熔点」算成「没超」。
+    /// ⇒ 对布尔做二分合法，对数值做插值不合法。
+    /// **下一个人别顺手拿峰值温度（TMaxC）去加速收敛，也别读 PlateSlack／任何裕度** ——
+    /// 那些都是 S1 禁止引用的；`MeltFloorTests` 盯着本方法体里不许出现它们。
+    ///
+    /// ══ 逐片，不是整线一个下角
+    /// 每片电流不同，熔化阈值也不同（共用片发热是端片的 2.6 倍）。
+    /// 熔化时 LineRunner 在**第一次 RunOnce 就返回**（`if (!res.Ok) return res;`），段解那时还没吃法兰回灌
+    /// ⇒ 那一次解里各片的「熔/不熔」只由各自的板厚决定 ⇒ 可以在**同一次场解里对每片各自二分**
+    /// （向量二分：一次解读四个布尔，不是 4 片各二分一遍）。抬完再整体验一遍：耦合展开后
+    /// 抽热↑ ⇒ 电流↑ ⇒ 片更热，那时若又有片熔就再抬一遍（只增不减、有上界 ⇒ 必停；遍数封顶防抖）。
+    /// ⚠ 验上界时各片一起抬（对别的片是最悲观的构型），所以二分出的下角**可能偏保守一格，不会偏危险**；
+    ///   最后那一遍验的是「不熔」，不是「再薄一格就熔」。
+    ///
+    /// 厚度到顶仍熔 ⇒ **交棒**给增宽（盘径／舌半宽，「◇ 搜形状」），不许说无解 ——
+    /// **一个出口只能对它自己有的旋钮下结论。**
+    ///
+    /// 每次上抬都留痕（<see cref="BranchMarks.MeltFloorRaised"/>）：下角是「与初值无关」那条铁律的实物，
+    /// 它被悄悄改了会很难查。
+    /// </summary>
+    /// <returns>
+    /// Ok = 出了熔化区（可能一片都没抬）；HandOff = 厚度到顶仍熔（结构性停机，交棒）；
+    /// Why = 停因（人话）；Last = 最后那次**原始**场解（调用方要过 <see cref="Gate"/> 才能用它的数）。
+    /// </returns>
+    public static (bool Ok, bool HandOff, string Why, LineResult? Last) MeltFloor(
+        DesignSpec d, DesignInputs baseIn, SolverOptions o, SolverResult res,
+        CancellationToken cancel = default, IProgress<string>? progress = null,
+        IProgress<string>? inner = null)
+    {
+        void Log(string s) { res.Trace.Add(s); progress?.Report(s); }
+        int np = d.TabThickMm.Length;
+        double q = QuantOf(o, Knob.Thick), tol = TolOf(o, Knob.Thick), hiT = HiOf(o, Knob.Thick);
+        // 遍数封顶：最多**抬** MaxPasses−1 遍，第 MaxPasses 遍**只验不抬** —— 每一次上抬都要被下一遍验过，
+        //   不许把一次没验过的上抬交出去。每遍至少把一片抬高一格、且有工艺上界 ⇒ 本来就必停；封顶只防磨太久。
+        //   实测（2026-09-08，W08 导航网格）要 3 遍：第一遍按熔化区里（段解还没吃回灌）的布尔二分出阈值，
+        //   耦合展开后抽热↑ ⇒ 保持控温点的电流↑ ⇒ 片更热 ⇒ 又熔一点，第二、三遍再抬一点。
+        const int MaxPasses = 6;
+        // ★ 三态，与 RaiseUntil 同一口径：熔 / 不熔 / **判不了**。
+        //   段解失败（Ok=false 但不是熔）、耦合未收敛（Ok 但 !Converged）都是判不了 —— 那样的场连「不熔」
+        //   这个布尔都不能信（S1），不许当「不熔」把 hi 往下推。判不了 ⇒ 中止本方法、板厚退回本遍起点。
+        static bool Undetermined(LineResult? x) => x is null || (!x.Ok && !x.OverMelt) || (x.Ok && !x.Converged);
+        var from = (double[])d.TabThickMm.Clone();     // 只为留痕：抬之前的值
+        // ★ 二分的括号**先窄后宽**：上界先放在 lo×grow 处验一次，仍熔再往上翻，直到不熔或顶到工艺上界。
+        //   头一版直接拿工艺上界 6.0 当括号，每遍都从头二分 10 次；而第二遍起只是耦合展开后的小修正，
+        //   实测三遍 19.6 分钟。第一遍熔化区里的解便宜（第一次 RunOnce 就返回），括号放宽些；
+        //   后面各遍每次解都是完整耦合（贵），括号收窄到 ×1.25。
+        //   ⚠ 括号只是**搜索提示**，决定仍只看布尔：在这一点熔 ⇒ 它成为新的 lo；不熔 ⇒ 它是 hi。
+        double grow = 1.5;
+        string HandOff(IEnumerable<int> js) =>
+            $"片{string.Join("/", js)} 板厚抬到工艺上界 {hiT:0.00} mm **仍熔** ⇒ **厚度这条路走到头了**"
+          + "（实测，不是估的）—— 求解器手上只有法兰侧旋钮；下一根是**增宽**：盘径与舌半宽（「◇ 搜形状」）。"
+          + "**一个出口只能对它自己有的旋钮下结论**，这不是「无解」。";
+        void Restore(IEnumerable<int> js, double[] to) { foreach (int j in js) d.TabThickMm[j] = to[j]; }
+
+        for (int pass = 1; pass <= MaxPasses; pass++)
+        {
+            cancel.ThrowIfCancellationRequested();
+            var start = (double[])d.TabThickMm.Clone();    // 本遍起点：判不了时退回这里
+            var r = EvalRaw(d, baseIn, o, res, cancel, inner);
+            if (r is null) return (false, false, $"验下角时场解未返回 ⇒ 判不了（{res.NullWhy}）", null);
+            if (!r.OverMelt)
+            {
+                // 不熔 ≠ 出了熔化区：还得是 Ok 且收敛的场，Gate 说了算（!Ok／未收敛 ⇒ 留痕 + NullWhy ⇒ 判不了）
+                if (Gate(r, res) is null)
+                    return (false, false, $"验下角时场解解不出来 ⇒ 判不了（{res.NullWhy}）", null);
+                Log(pass == 1
+                    ? $"   · 验下角：板厚 {Join(d.TabThickMm)} mm 处 {np} 片都不熔（场已收敛）⇒ 不必上抬"
+                    : $"   · 验下角（第 {pass} 遍）：板厚 {Join(d.TabThickMm)} mm 处 {np} 片都不熔（场已收敛）⇒ 出了熔化区");
+                return (true, false, "", r);
+            }
+
+            // 熔了 ⇒ Ok=false（LineRunner 两个位一起置）。**哪一片**由逐片的位说。
+            var melting = Enumerable.Range(0, Math.Min(np, r.Flanges.Length))
+                                    .Where(j => r.Flanges[j].OverMelt).ToArray();
+            if (melting.Length == 0)
+                return (false, false, "整线报熔化，却没有一片带熔化位 ⇒ 判不了（逐片的位没接上，这是程序错，不是物理）", null);
+            if (pass == MaxPasses)
+                // 最后一遍只验不抬：讯息只说观察到的事实，不附没量过的机理
+                return (false, false, $"下角抬了 {MaxPasses - 1} 遍，第 {MaxPasses} 遍验时 片{string.Join("/", melting)} 仍熔"
+                                    + $" ⇒ 判不了（本方法最多抬 {MaxPasses - 1} 遍；板厚留在最后一次验过的值 {Join(d.TabThickMm)} 上）", null);
+            Log($"   · 验下角（第 {pass} 遍）：板厚 {Join(d.TabThickMm)} mm 处 片{string.Join("/", melting)} **熔化**"
+              + "（只用「熔/不熔」这个判断；温度数值是熔化区里的外推值，一个都不引用）"
+              + (pass == 1 ? " ⇒ 「不熔化」是下角漏掉的第三条约束，逐片二分抬板厚到刚好不熔"
+                           : " ⇒ 耦合展开后电流变了，再抬一点"));
+
+            var lo = new double[np]; var hi = new double[np];
+            foreach (int j in melting) lo[j] = d.TabThickMm[j];
+            var cannot = melting.Where(j => hiT <= lo[j] + 1e-12).ToArray();
+            if (cannot.Length > 0)
+            {
+                Log(BranchMarks.MeltFloorHandOff + $"：片{string.Join("/", cannot)} 已在上界 {hiT:0.00} mm，抬不动");
+                return (false, true, HandOff(cannot), null);
+            }
+
+            // ── 找「不熔的上界」：先试 lo×grow，仍熔的片把它当新的 lo 再往上；顶到工艺上界仍熔 ⇒ 交棒
+            var need = melting.ToList();
+            while (need.Count > 0)
+            {
+                cancel.ThrowIfCancellationRequested();
+                foreach (int j in need)
+                {
+                    hi[j] = Math.Min(hiT, Math.Max(lo[j] * grow, lo[j] + 0.1));
+                    d.TabThickMm[j] = hi[j];
+                }
+                var rHi = EvalRaw(d, baseIn, o, res, cancel, inner);
+                if (Undetermined(rHi))
+                {
+                    if (rHi is not null) Gate(rHi, res);         // 留痕 + NullWhy
+                    Restore(melting, start);
+                    Log($"     ✗ 验下角找上界时场解判不了（{res.NullWhy}）⇒ 中止，板厚退回本遍起点 {Join(d.TabThickMm)}");
+                    return (false, false, $"验下角找上界时场解判不了 ⇒ 判不了（{res.NullWhy}）", null);
+                }
+                var still = need.Where(j => j < rHi!.Flanges.Length && rHi.Flanges[j].OverMelt).ToList();
+                var atTop = still.Where(j => hi[j] >= hiT - 1e-12).ToArray();
+                if (atTop.Length > 0)
+                {
+                    Restore(melting, from);
+                    Log(BranchMarks.MeltFloorHandOff + $"：片{string.Join("/", atTop)} 抬到 {hiT:0.00} mm 仍熔");
+                    return (false, true, HandOff(atTop), null);
+                }
+                foreach (int j in still) lo[j] = hi[j];       // 在这一点仍熔 ⇒ 新的 lo（不变式：lo 熔）
+                need = still;
+            }
+
+            // ── 向量二分：一次场解读各片自己的布尔。逐片不变式：lo 熔、hi 不熔
+            int iters = 0;
+            for (; iters < o.BisectMaxIter && melting.Any(j => hi[j] - lo[j] > tol); iters++)
+            {
+                cancel.ThrowIfCancellationRequested();
+                foreach (int j in melting)
+                    d.TabThickMm[j] = hi[j] - lo[j] > tol ? 0.5 * (lo[j] + hi[j]) : hi[j];
+                var rMid = EvalRaw(d, baseIn, o, res, cancel, inner);
+                if (Undetermined(rMid))
+                {
+                    // 判不了 ⇒ 中止二分，板厚退回**本遍起点**（不许把一个没留痕的中点或上界留在模型里）
+                    if (rMid is not null) Gate(rMid, res);
+                    Restore(melting, start);
+                    Log($"     ✗ 验下角二分中点处场解判不了（{res.NullWhy}）⇒ 中止，板厚退回本遍起点 {Join(d.TabThickMm)}");
+                    return (false, false, $"验下角二分中点处场解判不了 ⇒ 判不了（{res.NullWhy}）", null);
+                }
+                foreach (int j in melting)
+                {
+                    if (!(hi[j] - lo[j] > tol)) continue;
+                    if (j < rMid!.Flanges.Length && rMid.Flanges[j].OverMelt) lo[j] = d.TabThickMm[j];
+                    else hi[j] = d.TabThickMm[j];
+                }
+            }
+            // ── 落到图纸格：向**上**（向下会掉回熔化区）
+            foreach (int j in melting)
+            {
+                double t = Math.Min(Math.Ceiling(hi[j] / q - 1e-9) * q, hiT);
+                d.TabThickMm[j] = t;
+                Log($"{BranchMarks.MeltFloorRaised}：片{j} {start[j]:0.00} → {t:0.00} mm"
+                  + $"（第 {pass} 遍；只按「熔/不熔」二分 {iters} 次，解出 {hi[j]:0.0000}，向上对齐到图纸格 {q:0.###}"
+                  + (pass > 1 ? $"；自闭式下角 {from[j]:0.00} 起累计" : "") + "）");
+            }
+            grow = 1.25;    // 后面各遍是耦合展开后的修正，括号收窄
+        }
+        return (false, false, "验下角循环意外退出 ⇒ 判不了（程序错）", null);    // MaxPasses ≥ 1 时到不了
+    }
+
+    /// <summary>
+    /// （下面这段注释是 Eval/Gate 的 S1 依据，原位保留。）
+    ///
+    /// ★★★★★ **不收敛的场，一个数都不许拿去做决定**（2026-09-07 督导 S1）。
+    ///
+    ///
+    ///   LineResult.Converged 自己的说明写着「**为 false 时表内所有数值一律不可引用**」，
+    ///   而这里原来只看 r.Ok。外层耦合不收敛时 res.Ok **仍是 true**
+    ///   （LineRunner 那一支只 Notes.Add「本次结果的每个数都不可用」，从不设 Ok=false）
+    ///   ⇒ 坏场照样往下走。
+    ///
+    ///   而 Solver.PlateSlack 直接读逐片原始量（Flanges[j].QFromTubeW / TDiscMaxC），
+    ///   **绕过 Checks，也就绕过了 Undetermined 那套铁律** ⇒
+    ///   坏数据被拿去决定「抬哪根旋钮、二分到哪个值」，再把这个由坏数据挑出来的设计
+    ///   送进终局复核，终局老实报「不可行」。
+    ///   **表现不是报错，是答案变差而且看起来有理有据。**
+    ///
+    ///   终局本来就是护住的（LineResult.AllOk 的定义带 Converged）——
+    ///   没护住的一直是**搜索过程**。这与 HANDOVER「场没解到位 ⇒ 吃它的判据一律判不了」
+    ///   是同一条铁律；那次补的是线性解那一层，外层耦合这一层从来没补过。
+    ///
+    ///   对照组：旧路 FlangeAutoSizer 读 Converged **21 处**，并据此拒绝把没收敛的状态
+    ///   当热启动（`if (lr.Converged) warmA = ...`）。Sizer→Solver 换代时这道闸丢了。
+    ///
+    ///   ⚠ 回 null 而不是抛：调用方（ChooseKnob / RaiseUntil）对 null 已有专门的一支，
+    ///     会印「解不出来 —— 不是『没用』，该修的是这根旋钮的上界」，并带上 NullWhy 里的原因。
+    ///
+    /// ★★★★★ **S1 的闸，且每一支都留痕**（2026-09-08，督导第 15 封）。
+    ///
+    /// 病：<c>Eval</c> 回 null 有两条路，<c>!Converged</c> 那支留痕、<c>!Ok</c> 那支**什么都不留**，
+    /// 而调用方把两条都印成「场解不收敛」。0.8 档实测：2 次场解就停、合计 NaN、
+    /// 屏幕上写「场解不收敛，判不了」—— 真相是 <c>Ok=false</c> 且原因是**起点熔化**
+    /// （轨迹原话：峰值 6260 °C 已越过铂熔点）。**说的和事实不一样**，正是本仓最高准则禁的那种。
+    ///
+    /// ⇒ 三态分清：**判不了 ≠ 不过 ≠ 解不出来**。回 null 之前把原因写进轨迹与
+    ///   <see cref="SolverResult.NullWhy"/>，每个印「解不出来」的出口都带上它。
+    /// </summary>
+    private static LineResult? Gate(LineResult r, SolverResult res)
+    {
+        if (!r.Ok)
+        {
+            res.NullWhy = (r.OverMelt ? "熔化 —— " : "场解回报失败 —— ") + r.Message;
+            res.Trace.Add("     " + BranchMarks.EvalNotOk + "：" + r.Message);
+            return null;
+        }
+        if (!r.Converged)
+        {
+            res.NullWhy = "外层耦合未收敛";
+            res.Trace.Add("     ⚠ 外层耦合**未收敛** ⇒ 本次场解的每个数都不可引用，当作没解出来");
+            return null;
+        }
+        res.NullWhy = "";
+        return r;
     }
 
     /// <summary>违反的硬判据（整体口径，用来兜住**没有旋钮**的那些）。判不了 = 不算过。</summary>
@@ -1322,6 +1588,14 @@ public sealed class SolverResult
     /// <summary>第二遍用的细网格 mm（0 = 没做第二遍）。</summary>
     public double FineMmUsed;
     public string StopWhy = "";
+
+    /// <summary>
+    /// ★ 上一次 <c>Eval</c> 回 null 的**原因**（人话）；为空 = 上一次解出来了。
+    ///   2026-09-08 督导第 15 封：<c>!Ok</c> 那一支原来什么都不留，调用方一律印「场解不收敛」——
+    ///   而 0.8 档的真实原因是**起点熔化**。说的和事实不一样。
+    ///   每个印「解不出来」的出口都要带上它，不许自己猜一个原因印上去。
+    /// </summary>
+    public string NullWhy = "";
 }
 
 public sealed class SolverOptions

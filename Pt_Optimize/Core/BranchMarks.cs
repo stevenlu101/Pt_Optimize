@@ -48,4 +48,19 @@ public static class BranchMarks
 
     /// <summary>Solver.RaiseUntil：**二分中点**判不了 ⇒ 中止二分（不许当「不过」往上推）。</summary>
     public const string UndeterminedBisect = "★ 走到了「二分中点判不了 ⇒ 中止」";
+
+    /// <summary>
+    /// Solver.Gate：场解回报 <c>Ok=false</c>（熔化／段解失败…）⇒ 判不了，**原因跟在冒号后面**。
+    /// 2026-09-08 督导第 15 封：这一支原来是哑的，0.8 档的「起点熔化」被印成「场解不收敛」。
+    /// </summary>
+    public const string EvalNotOk = "★ 走到了「场解回报失败 ⇒ 判不了」";
+
+    /// <summary>
+    /// Solver.MeltFloor：约束盒下角因**不熔化**这条约束而上抬 —— 后面跟着「片j a → b mm」。
+    /// 下角是「解与初值无关」那条铁律的实物，它被改了必须留痕，否则很难查（督导第 16 封）。
+    /// </summary>
+    public const string MeltFloorRaised = "★ 下角因熔化上抬";
+
+    /// <summary>Solver.MeltFloor：板厚抬到工艺上界**仍熔** ⇒ 交棒给增宽（不是判无解）。</summary>
+    public const string MeltFloorHandOff = "★ 走到了「下角抬到厚度上界仍熔 ⇒ 交棒给增宽」";
 }

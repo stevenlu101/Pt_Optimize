@@ -2642,7 +2642,8 @@ public sealed class LineDesignPage : TabPage
                     swPt.Stop();
                     done = baseDone + screenRounds;
                     _prog.Value = Math.Min(_prog.Maximum, done);
-                    Note($"{tag} 已完成　{(double.IsNaN(sr.MassG) ? "无解" : sr.MassG.ToString("0") + " g")}");
+                    // ★ NaN 不等于「无解」：可能是判不了、交棒（厚度到顶 ⇒ 增宽，本表正是在增宽）、⑥ 盖不住 —— 停因才说得清
+                    Note($"{tag} 已完成　{(double.IsNaN(sr.MassG) ? "未解出（看停因）" : sr.MassG.ToString("0") + " g")}");
                     rows.Add((sr.Design, sr.MassG, sr.Feasible, sr.Message));
                     // ★ 算完一个贴一个：中途取消也留得住已有结果
                     _out.AppendText(

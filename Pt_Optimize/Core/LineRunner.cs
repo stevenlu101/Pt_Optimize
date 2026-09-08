@@ -435,6 +435,14 @@ public sealed class FlangeOut
     /// </summary>
     public bool FieldsConverged = true;
 
+    /// <summary>
+    /// ★ **这一片**越过了铂熔点（2026-09-08）。整线位 <see cref="LineResult.OverMelt"/> 只说
+    ///   「有一片熔了」，说不出是哪一片；而求解器要**逐片**把下角抬出熔化区，必须知道抬哪片。
+    ///   ⚠ 它是布尔，不是温度：熔化区里峰值温度的**大小**不可引用（S1，拟合外推），
+    ///     只有「越没越过熔点」这个方向可信。读它的人不许顺手去读温度数值。
+    /// </summary>
+    public bool OverMelt;
+
     /// <summary>温度场停机时的**真残差**（相对）—— 诊断用；步长不是残差。</summary>
     public double FieldResidualRel = double.NaN;
 
@@ -1489,6 +1497,7 @@ public static class LineRunner
                 //     证明的是「没有任何东西挡着它」。两句话不一样，不夸大。
                 res.Ok = false;
                 res.OverMelt = true;
+                flanges[j].OverMelt = true;      // ★ 逐片的位：求解器按它决定抬哪一片的下角
                 res.Message = $"{flanges[j].Name}：峰值 {th.TMaxC:0} °C 已越过铂熔点 "
                             + $"{Materials.PtMeltC:0} °C —— **该解不存在**（不是「不够好」，是物理上不成立）";
                 res.Notes.Add("✗ " + res.Message);

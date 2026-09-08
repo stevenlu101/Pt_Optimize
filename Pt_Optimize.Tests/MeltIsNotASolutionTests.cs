@@ -44,6 +44,29 @@ public class MeltIsNotASolutionTests
     }
 
     /// <summary>
+    /// ★★★★★ **逐片的熔化位必须发布出来**（2026-09-08）：整线位只说「有一片熔了」，
+    /// 求解器要逐片抬下角，得知道是哪一片。新状态位默认没接上 —— 这道门造在下游。
+    /// 构型：W08 的闭式下角（0.60 mm 全片），实测必熔。代价：1 次熔化区场解（第一次 RunOnce 就返回）。
+    /// </summary>
+    [Trait("速度", "慢")]
+    [Fact]
+    public void 逐片熔化位与整线位一致()
+    {
+        var p = new DesignInputs();
+        var d = DesignSpec.Builtin[0].Clone();
+        double tLo = Math.Ceiling(d.DiscFloorMm(p) / 0.01 - 1e-9) * 0.01;
+        for (int j = 0; j < d.TabThickMm.Length; j++) { d.TabThickMm[j] = tLo; d.TabInsulMm[j] = 0.3; d.RingMul[j] = 1.0; d.RingMul2[j] = 1.0; }
+        var r = LineRunner.Run(d.BuildCase(p, checkRamp: false), null, default);
+
+        Assert.True(r.OverMelt, $"闭式下角 {tLo:0.00} mm 处没熔（Ok={r.Ok}）—— 本门落在空集上；构型漂了要重探");
+        Assert.False(r.Ok, "熔了 Ok 还是 true —— 「该解不存在」又能全绿交付了");
+        Assert.True(r.Flanges.Any(f => f.OverMelt), "整线说熔了，却没有一片带位 ⇒ 位没发布，求解器不知道抬哪片");
+        foreach (var f in r.Flanges)
+            Assert.Equal(f.TMaxC > Materials.PtMeltC, f.OverMelt);   // 位的定义 = 越过熔点，逐片一致
+        Console.WriteLine("熔化的片：" + string.Join("、", r.Flanges.Where(f => f.OverMelt).Select(f => f.Name)));
+    }
+
+    /// <summary>
     /// ★★★★ 行为：<c>OverMelt</c> 的判据本身是闭式的，直接验它的定义没有漂移。
     /// （造一个真熔化的整线算例代价太高；这一条守的是「阈值没被悄悄放宽」。）
     /// </summary>

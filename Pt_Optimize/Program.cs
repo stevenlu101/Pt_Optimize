@@ -4636,7 +4636,10 @@ internal static class Program
                         ? $"   ✓ 已做第二遍细网格求根（{rr.FineMmUsed:0.000} mm）⇒ 根是在**判决的那张网格**上求的"
                         : "   ⚠ **没做第二遍** ⇒ 这个解只在导航网格上成立，**不可交付**（A⑬）");
                     Console.WriteLine($"   停因：{rr.StopWhy}");
-                    if (rr.HitBound) Console.WriteLine("   ⚠ 这是**不可行的证明**（顶到上界或前提不成立），不是「没搜到」");
+                    // ★ HitBound 的语义 2026-09-08 收窄（见 Flow.cs）：结构性停机 = 再算一次会得到同一句话，
+                    //   不是「整个设计不可行」—— 交棒（厚度到顶 ⇒ 增宽）也走这个位，停因那句才说得清。
+                    if (rr.HitBound) Console.WriteLine("   ⚠ 结构性停机（旋钮顶到上界／前提不成立／交棒）：再算一次会得到同一句话，不是「没搜到」；"
+                                                     + "是不是整个设计不可行，看上面那句停因，不在这里下结论");
                     Console.WriteLine();
                     return rr;
                 }
