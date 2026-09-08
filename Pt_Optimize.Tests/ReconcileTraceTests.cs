@@ -35,11 +35,15 @@ public class ReconcileTraceTests
     public void 打出0点8档的求解轨迹()
     {
         var d = DesignSpec.Builtin[0].Clone();       // W08
+        // ★ 用户 2026-09-08：每次论证验算跑 2 段（3 片法兰）；3 段的 3480.7 g 只当归档基准，不再重跑。
+        d.SetpointC = new[] { 1150.0, 1080.0 };
+        d.SegLengthMm = new[] { 300.0, 300.0 };
+        d = d.Fit();
         // ★ 边跑边落轨迹（2026-09-08）：此前只在跑完才写档，2.5 小时里一行都看不到，分不清慢和挂。
         string dump = Path.Combine(HandoverDoc.Root(), "deliverable", "对帐超时_轨迹.txt");
         Directory.CreateDirectory(Path.GetDirectoryName(dump)!);
-        File.WriteAllText(dump, "═══ 0.8 档求解轨迹（导航网格；边跑边写，末尾有合计）═══" + Environment.NewLine
-                              + "对照：命令行验过的 0.8 档是 3480.7 g 全判据过（细网格口径）" + Environment.NewLine + Environment.NewLine);
+        File.WriteAllText(dump, "═══ 0.8 档求解轨迹（2 段 3 片，导航网格；边跑边写，末尾有合计）═══" + Environment.NewLine
+                              + "对照：3 段的归档基准 3480.7 g（bba08c7 之前口径，不可与 2 段直接比）" + Environment.NewLine + Environment.NewLine);
         var sw = Stopwatch.StartNew();
         var live = new FileProgress(s => File.AppendAllText(dump, $"[{sw.Elapsed.TotalMinutes,6:0.0} 分] {s}" + Environment.NewLine));
         var sr = Solver.Solve(d, new DesignInputs(), new SolverOptions
@@ -59,30 +63,22 @@ public class ReconcileTraceTests
         Console.WriteLine($"耗时 {sw.Elapsed.TotalMinutes:0.0} 分钟　场解 {sr.Solves} 次");
         Assert.True(sr.Trace.Count > 0, "轨迹是空的 —— Trace 没在记");
 
-        // ★★★★★ **仪器变成门**（2026-09-08 督导第 15/16 封）。
-        //   慢门跑完 0.8 档从 3480.7 g 变成 NaN，而本测试报「已通过」—— 它只 dump 轨迹，
-        //   对答案零断言，放在慢门道里永远不会红。
-        //   钉的是「**解得出**」，**不钉 3480.7** —— 那会因为变好（更省铂）而红，犯门 A。
-        Assert.True(double.IsFinite(sr.MassG),
-            $"0.8 档合计是 NaN ⇒ 求解器没解出来。停在：{sr.StopWhy}");
-        Assert.False(sr.StopWhy.Contains("判不了", StringComparison.Ordinal),
-            $"0.8 档在第一步就停了：{sr.StopWhy}");
-        // ★ 第三条（2026-09-08 我加的，不在督导给的两条里）：**0.8 档必须解得出且全过**。
-        //   实测：下角补进「不熔化」之后，上面两条都过了，但可行 False（3257.7 g，第 1 轮就收场：
-        //   候选探到上界时邻片熔 ⇒ 探针一律「解不出来」⇒ 片1 三个候选全败）。
-        //   两条绿着而交不出东西 = 「让人以为的和事实不一样」。这条只会因为变差而红，不犯门 A。
-        // ★ 2026-09-08 实测：熔化两层修好后 0.8 档回到 3480.7 g、三条逐片判据全过，唯一剩下的是
-        //   **法兰 J 判不了**（C1 已知阻塞，R18 未做）⇒ Feasible 仍 False。门改准：剩余的不过／判不了
-        //   **只许是法兰 J**，多一条就红；R18 做完把这段换回 Assert.True(sr.Feasible)。
-        Assert.NotNull(sr.Best);
-        var leftover = sr.Best!.Checks
-            .Where(c => c.Kind != CheckKind.Reference && !(c.Ok && !c.Undetermined))
-            .Select(c => c.Name).ToArray();
-        Assert.True(leftover.All(n => n.Contains("法兰 J", StringComparison.Ordinal)),
-            $"0.8 档除了已知的「法兰 J 判不了」（R18）之外还有判据不过：{string.Join("、", leftover)}；停在：{sr.StopWhy}");
-        Assert.True(sr.Feasible || leftover.Length > 0,
-            "Feasible=false 却找不到任何不过的判据 —— AllOk 与 Checks 对不上");
-        // ★ 探针态邻片熔 ⇒ 副本上抬：0.8 档第 1 轮必踩（板厚探 6 mm／t₂ 探 2.5 让邻片熔）—— 断言「走到了」
-        Assert.Contains(sr.Trace, s => s.TrimStart().StartsWith(BranchMarks.MeltProbeRaised, StringComparison.Ordinal));
+        // ★★★★★ 2026-09-08 晚，用户设计因果链落地后这条门的**意思变了**：
+        //   0.8 档（W08：盘 R30、舌宽 60）在「20 °C/h 升温设计电流 ⇒ 按 J=10 定截面」下，共用片要 4.26 mm，
+        //   焊脚随之 4.26 ⇒ 盘 R30 盖不住管孔（要 30.06）⇒ **第一次场解之前就按 ⑥ 停、给处方**。
+        //   这在新链下是对的答案：这个形状太小，该走第 ② 步「搜形状」（真实路径：UiWiring --segs 2 --searchshape）。
+        //   本门钉：① 设计电流印出来了；② J=10 下角抬了；③ 零场解、⑥ 处方且处方数可闭式复算；④ 停因不是「判不了／不收敛」。
+        //   固定形状 3480.7 g 那套口径已作废：那份解舌根 J_max 37、热点 +99 K，用户 09-08：完全不可用。
+        Assert.Contains(sr.Trace, s => s.Contains("设计电流", StringComparison.Ordinal));
+        Assert.Contains(sr.Trace, s => s.TrimStart().StartsWith(BranchMarks.JFloorRaised, StringComparison.Ordinal));
+        Assert.NotNull(sr.DesignCurrent);
+        Assert.Equal(0, sr.Solves);
+        Assert.Contains("⑥", sr.StopWhy);
+        var mNeed = System.Text.RegularExpressions.Regex.Match(sr.StopWhy, @"需要 ([0-9.]+) mm");
+        Assert.True(mNeed.Success, "⑥ 处方里没有「需要 X mm」：" + sr.StopWhy);
+        double need = double.Parse(mNeed.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Equal(d.HoleRadiusMm + Math.Max(sr.Design.TabThickMm.Max(), d.WallMm), need, 2);
+        Assert.False(sr.StopWhy.Contains("判不了", StringComparison.Ordinal), $"停因不该是判不了：{sr.StopWhy}");
+        Assert.False(sr.StopWhy.Contains("不收敛", StringComparison.Ordinal), $"停因不该是不收敛：{sr.StopWhy}");
     }
 }

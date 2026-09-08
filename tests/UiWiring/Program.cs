@@ -715,10 +715,15 @@ class UiWiringTests {
                     //   改成**更强**的说法：**除了法兰 J 判不了之外，其余一条都不许红**。
                     //   这样它照旧抓得住任何别的退化，而那条已知的阻塞是**指名放行**的。
                     //   ⇒ 网格修好、J 可判之后，把这里改回 r1b.AllOk（那时它该真的全过）。
-                    var stillBad = r1b.Failed.Where(f => !f.Contains("法兰 J")).ToArray();
-                    Check("页面路径：除『法兰 J 判不了』外全过", stillBad.Length == 0,
+                    // ★★★★★ 2026-09-08 晚：用户设计因果链落地 ⇒ 「· 法兰 J_max」降为参考量（不再进 Failed），
+                    //   新硬判据「法兰截面 J」= 设计电流 ÷ 必经截面积 < 11。设计记录 W08/W06 早于这条链，
+                    //   板厚没按 J=10 定 ⇒ 这一行在**记录**上必红（实测 27.7/11），而且是实情、不是退化。
+                    //   处置照旧不是删断言：**除了它，其余一条都不许红**。要它绿得走「自动定厚」把板厚抬上去。
+                    var stillBad = r1b.Failed.Where(f => !f.Contains("法兰 J") && !f.Contains("法兰截面 J")).ToArray();
+                    var sectionJ = r1b.Checks.FirstOrDefault(c => c.Name.StartsWith("法兰截面 J", StringComparison.Ordinal));
+                    Check("页面路径：除『法兰截面 J』外全过", stillBad.Length == 0,
                           stillBad.Length == 0
-                            ? "（法兰 J 判不了 —— C1 的已知阻塞，网格修好前一直在）"
+                            ? $"（法兰截面 J {sectionJ?.Actual:0.0}/{sectionJ?.Limit:0.0} —— 记录早于 J=10 链，板厚没按截面定；自动定厚才会抬上去）"
                             : string.Join("；", stillBad));
                 }
             }

@@ -102,6 +102,7 @@ public static class Criteria
         E(LineResult.Key.FreeTab,   "mm",    "≥", "舌片伸出来、没被压接吃掉的那一段够不够长 —— 现场铜排装得下吗", true),
         E(LineResult.Key.DiscCover, "mm",    "≥", "圆盘半径够不够盖住管孔加焊脚 —— 盖不住就焊不出来", true),
         E(LineResult.Key.TubeJ,     "A/mm²", "≤", "管子自身的电流密度上限", true),
+        E(LineResult.Key.SectionJ,  "A/mm²", "<", "法兰每一个必经截面（舌片各处含开孔、舌盘交界、孔缘环与各级环）的电流密度 = 升温设计电流 ÷ 截面积；按 10 定尺寸，全体要小于 11", true),
 
         // ── 靶（列进「必须出现」名单，但不算硬安全线）
         E(LineResult.Key.FlangeDip, "K",     "≤", "**法兰把管根拉冷了多少** —— 只算法兰的责任，不含控温点梯度", false),

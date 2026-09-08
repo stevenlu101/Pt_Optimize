@@ -6468,18 +6468,19 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
                             // 声明里点名了哪几条，就只准坏那几条（比对的是 InvalidChecks 这个
                             // **独立字段**，不是 Invalid 正文 —— 正文里写着「①②′②″③管J 仍全过」，
                             // 拿它做子串匹配会每条都命中，门就成了摆设）
-                            // ★ 「法兰 J 判不了」是 C1 的**已知阻塞**，对每一份档都成立，
-                            //   不是这一档「新出现的」问题 ⇒ 不计进 unexpected。
-                            //   ⚠ 但那个**数照印**（下面的 foreach 会印）—— 它是真信号，
-                            //     只是依据（未细化的网格）不可信，所以不拿它判。
+                            // ★ 2026-09-08 晚：「法兰截面 J」是用户设计因果链（按 J=10 定截面、终验 < 11）新立的硬判据，
+                            //   四份内置记录都**早于这条链**、板厚没按截面定 ⇒ 这一行在记录上必红，是实情不是退化，
+                            //   对每一份档都成立 ⇒ 不计进 unexpected（记录只用来校正计算流程，不是交付物）。
+                            //   ⚠ 但那个**数照印** —— 要它绿得走「自动定厚」把板厚抬上去。
+                            //   （此前这里放行的是「法兰 J 判不了」= C1；场逐点峰值现已降为参考量，不再进 failed。）
                             var unexpected = failed.Where(c =>
-                                !c.Name.Contains("法兰 J")
+                                !c.Name.StartsWith(LineResult.Key.SectionJ, StringComparison.Ordinal)
                                 && !fd.InvalidChecks.Any(k => c.Name.StartsWith(k, StringComparison.Ordinal))).ToArray();
                             foreach (var c in failed)
                                 Console.WriteLine($"      {(unexpected.Contains(c) ? "✗" : "·")} " +
                                     $"{c.Name} {c.Actual:0.000} / {c.Limit:0.000}　{c.Where}" +
                                     (unexpected.Contains(c) ? "　★ **声明之外的失败**"
-                                     : c.Name.Contains("法兰 J") ? "　（**判不了** —— C1 已知阻塞；这个数依据未收敛，只报不判）"
+                                     : c.Name.StartsWith(LineResult.Key.SectionJ, StringComparison.Ordinal) ? "　（记录早于 J=10 设计链，板厚没按截面定 —— 只报不判）"
                                      : "　（声明之内）"));
                             if (unexpected.Length > 0)
                             {
@@ -6497,11 +6498,12 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
                         //   ⚠ 处置不是把这条门放宽 —— 那等于判据消失。
                         //   而是**指名放行这一条已知阻塞**，其余照旧算「最严重的一种」。
                         //   ⇒ 网格修好、J 可判之后，把这段删掉即可（那时它本来就不会红）。
-                        var known = failed.Where(c => c.Name.Contains("法兰 J")).ToArray();
-                        var other = failed.Where(c => !c.Name.Contains("法兰 J")).ToArray();
-                        if (known.Length > 0)
-                            Console.WriteLine("      · 法兰 J **判不了**（C1 的已知阻塞：孔那一带网格未细化，"
-                                            + "这个数是下界且未收敛）—— 修好网格前它会一直在");
+                        // ★ 2026-09-08 晚起，放行的那条换成「法兰截面 J」（记录早于 J=10 设计链）；法兰 J_max 已是参考量。
+                        var known = failed.Where(c => c.Name.StartsWith(LineResult.Key.SectionJ, StringComparison.Ordinal)).ToArray();
+                        var other = failed.Where(c => !c.Name.StartsWith(LineResult.Key.SectionJ, StringComparison.Ordinal)).ToArray();
+                        foreach (var c in known)
+                            Console.WriteLine($"      · {c.Name} {c.Actual:0.0} / {c.Limit:0.0}　{c.Where}"
+                                            + " —— 记录早于 2026-09-08 的 J=10 设计链，板厚没按截面定；只报不判（记录是校正流程用的，不是交付物）");
                         if (other.Length > 0)
                         {
                             bad++;

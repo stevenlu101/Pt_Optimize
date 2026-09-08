@@ -295,12 +295,17 @@ public static class Solver
         var lc = d.BuildCase(baseIn, checkRamp: false);
         double dipMax = lc.RootDeltaMaxK, discMax = lc.DiscOverTempMaxK;
 
-        // ★ 印出来的必须和进模型的一致（督导第 16 封）：下角有三个来源，其中「不熔化」要解场才知道
+        // ★★★★★ 下角的又一来源：**按 J=10 定的截面**（用户 2026-09-08 设计因果链第 ①② 步）。
+        //   设计电流 = 20 °C/h 空管升温全程峰值；舌片各截面／舌盘交界弦／孔缘环与各级环的 I/A 都要 ≤ 10 ⇒ 板厚闭式下界。
+        //   闭式、不解场；每轮开头按最新几何（法兰变重 ⇒ 电流略升）重算，只增不减。
+        var (_, jFloor) = ApplySectionFloor(d, baseIn, opt, res, null, Log);
+        Log(res.DesignCurrent!.Describe());
+        // ★ 印出来的必须和进模型的一致（督导第 16 封）：下角有四个来源，其中「不熔化」要解场才知道
         //   ⇒ 这里只印**闭式部分**，真正的起点在每遍开头验完「不熔化」之后才印（见 Rounds）。
-        Log($"下角的闭式部分：板厚 ≥ {tLo:0.00} mm（焊接屈曲/烧穿）／" +
+        Log($"下角的闭式部分：板厚 {Join(d.TabThickMm)} mm（逐片；= max(焊接屈曲/烧穿 {tLo:0.00}, 按 J=10 的截面 {Join(jFloor)})）／" +
             $"舌保温 {opt.InsLoMm:0.00} mm（裸舌）／环倍率 t₁ {opt.RingLo:0.00}／" +
             $"外级倍率 t₂ {opt.RingLo:0.00}（都=无台阶）　× {np} 片　" +
-            "—— 「**不熔化**」是下角的第三个来源，要解场才知道：每遍开头在那遍的网格上验一次，验完才印真正的起点");
+            "—— 「**不熔化**」是下角的第四个来源，要解场才知道：每遍开头在那遍的网格上验一次，验完才印真正的起点");
         Log($"传进来的旋钮值**一个都没用**（板厚 {string.Join("/", geometry.TabThickMm.Select(x => x.ToString("0.00")))} 被丢弃）—— " +
             "这就是「与初值无关」的实现方式。");
         Log($"限值只从 LineCase 读：③ ≤ {dipMax:0.0} K　②″ ≤ {discMax:0.0} K");
@@ -365,7 +370,7 @@ public static class Solver
             }
             if (o.FineMm <= 0)
                 Log($"起点 = **约束盒的下角**（不是种子）：板厚 {Join(d.TabThickMm)} mm" +
-                    "（逐片；= max(焊接屈曲, 烧穿, 不熔化)）／" +
+                    "（逐片；= max(焊接屈曲, 烧穿, 按 J=10 的截面, 不熔化)）／" +
                     $"舌保温 {opt.InsLoMm:0.00} mm（裸舌）／环倍率 t₁ {opt.RingLo:0.00}／" +
                     $"外级倍率 t₂ {opt.RingLo:0.00}（都=无台阶）　× {np} 片");
             LineResult? pre = mfLast;
@@ -388,6 +393,9 @@ public static class Solver
             for (int round = 1; round <= o.MaxRounds; round++)
             {
                 cancel.ThrowIfCancellationRequested();
+                // ★ 每轮开头按最新几何重算设计电流与 J=10 截面下界（法兰变重 ⇒ 电流略升 ⇒ 下角只增不减）。
+                //   抬了就得重解（验下角那次场解作废）。
+                if (round > 1 && ApplySectionFloor(d, baseIn, o, res, last, Log).Raised) pre = null;
                 // 验下角那次场解解出来了就直接用（逐位相同，省一次）；否则照常解
                 if (pre is not null) { last = Gate(pre, res); pre = null; }
                 else last = Eval(d, baseIn, o, res, cancel, inner);
@@ -680,7 +688,7 @@ public static class Solver
 
         foreach (var k in knobs)
         {
-            double lo = Get(d, k, j), hi = HiOfFor(d, baseIn, opt, k, j);
+            double lo = Get(d, k, j), hi = HiOfFor(d, baseIn, opt, k, j, res);
             // ★★★★★ **可证明空转的候选，直接跳过 —— 不花场解，也不改答案**（2026-09-06）。
             //
             //   代价是实测出来的：0.8 档对帐从「跑得完、3480.7 g」变成 **60 分钟跑满超时**。
@@ -828,7 +836,7 @@ public static class Solver
         double knownBefore = double.NaN, double knownAfter = double.NaN)
     {
         double lo = Get(d, knob, j);
-        double hi = HiOfFor(d, baseIn, opt, knob, j);
+        double hi = HiOfFor(d, baseIn, opt, knob, j, res);
         string nm = $"片{j} {KnobName(knob)}";
 
         // ★ 候选比价时已经量过就不再量 —— 同一个数花两次场解是纯浪费（实测每次抬多花 3 次）。
@@ -960,7 +968,7 @@ public static class Solver
         //   抬高可能让**别的**判据变差 —— 那由外层下一轮再抬它自己的旋钮补上，
         //   「只增不减」的不变式不受影响。
         double q = QuantOf(opt, knob);
-        double snapped = Math.Min(Math.Ceiling(hi / q - 1e-9) * q, HiOfFor(d, baseIn, opt, knob, j));
+        double snapped = Math.Min(Math.Ceiling(hi / q - 1e-9) * q, HiOfFor(d, baseIn, opt, knob, j, res));
         Set(d, knob, j, snapped);
         // ★ 「二分求根」这四个字对工程师没意义 —— 他要知道的是**凭什么信这个数**。
         //   单调性扫描（--monotone）的作用就在这句话里：抬到上界确实变好 = 这一点上单调，
@@ -1192,6 +1200,44 @@ public static class Solver
             res.Trace.Add("     ✗ 场解抛出异常 ⇒ 判不了：" + ex.Message);
             return null;
         }
+    }
+
+    /// <summary>
+    /// ★★★★★ **约束盒下角的来源之一：按 J = 10 定的截面**（用户 2026-09-08 设计因果链第 ①② 步）。
+    ///
+    /// 设计电流由 <see cref="Core.DesignCurrent"/> 从 20 °C/h 空管升温算出（每段峰值、共用片矢量合成）；
+    /// 板厚下界 = 当前厚度 × max_截面(J/10)（<see cref="SectionSizing.PlateThickFloorMm"/>，截面积都正比于板厚 ⇒ 闭式一步）。
+    /// 只增不减：每轮开头重算，法兰变重 ⇒ 电流略升 ⇒ 下角只会上抬；每次上抬留痕 <see cref="BranchMarks.JFloorRaised"/>。
+    /// ⚠ 不读设计记录的板厚 —— 输入只有当前几何与工况（与 <see cref="MeltFloor"/> 同一条铁律）。
+    /// </summary>
+    public static (bool Raised, double[] FloorMm) ApplySectionFloor(
+        DesignSpec d, DesignInputs baseIn, SolverOptions o, SolverResult res, LineResult? last,
+        Action<string>? log = null, double jDesign = SectionSizing.JDesignAPerMm2)
+    {
+        var dc = Core.DesignCurrent.ForLine(d, baseIn, last);
+        res.DesignCurrent = dc;
+        double floorD = d.DiscFloorMm(baseIn), q = QuantOf(o, Knob.Thick);
+        int np = d.TabThickMm.Length;
+        var floors = new double[np];
+        bool raised = false;
+        for (int j = 0; j < np; j++)
+        {
+            double iA = j < dc.PlateA.Length ? dc.PlateA[j] : 0;
+            var g = d.Plate(j, floorD);
+            double tNow = Math.Max(d.TabThickMm[j], floorD);        // Plate() 就是这么夹的
+            double tF = SectionSizing.PlateThickFloorMm(g, tNow, iA, d.ClampLengthMm, jDesign);
+            tF = Math.Ceiling(tF / q - 1e-9) * q;                     // 图纸格，向上
+            floors[j] = tF;
+            if (tF > d.TabThickMm[j] + 1e-12)
+            {
+                var w = SectionSizing.Worst(g, iA, d.ClampLengthMm);
+                log?.Invoke($"{BranchMarks.JFloorRaised}：片{j} {d.TabThickMm[j]:0.00} → {tF:0.00} mm"
+                          + $"（设计电流 {iA:0} A；最紧截面 {w.Where} {w.AreaMm2:0.0} mm² ⇒ J {w.JAPerMm2:0.0} > {jDesign:0}）");
+                d.TabThickMm[j] = tF;
+                raised = true;
+            }
+        }
+        return (raised, floors);
     }
 
     /// <summary>
@@ -1593,13 +1639,29 @@ public static class Solver
     /// ⚠ 所有取上界的地方都要走这一个函数 —— 漏一处就会有旋钮被抬进无效几何，
     ///   而那不会报错，只会解不出来。
     /// </summary>
-    private static double HiOfFor(DesignSpec d, DesignInputs baseIn, SolverOptions o, Knob k, int j)
+    private static double HiOfFor(DesignSpec d, DesignInputs baseIn, SolverOptions o, Knob k, int j,
+                                  SolverResult? res = null)
     {
-        // ★ 孔径：桥宽闭式反解（孔缘到舌边要留够）
-        if (k == Knob.TabHoleR) return Math.Min(HiOf(o, k), d.TabHoleRMaxMm());
+        // ★ 挖料旋钮（孔径／槽张角）**减小截面** ⇒ 上界还要受「按 J=10 的截面」约束（用户 2026-09-08 第 ②④ 步）。
+        //   两条上界（桥宽闭式／J 截面）取紧的那个；哪条生效由数说。
+        double floorD = d.DiscFloorMm(baseIn);
+        double iA = res?.DesignCurrent is { } dc && j < dc.PlateA.Length ? dc.PlateA[j] : 0;
+        if (k == Knob.TabHoleR)
+        {
+            double hi = Math.Min(HiOf(o, k), d.TabHoleRMaxMm());
+            if (iA > 0) hi = Math.Min(hi, SectionSizing.HoleRadiusMaxByJMm(d.Plate(j, floorD), d.TabHoleCenterXMm(), iA));
+            return hi;
+        }
         if (k != Knob.SlotSpan) return HiOf(o, k);
-        double td = Math.Max(j < d.TabThickMm.Length ? d.TabThickMm[j] : 0, d.DiscFloorMm(baseIn));
-        return Math.Min(HiOf(o, k), d.SlotSpanMaxDeg(Math.Max(td, d.WallMm)));
+        double td = Math.Max(j < d.TabThickMm.Length ? d.TabThickMm[j] : 0, floorD);
+        double weld = Math.Max(td, d.WallMm);
+        double hiS = Math.Min(HiOf(o, k), d.SlotSpanMaxDeg(weld));
+        if (iA > 0)
+        {
+            var (rin, rout) = d.SlotBandMm(weld);
+            if (rout > rin) hiS = Math.Min(hiS, SectionSizing.SlotSpanMaxByJDeg(d.Plate(j, floorD), rin, rout, iA));
+        }
+        return hiS;
     }
 
     private static double HiOf(SolverOptions o, Knob k) => k switch
@@ -1684,6 +1746,9 @@ public sealed class SolverResult
 
     /// <summary>Solve 传进来的进度接收器；MeltFloor 从 Eval 里被调时借它往界面报，没有就只进 Trace。</summary>
     internal IProgress<string>? Progress;
+
+    /// <summary>最近一次算的设计电流（20 °C/h 升温峰值，逐片）—— 下角与孔/槽上界都从它来。</summary>
+    public Core.DesignCurrent.Result? DesignCurrent;
 
     /// <summary>
     /// ★ 探针副本上**上次**把各片抬到的厚度（逐片，只增）。下一个探针又让同一片熔时先直接试它：

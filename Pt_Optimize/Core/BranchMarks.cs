@@ -69,4 +69,10 @@ public static class BranchMarks
     /// 那份厚度算进该候选的代价，但不落进模型（2026-09-08，0.8 档第 1 轮收场的病灶）。
     /// </summary>
     public const string MeltProbeRaised = "★ 探针态邻片熔 ⇒ 副本上先抬到不熔再量（不落地）";
+
+    /// <summary>
+    /// Solver.ApplySectionFloor：约束盒下角因**按 J=10 定的截面**而上抬（用户 2026-09-08 设计因果链第 ② 步）——
+    /// 后面跟着「片j a → b mm（设计电流 I，最紧截面 …）」。
+    /// </summary>
+    public const string JFloorRaised = "★ 下角因 J=10 截面上抬";
 }

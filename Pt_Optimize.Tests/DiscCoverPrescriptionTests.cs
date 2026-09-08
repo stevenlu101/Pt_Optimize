@@ -200,7 +200,13 @@ public class DiscCoverPrescriptionTests
         Assert.False(res.Feasible);
         Assert.Contains("⑥ 圆盘盖不住管孔", res.StopWhy);
         Assert.Contains("【处方】", res.StopWhy);
-        Assert.Contains("26.60", res.StopWhy);        // 起点板厚 0.61 < 壁 0.8 ⇒ 焊脚 = 0.8
+        // ★ 2026-09-08：下角多了「按 J=10 的截面」这一来源，起点板厚不再是 0.61（焊脚也不再是壁厚 0.8）。
+        //   处方数 = 管孔 + 焊脚（焊脚 = max(起点板厚, 壁厚)），按 res.Design 里真正进模型的板厚闭式复算，不钉字面数。
+        var mNeed = System.Text.RegularExpressions.Regex.Match(res.StopWhy, @"需要 ([0-9.]+) mm");
+        Assert.True(mNeed.Success, "处方里没有「需要 X mm」：" + res.StopWhy);
+        double need = double.Parse(mNeed.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+        double expect = d.HoleRadiusMm + Math.Max(res.Design.TabThickMm.Max(), d.WallMm);
+        Assert.Equal(expect, need, 2);
 
         // ★ **零场解**：这正是把 ⑥ 前移的全部理由。慢了就说明它又排到场解后面去了。
         Assert.Equal(0, res.Solves);

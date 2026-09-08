@@ -203,6 +203,39 @@ public class BranchMarksAreReachedTests
         for (int j = 0; j < d.TabThickMm.Length; j++) Assert.Equal(before[j], d.TabThickMm[j], 12);
     }
 
+    /// <summary>
+    /// ★★★★★ 下角因 J=10 截面上抬（用户 2026-09-08 设计因果链第 ②步）—— 这条分支真的被走到，而且抬完各片最紧截面 J ≤ 10。
+    /// 不解场：设计电流由升温模型（毫秒级）给，截面闭式。
+    /// </summary>
+    [Fact]
+    public void 下角因J10截面上抬_这条分支走到了()
+    {
+        var (d, p, o) = CornerStart();
+        var before = (double[])d.TabThickMm.Clone();
+        var res = new SolverResult();
+        var (raised, floors) = Solver.ApplySectionFloor(d, p, o, res, null, s => res.Trace.Add(s));
+
+        Assert.True(raised, "闭式下角 0.60 mm 处按 J=10 一片都不用抬 —— 本门落在空集上；构型漂了要重探");
+        Assert.Contains(res.Trace, s => s.TrimStart().StartsWith(BranchMarks.JFloorRaised, StringComparison.Ordinal));
+        Assert.NotNull(res.DesignCurrent);
+        Assert.All(res.DesignCurrent!.PlateA, a => Assert.True(a > 100, $"设计电流 {a} A 不像样"));
+        double floorD = d.DiscFloorMm(p);
+        for (int j = 0; j < d.TabThickMm.Length; j++)
+        {
+            Assert.True(d.TabThickMm[j] >= before[j] - 1e-12, $"片{j} 下角**降**了：{before[j]} → {d.TabThickMm[j]}");
+            Assert.Equal(floors[j], d.TabThickMm[j], 9);
+            var w = SectionSizing.Worst(d.Plate(j, floorD), res.DesignCurrent.PlateA[j], d.ClampLengthMm);
+            Assert.True(w.JAPerMm2 <= SectionSizing.JDesignAPerMm2 + 0.2,
+                $"片{j} 抬到 {d.TabThickMm[j]:0.00} 之后最紧截面 {w.Where} 仍 J={w.JAPerMm2:0.00} > 10");
+        }
+        // 共用片电流 ≥ 端片 ⇒ 共用片的下角不低于端片
+        int n = d.TabThickMm.Length;
+        for (int j = 1; j < n - 1; j++)
+            Assert.True(d.TabThickMm[j] >= Math.Min(d.TabThickMm[0], d.TabThickMm[n - 1]) - 1e-9, "共用片的 J 下角比端片还低 —— 电流合成没接上");
+        Console.WriteLine(res.DesignCurrent.Describe());
+        Console.WriteLine("板厚 " + string.Join("/", d.TabThickMm.Select(v => v.ToString("0.00"))));
+    }
+
     // ══════════════════════════════════════════════════════════════════
     //  登记门：加了痕迹却没人看 = 「造好了没接线」，本仓最常犯的一族
     // ══════════════════════════════════════════════════════════════════
@@ -247,6 +280,10 @@ public class BranchMarksAreReachedTests
               + "0.8 档那 72 次场解全收敛，踩不到。欠账。",
             [nameof(BranchMarks.UndeterminedBisect)] =
                 "**未造出**：要 mid 处熔/发散而 lo、hi 两端都好 —— 一个非单调的窗口。欠账。",
+            [nameof(BranchMarks.MeltProbeRaised)] =
+                "**测试里未造出**（实跑走到过）：2026-09-08 下午 0.8 档 3 段固定形状的对帐第 1 轮踩了 15 次"
+              + "（deliverable/对帐超时_轨迹.txt，a982814）；晚上设计因果链落地后固定形状在 ⑥ 前就停，"
+              + "只有搜形状过程里才会再踩到（UiWiring --segs 2 --searchshape）。欠账。",
             [nameof(BranchMarks.EvalNotOk)] =
                 "**未造出**（不是「到不了」—— 正常搜索里可达）：熔化现在由 EvalMelt 先处置（落地或副本上抬），"
               + "走到这里的只剩 Ok=false 而不是熔的失败（段解失败：热稳定极限内到不了控温点）；"

@@ -435,6 +435,12 @@ public sealed class FlangeOut
     /// </summary>
     public bool FieldsConverged = true;
 
+    /// <summary>这一片的设计电流 A（20 °C/h 空管升温峰值，共用片矢量合成；用户 2026-09-08 设计因果链第 ① 步）。</summary>
+    public double DesignCurrentA = double.NaN;
+    /// <summary>这一片最紧截面的电流密度 A/mm²（= 设计电流 ÷ 必经截面积，闭式）与那个截面在哪。</summary>
+    public double SectionJAPerMm2 = double.NaN;
+    public string SectionJWhere = "";
+
     /// <summary>
     /// ★ **这一片**越过了铂熔点（2026-09-08）。整线位 <see cref="LineResult.OverMelt"/> 只说
     ///   「有一片熔了」，说不出是哪一片；而求解器要**逐片**把下角抬出熔化区，必须知道抬哪片。
@@ -581,6 +587,8 @@ public sealed class LineResult
         public const string FreeTab = "⑤ 舌片自由段";        // 现场铜排装得下吗（几何闭式）
         public const string DiscCover = "⑥ 圆盘盖得住管孔";   // 盘半径 − 管孔半径 − 焊脚（几何闭式）
         public const string TubeJ = "管 J";
+        /// <summary>法兰**截面**电流密度 = 设计电流 ÷ 必经截面积（用户 2026-09-08 设计因果链第 ④ 步，全体 &lt; 11）。</summary>
+        public const string SectionJ = "法兰截面 J";
         /// <summary>整片热稳定：dQ_散热/dT ÷ dP_发热/dT，须 &gt; 1</summary>
         public const string FlangeStab = "· 整片热稳定";
         /// <summary>局部热稳定：J_stab ÷ J_实际（圆盘峰值点），须 &gt; 1</summary>
@@ -640,6 +648,7 @@ public sealed class LineResult
         (Key.FreeTab,   CheckKind.HardSafety, false),
         (Key.DiscCover, CheckKind.HardSafety, false),
         (Key.TubeJ,     CheckKind.HardSafety, false),
+        (Key.SectionJ,  CheckKind.HardSafety, false),   // 2026-09-08 用户设计因果链第 ④ 步：截面 J 全体 < 11
         (LineResult.Key.FlangeDip, CheckKind.Target,     false),
     };
 
@@ -1882,16 +1891,66 @@ public static class LineRunner
         //   ⚠ 这是有代价的、用户明知并拍板的：**在网格修好之前，交付被挡住。**
         //     另两条路都被否掉了 —— 提成「≤10」会拿假数判；留作参考量则等于判据消失，
         //     而「判据绝不允许消失」是本项目的铁律。
+        // ★★★★★ 2026-09-08 下午改口径（用户设计因果链第 ④ 步：「核算电流通过**截面**的电流密度，全体必须小于 11」）：
+        //   判据看的是**截面** J = 设计电流 ÷ 必经截面积（闭式、与网格无关，当场判得了）；
+        //   场的逐点峰值（凹角处随网格涨、无收敛平台）是局部发热问题，归温度场与熔化门管，
+        //   在这里降为**参考量**（诊断，给第 ③ 步「电流密度低处定孔」用）。
+        //   ⚠ 这是推翻前任的口径（他把逐点峰值当判据去追网格 ⇒ 永远判不了，挡住每一档交付），按用户第 8 条说出来。
         var worstJf = flanges.OrderByDescending(f => f.JMaxAPerMm2).First();
         checks.Add(new ConstraintOut
         {
-            Name = "· 法兰 J_max", Unit = "A/mm²", Kind = CheckKind.HardSafety,
-            Ok = false, Undetermined = true,
+            Name = "· 法兰 J_max", Unit = "A/mm²", Kind = CheckKind.Reference,
+            Ok = true, Undetermined = false,
             Actual = worstJf.JMaxAPerMm2, Limit = c.Base.JAllowAPerMm2, Where = worstJf.Name,
-            Note = "**判不了**：孔那一带网格从未细化，这个数是**下界**且未收敛"
-                 + "（实测同一孔 7.920 → 10.068 仍在上升）。修好网格之前不下结论 —— "
-                 + "判不了不算过。"
+            Note = "场的**逐点峰值**（凹角处随网格涨，是局部发热问题，由温度场与熔化门管）—— 诊断量，"
+                 + "给「电流密度低处定孔」用；**判据看「法兰截面 J」**（设计电流 ÷ 必经截面积，闭式）。"
         });
+        {
+            // ── 法兰截面 J（用户 2026-09-08 设计因果链第 ①④ 步）
+            //   设计电流：温控 20 °C/h 空管升温全程峰值（RampTwoNode），每段各算、共用片矢量合成；
+            //   截面：舌片各处（含开孔弦）、舌盘交界弦、孔缘环与各级环（含槽带）—— SectionSizing.Cuts。
+            try
+            {
+                var platesJ = c.FlangePlates is { Length: > 0 } ? c.FlangePlates : c.GeomForJudge;
+                if (platesJ is null || platesJ.Length == 0) throw new InvalidOperationException("没有法兰几何（解析 FlangePlate 或 .3dm 的判据几何都没有）");
+                var dcr = DesignCurrent.Compute(platesJ, c.WallMm, c.Base, c.RampFromC, c.RampTargetC, c.RampRateKPerH,
+                              segs.Length, c.SetpointC,
+                              jj => jj < flanges.Length && flanges[jj] is { } f0 && f0.QGenW > 0 && f0.CurrentA > 0
+                                    ? (f0.QGenW / (f0.CurrentA * f0.CurrentA), f0.TRootC) : null);
+                double worstJ = double.NegativeInfinity; string where = ""; bool undet = false;
+                for (int jj = 0; jj < flanges.Length; jj++)
+                {
+                    var plj = platesJ[Math.Min(jj, platesJ.Length - 1)];
+                    double iA = jj < dcr.PlateA.Length ? dcr.PlateA[jj] : double.NaN;
+                    var cut = SectionSizing.Worst(plj, iA, c.Base.BusbarClampLengthMm);
+                    flanges[jj].DesignCurrentA = iA;
+                    flanges[jj].SectionJAPerMm2 = cut.JAPerMm2;
+                    flanges[jj].SectionJWhere = cut.Where;
+                    if (double.IsNaN(cut.JAPerMm2)) undet = true;
+                    else if (cut.JAPerMm2 > worstJ) { worstJ = cut.JAPerMm2; where = $"{flanges[jj].Name} {cut.Where}"; }
+                }
+                checks.Add(new ConstraintOut
+                {
+                    Name = LineResult.Key.SectionJ, Unit = "A/mm²", Kind = CheckKind.HardSafety,
+                    Actual = undet ? double.NaN : worstJ, Limit = SectionSizing.JCheckAPerMm2, LessIsBetter = true,
+                    Ok = !undet && worstJ < SectionSizing.JCheckAPerMm2, Undetermined = undet, Where = where,
+                    Note = dcr.Describe()
+                         + "　截面 J = 设计电流 ÷ 必经截面积（舌片各处含开孔／舌盘交界弦／孔缘环与各级环含槽带，圆盘按整圈），"
+                         + "闭式、与网格无关；按 J=10 定尺寸，终验全体 < 11。"
+                         + (!undet && worstJ < SectionSizing.JCheckAPerMm2 ? "" : NextAction.SectionJHigh)
+                });
+            }
+            catch (Exception ex)
+            {
+                checks.Add(new ConstraintOut
+                {
+                    Name = LineResult.Key.SectionJ, Unit = "A/mm²", Kind = CheckKind.HardSafety,
+                    Actual = double.NaN, Limit = SectionSizing.JCheckAPerMm2, LessIsBetter = true,
+                    Ok = false, Undetermined = true, Where = "—",
+                    Note = "★ **算不出来**（判不了不算过）：" + ex.Message
+                });
+            }
+        }
         var worstJt = segs.OrderByDescending(s => s.TubeJAPerMm2).First();
         checks.Add(new ConstraintOut
         {
