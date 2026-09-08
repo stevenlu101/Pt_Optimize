@@ -74,7 +74,12 @@ public enum ChainId
 /// 主线两格，直接对应用户说的模型：**输入 → 计算 → 储存结果报告与图档**。
 /// 「参考工具」与「使用说明」不带编号、永远进得去。
 /// </summary>
-public enum StageId { 整线核算, 交付, 参考工具, 说明 }
+/// <summary>
+/// ★★★★★ 阶段轨（R21，用户 2026-09-08：「APP 的操作流程：UI 或 3DM 输入 → 法兰优化 → 计算结果与出图」）：
+///   ① 输入（<see cref="输入"/>）→ ② 法兰优化（<see cref="整线核算"/>，成员名沿用旧名以免全仓改动）→ ③ 结果与出图（<see cref="交付"/>）；
+///   参考工具／使用说明不带编号。
+/// </summary>
+public enum StageId { 输入, 整线核算, 交付, 参考工具, 说明 }
 
 /// <summary>
 /// 命令的三组分法 —— 沿用说明书里已经教给用户的那套（ManualPage §2.3）。
@@ -262,9 +267,9 @@ public static class Flow
             CmdGroup.页面参数, true, "十几分钟～两小时，全程有进度，随时可取消",
             "**一路算到能出图为止**：解一次 → 判据没过就自己调厚度（必要时连形状一起搜）"
             + " → 加密复算到数不再变。几何用的是和设计记录完全同一套构造器"),
-        new("geom.analyze", "分析几何变数", StageId.整线核算, ChainId.C整线耦合,
+        new("geom.analyze", "分析几何变数", StageId.输入, ChainId.C整线耦合,
             CmdGroup.工具, true, "分钟级", "报各几何量对判据的斜率（只测不调）"),
-        new("geom.toanalytic", "◈ 图纸几何 → 参数", StageId.整线核算, ChainId.无,
+        new("geom.toanalytic", "◈ 图纸几何 → 参数", StageId.输入, ChainId.无,
             CmdGroup.工具, true, "瞬时",
             "把 .3dm 反推出来的几何（盘径／舌长／舌半宽／管壁／板厚）**交给解析路**，并切到解析模式。" +
             "⇒ 「◇ 搜形状」随之可用 —— 那是全程唯一能**改形状**的东西，而 .3dm 路改不了形状" +
@@ -363,8 +368,21 @@ public static class Flow
     //     全部搬进「参考工具」。降级的是**编号与位置**，不是能力。
     public static readonly StageSpec[] Stages =
     {
-        new(StageId.整线核算, 1, "① 整线核算 ★",
-            "两个入口：填左边的参数，或读一张 .3dm 图纸。厚度、保温、环倍率这些由 APP 自己解出来。",
+        // ★★★★★ R21（用户 2026-09-08）：三步主线 ① 输入 → ② 法兰优化 → ③ 结果与出图。
+        //   ① 输入：左边参数表 + 管／法兰形状／厚度等控件，或读一张 .3dm 图纸（分析 → 交给解析路）。
+        //   没有门：输入永远进得去。
+        new(StageId.输入, 1, "① 输入",
+            "两个入口：填左边的参数表与本页控件，或读一张 .3dm 图纸（分析几何变数 → 图纸几何 → 参数）。"
+            + "厚度、舌片厚、保温、环倍率这些由 APP 自己解出来，不用填。填好就到「② 法兰优化」。",
+            new[] { ChainId.无 },
+            GateToUnlockNext: null,
+            new[] { "geom.analyze", "geom.toanalytic" },
+            new[] { ParamCat.电气, ParamCat.保温与表面, ParamCat.玻璃物性,
+                    ParamCat.管几何, ParamCat.法兰与铜排, ParamCat.数值 }),
+
+        new(StageId.整线核算, 2, "② 法兰优化",
+            "点「核算整线」：一路算到能出图为止（解一次 → 按 J=10 定截面与自动定厚 → 必要时搜形状 → 加密复算）。"
+            + "全程有进度、随时可取消；分步按钮收在「手动分步」里，平时不用碰。",
             new[] { ChainId.C整线耦合, ChainId.C定尺寸, ChainId.C形状搜索 },
             // ★★★ 进「交付」的门只留一条：**有一个当前参数的收敛解**。
             //
@@ -380,12 +398,12 @@ public static class Flow
             new GateSpec(
                 Array.Empty<string>(),
                 RequireConverged: true, RequireAllOk: false, RequireFresh: true,
-                LockedTitle: "② 交付 —— 还没解锁",
+                LockedTitle: "③ 结果与出图 —— 还没解锁",
                 LockedWhy: "交付要有一个**当前参数的、解得出来的**解。"
                          + "过没过、准不准由你判断（存或出图时会把问题列给你看）—— "
                          + "但「没解出来」和「参数动过了」不是风险，是对不上。"),
             new[] { "core.runLine", "core.autoThick", "shape.search", "core.verifyMesh",
-                    "geom.analyze", "geom.toanalytic", "geom.export3dm", "scan.thickness" },
+                    "geom.export3dm", "scan.thickness" },
             // ⚠ 这里是**类别名的片段**，按 Contains 匹配（不是 StartsWith）——
             //   真实类别名带编号前缀（「5 C 整线 — 管几何」），写「C 整线」用前缀匹配永远不中。
             //   2026-08-20 建这个字段时就写错了，而它**一直没有消费者**，所以错了两周没人知道。
@@ -394,15 +412,15 @@ public static class Flow
             new[] { ParamCat.电气, ParamCat.保温与表面, ParamCat.玻璃物性,
                     ParamCat.管几何, ParamCat.法兰与铜排, ParamCat.数值 }),
 
-        new(StageId.交付, 2, "② 交付（出图 / 存档）",
-            "把这一版交出去：出图纸、存成设计记录。有问题会先列给你看，由你决定存不存。",
+        new(StageId.交付, 3, "③ 结果与出图",
+            "判据表、场图、各片厚度都在这里。把这一版交出去：出图纸、存成设计记录。有问题会先列给你看，由你决定存不存。",
             new[] { ChainId.无 },
             GateToUnlockNext: null,
             new[] { "export.page3dm", "final.save", "case.save", "case.load" },
             Array.Empty<string>()),
 
         // ── 不带编号的两格：永远进得去（前一格 GateToUnlockNext 为 null）。
-        new(StageId.参考工具, 3, "参考工具",
+        new(StageId.参考工具, 4, "参考工具",
             "**这一页不是设计的起点。** 设计从「① 整线核算」页开始 —— 那里有两个入口：" +
             "填 UI 参数，或读一张 .3dm 图纸。厚度、保温、环倍率这些由 APP 自己解出来，不从档里抄。" +
             Environment.NewLine +
@@ -419,7 +437,7 @@ public static class Flow
             new[] { ParamCat.工艺条件, ParamCat.电气,
                     ParamCat.保温与表面, ParamCat.玻璃物性 }),
 
-        new(StageId.说明, 4, "使用说明",
+        new(StageId.说明, 5, "使用说明",
             "图按设计记录实时生成 —— 换一档，图跟着变。",
             new[] { ChainId.无 },
             GateToUnlockNext: null,

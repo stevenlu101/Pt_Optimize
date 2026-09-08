@@ -164,13 +164,24 @@ public sealed class MainForm : Form
         //   阶段轨重排时原 ④ 页被删掉，而 自动定厚／◇搜形状／厚度灵敏度扫描
         //   原来是挂在那一页的工具条上 ⇒ **造好了没挂上屏**，本仓头号敌人。
         //   ⚠ 分两排：主线四个在上，图纸路与工具在下（一排塞八个正是当初拆页的病因）。
-        // 主线：解 → 定厚 → 搜形状 → 复核，都在第一排
+        // ★★★★★ R17／R21（用户 2026-09-08：「UI 或 3DM 输入 → 法兰优化 → 计算结果与出图」）：
+        //   分步按钮（自动定厚／搜形状／加密复算／灵敏度扫描／可回读 3DM）全部收进 ② 页的第二排（默认收起，「手动分步 ▾」展开）。
         linePage.MountMainRow(new ToolStripItem[]
         { linePage.BtnAutoThick, linePage.BtnSearchShape });
-        // 工具：只测不调，压在第二排
         linePage.MountSecondRow(new ToolStripItem[] { toolsOwner.BtnThicknessScan });
 
-        // ── ② 交付：储存结果报告与图档。用户的模型第三步就是这一格。
+        // ── ① 输入：本页控件（管／法兰形状／厚度／保温／环／槽／孔／段表）整块借过来，图纸路两个按钮在工具条上。
+        //   控件仍归 LineDesignPage 所有（状态机、写回、快照都在那边），只是摆在这一页。
+        var inputTool = NewTool();
+        inputTool.Items.Add(new ToolStripLabel("图纸路："));
+        inputTool.Items.Add(linePage.BtnAnalyze);
+        inputTool.Items.Add(linePage.BtnToAnalytic);
+        var inputPage = new TabPage(Flow.Stage(StageId.输入).Title) { Padding = new Padding(2) };
+        inputPage.Controls.Add(linePage.InputHost);          // Dock=Fill 先加，剩下的空间才归它
+        inputPage.Controls.Add(Banner(Flow.Stage(StageId.输入).Banner));
+        inputPage.Controls.Add(inputTool);
+
+        // ── ③ 结果与出图：判据表 + 场图（本页借来）+ 出图／存档。用户的模型第三步就是这一格。
         var shipTool = NewTool();
         shipTool.Items.Add(linePage.BtnExportPage3dm);
         shipTool.Items.Add(linePage.BtnSaveFinal);
@@ -178,17 +189,20 @@ public sealed class MainForm : Form
         shipTool.Items.Add(Btn("保存", (_, _) => Save()));
         shipTool.Items.Add(Btn("读取", (_, _) => LoadCase()));
         var shipPage = new TabPage(Flow.Stage(StageId.交付).Title) { Padding = new Padding(2) };
-        shipPage.Controls.Add(StageHint(StageId.交付));
+        shipPage.Controls.Add(linePage.ResultHost);          // Dock=Fill 先加
+        // R17：不再放 StageHint（Dock=Fill 的整页说明）—— 它会盖住判据表与场图；横幅一句话够了，其余在按钮的提示里
         shipPage.Controls.Add(Banner(Flow.Stage(StageId.交付).Banner));
         shipPage.Controls.Add(shipTool);
 
-        // ── 装轨
+        // ── 装轨：① 输入 → ② 法兰优化 → ③ 结果与出图 → 参考工具 → 使用说明
         linePage.Text = Flow.Stage(StageId.整线核算).Title;
+        _tabs.TabPages.Add(inputPage);
         _tabs.TabPages.Add(linePage);
         _tabs.TabPages.Add(shipPage);
         _tabs.TabPages.Add(refPage);
         _tabs.TabPages.Add(new ManualPage(_in));   // 说明书里的限值要跟着参数表走
 
+        _stageOf[inputPage] = StageId.输入;
         _stageOf[linePage] = StageId.整线核算;
         _stageOf[shipPage] = StageId.交付;
         _stageOf[refPage] = StageId.参考工具;
@@ -444,6 +458,8 @@ public sealed class MainForm : Form
                 foreach (var b in ts.Items.OfType<ToolStripButton>())
                     if (b.Text == text) btn = b;
         if (btn is null) return;
+        // R17：指到的按钮若在收起的「手动分步」那一排，先把那一排展开 —— 指着一个看不见的按钮说「点这个」比不指更糟
+        if (btn.Owner is ToolStrip owner && !owner.Visible) _linePage?.ShowManualRow(true);
 
         // ★ 连点保护（2026-08-24）：拦下换页时会闪「取消」，而用户可能连点几下页签。
         //   两个定时器叠上去，第二个会把**已经闪成黄色**的那一刻当作原色存下来，

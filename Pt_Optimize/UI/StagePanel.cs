@@ -198,7 +198,8 @@ public sealed class StagePanel : Panel
         //   ⚠ 链代号剥壳走 ChainSpec.PlainName，与判据代号走 Criteria.Plain 是同一条规矩。
         var chains = st.Chains.Where(x => x != ChainId.无).Select(Flow.Chain).ToArray();
         _chain.Text = Plain(chains.Length == 0
-            ? "这一格不算东西 —— 只出图与存档。"
+            ? (st.Id == StageId.输入 ? "这一格不算东西 —— 填参数、或读一张 .3dm 图纸；算在「② 法兰优化」。"
+                                     : "这一格不算东西 —— 只出图与存档。")
             : "这一格会做：" + string.Join(" → ", chains.Select(c => c.PlainName))
                     + "　" + (chains.Any(c => c.Deliverable)
                               ? "★ 这里算出来的数**可以拿去交付**"

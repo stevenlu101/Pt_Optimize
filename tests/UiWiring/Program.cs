@@ -202,7 +202,7 @@ class UiWiringTests {
         Check("首屏是说明而不是预测块",
               outBox.Text.Contains("点「核算整线」") && !outBox.Text.Contains("参数已改"),
               outBox.Text.Length > 60 ? outBox.Text[..60] : outBox.Text);
-        Check("四个页签都在", tabs.TabPages.Count >= 4, $"（{tabs.TabPages.Count} 个）");
+        Check("五个页签都在（① 输入／② 法兰优化／③ 结果与出图／参考工具／使用说明）", tabs.TabPages.Count >= 5, $"（{tabs.TabPages.Count} 个）");
 
         // ★★★★★ 开箱那一刻摆在界面上的几何，**必须是造得出来的**（2026-08-24）。
         //
@@ -2254,9 +2254,10 @@ class UiWiringTests {
             //   原来这一段验的是「先决条件那道门管的是 ②，不是文案说的 ③」——
             //   而 ① 先决条件、② 粗算 两格已降级成不带编号的「参考工具」（蓝链从不指它们）。
             //   ⇒ 那几条断言失去了对象。删掉，改成钉住**现在真实的结构**。
-            Check("阶段轨是四格", Flow.Stages.Length == 4,
+            // ★ R17／R21（2026-09-08）：三步主线 ① 输入 → ② 法兰优化 → ③ 结果与出图 + 参考工具 + 使用说明 = 五格
+            Check("阶段轨是五格（三步主线 + 两格不带编号）", Flow.Stages.Length == 5,
                   string.Join("／", Flow.Stages.OrderBy(x => x.Order).Select(x => x.Title)));
-            Check("只有「整线核算」那一格有门（主线两格之间）",
+            Check("只有「法兰优化」那一格有门（② → ③ 之间）",
                   Flow.Stages.Count(x => x.GateToUnlockNext is not null) == 1
                   && Flow.Stage(StageId.整线核算).GateToUnlockNext is not null);
 

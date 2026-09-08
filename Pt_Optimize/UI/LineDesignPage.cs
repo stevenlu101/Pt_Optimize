@@ -70,7 +70,36 @@ public sealed class LineDesignPage : TabPage
     { GripStyle = ToolStripGripStyle.Hidden, Font = UiScale.Ui(), Dock = DockStyle.Top };
 
     private readonly ToolStrip _tool2 = new()
-    { GripStyle = ToolStripGripStyle.Hidden, Font = UiScale.Ui(), Dock = DockStyle.Top };
+    { GripStyle = ToolStripGripStyle.Hidden, Font = UiScale.Ui(), Dock = DockStyle.Top, Visible = false };
+
+    /// <summary>
+    /// ★★★★★ R17／R21（用户 2026-09-08）：主视图三步「① 输入 → ② 法兰优化 → ③ 结果与出图」。
+    /// 本页（TabPage）是第 ② 步；输入控件与结果（判据表、场图）**仍由本页创建与持有**（所有状态机、写回、快照都在这里），
+    /// 只是摆到 MainForm 造的「① 输入」「③ 结果与出图」两页上 —— 与设计记录那组按钮借出去是同一个做法：
+    /// 重建一套控件等于把状态抄第二份，迟早漂开。
+    /// </summary>
+    internal Control InputHost => _inputHost;
+    internal Control ResultHost => _resultHost;
+    private readonly Panel _inputHost = new() { Dock = DockStyle.Fill };
+    private readonly Panel _resultHost = new() { Dock = DockStyle.Fill };
+    /// <summary>
+    /// 两个宿主的「停车位」：0×0 但**可见**的面板，挂在本页上。
+    /// 为什么必须有：<see cref="HookAutoRun"/> 从本页 Controls 递归挂监听（ControlAdded 也递归），宿主不在树里
+    /// ⇒ 输入控件一个都没接上自动重算（2026-09-09 接线测试当场抓到）；单独造本页的测试也得在树里找得到段表与旋钮。
+    /// 可见才会随窗体建句柄（段表的列要句柄才生成）。MainForm 装轨时把宿主搬到 ①③ 页，停车位就空了。
+    /// </summary>
+    private readonly Panel _parking = new() { Size = new Size(0, 0), Location = new Point(0, 0), Visible = true };
+    /// <summary>③ 页：判据表在上、场图在下。存成字段是为了按有没有结果调比例（没结果时判据表让位）。</summary>
+    private readonly SplitContainer _resultSplit = new()
+    { Dock = DockStyle.Fill, Orientation = System.Windows.Forms.Orientation.Horizontal };
+    /// <summary>「手动分步 ▾」：展开/收起第二排（自动定厚／搜形状／加密复算／灵敏度扫描／可回读 3DM）。
+    /// 故意用 Label 不用 Button：它不是 Flow 命令，不该被门禁、指路、接线测试当成命令。</summary>
+    private readonly ToolStripLabel _btnManual = new("手动分步 ▾") { IsLink = true, LinkBehavior = LinkBehavior.AlwaysUnderline };
+    internal void ShowManualRow(bool on)
+    {
+        _tool2.Visible = on;
+        _btnManual.Text = on ? "收起手动分步 ▴" : "手动分步 ▾";
+    }
 
     private readonly TableLayoutPanel _plateBox = new()
     {
@@ -642,18 +671,22 @@ public sealed class LineDesignPage : TabPage
         //   ⚠ Btn() **只造不挂** —— 忘了 Items.Add，按钮就成了「造好了没接线」（本仓头号敌人）。
         //     2026-09-02 阶段轨重排时又栽了一次：原 ④ 页删掉，而自动定厚/搜形状/厚度灵敏度
         //     原来挂在那一页 ⇒ 三个按钮当场从屏幕上消失。抓图才看出来。
+        // ★★★★★ R17／R21（2026-09-08）：第一排只剩**一件事**——「核算整线」（= 法兰优化，一路算到能出图）。
+        //   分步按钮（自动定厚／搜形状／加密复算／灵敏度扫描／可回读 3DM）收进第二排，默认收起，
+        //   点「手动分步 ▾」展开；蓝色指路指到其中某个按钮时 MainForm 会自动展开。
+        //   图纸路的两个按钮（分析几何变数／图纸几何 → 参数）归「① 输入」页（MainForm 挂）。
+        _btnRun.Font = UiScale.Ui(FontStyle.Bold);
         tool.Items.Add(_btnRun);
-        tool.Items.Add(_btnVerify);
+        tool.Items.Add(_btnManual);
+        _btnManual.Click += (_, _) => ShowManualRow(!_tool2.Visible);
         _prog.Size = new Size(UiScale.S(160), UiScale.S(16));
         tool.Items.Add(_prog);
         tool.Items.Add(_status);
 
-        // ── 第二排：**图纸路与工具**。主线之外的东西压在下面一排，
-        //   一排塞八个正是 2026-08-20 拆页的病因。
-        //   （自动定厚/搜形状/厚度灵敏度由 MainForm 插到这一排的最前面 —— 见 MountSecondRow）
+        // ── 第二排：**手动分步**（默认收起）。顺序 = 流水线里的先后：定厚 → 搜形状 → 加密复算，再是工具。
+        //   自动定厚／搜形状／厚度灵敏度由 MainForm 插进来（MountMainRow / MountSecondRow）。
+        _tool2.Items.Add(_btnVerify);
         _tool2.Items.Add(new ToolStripSeparator());
-        _tool2.Items.Add(_btnAnalyze);
-        _tool2.Items.Add(_btnToAnalytic);
         _tool2.Items.Add(_btnExportRead);
 
         // ── 输入面板
@@ -823,10 +856,13 @@ public sealed class LineDesignPage : TabPage
             _plots.TabPages.Add(pg);
         }
 
-        // 判据表（Excel 式）在上、散文说明在下 —— 表归表、话归话
+        // ★★★★★ R17／R21（2026-09-08）三步主视图：
+        //   ① 输入页  ← _inputHost（本页的输入控件整块）
+        //   ② 本页    ← 工具条 + 输出框（过程与结论的文字）
+        //   ③ 结果页  ← _resultHost（判据表在上、场图在下）
         InitChecksGrid();
-        var textSplit = _textSplit;
-        textSplit.Panel1.Controls.Add(_checks);
+        _inputHost.Controls.Add(input);
+
         // 输出区：正文 + 顶上一条开关（明细 / 诊断，默认收起）
         var outSwitches = new FlowLayoutPanel
         { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(UiScale.S(6), 2, 0, 2) };
@@ -834,23 +870,23 @@ public sealed class LineDesignPage : TabPage
         outSwitches.Controls.Add(_showDiag);
         _showDetail.CheckedChanged += (_, _) => Show(_last);
         _showDiag.CheckedChanged += (_, _) => Show(_last);
-        textSplit.Panel2.Controls.Add(_out);
-        textSplit.Panel2.Controls.Add(outSwitches);
+        var outHost = new Panel { Dock = DockStyle.Fill };
+        outHost.Controls.Add(_out);
+        outHost.Controls.Add(outSwitches);
 
-        var rightSplit = new SplitContainer
-        { Dock = DockStyle.Fill, Orientation = System.Windows.Forms.Orientation.Horizontal };
-        rightSplit.Panel1.Controls.Add(textSplit);
-        rightSplit.Panel2.Controls.Add(_plots);
+        _resultSplit.Panel1.Controls.Add(_checks);
+        _resultSplit.Panel2.Controls.Add(_plots);
+        _resultHost.Controls.Add(_resultSplit);
 
-        var main = new SplitContainer { Dock = DockStyle.Fill };
-        main.Panel1.Controls.Add(input);
-        main.Panel2.Controls.Add(rightSplit);
-
-        Controls.Add(main);
-        // ⚠ Dock=Top 的加入顺序是**倒着**的：后加的在上面。要「主线在上、工具在下」，
+        Controls.Add(outHost);
+        // ⚠ Dock=Top 的加入顺序是**倒着**的：后加的在上面。要「主线在上、手动分步在下」，
         //   就得先加第二排、再加第一排。
         Controls.Add(_tool2);
         Controls.Add(tool);
+        // 宿主先停在本页（见 _parking 的说明）；必须在 HookAutoRun 之前
+        _parking.Controls.Add(_inputHost);
+        _parking.Controls.Add(_resultHost);
+        Controls.Add(_parking);
 
         // 首屏三张图先摆空态 —— 开箱看到的不该是三个 −10…10 的空坐标轴
         FieldPlots.DrawEmpty(_pT, "还没有结果 —— 点「核算整线」");
@@ -887,7 +923,8 @@ public sealed class LineDesignPage : TabPage
             //   删掉的是「自动重算怎么触发」「预测值怎么来」这类**程序内部机制**
             //   —— 工程师改完参数会看到它自己重算，不必先读一段说明。
             //   留下的那条是**程序改了他填的数**：舌长被顶高了，不说就是静默改输入。
-            "填好左边的参数（或选一张 .3dm 图纸），点「核算整线」。";
+            "在「① 输入」填好参数（或读一张 .3dm 图纸）后，点「核算整线」—— 它会一路算到能出图为止；"
+          + "过程写在这里，判据表与场图在「③ 结果与出图」。";
         // ★★★ 2026-09-02 抓图抓到：首屏这段的 `**` **原样露在屏幕上**。
         //   病因与 MainForm 里记着的那条同源 —— 本框此刻**句柄还没建**，
         //   `.Text =` 不触发 TextChanged（原生控件没窗口就没有 EN_CHANGE 通知）
@@ -895,15 +932,8 @@ public sealed class LineDesignPage : TabPage
         //   ⇒ 这里**直接调一次**，不押在事件时机上。
         TextFmt.Write(_out, _out.Text);
         SyncGeomSource();
-        HandleCreated += (_, _) => BeginInvoke(() =>
-        {
-            // ★ 输入这一栏是工程师**真正要填**的东西，原来卡在 330 ⇒ 最重要的一栏最窄，
-            //   还得滚动才看得到最后几片。放宽到 430（仍随窗口走，小窗口不会挤爆右边）。
-            main.SplitterDistance =
-                Math.Min(UiScale.S(430), Math.Max(UiScale.S(260), main.Width * 2 / 5));
-            rightSplit.SplitterDistance = (int)(rightSplit.Height * 0.66);
-            SyncTextSplit();
-        });
+        // R17：输入控件整块在「① 输入」页上占满一页（不再与结果分栏）；③ 页判据表/场图的比例由 SyncTextSplit 按有没有结果调
+        _resultSplit.HandleCreated += (_, _) => BeginInvoke(() => SyncTextSplit());
     }
 
     /// <summary>
@@ -3336,8 +3366,6 @@ public sealed class LineDesignPage : TabPage
     /// 还没解过时判据表是空的，却占着 46 % 的高度 —— 开箱第一眼看到的是一张空格子，
     /// 而该看的「怎么开始」被挤在下面。⇒ 没结果就把地方让给说明（2026-09-03 抓图）。
     /// </summary>
-    private readonly SplitContainer _textSplit = new()
-    { Dock = DockStyle.Fill, Orientation = System.Windows.Forms.Orientation.Horizontal };
 
     private string _pendingReview = "";
 
@@ -3858,11 +3886,12 @@ public sealed class LineDesignPage : TabPage
     /// 主线工具条的**第二排**。一排塞八个正是 2026-08-20 拆页的病因 ——
     /// 阶段轨收成两格之后按钮回到同一页，用两排分开「主线」与「图纸路/工具」。
     /// </summary>
-    /// <summary>主线按钮插到**第一排**「核算整线」之后 —— 它们是工程师照蓝链走的那几个。</summary>
+    /// <summary>分步按钮（自动定厚／搜形状）插到**第二排**「加密复算」之前 —— 顺序 = 流水线：定厚 → 搜形状 → 复核。
+    /// R17（2026-09-08）起第一排只有「核算整线」；这一排默认收起，点「手动分步 ▾」展开。</summary>
     internal void MountMainRow(ToolStripItem[] items)
     {
-        int at = _tool.Items.IndexOf(_btnVerify);   // 摆在「加密复算」之前：解 → 定厚 → 复核
-        foreach (var it in items) _tool.Items.Insert(at++, it);
+        int at = _tool2.Items.IndexOf(_btnVerify);
+        foreach (var it in items) _tool2.Items.Insert(at++, it);
     }
 
     /// <summary>工具按钮追加到第二排。</summary>
@@ -3973,6 +4002,9 @@ public sealed class LineDesignPage : TabPage
     //    本页仍是它们的**所有者**（跑起来改文字、互相禁用的逻辑都在 RunAsync 里），
     //    ④⑤ 只是把它们挂到自己的工具条上。⇒ 状态只有一份。
     internal ToolStripButton BtnAutoThick => _btnAuto;
+    /// <summary>图纸路的两个按钮 —— 归「① 输入」页（R21）。</summary>
+    internal ToolStripButton BtnAnalyze => _btnAnalyze;
+    internal ToolStripButton BtnToAnalytic => _btnToAnalytic;
     internal ToolStripButton BtnSearchShape => _btnShape;
     internal ToolStripButton BtnExportPage3dm => _btnExport;
     internal ToolStripButton BtnExportFinal3dm => _btn3dm;
@@ -4013,12 +4045,13 @@ public sealed class LineDesignPage : TabPage
     /// </summary>
     private void SyncTextSplit()
     {
-        if (_textSplit.Height <= 0) return;
-        int want = (int)(_textSplit.Height * (_checks.Rows.Count > 0 ? 0.46 : 0.14));
-        want = Math.Max(_textSplit.Panel1MinSize + 1,
-               Math.Min(want, _textSplit.Height - _textSplit.Panel2MinSize - _textSplit.SplitterWidth - 1));
-        if (Math.Abs(_textSplit.SplitterDistance - want) > UiScale.S(8))
-            _textSplit.SplitterDistance = want;
+        // R17：③ 页上判据表在上、场图在下。有结果时判据表占 46 %，没结果时让位给场图的空态提示
+        if (_resultSplit.Parent is null || _resultSplit.Height <= 0) return;
+        int want = (int)(_resultSplit.Height * (_checks.Rows.Count > 0 ? 0.46 : 0.14));
+        want = Math.Max(_resultSplit.Panel1MinSize + 1,
+               Math.Min(want, _resultSplit.Height - _resultSplit.Panel2MinSize - _resultSplit.SplitterWidth - 1));
+        if (Math.Abs(_resultSplit.SplitterDistance - want) > UiScale.S(8))
+            _resultSplit.SplitterDistance = want;
     }
 
     private void FillChecks(LineResult? r)
