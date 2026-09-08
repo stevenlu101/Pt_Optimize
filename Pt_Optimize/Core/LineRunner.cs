@@ -576,6 +576,8 @@ public sealed class LineResult
     public static class Key
     {
         public const string Ramp = "① 升温";
+        /// <summary>参考量：集总模型（含法兰质量与自热）算的升温到位用时 h（R20 前它是硬判据 ①）。</summary>
+        public const string RampHours = "· 升温到位用时（集总）";
         public const string NetFlux = "②′管孔净流入";      // B：热流方向本身
         public const string DiscTemp = "②″圆盘区最高温";     // C：贴管子那一圈
         public const string FlangeDip = "③ 法兰增量温降";    // 法兰挖的坑
@@ -642,7 +644,7 @@ public sealed class LineResult
     /// </summary>
     public static readonly (string Prefix, CheckKind Kind, bool NeedsRamp)[] Required =
     {
-        (LineResult.Key.Ramp,      CheckKind.HardSafety, true),   // CheckRamp=false 时**合法缺席**
+        (LineResult.Key.Ramp,      CheckKind.HardSafety, false),  // R20：闭式、每轮都在（此前走集总模型，CheckRamp=false 时合法缺席）
         (LineResult.Key.NetFlux,   CheckKind.HardSafety, false),
         (LineResult.Key.DiscTemp,  CheckKind.HardSafety, false),
         (Key.FreeTab,   CheckKind.HardSafety, false),
@@ -1663,10 +1665,12 @@ public static class LineRunner
             //   永远跑不到、也永远没被验过的代码，而「死代码里的错答案」正是本项目的病灶之一。
             //   万一将来这个前提被改掉：兜底的是 LineResult.Required —— CheckRamp 为真时
             //   ① 在必备名单里，缺了 AllOk 直接为 false 并在 Failed 里报「判据缺席」。
+            // ★ R20（用户 2026-09-08）：判据 ① 改闭式（见下面「① 升温」那条），这条集总升温用时**降为参考量**——
+            //   它仍是有用的对照（含法兰质量与自热），但硬判据只有一条、不许两处来源。
             if (worst is not null)
                 checks.Add(new ConstraintOut
                 {
-                    Name = "① 升温 空管到目标", Unit = "h", Kind = CheckKind.HardSafety,
+                    Name = LineResult.Key.RampHours, Unit = "h", Kind = CheckKind.Reference,
                     Actual = worst.Reached ? worst.HoursToTarget : double.NaN,
                     Limit = c.RampHours, Ok = worst.Reached && worst.HoursToTarget <= c.RampHours,
                     Where = where,
@@ -1917,6 +1921,19 @@ public static class LineRunner
                               segs.Length, c.SetpointC,
                               jj => jj < flanges.Length && flanges[jj] is { } f0 && f0.QGenW > 0 && f0.CurrentA > 0
                                     ? (f0.QGenW / (f0.CurrentA * f0.CurrentA), f0.TRootC) : null);
+                // ── ① 升温（R20，用户 2026-09-08 纠正：全体截面 J<11 就不会熔，不判峰值；
+                //    ① = 升温所需电流没被管 J 许用上限截住 ⇒ 按 20 °C/h 升得到目标）。闭式、与网格无关、每轮都在。
+                bool rampUndet = double.IsNaN(dcr.RampTubeJPeakAPerMm2);
+                checks.Add(new ConstraintOut
+                {
+                    Name = LineResult.Key.Ramp, Unit = "A/mm²", Kind = CheckKind.HardSafety,
+                    Actual = dcr.RampTubeJPeakAPerMm2, Limit = dcr.TubeJAllowAPerMm2, LessIsBetter = true,
+                    Ok = !rampUndet && !dcr.Clipped, Undetermined = rampUndet, Where = "全线",
+                    Note = $"{dcr.RampRateKPerH:0} °C/h 空管升温 {dcr.FromC:0}→{dcr.TargetC:0} °C 所需电流（管子准静态 I²R = 散热 + C·Ṫ）"
+                         + $"全程峰值 {(dcr.SegPeakA.Length > 0 ? dcr.SegPeakA.Max() : double.NaN):0} A ⇒ 管 J 峰值 {dcr.RampTubeJPeakAPerMm2:0.00} A/mm²，"
+                         + $"许用 {dcr.TubeJAllowAPerMm2:0}。没被截住 = 升得到；闭式、与网格无关。"
+                         + (dcr.Clipped ? NextAction.RampClipped : "")
+                });
                 double worstJ = double.NegativeInfinity; string where = ""; bool undet = false;
                 for (int jj = 0; jj < flanges.Length; jj++)
                 {

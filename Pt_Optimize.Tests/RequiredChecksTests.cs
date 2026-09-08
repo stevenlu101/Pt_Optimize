@@ -105,9 +105,15 @@ public class RequiredChecksTests
     [Fact]
     public void RampCheck_IsRequiredOnlyWhenItWasRun()
     {
+        // ★ R20（2026-09-08）：① 改闭式（升温所需电流折成管 J ≤ 许用），**每轮都在**，不再随 CheckRamp 缺席。
+        //   集总升温用时那条降为参考量（Key.RampHours），参考量按定义不在必备名单。
         var off = Table(ramp: false);
         Assert.Empty(off.MissingChecks);
-        Assert.True(off.AllOk, "定尺寸内循环关掉 ① 属正常，不该因此判不过");
+        Assert.True(off.AllOk, "① 闭式每轮都在；表里有它就不该缺席");
+
+        var offDrop = Table(ramp: false, drop: LineResult.Key.Ramp);
+        Assert.Contains(LineResult.Key.Ramp, offDrop.MissingChecks);
+        Assert.False(offDrop.AllOk, "R20 之后 ① 不再有「合法缺席」");
 
         var on = Table(ramp: true, drop: LineResult.Key.Ramp);
         Assert.Contains(LineResult.Key.Ramp, on.MissingChecks);

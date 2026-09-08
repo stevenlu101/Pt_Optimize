@@ -96,7 +96,8 @@ public static class Criteria
     public static readonly Entry[] All =
     {
         // ── 硬安全线（卡交付）
-        E(LineResult.Key.Ramp,      "h",     "≤", "空管升到目标温度要多久；太慢说明整线发热不够", true),
+        E(LineResult.Key.Ramp,      "A/mm²", "≤", "按设定速率（20 °C/h）空管升温所需电流折成的管 J 峰值；没被管 J 许用截住 = 升得到目标（闭式，R20）", true),
+        E(LineResult.Key.RampHours, "h",     "≤", "参考：集总模型（含法兰质量与自热）算的升温到位用时", false),
         E(LineResult.Key.NetFlux,   "W",     ">", "热是从管子流进法兰（安全），还是倒灌进管子（**烧断的方向**）", true),
         E(LineResult.Key.DiscTemp,  "K",     "≤", "贴着管孔那一圈盘面比管子热多少；热是孔周电流拥塞顶出来的尖峰", true),
         E(LineResult.Key.FreeTab,   "mm",    "≥", "舌片伸出来、没被压接吃掉的那一段够不够长 —— 现场铜排装得下吗", true),

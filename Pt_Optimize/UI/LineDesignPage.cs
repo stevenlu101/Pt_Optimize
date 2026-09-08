@@ -1066,7 +1066,7 @@ public sealed class LineDesignPage : TabPage
         d.Binding = "";                       // ← 工程判断，留给人填
         d.TotalMassG = r.TotalMassG; d.TubeMassG = r.TubeMassG; d.FlangeMassG = r.FlangeMassG;
         // 五个回归基准值：**从本次解直接取**，不经人手
-        d.RampH = r.ValueOf(LineResult.Key.Ramp);
+        d.RampH = r.ValueOf(LineResult.Key.RampHours);   // R20：RampH 记的是集总升温用时（参考行），① 本身改成闭式管 J
         d.DiscOverK = r.ValueOf(LineResult.Key.DiscTemp);
         d.HoleFluxW = r.ValueOf(LineResult.Key.NetFlux);
         d.FlangeDipK = r.ValueOf(LineResult.Key.FlangeDip);

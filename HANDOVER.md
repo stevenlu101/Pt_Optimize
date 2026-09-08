@@ -425,8 +425,7 @@ flowchart TD
 | R17 | **UI 检视与整理**（用户 09-08：物件、排版与字体是否合理；给工程师用的，可改成更合理的操作，不必要的资讯或按钮可以不呈现；**放到最后做；改完必须截图确认**） | 09-08 | ✗ 未做（现状我还没看过，不先下结论） | 验收 = `--cli --uishot <dir>` 逐页截图**改前／改后**对照 + `UiWiring` 接线测试 + `NoCliFlagInUiTests`／`NoCriterionCodeInUiTests` ⇒ 分母 = 页数（截图逐页） |
 | R18 | **法兰 J 判不了要判得了** —— 2026-09-08 下午用户给了**设计因果链**，R18 按它重排：① 20 °C/h 升温下所需的管电流（功率）→ ② 按 **J = 10** 定法兰 r1/t1/r2/t2 与舌片横截面积 → ③ 分析舌片与法兰温场/电场，电流密度低处定孔的形状与位置 → ④ 复核温场与电流场，**全体截面 J < 11**。用户原话：「如果横截面该加大就要加大，首先是可造可用，J 20–37 已完全不可用；电流使用的大小应该与铂金管升温速率有关」。实测 0.8 档（3480.7 g）舌根 J_max 37、热点 +99 K ⇒ 那份「全过」不可用 | 09-08 | ◐ **第一阶段已做**（2026-09-08 晚）：① `Core/DesignCurrent.cs` 由 `RampTwoNode` 温控 20 °C/h 空管升温（全线目标 1150）算每段峰值电流、共用片矢量合成，求解器轨迹印出；② `Core/SectionSizing.cs` 闭式截面（舌片各处含开孔弦／舌盘交界弦／孔缘环与各级环含槽带，圆盘按整圈）⇒ 板厚下界 = t×max(J/10)，进约束盒下角（`Solver.ApplySectionFloor`，每轮重算、只增不减、留痕 `★ 下角因 J=10 截面上抬`），孔径/槽张角上界也受 J 约束；④ 新硬判据 `法兰截面 J`（< 11，闭式，当场判得了）进 `Required` 与判据表，场逐点峰值 `· 法兰 J_max` 降为参考量。**未做**：③ 场定孔（R12）。提交 `97cf201`。实测：固定形状 W08（2 段）在新链下共用片要 4.26 mm ⇒ 盘 R30 盖不住 ⇒ ⑥ 前停给处方（对的：该搜形状）；搜形状第一趟全军覆没的根因是设计电流没带设计记录的管保温层（1473 vs 1214 A），修后 Ø70/舌70 单点**可行 2997.8 g**（板厚 1.74/3.01/1.74、舌保温 6.3/3.1/8.9）；搜形状第二趟跑着 | 验收 = ① 设计电流由 20 °C/h 升温算出并印出 ✓；② 截面由 I/10 闭式定出成为下角 ✓（`BranchMarksAreReachedTests.下角因J10截面上抬`）；④ 截面 J 行能判过/不过 ✓（`SectionSizingTests`、`CriteriaTableTests`）；0.8 档（2 段）在新链下由搜形状搜出可交付解 ⇒ 待第二趟 |
 | R19 | **3DM 路要能进第 ② 步搜形状**（用户 09-08 纠正：不是熔化的事——截面/⑥ 到头时交棒给搜形状，3DM 模式下搜形状现在用不了 ⇒ 死路）。出口 = Flow.cs 里记的那条：把 3DM 反推的形状交给解析路（与 R14/R8 同一条线） | 09-08 | ✅ **2026-09-08 晚做完**：`Flow.Next` 在 .3dm 模式下，图纸分析过、照图纸解过一次（「改前」基准）之后就指「◈ 图纸几何 → 参数」，**不管那次过没过、收没收敛**（不收敛照旧指「重解」正是原来的死循环）；一键流水线把「分析图纸」「图纸几何 → 参数」当输入步骤自己做、做完往下走（不再停在「要人决定」），交接后按解析路：核算 → 自动定厚 → 搜形状 → 加密复算。实测走查 `--follow3dm Pt_Heater3.3dm --segs 2`：分析 → 核算（5721 g，③ 341 K）→ 交接（盘径/舌宽控件解禁 ✓）→ 核算 → 自动定厚 → … | `FlowDeadEndTests`（夹具改照实：解析模式下 geom.toanalytic 不适用）、`UniformPlateSizingTests`（改钉新口径）；`UiWiring --follow3dm` 第 3 步「交接后盘径与舌宽控件解禁」✓；`OneClickPipelineTests` |
-| R20 | **判据 ① 改闭式进导航**（用户 09-08 纠正：全体截面 J<11 就不会熔，不判峰值）：① = 设计电流没被管 J 许用上限截住 ⇒ 20 °C/h 能升到 1150（`DesignCurrent.SegClipped` 已有这个位，接成判据） | 09-08 | ✗ 未做 | 验收 = ① 由设计电流闭式判、每轮都在；被截住时给处方（加管保温／减升温速率／换管壁） |
-
+| R20 | **判据 ① 改闭式进导航**（用户 09-08 纠正：全体截面 J<11 就不会熔，不判峰值）：① = 设计电流没被管 J 许用上限截住 ⇒ 20 °C/h 能升到 1150（`DesignCurrent.SegClipped` 已有这个位，接成判据） | 09-08 | ✅ **2026-09-09 凌晨做完**：`DesignCurrent.Result.RampTubeJPeakAPerMm2`（未截住的所需电流峰值 ÷ 管截面）与 `TubeJAllowAPerMm2`、`Clipped`；`LineRunner` 新硬判据行 `① 升温`（Actual = 升温期管 J 峰值，Limit = 管 J 许用，Ok = 没截住；闭式、每轮都在、进 Required 不再随 CheckRamp 缺席），被截住时给处方 `NextAction.RampClipped`（加管保温／降速率／换管壁 —— 都是输入不是法兰旋钮）；集总升温用时降为参考行 `· 升温到位用时（集总）`（记录值 RampH 与说明书、自检读参考行） | `DesignCurrentTests.管J许用压小_升温电流被截住_判据一不过`（许用压到 2 ⇒ 截住、所需电流不变）；`RequiredChecksTests`（① 不再合法缺席）；`CriteriaTableTests` §1.83 两行对上 |
 #### ★★★★★ 反复犯的错（2026-09-05 用户：「你也常犯莫名其妙的问题」）
 
 > 不是保证，是**清单**。每条都有当天的实例，动手前对一遍。
@@ -2609,7 +2608,8 @@ pandoc docs/Pt_理论模型.md -o docs/Pt_理论模型_v4.0.docx --toc --toc-dep
 
 | 判据 | 限值 | 判定 | 来源 |
 |---|---|---|---|
-| `① 升温` 空管 25→1150 °C | 72 h | **硬判据** | 用户「≤3 天」（曾误用程序默认 3 h，§4.3i） |
+| `① 升温` 所需电流折成的管电流密度峰值 | 12 A/mm² | **硬判据** | **R20（用户 2026-09-08 纠正）**：① = 20 °C/h 空管升温所需电流（管子准静态 I²R = 散热 + C·Ṫ，全程峰值）**没被管 J 许用上限截住** ⇒ 按设定速率升得到 1150。闭式、与网格无关、每轮都在；限值就是「管 J」那条的许用（同一个数，不另立）。此前用集总模型算「72 h 内到不到」当硬判据，现降为下面的参考行 |
+| `· 升温到位用时（集总）` | 72 h | 参考 | 集总模型（含法兰质量与自热）算的到位用时；限值 = 用户「≤3 天」（曾误用程序默认 3 h，§4.3i）。R20 后只作对照 |
 | `②′管孔净流入` 须为正 | 0 W | **硬判据** | 总纲 C2 下半条「为负即法兰比管热」；**方向性判据，本就该是 0** |
 | `②″圆盘区最高温` − 管温 | 5 K | **硬判据** | 现场控温精度。~~原为 0~~ —— 那是我从「任何一点都不许比管热」**字面**推的，是当年审计里**唯一没据的一条** |
 | `③ 法兰增量温降` ≤ 上限 | 10 K | **目标** | 总纲 C2 + 现场条件表；**用户 2026-08-15 补充：这个 10 K 是贴着热偶误差定的** |
@@ -5510,7 +5510,7 @@ Pt_Optimize.Tests/ · tests/UiWiring/ · Pt_Optimize.Geom/ · .githooks/   ← �
 > 改 `.githooks/` 改的是「门跑不跑」。这两类原本都不在名单里 ⇒
 > **唯一能让所有门失效的改动，恰恰是唯一不触发门的改动**。
 
-`dotnet test` 应为 **721/721**（2026-09-08 晚由 HandoverGateCountTests 反射数出；再 +13 = R8/R14/R11：ShapeToAnalyticTests 净 +7 快（三级逐位／两级／四级抛／闭环／舌片不同厚／槽不带／真图纸）+ SectionSizingTests +2 快 + DesignSpecTongueTests 4 快；此前 708 是 2026-09-08 下午的数，再 +16 = 设计因果链（含判据词汇表按条目生成的 2 条、三档仪器 LeverSurvey/ShapeDrainSurvey/ShapePointTrace 各 1 慢、DesignCurrent 管保温门 1 快）：SectionSizingTests 5 快 + DesignCurrentTests 3 快 + BranchMarks J 下角 1 快 + FlangePeakSurveyTests 1 慢；此前 +3 = BranchMarksAreReachedTests「断言走到了」那三条；再 +5 = 下角第三来源「不熔化」：BranchMarksAreReachedTests 2 慢 + MeltIsNotASolutionTests 1 慢 + MeltFloorTests 2 快）。
+`dotnet test` 应为 **724/724**（2026-09-09 凌晨由 HandoverGateCountTests 反射数出；再 +3 = R20：DesignCurrentTests 截住门 1 快 + CriteriaTableTests 参考行「升温到位用时」按条目生成 2 快；此前 721 = 再 +13 = R8/R14/R11：ShapeToAnalyticTests 净 +7 快（三级逐位／两级／四级抛／闭环／舌片不同厚／槽不带／真图纸）+ SectionSizingTests +2 快 + DesignSpecTongueTests 4 快；此前 708 是 2026-09-08 下午的数，再 +16 = 设计因果链（含判据词汇表按条目生成的 2 条、三档仪器 LeverSurvey/ShapeDrainSurvey/ShapePointTrace 各 1 慢、DesignCurrent 管保温门 1 快）：SectionSizingTests 5 快 + DesignCurrentTests 3 快 + BranchMarks J 下角 1 快 + FlangePeakSurveyTests 1 慢；此前 +3 = BranchMarksAreReachedTests「断言走到了」那三条；再 +5 = 下角第三来源「不熔化」：BranchMarksAreReachedTests 2 慢 + MeltIsNotASolutionTests 1 慢 + MeltFloorTests 2 快）。
 
 > 这个数**不用人记得改**了：`HandoverGateCountTests` 反射数出程序集里的用例数
 > （`[Fact]` 一条、`[Theory]` 按 `[InlineData]` 行数），再回头读本文件里的「应为 N/N」比对，

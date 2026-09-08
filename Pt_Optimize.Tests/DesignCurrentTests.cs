@@ -75,6 +75,31 @@ public class DesignCurrentTests
         Assert.True(b.SegPeakA[0] < a.SegPeakA[0] * 0.95, $"管保温 5→40 mm 设计电流 {a.SegPeakA[0]:0} → {b.SegPeakA[0]:0} A 没降 —— 杠杆是哑的");
     }
 
+    /// <summary>★ R20（用户 2026-09-08）：① = 升温所需电流没被管 J 许用上限截住。把许用压到很小就必截住。</summary>
+    [Fact]
+    public void 管J许用压小_升温电流被截住_判据一不过()
+    {
+        var (d, p) = W08TwoSeg();
+        var a = DesignCurrent.ForLine(d, p);
+        Assert.False(a.Clipped, "开箱工况下 0.8 档不该被截住");
+        Assert.InRange(a.RampTubeJPeakAPerMm2, 1, a.TubeJAllowAPerMm2);
+        double holeR = d.HoleRadiusMm, ri = holeR - d.WallMm, area = Math.PI * (holeR * holeR - ri * ri);
+        Assert.Equal(a.SegPeakA[0] / area, a.RampTubeJPeakAPerMm2, 6);          // 没截住时峰值就是段电流
+
+        var lc = d.BuildCase(p, checkRamp: true);          // 开着集总升温：参考行「升温到位用时」只在那时出现
+        var r = LineRunner.Run(lc);
+        var one = r.Checks.First(c => c.Name.StartsWith(LineResult.Key.Ramp, StringComparison.Ordinal));
+        Assert.True(one.Ok, one.Note);
+        Assert.Equal(CheckKind.HardSafety, one.Kind);
+        Assert.Contains(r.Checks, c => c.Name.StartsWith(LineResult.Key.RampHours, StringComparison.Ordinal) && c.Kind == CheckKind.Reference);
+
+        p.TubeJAllowAPerMm2 = 2.0;                                                // 许用压到 2 ⇒ 1214 A 的段必截住
+        var b = DesignCurrent.ForLine(d, p);
+        Assert.True(b.Clipped);
+        Assert.True(b.RampTubeJPeakAPerMm2 > b.TubeJAllowAPerMm2);
+        Assert.Equal(a.RampTubeJPeakAPerMm2, b.RampTubeJPeakAPerMm2, 6);          // 所需电流不变，只是被截住
+    }
+
     [Fact]
     public void 法兰更重_设计电流不降()
     {

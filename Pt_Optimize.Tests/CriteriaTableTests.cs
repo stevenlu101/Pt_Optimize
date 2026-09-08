@@ -55,7 +55,8 @@ public class CriteriaTableTests
 
         return new (string, string, double?)[]
         {
-            (LineResult.Key.Ramp,       KindOf(LineResult.Key.Ramp),       lc.RampHours),
+            (LineResult.Key.Ramp,       KindOf(LineResult.Key.Ramp),       di.TubeJAllowAPerMm2),   // R20：① = 升温所需电流折成管 J ≤ 许用
+            (LineResult.Key.RampHours,  KindOf(LineResult.Key.RampHours),  lc.RampHours),
             (LineResult.Key.NetFlux,    KindOf(LineResult.Key.NetFlux),    0.0),
             (LineResult.Key.DiscTemp,   KindOf(LineResult.Key.DiscTemp),   lc.DiscOverTempMaxK),
             (LineResult.Key.FlangeDip,  KindOf(LineResult.Key.FlangeDip),  lc.RootDeltaMaxK),

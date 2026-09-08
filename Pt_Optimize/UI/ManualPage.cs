@@ -768,7 +768,7 @@ public sealed class ManualPage : TabPage
         //   摆在同一个界面上必然误读。
         var crit = new (string n, string k, double a, double l, string u, bool less)[]
         {
-            ("升温 空管到目标",        "硬判据", fd.RampH,      72,    "h",      true),
+            ("升温到位用时（集总，参考）", "参考",  fd.RampH,      72,    "h",      true),
             ("圆盘区最高温 − 管温",    "硬判据", fd.DiscOverK,  5.00,  "K",      true),
             ("管孔净流入 须为正",      "硬判据", fd.HoleFluxW,  0,     "W",      false),
             ("法兰增量温降",           "目标",   fd.FlangeDipK, 10.00, "K",      true),

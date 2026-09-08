@@ -6519,7 +6519,7 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
                         Console.WriteLine($"      {(ok ? "✓" : "✗")} {nm,-6}{got,9:0.000} {unit,-6} 记录 {want,8:0.000}" +
                                           $"　差 {got - want,+7:0.000}" + (ok ? "" : $"　**超容差 {tol:0.###}**"));
                     }
-                    Chk("①",  V("①"),  fd.RampH,      0.02, "h");
+                    Chk("①用时", V(LineResult.Key.RampHours), fd.RampH, 0.02, "h");   // R20：记录的 RampH 是集总用时，读参考行
                     Chk("②″", V("②″"), fd.DiscOverK,  0.20, "K");
                     Chk("②′", V("②′"), fd.HoleFluxW,  0.50, "W");
                     Chk("③",  V("③"),  fd.FlangeDipK, 1.00, "K");
@@ -7509,7 +7509,7 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
                         {
                             var rv = LineRunner.Run(lcv);
                             if (!rv.Ok) return "解失败";
-                            var ck = rv.Checks.FirstOrDefault(x => x.Name.StartsWith("① 升温"));
+                            var ck = rv.Checks.FirstOrDefault(x => x.Name.StartsWith(LineResult.Key.RampHours));
                             return ck == null ? "—"
                                  : double.IsNaN(ck.Actual) ? "✗ 到不了" : $"{ck.Actual:0.0} h";
                         }
@@ -7521,7 +7521,7 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
                     catch (Exception ex) { Console.WriteLine($"{wl,7:0.00}  异常 {ex.Message}"); continue; }
                     if (!rL9.Ok) { Console.WriteLine($"{wl,7:0.00}  ✗ {rL9.Message}"); continue; }
 
-                    var ramp = rL9.Checks.FirstOrDefault(x => x.Name.StartsWith("① 升温"));
+                    var ramp = rL9.Checks.FirstOrDefault(x => x.Name.StartsWith(LineResult.Key.RampHours));
                     string txt = ramp == null ? "—"
                         : double.IsNaN(ramp.Actual) ? "✗ 到不了" : $"{ramp.Actual:0.0} h";
                     Console.WriteLine($"{wl,7:0.00}{rL9.Segments.Max(s => s.CurrentA),10:0}" +

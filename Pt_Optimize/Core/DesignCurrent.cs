@@ -33,6 +33,12 @@ public static class DesignCurrent
         public double[] PlateA = Array.Empty<double>();
         /// <summary>该段电流曾被二次侧上限（管 J 许用 × 管截面）截住 ⇒ 跟不上设定速率。</summary>
         public bool[] SegClipped = Array.Empty<bool>();
+        /// <summary>★ R20（用户 2026-09-08）：升温所需电流**未截住时**的全程峰值折成管 J（A/mm²）—— 判据 ① 的实测值。</summary>
+        public double RampTubeJPeakAPerMm2 = double.NaN;
+        /// <summary>管 J 许用（判据 ① 的限值；截住与否就看它）。</summary>
+        public double TubeJAllowAPerMm2 = double.NaN;
+        /// <summary>有段被截住 = 按设定速率升不到目标。</summary>
+        public bool Clipped => SegClipped.Any(c => c);
         /// <summary>对照：两节点模型（管 + 相邻较重那片法兰）的全程峰值 —— 含法兰自热倒灌，不进尺寸链。</summary>
         public double[] TwoNodeSegPeakA = Array.Empty<double>();
         public double RampRateKPerH, FromC, TargetC;
@@ -86,15 +92,18 @@ public static class DesignCurrent
         FlangePlate P(int j) => plates[Math.Min(j, plates.Length - 1)];
 
         // ── 尺寸依据：管子准静态电流沿全程取最大（每段同一根管 ⇒ 各段相同；仍逐段存，段参数将来可能不同）
-        double iQsPeak = 0; bool qsClipped = false;
+        double iQsPeak = 0, iRawPeak = 0; bool qsClipped = false;
         const int NT = 60;
         for (int k = 0; k <= NT; k++)
         {
             double tC = fromC + (targetC - fromC) * k / NT;
             double iq = RampTwoNode.QuasiStaticCurrentA(p, wallMm, tC, rateKPerH);
+            iRawPeak = Math.Max(iRawPeak, iq);                      // 未截住的所需电流（判据 ① 看它）
             if (iq > iCap) { iq = iCap; qsClipped = true; }
             iQsPeak = Math.Max(iQsPeak, iq);
         }
+        res.RampTubeJPeakAPerMm2 = tubeAreaMm2 > 1e-12 ? iRawPeak / tubeAreaMm2 : double.NaN;
+        res.TubeJAllowAPerMm2 = p.TubeJAllowAPerMm2;
 
         for (int i = 0; i < n; i++)
         {
