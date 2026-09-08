@@ -923,15 +923,64 @@ internal static class GeomProbe
                 return pc.IsClosed ? pc : null;
             }
 
-            //  舌板孔 = 椭圆，长轴**顺流**（沿 X）。AspectXZ = 长/短，1 = 正圆。
-            //    与 TabHole.Contains 的 (dx/(R·asp))² + (dz/R)² ≤ 1 一致。
-            Curve HoleCurve(double cx, double r, double asp)
+            //  ★ 孔的形状族（R13，2026-09-09）—— 与 Core/PlateCurrent2D 的 TabHole.Contains **逐字对应**：
+            //    本地坐标里先造「正 N 边形 ⊕ 圆角」（sides<3 或 corner≥0.999 = 圆），转成 NURBS，
+            //    再套同一个仿射：本地 x 乘 asp（拉长）→ 转 rotDeg → 平移到 (cx, cz)。
+            //    Contains 的反变换是 lx = (dx·cos(−ρ) − dz·sin(−ρ))/asp、lz = dx·sin(−ρ) + dz·cos(−ρ)，
+            //    正变换即 dx = asp·lx·cosρ − lz·sinρ、dz = asp·lx·sinρ + lz·cosρ —— 下面矩阵就是它。
+            //    NURBS 在仿射下是精确的（有理曲线），圆 → 椭圆、圆角 → 椭圆弧，都不是近似。
+            //    多边形顶点在本地 π/2 + 2πk/n（第一个顶点朝 +z），与 DistToRegularPolygon 同序。
+            Curve CutCurve(double cx, double cz, double r, int sides, double corner, double rotDeg, double asp)
             {
-                if (r <= 0.05) return null;
-                var pl = new Plane(new Point3d(cx, 0, 0),
-                                   new Vector3d(1, 0, 0), new Vector3d(0, 0, 1));
-                return new Ellipse(pl, r * Math.Max(asp, 1e-6), r).ToNurbsCurve();
+                if (r <= 0.05 || double.IsNaN(cx) || double.IsNaN(cz)) return null;
+                asp = Math.Max(asp, 1e-6);
+                Curve local;
+                if (sides < 3 || corner >= 0.999)
+                    local = new Circle(Plane.WorldZX, Point3d.Origin, r).ToNurbsCurve();
+                else
+                {
+                    double rr = r * Math.Clamp(corner, 0.0, 1.0), rc = r - rr;
+                    if (rc <= 1e-9) local = new Circle(Plane.WorldZX, Point3d.Origin, r).ToNurbsCurve();
+                    else
+                    {
+                        int n = sides;
+                        var V = new Point3d[n];
+                        for (int k = 0; k < n; k++)
+                        {
+                            double a = 2 * Math.PI * k / n + Math.PI / 2;
+                            V[k] = new Point3d(rc * Math.Cos(a), 0, rc * Math.Sin(a));
+                        }
+                        // 顶点按角递增 = 在 (x,z) 平面逆时针；边 (ex,ez) 的外法向 = (ez, −ex)
+                        Vector3d Nrm(int k)
+                        {
+                            var e = V[(k + 1) % n] - V[k];
+                            var m = new Vector3d(e.Z, 0, -e.X); m.Unitize(); return m;
+                        }
+                        var pc = new PolyCurve();
+                        for (int k = 0; k < n; k++)
+                        {
+                            var nk = Nrm(k); var nk1 = Nrm((k + 1) % n);
+                            var a0 = V[k] + nk * rr; var a1 = V[(k + 1) % n] + nk * rr;
+                            pc.Append(new LineCurve(a0, a1));                       // 平移出去的边
+                            var b1 = V[(k + 1) % n] + nk1 * rr;
+                            var mid = nk + nk1; mid.Unitize();
+                            pc.Append(new ArcCurve(new Arc(a1, V[(k + 1) % n] + mid * rr, b1)));   // 顶点处的圆角
+                        }
+                        pc.MakeClosed(tol);
+                        local = pc.ToNurbsCurve();
+                    }
+                }
+                if (local == null) return null;
+                double rho = rotDeg * Math.PI / 180.0, c = Math.Cos(rho), s = Math.Sin(rho);
+                var T = Transform.Identity;
+                T.M00 = asp * c; T.M02 = -s; T.M03 = cx;
+                T.M20 = asp * s; T.M22 = c;  T.M23 = cz;
+                if (!local.Transform(T)) return null;
+                return local.IsClosed ? local : null;
             }
+
+            //  舌板孔（老 spec，无形状族）= 椭圆，长轴**顺流**（沿 X）。AspectXZ = 长/短，1 = 正圆。
+            Curve HoleCurve(double cx, double r, double asp) => CutCurve(cx, 0, r, 0, 1.0, 0, asp);
 
             //  逐条从区域里减掉。**三级板身都要减** —— 槽带可能压在环上，
             //  而 Inside() 是「槽里就没有料」，不分级。
@@ -962,15 +1011,28 @@ internal static class GeomProbe
                 // ★ 本片的槽与孔（spec 里没有这几项 = 老档，按「不开」处理，行为与从前逐位相同）
                 double PD(string k, double dflt) =>
                     P.TryGetProperty(k, out var v) ? v.GetDouble() : dflt;
+                int PI(string k, int dflt) =>
+                    P.TryGetProperty(k, out var v) ? v.GetInt32() : dflt;
+                string PS(string k, string dflt) =>
+                    P.TryGetProperty(k, out var v) ? (v.GetString() ?? dflt) : dflt;
                 var cutters = new List<Curve>();
-                var sc = SlotCurve(PD("slotRIn", 0), PD("slotROut", 0), 0, PD("slotDeg", 0));
+                // ★ R12/R13（2026-09-09）：槽心角 slotCenterDeg（缺省 0° = 老档行为）；圆盘形状族 discShape：
+                //   "slot" = 弯椭圆槽（老路），"ellipse" = 直的长椭圆（中心/半径/拉长/转角由 spec 给，与 Core 的 DiscCutsOf 同一份数）。
+                string discShape = PS("discShape", "slot");
+                Curve sc = discShape == "ellipse"
+                    ? CutCurve(PD("discX", 0), PD("discZ", 0), PD("discR", 0), 0, 1.0, PD("discRot", 0), PD("discAsp", 1))
+                    : SlotCurve(PD("slotRIn", 0), PD("slotROut", 0), PD("slotCenterDeg", 0), PD("slotDeg", 0));
                 if (sc != null) cutters.Add(sc);
-                var hc = HoleCurve(PD("holeX", double.NaN), PD("holeR", 0), PD("holeAsp", 1));
+                // 舌孔：形状族 holeSides（缺省 0 = 圆/椭圆，老档逐位如前）、圆角比例 holeCorner、转角 holeRot
+                var hc = CutCurve(PD("holeX", double.NaN), 0, PD("holeR", 0), PI("holeSides", 0),
+                                  PD("holeCorner", 1.0), PD("holeRot", 0), PD("holeAsp", 1));
                 if (hc != null && !double.IsNaN(PD("holeX", double.NaN))) cutters.Add(hc);
                 if (cutters.Count > 0)
                     Console.Error.WriteLine($"[final] {pn}：切 {cutters.Count} 个"
-                        + $"（槽 {PD("slotDeg", 0):0}° r{PD("slotRIn", 0):0.0}-{PD("slotROut", 0):0.0}"
-                        + $"，孔 R{PD("holeR", 0):0.0}×{PD("holeAsp", 1):0.0} @x{PD("holeX", 0):0.0}）");
+                        + (discShape == "ellipse"
+                            ? $"（长椭圆 R{PD("discR", 0):0.0}×{PD("discAsp", 1):0.0} @({PD("discX", 0):0.0},{PD("discZ", 0):0.0}) 转 {PD("discRot", 0):0}°"
+                            : $"（槽 {PD("slotDeg", 0):0}° 心 {PD("slotCenterDeg", 0):0}° r{PD("slotRIn", 0):0.0}-{PD("slotROut", 0):0.0}")
+                        + $"，孔 R{PD("holeR", 0):0.0}×{PD("holeAsp", 1):0.0} 边 {PI("holeSides", 0)} @x{PD("holeX", 0):0.0}）");
 
                 // 板身 = 轮廓 − 环外边界（环外边界可能越过盘缘，故用曲线布尔差）− 槽/孔
                 // ★ R11：舌片与圆盘不同厚时，沿**切点竖线** x = −√(R²−w²) 把板身切成圆盘侧（厚 t）与舌片侧（厚 tabT），

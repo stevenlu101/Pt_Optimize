@@ -17,6 +17,8 @@ namespace PtOptimize.Tests;
 ///
 /// ⚠ 这不是回归门 —— 它是**交付物**。断言只钉「真的解出来了、图真的写出来了」。
 /// </summary>
+// ★ 2026-09-09：起 Rhino 子进程的测试类**串行**（同一 xunit collection）—— 并行起两个 RhinoCore 会互相挂死到 10 分钟超时（合并 R12/R13 时抓到，单跑 12 s 过）
+[Collection("Rhino 子进程")]
 public class ExportOptimized3dmTests
 {
     [Trait("速度", "慢")]   // ★ 真跑场解/出图；钩子默认跳过，见 .githooks/pre-commit

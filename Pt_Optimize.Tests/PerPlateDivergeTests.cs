@@ -117,7 +117,7 @@ public class PerPlateDivergeTests
     {
         var d = DesignSpec.Builtin[0].Clone();
         d.Name = "爆炸构型（09-06 被污染的 W08 逐位复现）";
-        d.TabHoleXMm = -79.75;
+        for (int j = 0; j < d.TabHoleXMm.Length; j++) d.TabHoleXMm[j] = -79.75;   // R12 之后孔心逐片：坏例四片同一个数，逐位复现当时
         for (int j = 0; j < d.TabThickMm.Length; j++)
         {
             if (j < d.TabHoleRMm.Length) d.TabHoleRMm[j] = 32.71;      // 巨孔，吃掉管孔那一圈

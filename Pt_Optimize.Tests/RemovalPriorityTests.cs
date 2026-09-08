@@ -53,18 +53,10 @@ public class RemovalPriorityTests
                                     tRootC: 1150, insulBoundaryX: double.NaN);
 
         int n = mesh.CellCount;
-        double k = Materials.PtThermalK(1150);      // W/(m·K) → 下面按 mm 换算
-        // 各单元的导热通量绝对值之和 / 2（每条面被两个单元各算一次）
-        var q = new double[n];
-        foreach (var f in mesh.Faces)
-        {
-            if (f.A < 0 || f.B < 0) continue;                  // 边界面不算「内部导热」
-            if (f.DistAB <= 1e-9) continue;
-            double tMm = 0.5 * (mesh.Thickness[f.A] + mesh.Thickness[f.B]);
-            // q = k[W/(m·K)] × 1e-3 → W/(mm·K)；面积 = 边长 × 厚度 [mm²]
-            double flux = Math.Abs(k * 1e-3 * f.Length * tMm * (th.T[f.A] - th.T[f.B]) / f.DistAB);
-            q[f.A] += 0.5 * flux; q[f.B] += 0.5 * flux;
-        }
+        // ★ 2026-09-09（R12）：算法搬进了 Core/RemovalPriority（求解器每轮开头就用它定孔位），本门直接调它 ——
+        //   同一个量不留两份实现。q = 各单元的导热通量绝对值之和 / 2（每条面被两个单元各算一次），k 取 1150 °C。
+        var q = RemovalPriority.ConductionW(mesh, th.T, 1150);
+        var pCore = RemovalPriority.Compute(mesh, cur.JMagAPerMm2, th.T, 1150);
 
         double xTan = plate.Tangent().X;
         var rows = Enumerable.Range(0, n)
@@ -86,6 +78,10 @@ public class RemovalPriorityTests
         double jEps = rows.Max(r => r.J) * 1e-3;
         var pri = rows.Select(r => new { r.X, r.R, r.Q, r.J, r.A, P = r.Q / (r.J + jEps) })
                       .OrderByDescending(r => r.P).ToList();
+        // 自证：Core 里那份与本门原来的式子逐单元相同（搬家没把算法搬走样）
+        foreach (var r in rows)
+            Assert.True(Math.Abs(pCore[r.I] - r.Q / (r.J + jEps)) <= 1e-9 * Math.Max(1, Math.Abs(pCore[r.I])),
+                $"单元 {r.I}：Core 算 {pCore[r.I]}，本门算 {r.Q / (r.J + jEps)}");
         Assert.True(pri[0].P > pri[^1].P * 2,
             "优先级几乎是常数 —— 那说明这个判据分不出高下，下面的结论是空转");
 

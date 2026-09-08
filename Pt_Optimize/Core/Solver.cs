@@ -293,6 +293,17 @@ public static class Solver
             if (j < d.TongueThickMm.Length) d.TongueThickMm[j] = double.NaN;
         }
         if (d.TongueThickMm.Length != np) d.TongueThickMm = Enumerable.Repeat(double.NaN, np).ToArray();
+        // ★ R12（2026-09-09）：槽心角／舌孔孔心／长椭圆轴向是**从场算出来的**，不是输入 ——
+        //   传进来的一律丢掉（NaN = 默认规则），第一次场解之后由 FieldPlacement 按场重定。
+        //   与「板厚被丢弃」同一条铁律：解与初值无关。槽张角／孔径／形状族照旧带进来（工程师图上本来就有的孔）。
+        for (int j = 0; j < np; j++)
+        {
+            if (j < d.SlotCenterDeg.Length) d.SlotCenterDeg[j] = double.NaN;
+            if (j < d.TabHoleXMm.Length) d.TabHoleXMm[j] = double.NaN;
+            if (j < d.DiscCutRotDeg.Length) d.DiscCutRotDeg[j] = double.NaN;
+        }
+        // ★ R15：孔径 < 1 mm 的孔不考虑 —— 带进来的小孔按无孔，并说出来
+        NormalizeHoleRadii(d, Log);
 
         // ★ 限值**只从 LineCase 读**（判据的唯一来源）。求解器不许自带第二份。
         var lc = d.BuildCase(baseIn, checkRamp: false);
@@ -313,6 +324,8 @@ public static class Solver
         Log($"传进来的旋钮值**一个都没用**（板厚 {string.Join("/", geometry.TabThickMm.Select(x => x.ToString("0.00")))} 被丢弃）—— " +
             "这就是「与初值无关」的实现方式。");
         Log($"限值只从 LineCase 读：③ ≤ {dipMax:0.0} K　②″ ≤ {discMax:0.0} K");
+        // ★ R12：第一次场解之前还没有场 ⇒ 位置走默认规则，但要说出来（不许静默）
+        FieldPlacement(d, baseIn, null, Log);
 
         // ★★ **⑥ 排在第一次场解之前**（2026-08-29）。它是闭式的、零成本 ——
         //   几何造不出来就不必解场。此前它排在场解之后，代价不只是白烧一次解：
@@ -411,6 +424,19 @@ public static class Solver
                     break;
                 }
 
+                // ★★★ R12（用户 2026-09-08 设计因果链第 ③ 步）：**每轮开头、候选比价之前**，从最新收敛的场算移除优先级，
+                //   逐片定圆盘槽的槽心角与舌孔孔心（长椭圆还定轴向）。有切口的片位置变了 ⇒ 这一轮的基准场要重解一次，
+                //   否则比价的 before 是旧位置的数。没有切口（张角 0、孔径 0）时位置变了也不改几何，不重解。
+                if (FieldPlacement(d, baseIn, last, Log))
+                {
+                    last = Eval(d, baseIn, o, res, cancel, inner);
+                    if (last is null)
+                    {
+                        res.StopWhy = $"场定孔位之后重解解不出来 ⇒ 判不了（{res.NullWhy}）";
+                        break;
+                    }
+                }
+
                 double mass = MassOf(last);
                 // ★★★★★ **九根旋钮全印，一根都不许省**（2026-09-07 督导 S8）。
                 //
@@ -428,7 +454,11 @@ public static class Solver
                     $"　外级r₂ {JoinW(d.RingW2Mm, 2 * d.RingWidthMm)}" +
                     $"　圆盘槽 {JoinF(np, q => q < d.SlotSpanDeg.Length ? d.SlotSpanDeg[q] : 0)}°" +
                     $"　孔径 {JoinF(np, q => q < d.TabHoleRMm.Length ? d.TabHoleRMm[q] : 0)}" +
-                    $"　孔拉长 {JoinF(np, q => q < d.TabHoleAspect.Length ? d.TabHoleAspect[q] : 1)}");
+                    $"　孔拉长 {JoinF(np, q => q < d.TabHoleAspect.Length ? d.TabHoleAspect[q] : 1)}" +
+                    // ★ R12/R13：场定的位置与选中的形状也是几何的一部分，印不全就是看不见的几何
+                    $"　槽心 {JoinF(np, q => d.SlotCenterDegOf(q))}°　孔心 {JoinF(np, q => d.TabHoleCenterXMm(q))}" +
+                    $"　盘形 {string.Join("/", Enumerable.Range(0, np).Select(q => DiscShapeName(d.DiscCutShapeOf(q))))}" +
+                    $"　孔形 {string.Join("/", Enumerable.Range(0, np).Select(q => HoleShapeName(d.TabHoleSidesOf(q))))}");
 
                 // ── 逐片逐条列违反
                 var todo = new List<(int J, Knob[] Knobs, string Key)>();
@@ -709,7 +739,7 @@ public static class Solver
             {
                 // 孔都没有，拉长比作用在空集上 —— HolesOf 在 r ≤ 0.05 时返回空数组。
                 //   实测印证（R60 那一跑）：抬到底 −118.877 → −118.877，**一位没变**。
-                Knob.TabHoleAspect when !(Get(d, Knob.TabHoleR, j) > 0.05)
+                Knob.TabHoleAspect when !(d.TabHoleREffective(j) > 0)      // R15：< 1 mm 的孔按无孔
                     => "还没有孔，拉长比作用在空集上",
                 // 倍率 = 1 ⇒ 这一级是平的，半径挪到哪儿都是同一块板。
                 //   原来要花一次场解才发现，而这是闭式可判的。
@@ -738,14 +768,38 @@ public static class Solver
                          : $"**开不出槽**：槽带内径 {rin0:0.0} > 外径 {rout0:0.0} mm ——"
                            + $" 盘半径 {d.DiscRadiusMm:0.0} 太小，管孔+焊脚+桥宽之外没有余地";
                 }
+                else if (k == Knob.TabHoleR && hi <= 1e-9)
+                {
+                    // ★ R15：上界本来有一点点（比如 0.4 mm），但孔径 < 1 mm 的孔不考虑 ⇒ 这根旋钮当场淘汰，并说清是哪一条
+                    double raw = HoleRadiusUpperRawMm(d, baseIn, opt, j, res);
+                    why0 = raw > 1e-9 && raw < DesignSpec.TabHoleRMinMm
+                         ? $"**孔径上界只有 {raw:0.00} mm < 最小孔径 {DesignSpec.TabHoleRMinMm:0.0} mm**（孔径 < 1 mm 的孔不考虑）⇒ 淘汰"
+                         : "**上界就是 0**（舌片按 J=10 定厚后，孔缘处再扣弦就超 J；开孔就得整条舌片加厚）";
+                }
                 else if (hi <= 1e-9)
                     why0 = "**上界就是 0**（这根旋钮在当前几何下开不出来）";
                 fails.Add($"{KnobName(k)} {why0}");
                 continue;
             }
-            Set(d, k, j, hi);
-            var rk = EvalProbe(d, baseIn, opt, res, cancel, inner);   // 临时态：邻片熔了在副本上抬，代价计入本候选
-            Set(d, k, j, lo);                       // 量完立刻还原 —— 只增不减的不变式不受影响
+            // ★★★ R13：挖料旋钮第一次打开时，**形状族**先各抬到各的上界探一针、按同一套比价挑（不另立指标）。
+            //   已经开了口的片形状不再换（换形状会改已提交的几何，破坏只增不减的推理）。
+            LineResult? rk;
+            double hiProbe = hi;
+            var family = ShapeFamilyFor(d, k, j, lo);
+            if (family.Length > 1)
+            {
+                (rk, hiProbe) = ProbeShapeFamily(d, baseIn, opt, j, k, key, family, lo, before, mass0,
+                                                 dipMax, discMax, res, Log, cancel, inner);
+                if (double.IsNaN(hiProbe)) { fails.Add($"{KnobName(k)} 形状族里没有一个装得下／解得出来"); continue; }
+            }
+            else
+            {
+                Set(d, k, j, hi);
+                rk = EvalProbe(d, baseIn, opt, res, cancel, inner);   // 临时态：邻片熔了在副本上抬，代价计入本候选
+                Set(d, k, j, lo);                       // 量完立刻还原 —— 只增不减的不变式不受影响
+            }
+            // 探针若不是在这根旋钮（选定形状后）自己的上界上量的，after 就不能当 knownAfter 交给 RaiseUntil
+            bool afterAtHi = Math.Abs(hiProbe - HiOfFor(d, baseIn, opt, k, j, res)) < 1e-9;
             double after = PlateSlack(rk, key, j, dipMax, discMax);
             double dSlack = after - before;
             double dMass = rk is null || double.IsNaN(mass0) ? double.NaN : MassOf(rk) - mass0;
@@ -810,7 +864,7 @@ public static class Solver
             if (best is null || Better(cand, new Cand(bestGain, bestMass, bestCloses)))
             {
                 best = k; bestCloses = closes; bestGain = dSlack;
-                bestAfter = after; bestGratis = cand.Gratis; bestMass = dMass;
+                bestAfter = afterAtHi ? after : double.NaN; bestGratis = cand.Gratis; bestMass = dMass;
             }
         }
 
@@ -948,7 +1002,9 @@ public static class Solver
         for (int i = 0; i < opt.BisectMaxIter && hi - lo > TolOf(opt, knob); i++)
         {
             cancel.ThrowIfCancellationRequested();
-            double mid = 0.5 * (lo + hi);
+            double mid = NextBisectPoint(knob, lo, hi);      // R15：孔径的二分点不许落在 (0, 1 mm)
+            // ★ 括号缩不下去了（孔径：lo 无孔、hi 已是最小孔 1 mm，(0,1) 不许探）⇒ hi 就是答案，别再探同一个点
+            if (mid >= hi - 1e-12) break;
             Set(d, knob, j, mid);
             var rMid = EvalProbe(d, baseIn, opt, res, cancel, inner);   // 临时态：中点上邻片熔了在副本上抬
             if (rMid is null)
@@ -1647,7 +1703,13 @@ public static class Solver
             case Knob.RingR1: d.RingW1Mm[j]  = v; break;
             case Knob.RingR2: d.RingW2Mm[j]  = v; break;
             case Knob.SlotSpan: if (j < d.SlotSpanDeg.Length) d.SlotSpanDeg[j] = v; break;
-            case Knob.TabHoleR: if (j < d.TabHoleRMm.Length) d.TabHoleRMm[j] = v; break;
+            case Knob.TabHoleR:
+                // ★ R15 的门：求解器永远不该把孔径写进 (0, 1 mm)。走到这里就是上界／二分点／量化哪一处漏了，当场炸、不静默。
+                if (v > 1e-12 && v < DesignSpec.TabHoleRMinMm - 1e-9)
+                    throw new InvalidOperationException(
+                        $"片{j} 孔径要被写成 {v:0.000} mm，落在 (0, {DesignSpec.TabHoleRMinMm:0.0}) —— 孔径 < 1 mm 的孔不考虑（R15）。"
+                        + "取值只能是 0 或 ≥ 1 mm；上界、二分点、量化三处必有一处漏了门。");
+                if (j < d.TabHoleRMm.Length) d.TabHoleRMm[j] = v; break;
             case Knob.TabHoleAspect: if (j < d.TabHoleAspect.Length) d.TabHoleAspect[j] = v; break;
             default: throw new ArgumentOutOfRangeException(nameof(k));
         }
@@ -1671,22 +1733,274 @@ public static class Solver
         //   两条上界（桥宽闭式／J 截面）取紧的那个；哪条生效由数说。
         double floorD = d.DiscFloorMm(baseIn);
         double iA = res?.DesignCurrent is { } dc && j < dc.PlateA.Length ? dc.PlateA[j] : 0;
-        if (k == Knob.TabHoleR)
-        {
-            double hi = Math.Min(HiOf(o, k), d.TabHoleRMaxMm());
-            if (iA > 0) hi = Math.Min(hi, SectionSizing.HoleRadiusMaxByJMm(d.Plate(j, floorD), d.TabHoleCenterXMm(), iA));
-            return hi;
-        }
+        if (k == Knob.TabHoleR) return HoleRadiusUpperMm(d, baseIn, o, j, res);
         if (k != Knob.SlotSpan) return HiOf(o, k);
         double td = Math.Max(j < d.TabThickMm.Length ? d.TabThickMm[j] : 0, floorD);
         double weld = Math.Max(td, d.WallMm);
         double hiS = Math.Min(HiOf(o, k), d.SlotSpanMaxDeg(weld));
+        // ★ R13：长椭圆还要装得下槽带（直的椭圆越长越往带外鼓）—— 闭式二分，不解场
+        if (d.DiscCutShapeOf(j) >= 1) hiS = Math.Min(hiS, d.DiscEllipseSpanMaxDeg(j, weld));
         if (iA > 0)
         {
             var (rin, rout) = d.SlotBandMm(weld);
-            if (rout > rin) hiS = Math.Min(hiS, SectionSizing.SlotSpanMaxByJDeg(d.Plate(j, floorD), rin, rout, iA));
+            if (rout > rin)
+            {
+                if (d.DiscCutShapeOf(j) == 0)
+                    hiS = Math.Min(hiS, SectionSizing.SlotSpanMaxByJDeg(d.Plate(j, floorD), rin, rout, iA));
+                else
+                    // 长椭圆没有「每圈扣 r·θ」的闭式 ⇒ 按「张角 → 板 → 各圈 J」二分（仍是闭式几何）
+                    hiS = Math.Min(hiS, SectionSizing.CutSpanMaxByJDeg(span =>
+                    {
+                        var dd = d.Clone();
+                        if (j < dd.SlotSpanDeg.Length) dd.SlotSpanDeg[j] = span;
+                        return dd.Plate(j, floorD);
+                    }, iA, hiS, d.ClampLengthMm));
+            }
         }
         return hiS;
+    }
+
+    /// <summary>
+    /// 孔径上界（桥宽闭式 ∧ 按 J=10 的孔缘弦），**未套 R15**。只给「为什么淘汰」的解释用。
+    /// </summary>
+    public static double HoleRadiusUpperRawMm(DesignSpec d, DesignInputs baseIn, SolverOptions o, int j, SolverResult? res = null)
+    {
+        double floorD = d.DiscFloorMm(baseIn);
+        double iA = res?.DesignCurrent is { } dc && j < dc.PlateA.Length ? dc.PlateA[j] : 0;
+        double hi = Math.Min(HiOf(o, Knob.TabHoleR), d.TabHoleRMaxMm());
+        if (iA > 0) hi = Math.Min(hi, SectionSizing.HoleRadiusMaxByJMm(d.Plate(j, floorD), d.TabHoleCenterXMm(j), iA));
+        return hi;
+    }
+
+    /// <summary>
+    /// ★ 孔径旋钮的上界，**套了 R15**：上界不足 <see cref="DesignSpec.TabHoleRMinMm"/> ⇒ 0（这根旋钮当场淘汰）。
+    /// 取值域从此是 {0} ∪ [1, hi]，二分点由 <see cref="NextBisectPoint"/> 保证不落进 (0, 1)。
+    /// </summary>
+    public static double HoleRadiusUpperMm(DesignSpec d, DesignInputs baseIn, SolverOptions o, int j, SolverResult? res = null)
+    {
+        double hi = HoleRadiusUpperRawMm(d, baseIn, o, j, res);
+        return hi < DesignSpec.TabHoleRMinMm - 1e-9 ? 0 : hi;
+    }
+
+    /// <summary>
+    /// ★ 二分的下一个探点。孔径（R15）：lo 还是「无孔」（&lt; 1 mm）时先探**最小孔 1 mm** ——
+    /// 1 mm 就过 ⇒ 答案是 1 mm；不过 ⇒ 括号从 1 mm 起再对半。(0, 1) 里一个点都不探、不写、不量化。
+    /// 其余旋钮照旧取中点。
+    /// </summary>
+    public static double NextBisectPoint(Knob k, double lo, double hi)
+    {
+        const double rMin = DesignSpec.TabHoleRMinMm;
+        if (k == Knob.TabHoleR && lo < rMin - 1e-12)
+            return hi > rMin + 1e-12 ? rMin : hi;
+        return 0.5 * (lo + hi);
+    }
+
+    /// <summary>
+    /// ★ R15：把带进来的 (0, 1 mm) 孔径按无孔处理并留痕。返回改了几片。
+    /// 「不考虑」= 几何里没有它（<see cref="DesignSpec.TabHoleREffective"/> 已经这么算），这里只是把数组也写成 0，免得报表印着 0.5。
+    /// </summary>
+    public static int NormalizeHoleRadii(DesignSpec d, Action<string>? log = null)
+    {
+        int n = 0;
+        for (int j = 0; j < d.TabHoleRMm.Length; j++)
+        {
+            double r = d.TabHoleRMm[j];
+            if (!(r > 1e-12) || r >= DesignSpec.TabHoleRMinMm - 1e-9) continue;
+            log?.Invoke($"★ 片{j} 孔径 {r:0.00} mm < 最小孔径 {DesignSpec.TabHoleRMinMm:0.0} mm（孔径 < 1 mm 的孔不考虑）⇒ 按无孔");
+            d.TabHoleRMm[j] = 0; n++;
+        }
+        return n;
+    }
+
+    // ══ R13：形状族（离散选择，不是旋钮）════════════════════════════════════════════
+
+    public static string DiscShapeName(int shape) => shape == 1 ? "长椭圆·切向" : shape == 2 ? "长椭圆·顺当地电流" : "弯椭圆槽";
+    public static string HoleShapeName(int sides) => sides == 3 ? "圆角三角" : sides == 4 ? "圆角方" : "圆";   // 圆的拉长比另有「孔拉长」一列；名字里不许带 /（表头用 / 分片）
+
+    /// <summary>
+    /// 这根旋钮在第 j 片上可选的形状族成员。只有**还没开口**（旋钮值 = 0）时才有得选；
+    /// 已经开了口的形状不换（换形状会改已提交的几何）。非挖料旋钮 ⇒ 只有一个元素（当前形状）。
+    /// </summary>
+    public static int[] ShapeFamilyFor(DesignSpec d, Knob k, int j, double lo)
+    {
+        if (k == Knob.SlotSpan)
+        {
+            if (lo > 0.5) return new[] { d.DiscCutShapeOf(j) };
+            // 「顺当地电流」要有方向才成一员：场给不出方向（还没有场／梯度退化）就只比弯槽与切向长椭圆
+            bool hasDir = j < d.DiscCutRotDeg.Length && !double.IsNaN(d.DiscCutRotDeg[j]);
+            return hasDir ? new[] { 0, 1, 2 } : new[] { 0, 1 };
+        }
+        if (k == Knob.TabHoleR) return lo > 1e-9 ? new[] { d.TabHoleSidesOf(j) } : new[] { 0, 3, 4 };
+        return new[] { 0 };
+    }
+
+    private static int GetShape(DesignSpec d, Knob k, int j) =>
+        k == Knob.SlotSpan ? d.DiscCutShapeOf(j) : k == Knob.TabHoleR ? d.TabHoleSidesOf(j) : 0;
+
+    private static void SetShape(DesignSpec d, Knob k, int j, int shape)
+    {
+        if (k == Knob.SlotSpan && j < d.DiscCutShape.Length) d.DiscCutShape[j] = shape;
+        if (k == Knob.TabHoleR && j < d.TabHoleSides.Length) d.TabHoleSides[j] = shape;
+    }
+
+    /// <summary>
+    /// ★★★ **形状族比价**（R13）：每个形状**抬到它自己的上界**各探一针，量 Δ裕度／Δ铂重／最紧截面 J，
+    /// 用 <see cref="Better"/>（与旋钮之间同一套比价：先看补不补得上，再看每克铂买多少）挑最好的，
+    /// **把选中的形状写进设计**并留痕。返回 (选中形状在自己上界处的场解, 那个上界)；
+    /// 没有一个形状装得下 ⇒ (null, NaN)；有装得下但没有一个让判据变好 ⇒ 回当前形状的场解（外层按「没变好」淘汰这根旋钮）。
+    ///
+    /// ⚠ 为什么不是「同一挖料面积」（2026-09-09 第一版就是那样，被 deliverable/形状族_求解轨迹.txt 第一趟打回）：
+    ///   公共面积只能取各形状上界的最小值 —— 长椭圆是直的、装得下的张角只有 25°，弯椭圆槽能开到两百多度；
+    ///   在 25° 上两者裕度只差 0.02 K（+7.83 vs +7.85），切向长椭圆险胜，于是槽这根旋钮被**它的 25° 封了顶**、
+    ///   「抬到上界仍不过」收场，而弯槽本可继续开到 −30 % 抽热。旋钮之间比价本来就是「各抬到各的上界」，形状之间照此办理。
+    ///   等面积的对照另有实测表（deliverable/形状族_对比.txt），那是量「每单位面积谁更有效」，不是求解器的决策依据。
+    /// </summary>
+    private static (LineResult? R, double HiProbe) ProbeShapeFamily(
+        DesignSpec d, DesignInputs baseIn, SolverOptions opt, int j, Knob k, string key, int[] family,
+        double lo, double before, double mass0, double dipMax, double discMax,
+        SolverResult res, Action<string> Log, CancellationToken cancel, IProgress<string>? inner)
+    {
+        int shape0 = GetShape(d, k, j);
+        string famName = k == Knob.SlotSpan ? "圆盘挖料形状" : "舌孔形状";
+        string Name(int s) => k == Knob.SlotSpan ? DiscShapeName(s) : HoleShapeName(s);
+
+        // 各形状自己的上界；装不下的（上界 ≤ lo）出局，其余各抬到各的上界探一针
+        var fails = new List<string>();
+        var open = new List<(int Shape, double Hi)>();
+        foreach (int s in family)
+        {
+            SetShape(d, k, j, s);
+            double hs = HiOfFor(d, baseIn, opt, k, j, res);
+            SetShape(d, k, j, shape0);
+            if (hs > lo + 1e-12) open.Add((s, hs)); else fails.Add($"{Name(s)} 装不下（上界 {hs:0.###}）");
+        }
+        if (open.Count == 0)
+        {
+            Log($"     · 片{j} {famName}比价：" + string.Join("；", fails) + " ⇒ 没有一个装得下");
+            return (null, double.NaN);
+        }
+        double floorD = d.DiscFloorMm(baseIn);
+        double iA = res.DesignCurrent is { } dc && j < dc.PlateA.Length ? dc.PlateA[j] : 0;
+
+        var lines = new List<string>(fails);
+        LineResult? bestR = null, baseR = null, anyR = null;
+        double bestHi = double.NaN, baseHi = double.NaN, anyHi = double.NaN;
+        int bestShape = -1; var bestCand = new Cand(double.NegativeInfinity, double.PositiveInfinity, false);
+        foreach (var (s, hs) in open)
+        {
+            SetShape(d, k, j, s);
+            Set(d, k, j, hs);
+            double jSec = iA > 0 ? SectionSizing.Worst(d.Plate(j, floorD), iA, d.ClampLengthMm).JAPerMm2 : double.NaN;
+            var r = EvalProbe(d, baseIn, opt, res, cancel, inner);
+            Set(d, k, j, lo);
+            SetShape(d, k, j, shape0);
+            if (r is null) { lines.Add($"{Name(s)} 抬到上界 {hs:0.###} 时解不出来（{res.NullWhy}）"); continue; }
+            if (anyR is null) { anyR = r; anyHi = hs; }
+            if (s == shape0) { baseR = r; baseHi = hs; }
+            double after = PlateSlack(r, key, j, dipMax, discMax);
+            double dSlack = after - before;
+            double dMass = double.IsNaN(mass0) ? double.NaN : MassOf(r) - mass0;
+            bool closes = after >= 0;
+            var cand = new Cand(dSlack, dMass, closes);
+            lines.Add($"{Name(s)} 上界 {hs:0.###}：{(closes ? "补得上" : "补不上")}、裕度 {dSlack:+0.00;-0.00}／铂 {dMass:+0.0;-0.0} g"
+                    + (double.IsNaN(jSec) ? "" : $"／最紧截面 J {jSec:0.0}")
+                    + (dSlack > 1e-9 ? "" : "（没变好）"));
+            if (!(dSlack > 1e-9)) continue;
+            if (bestShape < 0 || Better(cand, bestCand)) { bestShape = s; bestCand = cand; bestR = r; bestHi = hs; }
+        }
+        if (bestShape < 0)
+        {
+            Log($"     · 片{j} {famName}比价（各抬到各的上界）：" + string.Join("　", lines) + " ⇒ 没有一个形状让判据变好");
+            return baseR is not null ? (baseR, baseHi) : (anyR, anyHi);
+        }
+        SetShape(d, k, j, bestShape);
+        Log($"     · 片{j} {famName}比价（各抬到各的上界；比价规则与旋钮之间同一套：先补得上、再每克铂）："
+          + string.Join("　", lines) + $" ⇒ 选**{Name(bestShape)}**");
+        return (bestR, bestHi);
+    }
+
+    // ══ R12：场定孔位 ══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// ★★★★★ **每轮开头从最新收敛的场定位置**（R12，用户 2026-09-08 设计因果链第 ③ 步）。
+    /// 逐片：移除优先级 P = 导热贡献 ÷ 电流密度（<see cref="RemovalPriority"/>，与 2026-09-05 的量法同一份）；
+    ///   · 圆盘槽槽心角 = 槽带内 P 的面积加权平均最高的角向（窗口 ±max(15°, 张角/2)），落 1° 格；
+    ///   · 舌孔孔心 x = 自由段内（扣掉孔自身半长，孔要整个落在自由段里）P 最高处（窗口 ±max(5 mm, 孔半长)），落 0.5 mm 格；
+    ///   · 长椭圆轴向 = 槽心处的当地电流方向（−∇V）；那里电流几乎不走（|∇V| &lt; 全片最大的 0.1 %）就留 NaN 走切向。
+    /// 还没有场（<paramref name="last"/> 为 null）⇒ 不改，只说明用默认规则。
+    /// 返回：**有切口的片**位置变了（⇒ 调用方要重解一次基准场）。没有切口时位置照记、几何不变、不重解。
+    /// </summary>
+    public static bool FieldPlacement(DesignSpec d, DesignInputs baseIn, LineResult? last, Action<string>? log)
+    {
+        int np = d.TabThickMm.Length;
+        if (last is null || !last.Ok)
+        {
+            log?.Invoke(BranchMarks.FieldPlacement + "：还没有收敛的场 ⇒ 槽心 0°（背对舌片）／舌孔取自由段中点（默认规则）；第一次场解之后按场重定");
+            return false;
+        }
+        double floorD = d.DiscFloorMm(baseIn);
+        bool changed = false;
+        var parts = new List<string>();
+        for (int j = 0; j < np; j++)
+        {
+            var f = j < last.Flanges.Length ? last.Flanges[j] : null;
+            if (f?.Mesh is null || f.JField.Length < f.Mesh.CellCount || f.TField.Length < f.Mesh.CellCount)
+            { parts.Add($"片{j} 场里没有网格 ⇒ 默认规则"); continue; }
+            var mesh = f.Mesh;
+            var p = RemovalPriority.Compute(mesh, f.JField, f.TField, f.TRootC);
+
+            double td = Math.Max(j < d.TabThickMm.Length ? d.TabThickMm[j] : 0, floorD);
+            double weld = Math.Max(td, d.WallMm);
+            var (rin, rout) = d.SlotBandMm(weld);
+            double span = j < d.SlotSpanDeg.Length ? d.SlotSpanDeg[j] : 0;
+            bool hasSlot = span > 0.5;
+            double thOld = d.SlotCenterDegOf(j);
+            var (thNew, _) = rout > rin ? RemovalPriority.SlotCenterDeg(mesh, p, rin, rout, Math.Max(15.0, 0.5 * span)) : (double.NaN, double.NaN);
+            if (!double.IsNaN(thNew))
+            {
+                thNew = Math.Round(thNew);
+                if (j < d.SlotCenterDeg.Length) d.SlotCenterDeg[j] = thNew;
+            }
+            else thNew = thOld;
+
+            var g = d.Plate(j, floorD);
+            double xTan = g.Tangent().X, xClamp = -d.TabLengthMm + d.ClampLengthMm;
+            double rEff = d.TabHoleREffective(j);
+            double asp = j < d.TabHoleAspect.Length && d.TabHoleAspect[j] > 0 ? d.TabHoleAspect[j] : 1.0;
+            double halfLen = rEff * Math.Max(1.0, asp);
+            double margin = Math.Max(halfLen, 2.0);
+            bool hasHole = rEff > 0;
+            double xOld = d.TabHoleCenterXMm(j);
+            // ★★ 舌孔孔心：场给的位置**只印不用**（2026-09-09 实测把这条规则推翻了，见 deliverable/形状族_对比.txt 末段）：
+            //   「优先级最高处」在舌根（Pt_Heater1：x = −14.5，分数单调朝圆盘涨），而 孔位对比.txt 同一构型逐点实测
+            //   最优在 x = −50（抽热 −2.22 %），−20 反而最坏（峰值 J +23.9 %、抽热还升）。前提不成立就不许拿它改几何 ——
+            //   孔心仍走默认规则（自由段中点，或档里给的逐片值）；数印出来供对照，等有站得住的判据再接上。
+            //   逐片数组、存档、出图那条链都已通，接上只差这一行。
+            var (xNew, _) = RemovalPriority.TabHoleXMm(mesh, p, xClamp + margin, xTan - margin, Math.Max(5.0, halfLen));
+            if (!double.IsNaN(xNew)) xNew = Math.Round(xNew * 2) / 2; else xNew = xOld;
+            _ = hasHole;
+
+            // 当地电流方向：每轮都算（形状族里「长椭圆·顺当地电流」要拿它当长轴），梯度退化 ⇒ NaN（那一员就不参赛）
+            double rotOld = j < d.DiscCutRotDeg.Length ? d.DiscCutRotDeg[j] : double.NaN, rotNew = double.NaN;
+            if (f.VField.Length >= mesh.CellCount && rout > rin)
+            {
+                double rm = 0.5 * (rin + rout), th = thNew * Math.PI / 180.0;
+                var (dirDeg, mag) = RemovalPriority.CurrentDirectionDeg(mesh, f.VField, rm * Math.Cos(th), rm * Math.Sin(th));
+                if (!double.IsNaN(dirDeg) && mag > 0) rotNew = Math.Round(dirDeg);
+                if (j < d.DiscCutRotDeg.Length) d.DiscCutRotDeg[j] = rotNew;
+            }
+
+            double dth = Math.Abs(thNew - thOld); if (dth > 180) dth = 360 - dth;
+            if (hasSlot && dth > 0.5) changed = true;
+            if (hasSlot && d.DiscCutShapeOf(j) == 2 && !(double.IsNaN(rotOld) && double.IsNaN(rotNew)) && !(Math.Abs(rotOld - rotNew) < 0.5)) changed = true;
+
+            parts.Add($"片{j} 槽心 {thNew:0}°" + (double.IsNaN(rotNew) ? "" : $"（当地电流 {rotNew:0}°）")
+                    + $"／舌孔场给 x={xNew:0.0}（未采用，用 {xOld:0.0}）");
+        }
+        log?.Invoke(BranchMarks.FieldPlacement + "：" + string.Join("　", parts)
+                  + "（移除优先级 = 导热贡献 ÷ 电流密度，取最新收敛的场；"
+                  + (changed ? "有切口的片位置变了 ⇒ 基准场重解一次）" : "没有切口或位置没变 ⇒ 几何不变、不重解）"));
+        return changed;
     }
 
     private static double HiOf(SolverOptions o, Knob k) => k switch

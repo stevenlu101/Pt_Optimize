@@ -58,16 +58,52 @@ public static class SectionSizing
         foreach (var h in g.TabHoles) xs.Add(Math.Clamp(h.XMm, x0, x1));
         foreach (double x in xs)
         {
-            double w = 2 * g.HalfWidth(x);
-            foreach (var h in g.TabHoles)
-            {
-                double rx = h.RMm * Math.Max(1e-9, h.AspectXZ);          // 顺流拉长在 x 方向
-                double dx = (x - h.XMm) / rx;
-                if (Math.Abs(dx) < 1) w -= 2 * h.RMm * Math.Sqrt(1 - dx * dx);   // 扣掉孔的弦
-            }
+            double hw = g.HalfWidth(x);
+            double w = 2 * hw;
+            foreach (var h in g.TabHoles) w -= ChordMm(h, x, hw);        // 扣掉孔的弦
             res.Add((x, w));
         }
         return res;
+    }
+
+    /// <summary>
+    /// 孔在 x 处占掉的弦长 mm（限制在 |z| ≤ halfW 内）。
+    /// 圆／椭圆且不转角：闭式 2R√(1−(dx/(R·asp))²)（与 2026-09-08 逐位相同）；
+    /// 圆角三角／方或转了角（R13）：形状是凸的（凸多边形 ⊕ 圆盘再仿射），与竖线的交是**一段**区间 ——
+    /// 先粗采样找到孔内点，再对两端各二分到 1e-6 mm。闭式几何，不解场。
+    /// </summary>
+    public static double ChordMm(FlangePlate.TabHole h, double x, double halfW)
+    {
+        double asp = Math.Max(1e-9, h.AspectXZ);
+        if (h.Sides < 3 || h.CornerFrac >= 0.999)
+        {
+            if (Math.Abs(h.RotDeg) < 1e-12)
+            {
+                double dx = (x - h.XMm) / (h.RMm * asp);
+                return Math.Abs(dx) < 1 ? 2 * h.RMm * Math.Sqrt(1 - dx * dx) : 0;
+            }
+        }
+        double rb = h.RMm * Math.Max(1.0, asp);                       // 外包半径（转角后最远也就这么远）
+        if (Math.Abs(x - h.XMm) > rb) return 0;
+        double zLo = Math.Max(-halfW, h.ZMm - rb), zHi = Math.Min(halfW, h.ZMm + rb);
+        if (!(zHi > zLo)) return 0;
+        const int N = 400;
+        int first = -1, last = -1;
+        for (int i = 0; i <= N; i++)
+        {
+            double z = zLo + (zHi - zLo) * i / N;
+            if (!h.Contains(x, z)) continue;
+            if (first < 0) first = i;
+            last = i;
+        }
+        if (first < 0) return 0;
+        double step = (zHi - zLo) / N;
+        double a = zLo + first * step, b = zLo + last * step;
+        // 两端二分到边界（凸 ⇒ 单区间）
+        double aOut = Math.Max(zLo, a - step), bOut = Math.Min(zHi, b + step);
+        for (int k = 0; k < 40 && a - aOut > 1e-6; k++) { double m = 0.5 * (a + aOut); if (h.Contains(x, m)) a = m; else aOut = m; }
+        for (int k = 0; k < 40 && bOut - b > 1e-6; k++) { double m = 0.5 * (b + bOut); if (h.Contains(x, m)) b = m; else bOut = m; }
+        return Math.Max(0, b - a);
     }
 
     /// <summary>舌片最窄的有效宽度 mm（压接段之外；没有舌片段时 NaN）。</summary>
@@ -126,11 +162,20 @@ public static class SectionSizing
                 for (int i = 0; i <= M; i++) rs.Add(rIn + (rOut - rIn) * i / M);
                 foreach (double r in g.DiscStepRadiiMm) if (r > rIn && r < rOut) { rs.Add(r - 1e-6); rs.Add(r + 1e-6); }
                 foreach (var s in g.DiscSlots) { if (s.RInMm > rIn && s.RInMm < rOut) rs.Add(s.RInMm + 1e-6); if (s.ROutMm > rIn && s.ROutMm < rOut) rs.Add(s.ROutMm - 1e-6); }
+                foreach (var h in g.DiscCutHoles)
+                {
+                    double rc = Math.Sqrt(h.XMm * h.XMm + h.ZMm * h.ZMm), rb = h.RMm * Math.Max(1.0, h.AspectXZ);
+                    if (rc - rb > rIn && rc - rb < rOut) rs.Add(rc - rb + 1e-6);
+                    if (rc + rb > rIn && rc + rb < rOut) rs.Add(rc + rb - 1e-6);
+                    if (rc > rIn && rc < rOut) rs.Add(rc);
+                }
                 foreach (double r in rs)
                 {
                     double arc = 2 * Math.PI * r;
                     foreach (var s in g.DiscSlots)
                         if (r >= s.RInMm && r <= s.ROutMm) arc -= r * s.SpanDeg * Math.PI / 180.0;
+                    // ★ 圆盘上的直孔（长椭圆，R13）：这一圈落在孔里的弧长按角度扣（采样 + 二分到边界）
+                    foreach (var h in g.DiscCutHoles) arc -= r * ArcInsideRad(h, r);
                     // 厚度取舌片对侧（+x，槽心方向）之外的一点：−x 轴在盘上是各级台阶的厚度
                     double t = Math.Max(g.ThicknessAt(-r, 0), 1e-9);
                     if (arc <= 1e-9) { cuts.Add(new Cut($"圆盘 r={r:0.#}（被槽切断）", 0, double.PositiveInfinity)); continue; }
@@ -140,6 +185,63 @@ public static class SectionSizing
             }
         }
         return cuts;
+    }
+
+    /// <summary>
+    /// 半径 r 的圆周落在孔 <paramref name="h"/> 里的总弧度。圆与凸区域的交最多两段 ——
+    /// 先按 0.5° 采样找进出，再对每个过渡二分到 1e-6 rad。闭式几何，不解场。
+    /// </summary>
+    public static double ArcInsideRad(FlangePlate.TabHole h, double r)
+    {
+        double rc = Math.Sqrt(h.XMm * h.XMm + h.ZMm * h.ZMm), rb = h.RMm * Math.Max(1.0, h.AspectXZ);
+        if (r < rc - rb - 1e-12 || r > rc + rb + 1e-12) return 0;
+        const int N = 720;
+        double step = 2 * Math.PI / N;
+        var inside = new bool[N];
+        for (int i = 0; i < N; i++) { double t = i * step; inside[i] = h.Contains(r * Math.Cos(t), r * Math.Sin(t)); }
+        double total = 0;
+        for (int i = 0; i < N; i++)
+        {
+            int j = (i + 1) % N;
+            if (inside[i] == inside[j]) { if (inside[i]) total += step; continue; }
+            // 过渡：在 [i·step, (i+1)·step] 里二分找边界，边界之前/之后归各自
+            double a = i * step, b = (i + 1) * step;
+            for (int k = 0; k < 40 && b - a > 1e-6; k++)
+            {
+                double m = 0.5 * (a + b);
+                bool im = h.Contains(r * Math.Cos(m), r * Math.Sin(m));
+                if (im == inside[i]) a = m; else b = m;
+            }
+            total += inside[i] ? (a - i * step) : ((i + 1) * step - b);
+        }
+        return Math.Min(total, 2 * Math.PI);
+    }
+
+    /// <summary>
+    /// ★ 任意圆盘挖料形状的张角上界（按 J = 10）：给一个「张角 → 板」的造板函数，二分找**圆盘各圈** J 都 ≤ 10 的最大张角
+    /// （面积随张角单调增 ⇒ 圈上剩余弧单调减 ⇒ 二分成立）。弯椭圆槽有闭式 <see cref="SlotSpanMaxByJDeg"/>；
+    /// 长椭圆（R13）走这里。向下落到 1° 格；没有电流 ⇒ spanHi。
+    /// </summary>
+    public static double CutSpanMaxByJDeg(Func<double, FlangePlate> plateAt, double currentA, double spanHiDeg,
+                                          double clampLenMm = 0, double jDesign = JDesignAPerMm2)
+    {
+        if (!(currentA > 0) || !(spanHiDeg > 0)) return spanHiDeg;
+        bool Ok(double span)
+        {
+            var g = plateAt(span);
+            return Cuts(g, currentA, clampLenMm).Where(c => c.Where.StartsWith("圆盘", StringComparison.Ordinal))
+                                                 .All(c => c.JAPerMm2 <= jDesign + 1e-9);
+        }
+        if (Ok(spanHiDeg)) return spanHiDeg;
+        double lo = 0, hi = spanHiDeg;
+        if (!Ok(1.0)) return 0;
+        lo = 1.0;
+        for (int it = 0; it < 30 && hi - lo > 0.5; it++)
+        {
+            double mid = 0.5 * (lo + hi);
+            if (Ok(mid)) lo = mid; else hi = mid;
+        }
+        return Math.Floor(lo);
     }
 
     /// <summary>最紧的截面（J 最大）。</summary>

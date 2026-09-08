@@ -22,6 +22,8 @@ namespace PtOptimize.Tests;
 /// 求解器解出 120° 槽 + 36 mm 孔，导出的 .3dm 上一个都没有 ——
 /// 两边各自都自洽，只有把图读回来才看得出。
 /// </summary>
+// ★ 2026-09-09：起 Rhino 子进程的测试类**串行**（同一 xunit collection）—— 并行起两个 RhinoCore 会互相挂死到 10 分钟超时（合并 R12/R13 时抓到，单跑 12 s 过）
+[Collection("Rhino 子进程")]
 public class ExportShowsSolvedKnobsTests
 {
     // ══════════════════════════════════════════════════════════════════════
@@ -143,7 +145,7 @@ public class ExportShowsSolvedKnobsTests
     }
 
     /// <summary>跑一次厚度探针，返回各内部空洞的面积 mm²（降序，忽略 &lt; 20 mm² 的擦边噪点）。</summary>
-    private static List<double> HolesOf(string probe, string file, string layer, double planeY)
+    internal static List<double> HolesOf(string probe, string file, string layer, double planeY)   // ShapeFamilyTests 也用（2026-09-09）
     {
         var psi = new System.Diagnostics.ProcessStartInfo(probe)
         {

@@ -32,6 +32,8 @@ namespace PtOptimize.Tests;
 ///   · 图上有料、算上无料 ⇒ 多画了（本次：整个管腔）
 ///   · 算上有料、图上无料 ⇒ 少画了（挖过头，同样致命）
 /// </summary>
+// ★ 2026-09-09：起 Rhino 子进程的测试类**串行**（同一 xunit collection）—— 并行起两个 RhinoCore 会互相挂死到 10 分钟超时（合并 R12/R13 时抓到，单跑 12 s 过）
+[Collection("Rhino 子进程")]
 public class Export3dmMatchesSolvedTests
 {
     /// <summary>
@@ -161,7 +163,7 @@ public class Export3dmMatchesSolvedTests
         d.Name = "穿管坏例（2026-09-06 交付件逐位复现）";
         d.TabLengthMm = 199.5; d.TabHalfWidthMm = 40; d.WallMm = 1.0;
         d.DiscRadiusMm = 35;
-        d.TabHoleXMm = -79.75;
+        for (int j = 0; j < d.TabHoleXMm.Length; j++) d.TabHoleXMm[j] = -79.75;   // R12 之后孔心逐片：坏例四片同一个数，逐位复现当时
         double[] t   = { 3.04, 1.25, 5.06, 1.25 };
         double[] hr  = { 32.71, 30.00, 30.90, 0.00 };
         double[] asp = { 3.0, 2.9, 1.0, 1.0 };

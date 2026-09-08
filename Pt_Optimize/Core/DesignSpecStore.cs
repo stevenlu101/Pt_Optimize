@@ -99,7 +99,18 @@ public static class DesignSpecStore
         public double[]? tabHoleRMm { get; set; }
         /// <summary>孔的顺流拉长比（逐片；1 = 圆）。2026-09-05。</summary>
         public double[]? tabHoleAspect { get; set; }
+        /// <summary>旧档（2026-09-09 之前）的孔心：整线一个数。只读不写 —— 读进来铺到每一片。</summary>
         public double? tabHoleXMm { get; set; }
+        /// <summary>★ R12：孔心逐片（场定）。NaN ↔ null（= 默认规则：自由段中点）。</summary>
+        public double?[]? tabHoleXByPlateMm { get; set; }
+        /// <summary>★ R12：圆盘槽槽心角（逐片，场定）。NaN ↔ null（= 默认 0°）。</summary>
+        public double?[]? slotCenterDeg { get; set; }
+        /// <summary>★ R13：舌孔形状族（逐片：0 圆／椭圆、3 圆角三角、4 圆角方）。</summary>
+        public double[]? tabHoleSides { get; set; }
+        /// <summary>★ R13：圆盘挖料形状族（逐片：0 弯椭圆槽、1 长椭圆）。</summary>
+        public double[]? discCutShape { get; set; }
+        /// <summary>★ R13：长椭圆长轴方向 °（逐片，场定）。NaN ↔ null（= 切向）。</summary>
+        public double?[]? discCutRotDeg { get; set; }
         public double? slotROutMm { get; set; }
         public double? totalMassG { get; set; }
         public double? tubeMassG { get; set; }
@@ -272,7 +283,13 @@ public static class DesignSpecStore
         if (d.slotRInMm is { } sri) fd.SlotRInMm = sri;
         if (d.tabHoleRMm is { Length: > 0 } holeArr) fd.TabHoleRMm = (double[])holeArr.Clone();
         if (d.tabHoleAspect is { Length: > 0 } aspArr) fd.TabHoleAspect = (double[])aspArr.Clone();
-        if (d.tabHoleXMm is { } thx) fd.TabHoleXMm = thx;
+        // ★ R12（2026-09-09）：孔心改逐片。旧档只有一个标量 ⇒ 铺到每一片（与从前「整线一个数」逐位同义）；新档逐片数组优先。
+        if (d.tabHoleXMm is { } thx) fd.TabHoleXMm = Enumerable.Repeat(thx, nPlate).ToArray();
+        if (d.tabHoleXByPlateMm is { Length: > 0 } txp) fd.TabHoleXMm = NaA(txp);
+        if (d.slotCenterDeg is { Length: > 0 } scd) fd.SlotCenterDeg = NaA(scd);
+        if (d.tabHoleSides is { Length: > 0 } ths) fd.TabHoleSides = (double[])ths.Clone();
+        if (d.discCutShape is { Length: > 0 } dcs) fd.DiscCutShape = (double[])dcs.Clone();
+        if (d.discCutRotDeg is { Length: > 0 } dcr) fd.DiscCutRotDeg = NaA(dcr);
         if (d.slotROutMm is { } sro) fd.SlotROutMm = sro;
         if (d.ringW1Mm is { Length: > 0 } r1) fd.RingW1Mm = NaA(r1);
         if (d.ringW2Mm is { Length: > 0 } r2) fd.RingW2Mm = NaA(r2);
@@ -336,7 +353,13 @@ public static class DesignSpecStore
             slotRInMm = double.IsNaN(fd.SlotRInMm) ? null : fd.SlotRInMm,
             tabHoleRMm = fd.TabHoleRMm.Any(v => v > 0.05) ? fd.TabHoleRMm : null,
             tabHoleAspect = fd.TabHoleAspect.Any(v => Math.Abs(v - 1.0) > 1e-9) ? fd.TabHoleAspect : null,
-            tabHoleXMm = double.IsNaN(fd.TabHoleXMm) ? null : fd.TabHoleXMm,
+            // ★ R12/R13（2026-09-09）：孔心逐片（不再写标量）、槽心角、两个形状族、长椭圆方向。
+            //   与 ringMul2 那次同一条教训：少存一个，载入后就是**另一个设计**。样本门 Distinctive 已覆盖它们。
+            tabHoleXByPlateMm = NzA(fd.TabHoleXMm),
+            slotCenterDeg = NzA(fd.SlotCenterDeg),
+            tabHoleSides = fd.TabHoleSides.Any(v => v > 0.5) ? fd.TabHoleSides : null,
+            discCutShape = fd.DiscCutShape.Any(v => v > 0.5) ? fd.DiscCutShape : null,
+            discCutRotDeg = NzA(fd.DiscCutRotDeg),
             slotROutMm = double.IsNaN(fd.SlotROutMm) ? null : fd.SlotROutMm,
             totalMassG = fd.TotalMassG,
             tubeMassG = fd.TubeMassG,

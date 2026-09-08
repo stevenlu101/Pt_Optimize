@@ -111,6 +111,23 @@ public sealed class FlangePlate
             }
         }
 
+        /// <summary>
+        /// ★ **单位外接半径**（R = 1、不拉长）下这个形状族成员的面积 —— 等面积比形状要用它：
+        /// 同一个「孔径」旋钮值 R 在圆／圆角三角／圆角方之间要挖掉**同样多的料**，
+        /// 就把多边形的外接半径缩放到 R·√(π / UnitArea)（R13，用户 2026-09-08）。
+        /// 圆（Sides &lt; 3）的 UnitArea = π。
+        /// </summary>
+        public static double UnitArea(int sides, double cornerFrac)
+            => new TabHole(0, 0, 1.0, sides, cornerFrac).AreaMm2;
+
+        /// <summary>
+        /// 与半径 <paramref name="rCircle"/> 的圆**等面积**时，这个形状该用的外接半径。
+        /// 拉长比（AspectXZ）对所有形状同样作用在面积上，所以不进这里。
+        /// </summary>
+        public static double EqualAreaRadius(double rCircle, int sides, double cornerFrac)
+            => sides < 3 || cornerFrac >= 0.999 ? rCircle
+             : rCircle * Math.Sqrt(Math.PI / Math.Max(1e-12, UnitArea(sides, cornerFrac)));
+
         /// <summary>点 (x,z) 在不在这个孔里。</summary>
         public bool Contains(double x, double z)
         {
@@ -226,6 +243,19 @@ public sealed class FlangePlate
     /// ⚠ 与 <see cref="TabHoles"/> 一样，只从 <see cref="Inside"/> 一处生效。
     /// </summary>
     public DiscSlot[] DiscSlots = Array.Empty<DiscSlot>();
+
+    /// <summary>
+    /// ★★★ **圆盘上的直孔**（R13，用户 2026-09-08：「长椭圆与弯椭圆仅用于法兰」= 圆盘区）。
+    ///
+    /// 与 <see cref="DiscSlots"/>（沿圆周走的弯椭圆槽）并列的另一族：**直的**长椭圆放在圆盘上，
+    /// 长轴顺着当地电流方向、位置由场（移除优先级）定。几何复用 <see cref="TabHole"/>
+    /// 那一套「正 N 边形 ⊕ 圆角 ⊕ 拉长 ⊕ 转角」的判定 —— 同一段 Contains，不另写一份。
+    ///
+    /// ⚠ 为什么不直接塞进 <see cref="TabHoles"/>：舌片截面（<c>SectionSizing.TabWidths</c>）
+    ///   要扣**舌片上**每个孔的弦，圆盘上的孔不该混进去；分开放，两边各扣各的。
+    ///   与 TabHoles／DiscSlots 一样，只从 <see cref="Inside"/> 一处生效。
+    /// </summary>
+    public TabHole[] DiscCutHoles = Array.Empty<TabHole>();
 
     /// <summary>
     /// **等宽（矩形）舌片**：自与圆盘的交界起就保持 <see cref="TabEndHalfWidthMm"/> 不变，
@@ -468,7 +498,9 @@ public sealed class FlangePlate
     /// </summary>
     public bool Inside(double x, double z)
     {
-        if (x < TabTipXMm || x > DiscRadiusMm) return false;
+        // ★ 双舌片（2026-09-09 补齐）：域要伸到 +x 那条舌的舌端。此前这里止于盘缘 ⇒ TwoTabs 只在半宽上镜像，
+        //   第二条舌片**根本不在域里**，「双舌对称进电」的场与单舌逐位相同（FieldPlacementTests 抓到的）。
+        if (x < TabTipXMm || x > (TwoTabs ? -TabTipXMm : DiscRadiusMm)) return false;
         if (!(Math.Abs(z) <= HalfWidth(x) && x * x + z * z >= HoleRadiusMm * HoleRadiusMm))
             return false;
         // ★★★ 舌板开孔（2026-09-05 用户要求）：孔里没有金属，电流绕行。
@@ -485,6 +517,9 @@ public sealed class FlangePlate
             for (int q = 0; q < DiscSlots.Length; q++)
                 if (DiscSlots[q].Contains(x, z)) return false;
         }
+        // ★ 圆盘上的直孔（长椭圆，R13）：与舌板孔同一段判定，只是放在圆盘上
+        for (int q = 0; q < DiscCutHoles.Length; q++)
+            if (DiscCutHoles[q].Contains(x, z)) return false;
         return true;
     }
 }
@@ -500,7 +535,7 @@ public static class PlateCurrent2D
                                    double[,]? tempField = null, double tRefC = 1300,
                                    double[,]? thickField = null)
     {
-        double x0 = g.TabTipXMm - h, x1 = g.DiscRadiusMm + h;
+        double x0 = g.TabTipXMm - h, x1 = (g.TwoTabs ? -g.TabTipXMm : g.DiscRadiusMm) + h;   // 双舌片：图幅到 +x 舌端
         double z1 = Math.Max(g.DiscRadiusMm, g.ExtHalfWidthMm) + h;
         int nx = (int)Math.Round((x1 - x0) / h) + 1;
         int nz = (int)Math.Round((2 * z1) / h) + 1;
@@ -520,7 +555,7 @@ public static class PlateCurrent2D
                 if (!mask[i, j]) continue;
 
                 // 舌片末端整条边：等电位 V = 1
-                if (x <= g.TabTipXMm + h * 1.5) { fixedV[i, j] = true; V[i, j] = 1.0; }
+                if (x <= g.TabTipXMm + h * 1.5 || (g.TwoTabs && x >= -g.TabTipXMm - h * 1.5)) { fixedV[i, j] = true; V[i, j] = 1.0; }   // 双舌片：两端都是 V=1
                 // 管孔边界：V = 0（一圈厚度 1.5h 的环带）
                 double r = Math.Sqrt(x * x + z * z);
                 if (r <= g.HoleRadiusMm + h * 1.5) { fixedV[i, j] = true; V[i, j] = 0.0; }

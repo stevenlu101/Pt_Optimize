@@ -469,6 +469,11 @@ public sealed class FlangeOut
     public double[] JField = Array.Empty<double>();
     public double[] TField = Array.Empty<double>();
     /// <summary>
+    /// 单元电位（归一化 0…1，舌端 1、管孔 0）。R12/R13（2026-09-09）要从**最新收敛的场**取当地电流**方向**
+    /// （长椭圆的长轴顺着电流），而 |J| 没有方向 ⇒ 把电位场也留下来，方向 = −∇V。
+    /// </summary>
+    public double[] VField = Array.Empty<double>();
+    /// <summary>
     /// 各级的**局部最高温** °C（与 LineCase.LevelThicknessMm 同序）。
     /// 逐级定厚要靠它：知道是**哪一级**在过热，才知道该加厚哪一级。
     /// </summary>
@@ -1480,7 +1485,7 @@ public static class LineRunner
                 TMaxC = th.TMaxC, TMinC = th.TMinC, TTabEndC = th.TTabEndMeanC,
                 AreaMm2 = mesh.TotalArea, VolumeMm3 = mesh.VolumeMm3,
                 CellCount = mesh.CellCount,
-                Mesh = mesh, JField = sc.JMagAPerMm2, TField = th.T,
+                Mesh = mesh, JField = sc.JMagAPerMm2, TField = th.T, VField = sc.V,
                 Source = analytic
                     ? $"解析 Ø{2 * plate!.DiscRadiusMm:0}/舌{-plate.TabEndXMm:0}/t{plate.ThicknessMm:0.00}"
                     : System.IO.Path.GetFileName(file)

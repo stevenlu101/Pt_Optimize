@@ -55,7 +55,15 @@ public class HalfWiredFieldTests
         string sample = Src("Pt_Optimize.Tests", "DesignSpecStoreTests.cs");
         string page = Src("Pt_Optimize", "UI", "LineDesignPage.cs");
 
+        // ★★★★★ **④界面 的欠账表**（2026-09-09，R12/R13）：这五个逐片字段由 Core 侧（本次不许改 UI 的开发）加进来，
+        //   ①②③⑥ 都已接，**④界面 由主开发者接**（钩子列在交接报告：只读显示「槽心角／孔心／形状」，
+        //   PageToDesignSpec 读页面成设计时要把它们显式写回 NaN/0 而不是从种子静默继承）。
+        //   与 BranchMarksAreReachedTests 的欠账表同一规矩：欠账要写明理由；**接上了还挂在表上 ⇒ 红**（反向断言），
+        //   免得这张表变成藏东西的地方。
+        // 2026-09-09 主开发者把五个字段接上界面（只读显示 + PageToDesignSpec 显式写 + 解完/载入回填）⇒ 欠账表清空
+        var uiDebt = new System.Collections.Generic.Dictionary<string, string>();
         var missing = new System.Collections.Generic.List<string>();
+        var stale = new System.Collections.Generic.List<string>();
         foreach (string f in fields)
         {
             var gaps = new System.Collections.Generic.List<string>();
@@ -64,9 +72,17 @@ public class HalfWiredFieldTests
              && !spec.Contains($"{f} = FitArr", StringComparison.Ordinal)) gaps.Add("①Fit");
             if (!store.Contains(f, StringComparison.Ordinal)) gaps.Add("②存档");
             if (!sample.Contains("d." + f, StringComparison.Ordinal)) gaps.Add("③防过期样本");
-            if (!page.Contains(f, StringComparison.Ordinal)) gaps.Add("④界面");
+            bool onPage = page.Contains(f, StringComparison.Ordinal);
+            if (!onPage && !uiDebt.ContainsKey(f)) gaps.Add("④界面");
+            if (onPage && uiDebt.ContainsKey(f)) stale.Add(f);
             if (gaps.Count > 0) missing.Add($"{f}：缺 {string.Join("／", gaps)}");
         }
+        Assert.True(stale.Count == 0,
+            "这些字段界面已经接上了，却还挂在 ④界面 的欠账表上 —— 把它们从欠账表删掉，否则这张表会变成藏东西的地方："
+          + string.Join("、", stale));
+        foreach (var kv in uiDebt)
+            Assert.Contains(kv.Key, fields);          // 欠账表里的名字都得真的存在，否则打错字就等于偷偷放行
+        Console.WriteLine($"④界面 欠账 {uiDebt.Count} 个：" + string.Join("；", uiDebt.Select(kv => kv.Key + "（" + kv.Value + "）")));
 
         Assert.True(missing.Count == 0,
             "这些逐片参数只接了一半 —— 少一处就是**静默丢失**："

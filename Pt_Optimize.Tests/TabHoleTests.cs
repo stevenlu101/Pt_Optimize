@@ -19,6 +19,8 @@ namespace PtOptimize.Tests;
 ///   查源码只能证明「写了」，证明不了「算进去了」——
 ///   而本项目最贵的错正是「造好了没接线」。
 /// </summary>
+// ★ 2026-09-09：起 Rhino 子进程的测试类**串行**（同一 xunit collection）—— 并行起两个 RhinoCore 会互相挂死到 10 分钟超时（合并 R12/R13 时抓到，单跑 12 s 过）
+[Collection("Rhino 子进程")]
 public class TabHoleTests
 {
     /// <summary>一片规规矩矩的圆盘＋等宽舌片，用来做对照。</summary>

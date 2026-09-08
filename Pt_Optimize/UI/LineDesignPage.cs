@@ -143,6 +143,41 @@ public sealed class LineDesignPage : TabPage
     private double[]? _tongueFixed;
 
     /// <summary>
+    /// ★ R12／R13（2026-09-09）：场定的位置与求解器选的形状是**算出来的**，不是旋钮 —— 只读显示。
+    /// 逐片：槽心角 <see cref="DesignSpec.SlotCenterDeg"/>、舌孔孔心 <see cref="DesignSpec.TabHoleXMm"/>、
+    /// 圆盘挖料形状 <see cref="DesignSpec.DiscCutShape"/>（含长椭圆轴向 <see cref="DesignSpec.DiscCutRotDeg"/>）、舌孔形状 <see cref="DesignSpec.TabHoleSides"/>。
+    /// </summary>
+    private NumericUpDown[] _slotCenter = System.Array.Empty<NumericUpDown>();
+    private NumericUpDown[] _holeX = System.Array.Empty<NumericUpDown>();
+    private Label[] _discShape = System.Array.Empty<Label>();
+    private Label[] _holeShape = System.Array.Empty<Label>();
+    /// <summary>与 <see cref="_tongueFixed"/> 同一条生命周期：本页代表一份完整设计时，场定位置与形状原样带着；改参数就清掉回默认规则。</summary>
+    private DesignSpec? _fixedDerived;
+
+    /// <summary>把场定的位置与形状写进只读框（不触发重算）。</summary>
+    private void ShowDerived(DesignSpec d)
+    {
+        bool old = _suppressAuto; _suppressAuto = true;
+        try
+        {
+            for (int i = 0; i < _slotCenter.Length && i < d.FlangeCount; i++)
+            {
+                _slotCenter[i].Value = Math.Clamp((decimal)d.SlotCenterDegOf(i), _slotCenter[i].Minimum, _slotCenter[i].Maximum);
+                if (i < _holeX.Length)
+                    _holeX[i].Value = Math.Clamp((decimal)d.TabHoleCenterXMm(i), _holeX[i].Minimum, _holeX[i].Maximum);
+                if (i < _discShape.Length)
+                {
+                    int sh = d.DiscCutShapeOf(i);
+                    double rot = i < d.DiscCutRotDeg.Length ? d.DiscCutRotDeg[i] : double.NaN;
+                    _discShape[i].Text = Solver.DiscShapeName(sh) + (sh != 0 && !double.IsNaN(rot) ? $"（轴向 {rot:0}°）" : "");
+                }
+                if (i < _holeShape.Length) _holeShape[i].Text = Solver.HoleShapeName(d.TabHoleSidesOf(i));
+            }
+        }
+        finally { _suppressAuto = old; }
+    }
+
+    /// <summary>
     /// ★★★ **渐变环的形状**：内级外扩 r₁ / 外级外扩 r₂ / 外级倍率 t₂（逐片，2026-08-30 补控件）。
     ///
     /// ══ 补它的理由不是「多个输入方便」
@@ -373,6 +408,8 @@ public sealed class LineDesignPage : TabPage
                                               _tPlate[j].Minimum, _tPlate[j].Maximum);
             ShowTongues(d);      // R11：舌片厚是算出来的，解完照样回显示框
             _tongueFixed = (double[])d.TongueThickMm.Clone();   // 解出来的设计是完整的一份：核算复现它，不再重定舌片
+            _fixedDerived = d.Clone();                          // R12/R13：场定位置与形状也原样带着
+            ShowDerived(d);
             for (int j = 0; j < _tabIns.Length && j < d.TabInsulMm.Length; j++)
                 _tabIns[j].Value = Math.Clamp((decimal)d.TabInsulMm[j], _tabIns[j].Minimum, _tabIns[j].Maximum);
             for (int j = 0; j < _ringMul.Length && j < d.RingMul.Length; j++)
@@ -1334,7 +1371,8 @@ public sealed class LineDesignPage : TabPage
     private static NumericUpDown Slot() => Num(0m, 0m, 340m, 5m, 0);
 
     /// <summary>舌板开孔孔径（半径 mm）。0 = 无孔 —— 开箱默认，行为与从前逐位相同。</summary>
-    private static NumericUpDown Hole() => Num(0m, 0m, 30m, 0.5m, 2);
+    /// <summary>孔径 mm：R15（用户 2026-09-08）孔径 &lt; 1 mm 的孔不考虑 ⇒ 取值域 {0} ∪ [1, 30]，步进 1；填进 (0,1) 的数按无孔算（Core 的 TabHoleREffective）。</summary>
+    private static NumericUpDown Hole() => Num(0m, 0m, 30m, 1m, 2);
 
     /// <summary>孔的顺流拉长比。1 = 圆；>1 = 顺着电流拉长的椭圆。</summary>
     private static NumericUpDown HoleAsp() => Num(1m, 1m, 3m, 0.1m, 1);
@@ -1370,6 +1408,7 @@ public sealed class LineDesignPage : TabPage
     internal void MarkParamsChanged(string what)
     {
         _tongueFixed = null;                                  // R11：参数动过 ⇒ 舌片厚回到 I/(J·舌宽) 规则（放在早退之前）
+        _fixedDerived = null;                                 // R12/R13：场定位置与形状也回到默认规则
         if (_solvedSnap is null && _last is null) return;    // 本来就没有可作废的
         _solvedSnap = null;                                   // ⇒ Fresh = false，门关上
         _solvedRes = null;                                    // 外推基准也作废（它是另一组参数的解）
@@ -1598,6 +1637,7 @@ public sealed class LineDesignPage : TabPage
         //   ⚠ 接线测试没抓到，因为它只 CreateControl 不 Show —— 排版路径根本没走。
         if (!_userReady) return;
         _tongueFixed = null;                 // R11：用户改了页面参数 ⇒ 舌片厚回到 I/(J·舌宽) 规则
+        _fixedDerived = null;                // R12/R13：场定位置与形状也回到默认规则
 
         // ★ 页面控件动了同样要「从头走一遍」（2026-08-24 用户要求）。
         //   新鲜度那一侧本来就自动成立（Snap 变了 ⇒ Fresh 变 false），
@@ -2185,6 +2225,8 @@ public sealed class LineDesignPage : TabPage
         // R11：这份记录的舌片厚原样带着（NaN = 与基板同），核算复现的就是它；工程师一改参数就回到规则
         _tongueFixed = (double[])fd.TongueThickMm.Clone();
         ShowTongues(fd);
+        _fixedDerived = fd.Clone();          // R12/R13：记录里的槽心角／形状原样带着
+        ShowDerived(fd);
 
         // 分段控温点：只改控温点，水头保持页面上原有的值（那是工艺量，不属于设计记录几何）
         // ⚠ 名字**按段数生成**：原来是写死的 { "HC1","HC2","HC3" } ⇒ 档里有 4 段时
@@ -2548,6 +2590,17 @@ public sealed class LineDesignPage : TabPage
             if (i < d.TabHoleAspect.Length && i < _holeAsp.Length)
                 d.TabHoleAspect[i] = (double)_holeAsp[i].Value;
         }
+        // ★★★ R12／R13：场定位置与形状**显式**写（默认规则 = NaN／0），不许从种子静默继承；
+        //   本页代表一份完整设计（载入／解完）时原样带着，核算复现的就是它。
+        for (int i = 0; i < d.FlangeCount; i++)
+        {
+            bool fx = _fixedDerived is { } f0 && f0.FlangeCount == d.FlangeCount;
+            if (i < d.TabHoleXMm.Length)    d.TabHoleXMm[i]    = fx ? _fixedDerived!.TabHoleXMm[i]    : double.NaN;
+            if (i < d.SlotCenterDeg.Length) d.SlotCenterDeg[i] = fx ? _fixedDerived!.SlotCenterDeg[i] : double.NaN;
+            if (i < d.DiscCutRotDeg.Length) d.DiscCutRotDeg[i] = fx ? _fixedDerived!.DiscCutRotDeg[i] : double.NaN;
+            if (i < d.TabHoleSides.Length)  d.TabHoleSides[i]  = fx ? _fixedDerived!.TabHoleSides[i]  : 0;
+            if (i < d.DiscCutShape.Length)  d.DiscCutShape[i]  = fx ? _fixedDerived!.DiscCutShape[i]  : 0;
+        }
         // 圆盘保温：本页**有**控件，接过去（BuildCase 里原来写死 20，已改成读字段）
         d.FlangeInsulated = _flIns.SelectedIndex != 0;
         d.FlangeInsulMm = d.FlangeInsulated ? (double)_flInsT.Value : 0;
@@ -2581,6 +2634,7 @@ public sealed class LineDesignPage : TabPage
             else
                 d.SizeTongues(_base);
             ShowTongues(d);
+            ShowDerived(d);
         }
         catch (Exception ex) { _status.Text = "舌片厚算不出：" + ex.Message; }
         return d;
@@ -3713,6 +3767,10 @@ public sealed class LineDesignPage : TabPage
         _holeR   = Enumerable.Range(0, n).Select(i => Hole()).ToArray();
         _holeAsp = Enumerable.Range(0, n).Select(i => HoleAsp()).ToArray();
         _tongue  = Enumerable.Range(0, n).Select(i => Tongue()).ToArray();
+        _slotCenter = Enumerable.Range(0, n).Select(i => { var c = Num(0m, -180m, 180m, 1m, 0); c.Enabled = false; return c; }).ToArray();
+        _holeX = Enumerable.Range(0, n).Select(i => { var c = Num(0m, -1000m, 0m, 0.1m, 1); c.Enabled = false; return c; }).ToArray();
+        _discShape = Enumerable.Range(0, n).Select(i => new Label { Text = Solver.DiscShapeName(0), AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 4, 0) }).ToArray();
+        _holeShape = Enumerable.Range(0, n).Select(i => new Label { Text = Solver.HoleShapeName(0), AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 4, 0) }).ToArray();
         for (int i = 0; i < n; i++)
         {
             _tabIns[i].Value  = (decimal)Math.Clamp(vI[i],  (double)_tabIns[i].Minimum,  (double)_tabIns[i].Maximum);
@@ -3850,7 +3908,9 @@ public sealed class LineDesignPage : TabPage
           + "⚠ 实测（盘Ø120 构型）舌孔换到的抽热远少于圆盘槽 —— 划不划算由求解器当场比，"
           + "不预先替它删掉这个候选。"
           + Environment.NewLine
-          + "⚠ 上界闭式：孔缘到舌边要留够桥宽。";
+          + "⚠ 上界闭式：孔缘到舌边要留够桥宽。"
+          + Environment.NewLine
+          + "⚠ 最小孔径 1 mm（用户 2026-09-08）：填 0 = 无孔，填在 0～1 之间的数按无孔算；求解器不会探 1 mm 以下。";
         for (int i = 0; i < n; i++) Row($"{names[i]} 孔", _holeR[i], tipHole);
         string tipAsp =
             "1 = 圆孔；>1 = **顺着电流拉长**的椭圆（长轴顺流）。"
@@ -3861,6 +3921,18 @@ public sealed class LineDesignPage : TabPage
             + Environment.NewLine
             + "★ 判据「圆盘区最高温」不过时，求解器会**自己调它**，与舌保温、环倍率同排比价。";
         for (int i = 0; i < n; i++) Row($"{names[i]} 孔拉长", _holeAsp[i], tipAsp);
+
+        // ★★★ R12／R13（2026-09-09）：位置由场定、形状由求解器比价选 —— 都是算出来的，只读显示
+        Head("场定的位置与形状（算出来的，不是旋钮）");
+        string tipDerived =
+            "槽心角：每轮从最新收敛的场算「移除优先级 = 导热贡献 ÷ 电流密度」，槽心落在优先级最高的角向（单舌片 0° = 背对舌片；双舌片对称进电落到 ±90° 一带）。" + Environment.NewLine +
+            "圆盘挖料形状：弯椭圆槽／长椭圆（切向／顺当地电流）各抬到各的上界探针比价，选中的存进设计并出图。" + Environment.NewLine +
+            "舌孔孔心：场给的位置只印在求解器轨迹里（2026-09-05 实测最优在 −50、不在优先级最高处），几何仍按舌片自由段中点。" + Environment.NewLine +
+            "舌孔形状：圆／圆角三角／圆角方 —— 舌片按 J=10 定厚后孔径上界不足 1 mm，这一族在求解器里到不了（R15）。";
+        for (int i = 0; i < n; i++) Row($"{names[i]} 槽心角 °", _slotCenter[i], tipDerived);
+        for (int i = 0; i < n; i++) Row($"{names[i]} 圆盘挖料形状", _discShape[i], tipDerived);
+        for (int i = 0; i < n; i++) Row($"{names[i]} 舌孔孔心 x mm", _holeX[i], tipDerived);
+        for (int i = 0; i < n; i++) Row($"{names[i]} 舌孔形状", _holeShape[i], tipDerived);
 
         _plateBox.ResumeLayout();
         }

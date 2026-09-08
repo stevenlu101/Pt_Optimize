@@ -160,8 +160,14 @@ public class DesignSpecStoreTests
         d.SlotRInMm = 28.5; d.SlotROutMm = 41.5;
         // ★ 舌板开孔孔径（用户要求 R5）。四片四个不同的数 —— 理由同上。
         d.TabHoleRMm = new[] { 2.5, 3.5, 4.5, 5.5 };
-        d.TabHoleXMm = -77.0;
         d.TabHoleAspect = new[] { 1.2, 1.5, 1.8, 2.1 };
+        // ★ R12/R13（2026-09-09）：孔心改逐片、槽心角、两个形状族、长椭圆轴向 —— 四片四个不同的数，理由同上。
+        //   形状族只有 0/3/4 与 0/1 可选：给两片不同的非默认值，另两片留默认（错位也看得出）。
+        d.TabHoleXMm = new[] { -77.0, -81.0, -85.0, -89.0 };
+        d.SlotCenterDeg = new[] { 10.0, 95.0, -80.0, 170.0 };
+        d.TabHoleSides = new[] { 3.0, 4.0, 0.0, 3.0 };
+        d.DiscCutShape = new[] { 1.0, 0.0, 1.0, 0.0 };
+        d.DiscCutRotDeg = new[] { 100.0, double.NaN, 15.0, -60.0 };
         d.ResidualK = 0.75;
         return d;
     }

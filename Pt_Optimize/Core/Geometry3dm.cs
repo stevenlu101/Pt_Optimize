@@ -142,46 +142,9 @@ public static class Geometry3dm
         string probe = FindProbe()
             ?? throw new FileNotFoundException($"找不到 {ProbeName}.exe。先构建 {ProbeName}（需本机装 Rhino 8）。");
 
-        string R(double v) => v.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
-        var names = new[] { "入口", "共用1", "共用2", "出口" };
-        var sb = new StringBuilder();
-        sb.Append('{');
-        sb.Append($"\"name\":\"{fd.Name}\",");
-        sb.Append($"\"wallMm\":{R(fd.WallMm)},\"tubeIdMm\":{R(tubeIdMm)},");
-        sb.Append($"\"segLenMm\":{R(segLenMm)},\"segCount\":{segCount},");
-        sb.Append($"\"discR\":{R(fd.DiscRadiusMm)},\"holeR\":{R(fd.HoleRadiusMm)},");
-        sb.Append($"\"tabX\":{R(-fd.TabLengthMm)},\"tabHW\":{R(fd.TabHalfWidthMm)},");
-        sb.Append($"\"filletR\":{R(fd.TabFilletMm)},\"clampLenMm\":{R(fd.ClampLengthMm)},");
-        sb.Append($"\"ringR\":[{R(fd.RingRadiiMm[0])},{R(fd.RingRadiiMm[1])}],");
-        sb.Append("\"plates\":[");
-        // ★ 按实际片数（用户 2026-09-03：段数由 UI 决定）—— 写死 4 会让出图**少画片**
-        for (int j = 0; j < fd.TabThickMm.Length; j++)
-        {
-            double t = fd.TabThickMm[j];
-            if (j > 0) sb.Append(',');
-            // ★ R11（2026-09-08）：舌片自己的厚度（I/(J·舌宽)）；旧档 NaN ⇒ 与板厚同（Geom 侧缺省也是 t）
-            double tt = j < fd.TongueThickMm.Length && !double.IsNaN(fd.TongueThickMm[j]) ? fd.TongueThickMm[j] : t;
-            sb.Append($"{{\"name\":\"{names[j]}\",\"t\":{R(t)},\"tabT\":{R(tt)},");
-            sb.Append($"\"ring\":[{R(t * fd.RingMul[j])},{R(t * fd.RingMulOuter(j))}],");
-            // ★★★★★ **槽与孔必须跟着走**（2026-09-05）。
-            //   在此之前这份 spec 只有 t 和 ring ⇒ APP 自己的出图器**画不出**
-            //   圆盘背侧减重槽与舌板开孔，而它们正是求解器现役的旋钮。
-            //   后果：求解器解出 120° 槽 + 36 mm 孔，导出的图上一个都没有 ——
-            //   「算的是一个东西、导出的是另一个东西」，两边各自都自洽，最难发现。
-            //   槽带按**本片**焊脚算（焊脚 = max(板厚, 管壁)），与 DesignSpec.SlotBandMm 同一份规则。
-            var (rin, rout) = fd.SlotBandMm(Math.Max(t, fd.WallMm));
-            double span = j < fd.SlotSpanDeg.Length ? fd.SlotSpanDeg[j] : 0;
-            double hR = j < fd.TabHoleRMm.Length ? fd.TabHoleRMm[j] : 0;
-            double hA = j < fd.TabHoleAspect.Length && fd.TabHoleAspect[j] > 0
-                      ? fd.TabHoleAspect[j] : 1.0;
-            sb.Append($"\"slotDeg\":{R(span)},\"slotRIn\":{R(rin)},\"slotROut\":{R(rout)},");
-            sb.Append($"\"holeX\":{R(fd.TabHoleCenterXMm())},\"holeR\":{R(hR)},\"holeAsp\":{R(hA)}}}");
-        }
-        sb.Append("]}");
-
         string spec = Path.Combine(Path.GetDirectoryName(outPath) ?? ".",
                                    Path.GetFileNameWithoutExtension(outPath) + ".spec.json");
-        File.WriteAllText(spec, sb.ToString(), new UTF8Encoding(false));
+        File.WriteAllText(spec, BuildFinalSpec(fd, tubeIdMm, segLenMm, segCount), new UTF8Encoding(false));
 
         var psi = new ProcessStartInfo(probe)
         {
@@ -222,6 +185,74 @@ public static class Geometry3dm
         //   （原来在这里对每片每部位各起一次探针 = 每次出图多 12 个 Rhino 进程，
         //     而这是工程师每点一次「导出本页 3DM」都要付的成本。）
         return so.Trim();
+    }
+
+    /// <summary>
+    /// ★ 整机出图的 **spec JSON**（Geom 的 final 模式读它）。抽成独立方法（2026-09-09）是为了让门能**不起 Rhino** 就验
+    /// 「求解器定的槽心角／孔心／形状族有没有写进图」（R12/R13）。几何数字一律取自 <see cref="DesignSpec.HolesOf"/>／
+    /// <see cref="DesignSpec.SlotsOf"/>／<see cref="DesignSpec.DiscCutsOf"/> 造出来的**同一个**对象 —— 算的与画的是同一份数，
+    /// 不在这里再算一遍。
+    /// </summary>
+    public static string BuildFinalSpec(DesignSpec fd, double tubeIdMm = 50.0, double segLenMm = 300.0, int segCount = 3)
+    {
+        string R(double v) => v.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+        var names = new[] { "入口", "共用1", "共用2", "出口" };
+        var sb = new StringBuilder();
+        sb.Append('{');
+        sb.Append($"\"name\":\"{fd.Name}\",");
+        sb.Append($"\"wallMm\":{R(fd.WallMm)},\"tubeIdMm\":{R(tubeIdMm)},");
+        sb.Append($"\"segLenMm\":{R(segLenMm)},\"segCount\":{segCount},");
+        sb.Append($"\"discR\":{R(fd.DiscRadiusMm)},\"holeR\":{R(fd.HoleRadiusMm)},");
+        sb.Append($"\"tabX\":{R(-fd.TabLengthMm)},\"tabHW\":{R(fd.TabHalfWidthMm)},");
+        sb.Append($"\"filletR\":{R(fd.TabFilletMm)},\"clampLenMm\":{R(fd.ClampLengthMm)},");
+        sb.Append($"\"ringR\":[{R(fd.RingRadiiMm[0])},{R(fd.RingRadiiMm[1])}],");
+        sb.Append("\"plates\":[");
+        // ★ 按实际片数（用户 2026-09-03：段数由 UI 决定）—— 写死 4 会让出图**少画片**
+        for (int j = 0; j < fd.TabThickMm.Length; j++)
+        {
+            double t = fd.TabThickMm[j];
+            if (j > 0) sb.Append(',');
+            // ★ R11（2026-09-08）：舌片自己的厚度（I/(J·舌宽)）；旧档 NaN ⇒ 与板厚同（Geom 侧缺省也是 t）
+            double tt = j < fd.TongueThickMm.Length && !double.IsNaN(fd.TongueThickMm[j]) ? fd.TongueThickMm[j] : t;
+            sb.Append($"{{\"name\":\"{names[j]}\",\"t\":{R(t)},\"tabT\":{R(tt)},");
+            sb.Append($"\"ring\":[{R(t * fd.RingMul[j])},{R(t * fd.RingMulOuter(j))}],");
+            // ★★★★★ **槽与孔必须跟着走**（2026-09-05）。
+            //   在此之前这份 spec 只有 t 和 ring ⇒ APP 自己的出图器**画不出**
+            //   圆盘背侧减重槽与舌板开孔，而它们正是求解器现役的旋钮。
+            //   后果：求解器解出 120° 槽 + 36 mm 孔，导出的图上一个都没有 ——
+            //   「算的是一个东西、导出的是另一个东西」，两边各自都自洽，最难发现。
+            //   槽带按**本片**焊脚算（焊脚 = max(板厚, 管壁)），与 DesignSpec.SlotBandMm 同一份规则。
+            double weld = Math.Max(t, fd.WallMm);
+            var (rin, rout) = fd.SlotBandMm(weld);
+            double span = j < fd.SlotSpanDeg.Length ? fd.SlotSpanDeg[j] : 0;
+            // ★ R12/R13（2026-09-09）：槽心角、圆盘形状族、舌孔形状族与逐片孔心都跟着走。
+            //   数字取自造几何的**同一个**对象（HolesOf／DiscCutsOf）—— 多边形按等面积缩放后的外接半径、
+            //   转角、圆角比例，画的就是算的那一个；R15 的「孔径 < 1 mm 按无孔」也由此自动带上（HolesOf 已扣）。
+            sb.Append($"\"slotDeg\":{R(span)},\"slotRIn\":{R(rin)},\"slotROut\":{R(rout)},");
+            sb.Append($"\"slotCenterDeg\":{R(fd.SlotCenterDegOf(j))},");
+            var discCuts = fd.DiscCutsOf(j, weld);
+            if (fd.DiscCutShapeOf(j) >= 1 && discCuts.Length > 0)      // 1 = 切向、2 = 顺当地电流，画法相同（方向已在对象里）
+            {
+                var e = discCuts[0];
+                sb.Append($"\"discShape\":\"ellipse\",\"discX\":{R(e.XMm)},\"discZ\":{R(e.ZMm)},\"discR\":{R(e.RMm)},");
+                sb.Append($"\"discAsp\":{R(e.AspectXZ)},\"discRot\":{R(e.RotDeg)},");
+            }
+            else sb.Append("\"discShape\":\"slot\",");
+            var holes = fd.HolesOf(j);
+            if (holes.Length > 0)
+            {
+                var h = holes[0];
+                sb.Append($"\"holeX\":{R(h.XMm)},\"holeR\":{R(h.RMm)},\"holeAsp\":{R(h.AspectXZ)},");
+                sb.Append($"\"holeSides\":{h.Sides},\"holeCorner\":{R(h.CornerFrac)},\"holeRot\":{R(h.RotDeg)}}}");
+            }
+            else
+            {
+                double hA = j < fd.TabHoleAspect.Length && fd.TabHoleAspect[j] > 0 ? fd.TabHoleAspect[j] : 1.0;
+                sb.Append($"\"holeX\":{R(fd.TabHoleCenterXMm(j))},\"holeR\":0,\"holeAsp\":{R(hA)},\"holeSides\":0,\"holeCorner\":1,\"holeRot\":0}}");
+            }
+        }
+        sb.Append("]}");
+        return sb.ToString();
     }
 
 

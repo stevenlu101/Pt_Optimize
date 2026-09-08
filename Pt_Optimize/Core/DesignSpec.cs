@@ -271,6 +271,12 @@ public sealed class DesignSpec
         SlotSpanDeg = FitArr(SlotSpanDeg, n);
         TabHoleRMm  = FitArr(TabHoleRMm,  n);
         TabHoleAspect = FitArr(TabHoleAspect, n);
+        // ★ R12/R13（2026-09-09）：场定的位置与离散形状也是逐片数组，同一张清单
+        TabHoleXMm = FitArr(TabHoleXMm, n);
+        SlotCenterDeg = FitArr(SlotCenterDeg, n);
+        TabHoleSides = FitArr(TabHoleSides, n);
+        DiscCutShape = FitArr(DiscCutShape, n);
+        DiscCutRotDeg = FitArr(DiscCutRotDeg, n);
         // ★ 逐段长度是**按段**的（n-1），不是按片 —— 别跟上面六个混在一起。
         //   ⚠ 新增的段插在**倒数第二**（同 FitArr 的理由：首段/末段有各自的边界），
         //     所以这里也走同一个函数，只是长度不同。
@@ -316,6 +322,12 @@ public sealed class DesignSpec
         c.SlotSpanDeg = (double[])SlotSpanDeg.Clone();
         c.TabHoleRMm = (double[])TabHoleRMm.Clone();
         c.TabHoleAspect = (double[])TabHoleAspect.Clone();
+        // ★ R12/R13（2026-09-09）：五个新逐片数组，反射门 CloneCopiesEveryArrayTests 会盯着
+        c.TabHoleXMm = (double[])TabHoleXMm.Clone();
+        c.SlotCenterDeg = (double[])SlotCenterDeg.Clone();
+        c.TabHoleSides = (double[])TabHoleSides.Clone();
+        c.DiscCutShape = (double[])DiscCutShape.Clone();
+        c.DiscCutRotDeg = (double[])DiscCutRotDeg.Clone();
         // ★ InvalidChecks 也是栏位（2026-09-07 督导 ② 抓到）。
         //   目前**无害** —— 全仓没有一处就地改它的元素（只有宣告 + 两处整体赋值，
         //   换引用不伤原件），督导也没实测到污染。补上不是因为它现在坏了，
@@ -376,6 +388,7 @@ public sealed class DesignSpec
             WeldFilletLegMm = System.Math.Max(td, WallMm),
             DiscSlots = SlotsOf(j, System.Math.Max(td, WallMm)),
             TabHoles = HolesOf(j),
+            DiscCutHoles = DiscCutsOf(j, System.Math.Max(td, WallMm)),   // R13：圆盘上的长椭圆（形状族 1）
         };
     }
 
@@ -427,8 +440,100 @@ public sealed class DesignSpec
     /// </summary>
     public double[] TabHoleAspect = System.Linq.Enumerable.Repeat(1.0, 4).ToArray();
 
-    /// <summary>孔心沿舌轴的位置 mm（负向为舌端）。NaN = 取舌片中点。</summary>
-    public double TabHoleXMm = double.NaN;
+    /// <summary>
+    /// ★★★ **舌孔孔心沿舌轴的位置 mm**（逐片；负向为舌端）。NaN = 默认规则（舌片自由段中点，与 2026-09-09 之前逐位相同）。
+    ///
+    /// R12（用户 2026-09-08：孔心位置由场逐案定）：求解器每轮开头从最新收敛的场算移除优先级
+    /// （导热贡献 ÷ 电流密度，<see cref="RemovalPriority"/>），把自由段内优先级最高处写进这里，逐片各不相同。
+    /// 2026-09-09 之前它是整线一个数（不逐片）；旧档里的标量 <c>tabHoleXMm</c> 读进来铺到每一片。
+    /// </summary>
+    public double[] TabHoleXMm = { double.NaN, double.NaN, double.NaN, double.NaN };
+
+    /// <summary>
+    /// ★★★ **圆盘槽的槽心角 °**（逐片；+x 轴为 0°、逆时针为正，与 <see cref="FlangePlate.DiscSlot"/> 同口径）。
+    /// NaN = 默认规则 0°（背对舌片，与 2026-09-09 之前写死的值逐位相同）。
+    ///
+    /// R12：不再写死 0°。求解器每轮开头在槽带内取移除优先级最高的角向写进这里 ——
+    /// 单舌片自然落在 0° 一带；双舌片对称进电（<see cref="FlangePlate.TwoTabs"/>）时落到 ±90° 一带
+    /// （<c>FieldPlacementTests</c> 两条钉住）。
+    /// </summary>
+    public double[] SlotCenterDeg = { double.NaN, double.NaN, double.NaN, double.NaN };
+
+    /// <summary>
+    /// ★★★ **舌孔的形状族**（逐片；R13，用户 2026-09-08：圆角三角／圆角方）：
+    /// 0 = 圆／椭圆（拉长比由 <see cref="TabHoleAspect"/> 给，现状），3 = 圆角三角，4 = 圆角方。
+    /// 是**离散选择**不是旋钮：同一挖料面积下（同一个孔径旋钮值 R ⇒ 面积 π·R²·拉长比，多边形按
+    /// <see cref="FlangePlate.TabHole.EqualAreaRadius"/> 缩放外接半径）逐个探针量 Δ裕度/Δ铂重，由求解器的比价挑。
+    /// 圆角比例与转角是常数（<see cref="TabHoleCornerFracOf"/>／<see cref="TabHoleRotDegOf"/>，出处 deliverable/孔形对比.txt）。
+    /// 用 double 存是为了让「逐片数组」的固定清单（Fit／Clone／存档／样本门）对它一视同仁。
+    /// </summary>
+    public double[] TabHoleSides = new double[4];
+
+    /// <summary>
+    /// ★★★ **圆盘挖料的形状族**（逐片；R13，用户原话「长椭圆与弯椭圆仅用于法兰」= 圆盘区）：
+    /// 0 = 弯椭圆槽（沿圆周的胶囊形，现状），1 = 长椭圆·**切向**（直的椭圆孔放在圆盘上，长轴垂直于半径），
+    /// 2 = 长椭圆·**顺当地电流**（长轴 = 场算出的当地电流方向 <see cref="DiscCutRotDeg"/>）。
+    /// 大小仍由同一根旋钮 <see cref="SlotSpanDeg"/> 给：长椭圆取与同张角弯椭圆槽**等面积**（<see cref="DiscEllipseOf"/>），
+    /// 位置 = 槽带中径 × 槽心角（<see cref="SlotCenterDeg"/>，场定）。
+    ///
+    /// ⚠ 为什么切向与顺电流是**两个成员**而不是一条阈值（2026-09-09 实测，deliverable/形状族_对比.txt）：
+    ///   Pt_Heater1 构型、等面积 1045 mm²：弯椭圆槽 抽热 −30.6 %、长椭圆·切向 −22.6 %、长椭圆·顺当地电流 **−4.7 %**。
+    ///   背侧电流几乎不走（|∇V| 只有全片最大的 1.8 %），「顺电流」在那里等于顺着半径 —— 正好顺着热流，挡不住热。
+    ///   哪个对，让求解器在同一挖料面积上各探一针、用同一套比价定；不由我拍一个「电流小于多少算没有」的阈值。
+    /// </summary>
+    public double[] DiscCutShape = new double[4];
+
+    /// <summary>
+    /// 当地电流方向 °（逐片；+x 轴 0°、逆时针正），求解器每轮从最新收敛的场在槽心处取 −∇V 写进来；
+    /// 梯度退化时 NaN。只有 <see cref="DiscCutShape"/> = 2（长椭圆·顺当地电流）用它当长轴方向；切向那一族不看它。
+    /// </summary>
+    public double[] DiscCutRotDeg = { double.NaN, double.NaN, double.NaN, double.NaN };
+
+    /// <summary>
+    /// ★★★ **「能造」清单：孔径 &lt; 1 mm 的孔不考虑**（R15，用户 2026-09-08：「孔径小于 1 mm 可以忽视」）。
+    /// 孔径旋钮的取值只能是 0（无孔）或 ≥ 这个数；(0, 1) 之间的值在几何、出图、求解器里一律按无孔处理
+    /// （<see cref="TabHoleREffective"/>），二分与量化不许落进这段（<c>Solver.NextBisectPoint</c>）。
+    /// </summary>
+    public const double TabHoleRMinMm = 1.0;
+
+    /// <summary>第 j 片**生效的**孔径：≥ <see cref="TabHoleRMinMm"/> 才算孔，否则 0（R15）。几何、出图、求解器读孔径都走这里。</summary>
+    public double TabHoleREffective(int j)
+    {
+        double r = j < TabHoleRMm.Length ? TabHoleRMm[j] : 0;
+        return r >= TabHoleRMinMm - 1e-9 ? r : 0;
+    }
+
+    /// <summary>第 j 片的舌孔形状族成员（0／3／4）。数组外或非法值一律按 0（圆）。</summary>
+    public int TabHoleSidesOf(int j)
+    {
+        double s = j < TabHoleSides.Length ? TabHoleSides[j] : 0;
+        return double.IsNaN(s) ? 0 : (int)System.Math.Round(s) is 3 or 4 ? (int)System.Math.Round(s) : 0;
+    }
+
+    /// <summary>圆角占外接半径的比例：三角 0.35、方 0.30 —— deliverable/孔形对比.txt（2026-09-05）量的就是这两个。</summary>
+    public static double TabHoleCornerFracOf(int sides) => sides == 3 ? 0.35 : sides == 4 ? 0.30 : 1.0;
+
+    /// <summary>
+    /// 转角（相对电流方向）：三角 0°（三个朝向实测一样：峰值 J +8.1～8.2 %）、方 45°（边迎流：+4.8 %，角迎流 +16.9 %）。
+    /// 出处 deliverable/孔形对比.txt。
+    /// </summary>
+    public static double TabHoleRotDegOf(int sides) => sides == 4 ? 45.0 : 0.0;
+
+    /// <summary>第 j 片的圆盘挖料形状（0 = 弯椭圆槽，1 = 长椭圆·切向，2 = 长椭圆·顺当地电流）。数组外或非法值按 0。</summary>
+    public int DiscCutShapeOf(int j)
+    {
+        double s = j < DiscCutShape.Length ? DiscCutShape[j] : 0;
+        if (double.IsNaN(s)) return 0;
+        int k = (int)System.Math.Round(s);
+        return k is 1 or 2 ? k : 0;
+    }
+
+    /// <summary>第 j 片的槽心角 °：给了用给的，NaN 走默认规则 0°（背对舌片）。</summary>
+    public double SlotCenterDegOf(int j)
+    {
+        double c = j < SlotCenterDeg.Length ? SlotCenterDeg[j] : double.NaN;
+        return double.IsNaN(c) ? 0.0 : c;
+    }
 
     /// <summary>
     /// ★★★★★ **孔径的闭式上界** —— 开过头孔缘会咬到舌边。
@@ -449,9 +554,22 @@ public sealed class DesignSpec
     /// ⇒ 自由段 = 从盘缘切点到舌端，再去掉压接段（那里要夹铜排，不能开孔）。
     ///   取它的中点。
     /// </summary>
+    /// <summary>
+    /// 第 j 片的孔心 x：场定了（<see cref="TabHoleXMm"/> 非 NaN）就用它，否则默认规则（自由段中点）。
+    /// 求解、截面、出图一律走这个逐片版本。
+    /// </summary>
+    public double TabHoleCenterXMm(int j)
+    {
+        double x = j < TabHoleXMm.Length ? TabHoleXMm[j] : double.NaN;
+        return double.IsNaN(x) ? TabHoleCenterXMm() : x;
+    }
+
+    /// <summary>
+    /// **默认规则**的孔心（自由段中点，不看逐片场定值）。只给显示与旧调用用 ——
+    /// 求解与出图要走 <see cref="TabHoleCenterXMm(int)"/>（逐片），否则场定的位置会被这条默认规则悄悄盖掉。
+    /// </summary>
     public double TabHoleCenterXMm()
     {
-        if (!double.IsNaN(TabHoleXMm)) return TabHoleXMm;
         // 盘缘切点（等宽舌）：|x| = √(R² − 半宽²)；舌片在 −x 侧
         double hw = System.Math.Min(TabHalfWidthMm, DiscRadiusMm);
         double xTan = -System.Math.Sqrt(System.Math.Max(0, DiscRadiusMm * DiscRadiusMm - hw * hw));
@@ -462,22 +580,111 @@ public sealed class DesignSpec
     /// <summary>槽的内外半径 mm。默认取「管孔外缘 + 一点」到盘径的 2/3 —— 与实测最优带一致。</summary>
     public double SlotRInMm = double.NaN, SlotROutMm = double.NaN;
 
-    private FlangePlate.TabHole[] HolesOf(int j)
+    /// <summary>
+    /// 第 j 片的舌孔。R15：孔径 &lt; 1 mm 按无孔（<see cref="TabHoleREffective"/>）。
+    /// R13：形状族按 <see cref="TabHoleSides"/>，多边形外接半径按等面积缩放 —— 同一个孔径旋钮值挖同样多的料。
+    /// R12：孔心逐片（<see cref="TabHoleCenterXMm(int)"/>）。
+    /// </summary>
+    public FlangePlate.TabHole[] HolesOf(int j)
     {
-        double r = j < TabHoleRMm.Length ? TabHoleRMm[j] : 0;
-        if (!(r > 0.05)) return System.Array.Empty<FlangePlate.TabHole>();
+        double r = TabHoleREffective(j);
+        if (!(r > 0)) return System.Array.Empty<FlangePlate.TabHole>();
         double asp = j < TabHoleAspect.Length && TabHoleAspect[j] > 0 ? TabHoleAspect[j] : 1.0;
-        return new[] { new FlangePlate.TabHole(TabHoleCenterXMm(), 0, r,
-                                               Sides: 0, CornerFrac: 1.0, RotDeg: 0, AspectXZ: asp) };
+        int sides = TabHoleSidesOf(j);
+        double corner = TabHoleCornerFracOf(sides);
+        double rr = FlangePlate.TabHole.EqualAreaRadius(r, sides, corner);
+        return new[] { new FlangePlate.TabHole(TabHoleCenterXMm(j), 0, rr,
+                                               Sides: sides, CornerFrac: corner,
+                                               RotDeg: TabHoleRotDegOf(sides), AspectXZ: asp) };
     }
 
-    private FlangePlate.DiscSlot[] SlotsOf(int j, double weldLegMm)
+    /// <summary>第 j 片的弯椭圆槽（圆盘形状族 0）。槽心角走 <see cref="SlotCenterDegOf"/>（场定，NaN = 0°）。形状族 1 时这里为空，槽由 <see cref="DiscCutsOf"/> 给。</summary>
+    public FlangePlate.DiscSlot[] SlotsOf(int j, double weldLegMm)
     {
         double span = j < SlotSpanDeg.Length ? SlotSpanDeg[j] : 0;
         if (!(span > 0.5)) return System.Array.Empty<FlangePlate.DiscSlot>();
+        if (DiscCutShapeOf(j) != 0) return System.Array.Empty<FlangePlate.DiscSlot>();
         var (rin, rout) = SlotBandMm(weldLegMm);
         if (!(rout > rin)) return System.Array.Empty<FlangePlate.DiscSlot>();
-        return new[] { new FlangePlate.DiscSlot(rin, rout, CenterDeg: 0, SpanDeg: span) };
+        return new[] { new FlangePlate.DiscSlot(rin, rout, CenterDeg: SlotCenterDegOf(j), SpanDeg: span) };
+    }
+
+    /// <summary>第 j 片圆盘上的直孔（圆盘形状族 1 = 长椭圆）。形状族 0 时为空。</summary>
+    public FlangePlate.TabHole[] DiscCutsOf(int j, double weldLegMm)
+    {
+        double span = j < SlotSpanDeg.Length ? SlotSpanDeg[j] : 0;
+        if (!(span > 0.5) || DiscCutShapeOf(j) == 0) return System.Array.Empty<FlangePlate.TabHole>();
+        var e = DiscEllipseOf(j, weldLegMm, span);
+        return e is { } h ? new[] { h } : System.Array.Empty<FlangePlate.TabHole>();
+    }
+
+    /// <summary>弯椭圆槽（胶囊形）的面积 mm²：2·hw·rm·span + π·hw²。长椭圆按它取等面积。</summary>
+    public static double SlotAreaMm2(double rin, double rout, double spanDeg)
+    {
+        double rm = 0.5 * (rin + rout), hw = 0.5 * (rout - rin);
+        if (!(hw > 0) || !(spanDeg > 0)) return 0;
+        return 2 * hw * rm * spanDeg * System.Math.PI / 180.0 + System.Math.PI * hw * hw;
+    }
+
+    /// <summary>
+    /// ★★★ **长椭圆**（R13）：与同张角的弯椭圆槽**等面积**的直椭圆，放在槽带中径 × 槽心角处，
+    /// 短半轴 = 槽带半宽（径向），长半轴 = 面积/(π·短半轴)，长轴方向：形状 2 取 <see cref="DiscCutRotDeg"/>（NaN 时退回切向），其余切向。
+    /// 带子退化（rout ≤ rin）⇒ null。不判装不装得下 —— 那由 <see cref="DiscEllipseFits"/>／<see cref="DiscEllipseSpanMaxDeg"/> 管。
+    /// </summary>
+    public FlangePlate.TabHole? DiscEllipseOf(int j, double weldLegMm, double spanDeg)
+    {
+        var (rin, rout) = SlotBandMm(weldLegMm);
+        if (!(rout > rin) || !(spanDeg > 0)) return null;
+        double rm = 0.5 * (rin + rout), hw = 0.5 * (rout - rin);
+        double area = SlotAreaMm2(rin, rout, spanDeg);
+        double a = area / (System.Math.PI * hw);                       // 长半轴
+        double th = SlotCenterDegOf(j) * System.Math.PI / 180.0;
+        double rot = DiscCutShapeOf(j) == 2 && j < DiscCutRotDeg.Length ? DiscCutRotDeg[j] : double.NaN;
+        if (double.IsNaN(rot)) rot = SlotCenterDegOf(j) + 90.0;         // 切向（形状 1；形状 2 方向退化时也退到这里）
+        return new FlangePlate.TabHole(rm * System.Math.Cos(th), rm * System.Math.Sin(th), hw,
+                                       Sides: 0, CornerFrac: 1.0, RotDeg: rot, AspectXZ: a / hw);
+    }
+
+    /// <summary>
+    /// 长椭圆装不装得下槽带：沿椭圆边界采样，每一点的半径都要落在 [rin, rout] 内（与弯椭圆槽同一条带、同样的内外桥）。
+    /// 闭式几何，不解场。
+    /// </summary>
+    public bool DiscEllipseFits(int j, double weldLegMm, double spanDeg)
+    {
+        var (rin, rout) = SlotBandMm(weldLegMm);
+        var e = DiscEllipseOf(j, weldLegMm, spanDeg);
+        if (e is not { } h) return false;
+        double a = h.RMm * h.AspectXZ, b = h.RMm, rot = h.RotDeg * System.Math.PI / 180.0;
+        const int N = 180;
+        for (int i = 0; i < N; i++)
+        {
+            double t = 2 * System.Math.PI * i / N;
+            double lx = a * System.Math.Cos(t), lz = b * System.Math.Sin(t);
+            double x = h.XMm + lx * System.Math.Cos(rot) - lz * System.Math.Sin(rot);
+            double z = h.ZMm + lx * System.Math.Sin(rot) + lz * System.Math.Cos(rot);
+            double r = System.Math.Sqrt(x * x + z * z);
+            if (r < rin - 1e-9 || r > rout + 1e-9) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// 长椭圆的张角上界（按「装得下槽带」）：面积随张角单调增 ⇒ 二分找最大还装得下的张角，向下落到 1° 格。
+    /// 与 <see cref="SlotSpanMaxDeg"/>（弯椭圆槽的桥宽上界）是同一类量：闭式反解，不用试。0 = 连最小的也装不下。
+    /// </summary>
+    public double DiscEllipseSpanMaxDeg(int j, double weldLegMm)
+    {
+        double hiCap = SlotSpanMaxDeg(weldLegMm);
+        if (!(hiCap > 0)) return 0;
+        if (!DiscEllipseFits(j, weldLegMm, 1.0)) return 0;
+        double lo = 1.0, hi = hiCap;
+        if (DiscEllipseFits(j, weldLegMm, hi)) return System.Math.Floor(hi);
+        for (int it = 0; it < 30 && hi - lo > 0.5; it++)
+        {
+            double mid = 0.5 * (lo + hi);
+            if (DiscEllipseFits(j, weldLegMm, mid)) lo = mid; else hi = mid;
+        }
+        return System.Math.Floor(lo);
     }
 
     /// <summary>槽带 [r内, r外]。NaN 时按默认规则给 —— 规则只有这一份。</summary>

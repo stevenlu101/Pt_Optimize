@@ -399,7 +399,8 @@ public static class FlangeMesher
             xBands.Add(new Band(-innerRadius, innerRadius, hInner));
             zBands.Add(new Band(-innerRadius, innerRadius, hInner));
         }
-        double[] xs = GradedAxis(g.TabTipXMm, g.DiscRadiusMm, xBands, hCoarse);
+        // ★ 双舌片（2026-09-09 补齐）：x 轴要铺到 +x 那条舌的舌端，否则第二条舌片不在网格里（下面的压接边标记早就写了两端）
+        double[] xs = GradedAxis(g.TabTipXMm, g.TwoTabs ? -g.TabTipXMm : g.DiscRadiusMm, xBands, hCoarse);
         double zMax = g.DiscRadiusMm;
         double[] zs = GradedAxis(-zMax, zMax, zBands, hCoarse);
 

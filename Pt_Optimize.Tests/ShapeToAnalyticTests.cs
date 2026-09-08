@@ -24,6 +24,8 @@ namespace PtOptimize.Tests;
 /// 基准用的是 Pt_Heater1.3dm 的实测值（`--surrogate Pt_Heater1.3dm 法兰`）：
 ///   孔 R26.00　盘 R59.99　舌端 X−199.5／半宽 40.0　厚度 1 级 2.000 mm
 /// </summary>
+// ★ 2026-09-09：起 Rhino 子进程的测试类**串行**（同一 xunit collection）—— 并行起两个 RhinoCore 会互相挂死到 10 分钟超时（合并 R12/R13 时抓到，单跑 12 s 过）
+[Collection("Rhino 子进程")]
 public class ShapeToAnalyticTests
 {
     private static PlateShapeAnalyzer.Shape Heater1()

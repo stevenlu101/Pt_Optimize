@@ -75,4 +75,11 @@ public static class BranchMarks
     /// 后面跟着「片j a → b mm（设计电流 I，最紧截面 …）」。
     /// </summary>
     public const string JFloorRaised = "★ 下角因 J=10 截面上抬";
+
+    /// <summary>
+    /// Solver.FieldPlacement：每轮开头从**最新收敛的场**算移除优先级（导热贡献 ÷ 电流密度），
+    /// 据此逐片定圆盘槽的槽心角与舌孔孔心（R12，用户 2026-09-08 设计因果链第 ③ 步）——
+    /// 后面跟着「片j 槽心 θ°／舌孔 x=…」。第一轮之前还没有场时也发，但注明「用默认规则」。
+    /// </summary>
+    public const string FieldPlacement = "★ 场定孔位";
 }
