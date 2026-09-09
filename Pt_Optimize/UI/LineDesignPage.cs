@@ -4593,6 +4593,14 @@ public sealed class LineDesignPage : TabPage
     /// ★★ 写完**立刻按读取端的口径量回来**（照 --make3dm 的先例）：
     ///   Geom 子进程的注释里记着一次事故 —— 自己写出的 .3dm 再读回来量到 0 材料，
     ///   文件能打开、图看着对，数是错的。不回读就等于没写。
+    ///
+    /// ★★★★★ 2026-09-09 审查欠账（中）：本方法此前「画的不是算的那份」——
+    ///   ① 小孔（&lt; R15 下限 1 mm）没被过滤，照样画成真孔；
+    ///   ② 环半径拿的是 RingRadiiMm（= 第 0 片的样子），四片都画成同一个台阶半径；
+    ///   ③ 形状族／槽心角（SlotCenterDeg／DiscCutShape／DiscCutRotDeg／TabHoleSides／TabHoleXMm）
+    ///     一个都没传给 Geom。现在逐片调用 <see cref="Geometry3dm.BuildSteppedPlateArgs"/>——
+    ///     与整机出图（<see cref="Geometry3dm.WriteFinal3dm"/>／<see cref="Geometry3dm.BuildFinalSpec"/>）
+    ///     同一份取数逻辑，不在这里另算一遍。见 HANDOVER §「2026-09-09 多视角审查」。
     /// </summary>
     private void ExportReadable3dm()
     {
@@ -4623,38 +4631,44 @@ public sealed class LineDesignPage : TabPage
             Cursor = Cursors.WaitCursor;
             for (int j = 0; j < d.TabThickMm.Length; j++)
             {
-                double td = Math.Max(d.TabThickMm[j], floor);
-                var radii = d.RingRadiiMm.Concat(new[] { d.DiscRadiusMm }).ToArray();
-                var thick = new[] { td * d.RingMul[j], td * d.RingMulOuter(j), td };
-                // R11：舌片自己的厚度（NaN = 与基板同）
-                double tt = j < d.TongueThickMm.Length && !double.IsNaN(d.TongueThickMm[j]) ? Math.Max(d.TongueThickMm[j], floor) : td;
+                // ★ 2026-09-09 审查欠账①②③：取数逻辑抽到 Geometry3dm.BuildSteppedPlateArgs，
+                //   与整机出图同一份口径（R15 过滤、逐片环半径、五组形状族字段都在里面）。
+                var pa = Geometry3dm.BuildSteppedPlateArgs(d, j, floor);
                 string file = Path.Combine(dlg.SelectedPath,
                     $"可回读_{pn[j]}_壁{d.WallMm:0.0}.3dm");
 
-                Geometry3dm.WriteStepped3dm(file, d.HoleRadiusMm, radii, thick,
-                    -d.TabLengthMm, d.TabHalfWidthMm, tt,
+                Geometry3dm.WriteStepped3dm(file, d.HoleRadiusMm, pa.RadiiMm, pa.ThickMm,
+                    -d.TabLengthMm, d.TabHalfWidthMm, pa.TabThickMm,
                     // ★★★ 槽要真的写进图（2026-09-05）。写死 slotCount: 0 的话，
                     //   求解器开了槽、判据按有槽算，而**出的图上没有槽** ——
                     //   工程师拿着一张与计算不符的图去加工。那比不开槽更糟。
-                    slotCount: d.SlotSpanDeg[j] > 0.5 ? 1 : 0,
-                    slotWidthDeg: d.SlotSpanDeg[j],
-                    slotRInMm: d.SlotBandMm(Math.Max(td, d.WallMm)).RIn,
-                    slotROutMm: d.SlotBandMm(Math.Max(td, d.WallMm)).ROut,
-                    tabHoleXMm: d.TabHoleCenterXMm(),
-                    tabHoleRMm: j < d.TabHoleRMm.Length ? d.TabHoleRMm[j] : 0);
+                    slotCount: pa.SlotCount,
+                    slotWidthDeg: pa.SlotWidthDeg,
+                    slotRInMm: pa.SlotRInMm,
+                    slotROutMm: pa.SlotROutMm,
+                    tabHoleXMm: pa.TabHoleXMm,
+                    tabHoleRMm: pa.TabHoleRMm,
+                    // ★ 2026-09-09 审查欠账③：形状族字段
+                    slotCenterDeg: pa.SlotCenterDeg,
+                    discCutShape: pa.DiscCutShape,
+                    discCutXMm: pa.DiscCutXMm, discCutZMm: pa.DiscCutZMm, discCutRMm: pa.DiscCutRMm,
+                    discCutAspect: pa.DiscCutAspect, discCutRotDeg: pa.DiscCutRotDeg,
+                    tabHoleSides: pa.TabHoleSides, tabHoleCornerFrac: pa.TabHoleCornerFrac,
+                    tabHoleRotDeg: pa.TabHoleRotDeg, tabHoleAspect: pa.TabHoleAspect);
 
                 // ── 回读校验：走的是**读取端那条路**，不是自己再算一遍
                 var f = Geometry3dm.LoadThickness(file, "法兰", double.NaN, 0.5);
                 var sh = PlateShapeAnalyzer.Analyze(f);
                 var got = sh.Levels.Select(x => x.ThicknessMm).ToArray();
                 // ★ R11：舌片另有厚度时读回来会多一级（舌片那级）⇒ 按**集合**比：写入的每个厚度都读得到，读到的每级都是写入的
-                var expect = Math.Abs(tt - td) > 1e-9 ? thick.Concat(new[] { tt }).ToArray() : thick;
+                var expect = Math.Abs(pa.TabThickMm - pa.PlateThickMm) > 1e-9
+                    ? pa.ThickMm.Concat(new[] { pa.TabThickMm }).ToArray() : pa.ThickMm;
                 bool ok = expect.All(v => got.Any(g2 => Math.Abs(g2 - v) < 0.05))
                        && got.All(g2 => expect.Any(v => Math.Abs(g2 - v) < 0.05))
                        && Math.Abs(sh.DiscRadiusMm - d.DiscRadiusMm) < 0.5;
                 if (!ok) bad++;
                 sb.AppendLine($"{pn[j]}	{Path.GetFileName(file)}	"
-                    + string.Join("/", thick.Select(v => v.ToString("0.00"))) + "	"
+                    + string.Join("/", pa.ThickMm.Select(v => v.ToString("0.00"))) + "	"
                     + string.Join("/", got.Select(v => v.ToString("0.00"))) + "	"
                     + $"{d.DiscRadiusMm:0.0}/{sh.DiscRadiusMm:0.0}	{(ok ? "✓" : "✗ 对不上")}");
             }
