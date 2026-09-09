@@ -2313,7 +2313,39 @@ public sealed class LineDesignPage : TabPage
         _tabLen.Value = C(fd.TabLengthMm, _tabLen);
         _tabW.Value = C(fd.TabHalfWidthMm, _tabW);
         _clamp.Value = C(fd.ClampTempC, _clamp);
-        for (int j = 0; j < 4 && j < _tPlate.Length; j++)
+        // ★★★★★ **段表先更新，逐片值后灌**（2026-09-09，UiWiring §35 抓到）。
+        //   段表一动 ⇒ SegsChanged ⇒ RebuildPlateRows 按新片数**重建**逐片控件，并用 Keep()
+        //   按下标把旧控件的值搬进新控件（在倒数第二个位置增删）。原来这一段排在灌值**之后**：
+        //   3 片记录载进 4 片页面 ⇒ 板厚先灌成 新/新/新/旧，重建时删掉下标 2 ⇒ 新/新/**旧** ——
+        //   最后一片是上一份记录漏下来的值，数字看着正常；舌片厚／槽心角／孔心／形状这些只读框
+        //   更是整批被重建成默认值。⇒ 先把片数摆对，再往里灌，每一片才都是这份记录的。
+        //   （_suppressAuto 已经是 true ⇒ 重建触发的 ParamChanged 会早退，不会作废 _tongueFixed/_fixedDerived。）
+        // 分段控温点：只改控温点，水头保持页面上原有的值（那是工艺量，不属于设计记录几何）
+        // ⚠ 名字**按段数生成**：原来是写死的 { "HC1","HC2","HC3" } ⇒ 档里有 4 段时
+        //   `segNames[k]` 当场 IndexOutOfRange，程序崩在「载入设计记录」上（2026-09-03 查出）。
+        // ⚠ 长度也要带过来（用户 2026-09-03：每段直接加热管长可单独设定）——
+        //   只带控温点的话，载入之后长度还是页面上一组，**存进去和读出来不是同一个设计**。
+        // ⚠ 档里段数比页面少 ⇒ 多出来的行要删掉，否则会挂着上一个设计的段。
+        int nSeg = fd.SetpointC.Length;
+        for (int k = 0; k < nSeg; k++)
+        {
+            double len = k < fd.SegLengthMm.Length ? fd.SegLengthMm[k] : _base.TubeLengthMm;
+            if (k < _segs.Count)
+            {
+                _segs[k].名称 = "HC" + (k + 1);
+                _segs[k].控温C = fd.SetpointC[k];
+                _segs[k].直接加热管长mm = len;
+            }
+            else _segs.Add(new SegRow
+            { 名称 = "HC" + (k + 1), 控温C = fd.SetpointC[k], 直接加热管长mm = len });
+        }
+        while (_segs.Count > nSeg) _segs.RemoveAt(_segs.Count - 1);
+        _segGrid.Refresh();
+
+        // ⚠ 边界要同时看页面片数与记录片数（2026-09-09：原来只看 _tPlate.Length，载入片数更少的记录时
+        //   fd.TabThickMm[j] 越界 ⇒ 整个进程崩在「载入设计记录」上）。段表先更新之后两者相等，但门仍两边都守；
+        //   也不再 `j < 4` 封顶 —— 那会让 5 片记录的第 5 片留着旧值。
+        for (int j = 0; j < _tPlate.Length && j < fd.TabThickMm.Length; j++)
             _tPlate[j].Value = C(fd.TabThickMm[j], _tPlate[j]);
         // ★★ 舌保温与环倍率也要灌进控件（2026-08-25）。
         //   ⚠ 这**不是**「拿设计记录当起点」—— 工程师**明确点了「载入设计记录」**，
@@ -2324,9 +2356,9 @@ public sealed class LineDesignPage : TabPage
         _clampLen.Value = C(fd.ClampLengthMm, _clampLen);
         _fillet.Value = C(fd.TabFilletMm, _fillet);
         _ringW.Value = C(fd.RingWidthMm, _ringW);
-        for (int j = 0; j < 4 && j < _tabIns.Length && j < fd.TabInsulMm.Length; j++)
+        for (int j = 0; j < _tabIns.Length && j < fd.TabInsulMm.Length; j++)
             _tabIns[j].Value = C(fd.TabInsulMm[j], _tabIns[j]);
-        for (int j = 0; j < 4 && j < _ringMul.Length && j < fd.RingMul.Length; j++)
+        for (int j = 0; j < _ringMul.Length && j < fd.RingMul.Length; j++)
             _ringMul[j].Value = C(fd.RingMul[j], _ringMul[j]);
         // 渐变环形状：设计记录里**给了**（非 NaN）才勾自定并灌进去；
         // 全是 NaN（现役两档都是）⇒ 不勾，SyncRingShape 会按旧规则把值显示出来。
@@ -2350,28 +2382,6 @@ public sealed class LineDesignPage : TabPage
         ShowTongues(fd);
         _fixedDerived = fd.Clone();          // R12/R13：记录里的槽心角／形状原样带着
         ShowDerived(fd);
-
-        // 分段控温点：只改控温点，水头保持页面上原有的值（那是工艺量，不属于设计记录几何）
-        // ⚠ 名字**按段数生成**：原来是写死的 { "HC1","HC2","HC3" } ⇒ 档里有 4 段时
-        //   `segNames[k]` 当场 IndexOutOfRange，程序崩在「载入设计记录」上（2026-09-03 查出）。
-        // ⚠ 长度也要带过来（用户 2026-09-03：每段直接加热管长可单独设定）——
-        //   只带控温点的话，载入之后长度还是页面上一组，**存进去和读出来不是同一个设计**。
-        // ⚠ 档里段数比页面少 ⇒ 多出来的行要删掉，否则会挂着上一个设计的段。
-        int nSeg = fd.SetpointC.Length;
-        for (int k = 0; k < nSeg; k++)
-        {
-            double len = k < fd.SegLengthMm.Length ? fd.SegLengthMm[k] : _base.TubeLengthMm;
-            if (k < _segs.Count)
-            {
-                _segs[k].名称 = "HC" + (k + 1);
-                _segs[k].控温C = fd.SetpointC[k];
-                _segs[k].直接加热管长mm = len;
-            }
-            else _segs.Add(new SegRow
-            { 名称 = "HC" + (k + 1), 控温C = fd.SetpointC[k], 直接加热管长mm = len });
-        }
-        while (_segs.Count > nSeg) _segs.RemoveAt(_segs.Count - 1);
-        _segGrid.Refresh();
 
         if (quiet) { _suppressAuto = false; return; }
 

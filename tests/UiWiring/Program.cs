@@ -2584,6 +2584,148 @@ class UiWiringTests {
 
         }
 
+        // ════════════════════════════════════════════════════════════
+        Head("35 载入片数**不同**的设计记录：不许崩，而且每一片都要是新记录的值");
+
+        // 病灶①（2026-09-09）：LoadDesignSpecFrom 灌板厚的那个循环只查了 _tPlate.Length
+        //   （页面**载入前**的片数），没查 fd.TabThickMm.Length（要载入的记录自己的片数）。
+        //   页面 4 片、记录 3 片 ⇒ 跑到 j=3 读 fd.TabThickMm[3] ⇒ IndexOutOfRange。
+        //   它是从「载入设计记录」按钮进来的 ⇒ 整个 WinForms 进程崩掉，不是一条能被 catch 住的提示。
+        //   紧挨着的 _tabIns / _ringMul 两个循环早就把记录侧的长度也纳入了边界，只漏了这一处。
+        // 病灶②（同日，补①的门抓到的）：段表（决定片数、触发 RebuildPlateRows）原来在**灌完逐片值之后**才更新。
+        //   RebuildPlateRows 用 Keep() 按下标把旧控件的值搬进新控件（在倒数第二个位置增删）⇒
+        //   3 片记录载进 4 片页面：板厚先灌成 1.11/2.22/3.33/旧，重建时删掉下标 2 ⇒ 1.11/2.22/**旧** ——
+        //   最后一片是**上一份记录漏下来的值**，看起来正常；舌片厚／槽心角／孔心／形状这些只读框
+        //   更是整批被重建成默认值。⇒ 段表必须先更新，逐片值后灌。
+        // ⚠ 探针的逐片值**故意各不相同，且与基线的任何一个都不同** —— 值一样的话上面那条分不出来。
+        // ⚠ 两个方向都走：3 片（越界 ⇒ 崩）与 5 片（原来 `j < 4` 封顶 ⇒ 第 5 片是旧值）。
+        {
+            int idx4 = Array.FindIndex(DesignSpec.All, d => d.FlangeCount == 4 && d.Invalid.Length == 0);
+            Check("有一份 4 片的现役档可当基线", idx4 >= 0,
+                  idx4 >= 0 ? DesignSpec.All[idx4].Name : "★ 没基线，本节无法成立");
+
+            void Probe(int nFl)
+            {
+                string probeName = $"UiWiring临时探针档_{nFl}片";
+                bool InBox35() => caseBox.Items.Cast<object>().Any(x => (x as string) == probeName);
+                Console.WriteLine($"  ── {nFl} 片记录载进 4 片页面 ──");
+                Check("开工时下拉里没有探针档", !InBox35(), InBox35() ? "★ 上一轮残留" : "");
+                string? saved35 = null;
+                try
+                {
+                    Quiesce(page);
+                    // ① 基线：先把页面站到 4 片上
+                    caseBox.SelectedIndex = idx4;
+                    M(page, "LoadDesignSpec");
+                    Pump(300);
+                    var plate4 = (NumericUpDown[])F(page, "_tPlate")!;
+                    Check("基线载入后页面是 4 片", plate4.Length == 4, $"{plate4.Length} 片");
+
+                    // ② 探针：nFl 片（nFl−1 段），逐片值按下标生成、彼此不同
+                    var p = DesignSpec.Builtin[0].Clone();
+                    p.Name = probeName;
+                    p.Provenance = $"UiWiring 临时探针（{nFl} 片），本节结束即删";
+                    p.SetpointC = Enumerable.Range(0, nFl - 1).Select(k => 1150.0 - 30 * k).ToArray();
+                    p.SegLengthMm = Enumerable.Repeat(300.0, nFl - 1).ToArray();
+                    p.Fit();
+                    var ix = Enumerable.Range(0, nFl).ToArray();
+                    p.TabThickMm    = ix.Select(i => 1.11 * (i + 1)).ToArray();
+                    p.TabInsulMm    = ix.Select(i => 5.5 + 1.1 * i).ToArray();
+                    p.RingMul       = ix.Select(i => 1.25 + 0.25 * i).ToArray();
+                    p.TongueThickMm = ix.Select(i => 0.51 + 0.11 * i).ToArray();
+                    p.SlotCenterDeg = ix.Select(i => 11.0 * (i + 1)).ToArray();
+                    p.TabHoleXMm    = ix.Select(i => -(101.0 + i)).ToArray();
+                    p.TabHoleSides  = ix.Select(i => i % 3 == 0 ? 3.0 : i % 3 == 1 ? 4.0 : 0.0).ToArray();
+                    p.DiscCutShape  = ix.Select(i => i % 3 == 0 ? 1.0 : i % 3 == 1 ? 0.0 : 2.0).ToArray();
+                    Check($"探针是 {nFl} 片", p.FlangeCount == nFl && p.TabThickMm.Length == nFl,
+                          $"{p.FlangeCount} 片 / 板厚 {p.TabThickMm.Length} 个");
+                    Check("自证：探针的每个板厚都不等于基线的任何一个板厚（否则分不出新旧）",
+                          p.TabThickMm.All(v => plate4.All(c => Math.Abs((double)c.Value - v) > 1e-6)),
+                          string.Join("/", plate4.Select(x => x.Value.ToString("0.###")))
+                          + " vs " + string.Join("/", p.TabThickMm.Select(v => v.ToString("0.###"))));
+
+                    saved35 = DesignSpecStore.Save(p);
+                    Check("探针档写到磁盘了", File.Exists(saved35), saved35);
+                    DesignSpec.Reload();
+                    Pump(200);
+                    Check("重扫没有读档错误", DesignSpecStore.LoadErrors.Count == 0,
+                          string.Join("；", DesignSpecStore.LoadErrors));
+                    int idxP = Array.FindIndex(DesignSpec.All, d => d.Name == probeName);
+                    Check("探针档在下拉里", idxP >= 0 && InBox35());
+                    var back = idxP >= 0 ? DesignSpec.All[idxP] : null;
+                    Check($"读回来仍是 {nFl} 片（存档往返没把片数改掉）", back is not null && back.FlangeCount == nFl,
+                          back is null ? "null" : $"{back.FlangeCount} 片");
+
+                    // ③ 真的载入 —— 修①之前，3 片这一步是 IndexOutOfRange 把进程带走
+                    caseBox.SelectedIndex = idxP;
+                    string crash = "";
+                    try { M(page, "LoadDesignSpec"); }
+                    catch (TargetInvocationException ex)
+                    {
+                        var inner = ex.InnerException ?? ex;
+                        crash = inner.GetType().Name + "：" + inner.Message;
+                    }
+                    Pump(300);
+                    Check($"★ 把 {nFl} 片记录载进 4 片页面**不抛异常**", crash.Length == 0, crash);
+
+                    var plateN = (NumericUpDown[])F(page, "_tPlate")!;
+                    var insN   = (NumericUpDown[])F(page, "_tabIns")!;
+                    var ringN  = (NumericUpDown[])F(page, "_ringMul")!;
+                    var tongN  = (NumericUpDown[])F(page, "_tongue")!;
+                    var slotCN = (NumericUpDown[])F(page, "_slotCenter")!;
+                    var holeXN = (NumericUpDown[])F(page, "_holeX")!;
+                    var holeSN = (Label[])F(page, "_holeShape")!;
+                    var discSN = (Label[])F(page, "_discShape")!;
+                    var segsN  = (System.Collections.ICollection)F(page, "_segs")!;
+                    string Vals(NumericUpDown[] a) => string.Join("/", a.Select(x => x.Value.ToString("0.###")));
+                    string Want(double[] a) => string.Join("/", a.Select(v => v.ToString("0.###")));
+                    bool Same(NumericUpDown[] a, double[] want) =>
+                        a.Length == want.Length
+                        && Enumerable.Range(0, want.Length).All(i => Math.Abs((double)a[i].Value - want[i]) < 1e-6);
+
+                    Check($"页面片数跟着记录变成 {nFl}", plateN.Length == nFl, $"{plateN.Length} 片");
+                    Check($"段表变成 {nFl - 1} 段", segsN.Count == nFl - 1, $"{segsN.Count} 段");
+                    Check("板厚逐片 = 新记录（含最后一片，不是旧记录漏下来的）",
+                          Same(plateN, p.TabThickMm), Vals(plateN) + " vs " + Want(p.TabThickMm));
+                    Check("舌保温逐片 = 新记录", Same(insN, p.TabInsulMm), Vals(insN) + " vs " + Want(p.TabInsulMm));
+                    Check("环倍率逐片 = 新记录", Same(ringN, p.RingMul), Vals(ringN) + " vs " + Want(p.RingMul));
+                    Check("舌片厚只读框逐片 = 新记录", Same(tongN, p.TongueThickMm), Vals(tongN) + " vs " + Want(p.TongueThickMm));
+                    Check("槽心角只读框逐片 = 新记录", Same(slotCN, p.SlotCenterDeg), Vals(slotCN) + " vs " + Want(p.SlotCenterDeg));
+                    Check("舌孔孔心只读框逐片 = 新记录", Same(holeXN, p.TabHoleXMm), Vals(holeXN) + " vs " + Want(p.TabHoleXMm));
+                    Check("舌孔形状逐片 = 新记录（圆角三角／圆角方／圆 轮着来）",
+                          holeSN.Length == nFl
+                          && ix.All(i => holeSN[i].Text == Solver.HoleShapeName(p.TabHoleSidesOf(i))),
+                          string.Join("/", holeSN.Select(l => l.Text)));
+                    Check("圆盘挖料形状逐片 = 新记录（切向／弯槽／顺电流 轮着来）",
+                          discSN.Length == nFl
+                          && ix.All(i => discSN[i].Text == Solver.DiscShapeName(p.DiscCutShapeOf(i))),
+                          string.Join("/", discSN.Select(l => l.Text)));
+                    Check($"载入后页面仍带着这份记录的场定值（_fixedDerived 是 {nFl} 片）",
+                          F(page, "_fixedDerived") is DesignSpec fx && fx.FlangeCount == nFl);
+                    Check($"载入后舌片厚仍按记录冻结（_tongueFixed 是 {nFl} 片）",
+                          F(page, "_tongueFixed") is double[] tf && tf.Length == nFl);
+                    Check("载入后没有自动开跑", F(page, "_cts") is null);
+                    Check("说明文字在（没被预测块冲掉）", outBox.Text.Contains("已载入设计记录"));
+                }
+                finally
+                {
+                    // 探针档留在 finaldesigns/ 里会被 --selfcheck A 段当成一个要复核的基准
+                    if (saved35 is not null && File.Exists(saved35)) File.Delete(saved35);
+                    DesignSpec.Reload();
+                    Pump(100);
+                    // 把页面放回 4 片基线，别把别的片数留给后面的节
+                    if (idx4 >= 0) { caseBox.SelectedIndex = idx4; M(page, "LoadDesignSpec"); Pump(200); }
+                    Quiesce(page);
+                }
+                Check("清理之后探针档从下拉里消失了", !InBox35(),
+                      InBox35() ? "★ 探针档没删干净，会污染 --selfcheck A 段" : "");
+                Check("清理之后页面回到 4 片", ((NumericUpDown[])F(page, "_tPlate")!).Length == 4);
+            }
+
+            Probe(3);   // 减少片数：修①之前在这里崩
+            Probe(5);   // 增加片数：修②之前第 5 片是旧值、只读框全是默认
+        }
+
         Console.WriteLine();
         Console.WriteLine(fail == 0 ? "★ 全部通过" : $"✗ {fail} 项不过");
         Console.Out.Flush();
