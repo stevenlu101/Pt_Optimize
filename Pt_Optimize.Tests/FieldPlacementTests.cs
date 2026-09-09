@@ -122,6 +122,32 @@ public class FieldPlacementTests
         Assert.True(score > 0);
     }
 
+    /// <summary>
+    /// ★ 审查欠账（低，2026-09-09）：<see cref="DesignSpec.TabHoleXMm"/> 的注释此前写「R12：求解器每轮
+    /// 把优先级最高处写进这里」——与代码不符：<see cref="Solver.FieldPlacement"/> 对孔心只算场给的 x
+    /// 打印对照，从没写回这个数组（槽心角／长椭圆当地电流方向才真的写回并「开口后冻结」）。
+    /// 本门钉住真相：真解一次场、真调一次 <see cref="Solver.FieldPlacement"/>，孔心数组必须仍是 NaN，
+    /// <see cref="DesignSpec.TabHoleCenterXMm(int)"/> 落到默认规则（与 <see cref="DesignSpec.TabHoleCenterXMm()"/> 相同）。
+    /// </summary>
+    [Fact]
+    public void 孔心场给的位置只打印不写回数组()
+    {
+        var d = DesignSpec.Builtin[0].Clone();
+        d.TabHoleRMm = new[] { 5.0, 5.0, 5.0, 5.0 };   // 每片都有孔 ⇒ FieldPlacement 真的会走到 RemovalPriority.TabHoleXMm 那条计算
+        var baseIn = new DesignInputs();
+        var lc = d.BuildCase(baseIn, checkRamp: false);
+        var last = LineRunner.Run(lc, null, default);
+        Assert.True(last.Ok, "本门要一个收敛的场做基准，没收敛就没法验证「只打印不写回」");
+        Assert.All(d.TabHoleXMm, v => Assert.True(double.IsNaN(v), "求解前孔心本该是 NaN（默认规则）"));
+
+        Solver.FieldPlacement(d, baseIn, last, log: null);
+
+        Assert.All(d.TabHoleXMm, v => Assert.True(double.IsNaN(v),
+            "FieldPlacement 把场给的孔心写回了 TabHoleXMm —— 与 DesignSpec.TabHoleXMm 的注释（只打印、不采用）不符"));
+        for (int j = 0; j < d.FlangeCount; j++)
+            Assert.Equal(d.TabHoleCenterXMm(), d.TabHoleCenterXMm(j), 9);
+    }
+
     /// <summary>③ 场定的位置与形状族存得进档也读得回来（NaN = 默认规则 ↔ null）。</summary>
     [Fact]
     public void 场定的位置存得进档也读得回来()

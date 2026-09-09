@@ -2724,6 +2724,111 @@ class UiWiringTests {
 
             Probe(3);   // 减少片数：修①之前在这里崩
             Probe(5);   // 增加片数：修②之前第 5 片是旧值、只读框全是默认
+        }   // ← 35 节的块到此为止（合并时补：两边各加了一节 35）
+
+        // ────────────────────────────────────────────────────────────
+        Head("35′ 载入段数不同的设计记录：逐片只读框要跟着回填，不能被重建成默认");
+
+        // 审查欠账（低，2026-09-09）：LoadDesignSpecFrom 原来在**段数同步之前**调用
+        // ShowTongues／ShowDerived；段数一旦真的变了，段表更新会经
+        // CellValueChanged/RowsAdded/RowsRemoved → SegsChanged → RebuildPlateRows
+        // 把 _tongue／_slotCenter／_holeX／_discShape／_holeShape 这些**逐片只读框**
+        // 连同控件对象一起重建成默认值 —— 刚灌进去的记录值被盖掉，工程师载入一份
+        // 片数不同的设计记录，看到的舌片厚／场定量会是 0／默认，不是记录里的数。
+        // 本节：先载入一份 4 片记录站稳基线，再载入一份**片数不同（5 片，比基线多）**、
+        // 逐片只读量各不相同且互相可分辨的探针档，验证回填的是探针档的值。
+        // ⚠ 特意选**增加**片数（4→5），不是减少：LoadDesignSpecFrom 里灌 _tPlate 那个
+        //   循环（`for j<4 && j<_tPlate.Length` 读 `fd.TabThickMm[j]`）少了一层对 fd 自身
+        //   长度的边界检查，载入**片数更少**的记录会在段数同步**之前**先 IndexOutOfRange
+        //   崩掉整个进程（本节开发期间实测踩到）——那是另一处独立的缺陷，不在本次四条
+        //   审查欠账之列，已用 spawn_task 另行登记，这里绕开它，只专注验证只读框回填。
+        {
+            const string probe = "UiWiring段数探针档";
+            bool InBox() => caseBox.Items.Cast<object>().Any(x => (x as string) == probe);
+            Check("开工时下拉里没有这个名字", !InBox(),
+                  InBox() ? "★ 上一轮残留，本节所有断言都不成立" : "");
+
+            string? saved = null;
+            try
+            {
+                // ① 站稳基线：先载入一个 4 片的现役记录，让页面当前是 4 片状态
+                int idx4 = Array.FindIndex(DesignSpec.All, x => x.FlangeCount == 4);
+                Check("找得到一个 4 片的现役记录做基线", idx4 >= 0, idx4.ToString());
+                if (idx4 >= 0)
+                {
+                    caseBox.SelectedIndex = idx4;
+                    M(page, "LoadDesignSpec");
+                    Pump(600);
+                }
+                var tongue4 = (NumericUpDown[])F(page, "_tongue")!;
+                Check("基线：只读框先是 4 片（自证：不是 4 片，下面「变成 5 片」就证明不了重建）",
+                      tongue4.Length == 4, tongue4.Length.ToString());
+
+                // ② 造一份 5 片（4 段）的探针档，逐片只读量各不相同、互相可分辨
+                var d2 = DesignSpec.Builtin[0].Clone();
+                d2.Name = probe;
+                d2.Provenance = "UiWiring 段数探针，本节结束即删";
+                d2.SetpointC = new[] { 1150.0, 1100.0, 1080.0, 1050.0 };   // 4 段 ⇒ 5 片，跟基线的 4 片不同
+                d2.Fit();
+                d2.TongueThickMm = new[] { 1.11, 2.22, 3.33, 4.44, 5.55 };
+                d2.SlotCenterDeg = new[] { 12.0, -88.0, 47.0, -150.0, 3.0 };
+                d2.TabHoleXMm = new[] { -66.5, double.NaN, -70.0, -55.5, -80.0 };   // 含一片 NaN：验默认规则在重建后也没错位
+                d2.TabHoleSides = new[] { 3.0, 0.0, 4.0, 3.0, 0.0 };                // 圆角三角／圆／圆角方／圆角三角／圆
+                d2.DiscCutShape = new[] { 1.0, 0.0, 0.0, 1.0, 0.0 };                // 长椭圆·切向／弯椭圆槽…
+                saved = DesignSpecStore.Save(d2);
+                Check("探针档确实写到磁盘上了", File.Exists(saved), saved ?? "");
+                DesignSpec.Reload();
+                Pump(200);
+
+                int idxProbe = Array.FindIndex(DesignSpec.All, x => x.Name == probe);
+                Check("重扫之后下拉里能找到探针档", idxProbe >= 0, idxProbe.ToString());
+                if (idxProbe >= 0)
+                {
+                    var fdProbe = DesignSpec.All[idxProbe];
+                    caseBox.SelectedIndex = idxProbe;
+                    M(page, "LoadDesignSpec");
+                    Pump(600);
+
+                    // ★ 段数真的变了：只读框数组对象在 RebuildPlateRows 里被整体换掉了，
+                    //   必须重新反射取（沿用旧的 tongue4 引用会读到已经废弃的旧数组）。
+                    var tongue = (NumericUpDown[])F(page, "_tongue")!;
+                    var slotCenter = (NumericUpDown[])F(page, "_slotCenter")!;
+                    var holeX = (NumericUpDown[])F(page, "_holeX")!;
+                    var discShape = (Label[])F(page, "_discShape")!;
+                    var holeShape = (Label[])F(page, "_holeShape")!;
+
+                    Check("载入之后只读框跟着重建成 5 片（自证：片数没变就谈不上「重建后回填」）",
+                          tongue.Length == 5 && slotCenter.Length == 5 && holeX.Length == 5
+                          && discShape.Length == 5 && holeShape.Length == 5,
+                          $"舌{tongue.Length}／槽心{slotCenter.Length}／孔心{holeX.Length}／盘形{discShape.Length}／孔形{holeShape.Length}");
+
+                    for (int j = 0; j < 5 && j < tongue.Length; j++)
+                        Check($"片{j} 舌片厚回填成探针档的值（不是重建后的默认 0）",
+                              Math.Abs((double)tongue[j].Value - fdProbe.TongueThickMm[j]) < 1e-6,
+                              $"{tongue[j].Value} vs {fdProbe.TongueThickMm[j]:0.00}");
+                    for (int j = 0; j < 5 && j < slotCenter.Length; j++)
+                        Check($"片{j} 槽心角回填成探针档的值",
+                              Math.Abs((double)slotCenter[j].Value - fdProbe.SlotCenterDegOf(j)) < 0.6,
+                              $"{slotCenter[j].Value} vs {fdProbe.SlotCenterDegOf(j):0}");
+                    for (int j = 0; j < 5 && j < holeX.Length; j++)
+                        Check($"片{j} 孔心回填成探针档的值（含 NaN → 默认规则那一片）",
+                              Math.Abs((double)holeX[j].Value - fdProbe.TabHoleCenterXMm(j)) < 0.06,
+                              $"{holeX[j].Value} vs {fdProbe.TabHoleCenterXMm(j):0.0}");
+                    for (int j = 0; j < 5 && j < discShape.Length; j++)
+                        Check($"片{j} 圆盘挖料形状回填成探针档的值",
+                              discShape[j].Text.Contains(Solver.DiscShapeName(fdProbe.DiscCutShapeOf(j)), StringComparison.Ordinal),
+                              $"{discShape[j].Text} vs {Solver.DiscShapeName(fdProbe.DiscCutShapeOf(j))}");
+                    for (int j = 0; j < 5 && j < holeShape.Length; j++)
+                        Check($"片{j} 舌孔形状回填成探针档的值",
+                              holeShape[j].Text.Contains(Solver.HoleShapeName(fdProbe.TabHoleSidesOf(j)), StringComparison.Ordinal),
+                              $"{holeShape[j].Text} vs {Solver.HoleShapeName(fdProbe.TabHoleSidesOf(j))}");
+                }
+            }
+            finally
+            {
+                if (saved is not null && File.Exists(saved)) File.Delete(saved);
+                DesignSpec.Reload();
+            }
         }
 
         Console.WriteLine();

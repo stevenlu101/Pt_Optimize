@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
+using System.Threading;
 using PtOptimize.Core;
 using Xunit;
 
@@ -364,6 +367,101 @@ public class ShapeFamilyTests
             int j = int.Parse(line.Split('片')[1].Split(' ')[0]);
             string name = line.Split("⇒ 选**")[1].Split("**")[0];
             Assert.Equal(name, Solver.DiscShapeName(sr.Design.DiscCutShapeOf(j)));
+        }
+    }
+
+    /// <summary>
+    /// ⑧ 审查欠账（低，2026-09-09）：**形状族没赢就不落地**。此前 <c>ProbeShapeFamily</c> 探完形状族就把
+    /// 选中的形状直接写进已提交态 <c>d</c>，即使那根旋钮（孔径／槽张角）这一轮**没有真的抬起来**——
+    /// 要么在 <c>ChooseKnob</c> 同一排比价里输给了另一个候选，要么胜出后 <c>RaiseUntil</c> 又没能真的
+    /// 把它抬起来。修法：<c>ChooseKnob</c> 记下每个探过形状族的旋钮探前的形状，没赢的全部退回；
+    /// 胜出但没抬起来的那个也在 <c>Solve</c> 的调用点退回。
+    ///
+    /// ⚠ 成本控制：不跑整条 <c>Solve</c>（那要几十次场解、十几分钟）——直接反射调 <c>ChooseKnob</c>
+    /// 本身（它才是这处修法真正改的函数），候选只给「舌保温」「孔径」两根，约 5 次场解。
+    ///
+    /// ⚠ 怎么让「退回」这件事**看得见**（第一版落在空集，第二版又落在「探测族内部选中的
+    /// 恰好也是默认形状」这一巧合上，两次都验证不了任何东西）：探前**人为**把片0 的孔形状
+    /// 设成「圆角方」（模拟这条 bug 的真实成因——上一轮探过没赢、形状却没退回，留下的正是
+    /// 这样一个杂散值）。<c>ShapeFamilyFor</c> 只在孔径&gt;0（已开口）时才认这个值当形状族唯一
+    /// 成员，孔径仍是 0（没开）时它被无视、族照样是 {圆,圆角三角,圆角方} —— 但 <c>ChooseKnob</c>
+    /// 探前记的 <c>Shape0</c> 就是它。若孔径这一轮没赢，探测期间被 <c>ProbeShapeFamily</c> 临时改写
+    /// 过的形状必须退回到这个人为设的值，不能停在探测期间选中的那个（哪怕两者恰好一样，退回
+    /// 逻辑本身也必须真的跑过）。
+    /// </summary>
+    [Trait("速度", "慢")]
+    [Fact]
+    public void 形状族没赢就不落地_这条分支走到了()
+    {
+        var d = DesignSpec.Builtin[0].Clone();
+        var p = new DesignInputs();
+        var o = new SolverOptions();
+        double tLo = Math.Ceiling(d.DiscFloorMm(p) / o.QuantThickMm - 1e-9) * o.QuantThickMm;
+        for (int j = 0; j < d.TabThickMm.Length; j++)
+        {
+            d.TabThickMm[j] = tLo; d.TabInsulMm[j] = o.InsLoMm;
+            d.RingMul[j] = o.RingLo; d.RingMul2[j] = o.RingLo;
+        }
+        var res = new SolverResult();
+        Solver.ApplySectionFloor(d, p, o, res, null, s => res.Trace.Add(s));   // 闭式，不解场：填 res.DesignCurrent
+
+        const int j0 = 0;
+        // ★ 舌片厚（R11，闭式 I/(J·舌宽)）此刻正好卡在 J=10 满宽处 —— 开孔立刻超 J，孔径上界恒为 0，
+        //   形状族根本探不到（本门第一版就是撞在这里）。给舌片一点富余（不影响③违反：③ 由舌保温/几何主导），
+        //   孔径的按-J 上界才有正数，探针才有得探。
+        if (j0 < d.TongueThickMm.Length && !double.IsNaN(d.TongueThickMm[j0]))
+            d.TongueThickMm[j0] *= 1.6;
+        // ★ 人为埋一个「杂散形状值」（见上面类注释）：孔径仍是 0（没开），但形状字段不是默认的圆。
+        const int stray = 4;   // 圆角方
+        d.TabHoleSides[j0] = stray;
+
+        var lc = d.BuildCase(p, checkRamp: false);
+        double dipMax = lc.RootDeltaMaxK, discMax = lc.DiscOverTempMaxK;
+
+        var chooseKnob = typeof(Solver).GetMethod("ChooseKnob", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(chooseKnob);
+        var knobs = new[] { Solver.Knob.Insul, Solver.Knob.TabHoleR };
+        var log = new List<string>();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var args = new object?[]
+        {
+            d, p, o, j0, knobs, LineResult.Key.FlangeDip, dipMax, discMax, res,
+            (Action<string>)(s => { log.Add(s); }), CancellationToken.None, null,
+        };
+        object? raw;
+        try { raw = chooseKnob!.Invoke(null, args); }
+        catch (Exception ex)
+        {
+            Assert.Fail("直接调 ChooseKnob 抛了异常（不是判据不过，是代码本身出错）：" + (ex.InnerException ?? ex));
+            return;
+        }
+        sw.Stop();
+        Assert.NotNull(raw);
+        var (winner, why, before, after, shape0) = ((Solver.Knob?, string, double, double, int))raw!;
+        int shapeAfter = d.TabHoleSidesOf(j0);
+        string outDir = Path.Combine(HandoverDoc.Root(), "deliverable");
+        Directory.CreateDirectory(outDir);
+        File.WriteAllText(Path.Combine(outDir, "形状族没赢不落地_轨迹.txt"),
+            $"═══ 形状族没赢就不落地（W08 起点，片{j0}，「舌保温」vs「孔径」，探前人为形状={stray}，{sw.Elapsed.TotalSeconds:0.0} s）═══\n"
+          + $"赢家={winner}　why={why}　before={before:0.###}　after={after:0.###}　"
+          + $"ChooseKnob 返回的 Shape0={shape0}　调用后 d 里的形状={shapeAfter}\n\n"
+          + string.Join("\n", log) + "\n", new UTF8Encoding(false));
+        Console.WriteLine($"{sw.Elapsed.TotalSeconds:0.0} s　赢家={winner}　调用后形状={shapeAfter}（探前人为设的是 {stray}）");
+
+        Assert.True(before < 0, $"本门要③一开始就违反，实测裕度 {before:0.000} ≥ 0 —— 构型漂了，换个更薄/更冷的起点");
+
+        if (winner == Solver.Knob.TabHoleR)
+        {
+            // 孔径赢了：这次没走到「没赢」那条分支——如实记下，不假装；但顺带验一条相关不变式：
+            // 赢家的 Shape0 就该是我探前人为设的那个（供 RaiseUntil 万一没抬起来时退回用）。
+            Assert.Equal(stray, shape0);
+            Console.WriteLine("本次孔径赢了，「没赢就不落地」这条分支这次没被走到（形状族选中的形状留在设计里是对的，留痕供参考）。");
+        }
+        else
+        {
+            // 孔径没赢（舌保温赢了，或都没赢）：探测期间被临时改写过的形状必须退回**探前人为设的那个**，
+            // 不能停在 ProbeShapeFamily 探测期间选中的那个 —— 这正是本条修法要保证的。
+            Assert.Equal(stray, shapeAfter);
         }
     }
 }

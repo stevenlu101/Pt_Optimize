@@ -2379,8 +2379,16 @@ public sealed class LineDesignPage : TabPage
         _sizerTabIns = null; _sizerRingMul = null;
         // R11：这份记录的舌片厚原样带着（NaN = 与基板同），核算复现的就是它；工程师一改参数就回到规则
         _tongueFixed = (double[])fd.TongueThickMm.Clone();
-        ShowTongues(fd);
         _fixedDerived = fd.Clone();          // R12/R13：记录里的槽心角／形状原样带着
+        // ⚠ ShowTongues／ShowDerived 挪到段数同步**之后**（审查欠账·低，2026-09-09）：
+        //   原来紧跟在这里调用，而下面的段表更新一旦让段数真的变了，会经
+        //   `_segGrid.RowsAdded/RowsRemoved → SegsChanged → RebuildPlateRows` 把
+        //   `_tongue`／`_slotCenter`／`_holeX`／`_discShape`／`_holeShape` 这些**逐片只读框**
+        //   连同控件对象一起重建成默认值——刚写进去的 fd 值就被重建盖掉了（W08/2 段 → 4 段那类
+        //   载入会看见舌片厚、场定量全部跳回 0／默认）。放到段数同步之后，重建（如果发生）已经
+        //   落定，这里再回填就是最终会显示的那份。
+        //   （合并 176acb7 与 75b72bb 时这两句在冲突块里被丢掉，走查 UiWiring §35「舌孔形状逐片 = 新记录」当场红 ⇒ 补回。2026-09-10）
+        ShowTongues(fd);
         ShowDerived(fd);
 
         if (quiet) { _suppressAuto = false; return; }

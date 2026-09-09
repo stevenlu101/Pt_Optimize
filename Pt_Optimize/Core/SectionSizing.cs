@@ -296,14 +296,22 @@ public static class SectionSizing
         return tNowMm * w.JAPerMm2 / jDesign;
     }
 
-    /// <summary>孔径上界（按设定 J）：孔心处 (宽 − 2R)·t ≥ I/J ⇒ R ≤ (宽 − I/(J t))/2。</summary>
+    /// <summary>
+    /// 孔径上界（按设定 J）：孔心处 (宽 − 2R)·t ≥ I/J ⇒ R ≤ (宽 − I/(J t))/2。
+    /// 这个式子把孔当**圆**扣弦——<paramref name="shapeRadiusRatio"/> 是该孔形状族的外接半径相对
+    /// 同面积圆的放大倍数（圆角三角/方 &gt; 1，圆 = 1；由调用方按 <see cref="FlangePlate.TabHole.EqualAreaRadius"/>
+    /// 算好传进来，这里不重复几何）。审查欠账（低，2026-09-09）：此前恒为圆，圆角三角/方的
+    /// 真实弦长比这里算出的大 13–22 %，上界算宽了。
+    /// </summary>
     public static double HoleRadiusMaxByJMm(FlangePlate g, double holeXMm, double currentA,
-                                            double jDesign = JDesignAPerMm2)
+                                            double jDesign = JDesignAPerMm2, double shapeRadiusRatio = 1.0)
     {
         double tTab = double.IsNaN(g.TabThicknessMm) ? g.ThicknessMm : g.TabThicknessMm;
         double w = 2 * g.HalfWidth(holeXMm);
         double need = currentA / (jDesign * Math.Max(tTab, 1e-9));
-        return Math.Max(0, 0.5 * (w - need));
+        double capCircle = Math.Max(0, 0.5 * (w - need));
+        double ratio = Math.Max(shapeRadiusRatio, 1e-9);
+        return capCircle / ratio;
     }
 
     /// <summary>槽张角上界（按设定 J）：槽带各圈 (2πr − r·θ)·t ≥ I/J ⇒ θ ≤ 2π − I/(J t r)，取槽带内最紧的一圈。</summary>
