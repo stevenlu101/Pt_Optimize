@@ -62,6 +62,23 @@ public class BestShapeFineMeshTests
             foreach (var c in fine.Checks)
                 File.AppendAllText(dump, $"  {(c.Ok ? "✓" : c.Undetermined ? "？" : "✗")} {c.Name,-28} {c.Actual,10:0.000} / {c.Limit,-8:0.###} {c.Unit}　{c.Where}" + Environment.NewLine);
             File.AppendAllText(dump, $"  全判据 {fine.AllOk}　合计 {fine.TotalMassG:0.0} g" + Environment.NewLine);
+            if (!fine.AllOk)
+            {
+                // ★ 导航网格上的解在细网格上站不住 ⇒ 与「◇ 搜形状」精算胜出形状同一条路：Solver 在判据所在的那张网格上重新求根
+                //   （A⑬：根的位置随网格移动；③ 实测导航 → 细网格翻倍）。旋钮只增不减、从导航网格的解出发。
+                File.AppendAllText(dump, Environment.NewLine + $"═══ 细网格重解（Solver 第二遍，FineMm {mv.FineMm:0.###}）═══" + Environment.NewLine);
+                var (finFine, finFineR) = MeshVerify.RequiredMeshFor(sr.Design);
+                var sr2 = Solver.Solve(sr.Design, p, new SolverOptions { FineMm = finFine, FineRadiusMm = finFineR, MaxRounds = 16 }, live);
+                File.AppendAllText(dump, Environment.NewLine + $"═══ 细网格重解：耗时 {sw.Elapsed.TotalMinutes:0.0} 分（累计）　场解 {sr2.Solves} 次　可行 {sr2.Feasible}　合计 {sr2.MassG:0.0} g　停在：{sr2.StopWhy}" + Environment.NewLine);
+                if (sr2.Design is { } d2) File.AppendAllText(dump, "重解出的设计：" + d2.Describe() + Environment.NewLine);
+                if (sr2.Best is { } b2)
+                {
+                    File.AppendAllText(dump, "细网格重解判据表：" + Environment.NewLine);
+                    foreach (var c in b2.Checks)
+                        File.AppendAllText(dump, $"  {(c.Ok ? "✓" : c.Undetermined ? "？" : "✗")} {c.Name,-28} {c.Actual,10:0.000} / {c.Limit,-8:0.###} {c.Unit}　{c.Where}" + Environment.NewLine);
+                    File.AppendAllText(dump, $"  全判据 {b2.AllOk}　合计 {b2.TotalMassG:0.0} g" + Environment.NewLine);
+                }
+            }
         }
     }
 }

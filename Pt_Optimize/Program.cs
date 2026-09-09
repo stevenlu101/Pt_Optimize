@@ -4628,8 +4628,15 @@ internal static class Program
                 SolverResult RunOnce(DesignSpec g, string tag)
                 {
                     Console.WriteLine($"── {tag}");
+                    // R25：命令行也印五步的标题（与界面同一份认法 SolveStages）
+                    var stCur = SolveStages.Stage.None;
                     var rr = Solver.Solve(g, p, soOpt,
-                                          new SyncProgress<string>(s => Console.WriteLine("   " + s)));
+                                          new SyncProgress<string>(s =>
+                                          {
+                                              var st = SolveStages.Of(s, stCur);
+                                              if (st != stCur) { stCur = st; Console.WriteLine("   ═══ " + SolveStages.Title(st)); }
+                                              Console.WriteLine("   " + s);
+                                          }));
                     Console.WriteLine($"   ⇒ {(rr.Feasible ? "全过 ✓" : "不过 ✗")}　" +
                                       $"合计 {rr.MassG:0.0} g　场解 {rr.Solves} 次");
                     Console.WriteLine(rr.FineRefined

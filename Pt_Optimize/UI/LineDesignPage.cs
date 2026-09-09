@@ -260,6 +260,8 @@ public sealed class LineDesignPage : TabPage
     private readonly TextBox _layer3dm = new() { Text = "法兰", Width = UiScale.S(96) };
     private readonly DataGridView _segGrid = new();
     private readonly RichTextBox _out = new();
+    /// <summary>★ R25（用户 2026-09-09 晚）：解法五步 ①②③④⑤ 的状态条，喂每一行进度；认法在 Core.SolveStages。</summary>
+    private readonly SolveStageStrip _stages = new();
     private readonly ToolStripProgressBar _prog = new() { Visible = false, Maximum = 1000 };
     private readonly ToolStripLabel _status = new("");
     private readonly ToolStripButton _btnRun, _btnAuto, _btnExport, _btnLoadCase, _btn3dm, _btnRepro;
@@ -486,6 +488,9 @@ public sealed class LineDesignPage : TabPage
     }
 
     /// <summary>「搜形状」每个候选筛几轮 / 胜出者精算几轮。**只有走查器会改它**。</summary>
+    /// <summary>R25：加密复算的每一行进度先喂状态条，再原样回给输出框。</summary>
+    private string Tracked(string m) { _stages.Track(m); return "　" + m + Environment.NewLine; }
+
     /// <summary>R24：把搜形状算过的形状灌进下拉：可行的按铂重排前，不可行的排后并写明原因；一个都没有就藏起来。</summary>
     internal void RefreshShapePick()
     {
@@ -995,6 +1000,7 @@ public sealed class LineDesignPage : TabPage
         var outHost = new Panel { Dock = DockStyle.Fill };
         outHost.Controls.Add(_out);
         outHost.Controls.Add(outSwitches);
+        outHost.Controls.Add(_stages);            // R25：解法阶段条在最上面
 
         _resultSplit.Panel1.Controls.Add(_checks);
         _resultSplit.Panel2.Controls.Add(_plots);
@@ -2012,6 +2018,7 @@ public sealed class LineDesignPage : TabPage
 
         // 第 1 步永远是解一次 —— 没有解就谈不上任何判断
         _pipeStep = "第 1 步／解一次整线";
+        _stages.Reset("核算整线：从 ① 开始");
         await RunAsync(autoSize: false);
         // ★ 记下「前」——「这次改了什么」比的是**流水线动过什么**，
         //   所以基准取第 1 步解完那一刻，不是点按钮那一刻。
@@ -2028,6 +2035,7 @@ public sealed class LineDesignPage : TabPage
                 _out.AppendText(Environment.NewLine
                     + "★ 算完了：判据全过、是当前参数的解、而且已经加密复算到数不再变。"
                     + "可以到「交付」页出图。" + Environment.NewLine);
+                _stages.Finish(true, "判据全过、已加密复算到数不再变 —— 可以出图");
                 break;
             }
 
@@ -2095,6 +2103,9 @@ public sealed class LineDesignPage : TabPage
                     + Environment.NewLine);
         }
         _pipeStep = "";
+        if (_stages.Current != SolveStages.Stage.Done)
+            _stages.Finish(false, _pipeAborted ? "已取消／出错（见输出框）"
+                                  : Flow.Next(Shared!, App)?.Why?.Split(Environment.NewLine)[0] ?? "没到「可以出图」（见输出框）");
         PushFlow();
     }
 
@@ -2119,6 +2130,7 @@ public sealed class LineDesignPage : TabPage
         var prog = new Progress<string>(s => OnUi(() =>
         {
             _status.Text = s;
+            _stages.Track(s);                     // R25：①②③④⑤ 状态条
             // ★ 流水线里要说清「第几步／在做什么」—— 否则跑一小时只看到一行滚动的轮数
             Shared?.SetRunningNote(
                 (_pipeStep.Length > 0 ? _pipeStep + "　" : "")
@@ -2815,9 +2827,11 @@ public sealed class LineDesignPage : TabPage
         void Note(string s2)
         {
             _status.Text = s2;
+            _stages.Track(s2);                    // R25：搜形状里每个形状也走 ①②③，赢家走 ⑤
             int pct = _prog.Maximum > 0 ? 100 * _prog.Value / _prog.Maximum : 0;
             Shared?.SetRunningNote($"已用 {clock.Elapsed.TotalMinutes:0.0} 分　{s2}", pct);
         }
+        _stages.Reset("搜形状：每个形状走 ①②③，赢家再走 ⑤ 精算");
         Note("准备网格…");
 
         var sb = new StringBuilder();
@@ -3241,6 +3255,7 @@ public sealed class LineDesignPage : TabPage
         var prog = new Progress<string>(s => OnUi(() =>
         {
             _status.Text = s;
+            _stages.Track(s);                     // R25：①②③④⑤ 状态条
             // ★ 流水线里要说清「第几步／在做什么」—— 否则跑一小时只看到一行滚动的轮数
             Shared?.SetRunningNote(
                 (_pipeStep.Length > 0 ? _pipeStep + "　" : "")
@@ -3659,7 +3674,8 @@ public sealed class LineDesignPage : TabPage
         _out.AppendText(Environment.NewLine + "◆ **加密复算**开始 —— 把网格一档档加密，直到这个数不再变为止。" + Environment.NewLine
             + "　　10～40 分钟。随时可点「取消」，已跑完的档照样留下。" + Environment.NewLine);
 
-        var prog = new Progress<string>(m => OnUi(() => _out.AppendText("　" + m + Environment.NewLine)));
+        // 形态保持 `m => OnUi(() => _out.AppendText(…))`（MeshVerifyReachableTests 钉着回 UI 线程这件事）；R25 的状态条在 Tracked 里喂
+        var prog = new Progress<string>(m => OnUi(() => _out.AppendText(Tracked(m))));
         try
         {
             var res = await Task.Run(() => MeshVerify.Run(d, _base, progress: prog, cancel: _cts.Token),

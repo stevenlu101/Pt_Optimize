@@ -794,6 +794,40 @@ class UiWiringTests {
             Set(page, "_suppressAuto", false);
         }
 
+        Head("16⁗ 解法阶段条 ①②③④⑤（R25，用户 2026-09-09 晚：让工程师知道 APP 正在干啥）");
+        {
+            var strip = (Control)F(page, "_stages")!;
+            var cur = strip.GetType().GetProperty("Current", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            var track = strip.GetType().GetMethod("Track", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            var reset = strip.GetType().GetMethod("Reset", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            var finish = strip.GetType().GetMethod("Finish", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            Control? p0 = strip; while (p0 is not null && p0 != page) p0 = p0.Parent;
+            Check("状态条挂在整线设计页上（输出框顶上）", p0 == page, "");
+            Check("五个格子都在", strip.Controls.OfType<Label>().Count(l => l.Text.Contains("①") || l.Text.Contains("②") || l.Text.Contains("③") || l.Text.Contains("④") || l.Text.Contains("⑤")) == 5, "");
+            reset.Invoke(strip, new object[] { "核算整线：从 ① 开始" });
+            string St() => cur.GetValue(strip)!.ToString()!;
+            Check("重置 ⇒ 还没到任何一步", St() == "None", St());
+            // 下面的原句都抄自 deliverable/细网格复算_盘56舌56.txt（真轨迹），改了求解器的前缀这里会红
+            track.Invoke(strip, new object[] { "设计电流（温控 20 °C/h 空管升温 25→1150 °C，管子准静态 I²R=散热+C·Ṫ 全程峰值）：段 979/979 A ⇒ 片 979/1696/979 A（共用片矢量合成）" });
+            Check("① 设计电流", St() == "DesignCurrent", St());
+            track.Invoke(strip, new object[] { "★ 舌片厚按 I/(J·舌宽) 定：片0 — → 1.75 mm（设计电流 979 A ÷ (J 10 × 舌片最窄有效宽 56 mm)，向上落图纸格 0.01，不低于板料 0.60）" });
+            track.Invoke(strip, new object[] { "起点 = **约束盒的下角**（不是种子）：板厚 0.60/1.02/0.60 mm（逐片；= max(焊接屈曲, 烧穿, 按 J=10 的截面)；熔化只验不抬）／舌保温 0.30 mm（裸舌）" });
+            Check("② 约束盒下角", St() == "Corner", St());
+            track.Invoke(strip, new object[] { "── 第一遍：导航网格上定位（导航网格）" });
+            track.Invoke(strip, new object[] { "第  2 轮　合计 2603 g　板厚 0.60/1.02/0.60　舌保温 5.00/2.80/8.60" });
+            Check("③ 导航网格逐轮（轮数进细节）", St() == "NavRounds" && strip.GetType().GetProperty("DetailText", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(strip)!.ToString()!.Contains("第  2 轮　合计 2603 g"), St());
+            track.Invoke(strip, new object[] { "加密复算：0.250 mm（第 2 档）…" });
+            Check("④ 加密复算", St() == "MeshVerify", St());
+            track.Invoke(strip, new object[] { "── 第二遍：细网格上重新求根（**判据以此为准**）（细网格 0.125 mm）" });
+            track.Invoke(strip, new object[] { "第  1 轮　合计 2604 g　板厚 0.60/1.02/0.60" });
+            Check("⑤ 细网格重解（轮数归第二遍）", St() == "FineResolve", St());
+            track.Invoke(strip, new object[] { "外层耦合 3/600（ω=0.35）" });
+            Check("认不出的行不改阶段", St() == "FineResolve", St());
+            finish.Invoke(strip, new object[] { true, "判据全过" });
+            Check("收尾 ⇒ ✓ 算完", St() == "Done", St());
+            reset.Invoke(strip, new object[] { "" });
+        }
+
         Head("17 输出框排版：不许出现 Markdown 源码，中文列宽要按显示宽度算");
         // 用户 2026-08-17 反馈「文挡好乱」。两个病：
         //   ① `**粗体**` 是 Markdown，而输出框显示纯文本 ⇒ 满屏星号；
