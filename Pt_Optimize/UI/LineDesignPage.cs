@@ -270,6 +270,11 @@ public sealed class LineDesignPage : TabPage
     /// 没有它，工程师可以拿导航网格上的数直接出图，而那个数实测能差 1.8 K。
     /// </summary>
     private readonly ToolStripButton _btnVerify;
+    /// <summary>
+    /// R26（2026-09-09）：加密复算发现「导航网格上过、细网格上不过」时的出口 ——
+    /// 直接在那张细网格上重新求根，不必回导航网格再走一遍。见 <see cref="FineResolveAsync"/>。
+    /// </summary>
+    private readonly ToolStripButton _btnFineResolve;
     private MeshVerify.Result? _meshVerify;
     private object? _verifiedSnap;
     /// <summary>「分析几何变数」——只在 .3dm 模式且入口片已选时可用，由 SyncGeomSource 控。</summary>
@@ -728,6 +733,8 @@ public sealed class LineDesignPage : TabPage
         //   Flow 是命令表的唯一来源，名字也该只有那一份。
         _btnAuto = Btn(Flow.Cmd("core.autoThick").Text, (_, _) => _ = RunAsync(true));
         _btnVerify = Btn("◆ 加密复算（算到数不再变）", (_, _) => _ = VerifyMeshAsync());
+        // R26（2026-09-09）：按钮字从 Flow 读，不再抄一份 —— 与 core.autoThick 同规矩。
+        _btnFineResolve = Btn(Flow.Cmd("core.fineResolve").Text, (_, _) => _ = FineResolveAsync());
         // 1b 之后它导出的是**整机**（管 + 四片法兰）且几何与求解一致，故改名点明
         _btnExport = Btn("导出本页 3DM", (_, _) => Export());
 
@@ -803,6 +810,8 @@ public sealed class LineDesignPage : TabPage
         // ── 第二排：**手动分步**（默认收起）。顺序 = 流水线里的先后：定厚 → 搜形状 → 加密复算，再是工具。
         //   自动定厚／搜形状／厚度灵敏度由 MainForm 插进来（MountMainRow / MountSecondRow）。
         _tool2.Items.Add(_btnVerify);
+        // R26：紧跟在「◆ 加密复算」之后 —— 与 Flow 登记的命令顺序一致（UiWiring §18 盯着）。
+        _tool2.Items.Add(_btnFineResolve);
         _tool2.Items.Add(new ToolStripSeparator());
         _tool2.Items.Add(_btnExportRead);
 
@@ -1094,6 +1103,14 @@ public sealed class LineDesignPage : TabPage
                 : Shared?.Last is { Ok: true }
                     ? "参数在上次求解之后又动过了 —— 先点「核算整线」按现在这组重解。"
                     : "还没解过 —— 先点「核算整线」。没有解就无从谈「这个数准不准」。";
+        // R26（2026-09-09）：细网格重解——比加密复算多一条前置（做过一次网格无关复核）。
+        _btnFineResolve.ToolTipText =
+            Shared is { Fresh: true, Last: { Ok: true } } && _meshVerify is { Converged: true }
+                ? "在加密复算已经算到的那张细网格上直接重新求根（旋钮只增不减），"
+                  + "不必回导航网格重新走一遍「核算整线」。"
+                : _meshVerify is { Converged: true }
+                    ? "参数在上次求解之后又动过了 —— 先点「核算整线」按现在这组重解。"
+                    : "还没做过「◆ 加密复算」—— 细网格重解要接着那一次的网格口径，没有它就无从谈起。";
         _btnAnalyze.ToolTipText = an
             ? "只在「Rhino .3dm 文件」模式下可用 —— 解析形状是程序生成的，没有图纸需要反推。"
             : hasEntry
@@ -1351,6 +1368,11 @@ public sealed class LineDesignPage : TabPage
         //   ⚠ 条件与 VerifyMeshAsync 的前置**同一套**：有解、且解对应当前参数。
         //     两处不一致的话，要么灰着却能跑，要么亮着却拒绝 —— 都在骗人。
         "core.verifyMesh" => Shared is { Fresh: true, Last: { Ok: true } },
+        // ★ R26（2026-09-09）：细网格重解 —— 与 core.verifyMesh 同一前置，外加一条：
+        //   已经做过一次网格无关复核（_meshVerify is { Converged: true }）。它专治的状态
+        //   正是复核跑完之后（导航网格上过、细网格上不过），没有这条复核就无从谈「细网格」。
+        "core.fineResolve" => Shared is { Fresh: true, Last: { Ok: true } }
+                            && _meshVerify is { Converged: true },
 
         // ★★★★★ 原 ③→④ 那道门**降级到这里**（2026-09-02 阶段轨合并）。
         //
@@ -2036,6 +2058,8 @@ public sealed class LineDesignPage : TabPage
                 "core.autoThick"  => Flow.Cmd("core.autoThick").Text,
                 "shape.search"    => "搜形状（会改盘径与舌宽）",
                 "core.verifyMesh" => "加密复算（算到数不再变）",
+                // R26（2026-09-09）：加密复算发现细网格上不过时，流水线自己接着往下走。
+                "core.fineResolve" => Flow.Cmd("core.fineResolve").Text,
                 "core.runLine"    => "重解一次",
                 // ★★★★★ R19（用户 2026-09-08）：3DM 路要能进第 ② 步搜形状。
                 //   三步流程「UI 或 3DM 输入 → 法兰优化 → 结果与出图」里，3DM 是**输入**的一种；
@@ -2063,6 +2087,7 @@ public sealed class LineDesignPage : TabPage
                 case "core.runLine":   await RunAsync(autoSize: false); break;
                 case "shape.search":   await SearchShapeAsync(); break;
                 case "core.verifyMesh": await VerifyMeshAsync(); break;
+                case "core.fineResolve": await FineResolveAsync(); break;   // R26：细网格重解
                 case "geom.analyze":   AnalyzeShape(); break;            // 同步（起 Geom 子进程，秒级）
                 case "geom.toanalytic": AdoptShapeToAnalytic(); break;   // 同步，不起解；改的是参数
             }
@@ -3216,7 +3241,12 @@ public sealed class LineDesignPage : TabPage
     /// <param name="byTimer">true = 防抖定时器自动触发（用户可能已经走开）。
     /// ⚠ 与 <paramref name="autoSize"/> 是两回事，别混：前者说**做什么**，后者说**谁点的**。
     /// 只有「谁点的 = 用户」时才允许弹模态框。</param>
-    private async Task RunAsync(bool autoSize, bool byTimer = false)
+    /// <param name="fineMm">
+    /// R26（2026-09-09）：0（默认）= D8 只在导航网格上求根，行为与此前逐字相同；
+    /// > 0 = 第二遍直接在这张细网格上重新求根（<see cref="FineResolveAsync"/> 专用入口，
+    /// 治「加密复算发现导航网格上过、细网格上不过」那个状态）。
+    /// </param>
+    private async Task RunAsync(bool autoSize, bool byTimer = false, double fineMm = 0)
     {
         if (_cts is not null) { _cts.Cancel(); return; }        // 再点一次 = 取消
         _cts = new CancellationTokenSource();
@@ -3380,10 +3410,17 @@ public sealed class LineDesignPage : TabPage
                     //   D8 用舌保温守抽热窗口、环倍率守 圆盘区最高温、板厚只做接力与省铂。
                     var seedD8 = PageToDesignSpec();
                     // ★ 改走 **Solver**（求根，与初值无关）。Sizer 是搜索，必须有起点。
-                    //   ⚠ 这里**不开第二遍**（FineMm = 0）：按钮要等得起。
-                    //     结果只在导航网格上成立，下面会当场说出来。
+                    //   ⚠ 默认（fineMm = 0）**不开第二遍**：按钮要等得起，结果只在导航网格
+                    //     上成立，下面会当场说出来。
+                    //   ★★★ R26（2026-09-09）：`fineMm` 由 <see cref="FineResolveAsync"/> 传入
+                    //     （> 0）时，第二遍**直接在那张细网格上求根**——与「搜形状」精算胜出
+                    //     形状用的是同一条路（两遍 Solve），网格口径同一个来源
+                    //     （MeshVerify.RequiredMeshFor），求根的网格与判决的网格才是同一张。
+                    double fineRadiusD8 = fineMm > 0 ? MeshVerify.RequiredMeshFor(seedD8).RadiusMm : 0;
                     var srD8 = await Task.Run(() => Solver.Solve(seedD8, _base,
-                                   new SolverOptions { MaxRounds = 40 }, prog, ct), ct);
+                                   new SolverOptions { MaxRounds = 40,
+                                                        FineMm = fineMm, FineRadiusMm = fineRadiusD8 },
+                                   prog, ct), ct);
                     // ★★★ 顶到上界 = **不可行的证明** ⇒ 记下来，指路才不会把人推回同一个按钮。
                     //   ⚠ 只有 HitBound 才算证明；Feasible=false 但 HitBound=false 是「没搜到」，
                     //     那种再点一次是有意义的，不能一并堵掉。
@@ -3718,6 +3755,52 @@ public sealed class LineDesignPage : TabPage
             Shared?.SetRunning(null);
             PushFlow();
         }
+    }
+
+    /// <summary>
+    /// ★★★★★ R26（2026-09-09）：**加密复算发现「导航网格上过、细网格上不过」之后的出口**。
+    ///
+    /// ══ 病灶（HANDOVER R26 行，Ø56 盘那份实例）
+    ///
+    /// `VerifyMeshAsync` 只要网格无关（<c>res.Converged</c>）就把 <c>_last</c> 换成细网格
+    /// 那份结果，不问它 <c>AllOk</c>（见该方法的长注释）。于是「导航网格全过、0.125 mm 上
+    /// ③ 法兰增量温降 11.76 > 10」这种情形会让 <c>Flow.Next</c> 落进「判据没全过」那一支，
+    /// 原来一律指「自动定厚」—— 而 D8 的默认调用只在导航网格上求根（FineMm = 0），
+    /// 于是又全过、又要求加密复算、又不过 ⇒ 两个按钮**交替指、白跑 8 步**。
+    ///
+    /// ══ 修法
+    ///
+    /// 不回导航网格重来一遍：直接在**判据所在的那张细网格**上重新求根 ——
+    /// 与「搜形状」里胜出形状的精算走的是同一条路（<see cref="Solver.Solve"/> 两遍，
+    /// 第二遍旋钮只增不减、从第一遍的解出发）。细网格口径与 <see cref="MeshVerify.RequiredMeshFor"/>
+    /// 同一个来源，求根的网格与判决的网格必须是同一张（A⑬）。
+    ///
+    /// ⚠ 解完仍然只在这张细网格上**求过根**，不等于「已复核」—— 复核问的是「网格无关」
+    ///   （再加密一档判据还动不动），求根只问「这张网格上判据过不过」。所以解完之后
+    ///   <c>AdoptSolvedDesign</c> 换了快照，<see cref="_verifiedSnap"/> 因此不新鲜，
+    ///   下一步 <c>Flow.Next</c> 会重新要求「◆ 加密复算」再验一次，过了才指出图。
+    ///   这个环由 <see cref="RunPipelineAsync"/> 自带的指纹与 8 步上限兜底，不必另写。
+    /// </summary>
+    private async Task FineResolveAsync()
+    {
+        if (_cts is not null) { _cts.Cancel(); return; }        // 再点一次 = 取消
+        // 前置：有一个当前参数的解，且已经做过一次网格无关复核 —— 细网格重解要接着
+        // 那一次的网格口径（MeshVerify.RequiredMeshFor 只对「已经算出来的设计」有意义）。
+        if (_last is not { Ok: true } || !Equals(_solvedSnap, CurrentSnap())
+            || _meshVerify is not { Converged: true })
+        {
+            _out.AppendText(Environment.NewLine
+                + "⚠ 先点「核算整线」解出一个**当前参数的**解，并做过一次「◆ 加密复算」——"
+                + "细网格重解要接着那一次的网格口径，没有它就无从谈起。" + Environment.NewLine);
+            return;
+        }
+
+        var d = PageToDesignSpec();
+        var (fineMm, _) = MeshVerify.RequiredMeshFor(d);
+        _out.AppendText(Environment.NewLine
+            + $"◆ 细网格重解：加密复算在 {fineMm:0.000} mm 上判据不过 ⇒ 在这张网格上重新求根"
+            + Environment.NewLine);
+        await RunAsync(autoSize: true, fineMm: fineMm);
     }
 
     /// <summary>

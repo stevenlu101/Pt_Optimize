@@ -63,9 +63,12 @@ public class SizerDeadLoopTests
         return st;
     }
 
-    /// <summary>解析路：能搜形状、能自动定厚。</summary>
+    /// <summary>解析路：能搜形状、能自动定厚。
+    /// R26（2026-09-09）加了 core.fineResolve —— 与本文件的场景（还没做过网格无关复核）
+    /// 不冲突：只是把命令名单补全，不改变下面任何一条既有断言的结论。</summary>
     private static bool Analytic(string cmd) =>
-        cmd is "shape.search" or "core.autoThick" or "core.runLine" or "core.verifyMesh";
+        cmd is "shape.search" or "core.autoThick" or "core.runLine" or "core.verifyMesh"
+            or "core.fineResolve";
 
     /// <summary>★ 自证：没宣告不可行时，指的**就是**「自动定厚」（否则下面那条无意义）。</summary>
     [Fact]

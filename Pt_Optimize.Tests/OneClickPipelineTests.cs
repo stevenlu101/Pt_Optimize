@@ -41,8 +41,9 @@ public class OneClickPipelineTests
         Assert.True(a > 0 && b > a);
         string body = s[a..b];
         Assert.Contains("Flow.Next(Shared!, App)", body);
-        // 四条腿都接上了
-        foreach (string id in new[] { "core.autoThick", "shape.search", "core.verifyMesh", "core.runLine" })
+        // 四条腿都接上了（core.fineResolve 是第五条：R26，2026-09-09 加密复算不过后的出口）
+        foreach (string id in new[] { "core.autoThick", "shape.search", "core.verifyMesh",
+                                       "core.fineResolve", "core.runLine" })
             Assert.Contains(id, body);
     }
 
