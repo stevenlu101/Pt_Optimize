@@ -29,6 +29,11 @@ public sealed class LineCase
     public double TubeIdMm = double.NaN;
     public double WallMm = 1.0;
     /// <summary>
+    /// 设计电流密度 J（A/mm²，用户 2026-09-09：工程师设定，预设 10）。判据「法兰截面 J」的限值 = J+1
+    /// （<see cref="SectionSizing.JCheckOf"/>）只从这里读 —— 限值的唯一来源是 LineCase。
+    /// </summary>
+    public double JDesignAPerMm2 = SectionSizing.JDesignAPerMm2;
+    /// <summary>
     /// ★★★★★ **每段直接加热铂金管的长度，逐段单独设定**（用户 2026-09-03）。
     ///
     /// 原来是**一个标量**（所有段同一个长度，取自参数表的「段长 L」）。
@@ -1939,6 +1944,7 @@ public static class LineRunner
                          + $"许用 {dcr.TubeJAllowAPerMm2:0}。没被截住 = 升得到；闭式、与网格无关。"
                          + (dcr.Clipped ? NextAction.RampClipped : "")
                 });
+                double jChk = SectionSizing.JCheckOf(c.JDesignAPerMm2);   // 计算极限值 = 设定 J + 1（用户 2026-09-09）
                 double worstJ = double.NegativeInfinity; string where = ""; bool undet = false;
                 for (int jj = 0; jj < flanges.Length; jj++)
                 {
@@ -1954,12 +1960,12 @@ public static class LineRunner
                 checks.Add(new ConstraintOut
                 {
                     Name = LineResult.Key.SectionJ, Unit = "A/mm²", Kind = CheckKind.HardSafety,
-                    Actual = undet ? double.NaN : worstJ, Limit = SectionSizing.JCheckAPerMm2, LessIsBetter = true,
-                    Ok = !undet && worstJ < SectionSizing.JCheckAPerMm2, Undetermined = undet, Where = where,
+                    Actual = undet ? double.NaN : worstJ, Limit = jChk, LessIsBetter = true,
+                    Ok = !undet && worstJ < jChk, Undetermined = undet, Where = where,
                     Note = dcr.Describe()
                          + "　截面 J = 设计电流 ÷ 必经截面积（舌片各处含开孔／舌盘交界弦／孔缘环与各级环含槽带，圆盘按整圈），"
-                         + "闭式、与网格无关；按 J=10 定尺寸，终验全体 < 11。"
-                         + (!undet && worstJ < SectionSizing.JCheckAPerMm2 ? "" : NextAction.SectionJHigh)
+                         + $"闭式、与网格无关；按设定 J={c.JDesignAPerMm2:0.#} 定尺寸（工程师在 ① 输入设定，预设 10），终验全体 < J+1 = {jChk:0.#}。"
+                         + (!undet && worstJ < jChk ? "" : NextAction.SectionJHigh)
                 });
             }
             catch (Exception ex)
@@ -1967,7 +1973,7 @@ public static class LineRunner
                 checks.Add(new ConstraintOut
                 {
                     Name = LineResult.Key.SectionJ, Unit = "A/mm²", Kind = CheckKind.HardSafety,
-                    Actual = double.NaN, Limit = SectionSizing.JCheckAPerMm2, LessIsBetter = true,
+                    Actual = double.NaN, Limit = SectionSizing.JCheckOf(c.JDesignAPerMm2), LessIsBetter = true,
                     Ok = false, Undetermined = true, Where = "—",
                     Note = "★ **算不出来**（判不了不算过）：" + ex.Message
                 });

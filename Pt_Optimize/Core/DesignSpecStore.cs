@@ -49,6 +49,8 @@ public static class DesignSpecStore
         public string[]? invalidChecks { get; set; }
         public double? wallMm { get; set; }
         public double? tubeInsulMm { get; set; }
+        /// <summary>设计电流密度 J（用户 2026-09-09：工程师设定）。旧档没有 ⇒ 预设 10。</summary>
+        public double? jDesignAPerMm2 { get; set; }
         public double? discRadiusMm { get; set; }
         public double? tabLengthMm { get; set; }
         public double? tabHalfWidthMm { get; set; }
@@ -251,6 +253,7 @@ public static class DesignSpecStore
             InvalidChecks = d.invalidChecks ?? Array.Empty<string>(),
             WallMm = NeedD(d.wallMm, "wallMm"),
             TubeInsulMm = d.tubeInsulMm ?? 10.0,
+            JDesignAPerMm2 = d.jDesignAPerMm2 ?? SectionSizing.JDesignAPerMm2,
             DiscRadiusMm = NeedD(d.discRadiusMm, "discRadiusMm"),
             TabLengthMm = NeedD(d.tabLengthMm, "tabLengthMm"),
             TabHalfWidthMm = NeedD(d.tabHalfWidthMm, "tabHalfWidthMm"),
@@ -331,6 +334,7 @@ public static class DesignSpecStore
             invalidChecks = fd.InvalidChecks.Length > 0 ? fd.InvalidChecks : null,
             wallMm = fd.WallMm,
             tubeInsulMm = fd.TubeInsulMm,
+            jDesignAPerMm2 = fd.JDesignAPerMm2,
             discRadiusMm = fd.DiscRadiusMm,
             tabLengthMm = fd.TabLengthMm,
             tabHalfWidthMm = fd.TabHalfWidthMm,

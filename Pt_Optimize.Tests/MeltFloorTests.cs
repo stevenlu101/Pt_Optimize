@@ -42,6 +42,21 @@ public class MeltFloorTests
               + "只许用「熔/不熔」这个布尔做二分。");
     }
 
+    /// <summary>
+    /// ★★★★★ 熔化是判断工具，不是旋钮（用户 2026-09-09）：熔了就停、板厚一位不动。
+    /// 09-08 的版本在这里逐片二分抬板厚；按设定 J 的截面进下角后那条路不可达，处置改判断。
+    /// 禁用词式的门：方法体里出现「给板厚赋值」「退回」「多遍」就是有人把旋钮加回来了。
+    /// </summary>
+    [Fact]
+    public void 熔化只判不抬_方法体里不许给板厚赋值()
+    {
+        string body = Body();
+        Assert.Contains("该解不存在", body);
+        foreach (var banned in new[] { "TabThickMm[j] =", "TabThickMm[j]=", "TongueThickMm[j] =", "Restore(", "MaxPasses", "lo[j]", "hi[j]" })
+            Assert.False(body.Contains(banned, StringComparison.Ordinal),
+                $"MeltFloor 的方法体里出现了「{banned}」—— 熔化是判断工具不是旋钮（用户 2026-09-09），熔了就停、板厚一位不动");
+    }
+
     [Fact]
     public void 下角不许读设计记录的板厚()
     {

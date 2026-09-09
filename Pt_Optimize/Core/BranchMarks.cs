@@ -56,19 +56,10 @@ public static class BranchMarks
     public const string EvalNotOk = "★ 走到了「场解回报失败 ⇒ 判不了」";
 
     /// <summary>
-    /// Solver.MeltFloor：约束盒下角因**不熔化**这条约束而上抬 —— 后面跟着「片j a → b mm」。
-    /// 下角是「解与初值无关」那条铁律的实物，它被改了必须留痕，否则很难查（督导第 16 封）。
+    /// Solver.MeltFloor：场熔了 ⇒ **停**，「该解不存在」，板厚一位不动（用户 2026-09-09：熔化是判断工具，不是旋钮）。
+    /// 09-08 曾是「下角因熔化上抬」（逐片二分抬板厚）与「探针态副本上抬」；按设定 J 的截面进下角后那两条路不可达，处置改判断。
     /// </summary>
-    public const string MeltFloorRaised = "★ 下角因熔化上抬";
-
-    /// <summary>Solver.MeltFloor：板厚抬到工艺上界**仍熔** ⇒ 交棒给增宽（不是判无解）。</summary>
-    public const string MeltFloorHandOff = "★ 走到了「下角抬到厚度上界仍熔 ⇒ 交棒给增宽」";
-
-    /// <summary>
-    /// Solver.EvalProbe：探针／二分中点这种**临时态**上邻片熔了 ⇒ 在**副本**上把熔化的片抬到不熔再量判据，
-    /// 那份厚度算进该候选的代价，但不落进模型（2026-09-08，0.8 档第 1 轮收场的病灶）。
-    /// </summary>
-    public const string MeltProbeRaised = "★ 探针态邻片熔 ⇒ 副本上先抬到不熔再量（不落地）";
+    public const string MeltStop = "★ 走到了「熔化 ⇒ 该解不存在，不抬厚度」";
 
     /// <summary>
     /// Solver.ApplySectionFloor：约束盒下角因**按 J=10 定的截面**而上抬（用户 2026-09-08 设计因果链第 ② 步）——

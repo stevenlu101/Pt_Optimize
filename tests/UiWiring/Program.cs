@@ -732,6 +732,68 @@ class UiWiringTests {
             }
         }
 
+        Head("16″ 设计电流密度 J 是 ① 输入（用户 2026-09-09：J 工程师设定、预设 10，J+1 是计算极限值）");
+        {
+            var jBox = (NumericUpDown)F(page, "_jDesign")!;
+            var p2d = typeof(LineDesignPage).GetMethod("PageToDesignSpec", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            Check("控件预设 10", jBox.Value == 10m, $"{jBox.Value}");
+            Set(page, "_suppressAuto", true);
+            Set(page, "_tongueFixed", null);            // 载入过记录时舌片厚是原样带着的；本节要看的是 J 的规则
+            jBox.Value = 10m;
+            var d10 = (DesignSpec)p2d.Invoke(page, null)!;
+            jBox.Value = 20m;
+            var d20 = (DesignSpec)p2d.Invoke(page, null)!;
+            jBox.Value = 10m;
+            Set(page, "_suppressAuto", false);
+            Check("页面 J=20 进了设计", Math.Abs(d20.JDesignAPerMm2 - 20) < 1e-9, $"{d20.JDesignAPerMm2}");
+            Check("计算极限值 = J+1", Math.Abs(d20.JCheckAPerMm2 - 21) < 1e-9, $"{d20.JCheckAPerMm2}");
+            Check("J 进了算例（判据限值的唯一来源）",
+                  Math.Abs(d20.BuildCase(new DesignInputs(), false).JDesignAPerMm2 - 20) < 1e-9, "");
+            int k = Array.FindIndex(d10.TongueThickMm, v => !double.IsNaN(v));
+            Check("舌片厚随 J 反比（J 翻倍 ⇒ 舌片厚减半）",
+                  k >= 0 && Math.Abs(d20.TongueThickMm[k] * 2 - d10.TongueThickMm[k]) <= 0.03,
+                  k >= 0 ? $"J10 {d10.TongueThickMm[k]:0.00} / J20 {d20.TongueThickMm[k]:0.00}" : "舌片厚全 NaN");
+            // 快照含 J：J 变了快照就变 ⇒ 上一次的解不新鲜（新状态位默认没接上，这里是它的门）
+            var snapOf = typeof(LineDesignPage).GetMethod("CurrentSnap", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            Set(page, "_suppressAuto", true);
+            jBox.Value = 20m; var s20 = snapOf.Invoke(page, null);
+            jBox.Value = 10m; var s10 = snapOf.Invoke(page, null);
+            Set(page, "_suppressAuto", false);
+            Check("改 J 之后快照变了（上一次的解不新鲜）", !Equals(s10, s20), "");
+        }
+
+        Head("16‴ 搜形状结果下拉（R24，用户 2026-09-09：也供工程师自行选择）");
+        {
+            var pick = (ToolStripComboBox)F(page, "_shapePick")!;
+            Check("搜形状没跑过 ⇒ 下拉藏着", !pick.Available, "（ToolStripItem.Visible 还看父工具条显不显示；走查不 Show 窗体，看 Available）");
+            var a = DesignSpec.Current.Clone(); a.DiscRadiusMm = 31; a.TabHalfWidthMm = 31; a.TabLengthMm = 140;
+            var b = DesignSpec.Current.Clone(); b.DiscRadiusMm = 33; b.TabHalfWidthMm = 33; b.TabLengthMm = 140;
+            var c = DesignSpec.Current.Clone(); c.DiscRadiusMm = 27; c.TabHalfWidthMm = 27; c.TabLengthMm = 140;
+            var rows = new List<(DesignSpec d, double mass, bool ok, string msg)>
+            {
+                (b, 2650.0, true, "✓ 第 3 轮全过"), (a, 2600.0, true, "✓ 第 3 轮全过"), (c, double.NaN, false, "⑥ 圆盘盖不住管孔＋焊脚"),
+            };
+            Set(page, "_shapeRows", rows);
+            typeof(LineDesignPage).GetMethod("RefreshShapePick", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(page, null);
+            Check("有结果 ⇒ 下拉出现", pick.Available, "");
+            Check("条目 = 标题 + 每个算过的形状", pick.Items.Count == 4, $"{pick.Items.Count}");
+            Check("可行的按铂重排前", pick.Items[1]!.ToString()!.Contains("2600") && pick.Items[2]!.ToString()!.Contains("2650"), pick.Items[1]!.ToString()!);
+            Check("不可行的排后、写明原因", pick.Items[3]!.ToString()!.Contains("✗") && pick.Items[3]!.ToString()!.Contains("盖不住"), pick.Items[3]!.ToString()!);
+            decimal discBefore = discD.Value;
+            pick.SelectedIndex = 2;                            // 选 2650 那个（盘Ø66）
+            Check("选可行形状 ⇒ 盘径写回控件", discD.Value == 66m, $"{discBefore} → {discD.Value}");
+            Check("输出框说了「已选形状」与「精算才可出图」",
+                  outBox.Text.Contains("已选形状") && outBox.Text.Contains("核算整线"), "");
+            pick.SelectedIndex = 3;                            // 选不可行的
+            Check("选不可行形状 ⇒ 不写回、说明原因", discD.Value == 66m && outBox.Text.Contains("没写回页面") && pick.SelectedIndex == 0, $"{discD.Value}");
+            Set(page, "_shapeRows", new List<(DesignSpec d, double mass, bool ok, string msg)>());
+            typeof(LineDesignPage).GetMethod("RefreshShapePick", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(page, null);
+            Check("清空 ⇒ 下拉又藏起来", !pick.Available, "");
+            Set(page, "_suppressAuto", true);
+            discD.Value = discBefore;
+            Set(page, "_suppressAuto", false);
+        }
+
         Head("17 输出框排版：不许出现 Markdown 源码，中文列宽要按显示宽度算");
         // 用户 2026-08-17 反馈「文挡好乱」。两个病：
         //   ① `**粗体**` 是 Markdown，而输出框显示纯文本 ⇒ 满屏星号；

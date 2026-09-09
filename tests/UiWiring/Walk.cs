@@ -1475,6 +1475,9 @@ static class Walk
             }
         }
         OK("搜形状在预算内跑完", fin, $"用时 {clock.Elapsed.TotalMinutes:0.0} 分（预算 {budgetMs / 60_000} 分）");
+        // R24：算过的形状都进了下拉（标题 + 每个形状），工程师自行选
+        if (F(line, "_shapePick") is ToolStripComboBox pick)
+            OK("搜形状结果下拉里有算过的形状（R24）", pick.Available && pick.Items.Count >= 2, $"{pick.Items.Count} 项");
 
         string text = (F(line, "_out") as Control)?.Text ?? "";
         Console.WriteLine();

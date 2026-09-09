@@ -68,6 +68,14 @@ public sealed class DesignSpec
     // ── 管
     public double WallMm;
     public double TubeInsulMm = 5.0;
+    /// <summary>
+    /// ★ 设计电流密度 J（A/mm²）—— 用户 2026-09-09：「J 让工程师设定（实况风险工程师承担）；J 是设定值，J+1 是计算极限值；J 预设值为 10」。
+    /// 按它定舌片厚 = I/(J·舌宽)、圆盘各截面的板厚下界（约束盒下角）、孔径/槽张角的 J 上界；终验全体截面 &lt; <see cref="JCheckAPerMm2"/>。
+    /// 进设计记录（漏存就是另一个设计，样本门盯着）；进 <see cref="LineCase.JDesignAPerMm2"/>（判据限值的唯一来源）。
+    /// </summary>
+    public double JDesignAPerMm2 = SectionSizing.JDesignAPerMm2;
+    /// <summary>计算极限值 = 设定 J + 1（用户 2026-09-09）。</summary>
+    public double JCheckAPerMm2 => SectionSizing.JCheckOf(JDesignAPerMm2);
     public double[] SetpointC = { 1150.0, 1080.0, 1050.0 };
 
     /// <summary>
@@ -786,6 +794,7 @@ public sealed class DesignSpec
         {
             Base = p,
             WallMm = WallMm,
+            JDesignAPerMm2 = JDesignAPerMm2,      // ★ 判据「法兰截面 J」的限值 = J+1 从这里来（用户 2026-09-09）
             UseMeasuredCurrent = false,      // 由控温反算 —— 第一性
             CheckRamp = checkRamp,
             SetpointC = SetpointC,
@@ -808,8 +817,9 @@ public sealed class DesignSpec
     /// 电流为 0（没有段）时该片留 NaN，不给一个看起来正常的数。
     /// </summary>
     public double[] SizeTongues(DesignInputs baseIn, LineResult? last = null,
-                                double jDesign = SectionSizing.JDesignAPerMm2, double quantMm = 0.01)
+                                double? jDesign = null, double quantMm = 0.01)
     {
+        double jD = jDesign ?? JDesignAPerMm2;      // 不传就用本设计设定的 J（工程师在 ① 输入定的）
         var dc = DesignCurrent.ForLine(this, baseIn, last);
         double floorD = DiscFloorMm(baseIn);
         int n = FlangeCount;
@@ -817,7 +827,7 @@ public sealed class DesignSpec
         for (int j = 0; j < n; j++)
         {
             double iA = j < dc.PlateA.Length ? dc.PlateA[j] : 0;
-            double t = SectionSizing.TongueThickMm(Plate(j, floorD), iA, ClampLengthMm, jDesign);
+            double t = SectionSizing.TongueThickMm(Plate(j, floorD), iA, ClampLengthMm, jD);
             if (double.IsNaN(t) || double.IsInfinity(t)) { TongueThickMm[j] = double.NaN; continue; }
             t = System.Math.Max(t, baseIn.WeldMinThicknessMm);
             t = System.Math.Ceiling(t / quantMm - 1e-9) * quantMm;
@@ -850,7 +860,9 @@ public sealed class DesignSpec
         $"舌 {TabLengthMm:0}×{2 * TabHalfWidthMm:0}／板厚 {Fmt(TabThickMm, "0.00")}／舌片厚 {FmtT(TongueThickMm)}／" +
         $"舌保温 {Fmt(TabInsulMm, "0.0")}／" +
         $"环 r≤孔+{RingWidthMm:0}→×{Fmt(RingMul, "0.00")}／舌根圆角 R{TabFilletMm:0}／" +
-        $"压接 {ClampLengthMm:0} 夹 {ClampTempC:0} °C　合计 {TotalMassG:0} g";
+        $"压接 {ClampLengthMm:0} 夹 {ClampTempC:0} °C" +
+        (System.Math.Abs(JDesignAPerMm2 - SectionSizing.JDesignAPerMm2) > 1e-9 ? $"／J {JDesignAPerMm2:0.#}（工程师设定，极限 {JCheckAPerMm2:0.#}）" : "") +
+        $"　合计 {TotalMassG:0} g";
 
     // ════════════════════════════════════════════════════════════════════
     // ★★★★★ 设计记录（**全部重解**，2026-08-17 —— 这个日期是对的，

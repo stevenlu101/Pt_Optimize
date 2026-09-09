@@ -21,18 +21,26 @@ public class BestShapeFineMeshTests
         public void Report(string v) => _f(v);
     }
 
+    /// <summary>第四趟（截面修正前）最轻：Ø58／舌58；截面修正后单点复算 2614.3 → 细网格 2615.8 g（2026-09-09）。</summary>
     [Trait("速度", "慢")]
     [Fact]
-    public void 盘58舌58_细网格复算()
+    public void 盘58舌58_细网格复算() => Run(29, 29, 140, "盘58舌58");
+
+    /// <summary>第五趟（截面修正后）最轻：Ø56／舌56 导航网格 2606 g（2026-09-09 傍晚）—— 细网格上站不站得住看这里。</summary>
+    [Trait("速度", "慢")]
+    [Fact]
+    public void 盘56舌56_细网格复算() => Run(28, 28, 140, "盘56舌56");
+
+    private static void Run(double discR, double halfW, double tabLen, string tag)
     {
         var p = new DesignInputs();
         var d = DesignSpec.Builtin[0].Clone();
         d.SetpointC = new[] { 1150.0, 1080.0 }; d.SegLengthMm = new[] { 300.0, 300.0 }; d = d.Fit();
-        d.TubeInsulMm = 10;                                   // 与搜形状第四趟（页面默认 纤维保温 10）同一工况
-        d.DiscRadiusMm = 29; d.TabHalfWidthMm = 29; d.TabLengthMm = 140;
-        string dump = Path.Combine(HandoverDoc.Root(), "deliverable", "细网格复算_盘58舌58.txt");
+        d.TubeInsulMm = 10;                                   // 与搜形状（页面默认 纤维保温 10）同一工况
+        d.DiscRadiusMm = discR; d.TabHalfWidthMm = halfW; d.TabLengthMm = tabLen;
+        string dump = Path.Combine(HandoverDoc.Root(), "deliverable", $"细网格复算_{tag}.txt");
         Directory.CreateDirectory(Path.GetDirectoryName(dump)!);
-        File.WriteAllText(dump, "═══ 盘Ø58／舌宽58／舌长140（2 段 3 片，管壁 0.8，管保温 10）：先解（导航网格）再加密复算 ═══" + Environment.NewLine);
+        File.WriteAllText(dump, $"═══ 盘Ø{2 * discR:0}／舌宽{2 * halfW:0}／舌长{tabLen:0}（2 段 3 片，管壁 0.8，管保温 10）：先解（导航网格）再加密复算 ═══" + Environment.NewLine);
         var sw = Stopwatch.StartNew();
         var live = new FileProgress(s => File.AppendAllText(dump, $"[{sw.Elapsed.TotalMinutes,6:0.0} 分] {s}" + Environment.NewLine));
 

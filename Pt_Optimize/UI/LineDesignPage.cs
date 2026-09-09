@@ -32,6 +32,11 @@ public sealed class LineDesignPage : TabPage
     //   （--walk 全程验证抓到。下限仍保留 0.10：允许探索，但判据与夹持会拦住。）
     private readonly NumericUpDown _wall = Num(0.80m, 0.10m, 5.00m, 0.05m, 2);
     private readonly NumericUpDown _tubeIns = Num((decimal)StartPoint.TubeInsulMm, 0.0m, 100.0m, 0.5m, 1);
+    /// <summary>
+    /// ★ 设计电流密度 J（A/mm²）—— 用户 2026-09-09：「J 让工程师设定（实况风险工程师承担）；J 是设定值，J+1 是计算极限值；J 预设值为 10」。
+    /// 按它定舌片厚与各截面下界、孔径/槽张角上界；终验全体截面 &lt; J+1。进快照（改了上一次的解就不新鲜）、进设计记录。
+    /// </summary>
+    private readonly NumericUpDown _jDesign = Num((decimal)SectionSizing.JDesignAPerMm2, 3m, 30m, 0.5m, 1);
     private readonly NumericUpDown _clamp = Num((decimal)StartPoint.ClampTempC, -1m, 1200m, 10m, 0);
 
     /// <summary>
@@ -339,6 +344,8 @@ public sealed class LineDesignPage : TabPage
     private sealed record Snap
     {
         public double Wall, Plate, TubeIns;
+        /// <summary>设计电流密度 J（2026-09-09）：定截面的依据，改了上一次的解就不新鲜。</summary>
+        public double JDesign;
         public double Disc, TabLen, TabW;
         // ★ 定尺寸器带回来的另外两个旋钮（2026-08-25）。**必须进快照** ——
         //   它们参与判据（舌保温是守 管孔净流入/③ 的主力），却没有页面控件；
@@ -479,6 +486,65 @@ public sealed class LineDesignPage : TabPage
     }
 
     /// <summary>「搜形状」每个候选筛几轮 / 胜出者精算几轮。**只有走查器会改它**。</summary>
+    /// <summary>R24：把搜形状算过的形状灌进下拉：可行的按铂重排前，不可行的排后并写明原因；一个都没有就藏起来。</summary>
+    internal void RefreshShapePick()
+    {
+        _suppressShapePick = true;
+        try
+        {
+            _shapePick.Items.Clear(); _shapePickRows.Clear();
+            var feas = _shapeRows.Where(r => r.ok && !double.IsNaN(r.mass)).OrderBy(r => r.mass).ToList();
+            var infeas = _shapeRows.Where(r => !(r.ok && !double.IsNaN(r.mass))).ToList();
+            _shapePick.Items.Add($"搜形状结果 ▾　{feas.Count} 个可行形状（按铂重）—— 选一个写回页面");
+            foreach (var r in feas.Concat(infeas)) { _shapePickRows.Add(r); _shapePick.Items.Add(ShapeRowText(r)); }
+            _shapePick.SelectedIndex = 0;
+            _shapePick.Visible = _shapeRows.Count > 0;
+        }
+        finally { _suppressShapePick = false; }
+    }
+
+    private static string ShapeRowText((DesignSpec d, double mass, bool ok, string msg) r)
+    {
+        string geo = $"盘Ø{2 * r.d.DiscRadiusMm:0}／舌 {r.d.TabLengthMm:0}×{2 * r.d.TabHalfWidthMm:0}";
+        if (r.ok && !double.IsNaN(r.mass)) return $"{geo}　{r.mass:0} g　✓ 可行";
+        string why = (r.msg ?? "").Replace("\r", " ").Replace("\n", " ").Trim();
+        if (why.Length > 48) why = why[..48] + "…";
+        return $"{geo}　✗ {why}";
+    }
+
+    /// <summary>
+    /// R24：工程师在下拉里选了一个形状 ⇒ 几何与那次解出的旋钮写回控件（与搜形状写回赢家同一条路）。
+    /// 那是导航网格上的解，写回后当「还没精算」：点「核算整线」精算到判据所在网格才可出图。不可行的只说明、不写回。
+    /// </summary>
+    private void PickShape()
+    {
+        if (_suppressShapePick || _shapePick.SelectedIndex <= 0) return;
+        int k = _shapePick.SelectedIndex - 1;
+        if (k >= _shapePickRows.Count) return;
+        var r = _shapePickRows[k];
+        if (!(r.ok && !double.IsNaN(r.mass)))
+        {
+            _out.AppendText("\r\n✗ 这个形状**不可行**，没写回页面：" + ShapeRowText(r) + "\r\n   原因：" + (r.msg ?? "") + "\r\n");
+            _suppressShapePick = true; try { _shapePick.SelectedIndex = 0; } finally { _suppressShapePick = false; }
+            return;
+        }
+        decimal C(double v, NumericUpDown n) => Math.Clamp((decimal)v, n.Minimum, n.Maximum);
+        _suppressAuto = true;
+        try
+        {
+            _discD.Value = C(2 * r.d.DiscRadiusMm, _discD);
+            _tabW.Value = C(r.d.TabHalfWidthMm, _tabW);
+            _tabLen.Value = C(r.d.TabLengthMm, _tabLen);
+        }
+        finally { _suppressAuto = false; }
+        _solvedRes = null; _solvedSnap = null;      // 上一次精算的是别的形状
+        AdoptSolvedDesign(r.d, null);               // 板厚／舌片厚／舌保温／环／槽／孔都写回；best=null ⇒ 当「还没精算」
+        _out.AppendText("\r\n★ **已选形状**（工程师选的，写回上面的盘径/舌宽/舌长与那次解出的旋钮）：" + ShapeRowText(r) + "\r\n"
+                      + "   这是**导航网格**上的解 ⇒ 点「核算整线」精算到判据所在的网格，过了才可出图。\r\n");
+        _status.Text = "已选形状，待精算";
+        PushFlow();
+    }
+
     internal int SearchScreenRounds = 16, SearchFinalRounds = 40;
 
     /// <summary>
@@ -519,6 +585,7 @@ public sealed class LineDesignPage : TabPage
         Wall = (double)_wall.Value,
         Plate = _tPlate.Average(n => (double)n.Value),
         TubeIns = (double)_tubeIns.Value,
+        JDesign = (double)_jDesign.Value,
         Disc = (double)_discD.Value,
         TabLen = (double)_tabLen.Value,
         TabW = (double)_tabW.Value,
@@ -545,6 +612,17 @@ public sealed class LineDesignPage : TabPage
     //   工程师看不出选中的是 0.8 还是 0.6 档，而这个下拉决定的正是**算哪一档**。
     private readonly ToolStripComboBox _caseBox =
         new() { DropDownStyle = ComboBoxStyle.DropDownList, AutoSize = false, Width = UiScale.S(210) };
+    /// <summary>
+    /// ★ R24（用户 2026-09-09：「哪个轻由场和铂重说话 —— 也供工程师自行选择」；「梯形舌端收窄不是错，把它当成另一种解」）：
+    /// 搜形状算过的**每个**形状都留着（可行的按铂重排前，不可行的排后并写明原因），工程师从这个下拉选一个写回页面。
+    /// 搜形状自己仍把最轻的写回，这里是给工程师改主意的入口。选的是**导航网格上的解** ⇒ 写回后要点「核算整线」精算才可出图。
+    /// 搜形状没跑过就藏着。
+    /// </summary>
+    private readonly ToolStripComboBox _shapePick =
+        new() { DropDownStyle = ComboBoxStyle.DropDownList, AutoSize = false, Width = UiScale.S(320), Visible = false };
+    private List<(DesignSpec d, double mass, bool ok, string msg)> _shapeRows = new();
+    private readonly List<(DesignSpec d, double mass, bool ok, string msg)> _shapePickRows = new();   // 下拉里的顺序
+    private bool _suppressShapePick;
     private readonly TabControl _plots = new() { Dock = DockStyle.Fill };
     private readonly ScottPlot.WinForms.FormsPlot _pT = FieldPlots.NewPlot();
     private readonly ScottPlot.WinForms.FormsPlot _pJ = FieldPlots.NewPlot();
@@ -716,6 +794,8 @@ public sealed class LineDesignPage : TabPage
         tool.Items.Add(_btnRun);
         tool.Items.Add(_btnManual);
         _btnManual.Click += (_, _) => ShowManualRow(!_tool2.Visible);
+        tool.Items.Add(_shapePick);                                   // R24：搜形状结果，工程师自行选
+        _shapePick.SelectedIndexChanged += (_, _) => PickShape();
         _prog.Size = new Size(UiScale.S(160), UiScale.S(16));
         tool.Items.Add(_prog);
         tool.Items.Add(_status);
@@ -768,6 +848,11 @@ public sealed class LineDesignPage : TabPage
             $"　管J {dJ_dTubeIns:+0.00;−0.00} (A/mm²)/mm　（0.8 档 2026-08 离线实测）\n" +
             "机理：保温厚 ⇒ 管散热少 ⇒ 电流小（利），但 β 变小而 法兰增量温降=D/√(kAβ) 里 β 在分母（不利）。\n" +
             "现用的 5 mm 恰在拐点上 —— 这个值原本是没量过的默认值，碰巧是对的。");
+        Row("电流密度 J A/mm²", _jDesign,
+            "J 是**设定值**（预设 10，用户 2026-09-08 设计因果链）；**计算极限值 = J + 1**（预设 11）。\n" +
+            "按 J 定舌片厚 = 设计电流 ÷ (J × 舌片最窄有效宽) 与圆盘各截面的板厚下界（约束盒下角），孔径／减重槽的上界也受它约束；\n" +
+            "终验判据「法兰截面 J」全体 < J+1。调高 ⇒ 截面变薄、铂更省，但**实况风险由工程师承担**（用户 2026-09-09）。\n" +
+            "改了之后上一次的解作废，要重新核算。");
 
         Head("法兰几何来源");
         // ⚠ 提示文字用 Environment.NewLine 拼，不写反斜杠转义 ——
@@ -2186,6 +2271,7 @@ public sealed class LineDesignPage : TabPage
 
         _wall.Value = C(fd.WallMm, _wall);
         _tubeIns.Value = C(fd.TubeInsulMm, _tubeIns);
+        _jDesign.Value = C(fd.JDesignAPerMm2, _jDesign);     // 设计记录带着它的 J（旧档 = 预设 10）
         _discD.Value = C(2 * fd.DiscRadiusMm, _discD);
         _tabLen.Value = C(fd.TabLengthMm, _tabLen);
         _tabW.Value = C(fd.TabHalfWidthMm, _tabW);
@@ -2553,6 +2639,7 @@ public sealed class LineDesignPage : TabPage
         d.Binding = ""; d.Invalid = ""; d.InvalidChecks = Array.Empty<string>();
         d.WallMm = (double)_wall.Value;
         d.TubeInsulMm = (double)_tubeIns.Value;
+        d.JDesignAPerMm2 = (double)_jDesign.Value;          // ★ 用户 2026-09-09：J 由工程师设定；SizeTongues／下角／判据限值都从它来
         d.DiscRadiusMm = (double)_discD.Value * 0.5;
         d.TabLengthMm = (double)_tabLen.Value;
         d.TabHalfWidthMm = (double)_tabW.Value;
@@ -3116,6 +3203,9 @@ public sealed class LineDesignPage : TabPage
         {
             _prog.Visible = false; _prog.Style = ProgressBarStyle.Marquee;
             _btnShape.Text = Flow.Cmd("shape.search").Text;
+            // R24：算过的形状（取消时已算完的那些也算数）都交给下拉，工程师自行选
+            _shapeRows = rows.ToList();
+            RefreshShapePick();
             _btnRun.Enabled = _btnAuto.Enabled = _btnRepro.Enabled = true;
             _cts?.Dispose(); _cts = null;
             Shared?.SetRunning(null);
@@ -3867,7 +3957,7 @@ public sealed class LineDesignPage : TabPage
         // ★★★★★ R11（用户 2026-09-08）：舌片厚**不是旋钮**，只显示 —— 改舌宽/开孔/工况它才变，改圆盘板厚它不变
         Head("舌片厚 mm（算出来的，不是旋钮）");
         string tipTongue =
-            "舌片厚 = 设计电流 ÷ (J 10 A/mm² × 舌片最窄有效宽)，闭式（用户 2026-09-08：舌片厚度是截面积 I/10 ÷ 舌宽）。" + Environment.NewLine +
+            "舌片厚 = 设计电流 ÷ (设定 J × 舌片最窄有效宽)，闭式（用户 2026-09-08：舌片厚度是截面积 I/J ÷ 舌宽；J 在 ① 输入设定，预设 10）。" + Environment.NewLine +
             "设计电流由 20 °C/h 空管升温算出，只与管、管保温、工况有关 ⇒ 改舌宽、开孔、改工况它才变，改圆盘板厚它不变。" + Environment.NewLine +
             "不低于板料下限（烧穿 0.6 mm）；向上落到图纸格 0.01 mm。";
         for (int i = 0; i < n; i++) Row(names[i], _tongue[i], tipTongue);

@@ -100,7 +100,7 @@ public class BranchMarksAreReachedTests
     }
 
     // ══════════════════════════════════════════════════════════════════
-    //  下角的第三个来源「不熔化」（2026-09-08，督导第 15/16 封）
+    //  熔化只判不抬（用户 2026-09-09；09-08 曾是「下角因熔化上抬」，按设定 J 的截面进下角后那条路不可达）
     // ══════════════════════════════════════════════════════════════════
 
     /// <summary>同步的进度接收器（Progress&lt;T&gt; 是异步投递的，落档会乱序）。</summary>
@@ -130,77 +130,33 @@ public class BranchMarksAreReachedTests
     }
 
     /// <summary>
-    /// ★★★★★ 下角因熔化上抬 —— 这条分支真的被走到，而且**每抬一片留一痕、只增不减、抬完不熔**。
-    /// 反自证：起点必须真的熔（一片都没抬 ⇒ 门落在空集上），构型漂了就换一个会熔的起点，不许放行。
-    /// 代价：熔化区里的场解在第一次 RunOnce 就返回，便宜；整趟 ~13 次场解（上界 1 + 二分 ~10 + 验 2）。
+    /// ★★★★★ 熔化 ⇒ **停、不抬厚度**（用户 2026-09-09：熔化是判断工具，不是旋钮）—— 这条分支真的被走到。
+    /// 构型：W08 只按屈曲/烧穿的闭式下角 0.60 mm（不套 J 截面下界）⇒ 必熔（09-08 实测峰值 6260 °C）。
+    /// 反自证：起点必须真的熔（不熔 ⇒ 门落在空集上）。代价：1 次熔化区场解（第一次 RunOnce 就返回，便宜）。
     /// </summary>
     [Trait("速度", "慢")]
     [Fact]
-    public void 下角因熔化上抬_这条分支走到了()
+    public void 下角熔化就停_不抬厚度_这条分支走到了()
     {
         var (d, p, o) = CornerStart();
         var before = (double[])d.TabThickMm.Clone();
+        var tongueBefore = (double[])d.TongueThickMm.Clone();
         var res = new SolverResult();
-        // ★ 轨迹落档（仪器）：跑到一半也看得见；断言在后面
-        string dump = Path.Combine(HandoverDoc.Root(), "deliverable", "下角因熔化上抬_轨迹.txt");
-        Directory.CreateDirectory(Path.GetDirectoryName(dump)!);
-        File.WriteAllText(dump, $"═══ W08 闭式下角 {before[0]:0.00} mm 起，MeltFloor 轨迹（导航网格）═══" + Environment.NewLine);
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        var (ok, handOff, why, last) = Solver.MeltFloor(d, p, o, res, default,
-            new FileProgress(s => File.AppendAllText(dump, $"[{sw.Elapsed.TotalMinutes,5:0.0} 分] {s}" + Environment.NewLine)));
-        File.AppendAllText(dump, $"耗时 {sw.Elapsed.TotalMinutes:0.0} 分钟　场解 {res.Solves} 次　板厚 {string.Join("/", d.TabThickMm.Select(v => v.ToString("0.00")))}　ok={ok} handOff={handOff} {why}" + Environment.NewLine);
+        var (ok, handOff, why, last) = Solver.MeltFloor(d, p, o, res);
 
-        var raised = res.Trace.Where(s => s.TrimStart().StartsWith(BranchMarks.MeltFloorRaised, StringComparison.Ordinal)).ToArray();
-        Assert.True(raised.Length >= 1,
-            "闭式下角处一片都没熔、一片都没抬 —— 本门落在空集上恒过了。"
-          + "构型漂了就要重新探一个会熔的起点，不许放行。轨迹：" + string.Join(" | ", res.Trace));
-        Assert.True(ok && !handOff, "起点熔了却没走出熔化区：" + why);
-        Assert.NotNull(last);
-        Assert.False(last!.OverMelt, "抬完之后最后那次场解仍报熔化 —— 二分的不变式（hi 不熔）破了");
-
-        // 抬过的片都留了痕、留了痕的片都真的抬了（一遍可能抬几片，一片可能抬几遍 ⇒ 比的是**片的集合**）；
-        // 只增不减；没抬的片一位不动
-        var movedSet = new System.Collections.Generic.HashSet<int>();
-        for (int j = 0; j < d.TabThickMm.Length; j++)
-        {
-            Assert.True(d.TabThickMm[j] >= before[j] - 1e-12, $"片{j} 板厚 {before[j]} → {d.TabThickMm[j]}：下角**降**了，只增不减被破了");
-            if (d.TabThickMm[j] > before[j] + 1e-12) movedSet.Add(j);
-        }
-        var markedSet = new System.Collections.Generic.HashSet<int>(raised.Select(s =>
-            int.Parse(System.Text.RegularExpressions.Regex.Match(s, "：片(\\d+) ").Groups[1].Value)));
-        Assert.True(movedSet.SetEquals(markedSet),
-            $"动过的片 {{{string.Join(",", movedSet)}}} 与留痕的片 {{{string.Join(",", markedSet)}}} 对不上 —— 有片被悄悄抬了或痕迹指错了片");
-        foreach (var line in raised) Console.WriteLine(line);
-        Console.WriteLine($"板厚 {string.Join("/", d.TabThickMm.Select(v => v.ToString("0.00")))}　场解 {res.Solves} 次");
-    }
-
-    /// <summary>
-    /// ★★★★★ 板厚抬到工艺上界仍熔 ⇒ **交棒**（不是判无解）—— 这条分支真的被走到。
-    /// 手段：把厚度上界压到起点上方一格，第一次验上界就仍熔。代价：2 次熔化区场解。
-    /// </summary>
-    [Trait("速度", "慢")]
-    [Fact]
-    public void 下角抬到厚度上界仍熔就交棒_这条分支走到了()
-    {
-        var (d, p, o) = CornerStart();
-        o.ThickHiMm = d.TabThickMm[0] + 0.02;
-        var before = (double[])d.TabThickMm.Clone();
-        var res = new SolverResult();
-        var (ok, handOff, why, _) = Solver.MeltFloor(d, p, o, res);
-
-        Assert.Contains(res.Trace, s => s.TrimStart().StartsWith(BranchMarks.MeltFloorHandOff, StringComparison.Ordinal));
-        Assert.False(ok);
-        Assert.True(handOff, "交棒了却没标成结构性停机 ⇒ 指路层不知道这是「厚度到顶」");
-        Assert.Contains("增宽", why);
-        // 「无解」只许以否定形式出现（本层没有宽度旋钮，无权替搜形状下这个结论）
-        for (int i = 0; (i = why.IndexOf("无解", i, StringComparison.Ordinal)) >= 0; i += 2)
-        {
-            string near = why[Math.Max(0, i - 12)..i];
-            Assert.True(near.Contains("不是", StringComparison.Ordinal) || near.Contains("不许", StringComparison.Ordinal),
-                "交棒讯息里出现了正面的「无解」结论：" + why);
-        }
-        // 交棒时板厚退回起点 —— 一个抬不动的值不许留在模型里冒充下角
-        for (int j = 0; j < d.TabThickMm.Length; j++) Assert.Equal(before[j], d.TabThickMm[j], 12);
+        Assert.Contains(res.Trace, s => s.TrimStart().StartsWith(BranchMarks.MeltStop, StringComparison.Ordinal));
+        Assert.False(ok, "起点没熔 ⇒ 本门落在空集上恒过了。构型漂了就要重新探一个会熔的起点，不许放行。轨迹：" + string.Join(" | ", res.Trace));
+        Assert.False(handOff, "熔化不再交棒：它不是「往上走能救」的停机");
+        Assert.Null(last);
+        Assert.Contains("该解不存在", why);
+        Assert.Contains("不抬", why);
+        Assert.Contains("J=", why);
+        Assert.DoesNotContain("°C", why);          // 熔化区里的温度数一个都不引用（S1）
+        Assert.Equal(1, res.Solves);               // 只解一次：不二分、不验上界
+        for (int j = 0; j < before.Length; j++) Assert.Equal(before[j], d.TabThickMm[j], 12);   // 板厚一位不动
+        for (int j = 0; j < tongueBefore.Length; j++)
+            Assert.True(double.IsNaN(tongueBefore[j]) ? double.IsNaN(d.TongueThickMm[j]) : tongueBefore[j].Equals(d.TongueThickMm[j]),
+                        $"片{j} 舌片厚被动了：{tongueBefore[j]} → {d.TongueThickMm[j]}");
     }
 
     /// <summary>
@@ -280,12 +236,8 @@ public class BranchMarksAreReachedTests
               + "0.8 档那 72 次场解全收敛，踩不到。欠账。",
             [nameof(BranchMarks.UndeterminedBisect)] =
                 "**未造出**：要 mid 处熔/发散而 lo、hi 两端都好 —— 一个非单调的窗口。欠账。",
-            [nameof(BranchMarks.MeltProbeRaised)] =
-                "**测试里未造出**（实跑走到过）：2026-09-08 下午 0.8 档 3 段固定形状的对帐第 1 轮踩了 15 次"
-              + "（deliverable/对帐超时_轨迹.txt，a982814）；晚上设计因果链落地后固定形状在 ⑥ 前就停，"
-              + "只有搜形状过程里才会再踩到（UiWiring --segs 2 --searchshape）。欠账。",
             [nameof(BranchMarks.EvalNotOk)] =
-                "**未造出**（不是「到不了」—— 正常搜索里可达）：熔化现在由 EvalMelt 先处置（落地或副本上抬），"
+                "**未造出**（不是「到不了」—— 正常搜索里可达）：熔化现在由 EvalMelt 判成「该解不存在」（MeltStop，2026-09-09），"
               + "走到这里的只剩 Ok=false 而不是熔的失败（段解失败：热稳定极限内到不了控温点）；"
               + "要触发得有那样的构型，未造出。"
               + "⚠ 修下角**之前**它被 0.8 档真走到过一次（deliverable/对帐超时_轨迹.txt，2026-09-08，"

@@ -34,10 +34,15 @@ namespace PtOptimize.Core;
 /// </summary>
 public static class SectionSizing
 {
-    /// <summary>设计用电流密度 A/mm²（用户 2026-09-08：按 J=10 为限制定尺寸）。</summary>
+    /// <summary>
+    /// 设计用电流密度 A/mm² 的**预设值**（用户 2026-09-08：按 J=10 为限制定尺寸；2026-09-09：「J 让工程师设定，
+    /// 实况风险工程师承担；J 预设值为 10」）。实际用的 J 在 <see cref="DesignSpec.JDesignAPerMm2"/>（① 输入的控件），这里只是默认。
+    /// </summary>
     public const double JDesignAPerMm2 = 10.0;
-    /// <summary>终验限值 A/mm²（用户 2026-09-08：全体必须小于 11）。</summary>
+    /// <summary>终验限值 A/mm² 的预设值（= 预设 J + 1 = 11）。实际限值由 <see cref="JCheckOf"/> 按设定 J 算。</summary>
     public const double JCheckAPerMm2 = 11.0;
+    /// <summary>计算极限值 = 设定值 + 1（用户 2026-09-09：「J 是设定值，J+1 是计算极限值」）。终验全体截面 J 必须小于它。</summary>
+    public static double JCheckOf(double jDesign) => jDesign + 1.0;
 
     /// <summary>一个截面：在哪、面积、电流密度；<paramref name="OnTab"/> = 在舌片上（随舌片厚变，不随基板变）。</summary>
     public readonly record struct Cut(string Where, double AreaMm2, double JAPerMm2, bool OnTab = false);
@@ -291,17 +296,19 @@ public static class SectionSizing
         return tNowMm * w.JAPerMm2 / jDesign;
     }
 
-    /// <summary>孔径上界（按 J = 10）：孔心处 (宽 − 2R)·t ≥ I/10 ⇒ R ≤ (宽 − I/(10 t))/2。</summary>
-    public static double HoleRadiusMaxByJMm(FlangePlate g, double holeXMm, double currentA)
+    /// <summary>孔径上界（按设定 J）：孔心处 (宽 − 2R)·t ≥ I/J ⇒ R ≤ (宽 − I/(J t))/2。</summary>
+    public static double HoleRadiusMaxByJMm(FlangePlate g, double holeXMm, double currentA,
+                                            double jDesign = JDesignAPerMm2)
     {
         double tTab = double.IsNaN(g.TabThicknessMm) ? g.ThicknessMm : g.TabThicknessMm;
         double w = 2 * g.HalfWidth(holeXMm);
-        double need = currentA / (JDesignAPerMm2 * Math.Max(tTab, 1e-9));
+        double need = currentA / (jDesign * Math.Max(tTab, 1e-9));
         return Math.Max(0, 0.5 * (w - need));
     }
 
-    /// <summary>槽张角上界（按 J = 10）：槽带各圈 (2πr − r·θ)·t ≥ I/10 ⇒ θ ≤ 2π − I/(10 t r)，取槽带内最紧的一圈。</summary>
-    public static double SlotSpanMaxByJDeg(FlangePlate g, double rInMm, double rOutMm, double currentA)
+    /// <summary>槽张角上界（按设定 J）：槽带各圈 (2πr − r·θ)·t ≥ I/J ⇒ θ ≤ 2π − I/(J t r)，取槽带内最紧的一圈。</summary>
+    public static double SlotSpanMaxByJDeg(FlangePlate g, double rInMm, double rOutMm, double currentA,
+                                           double jDesign = JDesignAPerMm2)
     {
         if (!(rOutMm > rInMm) || !(currentA > 0)) return 360.0;
         double best = 360.0;
@@ -310,7 +317,7 @@ public static class SectionSizing
         {
             double r = rInMm + (rOutMm - rInMm) * i / M;
             double t = Math.Max(g.ThicknessAt(0, r), 1e-9);        // 盘上的点，不是舌片（同 Cuts）
-            double thetaRad = 2 * Math.PI - currentA / (JDesignAPerMm2 * t * r);
+            double thetaRad = 2 * Math.PI - currentA / (jDesign * t * r);
             best = Math.Min(best, Math.Max(0, thetaRad) * 180.0 / Math.PI);
         }
         return best;

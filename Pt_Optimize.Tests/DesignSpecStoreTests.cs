@@ -134,6 +134,7 @@ public class DesignSpecStoreTests
         //   「按下标错位」这类漏法在往返里看不出来（本样本存在的意义就是不许有这种盲区）。
         d.SegLengthMm = new[] { 231.0, 317.0, 428.0 };
         d.TubeInsulMm = 13.5;
+        d.JDesignAPerMm2 = 12.5;             // 2026-09-09：设计电流密度 J 进设计（预设 10）——不偏离预设本门就空转
         d.DiscRadiusMm = 33.0;
         d.TabLengthMm = 151.0;
         d.TabHalfWidthMm = 27.0;
