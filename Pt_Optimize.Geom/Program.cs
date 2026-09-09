@@ -762,8 +762,16 @@ internal static class GeomProbe
                     var bi = inner.GetBoundingBox(true);
                     bool overlap = bo.Min.X <= bi.Max.X && bi.Min.X <= bo.Max.X
                                 && bo.Min.Z <= bi.Max.Z && bi.Min.Z <= bo.Max.Z;
-                    bool touches = (ix != null && ix.Count > 0) || overlap;
-                    if (!touches) { acc.Add(o); continue; }      // 真的不用挖
+                    // ★ 没有交点时要分三种，不是两种（2026-09-09 分舌片时抓到）：
+                    //   · 外轮廓整个在内圈**里面** ⇒ 挖光了，什么都不剩（盘半径 30 < 环外级 31.8 时圆盘侧的板身就是这样）
+                    //     —— 原来按「包围盒重叠 ⇒ 挖失败」把整块原样放回去，法兰又一次实心穿管（管腔自检退出码 9 抓到）；
+                    //   · 整个在外面 ⇒ 真的不用挖；
+                    //   · 有交点却挖不出 ⇒ 几何有病。
+                    if (ix == null || ix.Count == 0)
+                    {
+                        if (inner.Contains(o.PointAtStart, Plane.WorldZX, tol) == PointContainment.Inside) continue;   // 整块被挖掉
+                        acc.Add(o); continue;                                                                          // 真的不用挖
+                    }
 
                     boolFailed.Add($"内圈与外轮廓相交（交点 {(ix?.Count ?? 0)} 个、包围盒重叠 {overlap}）"
                                  + $"，但布尔差挖不出来 —— 轮廓多半自交/不闭合"
@@ -1059,20 +1067,27 @@ internal static class GeomProbe
                     var tabSide = Curve.CreateBooleanIntersection(body, Rect(tabX - 10, xi), tol);
                     if (discSide == null || discSide.Length != 1 || tabSide == null || tabSide.Length == 0)
                     {
-                        Console.Error.WriteLine($"[final] {pn}：板身按切点 x={xi:0.00} 切不开（盘侧 {discSide?.Length ?? 0} 块、舌侧 {tabSide?.Length ?? 0} 块）"
-                            + $"⇒ 退回整片同厚 t={t:0.00}，**舌片厚 {tabT:0.00} 没画进去**");
+                        // ★★ 切不开 = **失败**，不是「退回同厚」（2026-09-09 审查抓到）：退回去画的是 t，算的是 tabT，
+                        //   而 stderr 到不了工程师 ⇒ 图≠算还报成功。与「相交却挖不出来」同一条路（退出码 8）。
+                        boolFailed.Add($"{pn}：板身按切点 x={xi:0.00} 切不开（盘侧 {discSide?.Length ?? 0} 块、舌侧 {tabSide?.Length ?? 0} 块）"
+                            + $"—— 舌片厚 {tabT:0.00} ≠ 板身 {t:0.00}，画不出就不许出图");
                     }
                     else
                     {
                         ringClip = discSide[0];
                         bodyDiscRegion = discSide;
                         int lyTab = Ly(pn + "-舌片", System.Drawing.Color.Goldenrod);
-                        Add(Solid(CutAll(tabSide, cutters), tabT, y0, pn + "舌片"),
-                            lyTab, pn + "_舌片_t" + tabT.ToString("0.00"));
+                        // ★★ 舌片侧也要**减管孔**（2026-09-09 审查抓到）：盘半径 = 舌半宽时切点在 x=0，舌片侧矩形盖住管腔左半圆；
+                        //   Core 的 Inside() 在 r < 孔半径处永远无料，不减就是「法兰实心穿过铂金管」再犯一次。
+                        //   传 y0 让管腔自检（BoreCheck）也查这一块；造不出实体同样计失败。
+                        var tabSolid = Solid(CutAll(RegionMinus(tabSide, Circ(holeR)), cutters), tabT, y0, pn + "舌片");
+                        if (tabSolid == null) boolFailed.Add($"{pn}：舌片实体造不出来（厚 {tabT:0.00}）—— 少一块料不许当成功");
+                        Add(tabSolid, lyTab, pn + "_舌片_t" + tabT.ToString("0.00"), y0);
                     }
                 }
-                Add(Solid(CutAll(RegionMinus(bodyDiscRegion, Circ(ringR[1])), cutters), t, y0, pn + "板身"),
-                    lyBody, pn + "_板身_t" + t.ToString("0.00"), y0);
+                var bodyRegion = CutAll(RegionMinus(bodyDiscRegion, Circ(ringR[1])), cutters);
+                if (bodyRegion.Length > 0)      // 盘半径 < 环外级半径时圆盘侧没有「板身」（全是环），不画、也不报失败
+                    Add(Solid(bodyRegion, t, y0, pn + "板身"), lyBody, pn + "_板身_t" + t.ToString("0.00"), y0);
                 // 环：外圈**裁到轮廓内**，否则盘缘之外会凭空长出一整圈料
                 Add(Solid(CutAll(RegionMinus(ClipToBody(Circ(ringR[1]), ringClip), Circ(ringR[0])), cutters), ring[1], y0, pn + "环外级"),
                     lyRingO, pn + "_环外级_r" + ringR[0].ToString("0.0") + "-" + ringR[1].ToString("0.0")

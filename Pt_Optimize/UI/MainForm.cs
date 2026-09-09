@@ -956,6 +956,7 @@ public sealed class MainForm : Form
         //   换引用只换得掉参数表这一处 —— 那两页会继续拿旧方案算，且毫无提示。
         //   详见 SegmentSolver.CopyInto 的注释。
         SegmentSolver.CopyInto(x, _in);
+        _linePage?.MarkParamsChanged("读取参数表");   // 工况变了：舌片厚／场定量不许再按上一份设计原样带着（2026-09-09 审查抓到）
         _grid.SelectedObject = _in;   // 同一个实例，但要让 PropertyGrid 重读一遍
         _grid.Refresh();
 

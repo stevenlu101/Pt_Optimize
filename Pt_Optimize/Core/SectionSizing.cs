@@ -146,10 +146,30 @@ public static class SectionSizing
             cuts.Add(new Cut($"舌片 x={x:0.#}", a, currentA / a, true));
         }
 
-        // ── 舌盘交界：切点处的弦（圆盘侧厚度）
+        // ── 舌盘交界：切点竖线 x = xT 上舌片电流的**必经**切口（2026-09-09 修正，审查抓到两处不当）：
+        //   ① 原来用整条弦 2·hwT × 圆盘侧厚，没扣管孔 —— 盘半径 = 舌半宽时切点在 x=0，那条弦有 51.6 mm 穿过管腔（没有料）；
+        //   ② 但也不能只剩两条边条：|xT| < 孔半径时，舌片脚印里有一段管孔边（焊弧），电流就在那里经焊缝进管壁，
+        //      不必绕到边条 —— 那段焊弧的板厚截面（弧长 × 孔边厚）同样是舌片电流的出口。
+        //   ⇒ 切口面积 = 边条（弦扣掉管孔弦，圆盘侧厚）+ 焊弧（x < xT 且 |z| ≤ hwT 那段孔边弧长 × 孔边处板厚）。
+        //   |xT| ≥ 孔半径时弦不穿孔、焊弧不在脚印里 ⇒ 退回原式 2·hwT·t（逐位相同）。
         {
-            double a = 2 * hwT * Math.Max(g.ThicknessAt(xT, 0), 1e-9);
-            cuts.Add(new Cut($"舌盘交界弦 x={xT:0.#}", a, currentA / a));
+            double aH = g.HoleRadiusMm;
+            double chordHalf = Math.Abs(xT) < aH ? Math.Sqrt(aH * aH - xT * xT) : 0;     // 弦穿过管腔的半长
+            double stripW = 2 * Math.Max(0, hwT - chordHalf);                              // 两条边条总宽
+            double zMid = Math.Min(hwT, chordHalf + 0.5 * Math.Max(0, hwT - chordHalf));    // 边条中点（在圆盘侧：x = xT 不算舌片）
+            double strips = stripW * Math.Max(g.ThicknessAt(xT, zMid), 1e-9);
+            double arcLen = 0, tEdge = 0;
+            if (Math.Abs(xT) < aH)
+            {
+                // 孔边圆弧上 x < xT 的那段以 −x 轴为中心、半角 th0 = acos(|xT|/a)；再限在舌片脚印 |z| ≤ hwT 里：半角 ≤ asin(hwT/a)
+                double th0 = Math.Acos(Math.Min(1.0, Math.Abs(xT) / aH));
+                double thMax = Math.Asin(Math.Min(1.0, hwT / aH));
+                arcLen = 2 * Math.Min(th0, thMax) * aH;
+                tEdge = Math.Max(g.ThicknessAt(-aH - 1e-6, 0), 1e-9);                      // 孔边、舌片侧的板厚（舌片厚）
+            }
+            double a = strips + arcLen * tEdge;
+            cuts.Add(new Cut(Math.Abs(xT) < aH ? $"舌盘交界（边条 {2 * Math.Max(0, hwT - chordHalf):0.#} mm + 焊弧 {arcLen:0.#} mm）x={xT:0.#}" : $"舌盘交界弦 x={xT:0.#}",
+                             a, a > 1e-9 ? currentA / a : double.PositiveInfinity));
         }
 
         // ── 圆盘：绕管孔每一圈（焊脚之外到盘缘），槽带扣掉槽的弧长
@@ -176,8 +196,9 @@ public static class SectionSizing
                         if (r >= s.RInMm && r <= s.ROutMm) arc -= r * s.SpanDeg * Math.PI / 180.0;
                     // ★ 圆盘上的直孔（长椭圆，R13）：这一圈落在孔里的弧长按角度扣（采样 + 二分到边界）
                     foreach (var h in g.DiscCutHoles) arc -= r * ArcInsideRad(h, r);
-                    // 厚度取舌片对侧（+x，槽心方向）之外的一点：−x 轴在盘上是各级台阶的厚度
-                    double t = Math.Max(g.ThicknessAt(-r, 0), 1e-9);
+                    // ★ 厚度取 +z 轴上的点 (0, r)：它在圆盘上、不在舌片上（舌片在 −x 侧，onTab 判 x < 切点）。
+                    //   2026-09-09 审查抓到：原来取 (−r, 0)，R11 解耦后那一点落在舌片上 ⇒ 各圈读成舌片厚（盘半径 = 舌半宽时全部读错）。
+                    double t = Math.Max(g.ThicknessAt(0, r), 1e-9);
                     if (arc <= 1e-9) { cuts.Add(new Cut($"圆盘 r={r:0.#}（被槽切断）", 0, double.PositiveInfinity)); continue; }
                     double a = arc * t;
                     cuts.Add(new Cut($"圆盘 r={r:0.#}", a, currentA / a));
@@ -288,7 +309,7 @@ public static class SectionSizing
         for (int i = 0; i <= M; i++)
         {
             double r = rInMm + (rOutMm - rInMm) * i / M;
-            double t = Math.Max(g.ThicknessAt(-r, 0), 1e-9);
+            double t = Math.Max(g.ThicknessAt(0, r), 1e-9);        // 盘上的点，不是舌片（同 Cuts）
             double thetaRad = 2 * Math.PI - currentA / (JDesignAPerMm2 * t * r);
             best = Math.Min(best, Math.Max(0, thetaRad) * 180.0 / Math.PI);
         }

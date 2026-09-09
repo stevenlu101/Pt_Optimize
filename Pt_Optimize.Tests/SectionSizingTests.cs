@@ -79,10 +79,55 @@ public class SectionSizingTests
         var g = Plate(1.0, new FlangePlate.TabHole(-100, 0, 10));   // 舌片最紧 J=15；舌盘交界弦 60×1 ⇒ J=10；圆盘整圈 J=3.7
         Assert.Equal(1.5, SectionSizing.PlateThickFloorMm(g, 1.0, 600), 6);           // 同厚（旧口径）：舌片截面算进来
         g.TabThicknessMm = 1.5;                                                        // 解耦：舌片自己 1.5
-        Assert.Equal(1.0, SectionSizing.PlateThickFloorMm(g, 1.0, 600), 6);           // 基板只看交界弦与圆盘：J=10 ⇒ 1.0
+        // 基板只看交界切口与圆盘各圈。交界切口（2026-09-09 修正）= 边条 2×(30−25.8)×1.0 + 焊弧 π×25.8×舌片厚 1.5
+        //   = 8.4 + 121.6 = 130.0 mm² ⇒ J 4.62；圆盘最内圈 2π×25.8×1.0 = 162.1 ⇒ J 3.70；最紧是交界 ⇒ 下界 = 1.0 × 4.62/10
+        double junction = 2 * (30 - 25.8) * 1.0 + Math.PI * 25.8 * 1.5;
+        Assert.Equal(600.0 / junction / 10.0, SectionSizing.PlateThickFloorMm(g, 1.0, 600), 6);
         Assert.All(SectionSizing.Cuts(g, 600).Where(c => c.Where.StartsWith("舌片")), c => Assert.True(c.OnTab));
         Assert.All(SectionSizing.Cuts(g, 600).Where(c => !c.Where.StartsWith("舌片")), c => Assert.False(c.OnTab));
         Assert.Equal(600.0 / 40.0 / 1.5, SectionSizing.Worst(g, 600).JAPerMm2, 6);   // 终验仍看全体：舌片孔处 600/(40×1.5) = 10
+    }
+
+    /// <summary>★ 2026-09-09 审查抓到：各圈厚度原取 (−r,0)，R11 解耦后那点在舌片上 ⇒ 读成舌片厚。现在取 (0,r)。</summary>
+    [Fact]
+    public void 圆盘各圈厚度取的是盘上的点_不是舌片厚()
+    {
+        var g = Plate(1.0);
+        g.TabThicknessMm = 3.0;                                   // 舌片解耦、比基板厚 3 倍
+        var ring = SectionSizing.Cuts(g, 600).Where(c => c.Where.StartsWith("圆盘")).ToList();
+        Assert.NotEmpty(ring);
+        // 圆盘整圈 2πr × 基板 1.0（不是 × 3.0）：最内一圈 r=25.8 ⇒ 162.1 mm²
+        Assert.Equal(2 * Math.PI * 25.8 * 1.0, ring.Min(c => c.AreaMm2), 1);
+        Assert.All(ring, c => Assert.True(c.AreaMm2 < 2 * Math.PI * 30 * 1.0 + 1, $"{c.Where} {c.AreaMm2:0.0} 像是按舌片厚算的"));
+        // 槽张角上界同一处：厚度也按盘上算
+        double theta1 = SectionSizing.SlotSpanMaxByJDeg(g, 27, 29, 600);
+        g.TabThicknessMm = double.NaN;
+        Assert.Equal(theta1, SectionSizing.SlotSpanMaxByJDeg(g, 27, 29, 600), 9);
+    }
+
+    /// <summary>
+    /// ★ 2026-09-09 修正舌盘交界切口：盘半径 = 舌半宽时切点在 x=0，整条弦有 2×25.8 穿过管腔（没有料）——
+    /// 原式 2·hwT·t 把管腔当成料；只剩边条又会把管孔边的焊弧（舌片电流真正的出口）漏掉。
+    /// 现在 = 边条 + 焊弧×孔边厚。用手算数钉住。
+    /// </summary>
+    [Fact]
+    public void 交界切口_盘径等于舌宽时扣管孔弦并加焊弧()
+    {
+        var g = Plate(1.0);                                       // 盘 R30、半宽 30 ⇒ 切点 x=0；孔 R25.8
+        var j = SectionSizing.Cuts(g, 600).First(c => c.Where.StartsWith("舌盘交界"));
+        // 边条：2×(30−25.8)=8.4 mm × 1.0；焊弧：x<0 且 |z|≤30 的整个左半圆 = π×25.8 = 81.05 mm × 孔边厚 1.0
+        double expect = 8.4 * 1.0 + Math.PI * 25.8 * 1.0;
+        Assert.Equal(expect, j.AreaMm2, 1);
+        Assert.Contains("焊弧", j.Where);
+        // 切点在孔外（半宽 20：|xT| = √(30²−20²) = 22.4 < 25.8 仍穿孔）—— 只有 |xT| ≥ 25.8 才回原式；用半宽 10：|xT| = 28.3
+        var g2 = new FlangePlate
+        {
+            DiscRadiusMm = 30, HoleRadiusMm = 25.8, TabEndXMm = -140, TabEndHalfWidthMm = 10,
+            ThicknessMm = 1.0, TabThicknessMm = double.NaN, TabParallel = true, WeldFilletLegMm = 0,
+        };
+        var j2 = SectionSizing.Cuts(g2, 600).First(c => c.Where.StartsWith("舌盘交界"));
+        Assert.Equal(2 * 10 * 1.0, j2.AreaMm2, 6);                // 原式逐位相同
+        Assert.DoesNotContain("焊弧", j2.Where);
     }
 
     [Fact]

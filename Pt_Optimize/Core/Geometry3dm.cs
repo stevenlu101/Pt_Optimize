@@ -184,7 +184,8 @@ public static class Geometry3dm
         //   零额外进程。此处只要不吞它的退出码即可（上面那个 ExitCode != 0 的 throw）。
         //   （原来在这里对每片每部位各起一次探针 = 每次出图多 12 个 Rhino 进程，
         //     而这是工程师每点一次「导出本页 3DM」都要付的成本。）
-        return so.Trim();
+        // ★ stderr 里的警告（[final] …）成功时也**附在回显后面**（2026-09-09 审查抓到：以前直接丢掉）
+        return se.Trim().Length == 0 ? so.Trim() : so.Trim() + Environment.NewLine + "⚠ 出图子进程的提醒：" + Environment.NewLine + se.Trim();
     }
 
     /// <summary>

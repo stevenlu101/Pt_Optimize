@@ -91,6 +91,43 @@ public class Export3dmMatchesSolvedTests
     /// 法兰伸进铂金管 = 装不进去，比任何判据都直接。
     /// </summary>
     [Trait("速度", "慢")]   // ★ 真跑场解/出图；钩子默认跳过，见 .githooks/pre-commit
+    /// <summary>
+    /// ★★★★★ 盘半径 = 舌半宽（现役两档、R18 搜出的 Ø58/舌58 都是）且舌片另有厚度（R11 起页面路径必然如此）：
+    /// 切点在 x=0，舌片侧那块矩形盖住管腔左半圆 —— 2026-09-09 审查抓到出图器没减管孔、也不跑管腔自检，
+    /// 图上法兰实心穿过铂金管的一半而退出码 0。本门钉：管腔里没有料、舌片层存在且厚度是舌片厚、盘上是板身厚。
+    /// </summary>
+    [Fact]
+    public void 盘径等于舌宽且舌片另有厚度_舌片侧不许伸进管腔()
+    {
+        string? probe = Geometry3dm.FindProbe();
+        if (probe is null) { Console.WriteLine("跳过：本机没有 Rhino 探针"); return; }
+        var d = DesignSpec.Builtin[0].Clone();
+        d.Name = "舌片侧管腔门";
+        d.DiscRadiusMm = 30; d.TabHalfWidthMm = 30; d.TabLengthMm = 140; d.WallMm = 0.8;
+        for (int j = 0; j < d.TabThickMm.Length; j++) { d.TabThickMm[j] = 1.0; d.TongueThickMm[j] = 2.5; }
+        string dir = Path.Combine(Path.GetTempPath(), "pt_tabbore_" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string f = Path.Combine(dir, "舌片侧.3dm");
+            string echo = Geometry3dm.WriteFinal3dm(d, f);          // 退出码 9（管腔有料）／8（切不开）会在这里抛
+            Assert.DoesNotContain("没画进去", echo);
+            var tab = Geometry3dm.LoadThickness(f, "入口-舌片", 0, 1.0);
+            int solid = 0;
+            for (int i = 0; i < tab.Nx; i++) for (int k = 0; k < tab.Nz; k++) if (tab.At(tab.X0 + i * tab.Step, tab.Z0 + k * tab.Step) > 1e-6) solid++;
+            Assert.True(solid > 2000, $"舌片层几乎是空的（{solid} 格）—— 舌片没画出来");
+            // 管腔（r < 25.8）在舌片侧一定是空的：x=−10/−20、z=0；舌片上（x=−60）厚度 = 舌片厚 2.5
+            Assert.True(tab.At(-10, 0) < 1e-6 && tab.At(-20, 0) < 1e-6, $"管腔里有料：{tab.At(-10, 0):0.00}/{tab.At(-20, 0):0.00} mm");
+            Assert.InRange(tab.At(-60, 0), 2.4, 2.6);
+            Assert.InRange(tab.At(-60, 20), 2.4, 2.6);
+            // 盘 R30 < 环外级 31.8 ⇒ 圆盘侧没有「板身」（全是环）：环内级层在盘上是基板厚 1.0（倍率 1），且不含舌片
+            var ringI = Geometry3dm.LoadThickness(f, "入口-环内级", 0, 1.0);
+            Assert.InRange(ringI.At(27, 0), 0.9, 1.1);
+            Assert.True(ringI.At(-60, 0) < 1e-6, "环内级层画到了舌片上");
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
     [Fact]
     public void 管腔里不许有法兰的料()
     {
@@ -253,7 +290,7 @@ public class Export3dmMatchesSolvedTests
                                 double ringR0, double ringR1)
     {
         var fields = new List<Field>();
-        foreach (string part in new[] { "板身", "环外级", "环内级" })
+        foreach (string part in new[] { "板身", "环外级", "环内级", "舌片" })   // R11 起舌片另成一层（同厚时没有这层，读不到就跳）
         {
             var fld = Probe(exe, file, plate + "-" + part, 0);
             if (fld is not null) fields.Add(fld.Value);

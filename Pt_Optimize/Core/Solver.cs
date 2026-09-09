@@ -1956,10 +1956,13 @@ public static class Solver
             bool hasSlot = span > 0.5;
             double thOld = d.SlotCenterDegOf(j);
             var (thNew, _) = rout > rin ? RemovalPriority.SlotCenterDeg(mesh, p, rin, rout, Math.Max(15.0, 0.5 * span)) : (double.NaN, double.NaN);
+            // ★ 槽一旦开口（span > 0.5）槽心就**冻结**（2026-09-09 审查抓到：逐轮重定会让已提交几何非单调、
+            //   「只往上走过 = 最小可行点」不再成立）。开口前每轮按最新场定；开口后只印场给的角、不改几何。
             if (!double.IsNaN(thNew))
             {
                 thNew = Math.Round(thNew);
-                if (j < d.SlotCenterDeg.Length) d.SlotCenterDeg[j] = thNew;
+                if (!hasSlot && j < d.SlotCenterDeg.Length) d.SlotCenterDeg[j] = thNew;
+                else if (hasSlot) { parts.Add($"片{j} 槽已开口，槽心冻结在 {thOld:0}°（场此刻给 {thNew:0}°，只印不改）"); thNew = thOld; }
             }
             else thNew = thOld;
 
@@ -1987,7 +1990,8 @@ public static class Solver
                 double rm = 0.5 * (rin + rout), th = thNew * Math.PI / 180.0;
                 var (dirDeg, mag) = RemovalPriority.CurrentDirectionDeg(mesh, f.VField, rm * Math.Cos(th), rm * Math.Sin(th));
                 if (!double.IsNaN(dirDeg) && mag > 0) rotNew = Math.Round(dirDeg);
-                if (j < d.DiscCutRotDeg.Length) d.DiscCutRotDeg[j] = rotNew;
+                if (!hasSlot && j < d.DiscCutRotDeg.Length) d.DiscCutRotDeg[j] = rotNew;   // 同槽心：开口后冻结
+                else if (hasSlot) rotNew = rotOld;
             }
 
             double dth = Math.Abs(thNew - thOld); if (dth > 180) dth = 360 - dth;
