@@ -110,12 +110,18 @@ internal static class GeomProbe
 
         // steps 模式：写一个**阶梯厚度 + 开槽**的法兰，各级为**独立实体**
         //   Geom.exe steps <out.3dm> <孔R> <r1,r2,..> <t1,t2,..> <舌端X> <舌端半宽> <舌厚> [槽数] [槽角宽] [槽r内,槽r外]
+        //                  [par] [孔x,孔r,孔边数,孔圆角比,孔转角,孔拉长] [槽心角°] [圆盘挖料形状族] [长椭圆x,z,R,拉长,转角]
         // 用来复现「R60/t3 -> R46/t2 -> R36/t1 + 四槽」这类图纸，供逐级定厚验证。
+        // ★ 2026-09-09 审查欠账③：后三个参数（槽心角／圆盘挖料形状族／长椭圆参数）与孔的形状族原来都没有，
+        //   本模式（「导出可回读 3DM」按钮走的就是它）画的是老几何，与算的（DesignSpec.SlotCenterDegOf／
+        //   DiscCutShapeOf／HolesOf）不是同一份数。调用方（Geometry3dm.WriteStepped3dm）始终带上这些参数，
+        //   位置固定，不再像老的「孔心x,孔半径」那样可省略 —— 省略会让后面几个参数的下标全部错位。
         if (args.Length > 0 && args[0] == "steps")
         {
             if (args.Length < 8)
             {
-                Console.Error.WriteLine("用法：Geom.exe steps <out.3dm> <孔R> <r1,r2,..> <t1,t2,..> <舌端X> <舌端半宽> <舌厚> [槽数] [槽角宽] [槽r内,槽r外]");
+                Console.Error.WriteLine("用法：Geom.exe steps <out.3dm> <孔R> <r1,r2,..> <t1,t2,..> <舌端X> <舌端半宽> <舌厚> [槽数] [槽角宽] [槽r内,槽r外]"
+                    + " [par] [孔x,孔r,孔边数,孔圆角比,孔转角,孔拉长] [槽心角°] [圆盘挖料形状族] [长椭圆x,z,R,拉长,转角]");
                 return 64;
             }
             string sOut = args[1];
@@ -140,19 +146,45 @@ internal static class GeomProbe
             catch (Exception e) { Console.Error.WriteLine("Resolver 失败：" + e.Message); return 1; }
             // 第 11 个参数：舌型（par = 等宽，与 FlangePlate.TabParallel 同口径；缺省梯形，保持旧行为）
             bool sPar = args.Length > 11 && args[11].Equals("par", StringComparison.OrdinalIgnoreCase);
-            // ★ 第 12 个参数：舌孔「孔心x,孔半径」（2026-09-05，用户要求 R5）
-            var sHoles = new System.Collections.Generic.List<(double X, double Z, double R)>();
+            // ★ 第 12 个参数：舌孔「孔心x,孔半径,孔边数,孔圆角比,孔转角,孔拉长」（六个数，形状族部分 2026-09-09 补）
+            var sHoles = new System.Collections.Generic.List<(double X, double Z, double R, int Sides, double CornerFrac, double RotDeg, double Aspect)>();
             if (args.Length > 12)
             {
                 var hp = args[12].Split(',');
-                if (hp.Length == 2
+                if (hp.Length == 6
                     && double.TryParse(hp[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double hX)
                     && double.TryParse(hp[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double hR)
+                    && int.TryParse(hp[2], out int hSides)
+                    && double.TryParse(hp[3], NumberStyles.Float, CultureInfo.InvariantCulture, out double hCorner)
+                    && double.TryParse(hp[4], NumberStyles.Float, CultureInfo.InvariantCulture, out double hRot)
+                    && double.TryParse(hp[5], NumberStyles.Float, CultureInfo.InvariantCulture, out double hAsp)
                     && hR > 1e-6)
-                    sHoles.Add((hX, 0, hR));
+                    sHoles.Add((hX, 0, hR, hSides, hCorner, hRot, hAsp));
+            }
+            // ★ 2026-09-09 审查欠账③：槽心角（第 13 个参数）、圆盘挖料形状族（第 14 个，0=弯椭圆槽／1,2=长椭圆）、
+            //   长椭圆的 x,z,R,拉长,转角（第 15 个）—— 与 Core/DesignSpec 的 SlotCenterDeg／DiscCutShape／
+            //   DiscCutRotDeg 同一份数，由调用方（Geometry3dm.BuildSteppedPlateArgs）算好传进来，这里只转发。
+            double sSlotCenterDeg = args.Length > 13 && double.TryParse(args[13], NumberStyles.Float, CultureInfo.InvariantCulture, out var scd) ? scd : 0;
+            int sDiscShape = args.Length > 14 && int.TryParse(args[14], out var dsh) ? dsh : 0;
+            double sDiscX = double.NaN, sDiscZ = 0, sDiscR = 0, sDiscAsp = 1, sDiscRot = 0;
+            if (args.Length > 15)
+            {
+                var dp = args[15].Split(',');
+                if (dp.Length == 5)
+                {
+                    double.TryParse(dp[0], NumberStyles.Float, CultureInfo.InvariantCulture, out sDiscX);
+                    double.TryParse(dp[1], NumberStyles.Float, CultureInfo.InvariantCulture, out sDiscZ);
+                    double.TryParse(dp[2], NumberStyles.Float, CultureInfo.InvariantCulture, out sDiscR);
+                    double.TryParse(dp[3], NumberStyles.Float, CultureInfo.InvariantCulture, out sDiscAsp);
+                    double.TryParse(dp[4], NumberStyles.Float, CultureInfo.InvariantCulture, out sDiscRot);
+                }
             }
             int rc;
-            try { rc = RunSteps(sOut, sHole, sR, sT, sTabX, sTabHW, sTabT, sN, sDeg, sSlotIn, sSlotOut, sPar, sHoles); }
+            try
+            {
+                rc = RunSteps(sOut, sHole, sR, sT, sTabX, sTabHW, sTabT, sN, sDeg, sSlotIn, sSlotOut, sPar, sHoles,
+                              sSlotCenterDeg, sDiscShape, sDiscX, sDiscZ, sDiscR, sDiscAsp, sDiscRot);
+            }
             catch (Exception e) { Console.Error.WriteLine(e.GetType().Name + ": " + e.Message); rc = 2; }
             Bye(rc);      // ★ 带上**真正的**返回码退出
             return rc;    // 到不了，编译器要
@@ -908,84 +940,16 @@ internal static class GeomProbe
             //  ★ 形状必须与 Core/PlateCurrent2D 的 DiscSlot/TabHole.Contains **逐字对应** ——
             //    求解器是按那两个判据算的裕度，画成别的形状就是「算一个、画另一个」。
             //
-            //  弯椭圆槽 = 到中弧（半径 rm、张角 span）的距离 ≤ 半宽 hw
-            //    ⇒ 边界 = 外弧(rm+hw) + 端半圆(hw) + 内弧(rm−hw) + 端半圆(hw)
-            //    两端是半圆而不是尖角：尖角在电流场里是尖点，在加工上也是裂纹源。
+            // ★★★★★ 2026-09-09 审查欠账③：这两个函数本体已抽成类静态方法 SlotCurveShape／CutCurveShape
+            //   （见文件末尾，RunPlate 之前），供 steps 模式（RunSteps，「导出可回读 3DM」按钮走的那一个）复用。
+            //   之前只有 RunFinal（「导出本页 3DM」）会画真实的槽/孔形状，steps 模式画的是另一套近似
+            //   （扇形代替胶囊、圆代替形状族、槽心角写死 0°）—— 算的是一个东西、导出可回读图的是另一个东西。
+            //   两条出图路径现在走同一份裁剪几何，这里只转发 tol，本体不再复制一份。
             Curve SlotCurve(double rin, double rout, double centerDeg, double spanDeg)
-            {
-                double rm = 0.5 * (rin + rout), hw = 0.5 * (rout - rin);
-                if (hw <= 1e-9 || spanDeg <= 0.5) return null;
-                double c = centerDeg * Math.PI / 180.0, half = spanDeg * 0.5 * Math.PI / 180.0;
-                Point3d P(double r, double th) => new(r * Math.Cos(th), 0, r * Math.Sin(th));
-                // 端帽的最外点：沿中弧切向再走 hw
-                Point3d Cap(double th, int sg) =>
-                    new(rm * Math.Cos(th) - sg * hw * Math.Sin(th), 0,
-                        rm * Math.Sin(th) + sg * hw * Math.Cos(th));
-                double a0 = c - half, a1 = c + half;
-                var pc = new PolyCurve();
-                pc.Append(new ArcCurve(new Arc(P(rm + hw, a0), P(rm + hw, c), P(rm + hw, a1))));
-                pc.Append(new ArcCurve(new Arc(P(rm + hw, a1), Cap(a1, +1), P(rm - hw, a1))));
-                pc.Append(new ArcCurve(new Arc(P(rm - hw, a1), P(rm - hw, c), P(rm - hw, a0))));
-                pc.Append(new ArcCurve(new Arc(P(rm - hw, a0), Cap(a0, -1), P(rm + hw, a0))));
-                pc.MakeClosed(tol);
-                return pc.IsClosed ? pc : null;
-            }
+                => SlotCurveShape(tol, rin, rout, centerDeg, spanDeg);
 
-            //  ★ 孔的形状族（R13，2026-09-09）—— 与 Core/PlateCurrent2D 的 TabHole.Contains **逐字对应**：
-            //    本地坐标里先造「正 N 边形 ⊕ 圆角」（sides<3 或 corner≥0.999 = 圆），转成 NURBS，
-            //    再套同一个仿射：本地 x 乘 asp（拉长）→ 转 rotDeg → 平移到 (cx, cz)。
-            //    Contains 的反变换是 lx = (dx·cos(−ρ) − dz·sin(−ρ))/asp、lz = dx·sin(−ρ) + dz·cos(−ρ)，
-            //    正变换即 dx = asp·lx·cosρ − lz·sinρ、dz = asp·lx·sinρ + lz·cosρ —— 下面矩阵就是它。
-            //    NURBS 在仿射下是精确的（有理曲线），圆 → 椭圆、圆角 → 椭圆弧，都不是近似。
-            //    多边形顶点在本地 π/2 + 2πk/n（第一个顶点朝 +z），与 DistToRegularPolygon 同序。
             Curve CutCurve(double cx, double cz, double r, int sides, double corner, double rotDeg, double asp)
-            {
-                if (r <= 0.05 || double.IsNaN(cx) || double.IsNaN(cz)) return null;
-                asp = Math.Max(asp, 1e-6);
-                Curve local;
-                if (sides < 3 || corner >= 0.999)
-                    local = new Circle(Plane.WorldZX, Point3d.Origin, r).ToNurbsCurve();
-                else
-                {
-                    double rr = r * Math.Clamp(corner, 0.0, 1.0), rc = r - rr;
-                    if (rc <= 1e-9) local = new Circle(Plane.WorldZX, Point3d.Origin, r).ToNurbsCurve();
-                    else
-                    {
-                        int n = sides;
-                        var V = new Point3d[n];
-                        for (int k = 0; k < n; k++)
-                        {
-                            double a = 2 * Math.PI * k / n + Math.PI / 2;
-                            V[k] = new Point3d(rc * Math.Cos(a), 0, rc * Math.Sin(a));
-                        }
-                        // 顶点按角递增 = 在 (x,z) 平面逆时针；边 (ex,ez) 的外法向 = (ez, −ex)
-                        Vector3d Nrm(int k)
-                        {
-                            var e = V[(k + 1) % n] - V[k];
-                            var m = new Vector3d(e.Z, 0, -e.X); m.Unitize(); return m;
-                        }
-                        var pc = new PolyCurve();
-                        for (int k = 0; k < n; k++)
-                        {
-                            var nk = Nrm(k); var nk1 = Nrm((k + 1) % n);
-                            var a0 = V[k] + nk * rr; var a1 = V[(k + 1) % n] + nk * rr;
-                            pc.Append(new LineCurve(a0, a1));                       // 平移出去的边
-                            var b1 = V[(k + 1) % n] + nk1 * rr;
-                            var mid = nk + nk1; mid.Unitize();
-                            pc.Append(new ArcCurve(new Arc(a1, V[(k + 1) % n] + mid * rr, b1)));   // 顶点处的圆角
-                        }
-                        pc.MakeClosed(tol);
-                        local = pc.ToNurbsCurve();
-                    }
-                }
-                if (local == null) return null;
-                double rho = rotDeg * Math.PI / 180.0, c = Math.Cos(rho), s = Math.Sin(rho);
-                var T = Transform.Identity;
-                T.M00 = asp * c; T.M02 = -s; T.M03 = cx;
-                T.M20 = asp * s; T.M22 = c;  T.M23 = cz;
-                if (!local.Transform(T)) return null;
-                return local.IsClosed ? local : null;
-            }
+                => CutCurveShape(tol, cx, cz, r, sides, corner, rotDeg, asp);
 
             //  舌板孔（老 spec，无形状族）= 椭圆，长轴**顺流**（沿 X）。AspectXZ = 长/短，1 = 正圆。
             Curve HoleCurve(double cx, double r, double asp) => CutCurve(cx, 0, r, 0, 1.0, 0, asp);
@@ -1256,6 +1220,97 @@ internal static class GeomProbe
         }
     }
 
+    // ══════════════════════════════════════════════════════════════════════
+    //  ★★★★★ 2026-09-09 审查欠账③：从 RunFinal 的局部函数抽成共享静态方法 ——
+    //   「导出可回读 3DM」（steps 模式，RunSteps）此前完全没有槽/孔的形状族与槽心角可画，
+    //   与「导出本页 3DM」（final 模式，RunFinal）画的是两套不同的几何、逐字对不上。
+    //   两条路现在共用同一份裁剪曲线（tol 从各自的 doc.ModelAbsoluteTolerance 传入）。
+    // ══════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// 弯椭圆槽（胶囊形）裁剪曲线 —— 与 <c>Core/DesignSpec.SlotsOf</c>／<c>FlangePlate.DiscSlot.Contains</c> 同一份公式。
+    /// 到中弧（半径 rm、张角 span）的距离 ≤ 半宽 hw ⇒ 边界 = 外弧+端半圆+内弧+端半圆（两端半圆不是尖角，
+    /// 尖角在电流场里是尖点，在加工上也是裂纹源）。centerDeg 决定槽开在哪个角向（+x 轴 0°，逆时针为正）。
+    /// </summary>
+    private static Curve? SlotCurveShape(double tol, double rin, double rout, double centerDeg, double spanDeg)
+    {
+        double rm = 0.5 * (rin + rout), hw = 0.5 * (rout - rin);
+        if (hw <= 1e-9 || spanDeg <= 0.5) return null;
+        double c = centerDeg * Math.PI / 180.0, half = spanDeg * 0.5 * Math.PI / 180.0;
+        Point3d P(double r, double th) => new(r * Math.Cos(th), 0, r * Math.Sin(th));
+        // 端帽的最外点：沿中弧切向再走 hw
+        Point3d Cap(double th, int sg) =>
+            new(rm * Math.Cos(th) - sg * hw * Math.Sin(th), 0,
+                rm * Math.Sin(th) + sg * hw * Math.Cos(th));
+        double a0 = c - half, a1 = c + half;
+        var pc = new PolyCurve();
+        pc.Append(new ArcCurve(new Arc(P(rm + hw, a0), P(rm + hw, c), P(rm + hw, a1))));
+        pc.Append(new ArcCurve(new Arc(P(rm + hw, a1), Cap(a1, +1), P(rm - hw, a1))));
+        pc.Append(new ArcCurve(new Arc(P(rm - hw, a1), P(rm - hw, c), P(rm - hw, a0))));
+        pc.Append(new ArcCurve(new Arc(P(rm - hw, a0), Cap(a0, -1), P(rm + hw, a0))));
+        pc.MakeClosed(tol);
+        return pc.IsClosed ? pc : null;
+    }
+
+    /// <summary>
+    /// 孔/圆盘挖料的形状族裁剪曲线 —— 与 <c>Core/PlateCurrent2D.TabHole.Contains</c> **逐字对应**：
+    /// 本地坐标里先造「正 N 边形 ⊕ 圆角」（sides&lt;3 或 corner≥0.999 = 圆），转成 NURBS，
+    /// 再套同一个仿射：本地 x 乘 asp（拉长）→ 转 rotDeg → 平移到 (cx, cz)。
+    /// Contains 的反变换是 lx = (dx·cos(−ρ) − dz·sin(−ρ))/asp、lz = dx·sin(−ρ) + dz·cos(−ρ)，
+    /// 正变换即 dx = asp·lx·cosρ − lz·sinρ、dz = asp·lx·sinρ + lz·cosρ —— 下面矩阵就是它。
+    /// NURBS 在仿射下是精确的（有理曲线），圆 → 椭圆、圆角 → 椭圆弧，都不是近似。
+    /// 多边形顶点在本地 π/2 + 2πk/n（第一个顶点朝 +z），与 DistToRegularPolygon 同序。
+    /// 圆盘上的长椭圆（形状族 1/2）也走这里：sides 传 0、corner 传 1.0 即退化成椭圆。
+    /// </summary>
+    private static Curve? CutCurveShape(double tol, double cx, double cz, double r, int sides, double corner, double rotDeg, double asp)
+    {
+        if (r <= 0.05 || double.IsNaN(cx) || double.IsNaN(cz)) return null;
+        asp = Math.Max(asp, 1e-6);
+        Curve? local;
+        if (sides < 3 || corner >= 0.999)
+            local = new Circle(Plane.WorldZX, Point3d.Origin, r).ToNurbsCurve();
+        else
+        {
+            double rr = r * Math.Clamp(corner, 0.0, 1.0), rc = r - rr;
+            if (rc <= 1e-9) local = new Circle(Plane.WorldZX, Point3d.Origin, r).ToNurbsCurve();
+            else
+            {
+                int n = sides;
+                var V = new Point3d[n];
+                for (int k = 0; k < n; k++)
+                {
+                    double a = 2 * Math.PI * k / n + Math.PI / 2;
+                    V[k] = new Point3d(rc * Math.Cos(a), 0, rc * Math.Sin(a));
+                }
+                // 顶点按角递增 = 在 (x,z) 平面逆时针；边 (ex,ez) 的外法向 = (ez, −ex)
+                Vector3d Nrm(int k)
+                {
+                    var e = V[(k + 1) % n] - V[k];
+                    var m = new Vector3d(e.Z, 0, -e.X); m.Unitize(); return m;
+                }
+                var pc = new PolyCurve();
+                for (int k = 0; k < n; k++)
+                {
+                    var nk = Nrm(k); var nk1 = Nrm((k + 1) % n);
+                    var a0 = V[k] + nk * rr; var a1 = V[(k + 1) % n] + nk * rr;
+                    pc.Append(new LineCurve(a0, a1));                       // 平移出去的边
+                    var b1 = V[(k + 1) % n] + nk1 * rr;
+                    var mid = nk + nk1; mid.Unitize();
+                    pc.Append(new ArcCurve(new Arc(a1, V[(k + 1) % n] + mid * rr, b1)));   // 顶点处的圆角
+                }
+                pc.MakeClosed(tol);
+                local = pc.ToNurbsCurve();
+            }
+        }
+        if (local == null) return null;
+        double rho = rotDeg * Math.PI / 180.0, c = Math.Cos(rho), s = Math.Sin(rho);
+        var T = Transform.Identity;
+        T.M00 = asp * c; T.M02 = -s; T.M03 = cx;
+        T.M20 = asp * s; T.M22 = c;  T.M23 = cz;
+        if (!local.Transform(T)) return null;
+        return local.IsClosed ? local : null;
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static int RunPlate(string outPath, double discR, double holeR,
                                 double tabX, double tabHW, List<double> thicks)
@@ -1414,9 +1469,15 @@ internal static class GeomProbe
                                 double tabX, double tabHW, double tabT,
                                 int slotN, double slotDeg, double slotRin, double slotRout,
                                 bool tabParallel = false,
-                                System.Collections.Generic.List<(double X, double Z, double R)>? tabHolesIn = null)
+                                System.Collections.Generic.List<(double X, double Z, double R, int Sides, double CornerFrac, double RotDeg, double Aspect)>? tabHolesIn = null,
+                                // ★★★★★ 2026-09-09 审查欠账③：槽心角／圆盘挖料形状族（长椭圆）——
+                                //   原来没有参数可传，这个模式（「导出可回读 3DM」）画的槽永远在 0°、永远是
+                                //   扇形近似，与算的（DesignSpec.SlotCenterDegOf／DiscCutShapeOf／DiscCutsOf）不是同一个东西。
+                                double slotCenterDeg = 0, int discCutShape = 0,
+                                double discX = double.NaN, double discZ = 0, double discR = 0,
+                                double discAsp = 1, double discRot = 0)
     {
-        var tabHoles = tabHolesIn ?? new System.Collections.Generic.List<(double X, double Z, double R)>();
+        var tabHoles = tabHolesIn ?? new System.Collections.Generic.List<(double X, double Z, double R, int Sides, double CornerFrac, double RotDeg, double Aspect)>();
         using (new RhinoCore(new[] { "/NOSPLASH" }, WindowStyle.Hidden))
         {
             var doc = RhinoDoc.CreateHeadless(null);
@@ -1434,6 +1495,37 @@ internal static class GeomProbe
                     new LineCurve(Point3d.Origin, new Point3d(0, t, 0)), true);
             }
 
+            // ★★★★★ 2026-09-09 审查欠账③：圆盘挖料现在按**它实际盖住的半径范围**切，不再只切最内一级
+            //   （老写法 `slotN > 0 && i == 0`：SlotBandMm 的内外边距只各留 6 mm，槽带多数情况横跨两级台阶，
+            //   老写法只挖了最内那一级，外面那一级仍是整片实心 —— 与算的（DesignSpec.Plate 逐点判 Inside）不符）。
+            //   形状族：discCutShape ∈ {1,2}（长椭圆）用 CutCurveShape 按等面积椭圆裁；否则（0＝弯椭圆槽，
+            //   老档缺省）用 SlotCurveShape，槽心角走 slotCenterDeg（老默认 0°，逐位如前）。
+            //   两个都走**共享**的裁剪曲线函数（同一份公式在 RunFinal / final 模式也用），不是另画一套近似。
+            Curve? discCutter = null;
+            if (slotN > 0)
+            {
+                discCutter = discCutShape >= 1
+                    ? ((discR > 0.05 && !double.IsNaN(discX))
+                        ? CutCurveShape(tol, discX, discZ, discR, 0, 1.0, discRot, discAsp) : null)
+                    : SlotCurveShape(tol, slotRin, slotRout, slotCenterDeg, slotDeg);
+                if (discCutter == null)
+                    Console.Error.WriteLine("⚠ 圆盘挖料裁剪曲线造不出来，写出的是**没有槽/孔**的圆盘");
+            }
+            Brep? discCutterSolid = null;
+            if (discCutter != null)
+            {
+                double maxT = ts.Length > 0 ? ts.Max() : 1;
+                // ★ 圆心/曲线要**沉到板下面**（y = −1）再拉伸 —— 与下面舌孔开孔同一个理由：
+                //   切柱底面若与环的底面（y = 0）共面，布尔差会在共面处静默失效（2026-09-05 舌孔那次踩过）。
+                discCutter.Translate(new Vector3d(0, -1.0, 0));
+                var cf = Brep.CreatePlanarBreps(new Curve[] { discCutter }, tol);
+                if (cf != null && cf.Length > 0)
+                    discCutterSolid = cf[0].Faces[0].CreateExtrusion(
+                        new LineCurve(Point3d.Origin, new Point3d(0, maxT + 2, 0)), true);
+                if (discCutterSolid == null)
+                    Console.Error.WriteLine("⚠ 圆盘挖料实体造不出来，写出的是**没有槽/孔**的圆盘");
+            }
+
             int made = 0;
             for (int i = 0; i < rs.Length; i++)
             {
@@ -1441,33 +1533,16 @@ internal static class GeomProbe
                 var ring = MakeRing(rin, rs[i], ts[i]);
                 if (ring == null) { Console.Error.WriteLine("环创建失败 级" + (i + 1)); return 5; }
 
-                if (slotN > 0 && i == 0)
+                if (discCutterSolid != null)
                 {
-                    for (int k = 0; k < slotN; k++)
-                    {
-                        double a0 = 2 * Math.PI * k / slotN - slotDeg * Math.PI / 360;
-                        double a1 = a0 + slotDeg * Math.PI / 180;
-                        var pts = new List<Point3d>();
-                        for (int q = 0; q <= 8; q++)
-                        {
-                            double aa = a0 + (a1 - a0) * q / 8.0;
-                            pts.Add(new Point3d(slotRout * Math.Cos(aa), 0, slotRout * Math.Sin(aa)));
-                        }
-                        for (int q = 8; q >= 0; q--)
-                        {
-                            double aa = a0 + (a1 - a0) * q / 8.0;
-                            pts.Add(new Point3d(slotRin * Math.Cos(aa), 0, slotRin * Math.Sin(aa)));
-                        }
-                        pts.Add(pts[0]);
-                        var wedge = new PolylineCurve(pts);
-                        var wf = Brep.CreatePlanarBreps(new Curve[] { wedge }, tol);
-                        if (wf == null || wf.Length == 0) continue;
-                        var cut = wf[0].Faces[0].CreateExtrusion(
-                            new LineCurve(new Point3d(0, -1, 0), new Point3d(0, ts[i] + 1, 0)), true);
-                        if (cut == null) continue;
-                        var diff = Brep.CreateBooleanDifference(new[] { ring }, new[] { cut }, tol);
-                        if (diff != null && diff.Length > 0) ring = diff[0];
-                    }
+                    // 挖不出来不当错误：多半是这一级根本不在裁剪范围内，本来就不用挖
+                    // （与 RunFinal 的 RegionMinus 同一个判断精神；这里量级小，不必照搬它的三态分支）。
+                    if (ring.SolidOrientation == BrepSolidOrientation.Inward) ring.Flip();
+                    var cutter2 = discCutterSolid;
+                    if (cutter2.SolidOrientation == BrepSolidOrientation.Inward)
+                    { cutter2 = cutter2.DuplicateBrep(); cutter2.Flip(); }
+                    var diff = Brep.CreateBooleanDifference(new[] { ring }, new[] { cutter2 }, tol);
+                    if (diff != null && diff.Length > 0) ring = diff[0];
                 }
 
                 var att = new Rhino.DocObjects.ObjectAttributes { LayerIndex = layer };
@@ -1526,15 +1601,19 @@ internal static class GeomProbe
                     if (tab != null && tabHoles.Count > 0)
                     {
                         var cutters = new System.Collections.Generic.List<Brep>();
-                        foreach (var (hx, hz, hr) in tabHoles)
+                        // ★ 2026-09-09 审查欠账③：舌孔形状族（TabHoleSides／圆角比／转角／拉长）—— 原来只会切正圆，
+                        //   现在走与 RunFinal 同一份 CutCurveShape（sides=0,corner=1 时退化成圆，逐位如前）。
+                        foreach (var (hx, hz, hr, hSides, hCorner, hRot, hAsp) in tabHoles)
                         {
                             if (!(hr > 1e-6)) continue;
+                            var cc = CutCurveShape(tol, hx, hz, hr, hSides, hCorner, hRot, hAsp);
+                            if (cc == null) continue;
                             // ★★★ 圆心要**沉到板下面**（y = −1），不能放在 y = 0。
                             //   放 y = 0 时切柱底面与舌片底面**共面**，布尔差在共面处
                             //   失效 —— 而且 Rhino **不报错**：diff 返回非空、实体数照样是 4，
                             //   写出来的图上却没有孔。2026-09-05 回读门抓到的就是这个
                             //   （孔心仍有 1.800 mm 材料）。
-                            var cc = new Circle(pl, new Point3d(hx, -1.0, hz), hr).ToNurbsCurve();
+                            cc.Translate(new Vector3d(0, -1.0, 0));
                             var cf = Brep.CreatePlanarBreps(new Curve[] { cc }, tol);
                             if (cf == null || cf.Length == 0) continue;
                             var cyl = cf[0].Faces[0].CreateExtrusion(

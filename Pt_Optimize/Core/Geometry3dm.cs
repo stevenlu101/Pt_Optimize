@@ -325,7 +325,17 @@ public static class Geometry3dm
                                          double tabEndXMm, double tabHalfWidthMm, double tabThickMm,
                                          int slotCount = 0, double slotWidthDeg = 20,
                                          double slotRInMm = double.NaN, double slotROutMm = double.NaN,
-                                         double tabHoleXMm = double.NaN, double tabHoleRMm = 0)
+                                         double tabHoleXMm = double.NaN, double tabHoleRMm = 0,
+                                         // ★★★★★ 2026-09-09 审查欠账③：五个形状族字段 —— 原来没有参数可传，
+                                         //   「可回读 3DM」画的槽/孔永远是默认形状（圆、弯椭圆槽、槽心 0°），
+                                         //   与算的（DesignSpec 的 SlotCenterDeg／DiscCutShape／DiscCutRotDeg／
+                                         //   TabHoleSides／TabHoleXMm）不是同一份数。默认值与老档逐位相同，
+                                         //   不传就是从前的行为（HANDOVER §「2026-09-09 多视角审查」）。
+                                         double slotCenterDeg = 0,
+                                         int discCutShape = 0, double discCutXMm = double.NaN, double discCutZMm = 0,
+                                         double discCutRMm = 0, double discCutAspect = 1, double discCutRotDeg = 0,
+                                         int tabHoleSides = 0, double tabHoleCornerFrac = 1.0,
+                                         double tabHoleRotDeg = 0, double tabHoleAspect = 1.0)
     {
         string probe = FindProbe()
             ?? throw new FileNotFoundException($"找不到 {ProbeName}.exe。先构建 {ProbeName}（需本机装 Rhino 8）。");
@@ -339,6 +349,8 @@ public static class Geometry3dm
             StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
             UseShellExecute = false, CreateNoWindow = true
         };
+        var ic = System.Globalization.CultureInfo.InvariantCulture;
+        string F(double v) => v.ToString("R", ic);          // Geom 那边一律按 InvariantCulture 解析（NumberStyles.Float）
         psi.ArgumentList.Add("steps");
         psi.ArgumentList.Add(outPath);
         psi.ArgumentList.Add(holeRadiusMm.ToString("R"));
@@ -355,11 +367,18 @@ public static class Geometry3dm
         // 等宽舌 —— 与 FlangePlate.TabParallel 同口径。梯形是本模式的旧默认，
         // 而设计记录几何早已不用梯形（见 Geom 的 RunSteps 注释）。
         psi.ArgumentList.Add("par");
-        // ★★★ 舌板开孔（2026-09-05，用户要求 R5）。第 12 个参数：孔心x,孔半径。
+        // ★★★ 舌板开孔（2026-09-05，用户要求 R5）。第 12 个参数：孔心x,孔半径,孔边数,孔圆角比,孔转角,孔拉长——
         //   ⚠ 孔径变了图上必须跟着变 —— 求解器调了孔而图没改，
         //     工程师拿到的就是一张**与计算不符**的图。那比不开孔更糟。
-        if (tabHoleRMm > 0.05 && !double.IsNaN(tabHoleXMm))
-            psi.ArgumentList.Add($"{tabHoleXMm.ToString("R")},{tabHoleRMm.ToString("R")}");
+        //   ★ 2026-09-09 审查欠账③：从「x,r」两个数扩成六个数（形状族），且**始终带上占位**——
+        //     不然后面槽心角/圆盘挖料形状族几个参数的下标会跟着错位。
+        psi.ArgumentList.Add((tabHoleRMm > 0.05 && !double.IsNaN(tabHoleXMm))
+            ? $"{F(tabHoleXMm)},{F(tabHoleRMm)},{tabHoleSides.ToString(ic)},{F(tabHoleCornerFrac)},{F(tabHoleRotDeg)},{F(tabHoleAspect)}"
+            : "NaN,0,0,1,0,1");
+        // ★ 2026-09-09 审查欠账③：槽心角（第 13 个参数）、圆盘挖料形状族与长椭圆参数（第 14/15 个）
+        psi.ArgumentList.Add(F(slotCenterDeg));
+        psi.ArgumentList.Add(discCutShape.ToString(ic));
+        psi.ArgumentList.Add($"{F(discCutXMm)},{F(discCutZMm)},{F(discCutRMm)},{F(discCutAspect)},{F(discCutRotDeg)}");
 
         using var proc = Process.Start(psi) ?? throw new InvalidOperationException("无法启动 " + probe);
         var cOut = proc.StandardOutput.ReadToEndAsync();
@@ -370,6 +389,91 @@ public static class Geometry3dm
         if (proc.ExitCode != 0)
             throw new InvalidOperationException($"{ProbeName} steps 退出码 {proc.ExitCode}。{stderr.Trim()}");
         return stdout;
+    }
+
+    /// <summary>
+    /// 「导出可回读 3DM」每一片要喂给 <see cref="WriteStepped3dm"/> 的参数。
+    ///
+    /// ★★★★★ 2026-09-09 审查欠账（中）：「可回读 3DM」画的不是算的那份 —— 从
+    /// <c>LineDesignPage.ExportReadable3dm</c> 里抽出来单独成一个可测的静态方法，是因为
+    /// 那是私有 UI 方法（弹目录选择框），测试够不到它；抽出来之后「画的是不是算的那份」
+    /// 才能被回归门直接钉住，不必靠比对源码字面文本（本仓库反复吃过「门钉当时的措辞」的亏）。
+    ///
+    /// 修的三条（整机出图 <see cref="WriteFinal3dm"/>／<see cref="BuildFinalSpec"/> 早就是对的，这里照它的做法）：
+    /// <code>
+    ///   ① R15（孔径 &lt; 1 mm 不画）  老代码直接传 TabHoleRMm[j] ⇒ 改走 DesignSpec.HolesOf(j)
+    ///                                  （已经按 TabHoleREffective 过滤，等面积缩放也在里面）
+    ///   ② 环半径逐片                  老代码用 RingRadiiMm（= RingRadiiOf(0)，只是第 0 片的样子）
+    ///                                  ⇒ 改走 RingRadiiOf(j)（逐片，RingW1Mm/RingW2Mm 逐片放开之后才不会画错台阶半径）
+    ///   ③ 形状族／槽心角              SlotCenterDeg／DiscCutShape／DiscCutRotDeg／TabHoleSides／TabHoleXMm
+    ///                                  老代码一个都没传给 Geom ⇒ 改走 DiscCutsOf(j,·)／SlotCenterDegOf(j)／HolesOf(j)，
+    ///                                  与 BuildFinalSpec 同一份数，不是另算一遍
+    /// </code>
+    /// </summary>
+    public readonly struct SteppedPlateArgs
+    {
+        /// <summary>各级**外**半径（逐片，取自 <see cref="DesignSpec.RingRadiiOf"/>），最后一个是圆盘外半径</summary>
+        public double[] RadiiMm { get; init; }
+        public double[] ThickMm { get; init; }
+        /// <summary>圆盘基板厚度（= max(TabThickMm[j], 下界)），只用来判断舌片是否需要另起一级——不直接喂给 Geom</summary>
+        public double PlateThickMm { get; init; }
+        /// <summary>舌片自己的厚度（R11；NaN 时与基板同厚，这里已经取过 max(·, 下界)）</summary>
+        public double TabThickMm { get; init; }
+        public int SlotCount { get; init; }
+        public double SlotWidthDeg { get; init; }
+        public double SlotRInMm { get; init; }
+        public double SlotROutMm { get; init; }
+        public double SlotCenterDeg { get; init; }
+        public double TabHoleXMm { get; init; }
+        public double TabHoleRMm { get; init; }
+        public int TabHoleSides { get; init; }
+        public double TabHoleCornerFrac { get; init; }
+        public double TabHoleRotDeg { get; init; }
+        public double TabHoleAspect { get; init; }
+        public int DiscCutShape { get; init; }
+        public double DiscCutXMm { get; init; }
+        public double DiscCutZMm { get; init; }
+        public double DiscCutRMm { get; init; }
+        public double DiscCutAspect { get; init; }
+        public double DiscCutRotDeg { get; init; }
+    }
+
+    public static SteppedPlateArgs BuildSteppedPlateArgs(DesignSpec d, int j, double floorMm)
+    {
+        double td = Math.Max(d.TabThickMm[j], floorMm);
+        // ② 环半径逐片 —— 不是 RingRadiiMm（那是 RingRadiiOf(0) 的别名，见该属性上的警告注释）
+        var radii = d.RingRadiiOf(j).Concat(new[] { d.DiscRadiusMm }).ToArray();
+        var thick = new[] { td * d.RingMul[j], td * d.RingMulOuter(j), td };
+        // R11：舌片自己的厚度（NaN = 与基板同）
+        double tt = j < d.TongueThickMm.Length && !double.IsNaN(d.TongueThickMm[j])
+            ? Math.Max(d.TongueThickMm[j], floorMm) : td;
+        double weld = Math.Max(td, d.WallMm);
+        var band = d.SlotBandMm(weld);
+        // ① R15 的孔径下限、等面积缩放、逐片孔心 —— HolesOf(j) 已经全做了，这里不重算
+        var holes = d.HolesOf(j);
+        // ③ 圆盘挖料的形状族（长椭圆时给出 X/Z/R/拉长/转角，与 BuildFinalSpec 的 discX/discZ/discR/discAsp/discRot 同一份数）
+        var discCuts = d.DiscCutsOf(j, weld);
+
+        return new SteppedPlateArgs
+        {
+            RadiiMm = radii, ThickMm = thick, PlateThickMm = td, TabThickMm = tt,
+            SlotCount = d.SlotSpanDeg[j] > 0.5 ? 1 : 0,
+            SlotWidthDeg = d.SlotSpanDeg[j],
+            SlotRInMm = band.RIn, SlotROutMm = band.ROut,
+            SlotCenterDeg = d.SlotCenterDegOf(j),
+            TabHoleXMm = holes.Length > 0 ? holes[0].XMm : d.TabHoleCenterXMm(j),
+            TabHoleRMm = holes.Length > 0 ? holes[0].RMm : 0,
+            TabHoleSides = holes.Length > 0 ? holes[0].Sides : 0,
+            TabHoleCornerFrac = holes.Length > 0 ? holes[0].CornerFrac : 1.0,
+            TabHoleRotDeg = holes.Length > 0 ? holes[0].RotDeg : 0,
+            TabHoleAspect = holes.Length > 0 ? holes[0].AspectXZ : 1.0,
+            DiscCutShape = d.DiscCutShapeOf(j),
+            DiscCutXMm = discCuts.Length > 0 ? discCuts[0].XMm : double.NaN,
+            DiscCutZMm = discCuts.Length > 0 ? discCuts[0].ZMm : 0,
+            DiscCutRMm = discCuts.Length > 0 ? discCuts[0].RMm : 0,
+            DiscCutAspect = discCuts.Length > 0 ? discCuts[0].AspectXZ : 1,
+            DiscCutRotDeg = discCuts.Length > 0 ? discCuts[0].RotDeg : 0,
+        };
     }
 
     public static string ScalePlate3dm(string inPath, string outPath, string layer,
