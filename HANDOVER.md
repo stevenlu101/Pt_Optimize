@@ -450,6 +450,12 @@ flowchart TD
 | 读取 .json 参数表不清固定量（**中**） | 工况变了舌片厚仍按上一份设计原样带着 | `MainForm.LoadCase` 后 `MarkParamsChanged` | 接线走查 |
 | 出图对账门只读三层（**中**） | 舌片层不在清单 | 清单加「舌片」 | `Export3dmMatchesSolvedTests` |
 
+**2026-09-10 并入子代理分支时另抓到的两条（已修）**：
+- `UI/TextFmt.cs` 的 `_writing`／`_rawText` 是静态表、没锁：并行跑的测试类各自构造 `LineDesignPage`、各自往输出框写 ⇒ HashSet 内部当场 IndexOutOfRange（`SegLengthPerSegmentTests` 随机红；搜形状并行化审查 `deliverable/搜形状并行化_审查_2026-09-09.md` 也点了名）⇒ 全部上 `_gate` 锁（并入 R28 那次提交带的）。
+- `--uishot` 画不出「使用说明」页正文（WebView2 内容 DrawToBitmap 抓不到，抓到的是上一页的标题栏）⇒ 说明页的验收以 `deliverable/说明书_渲染样本.html` 与走查为准；记在 `deliverable/界面审排版_2026-09-09.md` 汇总第 1 条。
+
+**界面审排版清单**（子代理三次看图断线，主开发者收尾）：`deliverable/界面审排版_2026-09-09.md`（中 5、低 4；抓图 `deliverable/界面审排版_2026-09-09/`）。**搜形状并行化审查**：`deliverable/搜形状并行化_审查_2026-09-09.md`（10 条共享状态，可并行的只有邻域轮；推荐同进程限 4 路，约 100 行 + 串行／并行逐位相同的门）。
+
 **确认了但还没修（欠账，按紧要度）**：
 - ~~熔化处置的杠杆（基板厚）够不到舌片（**高**）~~ **已销（R22，2026-09-09 下午）**：不是修杠杆，是把杠杆拆了 —— 按 J 定的截面进下角后熔化不可达，用户定「熔化是判断工具」⇒ `MeltFloor` 熔了就停「该解不存在」，不抬任何厚度。原文：探针熔在舌片上时被印成「厚度到头 ⇒ 交棒增宽」。
 - ~~`BuildFinalSpec` 用原始 `TabThickMm[j]`，Core 用 max(·, DiscFloorMm)（**中**）：页面板厚低于下界时图≠算~~ **已修（2026-09-09，审查欠账）**：`BuildFinalSpec` 出图前用**同一条** `DesignSpec.DiscFloorMm` 规则把每片板厚夹到下界（不重写第二份公式），NaN 舌片厚回退也改用夹过的值（与 `LineRunner`/`SectionSizing` 同口径）；夹了哪片、从几到几写进 `WriteFinal3dm` 的导出回显（不写进 spec.json，那是纯 JSON，混文字会让 Rhino 子进程解析失败），没夹任何片时不额外印字。门：`Export3dmMatchesSolvedTests.页面板厚低于工艺下界时出图按下界夹持并在回显里说明`（真写图读回，起 Rhino 子进程）+ `MinHoleRadiusTests.出图规格把低于工艺下界的板厚夹到下界`（不起子进程，钉 spec JSON 数值）。
