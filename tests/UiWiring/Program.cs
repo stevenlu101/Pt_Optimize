@@ -2517,6 +2517,66 @@ class UiWiringTests {
 
         }
 
+        Head("35 铂金管加热段数输入框（R27，用户 2026-09-10 原话：「UI 必须有输入铂金管加热段数的输入框」）");
+        {
+            var segCountBox = (NumericUpDown)F(page, "_segCount")!;
+            var segRows = (System.ComponentModel.BindingList<LineDesignPage.SegRow>)F(page, "_segs")!;
+            var baseIn = (DesignInputs)F(page, "_base")!;
+
+            // ① 挂在「① 输入」页上：走到最近的 TabPage 祖先，看它的标题。
+            Control? p0 = segCountBox;
+            while (p0 is not null && p0 is not TabPage) p0 = p0.Parent;
+            Check("段数输入框挂在「① 输入」页上",
+                  p0 is TabPage tp0 && tp0.Text.Contains("①") && tp0.Text.Contains("输入"),
+                  p0 is TabPage tpSeen ? tpSeen.Text : "（没找到 TabPage 祖先）");
+
+            // ② 默认值 = 段表行数（开箱 3 段）
+            Check("默认值 = 段表行数", (int)segCountBox.Value == segRows.Count,
+                  $"框 {segCountBox.Value} vs 表 {segRows.Count} 行");
+            int keepCount = segRows.Count;
+
+            // ③ 改输入框为 4 ⇒ 段表变 4 行、片数变 5（段数 + 1）；新段按规则给默认值
+            segCountBox.Value = 4m;
+            Pump(200);
+            Check("改输入框为 4 ⇒ 段表变 4 行", segRows.Count == 4, $"{segRows.Count}");
+            var plates4 = (NumericUpDown[])F(page, "_tPlate")!;
+            Check("片数跟着变 5（段数 + 1）", plates4.Length == 5, $"{plates4.Length}");
+            var added = segRows[3];
+            Check("新段名称按序号生成 HC4", added.名称 == "HC4", added.名称);
+            Check("新段长度取参数表「直接加热铂金管的长度」默认值",
+                  Math.Abs(added.直接加热管长mm - baseIn.TubeLengthMm) < 1e-6,
+                  $"{added.直接加热管长mm} vs {baseIn.TubeLengthMm}");
+            Check("新段控温点 = 上一段 − 70 °C（不低于 900）",
+                  Math.Abs(added.控温C - Math.Max(900.0, segRows[2].控温C - 70.0)) < 1e-6,
+                  $"{added.控温C}");
+
+            // ④ 改回 3 ⇒ 3 行 4 片；删的是规则生成的默认值 ⇒ 输出框不该多话
+            int outLenBefore = outBox.Text.Length;
+            segCountBox.Value = 3m;
+            Pump(200);
+            Check("改回 3 ⇒ 段表变回 3 行", segRows.Count == 3, $"{segRows.Count}");
+            var plates3 = (NumericUpDown[])F(page, "_tPlate")!;
+            Check("片数跟着变回 4", plates3.Length == 4, $"{plates3.Length}");
+            Check("删的是规则生成的默认值 ⇒ 输出框没多话", outBox.Text.Length == outLenBefore, "");
+
+            // ⑤ 表里直接加一行（工程师手改过控温点，不是规则会生成的样子）⇒ 输入框跟着变 4
+            segRows.Add(new LineDesignPage.SegRow
+            { 名称 = "HC4", 直接加热管长mm = 300, 控温C = 950, 水头m = 1.0 });
+            Pump(200);
+            Check("段表直接加一行 ⇒ 输入框跟着变 4", (int)segCountBox.Value == 4, $"{segCountBox.Value}");
+
+            // ⑥ 再改回 3 ⇒ 删掉的是「手改过」的那行 ⇒ 输出框要提一句（不弹框）
+            outLenBefore = outBox.Text.Length;
+            segCountBox.Value = 3m;
+            Pump(200);
+            Check("删掉手改过的段 ⇒ 输出框写了一句说明（不弹框）",
+                  outBox.Text.Length > outLenBefore && outBox.Text.Contains("删掉了") && outBox.Text.Contains("HC4"),
+                  "");
+
+            Check("收尾：还原回开箱的 3 段", segRows.Count == keepCount && (int)segCountBox.Value == keepCount,
+                  $"{segRows.Count}/{segCountBox.Value}");
+        }
+
         Console.WriteLine();
         Console.WriteLine(fail == 0 ? "★ 全部通过" : $"✗ {fail} 项不过");
         Console.Out.Flush();
