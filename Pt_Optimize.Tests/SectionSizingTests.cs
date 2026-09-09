@@ -43,6 +43,38 @@ public class SectionSizingTests
         Assert.Equal(15.0, SectionSizing.HoleRadiusMaxByJMm(g, -100, 300), 6);
     }
 
+    /// <summary>
+    /// ★ 审查欠账（低，2026-09-09）：孔径的桥宽上界（<see cref="DesignSpec.TabHoleRMaxMm"/>）与按 J
+    /// 的上界（<see cref="SectionSizing.HoleRadiusMaxByJMm"/>）此前恒按**圆**算；圆角三角／方（<c>TabHoleSides</c> 3/4）
+    /// 与「孔径旋钮值 R」等面积时的**外接半径**比 R 大 13–22 %（<see cref="FlangePlate.TabHole.EqualAreaRadius"/>）——
+    /// 真正会顶到舌边/顶到孔缘弦的是那个外接半径，按圆算会把三角/方孔的上界算宽。
+    /// 本门钉：① 两处上界随形状族收紧；② 收紧后按等面积换算折回外接半径，不超过圆的上界（不会再顶边）。
+    /// </summary>
+    [Fact]
+    public void 孔径上界按真实形状族收紧_圆角三角方比圆大一截()
+    {
+        var d = DesignSpec.Builtin[0].Clone();
+        d.TabHalfWidthMm = 20;
+        double capCircle = d.TabHoleRMaxMm(sides: 0);
+        double capTri = d.TabHoleRMaxMm(sides: 3);
+        double capSq = d.TabHoleRMaxMm(sides: 4);
+        Assert.True(capTri < capCircle, $"圆角三角孔径（桥宽）上界没有收紧（圆 {capCircle:0.###} / 三角 {capTri:0.###}）");
+        Assert.True(capSq < capCircle, $"圆角方孔径（桥宽）上界没有收紧（圆 {capCircle:0.###} / 方 {capSq:0.###}）");
+        double ratioTri = FlangePlate.TabHole.EqualAreaRadius(1.0, 3, DesignSpec.TabHoleCornerFracOf(3));
+        double ratioSq = FlangePlate.TabHole.EqualAreaRadius(1.0, 4, DesignSpec.TabHoleCornerFracOf(4));
+        Assert.True(ratioTri > 1.0 && ratioTri < 1.3, $"三角的等面积外接半径放大倍数不在 13–22% 那个量级（{ratioTri:0.###}）");
+        // 抬到上界后折回外接半径，不能超过「桥宽留给圆」的那个上界——否则依旧会顶边
+        Assert.True(capTri * ratioTri <= capCircle + 1e-9, "三角孔抬到上界后，外接半径仍超过桥宽给圆留的上界");
+        Assert.True(capSq * ratioSq <= capCircle + 1e-9, "方孔抬到上界后，外接半径仍超过桥宽给圆留的上界");
+
+        // 按 J=10 的孔缘弦上界同理：形状比例传进去后应等比收紧
+        var g = Plate(1.0);
+        double jCapCircle = SectionSizing.HoleRadiusMaxByJMm(g, -100, 300, shapeRadiusRatio: 1.0);   // 15（同上一门）
+        double jCapTri = SectionSizing.HoleRadiusMaxByJMm(g, -100, 300, shapeRadiusRatio: ratioTri);
+        Assert.True(jCapTri < jCapCircle, $"按 J 的孔径上界没有为圆角三角收紧（圆 {jCapCircle:0.###} / 三角 {jCapTri:0.###}）");
+        Assert.Equal(jCapCircle / ratioTri, jCapTri, 6);
+    }
+
     [Fact]
     public void 板厚下界按最紧截面线性放大()
     {

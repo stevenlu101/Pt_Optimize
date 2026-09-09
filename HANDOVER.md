@@ -450,7 +450,11 @@ flowchart TD
 - ~~熔化处置的杠杆（基板厚）够不到舌片（**高**）~~ **已销（R22，2026-09-09 下午）**：不是修杠杆，是把杠杆拆了 —— 按 J 定的截面进下角后熔化不可达，用户定「熔化是判断工具」⇒ `MeltFloor` 熔了就停「该解不存在」，不抬任何厚度。原文：探针熔在舌片上时被印成「厚度到头 ⇒ 交棒增宽」。
 - `BuildFinalSpec` 用原始 `TabThickMm[j]`，Core 用 max(·, DiscFloorMm)（**中**）：页面板厚低于下界时图≠算 —— 修法：出图前夹到下界并说出来。
 - 「导出可回读 3DM」画的不是算的那份（**中**）：R15 小孔照画、环半径用第 0 片、无形状族/槽心角 —— 它是诊断工具，整机导出（`WriteFinal3dm`）是对的。
-- `ProbeShapeFamily` 把选中形状写进已提交态即使没抬那根旋钮（低）；孔径桥宽/J 上界按圆算、多边形外接半径大 13–22 %（低，舌孔旋钮现在到不了）；`TabHoleXMm` 注释与代码不一致（低）；载入段数不同的记录时只读框被重建成默认（低）；分舌片导出读回时舌片厚与某级环厚在 0.05 内会并成一级（低）。
+- `ProbeShapeFamily` 把选中形状写进已提交态即使没抬那根旋钮（低）**已做（2026-09-09）**：`ChooseKnob` 记下每个探过形状族的旋钮探前的形状，没赢的全部退回；胜出但 `RaiseUntil` 最终没抬起来的也在 `Solve` 调用点退回。门：`ShapeFamilyTests.形状族没赢就不落地_这条分支走到了`（慢，真跑求解器）。
+- 孔径桥宽/J 上界按圆算、多边形外接半径大 13–22 %（低，舌孔旋钮现在到不了）**已做（2026-09-09）**：`DesignSpec.TabHoleRMaxMm` 与 `SectionSizing.HoleRadiusMaxByJMm` 都按该片真实形状族（`TabHoleSidesOf`）的外接半径收紧，复用 `FlangePlate.TabHole.EqualAreaRadius` 换算，圆（sides=0）时逐位不变。门：`SectionSizingTests.孔径上界按真实形状族收紧_圆角三角方比圆大一截`。
+- `TabHoleXMm` 注释与代码不一致（低）**已做（2026-09-09）**：注释改成与代码一致——NaN = 默认规则（切点与压接段边界中点）；R12 场定目前**没有**写回这个数组（与槽心角不同），只把场给的位置打印对照。门：`FieldPlacementTests.孔心场给的位置只打印不写回数组`。
+- 载入段数不同的记录时只读框被重建成默认（低）**已做（2026-09-09）**：`LoadDesignSpecFrom` 把 `ShowTongues`／`ShowDerived` 挪到段数同步（可能触发 `RebuildPlateRows`）之后再回填。门：`tests/UiWiring` 第 35 节「载入段数不同的设计记录：逐片只读框要跟着回填，不能被重建成默认」。验证途中另发现 `LoadDesignSpecFrom` 灌 `_tPlate` 那个循环载入**片数更少**的记录时会 IndexOutOfRange 崩溃——不在这四条之列，已用 spawn_task 另行登记，未修。
+- 分舌片导出读回时舌片厚与某级环厚在 0.05 内会并成一级（低）。
 
 #### ★★★★★ 反复犯的错（2026-09-05 用户：「你也常犯莫名其妙的问题」）
 
@@ -5536,7 +5540,7 @@ Pt_Optimize.Tests/ · tests/UiWiring/ · Pt_Optimize.Geom/ · .githooks/   ← �
 > 改 `.githooks/` 改的是「门跑不跑」。这两类原本都不在名单里 ⇒
 > **唯一能让所有门失效的改动，恰恰是唯一不触发门的改动**。
 
-`dotnet test` 应为 **761/761**（2026-09-09 傍晚由 HandoverGateCountTests 反射数出；再 +1 = BestShapeFineMeshTests 盘56舌56 慢；此前 760：再 +4 = R22：DesignJTests 4 快 + MeltFloorTests 1 快 + BranchMarksAreReachedTests 熔化就停 1 慢 − 熔化上抬/交棒 2 慢；此前 756 是 2026-09-09 上午的数；再 +3 = 审查修正门：SectionSizingTests 2 快 + Export3dmMatchesSolvedTests 1（Rhino 串行）；再 +1 = R18 收尾 BestShapeFineMeshTests 慢；再 +3 = R20：DesignCurrentTests 截住门 1 快 + CriteriaTableTests 参考行「升温到位用时」按条目生成 2 快；再 +28 = R12/R13/R15：MinHoleRadiusTests 9 快（含 Theory 4 行）+ FieldPlacementTests 9 快（含「槽心角必须落在带内有单元的角向上」那道不变式门，它抓到了角差取模的错）+ ShapeFamilyTests 9 快 + 1 慢；此前 721 是 2026-09-08 晚的数，再 +13 = R8/R14/R11：ShapeToAnalyticTests 净 +7 快（三级逐位／两级／四级抛／闭环／舌片不同厚／槽不带／真图纸）+ SectionSizingTests +2 快 + DesignSpecTongueTests 4 快；此前 708 是 2026-09-08 下午的数，再 +16 = 设计因果链（含判据词汇表按条目生成的 2 条、三档仪器 LeverSurvey/ShapeDrainSurvey/ShapePointTrace 各 1 慢、DesignCurrent 管保温门 1 快）：SectionSizingTests 5 快 + DesignCurrentTests 3 快 + BranchMarks J 下角 1 快 + FlangePeakSurveyTests 1 慢；此前 +3 = BranchMarksAreReachedTests「断言走到了」那三条；再 +5 = 下角第三来源「不熔化」：BranchMarksAreReachedTests 2 慢 + MeltIsNotASolutionTests 1 慢 + MeltFloorTests 2 快）。
+`dotnet test` 应为 **764/764**（2026-09-09 夜里由 HandoverGateCountTests 反射数出；再 +3 = 审查欠账「四条低」收尾：SectionSizingTests 1 快（孔径上界按真实形状族收紧）+ FieldPlacementTests 1 快（孔心场给的位置只打印不写回数组）+ ShapeFamilyTests 1 慢（形状族没赢就不落地——真调 ChooseKnob，约 3 分钟，不进 `速度!=慢` 快门）；此前 761：再 +1 = BestShapeFineMeshTests 盘56舌56 慢；此前 760：再 +4 = R22：DesignJTests 4 快 + MeltFloorTests 1 快 + BranchMarksAreReachedTests 熔化就停 1 慢 − 熔化上抬/交棒 2 慢；此前 756 是 2026-09-09 上午的数；再 +3 = 审查修正门：SectionSizingTests 2 快 + Export3dmMatchesSolvedTests 1（Rhino 串行）；再 +1 = R18 收尾 BestShapeFineMeshTests 慢；再 +3 = R20：DesignCurrentTests 截住门 1 快 + CriteriaTableTests 参考行「升温到位用时」按条目生成 2 快；再 +28 = R12/R13/R15：MinHoleRadiusTests 9 快（含 Theory 4 行）+ FieldPlacementTests 9 快（含「槽心角必须落在带内有单元的角向上」那道不变式门，它抓到了角差取模的错）+ ShapeFamilyTests 9 快 + 1 慢；此前 721 是 2026-09-08 晚的数，再 +13 = R8/R14/R11：ShapeToAnalyticTests 净 +7 快（三级逐位／两级／四级抛／闭环／舌片不同厚／槽不带／真图纸）+ SectionSizingTests +2 快 + DesignSpecTongueTests 4 快；此前 708 是 2026-09-08 下午的数，再 +16 = 设计因果链（含判据词汇表按条目生成的 2 条、三档仪器 LeverSurvey/ShapeDrainSurvey/ShapePointTrace 各 1 慢、DesignCurrent 管保温门 1 快）：SectionSizingTests 5 快 + DesignCurrentTests 3 快 + BranchMarks J 下角 1 快 + FlangePeakSurveyTests 1 慢；此前 +3 = BranchMarksAreReachedTests「断言走到了」那三条；再 +5 = 下角第三来源「不熔化」：BranchMarksAreReachedTests 2 慢 + MeltIsNotASolutionTests 1 慢 + MeltFloorTests 2 快）。
 
 > 这个数**不用人记得改**了：`HandoverGateCountTests` 反射数出程序集里的用例数
 > （`[Fact]` 一条、`[Theory]` 按 `[InlineData]` 行数），再回头读本文件里的「应为 N/N」比对，

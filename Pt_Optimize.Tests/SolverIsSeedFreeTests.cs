@@ -166,7 +166,9 @@ public class SolverIsSeedFreeTests
         //   而灵敏度随形状变号 ⇒ 一张离线表管不了工程师手上那个形状。
         //   现在改成 ChooseKnob：**每个候选各实测一次**，按「补不补得上 + 每克铂买多少裕度」挑。
         //   ⇒ 敏感度矩阵的**作用**进了链路，而不是它的**结论**被抄成了顺序。
-        Assert.Contains("private static (Knob? Knob, string Why, double Before, double After) ChooseKnob(", s);
+        // ★ 签名多带了一个 Shape0（审查欠账·低，2026-09-09：形状族探测选中的形状不该在没赢时也落地，
+        //   胜出旋钮的探前形状要交给调用方，抬失败时退回去）——门只认方法还在，不认元组字段数。
+        Assert.Contains("private static (Knob? Knob, string Why, double Before, double After, int Shape0) ChooseKnob(", s);
         Assert.Contains("var pick = ChooseKnob(", s);
         // ★★★★★ 2026-09-08 改：原来钉的是「所有候选都不成立」这**句字面**。
         //   当天把它改准（「**法兰侧**候选都不成立…⇒ 下一根杠杆是盘径与舌半宽」）之后本条就红了 ——

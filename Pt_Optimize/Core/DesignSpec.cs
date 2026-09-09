@@ -449,11 +449,23 @@ public sealed class DesignSpec
     public double[] TabHoleAspect = System.Linq.Enumerable.Repeat(1.0, 4).ToArray();
 
     /// <summary>
-    /// ★★★ **舌孔孔心沿舌轴的位置 mm**（逐片；负向为舌端）。NaN = 默认规则（舌片自由段中点，与 2026-09-09 之前逐位相同）。
+    /// ★★★ **舌孔孔心沿舌轴的位置 mm**（逐片；负向为舌端）。
     ///
-    /// R12（用户 2026-09-08：孔心位置由场逐案定）：求解器每轮开头从最新收敛的场算移除优先级
-    /// （导热贡献 ÷ 电流密度，<see cref="RemovalPriority"/>），把自由段内优先级最高处写进这里，逐片各不相同。
-    /// 2026-09-09 之前它是整线一个数（不逐片）；旧档里的标量 <c>tabHoleXMm</c> 读进来铺到每一片。
+    /// ★ NaN = **默认规则**：切点（舌片与圆盘相切处）与压接段边界这两点的**中点**
+    /// （<see cref="TabHoleCenterXMm()"/>：0.5·(切点 x ＋ 压接段边界 x)）；<see cref="TabHoleCenterXMm(int)"/>
+    /// 就是这条规则的逐片实现——非 NaN 就直接用那个值，NaN 才回落默认规则。
+    /// 非 NaN = 由外部**给定并冻结**的一个值（来自加载的设计记录，或 <c>LineDesignPage</c>「逐片自定」勾上时的存量），
+    /// 直接采用、不再回落默认规则。
+    ///
+    /// ⚠ 审查欠账（低，2026-09-09）：这里原来的说明写「R12：孔心位置由场逐案定，求解器每轮把
+    /// 优先级最高处写进这里」——**与代码不符**。R12 场定确实对**槽心角**／**长椭圆当地电流方向**生效
+    /// （<see cref="Solver.FieldPlacement"/> 里真的写回 <see cref="SlotCenterDeg"/>／<see cref="DiscCutRotDeg"/>，
+    /// 且槽一开口就冻结），但对**孔心**只算出场给的位置**打印对照，没有写回这个数组**——
+    /// 2026-09-09 实测发现「移除优先级最高处」（x=−14.5）与逐点实测最优（x=−50）不是一回事
+    /// （deliverable/形状族_对比.txt 末段），前提不站得住就不接上；接上之前 R12 场定对孔心不生效，
+    /// 求解过程中孔心恒等于默认规则（<see cref="Solver.Solve"/> 每轮开头也确实把这个数组清回 NaN，
+    /// 与「解与初值无关」同一条铁律）。2026-09-09 之前它是整线一个数（不逐片）；旧档里的标量
+    /// <c>tabHoleXMm</c> 读进来铺到每一片。
     /// </summary>
     public double[] TabHoleXMm = { double.NaN, double.NaN, double.NaN, double.NaN };
 
@@ -546,10 +558,19 @@ public sealed class DesignSpec
     /// <summary>
     /// ★★★★★ **孔径的闭式上界** —— 开过头孔缘会咬到舌边。
     /// 与「圆盘盖得住管孔＋焊脚」「槽张角」同一个套路：闭式反解，不用试。
-    /// 桥宽 = 舌半宽 − 孔半径 ≥ minBridgeMm。
+    /// 桥宽 = 舌半宽 − 孔的**外接半径** ≥ minBridgeMm。
+    ///
+    /// ★ <paramref name="sides"/>（审查欠账·低，2026-09-09）：传该片的孔形状族（<see cref="TabHoleSidesOf"/>）。
+    ///   此前恒按圆算，而圆角三角／方（sides=3/4）与「孔径旋钮值 R」等面积的外接半径比 R **大 13–22 %**
+    ///   （<see cref="FlangePlate.TabHole.EqualAreaRadius"/>）——真正顶到舌边的是那个外接半径，不是 R 本身，
+    ///   按圆算会把三角/方孔的桥宽上界算宽。这里复用等面积换算把上界折回到「R」的口径，不另写几何。
     /// </summary>
-    public double TabHoleRMaxMm(double minBridgeMm = 4.0)
-        => System.Math.Max(0, TabHalfWidthMm - minBridgeMm);
+    public double TabHoleRMaxMm(double minBridgeMm = 4.0, int sides = 0)
+    {
+        double bridgeCapMm = System.Math.Max(0, TabHalfWidthMm - minBridgeMm);   // 对圆孔（外接半径 = R）的上界
+        double ratio = FlangePlate.TabHole.EqualAreaRadius(1.0, sides, TabHoleCornerFracOf(sides));
+        return ratio > 1e-9 ? bridgeCapMm / ratio : bridgeCapMm;
+    }
 
     /// <summary>
     /// ★★★★★ 孔心位置：默认落在**舌片自由段**的中点。

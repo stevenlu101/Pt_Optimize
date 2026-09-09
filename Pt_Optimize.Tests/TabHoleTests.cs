@@ -122,7 +122,9 @@ public class TabHoleTests
         // ① 旋钮存在，且上界走**闭式**（桥宽），不是常数
         Assert.Contains(Enum.GetValues<Solver.Knob>(), k => k == Solver.Knob.TabHoleR);
         string solver = File.ReadAllText(Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "Core", "Solver.cs"));
-        Assert.Contains("d.TabHoleRMaxMm()", solver);
+        // ★ 审查欠账（低，2026-09-09）：这里改成按片的真实形状族收紧上界（SectionSizingTests.
+        //   孔径上界按真实形状族收紧_圆角三角方比圆大一截 钉了那条效果），调用文本从无参变成带 sides —— 门只认「调用还在」，不认措辞。
+        Assert.Contains("d.TabHoleRMaxMm(sides: sides)", solver);
         // ② 进了「法兰增量温降」那一排（与舌保温、圆盘槽同排比价）
         Assert.Contains("Knob.Insul, Knob.SlotSpan, Knob.TabHoleR", solver);
 

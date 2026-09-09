@@ -176,7 +176,16 @@ public static class DesignSpecStore
             if (Directory.Exists(p)) return p;
             // 建目录时认「仓库根」：有 .git 的那一层。别在 bin 下面随手造一个 ——
             // 那儿的东西不进 git，第一层保障（变更被 diff 记录）就没了。
-            if (create && Directory.Exists(Path.Combine(d.FullName, ".git")))
+            //
+            // ★ 验证前置修复（不是四条审查欠账之一，是让走查跑得起来的必要前提，2026-09-09）：
+            //   .git 在**工作树（worktree）里是文件**（`gitdir: ...` 指向共享仓库），不是目录 ——
+            //   与 tests/UiWiring/Program.cs 的 RepoRoot() 处理的是**同一个坑**（那边 2026-09-07
+            //   已经踩过、已经修了）。这里只认目录 ⇒ 在 worktree 里跑 UiWiring.exe 时找不到
+            //   「仓库根」，finaldesigns/ 建不出来，DesignSpecStore.Save 直接抛异常、整个走查中断
+            //   （本次走查第 30 节「另存设计记录」当场炸出 IOException）。跟着 RepoRoot() 的口径改：
+            //   .git 是文件也算数。
+            if (create && (Directory.Exists(Path.Combine(d.FullName, ".git"))
+                        || File.Exists(Path.Combine(d.FullName, ".git"))))
                 return Directory.CreateDirectory(p).FullName;
         }
         return null;

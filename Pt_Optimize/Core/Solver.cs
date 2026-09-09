@@ -562,6 +562,14 @@ public static class Solver
                     if (!ok)
                     {
                         Log("  ✗ " + why);
+                        // ★ 审查欠账（低，2026-09-09）：ChooseKnob 挑中的这根旋钮探过形状族
+                        //   （pick.Shape0 ≥ 0），但 RaiseUntil 这里判定它**没能真的抬起来**
+                        //   （没留下 kept）⇒ 形状族选的形状也要退回探前那个，不许留在已提交态里。
+                        if (!kept && pick.Shape0 >= 0 && GetShape(d, pick.Knob.Value, j) != pick.Shape0)
+                        {
+                            Log($"     · 片{j} {KnobName(pick.Knob.Value)} 没抬起来 ⇒ 形状族探测选的形状退回（不落地）");
+                            SetShape(d, pick.Knob.Value, j, pick.Shape0);
+                        }
                         // ★ 补不上、但值**留下来了** ⇒ 记一笔「还有进展」，这一轮照做其余片。
                         if (kept) { partial = true; continue; }
                         firstBadWhy ??= why;
@@ -679,18 +687,20 @@ public static class Solver
     /// ⚠ 返回 <c>Before</c> 与 <c>After</c>：这两个数**这里已经花场解量过了**，
     ///   带出去给 <see cref="RaiseUntil"/> 用，免得它再量一遍。
     ///   （第一版没带，实测每次抬白花 3 次场解 —— 候选比价本来就该顺手把它们交出去。）
-    private static (Knob? Knob, string Why, double Before, double After) ChooseKnob(
+    // ★ 返回多带一个 Shape0（审查欠账·低，2026-09-09）：胜出旋钮若探过形状族，这里是它探前的形状；
+    //   RaiseUntil 之后若发现旋钮其实没抬起来，调用方要拿它把形状退回去（见 Solve 里的用法）。
+    private static (Knob? Knob, string Why, double Before, double After, int Shape0) ChooseKnob(
         DesignSpec d, DesignInputs baseIn, SolverOptions opt, int j, Knob[] knobs, string key,
         double dipMax, double discMax, SolverResult res, Action<string> Log,
         CancellationToken cancel, IProgress<string>? inner)
     {
-        if (knobs.Length == 1) return (knobs[0], "", double.NaN, double.NaN);
+        if (knobs.Length == 1) return (knobs[0], "", double.NaN, double.NaN, -1);
 
         var r0 = Eval(d, baseIn, opt, res, cancel, inner);
         double before = PlateSlack(r0, key, j, dipMax, discMax);
         double mass0 = r0 is null ? double.NaN : MassOf(r0);
         // 已经不违反 ⇒ 不必比价（RaiseUntil 会自己判「不抬」）。before 照样带出去。
-        if (before >= 0) return (knobs[0], "", before, double.NaN);
+        if (before >= 0) return (knobs[0], "", before, double.NaN, -1);
 
         // ★★ **效率只能在「补得上的」候选之间比**（2026-08-30 实测打回来的）。
         //
@@ -712,6 +722,10 @@ public static class Solver
         double bestAfter = double.NaN;
         var lines = new List<string>();
         var fails = new List<string>();
+        // ★ 审查欠账（低，2026-09-09）：形状族探测（ProbeShapeFamily）选中的形状会直接落进
+        //   已提交态 d，但这根旋钮本轮不一定真的胜出——记下每个探过形状族的旋钮探前的形状，
+        //   循环结束后把没赢的全部退回去，胜出的那个也交给调用方（RaiseUntil 若最终没抬起来同样要退）。
+        var shapeProbed = new List<(Knob K, int Shape0)>();
 
         foreach (var k in knobs)
         {
@@ -781,6 +795,8 @@ public static class Solver
             var family = ShapeFamilyFor(d, k, j, lo);
             if (family.Length > 1)
             {
+                int shape0 = GetShape(d, k, j);       // 探前的形状，本轮没赢就退回这个
+                shapeProbed.Add((k, shape0));
                 (rk, hiProbe) = ProbeShapeFamily(d, baseIn, opt, j, k, key, family, lo, before, mass0,
                                                  dipMax, discMax, res, Log, cancel, inner);
                 if (double.IsNaN(hiProbe)) { fails.Add($"{KnobName(k)} 形状族里没有一个装得下／解得出来"); continue; }
@@ -861,13 +877,27 @@ public static class Solver
             }
         }
 
+        // ★ 审查欠账（低，2026-09-09）：探过形状族、但这根旋钮没赢的 ⇒ 形状退回探前的样子
+        //   （没赢就没抬，已提交态不该带着一个从没生效的形状选择）。赢的那个把探前形状交出去，
+        //   给调用方——RaiseUntil 若最终发现这根旋钮其实没抬起来，也要照样退回（见 Solve 用法）。
+        int bestShape0 = -1;
+        foreach (var (probedKnob, shape0) in shapeProbed)
+        {
+            if (best.HasValue && probedKnob == best.Value) { bestShape0 = shape0; continue; }
+            if (GetShape(d, probedKnob, j) != shape0)
+            {
+                Log($"     · 片{j} {KnobName(probedKnob)} 这一轮没抬起来 ⇒ 形状族探测选的形状退回（不落地）");
+                SetShape(d, probedKnob, j, shape0);
+            }
+        }
+
         if (best is null)
             // ★ 范围是对的（**这一片这条判据**的候选确实穷尽了），但读者会读成「治不了」。
             //   补一句交棒，说清还剩哪条路 —— 督导第 11 封。
             return (null, $"片{j}「{Criteria.Plain(key)}」**法兰侧候选都不成立**：" + string.Join("；", fails)
                         + "。⇒ 这是**法兰侧九根旋钮**的穷尽，不是整个设计的判决；"
                         + "下一根杠杆是**盘径与舌半宽**（「◇ 搜形状」）",
-                    before, double.NaN);
+                    before, double.NaN, -1);
 
         if (lines.Count > 1)
             Log($"     · 片{j} 实测比价：" + string.Join("　", lines)
@@ -877,7 +907,7 @@ public static class Solver
                             : "（都补不上，先用买得最多的顶上去，下一轮缺口变小再挑便宜的）"));
         else if (fails.Count > 0)
             Log($"     · 片{j} 候选淘汰：{string.Join("；", fails)} ⇒ 抬**{KnobName(best.Value)}**");
-        return (best, "", before, bestAfter);
+        return (best, "", before, bestAfter, bestShape0);
     }
 
     private static (bool Ok, string Why, bool Kept) RaiseUntil(
@@ -1579,13 +1609,21 @@ public static class Solver
 
     /// <summary>
     /// 孔径上界（桥宽闭式 ∧ 按 J=10 的孔缘弦），**未套 R15**。只给「为什么淘汰」的解释用。
+    /// ★ 审查欠账（低，2026-09-09）：两条上界都按该片**真实形状族**（圆角三角/方外接半径比圆大
+    /// 13–22 %）收紧，不再恒按圆算 —— 用现有的等面积换算（<see cref="FlangePlate.TabHole.EqualAreaRadius"/>），
+    /// 圆（sides=0）时 ratio=1，与改前逐位相同。
     /// </summary>
     public static double HoleRadiusUpperRawMm(DesignSpec d, DesignInputs baseIn, SolverOptions o, int j, SolverResult? res = null)
     {
         double floorD = d.DiscFloorMm(baseIn);
         double iA = res?.DesignCurrent is { } dc && j < dc.PlateA.Length ? dc.PlateA[j] : 0;
-        double hi = Math.Min(HiOf(o, Knob.TabHoleR), d.TabHoleRMaxMm());
-        if (iA > 0) hi = Math.Min(hi, SectionSizing.HoleRadiusMaxByJMm(d.Plate(j, floorD), d.TabHoleCenterXMm(j), iA, d.JDesignAPerMm2));
+        int sides = d.TabHoleSidesOf(j);
+        double hi = Math.Min(HiOf(o, Knob.TabHoleR), d.TabHoleRMaxMm(sides: sides));
+        if (iA > 0)
+        {
+            double shapeRatio = FlangePlate.TabHole.EqualAreaRadius(1.0, sides, DesignSpec.TabHoleCornerFracOf(sides));
+            hi = Math.Min(hi, SectionSizing.HoleRadiusMaxByJMm(d.Plate(j, floorD), d.TabHoleCenterXMm(j), iA, d.JDesignAPerMm2, shapeRatio));
+        }
         return hi;
     }
 
