@@ -732,6 +732,12 @@ public sealed class LineDesignPage : TabPage
         // ★ 一键跑到底（2026-09-02 用户拍板）：解 → 定厚 →（搜形状）→ 加密复算
         //   → 停在「可以出图」。决策不新写，照 Flow.Next 一直走（见 RunPipelineAsync）。
         _btnRun = Btn("核算整线", (_, _) => _ = RunPipelineAsync());
+        // R28（2026-09-10，用户问「核算整线 vs 搜形状，工程师要怎么用、何时用」）：
+        //   两颗按钮各自的「什么时候点」先落进 ToolTipText——鼠标停一下就看到，
+        //   不必先翻「使用说明」页那张完整对照表（那张表在 ManualPage.BuildHtml 里）。
+        _btnRun.ToolTipText =
+            "核算整线：回答「这个设计能不能用、能不能造」。每次改完「① 输入」或读完图纸，" +
+            "都先点它——十几分钟到两小时，全程有进度、随时可取消。判据没全过时它会告诉你下一步该点哪个。";
         // ★★★ 按钮名字**从 Flow 读**（2026-09-04）。写死一份的后果当场就撞上了：
         //   我在 Flow 里把它改成「自动定厚（手动分步）」，而这里还写着旧名 ⇒
         //   界面接线测试五项红（Flow 登记的命令界面上找不到、界面上的按钮 Flow 没登记）。
@@ -1122,6 +1128,14 @@ public sealed class LineDesignPage : TabPage
             : hasEntry
                 ? "读入口片 .3dm，反推出各级台阶厚度，「自动定厚」才能逐级优化。"
                 : "请先选好**入口 .3dm** —— 要反推的就是那张图。";
+        // R28（2026-09-10）：「◇ 搜形状」的提示——.3dm 模式下**必须说清楚为什么禁用、
+        //   下一步点哪个**，不能只灰着不说话（§0.-2 第③条铁律）。解析模式下则照抄
+        //   「使用说明」页那张对照表里「什么时候点」一行，并提醒搜完要再核算整线。
+        _btnShape.ToolTipText = an
+            ? "① 核算整线告诉你「厚度到头，该改形状」时点它；② 当前形状已经全过，想找更省铂的；" +
+              "③ 想拿一张形状表自己挑。搜完要再点核算整线精算，过了才可出图。"
+            : "当前是「Rhino .3dm 文件」模式，形状由图纸给定，不是可搜索的自由度 —— " +
+              "搜形状改不了形状。要搜形状，先点「◈ 图纸几何 → 参数」把图纸反推成参数、切回解析模式。";
         // ★★★ 同一组控件在两个模式下**是两个物理量**：
         //     解析模式 = 板厚 mm；.3dm 模式 = 厚度**标度 k**（无量纲，图纸整体 ×k）。
         //
@@ -2862,6 +2876,10 @@ public sealed class LineDesignPage : TabPage
         Note("准备网格…");
 
         var sb = new StringBuilder();
+        // R28（2026-09-10）：输出框第一行先说清楚「搜形状搜的是什么、搜完还要做什么」——
+        //   用户问「工程师要怎么用、何时用」，这是最容易被漏看的一句：搜形状写回的是
+        //   导航网格上的解，不能直接出图，搜完必点核算整线（见「使用说明」页对照表）。
+        sb.AppendLine("搜形状找的是更省铂的形状；搜完要再点核算整线精算才可出图。");
         sb.AppendLine("=== 搜形状（盘半径 × 舌宽；舌长按装配算）===");
         sb.AppendLine($"盘径由判据「圆盘盖得住管孔＋焊脚」**闭式定下界**（不用搜）；下界不可行就二分。每点先筛 {screenRounds} 轮，胜出者跑 {finalRounds} 轮。");
         sb.AppendLine($"自由段下界 {FreeTabMin:0} mm（判据「舌片自由段」）　压接段 {DesignSpec.Current.ClampLengthMm:0} mm");
@@ -3168,7 +3186,11 @@ public sealed class LineDesignPage : TabPage
             {
                 _out.AppendText("\r\n★ 本网格里**没有全过的形状**。上面每行的失败原因已逐条列出，" +
                                 "据此扩网格（改盘径范围）或松工艺（管壁、控温点）。\r\n");
+                // R28：搜形状**结束**（这里是没找到可行形状那种结束）也要说下一步。
+                _out.AppendText("\r\n下一步：点核算整线精算。\r\n");
                 _status.Text = "无解";
+                if (_pipeStep.Length == 0)   // 独立点的才收尾；流水线里跑的留给流水线自己收尾（否则会冻结后续①②③④⑤显示）
+                    _stages.Finish(false, "没有全过的形状 —— 下一步：点核算整线精算");
                 return;
             }
 
@@ -3226,13 +3248,21 @@ public sealed class LineDesignPage : TabPage
                 "       它们跟着后续求解与出图走，不必再手抄进 Core/DesignSpec。" + Environment.NewLine + "" +
                 "   ⚠ 筛选只跑了 " + screenRounds + " 轮，**是粗筛**：名次靠前几名接近时，" +
                 "把它们各自再跑一次足轮数才算数。\r\n");
+            // R28：搜形状**结束**要说下一步——写回的是导航网格上的解，不点核算整线精算不可出图。
+            _out.AppendText("\r\n下一步：点核算整线精算。\r\n");
             _status.Text = "完成";
+            if (_pipeStep.Length == 0)   // 独立点的才收尾；流水线里跑的留给流水线自己的 Finish（否则会冻结后续①②③④⑤显示）
+                _stages.Finish(true, "已写回最轻形状 —— 下一步：点核算整线精算");
         }
         catch (OperationCanceledException)
         {
             _status.Text = "已取消";
             _pipeAborted = true;   // 取消一步 = 停整条流水线
-            _out.AppendText("\r\n（已取消。上面已经算完的形状结果仍然有效。）\r\n");
+            // R28：取消也是「结束」——已经算完的形状结果不会丢，但仍是导航网格上的解，
+            //   下一步照样要点核算整线精算。
+            _out.AppendText("\r\n（已取消。上面已经算完的形状结果仍然有效。下一步：点核算整线精算。）\r\n");
+            if (_pipeStep.Length == 0)
+                _stages.Finish(false, "已取消 —— 下一步：点核算整线精算");
         }
         catch (Exception ex)
         {
