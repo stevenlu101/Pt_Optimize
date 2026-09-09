@@ -373,22 +373,25 @@ internal static class TextFmt
         // 若闸门只在 <see cref="Hook"/> 的闭包里，那么**直接调用 Write** 的那些地方
         // （挂钩没参与）就绕过了闸门 —— 每写一段又触发一次 Write，层层套下去。
         // ⇒ 闸门按「哪个框正在被写」记，Write 与 Hook 共用同一份。
-        if (!_writing.Add(box)) return;
+        // ★ 2026-09-10：这两份静态表被并行跑的测试类（各自构造 LineDesignPage、各自往输出框写）同时改，
+        //   HashSet 内部数组当场 IndexOutOfRange（并入 R28 时钩子抓到；搜形状并行化审查也点了名）⇒ 全部上锁。
+        lock (_gate) { if (!_writing.Add(box)) return; }
         try
         {
             // ★★★ 记住**没折过的原文**（2026-09-03）。
             //   折行要按框的宽度来，而框在**构造时还没有宽度**（布局还没跑）⇒
             //   那一次必然折不了；等布局给了宽度，手上只剩已经折过的文本，
             //   再折一次既不能变宽也不能还原。⇒ 原文留着，尺寸一变就按新宽度重排。
-            _rawText[box] = append && _rawText.TryGetValue(box, out var old)
+            lock (_gate) _rawText[box] = append && _rawText.TryGetValue(box, out var old)
                           ? old + text : text;
             WriteCore(box, text, append);
         }
-        finally { _writing.Remove(box); }
+        finally { lock (_gate) _writing.Remove(box); }
     }
 
     /// <summary>每个输出框最后一次写进去的**原文**（带 `**`、未折行）。</summary>
     private static readonly Dictionary<RichTextBox, string> _rawText = new();
+    private static readonly object _gate = new();     // _rawText／_writing 的锁（2026-09-10）
 
     /// <summary>
     /// ★★★★★ **这个框此刻该以谁为准**（2026-09-03，界面接线测试当场抓到）。
@@ -407,8 +410,11 @@ internal static class TextFmt
     private static string RawOf(RichTextBox box)
     {
         string shown = box.Text;
-        if (_rawText.TryGetValue(box, out var raw) && Flat(raw) == Flat(shown)) return raw;
-        _rawText[box] = shown;
+        lock (_gate)
+        {
+            if (_rawText.TryGetValue(box, out var raw) && Flat(raw) == Flat(shown)) return raw;
+            _rawText[box] = shown;
+        }
         return shown;
     }
 
@@ -524,7 +530,7 @@ internal static class TextFmt
         //   ⚠ 必须从**原文**重排，不能拿框里已经折过的文本再折 —— 那样只会越折越窄。
         box.ClientSizeChanged += (_, _) =>
         {
-            if (_writing.Contains(box)) return;
+            lock (_gate) { if (_writing.Contains(box)) return; }
             string raw = RawOf(box);          // ⚠ 不能直接用缓存：外面可能刚改过（见 RawOf）
             if (raw.Length > 0) Write(box, raw);
         };
@@ -533,7 +539,7 @@ internal static class TextFmt
     /// <summary>内容里还带着 `\t` 或 `**` 就整框重排一次；正在写的时候不插手。</summary>
     private static void Reformat(RichTextBox box)
     {
-        if (_writing.Contains(box)) return;
+        lock (_gate) { if (_writing.Contains(box)) return; }
         // ★★★ 能走到这里 = **有人直接给 `.Text` 赋值**（没走 Write，`_writing` 是空的）
         //   ⇒ 框里这份就是新的原文，必须**当场认下**。
         //   ⚠ 上一版这里优先读 `_rawText`，而那份是上一次 Write 存的旧文 ⇒

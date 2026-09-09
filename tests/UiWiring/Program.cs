@@ -2892,6 +2892,59 @@ class UiWiringTests {
 
             Check("收尾：还原回开箱的 3 段", segRows.Count == keepCount && (int)segCountBox.Value == keepCount,
                   $"{segRows.Count}/{segCountBox.Value}");
+        }   // ← 35″ 节的块到此为止（合并缝，2026-09-10）
+
+        // ═══════════════════════════════════════════════════════════════
+        Head("35‴ R28：核算整线 vs ◇ 搜形状——使用说明有对照表、按钮有提示、.3dm 模式真禁用");
+        // 用户 2026-09-10 原话：「核算整线 vs ◇ 搜形状 <-- 工程师要怎么用？何时用？
+        //   写进使用说明里（或是有随时能提示或限制的功能，别让工程师瞎按）」。
+        // 三件事都要查：① 使用说明页有没有那张对照表（口径已定、照抄）；
+        //   ② 两颗按钮有没有 ToolTipText；③ .3dm 模式下搜形状按钮是不是真的禁了、
+        //   ToolTipText 说没说清楚原因（灰掉不说话就是个哑谜，见 §0.-2 第③条铁律）。
+        {
+            var fd35 = DesignSpec.Current;
+            string html35 = ManualPage.BuildHtml(fd35);
+            Check("使用说明含用户定死口径的那句「先点『核算整线』」",
+                  html35.Contains("先点『核算整线』"));
+            int h35 = html35.IndexOf("核算整线 vs", StringComparison.Ordinal);
+            Check("找得到「核算整线 vs ◇ 搜形状」那一节", h35 >= 0, $"{h35}");
+            int t35 = h35 >= 0 ? html35.IndexOf("</table>", h35, StringComparison.Ordinal) : -1;
+            string tbl35 = h35 >= 0 && t35 > h35 ? html35[h35..t35] : "";
+            Check("那张表两列标题都在（核算整线／◇ 搜形状）",
+                  tbl35.Contains("<th>核算整线</th>") && tbl35.Contains("<th>◇ 搜形状</th>"),
+                  tbl35.Length > 0 ? $"{tbl35.Length} 字元" : "★ 表没找到");
+
+            var btnRun35 = (ToolStripButton)F(page, "_btnRun")!;
+            var btnShape35 = (ToolStripButton)F(page, "_btnShape")!;
+            Check("「核算整线」按钮 ToolTipText 非空且含「核算整线」",
+                  !string.IsNullOrWhiteSpace(btnRun35.ToolTipText)
+                  && btnRun35.ToolTipText.Contains("核算整线", StringComparison.Ordinal),
+                  btnRun35.ToolTipText ?? "(空)");
+            Check("「◇ 搜形状」按钮 ToolTipText 非空且含「核算整线」（解析模式默认态）",
+                  !string.IsNullOrWhiteSpace(btnShape35.ToolTipText)
+                  && btnShape35.ToolTipText.Contains("核算整线", StringComparison.Ordinal),
+                  btnShape35.ToolTipText ?? "(空)");
+
+            // 切到 .3dm 模式：CommandApplicable 早就按 _srcAnalytic.Checked 把它拦住了
+            // （形状由图纸给定，不是可搜索的自由度）——这里补的是「说清楚为什么、下一步点哪个」。
+            var src3_35 = (RadioButton)F(page, "_src3dm")!;
+            var srcA_35 = (RadioButton)F(page, "_srcAnalytic")!;
+            Set(page, "_suppressAuto", true);
+            src3_35.Checked = true;
+            Set(page, "_suppressAuto", false);
+            bool app35 = (bool)typeof(LineDesignPage).GetMethod("CommandApplicable",
+                             BindingFlags.NonPublic | BindingFlags.Instance)!
+                             .Invoke(page, new object[] { "shape.search" })!;
+            Check(".3dm 模式下「◇ 搜形状」不适用（几何来源不对，门禁在起作用）", !app35);
+            Check(".3dm 模式下 ToolTipText 说清楚原因、点名「◈ 图纸几何 → 参数」",
+                  btnShape35.ToolTipText.Contains("图纸几何 → 参数", StringComparison.Ordinal),
+                  btnShape35.ToolTipText ?? "(空)");
+
+            // 切回解析模式，别把状态漏给后面的节（若还有节在本节之后）
+            Set(page, "_suppressAuto", true);
+            srcA_35.Checked = true;
+            Set(page, "_suppressAuto", false);
+            Set(page, "_autoArmed", false);
         }
 
         Console.WriteLine();
