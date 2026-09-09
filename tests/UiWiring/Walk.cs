@@ -657,8 +657,11 @@ static class Walk
     static string RepoRootOf(string anyPath)
     {
         var d = new DirectoryInfo(Path.GetDirectoryName(Path.GetFullPath(anyPath))!);
+        // ★ 2026-09-09：.git 在 `git worktree` 里是文件不是目录（同一处漏洞见 DesignSpecStore.FindDir，
+        //   那边先被自检撞到）——这里同一个判断，一并补上，免得下一步自检换个路径又炸一次。
         for (int i = 0; i < 8 && d is not null; i++, d = d.Parent)
-            if (Directory.Exists(Path.Combine(d.FullName, ".git"))) return d.FullName;
+            if (Directory.Exists(Path.Combine(d.FullName, ".git")) || File.Exists(Path.Combine(d.FullName, ".git")))
+                return d.FullName;
         return Path.GetDirectoryName(Path.GetFullPath(anyPath))!;
     }
 

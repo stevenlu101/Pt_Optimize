@@ -135,16 +135,20 @@ public static class Geometry3dm
           + " ⚠ 这条是**超时**，不是「算不出来」—— 两者处置不同，别当成几何有问题。");
     }
 
+    // ★ 2026-09-09（审查欠账「中」）：baseIn 为 null 时用 new DesignInputs()（工艺下界的开箱默认，
+    //   WeldMinThicknessMm 0.6 / WeldSafetyFactor 2.0）—— 与 ShapeReview.cs 的 `baseIn ?? new DesignInputs()`
+    //   同一口径；调用方拿得到真实 DesignInputs 时应该传（见 LineDesignPage._base）。
     public static string WriteFinal3dm(DesignSpec fd, string outPath,
                                        double tubeIdMm = 50.0, double segLenMm = 300.0,
-                                       int segCount = 3)
+                                       int segCount = 3, DesignInputs? baseIn = null)
     {
         string probe = FindProbe()
             ?? throw new FileNotFoundException($"找不到 {ProbeName}.exe。先构建 {ProbeName}（需本机装 Rhino 8）。");
+        var bi = baseIn ?? new DesignInputs();
 
         string spec = Path.Combine(Path.GetDirectoryName(outPath) ?? ".",
                                    Path.GetFileNameWithoutExtension(outPath) + ".spec.json");
-        File.WriteAllText(spec, BuildFinalSpec(fd, tubeIdMm, segLenMm, segCount), new UTF8Encoding(false));
+        File.WriteAllText(spec, BuildFinalSpec(fd, tubeIdMm, segLenMm, segCount, bi), new UTF8Encoding(false));
 
         var psi = new ProcessStartInfo(probe)
         {
@@ -185,7 +189,38 @@ public static class Geometry3dm
         //   （原来在这里对每片每部位各起一次探针 = 每次出图多 12 个 Rhino 进程，
         //     而这是工程师每点一次「导出本页 3DM」都要付的成本。）
         // ★ stderr 里的警告（[final] …）成功时也**附在回显后面**（2026-09-09 审查抓到：以前直接丢掉）
-        return se.Trim().Length == 0 ? so.Trim() : so.Trim() + Environment.NewLine + "⚠ 出图子进程的提醒：" + Environment.NewLine + se.Trim();
+        string echo = se.Trim().Length == 0 ? so.Trim() : so.Trim() + Environment.NewLine + "⚠ 出图子进程的提醒：" + Environment.NewLine + se.Trim();
+        // ★ 2026-09-09（审查欠账「中」）：BuildFinalSpec 已把低于工艺下界的板厚夹到下界出图
+        //   （与 DesignSpec.Plate() 同一条 DiscFloorMm 规则），这里把「夹了哪片、从几到几」
+        //   摘出来放进回显 —— 不许接进链路却不说话（同类：0.-3 节「④ 接进链路但不说话」）。
+        //   没夹任何片时 ClampNote 返回空串，不额外印字。
+        string clampNote = ClampNote(fd, bi);
+        return clampNote.Length == 0 ? echo : clampNote + Environment.NewLine + echo;
+    }
+
+    /// <summary>
+    /// ★ 2026-09-09（审查欠账「中」）：出图前板厚被夹到工艺下界（<see cref="DesignSpec.DiscFloorMm"/>）时，
+    /// 把「夹了哪片、从几到几」说给工程师看。不写进 spec.json ——
+    /// 那份文件是 Rhino 子进程按纯 JSON 解析的，混一段中文说明会解析失败；
+    /// 这段文字只走 <see cref="WriteFinal3dm"/> 的返回值（导出回显）。
+    /// </summary>
+    private static string ClampNote(DesignSpec fd, DesignInputs baseIn)
+    {
+        double floor = fd.DiscFloorMm(baseIn);
+        var names = new[] { "入口", "共用1", "共用2", "出口" };
+        var lines = new List<string>();
+        for (int j = 0; j < fd.TabThickMm.Length; j++)
+        {
+            double raw = fd.TabThickMm[j];
+            if (raw < floor - 1e-9)
+            {
+                string nm = j < names.Length ? names[j] : $"片{j}";
+                lines.Add($"{nm} {raw:0.00}→{floor:0.00} mm");
+            }
+        }
+        return lines.Count == 0 ? "" :
+            "★ 出图前已把板厚夹到工艺下界（与判据同一条规则 DesignSpec.DiscFloorMm，不是另算的数）：" +
+            string.Join("；", lines) + "。";
     }
 
     /// <summary>
@@ -193,11 +228,18 @@ public static class Geometry3dm
     /// 「求解器定的槽心角／孔心／形状族有没有写进图」（R12/R13）。几何数字一律取自 <see cref="DesignSpec.HolesOf"/>／
     /// <see cref="DesignSpec.SlotsOf"/>／<see cref="DesignSpec.DiscCutsOf"/> 造出来的**同一个**对象 —— 算的与画的是同一份数，
     /// 不在这里再算一遍。
+    ///
+    /// ★ 2026-09-09（审查欠账「中」）：本方法原来直接用 <c>fd.TabThickMm[j]</c> 出图，而判据算的是
+    /// <see cref="DesignSpec.Plate"/> 里的 <c>max(TabThickMm[j], DiscFloorMm)</c> —— 页面板厚被工程师
+    /// 改到工艺下界以下时，图纸画的厚度比判据实际用的薄，「图 ≠ 算」。这里改成出图前先按
+    /// **同一条** <see cref="DesignSpec.DiscFloorMm"/> 规则夹一遍，不重写第二份下界公式（铁律②）。
+    /// baseIn 为 null 时用 <c>new DesignInputs()</c>（工艺下界的开箱默认），与 ShapeReview.cs 同一口径。
     /// </summary>
-    public static string BuildFinalSpec(DesignSpec fd, double tubeIdMm = 50.0, double segLenMm = 300.0, int segCount = 3)
+    public static string BuildFinalSpec(DesignSpec fd, double tubeIdMm = 50.0, double segLenMm = 300.0, int segCount = 3, DesignInputs? baseIn = null)
     {
         string R(double v) => v.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
         var names = new[] { "入口", "共用1", "共用2", "出口" };
+        double discFloor = fd.DiscFloorMm(baseIn ?? new DesignInputs());
         var sb = new StringBuilder();
         sb.Append('{');
         sb.Append($"\"name\":\"{fd.Name}\",");
@@ -211,9 +253,12 @@ public static class Geometry3dm
         // ★ 按实际片数（用户 2026-09-03：段数由 UI 决定）—— 写死 4 会让出图**少画片**
         for (int j = 0; j < fd.TabThickMm.Length; j++)
         {
-            double t = fd.TabThickMm[j];
+            // ★ 2026-09-09：与 DesignSpec.Plate() 的 `td = Math.Max(TabThickMm[j], discFloorMm)` 同一条夹持规则。
+            double t = Math.Max(fd.TabThickMm[j], discFloor);
             if (j > 0) sb.Append(',');
             // ★ R11（2026-09-08）：舌片自己的厚度（I/(J·舌宽)）；旧档 NaN ⇒ 与板厚同（Geom 侧缺省也是 t）
+            // ★ 2026-09-09：NaN 缺省改用**夹过的** t —— 与 LineRunner.cs「double.IsNaN(pl.TabThicknessMm) ? pl.ThicknessMm : ...」
+            //   同一口径（pl.ThicknessMm 就是 Plate() 里夹过的 td），不是回退到未夹的原始板厚。
             double tt = j < fd.TongueThickMm.Length && !double.IsNaN(fd.TongueThickMm[j]) ? fd.TongueThickMm[j] : t;
             sb.Append($"{{\"name\":\"{names[j]}\",\"t\":{R(t)},\"tabT\":{R(tt)},");
             sb.Append($"\"ring\":[{R(t * fd.RingMul[j])},{R(t * fd.RingMulOuter(j))}],");

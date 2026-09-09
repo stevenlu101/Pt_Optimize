@@ -176,7 +176,11 @@ public static class DesignSpecStore
             if (Directory.Exists(p)) return p;
             // 建目录时认「仓库根」：有 .git 的那一层。别在 bin 下面随手造一个 ——
             // 那儿的东西不进 git，第一层保障（变更被 diff 记录）就没了。
-            if (create && Directory.Exists(Path.Combine(d.FullName, ".git")))
+            // ★ 2026-09-09（提交本任务时撞到）：.git **不总是目录** —— `git worktree` checkout 出来的
+            //   工作树里 .git 是一个指向主仓库 gitdir 的**文件**（内容一行 `gitdir: ...`）。
+            //   原来只认 Directory.Exists ⇒ 在工作树里跑 UiWiring 自检必炸「找不到仓库根」，
+            //   而这个自检正是 pre-commit 钩子要求的一环。两种都是「在仓库里」的合法标志，都认。
+            if (create && (Directory.Exists(Path.Combine(d.FullName, ".git")) || File.Exists(Path.Combine(d.FullName, ".git"))))
                 return Directory.CreateDirectory(p).FullName;
         }
         return null;

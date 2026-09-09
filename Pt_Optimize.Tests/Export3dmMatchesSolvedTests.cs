@@ -128,6 +128,50 @@ public class Export3dmMatchesSolvedTests
         finally { try { Directory.Delete(dir, true); } catch { } }
     }
 
+    /// <summary>
+    /// ★★★★ 2026-09-09（多视角审查欠账「中」）：`BuildFinalSpec` 以前直接用页面板厚 `TabThickMm[j]`
+    /// 出图，而判据算的是 `DesignSpec.Plate()` 里的 `max(TabThickMm[j], DiscFloorMm)` —— 工程师把
+    /// 页面板厚手改到工艺下界以下时，图纸画的比判据实际用的薄，「图 ≠ 算」。
+    /// 本门把片0 的板厚设成明显低于工艺下界，真写图、真读回：
+    ///   ① 图上该层厚度必须等于下界（不是那个被夹掉的更薄的原始值）；
+    ///   ② 导出回显里必须说出「夹了哪片、从几到几」——接进链路不许不说话。
+    /// </summary>
+    [Fact]
+    public void 页面板厚低于工艺下界时出图按下界夹持并在回显里说明()
+    {
+        string? probe = Geometry3dm.FindProbe();
+        if (probe is null) { Console.WriteLine("跳过：本机没有 Rhino 探针"); return; }
+
+        var baseIn = new DesignInputs();
+        var d = DesignSpec.Builtin[0].Clone();
+        d.Name = "板厚夹持门";
+        double floor = d.DiscFloorMm(baseIn);
+        double raw0 = floor - 0.2;
+        Assert.True(raw0 > 0, "本门假设下界大于 0.2 mm，Builtin[0] 变了要重估这个数");
+        d.TabThickMm[0] = raw0;                      // 页面手改到工艺下界以下；其余三片留原样（对照：不该被动）
+
+        string dir = Path.Combine(Path.GetTempPath(), "pt_clampfloor_" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string f = Path.Combine(dir, "夹持.3dm");
+            string echo = Geometry3dm.WriteFinal3dm(d, f);
+
+            // ② 回显必须说出夹了哪片、从几到几 —— 不许接进链路却不说话
+            Assert.Contains("工艺下界", echo);
+            Assert.Contains($"入口 {raw0:0.00}→{floor:0.00} mm", echo);
+
+            // ① 图上片0（入口）的厚度必须是下界，不是被夹掉的 raw0
+            //   盘 R30 < 环外级 31.8（W08 构型）⇒ 圆盘侧没有「板身」，环内级层在盘上是基板厚（倍率 1）
+            var ringI = Geometry3dm.LoadThickness(f, "入口-环内级", 0, 1.0);
+            double drawn = ringI.At(27, 0);
+            Assert.InRange(drawn, floor - 0.1, floor + 0.1);
+            Assert.True(Math.Abs(drawn - raw0) > 0.05,
+                $"图上厚度 {drawn:0.00} 太接近未夹的原始值 {raw0:0.00} —— 出图没有真的夹到下界");
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
     [Fact]
     public void 管腔里不许有法兰的料()
     {
