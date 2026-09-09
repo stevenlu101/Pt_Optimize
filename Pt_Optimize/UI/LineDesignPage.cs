@@ -2404,7 +2404,9 @@ public sealed class LineDesignPage : TabPage
         try
         {
             Cursor = Cursors.WaitCursor;
-            string echo = Geometry3dm.WriteFinal3dm(fd, dlg.FileName);
+            // ★ 2026-09-09（审查欠账「中」）：传 _base（本页判据用的同一份 DesignInputs），
+            //   出图前的工艺下界夹持才跟判据算的是同一条 DiscFloorMm，不是默认口径。
+            string echo = Geometry3dm.WriteFinal3dm(fd, dlg.FileName, baseIn: _base);
             _out.Text = "已写出 " + dlg.FileName + "\r\n\r\n" + echo + "\r\n\r\n" +
                 "图层按**片**分（入口／共用1／共用2／出口 各有 板身/环外级/环内级/压接段），" +
                 "另加「铂管」层三段。\r\n" +
@@ -4509,7 +4511,8 @@ public sealed class LineDesignPage : TabPage
         try
         {
             Cursor = Cursors.WaitCursor;
-            string log = Geometry3dm.WriteFinal3dm(dExp, dlg.FileName);
+            // ★ 2026-09-09（审查欠账「中」）：同上，传 _base 使出图夹持与判据同一口径。
+            string log = Geometry3dm.WriteFinal3dm(dExp, dlg.FileName, baseIn: _base);
             _out.Text = "【导出本页 3DM】" + dlg.FileName + "\r\n" +
                         "整机（三段管 + 四片法兰），几何 = 本页参数 + 下列本页无控件项：\r\n" +
                         AnalyticUsedWhat(dExp) + "\r\n" +

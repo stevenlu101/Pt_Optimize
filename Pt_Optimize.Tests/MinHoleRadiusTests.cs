@@ -40,6 +40,41 @@ public class MinHoleRadiusTests
         Assert.Equal(hole ? r.ToString("R") : "0", holeR);
     }
 
+    /// <summary>
+    /// ★ 2026-09-09（2026-09-09 多视角审查欠账「中」）：不起 Rhino 的快测，钉 <see cref="Geometry3dm.BuildFinalSpec"/>
+    /// 的夹持数值本身。此前它直接用 <c>fd.TabThickMm[j]</c> 出图，而判据算的是
+    /// <see cref="DesignSpec.Plate"/> 里的 <c>max(TabThickMm[j], DiscFloorMm)</c> —— 页面板厚被工程师
+    /// 手改到工艺下界以下时，图纸画的比判据实际用的薄（图 ≠ 算）。改法：出图前按**同一条**
+    /// DiscFloorMm 规则夹一遍。本门直接解析 spec JSON 里的 "t" 字段，不经 Rhino。
+    /// </summary>
+    [Fact]
+    public void 出图规格把低于工艺下界的板厚夹到下界()
+    {
+        var d = DesignSpec.Builtin[0].Clone();
+        var baseIn = new DesignInputs();
+        double floor = d.DiscFloorMm(baseIn);
+        double raw0 = floor - 0.2;                 // 页面手改到工艺下界以下
+        Assert.True(raw0 > 0, "本门假设下界大于 0.2 mm，Builtin[0] 变了要重估这个数");
+        d.TabThickMm[0] = raw0;
+        double untouched3 = d.TabThickMm[3];       // 对照片：本来就在下界以上，不该被夹持规则碰
+
+        string spec = Geometry3dm.BuildFinalSpec(d, baseIn: baseIn);
+        using var doc = System.Text.Json.JsonDocument.Parse(spec);
+        var plates = doc.RootElement.GetProperty("plates");
+
+        double t0 = plates[0].GetProperty("t").GetDouble();
+        Assert.True(Math.Abs(t0 - floor) < 1e-6,
+            $"片0 出图板厚应等于工艺下界 {floor:0.###}，实际 {t0:0.###}"
+          + $"（原始页面值 {raw0:0.###}，若相等说明夹持没生效）");
+        // R11：TongueThickMm[0] 是 NaN（旧档缺省）时 tabT 回退到**夹过的** t，不是未夹的原始板厚
+        double tt0 = plates[0].GetProperty("tabT").GetDouble();
+        Assert.True(Math.Abs(tt0 - floor) < 1e-6,
+            $"片0 舌片厚（NaN 回退值）应等于夹过的板厚 {floor:0.###}，实际 {tt0:0.###}");
+
+        double t3 = plates[3].GetProperty("t").GetDouble();
+        Assert.True(Math.Abs(t3 - untouched3) < 1e-6, "没低于下界的片不该被夹持规则动到");
+    }
+
     [Fact]
     public void 上界不足一毫米时这根旋钮的上界就是零()
     {
