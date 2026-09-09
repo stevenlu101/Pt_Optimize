@@ -1849,6 +1849,15 @@ class UiWiringTests {
                   Flow.Next(st)?.CmdId == "core.runLine", Flow.Next(st)?.Why ?? "");
             st.CurrentSnap = snap;
 
+            // ★ R26（2026-09-09）：从这里往下测的是「没做过网格无关复核」时「判据没全过」
+            //   那一支的老分支（厚度能救 / 几何救不了）—— 而 st.MeshVerified 从上面
+            //   「复核过了」那几步起一直是 true、VerifiedSnap 也还等于 CurrentSnap。
+            //   不重置的话，下面几条会被新加的「复核过、细网格上仍不过 ⇒ 指细网格重解」
+            //   那条规则截胡（它排在最前面，见 Flow.Next）——这不是回归，是这份夹具
+            //   现在描述的是两件不同的事，必须显式说清楚现在测的是哪一件。
+            //   「复核过、细网格上仍不过」单独有一节钉着：见 §28′。
+            st.MeshVerified = false; st.VerifiedSnap = null;
+
             // 热-电判据不过 ⇒ 厚度能救 ⇒ 自动定厚
             st.Last = Mk(true, C2(LineResult.Key.NetFlux + " 须为正", false));
             Check("热-电判据不过 → 指向「自动定厚」",
@@ -1880,6 +1889,64 @@ class UiWiringTests {
             var missing = pointed.Where(id => Flow.Commands.All(c => c.Id != id)).ToList();
             Check("指路指到的命令都真实存在", missing.Count == 0,
                   missing.Count == 0 ? string.Join("、", pointed) : "★ 不存在：" + string.Join("、", missing));
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        Head("28′ R26：加密复算不过后 —— 按钮真在界面上、Flow.Next 在那个状态下给「细网格重解」");
+        // ★★★★★ 病灶（HANDOVER R26 行，Ø56 盘那份实例）：VerifyMeshAsync 发现细网格上判据
+        //   不过时，只要「网格无关」（Converged）就把 _last 换成细网格那份结果，不问 AllOk。
+        //   Flow.Next 落进「判据没全过」那一支，原来一律指「自动定厚」——而 D8 的默认调用
+        //   只在导航网格上求根（FineMm = 0），于是又全过、又要求加密复算、又不过 ⇒
+        //   两个按钮交替指、走满 8 步白跑。本节钉两件事：① 按钮真的在工具条上（不是造好了
+        //   没接线）；② 在「复核过、细网格上仍不过」这个状态下，Flow.Next 真的给 core.fineResolve。
+        {
+            // ── ① 按钮在（本页 _tool2「手动分步」工具条上，紧跟在「◆ 加密复算」之后）──
+            var btnFine = (ToolStripButton?)F(page, "_btnFineResolve");
+            Check("_btnFineResolve 真的造出来了", btnFine is not null);
+            if (btnFine is not null)
+            {
+                Check("按钮字从 Flow 读（同一个来源）",
+                      btnFine.Text == Flow.Cmd("core.fineResolve").Text,
+                      $"按钮「{btnFine.Text}」／Flow「{Flow.Cmd("core.fineResolve").Text}」");
+
+                var tool2 = (ToolStrip)F(page, "_tool2")!;
+                var btnVerify = (ToolStripButton)F(page, "_btnVerify")!;
+                int iV = tool2.Items.IndexOf(btnVerify);
+                int iF = tool2.Items.IndexOf(btnFine);
+                Check("按钮真的挂在「手动分步」工具条上，且紧跟在「◆ 加密复算」之后",
+                      iV >= 0 && iF == iV + 1, $"verify={iV} fine={iF}");
+            }
+
+            // ── ② 那个状态下，Flow.Next 给 core.fineResolve（与 Pt_Optimize.Tests 的
+            //    FineResolveAfterVerifyTests 同一份夹具，两处各自独立验，互不替代）──
+            var snap = new object();
+            ConstraintOut C28(string name, bool ok, CheckKind k) =>
+                new() { Name = name, Ok = ok, Kind = k, Actual = ok ? 1 : 9, Limit = 5 };
+            var bad28 = C28(LineResult.Key.FlangeDip, false, CheckKind.HardSafety);
+            var lastBad = new LineResult
+            {
+                Ok = true, Converged = true, RampChecked = true,
+                Checks = LineResult.Required
+                    .Where(q => !bad28.Name.StartsWith(q.Prefix, StringComparison.Ordinal))
+                    .Select(q => C28(q.Prefix + " 底表", true, q.Kind))
+                    .Concat(new[] { bad28 }).ToArray(),
+            };
+            var stFine = new FlowState
+            {
+                Last = lastBad, SolvedSnap = snap, CurrentSnap = snap,
+                MeshVerified = true, VerifiedSnap = snap,
+            };
+            Check("夹具真的走到「复核过、细网格上仍不过」这个前提",
+                  stFine.MeshVerified && stFine.VerifiedFresh && !stFine.Last.AllOk);
+            var nsFine = Flow.Next(stFine);
+            Check("Flow.Next 在该状态下指向「core.fineResolve」",
+                  nsFine?.CmdId == "core.fineResolve", nsFine?.CmdId ?? "(无)");
+
+            // 反证：同一张判据表，没复核过时仍指「自动定厚」——证明新规则没有把整支改掉
+            var stNoVerify = new FlowState { Last = lastBad, SolvedSnap = snap, CurrentSnap = snap };
+            var nsNoVerify = Flow.Next(stNoVerify);
+            Check("同一张表、没复核过 ⇒ 仍指「自动定厚」（对照组）",
+                  nsNoVerify?.CmdId == "core.autoThick", nsNoVerify?.CmdId ?? "(无)");
         }
 
         // ═══════════════════════════════════════════════════════════════
