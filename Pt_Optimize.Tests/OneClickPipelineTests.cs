@@ -37,7 +37,7 @@ public class OneClickPipelineTests
     {
         string s = Ui("LineDesignPage.cs");
         int a = s.IndexOf("private async Task RunPipelineAsync()", StringComparison.Ordinal);
-        int b = s.IndexOf("private async Task ReproduceAsync()", StringComparison.Ordinal);
+        int b = s.IndexOf("private void LoadDesignSpec()", StringComparison.Ordinal);   // R37：ReproduceAsync 去掉后，下一个方法是它
         Assert.True(a > 0 && b > a);
         string body = s[a..b];
         Assert.Contains("Flow.Next(Shared!, App)", body);
@@ -53,7 +53,7 @@ public class OneClickPipelineTests
     {
         string s = Ui("LineDesignPage.cs");
         int a = s.IndexOf("private async Task RunPipelineAsync()", StringComparison.Ordinal);
-        int b = s.IndexOf("private async Task ReproduceAsync()", StringComparison.Ordinal);
+        int b = s.IndexOf("private void LoadDesignSpec()", StringComparison.Ordinal);   // R37：ReproduceAsync 去掉后，下一个方法是它
         string body = s[a..b];
 
         Assert.Contains("if (_pipeAborted) break;", body);          // ① 取消/出错断整条

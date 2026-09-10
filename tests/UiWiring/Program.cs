@@ -1529,61 +1529,8 @@ class UiWiringTests {
         }
 
         // ═══════════════════════════════════════════════════════════════
-        Head("25 复现设计记录要走完全程：解完必须发布状态，否则 ④⑤ 一格不开");
-        {
-            // 病灶（2026-08-21 用户提出「能否一键」时查出）：ReproduceAsync 只写
-            // `_last` + `Show()`，**既不设 _solvedSnap 也不 PushFlow** ⇒
-            // FlowState.Last 从没被推过、Fresh 恒 false ⇒
-            // **复现出一个全判据通过的解，④⑤ 照样锁着**，阶段轨当作什么都没发生。
-            //
-            // 这里不真跑分钟级复现（第 16 节已经验过页面路径能复现记录值），
-            // 只验**接线**：那两句在不在。方法体是编译期常量，读源码即可判定，
-            // 比跑一次几十秒的解便宜得多，且不会因机器快慢而不稳。
-            string src = File.ReadAllText(Path.Combine(RepoRoot(),
-                "Pt_Optimize", "UI", "LineDesignPage.cs"));
-            int a = src.IndexOf("private async Task ReproduceAsync", StringComparison.Ordinal);
-            int b = src.IndexOf("private void LoadDesignSpec()", StringComparison.Ordinal);
-            Check("找得到 ReproduceAsync 的方法体", a >= 0 && b > a, $"{a}..{b}");
-            string raw = a >= 0 && b > a ? src[a..b] : "";
-            // ⚠ 必须**剥掉注释再判**：这段代码的注释里正大段解释「为什么不走
-            //   PageToDesignSpec」，直接对全文做子串匹配会命中那些**散文**，
-            //   把「代码没调它」误报成「代码调了它」。
-            //   断言要测的是**那件事**，不是那件事附近的文字。
-            // 不用任何反斜杠转义：本仓的钩子会把转义序列改成真字符，字面量当场断掉。
-            var noCmt = raw.Split((char)10)   // (char)10 = LF：避开转义，且不挑 CRLF/LF
-                .Select(l => { int k = l.IndexOf("//", StringComparison.Ordinal);
-                               return k >= 0 ? l.Substring(0, k) : l; });
-            string body = string.Join(" ", noCmt);
+        // 25 节「复现设计记录要走完全程」随「▶ 复现设计记录」键一起去掉（R37，2026-09-11）。
 
-            Check("复现之后会灌控件（页面显示与档一致）",
-                  body.Contains("LoadDesignSpecFrom", StringComparison.Ordinal));
-            Check("复现**仍从档解**（不走 PageToDesignSpec，保住交叉校验）",
-                  body.Contains("fd.BuildCase", StringComparison.Ordinal)
-                  && !body.Contains("PageToDesignSpec", StringComparison.Ordinal),
-                  "从档解 = 独立于页面搬运的那条路");
-            Check("复现之后会发布状态（PushFlow）",
-                  body.Contains("PushFlow()", StringComparison.Ordinal),
-                  "没有它 FlowState.Last 永远是 null ⇒ ④⑤ 不开");
-            // ★ 快照必须取**开解那一刻**，不是解完这一刻（2026-08-24 修）。
-            //   原来是解完再 `_solvedSnap = CurrentSnap()` —— 复现要几分钟，
-            //   这几分钟里控件可改，于是「解的那组」与「记下的那组」可以是两组，
-            //   而 Fresh 会判成 true ⇒ ④⑤ 的门开在一张别的参数的判据表上。
-            //   所以这里不只验「记了」，还要验**没有再用那个旧写法**。
-            Check("复现之后会记下 _solvedSnap（否则 Fresh 恒 false）",
-                  body.Contains("_solvedSnap = snapAtStart", StringComparison.Ordinal));
-            Check("快照取自开解那一刻，不是解完那一刻",
-                  body.Contains("var snapAtStart = CurrentSnap()", StringComparison.Ordinal)
-                  && !body.Contains("_solvedSnap = CurrentSnap()", StringComparison.Ordinal),
-                  body.Contains("_solvedSnap = CurrentSnap()", StringComparison.Ordinal)
-                      ? "★ 还在用解完取快照的旧写法 ⇒ 解算中改参数会被判成「参数未变」" : "");
-            // ★ 而且**不能无条件**记：水头不属于设计记录几何，页面水头与存档不同时
-            //   这个解并不是「页面参数的解」，记了就是假的 Fresh。
-            Check("记 _solvedSnap 是**有条件**的（水头对得上才记）",
-                  body.Contains("headSame", StringComparison.Ordinal),
-                  "水头不属于设计记录几何 ⇒ 不同就不能假装 Fresh");
-        }
-
-        // ═══════════════════════════════════════════════════════════════
         Head("26 有链在跑时：状态面板要说话，其它会起算的命令一律禁掉");
         {
             // 病灶（2026-08-21 用户提出）：
@@ -1801,7 +1748,7 @@ class UiWiringTests {
             //
             // 断言只查「有没有接」，不查「接了几处」：数调用点看不穿包装函数
             // （把 Note(...) 这层一包，计数就骗人了 —— 试过，注入后仍能蒙混过关）。
-            foreach (string fn in new[] { "SearchShapeAsync", "RunAsync", "ReproduceAsync" })
+            foreach (string fn in new[] { "SearchShapeAsync", "RunAsync" })   // R37：ReproduceAsync 已去掉
             {
                 // ⚠ 用 "\n" 而不是 Environment.NewLine 找方法末尾：本文件是 LF，
                 //   拿 CRLF 去匹配一次都命中不了 ⇒ 方法体一路切到文件尾（实测 39621 字），

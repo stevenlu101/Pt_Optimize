@@ -279,9 +279,6 @@ public static class Flow
             "把本页解析几何写成**单图层多级台阶**的 .3dm —— 一张 APP 自己读得回来的图。" +
             "现有的出图是多图层，读取端要单图层，于是「出图 → 去 Rhino 改 → 读回来核算」这条路是断的。" +
             "写完立刻回读校验"),
-        new("final.reproduce", "▶ 复现设计记录", StageId.参考工具, ChainId.C整线耦合,
-            CmdGroup.设计记录不读页面, false, "分钟级，可取消",
-            "**完全不读页面控件**，直接按设计记录解一次。用来排除「页面上某个控件被改过而自己没注意到」"),
         new("final.load", "载入设计记录", StageId.参考工具, ChainId.无,
             CmdGroup.设计记录不读页面, false, "即时",
             "把 DesignSpec 的某一档灌进各控件。**已作废的档会在最前面自报失效**"),
@@ -440,7 +437,7 @@ public static class Flow
             "填 UI 参数，或读一张 .3dm 图纸。厚度、保温、环倍率这些由 APP 自己解出来，不从档里抄。" +
             Environment.NewLine +
             "本页是**解析粗看与校正**，不可交付：粗看用来快速比趋势；" +
-            "「▶ 复现设计记录」拿已归档的设计复算一遍，看计算流程还准不准。" +
+            "「载入设计记录」把已归档的设计灌进 ① 页，之后点「核算整线」得到的就是记录里的数（走查逐项钉着）；改设计仍从 ① 页那两个入口开始。" +
             "判据与交付数一律以「① 整线核算」页为准。",
             new[] { ChainId.D升温闸, ChainId.A单段解析, ChainId.A单段扫描,
                     ChainId.B分段解析, ChainId.B分段法兰, ChainId.C整线耦合 },
@@ -448,7 +445,7 @@ public static class Flow
             new[] { "gate.ramp",
                     "calc.segment", "sweep.insul", "sweep.eps", "export.csv",
                     "line.runAll", "line.bestGrade", "line.minWalls", "line.flanges",
-                    "final.reproduce", "final.load", "final.export3dm" },
+                    "final.load", "final.export3dm" },
             new[] { ParamCat.工艺条件, ParamCat.电气,
                     ParamCat.保温与表面, ParamCat.玻璃物性 }),
 

@@ -137,7 +137,6 @@ public sealed class MainForm : Form
         var refTool = NewTool();
         refTool.Items.Add(new ToolStripLabel("设计记录"));
         refTool.Items.Add(linePage.CaseBox);
-        refTool.Items.Add(linePage.BtnReproduce);
         refTool.Items.Add(linePage.BtnLoadCase);
         refTool.Items.Add(linePage.BtnExportFinal3dm);
         refTool.Items.Add(new ToolStripSeparator());

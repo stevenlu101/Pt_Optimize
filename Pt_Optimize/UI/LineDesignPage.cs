@@ -292,7 +292,7 @@ public sealed class LineDesignPage : TabPage
     private readonly SolveStageStrip _stages = new();
     private readonly ToolStripProgressBar _prog = new() { Visible = false, Maximum = 1000 };
     private readonly ToolStripLabel _status = new("");
-    private readonly ToolStripButton _btnRun, _btnAuto, _btnExport, _btnLoadCase, _btn3dm, _btnRepro;
+    private readonly ToolStripButton _btnRun, _btnAuto, _btnExport, _btnLoadCase, _btn3dm;
 
     /// <summary>
     /// ★★★ **网格无关复核**（2026-08-30 补）。在此之前它只有命令行有。
@@ -793,17 +793,8 @@ public sealed class LineDesignPage : TabPage
         _btnToAnalytic = Btn("◈ 图纸几何 → 参数", (_, _) => AdoptShapeToAnalytic());
         _btnSaveFinal = Btn("另存为设计记录", (_, _) => SaveAsDesignSpec());
 
-        // ★★★ 复现设计记录：**界面上唯一能跑出设计记录数字的按钮**（2026-08-16 用户提出）。
-        //
-        // 在此之前界面根本没有这条路：本页控件表达不了「管孔两级渐变环」与
-        // 「逐片舌保温」，所以「载入设计记录 → 核算整线」跑的是一个**缺两项的构型**，
-        // 数字对不上，而它照样出一张漂亮的判据表 —— §1.8「安静失败」的形状。
-        // ⇒ 本按钮**完全绕过页面控件**，直接用 DesignSpec.BuildCase 造算例。
-        _btnRepro = Btn("▶ 复现设计记录", (_, _) => _ = ReproduceAsync());
-        // ⚠ 不能写 `new Font(_btnRepro.Font, Bold)` —— 那会**在这一刻捕获**按钮当时的字体
-        //   （默认 9 pt），从此这个按钮就不再跟着工具条的字体走了。
-        //   用户 2026-08-18 截图里「▶ 复现设计记录」比邻居明显小一号，就是这么来的。
-        _btnRepro.Font = UiScale.Ui(FontStyle.Bold);
+        // 「▶ 复现设计记录」键 2026-09-11 去掉（R37，用户定 B）：「载入设计记录 → 核算整线」已能逐项复现记录数字
+        //   （走查 16 节每次都验，差在千分位），复现键剩下的只是校验程序本身 —— 那是走查的活，不是工程师的。
 
         // ★★★★★ 搜形状（2026-08-17，用户指出「跑得久」该用**进度条**解决，不是把功能挡在 CLI 外）。
         //
@@ -2063,17 +2054,8 @@ public sealed class LineDesignPage : TabPage
     }
 
     /// <summary>
-    /// ▶ 复现设计记录：按选中档的**完整几何**解一次，出判据表。
-    ///
-    /// 与「核算整线」的区别，一句话：
-    ///   · 核算整线 —— 读**页面上的控件**（可以随便改，用来试）
-    ///   · 复现设计记录 —— 读 <see cref="DesignSpec"/>，**完全不看页面**（用来复现交付数字）
-    ///
-    /// ⚠ 1b（2026-08-17）之后，「核算整线」用的是**同一套几何构造器**，
-    ///   把设计记录参数填进页面也能复现设计记录值（界面接线测试第 16 项每次都验，差 0.000）。
-    ///   那本条为什么还留着？——因为它**完全不读页面**：
-    ///   用来排除「页面上某个控件被改过而自己没注意到」。
-    ///   两条路给同一个数，才说明页面没被动过手脚；给不同的数，就该查页面。
+    /// 核算整线读**页面上的控件**；把设计记录载入页面再核算，得到的就是记录里的数（走查 16 节每次都验，差在千分位）。
+    /// 「▶ 复现设计记录」（完全不读页面的那条路）2026-09-11 去掉（R37）：它只是校验程序本身，那是走查的活。
     /// </summary>
     /// <summary>
     /// 输出区的两个开关：**明细**与**求解器诊断**默认收起（2026-09-02 用户：
@@ -2227,150 +2209,6 @@ public sealed class LineDesignPage : TabPage
         PushFlow();
     }
 
-    private async Task ReproduceAsync()
-    {
-        if (_cts is not null) { _cts.Cancel(); return; }
-        int i = _caseBox.SelectedIndex;
-        if (i < 0 || i >= DesignSpec.All.Length) return;
-        var fd = DesignSpec.All[i];
-
-        _cts = new CancellationTokenSource();
-        var ct = _cts.Token;
-        _btnRepro.Text = "取消"; _btnRun.Enabled = _btnAuto.Enabled = false;
-        _prog.Visible = true; _prog.Style = ProgressBarStyle.Marquee;
-        _status.Text = "复现中…（分钟级）";
-        // ★ 告诉阶段轨「正在跑哪条链」——右上角状态面板据此显示「正在算：…」，
-        //   而且它**切到哪一页都看得见**（④ 页自己没有进度条）。
-        //   同时它是互斥闸：SyncGates 会把所有会起算的命令禁掉。
-        Shared?.SetRunning(ChainId.C整线耦合, "复现设计记录");
-        // ★ 带上百分比与已跑时长 —— 否则状态面板只会转圈（见 PctOf 的说明）。
-        var clockR = System.Diagnostics.Stopwatch.StartNew();
-        var prog = new Progress<string>(s => OnUi(() =>
-        {
-            _status.Text = s;
-            _stages.Track(s);                     // R25：①②③④⑤ 状态条
-            // ★ 流水线里要说清「第几步／在做什么」—— 否则跑一小时只看到一行滚动的轮数
-            Shared?.SetRunningNote(
-                (_pipeStep.Length > 0 ? _pipeStep + "　" : "")
-                + $"已跑 {clockR.Elapsed.TotalMinutes:0.0} 分　{s}", PctOf(s, 40));
-        }));
-
-        try
-        {
-            // ═══ 一键走完全程（2026-08-21 用户要求）：灌控件 → **仍从档解** → 发布状态 ═══
-            //
-            // 病灶：此前本方法只写 `_last` + `Show()`，**既不设 _solvedSnap 也不 PushFlow**
-            //   ⇒ FlowState.Last 从来没被推过、Fresh 恒 false
-            //   ⇒ **复现出一个全判据通过的解，④⑤ 一格都不开**，阶段轨当作什么都没发生。
-            //   与 Snap 那个引用相等 bug 同族：界面状态不反映实际。
-            //
-            // ① 先把设计记录值灌进页面控件 —— 让界面显示与档一致，CurrentSnap 才对得上。
-            LoadDesignSpecFrom(fd, quiet: true);
-
-            // ★ 快照取在**灌完控件、开解之前**这一刻（2026-08-24）。
-            //   原来是解完再取 —— 复现要几分钟，这几分钟里控件可改，
-            //   于是「解的那组」与「记下的那组」可以是两组，而 Fresh 判成 true。
-            //   ⚠ 必须在 LoadDesignSpecFrom **之后**：上一行刚把设计记录值灌进控件，
-            //     放到它前面记的就是用户原来那组，复现完会永远判成不新鲜。
-            var snapAtStart = CurrentSnap();
-
-            // ② **仍从档解**，不走 PageToDesignSpec()。
-            //    保住这条独立路径是有代价换来的：PageToDesignSpec 是一段**搬运代码**，
-            //    本项目已经栽过好几次（盘径直径/半径、压接段用了 3 mm 默认值、
-            //    管孔渐变环整个漏掉）。复现对账的作用就是抓这类错 ——
-            //    若复现也改走页面路径，就成了**用有嫌疑的那条路去验它自己**，
-            //    搬运错了两边一起错，对账照样打勾。那正是假绿灯。
-            // ★ checkRamp: true —— ① 也要判。少判一条就不是「全判据通过」。
-            var lc = fd.BuildCase(_base, checkRamp: true);
-            var r = await Task.Run(() => LineRunner.Run(lc, prog, ct), ct);
-            r = await RetryIfJustSlowAsync(r, lc, prog, ct, interactive: true);
-            _last = r;
-            Show(r);
-
-            // 与 DesignSpec 记录值对账：不一致要**当场说出来**，不能等人自己发现
-            var sb = new StringBuilder();
-            sb.AppendLine();
-            sb.AppendLine("── 复现对账（本次实算 vs DesignSpec 记录值）");
-            if (r.Ok)
-            {
-                double mt = r.TubeMassG, mf = r.FlangeMassG, all = r.TotalMassG;
-                // 四列：名称 / 本次实算 / 记录值 / 差。
-                // ⚠ 差值格式里用 ASCII 的 `-`，不用 U+2212 —— 右对齐靠补空格，
-                //   一格里混进非 ASCII 字形就宽度不成整数倍，那一列会退回左对齐。
-                void Line(string nm, double got, double want)
-                {
-                    double d = want > 0 ? (got - want) / want * 100 : 0;
-                    sb.AppendLine($"   {nm}\t{got:0.0} g\t记录 {want:0} g\t" +
-                                  $"差 {d:+0.0;-0.0} %" + (Math.Abs(d) <= 1.0 ? "" : "　⚠"));
-                }
-                Line("管", mt, fd.TubeMassG);
-                Line("法兰", mf, fd.FlangeMassG);
-                Line("合计", all, fd.TotalMassG);
-                sb.AppendLine($"   全判据：{(r.AllOk ? "✓ 全过" : "✗ 有不过的")}　" +
-                              $"（记录：{fd.Binding}）");
-            }
-            sb.AppendLine();
-            sb.AppendLine("本次用的是 " + fd.Describe());
-            sb.AppendLine("出处：" + fd.Provenance);
-            sb.AppendLine("⚠ 这条路**完全不读页面上的控件**。");
-            sb.AppendLine("   1b（2026-08-17）之后「核算整线」用的是同一套几何构造器 ——");
-            sb.AppendLine("   把设计记录参数填进页面，它也能给出上面这组数。两条路**应当一致**；");
-            sb.AppendLine("   不一致就说明页面上有控件被改过，查页面，别怀疑内核。");
-            _out.Text += sb.ToString();
-
-            // ═══ ③ 发布状态 —— 没有这一步，复现出全判据通过的解 ④⑤ 也一格不开 ═══
-            //
-            // ⚠ 「新鲜」这个断言必须**说真话**：Fresh 的含义是
-            //    「页面上这组参数就是解出这个结果的那组」。
-            //    水头**不属于设计记录几何**（LoadDesignSpecFrom 故意不动它），
-            //    而本按钮从档解、用的是 LineCase 的内核默认水头 —— 两者可能不同。
-            //    此时页面参数并没有产生这个解，**不能假装 Fresh**，否则 ④ 会拿
-            //    「页面工况的解」当起点，而它其实是「存档工况的解」。
-            var headPage = _segs.Where(x => !string.IsNullOrWhiteSpace(x.名称))
-                                .Select(x => x.水头m).ToArray();
-            var headCase = lc.HeadM;
-            bool headSame = headPage.Length == headCase.Length
-                         && headPage.Zip(headCase).All(t => Math.Abs(t.First - t.Second) < 1e-9);
-
-            if (r.Ok && r.Converged && headSame)
-            {
-                // 同 RunAsync：快照取**开解那一刻**，不是解完这一刻。
-                // 复现要几分钟，这几分钟里控件可改 —— 拿解完时的控件当「解过的参数」，
-                // 就会把一张别的参数的判据表标成新鲜。
-                _solvedRes = r; _solvedSnap = snapAtStart;
-            }
-            PushFlow();
-
-            if (r.Ok && r.Converged && !headSame)
-                _out.Text +=
-                    Environment.NewLine
-                    + "⚠ **本次解的是存档工况，不是页面上的水头**（页面 "
-                    + string.Join("/", headPage.Select(v => v.ToString("0.0"))) + " m，存档 "
-                    + string.Join("/", headCase.Select(v => v.ToString("0.0"))) + " m）。"
-                    + Environment.NewLine
-                    + "   ⇒ 不把它记作「页面参数的解」，仍需你点「核算整线」按页面工况重解一次。"
-                    + Environment.NewLine
-                    + "   水头是工艺量、不属于设计记录几何，所以「载入设计记录」不会覆盖它 —— 这是有意的。";
-
-            _status.Text = "完成";
-        }
-        catch (OperationCanceledException) { _status.Text = "已取消"; _pipeAborted = true; }
-        catch (Exception ex)
-        {
-            _status.Text = "失败";
-            _pipeAborted = true;   // 出错同样停整条
-            MessageBox.Show(this, ex.Message, "复现失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        }
-        finally
-        {
-            _cts?.Dispose(); _cts = null;
-            _prog.Visible = false;
-            _btnRepro.Text = "▶ 复现设计记录";
-            _btnRun.Enabled = _btnAuto.Enabled = true;
-            Shared?.SetRunning(null);          // 清在 finally：异常/取消也必须解除互斥
-        }
-    }
-
     /// <summary>
     /// 把选中的设计记录灌进各控件。**值只从 <see cref="DesignSpec"/> 取**——
     /// UI 里再抄一份，就是「同一个数存两处然后悄悄漂开」（HANDOVER §1.8 最常见的失效）。
@@ -2384,8 +2222,7 @@ public sealed class LineDesignPage : TabPage
 
     /// <summary>
     /// 按**指设计记录**灌控件。<paramref name="quiet"/> = true 时**不写输出框** ——
-    /// 供「▶ 复现设计记录」复用：它自己要在输出框里写复现对账，
-    /// 不能被这里的「已载入设计记录…」整段冲掉。
+    /// 供程序化载入（走查、复算）复用：调用方自己写输出框，不被这里的「已载入设计记录…」整段冲掉。
     ///
     /// 拆出来是为了让两个入口共用同一段灌值代码 ——
     /// 各抄一份就是「同一件事存两处然后悄悄漂开」。
@@ -2511,8 +2348,7 @@ public sealed class LineDesignPage : TabPage
                 : $"，r ≤ 孔+{fd.RingWidthMm:0} 与 孔+{2 * fd.RingWidthMm:0} 两级\r\n") +
             $"   · 逐片舌保温 {DesignSpec.Fmt(fd.TabInsulMm, "0.0")} mm（守 {Criteria.Explain("管孔净流入")}/{Criteria.Explain("③")} 的主力旋钮）\r\n" +
             $"   · 压接段 {fd.ClampLengthMm:0} mm　舌根圆角 R{fd.TabFilletMm:0}　等宽舌片　管孔两面角焊缝\r\n" +
-            "   ⇒ 现在点「核算整线」**就能**复现设计记录数字（与「▶ 复现设计记录」同一套几何）。\r\n" +
-            "     两者的区别只剩：本按钮用页面上的水头，「复现设计记录」用内核默认值。";
+            "   ⇒ 现在点「核算整线」**就能**复现设计记录数字（走查 16 节每次都验）。";
         _suppressAuto = false;
     }
 
@@ -2686,7 +2522,7 @@ public sealed class LineDesignPage : TabPage
 
         if (_srcAnalytic.Checked)
         {
-            // ★ 与「自动定厚」「搜形状」「复现设计记录」走**同一个构造器**，不再另造一片
+            // ★ 与「自动定厚」「搜形状」走**同一个构造器**，不再另造一片
             var lcA = PageToDesignSpec().BuildCase(_base, checkRamp: true);
             // 水头是**操作条件**不是几何，DesignSpec 不带它 ⇒ 在这里补上（页面表格里有）
             lcA.HeadM = rows.Select(s => s.水头m).ToArray();
@@ -2933,7 +2769,7 @@ public sealed class LineDesignPage : TabPage
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
         _btnShape.Text = "取消";
-        _btnRun.Enabled = _btnAuto.Enabled = _btnRepro.Enabled = false;
+        _btnRun.Enabled = _btnAuto.Enabled = false;
         Shared?.SetRunning(ChainId.C形状搜索, "搜形状");
 
         // 网格：盘半径 × 半宽比例。半宽 > 盘半径没有切点（等宽舌片与圆盘接不上），故按比例取。
@@ -3385,7 +3221,7 @@ public sealed class LineDesignPage : TabPage
             // R24：算过的形状（取消时已算完的那些也算数）都交给下拉，工程师自行选
             _shapeRows = rows.ToList();
             RefreshShapePick();
-            _btnRun.Enabled = _btnAuto.Enabled = _btnRepro.Enabled = true;
+            _btnRun.Enabled = _btnAuto.Enabled = true;
             _cts?.Dispose(); _cts = null;
             Shared?.SetRunning(null);
         }
@@ -3691,7 +3527,7 @@ public sealed class LineDesignPage : TabPage
                             "\r\n   ⇒ 说明有人绕过了 DesignSpec.Plate 这个唯一构造器，请查 BuildCase。\r\n";
                     else
                         _out.Text +=
-                            "\r\n── 本次解的是**设计记录那套完整几何**（与「复现设计记录」同一个构造器）\r\n" +
+                            "\r\n── 本次解的是**设计记录那套完整几何**（DesignSpec.Plate 这唯一一个构造器）\r\n" +
                             AnalyticUsedWhat(PageToDesignSpec()) + "\r\n";
                 }
             }
@@ -3878,7 +3714,7 @@ public sealed class LineDesignPage : TabPage
         var snapAtStart = CurrentSnap();
         _cts = new CancellationTokenSource();
         _btnVerify.Text = "取消";
-        _btnRun.Enabled = _btnAuto.Enabled = _btnRepro.Enabled = false;
+        _btnRun.Enabled = _btnAuto.Enabled = false;
         Shared?.SetRunning(ChainId.C整线耦合, "加密复算");
         _out.AppendText(Environment.NewLine + "◆ **加密复算**开始 —— 把网格一档档加密，直到这个数不再变为止。" + Environment.NewLine
             + "　　10～40 分钟。随时可点「取消」，已跑完的档照样留下。" + Environment.NewLine);
@@ -3939,7 +3775,7 @@ public sealed class LineDesignPage : TabPage
         {
             _cts = null;
             _btnVerify.Text = "◆ 加密复算（算到数不再变）";
-            _btnRun.Enabled = _btnAuto.Enabled = _btnRepro.Enabled = true;
+            _btnRun.Enabled = _btnAuto.Enabled = true;
             Shared?.SetRunning(null);
             PushFlow();
         }
@@ -4528,7 +4364,6 @@ public sealed class LineDesignPage : TabPage
     internal ToolStripButton BtnExportFinal3dm => _btn3dm;
     // ── 设计记录那一组（2026-08-23 从 ③ 拆到独立页）。控件仍归本页所有 ——
     //    它们要读写本页的控件（载入=灌值、另存=读当前解），换个地方摆而已。
-    internal ToolStripButton BtnReproduce => _btnRepro;
     internal ToolStripButton BtnLoadCase => _btnLoadCase;
     internal ToolStripComboBox CaseBox => _caseBox;
     internal ToolStripButton BtnSaveFinal => _btnSaveFinal;
