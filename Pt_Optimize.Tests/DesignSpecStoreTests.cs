@@ -135,6 +135,8 @@ public class DesignSpecStoreTests
         d.SegLengthMm = new[] { 231.0, 317.0, 428.0 };
         d.TubeInsulMm = 13.5;
         d.TubeIdMm = 60.0;                                     // R30（2026-09-10）：管内径进几何
+        d.TabTaper = true;                                     // R31：锥形舌片
+        d.TabHoleRotDeg = new[] { 180.0, 0.0, 180.0, 90.0 };   // R31：舌孔朝向
         d.JDesignAPerMm2 = 12.5;             // 2026-09-09：设计电流密度 J 进设计（预设 10）——不偏离预设本门就空转
         d.DiscRadiusMm = 33.0;
         d.TabLengthMm = 151.0;

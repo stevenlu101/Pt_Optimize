@@ -60,6 +60,8 @@ public sealed class LineDesignPage : TabPage
     private readonly NumericUpDown _discD = Num(60m, 30m, 300m, 2m, 0);
     private readonly NumericUpDown _tabLen = Num(50m, 20m, 400m, 5m, 0);
     private readonly NumericUpDown _tabW = Num(20m, 5m, 150m, 1m, 0);
+    /// <summary>R31（2026-09-10）：锥形舌片 —— 两边从舌端两角切到圆盘，舌根按切线自动变宽（用户「拍脑袋」图上那种）。</summary>
+    private readonly CheckBox _tabTaper = new() { Text = "锥形舌片（两边与圆盘相切，舌端窄、舌根宽）", AutoSize = true };
     // ★★★★★ 2026-09-02：这六个逐片数组原来都是**写死四个**的 readonly 字段。
     //   用户实测：段表加到 HC4（4 段）之后界面仍只有 4 片，而核心要 5 片
     //   （SegmentCount => SetpointC.Length，FlangeCount = n+1）⇒ 算的是另一个零件。
@@ -176,7 +178,9 @@ public sealed class LineDesignPage : TabPage
                     double rot = i < d.DiscCutRotDeg.Length ? d.DiscCutRotDeg[i] : double.NaN;
                     _discShape[i].Text = Solver.DiscShapeName(sh) + (sh != 0 && !double.IsNaN(rot) ? $"（轴向 {rot:0}°）" : "");
                 }
-                if (i < _holeShape.Length) _holeShape[i].Text = Solver.HoleShapeName(d.TabHoleSidesOf(i));
+                if (i < _holeShape.Length)
+                    _holeShape[i].Text = Solver.HoleShapeName(d.TabHoleSidesOf(i))
+                        + (d.TabHoleSidesOf(i) == 3 && d.TabHoleREffective(i) > 0 ? $"（朝向 {d.TabHoleRotDegFor(i):0}°）" : "");   // R31
             }
         }
         finally { _suppressAuto = old; }
@@ -361,6 +365,7 @@ public sealed class LineDesignPage : TabPage
         /// <summary>设计电流密度 J（2026-09-09）：定截面的依据，改了上一次的解就不新鲜。</summary>
         public double JDesign;
         public double Disc, TabLen, TabW;
+        public bool Taper;                                   // R31：舌片边平行/锥形，改了上一次的解就不新鲜
         // ★ 定尺寸器带回来的另外两个旋钮（2026-08-25）。**必须进快照** ——
         //   它们参与判据（舌保温是守 管孔净流入/③ 的主力），却没有页面控件；
         //   不进快照就会「换了旋钮而 Fresh 不变」= 假新鲜。
@@ -606,6 +611,7 @@ public sealed class LineDesignPage : TabPage
         Disc = (double)_discD.Value,
         TabLen = (double)_tabLen.Value,
         TabW = (double)_tabW.Value,
+        Taper = _tabTaper.Checked,
         // ★★ 2026-08-25：改读**控件**。此前是 `_sizerX ?? DesignSpec.Current.X` ——
         //   定尺寸没跑过时，快照记的是**设计记录**的值，而实际计算用的也是它
         //   ⇒ 「参数没变」判得对，但两边一起错。现在控件是唯一来源，快照跟着控件走，
@@ -929,6 +935,7 @@ public sealed class LineDesignPage : TabPage
             "　不是失效。真正拦住你的是「圆盘盖得住管孔」。");
         Row("舌片长度 mm", _tabLen, "省铂宜短；但舌片越长形状数 Ψ 越小、局部越不易过热");
         Row("舌端半宽 mm", _tabW);
+        Row("舌片边", _tabTaper, "不勾 = 平行边（舌根与舌端同宽）；勾 = 锥形，两边是舌端两角到圆盘的切线，舌根自动变宽");   // R31
 
         // ★★★★★ 逐片输入：**行数按段数生成**（2026-09-02）。
         //   原来是四段写死的 `for i < 4`。用户实测段表加到 HC4 之后界面仍只有 4 片，
@@ -1105,7 +1112,7 @@ public sealed class LineDesignPage : TabPage
     private void SyncGeomSource()
     {
         bool an = _srcAnalytic.Checked;
-        _discD.Enabled = _tabLen.Enabled = _tabW.Enabled = an;
+        _discD.Enabled = _tabLen.Enabled = _tabW.Enabled = _tabTaper.Enabled = an;
         foreach (var r in _row3dm) if (r is not null) r.Enabled = !an;
         _layer3dm.Enabled = !an;
 
@@ -2357,6 +2364,7 @@ public sealed class LineDesignPage : TabPage
         _discD.Value = C(2 * fd.DiscRadiusMm, _discD);
         _tabLen.Value = C(fd.TabLengthMm, _tabLen);
         _tabW.Value = C(fd.TabHalfWidthMm, _tabW);
+        _tabTaper.Checked = fd.TabTaper;                       // R31
         _clamp.Value = C(fd.ClampTempC, _clamp);
         // ★★★★★ **段表先更新，逐片值后灌**（2026-09-09，UiWiring §35 抓到）。
         //   段表一动 ⇒ SegsChanged ⇒ RebuildPlateRows 按新片数**重建**逐片控件，并用 Keep()
@@ -2746,6 +2754,7 @@ public sealed class LineDesignPage : TabPage
         d.DiscRadiusMm = (double)_discD.Value * 0.5;
         d.TabLengthMm = (double)_tabLen.Value;
         d.TabHalfWidthMm = (double)_tabW.Value;
+        d.TabTaper = _tabTaper.Checked;                        // R31
         d.ClampTempC = (double)_clamp.Value;
         // ★★★★★ 2026-08-28：这三个此前**只能取设计记录值**（「本页无控件」），
         //   现在都有控件了 ⇒ **页面上每一个进计算的量都有输入来源**，

@@ -86,4 +86,22 @@ public class TabArmBandTests
         Assert.Contains("\"tabArmT\":", s1);
         Assert.Contains("\"tabArmX0\":", s1);
     }
+    /// <summary>R29 补（2026-09-10 拍脑袋 Y 形仪器抓到）：起点／每轮开头的 ApplySectionFloor 也要走杆／叉臂分段，不许把叉臂抹回整条舌片。</summary>
+    [Fact]
+    public void 起点就分杆臂_ApplySectionFloor不许抹回整条舌片()
+    {
+        var p = new DesignInputs();
+        var d = DesignSpec.Builtin[0].Clone();
+        d.SetpointC = new[] { 1150.0, 1080.0 }; d.SegLengthMm = new[] { 300.0, 300.0 }; d = d.Fit();
+        d.TubeInsulMm = 10; d.DiscRadiusMm = 28; d.TabHalfWidthMm = 28; d.TabLengthMm = 140;
+        for (int j = 0; j < d.FlangeCount; j++) { d.TabHoleRMm[j] = 8; d.TabHoleXMm[j] = -12; }   // 记录里已经有舌根孔
+        var res = new SolverResult();
+        var trace = new System.Collections.Generic.List<string>();
+        Solver.ApplySectionFloor(d, p, new SolverOptions(), res, null, s => trace.Add(s));
+        double iA = res.DesignCurrent!.PlateA[1];
+        Assert.True(d.HasTabArm(1), "起点该有叉臂");
+        Assert.Equal(Math.Ceiling(iA / (d.JDesignAPerMm2 * 40.0) / 0.01 - 1e-9) * 0.01, d.TabArmThickMm[1], 6);   // 带内 56−16
+        Assert.Equal(Math.Ceiling(iA / (d.JDesignAPerMm2 * 56.0) / 0.01 - 1e-9) * 0.01, d.TongueThickMm[1], 6);   // 杆按完整宽
+        Assert.Contains(trace, s => s.Contains("叉臂", StringComparison.Ordinal));
+    }
 }

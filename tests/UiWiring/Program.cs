@@ -828,6 +828,21 @@ class UiWiringTests {
             reset.Invoke(strip, new object[] { "" });
         }
 
+        Head("16⁗′ 锥形舌片勾选（R31，用户 2026-09-10 拍脑袋图：两边与圆盘相切）");
+        {
+            var taper = (CheckBox)F(page, "_tabTaper")!;
+            Control? pt = taper; while (pt is not null && pt is not TabPage) pt = pt.Parent;
+            Check("勾选挂在「① 输入」页上", pt is TabPage tpT && tpT.Text.Contains("①"), pt is TabPage tpx ? tpx.Text : "（没找到 TabPage）");
+            Check("默认不勾（平行边，逐位同前）", !taper.Checked, "");
+            var d0 = (DesignSpec)M(page, "PageToDesignSpec")!;
+            Check("不勾 ⇒ 设计 TabTaper=false", !d0.TabTaper, "");
+            taper.Checked = true; Pump(150);
+            var d1 = (DesignSpec)M(page, "PageToDesignSpec")!;
+            Check("勾上 ⇒ 设计 TabTaper=true", d1.TabTaper, "");
+            Check("勾上 ⇒ 舌根切点按切线（比平行边更靠盘顶）", d1.TangentXMm() > d0.TangentXMm() + 1e-6, $"{d0.TangentXMm():0.0} → {d1.TangentXMm():0.0}");
+            taper.Checked = false; Pump(150);
+        }
+
         Head("17 输出框排版：不许出现 Markdown 源码，中文列宽要按显示宽度算");
         // 用户 2026-08-17 反馈「文挡好乱」。两个病：
         //   ① `**粗体**` 是 Markdown，而输出框显示纯文本 ⇒ 满屏星号；

@@ -50,6 +50,8 @@ public static class DesignSpecStore
         public double? wallMm { get; set; }
         public double? tubeInsulMm { get; set; }
         public double? tubeIdMm { get; set; }            // R30：管内径进几何（旧档没有 = 50）
+        public bool? tabTaper { get; set; }              // R31：锥形舌片
+        public double?[]? tabHoleRotDeg { get; set; }    // R31：舌孔朝向
         /// <summary>设计电流密度 J（用户 2026-09-09：工程师设定）。旧档没有 ⇒ 预设 10。</summary>
         public double? jDesignAPerMm2 { get; set; }
         public double? discRadiusMm { get; set; }
@@ -262,6 +264,7 @@ public static class DesignSpecStore
             WallMm = NeedD(d.wallMm, "wallMm"),
             TubeInsulMm = d.tubeInsulMm ?? 10.0,
             TubeIdMm = d.tubeIdMm ?? 50.0,
+            TabTaper = d.tabTaper ?? false,
             JDesignAPerMm2 = d.jDesignAPerMm2 ?? SectionSizing.JDesignAPerMm2,
             DiscRadiusMm = NeedD(d.discRadiusMm, "discRadiusMm"),
             TabLengthMm = NeedD(d.tabLengthMm, "tabLengthMm"),
@@ -308,6 +311,7 @@ public static class DesignSpecStore
         if (d.ringMul2 is { Length: > 0 } t2) fd.RingMul2 = NaA(t2);
         if (d.tongueThickMm is { Length: > 0 } tg) fd.TongueThickMm = NaA(tg);
         if (d.tabArmX0Mm is { Length: > 0 } ax0) fd.TabArmX0Mm = NaA(ax0);          // R29
+        if (d.tabHoleRotDeg is { Length: > 0 } hr) fd.TabHoleRotDeg = NaA(hr);      // R31
         if (d.tabArmX1Mm is { Length: > 0 } ax1) fd.TabArmX1Mm = NaA(ax1);
         if (d.tabArmThickMm is { Length: > 0 } axt) fd.TabArmThickMm = NaA(axt);
         // ★ 最后统一按段数对齐 —— 档里存的片数与 setpointC 对不上时（旧档、手改过的档），
@@ -347,6 +351,8 @@ public static class DesignSpecStore
             wallMm = fd.WallMm,
             tubeInsulMm = fd.TubeInsulMm,
             tubeIdMm = fd.TubeIdMm,
+            tabTaper = fd.TabTaper ? true : null,
+            tabHoleRotDeg = NzA(fd.TabHoleRotDeg),
             jDesignAPerMm2 = fd.JDesignAPerMm2,
             discRadiusMm = fd.DiscRadiusMm,
             tabLengthMm = fd.TabLengthMm,

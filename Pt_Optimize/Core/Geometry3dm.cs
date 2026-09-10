@@ -246,7 +246,7 @@ public static class Geometry3dm
         sb.Append($"\"wallMm\":{R(fd.WallMm)},\"tubeIdMm\":{R(tubeIdMm)},");
         sb.Append($"\"segLenMm\":{R(segLenMm)},\"segCount\":{segCount},");
         sb.Append($"\"discR\":{R(fd.DiscRadiusMm)},\"holeR\":{R(fd.HoleRadiusMm)},");
-        sb.Append($"\"tabX\":{R(-fd.TabLengthMm)},\"tabHW\":{R(fd.TabHalfWidthMm)},");
+        sb.Append($"\"tabX\":{R(-fd.TabLengthMm)},\"tabHW\":{R(fd.TabHalfWidthMm)},\"tabTaper\":{(fd.TabTaper ? "true" : "false")},");   // R31
         sb.Append($"\"filletR\":{R(fd.TabFilletMm)},\"clampLenMm\":{R(fd.ClampLengthMm)},");
         sb.Append($"\"ringR\":[{R(fd.RingRadiiMm[0])},{R(fd.RingRadiiMm[1])}],");
         sb.Append("\"plates\":[");

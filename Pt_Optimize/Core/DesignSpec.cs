@@ -99,6 +99,17 @@ public sealed class DesignSpec
     /// 及各级台阶**解耦**。NaN = 与基板同厚（四份内置记录早于这条规则，只报不判）。
     /// ⚠ 名字里的「Tab」历史上指整片板（<see cref="TabThickMm"/> 其实是基板厚），所以这里用 Tongue 区分。
     /// </summary>
+    /// <summary>
+    /// ★ R31（2026-09-10，用户给了「拍脑袋」的 Y 形图）：**锥形舌片** —— 两边是从舌端两角到圆盘的切线，舌端半宽 = <see cref="TabHalfWidthMm"/>，
+    /// 舌根按切线自动变宽。false = 平行边（逐位同前）。锥形时舌根圆角不画（几何层的圆角只对平行边定义）。
+    /// </summary>
+    public bool TabTaper = false;
+    /// <summary>
+    /// ★ R31：舌孔朝向（度，逐片；NaN = 形状族默认：圆角三角够到舌根时底边朝盘 90°、否则 0°，圆角方 45°）。
+    /// 用户图上的长圆角三角槽是宽端朝盘、圆头朝铜排 —— 那就是 90°（多边形 0° 时一个顶点朝 +z，转 90° 顶点朝 −x = 铜排侧、底边朝 +x = 盘侧）。
+    /// </summary>
+    public double[] TabHoleRotDeg = { double.NaN, double.NaN, double.NaN, double.NaN };
+
     public double[] TongueThickMm = { double.NaN, double.NaN, double.NaN, double.NaN };
 
     /// <summary>
@@ -285,6 +296,7 @@ public sealed class DesignSpec
         TabThickMm = FitArr(TabThickMm, n);
         TabInsulMm = FitArr(TabInsulMm, n);
         TongueThickMm = FitArr(TongueThickMm, n);
+        TabHoleRotDeg = FitArr(TabHoleRotDeg, n);          // R31
         TabArmX0Mm = FitArr(TabArmX0Mm, n); TabArmX1Mm = FitArr(TabArmX1Mm, n); TabArmThickMm = FitArr(TabArmThickMm, n);   // R29
         RingMul    = FitArr(RingMul,    n);
         RingW1Mm   = FitArr(RingW1Mm,   n);
@@ -329,6 +341,7 @@ public sealed class DesignSpec
         c.TabThickMm = (double[])TabThickMm.Clone();
         c.TabInsulMm = (double[])TabInsulMm.Clone();
         c.TongueThickMm = (double[])TongueThickMm.Clone();
+        c.TabHoleRotDeg = (double[])TabHoleRotDeg.Clone();   // R31（TabTaper 是标量，MemberwiseClone 已带）
         c.TabArmX0Mm = (double[])TabArmX0Mm.Clone(); c.TabArmX1Mm = (double[])TabArmX1Mm.Clone(); c.TabArmThickMm = (double[])TabArmThickMm.Clone();   // R29
         c.RingMul = (double[])RingMul.Clone();
         c.RingW1Mm = (double[])RingW1Mm.Clone();
@@ -409,7 +422,7 @@ public sealed class DesignSpec
             DiscStepThicknessMm = new[] { td * RingMul[j], td * RingMulOuter(j) },
             TabThicknessMm = j < TongueThickMm.Length ? TongueThickMm[j] : double.NaN,   // R11：舌片自己的厚度（NaN = 与基板同）
             InsulBoundaryXMm = double.NaN, TabInsulThickMm = TabInsulMm[j],
-            TabParallel = true, TabFilletMm = TabFilletMm,
+            TabParallel = !TabTaper, TabFilletMm = TabTaper ? 0 : TabFilletMm,   // R31：锥形舌片两边与圆盘相切，不画舌根圆角
             WeldFilletLegMm = System.Math.Max(td, WallMm),
             DiscSlots = SlotsOf(j, System.Math.Max(td, WallMm)),
             TabHoles = HolesOf(j),
@@ -559,6 +572,44 @@ public sealed class DesignSpec
     /// </summary>
     public static double TabHoleRotDegOf(int sides) => sides == 4 ? 45.0 : 0.0;
 
+    /// <summary>
+    /// R31：这一片舌孔的朝向 —— 记录里给了就用记录的；没给：圆角三角**够到舌根**（孔的盘侧端到切点 5 mm 以内，长槽的孔心离切点很远也算）
+    /// ⇒ 90°（底边朝盘、圆头朝铜排，用户图上那种；0° 时顶点朝 +z），否则形状族默认。
+    /// </summary>
+    public double TabHoleRotDegFor(int j)
+    {
+        double v = j < TabHoleRotDeg.Length ? TabHoleRotDeg[j] : double.NaN;
+        if (!double.IsNaN(v)) return v;
+        int sides = TabHoleSidesOf(j);
+        if (sides == 3)
+        {
+            double rEff = TabHoleREffective(j);
+            if (rEff > 0)
+            {
+                double asp = j < TabHoleAspect.Length && TabHoleAspect[j] > 0 ? TabHoleAspect[j] : 1.0;
+                double rr = FlangePlate.TabHole.EqualAreaRadius(rEff, sides, TabHoleCornerFracOf(sides));
+                if (TabHoleCenterXMm(j) + rr * System.Math.Max(1.0, asp) >= TangentXMm() - 5.0) return 90.0;
+            }
+        }
+        return TabHoleRotDegOf(sides);
+    }
+
+    /// <summary>切点横坐标：平行边 = −√(R² − 舌半宽²)；锥形（R31）= 从舌端角到圆盘的切线切点（与 FlangePlate.Tangent 同一公式）。</summary>
+    public double TangentXMm()
+    {
+        double R = DiscRadiusMm;
+        if (!TabTaper)
+        {
+            double hw = System.Math.Min(TabHalfWidthMm, R);
+            return -System.Math.Sqrt(System.Math.Max(0, R * R - hw * hw));
+        }
+        double px = -TabLengthMm, pz = TabHalfWidthMm;
+        double amp = System.Math.Sqrt(px * px + pz * pz);
+        double phi = System.Math.Atan2(pz, px);
+        double th = phi - System.Math.Acos(System.Math.Clamp(R / amp, -1, 1));
+        return R * System.Math.Cos(th);
+    }
+
     /// <summary>第 j 片的圆盘挖料形状（0 = 弯椭圆槽，1 = 长椭圆·切向，2 = 长椭圆·顺当地电流）。数组外或非法值按 0。</summary>
     public int DiscCutShapeOf(int j)
     {
@@ -620,8 +671,7 @@ public sealed class DesignSpec
     public double TabHoleCenterXMm()
     {
         // 盘缘切点（等宽舌）：|x| = √(R² − 半宽²)；舌片在 −x 侧
-        double hw = System.Math.Min(TabHalfWidthMm, DiscRadiusMm);
-        double xTan = -System.Math.Sqrt(System.Math.Max(0, DiscRadiusMm * DiscRadiusMm - hw * hw));
+        double xTan = TangentXMm();                        // R31：等宽舌与锥形舌同一入口
         double xClamp = -TabLengthMm + ClampLengthMm;      // 压接段占住舌端那一截
         return 0.5 * (xTan + xClamp);
     }
@@ -644,7 +694,7 @@ public sealed class DesignSpec
         double rr = FlangePlate.TabHole.EqualAreaRadius(r, sides, corner);
         return new[] { new FlangePlate.TabHole(TabHoleCenterXMm(j), 0, rr,
                                                Sides: sides, CornerFrac: corner,
-                                               RotDeg: TabHoleRotDegOf(sides), AspectXZ: asp) };
+                                               RotDeg: TabHoleRotDegFor(j), AspectXZ: asp) };
     }
 
     /// <summary>第 j 片的弯椭圆槽（圆盘形状族 0）。槽心角走 <see cref="SlotCenterDegOf"/>（场定，NaN = 0°）。形状族 1 时这里为空，槽由 <see cref="DiscCutsOf"/> 给。</summary>
@@ -932,7 +982,7 @@ public sealed class DesignSpec
         // ⚠ 必须逐个格式化。`string.Join("/", double[])` 打出来的是
         //   「1.3600000000000003/2.55656893078647」这种二进制残渣，而它会**直接进报告**——
         //   读的人无从分辨那是「算出来的精度」还是「忘了格式化」。（2026-08-17 实际发生。）
-        $"舌 {TabLengthMm:0}×{2 * TabHalfWidthMm:0}／板厚 {Fmt(TabThickMm, "0.00")}／舌片厚 {FmtT(TongueThickMm)}{DescribeTabArms()}／" +
+        $"舌 {TabLengthMm:0}×{2 * TabHalfWidthMm:0}{(TabTaper ? "锥形" : "")}／板厚 {Fmt(TabThickMm, "0.00")}／舌片厚 {FmtT(TongueThickMm)}{DescribeTabArms()}／" +
         $"舌保温 {Fmt(TabInsulMm, "0.0")}／" +
         $"环 r≤孔+{RingWidthMm:0}→×{Fmt(RingMul, "0.00")}／舌根圆角 R{TabFilletMm:0}／" +
         $"压接 {ClampLengthMm:0} 夹 {ClampTempC:0} °C" +

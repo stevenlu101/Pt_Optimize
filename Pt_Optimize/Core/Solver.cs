@@ -1278,20 +1278,20 @@ public static class Solver
             //   先定舌片，再按**圆盘侧**截面定基板下界（舌片截面不再算进基板：抬基板治不了舌片）。
             //   只增不减：设计电流只会随法兰变重略升，开孔只会让有效宽变窄。
             {
-                var g0 = d.Plate(j, floorD);
-                double wMin = SectionSizing.TabMinWidthMm(g0, d.ClampLengthMm);
-                double tt = SectionSizing.TongueThickMm(g0, iA, d.ClampLengthMm, jDesign);
-                if (!double.IsNaN(tt) && !double.IsInfinity(tt))
+                // ★ R29（2026-09-10 抓到）：这里原来自己算 I/(J·整条舌片最窄宽) 直接写 TongueThickMm ⇒ 绕过了 SizeTongue 的杆／叉臂分段，
+                //   起点（与每轮开头）把叉臂的厚度抹回整条舌片 —— 拍脑袋 Y 形仪器上「舌片厚 3.69、无叉臂」就是它。现在统一走 SizeTongue（纯函数）。
+                double ttOld = d.TongueThickMm[j];
+                double armOld = j < d.TabArmThickMm.Length ? d.TabArmThickMm[j] : double.NaN;
+                double tt = d.SizeTongue(j, iA, baseIn, jDesign, q);
+                if (!double.IsNaN(tt))
                 {
-                    tt = Math.Max(tt, baseIn.WeldMinThicknessMm);
-                    tt = Math.Ceiling(tt / q - 1e-9) * q;
-                    double ttOld = d.TongueThickMm[j];
-                    if (double.IsNaN(ttOld) || tt > ttOld + 1e-12)
-                    {
+                    double armNew = d.HasTabArm(j) ? d.TabArmThickMm[j] : double.NaN;
+                    bool changed = double.IsNaN(ttOld) || Math.Abs(tt - ttOld) > 1e-12
+                                || (double.IsNaN(armOld) != double.IsNaN(armNew)) || (!double.IsNaN(armNew) && Math.Abs(armNew - armOld) > 1e-12);
+                    if (changed)
                         log?.Invoke($"★ 舌片厚按 I/(J·舌宽) 定：片{j} {(double.IsNaN(ttOld) ? "—" : ttOld.ToString("0.00"))} → {tt:0.00} mm"
-                                  + $"（设计电流 {iA:0} A ÷ (J {jDesign:0} × 舌片最窄有效宽 {wMin:0.#} mm)，向上落图纸格 {q:0.00}，不低于板料 {baseIn.WeldMinThicknessMm:0.00}）");
-                        d.TongueThickMm[j] = tt;
-                    }
+                                  + (d.HasTabArm(j) ? $"，叉臂 {armNew:0.00} mm×[{d.TabArmX0Mm[j]:0},{d.TabArmX1Mm[j]:0}]" : "")
+                                  + $"（设计电流 {iA:0} A ÷ (J {jDesign:0} × {(d.HasTabArm(j) ? "带外／带内各自的" : "舌片")}最窄有效宽)，向上落图纸格 {q:0.00}，不低于板料 {baseIn.WeldMinThicknessMm:0.00}）");
                 }
             }
             var g = d.Plate(j, floorD);

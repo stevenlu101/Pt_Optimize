@@ -660,6 +660,17 @@ internal static class GeomProbe
                    segLen = D("segLenMm"), discR = D("discR"), holeR = D("holeR"),
                    tabX = D("tabX"), tabHW = D("tabHW"), filletR = D("filletR"),
                    clampLen = D("clampLenMm");
+            // R31：锥形舌片（两边与圆盘相切，舌端半宽 = tabHW）；缺省 false = 平行边，逐位如前
+            bool tabTaper = R.TryGetProperty("tabTaper", out var ttE) && ttE.ValueKind == JsonValueKind.True;
+            if (tabTaper) filletR = 0;                       // 锥形时舌根圆角不画（与 DesignSpec.Plate 同）
+            // 切点：平行边 −√(R²−w²)；锥形按舌端角到圆盘的切线（与 FlangePlate.Tangent 同一公式）
+            double TangentX()
+            {
+                if (!tabTaper) { double wS0 = Math.Min(tabHW, discR); return -Math.Sqrt(Math.Max(0, discR * discR - wS0 * wS0)); }
+                double amp0 = Math.Sqrt(tabX * tabX + tabHW * tabHW), phi0 = Math.Atan2(tabHW, tabX);
+                double th0 = phi0 - Math.Acos(Math.Clamp(discR / amp0, -1, 1));
+                return discR * Math.Cos(th0);
+            }
             int segCount = R.GetProperty("segCount").GetInt32();
             var ringR = R.GetProperty("ringR").EnumerateArray().Select(e => e.GetDouble()).ToArray();
             var plates = R.GetProperty("plates").EnumerateArray().ToArray();
@@ -1019,8 +1030,7 @@ internal static class GeomProbe
                 Curve[] bodyDiscRegion = new[] { body };
                 if (splitTab)
                 {
-                    double wS = Math.Min(tabHW, discR);
-                    double xi = -Math.Sqrt(Math.Max(0, discR * discR - wS * wS));
+                    double xi = TangentX();                       // R31：锥形时是切线切点
                     double big = Math.Abs(tabX) + discR + 50;
                     Curve Rect(double xa, double xb)
                     {
