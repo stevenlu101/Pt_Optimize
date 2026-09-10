@@ -971,7 +971,12 @@ internal static class GeomProbe
                 double t = P.GetProperty("t").GetDouble();
                 // ★ R11（2026-09-08）：舌片自己的厚度；spec 没有这一项（老档）⇒ 与板身同厚，行为逐位如前
                 double tabT = P.TryGetProperty("tabT", out var tabTe) ? tabTe.GetDouble() : t;
-                bool splitTab = Math.Abs(tabT - t) > 1e-9;
+                // R29（2026-09-10）：舌根加厚带（叉臂）—— [tabArmX0, tabArmX1] 这一段舌片厚 tabArmT
+                double tabArmT = P.TryGetProperty("tabArmT", out var armTe) ? armTe.GetDouble() : double.NaN;
+                double tabArmX0 = P.TryGetProperty("tabArmX0", out var armX0e) ? armX0e.GetDouble() : double.NaN;
+                double tabArmX1 = P.TryGetProperty("tabArmX1", out var armX1e) ? armX1e.GetDouble() : double.NaN;
+                bool hasArm = !double.IsNaN(tabArmT) && !double.IsNaN(tabArmX0) && !double.IsNaN(tabArmX1);
+                bool splitTab = Math.Abs(tabT - t) > 1e-9 || hasArm;
                 var ring = P.GetProperty("ring").EnumerateArray().Select(e => e.GetDouble()).ToArray();
                 double y0 = j * segLen;
 
@@ -1044,9 +1049,37 @@ internal static class GeomProbe
                         // ★★ 舌片侧也要**减管孔**（2026-09-09 审查抓到）：盘半径 = 舌半宽时切点在 x=0，舌片侧矩形盖住管腔左半圆；
                         //   Core 的 Inside() 在 r < 孔半径处永远无料，不减就是「法兰实心穿过铂金管」再犯一次。
                         //   传 y0 让管腔自检（BoreCheck）也查这一块；造不出实体同样计失败。
-                        var tabSolid = Solid(CutAll(RegionMinus(tabSide, Circ(holeR)), cutters), tabT, y0, pn + "舌片");
-                        if (tabSolid == null) boolFailed.Add($"{pn}：舌片实体造不出来（厚 {tabT:0.00}）—— 少一块料不许当成功");
-                        Add(tabSolid, lyTab, pn + "_舌片_t" + tabT.ToString("0.00"), y0);
+                        if (!hasArm)
+                        {
+                            var tabSolid = Solid(CutAll(RegionMinus(tabSide, Circ(holeR)), cutters), tabT, y0, pn + "舌片");
+                            if (tabSolid == null) boolFailed.Add($"{pn}：舌片实体造不出来（厚 {tabT:0.00}）—— 少一块料不许当成功");
+                            Add(tabSolid, lyTab, pn + "_舌片_t" + tabT.ToString("0.00"), y0);
+                        }
+                        else
+                        {
+                            // R29（2026-09-10）：舌片侧再按加厚带切成 杆（x < x0）／叉臂（x0..x1）／杆根（x1..切点，带到切点时没有）三块，各自厚度
+                            int lyArm = Ly(pn + "-舌片叉臂", System.Drawing.Color.DarkOrange);
+                            var zones = new List<(double xa, double xb, double tz, int ly, string nm)>
+                            {
+                                (tabX - 10, tabArmX0, tabT, lyTab, "舌片杆"),
+                                (tabArmX0, tabArmX1, tabArmT, lyArm, "舌片叉臂"),
+                                (tabArmX1, xi, tabT, lyTab, "舌片杆根"),
+                            };
+                            foreach (var (xa, xb, tz, ly, nm) in zones)
+                            {
+                                if (xb - xa < 0.05) continue;
+                                var part = new List<Curve>();
+                                foreach (var c in tabSide)
+                                {
+                                    var seg = Curve.CreateBooleanIntersection(c, Rect(xa, xb), tol);
+                                    if (seg != null) part.AddRange(seg);
+                                }
+                                if (part.Count == 0) { if (nm == "舌片叉臂") boolFailed.Add($"{pn}：叉臂段 x∈[{xa:0.0},{xb:0.0}] 切不出来"); continue; }
+                                var zs = Solid(CutAll(RegionMinus(part.ToArray(), Circ(holeR)), cutters), tz, y0, pn + nm);
+                                if (zs == null) { boolFailed.Add($"{pn}：{nm}实体造不出来（厚 {tz:0.00}）—— 少一块料不许当成功"); continue; }
+                                Add(zs, ly, pn + "_" + nm + "_t" + tz.ToString("0.00"), y0);
+                            }
+                        }
                     }
                 }
                 var bodyRegion = CutAll(RegionMinus(bodyDiscRegion, Circ(ringR[1])), cutters);

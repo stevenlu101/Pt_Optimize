@@ -182,8 +182,9 @@ public static class SectionSizing
         foreach (var (x, w) in TabWidths(g, clampLenMm))
         {
             if (w <= 1e-9) { cuts.Add(new Cut($"舌片 x={x:0.#}（被孔切断）", 0, double.PositiveInfinity, true)); continue; }
-            double a = w * tTab;
-            cuts.Add(new Cut($"舌片 x={x:0.#}", a, currentA / a, true));
+            double tx = TabThicknessAt(g, x, tTab);                    // R29：带内取臂厚
+            double a = w * tx;
+            cuts.Add(new Cut(g.InTabArm(x) ? $"舌片 x={x:0.#}（叉臂 {tx:0.00}）" : $"舌片 x={x:0.#}", a, currentA / a, true));
         }
 
         // ── 舌盘交界：切点竖线 x = xT 上舌片电流的**必经**切口（2026-09-09 修正，审查抓到两处不当）：
@@ -309,6 +310,10 @@ public static class SectionSizing
         }
         return Math.Floor(lo);
     }
+
+    /// <summary>R29：舌片在横坐标 x 处的厚度 —— 解耦时带内取臂厚、带外取杆厚；与基板同厚（NaN）时照旧。</summary>
+    public static double TabThicknessAt(FlangePlate g, double x, double tTab)
+        => double.IsNaN(g.TabThicknessMm) ? tTab : (g.InTabArm(x) ? g.TabArmThicknessMm : tTab);
 
     /// <summary>最紧的截面（J 最大）。</summary>
     public static Cut Worst(FlangePlate g, double currentA, double clampLenMm = 0)

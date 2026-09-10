@@ -1056,7 +1056,7 @@ public static class Solver
         SetKnob(d, knob, j, snapped, baseIn, res);
         double tongueAfter = j < d.TongueThickMm.Length ? d.TongueThickMm[j] : double.NaN;
         if (!double.IsNaN(tongueBefore) && !double.IsNaN(tongueAfter) && Math.Abs(tongueAfter - tongueBefore) > 1e-9)
-            res.Trace.Add($"     {BranchMarks.TongueResized}：片{j} {tongueBefore:0.00} → {tongueAfter:0.00} mm（{KnobName(knob)} 落地后按 I/(J·最窄有效宽) 闭式重定；铂重已计入比价）");
+            res.Trace.Add($"     {BranchMarks.TongueResized}：片{j} 杆 {tongueBefore:0.00} → {tongueAfter:0.00} mm{(d.HasTabArm(j) ? $"，叉臂 {d.TabArmThickMm[j]:0.00} mm×[{d.TabArmX0Mm[j]:0},{d.TabArmX1Mm[j]:0}]" : "")}（{KnobName(knob)} 落地后按 I/(J·最窄有效宽) 闭式重定，加厚只落在切口那一段；铂重已计入比价）");
         // ★ 「二分求根」这四个字对工程师没意义 —— 他要知道的是**凭什么信这个数**。
         //   单调性扫描（--monotone）的作用就在这句话里：抬到上界确实变好 = 这一点上单调，
         //   而单调是二分求根成立的前提。求解器**每次抬之前都实测一遍**，不是查表。

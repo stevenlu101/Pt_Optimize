@@ -43,13 +43,16 @@ public class TongueResizeTests
         Assert.True(t0 > 0 && iA > 0);
 
         Solver.SetKnob(d, Solver.Knob.TabHoleR, 1, 8.0, p, res);
-        double t1 = d.TongueThickMm[1];
-        // 孔心默认在自由段中点，那里舌宽 56 ⇒ 最窄有效宽 = 56 − 2×8 = 40 ⇒ t = I/(J·40)，向上落 0.01 格
+        // 孔心默认在自由段中点，那里舌宽 56 ⇒ 孔段最窄有效宽 = 56 − 2×8 = 40 ⇒ 臂厚 = I/(J·40)，向上落 0.01 格；
+        // R29（2026-09-10）：加厚只落在孔那一段（叉臂），杆厚照旧 I/(J·56)
         double expect = Math.Ceiling(iA / (d.JDesignAPerMm2 * 40.0) / 0.01 - 1e-9) * 0.01;
-        Assert.Equal(expect, t1, 6);
-        Assert.True(t1 > t0, $"开了 8 mm 孔舌片厚该变厚：{t0} → {t1}");
+        Assert.True(d.HasTabArm(1), "开孔后该有加厚带");
+        Assert.Equal(expect, d.TabArmThickMm[1], 6);
+        Assert.Equal(t0, d.TongueThickMm[1], 9);
+        Assert.True(d.TabArmThickMm[1] > t0, $"开了 8 mm 孔臂段该变厚：{t0} → {d.TabArmThickMm[1]}");
 
         Solver.SetKnob(d, Solver.Knob.TabHoleR, 1, 0.0, p, res);
+        Assert.False(d.HasTabArm(1));
         Assert.Equal(t0, d.TongueThickMm[1], 9);                   // 纯函数：几何退回去，厚度也退回去
     }
 
@@ -68,9 +71,9 @@ public class TongueResizeTests
 }
 
 /// <summary>
-/// ★ 仪器（慢）：把舌保温封在 3 mm，让「法兰增量温降」在 Ø56/舌56 上没免费旋钮可抬 ——
-/// 看求解器会不会真的去探舌孔（R23 之前那根旋钮的上界恒为 0、从来没被探过），落地时留痕「★ 舌片厚随切口重定」。
-/// 只看不判：轨迹与结果落 deliverable/R23_开孔候选_轨迹.txt。
+/// ★ 仪器（慢）：把舌保温封在 3 mm，让「法兰增量温降」没免费旋钮可抬 —— 看求解器会不会去探舌孔、场把孔放在哪、
+/// R29（加厚只落在切口段）之后孔还差不差。用户 2026-09-10：「Ø56 内径 50 舌保温封 3 mm（R23 那次的对照），再加一个大管径案例（内径 80），
+/// 看场定的孔到底落哪、③ 有没有变好。数出来再下结论。」只看不判：轨迹落 deliverable/R29_对比_<案例>.txt。
 /// </summary>
 public class TongueResizeReachableTests
 {
@@ -81,24 +84,36 @@ public class TongueResizeReachableTests
         public void Report(string v) => _f(v);
     }
 
-    [Trait("速度", "慢")]
-    [Fact]
-    public void 舌保温封顶后舌孔进候选_不再被J上界挡在门外()
+    private static void Run(string tag, double tubeIdMm, double discRMm, double tabLenMm, string head)
     {
-        var p = new DesignInputs();
+        var p = new DesignInputs { TubeIdMm = tubeIdMm };
         var d = DesignSpec.Builtin[0].Clone();
         d.SetpointC = new[] { 1150.0, 1080.0 }; d.SegLengthMm = new[] { 300.0, 300.0 }; d = d.Fit();
-        d.TubeInsulMm = 10; d.DiscRadiusMm = 28; d.TabHalfWidthMm = 28; d.TabLengthMm = 140;
-        string dump = Path.Combine(HandoverDoc.Root(), "deliverable", "R23_开孔候选_轨迹.txt");
+        d.TubeIdMm = tubeIdMm; d.TubeInsulMm = 10; d.DiscRadiusMm = discRMm; d.TabHalfWidthMm = discRMm; d.TabLengthMm = tabLenMm;
+        string dump = Path.Combine(HandoverDoc.Root(), "deliverable", $"R29_对比_{tag}.txt");
         Directory.CreateDirectory(Path.GetDirectoryName(dump)!);
-        File.WriteAllText(dump, "═══ R23 仪器：Ø56/舌56/140（2 段 3 片，管保温 10），舌保温上界压到 3 mm ⇒ 法兰增量温降只能靠别的旋钮 ═══" + Environment.NewLine);
+        File.WriteAllText(dump, "═══ " + head + " ═══" + Environment.NewLine);
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var live = new FileProgress(s => File.AppendAllText(dump, $"[{sw.Elapsed.TotalMinutes,6:0.0} 分] {s}" + Environment.NewLine));
         var sr = Solver.Solve(d, p, new SolverOptions { InsHiMm = 3, MaxRounds = 12 }, live);
+        var probes = sr.Trace.Where(s => s.Contains("舌板开孔孔径", StringComparison.Ordinal) && (s.Contains("→", StringComparison.Ordinal) || s.Contains("变好", StringComparison.Ordinal))).ToList();
+        var placed = sr.Trace.Where(s => s.Contains("舌孔孔心按场定", StringComparison.Ordinal) || s.Contains("孔心冻结", StringComparison.Ordinal)).ToList();
         File.AppendAllText(dump, Environment.NewLine + $"═══ 耗时 {sw.Elapsed.TotalMinutes:0.0} 分　场解 {sr.Solves} 次　可行 {sr.Feasible}　合计 {sr.MassG:0.0} g　停在：{sr.StopWhy}" + Environment.NewLine
             + (sr.Design is null ? "" : "解出的设计：" + sr.Design.Describe() + Environment.NewLine)
-            + $"舌片厚随切口重定留痕：{sr.Trace.Count(s => s.Contains(BranchMarks.TongueResized, StringComparison.Ordinal))} 次" + Environment.NewLine);
+            + $"舌片厚随切口重定留痕：{sr.Trace.Count(s => s.Contains(BranchMarks.TongueResized, StringComparison.Ordinal))} 次" + Environment.NewLine
+            + "场定的孔心：" + Environment.NewLine + string.Join(Environment.NewLine, placed.Select(s => "  " + s.Trim())) + Environment.NewLine
+            + "舌孔探针的判语：" + Environment.NewLine + string.Join(Environment.NewLine, probes.Select(s => "  " + s.Trim())) + Environment.NewLine);
         Assert.True(sr.Trace.Count > 0);
         Assert.DoesNotContain(sr.Trace, s => s.Contains("上界就是 0**（舌片按 J", StringComparison.Ordinal));
     }
+
+    [Trait("速度", "慢")]
+    [Fact]
+    public void 对照_内径50_Ø56_舌保温封3mm()
+        => Run("内径50_Ø56", 50, 28, 140, "R29 对照：Ø56/舌56/140，内径 50，2 段 3 片，管保温 10，舌保温上界 3 mm（与 R23 仪器同一工况）");
+
+    [Trait("速度", "慢")]
+    [Fact]
+    public void 大管径_内径80_Ø96_舌保温封3mm()
+        => Run("内径80_Ø96", 80, 48, 140, "R29 大管径：Ø96/舌96/140，内径 80（管孔 r 40.8），2 段 3 片，管保温 10，舌保温上界 3 mm");
 }

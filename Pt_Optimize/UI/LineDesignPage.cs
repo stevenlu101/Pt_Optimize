@@ -2352,6 +2352,7 @@ public sealed class LineDesignPage : TabPage
 
         _wall.Value = C(fd.WallMm, _wall);
         _tubeIns.Value = C(fd.TubeInsulMm, _tubeIns);
+        _base.TubeIdMm = fd.TubeIdMm;                           // R30：记录的内径写回参数表（几何只有一个来源）
         _jDesign.Value = C(fd.JDesignAPerMm2, _jDesign);     // 设计记录带着它的 J（旧档 = 预设 10）
         _discD.Value = C(2 * fd.DiscRadiusMm, _discD);
         _tabLen.Value = C(fd.TabLengthMm, _tabLen);
@@ -2740,6 +2741,7 @@ public sealed class LineDesignPage : TabPage
         d.Binding = ""; d.Invalid = ""; d.InvalidChecks = Array.Empty<string>();
         d.WallMm = (double)_wall.Value;
         d.TubeInsulMm = (double)_tubeIns.Value;
+        d.TubeIdMm = _base.TubeIdMm;                            // R30：几何的管孔跟着参数表「内径 ID」
         d.JDesignAPerMm2 = (double)_jDesign.Value;          // ★ 用户 2026-09-09：J 由工程师设定；SizeTongues／下角／判据限值都从它来
         d.DiscRadiusMm = (double)_discD.Value * 0.5;
         d.TabLengthMm = (double)_tabLen.Value;
@@ -2784,6 +2786,9 @@ public sealed class LineDesignPage : TabPage
         {
             bool fx = _fixedDerived is { } f0 && f0.FlangeCount == d.FlangeCount;
             if (i < d.TabHoleXMm.Length)    d.TabHoleXMm[i]    = fx ? _fixedDerived!.TabHoleXMm[i]    : double.NaN;
+            if (i < d.TabArmX0Mm.Length)    d.TabArmX0Mm[i]    = fx ? _fixedDerived!.TabArmX0Mm[i]    : double.NaN;   // R29：加厚带随解出的设计走
+            if (i < d.TabArmX1Mm.Length)    d.TabArmX1Mm[i]    = fx ? _fixedDerived!.TabArmX1Mm[i]    : double.NaN;
+            if (i < d.TabArmThickMm.Length) d.TabArmThickMm[i] = fx ? _fixedDerived!.TabArmThickMm[i] : double.NaN;
             if (i < d.SlotCenterDeg.Length) d.SlotCenterDeg[i] = fx ? _fixedDerived!.SlotCenterDeg[i] : double.NaN;
             if (i < d.DiscCutRotDeg.Length) d.DiscCutRotDeg[i] = fx ? _fixedDerived!.DiscCutRotDeg[i] : double.NaN;
             if (i < d.TabHoleSides.Length)  d.TabHoleSides[i]  = fx ? _fixedDerived!.TabHoleSides[i]  : 0;

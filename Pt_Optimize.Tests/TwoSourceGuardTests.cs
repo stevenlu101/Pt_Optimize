@@ -58,14 +58,18 @@ public class TwoSourceGuardTests
     /// 彻底修要把 TubeIdMm 接进几何（铁律②）—— **尚未做**。
     /// 在此之前**不许静默**：对不上就拒算。
     /// </summary>
+    /// <summary>
+    /// R30（2026-09-10）：内径进了几何（<see cref="DesignSpec.TubeIdMm"/>），铁律②「几何只有一个来源」成立了 ——
+    /// 参数表与设计不一致时**以设计为准**，整线的管内径与法兰管孔都从设计取，不再拒算（原来的拒算是没接进几何之前的权宜）。
+    /// </summary>
     [Fact]
-    public void 管内径与写死的孔半径对不上时_当场拒算()
+    public void 管内径以设计为准_参数表不同不再拒算()
     {
-        var p = new DesignInputs { TubeIdMm = 60.0 };     // 半径 30 ≠ 写死的 25
-        var ex = Assert.Throws<ArgumentException>(() => DesignSpec.W08.BuildCase(p));
-        Assert.Contains("对不上", ex.Message);
-        Assert.Contains("铁律", ex.Message);
-        Assert.Contains("宁可拒算", ex.Message);
+        var p = new DesignInputs { TubeIdMm = 60.0 };     // 参数表 60，设计（W08）50
+        var lc = DesignSpec.W08.BuildCase(p);
+        Assert.Equal(DesignSpec.W08.TubeIdMm, lc.TubeIdMm, 9);                       // 整线管内径 = 设计的
+        Assert.Equal(DesignSpec.W08.HoleRadiusMm, lc.FlangePlates[0].HoleRadiusMm, 9); // 法兰管孔 = 设计的
+        Assert.Equal(DesignSpec.W08.WallMm + 25.0, lc.FlangePlates[0].HoleRadiusMm, 9); // W08 仍是 Ø50，逐位同前
     }
 
     [Fact]

@@ -136,6 +136,39 @@ public class Export3dmMatchesSolvedTests
     ///   ① 图上该层厚度必须等于下界（不是那个被夹掉的更薄的原始值）；
     ///   ② 导出回显里必须说出「夹了哪片、从几到几」——接进链路不许不说话。
     /// </summary>
+    /// <summary>R29（2026-09-10）：舌根加厚带 —— 叉臂段按臂厚、杆段按杆厚各自成实体，读回的厚度场要分得出来。</summary>
+    [Fact]
+    public void 舌根加厚带_叉臂段厚杆段薄都画进去()
+    {
+        string? probe = Geometry3dm.FindProbe();
+        if (probe is null) { Console.WriteLine("跳过：本机没有 Rhino 探针"); return; }
+        var d = DesignSpec.Builtin[0].Clone();
+        d.Name = "叉臂门";
+        d.DiscRadiusMm = 30; d.TabHalfWidthMm = 30; d.TabLengthMm = 140; d.WallMm = 0.8;
+        for (int j = 0; j < d.TabThickMm.Length; j++) { d.TabThickMm[j] = 1.0; d.TongueThickMm[j] = 1.8; }
+        // 孔与带放在管腔（r ≤ 25.8）之外，读回的厚度才分得清是孔、是管腔还是带：孔 (−40,0) R6，带 [−48, −32] 厚 3.2
+        d.TabHoleRMm[0] = 6.0; d.TabHoleXMm[0] = -40.0;
+        d.TabArmX0Mm[0] = -48.0; d.TabArmX1Mm[0] = -32.0; d.TabArmThickMm[0] = 3.2;
+        string dir = Path.Combine(Path.GetTempPath(), "pt_tabarm_" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string f = Path.Combine(dir, "叉臂.3dm");
+            string echo = Geometry3dm.WriteFinal3dm(d, f);
+            Console.WriteLine(echo);
+            Assert.DoesNotContain("没画进去", echo);
+            var arm = Geometry3dm.LoadThickness(f, "入口-舌片叉臂", 0, 1.0);
+            var tab = Geometry3dm.LoadThickness(f, "入口-舌片", 0, 1.0);   // 量测按图层名「含」匹配 ⇒ 这一份 = 杆 + 叉臂
+            Assert.InRange(arm.At(-40, 20), 3.1, 3.3);                 // 带内、避开孔 ⇒ 臂厚
+            Assert.True(arm.At(-40, 0) < 1e-6, $"孔里有料：{arm.At(-40, 0):0.00} mm");
+            Assert.True(arm.At(-60, 0) < 1e-6 && arm.At(-20, 28) < 1e-6, "叉臂层画到了杆上");
+            Assert.InRange(tab.At(-60, 0), 1.7, 1.9);                   // 带外（舌端侧的杆）⇒ 杆厚
+            Assert.InRange(tab.At(-20, 28), 1.7, 1.9);                  // 带外（切点侧的杆根，管腔之外）⇒ 杆厚
+            Assert.InRange(tab.At(-40, 20), 3.1, 3.3);                  // 杆 + 叉臂合在一起看，带内就是臂厚（杆没有画到带里）
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
     [Fact]
     public void 页面板厚低于工艺下界时出图按下界夹持并在回显里说明()
     {

@@ -261,6 +261,8 @@ public static class Geometry3dm
             //   同一口径（pl.ThicknessMm 就是 Plate() 里夹过的 td），不是回退到未夹的原始板厚。
             double tt = j < fd.TongueThickMm.Length && !double.IsNaN(fd.TongueThickMm[j]) ? fd.TongueThickMm[j] : t;
             sb.Append($"{{\"name\":\"{names[j]}\",\"t\":{R(t)},\"tabT\":{R(tt)},");
+            if (fd.HasTabArm(j))                                          // R29：舌根加厚带（叉臂）
+                sb.Append($"\"tabArmX0\":{R(fd.TabArmX0Mm[j])},\"tabArmX1\":{R(fd.TabArmX1Mm[j])},\"tabArmT\":{R(Math.Max(fd.TabArmThickMm[j], discFloor))},");
             sb.Append($"\"ring\":[{R(t * fd.RingMul[j])},{R(t * fd.RingMulOuter(j))}],");
             // ★★★★★ **槽与孔必须跟着走**（2026-09-05）。
             //   在此之前这份 spec 只有 t 和 ring ⇒ APP 自己的出图器**画不出**

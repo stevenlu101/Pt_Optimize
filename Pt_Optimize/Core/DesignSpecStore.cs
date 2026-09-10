@@ -49,6 +49,7 @@ public static class DesignSpecStore
         public string[]? invalidChecks { get; set; }
         public double? wallMm { get; set; }
         public double? tubeInsulMm { get; set; }
+        public double? tubeIdMm { get; set; }            // R30：管内径进几何（旧档没有 = 50）
         /// <summary>设计电流密度 J（用户 2026-09-09：工程师设定）。旧档没有 ⇒ 预设 10。</summary>
         public double? jDesignAPerMm2 { get; set; }
         public double? discRadiusMm { get; set; }
@@ -88,6 +89,9 @@ public static class DesignSpecStore
         public double?[]? ringMul2 { get; set; }
         /// <summary>★ 舌片厚（逐片，R11 2026-09-08：= I/(J·舌宽) 闭式）。NaN ↔ null（= 与基板同厚，旧档）。</summary>
         public double?[]? tongueThickMm { get; set; }
+        public double?[]? tabArmX0Mm { get; set; }       // R29：舌根加厚带（派生）
+        public double?[]? tabArmX1Mm { get; set; }
+        public double?[]? tabArmThickMm { get; set; }
 
         /// <summary>
         /// ★★★ 圆盘背侧减重槽的张角（逐片，度；0 = 不开槽）。2026-09-05 加。
@@ -257,6 +261,7 @@ public static class DesignSpecStore
             InvalidChecks = d.invalidChecks ?? Array.Empty<string>(),
             WallMm = NeedD(d.wallMm, "wallMm"),
             TubeInsulMm = d.tubeInsulMm ?? 10.0,
+            TubeIdMm = d.tubeIdMm ?? 50.0,
             JDesignAPerMm2 = d.jDesignAPerMm2 ?? SectionSizing.JDesignAPerMm2,
             DiscRadiusMm = NeedD(d.discRadiusMm, "discRadiusMm"),
             TabLengthMm = NeedD(d.tabLengthMm, "tabLengthMm"),
@@ -302,6 +307,9 @@ public static class DesignSpecStore
         if (d.ringW2Mm is { Length: > 0 } r2) fd.RingW2Mm = NaA(r2);
         if (d.ringMul2 is { Length: > 0 } t2) fd.RingMul2 = NaA(t2);
         if (d.tongueThickMm is { Length: > 0 } tg) fd.TongueThickMm = NaA(tg);
+        if (d.tabArmX0Mm is { Length: > 0 } ax0) fd.TabArmX0Mm = NaA(ax0);          // R29
+        if (d.tabArmX1Mm is { Length: > 0 } ax1) fd.TabArmX1Mm = NaA(ax1);
+        if (d.tabArmThickMm is { Length: > 0 } axt) fd.TabArmThickMm = NaA(axt);
         // ★ 最后统一按段数对齐 —— 档里存的片数与 setpointC 对不上时（旧档、手改过的档），
         //   这里补齐/裁掉，而不是让它带着一个错长度进计算。
         fd.Fit();
@@ -338,6 +346,7 @@ public static class DesignSpecStore
             invalidChecks = fd.InvalidChecks.Length > 0 ? fd.InvalidChecks : null,
             wallMm = fd.WallMm,
             tubeInsulMm = fd.TubeInsulMm,
+            tubeIdMm = fd.TubeIdMm,
             jDesignAPerMm2 = fd.JDesignAPerMm2,
             discRadiusMm = fd.DiscRadiusMm,
             tabLengthMm = fd.TabLengthMm,
@@ -357,6 +366,7 @@ public static class DesignSpecStore
             ringW2Mm = NzA(fd.RingW2Mm),
             ringMul2 = NzA(fd.RingMul2),
             tongueThickMm = NzA(fd.TongueThickMm),
+            tabArmX0Mm = NzA(fd.TabArmX0Mm), tabArmX1Mm = NzA(fd.TabArmX1Mm), tabArmThickMm = NzA(fd.TabArmThickMm),   // R29
             slotSpanDeg = fd.SlotSpanDeg.Any(v => v > 0.5) ? fd.SlotSpanDeg : null,
             slotRInMm = double.IsNaN(fd.SlotRInMm) ? null : fd.SlotRInMm,
             tabHoleRMm = fd.TabHoleRMm.Any(v => v > 0.05) ? fd.TabHoleRMm : null,

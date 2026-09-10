@@ -101,6 +101,15 @@ public sealed class DesignSpec
     /// </summary>
     public double[] TongueThickMm = { double.NaN, double.NaN, double.NaN, double.NaN };
 
+    /// <summary>
+    /// ★ R29（2026-09-10）：舌根加厚带（叉臂）—— **派生量，不是旋钮**：舌片上有切口（舌孔／落到舌根的圆盘槽）时，
+    /// 带 = [切口最远处 − 2 mm, 切口最近处 + 2 mm]（切口贴着切点就到切点），带厚 = I/(J·带内最窄有效宽)，
+    /// 杆厚 <see cref="TongueThickMm"/> = I/(J·带外最窄有效宽)。都闭式，由 <see cref="SizeTongue"/> 每次动切口时重算。NaN = 没有带。
+    /// </summary>
+    public double[] TabArmX0Mm = { double.NaN, double.NaN, double.NaN, double.NaN };
+    public double[] TabArmX1Mm = { double.NaN, double.NaN, double.NaN, double.NaN };
+    public double[] TabArmThickMm = { double.NaN, double.NaN, double.NaN, double.NaN };
+
     // ── 管孔渐变环：**相对量**（绝对值写法已两次造成安静失败，见 §1.8 ⑥⑦）
     /// <summary>环宽 mm，相对管孔外扩；两级台阶在 孔+w 与 孔+2w</summary>
     public double RingWidthMm = 3.0;
@@ -222,7 +231,13 @@ public sealed class DesignSpec
     //   而收敛度量本身也可能是代理量 —— 这是「代理量不是原量」的第五次发作。
     // ================================================================
 
-    public double HoleRadiusMm => WallMm + 25.0;
+    /// <summary>
+    /// ★ R30（2026-09-10，用户要看大管径对比）：管内径进几何 —— 管孔半径 = 内径/2 + 管壁。此前写死 25.0（Ø50），
+    /// 改内径只有求解器跟着走、几何／图纸／下界不动，BuildCase 干脆拒算。现在几何只有这一个来源：本设计的 <see cref="TubeIdMm"/>；
+    /// 页面读控件成设计时从参数表「内径 ID」抄进来，载入记录时反过来写回参数表。
+    /// </summary>
+    public double TubeIdMm = 50.0;
+    public double HoleRadiusMm => WallMm + 0.5 * TubeIdMm;
     /// <summary>
     /// 两级台阶外半径的**第 0 片视角** —— 只给出图与显示用。
     /// ⚠ 求解与建模一律走 <see cref="RingRadiiOf"/>（逐片），别用这个属性，
@@ -270,6 +285,7 @@ public sealed class DesignSpec
         TabThickMm = FitArr(TabThickMm, n);
         TabInsulMm = FitArr(TabInsulMm, n);
         TongueThickMm = FitArr(TongueThickMm, n);
+        TabArmX0Mm = FitArr(TabArmX0Mm, n); TabArmX1Mm = FitArr(TabArmX1Mm, n); TabArmThickMm = FitArr(TabArmThickMm, n);   // R29
         RingMul    = FitArr(RingMul,    n);
         RingW1Mm   = FitArr(RingW1Mm,   n);
         RingW2Mm   = FitArr(RingW2Mm,   n);
@@ -313,6 +329,7 @@ public sealed class DesignSpec
         c.TabThickMm = (double[])TabThickMm.Clone();
         c.TabInsulMm = (double[])TabInsulMm.Clone();
         c.TongueThickMm = (double[])TongueThickMm.Clone();
+        c.TabArmX0Mm = (double[])TabArmX0Mm.Clone(); c.TabArmX1Mm = (double[])TabArmX1Mm.Clone(); c.TabArmThickMm = (double[])TabArmThickMm.Clone();   // R29
         c.RingMul = (double[])RingMul.Clone();
         c.RingW1Mm = (double[])RingW1Mm.Clone();
         c.RingW2Mm = (double[])RingW2Mm.Clone();
@@ -396,6 +413,9 @@ public sealed class DesignSpec
             WeldFilletLegMm = System.Math.Max(td, WallMm),
             DiscSlots = SlotsOf(j, System.Math.Max(td, WallMm)),
             TabHoles = HolesOf(j),
+            TabArmX0Mm = j < TabArmX0Mm.Length ? TabArmX0Mm[j] : double.NaN,          // R29：舌根加厚带（派生）
+            TabArmX1Mm = j < TabArmX1Mm.Length ? TabArmX1Mm[j] : double.NaN,
+            TabArmThicknessMm = j < TabArmThickMm.Length ? TabArmThickMm[j] : double.NaN,
             DiscCutHoles = DiscCutsOf(j, System.Math.Max(td, WallMm)),   // R13：圆盘上的长椭圆（形状族 1）
         };
     }
@@ -776,25 +796,11 @@ public sealed class DesignSpec
     /// <param name="checkRamp">是否连 ① 升温一起判。判它更慢，但**少判一条就不是全判据**</param>
     public LineCase BuildCase(DesignInputs baseInputs, bool checkRamp = true)
     {
-        // ★★★★★ 管孔半径有**两处来源**（2026-08-28 第一性原理通查查出）：
-        //   · 本类 HoleRadiusMm => WallMm + **25.0**（写死），几何、图纸、板厚下界都用它；
-        //   · 求解器走 LineRunner 的 holeR = **TubeIdMm*0.5** + WallMm，跟着参数表的管内径。
-        //   两者只在 TubeIdMm = 50 时相等。工程师把管内径一改：
-        //   **求解器动了，几何/图纸/下界不动，不报错** —— 典型的「旋钮转了、一半模型没动」。
-        //
-        //   彻底修要把 TubeIdMm 接进几何（铁律②：几何只有一个来源）⇒ 要改的地方多，**尚未做**。
-        //   在此之前**不许静默**：对不上就当场抛，并说清怎么办。
-        if (System.Math.Abs(baseInputs.TubeIdMm * 0.5 - 25.0) > 1e-9)
-            throw new System.ArgumentException(
-                "管内径 " + baseInputs.TubeIdMm.ToString("0.0") + " mm（半径 "
-              + (baseInputs.TubeIdMm * 0.5).ToString("0.0") + "）与**几何里写死的 25.0 mm** 对不上。"
-              + System.Environment.NewLine
-              + "  DesignSpec.HoleRadiusMm 目前是 `WallMm + 25.0`，而求解器用的是 "
-              + "`TubeIdMm*0.5 + WallMm` —— 改了管内径只有求解器跟着走，"
-              + "几何、3DM 图纸与板厚工艺下界**都不会动**。"
-              + System.Environment.NewLine
-              + "  ⇒ 要换管径，必须先把 TubeIdMm 接进 DesignSpec 的几何（铁律②），"
-              + "而不是只改参数表。**宁可拒算，也不给一个一半对一半错的结果。**");
+        // ★★★★★ 管孔半径曾有**两处来源**（2026-08-28 查出：本类写死 25.0，求解器用 TubeIdMm*0.5 + WallMm），
+        //   那时对不上就拒算。R30（2026-09-10）：内径进了几何（TubeIdMm 字段），整线的管内径也从本设计取 ⇒ 只剩一个来源。
+        //   参数表的「内径 ID」只是新设计的默认值（页面读控件成设计时抄进来）；两边不等时以**设计**为准并说出来。
+        if (System.Math.Abs(baseInputs.TubeIdMm - TubeIdMm) > 1e-9)
+            System.Diagnostics.Debug.WriteLine($"参数表内径 {baseInputs.TubeIdMm:0.0} ≠ 设计内径 {TubeIdMm:0.0} —— 整线按设计的内径算（几何只有一个来源）");
 
         var p = SegmentSolver.Clone(baseInputs);
         p.WallMinMm = WallMm;
@@ -813,6 +819,7 @@ public sealed class DesignSpec
 
         return new LineCase
         {
+            TubeIdMm = TubeIdMm,       // R30：整线的管内径从本设计取（与法兰管孔同一个来源）
             Base = p,
             WallMm = WallMm,
             JDesignAPerMm2 = JDesignAPerMm2,      // ★ 判据「法兰截面 J」的限值 = J+1 从这里来（用户 2026-09-09）
@@ -862,12 +869,46 @@ public sealed class DesignSpec
         int n = FlangeCount;
         if (TongueThickMm.Length != n) TongueThickMm = FitArr(TongueThickMm, n);
         if (j < 0 || j >= n) return double.NaN;
-        double t = SectionSizing.TongueThickMm(Plate(j, DiscFloorMm(baseIn)), iA, ClampLengthMm, jD);
-        if (double.IsNaN(t) || double.IsInfinity(t)) { TongueThickMm[j] = double.NaN; return double.NaN; }
-        t = System.Math.Max(t, baseIn.WeldMinThicknessMm);
-        t = System.Math.Ceiling(t / quantMm - 1e-9) * quantMm;
-        TongueThickMm[j] = t;
-        return t;
+        if (TabArmX0Mm.Length != n) { TabArmX0Mm = FitArr(TabArmX0Mm, n); TabArmX1Mm = FitArr(TabArmX1Mm, n); TabArmThickMm = FitArr(TabArmThickMm, n); }
+        double Q(double v) => System.Math.Ceiling(System.Math.Max(v, baseIn.WeldMinThicknessMm) / quantMm - 1e-9) * quantMm;
+        var g = Plate(j, DiscFloorMm(baseIn));
+        if (!(iA > 0)) { TongueThickMm[j] = double.NaN; TabArmX0Mm[j] = TabArmX1Mm[j] = TabArmThickMm[j] = double.NaN; return double.NaN; }
+        var widths = SectionSizing.TabWidths(g, ClampLengthMm);
+        if (widths.Count == 0) { TongueThickMm[j] = double.NaN; TabArmX0Mm[j] = TabArmX1Mm[j] = TabArmThickMm[j] = double.NaN; return double.NaN; }
+        double xT = g.Tangent().X;
+        // ★ R29：切口所在的那一段横坐标 ⇒ 加厚带；带外按完整宽定杆厚。切口贴到切点（2 mm 内）带就到切点。
+        double cutLo = double.NaN, cutHi = double.NaN;
+        foreach (var (x, w) in widths)
+            if (w < 2 * g.HalfWidth(x) - 1e-6)
+            { cutLo = double.IsNaN(cutLo) ? x : System.Math.Min(cutLo, x); cutHi = double.IsNaN(cutHi) ? x : System.Math.Max(cutHi, x); }
+        double wMinAll = widths.Min(t => t.WidthMm);
+        if (double.IsNaN(cutLo))
+        {
+            TabArmX0Mm[j] = TabArmX1Mm[j] = TabArmThickMm[j] = double.NaN;
+            if (wMinAll <= 1e-9) { TongueThickMm[j] = double.NaN; return double.NaN; }
+            TongueThickMm[j] = Q(iA / (jD * wMinAll));
+            return TongueThickMm[j];
+        }
+        double x0 = System.Math.Max(widths.Min(t => t.X), cutLo - 2.0);
+        double x1 = cutHi + 2.0 >= xT - 1e-9 ? xT : cutHi + 2.0;
+        double wArm = widths.Where(t => t.X >= x0 - 1e-9 && t.X <= x1 + 1e-9).Select(t => t.WidthMm).DefaultIfEmpty(wMinAll).Min();
+        double wStem = widths.Where(t => t.X < x0 - 1e-9 || t.X > x1 + 1e-9).Select(t => t.WidthMm).DefaultIfEmpty(2 * g.HalfWidth(widths[0].X)).Min();
+        if (wArm <= 1e-9) { TongueThickMm[j] = double.NaN; TabArmX0Mm[j] = TabArmX1Mm[j] = TabArmThickMm[j] = double.NaN; return double.NaN; }   // 被切断
+        TabArmX0Mm[j] = x0; TabArmX1Mm[j] = x1; TabArmThickMm[j] = Q(iA / (jD * wArm));
+        TongueThickMm[j] = Q(iA / (jD * System.Math.Max(wStem, 1e-9)));
+        return TongueThickMm[j];
+    }
+
+    /// <summary>R29：这一片有没有加厚带。</summary>
+    public bool HasTabArm(int j) => j < TabArmThickMm.Length && !double.IsNaN(TabArmThickMm[j]) && !double.IsNaN(TabArmX0Mm[j]) && !double.IsNaN(TabArmX1Mm[j]);
+
+    /// <summary>R29：加厚带的一句话（给 Describe／界面／轨迹）。</summary>
+    public string DescribeTabArms()
+    {
+        var parts = new System.Collections.Generic.List<string>();
+        for (int j = 0; j < TabArmThickMm.Length; j++)
+            if (HasTabArm(j)) parts.Add($"片{j} {TabArmThickMm[j]:0.00} mm×[{TabArmX0Mm[j]:0},{TabArmX1Mm[j]:0}]");
+        return parts.Count == 0 ? "" : "／叉臂 " + string.Join(" ", parts);
     }
 
     /// <summary>自由段 = 舌长 − 圆盘切点 − 压接段。判据 ⑤ 判的就是它。</summary>
@@ -887,11 +928,11 @@ public sealed class DesignSpec
 
     public string Describe() =>
         (Invalid.Length > 0 ? "★ **已失效** " : "") +
-        $"[{Name}] 管壁 {WallMm:0.0}／管保温 {TubeInsulMm:0}／盘Ø{2 * DiscRadiusMm:0}／" +
+        $"[{Name}] 管壁 {WallMm:0.0}／{(System.Math.Abs(TubeIdMm - 50.0) > 1e-9 ? $"内径 {TubeIdMm:0}／" : "")}管保温 {TubeInsulMm:0}／盘Ø{2 * DiscRadiusMm:0}／" +
         // ⚠ 必须逐个格式化。`string.Join("/", double[])` 打出来的是
         //   「1.3600000000000003/2.55656893078647」这种二进制残渣，而它会**直接进报告**——
         //   读的人无从分辨那是「算出来的精度」还是「忘了格式化」。（2026-08-17 实际发生。）
-        $"舌 {TabLengthMm:0}×{2 * TabHalfWidthMm:0}／板厚 {Fmt(TabThickMm, "0.00")}／舌片厚 {FmtT(TongueThickMm)}／" +
+        $"舌 {TabLengthMm:0}×{2 * TabHalfWidthMm:0}／板厚 {Fmt(TabThickMm, "0.00")}／舌片厚 {FmtT(TongueThickMm)}{DescribeTabArms()}／" +
         $"舌保温 {Fmt(TabInsulMm, "0.0")}／" +
         $"环 r≤孔+{RingWidthMm:0}→×{Fmt(RingMul, "0.00")}／舌根圆角 R{TabFilletMm:0}／" +
         $"压接 {ClampLengthMm:0} 夹 {ClampTempC:0} °C" +

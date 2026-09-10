@@ -187,6 +187,22 @@ public sealed class FlangePlate
     public TabHole[] TabHoles = Array.Empty<TabHole>();
 
     /// <summary>
+    /// ★ R29（2026-09-10）：舌片上的**加厚带**（叉臂）—— x ∈ [TabArmX0Mm, TabArmX1Mm] 这一段舌片厚取 <see cref="TabArmThicknessMm"/>，
+    /// 其余舌片取 <see cref="TabThicknessMm"/>。用户 09-09：「挖孔会造成 J 超过设计值，所以舌片必须重新搜形状」——
+    /// R23 仪器证明加厚若落在整条舌片，导热涨七倍、孔必然更差；加厚只能落在有切口的那一段（两条臂）。NaN = 没有带。
+    /// 网格、体积、截面都从 <see cref="ThicknessAt"/> 取厚 ⇒ 场解与铂重自动按带算。
+    /// </summary>
+    public double TabArmX0Mm = double.NaN, TabArmX1Mm = double.NaN, TabArmThicknessMm = double.NaN;
+
+    /// <summary>x 在加厚带里（TwoTabs 时按 |x| 镜像）。</summary>
+    public bool InTabArm(double x)
+    {
+        if (double.IsNaN(TabArmThicknessMm) || double.IsNaN(TabArmX0Mm) || double.IsNaN(TabArmX1Mm)) return false;
+        double xs = TwoTabs ? -Math.Abs(x) : x;
+        return xs >= TabArmX0Mm - 1e-9 && xs <= TabArmX1Mm + 1e-9;
+    }
+
+    /// <summary>
     /// 圆盘上的一条**扇形槽**：半径 [RInMm, ROutMm]、中心角 CenterDeg、张角 SpanDeg。
     /// 角度以 +x 轴为 0°、逆时针为正（与 <see cref="Inside"/> 里的 Atan2(z, x) 同一口径）。
     /// </summary>
@@ -401,7 +417,7 @@ public sealed class FlangePlate
         // 舌片先判：阶梯是按半径分的，只对圆盘有意义
         bool onTab = !double.IsNaN(TabThicknessMm) &&
                      (TwoTabs ? Math.Abs(x) > Math.Abs(Tangent().X) : x < Tangent().X);
-        if (onTab) return TabThicknessMm;
+        if (onTab) return InTabArm(x) ? TabArmThicknessMm : TabThicknessMm;      // R29：带内取臂厚
 
         double r = Math.Sqrt(x * x + z * z);
 
