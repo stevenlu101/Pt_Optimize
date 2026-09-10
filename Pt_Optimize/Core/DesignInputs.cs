@@ -1,7 +1,61 @@
 ﻿using System.ComponentModel;
+using System.Linq;
 
 namespace PtOptimize.Core;
 
+/// <summary>
+/// ★ 审排版（2026-09-10）：参数表里枚举按 [Description] 的中文显示（原来漏出 AcPhase／Horizontal 这类英文代号），
+/// 反向也认中文与原名。
+/// </summary>
+public sealed class DescribedEnumConverter : EnumConverter
+{
+    public DescribedEnumConverter(System.Type t) : base(t) { }
+    private static string Name(object v)
+    {
+        var f = v.GetType().GetField(v.ToString() ?? "");
+        var d = f?.GetCustomAttributes(typeof(DescriptionAttribute), false).OfType<DescriptionAttribute>().FirstOrDefault();
+        return d?.Description ?? v.ToString() ?? "";
+    }
+    public override object? ConvertTo(ITypeDescriptorContext? c, System.Globalization.CultureInfo? ci, object? v, System.Type dest)
+        => dest == typeof(string) && v is not null ? Name(v) : base.ConvertTo(c, ci, v, dest);
+    public override object? ConvertFrom(ITypeDescriptorContext? c, System.Globalization.CultureInfo? ci, object v)
+    {
+        if (v is string s)
+        {
+            foreach (var e in System.Enum.GetValues(EnumType)) if (Name(e) == s || e.ToString() == s) return e;
+        }
+        return base.ConvertFrom(c, ci, v);
+    }
+}
+
+/// <summary>审排版（2026-09-10）：布尔在参数表里显示 是／否（原来是 True／False）。</summary>
+public sealed class ChineseBoolConverter : BooleanConverter
+{
+    public override object? ConvertTo(ITypeDescriptorContext? c, System.Globalization.CultureInfo? ci, object? v, System.Type dest)
+        => dest == typeof(string) && v is bool b ? (b ? "是" : "否") : base.ConvertTo(c, ci, v, dest);
+    public override object? ConvertFrom(ITypeDescriptorContext? c, System.Globalization.CultureInfo? ci, object v)
+        => v is string s ? (s.Trim() is "是" or "true" or "True") : base.ConvertFrom(c, ci, v);
+    public override StandardValuesCollection GetStandardValues(ITypeDescriptorContext? c) => new(new object[] { true, false });
+}
+
+/// <summary>审排版（2026-09-10）：「−1 = 自动」这类哨兵值在参数表里显示成「自动」，不再漏出 −1。</summary>
+public sealed class AutoOrValueConverter : DoubleConverter
+{
+    public override object? ConvertTo(ITypeDescriptorContext? c, System.Globalization.CultureInfo? ci, object? v, System.Type dest)
+        => dest == typeof(string) && v is double d && d < 0 ? "自动（程序自己算）" : base.ConvertTo(c, ci, v, dest);
+    public override object? ConvertFrom(ITypeDescriptorContext? c, System.Globalization.CultureInfo? ci, object v)
+    {
+        if (v is string s)
+        {
+            string t = s.Trim();
+            if (t.Length == 0 || t.StartsWith("自动") || t == "-1" || t == "−1") return -1.0;
+            if (double.TryParse(t, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d)) return d;
+        }
+        return base.ConvertFrom(c, ci, v);
+    }
+}
+
+[TypeConverter(typeof(DescribedEnumConverter))]
 public enum SupplyMode
 {
     [Description("单相交流（可控矽相控）")] AcPhase,
@@ -9,6 +63,7 @@ public enum SupplyMode
     [Description("直流（整流）")] Dc
 }
 
+[TypeConverter(typeof(DescribedEnumConverter))]
 public enum Orientation
 {
     [Description("水平")] Horizontal,
@@ -265,6 +320,7 @@ public class DesignInputs
 
     [Category(ParamCat.页面接管), DisplayName("法兰有保温"),
      Description("⚠ 本项被「③ 整线核算」页的「法兰保温」下拉接管 —— 在这张表里改它，对「③ 整线核算」没有影响。　法兰双面包覆高纯氧化铝纤维。降低 q″ 会降低自给所需的厚度")]
+    [TypeConverter(typeof(ChineseBoolConverter))]
     public bool FlangeInsulated { get; set; } = true;
 
     // ★ 2026-08-10 随 Layer1 一并改为 2.5：用户给的「纤维包覆 2–3 mm」是针对铂管的，
@@ -309,7 +365,8 @@ public class DesignInputs
     public double BusbarClampLengthMm { get; set; } = 3.0;
 
     [Category(ParamCat.法兰与铜排), DisplayName("铜排总热导 [W/K]"),
-     Description("★ 铜排到冷端的总热导 G = k_Cu·A/L（含铜排自身表面散热）。\n" +
+     Description("填「自动」（或留空）= 程序按铜排到冷端长度、许用电流密度与铜的导热自己算；填一个 ≥ 0 的数就用你给的。\n" +
+                 "★ 铜排到冷端的总热导 G = k_Cu·A/L（含铜排自身表面散热）。\n" +
                  "≥0 时**取代** BusbarClampTempC 的二选一，改用第三边界：q = G·(T_舌端 − T_冷端)。\n\n" +
                  "为什么必须有它：此前舌端只有两种边界，而**两种都不是真的**——\n" +
                  "  · 定温：假设铜排无论要带走多少热都能把接触点按在 300 °C，等于假设结论；\n" +
@@ -318,6 +375,7 @@ public class DesignInputs
                  "  §4.3c/§4.3d 的「端片自由端」结论正是建立在后者上。\n\n" +
                  "典型值：40×21.8 mm² 铜排、到冷端 300 mm ⇒ G = 385×873e-6/0.3 ≈ 1.1 W/K。\n" +
                  "把 G 当设计变量，接头温度就从**假设**变成**输出**，可以拿去对铜的许用温度。")]
+    [TypeConverter(typeof(AutoOrValueConverter))]
     public double BusbarConductanceWPerK { get; set; } = -1;
 
 
@@ -349,6 +407,7 @@ public class DesignInputs
                  "先跑对照、看清影响方向，再谈要不要重新跑一次。　" +
                  "⚠ 各半是领头阶正确解（两侧是同一根管、同样的导热）；" +
                  "更精细的做法是按两侧管端各自的导热通量加权 —— 那要动求解器，尚未做。")]
+    [TypeConverter(typeof(ChineseBoolConverter))]
     public bool SplitSharedFlangeDraw { get; set; } = false;
 
     [Category(ParamCat.法兰与铜排), DisplayName("基线收敛判据与主环同口径"),
@@ -368,6 +427,7 @@ public class DesignInputs
                  "⇒ 「历史 0.8 档在算得准的网格上不合格」这个结论是**判据 bug**，不是物理。　" +
                  "关掉它（--basetol-legacy）只用于复现历史数字，不得用于交付。")]
     [Browsable(false)]
+    [TypeConverter(typeof(ChineseBoolConverter))]
     public bool BaselineTolAmplified { get; set; } = true;
 
     [Category(ParamCat.法兰与铜排), DisplayName("电位场用旧的 Gauss–Seidel"),
@@ -378,6 +438,7 @@ public class DesignInputs
                  "CoupledSolver 那两处同一个错，慢收敛时步长很小而残差很大。　" +
                  "⚠ 打开只用于搞清楚「哪一改动把 ③ 改了」，**不得用于交付**。")]
     [Browsable(false)]
+    [TypeConverter(typeof(ChineseBoolConverter))]
     public bool LinearGaussSeidel { get; set; } = false;
 
 
@@ -393,6 +454,7 @@ public class DesignInputs
                  "（注释：铂 700–1300 °C 间 ρe 变化 48 %），重写时丢掉了。　" +
                  "⚠ 默认关：打开会改判据的数（②″ 与局部热稳定首当其冲）。")]
     [Browsable(false)]
+    [TypeConverter(typeof(ChineseBoolConverter))]
     public bool SigmaOfTCoupling { get; set; } = false;
 
     // ---------- 6 玻璃物性 ----------
@@ -427,6 +489,7 @@ public class DesignInputs
     /// 故用显式布尔。
     /// </summary>
     [Browsable(false)]
+    [TypeConverter(typeof(ChineseBoolConverter))]
     public bool FlangeDrawOverrideSet { get; set; }
 
     /// <summary>
@@ -462,6 +525,7 @@ public class DesignInputs
 
     [Category(ParamCat.程序算出), DisplayName("壁厚由程序反算"),
      Description("⚠ 本项被LineRunner 强制置 false —— 整线链壁厚由 LineCase.WallMm 定，自行反算会与之打架接管 —— 在这张表里改它，对「③ 整线核算」没有影响。　关闭 = 校核模式：壁厚取「最小可制造壁厚」的实测值，程序只报实际 J")]
+    [TypeConverter(typeof(ChineseBoolConverter))]
     public bool SizeWall { get; set; } = false;
 
     // ---------- 7 数值 ----------

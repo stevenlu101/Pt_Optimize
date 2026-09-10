@@ -29,8 +29,8 @@ public static class ParamCat
     public const string 数值 = "7 数值（网格）";
 
     /// <summary>页面控件接管：改这里没用，真正生效的是「整线核算」页上的同名控件。</summary>
-    public const string 页面接管 = "8 ✗ 改了没用 —— 由「整线核算」页上的控件决定";
+    public const string 页面接管 = "8 只读 —— 由「② 法兰优化」页上的控件决定（这里改了不算）";
 
     /// <summary>程序自己算：改这里没用，值由求解器强制取（如壁厚）。</summary>
-    public const string 程序算出 = "9 ✗ 改了没用 —— 由程序自己算出来";
+    public const string 程序算出 = "9 只读 —— 由程序自己算出来（这里改了不算）";
 }

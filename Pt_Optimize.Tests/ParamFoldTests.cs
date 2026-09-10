@@ -54,8 +54,8 @@ public class ParamFoldTests
     [Fact]
     public void 不起作用的那两类不被任何一格展开()
     {
-        var dead = Categories().Where(c => c.Contains("✗", StringComparison.Ordinal)).ToArray();
-        Assert.True(dead.Length >= 1, "找不到标 ✗ 的类别 —— 下面是空转");
+        var dead = Categories().Where(c => c.Contains("只读", StringComparison.Ordinal)).ToArray();   // R34（2026-09-10）：分类名由「✗ 改了没用」改成「只读 —— …」
+        Assert.True(dead.Length >= 1, "找不到标「只读」的类别 —— 下面是空转");
         foreach (var st in Flow.Stages)
             foreach (string p in st.ParamCategoryPrefixes)
                 Assert.DoesNotContain(dead, d => d.Contains(p, StringComparison.Ordinal));

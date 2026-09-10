@@ -860,6 +860,16 @@ class UiWiringTests {
             fam.SelectedIndex = 0; Pump(100);
         }
 
+        Head("16⁗‴ .3dm 只要一个输入（R33，用户 2026-09-10：后面几段的法兰都一样，段数 N ⇒ 法兰 N+1）");
+        {
+            var box = (Control)F(page, "_file3dmBox")!;
+            var labs = box.Controls.OfType<Label>().ToList();
+            Check("只画一行，标签是「法兰图纸 .3dm」", labs.Count == 1 && labs[0].Text.Contains("法兰图纸"), string.Join("／", labs.Select(l => l.Text)));
+            Check("标签不再是片名代号", !labs.Any(l => l.Text.Contains("HC1|HC2") || l.Text.Contains("入口 .3dm")), "");
+            var files = (TextBox[])F(page, "_file3dm")!;
+            Check("各片的框都还在（求解、出图逐片走）", files.Length == ((NumericUpDown[])F(page, "_tPlate")!).Length, $"{files.Length}");
+        }
+
         Head("17 输出框排版：不许出现 Markdown 源码，中文列宽要按显示宽度算");
         // 用户 2026-08-17 反馈「文挡好乱」。两个病：
         //   ① `**粗体**` 是 Markdown，而输出框显示纯文本 ⇒ 满屏星号；
@@ -1333,7 +1343,7 @@ class UiWiringTests {
                 // ⚠ 认 ✗ 要用 Contains 不是 StartsWith：分类名前面还有个**数字排序前缀**
                 //   （PropertyGrid 按字母序排分类，✗ 会排到最前面 —— 无效的参数反而最显眼，
                 //     正好反了 ⇒ 用 1…9 显式定序，把两组 ✗ 压到最后）。
-                .Where(x => (x.GetCustomAttribute<CategoryAttribute>()?.Category ?? "").Contains('✗'))
+                .Where(x => (x.GetCustomAttribute<CategoryAttribute>()?.Category ?? "").Contains("只读"))   // R34：分类名改「只读 —— …」，不再用 ✗
                 .ToArray();
             Check("有被接管的参数", overridden.Length > 0, $"{overridden.Length} 项");
             // ★ 自动抓「参数表说有效，实际被覆盖」这一类错 ——

@@ -42,6 +42,7 @@ internal sealed class SolveStageStrip : FlowLayoutPanel
             return l;
         }).ToArray();
         Controls.Add(_detail);
+        _detail.Text = "还没跑：点「核算整线」后从第一步开始，这一行跟着报每一步";   // 审排版：未解算时右侧别空着（别写 ①，走查按带圈数字数格子）
         Paint();
     }
 

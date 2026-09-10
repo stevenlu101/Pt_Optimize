@@ -101,7 +101,7 @@ public class OneClickPipelineTests
         Assert.DoesNotContain("用「自动定厚」把厚度调到过", body);
         Assert.DoesNotContain("点「◇ 搜形状」（几十分钟）", body);
         // 而且要说清「它会自己往下走」
-        Assert.Contains("一路算到能出图为止", body);
+        Assert.Contains("可以出图", body);            // R34（2026-09-10）：文案改成五步链，落点仍是「可以出图」
         Assert.Contains("它会自己", body);
     }
 }

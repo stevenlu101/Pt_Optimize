@@ -1166,8 +1166,8 @@ public sealed class LineDesignPage : TabPage
         //   下一步点哪个**，不能只灰着不说话（§0.-2 第③条铁律）。解析模式下则照抄
         //   「使用说明」页那张对照表里「什么时候点」一行，并提醒搜完要再核算整线。
         _btnShape.ToolTipText = an
-            ? "① 核算整线告诉你「厚度到头，该改形状」时点它；② 当前形状已经全过，想找更省铂的；" +
-              "③ 想拿一张形状表自己挑。搜完要再点核算整线精算，过了才可出图。"
+            ? "前提：当前参数已点过「核算整线」并收敛（否则本键灰着）。什么时候点：① 核算整线告诉你「厚度到头，该改形状」时；" +
+              "② 当前形状已经全过，想找更省铂的；③ 想拿一张形状表自己挑。搜完要再点核算整线精算，过了才可出图。"
             : "当前是「Rhino .3dm 文件」模式，形状由图纸给定，不是可搜索的自由度 —— " +
               "搜形状改不了形状。要搜形状，先点「◈ 图纸几何 → 参数」把图纸反推成参数、切回解析模式。";
         // ★★★ 同一组控件在两个模式下**是两个物理量**：
@@ -1459,9 +1459,8 @@ public sealed class LineDesignPage : TabPage
         _file3dm[idx].Text = dlg.FileName;
         // 选完文件要重新过一遍 enable —— 否则「分析几何变数」选了图纸也不会亮
         SyncGeomSource();
-        // 空着的后续片默认沿用同一文件 —— 四片常常同形状，省得点四次
-        for (int k = idx + 1; k < _file3dm.Length; k++)
-            if (string.IsNullOrWhiteSpace(_file3dm[k].Text)) _file3dm[k].Text = dlg.FileName;
+        // R33：只有一个输入框 ⇒ 各片都用同一张图（用户：后面几段的法兰都是一样的）
+        for (int k = 0; k < _file3dm.Length; k++) _file3dm[k].Text = dlg.FileName;
     }
 
     /// <summary>舌保温框：初始值与上下界都只有一个来源（StartPoint / SizerOptions）。</summary>
@@ -4032,10 +4031,16 @@ public sealed class LineDesignPage : TabPage
             pnl.Controls.Add(b, 1, 0);
             _row3dm[idx] = pnl;
 
-            var lab = new Label { Text = names[i] + " .3dm", AutoSize = true,
-                                  Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 4, 0) };
-            _file3dmBox.Controls.Add(lab);
-            _file3dmBox.Controls.Add(pnl);
+            // ★ R33（用户 2026-09-10：「这只要点一个3DM输入即可，后面几段的法兰都是一样的，只需输入N段加热，法兰数N+1」）：
+            //   只画第一行，标签不再是片名代号；其余片的框照旧存在（选文件时一并填同一张图），求解、出图逐片走原来的数组。
+            if (i == 0)
+            {
+                var lab = new Label { Text = "法兰图纸 .3dm", AutoSize = true,
+                                      Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 4, 0) };
+                new ToolTip().SetToolTip(lab, "各片同一张图（形状相同），厚度各自解；段数由「铂金管加热段数」定，法兰 = 段数 + 1，每段管长在段表里填");
+                _file3dmBox.Controls.Add(lab);
+                _file3dmBox.Controls.Add(pnl);
+            }
         }
         _file3dmBox.ResumeLayout();
     }

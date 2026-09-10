@@ -75,6 +75,9 @@ public sealed class MainForm : Form
         _grid.PropertySort = PropertySort.Categorized;
         _grid.HelpVisible = true;
         _grid.Dock = DockStyle.Fill;
+        // 审排版（2026-09-10）：说明栏一开始显示的是被选中的**分类名**，看起来像文字溢出到面板外 ⇒ 一开始就选第一项
+        //   ⚠ 第一版挂在 HandleCreated：那时项还没生成，赋值抛「必须是有效的 GridItem」（用户 2026-09-10 当场撞到）⇒ 改窗体 Shown 之后再选，选不上就算了
+        Shown += (_, _) => BeginInvoke(new Action(SelectFirstGridProperty));
 
         // ★★★★★ 参数表改一项 = 上一次的解不再新鲜（2026-08-24）。
         //   此前这个事件**从来没被挂过** —— 详见 LineDesignPage.MarkParamsChanged 的说明：
@@ -959,6 +962,7 @@ public sealed class MainForm : Form
         _linePage?.MarkParamsChanged("读取参数表");   // 工况变了：舌片厚／场定量不许再按上一份设计原样带着（2026-09-09 审查抓到）
         _grid.SelectedObject = _in;   // 同一个实例，但要让 PropertyGrid 重读一遍
         _grid.Refresh();
+        SelectFirstGridProperty();
 
         // 换了方案 ⇒ 上一次的解与判据**全部作废**。不清掉的话，
         // 判据表会挂着旧方案的结论，而参数表已经是新方案了。
@@ -978,4 +982,20 @@ public sealed class MainForm : Form
             s.AppendLine($"{_res.X[i]:0.###},{_res.TMetal[i]:0.###},{_res.TGlass[i]:0.###}");
         File.WriteAllText(d.FileName, s.ToString(), Encoding.UTF8);
     }
+
+    /// <summary>审排版（2026-09-10）：让说明栏显示某一项的说明，而不是分类名。</summary>
+    private void SelectFirstGridProperty()
+    {
+        try
+        {
+            var root = _grid.SelectedGridItem;
+            while (root?.Parent is not null) root = root.Parent;
+            if (root is null) return;
+            foreach (GridItem cat in root.GridItems)
+                foreach (GridItem it in cat.GridItems)
+                    if (it.GridItemType == GridItemType.Property) { _grid.SelectedGridItem = it; return; }
+        }
+        catch (Exception) { /* 只是让说明栏好看一点；选不上不影响任何功能，不许为此弹窗 */ }
+    }
+
 }
