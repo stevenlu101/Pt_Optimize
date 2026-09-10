@@ -52,6 +52,24 @@ public static class UiShot
             Shoot(form, file);
             index.Add($"{Path.GetFileName(file)}　←　页签「{page.Text}」");
 
+            // R35（2026-09-11）：页里可滚动的面板（① 页的参数栏）默认只画得出第一屏 ——
+            // 舌片厚／叉臂那些行在折线以下，「源码写了不等于布局给了」，所以逐屏往下滚再各来一张。
+            int sk = 0;
+            foreach (var sc in Descendants(page).OfType<ScrollableControl>().Where(c => c.AutoScroll && c.VerticalScroll.Visible && c.ClientSize.Height > 0))
+            {
+                int total = sc.DisplayRectangle.Height, view = sc.ClientSize.Height;
+                for (int y = view; y < total; y += view)
+                {
+                    sc.AutoScrollPosition = new Point(0, y);
+                    Pump(300);
+                    string sfile = Path.Combine(dir, $"{n:00}s{++sk}_{name}_往下滚{sk}.png");
+                    Shoot(form, sfile);
+                    index.Add($"{Path.GetFileName(sfile)}　←　页签「{page.Text}」滚到第 {sk + 1} 屏");
+                }
+                sc.AutoScrollPosition = new Point(0, 0);
+                Pump(200);
+            }
+
             // 嵌套页签（② 快筛里的三张、③ 整线核算里的三张场图）也要各来一张 ——
             // 它们同样是「当前看不见」的那一类。
             foreach (var inner in Descendants(page).OfType<TabControl>())
@@ -66,6 +84,25 @@ public static class UiShot
                 }
             }
         }
+
+        // R35（用户 2026-09-11「所有 Excel 表格物件都检查一遍，不要有字体被挡住」）：窗体是真 Show 出来的，
+        //   这里量的是真像素 —— 每张表的表头高与每一行行高都得装得下自己的字。走查里窗体没 Show，量不到这个。
+        int grids = 0, bad = 0;
+        foreach (TabPage page in tabs.TabPages)
+        {
+            tabs.SelectedTab = page; Pump(200);
+            foreach (var g in Descendants(page).OfType<DataGridView>())
+            {
+                grids++;
+                int need = GridFmt.HeaderNeedPx(g);
+                var probs = new List<string>();
+                if (g.ColumnHeadersHeight < need) probs.Add($"表头 {g.ColumnHeadersHeight} px < 字需 {need} px");
+                foreach (DataGridViewRow r in g.Rows) if (r.Visible && r.Height < need) { probs.Add($"行 {r.Index} 高 {r.Height} px < 字需 {need} px"); break; }
+                if (probs.Count > 0) { bad++; index.Add($"⚠ 表格字被裁　「{page.Text}」▸ {(string.IsNullOrEmpty(g.Name) ? "（未命名表）" : g.Name)}：{string.Join("；", probs)}"); }
+            }
+        }
+        index.Add(bad == 0 ? $"表格自检：{grids} 张表，表头与行高都装得下字" : $"表格自检：{grids} 张表，{bad} 张字被裁（见上面 ⚠）");
+        if (bad > 0) Environment.ExitCode = 3;
 
         File.WriteAllText(Path.Combine(dir, "索引.txt"),
             string.Join(Environment.NewLine, index), new System.Text.UTF8Encoding(false));

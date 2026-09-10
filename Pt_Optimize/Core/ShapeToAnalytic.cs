@@ -71,6 +71,10 @@ public static class ShapeToAnalytic
         public bool HasRing => !double.IsNaN(RingW1Mm);
         /// <summary>图纸上舌片那一级的厚度 mm（覆盖舌端的那级）。R11 前解析模型舌片 = 基板，不同时标为近似。</summary>
         public double TabThickMm;
+        /// <summary>R35：图上舌片是锥形（舌根比舌端宽 1 mm 以上）⇒ 解析路勾「锥形舌片」（R31）。</summary>
+        public bool TabTaper;
+        /// <summary>R35：图上舌根那一段比杆厚（叉臂，R29）：臂厚与带的起点；NaN = 没有。解析路按 J 自己重定，这里只用来说明与对照。</summary>
+        public double TabArmThickMm = double.NaN, TabArmX0Mm = double.NaN;
         /// <summary>舌片那级与盘缘那级不同厚 ⇒ 解析模型（舌片 = 基板）是近似。</summary>
         public bool TabThickApproximated;
         /// <summary>近似与反推的说明。调用方**必须**原样呈现，不许吞。</summary>
@@ -136,6 +140,9 @@ public static class ShapeToAnalytic
             DiscDiameterMm = 2 * sh.DiscRadiusMm,
             TabLengthMm = Math.Abs(sh.TabEndXMm),
             TabHalfWidthMm = sh.TabEndHalfWidthMm,
+            TabTaper = !double.IsNaN(sh.TabRootHalfWidthMm) && sh.TabRootHalfWidthMm > sh.TabEndHalfWidthMm + 1.0,   // R35
+            TabArmThickMm = !double.IsNaN(sh.TabRootThickMm) && sh.TabRootThickMm > sh.TabEndThickMm + 0.05 ? sh.TabRootThickMm : double.NaN,
+            TabArmX0Mm = sh.TabArmX0Mm,
             WallMm = wall,
             PlateThickMm = baseT,
             LevelCount = sh.Levels.Count,

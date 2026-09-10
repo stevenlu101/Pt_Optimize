@@ -20,7 +20,7 @@ public sealed class MainForm : Form
     };
     private readonly RichTextBox _segOut = new();
     /// <summary>「② 粗算」分段结果的**真表格**（用户 2026-08-20：能用 Excel 格式就用）。</summary>
-    private readonly DataGridView _segResult = GridFmt.NewGrid();
+    private readonly DataGridView _segResult = GridFmt.NewGrid();   // 名字在构造函数里给（抓图表格自检点名用）
     private DesignInputs _in = new();
     private SolveResult? _res;
 
@@ -104,6 +104,10 @@ public sealed class MainForm : Form
         _segBind.DataSource = _segs;
         _segGrid.DataSource = _segBind;
         _segGrid.DataError += (_, e) => e.ThrowException = false;
+        // R35（用户 2026-09-11 抓图「字体被挡住了」）：表头高度原是控件默认 23 px，14.4 pt 的表头字被裁掉上半截。
+        //   表头与行高都按内容自算（与 GridFmt.Make 同一条规则），字号再变也不会再裁。
+        GridFmt.FitFont(_segGrid, "分段核算段表");
+        _segResult.Name = "分段核算结果表";
 
         _segOut.Dock = DockStyle.Fill;
         _segOut.Font = UiScale.Mono();
@@ -113,6 +117,7 @@ public sealed class MainForm : Form
 
         // ── 两页各自持有自己的控件与按钮
         var linePage = new LineDesignPage(_in) { Shared = _flow };
+        linePage.BaseParamsLoaded += () => { _grid.Refresh(); SelectFirstGridProperty(); };   // R35：载入记录后参数表重读（内径等）
         var toolsOwner = new AnalysisPage(_in) { Shared = _flow };
         _toolsOwner = toolsOwner;   // 它不再是页签，但控件被借出去了 —— 引用要留住
         _linePage = linePage;

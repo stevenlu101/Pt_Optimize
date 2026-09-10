@@ -47,6 +47,10 @@ public static class PlateShapeAnalyzer
         public double DiscRadiusMm;
         /// <summary>舌片末端 X mm（负值）与该处半宽 mm；无舌片时为 NaN</summary>
         public double TabEndXMm = double.NaN, TabEndHalfWidthMm = double.NaN;
+        /// <summary>R35（2026-09-11）：舌根（盘缘外 5 mm 处）的半宽 —— 比舌端宽 1 mm 以上就是锥形舌（R31）。</summary>
+        public double TabRootHalfWidthMm = double.NaN;
+        /// <summary>R35：舌端（压接段里）与舌根（盘缘外 5 mm）的板厚；舌根厚 > 舌端厚 + 0.05 ⇒ 有叉臂（R29），带从 TabArmX0Mm 到盘缘。</summary>
+        public double TabEndThickMm = double.NaN, TabRootThickMm = double.NaN, TabArmX0Mm = double.NaN;
         public List<Level> Levels = new();
         public Slots Slot = new();
         public double NetAreaMm2, VolumeMm3;
@@ -197,6 +201,42 @@ public static class PlateShapeAnalyzer
                 if (ixEnd >= 0 && ixEnd < f.Nx && f.T[ixEnd * f.Nz + iz] > 1e-6)
                     half = Math.Max(half, Math.Abs(f.Z0 + iz * step - cz));
             sh.TabEndHalfWidthMm = half;
+
+            // R35：舌根半宽与厚度（盘缘外 5 mm 那一列），舌端厚（舌端往里 45 mm，压接段里、避开舌孔）
+            double Col(double xWorld, out double halfW, out double tMax)
+            {
+                halfW = 0; tMax = 0;
+                int ix = (int)Math.Round((xWorld + cx - f.X0) / step);
+                if (ix < 0 || ix >= f.Nx) return double.NaN;
+                for (int iz = 0; iz < f.Nz; iz++)
+                {
+                    double t = f.T[ix * f.Nz + iz];
+                    if (t <= 1e-6) continue;
+                    halfW = Math.Max(halfW, Math.Abs(f.Z0 + iz * step - cz));
+                    tMax = Math.Max(tMax, t);
+                }
+                return xWorld;
+            }
+            double xRoot = -(sh.DiscRadiusMm + 5.0);
+            if (xRoot > minX + 10)
+            {
+                Col(xRoot, out double hwRoot, out double tRoot);
+                Col(minX + 45.0, out _, out double tEnd);
+                sh.TabRootHalfWidthMm = hwRoot;
+                sh.TabRootThickMm = tRoot; sh.TabEndThickMm = tEnd;
+                if (tRoot > tEnd + 0.05)
+                {
+                    // 从舌根往舌端扫，厚度落回舌端厚的第一列就是带的起点
+                    double x0 = xRoot;
+                    for (double x = xRoot; x > minX + 45.0; x -= step)
+                    {
+                        Col(x, out _, out double tx);
+                        if (tx <= tEnd + 0.05) break;
+                        x0 = x;
+                    }
+                    sh.TabArmX0Mm = x0;
+                }
+            }
         }
 
         // ── ④ 开槽 = 除管孔外的其余内部空腔（面积过小的当噪点丢掉）

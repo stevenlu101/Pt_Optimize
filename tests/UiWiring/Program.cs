@@ -58,7 +58,15 @@ class UiWiringTests {
     [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
     static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
 
-    static void Head(string s) { Console.WriteLine(); Console.WriteLine("=== " + s + " ==="); }
+    static Control? _watchPage;   // R35：每节开头看一眼防抖定时器，谁留下的一目了然
+    /// <summary>R35：本节动过用户控件（不是程序写值）⇒ 走前把防抖定时器停掉，别让 1.5 s 后自己起的解干扰后面的节。</summary>
+    static void StopAuto(object page) { if (F(page, "_autoTimer") is System.Windows.Forms.Timer t) t.Stop(); }
+    static void Head(string s)
+    {
+        Console.WriteLine(); Console.WriteLine("=== " + s + " ===");
+        if (_watchPage is not null && F(_watchPage, "_autoTimer") is System.Windows.Forms.Timer t && t.Enabled)
+            Console.WriteLine("  ⚠ 进入本节时防抖定时器挂着（上一节改了控件没收拾，1.5 s 后会自己起解）");
+    }
 
     /// <summary>
     /// 把页面**静置**下来：解除自动重算的武装、取消在跑的解、等它真的退出。
@@ -80,6 +88,16 @@ class UiWiringTests {
 
     [STAThread]
     static void Main(string[] args) {
+        // R35（2026-09-11）：被 DataGridView.DataError／绑定层吞掉的异常会让「触发自动重算」这类断言无声地红；
+        //   这里把发生在本仓 UI 代码里的首次机会异常印出来（每个调用点只印一次），红了就知道是哪一行抛的。
+        var seenFcx = new HashSet<string>();
+        AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
+        {
+            string st = e.Exception.StackTrace ?? "";
+            if (!st.Contains("PtOptimize.")) return;
+            var top = st.Split('\n').FirstOrDefault(l => l.Contains("PtOptimize."))?.Trim() ?? "";
+            if (seenFcx.Add(top)) Console.WriteLine($"  ⚠ 首次机会异常：{e.Exception.GetType().Name}: {e.Exception.Message}　@ {top}");
+        };
         // `--walk`：①→⑤ 全程走通并逐步核对（用户 2026-08-21）。
         // 与接线测试分开跑：那个验「接线对不对」，这个验「整条流程跑得完、数对不对」。
         if (args.Contains("--walk")) { Environment.ExitCode = Walk.Run(); return; }
@@ -157,6 +175,7 @@ class UiWiringTests {
         main.CreateControl();
         var tabs = (TabControl)F(main, "_tabs")!;
         var page = tabs.TabPages.OfType<LineDesignPage>().First();
+        _watchPage = page;
         typeof(Form).GetMethod("OnLoad", BindingFlags.NonPublic | BindingFlags.Instance)!
             .Invoke(main, new object?[] { EventArgs.Empty });
         Pump(1200);
@@ -841,6 +860,7 @@ class UiWiringTests {
             Check("勾上 ⇒ 设计 TabTaper=true", d1.TabTaper, "");
             Check("勾上 ⇒ 舌根切点按切线（比平行边更靠盘顶）", d1.TangentXMm() > d0.TangentXMm() + 1e-6, $"{d0.TangentXMm():0.0} → {d1.TangentXMm():0.0}");
             taper.Checked = false; Pump(150);
+            StopAuto(page);   // R35：勾／取消勾是用户操作 ⇒ 排了防抖，走前停掉
         }
 
         Head("16⁗″ 解法三选一（R32，用户 2026-09-10：不挖孔／挖孔两族各自最优、不比重量）");
@@ -858,6 +878,7 @@ class UiWiringTests {
             fam.SelectedIndex = 2; Pump(100);
             Check("两个都算 ⇒ 并列", (bool)both.GetValue(page)! && !(bool)allows.GetValue(page)!, "");
             fam.SelectedIndex = 0; Pump(100);
+            StopAuto(page);   // R35：切过解法下拉 ⇒ 排了防抖，走前停掉
         }
 
         Head("16⁗‴ .3dm 只要一个输入（R33，用户 2026-09-10：后面几段的法兰都一样，段数 N ⇒ 法兰 N+1）");
@@ -868,6 +889,54 @@ class UiWiringTests {
             Check("标签不再是片名代号", !labs.Any(l => l.Text.Contains("HC1|HC2") || l.Text.Contains("入口 .3dm")), "");
             var files = (TextBox[])F(page, "_file3dm")!;
             Check("各片的框都还在（求解、出图逐片走）", files.Length == ((NumericUpDown[])F(page, "_tPlate")!).Length, $"{files.Length}");
+        }
+
+        Head("16⁗⁗ 三条低欠账（R35）：叉臂只读标签、孔径 <1 mm 输入层拦、载入记录刷参数表");
+        {
+            var autoT = (System.Windows.Forms.Timer)F(page, "_autoTimer")!;
+            Check("进本节时没有挂着的防抖定时器（上面的节没有偷偷起解）", !autoT.Enabled && F(page, "_cts") is null, $"timer={autoT.Enabled} cts={(F(page, "_cts") is null ? "null" : "跑着")}");
+            var armLbls = (Label[])F(page, "_tongueArm")!;
+            var tpN = (NumericUpDown[])F(page, "_tPlate")!;
+            Check("叉臂只读标签逐片都在", armLbls.Length == tpN.Length && armLbls.All(a => a.Text == "—"), $"{armLbls.Length}/{tpN.Length}");
+            var dArm = DesignSpec.Builtin[0].Clone();
+            dArm.TabArmX0Mm[1] = -33; dArm.TabArmX1Mm[1] = 0; dArm.TabArmThickMm[1] = 5.34;
+            typeof(LineDesignPage).GetMethod("ShowTongues", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(page, new object[] { dArm });
+            Check("有叉臂的片显示「厚 × [起, 止]」", armLbls.Length > 1 && armLbls[1].Text.Contains("5.34") && armLbls[1].Text.Contains("[-33, 0]"), armLbls.Length > 1 ? armLbls[1].Text : "");
+            Check("没叉臂的片显示「—」", armLbls.Length > 0 && armLbls[0].Text == "—", armLbls.Length > 0 ? armLbls[0].Text : "");
+            var holesR = (NumericUpDown[])F(page, "_holeR")!;
+            Set(page, "_suppressAuto", true);
+            holesR[0].Value = 0.5m; Pump(50);
+            Check("孔径填 0.5 ⇒ 输入层拦成 1（R15：< 1 mm 的孔不考虑）", holesR[0].Value == 1m, $"{holesR[0].Value}");
+            holesR[0].Value = 0m; Pump(50);
+            Check("孔径填 0 ⇒ 不开孔，照填", holesR[0].Value == 0m, $"{holesR[0].Value}");
+            Set(page, "_suppressAuto", false);
+            var evLoaded = typeof(LineDesignPage).GetEvent("BaseParamsLoaded", BindingFlags.NonPublic | BindingFlags.Instance);
+            Check("载入记录会通知主窗体刷参数表（事件在）", evLoaded is not null, "");
+
+            // R35 抓图抓到的老虫：段改名只换标签时按位置猜后缀，R11 之后每加一组逐片行名字就错位一组
+            var plateBox = (TableLayoutPanel)F(page, "_plateBox")!;
+            var rename = typeof(LineDesignPage).GetMethod("RenamePlateRows", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            var origNames = (string[])typeof(LineDesignPage).GetMethod("PlateNames", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(page, null)!;
+            rename.Invoke(page, new object[] { new[] { "甲", "乙", "丙", "丁" } });
+            var texts = plateBox.Controls.OfType<Label>().Where(l => !l.Font.Bold).Select(l => l.Text).ToList();   // 标题（粗体）不算
+            Check("段改名后叉臂行名字带后缀", texts.Contains("甲 叉臂") && texts.Contains("丁 叉臂"), string.Join("／", texts.Where(t => t.Contains("叉臂"))));
+            Check("段改名后倍率行名字不带别组的后缀（原来显示成「入口 t₂」）", texts.Count(t => t == "甲") == 4 && texts.Count(t => t.EndsWith(" t₂")) == 4, $"裸名 {texts.Count(t => t == "甲")}／t₂ {texts.Count(t => t.EndsWith(" t₂"))}");
+            Check("段改名后槽／孔／舌孔形状行也跟着改", texts.Contains("乙 槽") && texts.Contains("丙 孔") && texts.Contains("丁 舌孔形状"), "");
+            Check("只读值标签没被当名字改掉（片 0 仍「—」、片 1 仍是回填的臂厚）", armLbls[0].Text == "—" && armLbls[1].Text.Contains("5.34"), string.Join("／", armLbls.Select(a => a.Text)));
+            rename.Invoke(page, new object[] { origNames });
+            Check("改回原名", plateBox.Controls.OfType<Label>().Any(l => l.Text == origNames[0] + " 叉臂"), "");
+            Check("本节没有留下防抖定时器（没有偷偷起解）", !autoT.Enabled && F(page, "_cts") is null, $"timer={autoT.Enabled} cts={(F(page, "_cts") is null ? "null" : "跑着")}");
+
+            // 用户 2026-09-11 两张抓图「字体被挡住了」「所有 Excel 表格物件都检查一遍」：每一张 DataGridView 都得按字定表头高与行高。
+            //   走查里窗体没 Show，量不到像素 —— 像素在 --uishot 的「表格自检」里量；这里扫的是每张表的模式。
+            static IEnumerable<Control> Desc(Control c) { foreach (Control k in c.Controls) { yield return k; foreach (var d in Desc(k)) yield return d; } }
+            var grids = Desc(main).OfType<DataGridView>().Concat(Desc(page).OfType<DataGridView>()).Distinct().ToList();
+            Check("找得到仓里的表（分段核算段表／结果表／分段控温点／判据表）", grids.Count >= 4, $"{grids.Count} 张：{string.Join("／", grids.Select(g => string.IsNullOrEmpty(g.Name) ? "（未命名）" : g.Name))}");
+            var badH = grids.Where(g => g.ColumnHeadersHeightSizeMode != DataGridViewColumnHeadersHeightSizeMode.AutoSize).Select(g => g.Name).ToList();
+            var badR = grids.Where(g => g.AutoSizeRowsMode == DataGridViewAutoSizeRowsMode.None).Select(g => g.Name).ToList();
+            Check("每张表的表头都按内容定高", badH.Count == 0, string.Join("／", badH));
+            Check("每张表的行高都按内容定", badR.Count == 0, string.Join("／", badR));
+            Check("每张表都有名字（抓图自检点得出名）", grids.All(g => !string.IsNullOrEmpty(g.Name)), "");
         }
 
         Head("17 输出框排版：不许出现 Markdown 源码，中文列宽要按显示宽度算");
@@ -1299,8 +1368,18 @@ class UiWiringTests {
             _ = segGrid22.Handle;
             int rows0 = segGrid22.Rows.Count;
             var rowType22 = segs22.GetType().GetGenericArguments()[0];
-            segs22.Add(Activator.CreateInstance(rowType22));
+            string St22() => $"segs={segs22.Count} 段数框={((NumericUpDown)F(page, "_segCount")!).Value} 片数已示={F(page, "_plateCountShown")} suppress={F(page, "_suppressAuto")} ready={F(page, "_userReady")} armed={F(page, "_autoArmed")} timer={((System.Windows.Forms.Timer)F(page, "_autoTimer")!).Enabled} 页表句柄={segGrid22.IsHandleCreated} 主表句柄={((DataGridView)F(main, "_segGrid")!).IsHandleCreated}";
+            // ★ R35：加的这一行要有名字 —— 没名字的段在 PlateNames／BuildCase 里都不算存在（表里多一行、法兰与段数框都不动），
+            //   工程师在表里加行时新行默认名是 DefaultValuesNeeded 给的（HC4），这里照那条路给名。
+            //   （2026-09-11 前这条断言过不过取决于上面的节有没有把 _plateCountShown 弄脏，不是在测它自己。）
+            var newRow22 = Activator.CreateInstance(rowType22)!;
+            rowType22.GetProperty("名称")!.SetValue(newRow22, "HC" + (segs22.Count + 1));
+            Set(page, "_autoArmed", false);   // 逼句柄那一步会把它重新武装起来 —— 这里要测的是「加行」本身，加行前先清零
+            Console.WriteLine("     加行前：" + St22());
+            segs22.Add(newRow22);
             Pump(120);
+            Console.WriteLine("     加行后：" + St22());
+            Check("段数框跟着段表走（R27：表 4 行框不能还是 3）", (int)((NumericUpDown)F(page, "_segCount")!).Value == segs22.Count, St22());
             Check("段表真的多出一行（否则下一条等于没测）",
                   segGrid22.Rows.Count > rows0, $"{rows0} → {segGrid22.Rows.Count} 行");
             Check("段表加一行会触发自动重算", (bool)F(page, "_autoArmed")! == true);

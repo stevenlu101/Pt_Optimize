@@ -68,6 +68,8 @@ public sealed class LineDesignPage : TabPage
     /// </summary>
     private readonly ComboBox _family = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = UiScale.S(300) };   // 抓图核对：260 时最长一项被截
     internal bool FamilyAllowsCuts => _family.SelectedIndex == 1;
+    /// <summary>R35（R30 欠账）：载入设计记录把内径等写回了参数表（DesignInputs）⇒ 主窗体的 PropertyGrid 要重读。</summary>
+    internal event Action? BaseParamsLoaded;
     internal bool FamilyBoth => _family.SelectedIndex == 2;
     // ★★★★★ 2026-09-02：这六个逐片数组原来都是**写死四个**的 readonly 字段。
     //   用户实测：段表加到 HC4（4 段）之后界面仍只有 4 片，而核心要 5 片
@@ -165,6 +167,14 @@ public sealed class LineDesignPage : TabPage
     private NumericUpDown[] _holeX = System.Array.Empty<NumericUpDown>();
     private Label[] _discShape = System.Array.Empty<Label>();
     private Label[] _holeShape = System.Array.Empty<Label>();
+    /// <summary>R35（2026-09-11，功能落地排查 R29「半」）：叉臂厚与带的只读标签，逐片；没有切口就是「—」。</summary>
+    private Label[] _tongueArm = System.Array.Empty<Label>();
+    /// <summary>
+    /// R35（2026-09-11 抓图抓到）：逐片行的名字标签登记（标签、片号、后缀）。段改名只换标签时按这张表改，
+    /// 不再按位置猜后缀 —— 原来那份 { "", "", "", " r₁ mm", " r₂ mm", " t₂" } 是 R11 之前的行序，
+    /// 之后每加一组逐片行（舌片厚、叉臂、槽、孔…）名字就整体错位一组（倍率行显示成「入口 t₂」）。
+    /// </summary>
+    private readonly System.Collections.Generic.List<(Label l, int idx, string suffix)> _plateRowNames = new();
     /// <summary>与 <see cref="_tongueFixed"/> 同一条生命周期：本页代表一份完整设计时，场定位置与形状原样带着；改参数就清掉回默认规则。</summary>
     private DesignSpec? _fixedDerived;
 
@@ -1000,12 +1010,32 @@ public sealed class LineDesignPage : TabPage
         //   人会以为这一段长度是 0（「显示的 ≠ 算的」正是本项目反复栽的形态）。
         _segGrid.DefaultValuesNeeded += (_, e) =>
         {
+            // R35（2026-09-11 走查 22 节抓到）：没名字的段在 PlateNames／BuildCase 里都被当成不存在 ⇒
+            //   表里多一行、法兰行与段数框都不动。新行一开始就给个名字（工程师可改），不留「有行没名」的状态。
+            e.Row.Cells[nameof(SegRow.名称)].Value = "HC" + (_segs.Count + 1);
             e.Row.Cells[nameof(SegRow.直接加热管长mm)].Value = _base.TubeLengthMm;
             e.Row.Cells[nameof(SegRow.控温C)].Value = _segs.Count > 0
                 ? _segs[^1].控温C : 1050.0;
         };
         _segGrid.DataSource = _segs;
         _segGrid.DataError += (_, e) => e.ThrowException = false;
+        GridFmt.FitFont(_segGrid, "分段控温点");   // R35：表头／行高按字算（用户 2026-09-11 抓图「字体被挡住了」）
+        // 表高跟着行数走：表头 + 各行 + 新行，夹在 60～260 之间（原来写死 110，字放大后第 4 行就得滚）
+        // ⚠ 不挂 _segGrid.RowsAdded/RowsRemoved（SegGridLayoutTests 钉着：那个事件只许挂带守卫的 SegsChanged 一个），
+        //   听绑定列表的 ListChanged，等表把行加完（BeginInvoke 排到后面）再量。
+        void FitSegGridHeight()
+        {
+            if (!_segGrid.IsHandleCreated) return;
+            _segGrid.BeginInvoke(new Action(() =>
+            {
+                if (!_segGrid.IsHandleCreated) return;
+                int h = _segGrid.ColumnHeadersHeight + _segGrid.Rows.GetRowsHeight(DataGridViewElementStates.Visible) + UiScale.S(6);
+                _segGrid.Height = Math.Clamp(h, UiScale.S(60), UiScale.S(260));
+            }));
+        }
+        _segGrid.HandleCreated += (_, _) => FitSegGridHeight();
+        _segs.ListChanged += (_, _) => FitSegGridHeight();
+        _segGrid.RowHeightChanged += (_, _) => FitSegGridHeight();
         input.Controls.Add(_segGrid);
         input.SetColumnSpan(_segGrid, 2);
 
@@ -2372,6 +2402,7 @@ public sealed class LineDesignPage : TabPage
         _wall.Value = C(fd.WallMm, _wall);
         _tubeIns.Value = C(fd.TubeInsulMm, _tubeIns);
         _base.TubeIdMm = fd.TubeIdMm;                           // R30：记录的内径写回参数表（几何只有一个来源）
+        BaseParamsLoaded?.Invoke();                             // R35：让参数表那一格跟着刷
         _jDesign.Value = C(fd.JDesignAPerMm2, _jDesign);     // 设计记录带着它的 J（旧档 = 预设 10）
         _discD.Value = C(2 * fd.DiscRadiusMm, _discD);
         _tabLen.Value = C(fd.TabLengthMm, _tabLen);
@@ -2866,6 +2897,8 @@ public sealed class LineDesignPage : TabPage
                 double v = double.IsNaN(d.TongueThickMm[i])
                     ? (i < d.TabThickMm.Length ? d.TabThickMm[i] : 0) : d.TongueThickMm[i];
                 _tongue[i].Value = Math.Clamp((decimal)v, _tongue[i].Minimum, _tongue[i].Maximum);
+                if (i < _tongueArm.Length)   // R35：叉臂只读标签
+                    _tongueArm[i].Text = d.HasTabArm(i) ? $"{d.TabArmThickMm[i]:0.00} mm × [{d.TabArmX0Mm[i]:0}, {d.TabArmX1Mm[i]:0}]" : "—";
             }
         }
         finally { _suppressAuto = old; }
@@ -3786,6 +3819,7 @@ public sealed class LineDesignPage : TabPage
         _checks.ColumnHeadersDefaultCellStyle.Font = UiScale.Ui(FontStyle.Bold);
         _checks.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(240, 240, 236);
         _checks.RowTemplate.Height = UiScale.S(22);
+        GridFmt.FitFont(_checks, "判据表");   // R35：表头高按字算（列宽仍 Fill）
         _checks.Columns.AddRange(
             new DataGridViewTextBoxColumn { Name = "kind", HeaderText = "类别", FillWeight = 8 },
             new DataGridViewTextBoxColumn { Name = "name", HeaderText = "判据", FillWeight = 34 },
@@ -4089,6 +4123,7 @@ public sealed class LineDesignPage : TabPage
         _plateBox.SuspendLayout();
         foreach (Control c in _plateBox.Controls.Cast<Control>().ToArray()) c.Dispose();
         _plateBox.Controls.Clear();
+        _plateRowNames.Clear();   // R35：逐片名字标签登记跟着重建
 
         _tPlate  = Enumerable.Range(0, n).Select(i => Num((decimal)vT[i], 0.10m, 8.0m, 0.02m, 3)).ToArray();
         _tabIns  = Enumerable.Range(0, n).Select(i => Ins()).ToArray();
@@ -4098,12 +4133,20 @@ public sealed class LineDesignPage : TabPage
         _ringT2  = Enumerable.Range(0, n).Select(i => Ring()).ToArray();
         _slotDeg = Enumerable.Range(0, n).Select(i => Slot()).ToArray();
         _holeR   = Enumerable.Range(0, n).Select(i => Hole()).ToArray();
+        // R35（功能落地排查 R15「半」）：孔径 < 1 mm 的孔不考虑 —— 输入层就拦，别等算完才说
+        foreach (var c in _holeR)
+            c.ValueChanged += (sender, _) =>
+            {
+                if (sender is NumericUpDown nn && nn.Value > 0 && nn.Value < 1m)
+                { nn.Value = 1m; _status.Text = "孔径 < 1 mm 的孔不考虑（最小 1 mm）—— 已按 1 mm；要不开孔就填 0"; }
+            };
         _holeAsp = Enumerable.Range(0, n).Select(i => HoleAsp()).ToArray();
         _tongue  = Enumerable.Range(0, n).Select(i => Tongue()).ToArray();
         _slotCenter = Enumerable.Range(0, n).Select(i => { var c = Num(0m, -180m, 180m, 1m, 0); c.Enabled = false; return c; }).ToArray();
         _holeX = Enumerable.Range(0, n).Select(i => { var c = Num(0m, -1000m, 0m, 0.1m, 1); c.Enabled = false; return c; }).ToArray();
         _discShape = Enumerable.Range(0, n).Select(i => new Label { Text = Solver.DiscShapeName(0), AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 4, 0) }).ToArray();
         _holeShape = Enumerable.Range(0, n).Select(i => new Label { Text = Solver.HoleShapeName(0), AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 4, 0) }).ToArray();
+        _tongueArm = Enumerable.Range(0, n).Select(i => new Label { Text = "—", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 4, 0) }).ToArray();   // R35：叉臂只读标签
         for (int i = 0; i < n; i++)
         {
             _tabIns[i].Value  = (decimal)Math.Clamp(vI[i],  (double)_tabIns[i].Minimum,  (double)_tabIns[i].Maximum);
@@ -4150,6 +4193,13 @@ public sealed class LineDesignPage : TabPage
             if (tip is not null) new ToolTip().SetToolTip(l, tip);
             _plateBox.Controls.Add(l);
             _plateBox.Controls.Add(c);
+            // R35：登记「这是第几片的哪一行」，段改名时按登记换字，不按位置猜
+            int hit = -1;
+            for (int i = 0; i < names.Length; i++) if (label == names[i]) { hit = i; break; }
+            if (hit < 0)
+                for (int i = 0; i < names.Length; i++)
+                    if (label.StartsWith(names[i] + " ") && (hit < 0 || names[i].Length > names[hit].Length)) hit = i;
+            if (hit >= 0) _plateRowNames.Add((l, hit, label.Substring(names[hit].Length)));
         }
 
         string tipPlate =
@@ -4204,6 +4254,9 @@ public sealed class LineDesignPage : TabPage
             "设计电流由 20 °C/h 空管升温算出，只与管、管保温、工况有关 ⇒ 改舌宽、开孔、改工况它才变，改圆盘板厚它不变。" + Environment.NewLine +
             "不低于板料下限（烧穿 0.6 mm）；向上落到图纸格 0.01 mm。";
         for (int i = 0; i < n; i++) Row(names[i], _tongue[i], tipTongue);
+        string tipArm = "R29：舌根有切口（舌孔／落到舌根的圆盘槽）时，切口那一段舌片按 I/(J·带内最窄宽) 加厚成叉臂，带外还是杆厚；" +
+                        "显示「臂厚 mm × [起点, 终点]」，没有切口就是「—」。求解器每动一次切口都闭式重算，不是旋钮。";
+        for (int i = 0; i < n; i++) Row($"{names[i]} 叉臂", _tongueArm[i], tipArm);   // R35
         Head("逐片舌保温 mm（不花铂的旋钮）");
         for (int i = 0; i < n; i++) Row(names[i], _tabIns[i], tipIns);
         Head("管孔渐变环倍率（1.00 = 无台阶）");
@@ -4381,12 +4434,10 @@ public sealed class LineDesignPage : TabPage
     /// <summary>段数没变、只是段改名时，只换标签，不重建控件（免得把值与监听都丢了）。</summary>
     private void RenamePlateRows(string[] names)
     {
-        var labs = _plateBox.Controls.Cast<Control>().OfType<Label>()
-                            .Where(l => l.Font.Bold == false).ToArray();
-        int k = 0;
-        foreach (string suffix in new[] { "", "", "", " r₁ mm", " r₂ mm", " t₂" })
-            for (int i = 0; i < names.Length && k < labs.Length; i++, k++)
-                labs[k].Text = names[i] + suffix;
+        // R35（2026-09-11）：按建行时的登记换字（片号 + 后缀），逐片行不论多少组都对得上；
+        // 只读值标签（「—」、舌孔形状那些）不在登记里，不会被当成名字改掉。
+        foreach (var (l, idx, suffix) in _plateRowNames)
+            if (idx < names.Length) l.Text = names[idx] + suffix;
     }
 
     /// <summary>
@@ -5047,6 +5098,7 @@ public sealed class LineDesignPage : TabPage
             _discD.Value = Clamp(_discD, k.DiscDiameterMm, "盘Ø");
             _tabLen.Value = Clamp(_tabLen, k.TabLengthMm, "舌长");
             _tabW.Value = Clamp(_tabW, k.TabHalfWidthMm, "舌半宽");
+            _tabTaper.Checked = k.TabTaper;                                  // R35：图上是锥形舌就勾上（R31）
             _wall.Value = Clamp(_wall, k.WallMm, "管壁");
             // ★★★★★ R8／R14（用户 2026-09-08）：图纸的各级厚度**逐级**进 r₁/t₁、r₂/t₂ 控件，不压平均。
             //   四个是**成对**的自由度，同一个勾管着；有台阶就勾「逐片自定」并全写，
@@ -5086,6 +5138,8 @@ public sealed class LineDesignPage : TabPage
           + "盘Ø " + k.DiscDiameterMm.ToString("0.0")
           + "　舌长 " + k.TabLengthMm.ToString("0.0")
           + "　舌半宽 " + k.TabHalfWidthMm.ToString("0.0")
+          + (k.TabTaper ? "　锥形舌（图上舌根比舌端宽，已勾「锥形舌片」）" : "")
+          + (!double.IsNaN(k.TabArmThickMm) ? $"　图上舌根有加厚段 {k.TabArmThickMm:0.00} mm（从 x={k.TabArmX0Mm:0} 到盘缘）—— 解析路按 J 自己重定叉臂，不照抄" : "")
           + "　管壁 " + k.WallMm.ToString("0.00")
           + "　基板厚 " + k.PlateThickMm.ToString("0.00") + " mm" + nl2
           + ringLine + nl2 + nl2

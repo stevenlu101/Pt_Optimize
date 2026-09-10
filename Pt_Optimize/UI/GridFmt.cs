@@ -19,6 +19,24 @@ namespace PtOptimize.UI;
 /// </summary>
 internal static class GridFmt
 {
+    /// <summary>
+    /// ★ R35（用户 2026-09-11 两张抓图：「字体被挡住了」「所有 Excel 表格物件都检查一遍，不要有字体被挡住」）：
+    /// 表头高、行高按内容自算，列宽没设 Fill 的也按内容（含表头）算 —— 控件默认表头 23 px，14.4 pt 的字被裁掉上半截。
+    /// 仓里每一张 DataGridView 都要过这里；走查 16⁗⁗ 节逐张扫模式，`--uishot` 的表格自检量像素。
+    /// </summary>
+    public static void FitFont(DataGridView g, string? name = null)
+    {
+        if (!string.IsNullOrEmpty(name) && string.IsNullOrEmpty(g.Name)) g.Name = name;
+        g.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
+        g.ColumnHeadersDefaultCellStyle.WrapMode = DataGridViewTriState.False;
+        if (g.AutoSizeRowsMode == DataGridViewAutoSizeRowsMode.None) g.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
+        if (g.AutoSizeColumnsMode == DataGridViewAutoSizeColumnsMode.None) g.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.AllCells;
+    }
+
+    /// <summary>表头字需要的最小高度（像素）：表头字高 + 上下各 2 px。抓图自检与走查都用这一个数。</summary>
+    public static int HeaderNeedPx(DataGridView g) =>
+        (int)Math.Ceiling((g.ColumnHeadersDefaultCellStyle.Font ?? g.Font).GetHeight()) + 4;
+
     public static DataGridView NewGrid()
     {
         var g = new DataGridView
@@ -43,6 +61,7 @@ internal static class GridFmt
         g.DefaultCellStyle.Font = UiScale.Ui();
         g.ColumnHeadersDefaultCellStyle.Font = UiScale.Ui(FontStyle.Bold);
         g.DefaultCellStyle.Padding = new Padding(UiScale.S(4), UiScale.S(2), UiScale.S(4), UiScale.S(2));
+        FitFont(g);   // R35：与其它表同一条规则
         return g;
     }
 
