@@ -264,6 +264,13 @@ public static class Solver
         (LineResult.Key.DiscTemp,  new[] { Knob.Insul, Knob.Ring, Knob.RingR1 }),    // ②″ 实测只有舌保温治得住；环倍率留作换形状时的候选
     };
 
+    /// <summary>R32：这条判据在这一族里可用的旋钮（不挖舌孔族剔掉舌孔两根）。ChooseKnob 与测试同一个口径。</summary>
+    public static Knob[] KnobsFor(string key, SolverOptions o)
+    {
+        var all = Allocation.FirstOrDefault(a => a.Key == key).Knobs ?? Array.Empty<Knob>();
+        return o.AllowTabCuts ? all : all.Where(k => k is not (Knob.TabHoleR or Knob.TabHoleAspect)).ToArray();
+    }
+
     public static SolverResult Solve(DesignSpec geometry, DesignInputs baseIn, SolverOptions opt,
                                      IProgress<string>? progress = null,
                                      CancellationToken cancel = default)
@@ -729,6 +736,8 @@ public static class Solver
 
         foreach (var k in knobs)
         {
+            // R32：不挖舌孔族 —— 舌孔两根旋钮不进候选（说清是族的选择，不是「开不出来」）
+            if (!opt.AllowTabCuts && k is Knob.TabHoleR or Knob.TabHoleAspect) { fails.Add($"{KnobName(k)} 本族不挖舌孔（解法选的是「不挖舌孔」）"); continue; }
             double lo = Get(d, k, j), hi = HiOfFor(d, baseIn, opt, k, j, res);
             // ★★★★★ **可证明空转的候选，直接跳过 —— 不花场解，也不改答案**（2026-09-06）。
             //
@@ -1053,9 +1062,12 @@ public static class Solver
         double q = QuantOf(opt, knob);
         double snapped = Math.Min(Math.Ceiling(hi / q - 1e-9) * q, HiOfFor(d, baseIn, opt, knob, j, res));
         double tongueBefore = j < d.TongueThickMm.Length ? d.TongueThickMm[j] : double.NaN;
+        double armBefore = j < d.TabArmThickMm.Length ? d.TabArmThickMm[j] : double.NaN;
         SetKnob(d, knob, j, snapped, baseIn, res);
         double tongueAfter = j < d.TongueThickMm.Length ? d.TongueThickMm[j] : double.NaN;
-        if (!double.IsNaN(tongueBefore) && !double.IsNaN(tongueAfter) && Math.Abs(tongueAfter - tongueBefore) > 1e-9)
+        double armAfter = j < d.TabArmThickMm.Length ? d.TabArmThickMm[j] : double.NaN;
+        bool armChanged = double.IsNaN(armBefore) != double.IsNaN(armAfter) || (!double.IsNaN(armAfter) && Math.Abs(armAfter - armBefore) > 1e-9);   // R29 补：叉臂变了也留痕（两案例仪器「留痕 0 次」）
+        if ((!double.IsNaN(tongueBefore) && !double.IsNaN(tongueAfter) && Math.Abs(tongueAfter - tongueBefore) > 1e-9) || armChanged)
             res.Trace.Add($"     {BranchMarks.TongueResized}：片{j} 杆 {tongueBefore:0.00} → {tongueAfter:0.00} mm{(d.HasTabArm(j) ? $"，叉臂 {d.TabArmThickMm[j]:0.00} mm×[{d.TabArmX0Mm[j]:0},{d.TabArmX1Mm[j]:0}]" : "")}（{KnobName(knob)} 落地后按 I/(J·最窄有效宽) 闭式重定，加厚只落在切口那一段；铂重已计入比价）");
         // ★ 「二分求根」这四个字对工程师没意义 —— 他要知道的是**凭什么信这个数**。
         //   单调性扫描（--monotone）的作用就在这句话里：抬到上界确实变好 = 这一点上单调，
@@ -1977,6 +1989,11 @@ public sealed class SolverOptions
     // ── 盒的**上界**。注意：起点永远是下界，上界只用来判「不可行」与做二分的右端。
     public double ThickHiMm = 6.0;
     public double InsHiMm   = 20.0;
+    /// <summary>
+    /// ★ R32（用户 2026-09-10：「R23(不挖孔)，R29(挖孔)，分别独立选出最优解，不比较重量」）：
+    /// false = 「不挖舌孔」族 —— 舌板开孔孔径／顺流拉长比不进候选，其余旋钮照旧；true = 「挖舌孔」族。两族各自从下角走到最小可行点，互不比价。
+    /// </summary>
+    public bool AllowTabCuts = true;
     public double RingHi    = 2.5;
 
     /// <summary>

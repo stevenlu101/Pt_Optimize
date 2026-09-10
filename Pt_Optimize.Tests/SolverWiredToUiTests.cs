@@ -56,10 +56,11 @@ public class SolverWiredToUiTests
     {
         string s = Ui("LineDesignPage.cs");
         // 数**真调用**（注释里也会提到它，不能算进去）
-        Assert.Equal(3, Regex.Matches(s, @"Task\.Run\(\(\) => Solver\.Solve\(").Count);
+        Assert.Equal(4, Regex.Matches(s, @"Task\.Run\(\(\) => Solver\.Solve\(").Count);   // R32（2026-09-10）：第四处 = 「两个都算」的挖舌孔族
         Assert.Contains("Solver.Solve(seed, _base,", s);      // 搜形状粗筛
         Assert.Contains("Solver.Solve(win.d, _base,", s);     // 搜形状精算
         Assert.Contains("Solver.Solve(seedD8, _base,", s);    // 自动定厚按钮
+        Assert.Contains("Solver.Solve(seedAlt, _base,", s);   // R32：两个都算 ⇒ 挖舌孔族
     }
 
     /// <summary>

@@ -60,9 +60,31 @@ public class SketchShapeTests
         sb.AppendLine($"═══ 导航网格解一次：{sw.Elapsed.TotalMinutes:0.0} 分　收敛 {lr.Converged}　全判据 {lr.AllOk}　合计 {lr.TotalMassG:0.0} g（法兰 {lr.FlangeMassG:0.0} g）");
         foreach (var c in lr.Checks)
             sb.AppendLine($"  {(c.Ok ? "✓" : c.Undetermined ? "？" : "✗")} {c.Name,-28} {c.Actual,10:0.000} / {c.Limit,-8:0.###} {c.Unit}　{c.Where}");
+        // 基板下界是哪一刀定的（⑥ 差 0.25 mm 的来源）：共用片非舌片截面按 J 排前三
+        var nonTab = SectionSizing.Cuts(d.Plate(1, d.DiscFloorMm(p)), res.DesignCurrent!.PlateA[1], d.ClampLengthMm).Where(c => !c.OnTab).OrderByDescending(c => c.JAPerMm2).Take(3);
+        sb.AppendLine("共用片非舌片截面（J 最大三刀，基板下界由它定）：" + string.Join("　", nonTab.Select(c => $"{c.Where} J={c.JAPerMm2:0.00}")));
+        File.WriteAllText(dump, sb.ToString());
+
+        // ★ 公平比：把这个形状交给求解器（舌保温等旋钮自由、导航网格 12 轮），看它在自己的族里能走到哪
+        sb.AppendLine(); sb.AppendLine("═══ 交给求解器（形状固定，旋钮自由，导航网格）═══");
+        File.WriteAllText(dump, sb.ToString());
+        var sw2 = System.Diagnostics.Stopwatch.StartNew();
+        void Append(string text)
+        {
+            for (int k = 0; k < 20; k++)
+            {
+                try { File.AppendAllText(dump, text); return; }
+                catch (IOException) { System.Threading.Thread.Sleep(200); }   // 外面有人在读这份档（监视器）⇒ 等一下再写
+            }
+        }
+        var sr = Solver.Solve(d, p, new SolverOptions { MaxRounds = 12 }, new Progress<string>(m => Append($"[{sw2.Elapsed.TotalMinutes,6:0.0} 分] {m}" + Environment.NewLine)));
+        sb.AppendLine($"═══ 求解器：耗时 {sw2.Elapsed.TotalMinutes:0.0} 分　场解 {sr.Solves} 次　可行 {sr.Feasible}　合计 {sr.MassG:0.0} g　停在：{sr.StopWhy}");
+        if (sr.Design is { } dd) sb.AppendLine("解出的设计：" + dd.Describe());
+        if (sr.Best is { } bb) foreach (var c in bb.Checks.Where(c => !c.Ok || c.Name.Contains("温降") || c.Name.Contains("截面")))
+            sb.AppendLine($"  {(c.Ok ? "✓" : c.Undetermined ? "？" : "✗")} {c.Name,-28} {c.Actual,10:0.000} / {c.Limit,-8:0.###} {c.Unit}　{c.Where}");
         sb.AppendLine();
         sb.AppendLine("对照：APP 自己搜出来的 Ø56/舌56 平行舌（不开孔）细网格全判据过 2603.8 g，③ 9.06/10 K（deliverable/细网格复算_盘56舌56.txt）。");
-        File.WriteAllText(dump, sb.ToString());
+        Append(sb.ToString()[sb.ToString().IndexOf("═══ 求解器：")..]);
         Assert.True(lr.Checks.Count() > 0);
     }
 }

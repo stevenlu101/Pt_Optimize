@@ -62,6 +62,13 @@ public sealed class LineDesignPage : TabPage
     private readonly NumericUpDown _tabW = Num(20m, 5m, 150m, 1m, 0);
     /// <summary>R31（2026-09-10）：锥形舌片 —— 两边从舌端两角切到圆盘，舌根按切线自动变宽（用户「拍脑袋」图上那种）。</summary>
     private readonly CheckBox _tabTaper = new() { Text = "锥形舌片（两边与圆盘相切，舌端窄、舌根宽）", AutoSize = true };
+    /// <summary>
+    /// ★ R32（用户 2026-09-10：「R23(不挖孔)，R29(挖孔)，分别独立选出最优解，不比较重量」）：解法三选一。
+    /// 0 不挖舌孔（舌孔旋钮不进候选）／1 挖舌孔／2 两个都算并列给出（先不挖再挖，各自走到最小可行点；写回页面的是不挖那族，另一族进「搜形状结果 ▾」由工程师选，APP 不比重量）。
+    /// </summary>
+    private readonly ComboBox _family = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = UiScale.S(300) };   // 抓图核对：260 时最长一项被截
+    internal bool FamilyAllowsCuts => _family.SelectedIndex == 1;
+    internal bool FamilyBoth => _family.SelectedIndex == 2;
     // ★★★★★ 2026-09-02：这六个逐片数组原来都是**写死四个**的 readonly 字段。
     //   用户实测：段表加到 HC4（4 段）之后界面仍只有 4 片，而核心要 5 片
     //   （SegmentCount => SetpointC.Length，FlangeCount = n+1）⇒ 算的是另一个零件。
@@ -366,6 +373,7 @@ public sealed class LineDesignPage : TabPage
         public double JDesign;
         public double Disc, TabLen, TabW;
         public bool Taper;                                   // R31：舌片边平行/锥形，改了上一次的解就不新鲜
+        public int Family;                                   // R32：解法族，换了族上一次的解就不新鲜
         // ★ 定尺寸器带回来的另外两个旋钮（2026-08-25）。**必须进快照** ——
         //   它们参与判据（舌保温是守 管孔净流入/③ 的主力），却没有页面控件；
         //   不进快照就会「换了旋钮而 Fresh 不变」= 假新鲜。
@@ -527,7 +535,8 @@ public sealed class LineDesignPage : TabPage
 
     private static string ShapeRowText((DesignSpec d, double mass, bool ok, string msg) r)
     {
-        string geo = $"盘Ø{2 * r.d.DiscRadiusMm:0}／舌 {r.d.TabLengthMm:0}×{2 * r.d.TabHalfWidthMm:0}";
+        string fam = r.d.Provenance is { } pv && pv.Contains("解法：", StringComparison.Ordinal) ? "［" + pv[(pv.IndexOf("解法：", StringComparison.Ordinal) + 3)..].Split('；')[0] + "］" : "";   // R32
+        string geo = $"{fam}盘Ø{2 * r.d.DiscRadiusMm:0}／舌 {r.d.TabLengthMm:0}×{2 * r.d.TabHalfWidthMm:0}";
         if (r.ok && !double.IsNaN(r.mass)) return $"{geo}　{r.mass:0} g　✓ 可行";
         string why = (r.msg ?? "").Replace("\r", " ").Replace("\n", " ").Trim();
         if (why.Length > 48) why = why[..48] + "…";
@@ -612,6 +621,7 @@ public sealed class LineDesignPage : TabPage
         TabLen = (double)_tabLen.Value,
         TabW = (double)_tabW.Value,
         Taper = _tabTaper.Checked,
+        Family = _family.SelectedIndex,
         // ★★ 2026-08-25：改读**控件**。此前是 `_sizerX ?? DesignSpec.Current.X` ——
         //   定尺寸没跑过时，快照记的是**设计记录**的值，而实际计算用的也是它
         //   ⇒ 「参数没变」判得对，但两边一起错。现在控件是唯一来源，快照跟着控件走，
@@ -936,6 +946,9 @@ public sealed class LineDesignPage : TabPage
         Row("舌片长度 mm", _tabLen, "省铂宜短；但舌片越长形状数 Ψ 越小、局部越不易过热");
         Row("舌端半宽 mm", _tabW);
         Row("舌片边", _tabTaper, "不勾 = 平行边（舌根与舌端同宽）；勾 = 锥形，两边是舌端两角到圆盘的切线，舌根自动变宽");   // R31
+        _family.Items.AddRange(new object[] { "不挖舌孔", "挖舌孔（叉臂随孔加厚）", "两个都算，并列给出" });
+        _family.SelectedIndex = 0;
+        Row("解法", _family, "两族各自从约束盒下角走到最小可行点，互不比价；「两个都算」要两倍时间，写回页面的是不挖那族，另一族在「搜形状结果 ▾」里");   // R32
 
         // ★★★★★ 逐片输入：**行数按段数生成**（2026-09-02）。
         //   原来是四段写死的 `for i < 4`。用户实测段表加到 HC4 之后界面仍只有 4 片，
@@ -2946,6 +2959,7 @@ public sealed class LineDesignPage : TabPage
         sb.AppendLine($"盘径由判据「圆盘盖得住管孔＋焊脚」**闭式定下界**（不用搜）；下界不可行就二分。每点先筛 {screenRounds} 轮，胜出者跑 {finalRounds} 轮。");
         sb.AppendLine($"自由段下界 {FreeTabMin:0} mm（判据「舌片自由段」）　压接段 {DesignSpec.Current.ClampLengthMm:0} mm");
         sb.AppendLine("★ 舌长不是搜出来的，是**算出来的**：切点 + 压接段 + 自由段。");
+        sb.AppendLine(FamilyAllowsCuts ? "解法：挖舌孔那族（舌孔旋钮进候选）" : "解法：不挖舌孔那族（舌孔旋钮不进候选；「两个都算」在搜形状里按不挖跑，挖的那族请在核算整线里看）");   // R32
         sb.AppendLine("随时可以点「取消」——**已经算完的形状结果不会丢**。");
         sb.AppendLine();
         // ⚠ 表头必须是 sb 的**最后一行**，后面不能垫空行：下面的数据行是随算随
@@ -3008,7 +3022,7 @@ public sealed class LineDesignPage : TabPage
                     //   先量再改：不量就动，等于又一次「没算成本就下手」。
                     var swPt = System.Diagnostics.Stopwatch.StartNew();
                     var sr = await Task.Run(() => Solver.Solve(seed, _base,
-                                 new SolverOptions { MaxRounds = screenRounds,
+                                 new SolverOptions { AllowTabCuts = FamilyAllowsCuts, MaxRounds = screenRounds,
                                                      ScreenCoarseMm = SearchScreenCoarseMm },
                                  prog2, ct), ct);
                     swPt.Stop();
@@ -3264,7 +3278,7 @@ public sealed class LineDesignPage : TabPage
             var (finFine, finFineR) = MeshVerify.RequiredMeshFor(win.d);
             int finRound = 0;
             var fin = await Task.Run(() => Solver.Solve(win.d, _base,
-                          new SolverOptions { MaxRounds = finalRounds,
+                          new SolverOptions { AllowTabCuts = FamilyAllowsCuts, MaxRounds = finalRounds,
                                               FineMm = finFine, FineRadiusMm = finFineR },
                           new Progress<string>(s => OnUi(() =>
                           {
@@ -3526,10 +3540,24 @@ public sealed class LineDesignPage : TabPage
                     //     形状用的是同一条路（两遍 Solve），网格口径同一个来源
                     //     （MeshVerify.RequiredMeshFor），求根的网格与判决的网格才是同一张。
                     double fineRadiusD8 = fineMm > 0 ? MeshVerify.RequiredMeshFor(seedD8).RadiusMm : 0;
-                    var srD8 = await Task.Run(() => Solver.Solve(seedD8, _base,
-                                   new SolverOptions { MaxRounds = 40,
-                                                        FineMm = fineMm, FineRadiusMm = fineRadiusD8 },
-                                   prog, ct), ct);
+                    // ★ R32：解法族 —— 0 不挖舌孔／1 挖舌孔／2 两个都算并列给出（先不挖再挖，同一个起点各自走到最小可行点，不比重量）
+                    int fam = _family.SelectedIndex;
+                    SolverOptions OptsFor(bool cuts) => new SolverOptions { MaxRounds = 40, FineMm = fineMm, FineRadiusMm = fineRadiusD8, AllowTabCuts = cuts };
+                    static void TagFamily(SolverResult sr, bool cuts)
+                    {
+                        if (sr.Design is { } dd)
+                            dd.Provenance = ((dd.Provenance ?? "").Trim() + (cuts ? "；解法：挖舌孔" : "；解法：不挖舌孔")).TrimStart('；');
+                    }
+                    var seedAlt = seedD8.Clone();
+                    var srD8 = await Task.Run(() => Solver.Solve(seedD8, _base, OptsFor(fam == 1), prog, ct), ct);
+                    TagFamily(srD8, fam == 1);
+                    SolverResult? srAlt = null;
+                    if (fam == 2)
+                    {
+                        _out.AppendText(Environment.NewLine + "── 解法「两个都算」：不挖舌孔那族解完了，接着解挖舌孔那族（同一个起点，各自走到最小可行点，不比重量）" + Environment.NewLine);
+                        srAlt = await Task.Run(() => Solver.Solve(seedAlt, _base, OptsFor(true), prog, ct), ct);
+                        TagFamily(srAlt, true);
+                    }
                     // ★★★ 顶到上界 = **不可行的证明** ⇒ 记下来，指路才不会把人推回同一个按钮。
                     //   ⚠ 只有 HitBound 才算证明；Feasible=false 但 HitBound=false 是「没搜到」，
                     //     那种再点一次是有意义的，不能一并堵掉。
@@ -3563,6 +3591,23 @@ public sealed class LineDesignPage : TabPage
                             + "   ⇒ **下一步点「◆ 加密复算（算到数不再变）」**（本页工具条，10～40 分钟，可取消）。"
                             + "没过这一关，「交付」的门不会开。" + Environment.NewLine);
                     AdoptSolvedDesign(srD8.Design, srD8.Best);   // 统一入口
+                    if (srAlt is not null)
+                    {
+                        // R32：两族并列，APP 不替工程师挑；写回页面的是不挖那族，挖的那族进「搜形状结果 ▾」，选它就写回
+                        string FamLine(SolverResult s, string nm)
+                        {
+                            var b = s.Best;
+                            double dip = b?.Checks.FirstOrDefault(c => c.Name == LineResult.Key.FlangeDip)?.Actual ?? double.NaN;
+                            double sj = b?.Checks.FirstOrDefault(c => c.Name == LineResult.Key.SectionJ)?.Actual ?? double.NaN;
+                            return $"   {nm}　{(s.Feasible ? "可行" : "不可行")}　合计 {s.MassG:0.0} g　法兰增量温降 {dip:0.00} K　法兰截面 J {sj:0.00}　{s.StopWhy}";
+                        }
+                        _out.AppendText(Environment.NewLine + "★ 两族并列（各自最优，不比重量 —— 你来选）：写回页面的是「不挖舌孔」；「挖舌孔」在「搜形状结果 ▾」里，选它就写回。"
+                            + Environment.NewLine + FamLine(srD8, "不挖舌孔") + Environment.NewLine + FamLine(srAlt, "挖舌孔　") + Environment.NewLine);
+                        var rowsFam = new List<(DesignSpec d, double mass, bool ok, string msg)> { (srD8.Design, srD8.MassG, srD8.Feasible, srD8.Message) };
+                        if (srAlt.Design is not null) rowsFam.Add((srAlt.Design, srAlt.MassG, srAlt.Feasible, srAlt.Message));
+                        _shapeRows = rowsFam;
+                        RefreshShapePick();
+                    }
                     // ★★★★★ 同上：必须发布，否则提示与门禁读的是冻住的旧解（见上一分支的长注释）。
                     //
                     // ⚠ 但**不能**像上一分支那样标成「新鲜」：D8 的解含**舌保温**与**环倍率**，

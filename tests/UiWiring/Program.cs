@@ -843,6 +843,23 @@ class UiWiringTests {
             taper.Checked = false; Pump(150);
         }
 
+        Head("16⁗″ 解法三选一（R32，用户 2026-09-10：不挖孔／挖孔两族各自最优、不比重量）");
+        {
+            var fam = (ComboBox)F(page, "_family")!;
+            Control? pf = fam; while (pf is not null && pf is not TabPage) pf = pf.Parent;
+            Check("解法下拉挂在「① 输入」页上", pf is TabPage tpF && tpF.Text.Contains("①"), pf is TabPage tpy ? tpy.Text : "（没找到 TabPage）");
+            Check("三个选项：不挖舌孔／挖舌孔／两个都算", fam.Items.Count == 3 && fam.Items[0]!.ToString()!.Contains("不挖") && fam.Items[1]!.ToString()!.Contains("挖舌孔") && fam.Items[2]!.ToString()!.Contains("两个都算"), $"{fam.Items.Count}");
+            Check("默认不挖舌孔", fam.SelectedIndex == 0, $"{fam.SelectedIndex}");
+            var allows = typeof(LineDesignPage).GetProperty("FamilyAllowsCuts", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            var both = typeof(LineDesignPage).GetProperty("FamilyBoth", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            Check("不挖 ⇒ 舌孔旋钮不进候选", !(bool)allows.GetValue(page)! && !(bool)both.GetValue(page)!, "");
+            fam.SelectedIndex = 1; Pump(100);
+            Check("挖舌孔 ⇒ 舌孔旋钮进候选", (bool)allows.GetValue(page)!, "");
+            fam.SelectedIndex = 2; Pump(100);
+            Check("两个都算 ⇒ 并列", (bool)both.GetValue(page)! && !(bool)allows.GetValue(page)!, "");
+            fam.SelectedIndex = 0; Pump(100);
+        }
+
         Head("17 输出框排版：不许出现 Markdown 源码，中文列宽要按显示宽度算");
         // 用户 2026-08-17 反馈「文挡好乱」。两个病：
         //   ① `**粗体**` 是 Markdown，而输出框显示纯文本 ⇒ 满屏星号；

@@ -48,7 +48,11 @@ BIN="$ROOT/Pt_Optimize/bin/Release/net8.0-windows"
 #  ⇒ 不靠记性，靠这一步。只杀本仓自己的产物进程，不碰别的。
 # ============================================================================
 echo "── 清残留进程（testhost / Pt_Optimize.Geom / Pt_Optimize）"
-for proc in testhost Pt_Optimize.Geom Pt_Optimize; do
+# ★ 2026-09-10：只杀**从 bin\Release 起的** testhost（钩子自己上一轮留下的），别杀从 bin\scratch* 起的 ——
+#   那是长仪器（几十分钟到几小时的慢门）在跑，提交一次就把它们杀掉、数据作废（当天就栽了一次）。
+#   Pt_Optimize.Geom / Pt_Optimize 仍按映像名杀（它们锁的是 Release 目录）。
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { \$_.Name -eq 'testhost.exe' -and \$_.CommandLine -like '*bin\\Release\\*' } | ForEach-Object { Write-Host ('     残留 testhost（Release）pid ' + \$_.ProcessId + ' ⇒ 结束它'); Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }" 2>/dev/null || true
+for proc in Pt_Optimize.Geom Pt_Optimize; do
   # tasklist 找得到才杀，避免每次都打一堆红字
   if tasklist //FI "IMAGENAME eq $proc.exe" 2>/dev/null | grep -qi "$proc.exe"; then
     echo "     残留 $proc.exe ⇒ 结束它（否则它锁住的那个子项目会**静默地不重编**）"
