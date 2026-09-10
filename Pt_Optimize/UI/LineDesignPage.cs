@@ -1,6 +1,7 @@
 ﻿using System.ComponentModel;
 using System.IO;
 using System.Text;
+using System.Threading;
 using PtOptimize.Core;
 
 namespace PtOptimize.UI;
@@ -2910,7 +2911,114 @@ public sealed class LineDesignPage : TabPage
                         (sr.HitBound ? $"（⚠ {sr.StopWhy}）" : "") + "\r\n");
             }
 
+            // ★★★★★ R36（2026-09-11，同进程 4 路并行）：⑥「剩余舌宽比例」与 ⑦「邻域探索」
+            //   本轮内候选互相独立（deliverable/搜形状并行化_审查_2026-09-09.md 第 0 节结论）
+            //   ⇒ 改成批量并发；③④⑤（不动点迭代／二分／黄金分割）与 ⑧（精算）逐次依赖，
+            //   仍然走上面 EvalShape 的单点 await 路径，一行未动。
+            //
+            //   门 = 串行（lanes=1）与并行（lanes=4）逐位相同：PageToDesignSpec() 这类
+            //   UI 线程同步前缀在这里**先做完**（审查第 3 节：不能挪到别的线程），
+            //   真正并发的只有 Solver.Solve 本身——它是纯函数（审查第 1、2 节：Solve
+            //   入口先 Clone，Core 侧没有会被搜形状碰到的共享可变状态），谁先算完
+            //   不影响各自的结果，也不影响下面收尾时按候选原顺序贴回 rows/_out。
+            async Task EvalShapesBatch(IReadOnlyList<(double R, double hw)> pts)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (pts.Count == 0) return;
 
+                // ── 准备（UI 线程，同步）：早筛「造不出来」的盘径 + 组好每个候选的
+                //   DesignSpec，与 EvalShape 同一套判据（GeometryScreen.MinDiscRadiusMm）；
+                //   挪到批前面一次做完，好让下面的求解真正并发。
+                double wall6c = (double)_wall.Value;
+                double minDisc2 = GeometryScreen.MinDiscRadiusMm(
+                    holeRadiusMm: wall6c + 25.0, thickMm: _base.WeldMinThicknessMm, wallMm: wall6c);
+                var tag = new string[pts.Count];
+                var skip = new bool[pts.Count];
+                var skipMsg = new string[pts.Count];
+                var specs = new List<DesignSpec>(pts.Count);
+                for (int i = 0; i < pts.Count; i++)
+                {
+                    var (R, hw) = pts[i];
+                    tag[i] = $"盘Ø{2 * R:0}／舌宽{2 * hw:0}";
+                    if (R < minDisc2 - 1e-9)
+                    {
+                        skip[i] = true;
+                        skipMsg[i] = $"跳过：管壁 {(double)_wall.Value:0.0} 时盘半径至少要 {minDisc2:0.0}（判据 {Criteria.Explain("⑥")}）";
+                        continue;
+                    }
+                    var seed = PageToDesignSpec();
+                    seed.DiscRadiusMm = R;
+                    seed.TabHalfWidthMm = hw;
+                    seed.TabLengthMm = Math.Sqrt(Math.Max(0, R * R - hw * hw))
+                                       + seed.ClampLengthMm + FreeTabMin;
+                    specs.Add(seed);
+                }
+
+                // ── 求解（并发，最多 4 路）：批内互不依赖，solveOne 是纯函数
+                //   （见 Core/ShapeBatchEval.cs 类头注释）。
+                int batchBase = done;
+                int roundsDone = 0;
+                // ★ 界面控件属性只能在 UI 线程读：下面的 lambda 跑在线程池，所以「解法」族在这里先取成局部值再带进去
+                //   （合入时审出：原来在 lambda 里直接读 FamilyAllowsCuts ⇒ 跨线程读 ComboBox）。
+                bool allowCutsBatch = FamilyAllowsCuts;
+                ShapeBatchEval.Outcome<(SolverResult sr, TimeSpan elapsed)>? outcome = null;
+                if (specs.Count > 0)
+                {
+                    outcome = await ShapeBatchEval.RunAsync(specs, (spec, tok) =>
+                    {
+                        // ★ 这段跑在线程池线程上（ShapeBatchEval 内部 Task.Run），Progress<T>
+                        //   构造时捕获不到 UI 同步上下文 ⇒ 自己的回调必须显式 OnUi 封送，
+                        //   不能指望 Progress<T> 自动回主线程（审查第 3 节点名的那个坑）。
+                        // 回调整段回 UI 线程（SegGridLayoutTests 钉着：每一处 Progress 都得是 s => OnUi(...)）；
+                        //   计数在 UI 线程上做，天然串行，不必 Interlocked。
+                        var prog2 = new Progress<string>(s => OnUi(() =>
+                        {
+                            if (!s.StartsWith("第", StringComparison.Ordinal)) return;
+                            roundsDone++;
+                            _prog.Value = Math.Min(_prog.Maximum, batchBase + roundsDone);
+                        }));
+                        var swPt = System.Diagnostics.Stopwatch.StartNew();
+                        var r = Solver.Solve(spec, _base,
+                            new SolverOptions { AllowTabCuts = allowCutsBatch, MaxRounds = screenRounds,
+                                                 ScreenCoarseMm = SearchScreenCoarseMm },
+                            prog2, tok);
+                        swPt.Stop();
+                        return (r, swPt.Elapsed);
+                    }, lanes: 4, ct);
+                }
+
+                // ── 收尾（UI 线程，按候选原顺序）：与 EvalShape 单点路径同一套追加逻辑——
+                //   只是从「算完一个贴一个」变成「批完了按原顺序一起贴」，贴出来的内容
+                //   逐位相同，只是送达 _out 的时机从批内穿插变成批完一起送达。
+                int si = 0;
+                for (int i = 0; i < pts.Count; i++)
+                {
+                    var (R, hw) = pts[i];
+                    if (skip[i])
+                    {
+                        done += screenRounds; _prog.Value = Math.Min(_prog.Maximum, done);
+                        Note($"跳过 盘Ø{2 * R:0}（判据 {Criteria.Explain("⑥")} 早筛）");
+                        _out.AppendText($"{2 * R:0}\t—\t—\t—\t{skipMsg[i]}\r\n");
+                        continue;
+                    }
+                    int idx = si++;
+                    done += screenRounds; _prog.Value = Math.Min(_prog.Maximum, done);
+                    // 批内被取消打断：这个候选没跑完，不留痕（与串行「没轮到就没有输出」一致）。
+                    if (outcome is null || !outcome.Done[idx]) continue;
+                    var (sr, elapsed) = outcome.Results[idx];
+                    Note($"{tag[i]} 已完成　{(double.IsNaN(sr.MassG) ? "未解出（看停因）" : sr.MassG.ToString("0") + " g")}");
+                    rows.Add((sr.Design, sr.MassG, sr.Feasible, sr.Message));
+                    _out.AppendText(
+                        $"{2 * R:0}\t{2 * hw:0}\t{sr.Design.TabLengthMm:0}\t" +
+                        $"{elapsed.TotalMinutes:0.0}\t" +
+                        (double.IsNaN(sr.MassG) ? "—" : sr.MassG.ToString("0")) +
+                        $"\t{(sr.Feasible ? "✓ " : "")}{sr.Message}" +
+                        (sr.HitBound ? $"（⚠ {sr.StopWhy}）" : "") + "\r\n");
+                }
+                // ★ 已经算完的都已经贴进 rows/_out 了才轮到这里——「已经算完的形状结果不会丢」
+                //   在并行批次下依然成立（ShapeBatchEval 类头注释）。
+                if (outcome is { Cancelled: true }) ct.ThrowIfCancellationRequested();
+            }
 
             // ── 第 1 轮：网格粗筛。它的作用是**给出发点与方向**，不是最终答案。
             // ★ **先把工程师现在这个形状算一遍**（2026-08-25）。
@@ -3040,12 +3148,15 @@ public sealed class LineDesignPage : TabPage
             }
 
             // ③ 在最优盘径上把其余舌宽比例各试一次（舌宽是另一维，不由 ⑥ 决定）
-            foreach (double f in wFrac)
-                if (Math.Abs(f - fWide) > 1e-9)
-                {
-                    _prog.Maximum += screenRounds;
-                    await EvalShape(Rbest, Rbest * f);
-                }
+            // ★ R36：这一批候选（盘径都是 Rbest）本轮内互相独立 ⇒ 走 EvalShapesBatch，
+            //   4 路并发；_prog.Maximum 按整批一次性加（审查 P2：不在批内逐次累加）。
+            var batch6 = wFrac.Where(f => Math.Abs(f - fWide) > 1e-9)
+                               .Select(f => (Rbest, Rbest * f)).ToList();
+            if (batch6.Count > 0)
+            {
+                _prog.Maximum += batch6.Count * screenRounds;
+                await EvalShapesBatch(batch6);
+            }
 
             // ── 之后每一轮：从当前最好点出发，试四个邻点（盘径 ±5、舌宽比例 ±0.125）。
             //    有更好的就搬过去继续；**一个都没更好就停** —— 这正是用户 2026-08-25 要的
@@ -3098,7 +3209,10 @@ public sealed class LineDesignPage : TabPage
                 _prog.Maximum += todo.Count * screenRounds;
                 _out.AppendText(NL2 + $"第 {ext + 1} 轮 · 从 盘Ø{2 * R0:0}／舌宽{2 * hw0:0}"
                               + $"（{before:0} g）出发，试 {todo.Count} 个邻点" + NL2);
-                foreach (var (R2, hw2) in todo) await EvalShape(R2, hw2);
+                // ★ R36：4 个邻点本轮内互相独立（ShapeSearchPlan.Neighbours 的结构性保证，
+                //   见 deliverable/搜形状并行化_审查_2026-09-09.md 第 0 节）⇒ 4 路并发跑，
+                //   不再逐个 await EvalShape(。
+                await EvalShapesBatch(todo);
 
                 double after = BestMass();
                 bool better = ShapeSearchPlan.Improved(before, after);   // 唯一一份口径
