@@ -42,6 +42,8 @@ public static class BranchMarks
 
     /// <summary>Solver.RaiseUntil：**抬之前**那一点就判不了（场解不收敛/不存在）。</summary>
     public const string UndeterminedBefore = "★ 走到了「抬前判不了」";
+    /// <summary>R23（2026-09-10）：切口旋钮落地后舌片厚按 I/(J·最窄有效宽) 闭式重定 —— 这条分支真的被走到。</summary>
+    public const string TongueResized = "★ 舌片厚随切口重定";
 
     /// <summary>Solver.RaiseUntil：抬到**上界**那一点判不了 ⇒ 上界存疑。</summary>
     public const string UndeterminedAtHi = "★ 走到了「上界判不了」";

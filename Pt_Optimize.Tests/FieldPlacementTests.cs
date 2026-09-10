@@ -129,8 +129,33 @@ public class FieldPlacementTests
     /// 本门钉住真相：真解一次场、真调一次 <see cref="Solver.FieldPlacement"/>，孔心数组必须仍是 NaN，
     /// <see cref="DesignSpec.TabHoleCenterXMm(int)"/> 落到默认规则（与 <see cref="DesignSpec.TabHoleCenterXMm()"/> 相同）。
     /// </summary>
+    /// <summary>R23（2026-09-10）：孔心规则**启用**——开孔前每轮按场写回 <c>TabHoleXMm</c>，落在压接段之外、切点之内。</summary>
     [Fact]
-    public void 孔心场给的位置只打印不写回数组()
+    public void 孔心场给的位置_开孔前采用写回数组()
+    {
+        var d = DesignSpec.Builtin[0].Clone();
+        for (int j = 0; j < d.TabHoleRMm.Length; j++) d.TabHoleRMm[j] = 0;    // 还没开孔
+        var baseIn = new DesignInputs();
+        var lc = d.BuildCase(baseIn, checkRamp: false);
+        var last = LineRunner.Run(lc, null, default);
+        Assert.True(last.Ok, "本门要一个收敛的场做基准");
+        Assert.All(d.TabHoleXMm, v => Assert.True(double.IsNaN(v)));
+
+        Solver.FieldPlacement(d, baseIn, last, log: null);
+
+        double floor = d.DiscFloorMm(baseIn);
+        for (int j = 0; j < d.FlangeCount; j++)
+        {
+            double x = d.TabHoleXMm[j];
+            Assert.False(double.IsNaN(x), $"片{j} 开孔前场给的孔心该写回（R23）");
+            double xTan = d.Plate(j, floor).Tangent().X, xClamp = -d.TabLengthMm + d.ClampLengthMm;
+            Assert.InRange(x, xClamp + 2.0 - 1e-9, xTan - 2.0 + 1e-9);
+        }
+    }
+
+    /// <summary>R23：孔一开，孔心就冻结（与槽心同规则）—— 已提交几何不许非单调。</summary>
+    [Fact]
+    public void 孔心场给的位置_已开孔就冻结不写回()
     {
         var d = DesignSpec.Builtin[0].Clone();
         d.TabHoleRMm = new[] { 5.0, 5.0, 5.0, 5.0 };   // 每片都有孔 ⇒ FieldPlacement 真的会走到 RemovalPriority.TabHoleXMm 那条计算

@@ -113,7 +113,7 @@ public class ComboAccumulateTests
     {
         string s = Src();
         Assert.Contains("二分：找「刚好不违反」的最小值", s);
-        Assert.Contains("Set(d, knob, j, snapped);", s);
+        Assert.Contains("SetKnob(d, knob, j, snapped, baseIn, res);", s);   // R23：写旋钮走 SetKnob（动切口就重定舌片厚）
     }
 
     /// <summary>
@@ -138,7 +138,7 @@ public class ComboAccumulateTests
         string s = Src();
         int at = s.IndexOf("bool kept = ", StringComparison.Ordinal);
         Assert.True(at > 0);
-        Assert.Contains("Set(d, knob, j, lo);        // 一点没变好", s[at..]);
+        Assert.Contains("SetKnob(d, knob, j, lo, baseIn, res);        // 一点没变好", s[at..]);
     }
 
     // ── 帮手 ────────────────────────────────────────────────────────────────

@@ -846,15 +846,28 @@ public sealed class DesignSpec
         int n = FlangeCount;
         if (TongueThickMm.Length != n) TongueThickMm = FitArr(TongueThickMm, n);
         for (int j = 0; j < n; j++)
-        {
-            double iA = j < dc.PlateA.Length ? dc.PlateA[j] : 0;
-            double t = SectionSizing.TongueThickMm(Plate(j, floorD), iA, ClampLengthMm, jD);
-            if (double.IsNaN(t) || double.IsInfinity(t)) { TongueThickMm[j] = double.NaN; continue; }
-            t = System.Math.Max(t, baseIn.WeldMinThicknessMm);
-            t = System.Math.Ceiling(t / quantMm - 1e-9) * quantMm;
-            TongueThickMm[j] = t;
-        }
+            SizeTongue(j, j < dc.PlateA.Length ? dc.PlateA[j] : 0, baseIn, jD, quantMm);
         return TongueThickMm;
+    }
+
+    /// <summary>
+    /// ★ R23（2026-09-10）：**一片**的舌片厚按当前几何闭式重定 —— 求解器每动一次孔径／拉长比／槽张角都调它，
+    /// 开孔让最窄有效宽变小 ⇒ 舌片按 I/(J·w_min) 加厚（用户：「挖孔会造成 J 超过设计值，所以舌片必须重新搜形状」），
+    /// 铂重记在候选头上，④ 终验由构造满足。几何退回去时它也退回去（纯函数，不是只增旋钮）。
+    /// 返回新值；电流为 0 或舌片被切断 ⇒ NaN（不给一个看起来正常的数）。
+    /// </summary>
+    public double SizeTongue(int j, double iA, DesignInputs baseIn, double? jDesign = null, double quantMm = 0.01)
+    {
+        double jD = jDesign ?? JDesignAPerMm2;
+        int n = FlangeCount;
+        if (TongueThickMm.Length != n) TongueThickMm = FitArr(TongueThickMm, n);
+        if (j < 0 || j >= n) return double.NaN;
+        double t = SectionSizing.TongueThickMm(Plate(j, DiscFloorMm(baseIn)), iA, ClampLengthMm, jD);
+        if (double.IsNaN(t) || double.IsInfinity(t)) { TongueThickMm[j] = double.NaN; return double.NaN; }
+        t = System.Math.Max(t, baseIn.WeldMinThicknessMm);
+        t = System.Math.Ceiling(t / quantMm - 1e-9) * quantMm;
+        TongueThickMm[j] = t;
+        return t;
     }
 
     /// <summary>自由段 = 舌长 − 圆盘切点 − 压接段。判据 ⑤ 判的就是它。</summary>

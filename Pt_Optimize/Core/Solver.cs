@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -781,7 +781,7 @@ public static class Solver
                     double raw = HoleRadiusUpperRawMm(d, baseIn, opt, j, res);
                     why0 = raw > 1e-9 && raw < DesignSpec.TabHoleRMinMm
                          ? $"**孔径上界只有 {raw:0.00} mm < 最小孔径 {DesignSpec.TabHoleRMinMm:0.0} mm**（孔径 < 1 mm 的孔不考虑）⇒ 淘汰"
-                         : $"**上界就是 0**（舌片按 J={d.JDesignAPerMm2:0.#} 定厚后，孔缘处再扣弦就超 J；开孔就得整条舌片加厚）";
+                         : "**上界就是 0**（桥宽留不出孔：舌半宽 − 最小桥宽 ≤ 0）";
                 }
                 else if (hi <= 1e-9)
                     why0 = "**上界就是 0**（这根旋钮在当前几何下开不出来）";
@@ -803,9 +803,9 @@ public static class Solver
             }
             else
             {
-                Set(d, k, j, hi);
+                SetKnob(d, k, j, hi, baseIn, res);
                 rk = EvalProbe(d, baseIn, opt, res, cancel, inner);   // 临时态：熔了 ⇒ 该候选不成立（只判不抬）
-                Set(d, k, j, lo);                       // 量完立刻还原 —— 只增不减的不变式不受影响
+                SetKnob(d, k, j, lo, baseIn, res);                       // 量完立刻还原 —— 只增不减的不变式不受影响
             }
             // 探针若不是在这根旋钮（选定形状后）自己的上界上量的，after 就不能当 knownAfter 交给 RaiseUntil
             bool afterAtHi = Math.Abs(hiProbe - HiOfFor(d, baseIn, opt, k, j, res)) < 1e-9;
@@ -965,7 +965,7 @@ public static class Solver
             return (false, $"**{nm} 已在上界 {hi:0.000}**，「{Criteria.Plain(key)}」仍不过 ⇒ **这根旋钮到顶了** "
                          + "—— 求解器手上只有**法兰侧**九根旋钮；**盘径与舌半宽**（R3 里「增宽」那条路）不在它手里，归「◇ 搜形状」。**一个出口只能对它自己有的旋钮下结论。**", false);
 
-        Set(d, knob, j, hi);
+        SetKnob(d, knob, j, hi, baseIn, res);
         double after;
         if (double.IsNaN(knownAfter))
         {
@@ -973,7 +973,7 @@ public static class Solver
             if (rHi is null)
             {
                 // 判不了 ⇒ 不许印成「分派前提不成立…没变好」（那是「这旋钮没用」的意思）
-                Set(d, knob, j, lo);
+                SetKnob(d, knob, j, lo, baseIn, res);
                 Log("     " + BranchMarks.UndeterminedAtHi);
                 return (false, $"**{nm} 抬到上界 {hi:0.000} 时解不出来 ⇒ 判不了**（{res.NullWhy}）—— "
                              + "不是「这根旋钮没用」，是**上界存疑**（多半把几何抬坏了）", false);
@@ -985,7 +985,7 @@ public static class Solver
         // ★ 前提自检：抬到底也没让这一片的判据变好 ⇒ 这条分派对这一片是错的，**不许假装解出来**
         if (!(after > before + 1e-9))
         {
-            Set(d, knob, j, lo);
+            SetKnob(d, knob, j, lo, baseIn, res);
             return (false,
                 $"**分派前提不成立**：{nm} 从 {lo:0.000} 抬到上界 {hi:0.000}，" +
                 $"「{Criteria.Plain(key)}」的裕度 {before:+0.000;-0.000} → {after:+0.000;-0.000}（**没变好**）" +
@@ -996,7 +996,7 @@ public static class Solver
         {
             // ★★★★★ **抬到上界仍不过 ⇒ 留着，不退回**（2026-09-05 修）。
             //
-            //   原来这里 `Set(d, knob, j, lo)` 把它退回原值，而 ChooseKnob 明写着
+            //   原来这里 `SetKnob(d, knob, j, lo, baseIn, res)` 把它退回原值，而 ChooseKnob 明写着
             //   「都补不上时…**先用买得最多的顶上去**，下一轮缺口变小再挑便宜的」——
             //   **两者互相矛盾**：每轮挑出来、抬上去、又退回去，什么都不累积。
             //
@@ -1015,7 +1015,7 @@ public static class Solver
                 Log($"     · {nm} 抬到上界仍不过，但**把缺口从 {before:0.00} 拉到 {after:0.00}** ⇒ 留着，"
                   + "下一轮缺口变小再挑别的（不退回 —— 退回就永远凑不出组合）");
             else
-                Set(d, knob, j, lo);        // 一点没变好 ⇒ 白花铂，退回
+                SetKnob(d, knob, j, lo, baseIn, res);        // 一点没变好 ⇒ 白花铂，退回
             // ★ 同上：抬到顶的是**这一根**旋钮，不是「这组输入」。
             return (false, $"**{nm} 抬到上界 {hi:0.000} 仍不过**「{Criteria.Plain(key)}」⇒ **这根旋钮到顶了** "
                          + "—— 求解器手上只有**法兰侧**九根旋钮；**盘径与舌半宽**（R3 里「增宽」那条路）不在它手里，归「◇ 搜形状」。**一个出口只能对它自己有的旋钮下结论。**", kept);
@@ -1028,7 +1028,7 @@ public static class Solver
             double mid = NextBisectPoint(knob, lo, hi);      // R15：孔径的二分点不许落在 (0, 1 mm)
             // ★ 括号缩不下去了（孔径：lo 无孔、hi 已是最小孔 1 mm，(0,1) 不许探）⇒ hi 就是答案，别再探同一个点
             if (mid >= hi - 1e-12) break;
-            Set(d, knob, j, mid);
+            SetKnob(d, knob, j, mid, baseIn, res);
             var rMid = EvalProbe(d, baseIn, opt, res, cancel, inner);   // 临时态：中点熔了 ⇒ 判不了（只判不抬）
             if (rMid is null)
             {
@@ -1037,7 +1037,7 @@ public static class Solver
                 //   mid 判不了时这个不变式**已经破了** —— 往任何一侧推都是拿假设当数据。
                 //   而原来 −∞ 会走 else 分支 ⇒ lo = mid **往上推**，
                 //   推得越高越不收敛 ⇒ 正反馈，一路顶到上界。
-                Set(d, knob, j, lo);
+                SetKnob(d, knob, j, lo, baseIn, res);
                 Log("     " + BranchMarks.UndeterminedBisect);
                 return (false, $"**{nm} 在 {mid:0.000} 处解不出来 ⇒ 二分中止**（{res.NullWhy}；上界存疑）—— "
                              + "不许拿判不了的点当「不过」往上推", false);
@@ -1052,7 +1052,11 @@ public static class Solver
         //   「只增不减」的不变式不受影响。
         double q = QuantOf(opt, knob);
         double snapped = Math.Min(Math.Ceiling(hi / q - 1e-9) * q, HiOfFor(d, baseIn, opt, knob, j, res));
-        Set(d, knob, j, snapped);
+        double tongueBefore = j < d.TongueThickMm.Length ? d.TongueThickMm[j] : double.NaN;
+        SetKnob(d, knob, j, snapped, baseIn, res);
+        double tongueAfter = j < d.TongueThickMm.Length ? d.TongueThickMm[j] : double.NaN;
+        if (!double.IsNaN(tongueBefore) && !double.IsNaN(tongueAfter) && Math.Abs(tongueAfter - tongueBefore) > 1e-9)
+            res.Trace.Add($"     {BranchMarks.TongueResized}：片{j} {tongueBefore:0.00} → {tongueAfter:0.00} mm（{KnobName(knob)} 落地后按 I/(J·最窄有效宽) 闭式重定；铂重已计入比价）");
         // ★ 「二分求根」这四个字对工程师没意义 —— 他要知道的是**凭什么信这个数**。
         //   单调性扫描（--monotone）的作用就在这句话里：抬到上界确实变好 = 这一点上单调，
         //   而单调是二分求根成立的前提。求解器**每次抬之前都实测一遍**，不是查表。
@@ -1539,6 +1543,21 @@ public static class Solver
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
 
+    /// <summary>
+    /// 写旋钮。★ R23（2026-09-10）：动了**切口**（孔径／拉长比／槽张角）就按闭式重定这一片的舌片厚
+    /// （<see cref="DesignSpec.SizeTongue"/>，I 取本轮设计电流）—— 用户：「挖孔会造成 J 超过设计值，所以舌片必须重新搜形状」。
+    /// 探针、二分中点、落地、退回都走这一个口 ⇒ 舌片厚永远是几何的函数，不会带着上一个候选的厚度。
+    /// baseIn／res 缺一就只写旋钮（旧行为，只给不带电流的调用）。
+    /// </summary>
+    public static void SetKnob(DesignSpec d, Knob k, int j, double v, DesignInputs? baseIn, SolverResult? res)
+    {
+        Set(d, k, j, v);
+        if (baseIn is null || res?.DesignCurrent is not { } dc) return;
+        if (k is not (Knob.TabHoleR or Knob.TabHoleAspect or Knob.SlotSpan)) return;
+        double iA = j < dc.PlateA.Length ? dc.PlateA[j] : 0;
+        d.SizeTongue(j, iA, baseIn, d.JDesignAPerMm2);
+    }
+
     private static void Set(DesignSpec d, Knob k, int j, double v)
     {
         switch (k)
@@ -1619,11 +1638,10 @@ public static class Solver
         double iA = res?.DesignCurrent is { } dc && j < dc.PlateA.Length ? dc.PlateA[j] : 0;
         int sides = d.TabHoleSidesOf(j);
         double hi = Math.Min(HiOf(o, Knob.TabHoleR), d.TabHoleRMaxMm(sides: sides));
-        if (iA > 0)
-        {
-            double shapeRatio = FlangePlate.TabHole.EqualAreaRadius(1.0, sides, DesignSpec.TabHoleCornerFracOf(sides));
-            hi = Math.Min(hi, SectionSizing.HoleRadiusMaxByJMm(d.Plate(j, floorD), d.TabHoleCenterXMm(j), iA, d.JDesignAPerMm2, shapeRatio));
-        }
+        // ★ R23（2026-09-10）：不再按「舌片厚不变」用 J 截孔径 —— 那样上界恒为 0、旋钮死（R13 ◐ 的原因）。
+        //   现在孔一开、舌片厚就按 I/(J·最窄有效宽) 闭式重定（Set → SizeTongue），J 由构造满足，
+        //   代价是铂重，由候选比价说话。上界只剩桥宽（与形状族外接半径）。iA／floorD 留给日志与下游。
+        _ = iA; _ = floorD;
         return hi;
     }
 
@@ -1744,10 +1762,10 @@ public static class Solver
         foreach (var (s, hs) in open)
         {
             SetShape(d, k, j, s);
-            Set(d, k, j, hs);
+            SetKnob(d, k, j, hs, baseIn, res);
             double jSec = iA > 0 ? SectionSizing.Worst(d.Plate(j, floorD), iA, d.ClampLengthMm).JAPerMm2 : double.NaN;
             var r = EvalProbe(d, baseIn, opt, res, cancel, inner);
-            Set(d, k, j, lo);
+            SetKnob(d, k, j, lo, baseIn, res);
             SetShape(d, k, j, shape0);
             if (r is null) { lines.Add($"{Name(s)} 抬到上界 {hs:0.###} 时解不出来（{res.NullWhy}）"); continue; }
             if (anyR is null) { anyR = r; anyHi = hs; }
@@ -1836,7 +1854,11 @@ public static class Solver
             //   逐片数组、存档、出图那条链都已通，接上只差这一行。
             var (xNew, _) = RemovalPriority.TabHoleXMm(mesh, p, xClamp + margin, xTan - margin, Math.Max(5.0, halfLen));
             if (!double.IsNaN(xNew)) xNew = Math.Round(xNew * 2) / 2; else xNew = xOld;
-            _ = hasHole;
+            // ★ R23（2026-09-10）：场给的孔心**采用**（开孔前每轮按最新场定；开孔后冻结，与槽心同规则）。
+            //   09-05 那次把舌根孔位实测成最坏，是舌片厚不变时测的 —— J 超正是用户说的那一步，
+            //   现在开孔就重定舌片厚（SetKnob → SizeTongue），规则可以启用。
+            if (!hasHole && j < d.TabHoleXMm.Length && !double.IsNaN(xNew)) d.TabHoleXMm[j] = xNew;
+            else if (hasHole) xNew = xOld;
 
             // 当地电流方向：每轮都算（形状族里「长椭圆·顺当地电流」要拿它当长轴），梯度退化 ⇒ NaN（那一员就不参赛）
             double rotOld = j < d.DiscCutRotDeg.Length ? d.DiscCutRotDeg[j] : double.NaN, rotNew = double.NaN;
@@ -1854,7 +1876,7 @@ public static class Solver
             if (hasSlot && d.DiscCutShapeOf(j) == 2 && !(double.IsNaN(rotOld) && double.IsNaN(rotNew)) && !(Math.Abs(rotOld - rotNew) < 0.5)) changed = true;
 
             parts.Add($"片{j} 槽心 {thNew:0}°" + (double.IsNaN(rotNew) ? "" : $"（当地电流 {rotNew:0}°）")
-                    + $"／舌孔场给 x={xNew:0.0}（未采用，用 {xOld:0.0}）");
+                    + (hasHole ? $"／舌孔已开，孔心冻结在 x={xOld:0.0}" : $"／舌孔孔心按场定 x={xNew:0.0}（开孔前每轮更新）"));
         }
         log?.Invoke(BranchMarks.FieldPlacement + "：" + string.Join("　", parts)
                   + "（移除优先级 = 导热贡献 ÷ 电流密度，取最新收敛的场；"

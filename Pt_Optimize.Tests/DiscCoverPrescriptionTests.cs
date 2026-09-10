@@ -158,7 +158,7 @@ public class DiscCoverPrescriptionTests
         Assert.Contains("if (knob == Knob.Thick)", s);
         Assert.Contains("var (coverOk, coverWhy) = CoverCheck(d, baseIn);", s);
         // 而且是在**二分完、对齐到图纸格之后**验的 —— 验的必须是真正要用的那个板厚
-        int snap = s.IndexOf("Set(d, knob, j, snapped);", StringComparison.Ordinal);
+        int snap = s.IndexOf("SetKnob(d, knob, j, snapped, baseIn, res);", StringComparison.Ordinal);   // R23
         int chk = s.IndexOf("var (coverOk, coverWhy)", StringComparison.Ordinal);
         Assert.True(snap >= 0 && chk > snap, "⑥ 的检查跑在量化之前 —— 验的不是真正要用的板厚");
     }

@@ -162,6 +162,54 @@ public class SectionSizingTests
         Assert.DoesNotContain("焊弧", j2.Where);
     }
 
+    /// <summary>R23：叉口开到舌根 ⇒ 横跨切点的舌孔在切点这条线上也要扣（盘径 > 舌宽 ⇒ 弦不穿管腔，原式 2·hwT·t 减孔弦）。</summary>
+    [Fact]
+    public void 交界切口_扣掉横跨切点的舌孔弦()
+    {
+        var g = new FlangePlate
+        {
+            DiscRadiusMm = 30, HoleRadiusMm = 25.8, TabEndXMm = -140, TabEndHalfWidthMm = 10,
+            ThicknessMm = 1.0, TabThicknessMm = double.NaN, TabParallel = true, WeldFilletLegMm = 0,
+        };
+        double xT = g.Tangent().X;                                   // −√(30²−10²) = −28.28，|xT| ≥ 25.8 ⇒ 无管孔弦、无焊弧
+        var j0 = SectionSizing.Cuts(g, 600).First(c => c.Where.StartsWith("舌盘交界"));
+        Assert.Equal(20.0, j0.AreaMm2, 6);
+        g.TabHoles = new[] { new FlangePlate.TabHole(xT, 0, 3.0) };  // 圆孔正好骑在切点上，弦 = 2R = 6
+        var j1 = SectionSizing.Cuts(g, 600).First(c => c.Where.StartsWith("舌盘交界"));
+        Assert.Equal(14.0, j1.AreaMm2, 6);
+    }
+
+    /// <summary>R23：弯槽落在舌侧（槽心 180°）时，舌片在槽带那一段横坐标上的有效宽要扣掉槽弦；带外一位不变。</summary>
+    [Fact]
+    public void 舌片宽度_扣掉落在舌根的圆盘槽弦()
+    {
+        var g = new FlangePlate
+        {
+            DiscRadiusMm = 30, HoleRadiusMm = 25.8, TabEndXMm = -140, TabEndHalfWidthMm = 30,
+            ThicknessMm = 1.0, TabThicknessMm = 1.5, TabParallel = true, WeldFilletLegMm = 0,
+        };
+        var plain = SectionSizing.TabWidths(g, 0).ToDictionary(t => t.X, t => t.WidthMm);
+        // 尖角扇形（RoundEnds=false）：带外一位不切。圆头槽两端的半圆帽会伸到 |x| < 26.5 处，那是几何本来就有的料，不在本门的算式里
+        g.DiscSlots = new[] { new FlangePlate.DiscSlot(26.5, 29.5, 180, 60, RoundEnds: false) };   // 槽带 r 26.5–29.5，正对舌片
+        var cut = SectionSizing.TabWidths(g, 0);
+        int nBand = 0;
+        foreach (var (x, w) in cut)
+        {
+            // 竖线 x 与扇形环的交：每侧 z ∈ [zIn, min(zOut, zAng)]，zOut = √(rout²−x²)，zIn = |x|<rin ? √(rin²−x²) : 0，zAng = |x|·tan(半张角)
+            double ax = Math.Abs(x), chord = 0;
+            if (ax < 29.5)
+            {
+                double zOut = Math.Sqrt(29.5 * 29.5 - x * x);
+                double zIn = ax < 26.5 ? Math.Sqrt(26.5 * 26.5 - x * x) : 0;
+                double zAng = ax * Math.Tan(30 * Math.PI / 180);
+                chord = 2 * Math.Max(0, Math.Min(zOut, zAng) - zIn);
+            }
+            Assert.Equal(plain[x] - chord, w, 2);
+            if (chord > 1) nBand++;
+        }
+        Assert.True(nBand >= 5, $"槽扫过的横坐标该有采样点：{nBand}");
+    }
+
     [Fact]
     public void 常数就是用户给的数()
     {

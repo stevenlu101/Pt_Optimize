@@ -66,9 +66,44 @@ public static class SectionSizing
             double hw = g.HalfWidth(x);
             double w = 2 * hw;
             foreach (var h in g.TabHoles) w -= ChordMm(h, x, hw);        // 扣掉孔的弦
-            res.Add((x, w));
+            w -= DiscCutChordMm(g, x, hw);                                // R23：圆盘槽／长椭圆落到舌根时，舌片这一处也少了这段
+            res.Add((x, Math.Max(0, w)));
         }
         return res;
+    }
+
+    /// <summary>
+    /// ★ R23（用户 2026-09-09：叉口用「直椭圆 + 弯椭圆」或「圆角三角」拼，不加新几何）：
+    /// 圆盘切口（弯槽 <see cref="FlangePlate.DiscSlots"/>／长椭圆 <see cref="FlangePlate.DiscCutHoles"/>）落在舌根时，
+    /// 在横坐标 x 处、|z| ≤ halfW 内被它们挖掉的总长。按形状自己的 Contains 数值量（400 格 + 端点细分），与 <see cref="ChordMm"/> 同一手法；
+    /// 没有圆盘切口时恒为 0 ⇒ 旧数逐位不变。
+    /// </summary>
+    public static double DiscCutChordMm(FlangePlate g, double x, double halfW)
+    {
+        if ((g.DiscSlots.Length == 0 && g.DiscCutHoles.Length == 0) || !(halfW > 0)) return 0;
+        bool In(double z)
+        {
+            foreach (var s in g.DiscSlots) if (s.Contains(x, z)) return true;
+            foreach (var h in g.DiscCutHoles) if (h.Contains(x, z)) return true;
+            return false;
+        }
+        const int N = 400;
+        double step = 2 * halfW / N, total = 0;
+        bool prev = In(-halfW);
+        for (int i = 1; i <= N; i++)
+        {
+            double z = -halfW + i * step;
+            bool cur = In(z);
+            if (cur && prev) total += step;
+            else if (cur != prev)
+            {
+                double a = z - step, b = z;                           // 端点二分，把格子误差压到 1e-4 mm
+                for (int k = 0; k < 20; k++) { double m = 0.5 * (a + b); if (In(m) == prev) a = m; else b = m; }
+                total += prev ? (a - (z - step)) : (z - b);
+            }
+            prev = cur;
+        }
+        return Math.Min(total, 2 * halfW);
     }
 
     /// <summary>
@@ -161,6 +196,11 @@ public static class SectionSizing
             double aH = g.HoleRadiusMm;
             double chordHalf = Math.Abs(xT) < aH ? Math.Sqrt(aH * aH - xT * xT) : 0;     // 弦穿过管腔的半长
             double stripW = 2 * Math.Max(0, hwT - chordHalf);                              // 两条边条总宽
+            // R23：横跨切点的舌孔（叉口开到舌根）与落在舌根的圆盘切口，在切点这条线上也要扣掉
+            double cutAtT = 0;
+            foreach (var h in g.TabHoles) cutAtT += ChordMm(h, xT, hwT);
+            cutAtT += DiscCutChordMm(g, xT, hwT);
+            stripW = Math.Max(0, stripW - cutAtT);
             double zMid = Math.Min(hwT, chordHalf + 0.5 * Math.Max(0, hwT - chordHalf));    // 边条中点（在圆盘侧：x = xT 不算舌片）
             double strips = stripW * Math.Max(g.ThicknessAt(xT, zMid), 1e-9);
             double arcLen = 0, tEdge = 0;
