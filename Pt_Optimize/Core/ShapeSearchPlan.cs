@@ -104,6 +104,41 @@ public static class ShapeSearchPlan
     }
 
     /// <summary>
+    /// R38（2026-09-11）：同上，但候选多一维**锥形舌片**——用户 09-10 工单第 2 条点名
+    /// 「搜形状不搜锥形与孔族，只搜盘径／舌宽」，09-11 又定了目标「结果就是一次搜完，
+    /// 工程师看到每一族最轻的可行形状，以及锥形有没有帮助，不用手动改勾选反复跑」。
+    ///
+    /// ★★★ 理论依据（写在这里，不是拍脑袋多加一维）：
+    ///   锥形舌根按切线自动变宽 ⇒ 舌根截面积比平行边大 ⇒ 按 J = 电流/截面积 定厚时，
+    ///   舌根可以更薄、叉臂可以更短——这是省的一边；但舌片展开面积也比平行边大
+    ///   （两侧多出一块三角形），这是费的一边。**两头拉，谁赢只能算出来比，不能拍**——
+    ///   这正是把「要不要锥形」当成搜索维度、跟盘径/舌宽用同一套导航网格 + 邻域探索
+    ///   决定的理由，不再是工程师手动勾选、反复点「搜形状」才看得出差别。
+    ///
+    /// ⚠ 只在**邻域探索**（这里，第 5 个邻点）里出现「翻转锥形」这个方向——第 1 轮网格 /
+    ///   不动点迭代 / 二分 / 黄金分割（<c>SearchShapeAsync</c> 的 ①～④ 步）仍然按进入
+    ///   搜索时那**一个**锥形值跑：那几步找的是盘径与舌宽，不该同时又变出第三维、
+    ///   把「盘径变化」与「锥形变化」的贡献搅在一起看不清。等邻域探索把方向摸出来了，
+    ///   锥形才跟着盘径/舌宽一起被局部搜——与盘径/舌宽步长收缩用同一套停机逻辑。
+    /// </summary>
+    public static (double R, double HalfW, bool Taper)[] Neighbours(double R0, double hw0, bool taper0)
+        => Neighbours(R0, hw0, taper0, DiscStepMm);
+
+    /// <summary>同上，但步长由调用方给 —— 步长收缩（<see cref="Refine"/>）要用这个重载。</summary>
+    public static (double R, double HalfW, bool Taper)[] Neighbours(double R0, double hw0, bool taper0, double stepMm)
+    {
+        var four = Neighbours(R0, hw0, stepMm);   // 旧的 4 个邻点，逐位不变（本重载不改它们的算法，只是多带一维）
+        return new[]
+        {
+            (four[0].R, four[0].HalfW, taper0),
+            (four[1].R, four[1].HalfW, taper0),
+            (four[2].R, four[2].HalfW, taper0),
+            (four[3].R, four[3].HalfW, taper0),
+            (R0, hw0, !taper0),                   // 第 5 个邻点：当前点原地不动，只翻转锥形
+        };
+    }
+
+    /// <summary>
     /// 这一轮算不算「变好」。<paramref name="tolG"/> 是**不算改善的门槛**：
     /// 省下不到 0.5 g 就再多跑一轮几十分钟，不划算，且那点差已经落进数值噪声。
     /// </summary>
@@ -112,6 +147,12 @@ public static class ShapeSearchPlan
 
     /// <summary>形状的去重键 —— 同一个形状不该被算两次（每次都是几十分钟）。</summary>
     public static string Key(double R, double halfW) => $"{R:0.###}/{halfW:0.###}";
+
+    /// <summary>
+    /// 同上，但键里**带上锥形**（R38，2026-09-11）—— 平行边与锥形边是两个不同的形状，
+    /// 不能共用一把键，否则「翻转锥形」这个候选会被误判成「已经算过」而被去重掉。
+    /// </summary>
+    public static string Key(double R, double halfW, bool taper) => $"{Key(R, halfW)}/{(taper ? "T" : "F")}";
 
     /// <summary>
     /// 把邻点滤成「值得一试」的：几何上说得通、且没算过。
@@ -128,4 +169,14 @@ public static class ShapeSearchPlan
     public static List<(double R, double HalfW)> Worth(
         IEnumerable<(double R, double HalfW)> cand, ISet<string> seen, double minDiscMm)
         => cand.Where(c => c.R > minDiscMm && c.HalfW > 1 && seen.Add(Key(c.R, c.HalfW))).ToList();
+
+    /// <summary>同上，但候选带**锥形**这一维（R38）——去重键改用三参数 <see cref="Key(double,double,bool)"/>。</summary>
+    public static List<(double R, double HalfW, bool Taper)> Worth(
+        IEnumerable<(double R, double HalfW, bool Taper)> cand, ISet<string> seen)
+        => Worth(cand, seen, 5.0);
+
+    /// <summary>同上，盘半径下界由调用方给。</summary>
+    public static List<(double R, double HalfW, bool Taper)> Worth(
+        IEnumerable<(double R, double HalfW, bool Taper)> cand, ISet<string> seen, double minDiscMm)
+        => cand.Where(c => c.R > minDiscMm && c.HalfW > 1 && seen.Add(Key(c.R, c.HalfW, c.Taper))).ToList();
 }

@@ -129,7 +129,7 @@ public class ShapeSearchParallelWiringTests
     public void 搜形状的批处理函数交给ShapeBatchEval()
     {
         string s = Ui();
-        Assert.Contains("async Task EvalShapesBatch(IReadOnlyList<(double R, double hw)> pts)", s);
+        Assert.Contains("async Task EvalShapesBatch(IReadOnlyList<(double R, double hw, bool Taper)> pts)", s);   // R38：候选多带一维锥形
         Assert.Contains("outcome = await ShapeBatchEval.RunAsync(specs, (spec, tok) =>", s);
     }
 

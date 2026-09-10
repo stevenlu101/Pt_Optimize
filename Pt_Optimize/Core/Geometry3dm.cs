@@ -337,7 +337,9 @@ public static class Geometry3dm
                                          int discCutShape = 0, double discCutXMm = double.NaN, double discCutZMm = 0,
                                          double discCutRMm = 0, double discCutAspect = 1, double discCutRotDeg = 0,
                                          int tabHoleSides = 0, double tabHoleCornerFrac = 1.0,
-                                         double tabHoleRotDeg = 0, double tabHoleAspect = 1.0)
+                                         double tabHoleRotDeg = 0, double tabHoleAspect = 1.0,
+                                         // ★ R39（2026-09-11 边角料）：舌根加厚带（R29 叉臂）—— 第 17 个参数「x0,x1,厚」，NaN = 没有（逐位如前）
+                                         double tabArmX0Mm = double.NaN, double tabArmX1Mm = double.NaN, double tabArmThickMm = double.NaN)
     {
         string probe = FindProbe()
             ?? throw new FileNotFoundException($"找不到 {ProbeName}.exe。先构建 {ProbeName}（需本机装 Rhino 8）。");
@@ -381,6 +383,8 @@ public static class Geometry3dm
         psi.ArgumentList.Add(F(slotCenterDeg));
         psi.ArgumentList.Add(discCutShape.ToString(ic));
         psi.ArgumentList.Add($"{F(discCutXMm)},{F(discCutZMm)},{F(discCutRMm)},{F(discCutAspect)},{F(discCutRotDeg)}");
+        // ★ R39：第 17 个参数 —— 舌根加厚带 x0,x1,厚（始终带上占位，NaN = 没有）
+        psi.ArgumentList.Add($"{F(tabArmX0Mm)},{F(tabArmX1Mm)},{F(tabArmThickMm)}");
 
         using var proc = Process.Start(psi) ?? throw new InvalidOperationException("无法启动 " + probe);
         var cOut = proc.StandardOutput.ReadToEndAsync();
@@ -438,6 +442,10 @@ public static class Geometry3dm
         public double DiscCutRMm { get; init; }
         public double DiscCutAspect { get; init; }
         public double DiscCutRotDeg { get; init; }
+        /// <summary>R39：舌根加厚带（R29 叉臂）x0／x1／厚，NaN = 没有；厚已取过 max(·, 下界)</summary>
+        public double TabArmX0Mm { get; init; }
+        public double TabArmX1Mm { get; init; }
+        public double TabArmThickMm { get; init; }
     }
 
     public static SteppedPlateArgs BuildSteppedPlateArgs(DesignSpec d, int j, double floorMm)
@@ -474,6 +482,10 @@ public static class Geometry3dm
             DiscCutZMm = discCuts.Length > 0 ? discCuts[0].ZMm : 0,
             DiscCutRMm = discCuts.Length > 0 ? discCuts[0].RMm : 0,
             DiscCutAspect = discCuts.Length > 0 ? discCuts[0].AspectXZ : 1,
+            // R39：叉臂（R29）—— 与 BuildFinalSpec 同一份数（DesignSpec.TabArm*），可回读图也画出来
+            TabArmX0Mm = d.HasTabArm(j) ? d.TabArmX0Mm[j] : double.NaN,
+            TabArmX1Mm = d.HasTabArm(j) ? d.TabArmX1Mm[j] : double.NaN,
+            TabArmThickMm = d.HasTabArm(j) ? Math.Max(d.TabArmThickMm[j], floorMm) : double.NaN,
             DiscCutRotDeg = discCuts.Length > 0 ? discCuts[0].RotDeg : 0,
         };
     }

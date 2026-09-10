@@ -160,18 +160,21 @@ public class ExportOptimized3dmTests
             double floor = o.DiscFloorMm(baseIn);
             for (int j = 0; j < o.TabThickMm.Length; j++)
             {
-                double td = Math.Max(o.TabThickMm[j], floor);
-                var radii = o.RingRadiiMm.Concat(new[] { o.DiscRadiusMm }).ToArray();
-                var thick = new[] { td * o.RingMul[j], td * o.RingMulOuter(j), td };
+                // R39（2026-09-11 边角料）：原来这里自己拼参数（第 0 片的环半径套到每一片、孔不经 R15 下限），
+                //   与「导出可回读 3DM」按钮走的不是同一份取数 ⇒ 改走 BuildSteppedPlateArgs（逐片、形状族、孔径下限都在里面）。
+                var pa = Geometry3dm.BuildSteppedPlateArgs(o, j, floor);
                 string file = Path.Combine(outDir, $"{(j < nm.Length ? nm[j] : "片" + j)}.3dm");
-                var band = o.SlotBandMm(Math.Max(td, o.WallMm));
-                Geometry3dm.WriteStepped3dm(file, o.HoleRadiusMm, radii, thick,
-                    -o.TabLengthMm, o.TabHalfWidthMm, td,
-                    slotCount: (j < o.SlotSpanDeg.Length && o.SlotSpanDeg[j] > 0.5) ? 1 : 0,
-                    slotWidthDeg: j < o.SlotSpanDeg.Length ? o.SlotSpanDeg[j] : 0,
-                    slotRInMm: band.RIn, slotROutMm: band.ROut,
-                    tabHoleXMm: o.TabHoleCenterXMm(),
-                    tabHoleRMm: j < o.TabHoleRMm.Length ? o.TabHoleRMm[j] : 0);
+                Geometry3dm.WriteStepped3dm(file, o.HoleRadiusMm, pa.RadiiMm, pa.ThickMm,
+                    -o.TabLengthMm, o.TabHalfWidthMm, pa.TabThickMm,
+                    slotCount: pa.SlotCount, slotWidthDeg: pa.SlotWidthDeg,
+                    slotRInMm: pa.SlotRInMm, slotROutMm: pa.SlotROutMm,
+                    tabHoleXMm: pa.TabHoleXMm, tabHoleRMm: pa.TabHoleRMm,
+                    slotCenterDeg: pa.SlotCenterDeg, discCutShape: pa.DiscCutShape,
+                    discCutXMm: pa.DiscCutXMm, discCutZMm: pa.DiscCutZMm, discCutRMm: pa.DiscCutRMm,
+                    discCutAspect: pa.DiscCutAspect, discCutRotDeg: pa.DiscCutRotDeg,
+                    tabHoleSides: pa.TabHoleSides, tabHoleCornerFrac: pa.TabHoleCornerFrac,
+                    tabHoleRotDeg: pa.TabHoleRotDeg, tabHoleAspect: pa.TabHoleAspect,
+                    tabArmX0Mm: pa.TabArmX0Mm, tabArmX1Mm: pa.TabArmX1Mm, tabArmThickMm: pa.TabArmThickMm);
                 sb.AppendLine($"  {Path.GetFileName(file)}　"
                             + $"{(File.Exists(file) ? new FileInfo(file).Length / 1024 + " KB" : "✗ 没写出来")}");
                 Assert.True(File.Exists(file), "图没写出来：" + file);

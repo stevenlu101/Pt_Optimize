@@ -122,7 +122,11 @@ public static class PlateShapeAnalyzer
     /// ⚠ 板的中心由**管孔的形心**定，不假设它在原点：
     /// 用户的图未必居中，一个文件里也可能放了不止一片。
     /// </summary>
-    public static Shape Analyze(ThicknessField f, double levelTolMm = 0.05)
+    /// <remarks>
+    /// R39（2026-09-11 边角料）：并级容差原是 0.05 —— 舌片厚与某级环厚差在 0.05 内会被并成一级（分舌片导出读回抓到）。
+    /// 图纸上的厚度落在 0.01 格上、探针量厚度是精确的，容差取 0.011：同一级的格子量出来相同，不同级至少差一格。
+    /// </remarks>
+    public static Shape Analyze(ThicknessField f, double levelTolMm = 0.011)
     {
         var sh = new Shape();
         double step = f.Step, a = step * step;

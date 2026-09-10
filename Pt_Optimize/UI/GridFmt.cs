@@ -82,11 +82,15 @@ internal static class GridFmt
         if (lines.Length == 0) { g.ResumeLayout(); return; }
 
         var head = lines[0].Split('\t');
+        var hFont = g.ColumnHeadersDefaultCellStyle.Font ?? g.Font;
         foreach (var h in head)
             g.Columns.Add(new DataGridViewTextBoxColumn
             {
                 HeaderText = Plain(h),
                 SortMode = DataGridViewColumnSortMode.NotSortable,
+                // R39（2026-09-11 抓图抓到）：AllCells 自动列宽在第一列会把表头「盘直径 mm」裁成「盘直径 m…」——
+                //   表头字宽自己量一次当最小列宽，粗体表头一定装得下。
+                MinimumWidth = TextRenderer.MeasureText(Plain(h), hFont).Width + UiScale.S(14),
             });
 
         foreach (var line in lines.Skip(1))

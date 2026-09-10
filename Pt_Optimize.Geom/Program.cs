@@ -182,8 +182,21 @@ internal static class GeomProbe
             int rc;
             try
             {
+                // ★ R39：第 17 个参数 —— 舌根加厚带 x0,x1,厚（NaN = 没有）
+                double sArmX0 = double.NaN, sArmX1 = double.NaN, sArmT = double.NaN;
+                if (args.Length > 16)
+                {
+                    var ap = args[16].Split(',');
+                    if (ap.Length == 3)
+                    {
+                        double.TryParse(ap[0], NumberStyles.Float, CultureInfo.InvariantCulture, out sArmX0);
+                        double.TryParse(ap[1], NumberStyles.Float, CultureInfo.InvariantCulture, out sArmX1);
+                        double.TryParse(ap[2], NumberStyles.Float, CultureInfo.InvariantCulture, out sArmT);
+                    }
+                }
                 rc = RunSteps(sOut, sHole, sR, sT, sTabX, sTabHW, sTabT, sN, sDeg, sSlotIn, sSlotOut, sPar, sHoles,
-                              sSlotCenterDeg, sDiscShape, sDiscX, sDiscZ, sDiscR, sDiscAsp, sDiscRot);
+                              sSlotCenterDeg, sDiscShape, sDiscX, sDiscZ, sDiscR, sDiscAsp, sDiscRot,
+                              sArmX0, sArmX1, sArmT);
             }
             catch (Exception e) { Console.Error.WriteLine(e.GetType().Name + ": " + e.Message); rc = 2; }
             Bye(rc);      // ★ 带上**真正的**返回码退出
@@ -1518,7 +1531,9 @@ internal static class GeomProbe
                                 //   扇形近似，与算的（DesignSpec.SlotCenterDegOf／DiscCutShapeOf／DiscCutsOf）不是同一个东西。
                                 double slotCenterDeg = 0, int discCutShape = 0,
                                 double discX = double.NaN, double discZ = 0, double discR = 0,
-                                double discAsp = 1, double discRot = 0)
+                                double discAsp = 1, double discRot = 0,
+                                // ★ R39：舌根加厚带（R29 叉臂）—— [tabArmX0, tabArmX1] 这一段舌片厚 tabArmT，NaN = 没有
+                                double tabArmX0 = double.NaN, double tabArmX1 = double.NaN, double tabArmT = double.NaN)
     {
         var tabHoles = tabHolesIn ?? new System.Collections.Generic.List<(double X, double Z, double R, int Sides, double CornerFrac, double RotDeg, double Aspect)>();
         using (new RhinoCore(new[] { "/NOSPLASH" }, WindowStyle.Hidden))
@@ -1623,70 +1638,102 @@ internal static class GeomProbe
                     tp = new Point3d(rout2 * Math.Cos(th), 0, rout2 * Math.Sin(th));
                     tn = new Point3d(tp.X, 0, -tp.Z);
                 }
-                var poly = new PolyCurve();
-                // ⚠ 圆弧必须走**舌片这一侧**（过 −R）：舌片实体是「矩形**减去**圆盘」，
-                //   靠这段弧把圆盘那块挖掉。改成过 +R 会把整个圆盘也圈进舌片，
-                //   与三个环**叠加** ⇒ 读回来厚度变成 4/5/6、管孔被填掉（实测踩过）。
-                poly.Append(new ArcCurve(new Arc(tp, new Point3d(-rout2, 0, 0), tn)));
-                poly.Append(new LineCurve(tn, new Point3d(tabX, 0, -tabHW)));
-                poly.Append(new LineCurve(new Point3d(tabX, 0, -tabHW), new Point3d(tabX, 0, tabHW)));
-                poly.Append(new LineCurve(new Point3d(tabX, 0, tabHW), tp));
-                poly.MakeClosed(tol);
-                var tf2 = Brep.CreatePlanarBreps(new Curve[] { poly }, tol);
-                if (tf2 != null && tf2.Length > 0)
+                // ★ R39（2026-09-11 边角料）：舌根加厚带（R29 叉臂）—— 可回读 3DM 也要画出来，
+                //   否则读回来的舌根厚与算的不是一份（R35 图纸读回已经认叉臂了，写入端却一直没画）。
+                //   舌片按 x 切成 杆 [舌端, x0]／叉臂 [x0, x1]／杆根 [x1, 交界]：各自独立实体、各自厚度、同一图层
+                //   （读取端逐点量厚度，不看实体数）。没有叉臂（NaN）时只有一个实体，与从前逐位相同。
+                //   半宽随 x 走：等宽舌是常数；梯形舌从舌端半宽到切点线性 —— 与上面 tp/tn 的口径一致。
+                double HalfAt(double x)
                 {
+                    if (tabParallel) return Math.Min(tabHW, rout2);
+                    return tabHW + (tp.Z - tabHW) * (x - tabX) / (tp.X - tabX);
+                }
+                bool hasArm = !double.IsNaN(tabArmX0) && !double.IsNaN(tabArmX1) && !double.IsNaN(tabArmT) && tabArmT > 1e-6;
+                var pieces = new System.Collections.Generic.List<(double xa, double xb, double t, string name)>();
+                if (hasArm)
+                {
+                    double x0 = Math.Max(tabX, Math.Min(tabArmX0, tp.X));
+                    double x1 = Math.Max(x0, Math.Min(tabArmX1, tp.X));
+                    if (x0 > tabX + 1e-6) pieces.Add((tabX, x0, tabT, "舌片杆"));
+                    if (x1 > x0 + 1e-6) pieces.Add((x0, x1, tabArmT, "舌片叉臂"));
+                    pieces.Add((x1, tp.X, tabT, "舌片杆根"));
+                }
+                else pieces.Add((tabX, tp.X, tabT, "舌片"));
+
+                // ★★★★★ **舌板开孔**（2026-09-05 用户要求）：造截面 → 拉成柱 → BooleanDifference 挖掉。
+                //   ⚠ 柱要比板厚长一截（−1 … 最厚+1），否则布尔差在两个面上共面，Rhino 会给出不封闭的结果。
+                //   ★ 2026-09-09 审查欠账③：舌孔形状族走与 RunFinal 同一份 CutCurveShape（sides=0,corner=1 时退化成圆）。
+                //   ★★★★★ 法向朝内的实体，布尔差会原样退回且不报错（2026-09-05 实测）⇒ 造出来就摆正。
+                double tMax = Math.Max(tabT, hasArm ? tabArmT : tabT);
+                var cutters = new System.Collections.Generic.List<Brep>();
+                foreach (var (hx, hz, hr, hSides, hCorner, hRot, hAsp) in tabHoles)
+                {
+                    if (!(hr > 1e-6)) continue;
+                    var cc = CutCurveShape(tol, hx, hz, hr, hSides, hCorner, hRot, hAsp);
+                    if (cc == null) continue;
+                    // 圆心沉到板下面（y = −1）：放 y = 0 时切柱底面与舌片底面共面，布尔差静默失效（回读门抓到过）
+                    cc.Translate(new Vector3d(0, -1.0, 0));
+                    var cf = Brep.CreatePlanarBreps(new Curve[] { cc }, tol);
+                    if (cf == null || cf.Length == 0) continue;
+                    var cyl = cf[0].Faces[0].CreateExtrusion(
+                        new LineCurve(Point3d.Origin, new Point3d(0, tMax + 2, 0)), true);
+                    if (cyl == null) continue;
+                    if (cyl.SolidOrientation == BrepSolidOrientation.Inward) cyl.Flip();
+                    cutters.Add(cyl);
+                }
+
+                // 圆盘柱：有叉臂时每一段都拿它减一次（段的 x 范围可能伸进圆盘：舌盘交界 x = −√(R²−w²) ≥ −R），
+                //   否则中间那段纯矩形会与圆盘环叠加、读回来厚度是两者之和（ReadableArmExportTests 抓到 4.4 = 3.2 + 1.2）。
+                Brep? discCyl = null;
+                if (hasArm)
+                {
+                    var circ = new Circle(new Plane(new Point3d(0, -1, 0), pl.XAxis, pl.YAxis), rout2);
+                    discCyl = Brep.CreateFromCylinder(new Cylinder(circ, tMax + 2), true, true);
+                    if (discCyl != null && discCyl.SolidOrientation == BrepSolidOrientation.Inward) discCyl.Flip();
+                }
+                foreach (var (xa, xb, tPiece, pname) in pieces)
+                {
+                    var poly = new PolyCurve();
+                    double ha = HalfAt(xa), hb = HalfAt(xb);
+                    if (!hasArm && Math.Abs(xb - tp.X) < 1e-9)
+                    {
+                        // 最后一段带圆弧：tp → 弧（过 −R，走舌片这一侧）→ tn → (xa,−ha) → (xa,ha) → tp
+                        // ⚠ 圆弧必须走舌片这一侧（过 −R）：靠这段弧把圆盘那块挖掉；改成过 +R 会把整个圆盘也圈进舌片。
+                        poly.Append(new ArcCurve(new Arc(tp, new Point3d(-rout2, 0, 0), tn)));
+                        poly.Append(new LineCurve(tn, new Point3d(xa, 0, -ha)));
+                        poly.Append(new LineCurve(new Point3d(xa, 0, -ha), new Point3d(xa, 0, ha)));
+                        poly.Append(new LineCurve(new Point3d(xa, 0, ha), tp));
+                    }
+                    else
+                    {
+                        poly.Append(new LineCurve(new Point3d(xa, 0, -ha), new Point3d(xb, 0, -hb)));
+                        poly.Append(new LineCurve(new Point3d(xb, 0, -hb), new Point3d(xb, 0, hb)));
+                        poly.Append(new LineCurve(new Point3d(xb, 0, hb), new Point3d(xa, 0, ha)));
+                        poly.Append(new LineCurve(new Point3d(xa, 0, ha), new Point3d(xa, 0, -ha)));
+                    }
+                    poly.MakeClosed(tol);
+                    var tf2 = Brep.CreatePlanarBreps(new Curve[] { poly }, tol);
+                    if (tf2 == null || tf2.Length == 0) { Console.Error.WriteLine("⚠ 舌片段「" + pname + "」造不出平面"); continue; }
                     var tab = tf2[0].Faces[0].CreateExtrusion(
-                        new LineCurve(Point3d.Origin, new Point3d(0, tabT, 0)), true);
-                    // ★★★★★ **舌板开孔**（2026-09-05 用户要求）。
-                    //   与圆盘开槽走**同一条路**：造截面 → 拉成柱 → BooleanDifference 挖掉。
-                    //   ⚠ 柱要比板厚长一截（−1 … tabT+1），否则布尔差在两个面上共面，
-                    //     Rhino 会给出不封闭的结果 —— 圆盘开槽那段已经这么干了。
-                    if (tab != null && tabHoles.Count > 0)
+                        new LineCurve(Point3d.Origin, new Point3d(0, tPiece, 0)), true);
+                    if (tab == null) continue;
+                    if (discCyl != null && xb > -rout2 + 1e-9)
                     {
-                        var cutters = new System.Collections.Generic.List<Brep>();
-                        // ★ 2026-09-09 审查欠账③：舌孔形状族（TabHoleSides／圆角比／转角／拉长）—— 原来只会切正圆，
-                        //   现在走与 RunFinal 同一份 CutCurveShape（sides=0,corner=1 时退化成圆，逐位如前）。
-                        foreach (var (hx, hz, hr, hSides, hCorner, hRot, hAsp) in tabHoles)
-                        {
-                            if (!(hr > 1e-6)) continue;
-                            var cc = CutCurveShape(tol, hx, hz, hr, hSides, hCorner, hRot, hAsp);
-                            if (cc == null) continue;
-                            // ★★★ 圆心要**沉到板下面**（y = −1），不能放在 y = 0。
-                            //   放 y = 0 时切柱底面与舌片底面**共面**，布尔差在共面处
-                            //   失效 —— 而且 Rhino **不报错**：diff 返回非空、实体数照样是 4，
-                            //   写出来的图上却没有孔。2026-09-05 回读门抓到的就是这个
-                            //   （孔心仍有 1.800 mm 材料）。
-                            cc.Translate(new Vector3d(0, -1.0, 0));
-                            var cf = Brep.CreatePlanarBreps(new Curve[] { cc }, tol);
-                            if (cf == null || cf.Length == 0) continue;
-                            var cyl = cf[0].Faces[0].CreateExtrusion(
-                                new LineCurve(Point3d.Origin, new Point3d(0, tabT + 2, 0)), true);
-                            if (cyl != null) cutters.Add(cyl);
-                        }
-                        if (cutters.Count > 0)
-                        {
-                            // ★★★★★ **法向朝内的实体，布尔差会原样退回且不报错**（2026-09-05 实测）。
-                            //   CreateExtrusion 造出来的实体是 Inward。不摆正就切：
-                            //   CreateBooleanDifference 返回 1 个 brep、面数**仍是 6**（该有 9），
-                            //   `实体数 4` 照常打印，**一句警告都没有** —— 写出的图上没有孔，
-                            //   而计算里有孔 ⇒ 工程师拿到一张与计算不符的图。
-                            //   是回读门（TabHoleTests.孔真的写进了图也读得回来）抓到的：孔心仍有 1.8 mm 材料。
-                            //   ⚠ 圆盘开槽那段是同样的写法 —— 它的唯一调用方一直传 slotCount:0，
-                            //     所以这个雷在那边**从没响过**。现在一并摆正。
-                            if (tab.SolidOrientation == BrepSolidOrientation.Inward) tab.Flip();
-                            foreach (var cq in cutters)
-                                if (cq.SolidOrientation == BrepSolidOrientation.Inward) cq.Flip();
-                            var diff = Brep.CreateBooleanDifference(new[] { tab }, cutters, tol);
-                            if (diff != null && diff.Length > 0) tab = diff[0];
-                            else Console.Error.WriteLine("⚠ 舌孔布尔差失败，写出的是**没有孔**的舌片");
-                        }
+                        if (tab.SolidOrientation == BrepSolidOrientation.Inward) tab.Flip();
+                        var cutDisc = Brep.CreateBooleanDifference(new[] { tab }, new[] { discCyl }, tol);
+                        if (cutDisc != null && cutDisc.Length > 0) tab = cutDisc[0];
+                        else Console.Error.WriteLine("⚠ 舌片段「" + pname + "」减圆盘失败，可能与圆盘环叠加");
                     }
-                    if (tab != null)
+                    if (cutters.Count > 0)
                     {
-                        var att2 = new Rhino.DocObjects.ObjectAttributes { LayerIndex = layer };
-                        att2.Name = "舌片";
-                        if (doc.Objects.AddBrep(tab, att2) != Guid.Empty) made++;
+                        if (tab.SolidOrientation == BrepSolidOrientation.Inward) tab.Flip();
+                        var diff = Brep.CreateBooleanDifference(new[] { tab }, cutters, tol);
+                        if (diff != null && diff.Length > 0) tab = diff[0];
+                        else if (pieces.Count == 1) Console.Error.WriteLine("⚠ 舌孔布尔差失败，写出的是**没有孔**的舌片");
                     }
+                    var att2 = new Rhino.DocObjects.ObjectAttributes { LayerIndex = layer };
+                    att2.Name = pname;
+                    if (doc.Objects.AddBrep(tab, att2) != Guid.Empty) made++;
                 }
             }
 

@@ -1450,8 +1450,18 @@ static class Walk
             typeof(LineDesignPage).GetMethod("LoadDesignSpecFrom",
                 BindingFlags.NonPublic | BindingFlags.Instance)!
                 .Invoke(line, new object[] { DesignSpec.Current, true });
-            Pump(200);
-            H("◇ 搜形状 · **接线验证**（每候选只筛 2 轮 ⇒ 分钟级）");
+            // ★ R38（2026-09-11）：quick 模式顺带验「两个都算」——用户 09-11 目标原话
+            //   「结果就是一次搜完，工程师看到每一族最轻的可行形状，以及锥形有没有帮助，
+            //   不用手动改勾选反复跑」。quick 模式本来就是分钟级，两族各跑一遍在这里验
+            //   不算「给走查加分钟级的东西」——它已经是分钟级了，这里只是加断言。
+            var famBox = (System.Windows.Forms.ComboBox)F(line, "_family")!;
+            famBox.SelectedIndex = 2;   // 两个都算
+            Pump(100);
+            // ★ 切这个下拉会排防抖自动重算（R35 同款坑：16⁗″ 节切过之后要 StopAuto）——
+            //   不停掉的话，防抖定时器会在下面搜形状**跑到一半**时触发，
+            //   把这一页共用的 _cts 顶掉，搜形状会被误判成「被取消」（实测撞过一次）。
+            if (F(line, "_autoTimer") is System.Windows.Forms.Timer autoT) autoT.Stop();
+            H("◇ 搜形状 · **接线验证**（每候选只筛 2 轮 ⇒ 分钟级；顺带验「两个都算」+ 锥形）");
             Console.WriteLine("  ⚠ 本模式下**铂重没有意义**（2 轮定不出厚度）——只看流程走得对不对。");
         }
         else
@@ -1492,7 +1502,9 @@ static class Walk
         // ── 接线断言：这几条只看**流程**，与轮数无关
         Console.WriteLine();
         OK("第 1 轮是网格（给出发点与方向）", text.Contains("网格", StringComparison.Ordinal));
-        bool hasRound = text.Contains("轮 · 从 盘Ø", StringComparison.Ordinal);
+        // ★ R38：两个都算时每族的邻域轮次前面多了「第 N 族（…）　」这段前缀
+        //   （famPrefix），「轮 · 从 」与「盘Ø」不再紧贴在一起 ⇒ 分开判，不认原来那个连着的子串。
+        bool hasRound = text.Contains("轮 · 从 ", StringComparison.Ordinal) && text.Contains("盘Ø", StringComparison.Ordinal);
         bool gridOnly = text.Contains("网格里没有可行解", StringComparison.Ordinal);
         OK("网格之后进了外推轮（或明说没有出发点）", hasRound || gridOnly,
            hasRound ? "有外推轮" : gridOnly ? "网格无可行解 —— 明说了，没有硬推" : "★ 两者都没有");
@@ -1507,6 +1519,41 @@ static class Walk
                || text.Contains("变好，继续", StringComparison.Ordinal),
                "（跑满上限而停也算 —— 那时最后一轮是「变好，继续」）");
         }
+
+        // ★★★ R38（2026-09-11）：两个都算 + 锥形进搜索空间——这几条钉住用户 09-11 的
+        //   目标「一次搜完，工程师看到每一族最轻的可行形状，以及锥形有没有帮助，
+        //   不用手动改勾选反复跑」，quick 里已经把 _family 设成了「两个都算」（见上面）。
+        if (F(line, "_shapePickRows") is List<(DesignSpec d, double mass, bool ok, string msg)> pickRows)
+        {
+            bool hasNoCuts = pickRows.Any(r => r.d?.Provenance?.Contains("解法：不挖舌孔", StringComparison.Ordinal) == true);
+            bool hasCuts = pickRows.Any(r => r.d?.Provenance?.Contains("解法：挖舌孔", StringComparison.Ordinal) == true);
+            OK("两个都算 ⇒ 下拉里两族都在（［不挖舌孔］／［挖舌孔］）", hasNoCuts && hasCuts,
+               $"不挖舌孔 {hasNoCuts}　挖舌孔 {hasCuts}　共 {pickRows.Count} 行");
+            bool anyTaper = pickRows.Any(r => r.d?.TabTaper == true);
+            OK("至少有一个候选是锥形（邻域探索第 5 个方向真的翻过）", anyTaper,
+               anyTaper ? "" : "★ 全部候选都是平行边 —— 「翻转锥形」这个方向没被走到");
+            if (F(line, "_shapePick") is ToolStripComboBox pick2)
+                OK("下拉条目里看得到「锥形」字样（ShapeRowText 带出来的）",
+                   Enumerable.Range(0, pick2.Items.Count).Any(i => (pick2.Items[i]?.ToString() ?? "").Contains("锥形", StringComparison.Ordinal)),
+                   anyTaper ? "" : "（没有锥形候选，这条本来就过不了，看上一条）");
+
+            // 写回页面的固定是「不挖舌孔」族——_tabTaper.Checked 该等于那族赢家的 TabTaper。
+            // 赢家的盘径/舌宽已经写回 _discD/_tabW，用它们在「不挖舌孔」族里找回对应候选自证。
+            var noCutsRows = pickRows.Where(r => r.d?.Provenance?.Contains("解法：不挖舌孔", StringComparison.Ordinal) == true
+                                               && r.ok && !double.IsNaN(r.mass)).ToList();
+            var discD2 = (NumericUpDown)F(line, "_discD")!;
+            var tabW2 = (NumericUpDown)F(line, "_tabW")!;
+            var tabTaper2 = (CheckBox)F(line, "_tabTaper")!;
+            var matched = noCutsRows.FirstOrDefault(r =>
+                Math.Abs(2 * r.d!.DiscRadiusMm - (double)discD2.Value) < 0.6
+                && Math.Abs(r.d.TabHalfWidthMm - (double)tabW2.Value) < 0.6);
+            OK("_tabTaper.Checked 等于写回赢家（不挖舌孔族）的 TabTaper", matched.d is not null && matched.d.TabTaper == tabTaper2.Checked,
+               matched.d is null ? "★ 在下拉里找不回写回页面的那个候选（盘径/舌宽对不上）"
+                                  : $"候选 TabTaper={matched.d.TabTaper}　_tabTaper.Checked={tabTaper2.Checked}");
+        }
+        else
+            OK("_shapePickRows 反射得到（前置：字段名/类型没变）", false, "★ 拿不到，上面几条 R38 断言全部跳过");
+
         Console.WriteLine();
         Console.WriteLine(_bad == 0 ? "★ 搜形状走查通过" : $"✗ 搜形状走查：{_bad} 项不过");
         return _bad;

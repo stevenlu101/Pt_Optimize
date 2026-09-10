@@ -101,7 +101,7 @@ public class ShapeStepRefineTests
             Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "UI", "LineDesignPage.cs"));
 
         Assert.Contains("double step = ShapeSearchPlan.DiscStepMm;", ui);
-        Assert.Contains("ShapeSearchPlan.Neighbours(R0, hw0, step)", ui);
+        Assert.Contains("ShapeSearchPlan.Neighbours(R0, hw0, curTaper, step)", ui);   // R38：邻域探索多带一维锥形
         Assert.Contains("ShapeSearchPlan.Refine(step)", ui);
         Assert.Contains("ShapeSearchPlan.StepExhausted", ui);
 

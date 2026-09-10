@@ -107,7 +107,7 @@ public class ShapeSearchCostTests
         // ★ 红线：算出下界之后**仍然照常求解**那一点
         int at = s.IndexOf("GeometryScreen.MinDiscRadiusMm(plates)", StringComparison.Ordinal);
         Assert.True(at > 0);
-        Assert.Contains("await EvalShape(Rnext, Rnext * fWide);", s[at..]);
+        Assert.Contains("await EvalShape(Rnext, Rnext * fWide, taperPage);", s[at..]);   // R38：多带一个锥形参数，其余不变
 
         // 反面：原来的 3×2 盘径网格枚举不许再在（那是被替掉的东西）
         var code = s.Split(((char)10).ToString())
@@ -143,7 +143,7 @@ public class ShapeSearchCostTests
         // 而且每个候选点都是真解（走 EvalShape），不是估的
         int at = s.IndexOf("④ 找最轻", StringComparison.Ordinal);
         Assert.True(at > 0);
-        Assert.Contains("await EvalShape(probe, probe * fWide);", s[at..]);
+        Assert.Contains("await EvalShape(probe, probe * fWide, taperPage);", s[at..]);   // R38：多带一个锥形参数，其余不变
     }
 
     /// <summary>

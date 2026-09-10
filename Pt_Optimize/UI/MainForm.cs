@@ -161,6 +161,7 @@ public sealed class MainForm : Form
         refInner.TabPages.Add(TabWith("分段核算", SplitH(_segGrid, SplitH(_segResult, _segOut))));
         refInner.TabPages.Add(TabWith("单段报告", _out));
         refInner.TabPages.Add(TabWith("轴向剖面", _pAxial));
+        refInner.TabPages.Add(TabWith("焊接下界小算盘", new WeldFloorPage()));   // R39：独立于求解链外的工艺下界计算
 
         var refPage = new TabPage(Flow.Stage(StageId.参考工具).Title) { Padding = new Padding(2) };
         refPage.Controls.Add(refInner);
