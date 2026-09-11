@@ -206,12 +206,12 @@ public sealed class StagePanel : Panel
                               : "⚠ 这里的数只能参考，**不能拿去交付**"));
         _chainTip.SetToolTip(_chain, chains.Length == 0 ? "（本格不跑求解器）"
             : string.Join(Environment.NewLine,
-                chains.Select(c => $"{c.Name}　{c.EntryPoint}　{c.Cost}")));
+                chains.Select(c => $"{c.PlainName}　{c.EntryPoint}　{c.Cost}")));
 
         // 正在跑什么 —— 取各页已有的进度文字，不另起一套
         if (_state.Running is { } run)
         {
-            _input.Text = $"正在算：{Flow.Chain(run).Name}"
+            _input.Text = $"正在算：{Flow.Chain(run).PlainName}"
                         + (_state.RunningNote.Length > 0 ? $"　{_state.RunningNote}" : "")
                         + "　（再点那个按钮 = 取消）";
             // 说得出百分比就画实条，说不出就走马灯 —— 别拿一根不动的空条冒充「有进度」
