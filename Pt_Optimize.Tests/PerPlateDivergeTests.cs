@@ -115,22 +115,24 @@ public class PerPlateDivergeTests
     [Fact]
     public void 爆炸不许被印成没变好()
     {
+        // ★ R40（2026-09-11 验收慢门实跑抓到）：09-06 那个「被污染的 W08 巨孔」坏例在 J 定截面的新链（R22 之后）下
+        //   第一轮就停在「法兰截面 J」—— 它没有旋钮能治（要改形状），一根旋钮都没抬、一行「没变好」都没印，
+        //   本门自己的防空转断言把它判红（空集恒真）。坏例的初衷是「场爆炸不许印成没变好」，那条不变式与构型无关：
+        //   换成 R36 对拍实跑里**确实印过「没变好」**的那个候选（2 段、盘Ø66／舌宽35、MaxRounds=2，
+        //   deliverable/搜形状并行化_逐位对拍_2026-09-11.txt 候选 0），门就有活干了。
         var d = DesignSpec.Builtin[0].Clone();
-        d.Name = "爆炸构型（09-06 被污染的 W08 逐位复现）";
-        for (int j = 0; j < d.TabHoleXMm.Length; j++) d.TabHoleXMm[j] = -79.75;   // R12 之后孔心逐片：坏例四片同一个数，逐位复现当时
-        for (int j = 0; j < d.TabThickMm.Length; j++)
-        {
-            if (j < d.TabHoleRMm.Length) d.TabHoleRMm[j] = 32.71;      // 巨孔，吃掉管孔那一圈
-            if (j < d.TabHoleAspect.Length) d.TabHoleAspect[j] = 3.0;  // 顺流拉长 3 ⇒ 长半轴 98
-            if (j < d.SlotSpanDeg.Length) d.SlotSpanDeg[j] = 120;
-        }
+        d.SetpointC = new[] { 1150.0, 1080.0 }; d.SegLengthMm = new[] { 300.0, 300.0 }; d = d.Fit();
+        d.TubeInsulMm = 10;
+        d.Name = "没变好分支的实跑案例（R36 对拍候选 0）";
+        d.DiscRadiusMm = 33; d.TabHalfWidthMm = 17.5;
+        d.TabLengthMm = Math.Sqrt(Math.Max(0, 33 * 33 - 17.5 * 17.5)) + d.ClampLengthMm + GeometryScreen.FreeTabMinDefaultMm;
 
         var sr = Solver.Solve(d, new DesignInputs(), new SolverOptions
         {
             // ⚠ 轮数不能设太紧：第一版写 MaxRounds=2 / MaxPartialRounds=0，
             //   求解器在「整轮没有一根抬得动」就收摊，**一行「没变好」都没印**
             //   ⇒ 门在**空集上恒过**（正是督导点过的那一族）。见下面那道防空转的断言。
-            FineMm = 0, FineRadiusMm = 0, MaxRounds = 15, MaxPartialRounds = 2,
+            FineMm = 0, FineRadiusMm = 0, MaxRounds = 2, MaxPartialRounds = 2,
         });
 
         // 「没变好（a→b）」里的 b：必须是个像样的物理量。

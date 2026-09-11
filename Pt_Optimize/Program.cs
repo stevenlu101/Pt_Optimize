@@ -275,6 +275,24 @@ internal static class Program
 
             // --cli --uishot [dir]   把界面逐页画成 PNG（用户 2026-08-20 要求「自己抓全部 UI」）
             // 放在求解之前：出图与热解无关，不必先花时间解一遍管段
+            // --cli --flowdump [file]   把 Flow 登记表（页 / 链 / 命令）倒成表格，给验收清单用（R40，2026-09-11 验收收尾）
+            if (args.Contains("--flowdump"))
+            {
+                int fi = Array.IndexOf(args, "--flowdump");
+                string fout = fi + 1 < args.Length && !args[fi + 1].StartsWith("--") ? args[fi + 1] : "deliverable/Flow登记表.tsv";
+                var sbF = new System.Text.StringBuilder();
+                sbF.AppendLine("类别\t编号\t名字\t页\t链\t分组\t读页面控件\t耗时\t说明");
+                foreach (var st in UI.Flow.Stages)
+                    sbF.AppendLine($"页\t{st.Id}\t{st.Title}\t{st.Order}\t{string.Join("／", st.Chains)}\t\t\t\t{st.Banner.Replace("**", "").Replace("\n", " ").Replace("\r", " ")}");
+                foreach (var ch in UI.Flow.Chains)
+                    sbF.AppendLine($"链\t{ch.Id}\t{ch.Name}\t\t{ch.EntryPoint}\t\t\t{ch.Cost}\t{ch.Answers.Replace("**", "")}");
+                foreach (var c in UI.Flow.Commands)
+                    sbF.AppendLine($"命令\t{c.Id}\t{c.Text}\t{UI.Flow.Stage(c.Stage).Title}\t{c.Chain}\t{c.Group}\t{(c.ReadsPageControls ? "读" : "不读")}\t{c.Cost}\t{c.Tip.Replace("**", "").Replace("\n", " ").Replace("\r", " ")}");
+                System.IO.File.WriteAllText(fout, sbF.ToString(), new System.Text.UTF8Encoding(false));
+                Console.WriteLine($"Flow 登记表已倒出：{fout}（页 {UI.Flow.Stages.Length}、链 {UI.Flow.Chains.Length}、命令 {UI.Flow.Commands.Length}）");
+                return;
+            }
+
             if (args.Contains("--uishot"))
             {
                 int si = Array.IndexOf(args, "--uishot");
