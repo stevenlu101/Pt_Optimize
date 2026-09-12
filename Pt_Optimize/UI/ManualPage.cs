@@ -1265,15 +1265,15 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         sb.Append(Criteria.Html());
         sb.Append("<h3>限值的出处（每条都有）</h3><table class=\"nw\">" +
                   "<tr><th>判据</th><th>限值</th><th>出处</th></tr>" +
-                  $"<tr><td>升温（空管到目标）</td><td class=\"n\">{lim.RampHours:0} h</td><td>业主要求「不超过 3 天」</td></tr>" +
+                  $"<tr><td>升温（空管到目标）</td><td class=\"n\">{lim.RampHours:0} h</td><td>设计要求：不超过 3 天</td></tr>" +
                   "<tr><td>管孔净流入</td><td class=\"n\">&gt; 0</td><td>热要从管子流进法兰；反过来就是法兰比管子热，管子会烧</td></tr>" +
                   $"<tr><td>圆盘区最高温</td><td class=\"n\">{lim.DiscOverTempMaxK:0} K</td><td>现场控温精度 ±5 K</td></tr>" +
-                  $"<tr><td>法兰增量温降</td><td class=\"n\">{lim.RootDeltaMaxK:0} K</td><td>业主定的，按热电偶误差取的数</td></tr>" +
+                  $"<tr><td>法兰增量温降</td><td class=\"n\">{lim.RootDeltaMaxK:0} K</td><td>给定值，按热电偶误差取的数</td></tr>" +
                   $"<tr><td>管 J</td><td class=\"n\">{dfl.TubeJAllowAPerMm2:0.#} A/mm²</td>" +
                   "<td>现场经验：一般 15，管壁 0.6 时 12 是极限。<b>参数表里可改</b>，本行跟着它走</td></tr>" +
                   $"<tr><td>法兰截面 J</td><td class=\"n\">设定 J + 1</td><td>设计电流除以法兰每一个必经截面的面积；按设定 J（预设 10）定尺寸，全体要小于 J + 1</td></tr>" +
                   $"<tr><td><b>舌片自由段</b></td><td class=\"n\">≥ {GeometryScreen.FreeTabMinDefaultMm:0} mm</td>" +
-                  "<td>现场铜排长 100、宽 60–80 mm，自由段留 100 才装得上（业主说这是参考值，铜排可以定制）</td></tr>" +
+                  "<td>现场铜排长 100、宽 60–80 mm，自由段留 100 才装得上（参考值，铜排可以定制）</td></tr>" +
                   "<tr><td><b>圆盘盖得住管孔＋焊脚</b></td><td class=\"n\">≥ 0</td>" +
                   "<td>能不能焊：盘半径 − 管孔半径 − 焊脚（= max(板厚, 壁厚)）。盖不住的几何料最少，优化器会主动往那里跑，所以必须有这一条拦着</td></tr>" +
                   $"<tr><td>管壁下界</td><td class=\"n\">{DesignInputs.WeldMinDefaultMm:0.0} mm</td>" +

@@ -671,7 +671,7 @@ public sealed class MainForm : Form
                         + (r.Feasible ? "✓" : (r.Unknown ? "⚠ " : "✗ ") + r.Binding));
         GridFmt.Fill(_segResult, tab.ToString());
 
-        sb.AppendLine($"材料数据：用户实测工作簿   寿命 {_in.DesignLifeHours:0} h   安全系数 {_in.SafetyFactor:0.0}");
+        sb.AppendLine($"材料数据：实测工作簿   寿命 {_in.DesignLifeHours:0} h   安全系数 {_in.SafetyFactor:0.0}");
         sb.AppendLine($"金属价格比：Rh/Pt = 4.91（Umicore PMM 2026-08-06，Pt $1731/oz、Rh $8500/oz）");
         sb.AppendLine();
         sb.AppendLine($"合计铂重 {mass:0} g    相对成本 {cost:0}（= Σ 质量×牌号成本倍数，纯铂同质量为基准）");
