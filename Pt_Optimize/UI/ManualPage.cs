@@ -501,8 +501,8 @@ public sealed class ManualPage : TabPage
 
         // ★ R43（2026-09-12，用户在图上圈出「管体还是面／管体不用截开／镂空／这是两个面」并答：
         //   「一根空心实体管，再套上实体的法兰」；端片也像图里那样管从两边穿出；舌片和圆盘是同一块板切出来的）：
-        //   · 管 = 空心的实体管：近侧外壁两段（盘下、盘上）+ 管口一圈壁厚环（壁厚同倍放大）+ 管腔：只露口内一小段远侧内壁、
-        //     底下深色封住 —— 不截开、不镂空（之前把远侧内壁一直画到盘面，看着像一层壳）。
+        //   · 管 = 实体管：近侧外壁两段（盘下、盘上）+ 管端整个椭圆封住。先画过管口壁厚环 + 口内一小段内壁，
+        //     用户 09-12 看图说「管不需要开孔」⇒ 示意图上管端不画孔，壁厚只在标注里说（之前把远侧内壁一直画到盘面，像一层壳）。
         //   · 法兰 = 一个体：舌片矩形与圆盘各自的顶面（同厚时在弦 x=xa 处无缝相接；舌片更厚时补一块朝 +x 的台阶面），
         //     侧壁沿轮廓的近侧连续画（舌片近侧长边 → 圆盘近侧圆弧），舌片接上来的那段圆弧没有盘缘。
         //     本投影可见的是顶面、近侧面与朝 +x 的面；舌端面朝 −x，看不见，不画。
@@ -600,12 +600,9 @@ public sealed class ManualPage : TabPage
             }
         }
 
-        // ④ 管：盘上面那一段（近侧外壁）+ 管口：管腔底（深色）→ 口内一小段远侧内壁 → 一圈壁厚环
-        double bore = 0.3 * h;                   // 只露口内这么深的内壁，够看出是空心，又不像截开的壳
+        // ④ 管：盘上面那一段（近侧外壁）+ 管端：整个椭圆封住（用户 2026-09-12：「管不需要开孔」）
         sb.Append(Wall(h, topY, TUBE, "url(#gTube)"));
-        sb.Append(Disk(ri, TUBE - bore, "var(--tubeDark)"));
-        sb.Append(Wall(ri, TUBE - bore, TUBE, "url(#gTubeIn)", near: false));
-        sb.Append(TopRing(h, ri, TUBE, "var(--tubeTop)"));
+        sb.Append(Disk(h, TUBE, "var(--tubeTop)"));
 
         // ── 引线标注
         void Lead(double x, double y, double z, double dx, double dy, string txt, string anchor = "start")
@@ -1172,7 +1169,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   $"</div></div>");
 
         sb.Append($"<div class=\"fig\">{SvgIso(fd, 0)}" +
-                  $"<div class=\"cap\"><b>图 3　入口片立体示意。</b>一根空心的实体铂管（管口那一圈是壁厚），套一片实体法兰；舌片和圆盘是同一块板切出来的，管从法兰两面穿出。" +
+                  $"<div class=\"cap\"><b>图 3　入口片立体示意。</b>一根实体铂管（示意图上管端不画孔），套一片实体法兰；舌片和圆盘是同一块板切出来的，管从法兰两面穿出。" +
                   (fd.RingMul[0] > 1.001 || fd.RingMulOuter(0) > 1.001
                    ? $"盘上从管孔往外是两级台阶：环内级 {fd.TabThickMm[0] * fd.RingMul[0]:0.00} → 环外级 {fd.TabThickMm[0] * fd.RingMulOuter(0):0.00} → 板身 {fd.TabThickMm[0]:0.00} mm；"
                    : $"本档没有台阶：盘身与舌片同厚 {fd.TabThickMm[0]:0.00} mm；") +
