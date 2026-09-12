@@ -120,6 +120,7 @@ public static class FieldPlots
         plot.XLabel("x [mm]（0 = 管轴，负向为舌片）");
         plot.YLabel("z [mm]");
         plot.ShowLegend();
+        plot.Legend.FontName = "Microsoft YaHei";   // 图例字体：默认字体没有中文字形，「管孔（= 铂金管外壁）」在 ③ 页与存成的 PNG 里都成了方块（2026-09-12 报告用场图上抓到）
         plot.Axes.AutoScale();
         fp.Refresh();
     }

@@ -427,16 +427,19 @@ public sealed class ManualPage : TabPage
         //   每个体三个可见面各自一个明暗（顶面亮、近侧面中、底/内壁暗），管壁也按同一倍数放大成看得见的环，
         //   管口画出内壁，管的底端封口；舌片是一块板（顶、近侧、端面），盘与两级环是带侧壁的厚板。
         double h = fd.HoleRadiusMm, R = fd.DiscRadiusMm, wall = fd.WallMm;
-        double r1 = fd.RingRadiiMm[0], r2 = fd.RingRadiiMm[1];
+        // ★ 环半径夹到盘缘以内：现役记录环外级 31.8 > 盘半径 30，原来 TopRing(R, r2) 画出一个反向的环，盘身整个没了，
+        //   盘看起来只是几个垫圈叠着（用户 2026-09-11 两次说「不是实体」的根子之一）。环只能占盘的一部分，盘身至少留一圈。
+        double r1 = Math.Min(fd.RingRadiiMm[0], R - 2.0), r2 = Math.Min(fd.RingRadiiMm[1], R - 1.0);
         double t = fd.TabThickMm[plate];
         double ti = t * fd.RingMul[plate], to = t * fd.RingMulOuter(plate);
+        bool hasRings = fd.RingMul[plate] > 1.001 || fd.RingMulOuter(plate) > 1.001;   // 倍率都是 1 = 没有台阶：整个盘就是一块厚板，别画三个同厚的垫圈
         double L = fd.TabLengthMm, w = fd.TabHalfWidthMm;
 
         const double KX = 0.52, KY = 0.30;          // z 轴的投影方向
-        const double MAG = 5.0;                     // **只放大厚度**（板厚、管壁），见下
+        const double MAG = 7.0;                     // **只放大厚度**（板厚、管壁），见下
         const double TUBE = 40;                     // 管子露出的长度（真实尺寸，不放大）
         // 总缩放 px/mm：按舌长自适应，整块舌片都要画进画布（原来写死 3.4，舌长 163 时舌端出画布，标注被切）
-        double S = Math.Min(3.4, 560.0 / (L + R + KX * h + 24));
+        double S = Math.Min(3.4, 560.0 / (L + KX * w + R + KX * h + 24));   // 舌端近角在 z=−w，也要装进画布
 
         // ⚠ 放大倍数**不能写进投影**：y 既是板厚方向、也是**管子的轴向**。
         //   投影用真实 y；只把**厚度**在传入前乘 MAG。
@@ -444,7 +447,7 @@ public sealed class ManualPage : TabPage
         ti *= MAG; to *= MAG; t *= MAG;
         double ri = Math.Max(h * 0.55, h - wall * MAG);   // 管内半径（管壁同倍放大，才看得见是一根有壁的管）
 
-        double OX = 24 + L * S, OY = 230;
+        double OX = 24 + (L + KX * w) * S, OY = 230;
         string P(double x, double y, double z) =>
             $"{OX + (x + KX * z) * S:0.0},{OY - (y + KY * z) * S:0.0}";
 
@@ -466,10 +469,14 @@ public sealed class ManualPage : TabPage
             $"<path d=\"{Arc(rOut, y)}Z {Arc(rIn, y)}Z\" fill-rule=\"evenodd\" fill=\"{fill}\" {EDGE}/>";
         // 实心圆面（管底封口）
         string Disk(double r, double y, string fill) => $"<path d=\"{Arc(r, y)}Z\" fill=\"{fill}\" {EDGE}/>";
-        // 侧壁：near=true 画近侧半圈（本投影下 z<0 为近侧 ⇒ θ∈[π,2π]），false 画远侧半圈（管口内壁用）
+        // 侧壁：near=true 画朝观察者的半圈，false 画远侧半圈（管口内壁用）。
+        // ⚠ 斜投影 X = x + KX·z 下，圆柱的轮廓母线在 dX/dθ = 0 ⇒ tanθ = KX（θ ≈ 27.5°／207.5°），不在 0°／180°：
+        //   原来按 [π, 2π] 画，右边少一条 0.127r 的壁（顶面悬空），左边多画了背面又用竖线闭合 —— 上下各长一个「耳朵」、
+        //   中段凹进去，管看着像两头外翻的线轴，正是「壳／两个面」的观感之一（2026-09-12 审查抓到）。
+        double thSil = Math.Atan(KX);            // 轮廓母线角
         string Wall(double r, double yLo, double yHi, string fill, bool near = true)
         {
-            double a0 = near ? Math.PI : 0, a1 = near ? 2 * Math.PI : Math.PI;
+            double a0 = near ? Math.PI + thSil : thSil, a1 = a0 + Math.PI;
             var b = new StringBuilder("<path d=\"");
             b.Append(Arc(r, yHi, a0, a1, 48));
             for (int i = 48; i >= 0; i--)
@@ -482,7 +489,7 @@ public sealed class ManualPage : TabPage
         }
 
         var sb = new StringBuilder();
-        double W = OX + (R + KX * h) * S + 170;   // 画布宽随舌长走：右边要留得下三行标注
+        double W = OX + (R + KX * h) * S + 250;   // 画布宽随舌长走：右边要留得下三行标注（无台阶那行最长，170 时被裁）
         sb.Append($"<svg viewBox=\"0 0 {W:0} {OY + 200:0}\" width=\"100%\" style=\"max-width:{W:0}px\">");
         // 柱面明暗：左暗右亮，管子才像圆的
         sb.Append("<defs>" +
@@ -492,29 +499,112 @@ public sealed class ManualPage : TabPage
                   "<stop offset=\"0\" stop-color=\"var(--tube)\"/><stop offset=\"1\" stop-color=\"var(--tubeDark)\"/></linearGradient>" +
                   "</defs>");
 
-        // ① 管：盘下面那一段（近侧外壁 + 底端封口）
-        sb.Append(Disk(h, -TUBE, "var(--tubeDark)"));
-        sb.Append(Wall(h, -TUBE, -ti / 2, "url(#gTube)"));
+        // ★ R43（2026-09-12，用户在图上圈出「管体还是面／管体不用截开／镂空／这是两个面」并答：
+        //   「一根空心实体管，再套上实体的法兰」；端片也像图里那样管从两边穿出；舌片和圆盘是同一块板切出来的）：
+        //   · 管 = 空心的实体管：近侧外壁两段（盘下、盘上）+ 管口一圈壁厚环（壁厚同倍放大）+ 管腔：只露口内一小段远侧内壁、
+        //     底下深色封住 —— 不截开、不镂空（之前把远侧内壁一直画到盘面，看着像一层壳）。
+        //   · 法兰 = 一个体：舌片矩形与圆盘各自的顶面（同厚时在弦 x=xa 处无缝相接；舌片更厚时补一块朝 +x 的台阶面），
+        //     侧壁沿轮廓的近侧连续画（舌片近侧长边 → 圆盘近侧圆弧），舌片接上来的那段圆弧没有盘缘。
+        //     本投影可见的是顶面、近侧面与朝 +x 的面；舌端面朝 −x，看不见，不画。
+        //   · 有台阶时环外级、环内级是叠在盘上的两级厚板：侧壁只画露出盘面的那段（整段画会盖住盘壁，又成「垫圈叠着」）。
+        double tPlate = t;                       // 盘身厚（已放大）
+        double tTab = tt;                        // 舌片厚（已放大）；与盘身不同厚时舌片区按自己的厚度画，交界处是一道真实的台阶
+        // 舌片两条边与圆盘的交点角：平行舌 = ±(π − asin(w/R))；锥形舌 = 从舌端角点向圆盘作切线
+        double thetaAttach;
+        if (fd.TabTaper)
+        {
+            double dq = Math.Sqrt(L * L + w * w), gamma = Math.Atan2(w, -L);
+            thetaAttach = gamma - Math.Acos(Math.Min(1.0, R / dq));
+        }
+        else thetaAttach = Math.PI - Math.Asin(Math.Min(1.0, w / R));
+        double th1 = -thetaAttach, th2 = thetaAttach;          // 从近侧交点 th1 经 +x（θ=0）到远侧交点 th2
+        double xa = R * Math.Cos(thetaAttach), za = R * Math.Sin(thetaAttach);   // 远侧交点 (xa, +za)，近侧 (xa, −za)
 
-        // ② 舌片：一块厚 tt 的板 —— 顶面、近侧长边、端面三个面
-        string TabTop = $"M {P(-L, tt / 2, w)} L {P(0, tt / 2, w)} L {P(0, tt / 2, -w)} L {P(-L, tt / 2, -w)} Z";
-        string TabSide = $"M {P(-L, tt / 2, -w)} L {P(0, tt / 2, -w)} L {P(0, -tt / 2, -w)} L {P(-L, -tt / 2, -w)} Z";
-        string TabEnd = $"M {P(-L, tt / 2, w)} L {P(-L, tt / 2, -w)} L {P(-L, -tt / 2, -w)} L {P(-L, -tt / 2, w)} Z";
-        sb.Append($"<path d=\"{TabEnd}\" fill=\"var(--ptDark)\" {EDGE}/>");
-        sb.Append($"<path d=\"{TabSide}\" fill=\"var(--ptDark)\" {EDGE}/>");
-        sb.Append($"<path d=\"{TabTop}\" fill=\"var(--pt)\" {EDGE}/>");
+        // 圆盘近侧圆弧的侧壁：θ 从 max(th1, thSil − π) 到 thSil（朝观察者的那一半，且不含舌片接上来的那段）
+        string DiscNearWall(double yLo, double yHi, string fill)
+        {
+            const int n = 40;
+            double a0 = Math.Max(th1, thSil - Math.PI), a1 = thSil;
+            var b0 = new StringBuilder("<path d=\"");
+            for (int i = 0; i <= n; i++)
+            {
+                double ang = a0 + (a1 - a0) * i / n;
+                b0.Append(i == 0 ? "M " : "L ").Append(P(R * Math.Cos(ang), yHi, R * Math.Sin(ang))).Append(' ');
+            }
+            for (int i = n; i >= 0; i--)
+            {
+                double ang = a0 + (a1 - a0) * i / n;
+                b0.Append("L ").Append(P(R * Math.Cos(ang), yLo, R * Math.Sin(ang))).Append(' ');
+            }
+            b0.Append($"Z\" fill=\"{fill}\" {EDGE}/>");
+            return b0.ToString();
+        }
+        string Quad(string p1, string p2, string p3, string p4, string fill) =>
+            $"<path d=\"M {p1} L {p2} L {p3} L {p4} Z\" fill=\"{fill}\" {EDGE}/>";
 
-        // ③ 盘：板身 → 环外级 → 环内级，由外向内、由薄到厚；每级都有侧壁（近侧半圈）+ 顶面
-        sb.Append(Wall(R, -t / 2, t / 2, "var(--ptDark)"));
-        sb.Append(TopRing(R, r2, t / 2, "var(--pt)"));
-        sb.Append(Wall(r2, -to / 2, to / 2, "var(--ring2d)"));
-        sb.Append(TopRing(r2, r1, to / 2, "var(--ring2)"));
-        sb.Append(Wall(r1, -ti / 2, ti / 2, "var(--ring1d)"));
-        sb.Append(TopRing(r1, h, ti / 2, "var(--ring1)"));
+        // 舌片顶面（按舌片厚）与圆盘顶面（按盘身厚）分开画；同厚时在弦 x=xa 处无缝相接
+        string TabTop(double y) =>
+            $"<path d=\"M {P(-L, y, w)} L {P(xa, y, za)} L {P(xa, y, -za)} L {P(-L, y, -w)} Z\" fill=\"var(--pt)\" {EDGE}/>";
+        string DiscTop(double y)
+        {
+            var b0 = new StringBuilder("<path d=\"M ").Append(P(xa, y, -za)).Append(' ');
+            const int n = 60;
+            for (int i = 1; i <= n; i++)
+            {
+                double ang = th1 + (th2 - th1) * i / n;
+                b0.Append("L ").Append(P(R * Math.Cos(ang), y, R * Math.Sin(ang))).Append(' ');
+            }
+            b0.Append($"Z\" fill=\"var(--pt)\" {EDGE}/>");
+            return b0.ToString();
+        }
+        bool hasTab = -L < xa - 1.0;             // 舌端不出盘（几何无意义）时只画盘
 
-        // ④ 管：盘上面那一段（近侧外壁）+ 管口：远侧内壁露出来 + 管壁环
-        sb.Append(Wall(h, ti / 2, TUBE, "url(#gTube)"));
-        sb.Append(Wall(ri, ti / 2, TUBE, "url(#gTubeIn)", near: false));   // 管口望进去看到的远侧内壁：一直画到盘面，才像空心管
+        // ① 管：盘下面那一段（近侧外壁）
+        sb.Append(Wall(h, -TUBE, -tPlate / 2, "url(#gTube)"));
+
+        // ② 法兰体的侧壁：舌片近侧长边（按舌片厚）→ 圆盘近侧圆弧（按盘身厚）
+        if (hasTab)
+            sb.Append(Quad(P(-L, tTab / 2, -w), P(xa, tTab / 2, -za), P(xa, -tTab / 2, -za), P(-L, -tTab / 2, -w), "var(--ptDark)"));
+        sb.Append(DiscNearWall(-tPlate / 2, tPlate / 2, "var(--ptDark)"));
+
+        // ③ 顶面：舌片比盘薄（或同厚）时先舌片后圆盘（盘顶盖住弦附近被抬高的那一条）；
+        //    舌片比盘厚时先圆盘，再补一块朝 +x 的台阶面，最后舌片顶面
+        if (tTab <= tPlate + 1e-9)
+        {
+            if (hasTab) sb.Append(TabTop(tTab / 2));
+            sb.Append(DiscTop(tPlate / 2));
+        }
+        else
+        {
+            sb.Append(DiscTop(tPlate / 2));
+            if (hasTab)
+            {
+                sb.Append(Quad(P(xa, tPlate / 2, -za), P(xa, tTab / 2, -za), P(xa, tTab / 2, za), P(xa, tPlate / 2, za), "var(--ring2d)"));
+                sb.Append(TabTop(tTab / 2));
+            }
+        }
+        double topY = tPlate / 2;
+        if (hasRings)
+        {
+            if (to > tPlate + 1e-9)
+            {
+                sb.Append(Wall(r2, tPlate / 2, to / 2, "var(--ring2d)"));     // 只画露出盘面的那段
+                sb.Append(TopRing(r2, r1, to / 2, "var(--ring2)"));
+                topY = to / 2;
+            }
+            if (ti > topY * 2 + 1e-9)
+            {
+                sb.Append(Wall(r1, topY, ti / 2, "var(--ring1d)"));
+                sb.Append(TopRing(r1, h, ti / 2, "var(--ring1)"));
+                topY = ti / 2;
+            }
+        }
+
+        // ④ 管：盘上面那一段（近侧外壁）+ 管口：管腔底（深色）→ 口内一小段远侧内壁 → 一圈壁厚环
+        double bore = 0.3 * h;                   // 只露口内这么深的内壁，够看出是空心，又不像截开的壳
+        sb.Append(Wall(h, topY, TUBE, "url(#gTube)"));
+        sb.Append(Disk(ri, TUBE - bore, "var(--tubeDark)"));
+        sb.Append(Wall(ri, TUBE - bore, TUBE, "url(#gTubeIn)", near: false));
         sb.Append(TopRing(h, ri, TUBE, "var(--tubeTop)"));
 
         // ── 引线标注
@@ -530,11 +620,16 @@ public sealed class ManualPage : TabPage
                       $"text-anchor=\"{anchor}\" class=\"lbl\">{txt}</text>");
         }
         Lead(-(h + ri) / 2, TUBE, 0, -60, -18, $"铂管 Ø{2 * (h - wall):0} 壁 {wall:0.0}", "end");
-        Lead((h + r1) / 2, ti / 2, 0, 24, -62, $"环内级 {ti / MAG:0.00}");
-        Lead((r1 + r2) / 2, to / 2, 0, 58, -38, $"环外级 {to / MAG:0.00}");
-        Lead((r2 + R) / 2, t / 2, 0, 86, -12, $"板身 {t / MAG:0.00}");
+        if (hasRings)
+        {
+            Lead((h + r1) / 2, ti / 2, 0, 24, -62, $"环内级 {ti / MAG:0.00}");
+            Lead((r1 + r2) / 2, to / 2, 0, 58, -38, $"环外级 {to / MAG:0.00}");
+            Lead((r2 + R) / 2, t / 2, 0, 86, -12, $"板身 {t / MAG:0.00}");
+        }
+        else
+            Lead((h + R) / 2, t / 2, 0, 70, -30, $"盘身厚 {t / MAG:0.00}（无台阶）");
         Lead(-L * 0.6, tt / 2, 0, -10, 62, $"舌片 {L:0}×{2 * w:0}（接铜排）", "end");
-        Lead(0, -t / 2, h, 60, 40, $"盘 Ø{2 * R:0}");
+        Lead(R * Math.Cos(-Math.PI / 3), 0, R * Math.Sin(-Math.PI / 3), 60, 40, $"盘 Ø{2 * R:0}");
 
         sb.Append($"<text x=\"{W - 8:0}\" y=\"18\" text-anchor=\"end\" class=\"lbl dim\">" +
                   $"轴测示意　厚度方向放大 {MAG:0}×（板厚、环厚、管壁同倍，比例关系真实）</text>");
@@ -1069,7 +1164,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         sb.Append($"<div class=\"fig\">{SvgPlate(fd)}" +
                   $"<div class=\"cap\"><b>图 2　法兰平面图。</b>板面在 XZ 平面、厚度沿 Y（与 3DM 图纸的方位一致）。" +
                   $"舌根圆角 R{fd.TabFilletMm:0} 不是装饰：电流最挤的地方就在这个凹角上。<br>" +
-                  (fd.RingMul[0] > 1.001
+                  (fd.RingMul[0] > 1.001 || fd.RingMulOuter(0) > 1.001
                    ? $"管孔外面有<b>两级渐变环</b>（倍率 ×{fd.RingMul[0]:0.00}）压制孔周电流集中；环的半径和厚度都是相对量（相对管孔、相对板厚），板变厚环跟着变。" +
                      $"环外级外半径 {fd.RingRadiiMm[1]:0.0} mm 大于盘半径 {fd.DiscRadiusMm:0.0} mm ⇒ 两级环几乎盖满整个圆盘。"
                    : $"本档<b>没有渐变环</b>（倍率 1.00 = 等厚）：舌片加宽到 {2 * fd.TabHalfWidthMm:0} mm 之后，电流从管孔进来有足够的截面可走，孔周不再拥挤，" +
@@ -1077,8 +1172,11 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   $"</div></div>");
 
         sb.Append($"<div class=\"fig\">{SvgIso(fd, 0)}" +
-                  $"<div class=\"cap\"><b>图 3　入口片立体示意。</b>管子从盘面垂直穿出。盘上从管孔往外是两级台阶：" +
-                  $"环内级 {fd.TabThickMm[0] * fd.RingMul[0]:0.00} → 环外级 {fd.TabThickMm[0] * fd.RingMulOuter(0):0.00} → 板身 {fd.TabThickMm[0]:0.00} mm；舌片伸出去接铜排。<br>" +
+                  $"<div class=\"cap\"><b>图 3　入口片立体示意。</b>一根空心的实体铂管（管口那一圈是壁厚），套一片实体法兰；舌片和圆盘是同一块板切出来的，管从法兰两面穿出。" +
+                  (fd.RingMul[0] > 1.001 || fd.RingMulOuter(0) > 1.001
+                   ? $"盘上从管孔往外是两级台阶：环内级 {fd.TabThickMm[0] * fd.RingMul[0]:0.00} → 环外级 {fd.TabThickMm[0] * fd.RingMulOuter(0):0.00} → 板身 {fd.TabThickMm[0]:0.00} mm；"
+                   : $"本档没有台阶：盘身与舌片同厚 {fd.TabThickMm[0]:0.00} mm；") +
+                  "舌片伸出去接铜排。<br>" +
                   $"厚度方向放大了（真实板厚 1～2 mm，1:1 会薄成一条线），但板厚、环厚、管壁用同一个倍数，谁比谁厚多少是真的。</div></div>");
 
         sb.Append($"<div class=\"fig\">{SvgSection(fd, 0)}" +
