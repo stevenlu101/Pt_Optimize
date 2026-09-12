@@ -294,6 +294,11 @@ public sealed class LineDesignPage : TabPage
     private readonly ToolStripProgressBar _prog = new() { Visible = false, Maximum = 1000 };
     private readonly ToolStripLabel _status = new("");
     private readonly ToolStripButton _btnRun, _btnAuto, _btnExport, _btnLoadCase, _btn3dm;
+    /// <summary>R46（2026-09-12，用户「APP添加一个呈现配套清单与系统安装报告」）：③ 页「配套清单」表、「安装报告」正文与「导出安装报告」键。</summary>
+    private readonly ToolStripButton _btnReport;
+    private readonly DataGridView _kitGrid = GridFmt.NewGrid();
+    private readonly RichTextBox _report = new() { Dock = DockStyle.Fill, ReadOnly = true, WordWrap = false, BorderStyle = BorderStyle.None };
+    private LineResult? _shown;   // 最近一次 Show() 的结果 —— 导出安装报告用它，不另存一份状态
 
     /// <summary>
     /// ★★★ **网格无关复核**（2026-08-30 补）。在此之前它只有命令行有。
@@ -798,6 +803,7 @@ public sealed class LineDesignPage : TabPage
         _btnExportRead = Btn("导出可回读 3DM", (_, _) => ExportReadable3dm());
         _btnToAnalytic = Btn("◈ 图纸几何 → 参数", (_, _) => AdoptShapeToAnalytic());
         _btnSaveFinal = Btn("另存为设计记录", (_, _) => SaveAsDesignSpec());
+        _btnReport = Btn(Flow.Cmd("report.install").Text, (_, _) => ExportInstallReport());   // R46
 
         // 「▶ 复现设计记录」键 2026-09-11 去掉（R37，用户定 B）：「载入设计记录 → 核算整线」已能逐项复现记录数字
         //   （走查 16 节每次都验，差在千分位），复现键剩下的只是校验程序本身 —— 那是走查的活，不是工程师的。
@@ -1051,8 +1057,20 @@ public sealed class LineDesignPage : TabPage
         _out.ReadOnly = true; _out.WordWrap = false;
         _out.BackColor = Color.FromArgb(252, 252, 250);
 
+        // R46：配套清单表 + 安装报告正文，与三张场图同在 ③ 页的页签里
+        GridFmt.FitFont(_kitGrid, "配套清单");
+        _kitGrid.ReadOnly = true; _kitGrid.AllowUserToAddRows = false; _kitGrid.RowHeadersVisible = false;
+        _kitGrid.AutoGenerateColumns = false;
+        foreach (var (name, header) in new[] {
+            ("Name", "片"), ("CurrentA", "电流 A"), ("SecCur", "载流截面 mm²"), ("SecHeat", "导热截面 mm²"),
+            ("Bus", "铜排规格 宽×厚 mm"), ("JCu", "铜排 J A/mm²"), ("Clamp", "压接 mm"), ("ClampT", "夹持 °C"),
+            ("QClamp", "铜排带走 W"), ("Insul", "舌保温 mm"), ("InsulCover", "保温覆盖（x 从…到）"), ("Weld", "焊脚 mm"), ("Note", "备注") })
+            _kitGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = name, HeaderText = header, SortMode = DataGridViewColumnSortMode.NotSortable });
+        _report.Font = UiScale.Ui();
+        TextFmt.Hook(_report);
+        _report.Text = "还没有结果 —— 点「核算整线」";
         foreach (var (t, c) in new (string, Control)[]
-        { ("法兰温度场", _pT), ("法兰电流密度场", _pJ), ("管轴向剖面", _pAx) })
+        { ("法兰温度场", _pT), ("法兰电流密度场", _pJ), ("管轴向剖面", _pAx), ("配套清单", _kitGrid), ("安装报告", _report) })
         {
             var pg = new TabPage(t) { Padding = new Padding(2) };
             pg.Controls.Add(c);
@@ -4596,6 +4614,7 @@ public sealed class LineDesignPage : TabPage
     internal ToolStripButton BtnLoadCase => _btnLoadCase;
     internal ToolStripComboBox CaseBox => _caseBox;
     internal ToolStripButton BtnSaveFinal => _btnSaveFinal;
+    internal ToolStripButton BtnExportReport => _btnReport;   // R46
 
     /// <summary>④⑤ 页要显示「③ 解出来的是什么」，需要读这一份状态。</summary>
     internal LineResult? LastResult => _last;
@@ -4870,6 +4889,18 @@ public sealed class LineDesignPage : TabPage
                     sb.AppendLine($"  …（还有 {_lastTrace.Length - cap} 行，已略）");
             }
         }
+        // R46：输出框末尾附配套清单（与 ③ 页那张表、安装报告同一来源）
+        if (r.Ok)
+        {
+            try
+            {
+                var dKit = PageToDesignSpec();
+                sb.AppendLine();
+                sb.Append(FlangeKit.Text(FlangeKit.Build(r, dKit, _base), dKit, _base));
+                sb.AppendLine("  完整的安装报告在「③ 结果与出图 ▸ 安装报告」，点「导出安装报告」写成文件。");
+            }
+            catch { /* 页面设计读不出来时不附清单，报告页会说明 */ }
+        }
         // 照常写文本即可：排版（逐表制表位、`**…**` 加粗）由构造函数里挂的
         // TextFmt.Hook 接管 —— 与本页其余几十处写输出的地方走同一条路。
         _out.Text = sb.ToString();
@@ -4881,8 +4912,10 @@ public sealed class LineDesignPage : TabPage
             FieldPlots.DrawEmpty(_pT, "还没有结果 —— 点「核算整线」");
             FieldPlots.DrawEmpty(_pJ, "还没有结果 —— 点「核算整线」");
             FieldPlots.DrawEmpty(_pAx, "还没有结果 —— 点「核算整线」");
+            _kitGrid.Rows.Clear(); _report.Text = "还没有结果 —— 点「核算整线」"; _shown = null;   // R46：空态也要清，别留上一次的
             return;
         }
+        _shown = r;
 
         // 场图取最不利那片（局部最高温）
         var worst = r.Flanges.OrderByDescending(f => f.TMaxC).FirstOrDefault();
@@ -4898,6 +4931,54 @@ public sealed class LineDesignPage : TabPage
         //   页签在、控件在、数据也一直在，只是没人接这一行。
         //   一个永远空白的页签比没有这个页签更坏：它看起来像「这次没算出来」。
         FieldPlots.DrawLineAxialProfile(_pAx, r, _base);
+        FillKitAndReport(r);   // R46：配套清单表 + 安装报告
+    }
+
+    /// <summary>R46：配套清单表与安装报告正文都从同一份结果与页面设计生成（来源只有一个）。</summary>
+    private void FillKitAndReport(LineResult r)
+    {
+        _kitGrid.Rows.Clear();
+        DesignSpec d;
+        try { d = PageToDesignSpec(); }
+        catch (Exception ex) { _report.Text = "配套清单／安装报告没生成：页面设计读不出来 —— " + ex.Message; return; }
+        var rows = FlangeKit.Build(r, d, _base);
+        foreach (var k in rows)
+            _kitGrid.Rows.Add(k.Name, k.CurrentA.ToString("0"), k.SecCurMm2.ToString("0"), k.SecHeatMm2.ToString("0"),
+                              $"{k.BusWidthMm:0} × {k.BusThickMm:0.0}", k.JCuAPerMm2.ToString("0.00"), k.ClampLenMm.ToString("0"),
+                              k.ClampTempC.ToString("0") + (k.ClampTempIsInput ? "" : "（算出）"), k.QClampW.ToString("0.0"),
+                              k.TabInsulMm.ToString("0.0"), $"{k.InsulFromXMm:0} … {k.InsulToXMm:0}（长 {k.InsulLenMm:0}）",
+                              k.WeldLegMm.ToString("0.00"), (k.ArmNote + (k.ArmNote.Length > 0 && k.Note.Length > 0 ? "；" : "") + k.Note));
+        _report.Text = InstallReport.Build(r, d, _base, MeshNoteForReport());
+    }
+
+    /// <summary>安装报告里判据表那一行的口径说明：加密复算过没过、到多细。</summary>
+    private string MeshNoteForReport()
+    {
+        var st = Shared;
+        if (st is null) return "";
+        return st.MeshVerified && st.VerifiedFresh ? "判据已加密复算到数不再变" : "判据是导航网格上的数，还没加密复算";
+    }
+
+    /// <summary>R46：安装报告写成 .md（制表位表转成管道表）。抽成两层：带对话框的给按钮，写文件的给走查。</summary>
+    private void ExportInstallReport()
+    {
+        if (_shown is null || !_shown.Ok) { _status.Text = "还没有结果 —— 先点「核算整线」"; return; }
+        using var dlg = new SaveFileDialog
+        {
+            Filter = "Markdown|*.md|文本|*.txt",
+            FileName = $"安装报告_{DateTime.Now:yyyyMMdd_HHmm}.md"
+        };
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        ExportInstallReportTo(dlg.FileName);
+        _status.Text = "安装报告已写出：" + dlg.FileName;
+        _out.AppendText($"\r\n安装报告已写出：{dlg.FileName}\r\n");
+    }
+
+    internal void ExportInstallReportTo(string path)
+    {
+        string text = _report.Text;
+        if (path.EndsWith(".md", StringComparison.OrdinalIgnoreCase)) text = InstallReport.ToMarkdown(text);
+        File.WriteAllText(path, text, new System.Text.UTF8Encoding(false));
     }
 
     /// <summary>

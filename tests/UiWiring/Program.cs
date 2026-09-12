@@ -557,6 +557,25 @@ class UiWiringTests {
                     System.IO.Path.Combine(RepoRoot(), "deliverable", "输出框_排版样本.txt"),
                     txt, new System.Text.UTF8Encoding(false));
             } catch { }
+            // ★ R46（2026-09-12，用户「APP添加一个呈现配套清单与系统安装报告」）：③ 页多两个页签、一颗导出键，
+            //   借这里已经解出来的 rBad：Show() 之后表要有片数那么多行、报告正文要有十节，导出要真写出文件。
+            var plots46 = (TabControl)F(page, "_plots")!;
+            var tabNames46 = plots46.TabPages.Cast<TabPage>().Select(t => t.Text).ToList();
+            Check("③ 页有「配套清单」与「安装报告」页签", tabNames46.Contains("配套清单") && tabNames46.Contains("安装报告"), string.Join("／", tabNames46));
+            var kit46 = (DataGridView)F(page, "_kitGrid")!;
+            Check("配套清单每片一行", kit46.Rows.Count == rBad.Flanges.Length, $"{kit46.Rows.Count} 行 / {rBad.Flanges.Length} 片");
+            Check("配套清单有铜排规格（宽×厚）", kit46.Rows.Count > 0 && (kit46.Rows[0].Cells["Bus"].Value?.ToString() ?? "").Contains("×"), kit46.Rows.Count > 0 ? kit46.Rows[0].Cells["Bus"].Value?.ToString() ?? "" : "");
+            var rep46 = (RichTextBox)F(page, "_report")!;
+            Check("安装报告有标题与十节", rep46.Text.Contains("系统安装报告") && rep46.Text.Contains("10. 待现场确认") && rep46.Text.Contains("4. 配套清单"), rep46.Text.Length + " 字元");
+            Check("安装报告里没有判据代号", !rep46.Text.Contains("②′") && !rep46.Text.Contains("②″"), "");
+            string rep46Path = Path.Combine(Path.GetTempPath(), "uiwiring_安装报告.md");
+            try { File.Delete(rep46Path); } catch { }
+            typeof(LineDesignPage).GetMethod("ExportInstallReportTo", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(page, new object[] { rep46Path });
+            string rep46File = File.Exists(rep46Path) ? File.ReadAllText(rep46Path) : "";
+            Check("导出安装报告真写出了文件，制表位表转成了管道表", rep46File.Contains("| 片 |") && rep46File.Contains("系统安装报告"), rep46File.Length + " 字元");
+            var btn46 = (ToolStripButton)F(page, "_btnReport")!;
+            Check("「导出安装报告」键在 ③ 页工具条上", btn46.Owner is not null && btn46.Text == Flow.Cmd("report.install").Text, btn46.Text);
+
         }
 
         Head("14 搜形状：按钮在、不自己跑、.3dm 模式下要**明确拒绝**而不是空转");

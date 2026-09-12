@@ -192,6 +192,7 @@ public sealed class MainForm : Form
         // ── ③ 结果与出图：判据表 + 场图（本页借来）+ 出图／存档。用户的模型第三步就是这一格。
         var shipTool = NewTool();
         shipTool.Items.Add(linePage.BtnExportPage3dm);
+        shipTool.Items.Add(linePage.BtnExportReport);   // R46
         shipTool.Items.Add(linePage.BtnSaveFinal);
         shipTool.Items.Add(new ToolStripSeparator());
         shipTool.Items.Add(Btn("保存", (_, _) => Save()));

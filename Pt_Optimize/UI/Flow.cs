@@ -324,6 +324,10 @@ public static class Flow
             "10 个壁厚点各跑一次整线耦合解。**这是 C 链的工具，不是「分析」** —— 它的每一点都是权威解"),
 
         // ── ⑤ 交付 ────────────────────────────────────────────────────
+        new("report.install", "导出安装报告", StageId.交付, ChainId.无,
+            CmdGroup.导出, true, "即时",
+            "把解出的整线连同**配套清单**（每片的铜排规格、保温覆盖、焊脚）、判据结论、待现场确认项写成一份安装报告（.md）；" +
+            "内容与「③ 结果与出图 ▸ 安装报告」页签完全一样，同一个来源"),
         new("export.page3dm", "导出本页 3DM", StageId.交付, ChainId.无,
             CmdGroup.导出, true, "十几秒",
             "**整机**（三段管 + 四片法兰），几何与刚才求解的**完全一致**"),
@@ -428,7 +432,7 @@ public static class Flow
             "判据表、场图、各片厚度都在这里。把这一版交出去：出图纸、存成设计记录。有问题会先列给你看，由你决定存不存。",
             new[] { ChainId.无 },
             GateToUnlockNext: null,
-            new[] { "export.page3dm", "final.save", "case.save", "case.load" },
+            new[] { "export.page3dm", "report.install", "final.save", "case.save", "case.load" },
             Array.Empty<string>()),
 
         // ── 不带编号的两格：永远进得去（前一格 GateToUnlockNext 为 null）。
