@@ -6,6 +6,19 @@ using System.Threading;
 namespace PtOptimize.Core;
 
 /// <summary>
+/// ⛔⛔ **本类未接进生产，且加密配方未统一**（2026-09-14，Opus 5 记；R48UngatedFixesTests 钉着这句）
+///
+/// 读码核实：`LevelSolver.Solve` 在生产代码里**零调用**；图纸路径实际走的是
+/// <see cref="FlangeAutoSizer.SolveByLevel"/>（LineDesignPage 与 Program 的 --level 都是它）。
+/// 本类仍留着 R48 判定为事故根因的两处旧写法：
+/// <code>
+///   206 行  nav.FineRadiusMm = 0                        ← 导航那一遍细区半径不统一（实测同 h 差 9.8 W、符号相反）
+///   297 行  lc.MeshFineMm = o.FineMm（不走 RefineWholeMesh）← 粗区不缩，细粗比随加密 11→22→44
+/// </code>
+/// 这两处在解析路径（Solver）与图纸路径的生产入口（ApplyFinalMesh）上都已修掉。
+/// **谁要把本类接进生产，先把这两处改成 <see cref="MeshAdapt.RefineWholeMesh"/>**，
+/// 再把 R48OneRefineRecipeTests「配方只准有一处实现」的扫描名单加上本文件。
+///
 /// **逐级求解器**（`.3dm` 路）—— 把 <see cref="FlangeAutoSizer.SolveByLevel"/> 的
 /// 「搜索」换成「求根」，与 <see cref="Solver"/>（解析路）同一套论证。
 ///

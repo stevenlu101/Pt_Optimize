@@ -532,7 +532,16 @@ internal static class GeomProbe
                 for (int j = 0; j < nz; j++)
                 {
                     double z = z0 + j * step;
-                    var ray = new LineCurve(new Line(new Point3d(x, yLo, z), new Point3d(x, yHi, z)));
+                    // ★ R47 复修 M2（2026-09-13）：采样点恰落在包围盒的面上（舌尖 x=−140、直边 z=±30 这类整数坐标，
+                    //   步长 1／0.5／0.25 都会正中踩上）时，射线与实体只擦边不穿入，CurveBrep 给 0 或 1 个交点 ⇒ 这一整列／整排
+                    //   被判成无料（实测 入口 层步 1／0.5／0.25 面积 7550／7636／7679 mm²，随步长变 —— 漏的正是边界那半格）。
+                    //   落在面上的点向内挪再打射线：边界节点判有料，它代表的那半格由主程序按精确包络截掉。
+                    //   ⚠ 挪一个容差不够（实测 z=+30 整排仍无料、z=−30 一排厚度 0.22～0.39 = 射线擦到侧面多出一个交点、配对配错）：
+                    //   CurveBrep 把离面一个容差以内的点也算交点。挪 5 个容差（0.005 mm）就离开了擦边带，厚度仍是边上的厚度。
+                    double xr = x, zr = z, inward = 5 * tol;
+                    if (Math.Abs(x - bb.Min.X) < tol) xr = bb.Min.X + inward; else if (Math.Abs(x - bb.Max.X) < tol) xr = bb.Max.X - inward;
+                    if (Math.Abs(z - bb.Min.Z) < tol) zr = bb.Min.Z + inward; else if (Math.Abs(z - bb.Max.Z) < tol) zr = bb.Max.Z - inward;
+                    var ray = new LineCurve(new Line(new Point3d(xr, yLo, zr), new Point3d(xr, yHi, zr)));
                     double sum = 0;
                     foreach (var bp in parts)
                     {
@@ -556,6 +565,10 @@ internal static class GeomProbe
                 ["groupCount"] = groups.Count,
                 ["partsUsed"] = parts.Count,
                 ["x0"] = x0, ["z0"] = z0, ["step"] = step, ["nx"] = nx, ["nz"] = nz,
+                // R47 A（2026-09-13）：本次量的那一组的**精确包围盒**（几何，不受栅格步长与图幅留白影响）——
+                //   主程序的网格轴要按它铺，舌片直边才落在节点上（见 Core ThicknessField.XMinMaterial）。
+                ["xMinMaterial"] = bb.Min.X, ["xMaxMaterial"] = bb.Max.X,
+                ["zMinMaterial"] = bb.Min.Z, ["zMaxMaterial"] = bb.Max.Z,
                 ["solidPoints"] = solidPts,
                 ["areaMm2"] = solidPts * step * step,
                 ["volumeMm3"] = t.Sum() * step * step,

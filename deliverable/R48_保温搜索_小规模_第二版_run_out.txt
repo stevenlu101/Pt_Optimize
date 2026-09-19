@@ -1,0 +1,15 @@
+VSTest 版本 18.0.1 (x64)
+
+正在启动测试执行，请稍候...
+总共 1 个测试文件与指定模式相匹配。
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.28)
+[xUnit.net 00:00:00.04]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:00.11]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:00.12]   Starting:    Pt_Optimize.Tests
+[xUnit.net 00:37:20.71]   Finished:    Pt_Optimize.Tests
+  已通过 PtOptimize.Tests.R48InsulationSearchProbeTests.小规模第二版_管保温三层_圆盘舌0到12mm_粗筛 [37 m 20 s]
+
+测试运行成功。
+测试总数: 1
+     通过数: 1
+总时间: 37.3509 分钟

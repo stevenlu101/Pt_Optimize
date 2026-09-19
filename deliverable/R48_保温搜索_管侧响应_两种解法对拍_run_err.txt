@@ -1,0 +1,2 @@
+[xUnit.net 00:10:56.04]     PtOptimize.Tests.R48TubeResponseNewtonGateTests.管侧响应_牛顿与欠松弛迭代同一不动点 [FAIL]
+测试运行失败。

@@ -40,6 +40,8 @@ public static class ShellCurrent
     /// <summary>
     /// 解电位场。边界：<see cref="ShellMesh.TagTabEnd"/> 取 V=1，
     /// <see cref="ShellMesh.TagHole"/> 取 V=0，其余自然 Neumann（零通量，无需显式处理）。
+    /// ★ R48（2026-09-14，Opus 5）：生产网格还带 <see cref="ShellMesh.ClampCell"/>（压接段整面接触，FlangeMesher 的配方 ③）——
+    ///   那些格一并取 V=1，电极 = 整个压接面，电流主要从压接段内边（x = 舌尖 + 压接长）进铂。
     /// </summary>
     /// <param name="rhoRefOhmMm">参考电阻率 Ω·mm（= Ω·m × 1000）</param>
     /// <param name="tempC">可选单元温度，用于 σ(T)；null 则等温</param>
@@ -79,6 +81,15 @@ public static class ShellCurrent
             if (f.Tag == ShellMesh.TagTabEnd) { isFixed[f.A] = true; fixedVal[f.A] = 1.0; }
             else if (f.Tag == ShellMesh.TagHole) { isFixed[f.A] = true; fixedVal[f.A] = 0.0; }
         }
+        // ★ R48 生产配方（2026-09-14，Opus 5）：压接段整面接触 —— 形心在压接段内的格一并作电极（ShellMesh.ClampCell 空 = 老口径只钉外圈，逐位不变）。
+        //   整面口径下各量的语义逐条核过（2026-09-14 Opus 5）：
+        //   · 下面「总电流」只累加定温格与邻格的净电流 —— 压接格之间 V 相等、面电流为 0，只剩内边那一排面，正是进铂的电流，定标不受影响；
+        //   · 压接格内部 J ≈ 0（电流在铜排里走），内边那排压接格的 J 由最小二乘重构只拿到一侧面的通量，约为邻格的一半
+        //     （由下面的重构式推得：x 向两面只有一面有通量 jn ⇒ Jx = jn/2；推导，没有单测）—— 这是电极格本身的离散假象，量级 O(h)（配方 ④ 的细带让这排格随 h 变细）；定温模式下这些格被热场排除在账外，热导模式下计入发热；
+        //   · TotalGenW 因此不含压接段里的铂发热，这是模型的本意（deliverable/R48_压接整面接触AB_2026-09-14.txt：整面比外圈片0 发热少 60.6～63.4 W；
+        //     该文件列名写「舌区发热」，取的其实是热场整片 QGenW）。
+        if (m.ClampCell.Length == n)
+            for (int i = 0; i < n; i++) if (m.ClampCell[i]) { isFixed[i] = true; fixedVal[i] = 1.0; }
         for (int i = 0; i < n; i++) if (isFixed[i]) res.V[i] = fixedVal[i];
 
         // 面传导系数 G = σ_f · t_f · L / d   （调和平均取界面值，厚度突变处才不会失真）

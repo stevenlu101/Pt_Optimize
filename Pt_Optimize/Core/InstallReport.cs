@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -15,6 +15,15 @@ namespace PtOptimize.Core;
 public static class InstallReport
 {
     public const string Title = "系统安装报告";
+
+    /// <summary>★ R48（2026-09-14，Opus 5）：圆盘保温按设计逐片取（DesignSpec.DiscInsulMmOf，与算例同一口径）。</summary>
+    private static string DiscInsulText(DesignSpec d)
+    {
+        var discs = Enumerable.Range(0, d.FlangeCount).Select(d.DiscInsulMmOf).ToArray();
+        return discs.All(v => v <= 1e-6) ? "圆盘不包；"
+             : discs.All(v => Math.Abs(v - discs[0]) < 1e-9) ? $"圆盘双面包 {discs[0]:0.0} mm；"
+             : $"圆盘双面包，逐片 {string.Join(" / ", discs.Select(v => v.ToString("0.0")))} mm（入口 … 出口）；";
+    }
 
     public static string Build(LineResult r, DesignSpec d, DesignInputs p, string meshNote = "", DateTime? when = null)
     {
@@ -62,7 +71,10 @@ public static class InstallReport
             string hole = j < d.TabHoleRMm.Length && d.TabHoleRMm[j] > 1e-9
                 ? $"{Solver.HoleShapeName(d.TabHoleSidesOf(j))} r{d.TabHoleRMm[j]:0.0}×{(j < d.TabHoleAspect.Length ? d.TabHoleAspect[j] : 1):0.00}"
                 : "无";
-            sb.AppendLine($"{f.Name}\t{where}\t{(j < d.TabThickMm.Length ? d.TabThickMm[j] : double.NaN):0.00}" +
+            // R47 第三轮 N5：图纸档的板厚栏是 NaN（k 在 ThicknessScale），印「图纸×k」不印 NaN
+            string plateT = j < d.TabThickMm.Length && !double.IsNaN(d.TabThickMm[j]) ? d.TabThickMm[j].ToString("0.00")
+                          : d.IsDrawingRecord && j < d.ThicknessScale.Length ? $"图纸×{d.ThicknessScale[j]:0.00}" : "—";
+            sb.AppendLine($"{f.Name}\t{where}\t{plateT}" +
                           $"\t{(j < d.TongueThickMm.Length ? d.TongueThickMm[j] : double.NaN):0.00}" +
                           $"\t{(d.HasTabArm(j) ? $"{d.TabArmThickMm[j]:0.00} mm × [{d.TabArmX0Mm[j]:0}, {d.TabArmX1Mm[j]:0}]" : "无")}" +
                           $"\t{(j < d.TabInsulMm.Length ? d.TabInsulMm[j] : double.NaN):0.0}" +
@@ -82,7 +94,7 @@ public static class InstallReport
         // 5 保温
         sb.AppendLine("**5. 保温**");
         sb.AppendLine($"  管保温 {d.TubeInsulMm:0.0} mm（材料同参数表「② 中层」：{p.Layer1.Name}）；" +
-                      (p.FlangeInsulated && p.FlangeInsulThickMm > 1e-6 ? $"圆盘双面包 {p.FlangeInsulThickMm:0.0} mm；" : "圆盘不包；") +
+                      DiscInsulText(d) +
                       "舌片按上表逐片包，从圆盘切点到压接段前，压接段不包；" +
                       $"端部额外保温 {p.EndInsulExtraMm:0.0} mm × 长 {p.EndInsulLengthMm:0} mm。");
         sb.AppendLine("  舌保温是热平衡的主力旋钮，不花铂：各片厚度不同是算出来的，不要做成同一规格。");
@@ -93,7 +105,7 @@ public static class InstallReport
         var thick = new List<string>();
         for (int j = 0; j < d.FlangeCount && j < d.TabThickMm.Length; j++)
         {
-            var parts = new List<string> { $"板 {d.TabThickMm[j]:0.00}" };
+            var parts = new List<string> { double.IsNaN(d.TabThickMm[j]) ? (d.IsDrawingRecord && j < d.ThicknessScale.Length ? $"板 按图纸 ×{d.ThicknessScale[j]:0.00}" : "板 —") : $"板 {d.TabThickMm[j]:0.00}" };   // R47 第三轮 N5
             if (j < d.TongueThickMm.Length && !double.IsNaN(d.TongueThickMm[j]) && Math.Abs(d.TongueThickMm[j] - d.TabThickMm[j]) > 0.005) parts.Add($"舌 {d.TongueThickMm[j]:0.00}");
             if (d.HasTabArm(j)) parts.Add($"叉臂 {d.TabArmThickMm[j]:0.00}");
             if (j < d.RingMul.Length && d.RingMul[j] > 1.001) parts.Add($"环 ×{d.RingMul[j]:0.00}");

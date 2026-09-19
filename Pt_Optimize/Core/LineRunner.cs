@@ -6,6 +6,22 @@ using System.Threading;
 namespace PtOptimize.Core;
 
 /// <summary>
+/// ★ R48 审查第 1 条（2026-09-14，Opus 5）：**空管到温稳态的控温点从哪来**（<see cref="DesignSpec.BuildCase"/> 的参数；算例上只作记录，见 <see cref="LineCase.EmptyTubeSetpointFrom"/>）。
+///
+/// 用户 2026-09-14 只说了「设备到温后、进玻璃前的空管保温以稳态计算」，**没说**空管保温时控温点是多少。仓库里有两种读法：
+///   · <see cref="RampTarget"/>：「到温」= 升温目标。用户 2026-09-08 定「升温目标全线 1150 °C」（= <see cref="LineCase.RampTargetC"/>，DesignCurrent.cs 档头）。
+///   · <see cref="AsGiven"/>：沿用算例的 <see cref="LineCase.SetpointC"/>（BuildCase 里就是设计记录的生产控温点，如 1150/1080/1050）。
+/// 两种读法下游片的结论形态可能不同（梯度 1150→1080→1050 本身就推下游片的热），**待用户定**；探针两种都跑。
+/// </summary>
+public enum EmptyTubeSetpoint
+{
+    /// <summary>全线取升温目标 <see cref="LineCase.RampTargetC"/>（用户 2026-09-08：升温目标全线 1150 °C）。</summary>
+    RampTarget = 0,
+    /// <summary>控温点原样取算例的 <see cref="LineCase.SetpointC"/>（BuildCase 里 = 设计记录的生产控温点）。</summary>
+    AsGiven = 1,
+}
+
+/// <summary>
 /// 整线算例的**全部输入**。管子走数值，法兰形状走 Rhino（每片可用不同 .3dm）。
 /// </summary>
 public sealed class LineCase
@@ -90,11 +106,76 @@ public sealed class LineCase
     /// ⚠ **单独开一个字段，不往 FlangePlates 里塞**：那个数组是**求解**用的，
     ///   .3dm 模式下求解走厚度场，塞进去会让它改用解析形状去解 ——
     ///   那就成了「判的是 A、解的是 B」，比判不了更坏。
+    /// ★ R47 B（2026-09-13）：**逐片**（长度 = 片数）。图纸路径的保温分界 insulBoundaryX 与舌盘分界 tabBoundaryX
+    ///   取 GeomForJudge[j]（短了就用最后一份 —— 只有一份就是「复制到所有片」）；此前恒取 [0]、
+    ///   insulBoundaryX 还用 new FlangePlate() 默认板的切点 —— 与图纸无关的数。
+    ///   没有时从材料包络推切点，推不出就把 ②′ 与 ③ 判成无法判定（不许再用默认板）。
     /// </summary>
     public FlangePlate[] GeomForJudge = Array.Empty<FlangePlate>();
 
+    /// <summary>第 j 片供判据／保温分界用的等效几何；没有就 null。</summary>
+    public FlangePlate? GeomForJudgeAt(int j)
+        => GeomForJudge.Length > 0 ? GeomForJudge[Math.Min(Math.Max(j, 0), GeomForJudge.Length - 1)] : null;
+
+    /// <summary>
+    /// ★ R47 B（2026-09-13）：`.3dm` 模式下的**逐片**舌片保温厚度 mm（长度 = 片数；短了就用最后一片的值）。
+    /// NaN 或 &lt; 0.05 = 该片舌片裸露。**空数组** = 退回 <see cref="TabInsul3dmMm"/> 那个「同值填所有片」的旧标量。
+    /// 病：此前图纸路径只有一个标量，基线的 5.1/2.8/8.6 三个不同舌保温在这条路上表达不了 ⇒ 两条路输入不可比。
+    /// 读值一律走 <see cref="TabInsul3dmAt"/>，别直接读数组或标量。
+    /// </summary>
+    public double[] TabInsul3dmPerPlateMm = Array.Empty<double>();
+
+    /// <summary>第 j 片在图纸路径上的舌保温 mm（逐片数组优先；空数组时是旧标量）。</summary>
+    public double TabInsul3dmAt(int j)
+        => TabInsul3dmPerPlateMm.Length > 0
+           ? TabInsul3dmPerPlateMm[Math.Min(Math.Max(j, 0), TabInsul3dmPerPlateMm.Length - 1)]
+           : _tabInsul3dmAll;
+
+    private double _tabInsul3dmAll = double.NaN;
+
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5；数值把关人查出逐片圆盘保温在图纸路径上没有入口）：`.3dm` 模式下的**逐片**圆盘保温厚度 mm（长度 = 片数）。
+    /// NaN、**空数组**或**下标越界** = 该片沿用整线 <see cref="DesignInputs.FlangeInsulThickMm"/>（旧口径，逐位不变）；整线「不包」（FlangeInsulated = false）时有值也按 0。
+    /// 2026-09-14 Opus 5 更正（审查意见「短数组约定不一致」）：原写「短了用最后一片，与 TabInsul3dmPerPlateMm 同约定」，
+    ///   与 DesignSpec 的逐片圆盘保温（越界 = 整线）不一致；现统一为越界 = 整线，规则本体在 FlangePlate.DiscInsulEffective（数组形态）。
+    /// 解析路径（<see cref="FlangePlates"/> 非空）不读本字段 —— 板件自己带 FlangePlate.DiscInsulThickMm。
+    /// 读值一律走 <see cref="DiscInsulEffectiveAt"/>，别直接读数组、板件或 Base。
+    /// </summary>
+    public double[] DiscInsul3dmPerPlateMm = Array.Empty<double>();
+
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5）：第 j 片圆盘保温在热解里**实际用的**厚度 mm —— 全仓唯一取值口径。
+    /// 解析路径 = FlangePlates[j].DiscInsulEffectiveMm(Base)；图纸路径 = <see cref="DiscInsul3dmPerPlateMm"/> 的值（非 NaN 时；整线不包仍 0），
+    /// 否则 Base.FlangeInsulThickMm。LineRunner 的逐片热解、整片热稳定、升温两节点参考项、设计电流的两节点对照都调它。
+    /// 2026-09-14 Opus 5：两支都改调规则本体 FlangePlate.DiscInsulEffective（原图纸分支手写一份）；图纸分支越界 = 整线（原为用最后一片）。
+    /// </summary>
+    public double DiscInsulEffectiveAt(int j)
+    {
+        if (FlangePlates.Length > 0)
+            return FlangePlates[Math.Min(Math.Max(j, 0), FlangePlates.Length - 1)].DiscInsulEffectiveMm(Base);
+        return FlangePlate.DiscInsulEffective(DiscInsul3dmPerPlateMm, j, Base.FlangeInsulThickMm, Base.FlangeInsulated);
+    }
+
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5；审查意见「程序化造的图纸路径算例静默丢值」）：图纸路径上，第 j 片的**判据几何**（GeomForJudge）带了逐片圆盘保温，
+    /// 而热解实际用的（<see cref="DiscInsulEffectiveAt"/>，只读 <see cref="DiscInsul3dmPerPlateMm"/>）与它不同 ⇒ 回 true 并给出两个值。
+    /// 解析路径、判据几何没带逐片值、或两者相同 ⇒ false。LineRunner 据此在求解备注里写明「判据几何上的值没有用上」，不静默。
+    /// 为什么不直接取判据几何上的值：图纸路径的取值约定（规格 2026-09-14）是「数组，否则整线」，判据几何是反推的等效片，不是设定的出处。
+    /// </summary>
+    public bool JudgeGeomDiscInsulIgnored(int j, out double onJudgeGeomMm, out double usedMm)
+    {
+        onJudgeGeomMm = double.NaN; usedMm = DiscInsulEffectiveAt(j);
+        if (FlangePlates.Length > 0) return false;
+        var g = GeomForJudgeAt(j);
+        if (g is null || double.IsNaN(g.DiscInsulThickMm)) return false;
+        onJudgeGeomMm = g.DiscInsulEffectiveMm(Base);
+        return !onJudgeGeomMm.Equals(usedMm);
+    }
+
     /// <summary>
     /// `.3dm` 模式下的**舌片保温厚度** mm。NaN 或 &lt; 0.05 = 舌片裸露（原行为）。
+    /// ★ R47 B：已降为「同一值填所有片」的便捷入口 —— 逐片值在 <see cref="TabInsul3dmPerPlateMm"/>，
+    ///   逐片数组非空时读这里得到的是第 0 片的值（读旧值的地方不崩）。
     ///
     /// ★ 2026-08-23：在此之前 .3dm 路径把舌保温**写死为裸露**
     ///   （`tabInsulThickMm: double.NaN`，注释「沿用现场实况『仅圆盘保温、舌片裸露』」），
@@ -110,7 +191,19 @@ public sealed class LineCase
     ///
     /// ⚠ 默认仍是 NaN（裸露）——**不改既有 .3dm 算例的答案**。要用它得显式给值。
     /// </summary>
-    public double TabInsul3dmMm = double.NaN;
+    public double TabInsul3dmMm
+    {
+        get => TabInsul3dmPerPlateMm.Length > 0 ? TabInsul3dmPerPlateMm[0] : _tabInsul3dmAll;
+        set => _tabInsul3dmAll = value;
+    }
+
+    /// <summary>
+    /// ★ R47 B（2026-09-13）：**内存里的厚度场**（长度 = 片数；只给一份就所有片共用）。
+    /// 优先级：<see cref="FlangePlates"/>（解析）&gt; 本字段 &gt; <see cref="FlangeFile3dm"/>（走 Rhino 子进程提取）。
+    /// 用途：拓扑优化线（Pt_Topo）把 ρ 场变成厚度场后直接进整线链，不必先写 .3dm 再读回；
+    /// 测试也靠它把「同一解析板栅格化」喂进图纸路径与解析路径对照。与文件路径进的是同一段代码。
+    /// </summary>
+    public ThicknessField[] FlangeFields = Array.Empty<ThicknessField>();
 
     // ── 法兰（每片一个 .3dm，长度 = 段数+1；可重复同一文件）
     public string[] FlangeFile3dm = Array.Empty<string>();
@@ -131,6 +224,12 @@ public sealed class LineCase
     /// t=0 的格（轮廓外、管孔、开槽）乘任何数仍是 0，**槽与轮廓不受影响**。
     /// </summary>
     public double[] ThicknessScale = Array.Empty<double>();
+
+    /// <summary>
+    /// ★ R47 第三轮 N5（2026-09-13）：**这个算例造不出来的原因**（空 = 正常）。图纸档（GeomSource = 图纸）的 DesignSpec.BuildCase
+    /// 不造解析板，填这一句；<see cref="LineRunner.Run"/> 读到非空就原句返回 Ok=false，不算、不抛。
+    /// </summary>
+    public string RefusedWhy = "";
 
     /// <summary>
     /// **逐级厚度标度**：`LevelScale[片][级]`。非空时**优先于** <see cref="ThicknessScale"/>。
@@ -322,6 +421,47 @@ public sealed class LineCase
     /// </summary>
     public double[][] WarmStart = Array.Empty<double[]>();
 
+    /// <summary>
+    /// ★ R48 诊断钩子（2026-09-14，Opus 5；常驻数值把关人第十一轮要的「续跑」）：外层耦合**每轮**回调一次
+    /// （轮号、本轮结果、步长 δ、真残差、剩余误差估计、放大系数、ω、Anderson 报告）。null = 不回调，生产逐位不变。
+    /// 只给探针用：量「剩余误差估计」在共用接头慢模式上是否低估。不许在生产链路里挂它做判定。
+    /// </summary>
+    public Action<int, LineResult, double, double, double, double, double, string>? CoupleTrace;
+
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5）：**空管到温稳态**工况（无玻璃）。默认 false = 带玻璃稳态，逐位不变。
+    ///
+    /// 用户 2026-09-14：设备到温后、进玻璃前的空管保温「以稳态计算」—— 与带玻璃稳态**并列**、全部判据都要过的工况。
+    /// 为 true 时 <see cref="LineRunner.Run"/> 的**段解与无法兰基线**用 Base 的克隆、把产量与管内玻璃换热置 0
+    /// （判别只有 <see cref="SegmentSolver.IsEmptyTube"/> 一处），其余（法兰场解、判据）照常；结果 Notes 写明工况。
+    /// 物理：管内玻璃换热那一项 hg·π·D 没了 ⇒ 管的线性化散热系数 hP 变小、接头导热的 K/W 变大（∝ 1/√(kA·hP)）。
+    ///   电流升还是降要看玻璃在该段是**吸热还是给热**：玻璃比管热（下游段常见）时它在给管子热，拿掉玻璃反而要更多电流 ——
+    ///   不许凭「少了一个散热项」就写「电流更低」，数见 R48EmptyTubeStateTests 的输出。
+    ///
+    /// ⚠ **与本工况无关的只有尺寸链**：设计电流（DesignCurrent 的管子准静态峰值，只读板件与 Base）、舌片厚、
+    ///   硬判据「升温」与「法兰截面 J」的实际值 —— 两工况逐位相同（R48EmptyTubeGateTests 的双工况门守着）。
+    ///   2026-09-14 Opus 5（R48 审查第 4 条）改口：此前这里写「升温链与本工况无关」，**不对** —— 下面三样取本次稳态场，随工况变：
+    ///   「升温期法兰−管峰值」（两节点的参考电阻 QGen/I² 与参考温度取本次最热片的稳态值）、
+    ///   「升温到位用时（集总）」（段电流与法兰焦耳热取本次稳态，只在 CheckRamp 时有）、
+    ///   「法兰截面 J」说明里的两节点对照电流（参考电阻取本次各片稳态）。空管结果里这三样的 Note 标明「取空管到温稳态场」。
+    /// ⚠ 管强度与集总升温两条判据用的段参数**不置 0**：管强度的载荷沿用带玻璃的液柱与流动值，许用应力仍按段设定温度取 ——
+    ///   空管时管根可能比设定高（B2 沿用生产设定时 HC3 A 端管根 1153.13 °C、设定 1050，高 103 K，deliverable\R48_空管稳态_空管_2026-09-14.txt），高温许用更低，所以**不能说偏保守**（2026-09-14 Opus 5，审查第 7 条改口）；
+    ///   集总升温（RampSolver）本来不读玻璃。
+    /// ⚠ 控温点就是 <see cref="SetpointC"/>，本类不改它；空管读哪一种控温点由 <see cref="DesignSpec.BuildCase"/> 的 emptyTubeSetpoint 定，记在 <see cref="EmptyTubeSetpointFrom"/>。
+    /// ⚠ 模型只把玻璃拿掉，**不含空管才有的两条热路**：管腔内轴向辐射、管口辐射散热（R48 审查第 3 条，量级估计见
+    ///   DesignInputs.TubeCavityRadKAWmPerK）。空管结论一律是「不含这两项的模型结果」。
+    /// ⚠ 端部额外保温的渐变形状按带玻璃的 hg 定（空管段写 DesignInputs.EndInsulShapeHGlass），硬件不随工况变。
+    /// ⚠ 基线缓存 <see cref="BaselineRootC"/> 不记工况：同一个算例改了本位要清空缓存；把缓存在算例间传递的地方（定尺寸器、求解器）
+    ///   接本工况时，缓存键要带上工况。
+    /// </summary>
+    public bool EmptyTube;
+
+    /// <summary>
+    /// ★ R48 审查第 1 条（2026-09-14，Opus 5）：本算例控温点的来源，**只作记录**（写进空管工况说明），控温点永远读 <see cref="SetpointC"/>。
+    /// 默认 <see cref="EmptyTubeSetpoint.AsGiven"/> = SetpointC 原样；<see cref="DesignSpec.BuildCase"/> 按全线升温目标造空管算例时写 RampTarget。
+    /// </summary>
+    public EmptyTubeSetpoint EmptyTubeSetpointFrom = EmptyTubeSetpoint.AsGiven;
+
     /// <summary>其余物性、保温、电气、环境沿用 DesignInputs</summary>
     public DesignInputs Base = new();
 
@@ -384,6 +524,18 @@ public sealed class SegmentOut
     /// ⇒ 第 j 片的③ 责任 = max(段 j 的 A 端, 段 j−1 的 B 端)，端片只有一侧。
     /// </summary>
     public double FlangeDipAK = double.NaN, FlangeDipBK = double.NaN;
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5）：本段管的线性化散热系数 β（= hP，W/(m·K)，含管内玻璃换热一项）与热衰减长度 ℓt = √(kA/β) mm，
+    /// 原样取自 SolveResult.BetaWPerMK / DecayLengthMm（此前算了没带出来）。空管工况比带玻璃少了玻璃那一项 —— 探针拿它对物理把关人的 hP 预测。
+    /// 只报数，不进判据。
+    /// </summary>
+    public double BetaWPerMK = double.NaN, DecayLengthMm = double.NaN;
+    /// <summary>
+    /// ★ R48 审查第 5 条（2026-09-14，Opus 5）：本段端部额外保温的厚度分布 mm（自端部起逐子区间，两端对称；没有端部额外保温 = 空数组），
+    /// 原样取自 <see cref="SegmentSolver.EndInsulExtraProfileMm"/>（段解用的同一份参数）。它是硬件，空管与带玻璃应相同（只差损失表样条插值）——
+    /// 门拿它核 LineRunner 在空管段写了带玻璃的形状 hg；用户 2026-09-14 要报告给保温厚度分布，将来印分布读它。只报数，不进判据。
+    /// </summary>
+    public double[] EndInsulExtraProfileMm = Array.Empty<double>();
     public double[] X = Array.Empty<double>();
     public double[] TMetal = Array.Empty<double>();
     public double[] TGlass = Array.Empty<double>();
@@ -402,6 +554,16 @@ public sealed class FlangeOut
     public double BusSectionForHeatMm2;
     /// <summary>自身焦耳热与自身散热 W —— Φ = QGen/QLoss 的两个分子分母，判 §4.2k 时要看得见</summary>
     public double QGenW, QLossW;
+
+    /// <summary>R48（2026-09-14，Opus 5）：圆盘区/舌片区这一次按哪条规则分的（原样带进 ②″ 的说明）。</summary>
+    public string DiscZoneRule = "";
+    /// <summary>R48 续（2026-09-14，Opus 5）：保温按哪条规则划（原样带进 ②″ 的说明）。</summary>
+    public string InsulRule = "";
+
+    /// <summary>R48（2026-09-14，Opus 5）：舌片区峰值的位置（见 ShellThermalResult.TabMaxXMm 的注释）。</summary>
+    public double TabMaxXMm = double.NaN, TabMaxZMm = double.NaN,
+                  TabMaxRMm = double.NaN, TabMaxJAPerMm2 = double.NaN,
+                  TabMaxThickMm = double.NaN;
     /// <summary>
     /// 从舌片末端流进铜排夹的热 W —— **铜排冷却要按这个数选型**。
     ///
@@ -462,6 +624,15 @@ public sealed class FlangeOut
 
     /// <summary>没收敛时说清楚是哪个场、残差多少。空 = 收敛了。</summary>
     public string FieldNote = "";
+
+    /// <summary>
+    /// R47 B：图纸路径上这一片的保温分界／舌盘分界**从哪来**（给判据附注）。
+    /// 空 = 解析路径。<see cref="InsulBoundaryUndetermined"/> = 推不出切点 ⇒ ②′ 与 ③ 判成无法判定。
+    /// </summary>
+    public string InsulBoundaryNote = "";
+    public bool InsulBoundaryUndetermined;
+    /// <summary>R47 F：管孔定温环吃到孔边以外多少 mm（TagHole 面最大半径 − 孔半径），与焊脚以外被钉住的边界长 mm。</summary>
+    public double HoleTagOverMm = double.NaN, HoleTagBeyondWeldMm = double.NaN;
 
     public double DiscMaxXMm = double.NaN, DiscMaxZMm = double.NaN,
                   DiscMaxRMm = double.NaN, DiscMaxJAPerMm2 = double.NaN,
@@ -552,6 +723,8 @@ public sealed class LineResult
 
     /// <summary>入口片壳网格的单元数 —— 网格无关性验证的横轴，算了就要报得出来。</summary>
     public int MeshCells;
+    /// <summary>R47 复修 M12：这次解用的中带（导航）网格尺寸 mm —— 界面说「此前显示的是导航网格上的数」要说真实的数，不写死 2。</summary>
+    public double MeshFineMm;
 
     public SegmentOut[] Segments = Array.Empty<SegmentOut>();
     public FlangeOut[] Flanges = Array.Empty<FlangeOut>();
@@ -562,6 +735,12 @@ public sealed class LineResult
     public bool Ok = true;
     /// <summary>段↔法兰外层耦合是否收敛。**为 false 时表内所有数值一律不可引用。**</summary>
     public bool Converged;
+
+    /// <summary>
+    /// R48 续（2026-09-14，Opus 5）：**外层耦合停机时到不动点的剩余误差估计** K（= 最后一步步长 × 放大 r/(1−r) 或已知最坏 25）。
+    /// NaN = 这次没走外层耦合。加密复核逐档印它：判据的变化量若小于它，那次「在摆」与耦合停机噪声分不开。
+    /// </summary>
+    public double CoupleRemainK = double.NaN;
 
     /// <summary>
     /// ★ 本次解**越过了铂熔点** ⇒ <see cref="Ok"/> 为 false（2026-09-07 A）。
@@ -717,6 +896,31 @@ public sealed class LineResult
 }
 
 /// <summary>
+/// ★ R48（2026-09-14，Opus 5；审查意见「门不许手抄生产配方」）：第 j 片**壳热解**的输入 —— 网格与电流场之外的全部。
+/// 由 <see cref="LineRunner.PlateThermalInputs"/> 组装、<see cref="LineRunner.SolvePlateThermal"/> 消费；整线求解（RunOnce 逐片循环）与门共用这一份。
+/// </summary>
+public sealed class PlateThermalSetup
+{
+    /// <summary>本片的物性／保温／夹持：克隆自 LineCase.Base，写入本片控温点、夹持温度、按电流定的铜排热导、本片圆盘保温（LineCase.DiscInsulEffectiveAt）。</summary>
+    public DesignInputs P2 = new();
+    /// <summary>保温分界 x（按 x 划时用）。图纸路径推不出分界 ⇒ +∞（整片按裸露）且 <see cref="InsulUndetermined"/>。</summary>
+    public double InsulX = double.PositiveInfinity;
+    /// <summary>舌盘分界 x（NaN = ShellThermal 自己的默认）。</summary>
+    public double TabBoundaryX = double.NaN;
+    /// <summary>双舌片对称保温。</summary>
+    public bool SymmetricInsul;
+    /// <summary>本片舌保温 mm（解析 = 板件；图纸 = LineCase.TabInsul3dmAt）。</summary>
+    public double TabInsulThickMm = double.NaN;
+    /// <summary>圆盘区与保温边界按半径划时的盘半径、保温半径（NaN = 退回按 x，InsulRule／DiscZoneRule 写明）。</summary>
+    public double DiscRadiusMm = double.NaN, InsulDiscRadiusMm = double.NaN;
+    /// <summary>按本片电流定的铜排热导 W/K 与载流需截面 mm²；-1／0 = 没有按电流定。</summary>
+    public double BusGWPerK = -1, BusSectionForCurrentMm2;
+    /// <summary>保温分界的出处说明与「判不了」位（进 FlangeOut）。</summary>
+    public string InsulNote = "";
+    public bool InsulUndetermined;
+}
+
+/// <summary>
 /// **整线求解的唯一入口** —— CLI 与 WinForms 都只调 <see cref="Run"/>，
 /// 于是两边不可能跑出不同结果（此前 CLI 与 UI 各自拼装流程，是长期的不一致来源）。
 ///
@@ -729,6 +933,34 @@ public sealed class LineResult
 /// </summary>
 public static class LineRunner
 {
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5）：空管到温稳态工况的说明（<see cref="LineCase.EmptyTube"/> 为 true 时写进每个结果的 Notes 第一条）。
+    /// 会进界面 ⇒ 不写判据代号。
+    /// 2026-09-14 Opus 5（R48 审查第 1、3、4、7 条）：由常量改成按算例生成 —— 要写出**本次用的控温点与来源**；
+    ///   去掉「管强度偏保守」（许用应力按段设定温度取，空管管根可能比设定高，没有依据说它保守）；
+    ///   「升温链与本工况无关」改成准确说法（只有尺寸链无关，三条参考量随工况变）；写明模型不含管腔辐射与管口散热。
+    /// </summary>
+    public static string EmptyTubeNoteFor(LineCase c)
+    {
+        string sp = string.Join("/", c.SetpointC.Select(v => v.ToString("0.#")));
+        string from = c.EmptyTubeSetpointFrom == EmptyTubeSetpoint.RampTarget
+            ? $"全线取升温目标 {c.RampTargetC:0.#} °C"
+            : "沿用算例给定的控温点（由设计造算例时即生产控温点）";
+        return "工况：空管到温稳态（无玻璃）—— 段解与无法兰基线按产量 0、管内玻璃换热 0 算，法兰场解与判据照常。"
+             + $"控温点 {sp} °C（{from}；空管保温时控温点取哪一种尚待确认）。"
+             + "模型不含空管才有的两条热路：管腔内轴向辐射、管口辐射散热 —— 本工况的数都是不含这两项的模型结果。"
+             + "设计电流、舌片厚与「升温」「法兰截面 J」两条判据的实际值与本工况无关；"
+             + "「升温期法兰−管峰值」「升温到位用时（集总）」与截面 J 说明里的两节点对照取的是本次空管稳态场，随工况变。"
+             + "管强度：载荷沿用带玻璃的液柱与流动值，许用应力按段设定温度取（空管管根可能高于设定）。玻璃温降不适用。";
+    }
+
+    /// <summary>
+    /// ★ R48 审查第 4 条（2026-09-14，Opus 5）：取本次稳态场当参考的升温类参考量，空管时在 Note 末尾标明「随工况变」。带玻璃返回空串（逐位不变）。
+    /// </summary>
+    private static string StateDependentTag(LineCase c) => c.EmptyTube
+        ? "　⚠ 本条的参考值取自本次**空管到温稳态**场，随稳态工况变（带玻璃稳态下另有一个数）。"
+        : "";
+
     /// <summary>
     /// 把未显式指定的项接到 <see cref="LineCase.Base"/>（＝界面左侧那张参数表）。
     ///
@@ -781,51 +1013,12 @@ public static class LineRunner
         {
             var zero = new double[c.SegmentCount];
             var zeroLR = new (double L, double R)[c.SegmentCount];
-            (double L, double R)[]? bnb = null;
-            LineResult? br = null;
-            // ⚠ 基线的段间耦合必须与主解**同样处理**：欠松弛 + 收敛判据。
-            //   原来只跑 4 轮、且端温直接赋值（**裸 Picard**）—— 而主解那边的注释
-            //   早写明「裸 Picard 会发散，必须欠松弛」。两边收敛程度不同，
-            //   就会差出一个**与法兰无关的系统性偏移**：实测 ③ 恒为 31.5±0.4 K，
-            //   而净流入从 +1 W 到 +7 W（差 7 倍）它纹丝不动 ——
-            //   **不随因变量变，就不是那个因造成的**。
-            double wBase = c.CoupleRelax;
-            // ★ 基线也必须**报出自己的收敛情况**。收紧 CoupleTolK 之后，如果基线
-            //   悄悄地不收敛，③ 会整体偏掉几十 K 而判据表照样打得漂漂亮亮
-            //   —— HANDOVER 记过一次：基线没收敛好时 ③ 恒为 31.5±0.4 K、
-            //   净流入从 +1 到 +7 W 它纹丝不动。**不随因变量变，就不是那个因造成的。**
-            int baseRounds = 0; double baseDmax = double.NaN;
-            int baseMaxRounds = Math.Max(30, c.CoupleMaxRounds);
-            for (int k = 0; k < baseMaxRounds; k++)
-            {
-                br = RunOnce(c, null, cancel, zero, zeroLR, bnb);
-                if (!br.Ok) break;
-                var nb2 = new (double L, double R)[c.SegmentCount];
-                for (int i = 0; i < c.SegmentCount; i++)
-                    nb2[i] = (i == 0 ? double.NaN : br.Segments[i - 1].TRootBC,
-                              i == c.SegmentCount - 1 ? double.NaN : br.Segments[i + 1].TRootAC);
-                if (bnb is null) { bnb = nb2; continue; }
-                double dmax = 0;
-                for (int i = 0; i < c.SegmentCount; i++)
-                {
-                    double nl = double.IsNaN(nb2[i].L) ? double.NaN
-                              : (1 - wBase) * bnb[i].L + wBase * nb2[i].L;
-                    double nr = double.IsNaN(nb2[i].R) ? double.NaN
-                              : (1 - wBase) * bnb[i].R + wBase * nb2[i].R;
-                    if (!double.IsNaN(nl)) dmax = Math.Max(dmax, Math.Abs(nl - bnb[i].L));
-                    if (!double.IsNaN(nr)) dmax = Math.Max(dmax, Math.Abs(nr - bnb[i].R));
-                    bnb[i] = (nl, nr);
-                }
-                // ★ dmax 是**欠松弛步** = ω×残差，不是残差本身，更不是到不动点的距离。
-                //   到不动点 ≈ (dmax/ω) × FixedPointAmp。主环就是这么判的；
-                //   基线此前直接拿 dmax 比 CoupleTolK —— 两个错叠在一起（见 BaselineTolAmplified）。
-                double baseResid = wBase > 1e-9 ? dmax / wBase : dmax;
-                double baseJudge = c.Base.BaselineTolAmplified
-                                 ? baseResid * LineCase.FixedPointAmp
-                                 : dmax;                      // 历史口径
-                if (baseJudge < c.CoupleTolK) { baseRounds = k + 1; baseDmax = baseJudge; break; }
-                baseRounds = k + 1; baseDmax = baseJudge;
-            }
+            // ★ R48 E 审查修改（2026-09-15 Opus 5）：段间端温的欠松弛循环原样搬进 IterateNeighbourTemps（管侧响应 SolveTubeWithDraws 共用），
+            //   这里照原参数调：起步 null、容差 CoupleTolK、轮数 max(30, CoupleMaxRounds)、进度文字「无法兰基线」。纯搬移，全量转储前后逐位相同为证。
+            var bIt = IterateNeighbourTemps(c, bnb => RunOnce(c, null, cancel, zero, zeroLR, bnb), null,
+                                            Math.Max(30, c.CoupleMaxRounds), c.CoupleTolK, progress, "无法兰基线");
+            LineResult? br = bIt.Last;
+            int baseRounds = bIt.Rounds; double baseDmax = bIt.JudgeK;
             if (baseDmax >= c.CoupleTolK)
                 baseFailMsg += $"基线外层 {baseRounds} 轮**未收敛**（"
                              + (c.Base.BaselineTolAmplified ? "到不动点估计" : "欠松弛步（**历史口径**）")
@@ -860,7 +1053,7 @@ public static class LineRunner
         }
 
         var res = RunOnce(c, progress, cancel,
-                          warmDraw?.Select(w => 0.5 * (w.L + w.R)).ToArray(),
+                          warmDraw?.Select(MeanDraw).ToArray(),
                           warmDraw, warmNb, baseline);
         if (!res.Ok) return res;
         if (baseFailMsg.Length > 0) res.Notes.Add("★ 无法兰基线失败 ⇒ 判据③无法判定：" + baseFailMsg);
@@ -891,6 +1084,7 @@ public static class LineRunner
         var jumpReports = new List<string>();
         double[]? prevDraws = null; (double L, double R)[]? prevLR = null;
         double rEst = 0.0; int ratioOk = 0, omegaBoosts = 0, omegaCuts = 0;
+        double lastRemainK = double.NaN;   // R48 续（2026-09-14，Opus 5）：到不动点的剩余误差估计，逐轮跟踪，结束时写进结果
         double[]? draws = null;
         // ★ Anderson 加速器（默认开）。它只改变到达不动点的路径，不改变不动点本身；
         //   最坏情形（安全阀连连丢弃）退化回原来的欠松弛 Picard。
@@ -916,25 +1110,16 @@ public static class LineRunner
                 // 段 i 的两端分别是法兰 i 与 i+1，各贡献自己的抽热
                 double a = res.Flanges[i].QFromTubeW, b = res.Flanges[i + 1].QFromTubeW;
                 target[i] = 0.5 * (a + b);           // 仅作兼容/汇报用
-                // ★★★★★ 能量守恒（2026-08-28）：**内部共用片属于两段，必须分配**。
-                //   端片（法兰 0 与法兰 n）只属于一段 ⇒ 整份。
-                //   内部片 j 同时是「段 j−1 的右端」与「段 j 的左端」⇒ 各半，Q_L + Q_R = Q。
-                //   不分配时管子失去 Q₀ + 2ΣQ内 + Q_n，法兰只收到 ΣQ —— 实测残差 +2.66/+3.74 W。
-                //   ⚠ 默认**关**：打开会改动设计记录的数。见 DesignInputs.SplitSharedFlangeDraw。
-                bool sp = c.Base.SplitSharedFlangeDraw;
-                double aEff = sp && i > 0 ? 0.5 * a : a;                        // 左端：i>0 ⇒ 内部片
-                double bEff = sp && i < c.SegmentCount - 1 ? 0.5 * b : b;       // 右端：i<n−1 ⇒ 内部片
-                targetLR[i] = (aEff, bEff);          // ★ 两端各自回灌（原来取平均是另一个 bug，已修）
+                // ★★★★★ 能量守恒（2026-08-28）：内部共用片两侧各半、端片整份 —— 分配规则与原注释搬进 SegmentEndDraws
+                //   （R48 E 审查修改 2026-09-15 Opus 5：纯搬移，保温搜索扰动单片抽热时调同一份）。
+                targetLR[i] = SegmentEndDraws(c, i, a, b);   // ★ 两端各自回灌（原来取平均是另一个 bug，已修）
             }
             draws ??= new double[c.SegmentCount];
             drawsLR ??= new (double, double)[c.SegmentCount];
 
             // ── 段间端温：段 i 的左邻是段 i−1 的**右**端，右邻是段 i+1 的**左**端。
             //    整线两头没有邻段 ⇒ NaN（退化为纯法兰抽热边界）。
-            var nbNew = new (double L, double R)[c.SegmentCount];
-            for (int i = 0; i < c.SegmentCount; i++)
-                nbNew[i] = (i == 0 ? double.NaN : res.Segments[i - 1].TRootBC,
-                            i == c.SegmentCount - 1 ? double.NaN : res.Segments[i + 1].TRootAC);
+            var nbNew = NeighbourTempsOf(res.Segments);   // R48 E（2026-09-15 Opus 5）：定义搬进 NeighbourTempsOf，纯搬移
             nbT ??= nbNew;
             // 真残差要用**步之前**的 x，故先快照（写回之后 nbT 已经是 x⁺ 了）
             var nbTOld = ((double L, double R)[])nbT.Clone();
@@ -988,7 +1173,7 @@ public static class LineRunner
             }
             for (int i = 0; i < c.SegmentCount; i++)
             {
-                draws[i] = 0.5 * (drawsLR[i].L + drawsLR[i].R);   // 仅作兼容/汇报
+                draws[i] = MeanDraw(drawsLR[i]);   // 仅作兼容/汇报（R48 E 2026-09-15 Opus 5：式子搬进 MeanDraw，管侧单解同用）
                 if (double.IsNaN(nbNew[i].L)) nbT[i] = (double.NaN, nbT[i].R);
                 if (double.IsNaN(nbNew[i].R)) nbT[i] = (nbT[i].L, double.NaN);
             }
@@ -1104,9 +1289,14 @@ public static class LineRunner
             const double ampWorst = LineCase.FixedPointAmp;   // 唯一来源，别在这里另写一个数
             double amp = (rEst > 0.5 && rEst < 0.999) ? rEst / (1 - rEst) : ampWorst;
             double remain = delta * amp;
+            // （lastRemainK 在下面 resOk 算完后才写：停机要两支都过，距离估计取两支里大的）
             // ⚠ 两条**都**要过：δ 那条防「步子还很大」，真残差那条防「步子小但不在不动点上」。
             //   放大取已知最坏 25（= 1/(1−g)，g≈0.96）——真残差乘它才是到不动点的距离。
             bool resOk = resK * ampWorst < c.CoupleTolK;
+            // ★ R48 续（2026-09-14，Opus 5；常驻数值讨论人查出）：停机时步长那支与真残差那支**都要过**，
+            //   所以到不动点的距离估计取两支里大的，不能只记步长那支。
+            lastRemainK = Math.Max(remain, resK * ampWorst);
+            c.CoupleTrace?.Invoke(outer + 1, res, delta, resK, remain, amp, omega, aa is null ? "" : aa.Report());
             if (remain < c.CoupleTolK && resOk)
             {
                 res.Notes.Add($"外层耦合 {outer + 1} 轮收敛（剩余误差估计 {remain:0.00} K = 步长 {delta:0.00} × 放大 {amp:0.0}，真残差 {resK:0.000} K，ω={omega:0.00}，ω 末值 {omega:0.00}／放大 {omegaBoosts} 次／回退 {omegaCuts} 次）"
@@ -1121,6 +1311,10 @@ public static class LineRunner
                 break;
             }
         }
+        // ★ R48 续（2026-09-14，Opus 5；常驻数值讨论人列为「重解前必做」）：**剩余误差估计必须是个数，不能只活在说明文字里。**
+        //   加密复核要拿它区分「判据在摆是网格造成的」还是「是外层耦合停机噪声造成的」——
+        //   实测 ③ 最后一步变化 +0.820 K，**小于**耦合停机容差 1.0 K，两者分不开，而此前每档的这个数一次都没记下来。
+        res.CoupleRemainK = lastRemainK;
         if (!res.Converged)
         {
             if (aa is not null) res.Notes.Add("★ " + aa.Report());
@@ -1193,11 +1387,9 @@ public static class LineRunner
     {
         var res = new LineResult { BaselineMassG = c.BaselineMassG, RampChecked = c.CheckRamp };
         int n = c.SegmentCount, nf = c.FlangeCount;
-        if (n < 1) { res.Ok = false; res.Message = "段数不能为 0"; return res; }
-        if (c.UseMeasuredCurrent && c.MeasuredCurrentA.Length < n)
-        { res.Ok = false; res.Message = $"实测电流只给了 {c.MeasuredCurrentA.Length} 个，需要 {n} 个"; return res; }
-        if (c.FlangeFile3dm.Length == 0 && c.FlangePlates.Length == 0)
-        { res.Ok = false; res.Message = "未指定法兰几何（.3dm 或解析 FlangePlate 二选一）"; return res; }
+        // ★ R48 E 审查修改（2026-09-15 Opus 5）：算例前置检查搬进 CaseGuardMessage（管侧单解 SolveTubeSegments 共用；纯搬移，文字逐字不变）。
+        string guard = CaseGuardMessage(c);
+        if (guard.Length > 0) { res.Ok = false; res.Message = guard; return res; }
 
         // 各段两端的法兰抽热 W（由壳温度场回灌）。首轮未知，置 0；
         // ★ 必须显式回灌：不设 FlangeDrawOverrideSet 时 SegmentSolver 会**静默回退到
@@ -1205,85 +1397,22 @@ public static class LineRunner
         var drawW = drawIn ?? new double[n];
 
         // ── ①② 逐段
-        var segs = new SegmentOut[n];
-        var amps = new double[n];
-        var segParams = new DesignInputs[n];   // 各段实际用的参数，判据 ①④ 要拿去复用
-        double tg = c.GlassInC;
-        for (int i = 0; i < n; i++)
-        {
-            cancel.ThrowIfCancellationRequested();
-            progress?.Report($"段 {i + 1}/{n}：{(c.UseMeasuredCurrent ? "按实测电流求解" : "反算电流")}…");
-
-            var p = SegmentSolver.Clone(c.Base);
-            p.TubeIdMm = c.TubeIdMm; p.WallMinMm = c.WallMm; p.TubeLengthMm = c.SegLengthMm[i];
-            p.SupportSpanMm = c.SegLengthMm[i]; p.GradeName = c.GradeName;
-            p.TSetC = c.SetpointC[i]; p.TGlassInC = tg;
-            p.GlassHeadM = i < c.HeadM.Length ? c.HeadM[i] : 0;
-            p.SizeWall = false;
-            p.FlangeDrawOverrideW = drawW[i]; p.FlangeDrawOverrideSet = true;
-            // 两端各挂各的（原来取平均是 bug，见 DesignInputs.FlangeDrawLeftW）
-            if (drawLR is not null)
-            {
-                p.FlangeDrawLeftW = drawLR[i].L; p.FlangeDrawRightW = drawLR[i].R;
-                // ★ 记账：这两个数就是**真正落到管子边界上**的抽热，用来与各片实收对账
-                res.DrawAppliedW += drawLR[i].L + drawLR[i].R;
-            }
-            // 段间轴向导热：把相邻段的端温传进去（见 DesignInputs.NeighbourTempLeftC）。
-            // 首轮 nbT 为 null ⇒ 退化成原来的「各解各的」，由外层迭代逐步接上。
-            if (nbT is not null)
-            { p.NeighbourTempLeftC = nbT[i].L; p.NeighbourTempRightC = nbT[i].R; }
-
-            SolveResult sr;
-            if (c.UseMeasuredCurrent)
-            {
-                // 实测模式：电流已知，不需要外层二分 —— 这是秒级的来源
-                sr = SegmentSolver.SolveAtCurrent(p, c.MeasuredCurrentA[i]);
-            }
-            else
-            {
-                sr = SegmentSolver.Solve(p);
-            }
-            if (!sr.Ok) { res.Ok = false; res.Message = $"段 {i + 1} 求解失败：{sr.Message}"; return res; }
-
-            amps[i] = sr.CurrentA;
-            segParams[i] = p;
-            double area = Math.PI * (Math.Pow(c.TubeIdMm * 0.5 + c.WallMm, 2)
-                                     - Math.Pow(c.TubeIdMm * 0.5, 2));
-            segs[i] = new SegmentOut
-            {
-                Name = $"HC{i + 1}",
-                SetpointC = c.SetpointC[i],
-                CurrentA = sr.CurrentA,
-                PowerW = sr.PowerTotalW,
-                TubeJAPerMm2 = sr.CurrentA / area,
-                // 两端各算，判据取**较差**的那个（偏离控温点最多的）
-                TRootAC = sr.TFlangeAC, TRootBC = sr.TFlangeBC,
-                RootDeltaAK = c.SetpointC[i] - sr.TFlangeAC,
-                RootDeltaBK = c.SetpointC[i] - sr.TFlangeBC,
-                TRootC = Math.Abs(c.SetpointC[i] - sr.TFlangeAC)
-                       >= Math.Abs(c.SetpointC[i] - sr.TFlangeBC) ? sr.TFlangeAC : sr.TFlangeBC,
-                RootDeltaK = Math.Abs(c.SetpointC[i] - sr.TFlangeAC)
-                           >= Math.Abs(c.SetpointC[i] - sr.TFlangeBC)
-                           ? c.SetpointC[i] - sr.TFlangeAC : c.SetpointC[i] - sr.TFlangeBC,
-                GlassInC = tg,
-                GlassOutC = sr.TGlassOutC,
-                MassG = area * c.SegLengthMm[i] * Materials.PtDensity * 1e-6,
-                X = sr.X, TMetal = sr.TMetal, TGlass = sr.TGlass
-            };
-            tg = sr.TGlassOutC;
-        }
-        res.Segments = segs;
-        res.GlassDropModelK = c.GlassInC - tg;
-        res.GlassDropMeasuredK = c.GlassInC - c.GlassOutMeasuredC;
+        // ★ R48 E 审查修改（2026-09-15 Opus 5）：逐段循环原样搬进 SolveSegmentsInto —— 保温搜索量「管根对本片抽热的响应」要只解段、
+        //   不解法兰（审查意见：γ 要是当前选择的局部响应，不许锚在无出处的上界角上）。纯搬移，整线全量转储前后逐位相同为证。
+        if (!SolveSegmentsInto(c, res, progress, cancel, drawW, drawLR, nbT, out var amps, out var segParams)) return res;
+        var segs = res.Segments;
 
         // ── ③ 逐片法兰
         var flanges = new FlangeOut[nf];
+        string flangeName(int jj) => jj == 0 ? "入口" : jj >= n ? "出口" : $"{segs[jj - 1].Name}|{segs[jj].Name}";
         for (int j = 0; j < nf; j++)
         {
             cancel.ThrowIfCancellationRequested();
+            ThicknessField? fieldUsed = null;          // 图纸路径本片用的厚度场（推切点用）
             bool analytic = c.FlangePlates.Length > 0;
             var plate = analytic ? c.FlangePlates[Math.Min(j, c.FlangePlates.Length - 1)] : null;
-            string file = analytic ? "" : c.FlangeFile3dm[Math.Min(j, c.FlangeFile3dm.Length - 1)];
+            bool inMemField = !analytic && c.FlangeFields.Length > 0;      // R47 B：内存厚度场优先于文件
+            string file = analytic || inMemField ? "" : c.FlangeFile3dm[Math.Min(j, c.FlangeFile3dm.Length - 1)];
             double planeY = j < c.FlangePlaneY.Length ? c.FlangePlaneY[j] : double.NaN;
             progress?.Report(analytic
                 ? $"法兰 {j + 1}/{nf}：解析几何 + 建网格 + 解场…"
@@ -1293,15 +1422,34 @@ public static class LineRunner
             ShellMesh mesh;
             if (analytic)
             {
-                // 管孔必须跟着管外径走，否则法兰与管子对不上
-                plate!.HoleRadiusMm = holeR;
-                mesh = FlangeMesher.Build(plate, 0, c.MeshFineMm, c.MeshCoarseMm, c.MeshFineRadiusMm,
-                                          c.Base.BusbarClampLengthMm,
-                                          c.MeshInnerMm, c.MeshInnerRadiusMm);
+                // ★ R48 E（2026-09-15 Opus 5）：解析路径的建网格搬进 PlateMeshAnalyticCore（纯搬移，数逐位不变）——
+                //   保温搜索求解器（InsulationSearch）逐片单解要同一张网格，不许手抄配方。
+                mesh = PlateMeshAnalyticCore(c, j);
             }
             else
             {
-                var tf = Geometry3dm.LoadThickness(file, c.FlangeLayer, planeY, c.ThicknessStepMm);
+                // ★ R47 D（2026-09-13）：栅格步长跟着网格走 —— 取 min(ThicknessStepMm, 最细网格/4)。
+                //   隔离实验 V4b：h×0.25 上场步 1 给 22.67 W、场步 0.25 给 −0.66 W，1 mm 栅格在细网格上本身是 23 W 级因素。
+                //   LoadThickness 的缓存键含 step，不会重复探同一档。
+                //   ★ R47 复修 M4：文件路径的栅格步有地板 0.05 mm（FlangeMesher.RasterStepFloorMm，依据写在那里：探针耗时 ∝ 步⁻²），
+                //   到了地板才写「已到图纸分辨率」；内存场（FlangeFields）的栅格步是给定的、收不了，网格比它细同样算到了分辨率。
+                double hFinest = c.MeshInnerMm > 1e-9 ? Math.Min(c.MeshFineMm, c.MeshInnerMm) : c.MeshFineMm;
+                double stepWanted = Math.Min(c.ThicknessStepMm, FlangeMesher.RasterStepForFile(hFinest));
+                var tf = inMemField
+                       ? c.FlangeFields[Math.Min(j, c.FlangeFields.Length - 1)]
+                       : Geometry3dm.LoadThickness(file, c.FlangeLayer, planeY, stepWanted);
+                // ★ R47 复修 M3：「已到图纸分辨率」**不许就地追加到 tf.Warning** —— tf 是共享的（LoadThickness 缓存／
+                //   LineCase.FlangeFields 同一实例），多片、多档、多次 Run 会越滚越长。只写进本次 res.Notes，按片去重。
+                string resNote = inMemField
+                    ? (hFinest < tf.Step - 1e-9
+                        ? $"已到图纸分辨率：网格 {hFinest:0.###} mm 比厚度场栅格步 {tf.Step:0.###} mm 还细（内存厚度场的栅格步是给定的），再加密网格也分不出更多几何。"
+                        : "")
+                    : (FlangeMesher.RasterAtFloor(hFinest)
+                        ? $"已到图纸分辨率：网格 {hFinest:0.###} mm 要的栅格步 {FlangeMesher.RasterStepFor(hFinest):0.###} mm 已低于地板 {FlangeMesher.RasterStepFloorMm:0.###} mm（Rhino 探针耗时随步长平方反比增长），栅格停在 {tf.Step:0.###} mm，再加密网格也分不出更多几何。"
+                        : "");
+                string warnAll = tf.Warning + (tf.Warning.Length > 0 && resNote.Length > 0 ? "　" : "") + resNote;
+                if (warnAll.Length > 0 && !res.Notes.Contains("⚠ " + flangeName(j) + "：" + warnAll))
+                    res.Notes.Add("⚠ " + flangeName(j) + "：" + warnAll);
                 // 厚度标度：.3dm 的**形状**固定，但整体厚度可按比例缩放。
                 // 这让「自动定厚」在 .3dm 模式下同样可用 —— 求出的不是绝对厚度，
                 // 而是「你这张图纸的厚度要整体 ×k」，工程师照着改一版图即可。
@@ -1333,22 +1481,28 @@ public static class LineRunner
                         }
                         scaled[q] = t0 * kk;
                     }
-                    tf = new ThicknessField
-                    {
-                        X0 = tf.X0, Z0 = tf.Z0, Step = tf.Step,
-                        Nx = tf.Nx, Nz = tf.Nz, T = scaled
-                    };
+                    tf = tf.WithThickness(scaled);     // 图幅、包络、警告一并带过来（R47：包络丢了网格轴就退回栅格）
                 }
+                fieldUsed = tf;
+                // ★ R47 D：内带参数与解析路径同口径地传进去 —— 此前图纸路径无从加密。
                 mesh = FlangeMesher.BuildFromField(tf, holeR, 0,
                             c.MeshFineMm, c.MeshCoarseMm, c.MeshFineRadiusMm,
-                            c.Base.BusbarClampLengthMm);
+                            c.Base.BusbarClampLengthMm,
+                            c.MeshInnerMm, c.MeshInnerRadiusMm);
             }
 
-            if (j == 0) res.MeshCells = mesh.CellCount;
+            // ★ R48（2026-09-14，Opus 5）：网格生成器记下的**压接几何警告**（ClampAnchorNote 里以 ⚠ 开头的句子）接进本次输出。
+            //   此前只写在网格对象上、没人读（「压接长伸进了圆盘」那句从 R48 实验 b 起就在）；整面接触成了生产配方后，
+            //   「压接长盖到了管孔 ⇒ 这块板退回只按舌端外缘接电」是换了压接模型的大事，不许只留在网格上。按片去重，多次 Run 不越滚越长。
+            //   两句文字都会进界面输出框，写成现场工程师看得懂的话（2026-09-14 Opus 5 复审修）。
+            foreach (var w in mesh.ClampAnchorNote.Split('；').Select(s => s.Trim()).Where(s => s.StartsWith("⚠", StringComparison.Ordinal)))
+            {
+                string line = "⚠ " + flangeName(j) + "：" + w.TrimStart('⚠', ' ');
+                if (!res.Notes.Contains(line)) res.Notes.Add(line);
+            }
+            if (j == 0) { res.MeshCells = mesh.CellCount; res.MeshFineMm = c.MeshFineMm; }
             double iJoint = LineSolver.JointCurrentA(amps, j);
-            var sc = ShellCurrent.SolveFor(c, mesh, iJoint,
-                        Materials.PtResistivity(c.SetpointC[Math.Min(j, n - 1)]) * 1e3,
-                        c.SetpointC[Math.Min(j, n - 1)]);
+            var sc = PlateCurrentField(c, mesh, j, iJoint);   // R48 E（2026-09-15 Opus 5）：搬进公开函数，纯搬移
             // ★ 电位场的收敛此前**没有任何人读**（2026-08-29 补）。σ(T) 内循环会重解，
             //   所以取**最后一次**的收敛状态 —— 中间那次不收敛而末次收敛，场是好的。
             bool curConverged = sc.Converged;
@@ -1363,44 +1517,16 @@ public static class LineRunner
                          : j >= n ? segs[n - 1].TRootBC
                          : Math.Max(segs[j - 1].TRootBC, segs[j].TRootAC);
 
-            var p2 = SegmentSolver.Clone(c.Base);
-            p2.TSetC = c.SetpointC[Math.Min(j, n - 1)];
-            if (j < c.ClampTempC.Length) p2.BusbarClampTempC = c.ClampTempC[j];
-            // ★★★★★ 逐片热导 G（2026-08-28，B 项）：**由该片自己的电流算出来**，不再靠人抄。
-            //
-            //   此前 --busg 要人手填「40,21.8,300」，那个 40×21.8 是从 `--cli --busbar`
-            //   选型表里**抄**过来的 —— 同一个数两处来源，而且抄的是**共用片**那一行。
-            //   可四片电流本来就不同（实测 685/1099/975/542 A），
-            //   共用片走 √3 倍电流 ⇒ 需要的铜排更粗 ⇒ **G 本来就该逐片不同**。
-            //
-            //   第一性原理链（不循环）：A_j = I_j / J许用 ⇒ G_j = k_Cu·A_j/L。
-            //   截面只依赖**载流**，不依赖夹持温度 —— 所以可以在解之前定下来。
-            //   ⚠ 选型表里「导热需截面」那一支要 heatW 与夹持温度，是**循环**的，
-            //     故不进这条链；它在解完之后作为**一致性检查**（见 BusbarConsistency）。
-            double busGThis = -1, busSecCurMm2 = 0;
-            if (c.Base.BusbarConductanceWPerK >= 0 && c.Base.BusbarJAllowAPerMm2 > 1e-9
-                && c.Base.BusbarLenToSinkMm > 1e-9)
-            {
-                double aMm2 = iJoint / c.Base.BusbarJAllowAPerMm2;
-                busSecCurMm2 = aMm2;
-                p2.BusbarConductanceWPerK = busGThis =
-                    BusbarSizing.CuK * (aMm2 * 1e-6) / (c.Base.BusbarLenToSinkMm * 1e-3);
-            }
-            // 保温分界：解析几何用该片自己的分界（可为「全裸」= +∞ 之外），
-            // .3dm 路径沿用现场实况「仅圆盘保温、舌片裸露」的切点。
-            double insulX = analytic ? plate!.InsulBoundaryXResolved
-                                     : new FlangePlate().InsulBoundaryXResolved;
-            // ★ .3dm 也能包舌保温（2026-08-23）。切点取自「分析几何变数」反推的等效片
-            //   —— 与 ⑤⑥ 用的是同一组几何，不另立一套。
-            //   没有等效片（没分析过）或没给厚度时，仍按裸舌走，行为与从前一致。
-            var eq3 = !analytic && c.GeomForJudge is { Length: > 0 } ? c.GeomForJudge[0] : null;
-            ShellThermalResult Thermal(ShellCurrentResult cur) =>
-                ShellThermal.Solve(mesh, cur.JMagAPerMm2, p2, tRoot, insulX,
-                                   symmetricInsul: analytic && plate!.TwoTabs,
-                                   tabBoundaryX: analytic ? plate!.Tangent().X
-                                                : eq3?.Tangent().X ?? double.NaN,
-                                   tabInsulThickMm: analytic ? plate!.TabInsulThickMm
-                                                             : c.TabInsul3dmMm);
+            // ★ R48（2026-09-14，Opus 5；审查意见「门手抄了逐片热解配方」）：本片 p2、铜排热导、保温分界、半径口径的组装搬进 PlateThermalInputs，
+            //   壳热解调用搬进 SolvePlateThermal —— 本循环与 R48DiscInsulPerPlateGateTests 共用这一份，门里只换圆盘保温厚度。纯搬移，数逐位不变。
+            var ts = PlateThermalInputs(c, j, iJoint, fieldUsed);
+            double busGThis = ts.BusGWPerK, busSecCurMm2 = ts.BusSectionForCurrentMm2;
+            string insulNote = ts.InsulNote; bool insulUndet = ts.InsulUndetermined;
+            // ★ R48（2026-09-14，Opus 5；审查意见「程序化造的图纸路径算例静默丢值」）：判据几何带了逐片圆盘保温而热解没用上 ⇒ 写进求解备注，不静默。
+            if (!analytic && c.JudgeGeomDiscInsulIgnored(j, out double discOnGeomMm, out double discUsedMm))
+                res.Notes.Add($"⚠ {flangeName(j)}：判据几何上带了本片圆盘保温 {discOnGeomMm:0.0} mm，但图纸路径的圆盘保温只取图纸路径的逐片设定（没有设定则沿用整线）"
+                              + $" —— 本次按 {discUsedMm:0.0} mm 算，判据几何上的值没有用上。");
+            ShellThermalResult Thermal(ShellCurrentResult cur) => SolvePlateThermal(mesh, cur.JMagAPerMm2, tRoot, ts);
             var th = Thermal(sc);
 
             // ★★★★★ σ(T) 耦合（2026-08-28 第一性原理通查查出，默认**关**）。
@@ -1422,9 +1548,7 @@ public static class LineRunner
             if (c.Base.SigmaOfTCoupling)
                 for (int itSig = 0; itSig < 2; itSig++)
                 {
-                    var sc2 = ShellCurrent.SolveFor(c, mesh, iJoint,
-                                  Materials.PtResistivity(c.SetpointC[Math.Min(j, n - 1)]) * 1e3,
-                                  c.SetpointC[Math.Min(j, n - 1)], tempC: th.T);
+                    var sc2 = PlateCurrentField(c, mesh, j, iJoint, tempC: th.T);   // R48 E（2026-09-15 Opus 5）：同上
                     sc = sc2; th = Thermal(sc2);
                     curConverged = sc2.Converged;
                     curResidual = sc2.Residual; curIterations = sc2.Iterations;
@@ -1452,8 +1576,13 @@ public static class LineRunner
                 }
             }
 
+            // R47 F：管孔定温环的自检（只量不判）。焊脚：解析板取它自己的，图纸路径取管壁厚（图上焊缝是画出来的料）。
+            double weldLegJ = analytic ? plate!.WeldFilletLegMm : c.WallMm;
             flanges[j] = new FlangeOut
             {
+                InsulBoundaryNote = insulNote, InsulBoundaryUndetermined = insulUndet,
+                HoleTagOverMm = mesh.HoleTagMaxROverMm,
+                HoleTagBeyondWeldMm = mesh.HoleTagLengthBeyondMm(weldLegJ),
                 LevelTMaxC = lvTmax, LevelThickMm = lvTh,
                 Name = j == 0 ? "入口" : j >= n ? "出口" : $"{segs[j - 1].Name}|{segs[j].Name}",
                 Shared = j > 0 && j < n,
@@ -1482,6 +1611,11 @@ public static class LineRunner
                 TDiscMaxC = th.TDiscMaxC, TTabMaxC = th.TTabMaxC,
                 DiscMaxXMm = th.DiscMaxXMm, DiscMaxZMm = th.DiscMaxZMm,
                 DiscMaxRMm = th.DiscMaxRMm, DiscMaxJAPerMm2 = th.DiscMaxJAPerMm2,
+                DiscZoneRule = th.DiscZoneRule, InsulRule = th.InsulRule,   // R48 续：保温规则一起带出，退回按 x 时要看得见
+                // R48（2026-09-14，Opus 5）：舌片区峰位 —— 判断「②″ 排除舌片」有没有把孔边也排掉
+                TabMaxXMm = th.TabMaxXMm, TabMaxZMm = th.TabMaxZMm,
+                TabMaxRMm = th.TabMaxRMm, TabMaxJAPerMm2 = th.TabMaxJAPerMm2,
+                TabMaxThickMm = th.TabMaxThickMm,
                 LocalStabMargin = th.LocalStabMargin, LocalStabRMm = th.LocalStabRMm,
                 LocalStabTempC = th.LocalStabTempC, LocalStabJAPerMm2 = th.LocalStabJAPerMm2,
                 LocalStabLatLenMm = th.LocalStabLatLenMm,
@@ -1562,7 +1696,439 @@ public static class LineRunner
         if (baseline is not null) ApplyBaseline(res, baseline);
         res.Checks = Judge(c, res, segs, flanges, segParams);
         MarkUndeterminedIfFieldsFailed(res, flanges);
+        MarkUndeterminedIfInsulBoundaryUnknown(res, flanges);
         return res;
+    }
+
+    /// <summary>
+    /// 算例前置检查（RunOnce 与管侧单解共用）：返回 "" 表示可以解，否则是拒算原因（文字与原 RunOnce 逐字相同）。
+    /// ★ R48 E 审查修改（2026-09-15 Opus 5）：纯搬移。
+    /// </summary>
+    private static string CaseGuardMessage(LineCase c)
+    {
+        int n = c.SegmentCount;
+        if (n < 1) return "段数不能为 0";
+        if (c.UseMeasuredCurrent && c.MeasuredCurrentA.Length < n)
+            return $"实测电流只给了 {c.MeasuredCurrentA.Length} 个，需要 {n} 个";
+        if (c.RefusedWhy.Length > 0) return c.RefusedWhy;   // R47 第三轮 N5：图纸档不造解析板
+        if (c.FlangeFile3dm.Length == 0 && c.FlangePlates.Length == 0 && c.FlangeFields.Length == 0)
+            return "未指定法兰几何（.3dm／内存厚度场／解析 FlangePlate 三选一）";
+        return "";
+    }
+
+    /// <summary>一段的两端各挂多少抽热（整线外层耦合用它，保温搜索的管侧响应也用它）：没有这个就是两份配方。</summary>
+    public static double MeanDraw((double L, double R) lr) => 0.5 * (lr.L + lr.R);
+
+    /// <summary>
+    /// 第 i 段左、右两端落到管子边界上的抽热 W：左端是法兰 i（抽热 <paramref name="qFlangeLeftW"/>），右端是法兰 i+1。
+    /// 共用片按 <see cref="DesignInputs.SplitSharedFlangeDraw"/> 两侧各半，端片整份。
+    /// ★ R48 E 审查修改（2026-09-15 Opus 5）：从 Run 的外层耦合循环原样搬出（纯搬移），保温搜索扰动单片抽热时调同一份。
+    /// </summary>
+    public static (double L, double R) SegmentEndDraws(LineCase c, int i, double qFlangeLeftW, double qFlangeRightW)
+    {
+        double a = qFlangeLeftW, b = qFlangeRightW;
+        // ★★★★★ 能量守恒（2026-08-28）：**内部共用片属于两段，必须分配**。
+        //   端片（法兰 0 与法兰 n）只属于一段 ⇒ 整份。
+        //   内部片 j 同时是「段 j−1 的右端」与「段 j 的左端」⇒ 各半，Q_L + Q_R = Q。
+        //   不分配时管子失去 Q₀ + 2ΣQ内 + Q_n，法兰只收到 ΣQ —— 实测残差 +2.66/+3.74 W。
+        //   ⚠ 默认**关**：打开会改动设计记录的数。见 DesignInputs.SplitSharedFlangeDraw。
+        bool sp = c.Base.SplitSharedFlangeDraw;
+        double aEff = sp && i > 0 ? 0.5 * a : a;                        // 左端：i>0 ⇒ 内部片
+        double bEff = sp && i < c.SegmentCount - 1 ? 0.5 * b : b;       // 右端：i<n−1 ⇒ 内部片
+        return (aEff, bEff);
+    }
+
+    /// <summary>
+    /// **管侧单解**：给定各段两端抽热 <paramref name="drawLR"/> 与邻段端温 <paramref name="nbT"/>，只解段、不解法兰，一次（不迭代段间端温）。
+    /// 走的就是 RunOnce 的逐段循环（SolveSegmentsInto）与同一组前置检查；段电流仍按控温点反算（与整线同）。
+    /// 在整线收敛态（算例 WarmStart 里的抽热与端温）上调用，管根与整线逐位相同 —— 保温搜索每次用前自检这一点。
+    /// ★ R48 E 审查修改（2026-09-15 Opus 5）新增。
+    /// </summary>
+    public static LineResult SolveTubeSegments(LineCase c, (double L, double R)[] drawLR, (double L, double R)[]? nbT,
+                                               CancellationToken cancel = default)
+    {
+        if (c is null) throw new ArgumentNullException(nameof(c));
+        if (drawLR is null) throw new ArgumentNullException(nameof(drawLR));
+        Normalize(c);
+        var res = new LineResult { BaselineMassG = c.BaselineMassG, RampChecked = c.CheckRamp };
+        string guard = CaseGuardMessage(c);
+        if (guard.Length > 0) { res.Ok = false; res.Message = guard; return res; }
+        if (drawLR.Length < c.SegmentCount || (nbT is not null && nbT.Length < c.SegmentCount))
+        { res.Ok = false; res.Message = $"管侧单解：抽热或端温只给了 {drawLR.Length}/{nbT?.Length} 段，需要 {c.SegmentCount} 段"; return res; }
+        var drawW = drawLR.Take(c.SegmentCount).Select(MeanDraw).ToArray();
+        SolveSegmentsInto(c, res, null, cancel, drawW, drawLR, nbT, out _, out _);
+        return res;
+    }
+
+    /// <summary>段间端温不动点的结果（无法兰基线与管侧响应共用）。</summary>
+    public sealed class NeighbourIteration
+    {
+        /// <summary>最后一次段解（其管根就是这次迭代的结果）。</summary>
+        public LineResult? Last;
+        public int Rounds;
+        /// <summary>判收敛量 K（BaselineTolAmplified 开 = 到不动点估计；关 = 欠松弛步，历史口径）。没走到判的那一步是 NaN。</summary>
+        public double JudgeK = double.NaN;
+        public double TolK;
+        public bool Converged => Last is { Ok: true } && JudgeK < TolK;
+        /// <summary>最后一次段解用的邻段端温 x（null = 各段各解各的那一轮）；Last 就是 G(x)，真残差 = G(x) − x 不必再解一次。</summary>
+        public (double L, double R)[]? LastInput;
+    }
+
+    /// <summary>
+    /// 段间端温的欠松弛不动点：反复调 <paramref name="once"/>(邻段端温)，按无法兰基线的口径判收敛。
+    /// ★ R48 E 审查修改（2026-09-15 Opus 5）：从 Run 的无法兰基线循环原样搬出（纯搬移：基线以 nbStart = null、tol = CoupleTolK、
+    ///   轮数 max(30, CoupleMaxRounds) 调用，进度文字逐字不变），管侧响应 <see cref="SolveTubeWithDraws"/> 调同一份。
+    /// </summary>
+    private static NeighbourIteration IterateNeighbourTemps(LineCase c, Func<(double L, double R)[]?, LineResult> once,
+                                                            (double L, double R)[]? nbStart, int maxRounds, double tolK,
+                                                            IProgress<string>? progress, string label)
+    {
+        var it = new NeighbourIteration { TolK = tolK };
+        (double L, double R)[]? bnb = nbStart is null ? null : ((double L, double R)[])nbStart.Clone();
+        LineResult? br = null;
+        // ⚠ 基线的段间耦合必须与主解**同样处理**：欠松弛 + 收敛判据。
+        //   原来只跑 4 轮、且端温直接赋值（**裸 Picard**）—— 而主解那边的注释
+        //   早写明「裸 Picard 会发散，必须欠松弛」。两边收敛程度不同，
+        //   就会差出一个**与法兰无关的系统性偏移**：实测 ③ 恒为 31.5±0.4 K，
+        //   而净流入从 +1 W 到 +7 W（差 7 倍）它纹丝不动 ——
+        //   **不随因变量变，就不是那个因造成的**。
+        double wBase = c.CoupleRelax;
+        // ★ 基线也必须**报出自己的收敛情况**。收紧 CoupleTolK 之后，如果基线
+        //   悄悄地不收敛，③ 会整体偏掉几十 K 而判据表照样打得漂漂亮亮
+        //   —— HANDOVER 记过一次：基线没收敛好时 ③ 恒为 31.5±0.4 K、
+        //   净流入从 +1 到 +7 W 它纹丝不动。**不随因变量变，就不是那个因造成的。**
+        int baseRounds = 0; double baseDmax = double.NaN;
+        int baseMaxRounds = maxRounds;
+        for (int k = 0; k < baseMaxRounds; k++)
+        {
+            // ★ R48 审查修改轮（2026-09-14，Opus 5）：基线外层**每轮报进度**。此前整段基线不报（RunOnce 传 null），
+            //   空管＋管腔辐射敏感度探针在 0.5 mm 上卡在基线里 30 多分钟一行都不出，看不出是慢还是不收敛（长跑要看得出还活着）。
+            //   只报文字、不改任何数；措辞避开「第 N 轮」「外层耦合 n/m」，界面的进度条翻译器（LineDesignPage.PctOf）读不出轮数 ⇒ 走马灯，
+            //   不会拿基线的轮数冒充主环进度。
+            progress?.Report($"{label} {k + 1} 轮起（最多 {baseMaxRounds}）：上轮判收敛量 "
+                           + (double.IsNaN(baseDmax) ? "—" : baseDmax.ToString("0.000")) + $" K，容差 {tolK:0.###} K…");
+            var inputSnapshot = bnb is null ? null : ((double L, double R)[])bnb.Clone();   // R48 E（2026-09-15 Opus 5）：只记下来，不改任何数
+            br = once(bnb);
+            it.LastInput = inputSnapshot;
+            if (!br.Ok) break;
+            var nb2 = NeighbourTempsOf(br.Segments);   // R48 E（2026-09-15 Opus 5）：定义搬进 NeighbourTempsOf，纯搬移
+            if (bnb is null) { bnb = nb2; continue; }
+            double dmax = 0;
+            for (int i = 0; i < c.SegmentCount; i++)
+            {
+                double nl = double.IsNaN(nb2[i].L) ? double.NaN
+                          : (1 - wBase) * bnb[i].L + wBase * nb2[i].L;
+                double nr = double.IsNaN(nb2[i].R) ? double.NaN
+                          : (1 - wBase) * bnb[i].R + wBase * nb2[i].R;
+                if (!double.IsNaN(nl)) dmax = Math.Max(dmax, Math.Abs(nl - bnb[i].L));
+                if (!double.IsNaN(nr)) dmax = Math.Max(dmax, Math.Abs(nr - bnb[i].R));
+                bnb[i] = (nl, nr);
+            }
+            // ★ dmax 是**欠松弛步** = ω×残差，不是残差本身，更不是到不动点的距离。
+            //   到不动点 ≈ (dmax/ω) × FixedPointAmp。主环就是这么判的；
+            //   基线此前直接拿 dmax 比 CoupleTolK —— 两个错叠在一起（见 BaselineTolAmplified）。
+            double baseResid = wBase > 1e-9 ? dmax / wBase : dmax;
+            double baseJudge = c.Base.BaselineTolAmplified
+                             ? baseResid * LineCase.FixedPointAmp
+                             : dmax;                      // 历史口径
+            if (baseJudge < tolK) { baseRounds = k + 1; baseDmax = baseJudge; break; }
+            baseRounds = k + 1; baseDmax = baseJudge;
+        }
+        it.Last = br; it.Rounds = baseRounds; it.JudgeK = baseDmax;
+        return it;
+    }
+
+    /// <summary>
+    /// **管侧响应**：给定各段两端抽热，从 <paramref name="nbStart"/>（null = 各段各解各的起步，同无法兰基线）出发迭代段间端温到收敛，只解段。
+    /// ★ R48 E 审查修改（2026-09-15 Opus 5）新增；迭代与判收敛是无法兰基线的同一份（IterateNeighbourTemps）。
+    /// 保温搜索**不用**它量 γ（共用片处段间耦合增益 0.97～0.98，按 ×25 口径「收敛」时离不动点还有 0.35～0.74 K），改用 <see cref="SolveTubeWithDrawsNewton"/>；
+    /// 它留作对拍的参照：慢门 R48TubeResponseNewtonGateTests 用它证明两种解法同一不动点。
+    /// </summary>
+    public static NeighbourIteration SolveTubeWithDraws(LineCase c, (double L, double R)[] drawLR, (double L, double R)[]? nbStart,
+                                                        double tolK, int maxRounds, CancellationToken cancel = default)
+    {
+        if (c is null) throw new ArgumentNullException(nameof(c));
+        Normalize(c);
+        return IterateNeighbourTemps(c, nb => SolveTubeSegments(c, drawLR, nb, cancel), nbStart, maxRounds, tolK, null, "管侧单解");
+    }
+
+    /// <summary>
+    /// 段间端温向量（整线外层耦合与无法兰基线的定义）：段 i 的左邻 = 段 i−1 的 B 端，右邻 = 段 i+1 的 A 端；整线两头没有邻段 ⇒ NaN。
+    /// ★ R48 E 审查修改（2026-09-15 Opus 5）：给管侧牛顿解读 G(x) 用；与 Run 里两处（nb2、nbNew）同一定义，快门逐位比。
+    /// </summary>
+    public static (double L, double R)[] NeighbourTempsOf(SegmentOut[] segs)
+    {
+        int n = segs.Length;
+        var nb = new (double L, double R)[n];
+        for (int i = 0; i < n; i++)
+            nb[i] = (i == 0 ? double.NaN : segs[i - 1].TRootBC,
+                     i == n - 1 ? double.NaN : segs[i + 1].TRootAC);
+        return nb;
+    }
+
+    /// <summary>管侧牛顿解的结果。</summary>
+    public sealed class TubeNewtonResult
+    {
+        /// <summary>最后一次段解（在最后一个 x 上；其管根就是结果）。</summary>
+        public LineResult? Last;
+        /// <summary>段解次数（每次 = 全部段各解一次）。</summary>
+        public int Evaluations;
+        /// <summary>真残差 ‖G(x) − x‖∞ K（最后一个 x 上，由生产段解直接算出，与雅可比无关）。</summary>
+        public double ResidualK = double.NaN;
+        /// <summary>
+        /// 到不动点的距离估计 K = ‖(I − J)⁻¹ (G(x) − x)‖∞（按量出的雅可比把真残差放大，即「再走一步牛顿会动多少」）。
+        /// ★ 不用「真残差 × FixedPointAmp(25)」：那是按整线环路增益 0.96 定的常数，而共用片处段间耦合实测 0.972～0.984（放大 36～61 倍），
+        ///   按 25 会把距离低估一半以上（deliverable\R48_保温搜索_管侧响应_两种解法对拍_2026-09-15.txt：欠松弛迭代「判收敛量 0.30 K」处离牛顿解 0.72 K）。
+        /// </summary>
+        public double DistanceK = double.NaN;
+        public double JudgeK => DistanceK;
+        public double TolK;
+        public bool Converged => Last is { Ok: true } && DistanceK < TolK;
+        public string Message = "";
+        /// <summary>最后一次段解用的邻段端温 x（Last = G(x)）。</summary>
+        public (double L, double R)[]? LastInput;
+    }
+
+    /// <summary>
+    /// 段间端温不动点 x = G(x) 的雅可比（有限差分，前差 <paramref name="deltaK"/>）：x = 各段邻段端温里不是 NaN 的位（次序：段 0..n−1，每段先左后右），
+    /// G(x) = 用 x 解一次段后读出的新邻段端温（<see cref="NeighbourTempsOf"/>）。带玻璃时段与段经玻璃出口温度串联，所以逐位扰动、不做着色。
+    /// 返回 (位表, J, G(x₀) 那次段解)。★ R48 E 审查修改（2026-09-15 Opus 5）新增。
+    /// </summary>
+    public static ((int Seg, bool Left)[] Slots, double[,] J, LineResult Base) NeighbourJacobian(LineCase c, (double L, double R)[] drawLR,
+                                                                                               (double L, double R)[] nb, double deltaK,
+                                                                                               CancellationToken cancel = default)
+    {
+        if (c is null) throw new ArgumentNullException(nameof(c));
+        Normalize(c);
+        var slots = NeighbourSlots(nb);
+        int m = slots.Length;
+        var g0 = SolveTubeSegments(c, drawLR, nb, cancel);
+        var jac = new double[m, m];
+        if (!g0.Ok) return (slots, jac, g0);
+        var y0 = SlotValues(NeighbourTempsOf(g0.Segments), slots);
+        for (int col = 0; col < m; col++)
+        {
+            cancel.ThrowIfCancellationRequested();
+            var xp = ((double L, double R)[])nb.Clone();
+            var (seg, left) = slots[col];
+            xp[seg] = left ? (xp[seg].L + deltaK, xp[seg].R) : (xp[seg].L, xp[seg].R + deltaK);
+            var gp = SolveTubeSegments(c, drawLR, xp, cancel);
+            if (!gp.Ok) return (slots, jac, gp);
+            var yp = SlotValues(NeighbourTempsOf(gp.Segments), slots);
+            for (int row = 0; row < m; row++) jac[row, col] = (yp[row] - y0[row]) / deltaK;
+        }
+        return (slots, jac, g0);
+    }
+
+    /// <summary>
+    /// **管侧响应（牛顿弦法）**：给定各段两端抽热，从 <paramref name="nbStart"/> 出发解段间端温不动点 x = G(x)：
+    /// x ← x + (I − J)⁻¹ (G(x) − x)，J 用 <see cref="NeighbourJacobian"/> 在起点量好、全程不重算（弦法）。
+    /// 停机：到不动点距离估计 ‖(I − J)⁻¹ (G(x) − x)‖∞ &lt; <paramref name="tolK"/>（见 <see cref="TubeNewtonResult.DistanceK"/>）。
+    /// 为什么不用无法兰基线那份欠松弛迭代（<see cref="SolveTubeWithDraws"/>）：共用片那一处段间耦合增益近 1，实测 60 轮（每轮全部段解一次、约 1.7 s）
+    /// 仍没收敛到 0.25 K（deliverable\R48_保温搜索_管侧响应_两种解法对拍_2026-09-15.txt 另有两者同一不动点的对拍）。不动点由同一个段解定义，只是到达方式不同。
+    /// ★ R48 E 审查修改（2026-09-15 Opus 5）新增。
+    /// </summary>
+    public static TubeNewtonResult SolveTubeWithDrawsNewton(LineCase c, (double L, double R)[] drawLR, (double L, double R)[] nbStart,
+                                                           ((int Seg, bool Left)[] Slots, double[,] J) jacobian, double tolK, int maxIter,
+                                                           CancellationToken cancel = default, int minSteps = 0)
+    {
+        if (c is null) throw new ArgumentNullException(nameof(c));
+        Normalize(c);
+        var res = new TubeNewtonResult { TolK = tolK };
+        var slots = jacobian.Slots;
+        int m = slots.Length;
+        var x = ((double L, double R)[])nbStart.Clone();
+        // (I − J)
+        var a = new double[m, m];
+        for (int r = 0; r < m; r++)
+            for (int q = 0; q < m; q++)
+                a[r, q] = (r == q ? 1.0 : 0.0) - jacobian.J[r, q];
+        for (int it = 0; it <= maxIter; it++)
+        {
+            res.LastInput = ((double L, double R)[])x.Clone();
+            var g = SolveTubeSegments(c, drawLR, x, cancel);
+            res.Evaluations++;
+            res.Last = g;
+            if (!g.Ok) { res.Message = g.Message; return res; }
+            var gx = SlotValues(NeighbourTempsOf(g.Segments), slots);
+            var xv = SlotValues(x, slots);
+            var rv = new double[m];
+            double resid = 0;
+            for (int k = 0; k < m; k++) { rv[k] = gx[k] - xv[k]; resid = Math.Max(resid, Math.Abs(rv[k])); }
+            res.ResidualK = resid;
+            var dx = SolveDense(a, rv);
+            if (dx is null) { res.Message = "I − J 奇异，牛顿步解不出"; return res; }
+            res.DistanceK = dx.Max(v => Math.Abs(v));
+            if ((res.Converged && it >= minSteps) || it == maxIter) break;   // minSteps：至少走几步牛顿（起点本身离不动点的那一截对 ± 两个扰动是共同的，走一步把扰动自身的那一截也解掉）
+            for (int k = 0; k < m; k++)
+            {
+                var (seg, left) = slots[k];
+                x[seg] = left ? (x[seg].L + dx[k], x[seg].R) : (x[seg].L, x[seg].R + dx[k]);
+            }
+        }
+        if (!res.Converged && res.Message.Length == 0)
+            res.Message = $"{maxIter} 次牛顿步后到不动点估计 {res.JudgeK:0.0000} K 仍 ≥ 容差 {tolK} K";
+        return res;
+    }
+
+    /// <summary>段间端温不动点的误差放大倍数 ‖(I − J)⁻¹‖∞（真残差到「离不动点多远」的换算）；奇异返回 +∞。★ R48 E 审查修改（2026-09-15 Opus 5）。</summary>
+    public static double NeighbourAmplification(double[,] j)
+    {
+        int m = j.GetLength(0);
+        var a = new double[m, m];
+        for (int r = 0; r < m; r++) for (int q = 0; q < m; q++) a[r, q] = (r == q ? 1.0 : 0.0) - j[r, q];
+        var rowSum = new double[m];
+        for (int col = 0; col < m; col++)
+        {
+            var e = new double[m]; e[col] = 1;
+            var x = SolveDense(a, e);
+            if (x is null) return double.PositiveInfinity;
+            for (int r = 0; r < m; r++) rowSum[r] += Math.Abs(x[r]);
+        }
+        return m == 0 ? 1.0 : rowSum.Max();
+    }
+
+    private static (int Seg, bool Left)[] NeighbourSlots((double L, double R)[] nb)
+    {
+        var l = new List<(int, bool)>();
+        for (int i = 0; i < nb.Length; i++)
+        {
+            if (!double.IsNaN(nb[i].L)) l.Add((i, true));
+            if (!double.IsNaN(nb[i].R)) l.Add((i, false));
+        }
+        return l.ToArray();
+    }
+
+    private static double[] SlotValues((double L, double R)[] nb, (int Seg, bool Left)[] slots)
+        => slots.Select(s => s.Left ? nb[s.Seg].L : nb[s.Seg].R).ToArray();
+
+    /// <summary>小稠密方程组（列主元高斯消去）；奇异返回 null。</summary>
+    public static double[]? SolveDense(double[,] a, double[] b)
+    {
+        int m = b.Length;
+        var A = (double[,])a.Clone();
+        var x = (double[])b.Clone();
+        for (int col = 0; col < m; col++)
+        {
+            int piv = col;
+            for (int r = col + 1; r < m; r++) if (Math.Abs(A[r, col]) > Math.Abs(A[piv, col])) piv = r;
+            if (!(Math.Abs(A[piv, col]) > 1e-12)) return null;
+            if (piv != col)
+            {
+                for (int q = 0; q < m; q++) (A[col, q], A[piv, q]) = (A[piv, q], A[col, q]);
+                (x[col], x[piv]) = (x[piv], x[col]);
+            }
+            for (int r = col + 1; r < m; r++)
+            {
+                double f = A[r, col] / A[col, col];
+                if (f == 0) continue;
+                for (int q = col; q < m; q++) A[r, q] -= f * A[col, q];
+                x[r] -= f * x[col];
+            }
+        }
+        for (int r = m - 1; r >= 0; r--)
+        {
+            double s = x[r];
+            for (int q = r + 1; q < m; q++) s -= A[r, q] * x[q];
+            x[r] = s / A[r, r];
+        }
+        return x;
+    }
+
+    /// <summary>RunOnce 的逐段循环（原样搬出）。段解失败 ⇒ res.Ok = false、写原因、返回 false（res.Segments 不赋值，与原来一致）。</summary>
+    private static bool SolveSegmentsInto(LineCase c, LineResult res, IProgress<string>? progress, CancellationToken cancel,
+                                          double[] drawW, (double L, double R)[]? drawLR, (double L, double R)[]? nbT,
+                                          out double[] amps, out DesignInputs[] segParams)
+    {
+        int n = c.SegmentCount;
+        var segs = new SegmentOut[n];
+        amps = new double[n];
+        segParams = new DesignInputs[n];   // 各段实际用的参数，判据 ①④ 要拿去复用
+        // ★ R48（2026-09-14，Opus 5）：空管到温稳态 —— 没有玻璃串联进来，玻璃进口记 NaN（不适用），段解里玻璃温度不参与。
+        double tg = c.EmptyTube ? double.NaN : c.GlassInC;
+        if (c.EmptyTube) res.Notes.Add(EmptyTubeNoteFor(c));
+        for (int i = 0; i < n; i++)
+        {
+            cancel.ThrowIfCancellationRequested();
+            progress?.Report($"段 {i + 1}/{n}：{(c.UseMeasuredCurrent ? "按实测电流求解" : "反算电流")}…");
+
+            var p = SegmentSolver.Clone(c.Base);
+            p.TubeIdMm = c.TubeIdMm; p.WallMinMm = c.WallMm; p.TubeLengthMm = c.SegLengthMm[i];
+            p.SupportSpanMm = c.SegLengthMm[i]; p.GradeName = c.GradeName;
+            p.TSetC = c.SetpointC[i]; p.TGlassInC = tg;
+            p.GlassHeadM = i < c.HeadM.Length ? c.HeadM[i] : 0;
+            p.SizeWall = false;
+            p.FlangeDrawOverrideW = drawW[i]; p.FlangeDrawOverrideSet = true;
+            // 两端各挂各的（原来取平均是 bug，见 DesignInputs.FlangeDrawLeftW）
+            if (drawLR is not null)
+            {
+                p.FlangeDrawLeftW = drawLR[i].L; p.FlangeDrawRightW = drawLR[i].R;
+                // ★ 记账：这两个数就是**真正落到管子边界上**的抽热，用来与各片实收对账
+                res.DrawAppliedW += drawLR[i].L + drawLR[i].R;
+            }
+            // 段间轴向导热：把相邻段的端温传进去（见 DesignInputs.NeighbourTempLeftC）。
+            // 首轮 nbT 为 null ⇒ 退化成原来的「各解各的」，由外层迭代逐步接上。
+            if (nbT is not null)
+            { p.NeighbourTempLeftC = nbT[i].L; p.NeighbourTempRightC = nbT[i].R; }
+
+            // ★ R48（2026-09-14，Opus 5）：空管 ⇒ 段解（与走同一个 RunOnce 的无法兰基线）用的这份克隆把产量与管内玻璃换热置 0。
+            //   判据用的段参数 segParams 另留一份**置 0 之前**的（管强度仍按带玻璃载荷，见 LineCase.EmptyTube）。
+            DesignInputs? pJudge = null;
+            if (c.EmptyTube)
+            {
+                pJudge = SegmentSolver.Clone(p);
+                pJudge.TGlassInC = c.GlassInC;          // 判据那份不读玻璃进口；给回算例的数，免得 NaN 流进别处
+                // ★ R48 审查第 5 条（2026-09-14，Opus 5）：端部额外保温是硬件 —— 渐变形状按置 0 之前（带玻璃）的 hg 定，不随工况变。
+                //   调用方显式给过（≥ 0）就不覆盖。
+                if (p.EndInsulShapeHGlass < 0) p.EndInsulShapeHGlass = p.HGlass;
+                p.ThroughputTPerDay = 0; p.HGlass = 0;
+            }
+
+            SolveResult sr;
+            if (c.UseMeasuredCurrent)
+            {
+                // 实测模式：电流已知，不需要外层二分 —— 这是秒级的来源
+                sr = SegmentSolver.SolveAtCurrent(p, c.MeasuredCurrentA[i]);
+            }
+            else
+            {
+                sr = SegmentSolver.Solve(p);
+            }
+            if (!sr.Ok) { res.Ok = false; res.Message = $"段 {i + 1} 求解失败：{sr.Message}"; return false; }
+
+            amps[i] = sr.CurrentA;
+            segParams[i] = pJudge ?? p;
+            double area = Math.PI * (Math.Pow(c.TubeIdMm * 0.5 + c.WallMm, 2)
+                                     - Math.Pow(c.TubeIdMm * 0.5, 2));
+            segs[i] = new SegmentOut
+            {
+                Name = $"HC{i + 1}",
+                SetpointC = c.SetpointC[i],
+                CurrentA = sr.CurrentA,
+                PowerW = sr.PowerTotalW,
+                TubeJAPerMm2 = sr.CurrentA / area,
+                // 两端各算，判据取**较差**的那个（偏离控温点最多的）
+                TRootAC = sr.TFlangeAC, TRootBC = sr.TFlangeBC,
+                RootDeltaAK = c.SetpointC[i] - sr.TFlangeAC,
+                RootDeltaBK = c.SetpointC[i] - sr.TFlangeBC,
+                TRootC = Math.Abs(c.SetpointC[i] - sr.TFlangeAC)
+                       >= Math.Abs(c.SetpointC[i] - sr.TFlangeBC) ? sr.TFlangeAC : sr.TFlangeBC,
+                RootDeltaK = Math.Abs(c.SetpointC[i] - sr.TFlangeAC)
+                           >= Math.Abs(c.SetpointC[i] - sr.TFlangeBC)
+                           ? c.SetpointC[i] - sr.TFlangeAC : c.SetpointC[i] - sr.TFlangeBC,
+                GlassInC = tg,
+                GlassOutC = sr.TGlassOutC,
+                MassG = area * c.SegLengthMm[i] * Materials.PtDensity * 1e-6,
+                BetaWPerMK = sr.BetaWPerMK, DecayLengthMm = sr.DecayLengthMm,   // R48（2026-09-14，Opus 5）：只报数
+                EndInsulExtraProfileMm = SegmentSolver.EndInsulExtraProfileMm(p, c.WallMm),   // R48 审查第 5 条（2026-09-14，Opus 5）：只报数
+                X = sr.X, TMetal = sr.TMetal, TGlass = sr.TGlass
+            };
+            tg = sr.TGlassOutC;
+        }
+        res.Segments = segs;
+        res.GlassDropModelK = c.GlassInC - tg;                  // 空管时 tg 是 NaN ⇒ NaN；判据那条标「判不了（不适用）」，见 Judge 末尾
+        res.GlassDropMeasuredK = c.GlassInC - c.GlassOutMeasuredC;
+        return true;
     }
 
     /// <summary>
@@ -1611,23 +2177,33 @@ public static class LineRunner
     /// ⚠ 只标**吃法兰场**的那些。纯几何（⑤⑥）与纯管子的（管 J、④）不受影响 ——
     ///   把它们一并标成判不了是**过度**，会掩盖真正该看的东西。
     /// </summary>
+    /// <summary>
+    /// **吃法兰场的判据名单**（判据与参考行）。**加判据时要同步加这里** —— 不加的后果是它在场没解到位／保温分界判不了时
+    /// 照样报数，而那正是 <see cref="MarkUndeterminedIfFieldsFailed"/> 与 <see cref="MarkUndeterminedIfInsulBoundaryUnknown"/> 要挡的事。
+    /// ★ R47 第三轮 N2（2026-09-13）：名单只此一份，两个「标成无法判定」的后置遍历都读它 —— 此前保温分界那一份只标了两条，
+    ///   法兰最高温／自给率／热平衡残差这些同样吃法兰场的参考行照样报数。
+    /// </summary>
+    private static readonly string[] dependsOnFlangeFields =
+    {
+        LineResult.Key.NetFlux, LineResult.Key.DiscTemp, LineResult.Key.FlangeDip, LineResult.Key.Ramp,
+        LineResult.Key.FlangeStab, LineResult.Key.LocalStab, LineResult.Key.RampField, LineResult.Key.HeatBalance,
+        LineResult.Key.FlangeTopTemp, LineResult.Key.SelfSupply, LineResult.Key.FlangeJ, LineResult.Key.HeatResidual,
+    };
+    /// <summary>同一份名单的只读出口（测试拿它核对）；名单本体是上面那个字段（FieldConvergenceGateTests 的源码门按它的名字找）。</summary>
+    public static IReadOnlyList<string> DependsOnFlangeFields => dependsOnFlangeFields;
+
+    private static bool EatsFlangeFields(ConstraintOut ck)
+        => DependsOnFlangeFields.Any(k => ck.Name.StartsWith(k, StringComparison.Ordinal));
+
     private static void MarkUndeterminedIfFieldsFailed(LineResult res, FlangeOut[] flanges)
     {
         var bad = flanges.Where(f => f is not null && !f.FieldsConverged).ToArray();
         if (bad.Length == 0) return;
 
-        // 吃法兰场的判据名单。**加判据时要同步加这里** —— 不加的后果是它在场没解到位时
-        // 照样报数，而那正是本方法要挡的事。
-        string[] dependsOnFlangeFields =
-        {
-            LineResult.Key.NetFlux, LineResult.Key.DiscTemp, LineResult.Key.FlangeDip, LineResult.Key.Ramp,
-            LineResult.Key.FlangeStab, LineResult.Key.LocalStab, LineResult.Key.RampField, LineResult.Key.HeatBalance,
-            LineResult.Key.FlangeTopTemp, LineResult.Key.SelfSupply, LineResult.Key.FlangeJ, LineResult.Key.HeatResidual,
-        };
         string who = string.Join("、", bad.Select(f => $"{f.Name}（{f.FieldNote}）"));
 
         foreach (var ck in res.Checks)
-            if (dependsOnFlangeFields.Any(k => ck.Name.StartsWith(k, StringComparison.Ordinal)))
+            if (EatsFlangeFields(ck))
             {
                 ck.Undetermined = true;
                 ck.Ok = false;
@@ -1635,6 +2211,299 @@ public static class LineRunner
                         + "。**判不了不算过。** 原值仅供诊断，不得引用。"
                         + (string.IsNullOrEmpty(ck.Note) ? "" : "　（原注：" + ck.Note + "）");
             }
+    }
+
+    /// <summary>
+    /// R47 B（2026-09-13）：图纸路径推不出切点的片 ⇒ 舌片保温包到哪不知道 ⇒ 这片法兰的场就不是这个设计的场，
+    /// 所有吃法兰场的判据与参考行（名单 <see cref="DependsOnFlangeFields"/>，与场没解到位那一遍**同一份**）
+    /// 都判成**无法判定**并附注。判不了不算过。
+    /// </summary>
+    private static void MarkUndeterminedIfInsulBoundaryUnknown(LineResult res, FlangeOut[] flanges)
+    {
+        var bad = flanges.Where(f => f is not null && f.InsulBoundaryUndetermined).ToArray();
+        if (bad.Length == 0) return;
+        string who = string.Join("、", bad.Select(f => f.Name));
+        foreach (var ck in res.Checks)
+            if (EatsFlangeFields(ck))
+            {
+                ck.Undetermined = true; ck.Ok = false;
+                ck.Note = "★ **无法判定**：图纸没有切点，保温分界判不了（" + who + "）—— "
+                        + "舌片保温包到哪不知道，这片法兰的场就不是这个设计的场，吃法兰场的判据与参考行都不可信。请先做「分析几何变数」。"
+                        + (string.IsNullOrEmpty(ck.Note) ? "" : "　（原注：" + ck.Note + "）");
+            }
+    }
+
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5；审查意见：R48DiscInsulPerPlateGateTests 的逐片重解手抄了本处的逐片热解配方 —— 生产一改，门要么红、要么逼人再抄一遍）：
+    /// 第 j 片壳热解的输入组装。原在 RunOnce 逐片循环里就地写，**原样搬出**（数逐位不变），整线求解与门共用。
+    /// <paramref name="iJoint"/> = 本片接头电流 A（按电流定铜排热导）；<paramref name="fieldUsed"/> = 图纸路径本片实际用的厚度场（推切点的退路；
+    /// 解析路径不读它）。图纸路径上它就是本片网格的 ShellMesh.SourceField（ShellMesh.BuildFromField 写入的正是传进去的场）。
+    /// </summary>
+    public static PlateThermalSetup PlateThermalInputs(LineCase c, int j, double iJoint, ThicknessField? fieldUsed)
+    {
+        int n = c.SegmentCount;
+        bool analytic = c.FlangePlates.Length > 0;
+        var plate = analytic ? c.FlangePlates[Math.Min(j, c.FlangePlates.Length - 1)] : null;
+        var s = new PlateThermalSetup();
+        var p2 = SegmentSolver.Clone(c.Base);
+        p2.TSetC = c.SetpointC[Math.Min(j, n - 1)];
+        if (j < c.ClampTempC.Length) p2.BusbarClampTempC = c.ClampTempC[j];
+        // ★ R48（2026-09-14，Opus 5）：逐片圆盘保温 —— 唯一取值 LineCase.DiscInsulEffectiveAt（解析 = 板件；图纸 = DiscInsul3dmPerPlateMm；
+        //   都没有 = 整线值，与 p2 克隆来的逐位相同）。原先分两支写、图纸路径只留一句「逐片值被忽略」，现两条路同一个入口。
+        p2.FlangeInsulThickMm = c.DiscInsulEffectiveAt(j);
+        // ★★★★★ 逐片热导 G（2026-08-28，B 项）：**由该片自己的电流算出来**，不再靠人抄。
+        //
+        //   此前 --busg 要人手填「40,21.8,300」，那个 40×21.8 是从 `--cli --busbar`
+        //   选型表里**抄**过来的 —— 同一个数两处来源，而且抄的是**共用片**那一行。
+        //   可四片电流本来就不同（实测 685/1099/975/542 A），
+        //   共用片走 √3 倍电流 ⇒ 需要的铜排更粗 ⇒ **G 本来就该逐片不同**。
+        //
+        //   第一性原理链（不循环）：A_j = I_j / J许用 ⇒ G_j = k_Cu·A_j/L。
+        //   截面只依赖**载流**，不依赖夹持温度 —— 所以可以在解之前定下来。
+        //   ⚠ 选型表里「导热需截面」那一支要 heatW 与夹持温度，是**循环**的，
+        //     故不进这条链；它在解完之后作为**一致性检查**（见 BusbarConsistency）。
+        if (c.Base.BusbarConductanceWPerK >= 0 && c.Base.BusbarJAllowAPerMm2 > 1e-9
+            && c.Base.BusbarLenToSinkMm > 1e-9)
+        {
+            double aMm2 = iJoint / c.Base.BusbarJAllowAPerMm2;
+            s.BusSectionForCurrentMm2 = aMm2;
+            p2.BusbarConductanceWPerK = s.BusGWPerK =
+                BusbarSizing.CuK * (aMm2 * 1e-6) / (c.Base.BusbarLenToSinkMm * 1e-3);
+        }
+        // 保温分界：解析几何用该片自己的分界（可为「全裸」= +∞ 之外）。
+        // ★ R47 B（2026-09-13）：图纸路径**逐片、从几何来**。此前 insulX 用 new FlangePlate() 默认板的切点
+        //   （盘 R60／舌 −200 那块与图纸无关的板）、tabBoundaryX 永远取 GeomForJudge[0]。
+        //   现在：GeomForJudge[j]（分析几何变数反推的等效片，与 ⑤⑥ 同一组几何）→ 没有就从材料包络推切点
+        //   → 推不出就把 ②′ 与 ③ 判成无法判定。**不许再用默认板**。
+        double insulX, tabBoundX = double.NaN;
+        // ★ R48（2026-09-14，Opus 5）：圆盘区按**半径**圈（见 ShellThermal 里那段），所以要把盘半径接进去。
+        //   接不到就是 NaN ⇒ ShellThermal 退回旧的按切点口径，并把「退回了」写进 DiscZoneRule 让人看得见。
+        //   ⚠ 本项目栽过两次的形态：**赋了值 ≠ 用它的人读得到**。这一行就是那根接线。
+        double discRForZone = double.NaN;
+        // ★ R48 续（2026-09-14，Opus 5）：**保温边界**也按半径 —— 由板件的唯一判定给出
+        //   （FlangePlate.InsulDiscRadiusMm：默认分界给盘半径，显式分界给 NaN 仍按 x）。
+        //   拿不到板件（图纸路径推不出等效片）时是 NaN ⇒ 退回按 x，并由 InsulRule 写明。
+        double insulRForZone = double.NaN;
+        string insulNote = ""; bool insulUndet = false;
+        if (analytic) { insulX = plate!.InsulBoundaryXResolved; discRForZone = plate.DiscRadiusMm; insulRForZone = plate.InsulDiscRadiusMm; }
+        else
+        {
+            var eqJ = c.GeomForJudgeAt(j);
+            if (eqJ is not null)
+            {
+                insulX = eqJ.InsulBoundaryXResolved; tabBoundX = eqJ.Tangent().X;
+                discRForZone = eqJ.DiscRadiusMm;
+                insulRForZone = eqJ.InsulDiscRadiusMm;
+                insulNote = $"保温分界 x={insulX:0.0}／舌盘分界 x={tabBoundX:0.0}，来自本片分析几何变数的等效片";
+            }
+            else if (fieldUsed is not null && TangentFromField(fieldUsed, out double xT, out string howT))
+            {
+                insulX = xT; tabBoundX = xT;
+                insulNote = $"保温分界／舌盘分界 x={xT:0.0}，{howT}（没有分析几何变数，比等效片粗）";
+            }
+            else
+            {
+                insulX = double.PositiveInfinity;   // 没有分界 ⇒ 整片按裸露算，但判据要标成判不了
+                insulUndet = true;
+                insulNote = "图纸没有切点，保温分界判不了" + (fieldUsed is null ? "" : "（材料包络推不出舌盘分界）");
+            }
+        }
+        s.P2 = p2;
+        s.InsulX = insulX;
+        s.SymmetricInsul = analytic && plate!.TwoTabs;
+        s.TabBoundaryX = analytic ? plate!.Tangent().X : tabBoundX;
+        s.TabInsulThickMm = analytic ? plate!.TabInsulThickMm : c.TabInsul3dmAt(j);
+        s.DiscRadiusMm = discRForZone;
+        s.InsulDiscRadiusMm = insulRForZone;
+        s.InsulNote = insulNote; s.InsulUndetermined = insulUndet;
+        return s;
+    }
+
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5）：第 j 片壳热解（ShellThermal.Solve）—— 边界与物性全部取自 <see cref="PlateThermalInputs"/> 的结果。
+    /// 原是 RunOnce 里的局部函数 Thermal，原样搬出；σ(T) 内循环仍在 RunOnce 里（它重解电流场后再调本函数）。
+    /// </summary>
+    public static ShellThermalResult SolvePlateThermal(ShellMesh mesh, double[] jMagAPerMm2, double tRootC, PlateThermalSetup s)
+        => ShellThermal.Solve(mesh, jMagAPerMm2, s.P2, tRootC, s.InsulX,
+                              symmetricInsul: s.SymmetricInsul,
+                              tabBoundaryX: s.TabBoundaryX,
+                              tabInsulThickMm: s.TabInsulThickMm,
+                              discRadiusMm: s.DiscRadiusMm,
+                              insulDiscRadiusMm: s.InsulDiscRadiusMm);
+
+    /// <summary>
+    /// ★ R48 E（2026-09-15 Opus 5）：**解析路径**第 j 片的网格 —— 原在 RunOnce 逐片循环里就地写（管孔半径跟管外径 + FlangeMesher.Build），
+    /// 原样搬出、数逐位不变；保温搜索求解器（<see cref="InsulationSearch"/>）逐片单解要用整线求解**同一个配方**造的网格（门与求解器不许手抄配方）。
+    /// ⚠ 会把板件的管孔半径改成 管内径/2 + 管壁（与 RunOnce 一样，是原有副作用）；图纸路径（FlangePlates 为空）不在这里，抛异常。
+    /// 网格尺寸读算例的 MeshFineMm／MeshCoarseMm／MeshFineRadiusMm／MeshInner*；要加密先调 <see cref="MeshAdapt.RefineWholeMesh"/>。
+    /// </summary>
+    public static ShellMesh PlateMeshAnalytic(LineCase c, int j)
+    {
+        if (c is null) throw new ArgumentNullException(nameof(c));
+        if (c.FlangePlates.Length == 0) throw new InvalidOperationException("图纸路径没有解析板件，逐片网格只能随整线求解读图纸造（本函数只管解析路径）。");
+        Normalize(c);   // 管内径哨兵等（幂等；RunOnce 里已做过，走 Core 不再调）
+        return PlateMeshAnalyticCore(c, j);
+    }
+
+    private static ShellMesh PlateMeshAnalyticCore(LineCase c, int j)
+    {
+        var plate = c.FlangePlates[Math.Min(j, c.FlangePlates.Length - 1)];
+        // 管孔必须跟着管外径走，否则法兰与管子对不上
+        plate.HoleRadiusMm = c.TubeIdMm * 0.5 + c.WallMm;
+        return FlangeMesher.Build(plate, 0, c.MeshFineMm, c.MeshCoarseMm, c.MeshFineRadiusMm,
+                                  c.Base.BusbarClampLengthMm,
+                                  c.MeshInnerMm, c.MeshInnerRadiusMm);
+    }
+
+    /// <summary>
+    /// ★ R48 E（2026-09-15 Opus 5）：第 j 片的电位场（ShellCurrent.SolveFor，电阻率取本片所属段的控温点）—— 原在 RunOnce 里写了两份（首解与 σ(T) 内循环），
+    /// 原样搬出、数逐位不变；<paramref name="tempC"/> 非 null 即 σ(T) 重解。保温搜索求解器逐片单解调它。
+    /// </summary>
+    public static ShellCurrentResult PlateCurrentField(LineCase c, ShellMesh mesh, int j, double iJointA, double[]? tempC = null)
+    {
+        int n = c.SegmentCount;
+        double tSet = c.SetpointC[Math.Min(j, n - 1)];
+        return ShellCurrent.SolveFor(c, mesh, iJointA, Materials.PtResistivity(tSet) * 1e3, tSet, tempC: tempC);
+    }
+
+    /// <summary>
+    /// R47 B：从材料包络推舌盘分界（切点）—— 舌尖那一列的材料半宽 w、全场最大半宽 R（盘半径）：
+    /// 盘的圆弧半宽 √(R²−x²) 首次等于舌半宽 w 的地方就是舌盘分界，x = −√(R²−w²)（w ≥ R 时为 0，即盘Ø56／舌 56 那种）。
+    /// 这是**等宽舌**的几何；锥形舌的切点在直线与圆相切处，会偏 —— 所以它只是没有等效片时的退路，附注里说明。
+    /// 推不出（没有材料、舌尖不在管轴左侧、盘半径为 0）返回 false。
+    /// </summary>
+    public static bool TangentFromField(ThicknessField f, out double xTangent, out string how)
+        => FlangeMesher.TangentFromField(f, out xTangent, out _, out _, out how);   // R47 复修 M1：推法只有一份（网格锚点也用它）
+
+    /// <summary>
+    /// ★★ R48（2026-09-14，Opus 5 复审补；审查意见 major「集总模型漏改的调用点」）：**整片热稳定**（FlangeStability）与
+    /// **升温两节点**（RampTwoNode）两个集总模型的输入与求解，从 Judge 里提出来的公开函数 —— 门与探针拿同一份算
+    /// 「排除压接格」前后的数（R48ClampRecipeTests、R48ClampRecipeImpactTests），不手抄配方。
+    /// </summary>
+    public sealed class FlangeLumpedOut
+    {
+        /// <summary>最不利的一片（发热最大那片）的下标，及其板件与本函数建的网格</summary>
+        public int Index;
+        public FlangePlate Plate = null!;
+        public ShellMesh Mesh = null!;
+        /// <summary>排除压接格了没有（要求排除且网格带整面接触的压接格）</summary>
+        public bool ClampExcluded;
+        /// <summary>被排除的压接格面积 mm²（单面；没排除 = 0）</summary>
+        public double ClampAreaMm2;
+        /// <summary>热稳定用：圆盘区／舌片区单面面积 mm²（按切点分）、舌片到铜排的导热长 mm</summary>
+        public double DiscAreaMm2, TabAreaMm2, TabLenMm;
+        /// <summary>升温两节点用：包保温／裸露单面面积 mm²（按板件保温判定分）、体积 mm³、面积 mm²</summary>
+        public double RampInsulAreaMm2, RampBareAreaMm2, VolumeMm3, AreaMm2;
+        public FlangeStability.Result Stab = null!;
+        public RampTwoNode.Inputs? RampIn;
+        /// <summary>升温两节点结果；算不出来时为 null，原因在 <see cref="RampError"/></summary>
+        public RampTwoNodeResult? Ramp;
+        public string RampError = "";
+    }
+
+    /// <summary>
+    /// 见 <see cref="FlangeLumpedOut"/>。没有片或没有板件（解析板 FlangePlates／判据用等效片 GeomForJudge 都空）时返回 null。
+    ///
+    /// ══ excludeClampCells（生产传 true）—— 2026-09-14 Opus 5
+    ///   生产网格压接段整面接触（<see cref="ShellMesh.ClampCell"/>，FlangeMesher.BuildFromField 配方 ③）：压接段里的铂压在铜排下、钉在夹持温度上，
+    ///   ShellCurrent 把它当电极、不再算它的发热 ⇒ 壳解给的 QGenW 已不含这一段（量级见 deliverable/R48_判定网格配方影响_2026-09-14.txt）。
+    ///   发热降了而散热面积、质量、导热长还按整片算 ⇒ 热稳定裕度偏大、升温「法兰−管温」偏小，**两个都偏乐观**。
+    ///   ⇒ true 时：盘／舌散热面积、保温分区面积、质量（体积）、等效外半径与平均厚度（面积）都只数压接格以外的格；
+    ///     舌片到铜排的导热长减去压接长（定温边界从舌端挪到了压接段内边）。
+    ///   false，或网格不带压接格（老口径；压接段盖到管孔的退化几何回退）：与改动前逐位相同（面积、体积直接取网格原值，不重新累加）。
+    ///   ⚠ 舌片导热长仍从 |TabEndXMm| 起算（没计延长段，改动前就如此，本次不改）。
+    ///
+    /// ══ 量过的前后（deliverable/R48_集总模型排除压接格_2026-09-14.txt：误差预算设计、导航网格、生产配方，最不利片 HC1|HC2，排除 2400 mm²）
+    ///   整片热稳定裕度 16.397（不排除）→ 15.246（排除）；升温两节点「法兰−管」峰值 22.05 K → 144.29 K（质量 564 → 383 g、裸露面积 6979 → 4579 mm²）。
+    ///   改动前（老口径、同一算例）是 14.489 与 71.62 K（deliverable/R48A_基线树老口径记录_2026-09-14.txt，基线树上跑的）。
+    ///   ⚠ 升温两节点模型**本来就没有铜排导热这条通道**（RampTwoNode 类注释列的三条机理里没有它；改动前老口径靠压接段那块面积的表面散热顶着）。
+    ///     排除压接格后这条参考量少了那块面积、又没有铜排通道补上 ⇒ 现在偏保守一侧；要不要给 RampTwoNode 加铜排通道，待定（2026-09-14 Opus 5）。
+    /// </summary>
+    public static FlangeLumpedOut? FlangeLumped(LineCase c, IReadOnlyList<FlangeOut> flanges, bool excludeClampCells = true)
+    {
+        var plates = c.FlangePlates is { Length: > 0 } ? c.FlangePlates : c.GeomForJudge;
+        if (flanges.Count == 0 || plates is not { Length: > 0 }) return null;
+
+        // 最不利的一片 = 发热最大那片（dP/dT ∝ 发热）
+        int wj = 0;
+        for (int j = 1; j < flanges.Count; j++)
+            if (flanges[j].QGenW > flanges[wj].QGenW) wj = j;
+        var fw = flanges[wj];
+        var pl = plates[Math.Min(wj, plates.Length - 1)];
+
+        var mesh = FlangeMesher.Build(pl, 0, c.MeshFineMm, c.MeshCoarseMm,
+                                      c.MeshFineRadiusMm, c.Base.BusbarClampLengthMm,
+                                      c.MeshInnerMm, c.MeshInnerRadiusMm);
+        bool skip = excludeClampCells && mesh.CellCount > 0 && mesh.ClampCell.Length == mesh.CellCount;
+        var o = new FlangeLumpedOut { Index = wj, Plate = pl, Mesh = mesh, ClampExcluded = skip };
+
+        // 盘/舌面积按**切点**分 —— 与 DesignScreen.Extract 同一个口径（同一个函数 AreaByTangent），不另立标准。
+        // （原来调 DesignScreen.Extract 只取这两个面积，那里还解一遍电流场、结果没人用 ⇒ 改调它分面积的那一份，skip = false 时面积逐位相同。）
+        (o.DiscAreaMm2, o.TabAreaMm2) = DesignScreen.AreaByTangent(mesh, pl.Tangent().X, excludeClampCells: skip);
+        if (skip)
+        {
+            double a = 0, v = 0, ac = 0;
+            for (int k = 0; k < mesh.CellCount; k++)
+                if (mesh.ClampCell[k]) ac += mesh.Area[k];
+                else { a += mesh.Area[k]; v += mesh.Area[k] * mesh.Thickness[k]; }
+            o.AreaMm2 = a; o.VolumeMm3 = v; o.ClampAreaMm2 = ac;
+        }
+        else { o.AreaMm2 = mesh.TotalArea; o.VolumeMm3 = mesh.VolumeMm3; }
+        o.TabLenMm = Math.Abs(pl.TabEndXMm) - (skip ? c.Base.BusbarClampLengthMm : 0.0);
+        double tThick = double.IsNaN(pl.TabThicknessMm) ? pl.ThicknessMm : pl.TabThicknessMm;
+
+        // ⚠ 评估温度取**管根温度**，不取片上最高温：FlangeStability 的护栏写明
+        //   发散几何上片温会跑到几千度，拿那个温度判出来的全是垃圾。
+        o.Stab = FlangeStability.Check(
+            c.Base, fw.QGenW, fw.TRootC,
+            o.DiscAreaMm2, o.TabAreaMm2, c.DiscInsulEffectiveAt(wj),   // R48：逐片圆盘保温走唯一取值 LineCase.DiscInsulEffectiveAt（合并 A/D，2026-09-15 Opus 5）
+            2 * pl.TabEndHalfWidthMm * tThick, o.TabLenMm,
+            2 * Math.PI * pl.HoleRadiusMm * pl.ThicknessMm,
+            pl.DiscRadiusMm - pl.HoleRadiusMm,
+            pl.TabInsulThickMm);
+
+        try
+        {
+            double shareF = fw.Shared ? Math.Sqrt(3.0) : 1.0;
+            double iSeg = fw.CurrentA / Math.Max(1e-9, shareF);
+            double rRef = fw.QGenW / Math.Max(1e-9, fw.CurrentA * fw.CurrentA);
+            // ★ R48 续（2026-09-14，Opus 5）：保温面积按板件的唯一判定分（默认按半径），不再各抄一份 x 规则。
+            double aIns = 0, aBare = 0;
+            for (int k = 0; k < mesh.CellCount; k++)
+            {
+                if (skip && mesh.ClampCell[k]) continue;                  // R48 复审补（2026-09-14 Opus 5）：压接格不在铂的热平衡里
+                if (pl.UnderDiscInsulation(mesh.Centroid[k].X, mesh.Centroid[k].Z)) aIns += mesh.Area[k]; else aBare += mesh.Area[k];
+            }
+            o.RampInsulAreaMm2 = aIns; o.RampBareAreaMm2 = aBare;
+            double holeR = pl.HoleRadiusMm;
+            double tubeAreaMm2 = Math.PI * ((holeR * holeR)
+                               - (holeR - c.WallMm) * (holeR - c.WallMm));
+            var gRamp = new RampTwoNode.Inputs
+            {
+                WallMm = c.WallMm,
+                FlangeMassG = o.VolumeMm3 * Materials.PtDensity * 1e-6,
+                FlangeAreaInsulMm2 = aIns, FlangeAreaBareMm2 = aBare,
+                FlangeResistanceRefOhm = rRef, FlangeRefTempC = fw.TRootC,
+                HoleRadiusMm = holeR,
+                PlateEqOuterRadiusMm = Math.Sqrt(o.AreaMm2 / Math.PI + holeR * holeR),
+                FlangeThickMm = o.VolumeMm3 / Math.Max(1e-9, o.AreaMm2),
+                DesignCurrentA = iSeg,
+                MaxCurrentA = c.Base.TubeJAllowAPerMm2 * tubeAreaMm2,
+                FromC = c.RampFromC, TargetC = c.RampTargetC,
+                RampRateKPerH = c.RampRateKPerH,
+                MaxHours = (c.RampTargetC - c.RampFromC)
+                           / Math.Max(0.1, c.RampRateKPerH) * 1.4,
+                SharedFactor = shareF,
+                Mode = RampControl.TemperatureRamp,
+            };
+            o.RampIn = gRamp;
+            // R48（2026-09-14，Opus 5）：升温两节点也按本片圆盘保温（原读整线 c.Base）
+            var pRamp = SegmentSolver.Clone(c.Base);
+            pRamp.FlangeInsulThickMm = c.DiscInsulEffectiveAt(wj);   // 合并 A/D（2026-09-15 Opus 5）：唯一取值
+            o.Ramp = RampTwoNode.Solve(pRamp, gRamp);
+        }
+        catch (Exception ex) { o.Ramp = null; o.RampError = ex.Message; }
+        return o;
     }
 
     private static ConstraintOut[] Judge(LineCase c, LineResult res, SegmentOut[] segs,
@@ -1699,6 +2568,8 @@ public static class LineRunner
                         //   前提不写出来，读表的人会以为 ① 过了就等于升温这一段全过。
                         + "　⚠ 前提：按**温控**（功率随需给足、只受 J 上限）算，不含二次侧闭环方式。"
                         + "改恒压/恒流/恒功率是另一族工况（恒压冷启电流约 4.4 倍），用 `--cli --ramp2` 单独扫。"
+                        // R48 审查第 4 条（2026-09-14，Opus 5）：段电流与法兰焦耳热取本次稳态 ⇒ 空管时标明随工况变
+                        + StateDependentTag(c)
                 });
         }
 
@@ -1747,8 +2618,22 @@ public static class LineRunner
         //    ⇒ 原来整条判据不出现 ⇒ AllOk 少判一条硬安全线还报「全过」。
         //    现在补 else 报「无法判定」，并且 LineResult.Required 会**独立地**再兜一次底 ——
         //    两道是有意重复的：else 给得出原因，名单保证下一条新判据漏写 else 时也不会溜过去。
-        var hottestDisc = flanges.Where(f => !double.IsNaN(f.TDiscMaxC))
-                                 .OrderByDescending(f => f.TDiscMaxC - f.TRootC).FirstOrDefault();
+        // ★★★★★ R48（2026-09-14，Opus 5）：**任何一片判不了 ⇒ 整条判不了**。
+        //
+        //   上面那段注释只堵了「**所有**片都 NaN」那一种。实际的漏洞是「**有几片** NaN」：
+        //   `Where(!IsNaN)` 把它们**静默滤掉**，然后在剩下的片里挑最热的报出来 ——
+        //   于是一条硬安全线在那几片上**从来没判过**，而输出上完全看不出来。
+        //   这与同一文件里局部热稳定那条 2026-08-24 修过的病**逐字同形**
+        //   （当时：`Where(!NaN).OrderBy(margin).First()` 取「剩下几片里最差的」，
+        //     而判不了的恰恰是发散的那一片，于是发散算例报出一个由健康片算来的漂亮数）。
+        //   照它的修法办：先看有没有片判不了，有就整条判不了，并点名是哪几片。
+        //
+        //   ⚠ 实测（09-14，管壁 0.8）：两个内置设计的四片圆盘区都不空（NaN 0/4），
+        //     所以本次修改**不改变现役档的任何判定**。它堵的是换个几何才会发作的那个洞
+        //     （舌半宽 = 盘半径且用双舌片时，分区规则 |x| > |切点| 会让圆盘区成为空集）。
+        var blindDisc = flanges.Where(f => double.IsNaN(f.TDiscMaxC)).ToArray();
+        var hottestDisc = blindDisc.Length > 0 ? null
+                        : flanges.OrderByDescending(f => f.TDiscMaxC - f.TRootC).FirstOrDefault();
         if (hottestDisc is not null)
             checks.Add(new ConstraintOut
             {
@@ -1764,7 +2649,10 @@ public static class LineRunner
                        $"峰位 r={hottestDisc.DiscMaxRMm:0.0} mm（x={hottestDisc.DiscMaxXMm:+0.0;−0.0}, " +
                        $"z={hottestDisc.DiscMaxZMm:+0.0;−0.0}）J={hottestDisc.DiscMaxJAPerMm2:0.00} " +
                        $"t={hottestDisc.DiscMaxThickMm:0.00} mm；" +
-                       $"舌片区峰值 {hottestDisc.TTabMaxC:0.0} °C（另由熔点与局部失稳管）；" +
+                       $"分区口径：{hottestDisc.DiscZoneRule}；{hottestDisc.InsulRule}；" +
+                       $"舌片区峰值 {hottestDisc.TTabMaxC:0.0} °C" +
+                       (double.IsNaN(hottestDisc.TabMaxRMm) ? "" : $"（峰位 r={hottestDisc.TabMaxRMm:0.0} mm）") +
+                       "（另由熔点与局部失稳管）；" +
                        $"管孔净流入 {hottestDisc.QFromTubeW:+0;-0} W" +
                        (hottestDisc.TDiscMaxC - hottestDisc.TRootC > c.DiscOverTempMaxK
                         ? NextAction.DiscHot : "")
@@ -1774,10 +2662,16 @@ public static class LineRunner
             {
                 Name = "②″圆盘区最高温 − 管温", Unit = "K", Kind = CheckKind.HardSafety,
                 Actual = double.NaN, Limit = c.DiscOverTempMaxK, Ok = false,
-                Undetermined = true, Where = "—",
-                Note = "★ **无法判定**：没有任何一片算出圆盘区温度（每一片的网格里都没有" +
-                       "落在圆盘区的单元）。**不要把它读成通过** —— 这一关没被检查过。" +
-                       "常见成因：几何来自 .3dm 厚度场而盘/舌分区认不出来，或盘半径 ≤ 孔半径。"
+                Undetermined = true, Where = blindDisc.Length > 0 ? string.Join("、", blindDisc.Select(f => f.Name)) : "—",
+                Note = (blindDisc.Length > 0 && blindDisc.Length < flanges.Length
+                        ? $"★ **无法判定**：{blindDisc.Length} 片（{string.Join("、", blindDisc.Select(f => f.Name))}）"
+                        + "的网格里没有落在圆盘区的单元，圆盘区温度算不出来。"
+                        + "**任何一片判不了，整条就判不了** —— 只报剩下几片里最热的那个，"
+                        + "等于让这条硬安全线在那几片上从来没判过，而数字看着很正常。"
+                        : "★ **无法判定**：没有任何一片算出圆盘区温度（每一片的网格里都没有"
+                        + "落在圆盘区的单元）。**不要把它读成通过** —— 这一关没被检查过。") +
+                       "常见成因：几何来自 .3dm 厚度场而盘/舌分区认不出来，或盘半径 ≤ 孔半径，"
+                       + "或舌半宽 = 盘半径（切点落在 x=0）且用双舌片 —— 那时分区规则 |x| > |切点| 会把整片都算成舌片。"
             });
 
         // ── ②′ 同一条安全线的管侧视角：**热不能往管子里灌**
@@ -1790,14 +2684,26 @@ public static class LineRunner
         // 而「热往哪边流」有**直接量**：管孔净流入 QFromTubeW（>0 = 从管子抽热 = 安全）。
         // 直接量就在手里，没有任何理由再用代理量。
         var worstFlux = flanges.OrderBy(f => f.QFromTubeW).First();
+        // R47 F（2026-09-13）：管孔定温环的自检写进附注，**不改判定**。
+        //   TagHole 的口径是 |r − 孔半径| < 3 mm：环宽小于 3 mm 的盘（如盘 R28／孔 25.8）整段盘外缘会被钉成管孔温度。
+        string holeTagNote = "";
+        {
+            var over = flanges.Where(f => !double.IsNaN(f.HoleTagOverMm)).OrderByDescending(f => f.HoleTagOverMm).FirstOrDefault();
+            if (over is not null && over.HoleTagOverMm > 1e-6)
+                holeTagNote = $"　管孔定温环吃到孔边以外 {over.HoleTagOverMm:0.0} mm（{over.Name}"
+                            + (over.HoleTagBeyondWeldMm > 1e-6 ? $"，焊脚以外被钉住的边界长 {over.HoleTagBeyondWeldMm:0.0} mm" : "")
+                            + "；管孔边界口径 |r−孔半径|<3 mm，本处只量不判）。";
+        }
+        string insulSrcNote = string.IsNullOrEmpty(worstFlux.InsulBoundaryNote) ? "" : "　" + worstFlux.InsulBoundaryNote + "。";
         checks.Add(new ConstraintOut
         {
             Name = "②′管孔净流入 须为正", Unit = "W", Kind = CheckKind.HardSafety,
             Actual = worstFlux.QFromTubeW, Limit = 0, LessIsBetter = false,
             Ok = worstFlux.QFromTubeW > 0, Where = worstFlux.Name,
-            Note = worstFlux.QFromTubeW <= 0
+            Note = (worstFlux.QFromTubeW <= 0
                  ? "★ 热正在往管子里灌 —— 这是烧断的过程。" + NextAction.NetFluxLow
-                 : "法兰在从管子抽热，方向安全。" + NextAction.DrawWindow
+                 : "法兰在从管子抽热，方向安全。" + NextAction.DrawWindow)
+                 + holeTagNote + insulSrcNote
         });
 
         // ── ③ **法兰造成的增量温降** ≤ 上限
@@ -1811,7 +2717,18 @@ public static class LineRunner
         //   整个不出现，于是 AllOk 少判一条还报「全过」。实测阶梯就这么虚报过一次：
         //   增量降 max 是 +32（上限 10）却判「✓ 全过」。
         //   **判据消失比判据不过危险得多**：不过会被看见，消失不会。
-        var dips = segs.Where(s => !double.IsNaN(s.FlangeDipK)).ToArray();
+        // ★★★★★ R48 续（2026-09-14，Opus 5）：**任何一段判不了 ⇒ 整条判不了。**
+        //
+        //   原来是 `segs.Where(!IsNaN)`：算不出增量温降的段被**静默丢掉**，然后在剩下的段里报最深的那个。
+        //   紧挨着的注释只堵了「**所有**段都 NaN」（那时 dips.Length == 0 才走 else）。
+        //   这与同一文件里 ②″（blindDisc）和局部热稳定（anyUnknownPlate，2026-08-24 修）
+        //   **逐字同形** —— 同一个形态的第三次。规矩早就定了：任何一片/段判不了，整条就判不了。
+        //   ⚠ NaN 的来路：ApplyBaseline 逐段做 `baseline − 实际`，而基线是全有全无；
+        //     所以部分 NaN 只能来自某一段主解的管根温度是 NaN —— 正是 2026-08-24 那个「发散的那一片」，
+        //     只是层级从片换成段。结构上没有任何东西挡着。
+        var blindDip = segs.Where(s => double.IsNaN(s.FlangeDipK)).ToArray();
+        var dips = blindDip.Length > 0 ? Array.Empty<SegmentOut>()
+                 : segs.Where(s => !double.IsNaN(s.FlangeDipK)).ToArray();
         if (dips.Length > 0)
         {
             var deepest = dips.OrderByDescending(s => s.FlangeDipK).First();
@@ -1831,8 +2748,13 @@ public static class LineRunner
             {
                 Name = "③ 法兰增量温降 ≤ 上限", Unit = "K", Kind = CheckKind.Target,
                 Actual = double.NaN, Limit = c.RootDeltaMaxK, Ok = false,
-                Undetermined = true, Where = "—",
-                Note = "★ **无法判定**：无法兰基线没算出来（LineCase.BaselineRootC 为空且基线子解失败）。" +
+                Undetermined = true,
+                Where = blindDip.Length > 0 ? string.Join("、", blindDip.Select(x => x.Name)) : "—",
+                Note = (blindDip.Length > 0 && blindDip.Length < segs.Length
+                        ? $"★ **无法判定**：{blindDip.Length} 段（{string.Join("、", blindDip.Select(x => x.Name))}）"
+                        + "的增量温降算不出来。**任何一段判不了，整条就判不了** —— "
+                        + "只报剩下几段里最深的那个，等于让这条判据在那几段上从来没判过，而数字看着很正常。"
+                        : "★ **无法判定**：无法兰基线没算出来（LineCase.BaselineRootC 为空且基线子解失败）。") +
                        "不要把它读成通过。"
             });
         }
@@ -1851,7 +2773,11 @@ public static class LineRunner
         double utilMax = 0; string utilWhere = ""; bool undetermined = false; string undetNote = "";
         for (int i = 0; i < n; i++)
         {
-            var mr = Mechanics.Check(segParams[i], c.WallMm, 2.0, new FlangePlate());
+            // ★ R47 复修 M10：这里只读管的强度利用率（法兰不承重，见上），舌片那几项不看 ——
+            //   有真板就传真板（解析 FlangePlates／图纸 GeomForJudge），没有就传 Mechanics.TubeOnlyPlate（只为签名，不进任何判定）。
+            var plateMech = c.FlangePlates.Length > 0 ? c.FlangePlates[Math.Min(i, c.FlangePlates.Length - 1)]
+                          : c.GeomForJudgeAt(i) ?? Mechanics.TubeOnlyPlate;
+            var mr = Mechanics.Check(segParams[i], c.WallMm, 2.0, plateMech);
             Mechanics.ApplyAllowable(mr, segParams[i], segs[i].SetpointC, segs[i].SetpointC);
             if (double.IsNaN(mr.TubeAllowMPa))
             {
@@ -1930,7 +2856,8 @@ public static class LineRunner
                 var dcr = DesignCurrent.Compute(platesJ, c.WallMm, c.Base, c.RampFromC, c.RampTargetC, c.RampRateKPerH,
                               segs.Length, c.SetpointC,
                               jj => jj < flanges.Length && flanges[jj] is { } f0 && f0.QGenW > 0 && f0.CurrentA > 0
-                                    ? (f0.QGenW / (f0.CurrentA * f0.CurrentA), f0.TRootC) : null);
+                                    ? (f0.QGenW / (f0.CurrentA * f0.CurrentA), f0.TRootC) : null,
+                              c.DiscInsulEffectiveAt);   // R48（2026-09-14，Opus 5）：两节点对照印在本条 Note 里，原读整线圆盘保温
                 // ── ① 升温（R20，用户 2026-09-08 纠正：全体截面 J<11 就不会熔，不判峰值；
                 //    ① = 升温所需电流没被管 J 许用上限截住 ⇒ 按 20 °C/h 升得到目标）。闭式、与网格无关、每轮都在。
                 bool rampUndet = double.IsNaN(dcr.RampTubeJPeakAPerMm2);
@@ -1966,6 +2893,8 @@ public static class LineRunner
                          + "　截面 J = 设计电流 ÷ 必经截面积（舌片各处含开孔／舌盘交界弦／孔缘环与各级环含槽带，圆盘按整圈），"
                          + $"闭式、与网格无关；按设定 J={c.JDesignAPerMm2:0.#} 定尺寸（工程师在 ① 输入设定，预设 10），终验全体 < J+1 = {jChk:0.#}。"
                          + (!undet && worstJ < jChk ? "" : NextAction.SectionJHigh)
+                         // R48 审查第 4 条（2026-09-14，Opus 5）：Describe 里的两节点对照取本次各片稳态参考电阻 ⇒ 空管时标明；实际值不随工况变
+                         + (c.EmptyTube ? "　⚠ 说明里的两节点对照电流取自本次空管到温稳态场，随工况变；本条实际值（截面 J）与工况无关。" : "")
                 });
             }
             catch (Exception ex)
@@ -2058,29 +2987,11 @@ public static class LineRunner
             var plates = c.FlangePlates is { Length: > 0 } ? c.FlangePlates : c.GeomForJudge;
             if (flanges.Length > 0 && plates is { Length: > 0 })
             {
-                // 最不利的一片 = 发热最大那片（dP/dT ∝ 发热）
-                int wj = 0;
-                for (int j = 1; j < flanges.Length; j++)
-                    if (flanges[j].QGenW > flanges[wj].QGenW) wj = j;
-                var fw = flanges[wj];
-                var pl = plates[Math.Min(wj, plates.Length - 1)];
-
-                // 盘/舌面积按**切点**分 —— 与 DesignScreen.Extract 同一个口径，不另立标准
-                var mesh = FlangeMesher.Build(pl, 0, c.MeshFineMm, c.MeshCoarseMm,
-                                              c.MeshFineRadiusMm, c.Base.BusbarClampLengthMm,
-                                              c.MeshInnerMm, c.MeshInnerRadiusMm);
-                var sf = DesignScreen.Extract(mesh, 1000.0, 1050.0, pl.Tangent().X);
-                double tThick = double.IsNaN(pl.TabThicknessMm) ? pl.ThicknessMm : pl.TabThicknessMm;
-
-                // ⚠ 评估温度取**管根温度**，不取片上最高温：FlangeStability 的护栏写明
-                //   发散几何上片温会跑到几千度，拿那个温度判出来的全是垃圾。
-                var st = FlangeStability.Check(
-                    c.Base, fw.QGenW, fw.TRootC,
-                    sf.DiscAreaMm2, sf.TabAreaMm2, c.Base.FlangeInsulThickMm,
-                    2 * pl.TabEndHalfWidthMm * tThick, Math.Abs(pl.TabEndXMm),
-                    2 * Math.PI * pl.HoleRadiusMm * pl.ThicknessMm,
-                    pl.DiscRadiusMm - pl.HoleRadiusMm,
-                    pl.TabInsulThickMm);
+                // ★ R48（2026-09-14，Opus 5 复审补）：最不利片的选取、建网格、两个集总模型的输入与求解整块提成 FlangeLumped（公开，门与探针调同一份）。
+                //   生产传 excludeClampCells: true —— 压接段整面接触后，压接格不在铂的热平衡里，面积／质量／导热长都要把它排除（见 FlangeLumped 的注释）。
+                var lumped = FlangeLumped(c, flanges, excludeClampCells: true)!;   // 与本 if 同一个前提（有片、有板件）⇒ 非空
+                var fw = flanges[lumped.Index];
+                var st = lumped.Stab;
                 checks.Add(new ConstraintOut
                 {
                     Name = LineResult.Key.FlangeStab, Unit = "×", Kind = CheckKind.Reference,
@@ -2112,37 +3023,9 @@ public static class LineRunner
                 //  ⚠ **先按参考量进表，不升硬判据**：+215 K 是**现役基准**（设备在跑），
                 //    拿它去判现役等于判掉自己。限值需要出处 —— 与「热稳定」当初一样，
                 //    先把量露出来、攒跨几何的分布，有出处了再谈升硬判据。
-                try
+                // 输入与求解在 FlangeLumped 里（原来这里的 try 包的就是那一段；异常信息原样带回 RampError）
+                if (lumped.Ramp is { } rt)
                 {
-                    double shareF = fw.Shared ? Math.Sqrt(3.0) : 1.0;
-                    double iSeg = fw.CurrentA / Math.Max(1e-9, shareF);
-                    double rRef = fw.QGenW / Math.Max(1e-9, fw.CurrentA * fw.CurrentA);
-                    double insulX = pl.InsulBoundaryXResolved;
-                    double aIns = 0, aBare = 0;
-                    for (int k = 0; k < mesh.CellCount; k++)
-                        if (mesh.Centroid[k].X >= insulX) aIns += mesh.Area[k]; else aBare += mesh.Area[k];
-                    double holeR = pl.HoleRadiusMm;
-                    double tubeAreaMm2 = Math.PI * ((holeR * holeR)
-                                       - (holeR - c.WallMm) * (holeR - c.WallMm));
-                    var gRamp = new RampTwoNode.Inputs
-                    {
-                        WallMm = c.WallMm,
-                        FlangeMassG = mesh.VolumeMm3 * Materials.PtDensity * 1e-6,
-                        FlangeAreaInsulMm2 = aIns, FlangeAreaBareMm2 = aBare,
-                        FlangeResistanceRefOhm = rRef, FlangeRefTempC = fw.TRootC,
-                        HoleRadiusMm = holeR,
-                        PlateEqOuterRadiusMm = Math.Sqrt(mesh.TotalArea / Math.PI + holeR * holeR),
-                        FlangeThickMm = mesh.VolumeMm3 / Math.Max(1e-9, mesh.TotalArea),
-                        DesignCurrentA = iSeg,
-                        MaxCurrentA = c.Base.TubeJAllowAPerMm2 * tubeAreaMm2,
-                        FromC = c.RampFromC, TargetC = c.RampTargetC,
-                        RampRateKPerH = c.RampRateKPerH,
-                        MaxHours = (c.RampTargetC - c.RampFromC)
-                                   / Math.Max(0.1, c.RampRateKPerH) * 1.4,
-                        SharedFactor = shareF,
-                        Mode = RampControl.TemperatureRamp,
-                    };
-                    var rt = RampTwoNode.Solve(c.Base, gRamp);
                     checks.Add(new ConstraintOut
                     {
                         Name = LineResult.Key.RampField, Unit = "K", Kind = CheckKind.Reference,
@@ -2160,16 +3043,24 @@ public static class LineRunner
                              + "要升硬判据得先有限值的出处（同「热稳定」当初的路子）。"
                              + " ⚠ 判据 ① 用的 RampSolver 把法兰并进管子当同一个温度，"
                              + "「法兰比管热」在那个模型里结构性地看不见；本条用两节点模型补上。"
+                             // ★ R48（2026-09-14，Opus 5 复审补）：排除压接格之后这个数的偏向要让看数的人知道（对话的知识落到界面上）——
+                             //   量过：误差预算设计 22.05 K（不排除）→ 144.29 K（排除），见 FlangeLumped 的注释与 deliverable/R48_集总模型排除压接格_2026-09-14.txt。
+                             + (lumped.ClampExcluded
+                                ? "　⚠ 压接段压在铜排下，不算进法兰这一节点（发热、质量、散热面积都不含它）；"
+                                  + "而两节点模型没有「经舌片传给铜排」这条散热通道，所以这个数偏高、偏保守。"
+                                : "")
+                             // R48 审查第 4 条（2026-09-14，Opus 5）：参考电阻 QGen/I² 与参考温度取本次最热片的稳态值 ⇒ 空管时标明随工况变
+                             + StateDependentTag(c)
                     });
                 }
-                catch (Exception ex)
+                else
                 {
                     checks.Add(new ConstraintOut
                     {
                         Name = LineResult.Key.RampField, Unit = "K", Kind = CheckKind.Reference,
                         Actual = double.NaN, Limit = 215.0, LessIsBetter = true,
                         Ok = true, Undetermined = true, Where = "—",
-                        Note = "★ **算不出来**：" + ex.Message
+                        Note = "★ **算不出来**：" + lumped.RampError
                              + "　（参考量，不参与 AllOk；但算不出来就该说，不能装作没有这一条）"
                     });
                 }
@@ -2240,12 +3131,21 @@ public static class LineRunner
         }
 
         // ── 现场验证点：玻璃温降。这是全模型唯一一个拿实测校准的量，必须始终露出来。
-        checks.Add(new ConstraintOut
-        {
-            Name = "· 玻璃温降 vs 实测", Unit = "K", Kind = CheckKind.Reference, Ok = true,
-            Actual = res.GlassDropModelK, Limit = res.GlassDropMeasuredK, Where = "整线",
-            Note = $"偏差 {res.GlassDropModelK - res.GlassDropMeasuredK:+0.0;-0.0} K"
-        });
+        // ★ R48（2026-09-14，Opus 5）：空管到温稳态没有玻璃 ⇒ 这条**不适用**。ConstraintOut 没有「不适用」语义，
+        //   用「判不了」表达（参考量，不进 AllOk），原因写进 Note；不许报 0 或 NaN 冒充模型值。
+        checks.Add(c.EmptyTube
+            ? new ConstraintOut
+            {
+                Name = "· 玻璃温降 vs 实测", Unit = "K", Kind = CheckKind.Reference, Ok = true, Undetermined = true,
+                Actual = double.NaN, Limit = res.GlassDropMeasuredK, Where = "整线",
+                Note = "不适用：本次是空管到温稳态（管内无玻璃），没有玻璃温降可与实测比。实测值只对应带玻璃的稳态。"
+            }
+            : new ConstraintOut
+            {
+                Name = "· 玻璃温降 vs 实测", Unit = "K", Kind = CheckKind.Reference, Ok = true,
+                Actual = res.GlassDropModelK, Limit = res.GlassDropMeasuredK, Where = "整线",
+                Note = $"偏差 {res.GlassDropModelK - res.GlassDropMeasuredK:+0.0;-0.0} K"
+            });
 
         return checks.ToArray();
     }

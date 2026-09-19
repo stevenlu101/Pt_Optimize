@@ -4428,6 +4428,9 @@ internal static class Program
             //   `--cli --monotone [--wall 0.8] [--pts 7]`
             // ★ 网格无关复核：**判据以它为准**（导航网格上的「全过」可能是离散误差的假象）。
             //   同一段输出被 --judge 与 --solve 共用 —— 两处各写一份就会「一处改了另一处没改」。
+            // ★ R48（2026-09-14，Opus 5）：求根那一遍到底说了什么 —— 复核判「不过」时要照实引用它，
+            //   不能一律安一句「它说全过」。null = 本次没跑求根（只做复核）。
+            bool? solvedFeasible = null;
             void VerifyMesh(DesignSpec dv, string tag)
             {
                 int mcV = 40000;
@@ -4463,10 +4466,38 @@ internal static class Program
                 // ★ 两条安全线的结论必须印 —— 不印等于没做（A⑭）
                 if (mvv.MidBandConfirm is not null) Console.WriteLine("   " + mvv.MidBandConfirm);
                 if (mvv.PeakOutsideFine is not null) Console.WriteLine("   " + mvv.PeakOutsideFine);
-                if (mvv.Line is { } lvv && !lvv.AllOk)
+                // ★★★★★ R48 续（2026-09-14，Opus 5）：**判不了不许说成「不过」。**
+                //   界面那一侧（LineDesignPage.VerifyMeshAsync）已经认 Undecidable，命令行这一侧没认 ——
+                //   撞上单元上限、序列仍在摆时，下面那一支照样印「在算得准的网格上，这个设计不过」。
+                //   可那时网格根本没算准，「不过」与「过」都没有依据。同一个状态位两个出口一个读一个不读，
+                //   是本仓库栽过多次的形态；这里补上，并且让它**排在**「不过」那一支之前、互斥。
+                if (mvv.Undecidable)
                 {
+                    Console.WriteLine("⛔ **判不了** —— 已经加密到单元上限，而判据值仍在摆（不是还没收敛）。"
+                        + "**不要把它读成「不过」，也不要读成「过」**：这一关没有被检查过。");
+                    Console.WriteLine("   【下一步】① 换个网格族再验一次（改细区半径或起步档），看结论会不会跟着变；"
+                        + "② 换族之后结论一致的那部分才可引用；③ 若判据值本来就贴着限值，先问这条限值有没有留够噪声裕量。");
+                }
+                else if (mvv.Line is { } lvv && !lvv.AllOk)
+                {
+                    // ★ R48（2026-09-13，Opus 5）：这句以前一律写「导航网格上的全过」——
+                    //   而开了 --fine 时，说「全过」的是**求根的细网格那一遍**，不是导航网格。
+                    //   把没做过的事安给导航网格，读的人会去找错地方（最高准则：不许把事情搞混）。
+                    // ★ R48（2026-09-14，Opus 5）：这句只准说**求根那一遍真的说过的话**。
+                    //   09-13 的版本一律写「导航网格上的『全过』是假象」——开了 --fine 时说全过的是细网格那一遍。
+                    //   我 09-13 把它改成「求根那一遍报的『全过』…」，09-14 实跑又发现**照样是错的**：
+                    //   这次求解器**根本没报全过**（它是结构性停机，报「法兰侧九根旋钮穷尽」），
+                    //   那句话又把没做过的事安给了它。⇒ 现在按求解器**实际的停机结论**分三种说。
+                    double hLast = mvv.Trace.Count > 0 ? mvv.Trace[^1].Fine : 0;
+                    string claimed = solvedFeasible is true
+                        ? (args.Contains("--fine")
+                           ? "求根那一遍（--fine）报的「全过」是在更粗的网格上得到的"
+                           : "导航网格上的「全过」是离散误差造成的假象")
+                        : solvedFeasible is false
+                           ? "求根那一遍本来就没说它全过（看上面的停因）"
+                           : "本次没有求根那一遍可比（只做了复核）";
                     Console.WriteLine("✗ **在算得准的网格上，这个设计不过** —— "
-                        + "导航网格上的「全过」是离散误差造成的假象，不要拿它出图。");
+                        + claimed + $"；判据以本复核为准（已加密到 {hLast:0.000} mm）。不要拿它出图。");
                     // ★★ 说了「不过」就必须说**是哪一条**（2026-08-30）。
                     //   此前这里只有上面那一句：2026-08-29 那趟 0.6 档跑了 4 小时 22 分，
                     //   末行报「不过」，而日志里**找不到任何一条判据的名字** ——
@@ -4595,6 +4626,8 @@ internal static class Program
                 var gj = DesignSpec.Select(args);
                 Console.WriteLine("=== 单次判定（同一设计，只看判据）===");
                 Console.WriteLine($"用例：{gj.Name}");
+                // ★ R47 第三轮 N5：图纸档没有解析板 —— 明说、不算（BuildCase 也会拒，这里先说清楚再退出）
+                if (gj.IsDrawingRecord) { Console.WriteLine("✗ " + DesignSpec.DrawingRefusal); Environment.ExitCode = 1; return; }
                 Console.WriteLine("基线收敛口径："
                     + (p.BaselineTolAmplified ? "**与主环同口径**（真残差 × 放大 25）"
                                               : "**历史口径**（欠松弛步直接比容差）"));
@@ -4703,6 +4736,7 @@ internal static class Program
                 }
 
                 var r1 = RunOnce(geoS, "单次求解");
+                solvedFeasible = r1.Feasible;   // ★ R48：复核判「不过」时要照实引用求根那一遍的结论，不许替它说话
                 if (args.Contains("--verifymesh") && r1.Design is not null)
                     VerifyMesh(r1.Design, "求解器解出来的那一点");
                 else
@@ -6537,12 +6571,22 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
                                 Console.WriteLine($"         {c.Name} {c.Actual:0.000} / {c.Limit:0.000}　{c.Where}");
                         }
                     }
+                    // ★ R48（2026-09-13，Opus 5 加）：记录值出自修网格前的档（DesignSpec.RecordFromOldMesh）——
+                    //   R47 把网格轴修对后抽热约为原来的 4～8 倍（旧轴在管孔一侧留了 8.46 mm 的粗格从未被加密），
+                    //   旧记录的热学项与铂重**必然对不上**，那是旧数不可比，不是本次退化 ⇒ 这类档**只报不判**。
+                    //   ⚠ 只对**已作废、不再重解**的档成立；现役档一律要按 R48 重解并写回新记录值 ——
+                    //   拿这个开关掩盖现役档对不上，等于把这道门关掉。
+                    bool oldMesh = fd.RecordFromOldMesh;
+                    if (oldMesh)
+                        Console.WriteLine("      · 本档记录值出自**修网格前**的网格（R47 之前）⇒ 热学项与合计只报不判；"
+                                        + "本档已作废、不再重解，热学结论不可引用（见失效告示）。");
                     void Chk(string nm, double got, double want, double tol, string unit)
                     {
                         bool ok = Math.Abs(got - want) <= tol;
-                        if (!ok) bad++;
-                        Console.WriteLine($"      {(ok ? "✓" : "✗")} {nm,-6}{got,9:0.000} {unit,-6} 记录 {want,8:0.000}" +
-                                          $"　差 {got - want,+7:0.000}" + (ok ? "" : $"　**超容差 {tol:0.###}**"));
+                        if (!ok && !oldMesh) bad++;
+                        Console.WriteLine($"      {(ok ? "✓" : oldMesh ? "·" : "✗")} {nm,-6}{got,9:0.000} {unit,-6} 记录 {want,8:0.000}" +
+                                          $"　差 {got - want,+7:0.000}"
+                                          + (ok ? "" : oldMesh ? "　（修网格前的记录值，只报不判）" : $"　**超容差 {tol:0.###}**"));
                     }
                     Chk("①用时", V(LineResult.Key.RampHours), fd.RampH, 0.02, "h");   // R20：记录的 RampH 是集总用时，读参考行
                     Chk("②″", V("②″"), fd.DiscOverK,  0.20, "K");

@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using PtOptimize.Core;
+using PtOptimize.UI;
 using Xunit;
 
 namespace PtOptimize.Tests;
@@ -231,5 +233,31 @@ public class DocRefTests
         Assert.True(bad.Count == 0,
             "有指不到的出处（**凭空的出处比没有出处更坏**）：" + Environment.NewLine
             + string.Join(Environment.NewLine, bad));
+    }
+    /// <summary>
+    /// ★ R47 第三轮 N6（2026-09-13）：说明书是给工程师看的 HTML，**不许出现字面 `**`**（那是源码里的加粗记号，页面上得转成粗体）。
+    /// 病：首段「咬住它的：{fd.Binding}」没过 Md()，Binding 里的 **本档不过** 就原样印成两对星号。
+    /// 四档内置档 + 一份图纸档（N5：说明书读到图纸档不造解析板、印拒绝那句）都走一遍。
+    /// </summary>
+    [Fact]
+    public void ManualPage_BuildHtml_输出不含字面星号()
+    {
+        foreach (var fd in DesignSpec.Builtin)
+        {
+            string html = ManualPage.BuildHtml(fd);
+            int at = html.IndexOf("**", StringComparison.Ordinal);
+            Assert.True(at < 0, $"档「{fd.Name}」的说明书里有字面 **：…{html[Math.Max(0, at - 60)..Math.Min(html.Length, at + 60)]}…");
+        }
+        var dr = DesignSpec.Builtin[0].Clone();
+        dr.Name = "图纸档（说明书门）";
+        dr.GeomSource = DesignSpec.GeomSourceDrawing;
+        dr.FlangeFile3dm = new[] { "D:/图/入口.3dm" };
+        dr.ThicknessScale = new[] { 1.15, 0.90, 1.25, 1.05 };
+        dr.TabThickMm = Enumerable.Repeat(double.NaN, 4).ToArray();
+        string h2 = ManualPage.BuildHtml(dr);
+        Assert.DoesNotContain("**", h2);
+        Assert.Contains("本档出自图纸路径", h2);
+        Assert.Contains("请在界面里载入并先分析几何", h2);
+        Assert.DoesNotContain("NaN", h2);
     }
 }
