@@ -1,0 +1,42 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<title>Pt_Optimize 使用说明</title><style>
+:root{--bg:#F4F6F7;--card:#FFF;--ink:#12171A;--ink2:#3D4B53;--muted:#68767E;
+--rule:#D2DADE;--pt:#E8D9A8;--ring1:#E9A159;--ring2:#F0C79A;--tube:#C9D3D8;
+--clamp:#2C7A8C;--ok:#2C6B58;--hot:#C2570F;--dim:#9AA7AE;--ptDark:#C9B276;--ring1d:#C07A32;--ring2d:#CFA57A;--tubeDark:#9FAEB5;--tubeTop:#DCE4E8;--weld:#B9452F}
+@media(prefers-color-scheme:dark){:root{--bg:#0E1216;--card:#161C21;--ink:#E7EEF1;
+--ink2:#B3C0C7;--muted:#7E8D95;--rule:#28333A;--pt:#6B5C33;--ring1:#A6702F;--ring2:#7A5A38;
+--tube:#33424A;--clamp:#4FA8BC;--ok:#6FC0A4;--hot:#F0904A;--dim:#5C6A72;--ptDark:#514429;--ring1d:#7E5423;--ring2d:#5C442A;--tubeDark:#26323A;--tubeTop:#44565F;--weld:#D9694F}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+font-family:'Microsoft YaHei UI','Segoe UI',system-ui,sans-serif;font-size:24px;line-height:1.75}
+.wrap{max-width:760px;margin:0 auto;padding:28px 24px 80px}
+h1{font-size:1.7rem;margin:0 0 .3rem}
+h2{font-size:1.2rem;margin:2.2rem 0 .6rem;padding-bottom:.3rem;border-bottom:1px solid var(--rule)}
+h3{font-size:1rem;margin:1.4rem 0 .4rem}
+p,li{color:var(--ink2)}
+.lede{color:var(--muted);margin:0 0 1.4rem}
+.fig{background:var(--card);border:1px solid var(--rule);border-radius:4px;
+padding:14px;margin:14px 0;text-align:center}
+.cap{font-size:.82rem;color:var(--muted);margin-top:8px;text-align:left}
+text.lbl{font:13px 'Microsoft YaHei UI',sans-serif;fill:var(--ink)}
+text.dim{fill:var(--muted);font-size:11.5px}
+text.clamp{fill:var(--clamp)}
+text.onTube{fill:var(--ink);font-size:11.5px}
+table{border-collapse:collapse;width:100%;font-size:.88rem;background:var(--card);
+border:1px solid var(--rule);border-radius:4px;overflow:hidden}
+th,td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--rule)}
+th{font-size:.76rem;color:var(--muted);background:var(--bg)}
+tr:last-child td{border-bottom:none}
+td.n{font-family:Consolas,monospace}
+/* 首列是短标签的表：不让页签名被折成「分段核／算」这种断在半个词上的样子 */
+table.nw td:first-child,table.nw th:first-child{white-space:nowrap}
+.bar{display:inline-block;width:86px;height:7px;background:var(--rule);position:relative;
+border-radius:1px;vertical-align:middle}
+.bar i{position:absolute;left:0;top:0;bottom:0;background:var(--ok);border-radius:1px}
+.bar.tight i{background:var(--hot)}
+.pct{font-size:.78rem;color:var(--muted);margin-left:7px}
+.note{border-left:3px solid var(--hot);padding:6px 0 6px 14px;margin:16px 0;
+color:var(--ink2);font-size:.92rem;background:var(--card)}
+code{font-family:Consolas,monospace;background:var(--card);padding:1px 5px;
+border:1px solid var(--rule);border-radius:3px;font-size:.88em}
+</style></head><body><div class="wrap"><h3>判据全表</h3><p>这是 APP 会判、会印出来的<b>全部</b>判据。名字与单位跟屏幕上一模一样 —— 判据表里那行字长什么样，这里就长什么样，不用换算、不用对照。</p><p>⚠ <b>本表不含限值数字</b> —— 限值只有一个来源（判据自己）。要看限值请看下面「限值的出处」那张表，两张表不会打架。</p><h4>硬安全线（不过就不能交付）</h4><table class="nw"><tr><th>判据（APP 里显示的名字）</th><th>单位</th><th>方向</th><th style="white-space:nowrap">空管到温稳态</th><th>它在管什么</th></tr><tr><td><b>升温</b></td><td class="n">A/mm²</td><td class="n">≤</td><td class="n" style="white-space:nowrap">卡交付</td><td>按设定速率（20 &#176;C/h）空管升温所需电流折成的管 J 峰值；没被管 J 许用截住 = 升得到目标（闭式，R20）</td></tr><tr><td><b>管孔净流入</b></td><td class="n">W</td><td class="n">></td><td class="n" style="white-space:nowrap">只作参考</td><td>热是从管子流进法兰（安全），还是倒灌进管子（<b>烧断的方向</b>）</td></tr><tr><td><b>最热铂高出热偶读数</b></td><td class="n">K</td><td class="n">≤</td><td class="n" style="white-space:nowrap">只作参考</td><td>法兰上（圆盘和舌片）以及它贴着的管根里，最热的那一点比控温热偶的读数高多少。控温热偶装在每段中点，读数误差 5 ℃ —— 读数上下各这么多以内分不出来，所以任何一处铂比读数高出这个带，就可能已经越过设定而热偶看不出来。端片的基准是本段热偶的读数；两段共用的那一片，基准取两侧热偶读数的对数平均（按开尔文算）。判据说明里并列「模型算的无法兰交界管温」作对照，它与基准差超过 1 ℃ 时会写明 —— 判定只按热偶读数，因为模型交界温度会随设计变量挪动</td></tr><tr><td><b>舌片自由段</b></td><td class="n">mm</td><td class="n">≥</td><td class="n" style="white-space:nowrap">卡交付</td><td>舌片伸出来、没被压接吃掉的那一段够不够长 —— 现场铜排装得下吗</td></tr><tr><td><b>圆盘盖得住管孔</b></td><td class="n">mm</td><td class="n">≥</td><td class="n" style="white-space:nowrap">卡交付</td><td>圆盘半径够不够盖住管孔加焊脚 —— 盖不住就焊不出来</td></tr><tr><td><b>管 J</b></td><td class="n">A/mm²</td><td class="n">≤</td><td class="n" style="white-space:nowrap">卡交付</td><td>管子自身的电流密度上限</td></tr><tr><td><b>法兰截面 J</b></td><td class="n">A/mm²</td><td class="n"><</td><td class="n" style="white-space:nowrap">卡交付</td><td>法兰每一个必经截面（舌片各处含开孔、舌盘交界、孔缘环与各级环）的电流密度 = 升温设计电流 &#247; 截面积；按 10 定尺寸，全体要小于 11</td></tr><tr><td><b>管根低于热偶读数</b></td><td class="n">K</td><td class="n">≤</td><td class="n" style="white-space:nowrap">只作参考</td><td>法兰所在接头处管根较冷的那一端，比控温热偶的读数低多少 —— 法兰抽热会把管根拉冷。控温热偶装在每段中点、读数误差 5 ℃，管根低出这个带，热偶就看不出这一段已经偏冷。基准与上一条相同：端片取本段读数，共用的那一片取两侧读数的对数平均（按开尔文算）；说明里同样并列「模型算的无法兰交界管温」作对照，差超过 1 ℃ 时写明</td></tr></table><h4>参考量 / 靶（印出来，不卡交付）</h4><table class="nw"><tr><th>判据（APP 里显示的名字）</th><th>单位</th><th>方向</th><th>它在管什么</th></tr><tr><td><b>升温到位用时（集总）</b></td><td class="n">h</td><td class="n">≤</td><td>参考：集总模型（含法兰质量与自热）算的升温到位用时</td></tr><tr><td><b>圆盘区最高温 − 管温（旧判法）</b></td><td class="n">K</td><td class="n">≤</td><td>（旧判法，只作对照，不卡交付）圆盘上最热的那一点，比贴着的管子高多少 —— 基准是模型算的管根温度，不是热偶读数。圈的是圆盘整块 —— 从管孔边缘一直到圆盘外缘，不含伸出去的舌片。圈这块，是因为它经焊缝直接贴着管子：这块只要比管子热，热就直接进管；舌片上的热要进管子，必须先经过圆盘、先把圆盘顶热，所以看圆盘就够了，舌片不在这条里算。舌片自己的温度另见熔点与局部热失稳两项</td></tr><tr><td><b>法兰增量温降（旧判法）</b></td><td class="n">K</td><td class="n">≤</td><td>（旧判法，只作对照，不卡交付）<b>法兰把管根拉冷了多少</b> = 无法兰基线 − 实际 —— 只算法兰的责任，不含控温点梯度</td></tr><tr><td><b>管强度利用率</b></td><td class="n">—</td><td class="n">≤</td><td>管子的强度用掉了几成（Pt 持久强度实测区间外时<b>判不了</b>）</td></tr><tr><td><b>法兰最高温</b></td><td class="n">K</td><td class="n">≤</td><td>整片法兰（含舌片）最高温比管温高多少</td></tr><tr><td><b>偏离本段控温点</b></td><td class="n">K</td><td class="n">≤</td><td>管温偏离本段控温点多少 —— <b>由控温点梯度决定，法兰管不着</b></td></tr><tr><td><b>法兰自给率</b></td><td class="n">—</td><td class="n">≥</td><td>法兰自身发热够不够养活自身散热</td></tr><tr><td><b>法兰 J_max</b></td><td class="n">A/mm²</td><td class="n">≤</td><td>法兰上的电流密度峰值（≠「局部热稳定」那条）</td></tr><tr><td><b>整片热稳定</b></td><td class="n">×</td><td class="n">≥</td><td>整片热稳定：散热随温度涨得比发热快多少倍</td></tr><tr><td><b>局部热稳定</b></td><td class="n">×</td><td class="n">≥</td><td>局部热稳定：峰值点离热失控还有几倍余量</td></tr><tr><td><b>升温期法兰−管峰值</b></td><td class="n">K</td><td class="n">≤</td><td>现场升温过程中「法兰−管」温差的全程最大值</td></tr><tr><td><b>管↔法兰热收支</b></td><td class="n">W</td><td class="n">≈</td><td>管子失去的热与法兰收到的热对不对得上（守恒对账）</td></tr><tr><td><b>法兰热平衡残差</b></td><td class="n">W</td><td class="n">≈</td><td>单片法兰自己的热平衡残差，应接近 0</td></tr><tr><td><b>玻璃温降</b></td><td class="n">K</td><td class="n">≤</td><td>玻璃温降与现场实测差多少</td></tr></table><p>★ <b>两种稳态工况，卡交付的判据不一样</b>：带玻璃稳态（管内有热玻璃，电流小，法兰主要当散热片）「硬安全线」那张表每一条都卡交付；空管到温稳态（设备升到温、进玻璃之前，电流大）卡交付的只有「升温」「舌片自由段」「圆盘盖得住管孔」「管 J」「法兰截面 J」，「管孔净流入」「最热铂高出热偶读数」「管根低于热偶读数」在空管态照常计算、照常印在判据表里，只作参考，不卡交付。两种工况都一样的是<b>场要解得出来</b>：场没收敛、越过铂熔点、超出散热表的温度范围、压接段盖到管孔或伸进圆盘、图纸推不出保温分界时，该工况判不了 —— 判不了不算过。先后次序：先过升温全程（本表里的「升温」一条两态都卡；升温期的其他判据另行落地），带玻璃稳态决定法兰设计成不成，空管到温稳态只卡电流密度与场要解得出来。</p><p>★ <b>「管孔净流入」与「最热铂高出热偶读数」管的是两件不同的事，要分开看</b> —— 前者管<b>热流方向</b>：热该从管子流进法兰，不该倒灌进管子（烧断的方向）；后者管<b>铂比控温热偶的读数高出多少</b>：法兰上（圆盘、舌片）以及它贴着的管根，任何一处比读数高出误差带就说不清了。两者不能互相推出：热往法兰走时铂照样可以比读数高出误差带（比如两段共用的那一片，一侧管子本身就比两侧读数的对数平均热），反过来铂没有高出读数时热也可能在往管里灌。所以两条各自都要过。</p><p>★ <b>「最热铂高出热偶读数」与「管根低于热偶读数」的基准都是控温热偶的读数</b>：热偶装在每段中点，读数误差 5 ℃，上下各算一次，所以热侧、冷侧各自一条。端片取本段读数；两段共用的那一片取两侧读数的<b>对数平均</b>（按开尔文算）。基准只用设定值算，不用模型算的交界管温 —— 那个温度会随设计变量挪动；它只在判据说明里并列作对照，与基准差超过 1 ℃ 时写明。「圆盘区最高温 − 管温」「法兰增量温降」是换基准之前的旧判法，现在只列在参考量里作对照，不卡交付。</p></div></body></html>

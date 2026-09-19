@@ -198,4 +198,36 @@ public class CliUiParityTests
             HandoverDoc.Root(), "Pt_Optimize", "UI", "LineDesignPage.cs"));
         Assert.Contains("MeshVerify.Run(", ui);
     }
+
+    /// <summary>
+    /// ★ R47 C（2026-09-13）：**细网格重解在 .3dm 模式下网格格数随 fineMm 变** ——
+    /// <see cref="FlangeAutoSizer.ApplyFinalMesh"/>（SolveByLevel 入口套的就是它）把 Options 的终局细网格四项套到算例上，
+    /// 同一张厚度场（解析板栅格化，不起 Rhino）按口径 2.0／1.0／0.5 mm 造网格，格数必须严格递增；
+    /// 没设口径（0）时原样返回、不动网格 —— 这样解析路径与旧调用一个字不变。
+    /// </summary>
+    [Fact]
+    public void 细网格重解在图纸路径上格数随口径变()
+    {
+        var d = DesignSpec.Builtin[0].Clone();
+        var g = d.Plate(1, d.DiscFloorMm(new DesignInputs()));
+        g.HoleRadiusMm = d.HoleRadiusMm;
+        var f = AnalyticSurrogate.Rasterize(g, 0.5, 2.0);
+        var lc0 = new LineCase { Base = new DesignInputs(), WallMm = d.WallMm, FlangeFields = new[] { f } };
+        int Cells(LineCase c) => FlangeMesher.BuildFromField(f, g.HoleRadiusMm, 0, c.MeshFineMm, c.MeshCoarseMm, c.MeshFineRadiusMm,
+                                                             c.Base.BusbarClampLengthMm, c.MeshInnerMm, c.MeshInnerRadiusMm).CellCount;
+        Assert.Same(lc0, FlangeAutoSizer.ApplyFinalMesh(lc0, new FlangeAutoSizer.Options()));   // 0 = 不动
+        int prev = 0;
+        foreach (double fine in new[] { 2.0, 1.0, 0.5 })
+        {
+            var o = new FlangeAutoSizer.Options { FinalMeshFineMm = fine, FinalMeshFineRadiusMm = 50, FinalMeshInnerMm = fine * 0.5, FinalMeshInnerRadiusMm = g.HoleRadiusMm + 3 };
+            var c = FlangeAutoSizer.ApplyFinalMesh(lc0, o);
+            Assert.NotSame(lc0, c);
+            Assert.Equal(fine, c.MeshFineMm); Assert.Equal(fine * 0.5, c.MeshInnerMm);
+            Assert.Empty(c.FlangePlates); Assert.Single(c.FlangeFields);           // 仍走图纸路径
+            int n = Cells(c);
+            Assert.True(n > prev, $"口径 {fine} mm 的格数 {n} 应多于上一档 {prev}");
+            prev = n;
+        }
+        Assert.Equal(2.0, lc0.MeshFineMm); Assert.Equal(0.0, lc0.MeshInnerMm);   // 原件没被改（ApplyFinalMesh 只动副本）
+    }
 }
