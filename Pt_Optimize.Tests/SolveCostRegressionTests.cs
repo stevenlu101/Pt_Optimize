@@ -75,8 +75,8 @@ public class SolveCostRegressionTests
         sb.AppendLine("⚠ 这里是导航网格的口径，绝对值不能拿去对帐；");
         sb.AppendLine("   对帐要的是细网格第二遍，那一遍每轮还要贵一个量级。");
 
-        Directory.CreateDirectory(Path.Combine(HandoverDoc.Root(), "deliverable"));
-        File.WriteAllText(Path.Combine(HandoverDoc.Root(), "deliverable", "对帐超时_成本归因.txt"),
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        File.WriteAllText(DeliverableOut.Stamped("对帐超时_成本归因.txt"),
                           sb.ToString());
         Console.WriteLine(sb.ToString());
 

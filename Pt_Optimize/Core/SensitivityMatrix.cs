@@ -147,11 +147,13 @@ public static class SensitivityMatrix
     public static readonly string[] Keys =
     {
         LineResult.Key.NetFlux,      // ②′
-        LineResult.Key.FlangeDip,    // ③
-        LineResult.Key.DiscTemp,     // ②″
+        // R48 B（2026-09-14 Opus 5）：法兰增量温降／圆盘区最高温 − 管温（③／②″）换成热偶读数基准的冷侧／热侧（⑧／⑦）
+        //   （与 Solver.Allocation 同步；旧判法已是参考量，没有逐片裕度）。代号用新的，②″／③ 不换主人。
+        LineResult.Key.ColdUnderTc,  // ⑧
+        LineResult.Key.HotOverTc,    // ⑦
     };
 
-    public static readonly string[] Codes = { "②′", "③", "②″" };
+    public static readonly string[] Codes = { "②′", "⑧", "⑦" };
 
     /// <summary>把第 j 片的第 v 个量设成 <paramref name="value"/>。**唯一的写入口**。</summary>
     public static void Set(DesignSpec d, Var v, int j, double value)
@@ -320,7 +322,7 @@ public static class SensitivityMatrix
                 Set(d0, v, j, Get(d0, v, j));
 
         var lc0 = d0.BuildCase(baseIn, checkRamp: false);
-        double dipMax = lc0.RootDeltaMaxK, discMax = lc0.DiscOverTempMaxK;
+        double coldMax = lc0.ColdUnderTcMaxK, hotMax = lc0.HotOverTcMaxK;   // R48 B（2026-09-14 Opus 5）：限值跟着判据换，仍只从 LineCase 读
 
         LineResult? Run(DesignSpec d)
         {
@@ -332,7 +334,7 @@ public static class SensitivityMatrix
         }
 
         double[] Slacks(LineResult r, int j) =>
-            Keys.Select(k => Solver.PlateSlack(r, k, j, dipMax, discMax)).ToArray();
+            Keys.Select(k => Solver.PlateSlack(r, k, j, coldMax, hotMax)).ToArray();
 
         double Mass(LineResult r) => r.Segments.Sum(s => s.MassG) + r.Flanges.Sum(f => f.MassG);
 
@@ -421,8 +423,8 @@ public static class SensitivityMatrix
                     double off = 0;
                     for (int k = 0; k < np; k++)
                     {
-                        double a = Solver.PlateSlack(rHi, Keys[i], k, dipMax, discMax);
-                        double e = Solver.PlateSlack(b, Keys[i], k, dipMax, discMax);
+                        double a = Solver.PlateSlack(rHi, Keys[i], k, coldMax, hotMax);
+                        double e = Solver.PlateSlack(b, Keys[i], k, coldMax, hotMax);
                         col[k] = (double.IsNaN(a) || double.IsNaN(e)) ? double.NaN : (a - e) / c.StepUp;
                         if (k != j && !double.IsNaN(col[k])) off = Math.Max(off, Math.Abs(col[k]));
                     }

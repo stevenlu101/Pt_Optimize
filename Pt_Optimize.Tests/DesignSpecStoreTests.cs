@@ -145,6 +145,11 @@ public class DesignSpecStoreTests
         d.RingWidthMm = 4.25;
         d.FlangeInsulMm = 17.5;
         d.FlangeInsulated = false;           // 默认是 true
+        // ★ R48（2026-09-14，Opus 5）：逐片圆盘保温进了设计（DesignSpec.DiscInsulMm → FlangePlate.DiscInsulThickMm），默认是空数组 ⇒
+        //   不给值「样本必须覆盖每一个会进设计的字段」当场红、往返对它空转。四片四个不同的数，且都不等于 FlangeInsulMm（错位、退回整线值都看得出）。
+        //   ⚠ 本样本 FlangeInsulated = false ⇒ 算例里实际取值全是 0；板件上的 DiscInsulThickMm 仍逐片进 LineCase 序列化，往返照样钉得住。
+        //     「包着时逐片取值往返后相同」另见 RoundTrip_逐片圆盘保温_存读逐片_算例取值相同。
+        d.DiscInsulMm = new[] { 3.5, 7.0, 12.5, 16.0 };
         d.ClampLengthMm = 37.0;
         d.ClampTempC = 285.0;
         d.SetpointC = new[] { 1141.0, 1071.0, 1041.0 };
@@ -216,8 +221,106 @@ public class DesignSpecStoreTests
             Assert.NotEqual(def.RingWidthMm, src.RingWidthMm);
             Assert.NotEqual(def.ClampLengthMm, src.ClampLengthMm);
             Assert.NotEqual(def.FlangeInsulated, src.FlangeInsulated);
+            // R48（2026-09-14，Opus 5）：逐片圆盘保温逐片读回，且真的进了算例的板件（不是只在 DesignSpec 上）
+            Assert.NotEmpty(src.DiscInsulMm);
+            Assert.Equal(src.DiscInsulMm, back.DiscInsulMm);
+            var lcBack = back.BuildCase(p, checkRamp: true);
+            Assert.Equal(src.DiscInsulMm, lcBack.FlangePlates.Select(g => g.DiscInsulThickMm).ToArray());
         }
         finally { if (w is not null) { try { File.Delete(w); } catch { } } }
+    }
+
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5）：逐片圆盘保温**包着时**（FlangeInsulated = true）的往返 —— Distinctive() 为了覆盖 FlangeInsulated 用的是「不包」，
+    /// 那样算例里实际取值全是 0，逐片值错了也看不出。这里存→读后，算例逐片实际取值（LineCase.DiscInsulEffectiveAt）必须与存之前逐位相同、
+    /// 且与 DesignSpec.DiscInsulMmOf 相同（同源），并且四片确实各不相同（不是整线值）。
+    /// </summary>
+    [Fact]
+    public void RoundTrip_逐片圆盘保温_存读逐片_算例取值相同()
+    {
+        var src = Distinctive();
+        src.FlangeInsulated = true;
+        src.Name = "★往返测试★ 逐片圆盘保温 " + Guid.NewGuid().ToString("N")[..6];
+        var p = new DesignInputs();
+        string? w = null;
+        try
+        {
+            w = DesignSpecStore.Save(src);
+            string json = File.ReadAllText(w);
+            Assert.Contains("\"discInsulMm\"", json);
+            var back = Parse(json);
+            Assert.Equal(src.DiscInsulMm, back.DiscInsulMm);
+            var a = src.BuildCase(p, checkRamp: true);
+            var b = back.BuildCase(p, checkRamp: true);
+            Assert.Equal(src.FlangeCount, a.FlangeCount);
+            for (int j = 0; j < src.FlangeCount; j++)
+            {
+                Assert.Equal(src.DiscInsulMm[j], a.DiscInsulEffectiveAt(j));          // 包着 ⇒ 取的是本片的值
+                Assert.Equal(a.DiscInsulEffectiveAt(j), b.DiscInsulEffectiveAt(j));   // 往返逐位相同
+                Assert.Equal(back.DiscInsulMmOf(j), b.DiscInsulEffectiveAt(j));       // 清单口径与算例同源
+            }
+            Assert.Equal(src.FlangeCount, a.FlangePlates.Select(g => g.DiscInsulEffectiveMm(a.Base)).Distinct().Count());
+            Assert.NotEqual(src.FlangeInsulMm, a.DiscInsulEffectiveAt(0));
+        }
+        finally { if (w is not null) { try { File.Delete(w); } catch { } } }
+    }
+
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5）：**旧档**（没有 discInsulMm 键 —— 该键 2026-09-14 才加）读回 DiscInsulMm 为空，BuildCase 造出的算例
+    /// 与原设计**逐位相同**（整份 LineCase 序列化比，含板件 DiscInsulThickMm = NaN 与逐片实际取值 = 整线值）。
+    /// 另钉写法：没有逐片值的设计存出来**不写**这个键（旧档逐字不变的前提）；有值的档把键删掉 ⇒ 与「从来没设过」的设计逐位相同。
+    /// </summary>
+    [Fact]
+    public void Parse_旧档没有逐片圆盘保温键_读回为空_算例逐位不变()
+    {
+        var p = new DesignInputs();
+        string J(LineCase c) => System.Text.Json.JsonSerializer.Serialize(c,
+            new System.Text.Json.JsonSerializerOptions
+            {
+                IncludeFields = true,
+                NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals,
+            });
+        // ① 内置档（从来没有逐片圆盘保温）：写出来不带键 ⇒ 这就是旧档的形态
+        var an = DesignSpec.Builtin[0].Clone();
+        Assert.Empty(an.DiscInsulMm);
+        an.Name = "★往返测试★ 旧档圆盘保温 " + Guid.NewGuid().ToString("N")[..6];
+        // ② 带逐片值的档，删掉键 ⇒ 模拟「该键出现之前写的档」
+        var withDisc = Distinctive();
+        withDisc.FlangeInsulated = true;
+        withDisc.Name = "★往返测试★ 删键 " + Guid.NewGuid().ToString("N")[..6];
+        string? w1 = null, w2 = null;
+        try
+        {
+            w1 = DesignSpecStore.Save(an);
+            string json1 = File.ReadAllText(w1);
+            Assert.DoesNotContain("discInsulMm", json1);
+            var back1 = Parse(json1);
+            Assert.Empty(back1.DiscInsulMm);
+            var lc0 = an.BuildCase(p, checkRamp: true);
+            var lc1 = back1.BuildCase(p, checkRamp: true);
+            Assert.Equal(J(lc0), J(lc1));
+            for (int j = 0; j < lc1.FlangeCount; j++)
+            {
+                Assert.True(double.IsNaN(lc1.FlangePlates[j].DiscInsulThickMm), $"片{j} 旧档的板件不该带逐片圆盘保温");
+                Assert.Equal(lc1.Base.FlangeInsulThickMm, lc1.DiscInsulEffectiveAt(j));
+                Assert.Equal(an.DiscInsulMmOf(j), lc1.DiscInsulEffectiveAt(j));
+            }
+
+            w2 = DesignSpecStore.Save(withDisc);
+            var node = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(w2))!.AsObject();
+            Assert.True(node.Remove("discInsulMm"), "档里本该有 discInsulMm 键（否则本例空转）");
+            var back2 = Parse(node.ToJsonString());
+            Assert.Empty(back2.DiscInsulMm);
+            var never = withDisc.Clone();
+            never.DiscInsulMm = Array.Empty<double>();
+            Assert.Equal(J(never.BuildCase(p, checkRamp: true)), J(back2.BuildCase(p, checkRamp: true)));
+            Assert.NotEqual(J(withDisc.BuildCase(p, checkRamp: true)), J(back2.BuildCase(p, checkRamp: true)));   // 删键确实改到了算例（门咬得住）
+        }
+        finally
+        {
+            if (w1 is not null) { try { File.Delete(w1); } catch { } }
+            if (w2 is not null) { try { File.Delete(w2); } catch { } }
+        }
     }
 
     /// <summary>
@@ -244,6 +347,16 @@ public class DesignSpecStoreTests
             "RampH", "DiscOverK", "HoleFluxW", "FlangeDipK", "TubeJ",
             "VerifiedMeshMm", "VerifiedFlangeDipK", "VerifiedHoleFluxW",
             "VerifiedDiscOverK", "VerifiedNote",
+            // R47 B（2026-09-13）：几何来源／图纸文件名／读档说明 —— 都是**出处**，解析 BuildCase 不读它们
+            //   （图纸路径的算例由页面 BuildCase 造，不经 DesignSpec）。往返由下面「旧档单个舌保温…」那条与 RoundTrip_图纸来源 钉。
+            "GeomSource", "FlangeFile3dm", "Notes",
+            // R47 第三轮 N5：图纸档逐片厚度倍数 k —— 只有图纸档才有，解析 BuildCase 不读它（图纸档的 BuildCase 直接拒绝）。
+            //   往返由下面 RoundTrip_图纸档厚度倍数k… 钉。
+            "ThicknessScale",
+            // R48（2026-09-13，Opus 5 加）：记录值是不是出自修网格前的网格 —— 这是**记录值的口径**，不是设计的一部分，
+            //   BuildCase 不读它；只给自检门 A 用（那一档的热学项与合计只报不判）。
+            //   由 OldMeshRecordTests 钉：现役档一律 false、作废两档 true 且失效告示写明热学结论不可引用。
+            "RecordFromOldMesh",
         };
         var def = new DesignSpec();
         var got = Distinctive();
@@ -356,6 +469,65 @@ public class DesignSpecStoreTests
         finally { if (w is not null) { try { File.Delete(w); } catch { } } }
     }
 
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5；审查意见：「某片 NaN = 沿用整线」已是逐片圆盘保温的正式语义，而档的 discInsulMm 原是 double[]、JSON 写不了 NaN，
+    /// 带 NaN 的设计一存就抛、报错看不出是哪个字段）：**部分设定**存得下、读得回 —— 逐片 NaN ↔ null（与 ringMul2 同一做法），
+    /// 读回后算例逐片实际取值与存之前逐位相同、与清单口径 DiscInsulMmOf 同源；全是 NaN 与空同义：不写键、读回为空、算例同「从没设过」。
+    /// </summary>
+    [Fact]
+    public void RoundTrip_逐片圆盘保温部分设定_NaN存成null读回仍沿用整线()
+    {
+        var p = new DesignInputs();
+        var src = Distinctive();
+        src.FlangeInsulated = true;
+        src.DiscInsulMm = new[] { 3.5, double.NaN, 12.5, double.NaN };
+        src.Name = "★往返测试★ 部分圆盘保温 " + Guid.NewGuid().ToString("N")[..6];
+        var allNaN = src.Clone();
+        allNaN.DiscInsulMm = new[] { double.NaN, double.NaN, double.NaN, double.NaN };
+        allNaN.Name = "★往返测试★ 全NaN圆盘保温 " + Guid.NewGuid().ToString("N")[..6];
+        string? w1 = null, w2 = null;
+        try
+        {
+            w1 = DesignSpecStore.Save(src);                       // 修前：这里抛（JSON 写不了 NaN）
+            string json1 = File.ReadAllText(w1);
+            Assert.Contains("\"discInsulMm\"", json1);
+            var back = Parse(json1);
+            Assert.Equal(4, back.DiscInsulMm.Length);
+            Assert.Equal(3.5, back.DiscInsulMm[0]);
+            Assert.True(double.IsNaN(back.DiscInsulMm[1]));
+            Assert.Equal(12.5, back.DiscInsulMm[2]);
+            Assert.True(double.IsNaN(back.DiscInsulMm[3]));
+            var a = src.BuildCase(p, checkRamp: true);
+            var b = back.BuildCase(p, checkRamp: true);
+            for (int j = 0; j < src.FlangeCount; j++)
+            {
+                Assert.Equal(a.DiscInsulEffectiveAt(j), b.DiscInsulEffectiveAt(j));
+                Assert.Equal(back.DiscInsulMmOf(j), b.DiscInsulEffectiveAt(j));
+            }
+            Assert.Equal(src.FlangeInsulMm, b.DiscInsulEffectiveAt(1));   // NaN 那片沿用整线
+            Assert.Equal(12.5, b.DiscInsulEffectiveAt(2));
+
+            w2 = DesignSpecStore.Save(allNaN);
+            string json2 = File.ReadAllText(w2);
+            Assert.DoesNotContain("discInsulMm", json2);
+            var back2 = Parse(json2);
+            Assert.Empty(back2.DiscInsulMm);
+            var never = allNaN.Clone(); never.DiscInsulMm = Array.Empty<double>();
+            var lcNever = never.BuildCase(p, checkRamp: true);
+            var lcBack2 = back2.BuildCase(p, checkRamp: true);
+            for (int j = 0; j < src.FlangeCount; j++)
+            {
+                Assert.Equal(lcNever.DiscInsulEffectiveAt(j), lcBack2.DiscInsulEffectiveAt(j));
+                Assert.Equal(allNaN.DiscInsulMmOf(j), lcBack2.DiscInsulEffectiveAt(j));
+            }
+        }
+        finally
+        {
+            if (w1 is not null) { try { File.Delete(w1); } catch { } }
+            if (w2 is not null) { try { File.Delete(w2); } catch { } }
+        }
+    }
+
     /// <summary>五个回归基准值也要原样带回来 —— 少一个，A 段就无从对账。</summary>
     [Fact]
     public void RoundTrip_KeepsRecordedChecks()
@@ -403,6 +575,147 @@ public class DesignSpecStoreTests
             Assert.ThrowsAny<Exception>(() => Parse(broken));
         }
         finally { if (w is not null) { try { File.Delete(w); } catch { } } }
+    }
+
+    /// <summary>
+    /// ★ R47 B（2026-09-13）：**向后兼容** —— 旧档（或图纸路径早期只有一个标量舌保温的档）`tabInsulMm` 是**单个数**时，
+    /// 读回不崩、填成所有片同值，并且 DesignSpec.Notes 里说清楚（不许静默补）。旧键 `tabInsul3dmMm` 同样认。
+    /// 现行数组形态照旧：长度不对仍拒。
+    /// </summary>
+    [Fact]
+    public void Parse_旧档单个舌保温读回填成所有片并有说明()
+    {
+        var src = DesignSpec.Builtin[0].Clone();
+        src.Name = "★往返测试★ 旧舌保温 " + Guid.NewGuid().ToString("N")[..6];
+        string? w = null;
+        try
+        {
+            w = DesignSpecStore.Save(src);
+            string json = File.ReadAllText(w);
+            // 现行形态：数组
+            Assert.Matches("\"tabInsulMm\":\\s*\\[", json);
+            // ① 单个数（旧形态）
+            string old1 = System.Text.RegularExpressions.Regex.Replace(json, "\"tabInsulMm\":\\s*\\[[^\\]]*\\]", "\"tabInsulMm\": 2.8");
+            Assert.NotEqual(json, old1);
+            var back1 = Parse(old1);
+            Assert.Equal(src.FlangeCount, back1.TabInsulMm.Length);
+            Assert.All(back1.TabInsulMm, v => Assert.Equal(2.8, v, 12));
+            Assert.Contains("只记了一个舌保温", back1.Notes);
+            Assert.Contains("2.8", back1.Notes);
+            // ② 旧键 tabInsul3dmMm（图纸路径早期的单控件）
+            string old2 = System.Text.RegularExpressions.Regex.Replace(json, "\"tabInsulMm\":\\s*\\[[^\\]]*\\]", "\"tabInsul3dmMm\": 5.1");
+            var back2 = Parse(old2);
+            Assert.All(back2.TabInsulMm, v => Assert.Equal(5.1, v, 12));
+            Assert.Contains("只记了一个舌保温", back2.Notes);
+            // ③ 现行数组：长度不对仍拒（兼容读法不能把这道门放松）
+            string bad = System.Text.RegularExpressions.Regex.Replace(json, "\"tabInsulMm\":\\s*\\[[^\\]]*\\]", "\"tabInsulMm\": [1.0, 2.0]");
+            var ex = Record.Exception(() => Parse(bad));
+            Assert.NotNull(ex);
+            Assert.Contains("tabInsulMm", ex!.Message, StringComparison.Ordinal);
+            // ④ 按现行形态写的档读回 Notes 为空（说明只在补旧档时出现）
+            Assert.Equal("", Parse(json).Notes);
+        }
+        finally { if (w is not null) { try { File.Delete(w); } catch { } } }
+    }
+
+    /// <summary>★ R47 B：图纸路径出的档要记**几何来源**与**逐片 .3dm 文件名**，读回逐字相同；解析档不写这两项。</summary>
+    [Fact]
+    public void RoundTrip_图纸来源与文件名()
+    {
+        var src = DesignSpec.Builtin[0].Clone();
+        src.Name = "★往返测试★ 图纸来源 " + Guid.NewGuid().ToString("N")[..6];
+        src.GeomSource = DesignSpec.GeomSourceDrawing;
+        src.FlangeFile3dm = new[] { "D:/图/入口.3dm", "D:/图/共用.3dm", "D:/图/共用.3dm", "D:/图/出口.3dm" };
+        string? w = null;
+        try
+        {
+            w = DesignSpecStore.Save(src);
+            var back = Parse(File.ReadAllText(w));
+            Assert.Equal(DesignSpec.GeomSourceDrawing, back.GeomSource);
+            Assert.Equal(src.FlangeFile3dm, back.FlangeFile3dm);
+            Assert.Equal(src.TabInsulMm, back.TabInsulMm);
+        }
+        finally { if (w is not null) { try { File.Delete(w); } catch { } } }
+        // 解析档：两项都不写、读回为空（旧档也是空）
+        var an = DesignSpec.Builtin[0].Clone();
+        an.Name = "★往返测试★ 解析来源 " + Guid.NewGuid().ToString("N")[..6];
+        string? w2 = null;
+        try
+        {
+            w2 = DesignSpecStore.Save(an);
+            string json = File.ReadAllText(w2);
+            Assert.DoesNotContain("flangeFile3dm", json);
+            Assert.Equal("", Parse(json).GeomSource);
+            Assert.Empty(Parse(json).FlangeFile3dm);
+        }
+        finally { if (w2 is not null) { try { File.Delete(w2); } catch { } } }
+    }
+
+    /// <summary>
+    /// ★ R47 第三轮 N5：图纸档的**厚度倍数 k**存独立字段（逐片）、板厚栏写 NaN：存读逐字；解析档不写 k、板厚照旧；
+    /// 图纸档读回后 BuildCase／单次判定／加密复算一律拒绝造解析板并明说（不抛、不算）；Describe() 印「厚度倍数 k」不印「板厚」；
+    /// R47 第二轮之前把 k 记在板厚栏里的旧图纸档读回按 k 接、板厚栏改 NaN 并在 Notes 说明。
+    /// </summary>
+    [Fact]
+    public void RoundTrip_图纸档厚度倍数k存读逐字_板厚为NaN_拒绝造解析板_解析档不受影响()
+    {
+        var p = new DesignInputs();
+        var src = DesignSpec.Builtin[0].Clone();
+        src.Name = "★往返测试★ 图纸k " + Guid.NewGuid().ToString("N")[..6];
+        src.GeomSource = DesignSpec.GeomSourceDrawing;
+        src.FlangeFile3dm = new[] { "D:/图/入口.3dm", "D:/图/共用.3dm", "D:/图/共用.3dm", "D:/图/出口.3dm" };
+        src.ThicknessScale = new[] { 1.15, 0.90, 1.25, 1.05 };
+        src.TabThickMm = Enumerable.Repeat(double.NaN, 4).ToArray();
+        string? w = null;
+        try
+        {
+            w = DesignSpecStore.Save(src);
+            string json = File.ReadAllText(w);
+            Assert.Contains("thicknessScale", json);
+            var back = Parse(json);
+            Assert.True(back.IsDrawingRecord);
+            Assert.Equal(src.ThicknessScale, back.ThicknessScale);
+            Assert.All(back.TabThickMm, v => Assert.True(double.IsNaN(v), "图纸档的板厚栏该是 NaN"));
+            Assert.Contains("厚度倍数 k 1.15/0.90/1.25/1.05", back.Describe());
+            Assert.DoesNotContain("板厚", back.Describe());
+            // 拒绝造解析板：BuildCase 给 RefusedWhy，LineRunner.Run 原句返回不算；MeshVerify.Run 拒答不抛
+            var lc = back.BuildCase(p);
+            Assert.Contains("本档出自图纸路径", lc.RefusedWhy);
+            Assert.Empty(lc.FlangePlates);
+            var r = LineRunner.Run(lc);
+            Assert.False(r.Ok);
+            Assert.Contains("请在界面里载入并先分析几何", r.Message);
+            var mv = MeshVerify.Run(back, p);
+            Assert.False(mv.Converged);
+            Assert.Contains("本档出自图纸路径", mv.Verdict);
+            Assert.Null(mv.Line);
+            // 旧图纸档：k 记在 tabThickMm 里、没有 thicknessScale ⇒ 读回按 k 接、板厚 NaN、Notes 说明
+            var node = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
+            node.Remove("thicknessScale");
+            node["tabThickMm"] = new System.Text.Json.Nodes.JsonArray(1.15, 0.90, 1.25, 1.05);
+            var old = Parse(node.ToJsonString());
+            Assert.Equal(src.ThicknessScale, old.ThicknessScale);
+            Assert.All(old.TabThickMm, v => Assert.True(double.IsNaN(v)));
+            Assert.Contains("旧图纸档把厚度倍数 k 记在板厚栏里", old.Notes);
+        }
+        finally { if (w is not null) { try { File.Delete(w); } catch { } } }
+        // 解析档：不写 k、板厚逐字、BuildCase 照常
+        var an = DesignSpec.Builtin[0].Clone();
+        an.Name = "★往返测试★ 解析板厚 " + Guid.NewGuid().ToString("N")[..6];
+        string? w2 = null;
+        try
+        {
+            w2 = DesignSpecStore.Save(an);
+            string json2 = File.ReadAllText(w2);
+            Assert.DoesNotContain("thicknessScale", json2);
+            var back2 = Parse(json2);
+            Assert.False(back2.IsDrawingRecord);
+            Assert.Equal(an.TabThickMm, back2.TabThickMm);
+            Assert.Empty(back2.ThicknessScale);
+            Assert.Equal("", back2.BuildCase(p).RefusedWhy);
+            Assert.Contains("板厚", back2.Describe());
+        }
+        finally { if (w2 is not null) { try { File.Delete(w2); } catch { } } }
     }
 
     /// <summary>数组长度不对也要拒绝 —— 三片厚度的档会静默造出一台三片法兰的机器。</summary>

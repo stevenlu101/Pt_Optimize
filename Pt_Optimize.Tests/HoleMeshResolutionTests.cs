@@ -107,8 +107,8 @@ public class HoleMeshResolutionTests
         sb.AppendLine("  · 若峰值 J 一路往上爬、没有收敛平台 ⇒ 原来那个数只是**网格的产物**，");
         sb.AppendLine("    deliverable/开孔的电流代价.txt 那张表作废，孔的判断要重做。");
 
-        Directory.CreateDirectory(Path.Combine(HandoverDoc.Root(), "deliverable"));
-        File.WriteAllText(Path.Combine(HandoverDoc.Root(), "deliverable", "孔的网格分辨率.txt"),
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        File.WriteAllText(DeliverableOut.Stamped("孔的网格分辨率.txt"),
                           sb.ToString());
         Console.WriteLine(sb.ToString());
         Assert.True(true);   // 这是**记录事实**的门，结论由数字给

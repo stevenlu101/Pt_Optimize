@@ -56,6 +56,8 @@ public static class PlateShapeAnalyzer
         public double NetAreaMm2, VolumeMm3;
         /// <summary>板中心（管孔形心）在图纸坐标里的位置 mm —— 不假设它在原点</summary>
         public double CenterXMm, CenterZMm;
+        /// <summary>R47 C：量这张图用的栅格步长 mm —— 加密复算取特征尺寸时要知道分析器的分辨率。</summary>
+        public double StepMm = double.NaN;
         public double MassG => VolumeMm3 * Materials.PtDensity * 1e-6;
         public readonly List<string> Notes = new();
     }
@@ -128,7 +130,7 @@ public static class PlateShapeAnalyzer
     /// </remarks>
     public static Shape Analyze(ThicknessField f, double levelTolMm = 0.011)
     {
-        var sh = new Shape();
+        var sh = new Shape { StepMm = f.Step };
         double step = f.Step, a = step * step;
 
         // ── ① 厚度分级：对非零厚度做直方图聚类
