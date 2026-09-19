@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace PtOptimize.Core;
@@ -118,6 +118,20 @@ public static class RampTwoNode
     /// </summary>
     public static double QuasiStaticCurrentA(DesignInputs p, double wallMm,
                                              double tubeTempC, double rateKPerH)
+        => QuasiStaticBreakdown(p, wallMm, tubeTempC, rateKPerH).CurrentA;
+
+    /// <summary>
+    /// <see cref="QuasiStaticCurrentA"/> 的**分项**：散热、金属热容、保温热容、所需功率、管电阻、电流。
+    /// 2026-09-18，Opus 5：提出来是为了让门能按定义算「比热改了，设计电流跟着变多少」——
+    /// 门里手抄一份同样的式子，守的就是手抄的那份（本项目 R48 栽过一次）。
+    /// 本函数是 <see cref="QuasiStaticCurrentA"/> 的**唯一实现**，不是它的副本。
+    /// </summary>
+    public readonly record struct QuasiStatic(
+        double LossW, double CapMetalJPerK, double CapInsulJPerK, double NeedW, double RTubeOhm, double CurrentA);
+
+    /// <inheritdoc cref="QuasiStatic"/>
+    public static QuasiStatic QuasiStaticBreakdown(DesignInputs p, double wallMm,
+                                                   double tubeTempC, double rateKPerH)
     {
         double ri = p.TubeIdMm * 0.5e-3, w = wallMm * 1e-3, rOut = ri + w;
         double area = Math.PI * (rOut * rOut - ri * ri);
@@ -130,6 +144,9 @@ public static class RampTwoNode
         double lossW = Insulation.CylinderLoss(tubeTempC, p.TAmbC, rOut, p.Layers, eps,
                            p.Posture == Orientation.Vertical, L, p.LossScale).QPerLength * L;
 
+        // ★ 比热进设计链的**唯一入口**就是这一项（2026-09-18，Opus 5 查明并注记）：
+        //   慢升温下它只有约 1 W，而散热是千瓦级 ⇒ 比热改 10 % 只挪动设计电流 1e-5 量级。
+        //   量级由门 R48ThermalSourceTests 按本函数的分项当场算出来，不写死在注释里。
         double capMetal = Materials.PtDensity * area * L * Materials.PtCp(tubeTempC);
         double capInsul = 0, r = rOut;
         foreach (var lay in p.Layers)
@@ -142,7 +159,8 @@ public static class RampTwoNode
 
         double need = lossW + (capMetal + capInsul) * (rateKPerH / 3600.0);
         double rTube = Materials.PtResistivity(tubeTempC) * L / area;
-        return need <= 0 ? 0 : Math.Sqrt(need / rTube);
+        return new QuasiStatic(lossW, capMetal, capInsul, need, rTube,
+                               need <= 0 ? 0 : Math.Sqrt(need / rTube));
     }
 
     public static RampTwoNodeResult Solve(DesignInputs p, Inputs g)

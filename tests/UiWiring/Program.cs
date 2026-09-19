@@ -285,6 +285,9 @@ class UiWiringTests {
         // ★ 说明书必须跟上界面与判据（2026-08-17）。说明书落后比程序落后更难发现：
         //   它有排版、有图、有判据表，看起来就是答案。
         // ⚠ 2026-09-03 起说明书里**没有判据代号**（用户：「工程师看不懂 ②′」）⇒ 查全名。
+        // R47 第三轮 N6：说明书是给工程师看的，源码里的加粗记号 ** 必须转成粗体，不许字面印出来（首段「咬住它的」曾漏过 Md()）
+        Check("说明书全文不含字面 **", !html.Contains("**", StringComparison.Ordinal),
+              html.Contains("**", StringComparison.Ordinal) ? "…" + html[Math.Max(0, html.IndexOf("**", StringComparison.Ordinal) - 40)..Math.Min(html.Length, html.IndexOf("**", StringComparison.Ordinal) + 40)] + "…" : "");
         Check("判据表含 舌片自由段", html.Contains("舌片自由段"));
         Check("判据表含 圆盘盖得住管孔", html.Contains("圆盘盖得住管孔"));
         Check("按钮表含「◇ 搜形状」", html.Contains("◇ 搜形状"));
@@ -742,11 +745,19 @@ class UiWiringTests {
                         Check($"页面路径复现设计记录 {nm}", Math.Abs(got - want) <= tol,
                               $"{got:0.000} {unit} vs 记录 {want:0.000}　差 " +
                               SizerResult.Signed(got - want, "+0.000;−0.000"));
-                    Near("③", V("③"), fd1b.FlangeDipK, 1.00, "K");
-                    Near("②′", V("②′"), fd1b.HoleFluxW, 0.50, "W");
-                    Near("②″", V("②″"), fd1b.DiscOverK, 0.20, "K");
+                    // ★★ R47（2026-09-13）：靶不再是档里的记录值 —— 那组数（③ 4.720／②′ 1.123／②″ −0.208／3547 g）
+                    //   是 R47 之前的导航网格（轴从端点起铺、子采样平局）上量的，网格生成器修好之后同一设计在
+                    //   导航网格上是 ③ 17.480／②′ 5.324／②″ −0.248／3545.2 g（deliverable/R47_改后_导航网格_2026-09-13.txt）。
+                    //   ⚠ 这只是「页面路径与整线链落到同一个解」的靶，**不是说 17.48 算准了**（R47 复修 M6 改口）：
+                    //   新生成器加密到 0.125 mm 为 20.48 K、中带确认没过、未收敛（审查实测 2026-09-13）；
+                    //   档里的旧复核值 10.329 K 是老轴上量的（老轴 −z 半边未加密），无效。
+                    //   档里的记录值**不改**（那是历史记录，档的 VerifiedNote 里已说明），本节只验两条路同解，不验「档还过不过」。
+                    const double dipR47 = 17.480, fluxR47 = 5.324, discR47 = -0.248, massR47 = 3545.2;
+                    Near("③", V("③"), dipR47, 1.00, "K");
+                    Near("②′", V("②′"), fluxR47, 0.50, "W");
+                    Near("②″", V("②″"), discR47, 0.20, "K");
                     Near("管J", V("管 J"), fd1b.TubeJ, 0.05, "A/mm²");
-                    Near("合计", r1b.TotalMassG, fd1b.TotalMassG, 2.0, "g");
+                    Near("合计", r1b.TotalMassG, massR47, 2.0, "g");
                     // ★★★★★ C1 之后「全过」暂时**不可能为真**（2026-09-07，用户拍板）。
                     //   法兰 J 从参考量改成硬判据里的**判不了** —— 因为孔那一带的网格
                     //   从未细化，那个数是**下界**且未收敛（同一孔 7.920→10.068 仍在升）。
@@ -760,11 +771,17 @@ class UiWiringTests {
                     //   新硬判据「法兰截面 J」= 设计电流 ÷ 必经截面积 < 11。设计记录 W08/W06 早于这条链，
                     //   板厚没按 J=10 定 ⇒ 这一行在**记录**上必红（实测 27.7/11），而且是实情、不是退化。
                     //   处置照旧不是删断言：**除了它，其余一条都不许红**。要它绿得走「自动定厚」把板厚抬上去。
-                    var stillBad = r1b.Failed.Where(f => !f.Contains("法兰 J") && !f.Contains("法兰截面 J")).ToArray();
+                    // ★★★★★ R47（2026-09-13）：「法兰增量温降」也**指名放行**。修好的导航网格上本档 ③ = 17.5/10，不过；
+                    //   加密到 0.125 mm 为 20.48 K 且中带确认没过（未收敛）—— 修网格后本档还没有一个算准的数，只知道它不过。
+                    //   档里的旧复核值 10.329 是老轴（−z 半边未加密）上的，无效，不能拿来「同向」佐证。这是实情、不是退化。
+                    //   处置照旧不是删断言：③ 的数由上面「复现设计记录 ③」钉着（容差 1 K），退化照样抓得住；
+                    //   除它与法兰截面 J 之外，其余一条都不许红。要它绿得重新解一次本档（求解器会自己抬舌保温／板厚）。
+                    var stillBad = r1b.Failed.Where(f => !f.Contains("法兰 J") && !f.Contains("法兰截面 J") && !f.Contains("法兰增量温降")).ToArray();
                     var sectionJ = r1b.Checks.FirstOrDefault(c => c.Name.StartsWith("法兰截面 J", StringComparison.Ordinal));
-                    Check("页面路径：除『法兰截面 J』外全过", stillBad.Length == 0,
+                    var dip3 = r1b.Checks.FirstOrDefault(c => c.Name.StartsWith("③", StringComparison.Ordinal));
+                    Check("页面路径：除『法兰截面 J』与『法兰增量温降』外全过", stillBad.Length == 0,
                           stillBad.Length == 0
-                            ? $"（法兰截面 J {sectionJ?.Actual:0.0}/{sectionJ?.Limit:0.0} —— 记录早于 J=10 链，板厚没按截面定；自动定厚才会抬上去）"
+                            ? $"（法兰截面 J {sectionJ?.Actual:0.0}/{sectionJ?.Limit:0.0} —— 记录早于 J=10 链，板厚没按截面定；法兰增量温降 {dip3?.Actual:0.0}/{dip3?.Limit:0.0} —— R47 修好网格后本档不过：导航网格 17.48 K、加密到 0.125 mm 20.48 K 未收敛；旧复核值 10.329 是老轴上的，无效）"
                             : string.Join("；", stillBad));
                 }
             }
@@ -3031,6 +3048,305 @@ class UiWiringTests {
             Set(page, "_suppressAuto", true);
             srcA_35.Checked = true;
             Set(page, "_suppressAuto", false);
+            Set(page, "_autoArmed", false);
+        }
+
+        Head("36 R47 图纸路径：① 页 3dm 模式用逐片舌保温表；加密复算走图纸路径；细网格重解格数随口径变");
+        // 工单 deliverable/R47_图纸路径增量温降_工单_2026-09-13.md §2 B／C 的界面门。三件事都不跑整线解（分钟级），只验接线：
+        //   ① 单控件 _tabIns3dm 已去掉，图纸模式下 ① 页那张逐片舌保温表可见、可编辑，BuildCase 逐片带进 LineCase；
+        //   ② 图纸模式的加密复算工厂（VerifyFactory3dm）造出来的 LineCase 走图纸路径（FlangePlates 为空、FlangeFile3dm 非空），
+        //      内带随档变、GeomForJudge 逐片（长度 = 片数）；没分析过几何时拒绝并说全名理由；
+        //   ③ 细网格重解的网格口径（Options 终局细网格）真的改了格数：同一厚度场，口径 2.0 与 1.0 mm 的格数不同。
+        {
+            Check("单控件 _tabIns3dm 已去掉（图纸模式改用 ① 页逐片舌保温表）",
+                  page.GetType().GetField("_tabIns3dm", BindingFlags.NonPublic | BindingFlags.Instance) is null);
+            var src3_36 = (RadioButton)F(page, "_src3dm")!;
+            var srcA_36 = (RadioButton)F(page, "_srcAnalytic")!;
+            var files36 = (TextBox[])F(page, "_file3dm")!;
+            var ins36 = (NumericUpDown[])F(page, "_tabIns")!;
+            var keepIns = ins36.Select(x => x.Value).ToArray();
+            string sample3dm = Path.Combine(RepoRoot(), "deliverable", "优化后3dm", "入口.3dm");
+            Set(page, "_suppressAuto", true);
+            src3_36.Checked = true;
+            foreach (var t in files36) t.Text = sample3dm;
+            double[] insVals = { 5.1, 2.8, 8.6, 1.0 };
+            for (int i = 0; i < ins36.Length; i++)
+                ins36[i].Value = (decimal)Math.Clamp(insVals[i % insVals.Length], (double)ins36[i].Minimum, (double)ins36[i].Maximum);
+            Set(page, "_suppressAuto", false);
+            M(page, "SyncGeomSource"); Pump(150);
+
+            Check("3dm 模式下逐片舌保温表的每一格都可编辑（Enabled，且在控件树里）",
+                  ins36.Length > 0 && ins36.All(x => x.Enabled && x.Parent is not null),
+                  $"{ins36.Length} 片");
+            Check("表的上限与解析模式一致（同一张表，同一组上下界；基线 8.6 填得进去）",
+                  ins36.All(x => x.Maximum >= 20m) && (double)ins36[Math.Min(2, ins36.Length - 1)].Value == 8.6,
+                  $"上限 {ins36[0].Maximum}　第 3 片 {ins36[Math.Min(2, ins36.Length - 1)].Value}");
+            var lc36 = (LineCase?)M(page, "BuildCase");
+            Check("图纸模式 BuildCase 造出算例", lc36 is not null);
+            if (lc36 is not null)
+            {
+                Check("走图纸路径：FlangePlates 为空、FlangeFile3dm 非空", lc36.FlangePlates.Length == 0 && lc36.FlangeFile3dm.Length == ins36.Length,
+                      $"FlangePlates {lc36.FlangePlates.Length}　FlangeFile3dm {lc36.FlangeFile3dm.Length}");
+                bool perPlate = lc36.TabInsul3dmPerPlateMm.Length == ins36.Length
+                             && Enumerable.Range(0, ins36.Length).All(j => Math.Abs(lc36.TabInsul3dmAt(j) - (double)ins36[j].Value) < 1e-9);
+                Check("逐片舌保温逐片进了 LineCase（TabInsul3dmPerPlateMm = 表里的值，逐片不同）", perPlate,
+                      string.Join("/", lc36.TabInsul3dmPerPlateMm.Select(v => v.ToString("0.0"))));
+            }
+            // 没分析过几何：加密复算不适用，且 ToolTip 说全名理由（不是哑谜）
+            Set(page, "_shape", null);
+            M(page, "SyncGeomSource"); Pump(100);
+            bool appV = (bool)typeof(LineDesignPage).GetMethod("CommandApplicable", BindingFlags.NonPublic | BindingFlags.Instance)!
+                             .Invoke(page, new object[] { "core.verifyMesh" })!;
+            var btnV36 = (ToolStripButton)F(page, "_btnVerify")!;
+            Check("图纸模式没分析过几何 ⇒ 加密复算不适用", !appV);
+            Check("灰掉的理由写全名：点名「分析几何变数」", btnV36.ToolTipText.Contains("分析几何变数", StringComparison.Ordinal), btnV36.ToolTipText ?? "(空)");
+            var fac0 = (ValueTuple<Func<double, double, LineCase>?, string>)page.GetType().GetMethod("VerifyFactory3dm", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(page, null)!;
+            Check("没分析过几何时工厂拒绝并说明", fac0.Item1 is null && fac0.Item2.Contains("分析几何变数"), fac0.Item2);
+
+            // 给一份分析结果（同一块解析板栅格化后分析，不必起 Rhino），工厂就能造：每档 LineCase 走图纸路径、内带随档变
+            var d36 = DesignSpec.Builtin[0].Clone();
+            var g36 = d36.Plate(1, d36.DiscFloorMm(new DesignInputs()));
+            g36.HoleRadiusMm = d36.HoleRadiusMm;
+            var f36 = AnalyticSurrogate.Rasterize(g36, 0.5, 2.0);
+            var sh36 = PlateShapeAnalyzer.Analyze(f36);
+            Set(page, "_shape", sh36);
+            var fac = (ValueTuple<Func<double, double, LineCase>?, string>)page.GetType().GetMethod("VerifyFactory3dm", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(page, null)!;
+            Check("分析过几何后工厂造得出来", fac.Item1 is not null, fac.Item2);
+            if (fac.Item1 is { } factory)
+            {
+                var (h0, radius, innerR, refused) = MeshVerify.RequiredMeshFor(sh36, (double)((NumericUpDown)F(page, "_wall")!).Value);
+                Check("起始网格从图纸的特征尺寸算出（不是挑的数）", refused is null && h0 > 0, refused ?? $"h0 {h0:0.000}　半径 {radius:0.0}／内带半径 {innerR:0.0}");
+                var a = factory(h0, h0); var b = factory(h0, h0 * 0.5);
+                Check("复核用的 LineCase 走图纸路径（FlangePlates 为空、FlangeFile3dm 非空）",
+                      a.FlangePlates.Length == 0 && a.FlangeFile3dm.Length > 0 && b.FlangePlates.Length == 0);
+                Check("每档只换内带：中带同、内带减半", a.MeshFineMm == h0 && b.MeshFineMm == h0 && b.MeshInnerMm == h0 * 0.5 && a.MeshInnerMm == h0,
+                      $"{a.MeshFineMm:0.000}/{a.MeshInnerMm:0.000} → {b.MeshFineMm:0.000}/{b.MeshInnerMm:0.000}");
+                Check("GeomForJudge 逐片（长度 = 片数）", a.GeomForJudge.Length == ins36.Length, $"{a.GeomForJudge.Length} vs {ins36.Length}");
+                Check("逐片舌保温也带进复核用的 LineCase", a.TabInsul3dmPerPlateMm.Length == ins36.Length && Math.Abs(a.TabInsul3dmAt(2) - (double)ins36[Math.Min(2, ins36.Length - 1)].Value) < 1e-9);
+            }
+            // 细网格重解：Options 终局细网格 ⇒ 格数随口径变（同一张厚度场，不起 Rhino）
+            {
+                var lcF = new LineCase { Base = new DesignInputs(), WallMm = 0.8, FlangeFields = new[] { f36 } };
+                double holeR = g36.HoleRadiusMm;
+                int Cells(double fine)
+                {
+                    var o = new FlangeAutoSizer.Options { FinalMeshFineMm = fine, FinalMeshFineRadiusMm = 50, FinalMeshInnerMm = fine * 0.5, FinalMeshInnerRadiusMm = holeR + 3 };
+                    var c = FlangeAutoSizer.ApplyFinalMesh(lcF, o);
+                    return FlangeMesher.BuildFromField(f36, holeR, 0, c.MeshFineMm, c.MeshCoarseMm, c.MeshFineRadiusMm,
+                                                       c.Base.BusbarClampLengthMm, c.MeshInnerMm, c.MeshInnerRadiusMm).CellCount;
+                }
+                int c2 = Cells(2.0), c1 = Cells(1.0);
+                Check("细网格重解：格数随终局细网格口径变（2.0 → 1.0 mm 格数增加）", c1 > c2, $"{c2} → {c1}");
+                string ldp36 = File.ReadAllText(Path.Combine(RepoRoot(), "Pt_Optimize", "UI", "LineDesignPage.cs"));
+                int b0 = ldp36.IndexOf("private async Task RunAsync", StringComparison.Ordinal);
+                int b1 = b0 < 0 ? -1 : ldp36.IndexOf("\n    private ", b0 + 10, StringComparison.Ordinal);
+                string body = b0 < 0 ? "" : (b1 < 0 ? ldp36[b0..] : ldp36[b0..b1]);
+                Check("RunAsync 的 .3dm 分支把口径真传给 SolveByLevel（FinalMeshFineMm 进 Options）",
+                      body.Contains("FinalMeshFineMm = fine3dm.MidMm", StringComparison.Ordinal) && body.Contains("lc, lvl, optLv,", StringComparison.Ordinal));
+                int f0 = ldp36.IndexOf("private async Task FineResolveAsync", StringComparison.Ordinal);
+                int f1 = f0 < 0 ? -1 : ldp36.IndexOf("\n    private ", f0 + 10, StringComparison.Ordinal);
+                string fbody = f0 < 0 ? "" : (f1 < 0 ? ldp36[f0..] : ldp36[f0..f1]);
+                Check("FineResolveAsync 的 .3dm 分支口径来自 RequiredMeshFor(Shape)，不再用 PageToDesignSpec 造的解析板",
+                      fbody.Contains("new FineMesh3dm(h0, radius, innerH, innerR)", StringComparison.Ordinal)
+                      && fbody.IndexOf("PageToDesignSpec()", StringComparison.Ordinal) > fbody.IndexOf("new FineMesh3dm(", StringComparison.Ordinal));
+            }
+            // 复原：切回解析、清图纸与分析结果、舌保温表回原值
+            Set(page, "_suppressAuto", true);
+            Set(page, "_shape", null);
+            foreach (var t in files36) t.Text = "";
+            for (int i = 0; i < ins36.Length; i++) ins36[i].Value = keepIns[i];
+            srcA_36.Checked = true;
+            Set(page, "_suppressAuto", false);
+            M(page, "SyncGeomSource");
+            Set(page, "_autoArmed", false);
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        Head("37 R47 复修：载入图纸档切到 .3dm 并回填文件名（找不到就明说不能复现）；切模式后细网格重解不适用；说明书 2.9 节 两句；第三轮：图纸档厚度倍数 k 逐片存读、图纸档拒绝造解析板、换图纸清分析结果");
+        // 审查「要改」M7／M8／M9 的界面门（deliverable/R47_Core实施记录_2026-09-13.md §5）。不跑整线解。
+        {
+            var src3_37 = (RadioButton)F(page, "_src3dm")!;
+            var srcA_37 = (RadioButton)F(page, "_srcAnalytic")!;
+            var files37 = (TextBox[])F(page, "_file3dm")!;
+            var out37 = (RichTextBox)F(page, "_out")!;
+            var btnFine37 = (ToolStripButton)F(page, "_btnFineResolve")!;
+            var load37 = typeof(LineDesignPage).GetMethod("LoadDesignSpecFrom", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            var stamp37 = typeof(LineDesignPage).GetMethod("StampGeomSource", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            var p2d37 = typeof(LineDesignPage).GetMethod("PageToDesignSpec", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            var parse37 = typeof(DesignSpecStore).GetMethod("Parse", BindingFlags.NonPublic | BindingFlags.Static)!;
+            bool App37(string id) => (bool)typeof(LineDesignPage).GetMethod("CommandApplicable", BindingFlags.NonPublic | BindingFlags.Instance)!
+                                              .Invoke(page, new object[] { id })!;
+            string sample37 = Path.Combine(RepoRoot(), "deliverable", "优化后3dm", "入口.3dm");
+            Check("样本图纸在", File.Exists(sample37), sample37);
+
+            // ── M9 ①：图纸档、文件在 ⇒ 切到 .3dm、逐片文件名回填、读档说明写出处
+            var fdD = DesignSpec.Builtin[0].Clone();
+            fdD.Name = "走查图纸档";
+            fdD.GeomSource = DesignSpec.GeomSourceDrawing;
+            fdD.FlangeFile3dm = Enumerable.Repeat(sample37, fdD.FlangeCount).ToArray();
+            srcA_37.Checked = true; Pump(50);
+            load37.Invoke(page, new object[] { fdD, false }); Pump(150);
+            Check("载入图纸档 ⇒ 切到「Rhino .3dm 文件」模式", src3_37.Checked && !srcA_37.Checked);
+            Check("逐片图纸文件名回填（每片一行，都是档里那张）", files37.Length == fdD.FlangeCount && files37.All(t => t.Text == sample37),
+                  string.Join("|", files37.Select(t => Path.GetFileName(t.Text))));
+            Check("读档说明写「本档出自图纸路径，复现要先分析几何」", out37.Text.Contains("本档出自图纸路径", StringComparison.Ordinal) && out37.Text.Contains("分析几何变数", StringComparison.Ordinal));
+            Check("文件在 ⇒ 不说「图纸找不到」", !out37.Text.Contains("图纸找不到", StringComparison.Ordinal));
+            Check("图纸档不给「点核算整线就能复现」那句", !out37.Text.Contains("就能**复现", StringComparison.Ordinal));
+            var headLbl = (Label?)F(page, "_tPlateHead");
+            Check("厚度组标题在 .3dm 模式下写「法兰厚度倍数 k」（M12）", headLbl is not null && headLbl.Text.Contains("法兰厚度倍数 k", StringComparison.Ordinal), headLbl?.Text ?? "(无)");
+
+            // ── M9 ②：文件不在 ⇒ 明说不能复现
+            var fdMiss = fdD.Clone();
+            fdMiss.FlangeFile3dm = Enumerable.Repeat(Path.Combine(RepoRoot(), "deliverable", "不存在的图_走查.3dm"), fdMiss.FlangeCount).ToArray();
+            load37.Invoke(page, new object[] { fdMiss, false }); Pump(150);
+            Check("图纸找不到 ⇒ 明说「图纸找不到，本档不能复现」", out37.Text.Contains("图纸找不到，本档不能复现", StringComparison.Ordinal));
+            Check("……且不给复现那句", !out37.Text.Contains("就能**复现", StringComparison.Ordinal) && !out37.Text.Contains("才能复现", StringComparison.Ordinal));
+
+            // ── M9 ③：往返 —— 页面（图纸模式、文件在）→ 另存同一条路盖几何来源 → 存档 → 读回 → 载入 ⇒ 模式与文件名对
+            load37.Invoke(page, new object[] { fdD, true }); Pump(100);
+            var dSave = (DesignSpec)p2d37.Invoke(page, null)!;
+            dSave.Name = "★走查往返★ 图纸档 " + Guid.NewGuid().ToString("N")[..6];
+            stamp37.Invoke(page, new object[] { dSave });
+            Check("另存那条路盖上几何来源 = 图纸、逐片文件名", dSave.GeomSource == DesignSpec.GeomSourceDrawing && dSave.FlangeFile3dm.SequenceEqual(files37.Select(t => t.Text.Trim())));
+            string? w37 = null;
+            try
+            {
+                w37 = DesignSpecStore.Save(dSave);
+                var back = (DesignSpec?)parse37.Invoke(null, new object[] { File.ReadAllText(w37), Path.GetFileName(w37) });
+                Check("读回的档几何来源 = 图纸、文件名逐字相同", back is not null && back.GeomSource == DesignSpec.GeomSourceDrawing && back.FlangeFile3dm.SequenceEqual(dSave.FlangeFile3dm));
+                Check("读回的档 Notes 带「本档出自图纸路径」", back is not null && back.Notes.Contains("本档出自图纸路径", StringComparison.Ordinal), back?.Notes ?? "(null)");
+                // 先把页面切回解析、清掉文件，再载入读回的档 —— 模式与文件名要由档决定
+                Set(page, "_suppressAuto", true);
+                srcA_37.Checked = true; foreach (var t in files37) t.Text = "";
+                Set(page, "_suppressAuto", false); Pump(50);
+                if (back is not null) { load37.Invoke(page, new object[] { back, false }); Pump(150); }
+                Check("往返后载入 ⇒ 模式 = .3dm", src3_37.Checked);
+                Check("往返后载入 ⇒ 文件名 = 存进去的", files37.All(t => t.Text == sample37));
+            }
+            finally { if (w37 is not null) { try { File.Delete(w37); } catch { } } }
+
+            // ── R47 第三轮 N5：图纸模式另存 —— k 存独立字段（逐片）、板厚栏 NaN；读回、载入 k 逐字；图纸档拒绝造解析板
+            {
+                load37.Invoke(page, new object[] { fdD, true }); Pump(100);
+                var tPl37 = (NumericUpDown[])F(page, "_tPlate")!;
+                double[] kWant = { 1.15, 0.90, 1.25, 1.05, 1.10 };
+                Set(page, "_suppressAuto", true);
+                for (int j = 0; j < tPl37.Length; j++) tPl37[j].Value = (decimal)kWant[j % kWant.Length];
+                Set(page, "_suppressAuto", false); Pump(50);
+                double[] kSet = tPl37.Select(n => (double)n.Value).ToArray();
+                var dK = (DesignSpec)p2d37.Invoke(page, null)!;
+                dK.Name = "★走查往返★ 图纸档k " + Guid.NewGuid().ToString("N")[..6];
+                Check("图纸模式 PageToDesignSpec：几何来源当场 = 图纸", dK.IsDrawingRecord, dK.GeomSource);
+                Check("图纸模式 PageToDesignSpec：厚度倍数 k 逐片进 ThicknessScale（真 k 值）", dK.ThicknessScale.SequenceEqual(kSet), DesignSpec.Fmt(dK.ThicknessScale, "0.00"));
+                Check("图纸模式 PageToDesignSpec：板厚栏全 NaN（k 不再当毫米）", dK.TabThickMm.All(double.IsNaN), DesignSpec.Fmt(dK.TabThickMm, "0.00"));
+                Check("Describe() 印「厚度倍数 k」不印「板厚」", dK.Describe().Contains("厚度倍数 k", StringComparison.Ordinal) && !dK.Describe().Contains("板厚", StringComparison.Ordinal), dK.Describe());
+                string? wK = null;
+                try
+                {
+                    wK = DesignSpecStore.Save(dK);
+                    var backK = (DesignSpec?)parse37.Invoke(null, new object[] { File.ReadAllText(wK), Path.GetFileName(wK) });
+                    Check("读回：k 逐字相同、板厚栏 NaN", backK is not null && backK.ThicknessScale.SequenceEqual(kSet) && backK.TabThickMm.All(double.IsNaN),
+                          backK is null ? "(null)" : DesignSpec.Fmt(backK.ThicknessScale, "0.00"));
+                    var pIn = (DesignInputs)F(main, "_in")!;
+                    var lcK = backK!.BuildCase(pIn);
+                    Check("图纸档 BuildCase 拒绝造解析板（RefusedWhy 写全名理由、FlangePlates 空）", lcK.RefusedWhy.Contains("本档出自图纸路径", StringComparison.Ordinal) && lcK.FlangePlates.Length == 0, lcK.RefusedWhy);
+                    var rK = LineRunner.Run(lcK);
+                    Check("LineRunner.Run 读到拒绝原句返回、不算", !rK.Ok && rK.Message.Contains("请在界面里载入并先分析几何", StringComparison.Ordinal), rK.Message);
+                    var mvK = MeshVerify.Run(backK, pIn);
+                    Check("MeshVerify.Run(图纸档) 拒答不抛、Verdict 原句", !mvK.Converged && mvK.Verdict.Contains("本档出自图纸路径", StringComparison.Ordinal), mvK.Verdict);
+                    string manK = ManualPage.BuildHtml(backK, pIn);
+                    Check("说明书读到图纸档：印拒绝那句、不画解析板、无 NaN、无字面 **",
+                          manK.Contains("本档出自图纸路径", StringComparison.Ordinal) && !manK.Contains("NaN", StringComparison.Ordinal) && !manK.Contains("**", StringComparison.Ordinal));
+                    // 载入读回的图纸档 ⇒ 厚度倍数框 = 存进去的 k
+                    Set(page, "_suppressAuto", true);
+                    for (int j = 0; j < tPl37.Length; j++) tPl37[j].Value = 1.0m;
+                    Set(page, "_suppressAuto", false);
+                    load37.Invoke(page, new object[] { backK, false }); Pump(150);
+                    Check("载入图纸档 ⇒ 厚度倍数 k 框回填成档里的 k", tPl37.Select(n => (double)n.Value).SequenceEqual(kSet), string.Join("/", tPl37.Select(n => n.Value)));
+                    Check("载入图纸档 ⇒ 输出框「已载入设计记录」印厚度倍数 k", out37.Text.Contains("厚度倍数 k", StringComparison.Ordinal));
+                }
+                finally { if (wK is not null) { try { File.Delete(wK); } catch { } } }
+            }
+
+            // ── R47 第三轮 N7：换图纸要清分析结果 —— 分析 A 后换成 B ⇒ 加密复算不适用、核算整线用的 GeomForJudge 为空
+            {
+                load37.Invoke(page, new object[] { fdD, true }); Pump(100);        // 图纸 A = sample37
+                var layer37 = (TextBox)F(page, "_layer3dm")!;
+                var shapeA = new PlateShapeAnalyzer.Shape { DiscRadiusMm = 28, HoleRadiusMm = 25.8, TabEndXMm = -140, TabEndHalfWidthMm = 28 };
+                shapeA.Levels.Add(new PlateShapeAnalyzer.Level { ThicknessMm = 1.0, RInnerMm = 25.8, ROuterMm = 28 });
+                Set(page, "_shape", shapeA);
+                Set(page, "_levels", new[] { new[] { 1.0 } });
+                Set(page, "_shapeKey", sample37 + "|" + layer37.Text.Trim());
+                var bc37 = typeof(LineDesignPage).GetMethod("BuildCase", BindingFlags.NonPublic | BindingFlags.Instance)!;
+                var lcA37 = (LineCase)bc37.Invoke(page, null)!;
+                Check("夹具：分析了 A 之后 BuildCase 带 GeomForJudge", lcA37.GeomForJudge.Length > 0, $"{lcA37.GeomForJudge.Length} 片");
+                // 入口一：载入设计记录回填成图纸 B
+                load37.Invoke(page, new object[] { fdMiss, true }); Pump(100);
+                Check("载入回填成图纸 B ⇒ 分析结果清空（_shape/_levels/_levelScale 为空）", F(page, "_shape") is null && F(page, "_levels") is null && F(page, "_levelScale") is null);
+                var lcB37 = (LineCase)bc37.Invoke(page, null)!;
+                Check("换图纸后核算整线用的 GeomForJudge 为空（不拿 A 的分析判 B）", lcB37.GeomForJudge.Length == 0, $"{lcB37.GeomForJudge.Length} 片");
+                Check("换图纸后加密复算不适用", !App37("core.verifyMesh"));
+                Check("换图纸后「分析几何变数」重新亮起（GeomAnalysisPending）", ((FlowState)F(main, "_flow")!).GeomAnalysisPending);
+                var btnV37 = (ToolStripButton)F(page, "_btnVerify")!;
+                Check("灰掉的理由点名「分析几何变数」", btnV37.ToolTipText.Contains("分析几何变数", StringComparison.Ordinal), btnV37.ToolTipText ?? "(空)");
+                // 入口二：文件框改字（TextChanged）
+                Set(page, "_shape", shapeA); Set(page, "_shapeKey", files37[0].Text.Trim() + "|" + layer37.Text.Trim());
+                Set(page, "_suppressAuto", true); files37[0].Text = sample37; Set(page, "_suppressAuto", false); Pump(50);
+                Check("文件框改字 ⇒ 分析结果清空（TextChanged 接线）", F(page, "_shape") is null, files37[0].IsHandleCreated ? "" : "（文本框没有窗口句柄，TextChanged 靠 .Text= 触发）");
+                // 入口三：换图层
+                Set(page, "_shape", shapeA); Set(page, "_shapeKey", files37[0].Text.Trim() + "|" + layer37.Text.Trim());
+                string layerWas = layer37.Text;
+                layer37.Text = layerWas + "_走查"; Pump(50);
+                Check("换图层 ⇒ 分析结果清空", F(page, "_shape") is null);
+                layer37.Text = layerWas; Pump(50);
+                // 同一张图不清：键相同
+                Set(page, "_shape", shapeA); Set(page, "_shapeKey", files37[0].Text.Trim() + "|" + layer37.Text.Trim());
+                load37.Invoke(page, new object[] { fdD, true }); Pump(100);
+                Check("载入同一张图的档 ⇒ 分析结果留着（对照）", F(page, "_shape") is not null);
+                // 源码门：三个入口都调 InvalidateShapeIfDrawingChanged
+                string ldpN7 = File.ReadAllText(Path.Combine(RepoRoot(), "Pt_Optimize", "UI", "LineDesignPage.cs"));
+                int pf0 = ldpN7.IndexOf("private void PickFile(int idx)", StringComparison.Ordinal);
+                int pf1 = pf0 < 0 ? -1 : ldpN7.IndexOf("\n    }", pf0, StringComparison.Ordinal);
+                Check("源码门：PickFile 调 InvalidateShapeIfDrawingChanged", pf0 >= 0 && pf1 > pf0 && ldpN7[pf0..pf1].Contains("InvalidateShapeIfDrawingChanged()", StringComparison.Ordinal));
+                Check("源码门：文件框 TextChanged 接 InvalidateShapeIfDrawingChanged", ldpN7.Contains("tb.TextChanged += (_, _) => InvalidateShapeIfDrawingChanged();", StringComparison.Ordinal));
+                Set(page, "_shape", null); Set(page, "_levels", null); Set(page, "_levelScale", null); Set(page, "_shapeKey", "");
+            }
+
+            // ── M7：切模式后 core.fineResolve 不适用（复核快照 ≠ 当前快照）
+            Set(page, "_meshVerify", new MeshVerify.Result { Converged = true, FineMm = 0.5 });
+            Set(page, "_verifiedSnap", M(page, "CurrentSnap"));
+            Check("夹具：复核快照 = 当前快照（切模式前）", Equals(F(page, "_verifiedSnap"), M(page, "CurrentSnap")));
+            srcA_37.Checked = true; Pump(100);                       // 图纸 → 解析
+            Check("切模式后复核快照 ≠ 当前快照（几何来源在快照里）", !Equals(F(page, "_verifiedSnap"), M(page, "CurrentSnap")));
+            Check("切模式后 core.fineResolve 不适用", !App37("core.fineResolve"));
+            Check("灰掉的理由点名几何来源动过了", btnFine37.ToolTipText.Contains("几何来源", StringComparison.Ordinal), btnFine37.ToolTipText ?? "(空)");
+            string ldp37 = File.ReadAllText(Path.Combine(RepoRoot(), "Pt_Optimize", "UI", "LineDesignPage.cs"));
+            int ca0 = ldp37.IndexOf("\"core.fineResolve\" =>", StringComparison.Ordinal);
+            int ca1 = ca0 < 0 ? -1 : ldp37.IndexOf("\n\n", ca0, StringComparison.Ordinal);
+            string caBody = ca0 < 0 ? "" : ldp37[ca0..(ca1 < 0 ? ldp37.Length : ca1)];
+            Check("源码门：CommandApplicable「core.fineResolve」带 Equals(_verifiedSnap, CurrentSnap())", caBody.Contains("Equals(_verifiedSnap, CurrentSnap())", StringComparison.Ordinal));
+            int fr0 = ldp37.IndexOf("private async Task FineResolveAsync", StringComparison.Ordinal);
+            int fr1 = fr0 < 0 ? -1 : ldp37.IndexOf("\n    private ", fr0 + 10, StringComparison.Ordinal);
+            string frBody = fr0 < 0 ? "" : (fr1 < 0 ? ldp37[fr0..] : ldp37[fr0..fr1]);
+            Check("源码门：FineResolveAsync 入口带 Equals(_verifiedSnap, CurrentSnap())", frBody.Contains("Equals(_verifiedSnap, CurrentSnap())", StringComparison.Ordinal));
+            Check("厚度组标题回到解析模式写「法兰厚度 mm」（M12）", headLbl is not null && headLbl.Text.StartsWith("法兰厚度 mm", StringComparison.Ordinal), headLbl?.Text ?? "(无)");
+
+            // ── M8：说明书 2.9 节 两句（用户看得见的话，不许出现判据代号）
+            var pIn37 = (DesignInputs)F(main, "_in")!;
+            string manual37 = ManualPage.BuildHtml(DesignSpec.Current, pIn37);
+            Check("说明书 2.9 节：舌保温与解析模式共用 ① 页逐片舌保温表，逐片可不同，0.3–80 mm",
+                  manual37.Contains("与解析模式共用「① 输入」页的逐片舌保温表，逐片可不同，0.3–80 mm", StringComparison.Ordinal));
+            Check("说明书 2.9 节：加密复算／细网格重解复核的就是这张图纸，要先分析几何变数，没分析过按钮灰着并说明理由",
+                  manual37.Contains("复核用的就是这张图纸", StringComparison.Ordinal) && manual37.Contains("要先「分析几何变数」；没分析过按钮灰着", StringComparison.Ordinal));
+            Check("说明书里不再有「默认 0 = 裸舌」", !manual37.Contains("默认 0 = 裸舌", StringComparison.Ordinal));
+
+            // 复原：解析模式、清图纸、复核状态清空、载回内置档
+            Set(page, "_meshVerify", null); Set(page, "_verifiedSnap", null); Set(page, "_shape", null);
+            Set(page, "_suppressAuto", true);
+            srcA_37.Checked = true; foreach (var t in files37) t.Text = "";
+            Set(page, "_suppressAuto", false);
+            load37.Invoke(page, new object[] { DesignSpec.Builtin[0], true }); Pump(100);
+            M(page, "SyncGeomSource");
             Set(page, "_autoArmed", false);
         }
 

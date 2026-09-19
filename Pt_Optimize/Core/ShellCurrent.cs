@@ -79,6 +79,9 @@ public static class ShellCurrent
             if (f.Tag == ShellMesh.TagTabEnd) { isFixed[f.A] = true; fixedVal[f.A] = 1.0; }
             else if (f.Tag == ShellMesh.TagHole) { isFixed[f.A] = true; fixedVal[f.A] = 0.0; }
         }
+        // ★ R48 实验（2026-09-14，Opus 5）：压接段整面接触 —— 形心在压接段内的格一并作电极（ShellMesh.ClampCell 空 = 老口径，逐位不变）
+        if (m.ClampCell.Length == n)
+            for (int i = 0; i < n; i++) if (m.ClampCell[i]) { isFixed[i] = true; fixedVal[i] = 1.0; }
         for (int i = 0; i < n; i++) if (isFixed[i]) res.V[i] = fixedVal[i];
 
         // 面传导系数 G = σ_f · t_f · L / d   （调和平均取界面值，厚度突变处才不会失真）
