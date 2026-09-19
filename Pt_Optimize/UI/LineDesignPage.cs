@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -52,10 +52,16 @@ public sealed class LineDesignPage : TabPage
     private readonly NumericUpDown _ringW = Num((decimal)StartPoint.RingWidthMm, 0.5m, 20m, 0.5m, 1);
     private readonly NumericUpDown _clampLen = Num((decimal)StartPoint.ClampLengthMm, 3m, 200m, 5m, 0);
     /// <summary>
-    /// `.3dm` 模式下的舌保温 mm。解析模式不用它（那边逐片来自 DesignSpec.TabInsulMm）。
-    /// 0 = 裸舌 —— 那是此前 .3dm 路径**写死**的行为。
+    /// ★ R47 B（2026-09-13）：`.3dm` 模式的舌保温**改用 ① 页那张逐片舌保温表**（<see cref="_tabIns"/>，解析模式在用的那张）。
+    ///   此前这里是一个单控件 `_tabIns3dm`（上限 5.0 mm、四片同一个值）：基线的 5.1／2.8／8.6 三个不同舌保温在图纸路径上
+    ///   表达不了，5.1 与 8.6 连填都填不进去 ⇒ 两条路输入不可比（工单 §1 B）。现在两种几何来源共用同一张表、同一组上下界。
+    ///   图纸段里只留一行说明，指向那张表。
     /// </summary>
-    private readonly NumericUpDown _tabIns3dm = Num(0.0m, 0.0m, 5.0m, 0.05m, 2);
+    private readonly Label _tabIns3dmNote = new()
+    {
+        Text = "舌保温：用下面「逐片舌保温 mm」那张表（两种几何来源共用同一张表，逐片可不同）",
+        AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 4, 0),
+    };
     private readonly ComboBox _flIns = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = UiScale.S(110) };
     private readonly NumericUpDown _flInsT = Num(20.0m, 0.0m, 60.0m, 0.5m, 1);
     private readonly NumericUpDown _discD = Num(60m, 30m, 300m, 2m, 0);
@@ -352,6 +358,15 @@ public sealed class LineDesignPage : TabPage
     /// 初值 1.0 = .3dm 模式的「按图纸原尺寸」。
     /// </summary>
     private readonly decimal[] _keepOther = { 1.0m, 1.0m, 1.0m, 1.0m };
+    /// <summary>R47 复修 M12：逐片厚度组的标题标签（两个模式下是两个物理量，切模式时改字）。</summary>
+    private Label? _tPlateHead;
+    private string PlateHeadText(bool analytic)
+    {
+        int n = PlateNames().Length;
+        return analytic
+            ? $"法兰厚度 mm（{n} 片＝{n - 1} 段＋1；可点「自动定厚」求解）"
+            : $"法兰厚度倍数 k（图纸整体 ×k，1.0 = 原尺寸；{n} 片＝{n - 1} 段＋1；可点「自动定厚」逐级求倍数）";
+    }
     /// <summary>上一次 SyncGeomSource 看到的模式，用来判「是不是刚切过来」。</summary>
     private bool _lastAnalytic = true;
     private Snap? _solvedSnap;               // 上一次**真解**时的参数
@@ -407,6 +422,13 @@ public sealed class LineDesignPage : TabPage
         public double SizerHoleAsp;
         /// <summary>2026-08-28 补：这三个也进快照 —— 它们现在是**输入**，改了就该让上一次的解不新鲜。</summary>
         public double Fillet, RingW, ClampLen;
+        /// <summary>
+        /// ★ R47 C（2026-09-13）：几何来源（解析／图纸）、图纸文件名与图层、**逐片**舌保温也进快照。
+        ///   此前切几何来源、换一张图、或把两片的舌保温对调（平均值不变）都不会让上一次的解不新鲜 —— 假新鲜。
+        ///   逐片舌保温存成「|」拼接的串（SizerTabIns 那个平均值留着，只是它分辨不出逐片对调）。
+        /// </summary>
+        public bool Src3dm;
+        public string File3dm = "", Layer3dm = "", TabInsByPlate = "";
         /// <summary>
         /// 2026-08-30 补：渐变环形状也进快照。**不进就是假新鲜** ——
         /// 它们直接进厚度分布、进判据，改了却让上一次的解还显示「新鲜」，
@@ -650,6 +672,11 @@ public sealed class LineDesignPage : TabPage
         Fillet = (double)_fillet.Value,
         RingW = (double)_ringW.Value,
         ClampLen = (double)_clampLen.Value,
+        // R47 C：几何来源／图纸文件名／图层／逐片舌保温
+        Src3dm = !_srcAnalytic.Checked,
+        File3dm = string.Join("|", _file3dm.Select(t => t.Text.Trim())),
+        Layer3dm = _layer3dm.Text.Trim(),
+        TabInsByPlate = string.Join("|", _tabIns.Select(n => ((double)n.Value).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture))),
         SizerTabIns = _tabIns.Average(n => (double)n.Value),
         SizerRingMul = _ringMul.Average(n => (double)n.Value),
         SizerSlotDeg = _slotDeg.Length > 0 ? _slotDeg.Max(n => (double)n.Value) : 0,
@@ -701,6 +728,12 @@ public sealed class LineDesignPage : TabPage
     /// 那是**诚实的**：还没告诉过程序这张图长什么样。
     /// </summary>
     private PlateShapeAnalyzer.Shape? _shape;
+    /// <summary>
+    /// ★ R47 第三轮 N7（2026-09-13）：<see cref="_shape"/> 是分析**哪张图、哪个图层**得到的（"文件|图层"）。
+    /// 换图纸（选文件、载入设计记录回填、文件框改字）而分析结果还留着 ⇒ 加密复算、GeomForJudge 用的是 A 的分析去算 B 的图 ——
+    /// 判的是 A、解的是 B。<see cref="InvalidateShapeIfDrawingChanged"/> 拿它比对，不符就把分析结果清空。
+    /// </summary>
+    private string _shapeKey = "";
 
     /// <summary>
     /// 左侧那块**输入面**（参数框、几何来源单选、段表、各级锁定…）。
@@ -881,7 +914,7 @@ public sealed class LineDesignPage : TabPage
         void Row(string label, Control c, string? tip = null)
         {
             var l = new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 4, 0) };
-            if (tip is not null) new ToolTip().SetToolTip(l, tip);
+            if (tip is not null) new ToolTip().SetToolTip(l, TextFmt.Strip(tip));   // R47 第三轮 N6：ToolTip 没有富文本，** 要剥掉
             input.Controls.Add(l);
             input.Controls.Add(c);
         }
@@ -932,12 +965,12 @@ public sealed class LineDesignPage : TabPage
         input.Controls.Add(_file3dmBox);
         input.SetColumnSpan(_file3dmBox, 2);
         RebuildFile3dmRows();
-        Row("舌保温 mm（.3dm）", _tabIns3dm,
-            "舌片自己的保温厚度。**0 = 裸舌**，那是本路径此前写死的行为。"
+        _layer3dm.TextChanged += (_, _) => InvalidateShapeIfDrawingChanged();   // R47 第三轮 N7：换图层 = 换图，分析结果作废
+        // ★ R47 B（2026-09-13）：图纸路径的舌保温改用逐片表（见 _tabIns3dmNote 的说明），这里只留一行指路。
+        Row("舌保温 mm（.3dm）", _tabIns3dmNote,
+            $"舌片自己的保温厚度，是守 {Criteria.Explain("管孔净流入")}/{Criteria.Explain("③")} 的主力旋钮，逐片可不同。"
             + Environment.NewLine
-            + $"它是守 {Criteria.Explain("管孔净流入")}/{Criteria.Explain("③")} 的主力旋钮："
-            + "实测在设计记录几何上，0.4 mm ⇒ 法兰增量温降 = 5.2 K ✓，"
-            + "而 0（裸舌）⇒ 法兰 2986 °C、往管里灌 256 W。"
+            + "图纸模式与解析模式用**同一张**「逐片舌保温 mm」表（同一组上下界），求解器调的也是那张表里的值。"
             + Environment.NewLine
             + "舌片裸露占端片散热的 90 % 以上 —— 一裸就净抽热、一全包又净倒灌，中间有零点。");
         Row("图层名", _layer3dm, "厚度场从该图层提取。t=0 表示无材料 ⇒ 开槽、孔、轮廓一次拿全");
@@ -1189,24 +1222,28 @@ public sealed class LineDesignPage : TabPage
         //   ⇒ 本页只回答「适不适用」（CommandApplicable），Enabled 只由 SyncGates 一处设。
         // ★ 灰掉必须说清为什么 —— 灰着不解释就是哑谜（2026-09-02 与适用性一起补）。
         _btnVerify.ToolTipText =
-            Shared is { Fresh: true, Last: { Ok: true } }
-                ? "把网格一档档加密，直到这个数不再变为止。10～40 分钟，随时可取消。"
+            !an && _shape is null
+                ? "图纸模式下要先点「分析几何变数」—— 加密复算的起始网格从图纸的特征尺寸（环宽、各级径向宽）算，没分析过就取不到。"
+            : Shared is { Fresh: true, Last: { Ok: true } }
+                ? (an ? "把网格一档档加密，直到这个数不再变为止。10～40 分钟，随时可取消。"
+                      : "把网格一档档加密（内带与厚度场栅格步一起收），直到这个数不再变为止。复核用的就是这张图纸，不换零件。10～40 分钟，随时可取消。")
                 : Shared?.Last is { Ok: true }
                     ? "参数在上次求解之后又动过了 —— 先点「核算整线」按现在这组重解。"
                     : "还没解过 —— 先点「核算整线」。没有解就无从谈「这个数准不准」。";
         // R26（2026-09-09）：细网格重解——比加密复算多一条前置（做过一次网格无关复核）。
+        bool verifiedNow = _meshVerify is { Converged: true } && Equals(_verifiedSnap, CurrentSnap());   // R47 复修 M7
         _btnFineResolve.ToolTipText =
-            Shared is { Fresh: true, Last: { Ok: true } } && _meshVerify is { Converged: true }
+            Shared is { Fresh: true, Last: { Ok: true } } && verifiedNow
                 ? "在加密复算已经算到的那张细网格上直接重新求根（旋钮只增不减），"
                   + "不必回导航网格重新走一遍「核算整线」。"
                 : _meshVerify is { Converged: true }
-                    ? "参数在上次求解之后又动过了 —— 先点「核算整线」按现在这组重解。"
+                    ? "参数（含法兰几何来源／图纸文件）在上次加密复算之后又动过了 —— 先点「核算整线」按现在这组重解，再点「◆ 加密复算」。"
                     : "还没做过「◆ 加密复算」—— 细网格重解要接着那一次的网格口径，没有它就无从谈起。";
         _btnAnalyze.ToolTipText = an
             ? "只在「Rhino .3dm 文件」模式下可用 —— 解析形状是程序生成的，没有图纸需要反推。"
             : hasEntry
                 ? "读入口片 .3dm，反推出各级台阶厚度，「自动定厚」才能逐级优化。"
-                : "请先选好**入口 .3dm** —— 要反推的就是那张图。";
+                : "请先选好入口 .3dm —— 要反推的就是那张图。";   // R47 第三轮 N6：ToolTip 不走加粗
         // R28（2026-09-10）：「◇ 搜形状」的提示——.3dm 模式下**必须说清楚为什么禁用、
         //   下一步点哪个**，不能只灰着不说话（§0.-2 第③条铁律）。解析模式下则照抄
         //   「使用说明」页那张对照表里「什么时候点」一行，并提醒搜完要再核算整线。
@@ -1234,6 +1271,7 @@ public sealed class LineDesignPage : TabPage
             }
             _lastAnalytic = an;
         }
+        if (_tPlateHead is not null) _tPlateHead.Text = PlateHeadText(an);   // R47 复修 M12：标题跟着物理量走
 
         // 几何来源变了 ⇒ 有些命令的「适不适用」跟着变 ⇒ 让 SyncGates 重算一遍。
         // 走 Notify 而不是直接改按钮：Enabled 只允许有一个来源。
@@ -1263,6 +1301,13 @@ public sealed class LineDesignPage : TabPage
     /// ⚠ Name 由用户填、Binding 留空 —— 「什么咬住了它」是工程判断，不是程序能算的，
     ///   留空比替你猜一句更诚实。
     /// </summary>
+    /// <summary>R47 复修 M9：档里的几何来源与逐片图纸文件名只从这里盖（另存与走查的往返门同一条路）。</summary>
+    internal void StampGeomSource(DesignSpec d)
+    {
+        d.GeomSource = _srcAnalytic.Checked ? DesignSpec.GeomSourceAnalytic : DesignSpec.GeomSourceDrawing;
+        d.FlangeFile3dm = _srcAnalytic.Checked ? Array.Empty<string>() : _file3dm.Select(t => t.Text.Trim()).ToArray();
+    }
+
     private void SaveAsDesignSpec()
     {
         // ★★★★★ A1（2026-09-02 用户拍板）：**程序不再替工程师否决**。
@@ -1281,7 +1326,7 @@ public sealed class LineDesignPage : TabPage
         {
             MessageBox.Show(this,
                 "参数在上次求解之后又动过了。" + Environment.NewLine + Environment.NewLine
-                + "现在存下去的会是**上一组参数**的解 —— 与你眼前这张表对不上。"
+                + "现在存下去的会是上一组参数的解 —— 与你眼前这张表对不上。"   // R47 第三轮 N6：MessageBox 没有富文本
                 + "先点「核算整线」按现在这组重解一次。",
                 "还不能另存", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
@@ -1331,6 +1376,8 @@ public sealed class LineDesignPage : TabPage
         var d = PageToDesignSpec();
         d.Name = name.Trim();
         d.Provenance = $"由 APP「另存为设计记录」写出；解出自「{(_srcAnalytic.Checked ? "解析形状" : "Rhino .3dm")}」路径";
+        // ★ R47 B（2026-09-13）：几何来源与图纸文件名进档（逐片舌保温 PageToDesignSpec 已从 ① 页那张表带上，两种来源同一张表）。
+        StampGeomSource(d);
         d.Binding = "";                       // ← 工程判断，留给人填
         d.TotalMassG = r.TotalMassG; d.TubeMassG = r.TubeMassG; d.FlangeMassG = r.FlangeMassG;
         // 五个回归基准值：**从本次解直接取**，不经人手
@@ -1466,12 +1513,19 @@ public sealed class LineDesignPage : TabPage
         //   「能点但点了只弹一句『请先切到…』」正是用户最初抱怨的那个形状。
         //   ⚠ 条件与 VerifyMeshAsync 的前置**同一套**：有解、且解对应当前参数。
         //     两处不一致的话，要么灰着却能跑，要么亮着却拒绝 —— 都在骗人。
-        "core.verifyMesh" => Shared is { Fresh: true, Last: { Ok: true } },
+        // ★ R47 C（2026-09-13）：图纸模式还要**分析过几何**（_shape 非空）—— 加密复算的起始网格从图纸的特征尺寸算
+        //   （MeshVerify.RequiredMeshFor(Shape)），没分析过就取不到，Core 会拒答；界面在这里先灰掉并在 ToolTip 里说原因。
+        "core.verifyMesh" => Shared is { Fresh: true, Last: { Ok: true } } && (_srcAnalytic.Checked || _shape is not null),
         // ★ R26（2026-09-09）：细网格重解 —— 与 core.verifyMesh 同一前置，外加一条：
         //   已经做过一次网格无关复核（_meshVerify is { Converged: true }）。它专治的状态
         //   正是复核跑完之后（导航网格上过、细网格上不过），没有这条复核就无从谈「细网格」。
+        // ★ R47 复修 M7（2026-09-13）：复核必须对应**当前**快照（几何来源／图纸文件名／逐片舌保温都在 CurrentSnap 里）——
+        //   解析模式复核完切到图纸模式，_meshVerify 还是 Converged，没有这一条就会拿解析板的复核口径去重解图纸（跨模式错口径）。
+        //   与 VerifyMeshAsync 存 _verifiedSnap、GateSpec 判 VerifiedFresh 同一把尺。
         "core.fineResolve" => Shared is { Fresh: true, Last: { Ok: true } }
-                            && _meshVerify is { Converged: true },
+                            && _meshVerify is { Converged: true }
+                            && Equals(_verifiedSnap, CurrentSnap())
+                            && (_srcAnalytic.Checked || _shape is not null),   // R47 C：图纸模式同样要分析过几何
 
         // ★★★★★ 原 ③→④ 那道门**降级到这里**（2026-09-02 阶段轨合并）。
         //
@@ -1502,10 +1556,38 @@ public sealed class LineDesignPage : TabPage
         using var dlg = new OpenFileDialog { Filter = "Rhino 3D 模型 (*.3dm)|*.3dm" };
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
         _file3dm[idx].Text = dlg.FileName;
-        // 选完文件要重新过一遍 enable —— 否则「分析几何变数」选了图纸也不会亮
-        SyncGeomSource();
         // R33：只有一个输入框 ⇒ 各片都用同一张图（用户：后面几段的法兰都是一样的）
         for (int k = 0; k < _file3dm.Length; k++) _file3dm[k].Text = dlg.FileName;
+        // ★ R47 第三轮 N7：换了图纸就把上一张图的分析结果清掉（先清再过 enable，SyncGeomSource 读 _shape）
+        InvalidateShapeIfDrawingChanged();
+        // 选完文件要重新过一遍 enable —— 否则「分析几何变数」选了图纸也不会亮
+        SyncGeomSource();
+    }
+
+    /// <summary>当前文件框与图层对应的分析键（与 <see cref="AnalyzeShape"/> 记下的 <see cref="_shapeKey"/> 同一口径）。</summary>
+    private string DrawingKeyNow() => (_file3dm.Length > 0 ? _file3dm[0].Text.Trim() : "") + "|" + _layer3dm.Text.Trim();
+
+    /// <summary>
+    /// ★ R47 第三轮 N7（2026-09-13）：**换图纸要清分析结果**。分析结果（<see cref="_shape"/>／<see cref="_levels"/>／<see cref="_levelScale"/>）
+    /// 是对某一张图、某一个图层量的；文件框或图层一变而它们还在，「加密复算」「细网格重解」「自动定厚」「核算整线」的 GeomForJudge
+    /// 就会拿 A 的分析去算 B 的图。这里比对分析时记下的键，不符就清空、把「分析几何变数」重新亮起来并在输出框说明。
+    /// 三个入口都调它：选文件（PickFile）、载入设计记录回填（LoadDesignSpecFrom）、文件框／图层框改字（TextChanged）。
+    /// </summary>
+    private void InvalidateShapeIfDrawingChanged()
+    {
+        if (_shape is null && _levels is null && _levelScale is null) return;
+        string now = DrawingKeyNow();
+        if (string.Equals(now, _shapeKey, StringComparison.OrdinalIgnoreCase)) return;
+        string was = _shapeKey.Length > 0 ? _shapeKey.Split('|')[0] : "（未记）";
+        _shape = null; _levels = null; _levelScale = null; _surrFid = null; _shapeKey = "";
+        SyncAnalysisPending();
+        Shared?.Notify();
+        try
+        {
+            _out.AppendText(Environment.NewLine + "⚠ 图纸换了（" + Path.GetFileName(was) + " → " + Path.GetFileName(now.Split('|')[0])
+                + "），上一张图的「分析几何变数」结果已清掉 —— 加密复算、细网格重解、自动定厚都要先对这张图重新点「分析几何变数」。" + Environment.NewLine);
+        }
+        catch { /* 输出框还没建好时不该把换文件拖垮 */ }
     }
 
     /// <summary>舌保温框：初始值与上下界都只有一个来源（StartPoint / SizerOptions）。</summary>
@@ -1686,8 +1768,8 @@ public sealed class LineDesignPage : TabPage
         // 排到消息队列尾部：别在控件的 ValueChanged 里同步弹模态框
         BeginInvoke(new Action(() => MessageBox.Show(this,
             $"你刚改了「{what}」。从这一刻起：" + Environment.NewLine + Environment.NewLine
-            + "  · 上一次的解**不再对应当前参数** —— 判据表留着给你对照，" + Environment.NewLine
-            + "    但它是**上一组参数**的结论；" + Environment.NewLine
+            + "  · 上一次的解不再对应当前参数 —— 判据表留着给你对照，" + Environment.NewLine   // R47 第三轮 N6：MessageBox 没有富文本
+            + "    但它是上一组参数的结论；" + Environment.NewLine
             + "  ·「交付」那一格的门已经关上；" + Environment.NewLine
             + "  · 之前若「越关」进过某一格，那张通行证也一并作废" + Environment.NewLine
             + "    （它是按旧参数批的）。" + Environment.NewLine + Environment.NewLine
@@ -2063,7 +2145,7 @@ public sealed class LineDesignPage : TabPage
         }
 
         var ans = MessageBox.Show(this,
-            "外层耦合没收敛，但残差**仍在单调收缩** —— 是「慢」，不是「发散」。\r\n\r\n" +
+            "外层耦合没收敛，但残差仍在单调收缩 —— 是「慢」，不是「发散」。\r\n\r\n" +   // R47 第三轮 N6：MessageBox 没有富文本
             (need.Length > 0 ? need.Replace("★ ", "") + "\r\n\r\n" : "") +
             $"要把轮数上限从 {lc.CoupleMaxRounds} 提到 1500 重跑一次吗？\r\n" +
             "（可能要几倍时间；随时可以点「取消」中止）",
@@ -2302,8 +2384,32 @@ public sealed class LineDesignPage : TabPage
         // ⚠ 边界要同时看页面片数与记录片数（2026-09-09：原来只看 _tPlate.Length，载入片数更少的记录时
         //   fd.TabThickMm[j] 越界 ⇒ 整个进程崩在「载入设计记录」上）。段表先更新之后两者相等，但门仍两边都守；
         //   也不再 `j < 4` 封顶 —— 那会让 5 片记录的第 5 片留着旧值。
-        for (int j = 0; j < _tPlate.Length && j < fd.TabThickMm.Length; j++)
-            _tPlate[j].Value = C(fd.TabThickMm[j], _tPlate[j]);
+        // ★ R47 复修 M9（2026-09-13）：几何来源跟着档走。GeomSource = 图纸 ⇒ 切到 Rhino .3dm 模式、回填逐片文件名；
+        //   文件不存在就明说「图纸找不到，本档不能复现」且不给复现那句话。旧档（GeomSource 空）与解析档 ⇒ 解析模式。
+        //   ⚠ 必须放在灌板厚之前：SyncGeomSource 切模式时把 _tPlate 与 _keepOther 整组交换（板厚 mm ↔ 厚度倍数 k），
+        //     先灌后切会把刚灌的值换走。
+        bool drawingRec = fd.GeomSource == DesignSpec.GeomSourceDrawing;
+        string[] missing3dm = Array.Empty<string>();
+        if (drawingRec)
+        {
+            _src3dm.Checked = true;                       // 经 _srcAnalytic.CheckedChanged → SyncGeomSource
+            for (int j = 0; j < _file3dm.Length; j++)
+                _file3dm[j].Text = fd.FlangeFile3dm.Length == 0 ? "" : fd.FlangeFile3dm[Math.Min(j, fd.FlangeFile3dm.Length - 1)];
+            missing3dm = fd.FlangeFile3dm.Length == 0
+                ? new[] { "（档里没记图纸文件名）" }
+                : fd.FlangeFile3dm.Distinct().Where(f => string.IsNullOrWhiteSpace(f) || !File.Exists(f)).ToArray();
+            InvalidateShapeIfDrawingChanged();            // R47 第三轮 N7：回填的图纸与分析过的不是同一张 ⇒ 清分析结果
+            SyncGeomSource();
+        }
+        else _srcAnalytic.Checked = true;
+        // ★ R47 第三轮 N5：图纸档灌的是逐片厚度倍数 k（档里 TabThickMm 是 NaN，(decimal)NaN 会当场炸）；没记 k 的旧档按 1.0。
+        //   解析档照旧灌板厚 mm。SyncGeomSource 已按模式把 _tPlate 换成对应那组，这里灌的就是当前物理量。
+        if (drawingRec)
+            for (int j = 0; j < _tPlate.Length; j++)
+                _tPlate[j].Value = C(j < fd.ThicknessScale.Length && !double.IsNaN(fd.ThicknessScale[j]) ? fd.ThicknessScale[j] : 1.0, _tPlate[j]);
+        else
+            for (int j = 0; j < _tPlate.Length && j < fd.TabThickMm.Length; j++)
+                _tPlate[j].Value = C(double.IsNaN(fd.TabThickMm[j]) ? (double)_tPlate[j].Value : fd.TabThickMm[j], _tPlate[j]);
         // ★★ 舌保温与环倍率也要灌进控件（2026-08-25）。
         //   ⚠ 这**不是**「拿设计记录当起点」—— 工程师**明确点了「载入设计记录」**，
         //     那是设计记录的正当用途：**校正计算流程**（载入 → 核算 → 对得上说明链路没坏）。
@@ -2360,6 +2466,15 @@ public sealed class LineDesignPage : TabPage
             "已载入设计记录：" + fd.Describe() + "\r\n" +
             "咬住它的：" + fd.Binding + "\r\n" +
             "出处：" + fd.Provenance + "\r\n" +
+            // R47 B：几何来源／图纸文件名／读档说明（旧档只记一个舌保温时，读回填成所有片同值，这里说出来）
+            (fd.GeomSource.Length > 0 ? "几何来源：" + fd.GeomSource + (fd.FlangeFile3dm.Length > 0 ? "　图纸：" + string.Join("；", fd.FlangeFile3dm.Distinct()) : "") + "\r\n" : "") +
+            // R47 复修 M9：图纸档的读档说明（DesignSpecStore 读档时已写进 Notes；档不是从文件读的（内置／程序造的）也要有这句）
+            (fd.Notes.Length > 0 || drawingRec
+                ? "读档说明：" + fd.Notes + (drawingRec && !fd.Notes.Contains(DesignSpec.DrawingRecordNote, StringComparison.Ordinal) ? (fd.Notes.Length > 0 ? "　" : "") + DesignSpec.DrawingRecordNote : "") + "\r\n"
+                : "") +
+            (missing3dm.Length > 0
+                ? "★ 图纸找不到，本档不能复现：" + string.Join("；", missing3dm) + "\r\n"
+                : "") +
             $"外层耦合剩余误差估计 {fd.ResidualK:0.00} K（不是步长；见 HANDOVER §1.85）\r\n\r\n" +
             // ★ 这段话 2026-08-17（1b）之前是「本页表达不了两项，核算整线算的是另一片法兰」。
             //   1b 之后**不再成立**：解析模式与「复现设计记录」走同一个构造器，
@@ -2372,7 +2487,11 @@ public sealed class LineDesignPage : TabPage
                 : $"，r ≤ 孔+{fd.RingWidthMm:0} 与 孔+{2 * fd.RingWidthMm:0} 两级\r\n") +
             $"   · 逐片舌保温 {DesignSpec.Fmt(fd.TabInsulMm, "0.0")} mm（守 {Criteria.Explain("管孔净流入")}/{Criteria.Explain("③")} 的主力旋钮）\r\n" +
             $"   · 压接段 {fd.ClampLengthMm:0} mm　舌根圆角 R{fd.TabFilletMm:0}　等宽舌片　管孔两面角焊缝\r\n" +
-            "   ⇒ 现在点「核算整线」**就能**复现设计记录数字（走查 16 节每次都验）。";
+            (missing3dm.Length > 0
+                ? "   ⇒ **图纸找不到，本档不能复现** —— 先把上面列的 .3dm 放回去（或在文件行重新选），再「分析几何变数」→「核算整线」。"
+                : drawingRec
+                    ? "   ⇒ 本档出自图纸路径：先点「分析几何变数」，再点「核算整线」才能复现。"
+                    : "   ⇒ 现在点「核算整线」**就能**复现设计记录数字（走查 16 节每次都验）。");
         _suppressAuto = false;
     }
 
@@ -2584,9 +2703,9 @@ public sealed class LineDesignPage : TabPage
             lc.FlangeFile3dm = files;
             lc.FlangeLayer = _layer3dm.Text.Trim();
             lc.ThicknessScale = _tPlate.Select(n => (double)n.Value).ToArray();
-            // 0 ⇒ 传 NaN（裸舌，与从前一致）；> 0 才真的包保温
-            double ti3 = (double)_tabIns3dm.Value;
-            lc.TabInsul3dmMm = ti3 > 1e-9 ? ti3 : double.NaN;
+            // ★ R47 B（2026-09-13）：舌保温**逐片**、从 ① 页那张逐片表来（与解析路径 PageToDesignSpec 读的是同一组控件）。
+            //   此前是单控件 _tabIns3dm 一个标量填所有片（上限 5.0，基线 5.1/8.6 填不进去）。< 0.05 mm 按裸露（NaN）。
+            lc.TabInsul3dmPerPlateMm = _tabIns.Select(n => (double)n.Value >= 0.05 ? (double)n.Value : double.NaN).ToArray();
             if (_levels is not null) lc.LevelThicknessMm = _levels;
             if (_levelScale is not null) lc.LevelScale = _levelScale;
 
@@ -2629,8 +2748,10 @@ public sealed class LineDesignPage : TabPage
                     TabArmThicknessMm = arm3 ? sh3.TabRootThickMm : double.NaN,
                     WeldFilletLegMm = Math.Max(tMax, (double)_wall.Value),
                 };
-                // 四片同图 ⇒ 四片同形。逐片各选各的 .3dm 时这里要跟着改。
-                lc.GeomForJudge = new[] { eq, eq, eq, eq };
+                // ★ R47 B（2026-09-13）：**逐片**（长度 = 片数，与 _file3dm 同长），LineRunner 按 GeomForJudge[j] 取本片的
+                //   保温分界／舌盘分界。本页只分析入口那张图（R33：各片同一张图）⇒ 只有一份，复制到每一片；
+                //   哪天逐片各分析各的图，这里按片下标各放各的即可。此前写死 4 份，段数 ≠ 3 时长度就对不上。
+                lc.GeomForJudge = Enumerable.Repeat(eq, Math.Max(1, files.Length)).ToArray();
             }
         }
         return lc;
@@ -2755,6 +2876,17 @@ public sealed class LineDesignPage : TabPage
             ShowDerived(d);
         }
         catch (Exception ex) { _status.Text = "舌片厚算不出：" + ex.Message; }
+        // ★ R47 第三轮 N5（2026-09-13）：**图纸模式下 _tPlate 是厚度倍数 k，不是板厚** —— 此前照样写进 TabThickMm，
+        //   另存出来的图纸档读回就是一片「板厚 1.00」的解析板。现在 k 存 ThicknessScale（逐片）、TabThickMm 写 NaN，
+        //   几何来源当场盖上（IsDrawingRecord 由它判：BuildCase／加密复算／说明书读到就拒绝造解析板）。
+        //   放在舌片厚闭式之后：那几行只读显示照旧（图纸模式下舌片厚由图纸给，显示只作对照）。
+        StampGeomSource(d);
+        if (!_srcAnalytic.Checked)
+        {
+            d.ThicknessScale = _tPlate.Select(n => (double)n.Value).ToArray();
+            for (int i = 0; i < d.TabThickMm.Length; i++) d.TabThickMm[i] = double.NaN;
+        }
+        else d.ThicknessScale = Array.Empty<double>();
         return d;
     }
 
@@ -2769,6 +2901,8 @@ public sealed class LineDesignPage : TabPage
                 // NaN = 与基板同厚（早于 R11 的记录）⇒ 显示基板厚，别让框里留着旧数
                 double v = double.IsNaN(d.TongueThickMm[i])
                     ? (i < d.TabThickMm.Length ? d.TabThickMm[i] : 0) : d.TongueThickMm[i];
+                // R47 第三轮 N5：图纸档的板厚栏是 NaN（舌片厚由图纸给）—— 没有数就不动只读框，(decimal)NaN 会当场炸
+                if (double.IsNaN(v)) continue;
                 _tongue[i].Value = Math.Clamp((decimal)v, _tongue[i].Minimum, _tongue[i].Maximum);
                 if (i < _tongueArm.Length)   // R35：叉臂只读标签
                     _tongueArm[i].Text = d.HasTabArm(i) ? $"{d.TabArmThickMm[i]:0.00} mm × [{d.TabArmX0Mm[i]:0}, {d.TabArmX1Mm[i]:0}]" : "—";
@@ -3483,7 +3617,14 @@ public sealed class LineDesignPage : TabPage
     /// > 0 = 第二遍直接在这张细网格上重新求根（<see cref="FineResolveAsync"/> 专用入口，
     /// 治「加密复算发现导航网格上过、细网格上不过」那个状态）。
     /// </param>
-    private async Task RunAsync(bool autoSize, bool byTimer = false, double fineMm = 0)
+    /// <summary>
+    /// ★ R47 C（2026-09-13）：图纸路径「细网格重解」的网格口径（中带 h／中带半径／内带 h／内带半径），
+    /// 由 <see cref="FineResolveAsync"/> 从 MeshVerify.RequiredMeshFor(Shape) 与加密复算收敛那一档取，
+    /// 经 <see cref="FlangeAutoSizer.Options.FinalMeshFineMm"/> 那组真传给 SolveByLevel。解析路径不用它（fineMm 那条走 Solver）。
+    /// </summary>
+    internal sealed record FineMesh3dm(double MidMm, double RadiusMm, double InnerMm, double InnerRadiusMm);
+
+    private async Task RunAsync(bool autoSize, bool byTimer = false, double fineMm = 0, FineMesh3dm? fine3dm = null)
     {
         if (_cts is not null) { _cts.Cancel(); return; }        // 再点一次 = 取消
         _cts = new CancellationTokenSource();
@@ -3597,8 +3738,17 @@ public sealed class LineDesignPage : TabPage
                         bool par = _surrTabParallel;
                         mkLevel = th => AnalyticSurrogate.Build(shp, th, par);
                     }
+                    // ★ R47 C（2026-09-13）：细网格重解时把网格口径**真传进去**（Options 的「终局细网格」四项，
+                    //   与搜索期放粗 SearchMeshFineMm 分开）。此前 fineMm 在本分支根本没用上，实际仍在 2 mm 导航网格上再跑一次。
+                    var optLv = new FlangeAutoSizer.Options();
+                    if (fine3dm is not null)
+                    {
+                        optLv.FinalMeshFineMm = fine3dm.MidMm; optLv.FinalMeshFineRadiusMm = fine3dm.RadiusMm;
+                        optLv.FinalMeshInnerMm = fine3dm.InnerMm; optLv.FinalMeshInnerRadiusMm = fine3dm.InnerRadiusMm;
+                        _out.AppendText($"   网格口径：中带 {fine3dm.MidMm:0.000} mm（半径 {fine3dm.RadiusMm:0.0}）／内带 {fine3dm.InnerMm:0.000} mm（半径 {fine3dm.InnerRadiusMm:0.0}）—— 搜索各轮与全精度复核都在这张网格上" + Environment.NewLine);
+                    }
                     var r = await Task.Run(() => FlangeAutoSizer.SolveByLevel(
-                        lc, lvl, new FlangeAutoSizer.Options(), prog, ct, 6, lockMask, mkLevel), ct);
+                        lc, lvl, optLv, prog, ct, 6, lockMask, mkLevel), ct);
                     _levelScale = r.LevelScale;
                     // ★★★ 结构性停机 = **不可行的证明**，与解析路的 HitBound 同一个语义。
                     //   不接这一位，指路会继续指「自动定厚」，而再点一次是同一句话 ——
@@ -3957,20 +4107,42 @@ public sealed class LineDesignPage : TabPage
             return;
         }
 
-        var d = PageToDesignSpec();
+        // ★★★★★ R47 C（2026-09-13）：**.3dm 模式不许再用 PageToDesignSpec 造解析板去复核**。
+        //   此前每档 d.BuildCase 填 FlangePlates ⇒ 走解析路，用禁用控件的残值、把「厚度标度 k」当板厚造一片解析法兰
+        //   复核，收敛后还把判据表换成它 —— 验的是另一个零件（工单 §1 C，「看起来正常的错数」）。
+        //   现在：图纸模式由 BuildCase() 造走图纸路径的 LineCase（FlangePlates 为空、FlangeFile3dm 非空、逐片舌保温），
+        //   经 MeshVerify 的工厂重载逐档加密（内带减半，厚度场栅格步由 LineRunner 按网格自己收）；
+        //   起始网格从图纸的特征尺寸取（RequiredMeshFor(Shape)），取不到就拒答、不抛。
+        bool drawing = !_srcAnalytic.Checked;
+        DesignSpec d = drawing ? null! : PageToDesignSpec();   // 图纸模式不造解析板（null!：下面只在 !drawing 那一支读它）
+        Func<double, double, LineCase>? factory3dm = null;
+        if (drawing)
+        {
+            var (f, refusedWhy) = VerifyFactory3dm();
+            if (f is null)
+            {
+                _out.AppendText(Environment.NewLine + "⚠ " + refusedWhy + Environment.NewLine);
+                return;
+            }
+            factory3dm = f;
+        }
         var snapAtStart = CurrentSnap();
         _cts = new CancellationTokenSource();
         _btnVerify.Text = "取消";
         _btnRun.Enabled = _btnAuto.Enabled = false;
         Shared?.SetRunning(ChainId.C整线耦合, "加密复算");
         _out.AppendText(Environment.NewLine + "◆ **加密复算**开始 —— 把网格一档档加密，直到这个数不再变为止。" + Environment.NewLine
-            + "　　10～40 分钟。随时可点「取消」，已跑完的档照样留下。" + Environment.NewLine);
+            + "　　10～40 分钟。随时可点「取消」，已跑完的档照样留下。" + Environment.NewLine
+            + (drawing ? "　　图纸模式：复核用的就是这张图纸（厚度场），每档同时收内带网格与厚度场栅格步，不换零件。" + Environment.NewLine : ""));
 
         // 形态保持 `m => OnUi(() => _out.AppendText(…))`（MeshVerifyReachableTests 钉着回 UI 线程这件事）；R25 的状态条在 Tracked 里喂
         var prog = new Progress<string>(m => OnUi(() => _out.AppendText(Tracked(m))));
         try
         {
-            var res = await Task.Run(() => MeshVerify.Run(d, _base, progress: prog, cancel: _cts.Token),
+            var shape3 = _shape; double wall3 = (double)_wall.Value;
+            var res = await Task.Run(() => drawing
+                                        ? MeshVerify.Run(shape3!, wall3, factory3dm!, progress: prog, cancel: _cts.Token)
+                                        : MeshVerify.Run(d, _base, progress: prog, cancel: _cts.Token),
                                      _cts.Token);
             _meshVerify = res;
             _verifiedSnap = res.Converged ? snapAtStart : null;
@@ -4002,10 +4174,12 @@ public sealed class LineDesignPage : TabPage
             //   （而门也照样关着，见 GateSpec.RequireMeshVerified）。
             if (res.Converged && res.Line is { Ok: true })
             {
+                double navMm = _last.MeshFineMm;      // R47 复修 M12：说真实的导航网格尺寸，不写死 2 mm
                 _last = res.Line;
                 _out.AppendText(Environment.NewLine
                     + $"◆ 判据表已换成**加密复算后**（{res.FineMm:0.000} mm）的值 —— "
-                    + "此前显示的是导航网格（2 mm）上的数。" + Environment.NewLine);
+                    + $"此前显示的是导航网格（{navMm:0.###} mm）上的数。"
+                    + (drawing ? "复核走的是图纸路径（同一张厚度场），不是解析替身。" : "") + Environment.NewLine);
                 Show(_last);
             }
             _out.AppendText(Environment.NewLine + res.Verdict + Environment.NewLine);
@@ -4026,6 +4200,37 @@ public sealed class LineDesignPage : TabPage
             Shared?.SetRunning(null);
             PushFlow();
         }
+    }
+
+    /// <summary>
+    /// ★ R47 C（2026-09-13）：图纸模式加密复算用的**工厂** —— 每档 (中带 h, 内带 h) 从 <see cref="BuildCase"/> 造的
+    /// 走图纸路径的 LineCase 复制一份，只换网格四项；中带半径与内带半径从图纸的特征尺寸取
+    /// （<see cref="MeshVerify.RequiredMeshFor(PlateShapeAnalyzer.Shape, double, bool)"/>，与 Run(Shape, …) 里算 h0 的是同一处）。
+    /// 返回 (null, 原因) = 做不了：没分析过几何／图纸没分析出特征尺寸／BuildCase 抛（文件没填全）。原因写全名给工程师看。
+    /// 单独成方法是为了让走查能不跑整线解就验「复核用的 LineCase 走图纸路径」。
+    /// </summary>
+    internal (Func<double, double, LineCase>? Factory, string Why) VerifyFactory3dm()
+    {
+        if (_srcAnalytic.Checked) return (null, "解析模式不走这条：解析设计由 MeshVerify.Run(DesignSpec, …) 复核。");
+        if (_shape is not { } sh)
+            return (null, "图纸模式下加密复算要先点「分析几何变数」—— 起始网格从图纸的特征尺寸（环宽、各级径向宽）算，没分析过就取不到。");
+        double wall = (double)_wall.Value;
+        var (_, radius, innerR, refused) = MeshVerify.RequiredMeshFor(sh, wall);
+        if (refused is not null) return (null, refused);
+        LineCase lc0;
+        try { lc0 = BuildCase(); }
+        catch (Exception ex) { return (null, "图纸模式下造不出算例：" + ex.Message); }
+        if (lc0.FlangePlates.Length > 0 || lc0.FlangeFile3dm.Length == 0)
+            return (null, "图纸模式下 BuildCase 造出来的不是图纸路径的算例（FlangePlates 非空或没有 .3dm）—— 这是程序错，不复核。");
+        return ((hMid, hInner) =>
+        {
+            var lc = FlangeAutoSizer.CloneCase(lc0);
+            lc.MeshFineMm = hMid;            // 中带：固定在特征尺寸
+            lc.MeshFineRadiusMm = radius;
+            lc.MeshInnerMm = hInner;         // 内带：逐档减半的就是它；厚度场栅格步由 LineRunner 按 min(步, 最细网格/4) 自己收
+            lc.MeshInnerRadiusMm = innerR;
+            return lc;
+        }, "");
     }
 
     /// <summary>
@@ -4065,7 +4270,34 @@ public sealed class LineDesignPage : TabPage
                 + "细网格重解要接着那一次的网格口径，没有它就无从谈起。" + Environment.NewLine);
             return;
         }
+        // ★ R47 复修 M7：复核对应的快照必须就是现在这组（含几何来源／图纸文件名）——切过模式就不是同一个零件的口径
+        if (!Equals(_verifiedSnap, CurrentSnap()))
+        {
+            _out.AppendText(Environment.NewLine
+                + "⚠ 参数（含法兰几何来源／图纸文件）在上次「◆ 加密复算」之后又动过了 —— 那次复核的网格口径不是现在这组的。"
+                + "先点「核算整线」，再点「◆ 加密复算」。" + Environment.NewLine);
+            return;
+        }
 
+        // ★ R47 C（2026-09-13）：图纸模式的网格口径从图纸的特征尺寸取（与加密复算同一处），内带用复核收敛那一档，
+        //   经 FineMesh3dm 真传给 SolveByLevel（Options 终局细网格）。此前这里一律 PageToDesignSpec ⇒ .3dm 模式用的是
+        //   禁用控件残值造的解析板算的 fineMm，而且 RunAsync 的 .3dm 分支根本没用它。
+        if (!_srcAnalytic.Checked)
+        {
+            if (_shape is not { } sh)
+            {
+                _out.AppendText(Environment.NewLine + "⚠ 图纸模式下细网格重解要先点「分析几何变数」—— 网格口径从图纸的特征尺寸算。" + Environment.NewLine);
+                return;
+            }
+            var (h0, radius, innerR, refused) = MeshVerify.RequiredMeshFor(sh, (double)_wall.Value);
+            if (refused is not null) { _out.AppendText(Environment.NewLine + "⚠ " + refused + Environment.NewLine); return; }
+            double innerH = _meshVerify.FineMm > 0 ? _meshVerify.FineMm : h0;
+            _out.AppendText(Environment.NewLine
+                + $"◆ 细网格重解（图纸路径）：加密复算在内带 {innerH:0.000} mm／中带 {h0:0.000} mm 上判据不过 ⇒ 在这张网格上重新求根"
+                + Environment.NewLine);
+            await RunAsync(autoSize: true, fine3dm: new FineMesh3dm(h0, radius, innerH, innerR));
+            return;
+        }
         var d = PageToDesignSpec();
         var (fineMm, _) = MeshVerify.RequiredMeshFor(d);
         _out.AppendText(Environment.NewLine
@@ -4124,6 +4356,7 @@ public sealed class LineDesignPage : TabPage
                                    Margin = new Padding(0, 2, 2, 2) };
             if (keep.TryGetValue(names[i], out var old)) tb.Text = old;
             new ToolTip().SetToolTip(tb, "点右边「…」选 .3dm 文件");
+            tb.TextChanged += (_, _) => InvalidateShapeIfDrawingChanged();   // R47 第三轮 N7：文件框改字 = 换图纸
             _file3dm[idx] = tb;
 
             // ⚠ 这一行**必须按列宽自适应**，不能用「固定宽文本框 + 固定宽按钮」硬拼
@@ -4241,7 +4474,7 @@ public sealed class LineDesignPage : TabPage
             _holeR[i].Value   = (decimal)Math.Clamp(vH[i],  (double)_holeR[i].Minimum,   (double)_holeR[i].Maximum);
         }
 
-        void Head(string t)
+        Label Head(string t)
         {
             var l = new Label
             {
@@ -4266,6 +4499,7 @@ public sealed class LineDesignPage : TabPage
             _plateBox.Controls.Add(l); _plateBox.SetColumnSpan(l, 2);
             Fit();
             if (_plateBox.Parent is { } p0) p0.SizeChanged += (_, _) => Fit();
+            return l;
         }
         void Row(string label, Control c, string? tip = null)
         {
@@ -4273,7 +4507,7 @@ public sealed class LineDesignPage : TabPage
             { Text = label, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 4, 0) };
             // ⚠ 提示语里装着**实测**（单调性、随形状变号、每克铂买到的裕度）——
             //   2026-09-02 我重建这一区时把它们整段删掉过一次，那是把已经落进 APP 的知识又弄丢。
-            if (tip is not null) new ToolTip().SetToolTip(l, tip);
+            if (tip is not null) new ToolTip().SetToolTip(l, TextFmt.Strip(tip));   // R47 第三轮 N6：ToolTip 没有富文本，** 要剥掉
             _plateBox.Controls.Add(l);
             _plateBox.Controls.Add(c);
             // R35：登记「这是第几片的哪一行」，段改名时按登记换字，不按位置猜
@@ -4328,7 +4562,8 @@ public sealed class LineDesignPage : TabPage
             "　**r₁ / r₂ 不是**求解器旋钮：t₁ = t₂ = 1.00 时台阶根本不存在，挪半径无效。" + Environment.NewLine +
             "　要让它们有意义，先把 t₁ 或 t₂ 抬离 1.00。";
 
-        Head($"法兰厚度 mm（{n} 片＝{n - 1} 段＋1；可点「自动定厚」求解）");
+        // R47 复修 M12：标题按几何来源切（.3dm 模式下这组框是厚度倍数 k，不是 mm）—— SyncGeomSource 切模式时改字
+        _tPlateHead = Head(PlateHeadText(_srcAnalytic.Checked));
         for (int i = 0; i < n; i++) Row(names[i], _tPlate[i], tipPlate);
         // ★★★★★ R11（用户 2026-09-08）：舌片厚**不是旋钮**，只显示 —— 改舌宽/开孔/工况它才变，改圆盘板厚它不变
         Head("舌片厚 mm（算出来的，不是旋钮）");
@@ -5109,7 +5344,7 @@ public sealed class LineDesignPage : TabPage
         if (!_srcAnalytic.Checked)
         {
             MessageBox.Show(this,
-                "本命令导出的是**解析几何**。当前是 Rhino .3dm 模式 —— 图纸本来就在你手上，"
+                "本命令导出的是解析几何。当前是 Rhino .3dm 模式 —— 图纸本来就在你手上，"   // R47 第三轮 N6：MessageBox 没有富文本
                 + Environment.NewLine + "要改厚度请用「自动定厚」之后的逐级出图。",
                 "导出可回读 3DM", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
@@ -5318,6 +5553,7 @@ public sealed class LineDesignPage : TabPage
             var f = Geometry3dm.LoadThickness(src, _layer3dm.Text.Trim(), double.NaN, 0.5);
             var sh = PlateShapeAnalyzer.Analyze(f);
             _shape = sh;
+            _shapeKey = DrawingKeyNow();      // R47 第三轮 N7：记下这份分析是对哪张图、哪个图层量的
             Shared?.Notify();
             // 四片先按同一张图的分级；各片可各自选不同 .3dm 时逐片解析亦可
             var lv = sh.Levels.Select(l => l.ThicknessMm).ToArray();

@@ -4595,6 +4595,8 @@ internal static class Program
                 var gj = DesignSpec.Select(args);
                 Console.WriteLine("=== 单次判定（同一设计，只看判据）===");
                 Console.WriteLine($"用例：{gj.Name}");
+                // ★ R47 第三轮 N5：图纸档没有解析板 —— 明说、不算（BuildCase 也会拒，这里先说清楚再退出）
+                if (gj.IsDrawingRecord) { Console.WriteLine("✗ " + DesignSpec.DrawingRefusal); Environment.ExitCode = 1; return; }
                 Console.WriteLine("基线收敛口径："
                     + (p.BaselineTolAmplified ? "**与主环同口径**（真残差 × 放大 25）"
                                               : "**历史口径**（欠松弛步直接比容差）"));

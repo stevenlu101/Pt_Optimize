@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -128,9 +128,45 @@ public static class MeshVerify
         var feats = weldAsGeometricFeature
                   ? new[] { d.TabFilletMm, d.RingWidthMm, weldLeg }
                   : new[] { d.TabFilletMm, d.RingWidthMm };
-        return (MeshAdapt.RequiredFineMm(feats),
+        return (FineFromFeatures(feats),
                 MeshAdapt.RequiredFineRadiusMm(
                     new[] { d.DiscRadiusMm, Math.Abs(d.TabLengthMm) * 0.35 }, d.HoleRadiusMm));
+    }
+
+    /// <summary>「特征尺寸 → 网格尺寸」只有这一处（解析设计与图纸路径共用）：最小特征 ÷ 每特征格数。</summary>
+    private static double FineFromFeatures(IEnumerable<double> featureSizesMm) => MeshAdapt.RequiredFineMm(featureSizesMm);
+
+    /// <summary>
+    /// ★ R47 C（2026-09-13）：**图纸路径**的「这个几何要多细的网格」—— 特征尺寸从 <see cref="PlateShapeAnalyzer"/>
+    /// 的分级取（各级的环宽、槽的径向宽；焊脚可选 = max(最厚一级, 管壁)），不再拿解析设计的圆角／环宽去猜图纸。
+    /// 取不到（图纸没分析出任何一级）就**拒答**：返回 Refused 非空，调用方把它原样写进结果，不抛。
+    /// 病：此前 .3dm 模式的加密复算拿 PageToDesignSpec 造的解析板复核 —— 验的是另一个零件。
+    /// </summary>
+    public static (double FineMm, double RadiusMm, double InnerRadiusMm, string? Refused)
+        RequiredMeshFor(PlateShapeAnalyzer.Shape sh, double wallMm, bool weldAsGeometricFeature = false)
+    {
+        if (sh is null) throw new ArgumentNullException(nameof(sh));
+        var feats = new List<double>();
+        // 环宽（盘半径 − 孔半径）：与解析设计的 RingWidthMm 同一个量，是圆盘上最小的几何特征之一
+        if (sh.HoleRadiusMm > 0 && sh.DiscRadiusMm > sh.HoleRadiusMm + 1e-9) feats.Add(sh.DiscRadiusMm - sh.HoleRadiusMm);
+        // 各级的径向宽：**只取宽于 3 个栅格步的级** —— 分析器按 0.011 mm 聚类厚度，焊缝的凹圆弧、倒角这类
+        //   连续过渡会被切成几十条发丝级「级」（实测 0.006 mm 宽 ⇒ 起始网格 0.002 mm，直接把内存吃光）；
+        //   窄于 3 格的级本来就在栅格的分辨能力之下，不是图纸上的设计特征。
+        double floorW = double.IsNaN(sh.StepMm) || sh.StepMm <= 0 ? 0 : 3.0 * sh.StepMm;
+        foreach (var lv in sh.Levels)
+            if (lv.RInnerMm < double.MaxValue && lv.ROuterMm - lv.RInnerMm >= Math.Max(floorW, 1e-9)) feats.Add(lv.ROuterMm - lv.RInnerMm);
+        if (sh.Slot.Found && sh.Slot.ROuterMm > sh.Slot.RInnerMm + 1e-9) feats.Add(sh.Slot.ROuterMm - sh.Slot.RInnerMm);
+        double tMax = sh.Levels.Count > 0 ? sh.Levels.Max(l => l.ThicknessMm) : 0;
+        double weldLeg = Math.Max(tMax, wallMm);
+        if (weldAsGeometricFeature && weldLeg > 1e-9) feats.Add(weldLeg);
+        if (feats.Count == 0 || !(sh.HoleRadiusMm > 0))
+            return (double.NaN, double.NaN, double.NaN,
+                    "图纸没分析出特征尺寸（没有厚度分级或没有管孔），加密复算不能判 —— 请先做「分析几何变数」并确认图层里有这片法兰。");
+        double fine = FineFromFeatures(feats);
+        double tabLen = double.IsNaN(sh.TabEndXMm) ? 0 : Math.Abs(sh.TabEndXMm);
+        double radius = MeshAdapt.RequiredFineRadiusMm(new[] { sh.DiscRadiusMm, tabLen * 0.35 }, sh.HoleRadiusMm);
+        double innerR = MeshAdapt.InnerRadiusFor(sh.HoleRadiusMm, weldLeg);
+        return (fine, radius, innerR, null);
     }
 
     public static Result Run(DesignSpec d, DesignInputs baseIn,
@@ -140,10 +176,71 @@ public static class MeshVerify
                              CancellationToken cancel = default)
     {
         if (d is null) throw new ArgumentNullException(nameof(d));
+        // ★ R47 第三轮 N5（2026-09-13）：图纸档没有解析板 —— 拒答、不抛、不算（Converged=false，Verdict 原句）。
+        if (d.IsDrawingRecord)
+        {
+            var refused = new Result { Converged = false, Verdict = DesignSpec.DrawingRefusal + $"（档「{d.Name}」）" };
+            progress?.Report("⚠ " + refused.Verdict);
+            return refused;
+        }
+        var (h0, radius) = RequiredMeshFor(d, weldAsGeometricFeature);
+        double weldLegV = Math.Max(d.TabThickMm.Max(), d.WallMm);
+        double innerR = MeshAdapt.InnerRadiusFor(d.HoleRadiusMm, weldLegV);
+        // ★ R47 C（2026-09-13）：每档造 LineCase 的活抽成工厂，本重载只负责「解析设计怎么造」。
+        //   .3dm 模式由页面把自己的 LineCase（FlangePlates 为空、FlangeFile3dm 非空）交给下面那个工厂重载，
+        //   不再拿 PageToDesignSpec 造的解析板去复核另一个零件。
+        return Run((hMid, hInner) =>
+        {
+            var lc = d.BuildCase(baseIn, checkRamp: true);
+            lc.MeshFineMm = hMid;                 // 中带：固定在特征尺寸
+            lc.MeshFineRadiusMm = radius;
+            lc.MeshInnerMm = hInner;              // 内带：逐档减半的就是它
+            lc.MeshInnerRadiusMm = innerR;
+            return lc;
+        }, h0, radius, innerR, maxCells, maxRounds, progress, cancel);
+    }
+
+    /// <summary>
+    /// ★ R47 C（2026-09-13）：图纸路径的复核入口 —— 特征尺寸从分析结果取（<see cref="RequiredMeshFor(PlateShapeAnalyzer.Shape,double,bool)"/>），
+    /// 取不到就拒答（Result.Verdict 写清楚、Converged=false，不抛）。<paramref name="caseFactory"/> 由调用方给：
+    /// 每档 (中带 h, 内带 h) 造一个走图纸路径的 LineCase（FlangePlates 为空、FlangeFile3dm 或 FlangeFields 非空），
+    /// 栅格步长由 LineRunner 按网格自己收（min(ThicknessStepMm, h/4)）。
+    /// </summary>
+    public static Result Run(PlateShapeAnalyzer.Shape shape, double wallMm,
+                             Func<double, double, LineCase> caseFactory,
+                             int maxCells = 40000, int maxRounds = 6,
+                             bool weldAsGeometricFeature = false,
+                             IProgress<string>? progress = null,
+                             CancellationToken cancel = default)
+    {
+        var (h0, radius, innerR, refused) = RequiredMeshFor(shape, wallMm, weldAsGeometricFeature);
+        if (refused is not null)
+        {
+            var r0 = new Result { Verdict = "✗ " + refused + "　⇒ **不能说这个设计过了**", Converged = false };
+            progress?.Report(r0.Verdict);
+            return r0;
+        }
+        return Run(caseFactory, h0, radius, innerR, maxCells, maxRounds, progress, cancel);
+    }
+
+    /// <summary>
+    /// ★ R47 C（2026-09-13）：**工厂重载** —— 逐档加密的主循环。<paramref name="caseFactory"/>(中带 h, 内带 h) 每档造一个 LineCase；
+    /// 解析设计与图纸路径共用这一段，差别只在工厂怎么造。
+    /// </summary>
+    /// <param name="h0">起始网格 mm（由几何特征算出，不是挑的数）。</param>
+    /// <param name="radius">中带（细化）半径 mm。</param>
+    /// <param name="innerR">内带半径 mm。</param>
+    public static Result Run(Func<double, double, LineCase> caseFactory,
+                             double h0, double radius, double innerR,
+                             int maxCells = 40000, int maxRounds = 6,
+                             IProgress<string>? progress = null,
+                             CancellationToken cancel = default)
+    {
+        if (caseFactory is null) throw new ArgumentNullException(nameof(caseFactory));
+        if (!(h0 > 0)) throw new ArgumentOutOfRangeException(nameof(h0), "起始网格必须为正");
         var res = new Result();
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
-        var (h0, radius) = RequiredMeshFor(d, weldAsGeometricFeature);
         // ★★ 按特征分区（A⑭，2026-08-29）：**只加密内带**。
         //   此前是把「按最小特征（焊脚）定的极细尺寸」铺满「按最大特征（盘径/舌长）定的大区域」，
         //   每加密一档单元数 ×4 —— 0.6 档实测收到 0.146 mm 时约 8 万单元，
@@ -151,8 +248,6 @@ public static class MeshVerify
         //   现在：中带（盘 + 舌根）固定在特征尺寸 h0 上；内带（孔 + 焊脚那一圈）逐档减半。
         //   ⚠ 这么做的合法性由**本循环自己**检验：判据不再变才算网格无关；
         //     并在收敛后**额外做一次「中带也加密」的确认**（见下面 confirm）。
-        double weldLegV = Math.Max(d.TabThickMm.Max(), d.WallMm);
-        double innerR = MeshAdapt.InnerRadiusFor(d.HoleRadiusMm, weldLegV);
         double hMid = h0;
         double h = h0;
 
@@ -198,11 +293,8 @@ public static class MeshVerify
                     + $" ⇒ 本档估 **~{ThrottledProgress.Fmt(TimeSpan.FromSeconds(lastT.Sec * grow))}**）";
             }
             progress?.Report($"加密复算：{h:0.000} mm（第 {it + 1} 档）{eta}…");
-            var lc = d.BuildCase(baseIn, checkRamp: true);
-            lc.MeshFineMm = hMid;                 // 中带：固定在特征尺寸
-            lc.MeshFineRadiusMm = radius;
-            lc.MeshInnerMm = h;                   // 内带：逐档减半的就是它
-            lc.MeshInnerRadiusMm = innerR;
+            var lc = caseFactory(hMid, h);        // 中带固定在特征尺寸；内带逐档减半的就是 h
+            if (lc is null) throw new InvalidOperationException("加密复算：工厂没造出 LineCase");
             var swOne = System.Diagnostics.Stopwatch.StartNew();
             // ★ 内层**一直在报**（外层耦合 n/600、段 i/n），此前这里传 null 把它全扔了。
             //   限流转发：内层一秒可能报几十条，全转会把日志淡掉（淡掉 = 等于没报）。
@@ -282,11 +374,7 @@ public static class MeshVerify
                 string floorC = ThrottledProgress.Fmt(TimeSpan.FromSeconds(res.Trace[^1].Sec));
                 progress?.Report($"中带确认：把中带 {hMid:0.000} → {hMid * 0.5:0.000} mm 再算一次，看判据动不动"
                     + $"（单元只增不减 ⇒ **至少 {floorC}**；这是下界，不是估计）…");
-                var lcC = d.BuildCase(baseIn, checkRamp: true);
-                lcC.MeshFineMm = hMid * 0.5;
-                lcC.MeshFineRadiusMm = radius;
-                lcC.MeshInnerMm = res.FineMm;
-                lcC.MeshInnerRadiusMm = innerR;
+                var lcC = caseFactory(hMid * 0.5, res.FineMm);   // 中带减半、内带留在收敛那一档
                 // ★★ 此前这里传 null，内层进度被**整个扔掉**。2026-08-29 实测：
                 //   0.6 档细阶梯跑到这一步，日志**静默 29 分钟**没有一行输出 ——
                 //   正是用户点名的那个病（「跑这么长时间…容易误认死机」）。

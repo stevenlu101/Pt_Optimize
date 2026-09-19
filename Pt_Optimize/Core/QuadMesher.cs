@@ -125,13 +125,14 @@ public static class QuadMesher
 
         m.BuildFaces(mid =>
         {
-            double r = Math.Sqrt(mid.X * mid.X + mid.Z * mid.Z);
-            if (Math.Abs(r - g.HoleRadiusMm) < 3.0) return ShellMesh.TagHole;
+            // R47 F（2026-09-13）：管孔判定与 Build／BuildFromField 共用同一份（FlangeMesher.IsHoleFace）
+            if (FlangeMesher.IsHoleFace(mid, g.HoleRadiusMm)) return ShellMesh.TagHole;
             if (g.TwoTabs
                 ? Math.Abs(mid.X) >= Math.Abs(g.TabTipXMm) - clampLenMm
                 : mid.X <= g.TabTipXMm + clampLenMm) return ShellMesh.TagTabEnd;
             return ShellMesh.TagFree;
         });
+        m.ComputeHoleTagDiagnostics(g.HoleRadiusMm);
         return m;
     }
 
