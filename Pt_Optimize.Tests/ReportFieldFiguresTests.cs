@@ -91,7 +91,8 @@ public class ReportFieldFiguresTests
             else log.AppendLine("  没有 Best（求解器没解出来）");
         }
 
-        string txt = Path.Combine(HandoverDoc.Root(), "deliverable", "场图_报告用_2026-09-11.txt");
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        string txt = DeliverableOut.Stamped("场图_报告用_2026-09-11.txt");
         File.WriteAllText(txt, log.ToString(), new UTF8Encoding(false));
         Assert.True(Directory.GetFiles(FigDir, "field_*.png").Length >= 6, "场图没存够");
     }

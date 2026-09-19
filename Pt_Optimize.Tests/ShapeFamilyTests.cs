@@ -348,9 +348,8 @@ public class ShapeFamilyTests
         });
         sw.Stop();
         // 轨迹落档（deliverable/形状族_求解轨迹.txt）：控制台那份会被代码页搅成乱码，档案才是留痕
-        string outDir = Path.Combine(HandoverDoc.Root(), "deliverable");
-        Directory.CreateDirectory(outDir);
-        File.WriteAllText(Path.Combine(outDir, "形状族_求解轨迹.txt"),
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        File.WriteAllText(DeliverableOut.Stamped("形状族_求解轨迹.txt"),
             $"═══ 形状族比价：求解器轨迹（{d.Name}，2 段 3 片，导航网格，MaxRounds=1）═══\n"
           + $"求解 {sw.Elapsed.TotalMinutes:0.0} 分钟，场解 {sr.Solves} 次，可行={sr.Feasible}，停因：{sr.StopWhy}\n\n"
           + string.Join("\n", sr.Trace) + "\n", new System.Text.UTF8Encoding(false));
@@ -416,7 +415,9 @@ public class ShapeFamilyTests
         d.TabHoleSides[j0] = stray;
 
         var lc = d.BuildCase(p, checkRamp: false);
-        double dipMax = lc.RootDeltaMaxK, discMax = lc.DiscOverTempMaxK;
+        // R48 B（2026-09-14 Opus 5）：有意改动 —— 求解器的冷侧／热侧换成热偶读数基准，旧判法 FlangeDip 已没有逐片裕度（PlateSlack 传进去会抛）⇒ 键与限值一起换。
+        //   ⚠ 本条是慢测试，本路没跑；「起点就违反」的前提（下面 before &lt; 0）是旧判法上验过的，新判法上待慢跑确认。
+        double coldMax = lc.ColdUnderTcMaxK, hotMax = lc.HotOverTcMaxK;
 
         var chooseKnob = typeof(Solver).GetMethod("ChooseKnob", BindingFlags.NonPublic | BindingFlags.Static);
         Assert.NotNull(chooseKnob);
@@ -425,7 +426,7 @@ public class ShapeFamilyTests
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var args = new object?[]
         {
-            d, p, o, j0, knobs, LineResult.Key.FlangeDip, dipMax, discMax, res,
+            d, p, o, j0, knobs, LineResult.Key.ColdUnderTc, coldMax, hotMax, res,
             (Action<string>)(s => { log.Add(s); }), CancellationToken.None, null,
         };
         object? raw;
@@ -439,9 +440,8 @@ public class ShapeFamilyTests
         Assert.NotNull(raw);
         var (winner, why, before, after, shape0) = ((Solver.Knob?, string, double, double, int))raw!;
         int shapeAfter = d.TabHoleSidesOf(j0);
-        string outDir = Path.Combine(HandoverDoc.Root(), "deliverable");
-        Directory.CreateDirectory(outDir);
-        File.WriteAllText(Path.Combine(outDir, "形状族没赢不落地_轨迹.txt"),
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        File.WriteAllText(DeliverableOut.Stamped("形状族没赢不落地_轨迹.txt"),
             $"═══ 形状族没赢就不落地（W08 起点，片{j0}，「舌保温」vs「孔径」，探前人为形状={stray}，{sw.Elapsed.TotalSeconds:0.0} s）═══\n"
           + $"赢家={winner}　why={why}　before={before:0.###}　after={after:0.###}　"
           + $"ChooseKnob 返回的 Shape0={shape0}　调用后 d 里的形状={shapeAfter}\n\n"

@@ -179,4 +179,16 @@ public static class ShapeSearchPlan
     public static List<(double R, double HalfW, bool Taper)> Worth(
         IEnumerable<(double R, double HalfW, bool Taper)> cand, ISet<string> seen, double minDiscMm)
         => cand.Where(c => c.R > minDiscMm && c.HalfW > 1 && seen.Add(Key(c.R, c.HalfW, c.Taper))).ToList();
+
+    /// <summary>
+    /// ★★ 2026-09-15 Opus 5（J 路，合并把关待办 P1-6）：粗筛胜出形状**精算之后**的结论 —— 能不能叫「最轻的全过形状」、能不能写回页面控件。
+    /// 唯一口径 = 精算那次 Solver.Solve 的 Feasible（= 终局复核 AllOk）。此前「搜形状」不看它：精算没过照样印「最轻的全过形状」、照样把盘径／舌宽／板厚写回控件，
+    /// 而这正是工程师读来决定形状的那一行。选「不写回」而不是「写回但标不可行」：写回会把一个没过的设计放到页面上当起点，下一步「核算整线」照着它算，
+    /// 容易被读成搜形状给的答案；不写回时它仍在「搜形状结果」下拉里（粗筛那一行），要看就选它。
+    /// </summary>
+    public static (bool WriteBack, string Headline) RefineVerdict(bool feasible, string stopWhy, string famPrefix)
+        => feasible
+            ? (true, $"★ {famPrefix}最轻的全过形状")
+            : (false, $"✗ {famPrefix}粗筛里最轻的那个形状，精算**没有全过**（{(string.IsNullOrWhiteSpace(stopWhy) ? "没有给出停机原因" : stopWhy.Replace("**", ""))}）"
+                      + " ⇒ 这一族**没有全过的形状**，页面不写回；粗筛那一行仍在「搜形状结果」下拉里，要看判据表就选它。");
 }

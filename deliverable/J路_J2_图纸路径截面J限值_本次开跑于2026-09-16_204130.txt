@@ -1,0 +1,16 @@
+#证据头 v1
+# 标题：J 路实验：J2_图纸路径截面J限值
+# git HEAD：0a15af83b9bff1f530f8e2b80ff8b9819d00d5b9
+# Core 改动指纹（Pt_Optimize/Core 相对 HEAD 的改动与未跟踪文件，SHA1）：72e09e0586c1021866abe1f91d614f83a350540c
+# 探针源码指纹（调用方源文件，SHA1）：Pt_Optimize.Tests/R48J_ExperimentProbeTests.cs 0bd2fcd09e91a9fb40b4847a7c5db73ae3624aed
+# 耦合容差：不适用（单片、管侧固定）
+# 共用片抽热：不适用
+# 工况：不适用
+#证据头结束
+[    0.1 s] 开跑 2026-09-16 20:41:30　出处：Pt_Optimize.Tests/R48J_ExperimentProbeTests.cs
+[    1.0 s] (a) 界面图纸模式、J 控件 = 8：LineDesignPage.BuildCase() 造出的算例 FlangeFile3dm 4 份、FlangePlates 0 份，JDesignAPerMm2 = 8 ⇒ 判据限值 SectionSizing.JCheckOf = 9
+[    1.1 s] (b) FlangeAutoSizer.CloneCase 没带过去的字段（只试了 double／int／bool／string／double[] 型）0 个：
+[    9.6 s] (c1) 图纸路径（内存厚度场，盘Ø56 一段），算例 J = 8 直接解：Ok=True　法兰截面 J 实际 9.993 限值 9 不过
+[    9.6 s] (c2) 同一算例经 FlangeAutoSizer.ApplyFinalMesh（内部 CloneCase，终局网格取同尺寸）：副本 JDesignAPerMm2 = 8
+[   18.1 s] (c2) 副本整线解：Ok=True　法兰截面 J 实际 9.993 限值 9 不过
+[   18.1 s] 完

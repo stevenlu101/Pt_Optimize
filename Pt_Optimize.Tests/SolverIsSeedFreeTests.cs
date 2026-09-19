@@ -85,8 +85,13 @@ public class SolverIsSeedFreeTests
         Assert.Contains("hi = mid;", s);
         Assert.Contains("lo = mid;", s);
         Assert.DoesNotContain("lo = hi;", s);          // 直接跳到上界 = 绕过求根
-        Assert.Contains("Math.Ceiling(hi / q - 1e-9) * q", s);
+        // ★ 2026-09-17 Opus 5：向上对齐那一行提成了唯一一份写法（Solver.SnapUpToGridMm）——
+        //   格子从 0.1 改到 0.5 时，四处手抄没有任何一道门守得住。钉的仍是**同一件事**：
+        //   解出的根向**上**落到图纸格，不是向下、也不是四舍五入。
+        Assert.Contains("SnapUpToGridMm(hi, q)", s);
+        Assert.Contains("Math.Ceiling(v / q - 1e-9) * q", s);   // 那一份写法自己必须是向上取整
         Assert.DoesNotContain("Math.Floor(hi", s);      // 向下取整会把判据舍掉
+        Assert.DoesNotContain("Math.Round(v / q", s);   // 四舍五入会把根舍到违反那一侧
     }
 
     /// <summary>
@@ -129,8 +134,10 @@ public class SolverIsSeedFreeTests
     {
         string s = Src("Solver.cs");
         Assert.Contains("return double.IsNaN(q) ? double.NaN : q;", s);            // ②′ 越大越好
-        Assert.Contains("discMax - over", s);                                       // ②″ 越小越好
-        Assert.Contains("dipMax - dip", s);                                         // ③  越小越好
+        // R48 B（2026-09-14 Opus 5）：有意改动 —— 热侧／冷侧换成热偶读数基准（ThermocoupleBasis），逐片裕度的写法随之改名；依据 Pt_Optimize/Core/Solver.cs 的 PlateSlack。
+        //   旧断言 "discMax - over" → 新 "hotMax - h"；旧 "dipMax - dip" → 新 "coldMax - cK"。方向不变：都是越小越好。
+        Assert.Contains("hotMax - h", s);                                           // ⑦ 热侧 越小越好
+        Assert.Contains("coldMax - cK", s);                                         // ⑧ 冷侧 越小越好
         Assert.Contains("须 > 0，限值就是 0", s);
     }
 
@@ -168,7 +175,8 @@ public class SolverIsSeedFreeTests
         //   ⇒ 敏感度矩阵的**作用**进了链路，而不是它的**结论**被抄成了顺序。
         // ★ 签名多带了一个 Shape0（审查欠账·低，2026-09-09：形状族探测选中的形状不该在没赢时也落地，
         //   胜出旋钮的探前形状要交给调用方，抬失败时退回去）——门只认方法还在，不认元组字段数。
-        Assert.Contains("private static (Knob? Knob, string Why, double Before, double After, int Shape0) ChooseKnob(", s);
+        // ★ R48 M（2026-09-18，Fable 5.1）：签名再多带一个 Need（这一点的认证误差，RaiseUntil 判「够不够细」要它）——门只认方法还在
+        Assert.Contains("private static (Knob? Knob, string Why, double Before, double After, int Shape0, double Need) ChooseKnob(", s);
         Assert.Contains("var pick = ChooseKnob(", s);
         // ★★★★★ 2026-09-08 改：原来钉的是「所有候选都不成立」这**句字面**。
         //   当天把它改准（「**法兰侧**候选都不成立…⇒ 下一根杠杆是盘径与舌半宽」）之后本条就红了 ——

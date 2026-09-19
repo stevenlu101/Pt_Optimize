@@ -69,8 +69,8 @@ public class LeverSurveyTests
                 first = false;
             }
         }
-        Directory.CreateDirectory(Path.Combine(HandoverDoc.Root(), "deliverable"));
-        File.WriteAllText(Path.Combine(HandoverDoc.Root(), "deliverable", "杠杆扫描_盘70舌70.txt"), sb.ToString());
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        File.WriteAllText(DeliverableOut.Stamped("杠杆扫描_盘70舌70.txt"), sb.ToString());
         Console.WriteLine(sb.ToString());
         Assert.True(sb.Length > 0);
     }

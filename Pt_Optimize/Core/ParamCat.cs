@@ -1,4 +1,4 @@
-namespace PtOptimize.Core;
+﻿namespace PtOptimize.Core;
 
 /// <summary>
 /// ★★★★★ **参数表分类名的唯一来源**（2026-09-03）。
@@ -20,6 +20,17 @@ namespace PtOptimize.Core;
 /// </summary>
 public static class ParamCat
 {
+    /// <summary>
+    /// ★★★★★ U 路（2026-09-18，Opus 5）：**温差预算与可行窗口** —— 判据的两条限值从写死改成工程师填。
+    ///
+    /// 用户 2026-09-17：「简单说：按半毫米一层缠，现在的判据下没有能造的设计……要你定一件事：冷侧那 5 度能不能放宽」，
+    /// 2026-09-18：「OK!了解了，请开工」。⇒ 冷侧「管根低于热偶读数」与热侧「最热铂高出热偶读数」的限值成为输入项，
+    /// 默认仍是 5 K（出处：用户 2026-09-14「圆盘区 5 K = 热偶 1100 °C 误差」）。
+    ///
+    /// ⚠ 编号用 <b>0</b>：1…9 已经排满，而这两项是「先定预算再谈设计」的东西，排在最前面正合次序。
+    /// </summary>
+    public const string 判据限值与窗口 = "0 判据限值与可行窗口";
+
     public const string 工艺条件 = "1 工艺条件";
     public const string 电气 = "2 电气";
     public const string 保温与表面 = "3 保温与表面";

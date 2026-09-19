@@ -1,0 +1,15 @@
+#证据头 v1
+# 标题：J 路实验：J6乙_一段两片找非空转算例
+# git HEAD：0a15af83b9bff1f530f8e2b80ff8b9819d00d5b9
+# Core 改动指纹（Pt_Optimize/Core 相对 HEAD 的改动与未跟踪文件，SHA1）：327dab4370f24bd98e7b4db33c242a6bbbb67ce0
+# 探针源码指纹（调用方源文件，SHA1）：Pt_Optimize.Tests/R48J_ExperimentProbeTests.cs 040f75f3eb9c062458cb7de7132f006d31df6b60
+# 耦合容差：不适用（单片、管侧固定）
+# 共用片抽热：不适用
+# 工况：不适用
+#证据头结束
+[    0.1 s] 开跑 2026-09-15 19:41:51　出处：Pt_Optimize.Tests/R48J_ExperimentProbeTests.cs
+[    7.2 s] 舌保温 0.3/0.3：Ok=True 7.1 s　入口 发热 953.27 W 裕度 10.7757　出口 发热 1240.69 W 裕度 8.2846
+[    9.3 s] 舌保温 0.3/8：Ok=False 2.1 s　入口 发热 952.04 W 裕度 10.2063　出口 发热 1836.77 W 裕度 2.9625
+[   11.7 s] 舌保温 8/0.3：Ok=False 2.5 s　入口 发热 1424.89 W 裕度 4.4814　出口 发热 1234.80 W 裕度 7.1105
+[   13.8 s] 舌保温 0.3/15：Ok=False 2.0 s　入口 发热 952.04 W 裕度 10.2063　出口 发热 1824.57 W 裕度 2.8472
+[   13.8 s] 完

@@ -64,8 +64,8 @@ public class SingleSolveCostTests
         sb.AppendLine("  单次 Eval 若本来就是几十秒，那 60 分钟的对帐预算**从来就不够**，");
         sb.AppendLine("  「超时」拦的是预算，不是退化 —— 预算该按实测重定，并且要打印实际耗时。");
 
-        Directory.CreateDirectory(Path.Combine(HandoverDoc.Root(), "deliverable"));
-        File.WriteAllText(Path.Combine(HandoverDoc.Root(), "deliverable", "对帐超时_单次成本.txt"),
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        File.WriteAllText(DeliverableOut.Stamped("对帐超时_单次成本.txt"),
                           sb.ToString());
         Console.WriteLine(sb.ToString());
         Assert.NotNull(r1);

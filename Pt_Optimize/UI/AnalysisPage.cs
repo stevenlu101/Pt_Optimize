@@ -131,7 +131,7 @@ public sealed class AnalysisPage : TabPage
     /// <summary>① 升温可达性：温控功率下升温是准静态的，「能不能到」＝「该温度的稳态工作点要多大电流」</summary>
     private string Gate1(CancellationToken ct)
     {
-        const double tTarget = RampScreen.TargetC;   // 目标温度也归 RampScreen，别在界面再写一个 1150
+        double tTarget = RampScreen.TargetC;   // 目标温度也归 RampScreen，别在界面再写一个 1150（2026-09-15 Opus 5（J 路）：RampScreen.TargetC 改读 LineCase.RampTargetC，不再是 const）
         var sb = new StringBuilder();
         sb.AppendLine("=== 升温可达性（管侧）===");
         sb.AppendLine($"目标 {tTarget:0} °C　空管口径（升温时管内无玻璃）");

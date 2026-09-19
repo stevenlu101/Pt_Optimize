@@ -19,8 +19,8 @@ public class ExportRecord3dmTests
     {
         var p = new DesignInputs();
         var d = DesignSpec.Builtin[0].Clone();
-        string dir = Path.Combine(HandoverDoc.Root(), "deliverable", "现役记录_3DM");
-        Directory.CreateDirectory(dir);
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）；出图目录同样带时刻（原 deliverable/现役记录_3DM 是说明书截图用的那份）
+        string dir = DeliverableOut.StampedDir("现役记录_3DM");
         string out3dm = Path.Combine(dir, "现役记录_整机.3dm");
         string echo = Geometry3dm.WriteFinal3dm(d, out3dm, tubeIdMm: 50.0, segLenMm: 300.0, segCount: d.FlangeCount - 1, baseIn: p);
         File.WriteAllText(Path.Combine(dir, "出图回显.txt"), "设计：" + d.Describe() + "\n" + echo, new UTF8Encoding(false));

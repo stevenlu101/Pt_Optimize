@@ -27,6 +27,12 @@ public sealed class MechResult
 
     public double SafetyFactor;
 
+    /// <summary>
+    /// ★ 2026-09-18，Opus 5：本次载荷是**带玻璃**（true，默认）还是**空管**（false，只有铂管自重、无液压）。
+    /// 印在判据说明里 —— 不写出来，读的人分不出这个利用率是哪一种载荷算的。
+    /// </summary>
+    public bool GlassInTube = true;
+
     // 许用应力与利用率（>1 = 超限）
     public double TubeAllowMPa, TabAllowMPa;
     public double TubeUtil, TabUtil;
@@ -38,14 +44,32 @@ public static class Mechanics
     /// <param name="glassHeadM">玻璃液柱高度 m（内压来源）</param>
     /// <param name="supportSpanMm">管的支承跨距 mm</param>
     /// <param name="sf">安全系数</param>
+    /// <summary>
+    /// R47 复修 M10：**只校核管**时的占位板 —— <see cref="Check"/> 的签名要一块板算舌片那几项，而 LineRunner 的 ④ 强度
+    /// 只读 TubeUtil／TubeAllowMPa（法兰不承重）。它不进任何法兰判定；图纸路径的保温分界那类**不许**再拿默认板。
+    /// </summary>
+    public static readonly FlangePlate TubeOnlyPlate = new();
+
+    /// <param name="glassInTube">
+    /// ★★ 2026-09-18，Opus 5：**管里有没有玻璃**。true（默认）= 带玻璃工况，逐位不变。
+    /// false = **空管**：没有玻璃液柱、没有流动压降（⇒ 内压 0、环向应力 0），管内也没有玻璃自重
+    /// （⇒ 弯曲只剩铂管自身）。
+    ///
+    /// 为什么要这个参数（病的形状）：整线判据 ④ 在**空管到温稳态**那张表上，许用侧按空管的控温点取
+    /// （<c>DesignSpec.BuildCase</c> 把控温点换成升温目标 1150 °C），而载荷侧一直**沿用带玻璃**的液柱与流量。
+    /// 于是印出来的利用率是一个**混血数**：既不是服役工况（服役时该段 1050 °C，许用值更高），
+    /// 也不是空管工况（空管没有玻璃柱）。混血数「更保守」不等于「可以引用」——
+    /// 它看起来正常，读的人以为那是空管态的性能。
+    /// </param>
     public static MechResult Check(DesignInputs p, double wallMm, double flangeThickMm,
                                    FlangePlate g, double? glassHeadOverrideM = null,
-                                   double? supportSpanOverrideMm = null, double? sfOverride = null)
+                                   double? supportSpanOverrideMm = null, double? sfOverride = null,
+                                   bool glassInTube = true)
     {
         double glassHeadM = glassHeadOverrideM ?? p.GlassHeadM;
         double supportSpanMm = supportSpanOverrideMm ?? p.SupportSpanMm;
         double sf = sfOverride ?? p.SafetyFactor;
-        var res = new MechResult { SafetyFactor = sf };
+        var res = new MechResult { SafetyFactor = sf, GlassInTube = glassInTube };
         const double gAcc = 9.81;
 
         // ── 铂管 ──────────────────────────────────────────────
@@ -53,16 +77,17 @@ public static class Mechanics
         double rm = ri + 0.5 * t;
 
         // 内压 = 玻璃液柱 + 流动压降（后者本工况仅数百 Pa，量级上可忽略但仍计入）
+        // 空管：两项都没有 —— 不是「小到可忽略」，是**物理上不存在**。
         double q = p.MassFlow / p.GlassDensity;
         double dpFlow = 128.0 * p.GlassViscosity * p.TubeLength * q
                         / (Math.PI * Math.Pow(p.TubeId, 4));
-        double pInt = p.GlassDensity * gAcc * glassHeadM + dpFlow;
+        double pInt = glassInTube ? p.GlassDensity * gAcc * glassHeadM + dpFlow : 0.0;
         res.TubeHoopMPa = pInt * rm / t * 1e-6;                     // σθ = p·r/t
 
-        // 弯曲：铂管自重 + 管内玻璃，按简支梁
+        // 弯曲：铂管自重 + 管内玻璃（空管只有铂管自重），按简支梁
         double aPt = Math.PI * t * (p.TubeId + t);                  // m²
         double wPt = Materials.PtDensity * aPt * gAcc;              // N/m
-        double wGlass = p.GlassDensity * Math.PI * ri * ri * gAcc;  // N/m
+        double wGlass = glassInTube ? p.GlassDensity * Math.PI * ri * ri * gAcc : 0.0;  // N/m
         double w = wPt + wGlass;
         double span = supportSpanMm * 1e-3;
         double m = w * span * span / 8.0;                           // 简支最大弯矩
