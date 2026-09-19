@@ -129,11 +129,15 @@ public class SolverPerPlateTests
     public void 限值只从判据自己那里读()
     {
         string s = Src("Core", "Solver.cs");
-        Assert.Contains("lc.RootDeltaMaxK", s);
-        Assert.Contains("lc.DiscOverTempMaxK", s);
-        // 不许把限值写成常数
+        // R48 B（2026-09-14 Opus 5）：有意改动 —— 求解器改追热偶读数基准的两条，限值字段换了（仍只从 LineCase 读）；依据 Pt_Optimize/Core/Solver.cs。
+        //   旧 "lc.RootDeltaMaxK" → 新 "lc.ColdUnderTcMaxK"；旧 "lc.DiscOverTempMaxK" → 新 "lc.HotOverTcMaxK"。
+        Assert.Contains("lc.ColdUnderTcMaxK", s);
+        Assert.Contains("lc.HotOverTcMaxK", s);
+        // 不许把限值写成常数（旧变量名与新变量名都查）
         Assert.DoesNotContain("dipMax = 10", s);
         Assert.DoesNotContain("discMax = 5", s);
+        Assert.DoesNotContain("coldMax = 5", s);
+        Assert.DoesNotContain("hotMax = 5", s);
     }
 
     /// <summary>

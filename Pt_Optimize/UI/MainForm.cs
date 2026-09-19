@@ -859,6 +859,28 @@ public sealed class MainForm : Form
         void H(string t) { s.AppendLine(); s.AppendLine("── " + t + " " + new string('─', Math.Max(2, 58 - TextFmt.Width(t)))); }
         void L(string k, string v) => s.AppendLine($"  {k}\t{v}");
 
+        // ★ R48 G3 第二轮审查后（2026-09-15，Opus 5）：空管时先印段解写的工况说明（SolveResult.Note，全文出自 SegmentSolver.EmptyTubeNoteOf）。
+        //   病：产量与管内玻璃换热都填 0 时，段解会默默带上默认系数的管腔轴向辐射（未经实测、两档估计之间尚无依据取舍），
+        //   热衰减长度与剖面都跟着变，而本页原来不显示 Note —— 看报表的人不知道结果里含这项假设，也不知道玻璃各项为什么是 NaN。
+        //   只在括号外的「；」处断行（括号里的分号是同一句的补充），长行由 TextFmt 按框宽折。带玻璃时 Note 为空，本节不出现、报表逐字不变。
+        if (r.EmptyTube && !string.IsNullOrEmpty(r.Note))
+        {
+            H("工况说明");
+            int depth = 0, start = 0;
+            for (int i = 0; i <= r.Note.Length; i++)
+            {
+                char c = i < r.Note.Length ? r.Note[i] : '；';
+                if (c == '（') depth++;
+                else if (c == '）') depth = Math.Max(0, depth - 1);
+                else if (c == '；' && (depth == 0 || i == r.Note.Length))
+                {
+                    string part = r.Note.Substring(start, i - start).Trim();
+                    if (part.Length > 0) s.AppendLine("  " + part);
+                    start = i + 1;
+                }
+            }
+        }
+
         H("铂用量  ← 目标函数");
         L("设计壁厚", $"{r.WallDesignMm:0.000} mm" +
             (r.WallLimitedByMinimum ? $"   ← 受最小壁厚限制 (电学仅需 {r.WallElecMm:0.000})"

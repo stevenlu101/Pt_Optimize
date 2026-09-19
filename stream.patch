@@ -1,0 +1,1169 @@
+diff --git a/Pt_Optimize.Tests/R48CavityRadiationGateTests.cs b/Pt_Optimize.Tests/R48CavityRadiationGateTests.cs
+new file mode 100644
+index 0000000..f9a12ec
+--- /dev/null
++++ b/Pt_Optimize.Tests/R48CavityRadiationGateTests.cs
+@@ -0,0 +1,281 @@
++﻿using System;
++using System.Linq;
++using System.Reflection;
++using PtOptimize.Core;
++using Xunit;
++using Xunit.Abstractions;
++
++namespace PtOptimize.Tests;
++
++/// <summary>
++/// ★ R48 G3 空管管腔轴向辐射进模型的快门（2026-09-15，Opus 5；规格出自物理把关人第十一轮与数值把关人第十四轮）。
++///
++/// 模型（口径见 DesignInputs.TubeCavityRadKA1150WmPerK、SegmentSolver.CavityRadKA／NeighbourConductanceWPerK）：
++///   空管时一维段解的轴向导热加一份 kA_rad = 系数 × (T_set/T_标定)³（开尔文，按段控温点温度取常数），带玻璃为 0；
++///   段间接头导度也加这一份（两段管腔在接头处连通），管腔那一份按邻段端温取，收敛后两侧只差 O(3ΔT/T)；前提是两段节距相同，
++///   管壁那一份按各自控温点取的原有不对称仍在（第二轮审查后改，2026-09-15 Opus 5：原写「同一接头两侧同值」，与事实不符）；铂管两端封住，不计管口辐射。
++///
++/// 本档的门（门槛跑前写死，出处逐条写在断言旁）：
++///   1. 带玻璃逐位不变：C 路三个指纹（R48EmptyTubeGateTests 的记录值、同一段指纹代码）在系数给 0／低档／高档／1.0 时都逐位相同。
++///   2. 空管一维解能量守恒：低档、高档，反算电流与定电流、带两端抽热与两侧邻段 —— SegmentSolver.EnergyBalance 残差 ≤ 0.5 %（与 C 路空管快门同一门槛）。
++///      同一个 Fact 里查说明：单段 SolveResult.Note 写出计入的管腔辐射；单段页报表（MainForm.Report）空管时印「工况说明」一节、带玻璃不印（第二轮审查后加，2026-09-15 Opus 5）。
++///   3. 系数增大 ⇒ 端部温降的衰减长度变长（在解出的剖面上量，不读 √(kA/β) 那个式子）、端部温降变浅，都严格单调。
++///   4. 接头守恒：两段不同控温点（1150|1080）的空管在接头处解到不动点，两侧流过接头的热对得上（误差不超过管壁导热按各自设定取的那份原有不对称）；
++///      并印出「若管腔那一份按各自控温点取」会差多少，证明本门分得开。
++///      R48 G3 审查后（2026-09-15，Opus 5）：允许误差按 q0 + q1 = (g0 − g1)/g0·q0 + g1·h 先验推出，管壁不对称只按它在接头导度里的占比计（初版按整份 |q0| 计，偏松约 5 倍）；
++///      另只报数：不等长两段（300|250 mm）接头失配多少（接头导度按各自节距取，前提是节距相同才守恒）。
++///   5. 整线空管工况说明写出系数、各段换算值与「不计管口辐射」；系数为 0 时写「未计入」；内径与估算条件不同时写明没换算。
++/// </summary>
++public class R48CavityRadiationGateTests
++{
++    private readonly ITestOutputHelper _o;
++    public R48CavityRadiationGateTests(ITestOutputHelper o) => _o = o;
++
++    private static DesignInputs Empty(DesignInputs p) => R48EmptyTubeGateTests.Empty(p);
++
++    /// <summary>单段页报表：调 MainForm 私有静态 Report（页上 Run() 写输出框用的同一个函数）。</summary>
++    private static string SingleSegReport(DesignInputs p, SolveResult r)
++    {
++        var m = typeof(PtOptimize.UI.MainForm).GetMethod("Report", BindingFlags.NonPublic | BindingFlags.Static);
++        Assert.NotNull(m);
++        return (string)m!.Invoke(null, new object[] { p, r })!;
++    }
++
++    [Fact]
++    public void 带玻璃_系数给多少三个指纹都逐位不变()
++    {
++        // 记录值出处：R48EmptyTubeGateTests.带玻璃_逐位不变_三个算例指纹（C 路 2026-09-14 记录；合并树 G3 改前 2026-09-15 实跑同值，
++        //   deliverable\R48_G3_C路快门_合并后改前_2026-09-15.txt）。算例构造与指纹代码调同一份（CaseB／Fingerprint 由那一档公开为 internal）。
++        foreach (double k in new[] { 0.0, SegmentSolver.CavityRadKA1150Low, SegmentSolver.CavityRadKA1150High, 1.0 })
++        {
++            var a = SegmentSolver.Solve(new DesignInputs { TubeCavityRadKA1150WmPerK = k });
++            var pb = R48EmptyTubeGateTests.CaseB(); pb.TubeCavityRadKA1150WmPerK = k;
++            var b = SegmentSolver.SolveAtCurrent(pb, 1500);
++            var c = SegmentSolver.SolveAtCurrent(new DesignInputs { HGlass = 0, TSetC = 1300, TubeCavityRadKA1150WmPerK = k }, 1400);
++            _o.WriteLine($"系数 {k:0.000}：A fp=0x{R48EmptyTubeGateTests.Fingerprint(a):X16}　B fp=0x{R48EmptyTubeGateTests.Fingerprint(b):X16}　C fp=0x{R48EmptyTubeGateTests.Fingerprint(c):X16}");
++            Assert.True(a.Ok && b.Ok && c.Ok);
++            Assert.Equal(0x33B7908F6563A1E0UL, R48EmptyTubeGateTests.Fingerprint(a));
++            Assert.Equal(0x20CA37AA8C454479UL, R48EmptyTubeGateTests.Fingerprint(b));
++            Assert.Equal(0x02DA1FDB755FFD7AUL, R48EmptyTubeGateTests.Fingerprint(c));
++            Assert.True(a.CavityRadKAWmPerK == 0.0 && b.CavityRadKAWmPerK == 0.0 && c.CavityRadKAWmPerK == 0.0, "带玻璃（含只 hg = 0 有流量）的管腔辐射应为 0");
++            // （接头导度带玻璃逐位不变由 B 指纹守：CaseB 有左邻段 1100 °C，接头那一项在剖面里）
++        }
++    }
++
++    [Fact]
++    public void 空管一维解_低档高档能量守恒()
++    {
++        foreach (double k in new[] { SegmentSolver.CavityRadKA1150Low, SegmentSolver.CavityRadKA1150High })
++        {
++            // 反算电流：两端抽热（左 5 W、右 −2 W）＋左邻段 1100 °C（C 路空管快门同一算例，去掉端部额外保温 —— 那条括根脆弱与本路无关，见 R48EmptyTubeGateTests）
++            var pd = Empty(R48EmptyTubeGateTests.CaseB()); pd.EndInsulExtraMm = 0; pd.TubeCavityRadKA1150WmPerK = k;
++            var rd = SegmentSolver.Solve(pd);
++            Assert.True(rd.Ok, rd.Message);
++            Assert.Equal(k, rd.CavityRadKAWmPerK);                                   // 控温点 1150 = 标定温度，换算系数恰为 1
++            Assert.InRange(rd.TMetal[rd.TMetal.Length / 2], pd.TSetC - 0.5, pd.TSetC + 0.5);
++            var ed = SegmentSolver.EnergyBalance(pd, rd);
++            // 定电流、两侧邻段（左 1100、右 1180）、控温点 1080（换算系数 ≠ 1，接头两端导度各按各的邻段端温取）
++            var pc = Empty(new DesignInputs
++            {
++                TSetC = 1080, FlangeDrawOverrideSet = true, FlangeDrawOverrideW = 0, FlangeDrawLeftW = 8.0, FlangeDrawRightW = -3.0,
++                NeighbourTempLeftC = 1100.0, NeighbourTempRightC = 1180.0, TubeCavityRadKA1150WmPerK = k
++            });
++            var rc = SegmentSolver.SolveAtCurrent(pc, 1400);
++            Assert.True(rc.Ok, rc.Message);
++            var ec = SegmentSolver.EnergyBalance(pc, rc);
++            _o.WriteLine($"系数 {k:0.000}：反算电流 I={rd.CurrentA:0.0} A　焦耳热 {ed.JouleW:0.00}　散热 {ed.SurfaceLossW:0.00}　两端流出 {ed.EndsOutW:0.00} W　残差 {ed.ResidualRel:P4}"
++                       + $"　｜定电流 1400 A、控温点 1080（段内 kA {rc.CavityRadKAWmPerK:0.0000}）：焦耳热 {ec.JouleW:0.00}　散热 {ec.SurfaceLossW:0.00}　两端流出 {ec.EndsOutW:0.00} W　残差 {ec.ResidualRel:P4}");
++            Assert.True(Math.Abs(ed.EndsOutW) > 1.0 && Math.Abs(ec.EndsOutW) > 1.0, "两端流出项应非零（不然没检到端部项）");
++            Assert.True(Math.Abs(ed.ResidualRel) <= 0.005, $"系数 {k}：反算电流算例能量账不平 {ed.ResidualRel:P3}（限 0.5 %，同 C 路空管快门）");
++            Assert.True(Math.Abs(ec.ResidualRel) <= 0.005, $"系数 {k}：定电流算例能量账不平 {ec.ResidualRel:P3}（限 0.5 %）");
++            Assert.InRange(rc.CavityRadKAWmPerK, 0.85 * k, 0.87 * k);                 // (1353.15/1423.15)³ = 0.8596
++
++            // R48 G3 审查后（2026-09-15，Opus 5）：单段说明要写出计入的管腔辐射（全文调生产函数，这里只查它真写进了结果、且含本段换算值与系数）
++            Assert.Equal(SegmentSolver.EmptyTubeNoteOf(pc), rc.Note);
++            Assert.StartsWith(SegmentSolver.EmptyTubeNote, rc.Note);
++            Assert.Contains($"计入 {rc.CavityRadKAWmPerK:0.000} W·m/K（1150 °C 时 {k:0.000}", rc.Note);
++            Assert.Contains("未经实测", rc.Note);
++            Assert.Contains("不计管口辐射散热", rc.Note);
++
++            // 第二轮审查后（2026-09-15，Opus 5）：单段页报表（MainForm.Report，页上 Run() 写进输出框的就是它）要把这句印出来 ——
++            //   调页上同一个私有函数（反射，同 BannerFitsTests 的做法），不另拼字串。
++            string rep = SingleSegReport(pc, rc);
++            Assert.Contains("── 工况说明", rep);
++            Assert.Contains($"计入 {rc.CavityRadKAWmPerK:0.000} W·m/K（1150 °C 时 {k:0.000}", rep);
++            Assert.Contains("未经实测", rep);
++            Assert.Contains("  铂管两端封住，不计管口辐射散热", rep);      // 括号外的「；」处断行：最后一句单独一行
++            Assert.DoesNotContain("  两档估计", rep);                      // 括号里的「；」不断行
++        }
++        // 带玻璃：报表里没有工况说明一节（Note 为空）
++        var pg = new DesignInputs();
++        Assert.DoesNotContain("工况说明", SingleSegReport(pg, SegmentSolver.Solve(pg)));
++        // 系数 0 的空管：说明只有「不适用」那句（没计入就不说计入）；带玻璃：说明为空
++        var p0 = Empty(new DesignInputs { TubeCavityRadKA1150WmPerK = 0 });
++        var r0 = SegmentSolver.Solve(p0);
++        Assert.True(r0.Ok, r0.Message);
++        Assert.Equal(SegmentSolver.EmptyTubeNote, r0.Note);
++        Assert.Equal("", SegmentSolver.Solve(new DesignInputs()).Note);
++        _o.WriteLine("单段空管说明（系数 0.056、控温点 1080）：" + SegmentSolver.EmptyTubeNoteOf(Empty(new DesignInputs { TSetC = 1080, TubeCavityRadKA1150WmPerK = SegmentSolver.CavityRadKA1150High })));
++    }
++
++    [Fact]
++    public void 系数增大_端部温降衰减长度变长_温降变浅()
++    {
++        // 长管（2000 mm，节距 1 mm）、控温点 1150、只在左端抽 20 W，右端绝热：远端 = 均匀平衡温度。电流取无抽热时反算的那一个（远端就是 1150）。
++        DesignInputs Mk(double k, bool draw) => Empty(new DesignInputs
++        {
++            TSetC = 1150, TubeLengthMm = 2000, Nodes = 2001, TubeCavityRadKA1150WmPerK = k,
++            FlangeDrawOverrideSet = true, FlangeDrawOverrideW = 0, FlangeDrawLeftW = draw ? 20.0 : 0.0, FlangeDrawRightW = 0
++        });
++        var r0 = SegmentSolver.Solve(Mk(0, false));
++        Assert.True(r0.Ok, r0.Message);
++        double current = r0.CurrentA;
++        double prevLen = -1, prevDeficit = double.MaxValue;
++        foreach (double k in new[] { 0.0, 0.01, SegmentSolver.CavityRadKA1150Low, SegmentSolver.CavityRadKA1150High, 0.1 })
++        {
++            var p = Mk(k, true);
++            var r = SegmentSolver.SolveAtCurrent(p, current);
++            Assert.True(r.Ok, r.Message);
++            int n = r.TMetal.Length;
++            double tFar = r.TMetal[n - 1];
++            double d0 = tFar - r.TMetal[0];
++            Assert.True(d0 > 1.0, $"系数 {k}：端部温降 {d0:0.000} K 太浅，量不了衰减长度");
++            // 衰减长度：温降第一次衰到端部的 1/e 处（线性插值）
++            double target = d0 / Math.E, len = double.NaN;
++            for (int i = 1; i < n; i++)
++            {
++                double di = tFar - r.TMetal[i], dPrev = tFar - r.TMetal[i - 1];
++                if (di <= target) { len = r.X[i - 1] + (r.X[i] - r.X[i - 1]) * (dPrev - target) / (dPrev - di); break; }
++            }
++            double tailDeficit = tFar - r.TMetal[n / 2];
++            _o.WriteLine($"系数 {k:0.000}：端部温降 {d0:0.000} K　实测衰减长度 {len:0.00} mm　√(kA/β) {r.DecayLengthMm:0.00} mm（比 {len / r.DecayLengthMm:0.000}）　管中点温降 {tailDeficit:0.0000} K　远端 {tFar:0.000} °C");
++            Assert.True(double.IsFinite(len), $"系数 {k}：剖面上没找到 1/e 点");
++            Assert.True(tailDeficit < 0.01 * d0, $"系数 {k}：管中点温降 {tailDeficit:0.000} K 不到端部的 1 %，远端不算「远」，长度量不准");
++            Assert.True(len > prevLen, $"系数 {k}：衰减长度 {len:0.00} mm 没比上一档 {prevLen:0.00} mm 长");
++            Assert.True(d0 < prevDeficit, $"系数 {k}：端部温降 {d0:0.000} K 没比上一档 {prevDeficit:0.000} K 浅");
++            var e = SegmentSolver.EnergyBalance(p, r);
++            Assert.True(Math.Abs(e.ResidualRel) <= 0.005, $"系数 {k}：能量账不平 {e.ResidualRel:P3}");
++            prevLen = len; prevDeficit = d0;
++        }
++    }
++
++    /// <summary>两段空管接头不动点（段 0 控温点 1150 右端接段 1、段 1 控温点 1080 左端接段 0，外侧两端绝热无抽热，各按无邻段时反算的电流定电流）。</summary>
++    private sealed class Joint
++    {
++        public double Xs, Ys, HRes, Q0, Q1, Area;
++        public SolveResult R0 = null!, R1 = null!;
++        public DesignInputs P0 = null!, P1 = null!;
++    }
++
++    private static DesignInputs JointSeg(double set, double lenMm, double nbL, double nbR, double k) => Empty(new DesignInputs
++    {
++        TSetC = set, TubeLengthMm = lenMm, TubeCavityRadKA1150WmPerK = k, FlangeDrawOverrideSet = true, FlangeDrawOverrideW = 0,
++        FlangeDrawLeftW = 0, FlangeDrawRightW = 0, NeighbourTempLeftC = nbL, NeighbourTempRightC = nbR
++    });
++
++    // 不动点：段 0 看到的邻段端温 x = 段 1 左端温度，段 1 看到的 y = 段 0 右端温度。段 0 右端温度只随 x 变、段 1 左端只随 y 变
++    //   ⇒ 标量方程 h(x) = T1A(T0B(x)) − x = 0，二分到 1e-9 K（h 严格单减：两段端温对邻段温度的斜率都 &lt; 1）。
++    // 这不是抄 LineRunner 的外层耦合（那边有欠松弛与 Anderson，只改到达路径）：这里要验的是**段解本身的接头通量**在不动点上守不守恒。
++    private static Joint SolveJoint(double len0Mm, double len1Mm, double k)
++    {
++        double i0 = SegmentSolver.Solve(JointSeg(1150, len0Mm, double.NaN, double.NaN, k)).CurrentA;
++        double i1 = SegmentSolver.Solve(JointSeg(1080, len1Mm, double.NaN, double.NaN, k)).CurrentA;
++        SolveResult S0(double x) => SegmentSolver.SolveAtCurrent(JointSeg(1150, len0Mm, double.NaN, x, k), i0);
++        SolveResult S1(double y) => SegmentSolver.SolveAtCurrent(JointSeg(1080, len1Mm, y, double.NaN, k), i1);
++        double H(double x) { var a = S0(x); return S1(a.TFlangeBC).TFlangeAC - x; }
++        double lo = 1000, hi = 1250;
++        Assert.True(H(lo) > 0 && H(hi) < 0, $"括根失败（段长 {len0Mm}|{len1Mm}）：h({lo}) = {H(lo)}，h({hi}) = {H(hi)}");
++        for (int it = 0; it < 80 && hi - lo > 1e-9; it++) { double m = 0.5 * (lo + hi); if (H(m) > 0) lo = m; else hi = m; }
++        var j = new Joint { Xs = 0.5 * (lo + hi) };
++        j.R0 = S0(j.Xs); j.Ys = j.R0.TFlangeBC; j.R1 = S1(j.Ys);
++        Assert.True(j.R0.Ok && j.R1.Ok, j.R0.Message + j.R1.Message);
++        j.P0 = JointSeg(1150, len0Mm, double.NaN, j.Xs, k); j.P1 = JointSeg(1080, len1Mm, j.Ys, double.NaN, k);
++        j.Q0 = SegmentSolver.EnergyBalance(j.P0, j.R0).EndsOutW;          // 段 0 只有右端（接头）有流出
++        j.Q1 = SegmentSolver.EnergyBalance(j.P1, j.R1).EndsOutW;          // 段 1 只有左端（接头）有流出
++        j.HRes = j.R1.TFlangeAC - j.Xs;
++        j.Area = j.R0.TubeAreaMm2 * 1e-6;                                  // 段解报出的管截面（与段解同一个）
++        return j;
++    }
++
++    [Fact]
++    public void 接头两侧不同控温点_流过接头的热对得上()
++    {
++        const double k = SegmentSolver.CavityRadKA1150High;
++        var j = SolveJoint(300, 300, k);
++        double xs = j.Xs, ys = j.Ys, q0 = j.Q0, q1 = j.Q1, hRes = j.HRes, area = j.Area;
++        // 各份导度一律调生产函数 NeighbourConductanceWPerK：管壁那一份 = 系数给 0 时的值（空管判别仍成立，管腔那一份为 0）；管腔那一份 = 总的减管壁的。
++        var p0w = SegmentSolver.Clone(j.P0); p0w.TubeCavityRadKA1150WmPerK = 0;
++        var p1w = SegmentSolver.Clone(j.P1); p1w.TubeCavityRadKA1150WmPerK = 0;
++        double g0 = SegmentSolver.NeighbourConductanceWPerK(j.P0, area, xs), g1 = SegmentSolver.NeighbourConductanceWPerK(j.P1, area, ys);
++        double gw0 = SegmentSolver.NeighbourConductanceWPerK(p0w, area, xs), gw1 = SegmentSolver.NeighbourConductanceWPerK(p1w, area, ys);
++        double gc0 = g0 - gw0, gc1 = g1 - gw1;
++        // 允许的误差 —— R48 G3 审查后（2026-09-15，Opus 5）改，按式子先验推出、不依赖实测数：
++        //   段 0 接头流出 q0 = g0·(y − x)，段 1 接头流出 q1 = g1·(x + h − y)（h = 二分停点残余）⇒ q0 + q1 = (g0 − g1)/g0 · q0 + g1·h。
++        //   |g0 − g1| ≤ |gw0 − gw1|（管壁 kPt 按各自控温点取，原有不对称）＋ max(gc0, gc1)·((1+u)³ − 1)（管腔那一份按两侧端温 T³ 取，u = |x − y|/T_min，(1+u)³ − 1 ≤ 3u(1+u)²）。
++        //   ⇒ allow = (|gw0 − gw1| + max(gc0, gc1)·3u(1+u)²)/g0 · |q0| + g1·|h|。
++        //   旧式（初版）是 wallAsym·|q0| + g1·|h| + 3ΔT/T·|q0|：管壁不对称按整份 |q0| 算，而管壁在接头导度里只占 gw/g ≈ 20 %（系数 0.056）⇒ 偏松约 5 倍，
++        //   管腔那一份若有 0.2 W 级的不对称查不出来（审查第 5 条）。两式都印出来。
++        double u = Math.Abs(xs - ys) / (Math.Min(xs, ys) + LineSolver.KelvinOffset);
++        double allow = (Math.Abs(gw0 - gw1) + Math.Max(gc0, gc1) * 3 * u * (1 + u) * (1 + u)) / g0 * Math.Abs(q0) + g1 * Math.Abs(hRes) + 1e-9;
++        double wallAsym = Math.Abs(Materials.PtThermalK(1150) - Materials.PtThermalK(1080)) / Materials.PtThermalK(1080);
++        double dT = Math.Abs(j.R0.TFlangeBC - j.R1.TFlangeAC);
++        double allowOld = wallAsym * Math.Abs(q0) + g1 * Math.Abs(hRes) + 3 * dT / (1080 + LineSolver.KelvinOffset) * Math.Abs(q0) + 1e-9;
++        double identity = (g0 - g1) / g0 * q0 + g1 * hRes;   // 只报数：上面那条恒等式的右边，应与实测合计几乎相同
++        // 分辨力对照（算的，不是跑的）：若管腔那一份按各自控温点取，两侧导度比差多少、接头热流就差多少
++        double gOwn0 = (Materials.PtThermalK(1150) * area + SegmentSolver.CavityRadKA(j.P0));
++        double gOwn1 = (Materials.PtThermalK(1080) * area + SegmentSolver.CavityRadKA(j.P1));
++        double ctrl = Math.Abs(1 - gOwn1 / gOwn0) * Math.Abs(q0);
++        _o.WriteLine($"接头（系数 {k:0.000}，两段各 300 mm）：不动点 x={xs:0.000000} °C（段 1 左端）　段 0 右端 {ys:0.000000} °C　ΔT {dT:0.0000} K　二分残余 {hRes:E2} K"
++                   + $"　段 0 流出 {q0:+0.0000;-0.0000} W　段 1 流出 {q1:+0.0000;-0.0000} W　合计 {q0 + q1:+0.00000;-0.00000} W（允许 {allow:0.00000}；初版允许式 {allowOld:0.00000}）"
++                   + $"　｜导度 W/K：段 0 {g0:0.000}（管壁 {gw0:0.000}＋管腔 {gc0:0.000}）　段 1 {g1:0.000}（管壁 {gw1:0.000}＋管腔 {gc1:0.000}）　恒等式右边 {identity:+0.00000;-0.00000} W"
++                   + $"　｜对照：管腔那一份按各自控温点取会差约 {ctrl:0.000} W");
++        Assert.True(Math.Abs(q0) > 5.0, $"接头热流 {q0:0.00} W 太小，本门检不出什么");
++        Assert.True(Math.Abs(q0 + q1) <= allow, $"接头两侧热流对不上：{q0:+0.0000} + {q1:+0.0000} = {q0 + q1:+0.00000} W，允许 {allow:0.00000} W");
++        Assert.True(ctrl > 5 * allow, $"对照差 {ctrl:0.0000} W 不到允许误差 {allow:0.0000} W 的 5 倍 —— 本门分不开两种取法");
++
++        // ── 只报数（审查第 5 条②，2026-09-15 Opus 5）：两段不等长（300|250 mm、节点数同为 401）时，接头导度按各自节距取 ⇒ 两侧导度差节距比，接头热流失配。
++        //   管壁那一份 R48 之前就这样；这里给出量级，交接 open issue。不设门槛（没有「允许失配多少」的出处）。
++        var ju = SolveJoint(300, 250, k);
++        double gu0 = SegmentSolver.NeighbourConductanceWPerK(ju.P0, ju.Area, ju.Xs), gu1 = SegmentSolver.NeighbourConductanceWPerK(ju.P1, ju.Area, ju.Ys);
++        _o.WriteLine($"只报数·不等长 300|250 mm（系数 {k:0.000}）：段 0 流出 {ju.Q0:+0.0000;-0.0000} W　段 1 流出 {ju.Q1:+0.0000;-0.0000} W　合计 {ju.Q0 + ju.Q1:+0.0000;-0.0000} W"
++                   + $"（占段 0 流出 {(ju.Q0 + ju.Q1) / ju.Q0:P1}）　导度 段 0 {gu0:0.000}／段 1 {gu1:0.000} W/K（比 {gu1 / gu0:0.0000}，节距比 300/250 = 1.2）"
++                   + $"　｜同一算例系数给 0："
++                   + JointLine(SolveJoint(300, 250, 0)));
++    }
++
++    private static string JointLine(Joint jj) => $"段 0 流出 {jj.Q0:+0.0000;-0.0000} W　段 1 流出 {jj.Q1:+0.0000;-0.0000} W　合计 {jj.Q0 + jj.Q1:+0.0000;-0.0000} W（占段 0 流出 {(jj.Q0 + jj.Q1) / jj.Q0:P1}）";
++
++    [Fact]
++    public void 整线空管工况说明_写出系数与换算值_不计管口辐射()
++    {
++        var d = DesignSpec.Builtin[0].Clone();
++        d.SetpointC = new[] { 1150.0, 1080.0 };
++        d.SegLengthMm = new[] { 300.0, 300.0 };
++        d = d.Fit();
++        var p = new DesignInputs();
++        string ramp = LineRunner.EmptyTubeNoteFor(d.BuildCase(p, checkRamp: false, emptyTube: true));
++        string asGiven = LineRunner.EmptyTubeNoteFor(d.BuildCase(p, checkRamp: false, emptyTube: true, emptyTubeSetpoint: EmptyTubeSetpoint.AsGiven));
++        // 第二轮审查后（2026-09-15，Opus 5）：空管段参数调生产函数造（原手抄 pe.ThroughputTPerDay = 0; pe.HGlass = 0;，门不许手抄生产配方）
++        var pe = SegmentSolver.Clone(p); LineRunner.MakeEmptyTubeSegment(pe);
++        string k1080 = SegmentSolver.CavityRadKAAt(pe, 1080).ToString("0.000");
++        _o.WriteLine("全线升温目标：" + ramp);
++        _o.WriteLine("沿用生产控温点：" + asGiven);
++        Assert.Contains("管腔内轴向辐射按附加的轴向导热计入：1150 °C 时 0.023 W·m/K，按各段控温点温度的三次方换算为 0.023/0.023 W·m/K", ramp);
++        Assert.Contains($"换算为 0.023/{k1080} W·m/K", asGiven);
++        Assert.Contains("接头导热也计入这一份", ramp);
++        Assert.Contains("较低的一档", ramp);
++        Assert.Contains("不计管口辐射散热", ramp);
++        Assert.DoesNotContain("与估算条件不同", ramp);
++        Assert.DoesNotContain("尚待确认", ramp);
++
++        var p0 = new DesignInputs { TubeCavityRadKA1150WmPerK = 0 };
++        string none = LineRunner.EmptyTubeNoteFor(d.BuildCase(p0, checkRamp: false, emptyTube: true));
++        Assert.Contains("管腔内轴向辐射本次未计入（系数为 0）", none);
++        Assert.Contains("不计管口辐射散热", none);
++
++        var d48 = d.Clone(); d48.TubeIdMm = 48.0; d48 = d48.Fit();
++        string off = LineRunner.EmptyTubeNoteFor(d48.BuildCase(p, checkRamp: false, emptyTube: true));
++        _o.WriteLine("内径 48：" + off);
++        Assert.Contains("内径 48 mm 与估算条件不同，系数没有换算", off);
++    }
++}
+diff --git a/Pt_Optimize.Tests/R48EmptyTubeContinuationTests.cs b/Pt_Optimize.Tests/R48EmptyTubeContinuationTests.cs
+new file mode 100644
+index 0000000..0023107
+--- /dev/null
++++ b/Pt_Optimize.Tests/R48EmptyTubeContinuationTests.cs
+@@ -0,0 +1,329 @@
++﻿using System;
++using System.Collections.Generic;
++using System.Globalization;
++using System.IO;
++using System.Linq;
++using System.Text;
++using PtOptimize.Core;
++using Xunit;
++using Xunit.Abstractions;
++
++namespace PtOptimize.Tests;
++
++/// <summary>
++/// ★★★★ R48 G3 空管态耦合续跑（2026-09-15，Opus 5 写；规格出自常驻数值把关人第十四轮与物理把关人第十一轮）：
++/// **空管到温稳态（全线 1150 °C、管腔轴向辐射进模型）上，外层耦合容差 0.25 K 加默认放大 25 够不够；两档管腔辐射系数下结论差多少。**
++///
++/// ══ 设计（同第二批 B2，与 R48EmptyTubeStateTests 同一组输入）
++///   W08；板厚 0.73/1.26/1.26/0.73；环倍率全 1；管保温 7.5；逐片圆盘保温 10.5/3.5/5.0/10.0；逐片舌保温 5.0/3.5/5.0/10.5；
++///   舌片厚 SizeTongues；共用片抽热各半（SplitSharedFlangeDraw = true）；BuildCase(emptyTube: true)（控温点全线取升温目标）；
++///   0.5 mm 整线细化、细区半径 MeshVerify.RequiredMeshFor。管腔辐射系数两档 0.023／0.056 W·m/K（1150 °C 时 kA，SegmentSolver.CavityRadKA1150Low／High），各一个 Fact，可两个进程并行。
++///
++/// ══ 做法
++///   阶段一：容差 0.25 K、最多 4000 轮解到收敛（WarmStart 回写）；CoupleTrace 每轮记步长、真残差、剩余估计、放大系数、ω、各段两端管根。
++///   阶段二：同一 LineCase 热启动，容差 1e-6 K（实际关掉）、最多 300 轮续跑；CoupleTrace 每轮记两片共用片的「管根低于热偶读数」（冷侧）、
++///     片1 抽热、步长、真残差、剩余估计、放大系数、ω、Anderson 报告。续跑若提前逐位停住（步长与真残差都到 0），停住的那一点就是不动点。
++///   两阶段的 res.Notes 全文、逐片最高温与散热表上限（ShellThermal.LossTableHiC，铂熔点）的差都打出来。
++///   机读行 DATA|… 给「两档并列」读：四片热侧／冷侧读数、管根较热端／较冷端、热偶读数基准、抽热、最高温；各段电流、两端管根、无法兰基线、段内管腔 kA、热衰减长度。
++///
++/// ══ 跑前写死的判读（2026-09-15 Opus 5 写于起跑之前）
++///   出处：「漂移 ≤ 0.1 K 且实测放大 ≤ 25 ⇒ 可用；实测放大 &gt; 25 ⇒ 默认值偏小」是数值把关人第十四轮；「0.1～0.5 记下不下结论、≥ 0.5 估法低估」沿用第十一轮
++///   （R48CoupleContinuationTests）；「实测放大」怎么量（两种估法、够格轮的 0.02 K 门槛、中位数）是 Opus 5 跑前定的，依据写在下面。
++///   记号：阶段一收敛那一轮的值记 x₀；续跑末 min(50, 续跑轮数) 轮的均值记 x∞（续跑提前逐位停住时就是停住的值）。
++///   · 漂移 D = 两片共用片「管根低于热偶读数」|x∞ − x₀| 的较大者（K）。
++///   · 实测放大 A = 阶段一各轮「真误差 ÷ 步长」的中位数：真误差 e_k = 各段两端管根 |T_k − T∞| 的最大值（T∞ 取续跑末段均值），步长 δ_k 即 LineRunner 的步长；
++///     只取 k ≥ 3、δ_k ≥ 0.02 K 且 e_k ≥ 0.02 K 的轮（0.02 K = 内层一维解容差 0.005 K 的 4 倍，低于它的比值是在读精度地板）；
++///     够格的轮少于 3 轮 ⇒ 改用阶段一 δ_k ≥ 0.02 K 各轮 ln δ 对轮号的最小二乘斜率 r，A = r/(1−r)（至少 5 轮、0 &lt; r &lt; 1）；再不够 ⇒ 放大判不了。
++///     另印最大值与两种估法各自的数，只报数。
++///   · D ≤ 0.1 K 且 A ≤ 25 ⇒ 「容差 0.25 K 加默认放大 25 在空管态可用」。
++///   · A &gt; 25 ⇒ 「默认放大 25 在空管态偏小」—— 交接 open issue：比值记录区间放宽到 (0.5, 0.999)，或空管态用实测值 × 安全系数。
++///   · A ≤ 25 而 D &gt; 0.1 K ⇒ 0.1～0.5 K 记下、不下结论；≥ 0.5 K ⇒ 剩余误差估计在空管态低估，要修估法。
++///   · A 判不了 ⇒ 只按 D 说 0.25 K 在本算例够不够，并写明「默认放大够不够没量到」。
++/// ══ 两档并列（第三个 Fact，只读两份输出）：同一份编译产物（核心、测试 MVID 相同）才比，差 = 高档 − 低档；只报数，给物理把关人判空管结论对管腔辐射系数敏不敏感。
++/// ══ 输出：deliverable\R48_空管续跑_kA0.023_2026-09-15.txt、…_kA0.056_2026-09-15.txt、…_两档并列_2026-09-15.txt（已存在就拒绝写，不覆盖）。
++///   R48 G3 审查后（2026-09-15，Opus 5）：文件名改带运行时刻 yyyy-MM-dd_HHmmss（与 R48EmptyTubeStateTests 同一做法）—— 原来只带日期，
++///   文件一旦存在，三个慢 Fact 以后任何一次重跑（含换一天）都因「拒绝覆盖」而红，成了永久红。04:07 那三份证据保持原名不动。
++///   两档并列改为读两档各自最新、且核心与测试 MVID 相同的一对（按文件写入时刻），读哪两份印在输出第一行。
++///   Anderson 报告两阶段每轮都接在行尾（原来阶段二只在 k ≤ 3 或 k % 25 = 0 时印、阶段一不印 —— 「Anderson 让残差不单调」这类判断没法复核）。
++///
++/// ══ 附注：不改判，只加报数（R48 G3 第二轮审查后，2026-09-15 Opus 5）
++///   撤回的东西：第一轮审查后在这里写过一段「判读更正」，把「逐轮最大」「LineRunner 两阶段比值记录的最大放大」也列为放大的触发条件，
++///     多出一类跑前规则里没有的结论「默认放大 25 够不够没有量准」，还丢了「空管态用实测值 × 安全系数」这个备选。那段是看过 04:07 两次跑的数之后才写的
++///     （它引的「电流二分容差地板」就是从那两次的数里发现的），违反「不许事后挪门槛」；而且自相矛盾 ——
++///     它自己的前提（估法一收的轮不在渐近段、逐轮「真误差 ÷ 步长」≠ r/(1−r)）同样说明「逐轮最大」不是放大的量法。已撤回。
++///   ⇒ **判读照上面「跑前写死的判读」一字不改**：A = 估法一中位数（够格轮不足 3 才用估法二）；结论只有规则里那几类。
++///   下面几项只报数、不进判读；要不要据此换判据，交数值把关人裁定，裁定之前不用：
++///     ① 估法一按构造量不到停机区（这条不依赖任何数）：停机要 δ × 25 ≤ 0.25 K 即 δ ≤ 0.01 K，估法一只收 δ ≥ 0.02 K 的轮，两个区间不重叠；
++///        Anderson 下这些轮不在渐近段，逐轮「真误差 ÷ 步长」不等于 r/(1−r)（LineRunner 外层耦合「真残差」那段注释）。
++///     ② 估法二（ln δ 斜率）、逐轮最大、LineRunner 两阶段比值记录的最大放大，各印一个数。
++///     ③ 外层步长地板与 LineRunner 比值记录：续跑步长分布照印。LineRunner 的比值记录 rEst 只在相邻两轮步长比落在 (0.9, 0.999) 时更新（LineRunner.Run 外层）；
++///        步长停在一层地板上时，两个几乎相等的地板步长也会让比值落进这个区间、把 rEst 推高 ⇒ 那时印出的放大不是收缩率。
++///        地板来源是推断：反算电流二分容差（SegmentSolver.FindCurrent，xTol = 0.05 A）乘管根对电流的斜率约 1.2 K/A ≈ 0.04 K
++///        （依据是 kA0.023 那次 HC3 电流 1065.08 → 1065.11 A 与末端管根 1171.066 → 1171.103 °C 同步变；没做单独隔离的实验）。Anderson 下放大本来就量不准。
++///     ④ 停机那一刻的两个直接比值：真误差 ÷ 末轮步长、真误差 ÷ 剩余估计。
++///   若数值把关人要按规则补救：前提是先把外层步长地板压到 0.01 K（= 0.25 ÷ 25）以下 —— 否则放宽比值记录区间到 (0.5, 0.999) 会让比值被地板抖动推高、停机判据过不了；
++///     另一个备选是空管态用实测值 × 安全系数。
++///   ⚠ 输出文件的判读行：带时刻 _064409 的两份（第一轮审查后跑的）末行「默认放大 25 够不够没有量准」按本附注**作废**，数照用；
++///     04:07 起跑、不带时刻的两份末行判读与跑前规则一致，但出自更早的编译产物（DATA 行除 MVID 外与 _064409 两份逐位相同）。
++///     05:03 那份两档并列读的是 04:07 那一对（旧编译产物 18c8cb2b），数照用；以同一编译产物重跑的一对与两档并列见带时刻的新文件。
++/// </summary>
++[Trait("速度", "慢")]
++public class R48EmptyTubeContinuationTests
++{
++    private readonly ITestOutputHelper _out;
++    public R48EmptyTubeContinuationTests(ITestOutputHelper o) { _out = o; }
++
++    // R48 G3 审查后（2026-09-15，Opus 5）：文件名带运行时刻（原固定 _2026-09-15.txt ⇒ 重跑永久红）
++    private static string Prefix(double ka) => $"R48_空管续跑_kA{ka.ToString("0.000", CultureInfo.InvariantCulture)}_";
++    private static string FileFor(double ka) => Path.Combine(Root(), "deliverable", $"{Prefix(ka)}{DateTime.Now:yyyy-MM-dd_HHmmss}.txt");
++    private static string CoreMvid => typeof(LineRunner).Assembly.ManifestModule.ModuleVersionId.ToString();
++    private static string TestMvid => typeof(R48EmptyTubeContinuationTests).Assembly.ManifestModule.ModuleVersionId.ToString();
++
++    [Fact] public void 空管续跑_管腔辐射低档() => Run(SegmentSolver.CavityRadKA1150Low);
++    [Fact] public void 空管续跑_管腔辐射高档() => Run(SegmentSolver.CavityRadKA1150High);
++    /// <summary>冒烟：同一段代码走开箱网格、续跑至多 5 轮，输出写系统临时目录（不进 deliverable、不读结论）—— 长跑之前先确认整条打印／判读／机读行不崩。</summary>
++    [Fact] public void 空管续跑_冒烟_开箱网格() => Run(SegmentSolver.CavityRadKA1150Low, smoke: true);
++
++    private sealed class Round
++    {
++        public int K; public double Delta, ResK, Remain, Amp, Omega;
++        public double[] RootA = Array.Empty<double>(), RootB = Array.Empty<double>();
++        public double Cold1, Cold2, Q1;
++    }
++
++    private void Run(double ka, bool smoke = false)
++    {
++        string file = smoke ? Path.Combine(Path.GetTempPath(), $"R48_空管续跑_冒烟_{DateTime.Now:yyyyMMdd_HHmmss}.txt") : FileFor(ka);
++        Assert.False(File.Exists(file), $"{file} 已存在 —— 拒绝覆盖");
++        var sb = new StringBuilder();
++        void Say(string s)
++        {
++            _out.WriteLine(s); sb.AppendLine(s);
++            try { File.WriteAllText(file, sb.ToString(), new UTF8Encoding(false)); } catch { }
++        }
++        var inv = CultureInfo.InvariantCulture;
++        var p = new DesignInputs { SplitSharedFlangeDraw = true, TubeCavityRadKA1150WmPerK = ka };
++        var d = DesignSpec.W08.Clone();
++        d.TabThickMm = new[] { 0.73, 1.26, 1.26, 0.73 };
++        d.RingMul = new[] { 1.0, 1.0, 1.0, 1.0 };
++        d.TubeInsulMm = 7.5;
++        d.DiscInsulMm = new[] { 10.5, 3.5, 5.0, 10.0 };
++        d.TabInsulMm = new[] { 5.0, 3.5, 5.0, 10.5 };
++        d = d.Fit();
++        d.SizeTongues(p);
++        var (_, radius) = MeshVerify.RequiredMeshFor(d);
++        var lc = d.BuildCase(p, checkRamp: false, emptyTube: true);
++        if (!smoke) MeshAdapt.RefineWholeMesh(lc, 0.5, radius);
++        lc.CoupleTolK = 0.25;
++        lc.CoupleMaxRounds = Math.Max(lc.CoupleMaxRounds, 4000);
++        int n = lc.SegmentCount;
++        if (smoke) Say($"⚠ 冒烟：开箱网格（细 {lc.MeshFineMm:0.###} mm）、续跑至多 5 轮 —— 只验代码路径，数不读");
++        Say($"R48 G3 空管态耦合续跑（Opus 5）　{DateTime.Now:yyyy-MM-dd HH:mm:ss}　管腔轴向辐射系数 {lc.Base.TubeCavityRadKA1150WmPerK:0.000} W·m/K（1150 °C 时 kA）　设计同第二批 B2　0.5 mm 细区半径 {radius:0}");
++        Say($"编译产物 核心 MVID {CoreMvid}　测试 MVID {TestMvid}");
++        Say($"工况位 EmptyTube = {lc.EmptyTube}（来源 {lc.EmptyTubeSetpointFrom}）　控温点 {string.Join("/", lc.SetpointC.Select(v => v.ToString("0.#")))} °C　Anderson {lc.UseAnderson}（深度 {lc.AndersonDepth}）　默认放大 {LineCase.FixedPointAmp}");
++        Say($"管保温 {lc.Base.Layer1.ThicknessMm:0.0}　板件圆盘保温 {string.Join("/", lc.FlangePlates.Select(g => g.DiscInsulThickMm.ToString("0.0")))}　板件舌保温 {string.Join("/", lc.FlangePlates.Select(g => g.TabInsulThickMm.ToString("0.0")))}　舌片厚 {string.Join("/", d.TongueThickMm.Select(v => v.ToString("0.00")))} mm");
++        Assert.True(lc.EmptyTube, "算例不是空管 —— 接线没接上");
++
++        var sw = System.Diagnostics.Stopwatch.StartNew(); double last = 0;
++        var tick = new Progress<string>(m =>
++        {
++            if (sw.Elapsed.TotalSeconds - last < 180) return;
++            last = sw.Elapsed.TotalSeconds;
++            Say($"     · [已跑 {sw.Elapsed.TotalSeconds:0} s] {m}");
++        });
++
++        // ── 阶段一
++        var ph1 = new List<Round>();
++        string Cold(LineResult res, int j) => ThermocoupleBasis.At(res, j).ColdK.ToString("+0.0000;-0.0000");
++        lc.CoupleTrace = (k, res, delta, resK, remain, amp, omega, aa) =>
++        {
++            ph1.Add(new Round
++            {
++                K = k, Delta = delta, ResK = resK, Remain = remain, Amp = amp, Omega = omega,
++                RootA = res.Segments.Select(s => s.TRootAC).ToArray(), RootB = res.Segments.Select(s => s.TRootBC).ToArray()
++            });
++            Say($"   阶段一 轮{k,4}　δ {delta:0.0000}　真残差 {resK:0.0000}　剩余估计 {remain:0.000}（×{amp:0.0}）　ω {omega:0.00}　"
++              + $"共用片冷侧 {Cold(res, 1)}/{Cold(res, 2)} K　片1 抽热 {res.Flanges[1].QFromTubeW:+0.0000;-0.0000} W　{sw.Elapsed.TotalMinutes:0.0} 分"
++              + (aa.Length > 0 ? $"　{aa}" : ""));   // R48 G3 审查后：每轮都印 Anderson
++        };
++        var r1 = LineRunner.Run(lc, tick, default);
++        Say($"阶段一（容差 0.25 K）：{sw.Elapsed.TotalMinutes:0.0} 分　Ok {r1.Ok}　收敛 {r1.Converged}　剩余估计 {r1.CoupleRemainK:0.000} K　外层 {ph1.Count} 轮");
++        Say("   Notes：");
++        foreach (var s in r1.Notes) Say("     " + s);
++        Assert.True(r1.Ok && r1.Converged, "0.25 K 那次没解到收敛 —— 本档不读：" + r1.Message);
++        Assert.True(lc.WarmStart.Length >= n, "收敛后 WarmStart 没回写，续跑无从热启动");
++        var j1 = Enumerable.Range(0, n + 1).Select(j => ThermocoupleBasis.At(r1, j)).ToArray();
++        double[] rootA0 = r1.Segments.Select(s => s.TRootAC).ToArray(), rootB0 = r1.Segments.Select(s => s.TRootBC).ToArray();
++        double delta0 = ph1.Count > 0 ? ph1[^1].Delta : double.NaN;
++        PrintState("阶段一收敛点", r1, Say);
++
++        // ── 阶段二
++        lc.CoupleTolK = 1e-6;
++        lc.CoupleMaxRounds = smoke ? 5 : 300;
++        var ph2 = new List<Round>();
++        lc.CoupleTrace = (k, res, delta, resK, remain, amp, omega, aa) =>
++        {
++            var rd = new Round
++            {
++                K = k, Delta = delta, ResK = resK, Remain = remain, Amp = amp, Omega = omega,
++                RootA = res.Segments.Select(s => s.TRootAC).ToArray(), RootB = res.Segments.Select(s => s.TRootBC).ToArray(),
++                Cold1 = ThermocoupleBasis.At(res, 1).ColdK, Cold2 = ThermocoupleBasis.At(res, 2).ColdK, Q1 = res.Flanges[1].QFromTubeW
++            };
++            ph2.Add(rd);
++            Say($"   续跑 轮{k,3}　共用片冷侧 {rd.Cold1:+0.0000;-0.0000}/{rd.Cold2:+0.0000;-0.0000} K　片1 抽热 {rd.Q1:+0.0000;-0.0000} W　"
++              + $"δ {delta:0.0000}　真残差 {resK:0.0000}　剩余估计 {remain:0.000}（×{amp:0.0}）　ω {omega:0.00}　{sw.Elapsed.TotalMinutes:0.0} 分"
++              + (aa.Length > 0 ? $"　{aa}" : ""));   // R48 G3 审查后：每轮都印（原只 k ≤ 3 或 k % 25 = 0）
++        };
++        var r2 = LineRunner.Run(lc, tick, default);
++        Say($"阶段二（热启动续跑 {ph2.Count} 轮）：{sw.Elapsed.TotalMinutes:0.0} 分　Ok {r2.Ok}　收敛 {r2.Converged}（容差 1e-6；逐位停住才会报收敛）");
++        Say("   Notes：");
++        foreach (var s in r2.Notes) Say("     " + s);
++        Assert.True(r2.Ok, "续跑解不出来：" + r2.Message);
++        Assert.True(ph2.Count >= 1, "续跑一轮都没跑");
++        PrintState("续跑末轮", r2, Say);
++
++        // ── 判读（规则见档头，跑前写死）
++        var tail = ph2.Skip(Math.Max(0, ph2.Count - 50)).ToArray();
++        double c1Inf = tail.Average(t => t.Cold1), c2Inf = tail.Average(t => t.Cold2), q1Inf = tail.Average(t => t.Q1);
++        double[] tAInf = Enumerable.Range(0, n).Select(i => tail.Average(t => t.RootA[i])).ToArray();
++        double[] tBInf = Enumerable.Range(0, n).Select(i => tail.Average(t => t.RootB[i])).ToArray();
++        double drift = Math.Max(Math.Abs(c1Inf - j1[1].ColdK), Math.Abs(c2Inf - j1[2].ColdK));
++        Say("");
++        Say($"★ 续跑末 {tail.Length} 轮均值：共用片冷侧 {c1Inf:+0.0000;-0.0000}（漂 {c1Inf - j1[1].ColdK:+0.0000;-0.0000}）/{c2Inf:+0.0000;-0.0000}（漂 {c2Inf - j1[2].ColdK:+0.0000;-0.0000}）K"
++          + $"　片1 抽热 {q1Inf:+0.0000;-0.0000}（漂 {q1Inf - r1.Flanges[1].QFromTubeW:+0.0000;-0.0000} W）　漂移 D = {drift:0.0000} K");
++        Say($"   末段极差：共用片冷侧 {tail.Max(t => t.Cold1) - tail.Min(t => t.Cold1):0.0000}/{tail.Max(t => t.Cold2) - tail.Min(t => t.Cold2):0.0000} K（仍在走就不是渐近值）");
++        double ErrAt(Round rd) => Enumerable.Range(0, n).Max(i => Math.Max(Math.Abs(rd.RootA[i] - tAInf[i]), Math.Abs(rd.RootB[i] - tBInf[i])));
++        double e0 = Enumerable.Range(0, n).Max(i => Math.Max(Math.Abs(rootA0[i] - tAInf[i]), Math.Abs(rootB0[i] - tBInf[i])));
++        Say($"   阶段一收敛点到续跑末段的真误差（各段两端管根最大）{e0:0.0000} K　阶段一末轮步长 {delta0:0.0000} K　阶段一报的剩余估计 {r1.CoupleRemainK:0.000} K");
++        var ratios = ph1.Where(rd => rd.K >= 3 && rd.Delta >= 0.02).Select(rd => (rd.K, e: ErrAt(rd), rd.Delta)).Where(t => t.e >= 0.02).Select(t => (t.K, a: t.e / t.Delta)).ToList();
++        double aMed = double.NaN, aMax = double.NaN;
++        if (ratios.Count > 0)
++        {
++            var sorted = ratios.Select(t => t.a).OrderBy(v => v).ToArray();
++            aMed = sorted.Length % 2 == 1 ? sorted[sorted.Length / 2] : 0.5 * (sorted[sorted.Length / 2 - 1] + sorted[sorted.Length / 2]);
++            aMax = sorted[^1];
++        }
++        Say($"   真误差÷步长（阶段一 k ≥ 3、δ ≥ 0.02 K、e ≥ 0.02 K，共 {ratios.Count} 轮）：{string.Join("　", ratios.Select(t => $"轮{t.K} {t.a:0.0}"))}");
++        var fitPts = ph1.Where(rd => rd.K >= 3 && rd.Delta >= 0.02).Select(rd => (x: (double)rd.K, y: Math.Log(rd.Delta))).ToList();
++        double rFit = double.NaN, aFit = double.NaN;
++        if (fitPts.Count >= 5)
++        {
++            double mx = fitPts.Average(t => t.x), my = fitPts.Average(t => t.y);
++            double sxy = fitPts.Sum(t => (t.x - mx) * (t.y - my)), sxx = fitPts.Sum(t => (t.x - mx) * (t.x - mx));
++            rFit = Math.Exp(sxy / sxx);
++            if (rFit > 0 && rFit < 1) aFit = rFit / (1 - rFit);
++        }
++        Say($"   估法一 中位数 {Fmt(aMed)}（最大 {Fmt(aMax)}）　估法二 ln δ 斜率（{fitPts.Count} 轮）r = {Fmt(rFit)} ⇒ r/(1−r) = {Fmt(aFit)}");
++        double aMeas = ratios.Count >= 3 ? aMed : aFit;
++        string aFrom = ratios.Count >= 3 ? "估法一" : double.IsFinite(aFit) ? "估法二（估法一够格的轮不足 3）" : "判不了";
++        Say($"   实测放大 A = {Fmt(aMeas)}（取{aFrom}）　默认放大 {LineCase.FixedPointAmp}");
++        // 只报数、不进判读（2026-09-15 Opus 5，冒烟之后、正式起跑之前加）：Anderson 步让迭代不是线性定常的，逐轮「真误差 ÷ 步长」只在渐近段才等于 r/(1−r)
++        //   （LineRunner 外层耦合「真残差」那段注释写的就是这一点）⇒ 另给停机那一刻的两个直接比值，供数值把关人对照。
++        //   R48 G3 审查后（2026-09-15，Opus 5）：末轮步长低于内层容差时也印出比值（原来印「—」），旁注步长低于内层容差。
++        Say($"   （只报数）停机那一刻：真误差 ÷ 末轮步长 = {(delta0 > 0 ? Fmt(e0 / delta0) : "—")}{(delta0 < 0.005 ? $"（末轮步长 {delta0:0.0000} K 低于内层容差 0.005 K，比值只作佐证）" : "")}　"
++          + $"真误差 ÷ 阶段一报的剩余估计 = {(r1.CoupleRemainK > 0 ? Fmt(e0 / r1.CoupleRemainK) : "—")}（≤ 1 = 估计盖住了真误差）");
++        // R48 G3 审查后（2026-09-15，Opus 5）：LineRunner 自己的比值记录（CoupleTrace 的 amp；没量到 r 时是默认 25）与续跑步长分布 —— 只报数，档头「附注」②③（第二轮审查后改口：原写「判读更正 ② 要读」，那段已撤回，这几个数不进判读）
++        double lrMax1 = ph1.Count > 0 ? ph1.Max(t => t.Amp) : double.NaN, lrMax2 = ph2.Max(t => t.Amp);
++        int lrOver1 = ph1.Count(t => t.Amp > LineCase.FixedPointAmp), lrOver2 = ph2.Count(t => t.Amp > LineCase.FixedPointAmp);
++        var ampHist = ph2.GroupBy(t => Math.Round(t.Amp, 1)).OrderByDescending(g => g.Count()).Take(8).Select(g => $"×{g.Key:0.0} {g.Count()} 轮");
++        Say($"   LineRunner 比值记录的放大：阶段一最大 {Fmt(lrMax1)}（> 25 的 {lrOver1} 轮）　续跑最大 {Fmt(lrMax2)}（> 25 的 {lrOver2}／{ph2.Count} 轮）　续跑各值轮数 {string.Join("　", ampHist)}");
++        Say($"   续跑步长分布（停机要 δ ≤ 0.25/25 = 0.01 K）：δ < 0.005 K {ph2.Count(t => t.Delta < 0.005)} 轮　0.005～0.01 {ph2.Count(t => t.Delta >= 0.005 && t.Delta < 0.01)} 轮　"
++          + $"0.01～0.03 {ph2.Count(t => t.Delta >= 0.01 && t.Delta < 0.03)} 轮　≥ 0.03 K {ph2.Count(t => t.Delta >= 0.03)} 轮　最大 {ph2.Max(t => t.Delta):0.0000} K");
++        // 判读：照档头「跑前写死的判读」（第二轮审查后恢复成 04:07 起跑那一版的分支与文字，2026-09-15 Opus 5；
++        //   第一轮审查后加的「没有量准」一类已撤回，理由见档头「附注」）
++        string verdict;
++        if (!double.IsFinite(aMeas))
++            verdict = drift <= 0.1
++                ? "⇒ 漂移 ≤ 0.1 K：容差 0.25 K 在本算例上够用；**实测放大判不了**（够格的轮不够），默认放大 25 在空管态够不够没量到。"
++                : $"⇒ 漂移 {drift:0.000} K > 0.1 K，且实测放大判不了 —— 记下，交数值把关人。";
++        else if (aMeas > LineCase.FixedPointAmp)
++            verdict = $"⇒ **实测放大 {aMeas:0.0} > 25：默认放大在空管态偏小** —— 提 open issue：比值记录区间放宽到 (0.5, 0.999)，或空管态用实测值 × 安全系数。（漂移 {drift:0.000} K）";
++        else if (drift <= 0.1)
++            verdict = "⇒ 漂移 ≤ 0.1 K 且实测放大 ≤ 25：容差 0.25 K 加默认放大 25 在空管态可用。";
++        else if (drift < 0.5)
++            verdict = $"⇒ 实测放大 ≤ 25，但漂移 {drift:0.000} K 在 0.1～0.5 K 之间：记下，不下结论。";
++        else
++            verdict = $"⇒ 实测放大 ≤ 25，但漂移 {drift:0.000} K ≥ 0.5 K：**剩余误差估计在空管态低估**，要修估法。";
++        Say($"★ 判读（跑前规则；实测放大 A {(double.IsFinite(aMeas) ? $"取{aFrom} {Fmt(aMeas)}" : "判不了")}，漂移 D {drift:0.0000} K）" + verdict);
++        // 附注（只报数，不改判；档头「附注」①～④）：各估法与比值记录的数都在上面几行，这里只把读它们时要知道的三件事写在判读旁边
++        Say($"   附注（只报数，不改判，交数值把关人）：① 估法一只收 δ ≥ 0.02 K 的轮，停机区是 δ ≤ 0.01 K，两区间不重叠，被统计的都是停机之前的轮；"
++          + $"② 其他量法：估法二 {Fmt(aFit)}、逐轮最大 {Fmt(aMax)}、LineRunner 比值记录阶段一最大 {Fmt(lrMax1)}／续跑最大 {Fmt(lrMax2)} —— Anderson 下逐轮比值不是收缩率，这几个数不当判据；"
++          + $"③ 续跑 δ ≥ 0.03 K 的有 {ph2.Count(t => t.Delta >= 0.03)}／{ph2.Count} 轮；外层步长可能有约 0.04 K 的地板（推断：反算电流二分容差 0.05 A × 管根对电流约 1.2 K/A，未单独隔离），"
++          + "比值记录在地板上会被两个几乎相等的地板步长推高，那时的放大不是收缩率；若要放宽比值记录区间，先把地板压到 0.01 K 以下，另一备选是空管态用实测值 × 安全系数。");
++
++        // 机读行（两档并列读它）：DATA|ka|coreMvid|testMvid|drift|aMeas|conv1|remain1|rounds1|rounds2|plates…|segs…
++        //   plate：hotK,coldK,rootHot,rootCold,ref,q,tmax（续跑末轮）；seg：I,TRootA,TRootB,BaseA,BaseB,cavKA,decayMm（续跑末轮）
++        string Num(double v) => v.ToString("R", inv);
++        var plates = Enumerable.Range(0, n + 1).Select(j =>
++        {
++            var t = ThermocoupleBasis.At(r2, j); var f = r2.Flanges[j];
++            return string.Join(",", new[] { t.HotK, t.ColdK, t.RootHotC, t.RootColdC, t.RefC, f.QFromTubeW, f.TMaxC }.Select(Num));
++        });
++        var segs = r2.Segments.Select(s => string.Join(",", new[] { s.CurrentA, s.TRootAC, s.TRootBC, s.BaseTRootAC, s.BaseTRootBC, s.CavityRadKAWmPerK, s.DecayLengthMm }.Select(Num)));
++        Say("DATA|" + Num(ka) + "|" + CoreMvid + "|" + TestMvid + "|" + Num(drift) + "|" + Num(aMeas) + "|" + (r1.Converged ? "1" : "0") + "|" + Num(r1.CoupleRemainK)
++          + "|" + ph1.Count + "|" + ph2.Count + "|" + string.Join(";", plates) + "|" + string.Join(";", segs));
++    }
++
++    /// <summary>逐片热侧／冷侧读数、管根、基准、抽热、最高温与散热表上限的差；逐段电流、管根、基线、管腔 kA、热衰减长度。</summary>
++    private static void PrintState(string title, LineResult r, Action<string> Say)
++    {
++        Say($"   【{title}】逐片（最热铂高出热偶读数／管根低于热偶读数／管根较热端与较冷端／热偶读数基准／抽热／最高温与散热表上限 {ShellThermal.LossTableHiC:0.0} °C 的差）：");
++        for (int j = 0; j < r.Flanges.Length; j++)
++        {
++            var t = ThermocoupleBasis.At(r, j); var f = r.Flanges[j];
++            Say($"     {t.Name}　热侧 {F(t.HotK)} K（{t.HottestWhat}）　冷侧 {F(t.ColdK)} K（{t.RootColdWhere}）　管根 {t.RootHotC:0.00}/{t.RootColdC:0.00}　基准 {t.RefC:0.00}　"
++              + $"抽热 {f.QFromTubeW:+0.000;-0.000} W　最高温 {f.TMaxC:0.00} °C（离上限 {ShellThermal.LossTableHiC - f.TMaxC:0.0} K）　场收敛 {f.FieldsConverged}");
++        }
++        Say("   逐段（电流／管根两端／无法兰基线两端／段内管腔 kA／热衰减长度）：");
++        foreach (var s in r.Segments)
++            Say($"     {s.Name}　设定 {s.SetpointC:0.#}　电流 {s.CurrentA:0.00} A　管根 {s.TRootAC:0.000}/{s.TRootBC:0.000}　基线 {s.BaseTRootAC:0.000}/{s.BaseTRootBC:0.000}　管腔 kA {s.CavityRadKAWmPerK:0.0000} W·m/K　热衰减长度 {s.DecayLengthMm:0.0} mm");
++        static string F(double v) => double.IsNaN(v) ? "判不了" : v.ToString("+0.000;-0.000");
++    }
++
++    private static string Fmt(double v) => double.IsFinite(v) ? v.ToString("0.000") : "—";
++
++    [Fact]
++    public void 两档并列_读结果()
++    {
++        string outFile = Path.Combine(Root(), "deliverable", $"R48_空管续跑_两档并列_{DateTime.Now:yyyy-MM-dd_HHmmss}.txt");   // R48 G3 审查后：带运行时刻
++        Assert.False(File.Exists(outFile), $"{outFile} 已存在 —— 拒绝覆盖");
++        var inv = CultureInfo.InvariantCulture;
++        // R48 G3 审查后（2026-09-15，Opus 5）：两档各自按文件写入时刻从新到旧，取最新的、核心与测试 MVID 相同的一对（原来读固定文件名）
++        (string file, string[] data)[] Cands(double ka) => new DirectoryInfo(Path.Combine(Root(), "deliverable"))
++            .GetFiles(Prefix(ka) + "*.txt").OrderByDescending(f => f.LastWriteTimeUtc)
++            .Select(f => (name: f.Name, data: File.ReadAllLines(f.FullName).LastOrDefault(x => x.StartsWith("DATA|", StringComparison.Ordinal))?.Split('|')))
++            .Where(t => t.data is not null).Select(t => (t.name, t.data!)).ToArray();
++        var loC = Cands(SegmentSolver.CavityRadKA1150Low); var hiC = Cands(SegmentSolver.CavityRadKA1150High);
++        Assert.True(loC.Length > 0 && hiC.Length > 0, "两档输出没齐（先跑两个续跑 Fact）");
++        var pair = loC.SelectMany(l => hiC.Where(h => h.data[2] == l.data[2] && h.data[3] == l.data[3]).Take(1).Select(h => (l, h))).Take(1).ToArray();
++        Assert.True(pair.Length == 1, "找不到核心与测试 MVID 都相同的一对两档输出 —— 不比");
++        var (loF, hiF) = pair[0];
++        var lo = loF.data; var hi = hiF.data;
++        double[][] Rows(string s) => s.Split(';').Select(r => r.Split(',').Select(v => double.Parse(v, inv)).ToArray()).ToArray();
++        var pl = Rows(lo[10]); var ph = Rows(hi[10]); var sl = Rows(lo[11]); var sh = Rows(hi[11]);
++        var sb = new StringBuilder();
++        void Say(string s) { _out.WriteLine(s); sb.AppendLine(s); }
++        Say($"R48 G3 空管续跑 两档并列（Opus 5）　{DateTime.Now:yyyy-MM-dd HH:mm:ss}　出处 {loF.file} 与 {hiF.file}（续跑末轮），同一份编译产物（核心 MVID {lo[2]}，测试 MVID {lo[3]}）");
++        // 第二轮审查后（2026-09-15，Opus 5）：判读口径恢复跑前规则，这一行跟着改（原引「判读更正」，已撤回）
++        Say("判读口径：R48EmptyTubeContinuationTests 档头「跑前写死的判读」—— 两档各自的判读看各自输出的「★ 判读」行，附注只报数、不改判；"
++          + "带时刻 _064409 的两份末行「默认放大 25 够不够没有量准」已作废（数照用）。");
++        Say($"管腔辐射系数 {lo[1]} → {hi[1]} W·m/K；差 = 高档 − 低档。两档的漂移 {double.Parse(lo[4], inv):0.0000}/{double.Parse(hi[4], inv):0.0000} K、实测放大 {lo[5]}/{hi[5]}");
++        string[] names = pl.Length == 4 ? new[] { "入口", "HC1|HC2", "HC2|HC3", "出口" } : Enumerable.Range(0, pl.Length).Select(j => $"片{j}").ToArray();
++        string[] cols = { "最热铂高出热偶读数 K", "管根低于热偶读数 K", "管根较热端 °C", "管根较冷端 °C", "热偶读数基准 °C", "抽热 W", "最高温 °C" };
++        for (int c = 0; c < cols.Length; c++)
++            Say($"   {cols[c]}：" + string.Join("　", Enumerable.Range(0, pl.Length).Select(j => $"{names[j]} {pl[j][c]:0.000} → {ph[j][c]:0.000}（{ph[j][c] - pl[j][c]:+0.000;-0.000}）")));
++        string[] scol = { "电流 A", "管根首端 °C", "管根末端 °C", "基线首端 °C", "基线末端 °C", "段内管腔 kA W·m/K", "热衰减长度 mm" };
++        for (int c = 0; c < scol.Length; c++)
++            Say($"   {scol[c]}：" + string.Join("　", Enumerable.Range(0, sl.Length).Select(i => $"HC{i + 1} {sl[i][c]:0.0000} → {sh[i][c]:0.0000}（{sh[i][c] - sl[i][c]:+0.0000;-0.0000}）")));
++        Say("   只报数：限值 5 K 的两条判据在两档下各自过不过、差多少，由物理把关人判空管结论对管腔辐射系数敏不敏感。");
++        File.WriteAllText(outFile, sb.ToString(), new UTF8Encoding(false));
++    }
++
++    private static string Root()
++    {
++        var dir = new DirectoryInfo(AppContext.BaseDirectory);
++        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Pt_Optimize.sln"))) dir = dir.Parent;
++        Assert.NotNull(dir);
++        return dir!.FullName;
++    }
++}
+diff --git a/Pt_Optimize.Tests/R48EmptyTubeGateTests.cs b/Pt_Optimize.Tests/R48EmptyTubeGateTests.cs
+index 12e87d0..ae7049b 100644
+--- a/Pt_Optimize.Tests/R48EmptyTubeGateTests.cs
++++ b/Pt_Optimize.Tests/R48EmptyTubeGateTests.cs
+@@ -25,6 +25,9 @@ namespace PtOptimize.Tests;
+ ///      Base 没被改；**「升温」「法兰截面 J」两工况逐位相同**（审查第 4 条：尺寸链与工况无关，此前「已实证」的证据是空转的）；
+ ///      **无法兰基线两工况不同**（审查第 8 条：证明基线真按空管算，不是读 Base 或复用带玻璃缓存）。
+ ///   6. 整线空管的端部保温形状经 LineRunner 写成带玻璃形状（审查第 5 条的接线门）。
++///   R48 G3（2026-09-15，Opus 5）：管腔轴向辐射由钩子改为模型输入（DesignInputs.TubeCavityRadKA1150WmPerK，空管才有、默认 0.023）——
++///     第 4 条改成「带玻璃给多少都逐位不变、空管给了才起作用」；整线双工况的空管那一份从此含管腔辐射（断言都是定性的，未改门槛）；
++///     三个指纹记录值不改。管腔辐射本身的门见 R48CavityRadiationGateTests。
+ /// </summary>
+ public class R48EmptyTubeGateTests
+ {
+@@ -32,7 +35,7 @@ public class R48EmptyTubeGateTests
+     public R48EmptyTubeGateTests(ITestOutputHelper o) => _o = o;
+ 
+     /// <summary>结果指纹：金属与玻璃温度剖面、电流及玻璃相关的各项标量的逐位 FNV-1a。</summary>
+-    private static ulong Fingerprint(SolveResult r)
++    internal static ulong Fingerprint(SolveResult r)   // R48 G3（2026-09-15，Opus 5）：internal —— 管腔辐射门调同一份指纹代码，不另抄
+     {
+         ulong h = 1469598103934665603UL;
+         void Add(double v)
+@@ -50,7 +53,7 @@ public class R48EmptyTubeGateTests
+     }
+ 
+     /// <summary>带两端抽热、左邻段、端部渐变保温 —— 让提出去的 TubeLossAt / EndFluxes 两条路都被走到。</summary>
+-    private static DesignInputs CaseB() => new()
++    internal static DesignInputs CaseB() => new()
+     {
+         TSetC = 1150, TGlassInC = 1150,
+         FlangeDrawOverrideSet = true, FlangeDrawOverrideW = 3.0,
+@@ -59,7 +62,7 @@ public class R48EmptyTubeGateTests
+         EndInsulExtraMm = 10.0, EndInsulLengthMm = 30.0
+     };
+ 
+-    private static DesignInputs Empty(DesignInputs p) { p.ThroughputTPerDay = 0; p.HGlass = 0; return p; }
++    internal static DesignInputs Empty(DesignInputs p) { p.ThroughputTPerDay = 0; p.HGlass = 0; return p; }
+ 
+     [Fact]
+     public void 带玻璃_逐位不变_三个算例指纹()
+@@ -88,7 +91,10 @@ public class R48EmptyTubeGateTests
+         var r = SegmentSolver.Solve(p);
+         Assert.True(r.Ok, r.Message);
+         Assert.True(r.EmptyTube);
+-        Assert.Equal(SegmentSolver.EmptyTubeNote, r.Note);
++        // R48 G3 审查后（2026-09-15，Opus 5）：默认系数 0.023 > 0 ⇒ 说明 = 原「不适用」那句 ＋ 管腔辐射一句（全文调生产函数 EmptyTubeNoteOf，不手抄）
++        Assert.Equal(SegmentSolver.EmptyTubeNoteOf(p), r.Note);
++        Assert.StartsWith(SegmentSolver.EmptyTubeNote, r.Note);
++        Assert.Contains("管腔内轴向辐射", r.Note);
+ 
+         Assert.All(r.TMetal, t => Assert.True(double.IsFinite(t), "空管金属温度出现 NaN/∞"));
+         Assert.True(double.IsFinite(r.CurrentA) && r.CurrentA > 1, $"电流 {r.CurrentA}");
+@@ -152,7 +158,7 @@ public class R48EmptyTubeGateTests
+     }
+ 
+     [Fact]
+-    public void 钩子_端部保温形状两工况相同_管腔辐射默认逐位不变_热偶基准()
++    public void 钩子_端部保温形状两工况相同_管腔辐射带玻璃逐位不变_热偶基准()   // R48 G3 审查后（2026-09-15，Opus 5）改名：原「…默认逐位不变…」—— 默认已是 0.023，测的是带玻璃给多少都不变
+     {
+         // ── 审查第 5 条：端部额外保温是硬件，形状按带玻璃的 hg 定。
+         //   带玻璃：设定 1080、玻璃进口 1150（损失表上界 max(1080,1150)+400）；空管：同一段把产量、hg 置 0（上界 1080+400）。
+@@ -172,20 +178,26 @@ public class R48EmptyTubeGateTests
+         Assert.True(po[^1] > 1.2 * pg[^1], $"正对照：按自身 hg=0 算的最外格 {po[^1]:0.000} 应明显比带玻璃 {pg[^1]:0.000} 厚 —— 不然本门没检到病");
+         Assert.Empty(SegmentSolver.EndInsulExtraProfileMm(new DesignInputs(), wall));   // 开箱没有端部额外保温
+ 
+-        // ── 审查第 3 条：管腔辐射 kA 钩子。显式 0 与默认逐位相同（带玻璃算例的逐位不变另由指纹门守）；设了才改变剖面，且能量账仍平。
++        // ── 审查第 3 条：管腔辐射。R48 G3（2026-09-15，Opus 5）：钩子改成模型输入（空管才有，默认低档 0.023）——
++        //   带玻璃时系数给 0 或给高档，结果逐位相同（管腔被玻璃占满，没有这条路）；空管时给了才改变剖面，且能量账仍平。
+         var a0 = SegmentSolver.SolveAtCurrent(CaseB(), 1500);
+-        var pb = CaseB(); pb.TubeCavityRadKAWmPerK = 0.0;
++        var pb = CaseB(); pb.TubeCavityRadKA1150WmPerK = 0.0;
+         var a1 = SegmentSolver.SolveAtCurrent(pb, 1500);
++        var pb2 = CaseB(); pb2.TubeCavityRadKA1150WmPerK = SegmentSolver.CavityRadKA1150High;
++        var a2 = SegmentSolver.SolveAtCurrent(pb2, 1500);
+         Assert.Equal(Fingerprint(a0), Fingerprint(a1));
+-        var pr = Empty(CaseB()); pr.EndInsulExtraMm = 0; pr.TubeCavityRadKAWmPerK = 0.023;
+-        var pn = Empty(CaseB()); pn.EndInsulExtraMm = 0;
++        Assert.Equal(Fingerprint(a0), Fingerprint(a2));
++        Assert.Equal(0.0, a2.CavityRadKAWmPerK);
++        var pr = Empty(CaseB()); pr.EndInsulExtraMm = 0; pr.TubeCavityRadKA1150WmPerK = 0.023;
++        var pn = Empty(CaseB()); pn.EndInsulExtraMm = 0; pn.TubeCavityRadKA1150WmPerK = 0.0;
+         var rr = SegmentSolver.SolveAtCurrent(pr, 1500); var rn = SegmentSolver.SolveAtCurrent(pn, 1500);
+         Assert.True(rr.Ok && rn.Ok, rr.Message + rn.Message);
+-        _o.WriteLine($"管腔辐射钩子（空管、带抽热、定电流 1500 A）：A 端 {rn.TMetal[0]:0.00} → {rr.TMetal[0]:0.00} °C　热衰减长度 {rn.DecayLengthMm:0.0} → {rr.DecayLengthMm:0.0} mm");
+-        Assert.True(Math.Abs(rr.TMetal[0] - rn.TMetal[0]) > 0.1, "设了管腔辐射 kA 却不改剖面 —— 钩子没接上");
++        _o.WriteLine($"管腔辐射（空管、带抽热、左邻段 1100 °C、定电流 1500 A）：A 端 {rn.TMetal[0]:0.00} → {rr.TMetal[0]:0.00} °C　热衰减长度 {rn.DecayLengthMm:0.0} → {rr.DecayLengthMm:0.0} mm　段内 kA {rr.CavityRadKAWmPerK:0.0000}");
++        Assert.True(Math.Abs(rr.TMetal[0] - rn.TMetal[0]) > 0.1, "设了管腔辐射却不改剖面 —— 没接上");
+         Assert.True(rr.DecayLengthMm > rn.DecayLengthMm);
++        Assert.Equal(0.023, rr.CavityRadKAWmPerK);   // 控温点 1150 = 标定温度 ⇒ 换算系数恰为 1
+         var er = SegmentSolver.EnergyBalance(pr, rr);
+-        Assert.True(Math.Abs(er.ResidualRel) <= 0.005, $"带管腔辐射钩子的能量账不平：残差 {er.ResidualRel:P3}");
++        Assert.True(Math.Abs(er.ResidualRel) <= 0.005, $"带管腔辐射的能量账不平：残差 {er.ResidualRel:P3}");
+ 
+         // ── 审查第 2 条：热偶读数基准（用户 2026-09-14：共用片取两侧热偶读数的对数平均）。
+         //   记录值出处：awk 手算 (1423.15−1353.15)/ln(1423.15/1353.15) − 273.15 = 1114.7058；(1353.15−1323.15)/ln(1353.15/1323.15) − 273.15 = 1064.9440（2026-09-14 Opus 5）
+diff --git a/Pt_Optimize.Tests/R48EmptyTubeStateTests.cs b/Pt_Optimize.Tests/R48EmptyTubeStateTests.cs
+index 9a5ed5d..f31f8c8 100644
+--- a/Pt_Optimize.Tests/R48EmptyTubeStateTests.cs
++++ b/Pt_Optimize.Tests/R48EmptyTubeStateTests.cs
+@@ -46,7 +46,8 @@ namespace PtOptimize.Tests;
+ ///   C. 空管·全线升温目标 1150：三段同一根管、同保温、同设定 ⇒ 下游两段电流升到约与 HC1 相同（约 1070 A），梯度推热没了；
+ ///      各片「最热铂 − 1150」主要剩法兰自热高出管根的那一截（第一轮空管里共用片与出口片约高出管根 +39～+51 K，入口片 +14 K）⇒
+ ///      预计共用片与出口片约 +40～+60 K、入口片约 0～+15 K。结论形态：仍超 5 K，但比沿用生产设定小一半以上。
+-///   D/E. 空管·沿用生产设定 + 管腔辐射 kA 0.023／0.056 W·m/K（DesignInputs.TubeCavityRadKAWmPerK 注释里的两档估计）：
++///   D/E. 空管·沿用生产设定 + 管腔辐射 kA 0.023／0.056 W·m/K（DesignInputs.TubeCavityRadKAWmPerK 注释里的两档估计 —— 2026-09-14 旧钩子时期的预测；
++///        该属性 R48 G3 起改名 DesignInputs.TubeCavityRadKA1150WmPerK、改成空管才有且按 T³ 换算，2026-09-15 Opus 5 注）：
+ ///      轴向总 kA 从 0.0106 升到约 0.034／0.066（3.2／6.3 倍）⇒ 接头 K/W ∝ 1/√kA 降到第一轮空管的约 0.56／0.40 倍（4.1 → 约 2.3／1.6 K/W）；
+ ///      下游管根被抬高的量（第一轮增量温降约 −88 K）按同一比例缩到约 −50／−35 K；「最热铂 − 基准」的 HC2|HC3 由 +139 降到约 +100～+120 K
+ ///      （基准 1064.94 与 HC3 设定梯度那部分不随辐射变）。结论形态：幅度明显变，方向不变。
+@@ -82,8 +83,15 @@ public class R48EmptyTubeStateTests
+     private readonly ITestOutputHelper _out;
+     public R48EmptyTubeStateTests(ITestOutputHelper o) { _out = o; }
+ 
+-    // ── 管腔辐射敏感度两档（出处：DesignInputs.TubeCavityRadKAWmPerK 注释里的估算：ℓ = 40 mm 串联表面热阻 0.023；与 ℓ 自洽 0.056）
+-    private const double RadKALow = 0.023, RadKAHigh = 0.056;
++    // ── 管腔辐射敏感度两档（出处：DesignInputs.TubeCavityRadKA1150WmPerK 注释里的估算：ℓ = 40 mm 串联表面热阻 0.023；与 ℓ 自洽 0.056）
++    // ⚠ R48 G3（2026-09-15，Opus 5）：钩子改成了模型输入 DesignInputs.TubeCavityRadKA1150WmPerK（空管才有、按段控温点温度 T³ 换算、
++    //   接头导度那一份按邻段端温取；生产默认低档 0.023）。本探针各 Fact 照旧**显式**给系数（带玻璃／生产设定／全线升温目标三档给 0 = 不计管腔辐射，
++    //   即 2026-09-14 那一版的模型）。⇒ 给 0 时**管腔辐射这一项**与 2026-09-15 凌晨同口径；给 0.023／0.056 时这一项也不同口径
++    //   （控温点 1080／1050 两段系数 ×0.860／×0.804，接头导度按邻段端温取），新口径的两档见 R48EmptyTubeContinuationTests（全线 1150、0.5 mm）。
++    // ⚠ R48 G3 审查后改口（2026-09-15，Opus 5）：此前这里写「给 0 的各档复现 2026-09-15 凌晨的数」—— **不对**。那批数出自合并前的 r48_C 树
++    //   （合并 A 压接整面接触、D 逐片保温之前），合并后整线法兰场已变（升温期法兰−管峰值、抽热、电流都不同，
++    //   见 deliverable\R48_G3_C路快门_合并后改前_2026-09-15.txt 与 r48_C 快门输出的逐项对照）⇒ 系数给 0 重跑，**整线数也不复现、不能与凌晨那批混比**。
++    private const double RadKALow = SegmentSolver.CavityRadKA1150Low, RadKAHigh = SegmentSolver.CavityRadKA1150High;
+ 
+     private const string TagGlass = "带玻璃", TagEmptyProd = "空管_生产设定", TagEmptyRamp = "空管_全线升温目标";
+     private static string TagRad(double ka) => $"空管_生产设定_腔辐射kA{ka:0.000}";
+@@ -196,7 +204,7 @@ public class R48EmptyTubeStateTests
+             _out.WriteLine(s); sb.AppendLine(s);
+             try { File.WriteAllText(file, sb.ToString(), new UTF8Encoding(false)); } catch { }
+         }
+-        var p = new DesignInputs { SplitSharedFlangeDraw = true, TubeCavityRadKAWmPerK = radKA };
++        var p = new DesignInputs { SplitSharedFlangeDraw = true, TubeCavityRadKA1150WmPerK = radKA };   // R48 G3：显式给（生产默认已是 0.023，给 0 = 不计）
+         var d = DesignSpec.W08.Clone();
+         d.TabThickMm = new[] { 0.73, 1.26, 1.26, 0.73 };
+         d.RingMul = new[] { 1.0, 1.0, 1.0, 1.0 };
+@@ -216,7 +224,7 @@ public class R48EmptyTubeStateTests
+         Say($"算例工况位 EmptyTube = {lc.EmptyTube}（设定 {emptyTube}）{(lc.EmptyTube != emptyTube ? "　⚠⚠ **与设定不符 —— 接线没接上，本档作废**" : "")}"
+           + $"　控温点 {string.Join("/", lc.SetpointC.Select(v => v.ToString("0.#")))} °C（来源 {lc.EmptyTubeSetpointFrom}）"
+           + $"　Base 产量 {lc.Base.ThroughputTPerDay} t/d、hg {lc.Base.HGlass}（段解里空管才置 0，Base 本身不改）　玻璃进口 {lc.GlassInC} °C");
+-        Say($"管腔辐射 kA 钩子 {lc.Base.TubeCavityRadKAWmPerK:0.000} W·m/K（0 = 生产模型，只有管壁导热）　端部额外保温 {lc.Base.EndInsulExtraMm:0.0} mm");
++        Say($"管腔轴向辐射系数（1150 °C 时 kA）{lc.Base.TubeCavityRadKA1150WmPerK:0.000} W·m/K（0 = 不计，只有管壁导热；2026-09-15 起生产默认 {SegmentSolver.CavityRadKA1150Low:0.000}）　端部额外保温 {lc.Base.EndInsulExtraMm:0.0} mm");
+         Say($"管保温层 {lc.Base.Layer1.ThicknessMm:0.0}　板件圆盘保温 {string.Join("/", lc.FlangePlates.Select(g => g.DiscInsulThickMm.ToString("0.0")))}　"
+           + $"板件舌保温 {string.Join("/", lc.FlangePlates.Select(g => g.TabInsulThickMm.ToString("0.0")))}　舌片厚 {string.Join("/", d.TongueThickMm.Select(v => v.ToString("0.00")))} mm");
+ 
+diff --git a/Pt_Optimize/Core/DesignInputs.cs b/Pt_Optimize/Core/DesignInputs.cs
+index d399880..dcbc529 100644
+--- a/Pt_Optimize/Core/DesignInputs.cs
++++ b/Pt_Optimize/Core/DesignInputs.cs
+@@ -535,18 +535,55 @@ public class DesignInputs
+     [Browsable(false)] public double EndInsulShapeHGlass { get; set; } = -1;
+ 
+     /// <summary>
+-    /// ★ R48 审查第 3 条（2026-09-14，Opus 5）：**敏感度探针专用** —— 管腔轴向辐射的等效轴向导热 kA，W·m/K，叠加在管壁导热 kPt·A 上。默认 0 = 逐位不变。
++    /// ★ R48 G3（2026-09-15，Opus 5；物理把关人第十一轮「空管管腔轴向辐射进模型」）：**空管管腔轴向辐射**的比例系数，
++    /// 以 <see cref="SegmentSolver.CavityRadRefC"/>（1150 °C）时的等效轴向导热 kA 表示，W·m/K。默认 0.023。
++    /// 前身是 R48 审查第 3 条（2026-09-14）的敏感度钩子 TubeCavityRadKAWmPerK（默认 0、带玻璃也加、不随温度）；改名是为了让旧语义的读者编译不过，不会读错。
+     ///
+-    /// 空管时管腔是连续的高温腔体，腔内辐射沿轴向传热；带玻璃时腔被玻璃充满，没有这条路。生产模型（<see cref="SegmentSolver"/>）只有管壁导热。
+-    /// 量级（推理，未实测）：黑体长管、线性温度下，等效 kA = 8σT³·πD·R²·∫₀^∞ H·F(H) dH（F = 管壁微元环对同轴圆盘的角系数，积分 = 2/3），
+-    ///   1100 °C、Ø50 ⇒ 0.077 W·m/K，是管壁 kPt·A（83.3 × 1.28e-4 ≈ 0.0106）的约 7 倍；灰体 ε = 0.18（<see cref="PtEmissivity"/>）在尺度 ℓ 上
+-    ///   与表面热阻串联：kA_eff = 1/(1/0.077 + 1/(G_s·ℓ²))，G_s = πD·ε/(1−ε)·4σT³ ≈ 20 W/(m·K) ⇒ ℓ = 40 mm 时约 0.023（管壁的 2.1 倍），
+-    ///   与 ℓ 自洽迭代（ℓ = √(kA_总/hP)，空管 hP ≈ 6.7）收在约 0.056（5.2 倍，ℓ ≈ 99 mm）。
+-    ///   ⚠ 扩散近似在 ℓ 只有两三个管径时偏大（辐射核是非局部的），所以这两个数只当敏感度的两档，不是模型值。
+-    /// 只进段解的轴向导热（Profile 的 K 与段间耦合导度）与报表的热衰减长度；**不进端部额外保温的形状**（那是硬件，见 <see cref="EndInsulShapeHGlass"/>）。
+-    /// ⚠ 生产链路不许设它：要不要进模型、管口边界怎么取，归物理把关人定（R48 空管稳态探针的 open issue）。
++    /// ══ 物理（出处：物理把关人第十一轮；下面量级是 2026-09-14 仓库里的推理估算，未实测）
++    /// 空管时管腔是连续的高温腔体，腔内辐射沿轴向传热，相当于附加的轴向导热 kA_rad(T) ∝ T³；带玻璃时腔被玻璃充满，没有这条路（取 0）。
++    ///   黑体长管：等效 kA = 8σT³·πD·R²·∫₀^∞ H·F(H) dH = (16/3)σT³·D × 管腔截面（F = 管壁微元环对同轴圆盘的角系数，积分 = 2/3），
++    ///   1100 °C、Ø50 ⇒ 0.077 W·m/K（1150 °C ⇒ 0.086），是管壁 kPt·A（83.3 × 1.28e-4 ≈ 0.0106）的约 7～8 倍；
++    ///   灰体 ε = 0.18（<see cref="PtEmissivity"/>）在尺度 ℓ 上与表面热阻串联：kA_eff = 1/(1/0.077 + 1/(G_s·ℓ²))，G_s = πD·ε/(1−ε)·4σT³ ≈ 20 W/(m·K)
++    ///   ⇒ ℓ = 40 mm 时约 0.023（管壁的 2.1 倍）；与 ℓ 自洽迭代（ℓ = √(kA_总/hP)，空管 hP ≈ 6.7）收在约 0.056（5.2 倍，ℓ ≈ 99 mm）。
++    ///   ⚠ 这两档是按 1100 °C 算的；物理把关人第十一轮定「在 1150 °C 下标定」⇒ 本系数把它们当 1150 °C 的值用（同一式在 1150 °C 重算低档是 0.025，差在两档之间的不确定度以内）。
++    /// ══ 默认值：暂取低档 0.023，**两档之间没有先验依据取舍**，待物理把关人定（2026-09-15 Opus 5 审查后改写）
++    ///   ⚠ 本段初版（同日）写的是「两档都出自扩散近似、扩散近似偏大 ⇒ 两档都偏上限 ⇒ 取较小的那档离真值近」—— **这推不出来，已撤回**：
++    ///     两档用的是同一个扩散近似的黑体值 0.077，差别只在尺度 ℓ。低档的 ℓ = 40 mm 是随手取的，与同一估算的自洽尺度不符：
++    ///     √((0.0106 + 0.023)/6.7) = 71 mm，代回得 0.043，再迭代收到 0.055（ℓ ≈ 99 mm，awk 按上面两式重算，2026-09-15 Opus 5）⇒
++    ///     **在这个估算内只有高档自洽**；低档偏低是因为 ℓ 取得不自洽，不是修正了扩散偏差。扩散近似在 ℓ ≈ 1～2 D 时让两档一起偏大，偏多少未知，不偏向哪一档。
++    ///   ⇒ 默认值只是沿用本路初版的取值，不代表更可信；在物理把关人定之前，**空管结论一律两档并报**
++    ///     （B2 设计两档续跑的并列见 deliverable\R48_空管续跑_两档并列_2026-09-15_&lt;时刻&gt;.txt 里读同一编译产物那一对的一份；
++    ///      05:03 那份不带时刻，读的是更早的编译产物，数与之逐位相同但出处不同 —— 第二轮审查后改，2026-09-15 Opus 5）。
++    ///   没有「偏保守」的一档：R48 C 路开箱网格三档对照（deliverable\R48_空管稳态_空管_生产设定_开箱网格_腔辐射kA*，r48_C 树）里
++    ///   kA 变大时下游片超温变小、入口片超温变大，方向不一致。
++    ///   ⚠ 本属性会随界面「保存方案」写进方案文件（MainForm.Save 把全部公开属性序列化），读方案时照读，界面参数表却不显示它（Browsable(false)）⇒
++    ///     以后默认值若改（比如定成高档），旧方案读进来仍是存盘时的值，参数表上看不出来；整线结果的空管工况说明会印出系数；单段解的 SolveResult.Note 也写（SegmentSolver.EmptyTubeNoteOf），
++    ///     单段页报表空管时把它印成「工况说明」一节（MainForm.Report；第二轮审查后加，2026-09-15 Opus 5，原来单段页不显示 Note）。
++    ///     不能加 JsonIgnore：<see cref="SegmentSolver.Clone"/> 靠 JSON 往返复制，加了会丢值。改默认值的人要一并处理读方案（交接 open issue）。
++    /// ══ 口径（写死在 <see cref="SegmentSolver.CavityRadKA"/>，只此一处）
++    ///   · 温度依赖：按**段控温点温度取常数** kA_rad = 本系数 × ((T_set + 273.15)/(1150 + 273.15))³ —— 与管壁 kPt 取 T_set 同一口径，
++    ///     一维求解器的 K 只随位置不随温度；沿管实际温度偏离控温点的部分不跟。
++    ///     误差量级按当前模型（合并 A/D 之后、含管腔辐射、全线 1150 空管、B2 设计）：低档管根 1117.95～1173.32 °C ⇒ T³ 相对控温点 −6.6 %～+5.0 %，
++    ///     高档 1129.13～1164.43 °C ⇒ −4.3 %～+3.1 %（出处 deliverable\R48_空管续跑_kA0.023_2026-09-15.txt／…_kA0.056_2026-09-15.txt 续跑末轮逐段管根，awk 算三次方；
++    ///     带时刻 _064409 的两份重跑与之 DATA 行除编译产物号外逐位相同，md5 核对，2026-09-15 Opus 5）；
++    ///     两档之间差 2.4 倍，这一项小于它。（初版引的「管根最高 1254 °C、T³ 差 24 %」出自 r48_C 合并前的模型、无管腔辐射，不是当前模型，已换掉。）
++    ///   · 只在空管（<see cref="SegmentSolver.IsEmptyTube"/>）时有；带玻璃为 0（带玻璃逐位不变）。
++    ///   · 段间接头：两段管腔在接头处连通（整线只封住两头）⇒ 接头导度也加这一份，按**邻段端温**的 T³ 取；
++    ///     收敛后同一接头两侧管腔那一份只差 O(3ΔT/T)，**前提是两段节距 Δx 相同** —— 接头导度按本段自己的节距（段长 ÷ (节点数 − 1)）取，
++    ///     两段不等长（节点数同为 401）时两侧导度差节距比，接头热流按同一比例失配；管壁那一份原来就有这个问题，管腔那一份跟着有（交接 open issue，
++    ///     R48CavityRadiationGateTests 接头门里有不等长对照的数）。
++    ///   · 管口：铂管两端封住 ⇒ 不计管口向外辐射（整线两头的端部边界照旧只有法兰抽热）。
++    ///   · 标定只对 Ø50 管腔、ε = 0.18：本系数**不按管径、发射率换算**；空管工况说明在两者与标定不同时写明。
++    ///   · 不进端部额外保温的形状（那是硬件，按带玻璃算，见 <see cref="EndInsulShapeHGlass"/>）。
++    ///   · **没进升温模型**（本轮范围只到 SegmentSolver）：RampSolver 是集总单节点，没有轴向导热；但 <see cref="RampTwoNode"/> 的管—法兰耦合导度
++    ///     用半无限翅片入口导度 √(kPt·A·β)，**含管壁轴向导热**，而升温期管里没有玻璃、管腔辐射在物理上同样存在（按两档 kA 管侧翅片导度约大 √3.2 ≈ 1.8／√6.3 ≈ 2.5 倍）。
++    ///     读它的地方（2026-09-15 Opus 5 逐处查过）：整线参考量「升温期法兰−管峰值」（LineRunner.FlangeLumped → RampTwoNode.Solve）、
++    ///     设计电流里「对照·两节点含法兰自热」那一栏（DesignCurrent 调 RampTwoNode.Solve，只印、不进尺寸链）；
++    ///     硬判据「升温」走管子准静态电流 RampTwoNode.QuasiStaticCurrentA，不经这个耦合导度。带玻璃算例也算这两处参考量，改了会动已记录的参考值
++    ///     ⇒ 要不要计入交物理把关人定（交接 open issue）。
++    ///     （初版此处写「RampSolver／RampTwoNode 没有轴向梯度」，对 RampTwoNode 是错的，2026-09-15 Opus 5 审查后改。）
+     /// </summary>
+-    [Browsable(false)] public double TubeCavityRadKAWmPerK { get; set; } = 0.0;
++    [Browsable(false)] public double TubeCavityRadKA1150WmPerK { get; set; } = SegmentSolver.CavityRadKA1150Low;
+ 
+     [Category(ParamCat.程序算出), DisplayName("壁厚由程序反算"),
+      Description("⚠ 本项被LineRunner 强制置 false —— 整线链壁厚由 LineCase.WallMm 定，自行反算会与之打架接管 —— 在这张表里改它，对「③ 整线核算」没有影响。　关闭 = 校核模式：壁厚取「最小可制造壁厚」的实测值，程序只报实际 J")]
+diff --git a/Pt_Optimize/Core/LineRunner.cs b/Pt_Optimize/Core/LineRunner.cs
+index 0599474..29bf3dd 100644
+--- a/Pt_Optimize/Core/LineRunner.cs
++++ b/Pt_Optimize/Core/LineRunner.cs
+@@ -469,8 +469,12 @@ public sealed class LineCase
+     ///   空管时管根可能比设定高（B2 沿用生产设定时 HC3 A 端管根 1153.13 °C、设定 1050，高 103 K，deliverable\R48_空管稳态_空管_2026-09-14.txt），高温许用更低，所以**不能说偏保守**（2026-09-14 Opus 5，审查第 7 条改口）；
+     ///   集总升温（RampSolver）本来不读玻璃。
+     /// ⚠ 控温点就是 <see cref="SetpointC"/>，本类不改它；空管读哪一种控温点由 <see cref="DesignSpec.BuildCase"/> 的 emptyTubeSetpoint 定，记在 <see cref="EmptyTubeSetpointFrom"/>。
+-    /// ⚠ 模型只把玻璃拿掉，**不含空管才有的两条热路**：管腔内轴向辐射、管口辐射散热（R48 审查第 3 条，量级估计见
+-    ///   DesignInputs.TubeCavityRadKAWmPerK）。空管结论一律是「不含这两项的模型结果」。
++    /// ⚠ 空管才有的两条热路（R48 审查第 3 条提出）：
++    ///   · 管腔内轴向辐射 —— R48 G3（2026-09-15，Opus 5）起**进模型**：段解的轴向导热与段间接头导度加一份等效 kA
++    ///     （<see cref="SegmentSolver.CavityRadKA"/>／<see cref="SegmentSolver.NeighbourConductanceWPerK"/>，系数 <see cref="DesignInputs.TubeCavityRadKA1150WmPerK"/>，
++    ///     默认暂取两档估计里的低档，两档之间没有先验依据取舍、未经实测 —— 空管结论两档并报，见 DesignInputs 注释）；无法兰基线走同一个 RunOnce，同样计入。
++    ///     此前（2026-09-14）的空管结论是「不含这一项的模型结果」。⚠ 升温两节点模型（RampTwoNode）的管侧翅片导度没计入管腔辐射（交接 open issue）。
++    ///   · 管口辐射散热 —— 用户定铂管两端封住 ⇒ 不计（整线两头的端部边界照旧只有法兰抽热）。
+     /// ⚠ 端部额外保温的渐变形状按带玻璃的 hg 定（空管段写 DesignInputs.EndInsulShapeHGlass），硬件不随工况变。
+     /// ⚠ 基线缓存 <see cref="BaselineRootC"/> 不记工况：同一个算例改了本位要清空缓存；把缓存在算例间传递的地方（定尺寸器、求解器）
+     ///   接本工况时，缓存键要带上工况。
+@@ -551,6 +555,8 @@ public sealed class SegmentOut
+     /// 只报数，不进判据。
+     /// </summary>
+     public double BetaWPerMK = double.NaN, DecayLengthMm = double.NaN;
++    /// <summary>R48 G3（2026-09-15，Opus 5）：本段段内用的管腔轴向辐射等效 kA W·m/K（取自 SolveResult.CavityRadKAWmPerK；带玻璃 0）。只报数，不进判据。</summary>
++    public double CavityRadKAWmPerK = double.NaN;
+     /// <summary>
+     /// ★ R48 审查第 5 条（2026-09-14，Opus 5）：本段端部额外保温的厚度分布 mm（自端部起逐子区间，两端对称；没有端部额外保温 = 空数组），
+     /// 原样取自 <see cref="SegmentSolver.EndInsulExtraProfileMm"/>（段解用的同一份参数）。它是硬件，空管与带玻璃应相同（只差损失表样条插值）——
+@@ -980,21 +986,60 @@ public static class LineRunner
+     /// 2026-09-14 Opus 5（R48 审查第 1、3、4、7 条）：由常量改成按算例生成 —— 要写出**本次用的控温点与来源**；
+     ///   去掉「管强度偏保守」（许用应力按段设定温度取，空管管根可能比设定高，没有依据说它保守）；
+     ///   「升温链与本工况无关」改成准确说法（只有尺寸链无关，三条参考量随工况变）；写明模型不含管腔辐射与管口散热。
++    /// R48 G3（2026-09-15，Opus 5）：管腔轴向辐射进了模型 ⇒ 改写成「计入了什么、按什么口径、系数多少」；管口辐射：用户定铂管两端封住 ⇒ 不计。
++    ///   控温点来源：用户已定空管保温三段全部升到 1150 °C（= 全线升温目标），「尚待确认」去掉；沿用生产控温点那一种写明是对照。
++    ///   各段管腔 kA 调 <see cref="SegmentSolver.CavityRadKAAt"/>（段解同一个函数；Base 带玻璃，故先在克隆上调 <see cref="MakeEmptyTubeSegment"/>，与 RunOnce 空管段同一个函数）。
++    /// R48 G3 审查后（2026-09-15，Opus 5）：两档之间没有先验依据取舍（初版默认值理由已撤回，见 DesignInputs.TubeCavityRadKA1150WmPerK）⇒ 取哪一档之后加「两档之间尚无依据取舍」；
++    ///   空管段参数的造法原在这里与 RunOnce 各抄一份，提成 <see cref="MakeEmptyTubeSegment"/>。
+     /// </summary>
+     public static string EmptyTubeNoteFor(LineCase c)
+     {
+         string sp = string.Join("/", c.SetpointC.Select(v => v.ToString("0.#")));
+         string from = c.EmptyTubeSetpointFrom == EmptyTubeSetpoint.RampTarget
+-            ? $"全线取升温目标 {c.RampTargetC:0.#} °C"
+-            : "沿用算例给定的控温点（由设计造算例时即生产控温点）";
++            ? $"全线取升温目标 {c.RampTargetC:0.#} °C，即空管保温时全线控温点都升到该温度"
++            : "沿用算例给定的控温点（由设计造算例时即生产控温点）；空管保温定的是全线升温目标，本次是对照";
++        var pe = SegmentSolver.Clone(c.Base);
++        MakeEmptyTubeSegment(pe);
++        double k0 = c.Base.TubeCavityRadKA1150WmPerK;
++        string cavity;
++        if (k0 > 0)
++        {
++            string kas = string.Join("/", c.SetpointC.Select(t => SegmentSolver.CavityRadKAAt(pe, t).ToString("0.000")));
++            bool offD = !(Math.Abs(c.TubeIdMm - SegmentSolver.CavityRadCalibTubeIdMm) <= 1e-9);
++            bool offE = !(Math.Abs(c.Base.PtEmissivity - SegmentSolver.CavityRadCalibEmissivity) <= 1e-9);
++            cavity = $"管腔内轴向辐射按附加的轴向导热计入：{SegmentSolver.CavityRadRefC:0} °C 时 {k0:0.000} W·m/K，按各段控温点温度的三次方换算为 {kas} W·m/K"
++                   + "（段内取常数；两段管腔在接头处连通，接头导热也计入这一份）；"
++                   + $"系数按内径 {SegmentSolver.CavityRadCalibTubeIdMm:0} mm、铂发射率 {SegmentSolver.CavityRadCalibEmissivity:0.00} 估算、未经实测，"
++                   + (k0 == SegmentSolver.CavityRadKA1150Low ? $"取两档估计 {SegmentSolver.CavityRadKA1150Low:0.000}～{SegmentSolver.CavityRadKA1150High:0.000} 里较低的一档（两档之间尚无依据取舍）"
++                      : k0 == SegmentSolver.CavityRadKA1150High ? $"取两档估计 {SegmentSolver.CavityRadKA1150Low:0.000}～{SegmentSolver.CavityRadKA1150High:0.000} 里较高的一档（两档之间尚无依据取舍）"
++                      : $"本次不是两档估计 {SegmentSolver.CavityRadKA1150Low:0.000}～{SegmentSolver.CavityRadKA1150High:0.000} 之一")
++                   + (offD || offE
++                      ? $"（⚠ 本次{(offD ? $"内径 {c.TubeIdMm:0.#} mm" : "")}{(offD && offE ? "、" : "")}{(offE ? $"铂发射率 {c.Base.PtEmissivity:0.00}" : "")} 与估算条件不同，系数没有换算）"
++                      : "")
++                   + "。";
++        }
++        else cavity = "管腔内轴向辐射本次未计入（系数为 0）。";
+         return "工况：空管到温稳态（无玻璃）—— 段解与无法兰基线按产量 0、管内玻璃换热 0 算，法兰场解与判据照常。"
+-             + $"控温点 {sp} °C（{from}；空管保温时控温点取哪一种尚待确认）。"
+-             + "模型不含空管才有的两条热路：管腔内轴向辐射、管口辐射散热 —— 本工况的数都是不含这两项的模型结果。"
++             + $"控温点 {sp} °C（{from}）。"
++             + cavity
++             + "铂管两端封住，不计管口辐射散热。"
+              + "设计电流、舌片厚与「升温」「法兰截面 J」两条判据的实际值与本工况无关；"
+              + "「升温期法兰−管峰值」「升温到位用时（集总）」与截面 J 说明里的两节点对照取的是本次空管稳态场，随工况变。"
+              + "管强度：载荷沿用带玻璃的液柱与流动值，许用应力按段设定温度取（空管管根可能高于设定）。玻璃温降不适用。";
+     }
+ 
++    /// <summary>
++    /// ★ R48 G3 审查后（2026-09-15，Opus 5）：把一份段参数（已是克隆）**就地**改成空管段 —— 空管段参数的造法只此一处，
++    /// RunOnce 的段解与 <see cref="EmptyTubeNoteFor"/> 的各段换算值都调它（原来两处各抄一份，以后多置一个量时工况说明会悄悄和段解对不上）。
++    /// 做三件事：端部额外保温形状按置 0 之前（带玻璃）的 hg 定（调用方已显式给过 ≥ 0 就不覆盖，R48 审查第 5 条）；产量置 0；管内玻璃换热置 0
++    /// （空管判别见 <see cref="SegmentSolver.IsEmptyTube"/>）。判据用的那份参数（管强度按带玻璃载荷）由调用方在调本函数之前另克隆。
++    /// </summary>
++    public static void MakeEmptyTubeSegment(DesignInputs p)
++    {
++        if (p.EndInsulShapeHGlass < 0) p.EndInsulShapeHGlass = p.HGlass;
++        p.ThroughputTPerDay = 0; p.HGlass = 0;
++    }
++
+     /// <summary>
+     /// ★ R48 审查第 4 条（2026-09-14，Opus 5）：取本次稳态场当参考的升温类参考量，空管时在 Note 末尾标明「随工况变」。带玻璃返回空串（逐位不变）。
+     /// </summary>
+@@ -1534,8 +1579,8 @@ public static class LineRunner
+                 pJudge.TGlassInC = c.GlassInC;          // 判据那份不读玻璃进口；给回算例的数，免得 NaN 流进别处
+                 // ★ R48 审查第 5 条（2026-09-14，Opus 5）：端部额外保温是硬件 —— 渐变形状按置 0 之前（带玻璃）的 hg 定，不随工况变。
+                 //   调用方显式给过（≥ 0）就不覆盖。
+-                if (p.EndInsulShapeHGlass < 0) p.EndInsulShapeHGlass = p.HGlass;
+-                p.ThroughputTPerDay = 0; p.HGlass = 0;
++                // R48 G3 审查后（2026-09-15，Opus 5）：原地写的三句提成 MakeEmptyTubeSegment（工况说明的各段换算值调同一个），语句与顺序不变。
++                MakeEmptyTubeSegment(p);
+             }
+ 
+             SolveResult sr;
+@@ -1574,6 +1619,7 @@ public static class LineRunner
+                 GlassOutC = sr.TGlassOutC,
+                 MassG = area * c.SegLengthMm[i] * Materials.PtDensity * 1e-6,
+                 BetaWPerMK = sr.BetaWPerMK, DecayLengthMm = sr.DecayLengthMm,   // R48（2026-09-14，Opus 5）：只报数
++                CavityRadKAWmPerK = sr.CavityRadKAWmPerK,                        // R48 G3（2026-09-15，Opus 5）：只报数
+                 EndInsulExtraProfileMm = SegmentSolver.EndInsulExtraProfileMm(p, c.WallMm),   // R48 审查第 5 条（2026-09-14，Opus 5）：只报数
+                 X = sr.X, TMetal = sr.TMetal, TGlass = sr.TGlass
+             };
+diff --git a/Pt_Optimize/Core/SegmentSolver.cs b/Pt_Optimize/Core/SegmentSolver.cs
+index 23d348a..ba351d0 100644
+--- a/Pt_Optimize/Core/SegmentSolver.cs
++++ b/Pt_Optimize/Core/SegmentSolver.cs
+@@ -30,6 +30,8 @@ public sealed class SolveResult
+ 
+     // 特征量
+     public double DecayLengthMm, TauMetalS, TauWithGlassS, StabilityRatio, TcrPerK, BetaWPerMK;
++    /// <summary>R48 G3（2026-09-15，Opus 5）：本段段内用的管腔轴向辐射等效 kA W·m/K（<see cref="SegmentSolver.CavityRadKA"/>；带玻璃 0）。只报数。</summary>
++    public double CavityRadKAWmPerK;
+     public double OuterSurfaceTempC, InsulationOuterDiaMm;
+ 
+     // 流动
+@@ -64,6 +66,22 @@ public static class SegmentSolver
+     /// </summary>
+     public const string EmptyTubeNote = "空管，无玻璃：玻璃温度、流速／停留时间／压降、含玻璃时间常数、经玻璃的电解各项、析晶裕度不适用（记 NaN）";
+ 
++    /// <summary>
++    /// ★ R48 G3 审查后（2026-09-15，Opus 5）：本段空管时写进 <see cref="SolveResult.Note"/> 的全文 = <see cref="EmptyTubeNote"/>
++    /// ＋（管腔轴向辐射系数 &gt; 0 时）一句「计入了管腔轴向辐射多少、未经实测、不计管口辐射」。
++    /// 病：空管判别成立时段解会默默带上默认系数 0.023 的管腔辐射，而说明只写「空管，无玻璃……不适用」—— 看剖面与热衰减长度的人不知道里面含一项未经实测的模型假设。
++    /// 数都调 <see cref="CavityRadKA"/>（段解同一个函数）与系数常量，不另写。带玻璃返回空串（与 Core 原行为一致）。
++    /// </summary>
++    public static string EmptyTubeNoteOf(DesignInputs p)
++    {
++        if (!IsEmptyTube(p)) return "";
++        double ka = CavityRadKA(p);
++        if (!(ka > 0)) return EmptyTubeNote;
++        return EmptyTubeNote
++             + $"；管腔内轴向辐射按附加的轴向导热计入 {ka:0.000} W·m/K（{CavityRadRefC:0} °C 时 {p.TubeCavityRadKA1150WmPerK:0.000}，按控温点温度的三次方换算；"
++             + $"两档估计 {CavityRadKA1150Low:0.000}～{CavityRadKA1150High:0.000} 之间尚无依据取舍，未经实测）；铂管两端封住，不计管口辐射散热";
++    }
++
+     /// <summary>
+     /// ★ R48（2026-09-14，Opus 5）：**空管判别的唯一一处** —— 产量 0 且管内玻璃换热 0。
+     ///
+@@ -159,7 +177,7 @@ public static class SegmentSolver
+         // ★ R48（2026-09-14，Opus 5）：空管工况标出来，下面凡是玻璃才有的量一律记 NaN（见 SolveResult.EmptyTube）。
+         bool empty = IsEmptyTube(p);
+         res.EmptyTube = empty;
+-        if (empty) res.Note = EmptyTubeNote;
++        if (empty) res.Note = EmptyTubeNoteOf(p);   // R48 G3 审查后（2026-09-15，Opus 5）：计入管腔辐射时说明里写出来（原 EmptyTubeNote）
+         res.TMinC = double.MaxValue; res.TMaxC = double.MinValue;
+         for (int i = 0; i < n; i++)
+         { res.TMinC = Math.Min(res.TMinC, tm[i]); res.TMaxC = Math.Max(res.TMaxC, tm[i]); }
+@@ -197,8 +215,9 @@ public static class SegmentSolver
+         var lossTab = TubeLossTable(p, rOut, L);
+         double beta = lossTab.Slope(p.TSetC) + p.HGlass * Math.PI * p.TubeId;
+         res.BetaWPerMK = beta;
+-        // R48 审查第 3 条（2026-09-14，Opus 5）：轴向导热走 AxialKA（管壁 kPt·A + 管腔辐射敏感度钩子，默认 0 ⇒ 逐位不变）
++        // R48 审查第 3 条（2026-09-14，Opus 5）：轴向导热走 AxialKA（管壁 kPt·A + 管腔轴向辐射；R48 G3 起空管才有、带玻璃为 0 ⇒ 带玻璃逐位不变）
+         res.DecayLengthMm = Math.Sqrt(AxialKA(p, area) / Math.Max(1e-6, beta)) * 1000.0;
++        res.CavityRadKAWmPerK = CavityRadKA(p);                  // R48 G3（2026-09-15，Opus 5）：只报数，AxialKA 里用的就是它
+ 
+         double cMetal = Materials.PtDensity * area * Materials.PtCp(p.TSetC);
+         double cGlass = p.GlassDensity * Math.PI * ri * ri * p.GlassCp;
+@@ -317,7 +336,7 @@ public static class SegmentSolver
+         tm = new double[n]; tg = new double[n];
+         for (int i = 0; i < n; i++) { tm[i] = p.TSetC; tg[i] = noGlass ? double.NaN : p.TGlassInC; }
+ 
+-        // ★ R48 审查第 3 条（2026-09-14，Opus 5）：管腔轴向辐射的敏感度钩子（DesignInputs.TubeCavityRadKAWmPerK，默认 0 ⇒ x + 0.0 逐位不变）。
++        // ★ R48 G3（2026-09-15，Opus 5）：轴向导热 = 管壁 + 空管管腔轴向辐射（CavityRadKA，按段控温点温度取常数；带玻璃为 0 ⇒ x + 0.0 逐位不变）。
+         double kAx = AxialKA(p, area);
+         double KOf(double x) => kAx;
+         var opt = new Bvp1D.Options { Nodes = n, Relax = 0.6, MaxIter = 40, Tol = 0.005 };
+@@ -358,12 +377,64 @@ public static class SegmentSolver
+     }
+ 
+     /// <summary>
+-    /// ★ R48 审查第 3 条（2026-09-14，Opus 5）：段解的**轴向导热 kA**（W·m/K）= 管壁 kPt(T_set)·A + 管腔辐射敏感度钩子
+-    /// （<see cref="DesignInputs.TubeCavityRadKAWmPerK"/>，默认 0）。Profile 的 K、段间耦合导度、报表的热衰减长度三处共用这一份。
+-    /// 钩子为 0 时 x + 0.0 与 x 逐位相同（x &gt; 0），带玻璃与既有算例逐位不变（R48EmptyTubeGateTests 的指纹守着）。
++    /// ★ R48 审查第 3 条（2026-09-14，Opus 5）：段解的**轴向导热 kA**（W·m/K）= 管壁 kPt(T_set)·A + 管腔轴向辐射。
++    /// Profile 的 K 与报表的热衰减长度共用这一份；段间接头导度见 <see cref="NeighbourConductanceWPerK"/>（管腔那一份按邻段端温取）。
++    /// R48 G3（2026-09-15，Opus 5）：管腔那一份由敏感度钩子（常数、带玻璃也加）改为 <see cref="CavityRadKA"/>（空管才有、按控温点温度 T³ 换算）。
++    /// 带玻璃时它是 0.0，x + 0.0 与 x 逐位相同（x &gt; 0）⇒ 带玻璃逐位不变（R48EmptyTubeGateTests 的三个指纹守着）。
+     /// </summary>
+     public static double AxialKA(DesignInputs p, double area)
+-        => Materials.PtThermalK(p.TSetC) * area + p.TubeCavityRadKAWmPerK;
++        => Materials.PtThermalK(p.TSetC) * area + CavityRadKA(p);
++
++    /// <summary>管腔轴向辐射系数的标定温度 °C（物理把关人第十一轮：两档 0.023／0.056 W·m/K「在 1150 °C 下标定」；也是用户定的空管到温目标）。</summary>
++    public const double CavityRadRefC = 1150.0;
++
++    /// <summary>
++    /// 管腔轴向辐射系数的两档估计 W·m/K（1150 °C 时的等效 kA；推导见 <see cref="DesignInputs.TubeCavityRadKA1150WmPerK"/>）：
++    /// 低档 = 灰体在尺度 ℓ = 40 mm 上与表面热阻串联；高档 = 与 ℓ 自洽迭代。R48 G3（2026-09-15，Opus 5）。
++    /// 默认暂取低档，但**两档之间没有先验依据取舍**：在同一估算内只有高档自洽（低档的 ℓ = 40 mm 与自洽尺度 71～99 mm 不符），
++    /// 扩散近似让两档一起偏大、偏多少未知 —— 待物理把关人定；在此之前空管结论两档并报（审查后改，2026-09-15 Opus 5；初版「低档离真值近」的说法已撤回）。
++    /// </summary>
++    public const double CavityRadKA1150Low = 0.023, CavityRadKA1150High = 0.056;
++
++    /// <summary>两档估计所用的管内径 mm 与铂发射率（推导见 <see cref="DesignInputs.TubeCavityRadKA1150WmPerK"/>）；系数不按它们换算，偏离时空管工况说明写明。</summary>
++    public const double CavityRadCalibTubeIdMm = 50.0, CavityRadCalibEmissivity = 0.18;
++
++    /// <summary>
++    /// ★ R48 G3（2026-09-15，Opus 5）：本段**管腔轴向辐射**的等效轴向导热 W·m/K —— 口径只此一处（依据与量级见 <see cref="DesignInputs.TubeCavityRadKA1150WmPerK"/>）。
++    /// 空管（<see cref="IsEmptyTube"/>）时 = 系数 × ((T_set + 273.15)/(1150 + 273.15))³，**按段控温点温度取常数**；带玻璃（管腔被玻璃占满）为 0。
++    /// </summary>
++    public static double CavityRadKA(DesignInputs p) => CavityRadKAAt(p, p.TSetC);
++
++    /// <summary>
++    /// 管腔轴向辐射等效 kA 在温度 <paramref name="tC"/>（°C）下的值：空管 = 系数 × (T/T_标定)³（开尔文）；带玻璃、系数 ≤ 0 或 <paramref name="tC"/> 不是数 ⇒ 0。
++    /// 段内用控温点温度（<see cref="CavityRadKA"/>），段间接头用邻段端温（<see cref="NeighbourConductanceWPerK"/>）。
++    /// </summary>
++    public static double CavityRadKAAt(DesignInputs p, double tC)
++    {
++        if (!(p.TubeCavityRadKA1150WmPerK > 0) || !double.IsFinite(tC) || !IsEmptyTube(p)) return 0.0;
++        double r = (tC + LineSolver.KelvinOffset) / (CavityRadRefC + LineSolver.KelvinOffset);
++        return p.TubeCavityRadKA1150WmPerK * r * r * r;
++    }
++
++    /// <summary>
++    /// ★ R48 G3（2026-09-15，Opus 5）：段端与邻段端之间的**接头导度** W/K（连续性极限：一个节距的导度）=
++    /// (管壁 kPt(T_set)·A + 管腔轴向辐射 kA_rad(T_邻)) / Δx。
++    /// 管腔那一份：两段管腔在接头处连通（铂管只在整线两头封住）⇒ 接头也有这条热路；按**邻段端温** <paramref name="tNbC"/> 的 T³ 取，
++    ///   不按本段控温点 —— 同一接头两侧各自算导度，若按各自控温点取，1150|1080 接头两侧管腔那一份差 14 %（(1353.15/1423.15)³ = 0.860），
++    ///   接头进出热流就对不上（两侧端温差 ΔT 很小，但流过的热是 G·ΔT，比值差多少热流就差多少）；按接头温度取，收敛后两侧管腔那一份只差 O(3ΔT/T)。
++    /// ⚠ 管壁那一份仍按本段控温点取（带玻璃逐位不变要求不动它）⇒ 两侧设定不同时接头仍有「kPt 按各自设定」这一份原有的不对称，
++    ///   1150|1080 接头 kPt 差 0.9 %（71.6 + 0.0106·T），与管腔辐射无关，是 R48 之前就有的。
++    /// ⚠ 「两侧同值」**前提是两段节距 Δx 相同**：Δx 取本段自己的（段长 ÷ (节点数 − 1)）。两段不等长而节点数相同时，两侧导度差的就是节距比，
++    ///   接头热流按同一比例失配（段 0 流出 q 时，段 1 收到的是 q·Δx₀/Δx₁）。管壁那一份原来就这样，管腔那一份跟着；
++    ///   R48CavityRadiationGateTests 接头门里印了 300|250 mm 的对照数。改它要把邻段节距传进来、会动不等长设计的带玻璃记录，本轮不改（交接 open issue，2026-09-15 Opus 5）。
++    /// 带玻璃：管腔那一份为 0.0，式子与改动前 AxialKA(p, area)/Δx 逐位相同。
++    /// </summary>
++    public static double NeighbourConductanceWPerK(DesignInputs p, double area, double tNbC)
++    {
++        int n = Math.Max(21, p.Nodes | 1);
++        double dx = p.TubeLength / (n - 1);
++        return (Materials.PtThermalK(p.TSetC) * area + CavityRadKAAt(p, tNbC)) / Math.Max(1e-9, dx);
++    }
+ 
+     /// <summary>
+     /// 管外表面散热：x（m，自段左端起）→ 该处用的损失表 W/m（含端部渐变保温）。
+@@ -441,6 +512,7 @@ public static class SegmentSolver
+         // ★ R48 审查第 5 条（2026-09-14，Opus 5）：形状是装上去的硬件，不随工况变 —— β 里的玻璃项取 EndInsulShapeHGlass
+         //   （空管段由 LineRunner 写入置 0 之前的 hg；未设 = −1 ⇒ 取本身 HGlass，逐位不变）。
+         //   kA 也只取管壁（不含管腔辐射敏感度钩子）：钩子是探针，不许改硬件形状。
++        //   R48 G3（2026-09-15，Opus 5）：管腔辐射进了模型之后仍只取管壁 —— 形状按带玻璃定，而带玻璃时管腔辐射本来就是 0，两工况同一个形状。
+         double hgShape = p.EndInsulShapeHGlass >= 0 ? p.EndInsulShapeHGlass : p.HGlass;
+         double betaU = lossTab.Slope(p.TSetC) + hgShape * Math.PI * p.TubeId;
+         double lt = Math.Sqrt(Math.Max(1e-12, kAWall / Math.Max(1e-12, betaU)));
+@@ -459,18 +531,18 @@ public static class SegmentSolver
+     /// </summary>
+     private sealed class EndFlux
+     {
+-        public double DrawL, DrawR, GNb, TNbL, TNbR;
++        // R48 G3（2026-09-15，Opus 5）：接头导度两端各一个（管腔辐射那一份按各自邻段端温取，见 NeighbourConductanceWPerK）；带玻璃两者相等且与原 GNb 逐位相同。
++        public double DrawL, DrawR, GNbL, GNbR, TNbL, TNbR;
+         public bool HasL, HasR;
+-        public double Left(double T) => DrawL + (HasL ? GNb * (T - TNbL) : 0.0);
+-        public double DLeft(double T) => HasL ? GNb : 0.0;
+-        public double Right(double T) => DrawR + (HasR ? GNb * (T - TNbR) : 0.0);
+-        public double DRight(double T) => HasR ? GNb : 0.0;
++        public double Left(double T) => DrawL + (HasL ? GNbL * (T - TNbL) : 0.0);
++        public double DLeft(double T) => HasL ? GNbL : 0.0;
++        public double Right(double T) => DrawR + (HasR ? GNbR * (T - TNbR) : 0.0);
++        public double DRight(double T) => HasR ? GNbR : 0.0;
+     }
+ 
+     private static EndFlux EndFluxes(DesignInputs p, double area)
+     {
+-        int n = Math.Max(21, p.Nodes | 1);
+-        double dx = p.TubeLength / (n - 1);
++        // （节距 Δx 随接头导度一起挪进 NeighbourConductanceWPerK，同一个式子 —— R48 G3，2026-09-15 Opus 5）
+         // 法兰从管根抽走的热 D。**只有两种情况**：
+         //   · FlangeDrawOverrideSet = true  → 由二维壳解回灌的真值（LineRunner/CoupledSolver 走这条）
+         //   · false                          → **视为 0**（裸管、无法兰的算例）
+@@ -490,10 +562,15 @@ public static class SegmentSolver
+         //    G = kA/Δx 取一个节距的导度 = **连续性极限**（G 越大两端温度被拉得越紧）。
+         //    不加这一项时实测同一位置断层 69 K，漏掉的热流 ~21 W 比法兰抽热还大。
+         //    R48 审查第 3 条（2026-09-14，Opus 5）：kA 走 AxialKA（钩子默认 0 ⇒ 逐位不变）；原来的 kPt 局部量随之不用。
+-        double gNb = AxialKA(p, area) / Math.Max(1e-9, dx);
++        //    R48 G3（2026-09-15，Opus 5）：改走 NeighbourConductanceWPerK —— 空管时加管腔轴向辐射（两段管腔在接头连通）；
++        //      管腔那一份按邻段端温取，收敛后两侧只差 O(3ΔT/T)；前提是两段节距相同，管壁那一份按各自控温点取的原有不对称仍在
++        //      （1150|1080 接头 kPt 差 0.9 %；两段不等长时两侧导度差节距比，见 NeighbourConductanceWPerK 注释）。
++        //      第二轮审查后改（2026-09-15 Opus 5）：原写「两侧同值守恒」，与事实不符。
++        //      带玻璃管腔那一份为 0，式子与上一版 AxialKA(p, area)/Δx 逐位相同。
+         double tNbL = p.NeighbourTempLeftC, tNbR = p.NeighbourTempRightC;
+         bool hasL = !double.IsNaN(tNbL), hasR = !double.IsNaN(tNbR);
+-        return new EndFlux { DrawL = drawL, DrawR = drawR, GNb = gNb, TNbL = tNbL, TNbR = tNbR, HasL = hasL, HasR = hasR };
++        double gL = NeighbourConductanceWPerK(p, area, tNbL), gR = NeighbourConductanceWPerK(p, area, tNbR);
++        return new EndFlux { DrawL = drawL, DrawR = drawR, GNbL = gL, GNbR = gR, TNbL = tNbL, TNbR = tNbR, HasL = hasL, HasR = hasR };
+     }
+ 
+     /// <summary>R48（2026-09-14，Opus 5）：一段稳态解的能量账 W，见 <see cref="EnergyBalance"/>。</summary>
+diff --git a/Pt_Optimize/UI/MainForm.cs b/Pt_Optimize/UI/MainForm.cs
+index 30b3271..36cf823 100644
+--- a/Pt_Optimize/UI/MainForm.cs
++++ b/Pt_Optimize/UI/MainForm.cs
+@@ -859,6 +859,28 @@ public sealed class MainForm : Form
+         void H(string t) { s.AppendLine(); s.AppendLine("── " + t + " " + new string('─', Math.Max(2, 58 - TextFmt.Width(t)))); }
+         void L(string k, string v) => s.AppendLine($"  {k}\t{v}");
+ 
++        // ★ R48 G3 第二轮审查后（2026-09-15，Opus 5）：空管时先印段解写的工况说明（SolveResult.Note，全文出自 SegmentSolver.EmptyTubeNoteOf）。
++        //   病：产量与管内玻璃换热都填 0 时，段解会默默带上默认系数的管腔轴向辐射（未经实测、两档估计之间尚无依据取舍），
++        //   热衰减长度与剖面都跟着变，而本页原来不显示 Note —— 看报表的人不知道结果里含这项假设，也不知道玻璃各项为什么是 NaN。
++        //   只在括号外的「；」处断行（括号里的分号是同一句的补充），长行由 TextFmt 按框宽折。带玻璃时 Note 为空，本节不出现、报表逐字不变。
++        if (r.EmptyTube && !string.IsNullOrEmpty(r.Note))
++        {
++            H("工况说明");
++            int depth = 0, start = 0;
++            for (int i = 0; i <= r.Note.Length; i++)
++            {
++                char c = i < r.Note.Length ? r.Note[i] : '；';
++                if (c == '（') depth++;
++                else if (c == '）') depth = Math.Max(0, depth - 1);
++                else if (c == '；' && (depth == 0 || i == r.Note.Length))
++                {
++                    string part = r.Note.Substring(start, i - start).Trim();
++                    if (part.Length > 0) s.AppendLine("  " + part);
++                    start = i + 1;
++                }
++            }
++        }
++
+         H("铂用量  ← 目标函数");
+         L("设计壁厚", $"{r.WallDesignMm:0.000} mm" +
+             (r.WallLimitedByMinimum ? $"   ← 受最小壁厚限制 (电学仅需 {r.WallElecMm:0.000})"

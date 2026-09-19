@@ -1,0 +1,187 @@
+R48 G3 审查第 12 条补：C 路 ThermocoupleBasis 三个入口逐位核对 —— 两边都调编译产物（Opus 5，2026-09-15 06:55）
+旧：D:\WinForm\r48_C\Pt_Optimize\bin\Debug\net8.0-windows\Pt_Optimize.dll（只读复制后加载）md5 2bfd197faa1c0c289ae17617cb9a7c79　MVID a745c1c9-2dca-42b0-a16d-dbcf4f29cbca
+新：D:\WinForm\r48_G3\Pt_Optimize\bin\Debug\net8.0-windows\Pt_Optimize.dll（G3 审查修改后）md5 fb52bda3480ae1f5d03fdcada6c210b7　MVID b5483832-0795-4d65-abd9-9147f6b9cda9
+说明：此前那份核对（R48_G3_热偶基准逐位核对_2026-09-15.txt）旧式是手抄 r48_C 源码、只直接比了 LogMeanC 与 ReferenceC；本份两边都引用编译产物，三个入口都直接比。
+
+LogMeanC 常规（900～1300 步 2.5 全组合 + 20～1700 随机 20 万对）：逐位相同 225921　不同 0　抛异常 0
+ReferenceC 常规（五组固定设定 + 2 万组随机 1～5 段，片号 −1～段数+1 含越界）：逐位相同 119919　不同 0　抛异常 0
+HottestMinusReferenceK 常规（2 万个随机 LineResult，1～4 段、各片圆盘峰与舌区峰 900～1400，片号 −1～段数+1 + 五组固定）：逐位相同 109990　不同 0　抛异常 0
+边界（两温度差 0～1e-5 K、NaN、低于绝对零度、空数组、Flanges／Segments／结果为 null）：逐位相同 21　不同 15　抛异常 1
+  近等 LogMean(1050,1050.000000002) Δ=2E-009: 旧 1049.9647998521032 新 1050.000000001
+  近等 LogMean(1050,1050.00000001) Δ=1E-008: 旧 1050.0036732575272 新 1050.000000005
+  近等 LogMean(1050,1050.0000001) Δ=1E-007: 旧 1050.0001575730503 新 1050.00000005
+  近等 LogMean(1050,1050.0000005) Δ=5E-007: 旧 1050.0001945531153 新 1050.00000025
+  近等 LogMean(1050,1050.0000009) Δ=9E-007: 旧 1050.0000031735126 新 1050.00000045
+  近等 LogMean(1114.7,1114.700000002) Δ=2E-009: 旧 1114.6934514627906 新 1114.700000001
+  近等 LogMean(1114.7,1114.70000001) Δ=1E-008: 旧 1114.6934514587906 新 1114.700000005
+  近等 LogMean(1114.7,1114.7000001000001) Δ=1E-007: 旧 1114.6995544995725 新 1114.7000000500002
+  近等 LogMean(1114.7,1114.7000005) Δ=5E-007: 旧 1114.7000444338541 新 1114.70000025
+  近等 LogMean(1114.7,1114.7000009) Δ=9E-007: 旧 1114.700098693405 新 1114.70000045
+  近等 LogMean(1150,1150.000000002) Δ=2E-009: 旧 1149.998048663876 新 1150.000000001
+  近等 LogMean(1150,1150.00000001) Δ=1E-008: 旧 1149.998048659876 新 1150.000000005
+  近等 LogMean(1150,1150.0000001) Δ=1E-007: 旧 1149.9997491224667 新 1150.00000005
+  近等 LogMean(1150,1150.0000005) Δ=5E-007: 旧 1150.0001438315644 新 1150.00000025
+  近等 LogMean(1150,1150.0000009) Δ=9E-007: 旧 1149.9999072157525 新 1150.00000045
+  LogMean(-300,1100) 低于绝对零度: 旧 NaN 新抛 ArgumentOutOfRangeException
+
+── 核对程序源码 Program.cs
+// 一次性核对（2026-09-15 Opus 5，G3 审查第 12 条补）：C 路 ThermocoupleBasis 三个入口 —— 两边**都引用编译产物**，不手抄。
+//   旧 = D:\WinForm\r48_C\Pt_Optimize\bin\Debug\net8.0-windows\Pt_Optimize.dll（r48_C 合并前的最终编译，只读复制到 scratchpad 再加载，免得锁住对方文件）
+//   新 = D:\WinForm\r48_G3\Pt_Optimize\bin\Debug\net8.0-windows\Pt_Optimize.dll（G3 审查修改后的编译，与慢跑副本 md5 相同）
+// 两份同名程序集各进一个 AssemblyLoadContext，全部经反射调用；LineResult／SegmentOut／FlangeOut 在各自的上下文里造。不进仓库。
+using System.Reflection;
+using System.Runtime.Loader;
+using System.Security.Cryptography;
+using System.Text;
+
+sealed class DirCtx : AssemblyLoadContext
+{
+    readonly string _dir;
+    public DirCtx(string dir, string name) : base(name) { _dir = dir; }
+    protected override Assembly Load(AssemblyName an)
+    {
+        string p = Path.Combine(_dir, an.Name + ".dll");
+        return File.Exists(p) ? LoadFromAssemblyPath(p) : null;
+    }
+}
+
+sealed class Side
+{
+    public readonly Assembly Asm;
+    readonly Type _tc, _lr, _so, _fo;
+    readonly MethodInfo _logMean, _ref, _hot;
+    public Side(string dir, string name)
+    {
+        var ctx = new DirCtx(dir, name);
+        Asm = ctx.LoadFromAssemblyPath(Path.Combine(dir, "Pt_Optimize.dll"));
+        _tc = Asm.GetType("PtOptimize.Core.ThermocoupleBasis", true);
+        _lr = Asm.GetType("PtOptimize.Core.LineResult", true);
+        _so = Asm.GetType("PtOptimize.Core.SegmentOut", true);
+        _fo = Asm.GetType("PtOptimize.Core.FlangeOut", true);
+        _logMean = _tc.GetMethod("LogMeanC", new[] { typeof(double), typeof(double) });
+        _ref = _tc.GetMethod("ReferenceC", new[] { typeof(double[]), typeof(int) });
+        _hot = _tc.GetMethod("HottestMinusReferenceK", new[] { _lr, typeof(int) });
+    }
+    static object Inv(MethodInfo m, params object[] a)
+    {
+        try { return m.Invoke(null, a); }
+        catch (TargetInvocationException ex) { throw ex.InnerException!; }
+    }
+    public double LogMean(double a, double b) => (double)Inv(_logMean, a, b);
+    public double Ref(double[] sp, int j) => (double)Inv(_ref, sp, j);
+    /// <summary>在本上下文里造一个 LineResult：段设定 sp、各片 (圆盘峰, 舌区峰)；flangesNull/segmentsNull 造边界</summary>
+    public object MakeResult(double[] sp, (double disc, double tab)[] pl, bool flangesNull = false, bool segmentsNull = false)
+    {
+        var r = Activator.CreateInstance(_lr);
+        var segs = Array.CreateInstance(_so, sp.Length);
+        for (int i = 0; i < sp.Length; i++)
+        {
+            var s = Activator.CreateInstance(_so);
+            _so.GetField("SetpointC").SetValue(s, sp[i]);
+            segs.SetValue(s, i);
+        }
+        var fls = Array.CreateInstance(_fo, pl.Length);
+        for (int j = 0; j < pl.Length; j++)
+        {
+            var f = Activator.CreateInstance(_fo);
+            _fo.GetField("TDiscMaxC").SetValue(f, pl[j].disc);
+            _fo.GetField("TTabMaxC").SetValue(f, pl[j].tab);
+            fls.SetValue(f, j);
+        }
+        _lr.GetField("Segments").SetValue(r, segmentsNull ? null : segs);
+        _lr.GetField("Flanges").SetValue(r, flangesNull ? null : fls);
+        return r;
+    }
+    public double Hot(object r, int j) => (double)Inv(_hot, r, j);
+}
+
+static class P
+{
+    static long same, diff, thrown;
+    static readonly List<string> diffs = new();
+    static void Cmp(string what, Func<double> o, Func<double> n)
+    {
+        double a, b;
+        try { a = o(); } catch (Exception ex) { thrown++; if (diffs.Count < 40) diffs.Add($"{what}: 旧抛 {ex.GetType().Name}"); return; }
+        try { b = n(); } catch (Exception ex) { thrown++; if (diffs.Count < 40) diffs.Add($"{what}: 旧 {a:R} 新抛 {ex.GetType().Name}"); return; }
+        if (BitConverter.DoubleToInt64Bits(a) == BitConverter.DoubleToInt64Bits(b) || (double.IsNaN(a) && double.IsNaN(b))) same++;
+        else { diff++; if (diffs.Count < 40) diffs.Add($"{what}: 旧 {a:R} 新 {b:R}"); }
+    }
+    static string Md5(string f) => Convert.ToHexString(MD5.HashData(File.ReadAllBytes(f))).ToLowerInvariant();
+    static void Reset() { same = diff = thrown = 0; diffs.Clear(); }
+
+    static void Main(string[] args)
+    {
+        System.Globalization.CultureInfo.DefaultThreadCurrentCulture = System.Globalization.CultureInfo.InvariantCulture;   // NaN 印成 NaN（不随系统区域）
+        System.Threading.Thread.CurrentThread.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
+        string root = AppContext.BaseDirectory;
+        string dirOld = args[0], dirNew = args[1], outFile = args[2], srcFile = args[3];
+        var oldS = new Side(dirOld, "r48_C"); var newS = new Side(dirNew, "r48_G3");
+        var sb = new StringBuilder();
+        void Say(string s) { Console.WriteLine(s); sb.AppendLine(s); }
+        Say($"R48 G3 审查第 12 条补：C 路 ThermocoupleBasis 三个入口逐位核对 —— 两边都调编译产物（Opus 5，{DateTime.Now:yyyy-MM-dd HH:mm}）");
+        Say($"旧：D:\\WinForm\\r48_C\\Pt_Optimize\\bin\\Debug\\net8.0-windows\\Pt_Optimize.dll（只读复制后加载）md5 {Md5(Path.Combine(dirOld, "Pt_Optimize.dll"))}　MVID {oldS.Asm.ManifestModule.ModuleVersionId}");
+        Say($"新：D:\\WinForm\\r48_G3\\Pt_Optimize\\bin\\Debug\\net8.0-windows\\Pt_Optimize.dll（G3 审查修改后）md5 {Md5(Path.Combine(dirNew, "Pt_Optimize.dll"))}　MVID {newS.Asm.ManifestModule.ModuleVersionId}");
+        Say("说明：此前那份核对（R48_G3_热偶基准逐位核对_2026-09-15.txt）旧式是手抄 r48_C 源码、只直接比了 LogMeanC 与 ReferenceC；本份两边都引用编译产物，三个入口都直接比。");
+        Say("");
+
+        var rng = new Random(20260915);
+        // ── LogMeanC
+        Reset();
+        for (double a = 900; a <= 1300; a += 2.5)
+            for (double b = 900; b <= 1300; b += 2.5) { double x = a, y = b; Cmp($"LogMean({x},{y})", () => oldS.LogMean(x, y), () => newS.LogMean(x, y)); }
+        for (int i = 0; i < 200000; i++) { double x = 20 + 1680 * rng.NextDouble(), y = 20 + 1680 * rng.NextDouble(); Cmp($"LogMean({x:R},{y:R})", () => oldS.LogMean(x, y), () => newS.LogMean(x, y)); }
+        Say($"LogMeanC 常规（900～1300 步 2.5 全组合 + 20～1700 随机 20 万对）：逐位相同 {same}　不同 {diff}　抛异常 {thrown}");
+        foreach (var d in diffs) Say("  " + d);
+
+        // ── ReferenceC
+        Reset();
+        var arrays = new List<double[]> { new[] { 1150.0, 1080, 1050 }, new[] { 1150.0, 1150, 1150 }, new[] { 1150.0, 1080 }, new[] { 1300.0 }, new[] { 1200.0, 1100, 1000, 950 } };
+        for (int i = 0; i < 20000; i++) { int n = 1 + rng.Next(5); var sp = new double[n]; for (int k = 0; k < n; k++) sp[k] = 900 + 400 * rng.NextDouble(); arrays.Add(sp); }
+        foreach (var sp in arrays)
+            for (int j = -1; j <= sp.Length + 1; j++) { var s2 = sp; int jj = j; Cmp($"Ref([{string.Join(",", s2)}],{jj})", () => oldS.Ref(s2, jj), () => newS.Ref(s2, jj)); }
+        Say($"ReferenceC 常规（五组固定设定 + 2 万组随机 1～5 段，片号 −1～段数+1 含越界）：逐位相同 {same}　不同 {diff}　抛异常 {thrown}");
+        foreach (var d in diffs) Say("  " + d);
+
+        // ── HottestMinusReferenceK：两边各在自己的上下文里造同一组 LineResult
+        Reset();
+        for (int i = 0; i < 20000; i++)
+        {
+            int n = 1 + rng.Next(4);
+            var sp = new double[n]; for (int k = 0; k < n; k++) sp[k] = 900 + 400 * rng.NextDouble();
+            var pl = new (double, double)[n + 1];
+            for (int j = 0; j <= n; j++) pl[j] = (900 + 500 * rng.NextDouble(), 900 + 500 * rng.NextDouble());
+            object ro = oldS.MakeResult(sp, pl), rn = newS.MakeResult(sp, pl);
+            for (int j = -1; j <= n + 1; j++) { int jj = j; Cmp($"Hot(sp=[{string.Join(",", sp)}],j={jj})", () => oldS.Hot(ro, jj), () => newS.Hot(rn, jj)); }
+        }
+        foreach (var sp in arrays.Take(5))
+        {
+            var pl = Enumerable.Range(0, sp.Length + 1).Select(j => (1100.0 + 10 * j, 1120.0 - 5 * j)).ToArray();
+            object ro = oldS.MakeResult(sp, pl), rn = newS.MakeResult(sp, pl);
+            for (int j = 0; j <= sp.Length; j++) { int jj = j; Cmp($"Hot 固定({jj})", () => oldS.Hot(ro, jj), () => newS.Hot(rn, jj)); }
+        }
+        Say($"HottestMinusReferenceK 常规（2 万个随机 LineResult，1～4 段、各片圆盘峰与舌区峰 900～1400，片号 −1～段数+1 + 五组固定）：逐位相同 {same}　不同 {diff}　抛异常 {thrown}");
+        foreach (var d in diffs) Say("  " + d);
+
+        // ── 边界
+        Reset();
+        foreach (double t in new[] { 1050.0, 1114.7, 1150.0 })
+            foreach (double dlt in new[] { 0.0, 1e-12, 1e-10, 2e-9, 1e-8, 1e-7, 5e-7, 9e-7, 1.1e-6, 1e-5 })
+            { double x = t, y = t + dlt; Cmp($"近等 LogMean({x},{y:R}) Δ={dlt:E0}", () => oldS.LogMean(x, y), () => newS.LogMean(x, y)); }
+        Cmp("LogMean(NaN,1100)", () => oldS.LogMean(double.NaN, 1100), () => newS.LogMean(double.NaN, 1100));
+        Cmp("LogMean(-300,1100) 低于绝对零度", () => oldS.LogMean(-300, 1100), () => newS.LogMean(-300, 1100));
+        Cmp("Ref(null,0)", () => oldS.Ref(null, 0), () => newS.Ref(null, 0));
+        Cmp("Ref([],0)", () => oldS.Ref(Array.Empty<double>(), 0), () => newS.Ref(Array.Empty<double>(), 0));
+        var spB = new[] { 1150.0, 1080 }; var plB = new[] { (1100.0, 1110.0), (1090.0, 1095.0), (1070.0, 1060.0) };
+        Cmp("Hot(Flanges=null)", () => oldS.Hot(oldS.MakeResult(spB, plB, flangesNull: true), 1), () => newS.Hot(newS.MakeResult(spB, plB, flangesNull: true), 1));
+        Cmp("Hot(Segments=null)", () => oldS.Hot(oldS.MakeResult(spB, plB, segmentsNull: true), 1), () => newS.Hot(newS.MakeResult(spB, plB, segmentsNull: true), 1));
+        Cmp("Hot(r=null)", () => (double)typeof(Side).GetMethod("Hot")!.Invoke(oldS, new object[] { null, 1 })!, () => (double)typeof(Side).GetMethod("Hot")!.Invoke(newS, new object[] { null, 1 })!);
+        Say($"边界（两温度差 0～1e-5 K、NaN、低于绝对零度、空数组、Flanges／Segments／结果为 null）：逐位相同 {same}　不同 {diff}　抛异常 {thrown}");
+        foreach (var d in diffs) Say("  " + d);
+        Say("");
+        Say("── 核对程序源码 Program.cs");
+        Say(File.ReadAllText(srcFile));
+        File.WriteAllText(outFile, sb.ToString(), new UTF8Encoding(false));
+    }
+}
+

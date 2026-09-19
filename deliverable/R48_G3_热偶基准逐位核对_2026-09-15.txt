@@ -1,0 +1,84 @@
+R48 G3 第 4 项：C 路 ThermocoupleBasis 原式 vs 合并树（转调 B 的 LineSolver.LogMeanC／ThermocoupleReferenceC）逐位核对（Opus 5，2026-09-15 04:16）
+旧式：抄自 D:\WinForm\r48_C\Pt_Optimize\Core\ThermocoupleBasis.cs（只读）；新式：引用 D:\WinForm\r48_G3 改前编译出的 Pt_Optimize.dll（md5 d37f45be16048094e8e8e8b7184c714c）。一次性核对程序，不进仓库，源码附在文末。
+常规：900～1300 °C 步 2.5 两两全组合 + 20～1700 °C 随机 20 万对 + 五组设定值数组（含越界片号）；边界：两温差 0～1e-5 K、NaN、低于绝对零度。
+
+常规：逐位相同 225949　不同 0　新版抛异常 0
+边界：逐位相同 19　不同 15　新版抛异常 1
+  近等 LogMean(1050,1050.000000002) Δ=2E-09: 旧 1049.9647998521032 新 1050.000000001
+  近等 LogMean(1114.7,1114.700000002) Δ=2E-09: 旧 1114.6934514627906 新 1114.700000001
+  近等 LogMean(1150,1150.000000002) Δ=2E-09: 旧 1149.998048663876 新 1150.000000001
+  近等 LogMean(1050,1050.00000001) Δ=1E-08: 旧 1050.0036732575272 新 1050.000000005
+  近等 LogMean(1114.7,1114.70000001) Δ=1E-08: 旧 1114.6934514587906 新 1114.700000005
+  近等 LogMean(1150,1150.00000001) Δ=1E-08: 旧 1149.998048659876 新 1150.000000005
+  近等 LogMean(1050,1050.0000001) Δ=1E-07: 旧 1050.0001575730503 新 1050.00000005
+  近等 LogMean(1114.7,1114.7000001000001) Δ=1E-07: 旧 1114.6995544995725 新 1114.7000000500002
+  近等 LogMean(1150,1150.0000001) Δ=1E-07: 旧 1149.9997491224667 新 1150.00000005
+  近等 LogMean(1050,1050.0000005) Δ=5E-07: 旧 1050.0001945531153 新 1050.00000025
+  近等 LogMean(1114.7,1114.7000005) Δ=5E-07: 旧 1114.7000444338541 新 1114.70000025
+  近等 LogMean(1150,1150.0000005) Δ=5E-07: 旧 1150.0001438315644 新 1150.00000025
+  近等 LogMean(1050,1050.0000009) Δ=9E-07: 旧 1050.0000031735126 新 1050.00000045
+  近等 LogMean(1114.7,1114.7000009) Δ=9E-07: 旧 1114.700098693405 新 1114.70000045
+  近等 LogMean(1150,1150.0000009) Δ=9E-07: 旧 1149.9999072157525 新 1150.00000045
+  低于绝对零度: 旧 非數值 新 抛 ArgumentOutOfRangeException
+
+读法：常规输入 225949 次逐位相同。差别只在两处边界 —— ① 两温度相差 1e-9～1e-6 K：旧式照走 (a−b)/ln(a/b)，舍入误差到 35 mK（如 1050 与 1050.000000002 给 1049.9648）；新式在差 < 1e-6 K 时取算术平均（B 路注释写的门槛），误差 ≤ 1e-12 K ⇒ 新式更准；② 低于绝对零度：旧式回 NaN、新式抛 ArgumentOutOfRangeException。三个共用片基准（1150/1080、1080/1050、全 1150）落在常规区，逐位相同。
+
+── 核对程序源码 Program.cs
+// 一次性核对（2026-09-15 Opus 5，G3 第 4 项）：C 路 ThermocoupleBasis 原式（抄自 D:\WinForm\r48_C\Pt_Optimize\Core\ThermocoupleBasis.cs，只读）
+// 与合并树 G3 转调 B 的 ThermocoupleBasis（引用 G3 编译出的 Pt_Optimize.dll）逐位比。不进仓库。
+using PtOptimize.Core;
+static class OldTc
+{
+    public static double LogMeanC(double aC, double bC)
+    {
+        double a = aC + 273.15, b = bC + 273.15;
+        if (!(a > 0) || !(b > 0)) return double.NaN;
+        if (Math.Abs(a - b) < 1e-9) return 0.5 * (aC + bC);
+        return (a - b) / Math.Log(a / b) - 273.15;
+    }
+    public static double ReferenceC(double[] setpointC, int plate)
+    {
+        if (setpointC is null || setpointC.Length == 0) return double.NaN;
+        int n = setpointC.Length;
+        if (plate < 0 || plate > n) return double.NaN;
+        if (plate == 0) return setpointC[0];
+        if (plate == n) return setpointC[n - 1];
+        return LogMeanC(setpointC[plate - 1], setpointC[plate]);
+    }
+}
+class P
+{
+    static long same = 0, diff = 0, thrown = 0;
+    static List<string> diffs = new();
+    static void Cmp(string what, Func<double> o, Func<double> n)
+    {
+        double a = o(); double b;
+        try { b = n(); } catch (Exception ex) { thrown++; if (diffs.Count < 30) diffs.Add($"{what}: 旧 {a:R} 新 抛 {ex.GetType().Name}"); return; }
+        if (BitConverter.DoubleToInt64Bits(a) == BitConverter.DoubleToInt64Bits(b) || (double.IsNaN(a) && double.IsNaN(b))) same++;
+        else { diff++; if (diffs.Count < 30) diffs.Add($"{what}: 旧 {a:R} 新 {b:R}"); }
+    }
+    static void Main()
+    {
+        var rng = new Random(20260915);
+        var vals = new List<double>();
+        for (double t = 20; t <= 1700; t += 0.5) vals.Add(t);
+        for (int k = 0; k < 2000; k++) vals.Add(20 + rng.NextDouble() * 1680);
+        // 常规网格：两两对
+        var grid = new List<double>();
+        for (double t = 900; t <= 1300; t += 2.5) grid.Add(t);
+        foreach (var a in grid) foreach (var b in grid) Cmp($"LogMean({a},{b})", () => OldTc.LogMeanC(a, b), () => ThermocoupleBasis.LogMeanC(a, b));
+        for (int k = 0; k < 200000; k++) { double a = vals[rng.Next(vals.Count)], b = vals[rng.Next(vals.Count)]; Cmp($"LogMean({a:R},{b:R})", () => OldTc.LogMeanC(a, b), () => ThermocoupleBasis.LogMeanC(a, b)); }
+        // 用过的设定值组合
+        var sets = new[] { new[] { 1150.0, 1080.0, 1050.0 }, new[] { 1150.0, 1150.0, 1150.0 }, new[] { 1150.0, 1080.0 }, new[] { 1150.0 }, new[] { 1300.0, 1150.0, 1080.0, 1050.0 } };
+        foreach (var s in sets) for (int j = -1; j <= s.Length + 1; j++) { int jj = j; Cmp($"Ref([{string.Join("/", s)}],{jj})", () => OldTc.ReferenceC(s, jj), () => ThermocoupleBasis.ReferenceC(s, jj)); }
+        Console.WriteLine($"常规：逐位相同 {same}　不同 {diff}　新版抛异常 {thrown}");
+        long s0 = same, d0 = diff, t0 = thrown;
+        // 边界：近乎相等（两版门槛 1e-9 与 1e-6 K 之间）、NaN、低于绝对零度
+        foreach (double eps in new[] { 0.0, 1e-12, 1e-10, 5e-10, 2e-9, 1e-8, 1e-7, 5e-7, 9e-7, 1.1e-6, 1e-5 })
+            foreach (double a in new[] { 1050.0, 1114.7, 1150.0 }) { double b = a + eps; Cmp($"近等 LogMean({a:R},{b:R}) Δ={eps}", () => OldTc.LogMeanC(a, b), () => ThermocoupleBasis.LogMeanC(a, b)); }
+        Cmp("NaN", () => OldTc.LogMeanC(double.NaN, 1150), () => ThermocoupleBasis.LogMeanC(double.NaN, 1150));
+        Cmp("低于绝对零度", () => OldTc.LogMeanC(-300, 1150), () => ThermocoupleBasis.LogMeanC(-300, 1150));
+        Console.WriteLine($"边界：逐位相同 {same - s0}　不同 {diff - d0}　新版抛异常 {thrown - t0}");
+        foreach (var d in diffs) Console.WriteLine("  " + d);
+    }
+}
