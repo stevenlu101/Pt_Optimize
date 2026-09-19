@@ -158,6 +158,50 @@ public static class LineSolver
             : Math.Sqrt(il * il + ir * ir + il * ir);      // 120° 相位差下的矢量差
     }
 
+    /// <summary>摄氏 → 开尔文的偏移（对数平均必须在绝对温标上取）。</summary>
+    public const double KelvinOffset = 273.15;
+
+    /// <summary>
+    /// ★★★★★ R48 B（2026-09-14 Opus 5）：第 <paramref name="flangeIndex"/> 片法兰的**热偶读数基准** °C —— 热侧、冷侧两条判据的唯一基准。
+    ///
+    /// 用户 2026-09-14 定：控温热偶在**每段中点**、误差 5 ℃；共用法兰处基准取**两侧热偶读数的对数平均**。
+    /// 片号与 <see cref="JointCurrentA"/> 同一套（n 段 n+1 片）：
+    /// <code>
+    ///   端片 j = 0      ：段 0 的设定
+    ///   端片 j = n      ：段 n−1 的设定
+    ///   共用片 0 &lt; j &lt; n：段 j−1 与段 j 设定的对数平均（开尔文算）(T₁−T₂)/ln(T₁/T₂)，T₁ = T₂ 时取 T₁
+    /// </code>
+    /// ⚠ 物理把关人核过：**只许用设定值**。模型算的交界管温会被设计变量（舌保温、板厚……）挪走，
+    ///   拿它当基准等于让靶跟着箭跑；它只作对照并列在判据说明里（见 <see cref="ThermocoupleBasis"/>）。
+    /// 快门验数（ThermocoupleBasisTests）：1150/1080 → 1114.71 °C，1080/1050 → 1064.94 °C。
+    /// </summary>
+    public static double ThermocoupleReferenceC(double[] setpointC, int flangeIndex, int segmentCount)
+    {
+        if (setpointC is null) throw new ArgumentNullException(nameof(setpointC));
+        if (segmentCount < 1 || setpointC.Length < segmentCount)
+            throw new ArgumentException($"段数 {segmentCount} 与设定值个数 {setpointC.Length} 对不上");
+        if (flangeIndex < 0 || flangeIndex > segmentCount)
+            throw new ArgumentOutOfRangeException(nameof(flangeIndex), flangeIndex, $"片号应在 0…{segmentCount}");
+        if (flangeIndex == 0) return setpointC[0];
+        if (flangeIndex == segmentCount) return setpointC[segmentCount - 1];
+        return LogMeanC(setpointC[flangeIndex - 1], setpointC[flangeIndex]);
+    }
+
+    /// <summary>
+    /// 两个摄氏温度在**开尔文**上的对数平均，返回 °C：(T₁−T₂)/ln(T₁/T₂)。
+    /// T₁ = T₂ 时取 T₁（极限值）；两者差小于 1e-6 K 时直接取算术平均（与对数平均差 O(ΔT²/T)，远小于 1e-12 K，
+    /// 且避开 ln(1+ε) 的舍入）。任一个是 NaN 返回 NaN。R48 B（2026-09-14 Opus 5）。
+    /// </summary>
+    public static double LogMeanC(double aC, double bC)
+    {
+        if (double.IsNaN(aC) || double.IsNaN(bC)) return double.NaN;
+        double t1 = aC + KelvinOffset, t2 = bC + KelvinOffset;
+        if (t1 <= 0 || t2 <= 0)
+            throw new ArgumentOutOfRangeException(nameof(aC), $"温度低于绝对零度：{aC} / {bC} °C");
+        if (Math.Abs(t1 - t2) < 1e-6) return 0.5 * (aC + bC);
+        return (t1 - t2) / Math.Log(t1 / t2) - KelvinOffset;
+    }
+
     /// <summary>
     /// 第 <paramref name="joint"/> 号接头那一片的厚度，以及**是被哪一段的需求定的**。
     ///
@@ -282,7 +326,9 @@ public static class LineSolver
         ExtensionMm = s.ExtensionMm,
         ExtHalfWidthMm = s.ExtHalfWidthMm,
         ThickenRadiusMm = s.ThickenRadiusMm,
-        ThickenedMm = s.ThickenedMm
+        ThickenedMm = s.ThickenedMm,
+        // R48（2026-09-14，Opus 5）：逐片圆盘保温跟着板件走 —— 漏抄它，CoupledSolver 里本片就退回整线值（手抄清单的老病，其余没抄的字段本批未动）
+        DiscInsulThickMm = s.DiscInsulThickMm,
     };
 
     /// <summary>为该段挑最省成本的可行牌号</summary>

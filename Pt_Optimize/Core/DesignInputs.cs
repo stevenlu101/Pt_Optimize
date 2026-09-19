@@ -523,6 +523,31 @@ public class DesignInputs
     [Browsable(false)] public double NeighbourTempLeftC { get; set; } = double.NaN;
     [Browsable(false)] public double NeighbourTempRightC { get; set; } = double.NaN;
 
+    /// <summary>
+    /// ★ R48 审查第 5 条（2026-09-14，Opus 5）：**端部额外保温渐变形状**用的管内玻璃换热 hg W/(m²·K)。&lt; 0（默认 −1）= 取 <see cref="HGlass"/>，逐位不变。
+    ///
+    /// 病：渐变形状按 ℓt = √(kA/β) 定，β 含 hg·π·D。空管工况把 hg 置 0 ⇒ ℓt 变长（B2 上 24.8 → 38.5 mm）⇒ 装上去的保温厚度分布跟着工况变
+    ///   （30 mm 端区最外子区间的额外厚度 exp(−27.5/24.8) = 0.33 倍 → exp(−27.5/38.5) = 0.49 倍）—— 等于换了工况就换了一套硬件。
+    /// 修：形状按**带玻璃**的 hg 定。LineRunner 的空管段把置 0 之前的 hg 写到这里；单段页上人自己填 hg = 0 时没有「带玻璃那一份」可取，照旧按本身参数。
+    /// 残余差异：β 的散热切线斜率取自损失表（三次样条，表的温度上界随玻璃进口变），两工况只差样条插值，量级远小于打印精度。
+    /// 用 −1 当「未设」：hg 物理上 ≥ 0，负值不会是合法输入（同 <see cref="BusbarConductanceWPerK"/> 的 −1 = 自动）；不用 NaN —— 参数表存盘的 JSON 不收 NaN。
+    /// </summary>
+    [Browsable(false)] public double EndInsulShapeHGlass { get; set; } = -1;
+
+    /// <summary>
+    /// ★ R48 审查第 3 条（2026-09-14，Opus 5）：**敏感度探针专用** —— 管腔轴向辐射的等效轴向导热 kA，W·m/K，叠加在管壁导热 kPt·A 上。默认 0 = 逐位不变。
+    ///
+    /// 空管时管腔是连续的高温腔体，腔内辐射沿轴向传热；带玻璃时腔被玻璃充满，没有这条路。生产模型（<see cref="SegmentSolver"/>）只有管壁导热。
+    /// 量级（推理，未实测）：黑体长管、线性温度下，等效 kA = 8σT³·πD·R²·∫₀^∞ H·F(H) dH（F = 管壁微元环对同轴圆盘的角系数，积分 = 2/3），
+    ///   1100 °C、Ø50 ⇒ 0.077 W·m/K，是管壁 kPt·A（83.3 × 1.28e-4 ≈ 0.0106）的约 7 倍；灰体 ε = 0.18（<see cref="PtEmissivity"/>）在尺度 ℓ 上
+    ///   与表面热阻串联：kA_eff = 1/(1/0.077 + 1/(G_s·ℓ²))，G_s = πD·ε/(1−ε)·4σT³ ≈ 20 W/(m·K) ⇒ ℓ = 40 mm 时约 0.023（管壁的 2.1 倍），
+    ///   与 ℓ 自洽迭代（ℓ = √(kA_总/hP)，空管 hP ≈ 6.7）收在约 0.056（5.2 倍，ℓ ≈ 99 mm）。
+    ///   ⚠ 扩散近似在 ℓ 只有两三个管径时偏大（辐射核是非局部的），所以这两个数只当敏感度的两档，不是模型值。
+    /// 只进段解的轴向导热（Profile 的 K 与段间耦合导度）与报表的热衰减长度；**不进端部额外保温的形状**（那是硬件，见 <see cref="EndInsulShapeHGlass"/>）。
+    /// ⚠ 生产链路不许设它：要不要进模型、管口边界怎么取，归物理把关人定（R48 空管稳态探针的 open issue）。
+    /// </summary>
+    [Browsable(false)] public double TubeCavityRadKAWmPerK { get; set; } = 0.0;
+
     [Category(ParamCat.程序算出), DisplayName("壁厚由程序反算"),
      Description("⚠ 本项被LineRunner 强制置 false —— 整线链壁厚由 LineCase.WallMm 定，自行反算会与之打架接管 —— 在这张表里改它，对「③ 整线核算」没有影响。　关闭 = 校核模式：壁厚取「最小可制造壁厚」的实测值，程序只报实际 J")]
     [TypeConverter(typeof(ChineseBoolConverter))]

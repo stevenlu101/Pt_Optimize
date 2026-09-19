@@ -29,35 +29,37 @@ namespace PtOptimize.Tests;
 ///
 /// ★ 处理方式：**两个数都留着、都标出测量工况、并要求使用者对手上的形状实测**。
 ///   删掉建议是错的（②″ 真超限时它可能仍然对）；把单个数当普适也是错的。
+///
+/// ══ 2026-09-14 Opus 5（R48 B 复审）：钉 NextAction.DiscHot 的三条退役
+///
+/// DiscHot 是「圆盘区最高温 − 管温」超限时附在判据说明上的操作指令。R48 B 把那条降为参考量（旧判法，不卡交付），
+/// 参考行不再附操作指令 ⇒ DiscHot（连同 DipHigh）**再也没有任何地方挂它**，界面上看不到；它还带代号与命令行开关名，
+/// 本来也不许上界面。于是原来钉它的三条（「先警告再给操作」「两个工况的实测都在」「建议本身不许删」）守的是一段**死字串**，
+/// 等于门在空转 —— 常量删掉，这三条退役：
+///   · 操作指令先警告灵敏度会变号 —— 删（没有这段指令了）；
+///   · 两个工况的实测都留着并标明出处 —— **改钉界面上真看得见的那一处**：LineDesignPage 的「环倍率」提示（窄舌 −1.4／宽舌 +0.056、137 g）；
+///     「∂圆盘区最高温/∂板厚 = +0.214」只在 DiscHot 里有，随它一起离开 APP，数与出处留在本档上面的说明里；
+///   · 原建议保留而不是删掉 —— 删：它的理由是「②″ 真超限时加环可能仍然对，没资格否定」，而 ②″ 已不卡交付，
+///     加环现在是热侧「最热铂高出热偶读数」的候选，抬不抬由求解器对手上的形状当场实测（Solver.ChooseKnob），不靠这段文字。
 /// </summary>
 public class SensitivitySignTests
 {
     private static string Read(string dir, string f) =>
         File.ReadAllText(Path.Combine(HandoverDoc.Root(), "Pt_Optimize", dir, f));
 
-    /// <summary>②″ 超限时印给人的指令，必须**先**警告方向会变号。</summary>
-    [Fact]
-    public void 操作指令先警告灵敏度会变号()
-    {
-        string s = Read("Core", "NextAction.cs");
-        int warn = s.IndexOf("随形状变号", System.StringComparison.Ordinal);
-        int act = s.IndexOf("① 加大管孔渐变环的倍率", System.StringComparison.Ordinal);
-
-        Assert.True(warn > 0, "DiscHot 里没有「随形状变号」的警告");
-        Assert.True(act > 0, "DiscHot 里找不到第 ① 条操作");
-        Assert.True(warn < act, "★ 警告必须在操作之前 —— 人是照着顺序做的");
-    }
-
-    /// <summary>两个方向的实测都要在，并且标明各自的工况。</summary>
+    /// <summary>两个方向的实测都要在，并且标明各自的工况 —— 钉在界面真显示的「环倍率」提示上（2026-09-14 Opus 5 由 NextAction 挪来）。</summary>
     [Fact]
     public void 两个工况的实测都留着并标明出处()
     {
-        string s = Read("Core", "NextAction.cs");
-        Assert.Contains("**窄舌**", s);          // −1.4 是在哪测的
-        Assert.Contains("宽舌", s);              // +0.056 是在哪测的
-        Assert.Contains("+0.056", s);
-        Assert.Contains("+0.214", s);
+        string s = Read("UI", "LineDesignPage.cs");
+        Assert.Contains("窄舌形状上曾测得", s);   // −1.4 是在哪测的
+        Assert.Contains("−1.4", s);
+        Assert.Contains("现役宽舌形状", s);        // 反方向是在哪测的
         Assert.Contains("137 g", s);             // 代价也要说
+        // DiscHot／DipHigh 已删：不许留着一段没人挂的指令让门空转
+        string na = Read("Core", "NextAction.cs");
+        Assert.DoesNotContain("public const string DiscHot", na);
+        Assert.DoesNotContain("public const string DipHigh", na);
     }
 
     /// <summary>
@@ -67,25 +69,9 @@ public class SensitivitySignTests
     [Fact]
     public void 要求对手上的形状实测并点名工具()
     {
-        foreach (var (dir, f) in new[] { ("Core", "NextAction.cs"), ("UI", "LineDesignPage.cs") })
-        {
-            string s = Read(dir, f);
-            Assert.Contains("--monotone", s);
-        }
-        Assert.Contains("别照抄任何一个数", Read("Core", "NextAction.cs"));
-        Assert.Contains("别照抄任何一个数", Read("UI", "LineDesignPage.cs"));
-    }
-
-    /// <summary>
-    /// **建议本身不许删**。②″ 真的超限时（窄舌、孔周拥塞），加环可能仍然对 ——
-    /// 今天的扫描没有覆盖那个工况，没资格否定它。
-    /// </summary>
-    [Fact]
-    public void 原建议保留而不是删掉()
-    {
-        string s = Read("Core", "NextAction.cs");
-        Assert.Contains("加大管孔渐变环的倍率", s);
-        Assert.Contains("加厚该片板", s);
-        Assert.Contains("两条路子仍然值得试", s);
+        // 2026-09-14 Opus 5（复审）：NextAction.cs 那一半随 DiscHot 删掉（见类说明）；界面那一处照旧钉。
+        string s = Read("UI", "LineDesignPage.cs");
+        Assert.Contains("--monotone", s);
+        Assert.Contains("别照抄任何一个数", s);
     }
 }

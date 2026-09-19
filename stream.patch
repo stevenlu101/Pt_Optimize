@@ -1,0 +1,2685 @@
+diff --git a/Pt_Optimize.Tests/R48ClampRecipeImpactTests.cs b/Pt_Optimize.Tests/R48ClampRecipeImpactTests.cs
+index df022db..5df1e20 100644
+--- a/Pt_Optimize.Tests/R48ClampRecipeImpactTests.cs
++++ b/Pt_Optimize.Tests/R48ClampRecipeImpactTests.cs
+@@ -291,9 +291,12 @@ public class R48ClampRecipeImpactTests
+         var stab = r.Checks.First(c => c.Name.StartsWith(LineResult.Key.FlangeStab, StringComparison.Ordinal));
+         var ramp = r.Checks.First(c => c.Name.StartsWith(LineResult.Key.RampField, StringComparison.Ordinal));
+         Assert.Equal(yes.Stab.Margin, stab.Actual);
+-        Assert.Equal(yes.Ramp!.MaxFlangeMinusTubeK, ramp.Actual);
++        // ★ R48 G2 复审（2026-09-15 Opus 5）有意改断言：原 Assert.Equal(yes.Ramp.MaxFlangeMinusTubeK, ramp.Actual) → 现「那一行判不了、不给数，排除那一份照样解出来」。
++        //   依据：审查意见 blocker —— 物理把关人复核前升温那一行不许给数（两节点模型的法兰温度是整片平均，看不到孔边比管热），见 LineRunner.RampPendingNote。
++        Assert.NotNull(yes.Ramp);
++        Assert.True(ramp.Undetermined && double.IsNaN(ramp.Actual), "升温那一行复核前应判不了、不给数");
+         Say("");
+-        Say("✓ 判据表里的两条参考量就是 excludeClampCells = true 那一份。");
++        Say("✓ 判据表里的整片热稳定就是 excludeClampCells = true 那一份；升温那一行复核前判不了、不给数（R48 G2 复审 2026-09-15），排除那一份照样解出来。");
+         Say("");
+         Say("── 判据表（生产配方，导航网格）");
+         foreach (var c in r.Checks)
+diff --git a/Pt_Optimize.Tests/R48ClampRecipeTests.cs b/Pt_Optimize.Tests/R48ClampRecipeTests.cs
+index 0d26379..a78f81e 100644
+--- a/Pt_Optimize.Tests/R48ClampRecipeTests.cs
++++ b/Pt_Optimize.Tests/R48ClampRecipeTests.cs
+@@ -30,6 +30,7 @@ namespace PtOptimize.Tests;
+ ///   (g) 被生产代码或配方声明引作依据的证据探针，建网格时必须显式写明两个开关（复审 major：默认值一改，证据探针悄悄换口径、重跑还覆盖同名证据）。
+ ///   (h) 下游：LineRunner.Run 出来的每片网格都带整面接触与细带；判据表里整片热稳定、升温两节点两条参考量排除了压接格
+ ///       （复审 major：发热已不含压接段，而面积／质量还按整片算，两个参考量都偏乐观）；排除后升温那条偏保守的原因写进了界面附注。
++///       ⛔ 「偏保守」那半句 2026-09-15 撤回（R48 G2，Opus 5）：升温两节点已补铜排通道与舌片保温，附注改为说明标定与假设、写「待复核」，不下方向结论。
+ ///
+ /// ══ 与工单原文不同的两处（如实写明，2026-09-14 Opus 5）
+ ///   · 工单 (a) 要求 h=2 时整面格数 ≥ 10 × 外圈格数。本板舌宽 60、压接长 40：整面 30×20 = 600 格，外圈 30 + 2×19 = 68 格，比值 8.8 ——
+@@ -484,15 +485,25 @@ public class R48ClampRecipeTests
+         Assert.False(double.IsNaN(stab.Actual), "热稳定判不了，本门量不到东西");
+         Assert.Equal(yes.Stab.Margin, stab.Actual);
+         Assert.NotEqual(no.Stab.Margin, stab.Actual);
+-        Assert.NotNull(yes.Ramp); Assert.NotNull(no.Ramp);
+-        Assert.Equal(yes.Ramp!.MaxFlangeMinusTubeK, ramp.Actual);
+-        Assert.NotEqual(no.Ramp!.MaxFlangeMinusTubeK, ramp.Actual);
++        // ★ R48 G2 复审（2026-09-15 Opus 5）有意改断言：原「判据表升温那一行 = 排除那一份的峰值，且 ≠ 不排除那一份」→
++        //   现「判据表那一行判不了、不给数；排除那一份照样解出来（留给前后对照探针）；排除与否的升温输入不同（非空转）」。
++        //   依据：审查意见 blocker —— 物理把关人复核前那一行不许给数（两节点模型的法兰温度是整片平均，看不到孔边比管热），见 LineRunner.RampPendingNote。
++        //   本算例（W08 一段原样）两片场里热从法兰流进管、节点均温低于管根 ⇒ 管孔一项标定不了、升温两节点不解（R48G2RampClampChannelGateTests 四乙），所以不要求 yes.Ramp 非空，要求「解了，或说了为什么没解」。
++        Assert.True(yes.Ramp is not null || yes.RampError.Length > 0); Assert.NotNull(no.RampIn);
++        Assert.True(ramp.Undetermined && double.IsNaN(ramp.Actual), "升温那一行复核前应判不了、不给数");
++        Assert.True(yes.RampIn!.FlangeMassG < no.RampIn!.FlangeMassG && yes.RampIn.FlangeAreaBareMm2 < no.RampIn.FlangeAreaBareMm2,
++            "排除压接格后升温两节点的质量与舌片区面积应当变小");
+         Assert.True(yes.TabAreaMm2 < no.TabAreaMm2 && yes.VolumeMm3 < no.VolumeMm3 && yes.TabLenMm < no.TabLenMm,
+             "排除压接格后舌片区面积、体积、导热长应当都变小");
+         Assert.Equal(yes.ClampAreaMm2, (no.TabAreaMm2 + no.DiscAreaMm2) - (yes.TabAreaMm2 + yes.DiscAreaMm2), 6);
+         Assert.Equal(lc.Base.BusbarClampLengthMm, no.TabLenMm - yes.TabLenMm, 9);
+         // 排除后升温两节点偏保守（模型没有铜排通道）—— 这件事要写在界面那条参考量的附注里，不只写在代码注释里
+-        Assert.Contains("偏保守", ramp.Note);
++        // ★ R48 G2（2026-09-15 Opus 5）有意改断言：原 Assert.Contains("偏保守") → 现 DoesNotContain("偏保守")、Contains("待复核")。
++        //   依据：物理把关人第十一轮 —— 模型已补铜排通道（稳态场标定）与舌片保温，而「偏保守」这个方向判断本身不成立（同一模型里舌片按裸铂多算散热，方向相反），
++        //   工单要求任何情况下附注不许再写「偏高偏保守」，复核前写「模型已补铜排通道与舌片保温，待复核」。附注仍须说到铜排（通道怎么标定）。
++        Assert.DoesNotContain("偏保守", ramp.Note);
++        Assert.DoesNotContain("偏高", ramp.Note);
++        Assert.Contains("待复核", ramp.Note);
+         Assert.Contains("铜排", ramp.Note);
+     }
+ }
+diff --git a/Pt_Optimize.Tests/R48DiscInsulPerPlateGateTests.cs b/Pt_Optimize.Tests/R48DiscInsulPerPlateGateTests.cs
+index 01e1629..293906a 100644
+--- a/Pt_Optimize.Tests/R48DiscInsulPerPlateGateTests.cs
++++ b/Pt_Optimize.Tests/R48DiscInsulPerPlateGateTests.cs
+@@ -149,14 +149,27 @@ public class R48DiscInsulPerPlateGateTests
+         var rB = Run("乙 整线5 逐片空", lcB);
+         var rC = Run("丙 整线20 逐片空（对照）", lcC);
+         Assert.True(rA.Ok, rA.Message); Assert.True(rB.Ok, rB.Message); Assert.True(rC.Ok, rC.Message);
++        // ★ R48 G2 复审（2026-09-15 Opus 5）：升温期法兰−管峰值那一行复核前判不了、不给数 ⇒ 升温两节点的数改从生产函数 LineRunner.FlangeLumped 取来比
++        var lA = LineRunner.FlangeLumped(lcA, rA.Flanges)!; var lB = LineRunner.FlangeLumped(lcB, rB.Flanges)!; var lC = LineRunner.FlangeLumped(lcC, rC.Flanges)!;
++        foreach (var (nm, l) in new[] { ("甲", lA), ("乙", lB), ("丙", lC) })
++            Say($"    {nm} 升温两节点（不进判据表）：{(l.Ramp is { } rt ? $"法兰−管峰值 {rt.MaxFlangeMinusTubeK:R} K" : "算不出来 " + l.RampError)}");
+ 
+         // 三条会读圆盘保温的参考行都在、都判得出（否则比的是两个 NaN）
++        // ★ R48 G2 复审（2026-09-15 Opus 5）有意改断言：原 Assert.False(double.IsNaN(升温那一行.Actual)) → 现「那一行判不了」+「FlangeLumped 解出了升温两节点」。
++        //   依据：审查意见 blocker「修后的数仍作为正常参考量进判据表」—— 物理把关人复核前那一行不许给数；门比的数改为 FlangeLumped 的升温结果（下面 rampDiff 与甲乙逐位）。
+         foreach (var r in new[] { rA, rB })
+         {
+             Assert.False(Row(r, LineResult.Key.FlangeStab).Undetermined, Row(r, LineResult.Key.FlangeStab).Note);
+-            Assert.False(double.IsNaN(Row(r, LineResult.Key.RampField).Actual), Row(r, LineResult.Key.RampField).Note);
++            Assert.True(Row(r, LineResult.Key.RampField).Undetermined, Row(r, LineResult.Key.RampField).Note);
+             Assert.Contains("两节点", Row(r, LineResult.Key.SectionJ).Note);
+         }
++        // ★ R48 G2 复审首跑（2026-09-15 Opus 5）如实写明：W08 三段最不利片（入口）场里管孔流入 −3.0 W（热从法兰流进管）、节点均温 1090 °C 低于管根 1157 °C
++        //   ⇒ 管孔一项标定不了、升温两节点不解（甲乙丙三份都是）⇒ 原先比峰值的做法在本算例上没有数可比。门改为：两份都解出来就比峰值；
++        //   否则比升温两节点**实际吃的**圆盘保温 —— 同一温度上的表面散热配方值（RampTwoNode.Model.FlangeSurfaceRecipeW，圆盘面按 RampP 的圆盘保温取表）。门的判读（甲≡乙、乙≠丙）没改。
++        double RampProbe(LineRunner.FlangeLumpedOut l) => l.Ramp?.MaxFlangeMinusTubeK ?? new RampTwoNode.Model(l.RampP!, l.RampIn!).FlangeSurfaceRecipeW(1000.0);
++        foreach (var l in new[] { lA, lB, lC }) Assert.True(l.Ramp is not null || (l.RampIn is not null && l.RampP is not null && l.RampError.Length > 0), "升温两节点既没解出来也没说为什么：" + l.RampError);
++        Assert.True((lA.Ramp is null) == (lB.Ramp is null), "甲乙一个解得出一个解不出 ⇒ 链路上还有地方读整线圆盘保温");
++        Assert.Equal(RampProbe(lB), RampProbe(lA));
+ 
+         var diffAB = Diff(rA, rB);
+         Say($"甲 vs 乙：{(diffAB.Count == 0 ? "逐位相同" : $"{diffAB.Count} 处不同")}");
+@@ -164,9 +177,10 @@ public class R48DiscInsulPerPlateGateTests
+ 
+         var diffBC = Diff(rB, rC);
+         bool stabDiff = diffBC.Any(s => s.StartsWith($"判据「{LineResult.Key.FlangeStab}", StringComparison.Ordinal));
+-        bool rampDiff = diffBC.Any(s => s.StartsWith($"判据「{LineResult.Key.RampField}」实际", StringComparison.Ordinal));
++        bool rampDiff = (lB.Ramp is null) == (lC.Ramp is null) ? RampProbe(lB) != RampProbe(lC) : true;   // R48 G2 复审：原比判据表那一行的实际值（现在是 NaN），见上
+         bool secJDiff = diffBC.Any(s => s.StartsWith($"判据「{LineResult.Key.SectionJ}」说明", StringComparison.Ordinal));
+         bool drawDiff = diffBC.Any(s => s.Contains(" 抽热："));
++        Say($"    升温两节点比的量：甲 {RampProbe(lA):R}　乙 {RampProbe(lB):R}　丙 {RampProbe(lC):R}（{(lB.Ramp is null ? "解不出，比 1000 °C 上的表面散热配方值 W" : "法兰−管峰值 K")}）");
+         Say($"乙 vs 丙（对照，门咬不咬得住）：{diffBC.Count} 处不同；逐片抽热 {(drawDiff ? "变" : "不变")}、整片热稳定 {(stabDiff ? "变" : "不变")}、"
+           + $"升温期法兰−管峰值 {(rampDiff ? "变" : "不变")}、法兰截面 J 说明（两节点对照）{(secJDiff ? "变" : "不变")}");
+         foreach (var s in diffBC.Where(s => s.StartsWith("判据「" + LineResult.Key.SectionJ, StringComparison.Ordinal))) Say("    " + s);
+@@ -259,15 +273,23 @@ public class R48DiscInsulPerPlateGateTests
+         var rC = Run("丙′ 整线20 逐片空（对照；判据几何带逐片5）", lcC);
+         var rD = Run("丁′ 整线20 逐片 3.5/7.5/12", lcD);
+         Assert.True(rA.Ok, rA.Message); Assert.True(rB.Ok, rB.Message); Assert.True(rC.Ok, rC.Message); Assert.True(rD.Ok, rD.Message);
++        // ★ R48 G2 复审（2026-09-15 Opus 5）：升温期法兰−管峰值那一行复核前判不了、不给数 ⇒ 升温两节点的数改从生产函数 LineRunner.FlangeLumped 取来比
++        var lA = LineRunner.FlangeLumped(lcA, rA.Flanges)!; var lB = LineRunner.FlangeLumped(lcB, rB.Flanges)!; var lC = LineRunner.FlangeLumped(lcC, rC.Flanges)!;
++        foreach (var (nm, l) in new[] { ("甲′", lA), ("乙′", lB), ("丙′", lC) })
++            Say($"    {nm} 升温两节点（不进判据表）：{(l.Ramp is { } rt ? $"法兰−管峰值 {rt.MaxFlangeMinusTubeK:R} K" : "算不出来 " + l.RampError)}　网格取自本片场 {l.MeshFromField}");
+ 
+         // 三条会读圆盘保温的参考行在图纸路径上都在、都判得出（否则「逐位相同」比的是两个 NaN）
++        // ★ R48 G2 复审（2026-09-15 Opus 5）有意改断言：原 Assert.False(double.IsNaN(升温那一行.Actual)) → 现「那一行判不了」+「FlangeLumped 解出了升温两节点、网格取自本片场」。
++        //   依据：审查意见 blocker（那一行复核前不许给数）与 minor（图纸路径上节点质量与标定要在同一张网格上）。
+         foreach (var r in new[] { rA, rB })
+         {
+             Assert.False(Row(r, LineResult.Key.FlangeStab).Undetermined, Row(r, LineResult.Key.FlangeStab).Note);
+             Assert.False(double.IsNaN(Row(r, LineResult.Key.FlangeStab).Actual), Row(r, LineResult.Key.FlangeStab).Note);
+-            Assert.False(double.IsNaN(Row(r, LineResult.Key.RampField).Actual), Row(r, LineResult.Key.RampField).Note);
++            Assert.True(Row(r, LineResult.Key.RampField).Undetermined, Row(r, LineResult.Key.RampField).Note);
+             Assert.Contains("两节点", Row(r, LineResult.Key.SectionJ).Note);
+         }
++        foreach (var l in new[] { lA, lB, lC }) { Assert.True(l.Ramp is not null, "升温两节点算不出来：" + l.RampError); Assert.True(l.MeshFromField); }
++        Assert.Equal(lB.Ramp!.MaxFlangeMinusTubeK, lA.Ramp!.MaxFlangeMinusTubeK);
+ 
+         var diffAB = Diff(rA, rB);
+         Say($"甲′ vs 乙′：{(diffAB.Count == 0 ? "逐位相同" : $"{diffAB.Count} 处不同")}");
+@@ -276,7 +298,7 @@ public class R48DiscInsulPerPlateGateTests
+ 
+         var diffBC = Diff(rB, rC);
+         bool stabDiff = diffBC.Any(s => s.StartsWith($"判据「{LineResult.Key.FlangeStab}", StringComparison.Ordinal));
+-        bool rampDiff = diffBC.Any(s => s.StartsWith($"判据「{LineResult.Key.RampField}」实际", StringComparison.Ordinal));
++        bool rampDiff = lB.Ramp!.MaxFlangeMinusTubeK != lC.Ramp!.MaxFlangeMinusTubeK;   // R48 G2 复审：原比判据表那一行的实际值（现在是 NaN）
+         bool secJDiff = diffBC.Any(s => s.StartsWith($"判据「{LineResult.Key.SectionJ}」说明", StringComparison.Ordinal));
+         bool drawDiff = diffBC.Any(s => s.Contains(" 抽热："));
+         Say($"乙′ vs 丙′（对照，门咬不咬得住；判据几何上的 5 有没有漏进来）：{diffBC.Count} 处不同；逐片抽热 {(drawDiff ? "变" : "不变")}、整片热稳定 {(stabDiff ? "变" : "不变")}、"
+diff --git a/Pt_Optimize.Tests/R48G2RampClampChannelGateTests.cs b/Pt_Optimize.Tests/R48G2RampClampChannelGateTests.cs
+new file mode 100644
+index 0000000..ac90a18
+--- /dev/null
++++ b/Pt_Optimize.Tests/R48G2RampClampChannelGateTests.cs
+@@ -0,0 +1,570 @@
++using System;
++using System.Linq;
++using PtOptimize.Core;
++using Xunit;
++using Xunit.Abstractions;
++
++namespace PtOptimize.Tests;
++
++/// <summary>
++/// ★★★★ R48 G2 快门（2026-09-15，Opus 5 写；依据常驻物理把关人第十一轮；复审同日重写）：**升温两节点补铜排通道与舌片保温，法兰节点四项在稳态场上逐项标定**。
++///
++/// ══ 改了什么（声明在 RampTwoNode 类注释、RampTwoNode.CalibrateNode、LineRunner.FlangeLumped 的注释里，本门只调生产函数）
++///   · 一个节点口径：节点格 = 场里不被边界钉住的格（ShellThermalResult.BoundaryCell），节点温度 = 这些格的体积加权均温；
++///   · 发热：参考电阻 = 节点格焦耳热 ÷ 场电流²，参考温度 = 节点温度（第一版挂管根温度 —— 审查意见 blocker）；
++///   · 表面散热：配方（圆盘按本片圆盘保温、舌片区按本片舌保温，DesignScreen.PlateFluxWPerM2）× κ，κ 在节点温度上还原节点格场散热；
++///   · 流进铜排：G_夹 = 流进铜排 ÷（节点温度 − 夹持参考温度），升温期夹持随法兰按比例升；
++///   · 管孔：孔侧导度 = 管孔流入 ÷（管根温度 − 节点温度），与管壁翅片导度串联（第一版按孔壁几何式 —— 审查意见 blocker）；
++///   · 整片热稳定的夹持导度 = G_夹·(1 − r)（与升温同一个夹持假设），舌片几何导度的裕度另算一份当灵敏度对照；
++///   · 判据表「升温期法兰−管峰值」在物理把关人复核前判不了、不给数。
++///
++/// ══ 五道门（跑前写死的判读）
++///   一、积分跑到两节点稳态：合成输入恒流跑到稳态，法兰节点「发热 − 表面 − 铜排 + 管来」与管节点「发热 − 散热 − 管来」都 ≤ 发热的 0.5 %；
++///       ⚠ 这是**恒等式**（热容吸收的定义就是这四项之和，跑到稳态自然趋 0），只验积分到位、通道不空转，**验不了集总模型对不对** —— 那是门五的事（审查意见 major）。
++///   二、舌片保温确实进了散热与热容：舌片区散热 = 2 × 面积 × PlateFluxWPerM2(本片舌保温)（查表插值 ≤ 1 %）；5 mm 舌保温在 700／1000 °C 低于裸铂；0 mm 与 NaN 逐位相同；
++///       舌保温热容与厚度成正比、与圆盘保温热容同一公式（面积、厚度相同时相等），法兰热容多出的正是它（调 Model 的公开量，不手抄 ρc 配方）；
++///       给了表面标定点 ⇒ 标定温度上表面散热 = 标定值、别的温度上 = κ × 配方，舌保温仍在（κ 不改舌／裸之比）。
++///   三、标定本体（合成网格与合成逐格账）：节点格、均温、四项、残差、排除与不排除两种口径的残差相同、热导／自由端、标定不了的各种情形（铜排项成而管孔项不成时整片热稳定仍判得了）；
++///       模型在标定点上逐项还原合成场的节点账；整片热稳定给 NaN 判不了、给值就用、几何导度总算一份且不随给的值变。
++///   四甲、整线（设计记录 W08 只跑一段、两片舌厚 1.26 mm，舌保温用设计记录自己的 0.4／0.3 mm）：标定取自本片场、整片热稳定与升温同一份（热稳定取 G·(1 − r)）、
++///       舌保温取本片热解那一份、网格取本片场、判据表升温那一行判不了不给数、附注说清原因、热稳定附注写割线与几何导度裕度。
++///   四乙、整线（W08 一段原样，两片热从法兰流进管、节点均温低于管根）：**记录模型缺陷，不是成立条件**（R48 G2 复审二 2026-09-15 Opus 5，审查意见 major 改写）——
++///       管孔流向与温差反号时单点割线标定不了，是两节点模型表示不了这种热流分布（壳解沿升温轨迹证伪了孔侧常数导度，见 RampTwoNode 类注释复审二那段），
++///       本门守的是**缺陷看得见、不被数字盖住**：升温两节点不解、判据表那一行暂不给数并写算不出来的原因与「模型的缺陷」；铜排项成了 ⇒ 整片热稳定照样判得了。
++///       「本算例标定不了」只作前提断言（门量得到这条路），将来模型改了让它标定得了，要换算例，不是改判读。
++///       （算例怎么选的见 W08OneSeg 上方注释：复审首跑发现原样算例标定不了，改作这条路的门。）
++///   五、场对账（审查意见 major「能量守恒门是恒等式」的补门；同一次整线解）：在标定点（法兰 = 节点温度、电流 = 场电流、管节点 = 管根 + 管孔流入 ÷ 翅片导度）调 RampTwoNode.Model.Flows，
++///       发热 ↔ 节点格场发热、表面 ↔ 节点格场散热、铜排 ↔ FlangeOut.QClampW、管来 ↔ FlangeOut.QFromTubeW 逐项比；热容吸收 ↔ 场的能量残差。
++///       容差（跑前写死，不看数据）：前三项相对 1e-9（同一温度上同一张表、同一个电流，只剩浮点）；管来相对 1e-6（翅片温降迭代停在 1e-9 K）；
++///       热容吸收与场残差之差 ≤ 1e-6 × 发热（求和顺序不同的浮点）；场残差本身 ≤ 节点格数 × ShellThermal.ResidualRelTol × 发热（场收敛判据逐格 |r| ≤ 容差 × 总焦耳热，残差是逐格 r 之和）。
++///       节点格 = 场的边界格取反，而且 = 压接格取反（定温边界的生产网格上两者一致，老口径回归靠它）。
++///       若参考温度仍挂管根温度，发热一项差 ρ(均温)/ρ(管根) 量级（约 10 %），本门当场红。
++///       ⚠ R48 G2 复审二（2026-09-15 Opus 5）：本门只证「在标定点上」对得上，**证不了**离开标定点的轨迹（复审探针表一：轨迹上比第一版偏得更远）。
++///   六、界面附注与带号数（R48 G2 复审二 2026-09-15 Opus 5，审查意见 minor 三条）：负数取整成零不印「-+0.0」（SizerResult.Signed，net8 实测病例）；
++///       整片热稳定的夹持导度标定不出来而判不了时，附注写原因（LineRunner.FlangeStabNote 追加标定的 Note）；追不追加夹持导度那一段读 ClampFromField 位；附注不写「割线」；
++///       管孔标定不成的原因说明是两节点模型的缺陷。
++///   ── 复审二还改了（门三、四甲、四乙里）：出处断言改读 FlangeStability.Result.ClampFromField（不比文字）；门三的几何导度裕度改比两次 Check 的 Margin（不手抄公式）；
++///       四甲／四乙断言升温那一行 ConstraintOut.Withheld、界面附注不写「孔边」而写「不代表片上最热处」、安装报告那一行印「参考（暂不给数）」。
++/// </summary>
++public class R48G2RampClampChannelGateTests
++{
++    private readonly ITestOutputHelper _out;
++    public R48G2RampClampChannelGateTests(ITestOutputHelper o) { _out = o; }
++
++    private static RampTwoNode.Inputs Synthetic(double iSeg, double gClamp, double tabInsulMm) => new()
++    {
++        WallMm = 1.0, FlangeMassG = 340, FlangeAreaInsulMm2 = 730, FlangeAreaBareMm2 = 4580,
++        FlangeResistanceRefOhm = 1.7e-4, FlangeRefTempC = 1090, HoleRadiusMm = 26, PlateEqOuterRadiusMm = 45, FlangeThickMm = 1.2,
++        SharedFactor = 1.0, DesignCurrentA = iSeg, FromC = 25, TargetC = 1700, MaxHours = 40,
++        Mode = RampControl.ConstantCurrent,
++        TabInsulThickMm = tabInsulMm, ClampConductanceWPerK = gClamp, ClampFollowRatio = 0.45, ClampColdEndC = 25,
++    };
++
++    [Fact]
++    public void 一_积分跑到两节点稳态_恒等式只验积分到位()
++    {
++        var p = new DesignInputs();
++        double iHold = RampTwoNode.QuasiStaticCurrentA(p, 1.0, 900.0, 0.0);
++        var on = RampTwoNode.Solve(p, Synthetic(iHold, 0.6, 5.0));
++        var off = RampTwoNode.Solve(p, Synthetic(iHold, 0.0, 5.0));
++        foreach (var (name, r) in new[] { ("有通道", on), ("没通道", off) })
++        {
++            var e = r.AtEnd;
++            _out.WriteLine($"{name}：{e.TimeS / 3600:0.00} h　管 {e.TTubeC:0.00} °C　法兰 {e.TFlangeC:0.00} °C　电流 {e.CurrentA:0.0} A　"
++                         + $"法兰 发热 {e.GenW:0.000} = 表面 {e.SurfaceW:0.000}（圆盘 {e.SurfaceDiscW:0.000} + 舌 {e.SurfaceTabW:0.000}）+ 铜排 {e.ClampW:0.000}（夹持 {e.ClampTempC:0.0} °C）− 管来 {e.FromTubeW:0.000} + 热容 {e.StorageW:0.0000}　"
++                         + $"管 发热 {e.TubeGenW:0.000} = 散热 {e.TubeLossW:0.000} + 管来 {e.FromTubeW:0.000} + 热容 {e.TubeStorageW:0.0000}　注：{r.Note}");
++            Assert.False(r.FlangeMelts, name + "：法兰熔了，合成输入没选好");
++            Assert.False(r.TubeReached, name + "：管到了目标温度就停了，没跑到稳态");
++            Assert.True(Math.Abs(e.GenW - e.SurfaceW - e.ClampW + e.FromTubeW) <= 0.005 * e.GenW,
++                $"{name}：法兰节点没跑到稳态（发热 {e.GenW} 表面 {e.SurfaceW} 铜排 {e.ClampW} 管来 {e.FromTubeW}）");
++            Assert.True(Math.Abs(e.TubeGenW - e.TubeLossW - e.FromTubeW) <= 0.005 * e.TubeGenW,
++                $"{name}：管节点没跑到稳态（发热 {e.TubeGenW} 散热 {e.TubeLossW} 管来 {e.FromTubeW}）");
++            Assert.Equal(e.SurfaceDiscW + e.SurfaceTabW, e.SurfaceW, 9);
++        }
++        Assert.True(on.AtEnd.ClampW > 50, "铜排通道空转");
++        Assert.Equal(0.0, off.AtEnd.ClampW);
++        Assert.True(double.IsNaN(off.AtEnd.ClampTempC));
++        Assert.Equal(25 + 0.45 * (on.AtEnd.TFlangeC - 25), on.AtEnd.ClampTempC, 9);
++        Assert.Equal(0.6 * (on.AtEnd.TFlangeC - on.AtEnd.ClampTempC), on.AtEnd.ClampW, 9);
++        Assert.True(off.AtEnd.TFlangeC > on.AtEnd.TFlangeC + 20, $"关掉铜排通道法兰终温应更高：{off.AtEnd.TFlangeC} vs {on.AtEnd.TFlangeC}");
++        // 结果原样带出输入的各项；老调用点的默认值 = 没有通道、舌片裸铂、表面不标定、孔侧按几何式
++        Assert.Equal(0.6, on.ClampConductanceWPerK); Assert.Equal(0.45, on.ClampFollowRatio); Assert.Equal(5.0, on.TabInsulThickMm);
++        Assert.Equal(1.0, on.SurfaceScale); Assert.True(double.IsNaN(on.HolePlateConductanceWPerK));
++        var d = new RampTwoNode.Inputs();
++        Assert.Equal(0.0, d.ClampConductanceWPerK);
++        Assert.True(double.IsNaN(d.TabInsulThickMm) && double.IsNaN(d.SurfaceCalibLossW) && double.IsNaN(d.SurfaceCalibTempC) && double.IsNaN(d.HolePlateConductanceWPerK));
++    }
++
++    [Fact]
++    public void 二_舌片保温确实进了散热与热容_表面标定只乘系数()
++    {
++        var p = new DesignInputs { FlangeInsulThickMm = 5.0 };
++        var mBare = new RampTwoNode.Model(p, Synthetic(1000, 0, double.NaN));
++        var mZero = new RampTwoNode.Model(p, Synthetic(1000, 0, 0.0));
++        var mIns = new RampTwoNode.Model(p, Synthetic(1000, 0, 5.0));
++        var mIns10 = new RampTwoNode.Model(p, Synthetic(1000, 0, 10.0));
++        const double aTab = 4580, aDisc = 730;
++        foreach (double t in new[] { 700.0, 1000.0 })
++        {
++            double wantIns = 2e-6 * aTab * DesignScreen.PlateFluxWPerM2(p, t, 5.0);
++            double wantBare = 2e-6 * aTab * DesignScreen.PlateFluxWPerM2(p, t, 0.0);
++            _out.WriteLine($"{t} °C：舌片区散热 裸 {mBare.FlangeSurfaceTabW(t):0.000} W（配方 {wantBare:0.000}）　5 mm {mIns.FlangeSurfaceTabW(t):0.000} W（配方 {wantIns:0.000}）　圆盘 {mBare.FlangeSurfaceDiscW(t):0.000} / {mIns.FlangeSurfaceDiscW(t):0.000} W");
++            Assert.True(Math.Abs(mIns.FlangeSurfaceTabW(t) / wantIns - 1) <= 0.01, $"舌片区（5 mm）散热与唯一配方差 {mIns.FlangeSurfaceTabW(t) / wantIns - 1:P3}");
++            Assert.True(Math.Abs(mBare.FlangeSurfaceTabW(t) / wantBare - 1) <= 0.01, $"舌片区（裸）散热与唯一配方差 {mBare.FlangeSurfaceTabW(t) / wantBare - 1:P3}");
++            Assert.True(mIns.FlangeSurfaceTabW(t) < mBare.FlangeSurfaceTabW(t), "5 mm 舌保温没把舌片区散热压下去");
++            Assert.Equal(mBare.FlangeSurfaceTabW(t), mZero.FlangeSurfaceTabW(t));      // 0 mm = 裸铂，逐位
++            Assert.Equal(mBare.FlangeSurfaceDiscW(t), mIns.FlangeSurfaceDiscW(t));     // 圆盘面不受舌保温影响
++            // 舌保温热容计入法兰节点：多出来的正是 Model 报的舌保温热容（审查意见 minor：原先门里手抄了 2×面积×厚×ρc×0.5）
++            Assert.Equal(mIns.CapInsulTabJPerK, mIns.CapFlange(t) - mBare.CapFlange(t), 9);
++        }
++        Assert.Equal(0.0, mBare.CapInsulTabJPerK); Assert.Equal(0.0, mZero.CapInsulTabJPerK);
++        Assert.True(mIns.CapInsulTabJPerK > 0);
++        Assert.Equal(2.0, mIns10.CapInsulTabJPerK / mIns.CapInsulTabJPerK, 12);          // 与厚度成正比
++        // 与圆盘保温同一公式：舌片区与圆盘面积、厚度都相同时两份热容相等
++        var gSame = Synthetic(1000, 0, 5.0); gSame.FlangeAreaBareMm2 = aDisc;
++        var mSame = new RampTwoNode.Model(p, gSame);
++        Assert.True(mSame.CapInsulDiscJPerK > 0);
++        Assert.Equal(mSame.CapInsulDiscJPerK, mSame.CapInsulTabJPerK, 12);
++
++        // 表面标定：标定温度上表面散热 = 标定值；别的温度上 = κ × 配方；κ 不改舌／裸之比（舌保温仍在）
++        var gCal = Synthetic(1000, 0, 5.0); gCal.SurfaceCalibLossW = 80.0; gCal.SurfaceCalibTempC = 900.0;
++        var mCal = new RampTwoNode.Model(p, gCal);
++        var gCalBare = Synthetic(1000, 0, double.NaN); gCalBare.SurfaceCalibLossW = 80.0; gCalBare.SurfaceCalibTempC = 900.0;
++        var mCalBare = new RampTwoNode.Model(p, gCalBare);
++        _out.WriteLine($"表面标定：κ {mCal.SurfaceScale:0.0000}（舌 5 mm）、{mCalBare.SurfaceScale:0.0000}（舌裸）；900 °C 散热 {mCal.FlangeSurfaceW(900):0.000} W");
++        Assert.Equal(80.0, mCal.FlangeSurfaceW(900.0), 9);
++        Assert.Equal(mCal.SurfaceScale * mIns.FlangeSurfaceRecipeW(700.0), mCal.FlangeSurfaceW(700.0), 9);
++        Assert.Equal(mIns.FlangeSurfaceRecipeW(700.0), mIns.FlangeSurfaceW(700.0));   // 没标定 κ = 1，逐位
++        Assert.Equal(mIns.FlangeSurfaceTabW(700.0) / mBare.FlangeSurfaceTabW(700.0),
++                     mCal.FlangeSurfaceTabW(700.0) / mCalBare.FlangeSurfaceTabW(700.0) * (mCalBare.SurfaceScale / mCal.SurfaceScale), 9);
++        var gBad = Synthetic(1000, 0, 5.0); gBad.SurfaceCalibLossW = -1.0; gBad.SurfaceCalibTempC = 900.0;
++        Assert.True(double.IsNaN(new RampTwoNode.Model(p, gBad).SurfaceScale), "标定值非正时系数应为 NaN（调用方据此判标定不了）");
++    }
++
++    [Fact]
++    public void 三_标定本体_合成网格与合成逐格账()
++    {
++        var plate = new FlangePlate { HoleRadiusMm = 26.0 };
++        var mesh = FlangeMesher.Build(plate, 0, 4.0, 11.0, 50.0, 40.0, clampBandMm: double.NaN, clampFullFace: true);   // 生产配方，只验标定口径
++        int n = mesh.CellCount;
++        Assert.True(mesh.ClampCell.Length == n && mesh.ClampCell.Any(b => b), "合成网格没有压接格，门空转");
++        var boundary = mesh.ClampCell.ToArray();
++        var tTwo = Enumerable.Range(0, n).Select(k => boundary[k] ? 450.0 : mesh.Centroid[k].X >= 0 ? 1100.0 : 900.0).ToArray();
++        var gen = Enumerable.Range(0, n).Select(k => 0.02 * mesh.Area[k] * (boundary[k] ? 0.5 : 1.0)).ToArray();
++        var loss = Enumerable.Range(0, n).Select(k => 0.01 * mesh.Area[k]).ToArray();
++        var pFix = new DesignInputs { BusbarClampTempC = 450, BusbarConductanceWPerK = -1, BusbarSinkTempC = 25 };
++        const double qClamp = 200.0, qHole = 15.0, tRoot = 1150.0, iA = 1700.0;
++
++        // 期望值（门里的求和是本门的判读，不是生产配方）
++        double v = 0, vt = 0, sg = 0, sl = 0, gB = 0, lB = 0; int cells = 0;
++        for (int k = 0; k < n; k++)
++        {
++            if (boundary[k]) { gB += gen[k]; lB += loss[k]; continue; }
++            double w = mesh.Area[k] * mesh.Thickness[k];
++            v += w; vt += w * tTwo[k]; sg += gen[k]; sl += loss[k]; cells++;
++        }
++        double tNode = vt / v;
++
++        var k1 = RampTwoNode.CalibrateNode(mesh, tTwo, gen, loss, boundary, qClamp, qHole, tRoot, iA, pFix, excludeBoundaryCells: true);
++        _out.WriteLine($"定温、排除：{k1.Note}　节点 {k1.NodeCells} 格 {k1.NodeVolumeMm3:0.0} mm³　G {k1.GEffWPerK:0.0000}　r {k1.FollowRatio:0.0000}　R {k1.ResistanceRefOhm:E4}　孔侧 {k1.HolePlateGWPerK:0.0000}　残差 {k1.ResidualW:0.000}");
++        Assert.True(k1.Ok && k1.ClampOk, k1.Note);
++        Assert.Equal(ShellThermal.ClampBoundary.FixedTemp, k1.Mode);
++        Assert.True(k1.BoundaryCellsExcluded);
++        Assert.Equal(cells, k1.NodeCells);
++        Assert.Equal(Enumerable.Range(0, n).Select(k => !boundary[k]).ToArray(), k1.NodeCell);
++        Assert.Equal(v, k1.NodeVolumeMm3, 9);
++        Assert.Equal(tNode, k1.TNodeC, 9);
++        Assert.Equal(sg, k1.QGenW, 9); Assert.Equal(sl, k1.QLossW, 9);
++        Assert.Equal(qClamp, k1.QClampW); Assert.Equal(qHole, k1.QFromTubeW);
++        Assert.Equal(sg - sl - qClamp + qHole, k1.ResidualW, 9);
++        Assert.Equal(450.0, k1.TClampC);
++        Assert.Equal(qClamp / (tNode - 450.0), k1.GEffWPerK, 12);
++        Assert.Equal((450.0 - 25.0) / (tNode - 25.0), k1.FollowRatio, 12);
++        Assert.Equal(sg / (iA * iA), k1.ResistanceRefOhm, 15);
++        Assert.Equal(qHole / (tRoot - tNode), k1.HolePlateGWPerK, 12);
++        Assert.Equal(k1.GEffWPerK * (1 - k1.FollowRatio), k1.StabClampWPerK, 12);
++
++        // 不排除：被钉住的格也在节点里 ⇒ 它们的「发热 − 散热」归铜排；节点账的残差与排除时相同
++        var k2 = RampTwoNode.CalibrateNode(mesh, tTwo, gen, loss, boundary, qClamp, qHole, tRoot, iA, pFix, excludeBoundaryCells: false);
++        Assert.True(!k2.BoundaryCellsExcluded && k2.NodeCells == n && k2.TNodeC < tNode, $"不排除时均温 {k2.TNodeC}");
++        Assert.Equal(mesh.VolumeMm3, k2.NodeVolumeMm3, 6);
++        Assert.Equal(qClamp + gB - lB, k2.QClampW, 9);
++        Assert.Equal(k1.ResidualW, k2.ResidualW, 9);
++
++        // 模型在标定点上逐项还原合成场的节点账
++        var gi = new RampTwoNode.Inputs
++        {
++            FlangeMassG = 300, FlangeAreaInsulMm2 = 700, FlangeAreaBareMm2 = 4000, HoleRadiusMm = 26, PlateEqOuterRadiusMm = 45, FlangeThickMm = 1.2,
++            DesignCurrentA = iA, SharedFactor = 1.0, TabInsulThickMm = 5.0,
++            FlangeResistanceRefOhm = k1.ResistanceRefOhm, FlangeRefTempC = k1.TNodeC,
++            ClampConductanceWPerK = k1.GEffWPerK, ClampFollowRatio = k1.FollowRatio, ClampColdEndC = k1.TColdC,
++            SurfaceCalibLossW = k1.QLossW, SurfaceCalibTempC = k1.TNodeC, HolePlateConductanceWPerK = k1.HolePlateGWPerK,
++        };
++        var model = new RampTwoNode.Model(pFix, gi);
++        double tt = model.TubeNodeTempAtRoot(tRoot, k1.TNodeC, qHole);
++        var f = model.Flows(0, tt, k1.TNodeC, iA);
++        _out.WriteLine($"标定点：管节点 {tt:0.000} °C（管根 {tRoot}）　发热 {f.GenW:0.000}　表面 {f.SurfaceW:0.000}　铜排 {f.ClampW:0.000}　管来 {f.FromTubeW:0.000000}　热容 {f.StorageW:0.000}");
++        Assert.True(tt > tRoot, "管孔流入为正时管节点应比管根热（翅片温降）");
++        Assert.Equal(1.0, f.GenW / sg, 12);
++        Assert.Equal(1.0, f.SurfaceW / sl, 12);
++        Assert.Equal(1.0, f.ClampW / qClamp, 12);
++        Assert.True(Math.Abs(f.FromTubeW / qHole - 1) <= 1e-6, $"管来 {f.FromTubeW} vs {qHole}");
++        Assert.Equal(k1.ResidualW, f.StorageW, 6);
++        Assert.Equal(450.0, model.ClampTempC(k1.TNodeC), 9);
++        Assert.Equal(k1.TColdC, model.ClampTempC(k1.TColdC), 9);   // 冷态时夹持在冷端，不是一开始就 450
++
++        // 热导边界：参考点是冷端，r = 0；自由端：没有通道
++        var pG = new DesignInputs { BusbarClampTempC = 450, BusbarConductanceWPerK = 2.0, BusbarSinkTempC = 30 };
++        var noBoundary = new bool[n];
++        var k4 = RampTwoNode.CalibrateNode(mesh, tTwo, gen, loss, noBoundary, qClamp, qHole, tRoot, iA, pG, true);
++        Assert.True(k4.Ok, k4.Note);
++        Assert.Equal(ShellThermal.ClampBoundary.Conductance, k4.Mode);
++        Assert.Equal(n, k4.NodeCells);                                  // 热导边界场里不钉格 ⇒ 压接格也在节点里
++        Assert.Equal(30.0, k4.TClampC); Assert.Equal(0.0, k4.FollowRatio);
++        Assert.Equal(qClamp / (k4.TNodeC - 30.0), k4.GEffWPerK, 12);
++        Assert.Equal(k4.GEffWPerK, k4.StabClampWPerK, 15);
++        var pFree = new DesignInputs { BusbarClampTempC = -1, BusbarConductanceWPerK = -1 };
++        var k5 = RampTwoNode.CalibrateNode(null, null, null, null, null, 0.0, qHole, tRoot, iA, pFree, true);
++        Assert.True(k5.ClampOk && !k5.Ok); Assert.Equal(0.0, k5.GEffWPerK); Assert.Equal(0.0, k5.StabClampWPerK);
++        Assert.Equal(ShellThermal.ClampBoundary.Free, k5.Mode);
++
++        // 标定不了的情形
++        var bad = new (string name, RampTwoNode.NodeCalibration k, bool clampOk)[]
++        {
++            ("没有场", RampTwoNode.CalibrateNode(null, null, null, null, null, qClamp, qHole, tRoot, iA, pFix, true), false),
++            ("逐格账长度不对", RampTwoNode.CalibrateNode(mesh, tTwo, gen.Take(n - 1).ToArray(), loss, boundary, qClamp, qHole, tRoot, iA, pFix, true), false),
++            ("铜排热为负", RampTwoNode.CalibrateNode(mesh, tTwo, gen, loss, boundary, -5.0, qHole, tRoot, iA, pFix, true), false),
++            ("均温不比夹持高 1 K", RampTwoNode.CalibrateNode(mesh, Enumerable.Repeat(450.5, n).ToArray(), gen, loss, boundary, qClamp, qHole, tRoot, iA, pFix, true), false),
++            ("夹持低于冷端", RampTwoNode.CalibrateNode(mesh, tTwo, gen, loss, boundary, qClamp, qHole, tRoot, iA, new DesignInputs { BusbarClampTempC = 20, BusbarConductanceWPerK = -1, BusbarSinkTempC = 25 }, true), false),
++            ("管孔流向与温差反号", RampTwoNode.CalibrateNode(mesh, tTwo, gen, loss, boundary, qClamp, -3.0, tRoot, iA, pFix, true), true),
++            ("管根与均温差不足 1 K", RampTwoNode.CalibrateNode(mesh, tTwo, gen, loss, boundary, qClamp, qHole, tNode + 0.5, iA, pFix, true), true),
++            ("没有电流", RampTwoNode.CalibrateNode(mesh, tTwo, gen, loss, boundary, qClamp, qHole, tRoot, 0.0, pFix, true), true),
++        };
++        foreach (var (name, kb, clampOk) in bad)
++        {
++            _out.WriteLine($"{name}：Ok {kb.Ok}　铜排项 {kb.ClampOk}　{kb.Note}");
++            Assert.False(kb.Ok, name);
++            Assert.Equal(clampOk, kb.ClampOk);
++            Assert.Contains("标定不了", kb.Note);
++            if (!clampOk) Assert.True(double.IsNaN(kb.GEffWPerK) && double.IsNaN(kb.StabClampWPerK), name + "：铜排项标定不了时导度应为 NaN，不许给个数顶上");
++            else Assert.True(double.IsFinite(kb.StabClampWPerK), name + "：铜排项成了，整片热稳定应当判得了");
++        }
++
++        // 整片热稳定：给 NaN 判不了；给值就用这个值；几何导度总算一份、不随给的值变；不给时夹持项就是几何导度
++        var q = new DesignInputs { BusbarClampTempC = 450 };
++        FlangeStability.Result S(double? gClamp) => FlangeStability.Check(q, 500.0, 1100.0, 730, 4580, 10.0, 2 * 30 * 1.2, 150, 2 * Math.PI * 26 * 1.2, 4, 5.0, gClamp);
++        var sNaN = S(double.NaN); var sVal = S(0.7); var sNull = S(null);
++        _out.WriteLine($"热稳定：NaN → {sNaN.Note}；0.7 → 夹持 {sVal.DClampDT} 裕度 {sVal.Margin:0.000}（几何 {sVal.DClampGeomDT:0.0000} ⇒ {sVal.MarginGeomClamp:0.000}）；不给 → 夹持 {sNull.DClampDT:0.0000}（{sNull.ClampSource}）");
++        Assert.True(sNaN.Undetermined);
++        Assert.Contains("无法判定", sNaN.Note);
++        Assert.DoesNotContain("热失控", sNaN.Note);
++        Assert.True(sNaN.ClampFromField, "给了场标定值（哪怕是 NaN）出处位就该是场");
++        Assert.False(sVal.Undetermined);
++        Assert.Equal(0.7, sVal.DClampDT); Assert.True(sVal.ClampFromField);
++        Assert.True(sVal.DClampGeomDT > 0 && sVal.DClampGeomDT != 0.7);
++        Assert.Equal(sVal.DClampGeomDT, sNull.DClampGeomDT);
++        Assert.Equal(sNull.DClampGeomDT, sNull.DClampDT); Assert.False(sNull.ClampFromField);
++        // R48 G2 复审二（2026-09-15 Opus 5；审查意见 minor「门三把 MarginGeomClamp 的定义再写一遍去核它自己」）有意改断言：
++        //   原 Assert.Equal((DSurfDT + DClampGeomDT + DTubeDT) / DGenDT, MarginGeomClamp, 12) → 现比两次 Check 的 Margin：把几何导度当场值传进去、与不传，都应逐位等于 MarginGeomClamp
++        Assert.Equal(S(sVal.DClampGeomDT).Margin, sVal.MarginGeomClamp);
++        Assert.Equal(sNull.Margin, sVal.MarginGeomClamp);
++    }
++
++    // ── 门四、门五的整线解（设计记录 W08 只跑一段）
++    //   ★ 算例选择如实写明（2026-09-15 Opus 5，复审首跑）：原样的 W08 一段两片场里**管孔流入都为负**（入口 −19.0 W、出口 −36.6 W，热从法兰流进管），
++    //     而节点均温比管根低（1100／1186 °C 对 1194／1236 °C）⇒ 管孔一项标定不了 —— 这正是「整片一个温度表示不了这条热流」的情形，
++    //     升温两节点不解、判据表那一行写算不出来。于是这个算例改作「标定不了」那条路的门（四乙）；
++    //     标定成得了的门（四甲、五）改用同一设计把两片舌厚改成 1.26 mm（两片管孔流入为正：入口 +21.4 W、出口 +25.6 W）。门的判读与容差没改。
++    private static (LineCase lc, LineResult r, double seconds, DesignSpec d, DesignInputs p) W08OneSeg(double[]? tabThickMm)
++    {
++        var p = new DesignInputs();
++        var d = DesignSpec.W08.Clone();
++        d.SetpointC = new[] { 1150.0 }; d.SegLengthMm = new[] { 300.0 };
++        if (tabThickMm is not null) d.TabThickMm = tabThickMm;
++        // 舌保温用设计记录自己的（两端片 0.4／0.3 mm，都算包着）。注：试过整线改成 5 mm，出口片越过铂熔点、整线解不存在（2026-09-15 首跑），故不改。
++        d = d.Fit();
++        var lc = d.BuildCase(p, checkRamp: false);
++        var sw = System.Diagnostics.Stopwatch.StartNew();
++        var r = LineRunner.Run(lc);
++        return (lc, r, sw.Elapsed.TotalSeconds, d, p);   // R48 G2 复审二（2026-09-15 Opus 5）：带回设计与输入，门调安装报告验「暂不给数」那一行
++    }
++    private static readonly Lazy<(LineCase lc, LineResult r, double seconds, DesignSpec d, DesignInputs p)> W08OneTab126 = new(() => W08OneSeg(new[] { 1.26, 1.26 }));
++    private static readonly Lazy<(LineCase lc, LineResult r, double seconds, DesignSpec d, DesignInputs p)> W08One = new(() => W08OneSeg(null));
++
++    /// <summary>R48 G2 复审二（2026-09-15 Opus 5）：安装报告判据表里某条判据那一行（按 Criteria.Plain 后的名字找，报告里名字就是这么印的）</summary>
++    private static string ReportRow(string report, string key)
++        => report.Split('\n').First(l => l.StartsWith(Criteria.Plain(key) + "\t", StringComparison.Ordinal));
++
++    [Fact]
++    public void 四乙_整线_记录模型缺陷_管孔流向与温差反号标定不了_界面暂不给数并说原因_热稳定仍判得了()
++    {
++        var (lc, r, secs, d, p) = W08One.Value;
++        _out.WriteLine($"LineRunner.Run（W08 一段，原样）：{secs:0.0} s　Ok {r.Ok}　{r.Message}");
++        Assert.True(r.Ok, r.Message);
++        var o = LineRunner.FlangeLumped(lc, r.Flanges, excludeClampCells: true)!;
++        var fw = r.Flanges[o.Index];
++        var k = o.Calib;
++        _out.WriteLine($"最不利片 {fw.Name}：管孔流入 {fw.QFromTubeW:+0.00;-0.00} W　管根 {fw.TRootC:0.0} °C　{k.Note}　铜排项 {k.ClampOk}　G {k.GEffWPerK:0.0000}　r {k.FollowRatio:0.0000}");
++        Assert.True(fw.QFromTubeW < 0 && k.TNodeC < fw.TRootC, "本算例的前提（热从法兰流进管、节点均温低于管根）不成立，门量不到「标定不了」那条路");
++        // R48 G2 复审二（2026-09-15 Opus 5）：下一句是**前提**（门量得到缺陷那条路），不是「标定不了才对」—— 模型改了让它标定得了，换算例，不改判读
++        Assert.False(k.Ok, "本算例已能标定 ⇒ 门量不到缺陷那条路，换一个管孔流向与温差反号的算例");
++        Assert.True(k.ClampOk, "铜排项应当标定得了");
++        Assert.True(double.IsNaN(k.HolePlateGWPerK));
++        Assert.Contains("整片一个温度表示不了", k.Note);
++        Assert.Null(o.Ramp);
++        Assert.Contains("标定不了", o.RampError);
++        Assert.NotNull(o.RampIn);                     // 输入照样组（前后对照探针复现老口径要用），只是不解
++        // 判据表：升温那一行算不出来（写原因）；整片热稳定只要铜排项，照样判得了，夹持取 G·(1 − r)
++        var stab = r.Checks.First(c => c.Name.StartsWith(LineResult.Key.FlangeStab, StringComparison.Ordinal));
++        var ramp = r.Checks.First(c => c.Name.StartsWith(LineResult.Key.RampField, StringComparison.Ordinal));
++        _out.WriteLine("升温附注：" + ramp.Note);
++        _out.WriteLine("热稳定附注：" + stab.Note);
++        Assert.True(ramp.Undetermined && double.IsNaN(ramp.Actual));
++        Assert.True(ramp.Withheld, "升温那一行复核前暂不给数，算不出来时也一样");
++        Assert.Contains("暂不给数", ramp.Note);
++        Assert.Contains("算不出来", ramp.Note);
++        Assert.Contains("整片一个温度表示不了", ramp.Note);
++        Assert.Contains("两节点模型的缺陷", ramp.Note);          // 缺陷写明是模型的，不让工程师以为设计出了问题
++        Assert.DoesNotContain("-+", ramp.Note);                // 带号数不印负零
++        Assert.DoesNotContain("AllOk", ramp.Note);             // 界面不许出现代码名
++        Assert.DoesNotContain("偏保守", ramp.Note);
++        Assert.False(stab.Undetermined, stab.Note);
++        Assert.True(o.Stab.ClampFromField);
++        Assert.Equal(k.GEffWPerK * (1 - k.FollowRatio), o.Stab.DClampDT);
++        Assert.Equal(o.Stab.Margin, stab.Actual);
++        // 安装报告：那一行印「参考（暂不给数）」，不印「参考（算不出）」
++        string row = ReportRow(InstallReport.Build(r, d, p), LineResult.Key.RampField);
++        _out.WriteLine("安装报告那一行：" + row);
++        Assert.Contains("参考（暂不给数）", row);
++        Assert.DoesNotContain("算不出", row);
++    }
++
++    [Fact]
++    public void 四甲_整线_标定取自本片场_两处同一份_升温那一行判不了()
++    {
++        var (lc, r, secs, d, p) = W08OneTab126.Value;
++        _out.WriteLine($"LineRunner.Run：{secs:0.0} s　Ok {r.Ok}　{r.Message}");
++        Assert.True(r.Ok, r.Message);
++        var o = LineRunner.FlangeLumped(lc, r.Flanges, excludeClampCells: true)!;
++        var fw = r.Flanges[o.Index];
++        var k = o.Calib;
++        _out.WriteLine($"最不利片 {fw.Name}：{k.Note}　G {k.GEffWPerK:0.0000}　r {k.FollowRatio:0.0000}　孔侧 {k.HolePlateGWPerK:0.0000}　κ {o.SurfaceScale:0.0000}　节点 {k.NodeCells} 格　舌保温 {o.ThermalSetup.TabInsulThickMm}　热稳定夹持 {o.Stab.DClampDT}（{o.Stab.ClampSource}）");
++        Assert.True(k.Ok, k.Note);
++        Assert.True(o.MeshFromField);
++        Assert.Same(fw.Mesh, o.Mesh);
++        Assert.Equal(ShellThermal.ClampBoundary.FixedTemp, k.Mode);
++        Assert.True(k.GEffWPerK > 0 && k.BoundaryCellsExcluded);
++        // 取自本片场
++        Assert.Equal(fw.QClampW, k.QClampW);
++        Assert.Equal(fw.QFromTubeW, k.QFromTubeW);
++        Assert.Equal(fw.TRootC, k.TRootC);
++        Assert.Equal(fw.CurrentA, k.CurrentA);
++        Assert.Equal(lc.ClampTempC[o.Index], k.TClampC);
++        Assert.True(k.TNodeC > k.TClampC && k.TNodeC < fw.TMaxC + 1e-9);
++        // 两处同一份：热稳定取 G·(1 − r)；升温两节点四项
++        Assert.Equal(k.GEffWPerK * (1 - k.FollowRatio), o.Stab.DClampDT);
++        Assert.True(o.Stab.ClampFromField);   // R48 G2 复审二（2026-09-15 Opus 5）有意改断言：原 Assert.Equal("稳态场标定", ClampSource)（比文字）→ 读出处位
++        var gi = o.RampIn!;
++        Assert.Equal(k.GEffWPerK, gi.ClampConductanceWPerK);
++        Assert.Equal(k.FollowRatio, gi.ClampFollowRatio);
++        Assert.Equal(k.TColdC, gi.ClampColdEndC);
++        Assert.Equal(k.ResistanceRefOhm, gi.FlangeResistanceRefOhm);
++        Assert.Equal(k.TNodeC, gi.FlangeRefTempC);
++        Assert.Equal(k.QLossW, gi.SurfaceCalibLossW); Assert.Equal(k.TNodeC, gi.SurfaceCalibTempC);
++        Assert.Equal(k.HolePlateGWPerK, gi.HolePlateConductanceWPerK);
++        Assert.Equal(k.NodeVolumeMm3 * Materials.PtDensity * 1e-6, gi.FlangeMassG, 9);
++        // 舌保温 = 本片热解那一份（PlateThermalInputs），而且确实包着、确实进了舌片区散热
++        var ts = LineRunner.PlateThermalInputs(lc, o.Index, fw.CurrentA, fw.Mesh?.SourceField);
++        Assert.Equal(ts.TabInsulThickMm, gi.TabInsulThickMm);
++        double tab = gi.TabInsulThickMm;
++        Assert.True(DesignScreen.FlangeFaceInsulated(tab), $"本片舌保温 {tab} mm 不算包着，门量不到舌保温");
++        Assert.Equal(lc.DiscInsulEffectiveAt(o.Index), o.RampP!.FlangeInsulThickMm);
++        var m = new RampTwoNode.Model(o.RampP!, gi);
++        Assert.Equal(o.SurfaceScale, m.SurfaceScale);
++        double want = 2e-6 * gi.FlangeAreaBareMm2 * DesignScreen.PlateFluxWPerM2(o.RampP!, 1000.0, tab);
++        double bare = 2e-6 * gi.FlangeAreaBareMm2 * DesignScreen.PlateFluxWPerM2(o.RampP!, 1000.0, 0.0);
++        Assert.NotEqual(bare, want);
++        Assert.True(Math.Abs(m.FlangeSurfaceTabW(1000.0) / m.SurfaceScale / want - 1) <= 0.01, "整线：舌片区散热没按本片舌保温算");
++        Assert.NotNull(o.Ramp);
++        Assert.Equal(k.GEffWPerK, o.Ramp!.ClampConductanceWPerK);
++        Assert.Equal(tab, o.Ramp.TabInsulThickMm);
++        Assert.Equal(k.HolePlateGWPerK, o.Ramp.HolePlateConductanceWPerK);
++        Assert.Equal(o.SurfaceScale, o.Ramp.SurfaceScale);
++
++        // 判据表：热稳定就是这一份；升温那一行判不了、不给数，附注说清原因（审查意见 blocker）
++        var stab = r.Checks.First(c => c.Name.StartsWith(LineResult.Key.FlangeStab, StringComparison.Ordinal));
++        var ramp = r.Checks.First(c => c.Name.StartsWith(LineResult.Key.RampField, StringComparison.Ordinal));
++        _out.WriteLine($"判据表：热稳定 {stab.Actual:R}（几何导度裕度 {o.Stab.MarginGeomClamp:R}）　升温 {ramp.Actual:R} 判不了 {ramp.Undetermined}（模型峰值 {o.Ramp.MaxFlangeMinusTubeK:R} K，不进表）");
++        _out.WriteLine("升温附注：" + ramp.Note);
++        _out.WriteLine("热稳定附注：" + stab.Note);
++        Assert.Equal(o.Stab.Margin, stab.Actual);
++        Assert.True(ramp.Undetermined, "升温那一行复核前应判不了");
++        Assert.True(double.IsNaN(ramp.Actual), "升温那一行复核前不许给数");
++        Assert.Equal(CheckKind.Reference, ramp.Kind);
++        Assert.Contains("待复核", ramp.Note);
++        Assert.Contains("不可引用", ramp.Note);
++        // R48 G2 复审二（2026-09-15 Opus 5；审查意见 major「位置说法没有依据」）有意改断言：原 Contains("不代表孔边最热处") → 现「不代表片上最热处」且全文不提孔边
++        Assert.Contains("不代表片上最热处", ramp.Note);
++        Assert.DoesNotContain("孔边", ramp.Note);
++        Assert.Contains("只在稳态那一点上", ramp.Note);          // 四项标定离开标定点不保证准，界面要说
++        Assert.True(ramp.Withheld);
++        Assert.DoesNotContain("-+", ramp.Note);
++        Assert.Contains("铜排", ramp.Note);
++        Assert.Contains($"{tab:0.0} mm 保温", ramp.Note);
++        Assert.Contains("不与 215 K 比", ramp.Note);
++        Assert.DoesNotContain("本条用两节点模型补上", ramp.Note);
++        Assert.DoesNotContain("出现在", ramp.Note);       // 原附注「全程最大值，出现在 x h、当时管温 y °C」—— 不给数就不给时刻
++        Assert.DoesNotContain("偏保守", ramp.Note);
++        Assert.DoesNotContain("偏高", ramp.Note);
++        Assert.Contains("稳态场标定", stab.Note);
++        // R48 G2 复审二（2026-09-15 Opus 5；审查意见 minor「割线不是工程师的话」）有意改断言：原 Contains("割线") → 现不写「割线」、写人话「可能偏大」
++        Assert.DoesNotContain("割线", stab.Note);
++        Assert.Contains("可能偏大", stab.Note);
++        Assert.Contains($"{o.Stab.MarginGeomClamp:0.00}", stab.Note);
++        Assert.Equal(LineRunner.FlangeStabNote(o), stab.Note);   // 判据表那一行的附注就是公开函数那一份
++        // 安装报告：升温那一行印「参考（暂不给数）」；热稳定那一行照常「参考（不卡交付）」
++        string report = InstallReport.Build(r, d, p);
++        string rampRow = ReportRow(report, LineResult.Key.RampField), stabRow = ReportRow(report, LineResult.Key.FlangeStab);
++        _out.WriteLine("安装报告：" + rampRow + "　｜　" + stabRow);
++        Assert.Contains("参考（暂不给数）", rampRow);
++        Assert.Contains("参考（不卡交付）", stabRow);
++        Assert.DoesNotContain("暂不给数", stabRow);
++        Assert.Contains("暂不给数", report.Split('\n').First(l => l.Contains("升温期间共用片最先到温")));
++    }
++
++    [Fact]
++    public void 五_场对账_标定点上模型逐项还原本片场的节点账()
++    {
++        var (lc, r, _, _, _) = W08OneTab126.Value;
++        Assert.True(r.Ok, r.Message);
++        var o = LineRunner.FlangeLumped(lc, r.Flanges, excludeClampCells: true)!;
++        Assert.True(o.Calib.Ok && o.RampIn is not null, o.Calib.Note + o.RampError);
++        for (int j = 0; j < r.Flanges.Length; j++)
++        {
++            // 每片都对一次账（生产只用最不利片，但标定口径对每片都该成立）；最不利片直接用生产那一份输入
++            var fw = r.Flanges[j];
++            var mesh = fw.Mesh!;
++            int n = mesh.CellCount;
++            Assert.True(fw.CellGenW.Length == n && fw.CellLossW.Length == n && fw.FieldBoundaryCell.Length == n, $"{fw.Name}：整线结果没带逐格账");
++            var ts = LineRunner.PlateThermalInputs(lc, j, fw.CurrentA, mesh.SourceField);
++            var k = RampTwoNode.CalibrateNode(mesh, fw.TField, fw.CellGenW, fw.CellLossW, fw.FieldBoundaryCell,
++                                              fw.QClampW, fw.QFromTubeW, fw.TRootC, fw.CurrentA, ts.P2, excludeBoundaryCells: true);
++            Assert.True(k.Ok, $"{fw.Name}：{k.Note}");
++            // 节点格 = 场的边界格取反 = 压接格取反
++            Assert.True(mesh.ClampCell.Length == n, $"{fw.Name}：网格没有整面接触压接格");
++            for (int c = 0; c < n; c++)
++            {
++                Assert.True(k.NodeCell[c] == !fw.FieldBoundaryCell[c], $"{fw.Name} 格 {c}：节点格与场的边界格对不上");
++                Assert.True(k.NodeCell[c] == !mesh.ClampCell[c], $"{fw.Name} 格 {c}：定温边界下场的边界格与压接格对不上");
++            }
++            // 场侧（门自己对逐格账求和）
++            double gen = 0, loss = 0;
++            for (int c = 0; c < n; c++) if (!fw.FieldBoundaryCell[c]) { gen += fw.CellGenW[c]; loss += fw.CellLossW[c]; }
++
++            RampTwoNode.Inputs gi;
++            if (j == o.Index) gi = o.RampIn!;
++            else
++            {
++                gi = o.RampIn!.Clone();
++                gi.FlangeResistanceRefOhm = k.ResistanceRefOhm; gi.FlangeRefTempC = k.TNodeC;
++                gi.SurfaceCalibLossW = k.QLossW; gi.SurfaceCalibTempC = k.TNodeC; gi.HolePlateConductanceWPerK = k.HolePlateGWPerK;
++                gi.ClampConductanceWPerK = k.GEffWPerK; gi.ClampFollowRatio = k.FollowRatio; gi.ClampColdEndC = k.TColdC;
++                gi.SharedFactor = fw.Shared ? Math.Sqrt(3.0) : 1.0;
++            }
++            var m = new RampTwoNode.Model(o.RampP!, gi);
++            double iSeg = fw.CurrentA / gi.SharedFactor;
++            double tt = m.TubeNodeTempAtRoot(fw.TRootC, k.TNodeC, fw.QFromTubeW);
++            var f = m.Flows(0, tt, k.TNodeC, iSeg);
++            double tolField = k.NodeCells * ShellThermal.ResidualRelTol * gen + 1e-9;
++            _out.WriteLine($"{fw.Name}{(j == o.Index ? "（最不利，生产输入）" : "")}：节点 {k.NodeCells} 格、均温 {k.TNodeC:0.00} °C、管根 {fw.TRootC:0.00} °C、管节点 {tt:0.00} °C　"
++                         + $"发热 模型 {f.GenW:0.000000} ↔ 场 {gen:0.000000}　表面 {f.SurfaceW:0.000000} ↔ {loss:0.000000}（κ {m.SurfaceScale:0.0000}）　"
++                         + $"铜排 {f.ClampW:0.000000} ↔ {fw.QClampW:0.000000}　管来 {f.FromTubeW:0.000000} ↔ {fw.QFromTubeW:0.000000}　"
++                         + $"热容吸收 {f.StorageW:0.000000} ↔ 场残差 {fw.EnergyResidualW:0.000000}（场残差上界 {tolField:0.000000}）　场收敛 {fw.FieldsConverged}");
++            Assert.True(Math.Abs(f.GenW / gen - 1) <= 1e-9, $"{fw.Name}：发热对不上场（模型 {f.GenW}，场 {gen}）—— 参考电阻或参考温度不是节点口径");
++            Assert.True(Math.Abs(f.SurfaceW / loss - 1) <= 1e-9, $"{fw.Name}：表面散热对不上场（模型 {f.SurfaceW}，场 {loss}）");
++            Assert.True(Math.Abs(f.ClampW / fw.QClampW - 1) <= 1e-9, $"{fw.Name}：流进铜排对不上场（模型 {f.ClampW}，场 {fw.QClampW}）");
++            Assert.True(Math.Abs(f.FromTubeW / fw.QFromTubeW - 1) <= 1e-6, $"{fw.Name}：管来对不上场（模型 {f.FromTubeW}，场 {fw.QFromTubeW}）");
++            Assert.True(Math.Abs(f.StorageW - fw.EnergyResidualW) <= 1e-6 * gen, $"{fw.Name}：热容吸收 {f.StorageW} 与场的能量残差 {fw.EnergyResidualW} 对不上");
++            Assert.True(fw.FieldsConverged, $"{fw.Name}：场没收敛，残差上界不成立");
++            Assert.True(Math.Abs(fw.EnergyResidualW) <= tolField, $"{fw.Name}：场的能量残差 {fw.EnergyResidualW} W 超过收敛判据推出的上界 {tolField} W");
++        }
++    }
++    [Fact]
++    public void 六_界面附注_判不了要说原因_带号数不印负零()
++    {
++        // ── 带号数：负数取整成零印正零（net8 原样印「-+0.0」，2026-09-15 本机实测）；正常负数、正数逐字不变
++        foreach (var (v, fmt, want) in new (double, string, string)[]
++                 {
++                     (-0.0, "+0.0;−0.0", "+0.0"), (-0.01, "+0.0;−0.0", "+0.0"), (-0.04, "+0.0;−0.0", "+0.0"), (-1e-9, "+0.0;−0.0", "+0.0"),
++                     (-0.004, "+0.00;−0.00", "+0.00"), (-0.06, "+0.0;−0.0", "−0.1"), (-3.0, "+0.0;−0.0", "−3.0"), (0.01, "+0.0;−0.0", "+0.0"), (2.5, "+0.0;−0.0", "+2.5"),
++                     (-0.01, "0.0", "0.0"),
++                 })
++        {
++            string got = SizerResult.Signed(v, fmt);
++            _out.WriteLine($"Signed({v:R}, \"{fmt}\") = \"{got}\"");
++            Assert.Equal(want, got);
++        }
++
++        // ── 整片热稳定附注：夹持导度标定不出来 ⇒ 判不了，附注末尾写标定为什么不成
++        var pFix = new DesignInputs { BusbarClampTempC = 450, BusbarConductanceWPerK = -1, BusbarSinkTempC = 25 };
++        FlangeStability.Result S(DesignInputs q, double? g) => FlangeStability.Check(q, 500.0, 1100.0, 730, 4580, 10.0, 2 * 30 * 1.2, 150, 2 * Math.PI * 26 * 1.2, 4, 5.0, g);
++        var kNoField = RampTwoNode.CalibrateNode(null, null, null, null, null, 200.0, 15.0, 1150.0, 1700.0, pFix, true);
++        Assert.False(kNoField.ClampOk);
++        var oBad = new LineRunner.FlangeLumpedOut { Stab = S(pFix, kNoField.StabClampWPerK), Calib = kNoField };
++        string noteBad = LineRunner.FlangeStabNote(oBad);
++        _out.WriteLine("判不了：" + noteBad);
++        Assert.True(oBad.Stab.Undetermined && oBad.Stab.ClampFromField);
++        Assert.Contains("无法判定", noteBad);
++        Assert.Contains("原因：" + kNoField.Note, noteBad);
++        Assert.DoesNotContain("热失控", noteBad);
++        Assert.DoesNotContain("夹持导度 =", noteBad);
++
++        // ── 标定成了（自由端 = 本来没有这条通道，导度 0 也算成）：追加夹持导度那一段，人话，不写「割线」
++        var pFree = new DesignInputs { BusbarClampTempC = -1, BusbarConductanceWPerK = -1 };
++        var kFree = RampTwoNode.CalibrateNode(null, null, null, null, null, 0.0, 15.0, 1150.0, 1700.0, pFree, true);
++        Assert.True(kFree.ClampOk);
++        var oFree = new LineRunner.FlangeLumpedOut { Stab = S(pFree, kFree.StabClampWPerK), Calib = kFree };
++        string noteFree = LineRunner.FlangeStabNote(oFree);
++        _out.WriteLine("标定成了：" + noteFree);
++        Assert.False(oFree.Stab.Undetermined);
++        Assert.Contains("舌端没有接铜排，夹持这一项为 0", noteFree);   // 自由端不说「流进铜排的热 ÷ 温差」那段空话
++        Assert.DoesNotContain("夹持导度 =", noteFree);
++        Assert.DoesNotContain("原因：", noteFree);
++        // 定温边界、标定成了（合成网格，与门三同一组合成账）：追加夹持导度那一段，人话，不写「割线」
++        var plate0 = new FlangePlate { HoleRadiusMm = 26.0 };
++        var mesh0 = FlangeMesher.Build(plate0, 0, 4.0, 11.0, 50.0, 40.0, clampBandMm: double.NaN, clampFullFace: true);
++        var b0 = mesh0.ClampCell.ToArray();
++        var t0 = Enumerable.Range(0, mesh0.CellCount).Select(k => b0[k] ? 450.0 : 1000.0).ToArray();
++        var g0 = Enumerable.Range(0, mesh0.CellCount).Select(k => 0.02 * mesh0.Area[k]).ToArray();
++        var l0 = Enumerable.Range(0, mesh0.CellCount).Select(k => 0.01 * mesh0.Area[k]).ToArray();
++        var kFix = RampTwoNode.CalibrateNode(mesh0, t0, g0, l0, b0, 200.0, 15.0, 1150.0, 1700.0, pFix, true);
++        Assert.True(kFix.Ok, kFix.Note);
++        var oFix = new LineRunner.FlangeLumpedOut { Stab = S(pFix, kFix.StabClampWPerK), Calib = kFix };
++        string noteFix = LineRunner.FlangeStabNote(oFix);
++        _out.WriteLine("定温标定成了：" + noteFix);
++        Assert.Contains("夹持导度 =", noteFix);
++        Assert.Contains("夹持温度", noteFix);
++        Assert.Contains("可能偏大", noteFix);
++        Assert.DoesNotContain("割线", noteFix);
++        Assert.DoesNotContain("原因：", noteFix);
++        // 不给场标定值（老算法）：出处位 false ⇒ 不追加
++        var oGeom = new LineRunner.FlangeLumpedOut { Stab = S(pFix, null), Calib = kFree };
++        Assert.False(oGeom.Stab.ClampFromField);
++        Assert.DoesNotContain("夹持导度 =", LineRunner.FlangeStabNote(oGeom));
++
++        // ── 管孔标定不成的原因：管孔流入落在 (−0.05, 0) 时不印「-+0.0」，并写明是两节点模型的缺陷
++        var plate = new FlangePlate { HoleRadiusMm = 26.0 };
++        var mesh = FlangeMesher.Build(plate, 0, 4.0, 11.0, 50.0, 40.0, clampBandMm: double.NaN, clampFullFace: true);
++        int n = mesh.CellCount;
++        var boundary = mesh.ClampCell.ToArray();
++        var tTwo = Enumerable.Range(0, n).Select(k => boundary[k] ? 450.0 : 1000.0).ToArray();
++        var gen = Enumerable.Range(0, n).Select(k => 0.02 * mesh.Area[k]).ToArray();
++        var loss = Enumerable.Range(0, n).Select(k => 0.01 * mesh.Area[k]).ToArray();
++        var kHole = RampTwoNode.CalibrateNode(mesh, tTwo, gen, loss, boundary, 200.0, -0.01, 1150.0, 1700.0, pFix, true);
++        _out.WriteLine("管孔标定不成：" + kHole.Note);
++        Assert.False(kHole.Ok);
++        Assert.Contains("管孔流入 +0.0 W", kHole.Note);
++        Assert.DoesNotContain("-+", kHole.Note);
++        Assert.Contains("两节点模型的缺陷", kHole.Note);
++    }
++}
+diff --git a/Pt_Optimize.Tests/R48G2RampClampChannelTests.cs b/Pt_Optimize.Tests/R48G2RampClampChannelTests.cs
+new file mode 100644
+index 0000000..7a628f9
+--- /dev/null
++++ b/Pt_Optimize.Tests/R48G2RampClampChannelTests.cs
+@@ -0,0 +1,462 @@
++using System;
++using System.Collections.Generic;
++using System.IO;
++using System.Linq;
++using System.Text;
++using PtOptimize.Core;
++using Xunit;
++using Xunit.Abstractions;
++
++namespace PtOptimize.Tests;
++
++/// <summary>
++/// ★★★★★ R48 G2 前后对照探针（2026-09-15，Opus 5 写；规格出自常驻物理把关人第十一轮；复审同日重写；复审二同日再改）：
++/// **升温两节点补铜排通道与舌片保温、法兰节点四项逐项标定，前后差多少、各项热流是什么、与准静态壳解对不对得上。**
++///
++/// ══ 设置
++///   B2：第二批 B2 的设计（管保温 7.5、逐片圆盘 10.5/3.5/5.0/10.0、逐片舌 5.0/3.5/5.0/10.5、SizeTongues、共用片抽热各半、耦合容差 0.25 K），**导航网格**整线一次；
++///   误差预算：误差预算设计（R48ClampRecipeImpactTests.Design 同一组输入，默认耦合容差）—— 旧 22.05 K／144.29 K 就是在它上面量的。
++///   ★ 复审二（审查意见 major「探针只在带玻璃稳态上标定」）：两个设计各跑**带玻璃**与**空管**两份（空管 = BuildCase(p, checkRamp: false, emptyTube: true, EmptyTubeSetpoint.RampTarget)，
++///     控温点全线升到升温目标 —— 用户已定的空管到温稳态，判据表空管那张表的升温行就用这个场标定），并列交物理把关人；
++///     另加**现役锚点**（审查意见 minor）：几何同 Program.cs「--flangestab」里的现役对照（Ø120／舌 200×半宽 40／厚 2.0／管纤维 2.5／圆盘保温 2.5／舌裸／舌端不接铜排），
++///     走 LineRunner.Run + FlangeLumped，印能不能标定、各版峰值。
++///     ⚠ +215 K（HANDOVER §4.2s，用户 2026-08-25 确认比较符合现状）是「--ramp2」那条输入路径算的（图纸几何、按许用 J 定电流、1050 °C 电流场的参考电阻、不解稳态热场），
++///       与本路径输入不同 ⇒ 不要求复现，只并列。
++///   改前逐位记录：deliverable/R48_G2_改前基线_2026-09-15.txt（甲、乙、整片热稳定几何导度与裕度）；
++///   第一版逐位记录：deliverable/R48_G2_升温两节点补铜排通道_B2_2026-09-15.txt 与 …_误差预算_2026-09-15.txt（丙、第一版整片热稳定裕度）；
++///   复审逐位记录：deliverable/R48_G2_复审_升温两节点逐项标定_B2_2026-09-15.txt 与 …_误差预算_2026-09-15.txt（丁峰值、复审整片热稳定裕度）。
++///   本次输出另写 deliverable/R48_G2_复审二_升温两节点_{B2,误差预算}_{带玻璃,空管}_2026-09-15.txt 与 …_现役锚点_2026-09-15.txt（不覆盖前两版）。
++///
++/// ══ 升温期参考项的版本（最不利片，全部由生产函数 LineRunner.FlangeLumped + RampTwoNode.Solve 给；老口径 = 同一份输入把新项关掉）
++///   甲　A 路前口径：不排除压接格、无铜排通道、舌片裸铂、参考电阻配管根温度、表面不标定、孔侧几何式；
++///   乙　A 路后缺通道：排除压接格，其余同甲；乙1 只补舌片保温；乙2 只补铜排通道；
++///   丙　G2 第一版：铜排通道 + 舌片保温，参考电阻仍配管根温度、表面不标定、孔侧几何式；
++///   丙+ 丙再把发热标定到节点口径；丁′ 再标定表面散热（孔侧仍几何式）；
++///   丁　复审生产：四项都在节点口径上标定（发热、表面、铜排、孔侧导度）—— 管孔流向与温差反号时标定不了、丁不解。
++///   「关掉」用的老值：参考电阻 = FlangeLumpedOut.LegacyRefOhm、参考温度 = FlangeOut.TRootC、表面标定点与孔侧导度置 NaN、铜排导度置 0 —— J0 逐位核它们。
++///
++/// ══ 准静态壳解复核（不依赖集总假设的对照）
++///   升温 20 K/h 全程约 56 h，法兰热时间常数分钟级 ⇒ 每一时刻法兰都近乎稳态。在丁的轨迹上（丁没解时用丙的轨迹，输出写明）取管温 300/500/700/900/1100 °C 附近、峰值时刻
++///   与（复审二加）轨迹终点，用同一片网格做壳热解：电流场按电流线性缩放、管孔温度 = 该时刻管温、夹持温度按同一个分压假设与壳解自己的节点均温迭代到自洽，
++///   其余边界与物性全取 LineRunner.PlateThermalInputs，壳热解调 LineRunner.SolvePlateThermal，节点各项调 RampTwoNode.CalibrateNode（与集总同一份节点格）。
++///   表一：状态对照；表二：集总各项取在壳解节点均温上（状态相同只比方程）；表三（复审二加）：壳解最热格在哪。
++///   ⚠ 壳解的管孔是定温边界（管温直接加在孔边，没串管壁翅片导度），管来绝对值会比集总大，只看方向。
++///
++/// ══ 跑前写死的判读（复审二，2026-09-15 Opus 5；复审的判读原样留在复审输出里，J1、J2′ 规则一字未改）
++///   J0 回归（断言，只对有记录的两跑：B2 带玻璃、误差预算带玻璃）：甲、乙、丙三版峰值与记录逐位相同；整片热稳定的舌片几何导度、几何导度裕度与改前记录逐位相同；
++///      第一版口径（夹持取 G）的裕度与第一版记录逐位相同 —— 复审二改调 LineRunner.StabilityCheck(…, G).Margin 复现（审查意见 minor：原手抄 (表面 + G + 管孔) ÷ 发热）；
++///      **复审**的丁峰值与整片热稳定裕度与复审记录逐位相同 —— 本轮只改界面文字、显示位与探针，不改算术；不同 ⇒ 本轮动了算术，本探针其余结论作废。
++///   J3 场对账（断言，丁解出来的每一跑）：最不利片、生产输入，在标定点上 发热／表面／铜排 与场的节点账相对差 ≤ 1e-9、管来 ≤ 1e-6、热容吸收与场能量残差之差 ≤ 1e-6 × 发热
++///      （与快门 R48G2RampClampChannelGateTests 五同一组容差，依据写在那里）。有记录的两跑丁必须解得出（复审时解得出）。
++///   J1（描述）：丁的「法兰 − 管」峰值 &gt; 100 K ⇒「未修好」；≤ 100 K ⇒ 只说量级过了物理把关人跑前门槛 —— 判据表那一行照样暂不给数、待复核。
++///   J2′（描述）：升温末段（轨迹上管温最接近 1100 °C 的取点，**不含**复审二加的终点）|集总法兰温度 − 壳解节点均温| ≤ 30 K 且 集总管来与壳解管孔同向 ⇒「末段集总与壳解一致」；否则「不一致」。
++///      30 K 沿用第一版 J2 的推导（J1 判别线 100 K 的三分之一）；同向是符号比较，没有门槛。（复审时如实写过：这条是看过第一版数据之后、跑复审之前写的。）
++///   以下复审二新加的只描述，**没有门槛、不下判读**：
++///   · 空管两跑、现役锚点：印同样的各版峰值与表一～表三；
++///   · 轨迹终点取点（积分停下那一刻，管温约升温目标）：表里标「轨迹终点」；轨迹描述行分「不含终点（与复审同口径）」与「含终点」两句；
++///   · 表三 壳解最热格：坐标、r、分区（与 ShellThermal 同一规则：r ≤ 盘半径为圆盘区）、离管孔 mm、当地厚度、电流密度、在哪种保温下、是不是被边界钉住的格；并列圆盘区峰值与舌片区峰值的位置；
++///   · 切线导度与发热偏置（审查建议的改法，交物理把关人定）：在标定点上调 LineRunner.SolvePlateThermal，管根温度、夹持温度（定温边界才做）各扰动 ±10 K
++///     （10 K 比场的收敛误差大几个量级、比升温一路的温度变化小两个量级），
++///     切线导度 = 热流之差 ÷ 温差之差，偏置 = 标定点热流 − 切线导度 × 标定点温差；表二加两列仿射预测（偏置按节点发热 ÷ 标定点节点发热缩放），与壳解同一状态比；
++///     复现检查：先在标定点原样重解一次，与整线场比 |Δ管孔|、|Δ铜排| &gt; 0.5 W 或 |Δ节点均温| &gt; 1 K ⇒ 印「复现不上，切线一节不可用」（描述）。
++/// </summary>
++[Trait("速度", "慢")]
++public class R48G2RampClampChannelTests
++{
++    private readonly ITestOutputHelper _out;
++    public R48G2RampClampChannelTests(ITestOutputHelper o) { _out = o; }
++
++    /// <summary>带号数：走 SizerResult.Signed（复审二 2026-09-15 Opus 5：原探针自造 Sg，审查意见 minor；Signed 同日补了「负数取整成零」那一支）</summary>
++    private static string Sg(double v, int dec)
++        => SizerResult.Signed(v, dec == 0 ? "+0;−0" : "+0." + new string('0', dec) + ";−0." + new string('0', dec));
++
++    /// <summary>逐位记录：甲、乙（改前基线）；丙、第一版热稳定裕度（第一版输出）；几何导度与几何裕度（改前基线）；丁峰值与复审热稳定裕度（复审输出）</summary>
++    private sealed record Rec(double V1, double V2, double V3, double StabGeom, double ClampGeom, double StabV1, double V4, double StabV2);
++    private static readonly Rec RecB2 = new(0.48368560511695335, 92.17982276720738, 0.28829265077824573, 16.37913833597184, 0.15470705865460616, 17.744490542627293,
++                                            0.38674976950390416, 16.855040748709104);
++    private static readonly Rec RecBudget = new(22.052149557030702, 144.29106823006862, 0.08665032704616493, 15.245460004422208, 0.17547705397175803, 16.582681672849702,
++                                                0.13608645691616772, 15.703361016748605);
++
++    [Fact] public void B2_带玻璃_导航网格() => RunDesign("B2", emptyTube: false, RecB2);
++    [Fact] public void B2_空管_导航网格() => RunDesign("B2", emptyTube: true, null);
++    [Fact] public void 误差预算_带玻璃_导航网格() => RunDesign("误差预算", emptyTube: false, RecBudget);
++    [Fact] public void 误差预算_空管_导航网格() => RunDesign("误差预算", emptyTube: true, null);
++    [Fact] public void 现役锚点_导航网格() => RunInService();
++
++    private Action<string> Writer(string fileName)
++    {
++        var sb = new StringBuilder();
++        string file = Path.Combine(HandoverDoc.Root(), "deliverable", fileName);
++        return s =>
++        {
++            _out.WriteLine(s); sb.AppendLine(s);
++            try { File.WriteAllText(file, sb.ToString(), new UTF8Encoding(false)); } catch { }
++        };
++    }
++
++    private const string Judgments =
++        "跑前写死的判读（复审二）：J0 甲乙丙三版峰值、几何导度／几何裕度／第一版裕度、复审丁峰值／复审裕度与记录逐位相同（断言，只对有记录的两跑）；J3 标定点场对账（断言，丁解出来的每一跑）；"
++      + "J1 丁峰值 > 100 K ⇒ 未修好（描述）；J2′ 末段（最接近 1100 °C 的取点，不含终点）|集总法兰 − 壳解节点均温| ≤ 30 K 且管来同向 ⇒ 一致（描述）；"
++      + "空管、现役锚点、轨迹终点、最热格位置、切线导度与偏置只描述，没有门槛。";
++
++    private void RunDesign(string tag, bool emptyTube, Rec? rec)
++    {
++        string state = emptyTube ? "空管" : "带玻璃";
++        var Say = Writer($"R48_G2_复审二_升温两节点_{tag}_{state}_2026-09-15.txt");
++        Say($"R48 G2 复审二：升温两节点法兰节点逐项标定 前后对照（Opus 5）　{DateTime.Now:yyyy-MM-dd HH:mm:ss}　算例 {tag}　{state}稳态标定　导航网格　出处：Pt_Optimize.Tests/R48G2RampClampChannelTests.cs");
++        Say(Judgments);
++        Say(rec is null
++            ? "记录出处：本跑没有前几版记录（复审二新加），J0 只打印不断言。"
++            : "记录出处：甲乙与几何导度 deliverable/R48_G2_改前基线_2026-09-15.txt；丙与第一版裕度 deliverable/R48_G2_升温两节点补铜排通道_" + tag + "_2026-09-15.txt；"
++              + "丁峰值与复审裕度 deliverable/R48_G2_复审_升温两节点逐项标定_" + tag + "_2026-09-15.txt。");
++
++        DesignInputs p; DesignSpec d;
++        if (tag == "B2")
++        {
++            p = new DesignInputs { SplitSharedFlangeDraw = true };
++            d = DesignSpec.W08.Clone();
++            d.TabThickMm = new[] { 0.73, 1.26, 1.26, 0.73 };
++            d.RingMul = new[] { 1.0, 1.0, 1.0, 1.0 };
++            d.TubeInsulMm = 7.5;
++            d.DiscInsulMm = new[] { 10.5, 3.5, 5.0, 10.0 };
++            d.TabInsulMm = new[] { 5.0, 3.5, 5.0, 10.5 };
++            d = d.Fit(); d.SizeTongues(p);
++        }
++        else
++        {
++            p = new DesignInputs();
++            d = DesignSpec.W08.Clone();
++            d.TabThickMm = new[] { 0.73, 1.26, 1.26, 0.73 };
++            d.TabInsulMm = new[] { 4.60, 2.10, 2.90, 7.50 };
++            d.RingMul = new[] { 1.0, 1.0, 1.0, 1.0 };
++            d = d.Fit(); d.SizeTongues(p);
++        }
++        var lc = emptyTube
++            ? d.BuildCase(p, checkRamp: false, emptyTube: true, emptyTubeSetpoint: EmptyTubeSetpoint.RampTarget)
++            : d.BuildCase(p, checkRamp: false);
++        if (tag == "B2") { lc.CoupleTolK = 0.25; lc.CoupleMaxRounds = Math.Max(lc.CoupleMaxRounds, 4000); }
++        var sw = System.Diagnostics.Stopwatch.StartNew();
++        var r = LineRunner.Run(lc);
++        Assert.True(r.Ok, "整线解不出来：" + r.Message);
++        Say($"LineRunner.Run：{sw.Elapsed.TotalSeconds:0} s　耦合收敛 {r.Converged}　耦合容差 {lc.CoupleTolK} K　空管 {lc.EmptyTube}（空管控温点取法 {lc.EmptyTubeSetpointFrom}）　"
++          + $"升温 {lc.RampFromC:0}→{lc.RampTargetC:0} °C、{lc.RampRateKPerH:0} K/h");
++        Analyze(lc, r, rec, Say);
++    }
++
++    private void RunInService()
++    {
++        var Say = Writer("R48_G2_复审二_升温两节点_现役锚点_2026-09-15.txt");
++        Say($"R48 G2 复审二：升温两节点 现役锚点（Opus 5）　{DateTime.Now:yyyy-MM-dd HH:mm:ss}　导航网格　出处：Pt_Optimize.Tests/R48G2RampClampChannelTests.cs");
++        Say(Judgments);
++        Say("几何与输入同 Program.cs「--flangestab」的现役对照：Ø120／舌长 200、半宽 40／厚 2.0／管壁 1.0、管纤维 2.5／圆盘保温 2.5、舌裸／舌端不接铜排（夹持温度 −1）／控温点 1150/1080/1050。");
++        Say("⚠ +215 K（HANDOVER §4.2s）是「--ramp2」那条输入路径算的（图纸几何、按许用 J 定电流、1050 °C 电流场参考电阻、不解稳态热场），与本路径输入不同，不要求复现，只并列。");
++        var pO = new DesignInputs();
++        pO.Layer1.ThicknessMm = 2.5; pO.Layer1.Enabled = true;
++        pO.WallMinMm = 1.0;
++        pO.FlangeInsulThickMm = 2.5; pO.FlangeInsulated = true;
++        pO.BusbarClampTempC = -1;
++        FlangePlate MkO(double t) => new()
++        {
++            DiscRadiusMm = 60, HoleRadiusMm = 26,
++            TabEndXMm = -200, TabEndHalfWidthMm = 40,
++            ThicknessMm = t, ThickenedMm = t,
++            InsulBoundaryXMm = double.NaN,
++        };
++        var lc = new LineCase
++        {
++            Base = pO, WallMm = 1.0, UseMeasuredCurrent = false, CheckRamp = false,
++            SetpointC = new[] { 1150.0, 1080.0, 1050.0 },
++            FlangePlates = new[] { MkO(2.0), MkO(2.0), MkO(2.0), MkO(2.0) },
++        };
++        var sw = System.Diagnostics.Stopwatch.StartNew();
++        LineResult r;
++        try { r = LineRunner.Run(lc); }
++        catch (Exception ex) { Say($"LineRunner.Run 抛异常：{ex.Message} ⇒ 现役锚点这一跑没有数（描述）"); return; }
++        Say($"LineRunner.Run：{sw.Elapsed.TotalSeconds:0} s　Ok {r.Ok}　耦合收敛 {r.Converged}　{r.Message}");
++        if (!r.Ok) { Say("整线解不出来 ⇒ 现役锚点这一跑没有数（描述，不是失败）"); return; }
++        Analyze(lc, r, null, Say);
++    }
++
++    private sealed class Row
++    {
++        public double T, Tt, Tf, I; public string Tag = ""; public bool IsEnd;
++        public RampTwoNode.FlangeFlows F = null!;
++        public RampTwoNode.NodeCalibration Kk = null!;
++        public ShellThermalResult Th = null!;
++        public PlateThermalSetup Ts = null!;
++        public double[] J = null!;
++        public double TClamp; public int Its;
++    }
++
++    private void Analyze(LineCase lc, LineResult r, Rec? rec, Action<string> Say)
++    {
++        Say("── 逐片稳态场的法兰节点标定（每片都标一次，只打印；生产只用最不利片）");
++        for (int j = 0; j < r.Flanges.Length; j++)
++        {
++            var f = r.Flanges[j];
++            var tsj = LineRunner.PlateThermalInputs(lc, j, f.CurrentA, f.Mesh?.SourceField);
++            var kj = RampTwoNode.CalibrateNode(f.Mesh, f.TField, f.CellGenW, f.CellLossW, f.FieldBoundaryCell, f.QClampW, f.QFromTubeW, f.TRootC, f.CurrentA, tsj.P2, excludeBoundaryCells: true);
++            Say($"   {f.Name,-8} 电流 {f.CurrentA:0.0} A　管根 {f.TRootC:0.00} °C　片最高 {f.TMaxC:0.0} °C　节点 {kj.NodeCells} 格、均温 {kj.TNodeC:0.0} °C　"
++              + $"节点账 发热 {kj.QGenW:0.00}（整片 {f.QGenW:0.00}）− 表面 {kj.QLossW:0.00}（整片 {f.QLossW:0.00}）− 铜排 {kj.QClampW:0.00} + 管孔 {Sg(kj.QFromTubeW, 3)} = 残差 {Sg(kj.ResidualW, 4)} W（场 {Sg(f.EnergyResidualW, 4)}）　"
++              + $"G {kj.GEffWPerK:0.0000} W/K、r {kj.FollowRatio:0.0000}、孔侧 {kj.HolePlateGWPerK:0.00000} W/K、参考电阻 {kj.ResistanceRefOhm:E5} Ω　舌保温 {tsj.TabInsulThickMm:0.0}　圆盘保温 {lc.DiscInsulEffectiveAt(j):0.0} mm　{(kj.Ok ? "" : "★ " + kj.Note)}");
++        }
++
++        var yes = LineRunner.FlangeLumped(lc, r.Flanges, excludeClampCells: true)!;
++        var no = LineRunner.FlangeLumped(lc, r.Flanges, excludeClampCells: false)!;
++        var fw = r.Flanges[yes.Index];
++        var pl = yes.Plate;
++        Assert.NotNull(yes.RampIn); Assert.NotNull(no.RampIn);
++        var k = yes.Calib;
++        Say("");
++        Say($"── 最不利片 {fw.Name}（发热最大）：网格取自本片场 {yes.MeshFromField}　排除压接格 {yes.ClampAreaMm2:0.0} mm²　质量 {yes.RampIn!.FlangeMassG:0.00} g（不排除 {no.RampIn!.FlangeMassG:0.00} g）"
++          + $"　圆盘保温面 {yes.RampIn.FlangeAreaInsulMm2:0.0} mm²（{yes.DiscInsulMm:0.0} mm）　舌片区 {yes.RampIn.FlangeAreaBareMm2:0.0} mm²（{yes.RampIn.TabInsulThickMm:0.0} mm）　单面　舌端边界 {k.Mode}");
++        Say($"   标定：{k.Note}");
++        Say($"   节点温度 {k.TNodeC:R} °C　参考电阻 {k.ResistanceRefOhm:R} Ω（改前 {yes.LegacyRefOhm:R} Ω 配管根 {fw.TRootC:R} °C）　"
++          + $"铜排 G {k.GEffWPerK:R} W/K、r {k.FollowRatio:R}（⇒ 整片热稳定取 G·(1−r) {k.StabClampWPerK:0.0000}）　孔侧导度 {k.HolePlateGWPerK:R} W/K　"
++          + $"表面系数 κ {yes.SurfaceScale:R}　标定点管节点 {yes.TubeNodeAtCalibC:0.00} °C　{(yes.Ramp is null ? "★ 丁没解：" + yes.RampError : "")}");
++
++        RampTwoNode.Inputs V(LineRunner.FlangeLumpedOut src, bool channel, bool tab, bool gen, bool surf, bool hole)
++        {
++            var g = src.RampIn!.Clone();
++            if (!channel) { g.ClampConductanceWPerK = 0; g.ClampFollowRatio = 0; }
++            if (!tab) g.TabInsulThickMm = double.NaN;
++            if (!gen) { g.FlangeResistanceRefOhm = src.LegacyRefOhm; g.FlangeRefTempC = fw.TRootC; }
++            if (!surf) { g.SurfaceCalibLossW = double.NaN; g.SurfaceCalibTempC = double.NaN; }
++            if (!hole) g.HolePlateConductanceWPerK = double.NaN;
++            return g;
++        }
++        const string N1 = "甲 A 路前口径（不排除压接格、无通道、舌裸、发热配管根、表面不标定、孔侧几何式）";
++        const string N2 = "乙 A 路后缺通道（排除，其余同甲）";
++        const string N3 = "丙 G2 第一版（通道 + 舌保温；发热配管根、表面不标定、孔侧几何式）";
++        const string N4 = "丁 复审生产（四项节点口径标定）";
++        bool calibOk = yes.Ramp is not null;
++        var versions = new List<(string name, DesignInputs pp, RampTwoNode.Inputs gi)>
++        {
++            (N1, no.RampP!, V(no, false, false, false, false, false)),
++            (N2, yes.RampP!, V(yes, false, false, false, false, false)),
++            ("乙1 只补舌片保温", yes.RampP!, V(yes, false, true, false, false, false)),
++            ("乙2 只补铜排通道", yes.RampP!, V(yes, true, false, false, false, false)),
++            (N3, yes.RampP!, V(yes, true, true, false, false, false)),
++        };
++        if (calibOk)
++        {
++            versions.Add(("丙+ 丙再把发热标定到节点口径", yes.RampP!, V(yes, true, true, true, false, false)));
++            versions.Add(("丁′ 再标定表面散热（孔侧仍几何式）", yes.RampP!, V(yes, true, true, true, true, false)));
++            versions.Add((N4, yes.RampP!, yes.RampIn));
++        }
++        var results = new Dictionary<string, RampTwoNodeResult>();
++        Say("");
++        Say("── 升温期「法兰 − 管」峰值与峰值时刻、升温末段的法兰节点热流（W；热容吸收 = 发热 − 表面 − 铜排 + 管来）");
++        foreach (var (name, pp, gi) in versions)
++        {
++            var rt = RampTwoNode.Solve(pp, gi);
++            results[name] = rt;
++            Say($"   {name}");
++            Say($"      峰值 {rt.MaxFlangeMinusTubeK:R} K　{rt.TimeAtMaxDeltaS / 3600:0.00} h　管温 {rt.TTubeAtMaxDeltaC:0.0} °C　法兰全程峰 {rt.TFlangePeakC:0.0} °C　电流 {rt.CurrentStartA:0.0}→{rt.CurrentEndA:0.0} A　到温 {rt.TubeReached}　κ {rt.SurfaceScale:0.0000}　孔侧 {rt.HolePlateConductanceWPerK:0.00000}　{rt.Note}");
++            foreach (var (lbl, a) in new[] { ("峰值时刻", rt.AtPeak), ("末了时刻", rt.AtEnd) })
++                Say($"      {lbl}：管 {a.TTubeC:0.0} °C　法兰 {a.TFlangeC:0.0} °C　段电流 {a.CurrentA:0.0} A　发热 {a.GenW:0.00}　表面 {a.SurfaceW:0.00}（圆盘 {a.SurfaceDiscW:0.00} + 舌 {a.SurfaceTabW:0.00}）"
++                  + $"　铜排 {a.ClampW:0.00}{(double.IsNaN(a.ClampTempC) ? "" : $"（夹持 {a.ClampTempC:0} °C）")}　管来 {Sg(a.FromTubeW, 2)}　热容吸收 {Sg(a.StorageW, 3)}（C {a.CapJPerK:0.0} J/K）");
++        }
++
++        // ── J0 回归
++        double v1 = results[N1].MaxFlangeMinusTubeK, v2 = results[N2].MaxFlangeMinusTubeK, v3 = results[N3].MaxFlangeMinusTubeK;
++        double v4 = calibOk ? results[N4].MaxFlangeMinusTubeK : double.NaN;
++        // 复审二（审查意见 minor「手抄了热稳定裕度的公式」）：第一版口径与几何口径都调生产的 StabilityCheck，只换夹持导度
++        double stabV1 = LineRunner.StabilityCheck(lc, fw, yes, k.GEffWPerK).Margin;
++        double stabGeomCall = LineRunner.StabilityCheck(lc, fw, yes, null).Margin;
++        Say("");
++        if (rec is not null)
++        {
++            bool j0 = v1 == rec.V1 && v2 == rec.V2 && v3 == rec.V3 && yes.Stab.DClampGeomDT == rec.ClampGeom && yes.Stab.MarginGeomClamp == rec.StabGeom
++                   && stabGeomCall == rec.StabGeom && stabV1 == rec.StabV1 && v4 == rec.V4 && yes.Stab.Margin == rec.StabV2;
++            Say($"J0 回归：甲 {v1:R}（记录 {rec.V1:R}）　乙 {v2:R}（记录 {rec.V2:R}）　丙 {v3:R}（记录 {rec.V3:R}）　"
++              + $"几何导度 {yes.Stab.DClampGeomDT:R}（记录 {rec.ClampGeom:R}）　几何裕度 {yes.Stab.MarginGeomClamp:R}／调 StabilityCheck(不给) {stabGeomCall:R}（记录 {rec.StabGeom:R}）　第一版裕度 {stabV1:R}（记录 {rec.StabV1:R}）　"
++              + $"复审丁峰值 {v4:R}（记录 {rec.V4:R}）　复审裕度 {yes.Stab.Margin:R}（记录 {rec.StabV2:R}）"
++              + $" ⇒ {(j0 ? "逐位相同" : "★★ 不同 —— 算术被改动，本探针结论作废")}");
++            Assert.Equal(rec.V1, v1); Assert.Equal(rec.V2, v2); Assert.Equal(rec.V3, v3);
++            Assert.Equal(rec.ClampGeom, yes.Stab.DClampGeomDT); Assert.Equal(rec.StabGeom, yes.Stab.MarginGeomClamp); Assert.Equal(rec.StabGeom, stabGeomCall);
++            Assert.Equal(rec.StabV1, stabV1);
++            Assert.True(calibOk, "有记录的这一跑复审时丁解得出，现在解不出：" + yes.RampError);
++            Assert.Equal(rec.V4, v4); Assert.Equal(rec.StabV2, yes.Stab.Margin);
++        }
++        else
++            Say($"J0：本跑没有记录，只打印 —— 甲 {v1:R}　乙 {v2:R}　丙 {v3:R}　几何导度 {yes.Stab.DClampGeomDT:R}　几何裕度 {stabGeomCall:R}　第一版口径裕度 {stabV1:R}　丁峰值 {(calibOk ? v4.ToString("R") : "没解")}　生产裕度 {yes.Stab.Margin:R}");
++
++        var stabRow = r.Checks.First(c => c.Name.StartsWith(LineResult.Key.FlangeStab, StringComparison.Ordinal));
++        var rampRow = r.Checks.First(c => c.Name.StartsWith(LineResult.Key.RampField, StringComparison.Ordinal));
++        if (yes.Stab.Undetermined) Assert.True(stabRow.Undetermined && double.IsNaN(stabRow.Actual));
++        else Assert.Equal(yes.Stab.Margin, stabRow.Actual);
++        Assert.True(rampRow.Undetermined && double.IsNaN(rampRow.Actual) && rampRow.Withheld, "判据表升温那一行复核前应暂不给数");
++        Say($"整片热稳定（判据表参考量）：{(yes.Stab.Undetermined ? "判不了" : yes.Stab.Margin.ToString("R"))}（夹持 {yes.Stab.DClampDT:0.0000}、出处位 {yes.Stab.ClampFromField}；表面 {yes.Stab.DSurfDT:0.0000} + 管孔 {yes.Stab.DTubeDT:0.0000}（孔壁几何式），发热 {yes.Stab.DGenDT:0.0000} W/K）");
++        Say("判据表附注（升温）：" + rampRow.Note);
++        Say("判据表附注（热稳定）：" + stabRow.Note);
++
++        // ── J3 场对账
++        if (calibOk)
++        {
++            var m = new RampTwoNode.Model(yes.RampP!, yes.RampIn);
++            double gen = 0, loss = 0;
++            for (int c = 0; c < fw.Mesh!.CellCount; c++) if (!fw.FieldBoundaryCell[c]) { gen += fw.CellGenW[c]; loss += fw.CellLossW[c]; }
++            double tt = m.TubeNodeTempAtRoot(fw.TRootC, k.TNodeC, fw.QFromTubeW);
++            var f = m.Flows(0, tt, k.TNodeC, fw.CurrentA / yes.RampIn.SharedFactor);
++            bool clampRel = fw.QClampW == 0 ? f.ClampW == 0 : Math.Abs(f.ClampW / fw.QClampW - 1) <= 1e-9;
++            bool j3 = Math.Abs(f.GenW / gen - 1) <= 1e-9 && Math.Abs(f.SurfaceW / loss - 1) <= 1e-9 && clampRel
++                   && Math.Abs(f.FromTubeW / fw.QFromTubeW - 1) <= 1e-6 && Math.Abs(f.StorageW - fw.EnergyResidualW) <= 1e-6 * gen;
++            Say("");
++            Say($"J3 场对账（标定点：管节点 {tt:0.000} °C、法兰 {k.TNodeC:0.000} °C、段电流 {f.CurrentA:0.0} A）：发热 {f.GenW:R} ↔ {gen:R}　表面 {f.SurfaceW:R} ↔ {loss:R}　"
++              + $"铜排 {f.ClampW:R} ↔ {fw.QClampW:R}　管来 {f.FromTubeW:R} ↔ {fw.QFromTubeW:R}　热容吸收 {f.StorageW:R} ↔ 场残差 {fw.EnergyResidualW:R} ⇒ {(j3 ? "逐项对上" : "★★ 对不上")}");
++            Assert.True(j3, "J3 场对账没过");
++        }
++        else Say($"J3：丁没解（{yes.RampError}），不适用。");
++
++        // ── J1
++        Say("");
++        Say(!calibOk ? "J1：丁没解，不适用（判据表那一行暂不给数、写算不出来的原因）。"
++            : v4 > 100
++            ? $"J1：丁峰值 {v4:0.00} K > 100 K ⇒ **未修好**。分量见上（峰值时刻、末了时刻）与下（沿轨迹、壳解对照）。"
++            : $"J1：丁峰值 {v4:0.00} K ≤ 100 K ⇒ 只说量级过了物理把关人跑前门槛；判据表那一行照样暂不给数、**待复核**（法兰温度是整片平均，不代表片上最热处；四项只在标定点上对得上）。");
++
++        // ── 准静态壳解
++        var mesh = fw.Mesh!;
++        double shareF = yes.RampIn.SharedFactor;
++        bool fixedT = k.Mode == ShellThermal.ClampBoundary.FixedTemp;
++        bool follow = fixedT && double.IsFinite(k.FollowRatio);
++        double tClampCal = fixedT ? k.TClampC : double.NaN;
++        (RampTwoNode.NodeCalibration kk, ShellThermalResult th, double tClamp, int its, PlateThermalSetup ts, double[] J) Shell(double tTube, double iSeg, double? clampFixedC)
++        {
++            double iJ = shareF * iSeg;
++            double scale = iJ / fw.CurrentA;
++            var J = fw.JField.Select(x => x * scale).ToArray();
++            PlateThermalSetup ts = null!;
++            double tClamp = clampFixedC ?? tClampCal;
++            ShellThermalResult th = null!;
++            RampTwoNode.NodeCalibration kk = null!;
++            int it = 0;
++            for (; it < 8; it++)
++            {
++                ts = LineRunner.PlateThermalInputs(lc, yes.Index, iJ, mesh.SourceField);
++                if (fixedT) ts.P2.BusbarClampTempC = tClamp;
++                th = LineRunner.SolvePlateThermal(mesh, J, tTube, ts);
++                kk = RampTwoNode.CalibrateNode(mesh, th.T, th.CellGenW, th.CellLossW, th.BoundaryCell, th.QToClampW, th.QFromTubeW, tTube, iJ, ts.P2, excludeBoundaryCells: true);
++                if (clampFixedC is not null || !follow) { it++; break; }
++                double tNew = k.TColdC + k.FollowRatio * (kk.TNodeC - k.TColdC);
++                if (Math.Abs(tNew - tClamp) < 0.5) { it++; break; }
++                tClamp = tNew;
++            }
++            return (kk, th, tClamp, it, ts, J);
++        }
++
++        // ── 切线导度与发热偏置（审查建议的改法，只描述）
++        const double dTan = 10.0;
++        double iCal = fw.CurrentA / shareF;
++        double gHoleTan = double.NaN, bHole = double.NaN, gClampTan = double.NaN, bClamp = double.NaN, pCal = double.NaN;
++        Say("");
++        Say("── 标定点上的切线导度与发热偏置（审查建议的改法，交物理把关人定；只描述）");
++        {
++            var s0 = Shell(fw.TRootC, iCal, fixedT ? tClampCal : null);
++            double dq = s0.kk.QFromTubeW - fw.QFromTubeW, dc = s0.kk.QClampW - k.QClampW, dn = s0.kk.TNodeC - k.TNodeC;
++            bool repOk = Math.Abs(dq) <= 0.5 && Math.Abs(dc) <= 0.5 && Math.Abs(dn) <= 1.0;
++            Say($"   复现：标定点原样重解 管孔 {Sg(s0.kk.QFromTubeW, 4)} W（整线场 {Sg(fw.QFromTubeW, 4)}）　铜排 {s0.kk.QClampW:0.0000} W（{k.QClampW:0.0000}）　节点均温 {s0.kk.TNodeC:0.0000} °C（{k.TNodeC:0.0000}）　节点发热 {s0.kk.QGenW:0.000} W（{k.QGenW:0.000}）"
++              + $" ⇒ {(repOk ? "复现上了" : "★ 复现不上，切线一节不可用")}");
++            pCal = s0.kk.QGenW;
++            var hp = Shell(fw.TRootC + dTan, iCal, fixedT ? tClampCal : null);
++            var hm = Shell(fw.TRootC - dTan, iCal, fixedT ? tClampCal : null);
++            double dxh = (fw.TRootC + dTan - hp.kk.TNodeC) - (fw.TRootC - dTan - hm.kk.TNodeC);
++            gHoleTan = (hp.kk.QFromTubeW - hm.kk.QFromTubeW) / dxh;
++            bHole = s0.kk.QFromTubeW - gHoleTan * (fw.TRootC - s0.kk.TNodeC);
++            Say($"   管孔：管根 ±{dTan:0} K ⇒ 管孔 {Sg(hp.kk.QFromTubeW, 3)}／{Sg(hm.kk.QFromTubeW, 3)} W、节点均温 {hp.kk.TNodeC:0.000}／{hm.kk.TNodeC:0.000} °C、铜排 {hp.kk.QClampW:0.000}／{hm.kk.QClampW:0.000} W"
++              + $"　⇒ 切线导度 {gHoleTan:0.00000} W/K、偏置 {Sg(bHole, 3)} W（标定点）　对照：割线 {k.HolePlateGWPerK:0.00000} W/K、整片热稳定的孔壁几何式 {yes.Stab.DTubeDT:0.00000} W/K　"
++              + $"节点均温随管根 {(hp.kk.TNodeC - hm.kk.TNodeC) / (2 * dTan):0.0000} K/K、铜排随管根 {(hp.kk.QClampW - hm.kk.QClampW) / (2 * dTan):0.00000} W/K");
++            if (fixedT)
++            {
++                var cp = Shell(fw.TRootC, iCal, tClampCal + dTan);
++                var cm = Shell(fw.TRootC, iCal, tClampCal - dTan);
++                double dxc = (cp.kk.TNodeC - (tClampCal + dTan)) - (cm.kk.TNodeC - (tClampCal - dTan));
++                gClampTan = (cp.kk.QClampW - cm.kk.QClampW) / dxc;
++                bClamp = s0.kk.QClampW - gClampTan * (s0.kk.TNodeC - tClampCal);
++                Say($"   铜排：夹持 ±{dTan:0} K ⇒ 铜排 {cp.kk.QClampW:0.000}／{cm.kk.QClampW:0.000} W、节点均温 {cp.kk.TNodeC:0.000}／{cm.kk.TNodeC:0.000} °C、管孔 {Sg(cp.kk.QFromTubeW, 3)}／{Sg(cm.kk.QFromTubeW, 3)} W"
++                  + $"　⇒ 切线导度 {gClampTan:0.00000} W/K、偏置 {Sg(bClamp, 3)} W（标定点）　对照：割线 G {k.GEffWPerK:0.00000} W/K、整片热稳定取 G·(1−r) {k.StabClampWPerK:0.00000}、舌片导热截面几何式 {yes.Stab.DClampGeomDT:0.00000} W/K　"
++                  + $"节点均温随夹持 {(cp.kk.TNodeC - cm.kk.TNodeC) / (2 * dTan):0.0000} K/K、管孔随夹持 {(cp.kk.QFromTubeW - cm.kk.QFromTubeW) / (2 * dTan):0.00000} W/K");
++            }
++            else Say($"   铜排：舌端边界 {k.Mode}，不扰动夹持温度。");
++        }
++
++        // ── 轨迹与取点
++        string trajName = calibOk ? N4 : N3;
++        var vt = results[trajName];
++        var mt = new RampTwoNode.Model(yes.RampP!, calibOk ? yes.RampIn : V(yes, true, true, false, false, false));
++        var picks = new List<(double t, double tt, double tf, double i, string tag, bool end)>();
++        foreach (double want in new[] { 300.0, 500.0, 700.0, 900.0, 1100.0 })
++        {
++            var s = vt.Trace.OrderBy(q => Math.Abs(q.tt - want)).First();
++            if (Math.Abs(s.tt - want) < 50) picks.Add((s.t, s.tt, s.tf, s.i, "", false));
++        }
++        picks.Add((vt.AtPeak.TimeS, vt.AtPeak.TTubeC, vt.AtPeak.TFlangeC, vt.AtPeak.CurrentA, "峰值时刻", false));
++        picks.Add((vt.AtEnd.TimeS, vt.AtEnd.TTubeC, vt.AtEnd.TFlangeC, vt.AtEnd.CurrentA, "轨迹终点", true));
++        var rows = new List<Row>();
++        foreach (var (t, tt, tf, i, tag, end) in picks.OrderBy(q => q.tt).ThenBy(q => q.end))
++        {
++            var sh = Shell(tt, i, null);
++            rows.Add(new Row { T = t, Tt = tt, Tf = tf, I = i, Tag = tag, IsEnd = end, F = mt.Flows(t, tt, tf, i), Kk = sh.kk, Th = sh.th, Ts = sh.ts, J = sh.J, TClamp = sh.tClamp, Its = sh.its });
++        }
++        Say("");
++        Say($"── 准静态壳解复核 表一：状态对照（集总 = {trajName} 的方程在它的轨迹状态上{(calibOk ? "" : "；★ 丁没解，改用丙的轨迹")}；壳解 = 同一片网格、同一边界与物性，节点各项取节点格 —— 与集总同一口径；夹持按分压假设与壳解节点均温迭代自洽）");
++        Say("   管温°C  段电流A  集总法兰°C  壳解均温°C  差K     集总铜排W  壳解铜排W  集总发热W  壳解发热W  集总表面W  壳解表面W  集总管来W  壳解管孔W  管来方向  壳解节点残差W  夹持°C  壳解最热°C  壳解盘峰°C  最热−管K  收敛/轮");
++        foreach (var w in rows)
++        {
++            bool same = Math.Sign(w.F.FromTubeW) == Math.Sign(w.Kk.QFromTubeW);
++            Say($"   {w.Tt,6:0.0}  {w.I,7:0.0}  {w.Tf,9:0.0}  {w.Kk.TNodeC,9:0.0}  {Sg(w.Tf - w.Kk.TNodeC, 1),7}   {w.F.ClampW,8:0.00}  {w.Kk.QClampW,8:0.00}  {w.F.GenW,8:0.00}  {w.Kk.QGenW,8:0.00}  {w.F.SurfaceW,8:0.00}  {w.Kk.QLossW,8:0.00}"
++              + $"  {Sg(w.F.FromTubeW, 2),8}  {Sg(w.Kk.QFromTubeW, 2),8}  {(same ? "同向" : "★反向"),4}  {Sg(w.Kk.ResidualW, 3),10}  {w.TClamp,5:0}  {w.Th.TMaxC,8:0.0}  {w.Th.TDiscMaxC,8:0.0}  {Sg(w.Th.TMaxC - w.Tt, 1),7}  {(w.Th.Converged ? "是" : "否")}/{w.Its}{(w.Tag.Length > 0 ? "　← " + w.Tag : "")}");
++        }
++        Say("── 表二：方程对照（集总各项取在**壳解节点均温**上，状态相同只比方程；管来的管节点取该时刻管温）　＋ 仿射预测（切线导度 × 温差 + 偏置 × 节点发热比，描述）");
++        Say("   管温°C  壳解均温°C  发热 集总/壳解W  表面 集总/壳解W  铜排 集总/壳解W  管来 集总/壳解W  集总热容吸收W  管孔 仿射预测/壳解W  铜排 仿射预测/壳解W");
++        foreach (var w in rows)
++        {
++            var g = mt.Flows(0, w.Tt, w.Kk.TNodeC, w.I);
++            double pr = w.Kk.QGenW / pCal;
++            double qhPred = gHoleTan * (w.Tt - w.Kk.TNodeC) + bHole * pr;
++            double qcPred = fixedT ? gClampTan * (w.Kk.TNodeC - w.TClamp) + bClamp * pr : double.NaN;
++            Say($"   {w.Tt,6:0.0}  {w.Kk.TNodeC,9:0.0}  {g.GenW,8:0.00}/{w.Kk.QGenW,-8:0.00}  {g.SurfaceW,8:0.00}/{w.Kk.QLossW,-8:0.00}  {g.ClampW,8:0.00}/{w.Kk.QClampW,-8:0.00}  {Sg(g.FromTubeW, 2),8}/{Sg(w.Kk.QFromTubeW, 2),-8}  {Sg(g.StorageW, 2),8}"
++              + $"      {Sg(qhPred, 2),8}/{Sg(w.Kk.QFromTubeW, 2),-8}  {(fixedT ? qcPred.ToString("0.00") : "—"),8}/{w.Kk.QClampW,-8:0.00}{(w.Tag.Length > 0 ? "　← " + w.Tag : "")}");
++        }
++        Say($"── 表三：壳解最热格在哪（分区规则与 ShellThermal 同一条：{rows[0].Th.DiscZoneRule}；管孔半径 {pl.HoleRadiusMm:0.0} mm、盘半径 {pl.DiscRadiusMm:0.0} mm）");
++        Say("   管温°C  最热°C  x mm    z mm    r mm   分区    离管孔mm  厚mm   J A/mm²  在哪种保温下        边界格  │ 圆盘区峰°C  r mm  │ 舌片区峰°C  r mm");
++        foreach (var w in rows)
++        {
++            int h = 0;
++            for (int c = 1; c < w.Th.T.Length; c++) if (w.Th.T[c] > w.Th.T[h]) h = c;
++            var cc = mesh.Centroid[h];
++            double rr = Math.Sqrt(cc.X * cc.X + cc.Z * cc.Z);
++            string zone = w.Ts.DiscRadiusMm > 1e-9 ? (rr > w.Ts.DiscRadiusMm ? "舌片区" : "圆盘区") : "（按 x）";
++            string insul = pl.UnderDiscInsulation(cc.X, cc.Z) ? $"圆盘保温 {yes.DiscInsulMm:0.0} mm" : $"舌保温 {w.Ts.TabInsulThickMm:0.0} mm";
++            bool bnd = w.Th.BoundaryCell.Length == mesh.CellCount && w.Th.BoundaryCell[h];
++            Say($"   {w.Tt,6:0.0}  {w.Th.T[h],6:0.0}  {cc.X,6:0.0}  {cc.Z,6:0.0}  {rr,5:0.0}  {zone,-4}  {rr - pl.HoleRadiusMm,7:0.0}  {mesh.Thickness[h],5:0.00}  {w.J[h],7:0.00}  {insul,-16}  {(bnd ? "是" : "否"),2}    │ {w.Th.TDiscMaxC,8:0.0}  {w.Th.DiscMaxRMm,5:0.0} │ {w.Th.TTabMaxC,8:0.0}  {w.Th.TabMaxRMm,5:0.0}{(w.Tag.Length > 0 ? "　← " + w.Tag : "")}");
++        }
++
++        string Describe(IEnumerable<Row> set)
++        {
++            var list = set.ToList();
++            var worstDT = list.OrderByDescending(w => Math.Abs(w.Tf - w.Kk.TNodeC)).First();
++            var hottest = list.OrderByDescending(w => w.Th.TMaxC - w.Tt).First();
++            var mismatch = list.Where(w => Math.Sign(w.F.FromTubeW) != Math.Sign(w.Kk.QFromTubeW)).Select(w => $"管温 {w.Tt:0} °C（集总 {Sg(w.F.FromTubeW, 1)} W，壳解 {Sg(w.Kk.QFromTubeW, 1)} W）").ToList();
++            return $"集总法兰温度与壳解节点均温最大相差 {Math.Abs(worstDT.Tf - worstDT.Kk.TNodeC):0.0} K（管温 {worstDT.Tt:0} °C）；管来方向不一致 {mismatch.Count} 点{(mismatch.Count > 0 ? "：" + string.Join("、", mismatch) : "")}；"
++                 + $"壳解最热铂比管温最多高 {Sg(hottest.Th.TMaxC - hottest.Tt, 1)} K（管温 {hottest.Tt:0} °C）";
++        }
++        Say($"   轨迹描述（不是判读）：不含终点（与复审同口径）—— {Describe(rows.Where(w => !w.IsEnd))}。");
++        Say($"   轨迹描述（不是判读）：含终点 —— {Describe(rows)}。");
++        Say("   注：壳解管孔是定温边界（管温直接加在孔边，没串管壁翅片导度），管孔流入绝对值比集总「管来」大，只看方向。");
++
++        // ── J2′（规则同复审，一字未改；取点不含终点）
++        var late = rows.Where(w => !w.IsEnd).OrderBy(w => Math.Abs(w.Tt - 1100.0)).First();
++        if (fixedT)
++        {
++            var lateFixed = Shell(late.Tt, late.I, tClampCal);
++            Say($"   升温末段（管温 {late.Tt:0.0} °C）夹持两种假设的壳解：随法兰按比例 {late.TClamp:0} °C ⇒ 节点均温 {late.Kk.TNodeC:0.0}、最热铂 {late.Th.TMaxC:0.0} °C、管孔 {Sg(late.Kk.QFromTubeW, 2)} W、铜排 {late.Kk.QClampW:0.00} W；"
++              + $"写死 {lateFixed.tClamp:0} °C ⇒ 节点均温 {lateFixed.kk.TNodeC:0.0}、最热铂 {lateFixed.th.TMaxC:0.0} °C、管孔 {Sg(lateFixed.kk.QFromTubeW, 2)} W、铜排 {lateFixed.kk.QClampW:0.00} W（收敛 {lateFixed.th.Converged}）");
++        }
++        bool j2 = Math.Abs(late.Tf - late.Kk.TNodeC) <= 30 && Math.Sign(late.F.FromTubeW) == Math.Sign(late.Kk.QFromTubeW);
++        Say("");
++        Say($"J2′（{trajName}）：升温末段（管温 {late.Tt:0.0} °C）集总法兰 − 壳解节点均温 {Sg(late.Tf - late.Kk.TNodeC, 1)} K（≤ 30）　集总管来 {Sg(late.F.FromTubeW, 2)} W、壳解管孔 {Sg(late.Kk.QFromTubeW, 2)} W（同向？）"
++          + (j2 ? " ⇒ 末段集总与壳解一致（仍只是整片平均的一致，不代表片上最热处；判据表那一行照样待复核）" : " ⇒ **不一致**：集总模型在危险段与壳解对不上，这条参考量要以壳解为准或改节点定义，交物理把关人"));
++    }
++}
+diff --git a/Pt_Optimize/Core/DesignCurrent.cs b/Pt_Optimize/Core/DesignCurrent.cs
+index 6ce7d9b..faeebd8 100644
+--- a/Pt_Optimize/Core/DesignCurrent.cs
++++ b/Pt_Optimize/Core/DesignCurrent.cs
+@@ -20,6 +20,9 @@ namespace PtOptimize.Core;
+ ///   而法兰电阻随板厚变、第 1 轮闭式估计（0.6 mm 薄板）与第 2 轮场解相差 20 倍 ⇒ 设计电流 1160 → 1485 A 跳。
+ ///   尺寸依据不许被「法兰帮管子发热」省掉、也不许随法兰自己漂 ⇒ 取管子单独所需的电流（上界、确定、闭式）。
+ ///   两节点的结果另算一份印出来当对照（<see cref="Result.TwoNodeSegPeakA"/>），不进尺寸链。
++/// ⚠ R48 G2 复审（2026-09-15 Opus 5）：这份对照仍是**旧的两节点模型**（没有经舌片流进铜排的通道、舌片按裸铂、参考电阻配管根温度）——
++///   求解器定下角时（<see cref="ForLine"/>）还没有场；整线判据表调用时有场（参考电阻取场），但每段两片各跑一次，没有接节点标定 —— 接不接、怎么接待定。
++///   整线判据表「升温期法兰−管峰值」那一行已改为逐项标定。界面字串（<see cref="Result.Describe"/>）写明「旧模型」。
+ ///
+ /// 片的接头电流按 <see cref="LineSolver.JointCurrentA"/> 矢量合成（共用片 120° 相位差 ⇒ 等电流时 √3 倍）。
+ /// </summary>
+@@ -46,7 +49,9 @@ public static class DesignCurrent
+             $"设计电流（温控 {RampRateKPerH:0} °C/h 空管升温 {FromC:0}→{TargetC:0} °C，管子准静态 I²R=散热+C·Ṫ 全程峰值）：段 "
+           + string.Join("/", SegPeakA.Select(a => a.ToString("0"))) + " A ⇒ 片 "
+           + string.Join("/", PlateA.Select(a => a.ToString("0"))) + " A（共用片矢量合成）"
+-          + $"　对照·两节点含法兰自热 {string.Join("/", TwoNodeSegPeakA.Select(a => a.ToString("0")))} A（不进尺寸链）"
++          // ★ R48 G2 复审（2026-09-15 Opus 5；审查意见 minor「对照电流仍是旧模型却没有说明」）：两节点对照没有接节点标定，仍是旧模型 —— 界面上写明，免得与升温那一行（已补通道、逐项标定）混为一谈
++          // R48 G2 复审二（2026-09-15 Opus 5；审查意见 minor「同一个已判不可引用的旧两节点模型照样给出对照电流」）：数仍印（逐片圆盘保温下游门靠它咬住圆盘保温），标明不可引用
++          + $"　对照·两节点旧模型（含法兰自热；没有经舌片流进铜排的通道、舌片按裸铂；不可引用）{string.Join("/", TwoNodeSegPeakA.Select(a => a.ToString("0")))} A（不进尺寸链）"
+           + (SegClipped.Any(c => c) ? "　⚠ 有段被管 J 许用上限截住 ⇒ 跟不上设定速率" : "");
+     }
+ 
+diff --git a/Pt_Optimize/Core/FlangeStability.cs b/Pt_Optimize/Core/FlangeStability.cs
+index 788528b..cdaad14 100644
+--- a/Pt_Optimize/Core/FlangeStability.cs
++++ b/Pt_Optimize/Core/FlangeStability.cs
+@@ -40,8 +40,26 @@ public static class FlangeStability
+         /// <summary>稳定裕度 = dQ_散热/dT ÷ dP_发热/dT。**必须 &gt; 1**；&lt; 1 即热失控</summary>
+         public double Margin => DGenDT > 1e-12 ? DLossDT / DGenDT : double.PositiveInfinity;
+         public bool Stable => !double.IsNaN(Margin) && Margin > 1.0;
+-        /// <summary>评估温度超出物性拟合区间 ⇒ 判不了（而不是「稳定」）</summary>
+-        public bool Undetermined => double.IsNaN(DGenDT);
++        /// <summary>
++        /// 评估温度超出物性拟合区间 ⇒ 判不了（而不是「稳定」）。
++        /// ★ R48 G2（2026-09-15 Opus 5）：调用方给了场标定的夹持导度、而它标定不出来（NaN）⇒ 同样判不了 —— 不退回几何算法各算各的。
++        /// </summary>
++        public bool Undetermined => double.IsNaN(DGenDT) || double.IsNaN(DClampDT);
++        /// <summary>
++        /// ★ R48 G2 复审二（2026-09-15 Opus 5；审查意见 minor「字符串协议」）：夹持那一项导度是不是调用方给的**稳态场标定值**（true）——
++        /// 否则按舌片几何算（false）。判断一律读本位；原先 LineRunner 拿界面文字 <see cref="ClampSource"/> 与「稳态场标定」比，文字一改就静默失效。
++        /// </summary>
++        public bool ClampFromField;
++        /// <summary>★ R48 G2（2026-09-15 Opus 5）：夹持那一项导度的出处，**只供界面文字**，由 <see cref="ClampFromField"/> 映射（R48 G2 复审二 2026-09-15 Opus 5 改为派生，不再单独赋值）。</summary>
++        public string ClampSource => ClampFromField ? "稳态场标定" : "舌片几何";
++        /// <summary>
++        /// ★ R48 G2 复审（2026-09-15 Opus 5；审查意见 minor「割线当切线用」）：夹持那一项**按舌片几何算**的导度 W/K（改动前的算法，调用方给不给场标定值都算一份），
++        /// 与只把夹持项换成它的裕度 —— 灵敏度对照：场标定值是割线（带走热 ÷ 温差，含舌片自身焦耳热流进铜排的那一份），当温升导数用可能偏大；
++        /// 几何导度是纯导热的切线值，但按舌端半宽 × 厚、从切点量到压接段内边，读的是整线设定的边界模式。两者之间就是这一项的不确定范围。
++        /// 求和顺序与 <see cref="DLossDT"/> 相同 ⇒ 调用方不给场标定值时 <see cref="MarginGeomClamp"/> 与 <see cref="Margin"/> 逐位相同。
++        /// </summary>
++        public double DClampGeomDT = double.NaN;
++        public double MarginGeomClamp => DGenDT > 1e-12 ? (DSurfDT + DClampGeomDT + DTubeDT) / DGenDT : double.PositiveInfinity;
+         /// <summary>失控前还能承受多少温升 K（线性外推，仅供量级参考）</summary>
+         public double HeadroomK;
+         public string Note = "";
+@@ -66,13 +84,24 @@ public static class FlangeStability
+     ///   本参数让 <paramref name="areaBareMm2"/> 那一片按自己的保温算。
+     ///   传 NaN 即退回原行为（裸），故老调用点不受影响。
+     /// </param>
++    /// <param name="clampConductanceWPerK">
++    /// ★ R48 G2（2026-09-15 Opus 5；物理把关人第十一轮「两处用同一个来源」）：夹持那一项的导度 W/K 由调用方给。
++    /// 整线（LineRunner.FlangeLumped）传升温两节点同一份**稳态场标定**的导度，并按同一个夹持假设取 G·(1 − r)（RampTwoNode.NodeCalibration.StabClampWPerK；
++    /// R48 G2 复审 2026-09-15 Opus 5：原传 G，与升温那一行「夹持随法兰按比例升」的假设不一致）；
++    /// 标定不出来传 NaN ⇒ 本条判不了（<see cref="Result.Undetermined"/>）。
++    /// null = 老算法（舌片几何导度 k·截面/舌长，热导边界再与铜排串联）：整线与命令行两处整片热稳定仪器都不再走它（R48 G2 复审：原注释说命令行「拿不到稳态场」不属实，
++    /// 那两处都先跑了整线解，现改传 LineRunner.FlangeLumped 的同一份标定）；老算法的值仍总算一份放进 <see cref="Result.DClampGeomDT"/> 当灵敏度对照。
++    /// 为什么整线不再用几何导度：它按舌端半宽 × 厚、从切点量到压接段的长度算，不含舌片自身发热沿舌长流进铜排的份额，
++    /// 与场里实际带走的热（整面接触 159～274 W）对不上；而且读的是整线 DesignInputs 的夹持温度／铜排热导，不是本片的。
++    /// </param>
+     public static Result Check(DesignInputs p, double qGenW, double tPlateC,
+                                double areaInsulMm2, double areaBareMm2, double insulThickMm,
+                                double tabSectionMm2, double tabLenMm,
+                                double holeSectionMm2, double discSpanMm,
+-                               double tabInsulThickMm = double.NaN)
++                               double tabInsulThickMm = double.NaN,
++                               double? clampConductanceWPerK = null)
+     {
+-        var r = new Result { QGenW = qGenW };
++        var r = new Result { QGenW = qGenW, ClampFromField = clampConductanceWPerK is not null };   // R48 G2 复审二（2026-09-15 Opus 5）：出处位在护栏之前定，判不了时也读得到
+ 
+         // ★ 护栏：电阻率拟合只在约 0–1400 °C 有效，外面二次项会翻号，
+         //   dρe/dT 变负 ⇒ 算出「升温反而少发热」的荒谬结论。
+@@ -109,11 +138,21 @@ public static class FlangeStability
+         //    · 热导：舌片导度与铜排导度**串联** ⇒ 1/(1/g_舌 + 1/G)；
+         //    · 自由端：这条通道不存在 ⇒ 0。
+         double gTab = tabLenMm > 1e-6 ? k * tabSectionMm2 / tabLenMm : 0;
+-        r.DClampDT = p.BusbarClampTempC >= 0
+-                   ? gTab
+-                   : (p.BusbarConductanceWPerK >= 0 && gTab > 1e-12
+-                      ? 1.0 / (1.0 / gTab + 1.0 / Math.Max(1e-12, p.BusbarConductanceWPerK))
+-                      : 0);
++        // R48 G2 复审（2026-09-15 Opus 5）：老算法的值总算一份（灵敏度对照，见 Result.DClampGeomDT）；下面 else 支取的就是它，算术不变
++        r.DClampGeomDT = p.BusbarClampTempC >= 0
++                       ? gTab
++                       : (p.BusbarConductanceWPerK >= 0 && gTab > 1e-12
++                          ? 1.0 / (1.0 / gTab + 1.0 / Math.Max(1e-12, p.BusbarConductanceWPerK))
++                          : 0);
++        if (clampConductanceWPerK is double gField)
++        {
++            // R48 G2（2026-09-15 Opus 5）：稳态场标定的导度（定温边界 = 法兰 → 夹持 × (1 − r)；热导边界 = 法兰 → 压接 → 冷端串联；自由端 = 0），见参数注释
++            r.DClampDT = gField;
++        }
++        else
++        {
++            r.DClampDT = r.DClampGeomDT;
++        }
+ 
+         // ── ③ 经管孔到管子：管子也是近似定温（由控温维持）
+         r.DTubeDT = discSpanMm > 1e-6 ? k * holeSectionMm2 / discSpanMm : 0;
+@@ -125,6 +164,13 @@ public static class FlangeStability
+                     ? (r.DLossDT - r.DGenDT) / Math.Max(1e-12, r.DGenDT * tcr)
+                     : 0;
+ 
++        // R48 G2（2026-09-15 Opus 5）：夹持导度标定不出来 ⇒ 判不了，不许落到下面「热失控」那句（NaN 比较恒为假）
++        if (double.IsNaN(r.DClampDT))
++        {
++            r.HeadroomK = 0;
++            r.Note = "★ 经舌片流进铜排的导度从稳态场标定不出来 —— 无法判定（不按舌片几何另算一份）";
++            return r;
++        }
+         r.Note = r.Stable
+             ? $"稳定：散热随温升增加 {r.DLossDT:0.00} W/K，快于发热的 {r.DGenDT:0.00} W/K"
+             : $"★ 热失控：发热随温升增加 {r.DGenDT:0.00} W/K，快于散热的 {r.DLossDT:0.00} W/K —— " +
+diff --git a/Pt_Optimize/Core/InstallReport.cs b/Pt_Optimize/Core/InstallReport.cs
+index dc62ed6..91c535b 100644
+--- a/Pt_Optimize/Core/InstallReport.cs
++++ b/Pt_Optimize/Core/InstallReport.cs
+@@ -121,16 +121,19 @@ public static class InstallReport
+         var ramp = r.Checks.FirstOrDefault(c => c.Name.Contains("升温到位用时"));
+         sb.AppendLine($"  升温速率 {lc.RampRateKPerH:0} °C/h；" + (ramp is not null ? $"升温到位用时（集总）{ramp.Actual:0.00} h（限 {ramp.Limit:0} h）；" : "") +
+                       $"运行控温点：{string.Join("／", d.SetpointC.Select(v => v.ToString("0")))} °C。");
+-        sb.AppendLine("  升温期间共用片最先到温，注意法兰比管热的那一段（判据表「升温期法兰−管峰值」）。");
++        // R48 G2 复审二（2026-09-15 Opus 5）：判据表那一行复核前暂不给数 ⇒ 不再叫工程师去那一行看数
++        sb.AppendLine("  升温期间共用片最先到温，注意法兰比管热的那一段（判据表「升温期法兰−管峰值」暂不给数、待复核，现场按实测盯）。");
+         sb.AppendLine();
+ 
+         // 8 判据结论
+         sb.AppendLine("**8. 判据表**" + (meshNote.Length > 0 ? $"（{meshNote}）" : ""));
+         sb.AppendLine("判据\t实际\t限值\t单位\t判定\t位置");
+         // ★ R48 B（2026-09-14 Opus 5）：参考量印「参考（不卡交付）」，不印「过」—— 旧判法两条降级后还在表里，印「过」会被读成它们也把过关。
++        // R48 G2 复审二（2026-09-15 Opus 5）：暂不给数的参考量（ConstraintOut.Withheld）印「参考（暂不给数）」，先于「算不出」—— 两者不是一回事。
++        // R48 G2 复审二（2026-09-15 Opus 5）：没有数的「实际」印「—」，不印 NaN（本机文化下印成「非數值」，门四甲首跑看到）
+         foreach (var c in r.Checks)
+-            sb.AppendLine($"{Criteria.Plain(c.Name)}\t{c.Actual:0.###}\t{c.Limit:0.###}\t{c.Unit}\t"
+-                        + $"{(c.Kind == CheckKind.Reference ? (c.Undetermined ? "参考（算不出）" : "参考（不卡交付）") : c.Undetermined ? "无法判定" : c.Ok ? "过" : "不过")}\t{c.Where}");   // 判据名走 Criteria.Plain：界面不许出现判据代号
++            sb.AppendLine($"{Criteria.Plain(c.Name)}\t{(double.IsNaN(c.Actual) ? "—" : c.Actual.ToString("0.###"))}\t{c.Limit:0.###}\t{c.Unit}\t"
++                        + $"{(c.Kind == CheckKind.Reference ? (c.Withheld ? "参考（暂不给数）" : c.Undetermined ? "参考（算不出）" : "参考（不卡交付）") : c.Undetermined ? "无法判定" : c.Ok ? "过" : "不过")}\t{c.Where}");   // 判据名走 Criteria.Plain：界面不许出现判据代号
+         sb.AppendLine();
+ 
+         // ★★ R48 B（2026-09-14 Opus 5）：热侧／冷侧两条的**逐片读数** —— 基准怎么取、最热的是谁、管根哪一端最冷，
+diff --git a/Pt_Optimize/Core/LineRunner.cs b/Pt_Optimize/Core/LineRunner.cs
+index 0599474..3915b35 100644
+--- a/Pt_Optimize/Core/LineRunner.cs
++++ b/Pt_Optimize/Core/LineRunner.cs
+@@ -462,7 +462,8 @@ public sealed class LineCase
+     /// ⚠ **与本工况无关的只有尺寸链**：设计电流（DesignCurrent 的管子准静态峰值，只读板件与 Base）、舌片厚、
+     ///   硬判据「升温」与「法兰截面 J」的实际值 —— 两工况逐位相同（R48EmptyTubeGateTests 的双工况门守着）。
+     ///   2026-09-14 Opus 5（R48 审查第 4 条）改口：此前这里写「升温链与本工况无关」，**不对** —— 下面三样取本次稳态场，随工况变：
+-    ///   「升温期法兰−管峰值」（两节点的参考电阻 QGen/I² 与参考温度取本次最热片的稳态值）、
++    ///   「升温期法兰−管峰值」（两节点的参考电阻 QGen/I² 与参考温度取本次最热片的稳态值；
++    ///     R48 G2 复审二 2026-09-15 Opus 5 改注：现为法兰节点发热／表面散热／流进铜排／管孔四项按本次最热片的稳态场标定，判据表那一行复核前暂不给数，标定仍随工况变）、
+     ///   「升温到位用时（集总）」（段电流与法兰焦耳热取本次稳态，只在 CheckRamp 时有）、
+     ///   「法兰截面 J」说明里的两节点对照电流（参考电阻取本次各片稳态）。空管结果里这三样的 Note 标明「取空管到温稳态场」。
+     /// ⚠ 管强度与集总升温两条判据用的段参数**不置 0**：管强度的载荷沿用带玻璃的液柱与流动值，许用应力仍按段设定温度取 ——
+@@ -596,6 +597,12 @@ public sealed class FlangeOut
+     /// <summary>能量闭合残差 W —— 应接近 0，显著非零说明场解有问题</summary>
+     public double EnergyResidualW;
+     /// <summary>
++    /// ★ R48 G2 复审（2026-09-15 Opus 5）：本片最后一次热解的逐格焦耳热 W、逐格表面散热 W（两面）与被边界钉住的格
++    /// （原样取自 ShellThermalResult.CellGenW／CellLossW／BoundaryCell）。升温两节点在稳态场上逐项标定法兰节点时要它（RampTwoNode.CalibrateNode）。
++    /// </summary>
++    public double[] CellGenW = Array.Empty<double>(), CellLossW = Array.Empty<double>();
++    public bool[] FieldBoundaryCell = Array.Empty<bool>();
++    /// <summary>
+     /// ★ 分区能量账（圆盘 / 舌片，以切点为界）—— 见 <see cref="ShellThermalResult.QGenDiscW"/>。
+     /// 整片一个「发热 &lt; 散热」指不出该动哪一段，而两段的杠杆方向相反。
+     /// </summary>
+@@ -706,6 +713,12 @@ public sealed class ConstraintOut
+     public CheckKind Kind = CheckKind.Target;
+     /// <summary>数据不足以判定（如纯铂在 1100 °C 以下无持久强度实测，见 §6 待补 ③）</summary>
+     public bool Undetermined;
++    /// <summary>
++    /// ★ R48 G2 复审二（2026-09-15 Opus 5；审查意见 minor「界面与报告跟升温那一行的状态对不上」）：参考量**暂不给数**（模型待复核，不许引用）——
++    /// <see cref="Actual"/> 为 NaN 不是「达不到」也不是「算不出」。显示层（判据表格、安装报告、命令行判据表）先看本位印「暂不给数」。
++    /// 现在只有「升温期法兰−管峰值」一行置它（LineRunner.Judge）。
++    /// </summary>
++    public bool Withheld;
+ 
+     /// <summary>
+     /// 本条判据的**裕度 %**。正 = 还有余量，负 = 越限。方向性判据（限 0）返回 NaN。
+@@ -1792,6 +1805,7 @@ public static class LineRunner
+                 // ★ 改用壳解的**直接通量**，不再用恒等式反推 —— 否则对账是循环论证
+                 QClampW = th.QToClampW,
+                 EnergyResidualW = th.EnergyResidualW, TRootC = tRoot,
++                CellGenW = th.CellGenW, CellLossW = th.CellLossW, FieldBoundaryCell = th.BoundaryCell,   // R48 G2 复审（2026-09-15 Opus 5）：节点标定用
+                 QGenDiscW = th.QGenDiscW, QLossDiscW = th.QLossDiscW,
+                 QGenTabW = th.QGenTabW, QLossTabW = th.QLossTabW,
+                 TDiscMeanC = th.TDiscMeanC, TTabMeanC = th.TTabMeanC,
+@@ -2122,9 +2136,97 @@ public static class LineRunner
+         public double RampInsulAreaMm2, RampBareAreaMm2, VolumeMm3, AreaMm2;
+         public FlangeStability.Result Stab = null!;
+         public RampTwoNode.Inputs? RampIn;
++        /// <summary>R48 G2（2026-09-15 Opus 5）：升温两节点吃的 DesignInputs（整线克隆、写入本片圆盘保温）—— 探针关掉新补两项复现老口径时用同一份。</summary>
++        public DesignInputs? RampP;
+         /// <summary>升温两节点结果；算不出来时为 null，原因在 <see cref="RampError"/></summary>
+         public RampTwoNodeResult? Ramp;
+         public string RampError = "";
++        /// <summary>
++        /// ★ R48 G2（2026-09-15 Opus 5）：本片热解的输入（<see cref="PlateThermalInputs"/>，舌保温／夹持温度／铜排热导都从这里取，与场解同一份）
++        /// 与法兰节点的稳态场标定（<see cref="RampTwoNode.CalibrateNode"/>；R48 G2 复审改为四项一个节点口径）。
++        /// 整片热稳定的夹持导度（<see cref="RampTwoNode.NodeCalibration.StabClampWPerK"/>）与升温两节点的四项都用 <see cref="Calib"/> 这一份。
++        /// </summary>
++        public PlateThermalSetup ThermalSetup = null!;
++        public RampTwoNode.NodeCalibration Calib = null!;
++        /// <summary>R48 G2（2026-09-15 Opus 5）：本片圆盘保温 mm（LineCase.DiscInsulEffectiveAt，只供附注与探针打印）</summary>
++        public double DiscInsulMm = double.NaN;
++        /// <summary>R48 G2 复审（2026-09-15 Opus 5）：网格取自本片场（FlangeOut.Mesh）没有 —— false 时是本函数按板件建的，那时节点标定判不了</summary>
++        public bool MeshFromField;
++        /// <summary>R48 G2 复审（2026-09-15 Opus 5）：升温两节点法兰节点的面积 mm²、体积 mm³（节点格 = 标定那一份；不排除时取网格原值）</summary>
++        public double NodeAreaMm2, NodeVolumeMm3;
++        /// <summary>R48 G2 复审（2026-09-15 Opus 5）：表面散热的场标定系数 κ（RampTwoNode.Model.SurfaceScale）与标定点上的管节点温度 °C（Model.TubeNodeTempAtRoot）；没解升温时 NaN</summary>
++        public double SurfaceScale = double.NaN, TubeNodeAtCalibC = double.NaN;
++        /// <summary>
++        /// R48 G2 复审（2026-09-15 Opus 5）：改动前升温两节点吃的参考电阻 Ω（整片发热 ÷ 电流²，当时配管根温度 FlangeOut.TRootC）。
++        /// **生产不再用**，只留给前后对照探针复现老口径（R48G2RampClampChannelTests 的 J0 回归逐位核它）。
++        /// </summary>
++        public double LegacyRefOhm = double.NaN;
++    }
++
++    /// <summary>
++    /// ★ R48 G2 复审二（2026-09-15 Opus 5；审查意见 minor 三条）：判据表「整片热稳定」那一行的附注，从 Judge 里原样提出来（门拿合成的 FlangeLumpedOut 就能验，不必跑整线）。改三处：
++    ///   · 追不追加「夹持导度」那一段读 <see cref="FlangeStability.Result.ClampFromField"/>（原拿界面文字与「稳态场标定」比，文字一改就静默失效）；
++    ///   · 夹持导度标定不出来而判不了时，末尾追加标定为什么不成（<see cref="RampTwoNode.NodeCalibration.Note"/>；原只有命令行附上，界面只写「标定不出来」）；
++    ///   · 「割线值」换成人话（按稳态带走的热 ÷ 温差算，把舌片自身发热直接流进铜排的那份也算成了导热，可能偏大）。
++    /// 其余文字（前缀、散热侧分项、参考量说明）与复审版逐字相同。
++    /// </summary>
++    public static string FlangeStabNote(FlangeLumpedOut lumped)
++    {
++        var st = lumped.Stab;
++        bool clampNotCalibrated = st.ClampFromField && double.IsNaN(st.DClampDT);
++        return "dQ_散热/dT ÷ dP_发热/dT，**须 > 1**；< 1 即正反馈失控（保温过头那条路）。"
++             + (st.Undetermined
++                ? "　" + st.Note + (clampNotCalibrated && lumped.Calib is { } k && k.Note.Length > 0 ? "；原因：" + k.Note + "。" : "")
++                : $"　散热侧 表面 {st.DSurfDT:0.000} + 夹持 {st.DClampDT:0.000}（{st.ClampSource}）"
++                  + $" + 管孔 {st.DTubeDT:0.000} = {st.DLossDT:0.000} W/K，"
++                  + $"发热侧 {st.DGenDT:0.000} W/K")
++             + (st.Undetermined || !st.ClampFromField ? ""
++                // R48 G2 复审二（2026-09-15 Opus 5）：按边界模式分句 —— 自由端没有铜排，原句「流进铜排的热 ÷（法兰均温 − 夹持温度）× (1 − 0.00)」对它是空话（合成门首跑看到）
++                : lumped.Calib?.Mode == ShellThermal.ClampBoundary.Free
++                ? "　舌端没有接铜排，夹持这一项为 0。"
++                : $"　夹持导度 = 本片稳态场里流进铜排的热 ÷（法兰均温 − {(lumped.Calib?.Mode == ShellThermal.ClampBoundary.FixedTemp ? "夹持温度" : "铜排冷端温度")}）"
++                  + $"× (1 − 夹持温度随法兰升的比例 {lumped.Calib?.FollowRatio ?? double.NaN:0.00})，与升温那一行同一个夹持假设；"
++                  + "这样按稳态带走的热 ÷ 温差算，把舌片自身发热直接流进铜排的那一份也算成了导热，当「温度每升 1 K 多带走多少热」用可能偏大 —— "
++                  + $"改按舌片导热截面算（{st.DClampGeomDT:0.000} W/K），裕度为 {st.MarginGeomClamp:0.00}。")
++             + "　⚠ 现为**参考量**：限 1.0 是精确物理，但跨几何的量级还没攒够，"
++             + "攒够再升为硬判据（管 J 当年也是这么升上去的）。";
++    }
++
++    /// <summary>
++    /// ★ R48 G2 复审（2026-09-15 Opus 5；审查意见 blocker「修后的数仍作为正常参考量进判据表」）：升温期「法兰 − 管」那一行的附注。
++    /// 物理把关人复核前这一行**判不了、不给数**。附注说清为什么不给数、模型补了什么、四项怎么标定、夹持温度的假设、舌片／圆盘按多厚保温算；
++    /// 不与 215 K 比（旧模型的现役基准），不下「偏高／偏保守」的方向结论。写给现场工程师：说人话、不带判据代号与开关名。
++    /// （第一版叫 RampChannelNote，把修后的数当正常参考量显示。）
++    /// ★ R48 G2 复审二（2026-09-15 Opus 5；审查意见 major「位置说法没有依据」「标定只在标定点上成立」）改两处，依据都是复审探针输出：
++    ///   ① 原句「不代表孔边最热处 —— 孔边比管热时……」撤回：壳解的孔面是定温边界、孔边温度就等于管温，孔边本身不会比管热；
++    ///      升温末段最热铂在圆盘区以外（圆盘区按 r ≤ 盘半径圈；deliverable/R48_G2_复审_升温两节点逐项标定_B2_2026-09-15.txt 表一管温 1101.6 °C：最热 1122.8 > 盘峰 1116.2 °C，
++    ///      误差预算同名文件管温 1098.3 °C：1109.2 > 1108.1 °C）。附注改说「不代表片上最热处」，**不写位置** —— 本函数对任何设计出同一句话，位置是算例的事：
++    ///      复审二探针表三（deliverable/R48_G2_复审二_升温两节点_{B2,误差预算}_{带玻璃,空管}_2026-09-15.txt）：升温末段最热格都在**舌片区、舌保温底下、紧贴圆盘外缘**（圆盘区按 r ≤ 30 mm 圈，管孔半径 25.8 mm）—— B2 带玻璃 管温 1101.6 °C 最热 1122.8 °C 在 r 35.0 mm（离管孔半径 9.2 mm，x −35，厚 3.10 mm，J 11.7 A/mm²）；误差预算带玻璃 1098.3 °C 最热 1109.2 °C 在 r 31.0 mm（5.2 mm，J 12.9）；B2 空管 1101.6 °C 最热 1137.6 °C 在 r 37.0 mm（11.2 mm）；误差预算空管 1098.3 °C 最热 1119.1 °C 在 r 33.0 mm（7.2 mm）；圆盘区峰值都在 r 29.0～29.8 mm。升温前段（管温 300～500 °C）最热格与管温相差不到 0.2 K，在孔面上或离管孔半径 1.2 mm 以内（片上别处都比管冷）。
++    ///   ② 补一句「四项只在稳态那一点上按场对上」：同两份输出表一，集总法兰温度与逐时刻壳解节点均温最大差 74.6 K（B2）／108.9 K（误差预算），
++    ///      比第一版（56.5／59.2 K，deliverable/R48_G2_升温两节点补铜排通道_{B2,误差预算}_2026-09-15.txt）偏得更远。界面只说离开那一点不保证准，数写在这里。
++    /// </summary>
++    public static string RampPendingNote(LineCase c, FlangeLumpedOut o)
++    {
++        var k = o.Calib; var gi = o.RampIn;
++        string Insul(double mm) => DesignScreen.FlangeFaceInsulated(mm) ? $"{mm:0.0} mm 保温" : "裸铂表面";
++        string head = $"★ **暂不给数，待复核**：现场升温方式（温控 {c.RampRateKPerH:0} K/h、空管）下「法兰温度 − 管温」的全程最大值。"
++                    + "两节点模型已补经舌片流进铜排的通道与舌片保温，法兰这一节点的发热、表面散热、流进铜排、经管孔与管子换热四项都按本片稳态场标定；"
++                    + "但这四项只在稳态那一点上与温度场对得上，升温途中离开那一点就不保证准。"
++                    + "而且这个法兰温度是整片（含越来越冷的舌片）按体积平均的温度，不代表片上最热处 —— 片上局部比管热时整片平均仍可能比管冷，这个数看不到局部的危险，复核前不可引用。"
++                    + "也不与 215 K 比：那是旧模型（没有这条通道、舌片按裸铂）对现役设备算的基准。";
++        if (k is null) return head;
++        string clamp = k.Mode switch
++        {
++            ShellThermal.ClampBoundary.Free => "舌端没有接铜排；",
++            ShellThermal.ClampBoundary.FixedTemp => $"夹持 {k.TClampC:0} °C，升温期假设夹持温度随法兰温度按同一比例升（从铜排冷端 {k.TColdC:0} °C 起），铜排自身发热与热惯性没算；",
++            _ => $"铜排冷端 {k.TClampC:0} °C，升温期冷端不变，铜排自身发热与热惯性没算；",
++        };
++        // R48 G2 复审二（2026-09-15 Opus 5；审查意见 minor「负零」）：带号数走 SizerResult.Signed（原 {x:+0.0;-0.0}，-0.05～0 之间 net8 印成「-+0.0」）
++        string detail = k.Ok && gi is not null
++            ? $"　本片稳态场：法兰均温 {k.TNodeC:0} °C、发热 {k.QGenW:0} W、表面散热 {k.QLossW:0} W、流进铜排 {k.QClampW:0} W、管孔流入 {SizerResult.Signed(k.QFromTubeW)} W（管根 {k.TRootC:0} °C）；"
++              + clamp + $"舌片区按 {Insul(gi.TabInsulThickMm)}、圆盘按 {Insul(o.DiscInsulMm)}算散热。"
++            : "　" + k.Note + "。";
++        return head + (o.ClampExcluded ? "　压接段压在铜排下，不算进法兰这一节点。" : "") + detail;
+     }
+ 
+     /// <summary>
+@@ -2138,13 +2240,72 @@ public static class LineRunner
+     ///     舌片到铜排的导热长减去压接长（定温边界从舌端挪到了压接段内边）。
+     ///   false，或网格不带压接格（老口径；压接段盖到管孔的退化几何回退）：与改动前逐位相同（面积、体积直接取网格原值，不重新累加）。
+     ///   ⚠ 舌片导热长仍从 |TabEndXMm| 起算（没计延长段，改动前就如此，本次不改）。
++    ///   ★ R48 G2 复审（2026-09-15 Opus 5）：升温两节点的节点格改取 <see cref="RampTwoNode.NodeCalibration.NodeCell"/>（场里不被边界钉住的格，与标定同一份）；
++    ///     定温边界的生产网格上它就是压接格以外的格（前后对照探针的老口径逐位回归核过）；热导边界下场里不钉格 ⇒ 压接格也在节点里（它们在场的热平衡里）。
++    ///     整片热稳定的盘／舌面积、导热长仍按压接格排除（本次不改）。
+     ///
+     /// ══ 量过的前后（deliverable/R48_集总模型排除压接格_2026-09-14.txt：误差预算设计、导航网格、生产配方，最不利片 HC1|HC2，排除 2400 mm²）
+     ///   整片热稳定裕度 16.397（不排除）→ 15.246（排除）；升温两节点「法兰−管」峰值 22.05 K → 144.29 K（质量 564 → 383 g、裸露面积 6979 → 4579 mm²）。
+     ///   改动前（老口径、同一算例）是 14.489 与 71.62 K（deliverable/R48A_基线树老口径记录_2026-09-14.txt，基线树上跑的）。
+     ///   ⚠ 升温两节点模型**本来就没有铜排导热这条通道**（RampTwoNode 类注释列的三条机理里没有它；改动前老口径靠压接段那块面积的表面散热顶着）。
+     ///     排除压接格后这条参考量少了那块面积、又没有铜排通道补上 ⇒ 现在偏保守一侧；要不要给 RampTwoNode 加铜排通道，待定（2026-09-14 Opus 5）。
++    ///   ⛔ 上一句的「偏保守一侧」**撤回**（2026-09-15 Opus 5，物理把关人第十一轮）：22.05 K 与 144.29 K 都不可引用 ——
++    ///     22 K 是两个假项（压接面按裸铂散热约 130 W、多算 180 g 热容）顶替出来的；144 K 缺铜排通道，同一模型里舌片又按裸铂 ε 0.18 多算散热约 150 W 量级，两项方向相反，谈不上哪一侧。
++    ///
++    /// ══ R48 G2（2026-09-15 Opus 5）：铜排通道与舌片保温一起补
++    ///   · 舌片区（圆盘保温圈以外）按本片舌保温算散热与保温热容；整片热稳定的舌保温也改取同一份（解析路径与原来的板件值相同；图纸路径原取判据等效片上的值）。
++    ///   · 升温期夹持温度随法兰温度按定比走（假设与局限见 RampTwoNode.Inputs.ClampFollowRatio）。
++    ///   ⛔ 第一版只把铜排通道按节点格均温标定，参考电阻仍配管根温度、管孔仍按几何式 —— 修后 0.29／0.09 K 是两处口径错互相抵消的数，撤回、不可引用（审查意见 blocker）。
++    ///     ⛔ 其中「互相抵消」一说撤回（R48 G2 复审二 2026-09-15 Opus 5）：两处改成节点口径后峰值 0.288 → 0.387 K（B2）、0.087 → 0.136 K（误差预算），仍在升温起点，不是抵消出来的；
++    ///       「撤回、不可引用」不变 —— 理由换成：整片平均的节点温度看不到片上最热处，且沿轨迹与壳解对不上（见下面复审二那段）。
++    ///
++    /// ══ R48 G2 复审（2026-09-15 Opus 5）：一个节点口径、四项在稳态场上标定（<see cref="RampTwoNode.CalibrateNode"/>）
++    ///   · 发热：参考电阻 = 节点格焦耳热 ÷ 场电流²，参考温度 = 节点温度（原：整片发热 ÷ 电流² 配管根温度）；
++    ///   · 表面散热：配方 × κ，κ 在节点温度上还原节点格场散热；
++    ///   · 流进铜排：G_夹 = 流进铜排 ÷（节点温度 − 夹持参考温度），夹持随法兰按比例升；
++    ///   · 管孔：孔侧导度 = 管孔流入 ÷（管根温度 − 节点温度），与管壁翅片导度串联（原：孔壁几何式）。
++    ///   · 整片热稳定的夹持导度 = G_夹·(1 − r)（与升温同一个夹持假设；原传 G_夹）；舌片几何导度的裕度另算一份进附注当灵敏度对照。
++    ///   · 图纸路径：网格取本片场的那一张（原按判据等效片另建一张，节点质量与标定不在同一张网格上）；没有场网格才自己建，那时标定判不了。
++    ///   · 判据表那一行在物理把关人裁决前**判不了、不给数**（<see cref="RampPendingNote"/>）；升温两节点照样解，数留在 <see cref="FlangeLumpedOut.Ramp"/> 给前后对照探针。
++    ///   前后对照：deliverable/R48_G2_复审_升温两节点逐项标定_B2_2026-09-15.txt 与 …_误差预算_2026-09-15.txt（R48G2RampClampChannelTests）；
++    ///   场对账快门 R48G2RampClampChannelGateTests 五。
++    ///
++    /// ══ R48 G2 复审二（2026-09-15 Opus 5；审查意见 major「管孔按稳态割线标定被自己的壳解数据证伪」）：如实写明，**模型没改**，交物理把关人
++    ///   · 四项标定只保证在标定点上逐项还原场（快门五）；沿升温轨迹比第一版偏得更远（两版输出各自的表一，准静态壳解同一片网格）：
++    ///     集总法兰 − 壳解节点均温 最大差 B2 56.5 → 74.6 K、误差预算 59.2 → 108.9 K；升温末段 B2 +16.6 → +34.9 K、误差预算 +19.8 → +39.3 K
++    ///     （第一版 deliverable/R48_G2_升温两节点补铜排通道_{B2,误差预算}_2026-09-15.txt；复审 deliverable/R48_G2_复审_升温两节点逐项标定_{B2,误差预算}_2026-09-15.txt）。
++    ///   · 管孔孔侧「导度」在壳解上沿轨迹不是常数：Q孔 ÷（管温 − 节点均温）误差预算管温 298/502/698/898/1098 °C 上 0.258/0.193/0.116/0.0215/−0.086 W/K（标定值 0.02166），
++    ///     B2 0.228 → −0.008 W/K（标定值 0.1179）—— 被分布发热的偏置主导，单点割线不是导度。审查另指：整片热稳定的管孔项按孔壁几何式 4.05 W/K，与升温两节点的 0.022 W/K 差约 180 倍，两处各算各的。
++    ///   · 管孔流向与温差反号时标定直接失败 ⇒ 设计记录 W08（一段、三段）的升温两节点不解，判据表那一行写算不出来并说原因（快门四乙记录的是这个缺陷，不是成立条件）。
++    ///   · 建议的改法（切线导度 + 发热偏置，两处同源）交物理把关人定；复审二探针在标定点上量了切线导度与偏置、沿轨迹给了预测对照（只描述），见 R48G2RampClampChannelTests：
++    ///     铜排：切线 0.301／0.366 W/K（B2／误差预算带玻璃），与整片热稳定现取的 G·(1−r) 0.296／0.330 同量级；按「切线 + 偏置 × 节点发热比」沿轨迹预测与壳解差 0.2～7.5 %（四跑，不计升温起点那几十毫瓦的点）；
++    ///     管孔：切线 0.698／0.685 W/K、偏置 −96／−122 W，割线 0.118／0.022，整片热稳定的孔壁几何式 4.045／4.052 W/K（约大 6 倍）；同法预测升温前中段（管温 300～900 °C）比壳解大 1.9～5.6 倍（B2 302 °C：+31.1 对 +13.8 W；误差预算 898 °C：+18.2 对 +3.3 W）⇒ 管孔那一项换成切线 + 偏置也不够。
++    ///   · 空管到温稳态上（升温轨迹的终点）两个设计的最不利片 HC2|HC3 管孔流向与温差反号（B2 −21.5 W、误差预算 −19.1 W）⇒ 空管那张判据表的升温行写算不出来。
++    ///   · 现役锚点（Program.cs「--flangestab」现役几何走本函数）：最不利片 HC1|HC2 管孔 +37.4 W 而节点均温 1280 °C 高于管根 1044 °C，同样标定不了；老模型（甲）峰值 333.4 K（与 §4.2s 的 215 K 不是同一条输入路径）；
++    ///     准静态壳解最热铂比管温高 +466 K，在舌端（r 约 186 mm、离管孔约 160 mm、裸舌）。数见 deliverable/R48_G2_复审二_升温两节点_现役锚点_2026-09-15.txt。
++    /// </summary>
++    /// <summary>
++    /// ★ R48 G2 复审二（2026-09-15 Opus 5；审查意见 minor「探针和门手抄了热稳定裕度的公式」）：<see cref="FlangeLumped"/> 里整片热稳定那一次调用原样搬出，
++    /// 夹持导度由调用方给（生产传 <see cref="RampTwoNode.NodeCalibration.StabClampWPerK"/>；前后对照探针传 G 复现第一版口径、传 null 复现改前几何口径）——
++    /// 其余参数（盘／舌面积、本片圆盘保温、舌片导热截面与导热长、管孔截面与盘宽、本片舌保温）逐个取自 <paramref name="o"/> 与本片场 <paramref name="fw"/>，与搬移前逐位相同。
++    /// <paramref name="o"/> 必须是 FlangeLumped 算好面积与热解输入之后的那一份。
+     /// </summary>
++    public static FlangeStability.Result StabilityCheck(LineCase c, FlangeOut fw, FlangeLumpedOut o, double? clampConductanceWPerK)
++    {
++        var pl = o.Plate;
++        double tThick = double.IsNaN(pl.TabThicknessMm) ? pl.ThicknessMm : pl.TabThicknessMm;
++        // ⚠ 评估温度取**管根温度**，不取片上最高温：FlangeStability 的护栏写明
++        //   发散几何上片温会跑到几千度，拿那个温度判出来的全是垃圾。
++        return FlangeStability.Check(
++            c.Base, fw.QGenW, fw.TRootC,
++            o.DiscAreaMm2, o.TabAreaMm2, c.DiscInsulEffectiveAt(o.Index),   // R48：逐片圆盘保温走唯一取值 LineCase.DiscInsulEffectiveAt（合并 A/D，2026-09-15 Opus 5）
++            2 * pl.TabEndHalfWidthMm * tThick, o.TabLenMm,
++            2 * Math.PI * pl.HoleRadiusMm * pl.ThicknessMm,
++            pl.DiscRadiusMm - pl.HoleRadiusMm,
++            o.ThermalSetup.TabInsulThickMm,                             // R48 G2：本片热解实际用的舌保温（原读板件 pl.TabInsulThickMm，解析路径同值）
++            clampConductanceWPerK: clampConductanceWPerK);
++    }
++
+     public static FlangeLumpedOut? FlangeLumped(LineCase c, IReadOnlyList<FlangeOut> flanges, bool excludeClampCells = true)
+     {
+         var plates = c.FlangePlates is { Length: > 0 } ? c.FlangePlates : c.GeomForJudge;
+@@ -2157,11 +2318,17 @@ public static class LineRunner
+         var fw = flanges[wj];
+         var pl = plates[Math.Min(wj, plates.Length - 1)];
+ 
+-        var mesh = FlangeMesher.Build(pl, 0, c.MeshFineMm, c.MeshCoarseMm,
++        // ★ R48 G2 复审（2026-09-15 Opus 5；审查意见 minor「图纸路径上两份格子不是同一张网格」）：有本片场的网格就用它 —— 质量、面积、排除位与标定同一张。
++        //   解析路径场网格就是下面同参数建的那一张（RunOnce 对同一块板件调同一个 FlangeMesher.Build）⇒ 逐位不变；
++        //   图纸路径原先按判据等效片另建一张，标定却在图纸网格上。没有场网格（片没解出来）才自己建，那时节点标定判不了。
++        bool meshFromField = fw.Mesh is { CellCount: > 0 };
++        var mesh = meshFromField
++                 ? fw.Mesh!
++                 : FlangeMesher.Build(pl, 0, c.MeshFineMm, c.MeshCoarseMm,
+                                       c.MeshFineRadiusMm, c.Base.BusbarClampLengthMm,
+                                       c.MeshInnerMm, c.MeshInnerRadiusMm);
+         bool skip = excludeClampCells && mesh.CellCount > 0 && mesh.ClampCell.Length == mesh.CellCount;
+-        var o = new FlangeLumpedOut { Index = wj, Plate = pl, Mesh = mesh, ClampExcluded = skip };
++        var o = new FlangeLumpedOut { Index = wj, Plate = pl, Mesh = mesh, ClampExcluded = skip, MeshFromField = meshFromField };
+ 
+         // 盘/舌面积按**切点**分 —— 与 DesignScreen.Extract 同一个口径（同一个函数 AreaByTangent），不另立标准。
+         // （原来调 DesignScreen.Extract 只取这两个面积，那里还解一遍电流场、结果没人用 ⇒ 改调它分面积的那一份，skip = false 时面积逐位相同。）
+@@ -2176,30 +2343,35 @@ public static class LineRunner
+         }
+         else { o.AreaMm2 = mesh.TotalArea; o.VolumeMm3 = mesh.VolumeMm3; }
+         o.TabLenMm = Math.Abs(pl.TabEndXMm) - (skip ? c.Base.BusbarClampLengthMm : 0.0);
+-        double tThick = double.IsNaN(pl.TabThicknessMm) ? pl.ThicknessMm : pl.TabThicknessMm;
+ 
+-        // ⚠ 评估温度取**管根温度**，不取片上最高温：FlangeStability 的护栏写明
+-        //   发散几何上片温会跑到几千度，拿那个温度判出来的全是垃圾。
+-        o.Stab = FlangeStability.Check(
+-            c.Base, fw.QGenW, fw.TRootC,
+-            o.DiscAreaMm2, o.TabAreaMm2, c.DiscInsulEffectiveAt(wj),   // R48：逐片圆盘保温走唯一取值 LineCase.DiscInsulEffectiveAt（合并 A/D，2026-09-15 Opus 5）
+-            2 * pl.TabEndHalfWidthMm * tThick, o.TabLenMm,
+-            2 * Math.PI * pl.HoleRadiusMm * pl.ThicknessMm,
+-            pl.DiscRadiusMm - pl.HoleRadiusMm,
+-            pl.TabInsulThickMm);
++        // ★ R48 G2（2026-09-15 Opus 5）：本片热解的输入（舌保温、夹持温度、铜排热导）与场解同一份。
++        // ★ R48 G2 复审（2026-09-15 Opus 5）：法兰节点四项从本片稳态场标定（一个节点口径，见 RampTwoNode.CalibrateNode）；节点格 = 场里不被边界钉住的格（excludeClampCells 同一个开关）。
++        o.ThermalSetup = PlateThermalInputs(c, wj, fw.CurrentA, fw.Mesh?.SourceField);
++        o.DiscInsulMm = c.DiscInsulEffectiveAt(wj);
++        o.Calib = RampTwoNode.CalibrateNode(meshFromField ? mesh : null, fw.TField, fw.CellGenW, fw.CellLossW, fw.FieldBoundaryCell,
++                                            fw.QClampW, fw.QFromTubeW, fw.TRootC, fw.CurrentA, o.ThermalSetup.P2, excludeClampCells);
++
++        // R48 G2 复审：夹持导度与升温两节点同一份标定、同一个夹持假设 G·(1 − r)（原传 G）；标定不出来 = NaN ⇒ 判不了。
++        // R48 G2 复审二（2026-09-15 Opus 5）：调用搬进 StabilityCheck（参数逐个不变），探针复现第一版口径时换夹持导度调同一份。
++        o.Stab = StabilityCheck(c, fw, o, o.Calib.StabClampWPerK);
+ 
+         try
+         {
+             double shareF = fw.Shared ? Math.Sqrt(3.0) : 1.0;
+             double iSeg = fw.CurrentA / Math.Max(1e-9, shareF);
+-            double rRef = fw.QGenW / Math.Max(1e-9, fw.CurrentA * fw.CurrentA);
++            o.LegacyRefOhm = fw.QGenW / Math.Max(1e-9, fw.CurrentA * fw.CurrentA);   // 改动前的参考电阻，生产不再用（见字段注释）
+             // ★ R48 续（2026-09-14，Opus 5）：保温面积按板件的唯一判定分（默认按半径），不再各抄一份 x 规则。
+-            double aIns = 0, aBare = 0;
++            // ★ R48 G2 复审（2026-09-15 Opus 5）：节点格与标定同一份（Calib.NodeCell）；没有节点格（没有场，升温不解）时退回压接格排除位，只给老口径对照的输入用。
++            bool nodeMask = o.Calib.NodeCell.Length == mesh.CellCount;
++            double aIns = 0, aBare = 0, aNode = 0, vNode = 0;
+             for (int k = 0; k < mesh.CellCount; k++)
+             {
+-                if (skip && mesh.ClampCell[k]) continue;                  // R48 复审补（2026-09-14 Opus 5）：压接格不在铂的热平衡里
++                if (nodeMask ? !o.Calib.NodeCell[k] : skip && mesh.ClampCell[k]) continue;   // R48 复审补（2026-09-14 Opus 5）：压接格不在铂的热平衡里
+                 if (pl.UnderDiscInsulation(mesh.Centroid[k].X, mesh.Centroid[k].Z)) aIns += mesh.Area[k]; else aBare += mesh.Area[k];
++                aNode += mesh.Area[k]; vNode += mesh.Area[k] * mesh.Thickness[k];
+             }
++            if (!excludeClampCells) { aNode = o.AreaMm2; vNode = o.VolumeMm3; }        // 老口径：直接取网格原值（与改动前逐位相同）
++            o.NodeAreaMm2 = aNode; o.NodeVolumeMm3 = vNode;
+             o.RampInsulAreaMm2 = aIns; o.RampBareAreaMm2 = aBare;
+             double holeR = pl.HoleRadiusMm;
+             double tubeAreaMm2 = Math.PI * ((holeR * holeR)
+@@ -2207,12 +2379,13 @@ public static class LineRunner
+             var gRamp = new RampTwoNode.Inputs
+             {
+                 WallMm = c.WallMm,
+-                FlangeMassG = o.VolumeMm3 * Materials.PtDensity * 1e-6,
++                FlangeMassG = vNode * Materials.PtDensity * 1e-6,
+                 FlangeAreaInsulMm2 = aIns, FlangeAreaBareMm2 = aBare,
+-                FlangeResistanceRefOhm = rRef, FlangeRefTempC = fw.TRootC,
++                // ★ R48 G2 复审（2026-09-15 Opus 5）：参考电阻与参考温度是同一节点口径的一对（原 整片发热 ÷ 电流² 配管根温度 ⇒ 节点温度下发热少算 ρ(均温)/ρ(管根)）
++                FlangeResistanceRefOhm = o.Calib.ResistanceRefOhm, FlangeRefTempC = o.Calib.TNodeC,
+                 HoleRadiusMm = holeR,
+-                PlateEqOuterRadiusMm = Math.Sqrt(o.AreaMm2 / Math.PI + holeR * holeR),
+-                FlangeThickMm = o.VolumeMm3 / Math.Max(1e-9, o.AreaMm2),
++                PlateEqOuterRadiusMm = Math.Sqrt(aNode / Math.PI + holeR * holeR),
++                FlangeThickMm = vNode / Math.Max(1e-9, aNode),
+                 DesignCurrentA = iSeg,
+                 MaxCurrentA = c.Base.TubeJAllowAPerMm2 * tubeAreaMm2,
+                 FromC = c.RampFromC, TargetC = c.RampTargetC,
+@@ -2221,11 +2394,27 @@ public static class LineRunner
+                            / Math.Max(0.1, c.RampRateKPerH) * 1.4,
+                 SharedFactor = shareF,
+                 Mode = RampControl.TemperatureRamp,
++                // ★ R48 G2（2026-09-15 Opus 5）：舌片区按本片舌保温；铜排通道取本片稳态场标定（与整片热稳定同一份）
++                TabInsulThickMm = o.ThermalSetup.TabInsulThickMm,
++                ClampConductanceWPerK = o.Calib.GEffWPerK,
++                ClampFollowRatio = o.Calib.FollowRatio,
++                ClampColdEndC = o.Calib.TColdC,
++                // ★ R48 G2 复审（2026-09-15 Opus 5）：表面散热与管孔孔侧导度也在同一个节点温度上标定
++                SurfaceCalibLossW = o.Calib.QLossW, SurfaceCalibTempC = o.Calib.TNodeC,
++                HolePlateConductanceWPerK = o.Calib.HolePlateGWPerK,
+             };
+             o.RampIn = gRamp;
+             // R48（2026-09-14，Opus 5）：升温两节点也按本片圆盘保温（原读整线 c.Base）
+             var pRamp = SegmentSolver.Clone(c.Base);
+             pRamp.FlangeInsulThickMm = c.DiscInsulEffectiveAt(wj);   // 合并 A/D（2026-09-15 Opus 5）：唯一取值
++            o.RampP = pRamp;
++            // R48 G2：标定不出来就不解（不许拿 NaN 或 0 顶上去算出一个看起来正常的数）；原因进判据表那一行
++            if (!o.Calib.Ok) throw new InvalidOperationException(o.Calib.Note);
++            var model = new RampTwoNode.Model(pRamp, gRamp);
++            o.SurfaceScale = model.SurfaceScale;
++            if (!(double.IsFinite(model.SurfaceScale) && model.SurfaceScale > 0))
++                throw new InvalidOperationException($"法兰节点标定不了：表面散热的场标定系数不是正数（节点散热 {o.Calib.QLossW:0.0} W、配方在 {o.Calib.TNodeC:0} °C 上 {model.FlangeSurfaceRecipeW(o.Calib.TNodeC):0.0} W）");
++            o.TubeNodeAtCalibC = model.TubeNodeTempAtRoot(fw.TRootC, o.Calib.TNodeC, o.Calib.QFromTubeW);
+             o.Ramp = RampTwoNode.Solve(pRamp, gRamp);
+         }
+         catch (Exception ex) { o.Ramp = null; o.RampError = ex.Message; }
+@@ -2835,13 +3024,7 @@ public static class LineRunner
+                     Actual = st.Undetermined ? double.NaN : st.Margin, Limit = 1.0,
+                     LessIsBetter = false, Ok = st.Stable, Undetermined = st.Undetermined,
+                     Where = fw.Name,
+-                    Note = "dQ_散热/dT ÷ dP_发热/dT，**须 > 1**；< 1 即正反馈失控（保温过头那条路）。"
+-                         + (st.Undetermined ? "　" + st.Note
+-                            : $"　散热侧 表面 {st.DSurfDT:0.000} + 夹持 {st.DClampDT:0.000}"
+-                              + $" + 管孔 {st.DTubeDT:0.000} = {st.DLossDT:0.000} W/K，"
+-                              + $"发热侧 {st.DGenDT:0.000} W/K")
+-                         + "　⚠ 现为**参考量**：限 1.0 是精确物理，但跨几何的量级还没攒够，"
+-                         + "攒够再升为硬判据（管 J 当年也是这么升上去的）。"
++                    Note = FlangeStabNote(lumped)   // R48 G2 复审二（2026-09-15 Opus 5）：附注提成公开函数（门验判不了时写原因、出处读位不读文字）
+                 });
+ 
+                 // ════════════════════════════════════════════════════════
+@@ -2861,32 +3044,24 @@ public static class LineRunner
+                 //    拿它去判现役等于判掉自己。限值需要出处 —— 与「热稳定」当初一样，
+                 //    先把量露出来、攒跨几何的分布，有出处了再谈升硬判据。
+                 // 输入与求解在 FlangeLumped 里（原来这里的 try 包的就是那一段；异常信息原样带回 RampError）
+-                if (lumped.Ramp is { } rt)
++                //
++                // ★★ R48 G2 复审（2026-09-15 Opus 5；审查意见 blocker「修后的数仍作为正常参考量进判据表」）：物理把关人复核前这一行**判不了、不给数**。
++                //   依据：两节点模型的法兰温度是整片体积平均，不代表片上最热处 —— 准静态壳解升温末段最热铂比管温高、整片平均仍比管冷
++                //   （deliverable/R48_G2_复审_升温两节点逐项标定_B2_2026-09-15.txt 表一管温 1101.6 °C：最热 1122.8 °C、节点均温 953.6 °C）；工单标题「修完前标不可引用」。
++                //   ⛔ 本段原句「看不到孔边比管热 —— 孔边已比管热」撤回（R48 G2 复审二 2026-09-15 Opus 5，审查意见 major）：壳解孔面是定温边界，孔边温度就是管温；
++                //     最热铂在圆盘区以外（同一行 最热 1122.8 > 盘峰 1116.2 °C）；位置见 RampPendingNote 注释 ①（复审二探针表三：舌片区、舌保温底下、离管孔半径 5～11 mm）。
++                //   原先：Actual = 峰值、Ok = true，附注对着 215 K 现役基准、写「本条用两节点模型补上」—— 看起来比现役安全得多，而那个数按构造就不对。
++                //   Limit 仍写 215（与交接文档的判据表同一行对得上），附注写明不与它比。升温两节点照样解，数留在 FlangeLumped 的结果里给前后对照探针。
++                if (lumped.Ramp is not null)
+                 {
+                     checks.Add(new ConstraintOut
+                     {
+                         Name = LineResult.Key.RampField, Unit = "K", Kind = CheckKind.Reference,
+-                        Actual = rt.MaxFlangeMinusTubeK, Limit = 215.0,
+-                        LessIsBetter = true, Ok = true, Where = fw.Name,
+-                        Note = $"现场升温方式（温控 {c.RampRateKPerH:0} K/h、空管）下"
+-                             + $"「法兰温度 − 管温」的**全程最大值**，出现在 "
+-                             + $"{rt.TimeAtMaxDeltaS / 3600.0:0.0} h、当时管温 {rt.TTubeAtMaxDeltaC:0} °C；"
+-                             + $"法兰峰值 {rt.TFlangePeakC:0} °C（铂熔点 {Materials.PtMeltC:0}）；"
+-                             + $"电流 {rt.CurrentStartA:0}→{rt.CurrentEndA:0} A"
+-                             + (rt.CurrentClipped ? "，**被二次侧上限截住 ⇒ 跟不上设定速率**" : "")
+-                             + (rt.FlangeMelts ? "　★★ **法兰在升温期熔化**" : "")
+-                             + "。★ 限值 215 是**现役基准**（用户 2026-08-25 确认「比较符合现状」），"
+-                             + "**不是通过线** —— 这一条现为参考量，"
+-                             + "要升硬判据得先有限值的出处（同「热稳定」当初的路子）。"
+-                             + " ⚠ 判据 ① 用的 RampSolver 把法兰并进管子当同一个温度，"
+-                             + "「法兰比管热」在那个模型里结构性地看不见；本条用两节点模型补上。"
+-                             // ★ R48（2026-09-14，Opus 5 复审补）：排除压接格之后这个数的偏向要让看数的人知道（对话的知识落到界面上）——
+-                             //   量过：误差预算设计 22.05 K（不排除）→ 144.29 K（排除），见 FlangeLumped 的注释与 deliverable/R48_集总模型排除压接格_2026-09-14.txt。
+-                             + (lumped.ClampExcluded
+-                                ? "　⚠ 压接段压在铜排下，不算进法兰这一节点（发热、质量、散热面积都不含它）；"
+-                                  + "而两节点模型没有「经舌片传给铜排」这条散热通道，所以这个数偏高、偏保守。"
+-                                : "")
+-                             // R48 审查第 4 条（2026-09-14，Opus 5）：参考电阻 QGen/I² 与参考温度取本次最热片的稳态值 ⇒ 空管时标明随工况变
++                        Actual = double.NaN, Limit = 215.0,
++                        LessIsBetter = true, Ok = true, Undetermined = true, Where = fw.Name,
++                        Withheld = true,   // R48 G2 复审二（2026-09-15 Opus 5）：显示层据此印「暂不给数」，不印「达不到／算不出」
++                        Note = RampPendingNote(c, lumped)
++                             // R48 审查第 4 条（2026-09-14，Opus 5）：标定取本次最热片的稳态场 ⇒ 空管时标明随工况变
+                              + StateDependentTag(c)
+                     });
+                 }
+@@ -2897,8 +3072,13 @@ public static class LineRunner
+                         Name = LineResult.Key.RampField, Unit = "K", Kind = CheckKind.Reference,
+                         Actual = double.NaN, Limit = 215.0, LessIsBetter = true,
+                         Ok = true, Undetermined = true, Where = "—",
+-                        Note = "★ **算不出来**：" + lumped.RampError
+-                             + "　（参考量，不参与 AllOk；但算不出来就该说，不能装作没有这一条）"
++                        // R48 G2 复审二（2026-09-15 Opus 5）：这一行复核前本来就不给数 ⇒ 算不出来时同样标「暂不给数」，附注再说算不出来的原因；
++                        //   「不参与 AllOk」是代码名，换成人话「不卡交付」（界面不许出现代号）。
++                        Withheld = true,
++                        Note = "★ **暂不给数，待复核**；本设计上还**算不出来**：" + lumped.RampError
++                             // R48 G2 复审（2026-09-15 Opus 5）：算不出来时也说清模型现状（已补通道与舌保温、逐项标定、待复核）与取的是哪个稳态场
++                             + "　（两节点模型已补经舌片流进铜排的通道与舌片保温、按本片稳态场逐项标定，待复核；参考量，不卡交付；但算不出来就该说，不能装作没有这一条）"
++                             + StateDependentTag(c)
+                     });
+                 }
+ 
+diff --git a/Pt_Optimize/Core/RampTwoNode.cs b/Pt_Optimize/Core/RampTwoNode.cs
+index 2313266..d3de90e 100644
+--- a/Pt_Optimize/Core/RampTwoNode.cs
++++ b/Pt_Optimize/Core/RampTwoNode.cs
+@@ -40,6 +40,24 @@ public sealed class RampTwoNodeResult
+     /// <summary>温控模式：电流是否被上限截住过（截住 ⇒ 跟不上设定速率）</summary>
+     public bool CurrentClipped;
+ 
++    /// <summary>
++    /// ★ R48 G2（2026-09-15 Opus 5）：本次用的**铜排通道**（导度 W/K、夹持温度随法兰温度走的比例、冷端 °C）
++    /// 与舌片区按多厚的**舌保温**算散热（NaN = 裸铂）。导度 0 = 本次没有这条通道（老调用点）。原样取自 <see cref="RampTwoNode.Inputs"/>。
++    /// </summary>
++    public double ClampConductanceWPerK, ClampFollowRatio, ClampColdEndC, TabInsulThickMm = double.NaN;
++    /// <summary>
++    /// ★ R48 G2 复审（2026-09-15 Opus 5）：本次管孔孔侧导度 W/K（NaN = 按孔壁几何式，老调用点）与表面散热的场标定系数（1 = 没标定，老调用点）。
++    /// 原样取自 <see cref="RampTwoNode.Inputs.HolePlateConductanceWPerK"/> 与 <see cref="RampTwoNode.Model.SurfaceScale"/>。
++    /// </summary>
++    public double HolePlateConductanceWPerK = double.NaN, SurfaceScale = 1.0;
++
++    /// <summary>
++    /// ★ R48 G2（2026-09-15 Opus 5）：「法兰 − 管」峰值那一刻（<see cref="AtPeak"/>）与积分停下那一刻（<see cref="AtEnd"/>）
++    /// 法兰节点与管节点的热流分量，由 <see cref="RampTwoNode.Model.Flows"/> 在那一刻的状态上算 —— 与积分用的是同一组函数。
++    /// 峰值从没出现过正值时，<see cref="AtPeak"/> 是起点那一刻。
++    /// </summary>
++    public RampTwoNode.FlangeFlows AtPeak = new(), AtEnd = new();
++
+     /// <summary>采样轨迹（供绘图/核对），列：时间 s、管温、法兰温、电流</summary>
+     public List<(double t, double tt, double tf, double i)> Trace = new();
+     public string Note = "";
+@@ -60,12 +78,63 @@ public sealed class RampTwoNodeResult
+ /// | 法兰不背保温热容，管子背 | C_管 含保温层热容（常大于铂本身），C_法兰 只含薄薄一层 |
+ /// | 管子当不了散热器 | 耦合导度 G 由**管壁的翅片导度** √(k·A·β) 与孔壁导度串联，只有约 1 W/K |
+ ///
++/// ★ R48 G2（2026-09-15 Opus 5；常驻物理把关人第十一轮）补了两项，**必须一起补**（方向相反）：
++///
++/// | 补的项 | 在方程里的位置 | 没补时的量级 |
++/// |---|---|---|
++/// | 法兰经舌片流进铜排 | −G_夹·(T_法兰 − T_夹持(T_法兰))，G_夹 由稳态场标定（<see cref="CalibrateNode"/>） | 整面接触稳态夹持带走 159～274 W，占法兰发热 30～45 %（R48_压接整面接触AB_2026-09-14.txt） |
++/// | 舌片包着舌保温 | 舌片区面积按 <see cref="Inputs.TabInsulThickMm"/> 走唯一配方 DesignScreen.PlateFluxWPerM2，舌保温热容计入法兰节点 | 按裸铂 ε 0.18 算，多算散热约 150 W 量级（物理把关人估） |
++///
++/// 两项的默认值（导度 0、舌保温 NaN）= 改动前的模型，逐位不变：命令行升温仪器与设计电流里的两节点对照仍走老模型
++/// （命令行升温仪器没有稳态场；设计电流的对照在求解器定下角时没有场、判据表调用时有场但每段两片各跑一次、没接节点标定 —— 界面对照数已注明是旧模型；R48 G2 复审 2026-09-15 Opus 5 改正原句「那两处拿不到稳态场」）。
++///
++/// ★★ R48 G2 复审（2026-09-15 Opus 5；审查意见 blocker「法兰节点温度的口径前后不一致」）：第一版只把铜排通道与热容按节点格均温标定，
++/// 发热的参考温度仍挂在管根温度上（节点温度下发热系统性少算 ρ(均温)/ρ(管根) ≈ 0.90）、管孔耦合仍按孔壁几何式建 ——
++/// 少算的约 60 W 发热被错号的管来项补上，修后 0.29／0.09 K 是两处口径错互相抵消出来的数。现改为**一个节点口径、四项都在稳态场上标定**：
++/// ⛔ 上一句后半「0.29／0.09 K 是两处口径错互相抵消出来的数」撤回（R48 G2 复审二 2026-09-15 Opus 5）：两处都改成节点口径后峰值 B2 0.288 → 0.387 K、误差预算 0.087 → 0.136 K，
++///   仍落在升温起点（deliverable/R48_G2_复审_升温两节点逐项标定_{B2,误差预算}_2026-09-15.txt 丙与丁两版）—— 峰值近 0 不是抵消出来的，是整片平均的节点温度整个升温期都比管冷；
++///   「少算约 60 W」按同一输出 J3 对照是 49 W（B2 标定点：配管根温度 461.69 W 对场 510.89 W，少 9.63 %）。
++///
++/// | 项 | 标定（节点格 = 场里不被边界钉住的格，<see cref="CalibrateNode"/>） | 老调用点（默认值，逐位不变） |
++/// |---|---|---|
++/// | 发热 | 参考电阻 = 节点格焦耳热 ÷ 场电流²，参考温度 = 节点温度 | 调用方给的参考电阻与参考温度 |
++/// | 表面散热 | 配方（圆盘保温面 + 舌片区）× 系数 κ，κ = 节点格场散热 ÷ 配方在节点温度上的值（<see cref="Inputs.SurfaceCalibLossW"/>） | κ = 1 |
++/// | 流进铜排 | G_夹 = 流进铜排的热 ÷（节点温度 − 夹持参考温度），夹持随法兰按比例升 | 没有这条通道 |
++/// | 管孔 | 孔侧导度 = 管孔流入 ÷（管根温度 − 节点温度），与管壁翅片导度串联（场的孔边是定温，场里没有管侧那一段） | 孔壁几何式 k·A_孔/l |
++///
++/// ⇒ 模型在标定点（法兰 = 节点温度、电流 = 场电流、管节点温度 = 管根 + 管孔流入 ÷ 管壁翅片导度，<see cref="Model.TubeNodeTempAtRoot"/>）上逐项还原场的节点能量账。
++/// ⚠ 单点标定：每一项都是过标定点的割线，分不开「导热」与「分布发热的偏置」（例如舌片自身焦耳热直接流进铜排、孔边电流拥塞的发热），离标定点越远越不准。
++/// ⚠⚠ R48 G2 复审二（2026-09-15 Opus 5；审查意见 major）如实写明：上表「四项标定」**只在标定点上**逐项还原场，**不是**对第一版的改进 ——
++///   沿升温轨迹与准静态壳解（同一片网格、同一边界，节点各项取节点格）比，比第一版偏得更远（两版输出各自的表一）：
++///   | 量 | 第一版（只标铜排通道） | 复审（四项标定） |
++///   |---|---|---|
++///   | 集总法兰 − 壳解节点均温 最大差，B2 | 56.5 K（管温 502 °C） | 74.6 K（管温 502 °C） |
++///   | 同上，误差预算 | 59.2 K | 108.9 K |
++///   | 升温末段（管温约 1100 °C），B2 | +16.6 K | +34.9 K |
++///   | 同上，误差预算 | +19.8 K | +39.3 K |
++///   出处：第一版 deliverable/R48_G2_升温两节点补铜排通道_{B2,误差预算}_2026-09-15.txt；复审 deliverable/R48_G2_复审_升温两节点逐项标定_{B2,误差预算}_2026-09-15.txt。
++///   病在管孔那一项：壳解上 Q孔 ÷（管温 − 节点均温）沿轨迹一路降到负值（误差预算管温 298→1098 °C：0.258、0.193、0.116、0.0215、−0.086 W/K，标定值 0.02166；
++///   B2 0.228 → −0.008，标定值 0.1179）—— 它被分布发热的偏置主导，不是导度；同一状态只比方程（复审输出表二）误差预算管温 502 °C 集总管来 +1.97 W、壳解 +19.60 W。
++///   审查粗算的仿射式 Q孔 ≈ 0.37·ΔT − 0.123·P发热（误差预算壳解 298、1098 °C 两点拟合；2026-09-15 Opus 5 按表一数复算一致）预测没参与拟合的 502/698/898 °C 得 20.7/17.3/5.6 W，壳解 19.6/15.0/3.3 W ⇒ 错的是模型形式。改法（切线导度 + 发热偏置）交物理把关人定，本类**没改**。
++/// ⚠ 节点温度是整片（含越来越冷的舌片）的体积平均，**不代表片上最热处**：升温末段准静态壳解上最热铂比管温高、而整片平均仍比管冷
++///   （复审输出表一：B2 管温 1101.6 °C 最热 1122.8 °C、节点均温 953.6 °C；误差预算 1098.3 °C 最热 1109.2 °C、节点均温 931.2 °C）⇒「节点温度 − 管温」这个指标看不到片上局部的危险，
++///   判据表那一行在物理把关人裁决前暂不给数（LineRunner.Judge）。
++///   ⛔ 原句「不代表孔边最热处：升温末段孔边已比管热」撤回（R48 G2 复审二，审查意见 major）：壳解孔面是定温边界，孔边温度就是管温；
++///   最热铂在圆盘区以外（同一行 最热 1122.8 > 盘峰 1116.2 °C、1109.2 > 1108.1 °C；圆盘区按 r ≤ 盘半径圈）。
++///   位置（R48 G2 复审二 2026-09-15 Opus 5 核过）：复审二探针表三（deliverable/R48_G2_复审二_升温两节点_{B2,误差预算}_{带玻璃,空管}_2026-09-15.txt）：升温末段最热格都在**舌片区、舌保温底下、紧贴圆盘外缘**（圆盘区按 r ≤ 30 mm 圈，管孔半径 25.8 mm）—— B2 带玻璃 管温 1101.6 °C 最热 1122.8 °C 在 r 35.0 mm（离管孔半径 9.2 mm，x −35，厚 3.10 mm，J 11.7 A/mm²）；误差预算带玻璃 1098.3 °C 最热 1109.2 °C 在 r 31.0 mm（5.2 mm，J 12.9）；B2 空管 1101.6 °C 最热 1137.6 °C 在 r 37.0 mm（11.2 mm）；误差预算空管 1098.3 °C 最热 1119.1 °C 在 r 33.0 mm（7.2 mm）；圆盘区峰值都在 r 29.0～29.8 mm。升温前段（管温 300～500 °C）最热格与管温相差不到 0.2 K，在孔面上或离管孔半径 1.2 mm 以内（片上别处都比管冷）。
++///   ⚠⚠ 复审二还量到（同一批输出）：**空管到温稳态上两个设计的最不利片（HC2|HC3）管孔流向都与温差反号**（B2 −21.5 W、误差预算 −19.1 W），四项标定不了 ⇒
++///   判据表空管那张表的升温行写算不出来；而升温轨迹的终点正是空管到温。带玻璃标定只是在一个不是轨迹终点的状态上成立。
++///
+ /// 电学上：管与它两端的**端片**串在同一回路（同一电流）；**共用片**走的是
+ /// §4.2h 的叠加电流 <c>SharedFactor·I</c>，它不是回路里的串联元件，只是发热更凶。
+ ///
+ /// 集总的代价：法兰盘内的径向温差被抹平。铂热扩散率 α = k/(ρc) ≈ 2.6e-5 m²/s，
+ /// 一分钟的扩散长度约 39 mm，与盘的径向尺寸（26→60 mm）同量级 ⇒
+ /// **分钟尺度上盘内确实是拉平的**，集总成立；秒级的孔周局部过热要看壳解。
++///
++/// 法兰节点温度 T_法兰 的口径（R48 G2 写明）：节点的热容是「节点所含格子的铂质量 × 比热」（外加保温热容），
++/// 所以 C·dT/dt = 净热流里的 T 是这些格子的**质量加权平均温度**（铂密度均匀 ⇒ 体积加权 Σ T·面积·厚 ÷ Σ 面积·厚）。
++/// 标定时从稳态场取的节点温度就是这个平均，格子范围与节点质量同一份（<see cref="CalibrateNode"/>；R48 G2 复审：四项都标定到这同一个温度上 —— 只在标定点上成立，见上面复审二那段）。
+ /// </summary>
+ public static class RampTwoNode
+ {
+@@ -79,14 +148,58 @@ public static class RampTwoNode
+         // ── 法兰（由壳网格 + ShellCurrent 给出，见 CLI --ramp2；**不需要**稳态热解）
+         /// <summary>单片质量 g</summary>
+         public double FlangeMassG;
+-        /// <summary>单面面积 mm²，按「包保温 / 裸露」分开（散热两面各一份）</summary>
++        /// <summary>
++        /// 单面面积 mm²，按「包圆盘保温 / 其余」分开（散热两面各一份）。
++        /// ★ R48 G2（2026-09-15 Opus 5）：「其余」（名字仍叫 Bare，免得动老调用点）就是圆盘保温圈以外的舌片区，
++        /// 它按 <see cref="TabInsulThickMm"/> 算散热 —— NaN 时才是字面意义的裸露。
++        /// </summary>
+         public double FlangeAreaInsulMm2, FlangeAreaBareMm2;
+-        /// <summary>参考温度下单片电阻 Ω = QGen_ref / I_ref²</summary>
++        /// <summary>
++        /// 参考温度下单片电阻 Ω = QGen_ref / I_ref²。
++        /// ★ R48 G2 复审（2026-09-15 Opus 5）：参考电阻与参考温度必须是**同一个节点口径**的一对 —— 整线（LineRunner.FlangeLumped）给
++        /// 节点格焦耳热 ÷ 场电流² 与节点温度（<see cref="NodeCalibration.ResistanceRefOhm"/>、<see cref="NodeCalibration.TNodeC"/>）；
++        /// 原先给「整片发热 ÷ 电流²」配「管根温度」，而方程在节点温度上取电阻 ⇒ 发热少算 ρ(均温)/ρ(管根)。
++        /// </summary>
+         public double FlangeResistanceRefOhm;
+         public double FlangeRefTempC = 1050;
+         /// <summary>共用片的电流叠加系数：§4.2h 推导为 √3；工作簿用 1.5；端片为 1</summary>
+         public double SharedFactor = Math.Sqrt(3.0);
+ 
++        /// <summary>
++        /// ★ R48 G2（2026-09-15 Opus 5）：<see cref="FlangeAreaBareMm2"/> 那一片（圆盘保温圈以外 = 舌片区）实际包的舌保温厚度 mm。
++        /// 包不包按 DesignScreen.FlangeFaceInsulated 判，散热走 DesignScreen.PlateFluxWPerM2，保温热容与圆盘保温同法（Layer1 物性、×0.5 梯度因子）。
++        /// NaN = 裸铂（老调用点的行为，逐位不变）。整线里由 LineRunner.FlangeLumped 取本片热解实际用的舌保温（LineRunner.PlateThermalInputs）。
++        /// </summary>
++        public double TabInsulThickMm = double.NaN;
++
++        /// <summary>
++        /// ★ R48 G2（2026-09-15 Opus 5）：**铜排通道**导度 W/K —— 法兰节点经舌片流进铜排的热 = G·(T_法兰 − T_夹持)。
++        /// 由稳态场标定（<see cref="CalibrateNode"/>）；0 = 没有这条通道（老调用点，逐位不变）。
++        /// </summary>
++        public double ClampConductanceWPerK = 0;
++        /// <summary>
++        /// ★ R48 G2：升温期夹持温度随法兰温度走的比例 r：T_夹持 = T_冷端 + r·(T_法兰 − T_冷端)。
++        /// 依据（假设）：夹持点是舌片导热与铜排导热之间的「分压点」—— 两段导度都不随时间变、铜排热惯性相对 56 h 的升温可略时，
++        /// 夹持温度离冷端的距离与法兰离冷端的距离成定比。比例由稳态场标定（稳态时正好回到场里的夹持温度）。
++        /// 热导边界下场里的冷端就是参考点 ⇒ r = 0。
++        /// </summary>
++        public double ClampFollowRatio = 0;
++        /// <summary>★ R48 G2：铜排冷端温度 °C（DesignInputs.BusbarSinkTempC，与热导边界同一个冷端）。</summary>
++        public double ClampColdEndC = 25;
++
++        /// <summary>
++        /// ★ R48 G2 复审（2026-09-15 Opus 5）：表面散热的稳态场标定点 —— 节点格的场散热 W（两面）与节点温度 °C。
++        /// 给了 ⇒ 表面散热 = κ × 配方，κ = 本值 ÷ 配方在该温度上的值（<see cref="Model.SurfaceScale"/>）：配方给温度依赖与圆盘／舌片分区，κ 把「整片一个温度」的集总误差在标定点上还原到场。
++        /// 任一为 NaN ⇒ κ = 1（老调用点逐位不变）。
++        /// </summary>
++        public double SurfaceCalibLossW = double.NaN, SurfaceCalibTempC = double.NaN;
++        /// <summary>
++        /// ★ R48 G2 复审（2026-09-15 Opus 5）：管孔耦合的**孔侧**导度 W/K，由稳态场标定（管孔流入 ÷（管根温度 − 节点温度），<see cref="NodeCalibration.HolePlateGWPerK"/>），
++        /// 与管壁翅片导度串联（<see cref="Model.GCouple"/>）。常数（与铜排通道导度同法，割线值）。NaN ⇒ 孔壁几何式 k·A_孔/l（老调用点逐位不变）。
++        /// ⚠ R48 G2 复审二（2026-09-15 Opus 5）：壳解沿升温轨迹证伪了「常数」—— 同一个比值从 0.258 降到 −0.086 W/K（误差预算），见类注释复审二那段；物理把关人裁决前不改。
++        /// </summary>
++        public double HolePlateConductanceWPerK = double.NaN;
++
+         // ── 耦合几何
+         public double HoleRadiusMm = 26.0;
+         /// <summary>盘的等效外半径 mm（由净面积反算），只用于孔壁导热的特征长度</summary>
+@@ -103,6 +216,396 @@ public static class RampTwoNode
+         public double RampRateKPerH = 20.0;
+         /// <summary>温控模式的电流上限 A（二次侧能力）。≤0 表示用 DesignCurrentA</summary>
+         public double MaxCurrentA = 0;
++
++        /// <summary>R48 G2（2026-09-15 Opus 5）：浅拷贝（字段全是值类型）—— 探针拿生产那一份输入、只关掉新补的两项去复现老口径，不手抄输入。</summary>
++        public Inputs Clone() => (Inputs)MemberwiseClone();
++    }
++
++    /// <summary>
++    /// ★ R48 G2（2026-09-15 Opus 5）：某一刻两个节点的热流分量 W。符号约定：
++    /// 法兰节点 <c>热容吸收 = 发热 − 表面散热 − 铜排通道 + 管来</c>；管节点 <c>热容吸收 = 发热 − 散热 − 管来</c>（管来 &gt; 0 = 管子在加热法兰）。
++    /// </summary>
++    public sealed class FlangeFlows
++    {
++        public double TimeS, TTubeC, TFlangeC, CurrentA;
++        /// <summary>法兰自身焦耳热（共用片按叠加电流）</summary>
++        public double GenW;
++        /// <summary>表面散热（两面）= 圆盘保温面 + 舌片区</summary>
++        public double SurfaceW, SurfaceDiscW, SurfaceTabW;
++        /// <summary>经舌片流进铜排；以及这一刻假设的夹持温度（没有通道时 NaN）</summary>
++        public double ClampW, ClampTempC = double.NaN;
++        /// <summary>管 → 法兰（经孔壁）</summary>
++        public double FromTubeW;
++        /// <summary>法兰热容吸收 = C_法兰·dT/dt，与 C_法兰 J/K</summary>
++        public double StorageW, CapJPerK;
++        /// <summary>管节点：发热、散热、热容吸收</summary>
++        public double TubeGenW, TubeLossW, TubeStorageW;
++    }
++
++    /// <summary>
++    /// ★ R48 G2（2026-09-15 Opus 5）：两节点模型的**方程本体**（散热表、热容、耦合导度、电学、电流律、铜排通道），
++    /// 从 <see cref="Solve"/> 的局部函数原样搬出成公开类 —— 门与探针在任意状态上取热流分量时调同一份，不手抄。
++    /// 搬移不改算术（新补两项默认 0 时加减的是 0.0，逐位不变；R48 G2 复审加的表面标定系数默认 1.0、孔侧导度默认 NaN 走原几何式，同样逐位不变 ——
++    /// 前后对照探针 R48G2RampClampChannelTests 的 J0 回归逐位核过甲乙丙三版）。
++    /// </summary>
++    public sealed class Model
++    {
++        private readonly DesignInputs _p;
++        private readonly Inputs _g;
++        private readonly LossTable _tubeLoss, _fluxBare, _fluxIns, _fluxTab;
++        private readonly double _L, _areaTube, _massTube, _massFlange, _capInsulTube, _capInsulFlange, _capInsulTab;
++        private readonly double _rhoRef, _vRef, _pRef, _iMax, _rateKPerS;
++        private readonly double _surfScale;
++
++        public Inputs In => _g;
++        /// <summary>
++        /// ★ R48 G2 复审（2026-09-15 Opus 5）：表面散热的场标定系数 κ = <see cref="Inputs.SurfaceCalibLossW"/> ÷ 配方（<see cref="FlangeSurfaceRecipeW"/>）在 <see cref="Inputs.SurfaceCalibTempC"/> 上的值；
++        /// 没给标定点 = 1。配方为 0 或标定值非正时是 NaN（调用方据此判「标定不了」，LineRunner.FlangeLumped）。
++        /// </summary>
++        public double SurfaceScale => _surfScale;
++        /// <summary>温控模式的电流上限 A</summary>
++        public double CurrentCapA => _iMax;
++
++        public Model(DesignInputs p, Inputs g)
++        {
++            _p = p; _g = g;
++            double ri = p.TubeIdMm * 0.5e-3, w = g.WallMm * 1e-3, rOut = ri + w;
++            _areaTube = Math.PI * (rOut * rOut - ri * ri);          // m²
++            _L = p.TubeLength;
++            double L = _L;
++
++            // ── 散热表（空管：管内没有玻璃项）
++            bool insulated = false;
++            foreach (var lay in p.Layers) if (lay.Enabled && lay.ThicknessMm > 1e-6) insulated = true;
++            double epsTube = insulated ? p.OuterEmissivity : p.PtEmissivity;
++
++            const double tabTop = 2000.0;      // 表的上界；超铂熔点后积分本就停了
++            _tubeLoss = new LossTable(p.TAmbC, tabTop, 80,
++                t => Insulation.CylinderLoss(t, p.TAmbC, rOut, p.Layers, epsTube,
++                                             p.Posture == Orientation.Vertical, L, p.LossScale).QPerLength);
++
++            // ★ R48（2026-09-14，Opus 5；审查意见「圆盘保温 0 mm 时四个消费方物理含义不一致」）：法兰两张表面热流表改调**唯一配方**
++            //   DesignScreen.PlateFluxWPerM2（特征长度 p.ConvCharLenM、包不包按 DesignScreen.FlangeFaceInsulated、两面都传风速）。
++            //   修的病：保温面原先无条件走 PlateFlux，厚度 0 时退到外覆材料 ε=0.45，而同一判据表里的整片热稳定按裸铂 ε=0.18；
++            //   保温面原先也不传风速（ShellThermal 传）。包着且默认风速 0 时调用参数与原来逐项相同 ⇒ 逐位不变。
++            _fluxBare = new LossTable(p.TAmbC, tabTop, 80,
++                t => DesignScreen.PlateFluxWPerM2(p, t, 0.0));
++            _fluxIns = DesignScreen.FlangeFaceInsulated(p.FlangeInsulThickMm)
++                ? new LossTable(p.TAmbC, tabTop, 80, t => DesignScreen.PlateFluxWPerM2(p, t, p.FlangeInsulThickMm))
++                : _fluxBare;
++            // ★ R48 G2（2026-09-15 Opus 5）：舌片区按本片舌保温（同一配方、同一判定）；不包 ⇒ 就是裸铂那张表（老口径逐位不变）。
++            //   p.FlangeInsulThickMm 是调用方给的本片圆盘保温（LineRunner.FlangeLumped 按 LineCase.DiscInsulEffectiveAt 克隆；DesignCurrent 按片克隆）—— 2026-09-15 核过。
++            _fluxTab = DesignScreen.FlangeFaceInsulated(g.TabInsulThickMm)
++                ? new LossTable(p.TAmbC, tabTop, 80, t => DesignScreen.PlateFluxWPerM2(p, t, g.TabInsulThickMm))
++                : _fluxBare;
++
++            // ── 热容
++            _massTube = Materials.PtDensity * _areaTube * L;             // kg
++            _massFlange = g.FlangeMassG * 1e-3;                          // kg
++            _capInsulTube = 0;
++            {
++                double r = rOut;
++                foreach (var lay in p.Layers)
++                {
++                    if (!lay.Enabled || lay.ThicknessMm <= 1e-6) continue;
++                    double rNext = r + lay.ThicknessMm * 1e-3;
++                    // ×0.5 是梯度因子：保温内表面跟着金属走、外表面接近环境（与 RampSolver 同口径）
++                    _capInsulTube += Math.PI * (rNext * rNext - r * r) * L
++                                   * lay.DensityKgM3 * lay.CpJKgK * 0.5;
++                    r = rNext;
++                }
++            }
++            _capInsulFlange = 0;
++            if (DesignScreen.FlangeFaceInsulated(p.FlangeInsulThickMm))   // R48（2026-09-14，Opus 5）：与散热同一判定（原 > 1e-6）
++            {
++                double volM3 = 2.0 * (g.FlangeAreaInsulMm2 * 1e-6) * (p.FlangeInsulThickMm * 1e-3);
++                _capInsulFlange = volM3 * p.Layer1.DensityKgM3 * p.Layer1.CpJKgK * 0.5;
++            }
++            // ★ R48 G2（2026-09-15 Opus 5）：舌保温的热容同法计入法兰节点（与散热同一判定；不包 ⇒ 0，老口径逐位不变）
++            _capInsulTab = 0;
++            if (DesignScreen.FlangeFaceInsulated(g.TabInsulThickMm))
++            {
++                double volTabM3 = 2.0 * (g.FlangeAreaBareMm2 * 1e-6) * (g.TabInsulThickMm * 1e-3);
++                _capInsulTab = volTabM3 * p.Layer1.DensityKgM3 * p.Layer1.CpJKgK * 0.5;
++            }
++
++            _rhoRef = Math.Max(1e-30, Materials.PtResistivity(g.FlangeRefTempC));
++
++            // ★ R48 G2 复审（2026-09-15 Opus 5）：表面散热的场标定系数（见 SurfaceScale）；没给标定点 ⇒ 1.0，老口径逐位不变（x·1.0 = x）
++            _surfScale = 1.0;
++            if (!double.IsNaN(g.SurfaceCalibLossW) && !double.IsNaN(g.SurfaceCalibTempC))
++            {
++                double recipe = FlangeSurfaceRecipeW(g.SurfaceCalibTempC);
++                _surfScale = recipe > 0 && g.SurfaceCalibLossW > 0 && double.IsFinite(g.SurfaceCalibLossW) ? g.SurfaceCalibLossW / recipe : double.NaN;
++            }
++
++            // 恒压/恒功率的定值：取**目标温度**处跑出设计电流所需的 V 或 P
++            double rAtTarget = RCircuit(g.TargetC, g.TargetC);
++            _vRef = g.DesignCurrentA * rAtTarget;
++            _pRef = g.DesignCurrentA * g.DesignCurrentA * rAtTarget;
++
++            _iMax = g.MaxCurrentA > 0 ? g.MaxCurrentA : g.DesignCurrentA;
++            _rateKPerS = g.RampRateKPerH / 3600.0;
++        }
++
++        /// <summary>管单位长度散热 × 管长 W（空管）</summary>
++        public double TubeLossW(double tt) => _tubeLoss.Eval(tt) * _L;
++
++        /// <summary>
++        /// ★ R48 G2 复审（2026-09-15 Opus 5）：表面散热的**配方值** W（两面各一份，mm² → m²）：圆盘保温面 + 舌片区，没乘场标定系数。
++        /// 唯一配方 DesignScreen.PlateFluxWPerM2（圆盘按本片圆盘保温、舌片区按本片舌保温）。
++        /// </summary>
++        public double FlangeSurfaceRecipeW(double tf)
++            => 2.0 * 1e-6 * (_g.FlangeAreaInsulMm2 * _fluxIns.Eval(tf)
++                           + _g.FlangeAreaBareMm2 * _fluxTab.Eval(tf));
++        /// <summary>单片表面散热 W = κ × 配方（<see cref="SurfaceScale"/>；没标定时 κ = 1，与改动前逐位相同）</summary>
++        public double FlangeSurfaceW(double tf) => _surfScale * FlangeSurfaceRecipeW(tf);
++        /// <summary>上式的圆盘保温面部分 W（只供分量打印）</summary>
++        public double FlangeSurfaceDiscW(double tf) => _surfScale * (2.0 * 1e-6 * (_g.FlangeAreaInsulMm2 * _fluxIns.Eval(tf)));
++        /// <summary>上式的舌片区部分 W（只供分量打印）</summary>
++        public double FlangeSurfaceTabW(double tf) => _surfScale * (2.0 * 1e-6 * (_g.FlangeAreaBareMm2 * _fluxTab.Eval(tf)));
++        /// <summary>★ R48 G2 复审：舌保温热容 J/K（两面、×0.5 梯度因子；不包 = 0）—— 门验「舌保温确实计入热容」时调它，不手抄配方</summary>
++        public double CapInsulTabJPerK => _capInsulTab;
++        /// <summary>★ R48 G2 复审：圆盘保温热容 J/K（同上）</summary>
++        public double CapInsulDiscJPerK => _capInsulFlange;
++
++        /// <summary>★ R48 G2：法兰温度为 tf 时假设的夹持温度 °C（见 <see cref="Inputs.ClampFollowRatio"/>）</summary>
++        public double ClampTempC(double tf) => _g.ClampColdEndC + _g.ClampFollowRatio * (tf - _g.ClampColdEndC);
++
++        /// <summary>★ R48 G2：经舌片流进铜排的热 W = G·(T_法兰 − T_夹持(T_法兰))；导度 ≤ 0 ⇒ 没有这条通道，恒 0</summary>
++        public double ClampW(double tf)
++            => _g.ClampConductanceWPerK > 0 ? _g.ClampConductanceWPerK * (tf - ClampTempC(tf)) : 0.0;
++
++        public double CapTube(double t) => _massTube * Materials.PtCp(t) + _capInsulTube;
++        public double CapFlange(double t) => _massFlange * Materials.PtCp(t) + _capInsulFlange + _capInsulTab;
++
++        /// <summary>
++        /// 耦合导度 G [W/K]：孔壁导热 与 管壁翅片导度 串联。
++        /// 管侧用半无限翅片的入口导度 √(k·A·β)（HANDOVER §6 ② 的 |ΔT_dip| = D/√(kAβ) 同一式）
++        /// </summary>
++        public double GCouple(double tMean)
++            => 1.0 / (1.0 / Math.Max(1e-9, GTubeFin(tMean)) + 1.0 / Math.Max(1e-9, GPlateSide(tMean)));
++
++        /// <summary>管子一侧：半无限翅片入口导度 √(k·A·β) W/K（R48 G2 复审 2026-09-15 Opus 5 从 GCouple 拆出，算术不变）</summary>
++        public double GTubeFin(double tMean)
++        {
++            double k = Materials.PtThermalK(tMean);                    // W/(m·K)
++            double beta = Math.Max(1e-6, _tubeLoss.Slope(tMean));      // W/(m·K)，空管无玻璃项
++            return Math.Sqrt(k * _areaTube * beta);                    // W/K（管子一侧）
++        }
++
++        /// <summary>
++        /// 法兰一侧（孔侧）导度 W/K：给了场标定的 <see cref="Inputs.HolePlateConductanceWPerK"/> 就用它（常数）；
++        /// 否则孔壁几何式 k·A_孔/l_特征（R48 G2 复审 2026-09-15 Opus 5 从 GCouple 拆出，几何式算术不变）。
++        /// </summary>
++        public double GPlateSide(double tMean)
++        {
++            if (!double.IsNaN(_g.HolePlateConductanceWPerK)) return _g.HolePlateConductanceWPerK;
++            double k = Materials.PtThermalK(tMean);                    // W/(m·K)
++            double aHole = 2 * Math.PI * (_g.HoleRadiusMm * 1e-3) * (_g.FlangeThickMm * 1e-3);  // m²
++            double lChar = Math.Max(1e-3, (_g.PlateEqOuterRadiusMm - _g.HoleRadiusMm) * 0.5e-3);
++            return k * aHole / lChar;                                  // W/K（法兰一侧）
++        }
++
++        /// <summary>
++        /// ★ R48 G2 复审（2026-09-15 Opus 5）：稳态场标定点上的**管节点温度** °C —— 场的孔边定在管根温度 <paramref name="tRootC"/>，
++        /// 而管节点是整根管（翅片那一段之外），两者差管壁翅片上的温降：T_管 = T_管根 + Q ÷ G_翅片((T_管 + T_法兰)/2)，取温与 <see cref="GCouple"/> 同一口径，迭代到 1e-9 K。
++        /// 孔侧导度按场标定时，模型在 (T_管, <paramref name="tf"/>) 上的管来正好等于 <paramref name="qFromTubeW"/>（门与探针在标定点上对账用它）。
++        /// </summary>
++        public double TubeNodeTempAtRoot(double tRootC, double tf, double qFromTubeW)
++        {
++            double tt = tRootC;
++            for (int it = 0; it < 200; it++)
++            {
++                double next = tRootC + qFromTubeW / Math.Max(1e-9, GTubeFin(0.5 * (tt + tf)));
++                bool done = Math.Abs(next - tt) < 1e-9;
++                tt = next;
++                if (done) break;
++            }
++            return tt;
++        }
++
++        // ── 电学：管与两端**端片**串联（同一电流），共用片只是发热更凶
++        public double RTube(double t) => Materials.PtResistivity(t) * _L / _areaTube;
++        public double RFlange(double t) => _g.FlangeResistanceRefOhm * Materials.PtResistivity(t) / _rhoRef;
++        public double RCircuit(double tt, double tf) => RTube(tt) + 2.0 * RFlange(tf);
++
++        /// <summary>
++        /// 温控模式：功率是被调量 —— 由「管子要跟住设定速率」的能量平衡反解电流
++        ///   C_管·(dT/dt)_设定 = I²R_管 − Q_散热(T_管) − G·(T_管 − T_法兰)
++        /// 冷态 Q_散热≈0 且 C·rate 极小 ⇒ 电流只有几十安，与顶满电流是两个世界。
++        /// </summary>
++        public double CurrentAt(double tt, double tf, double qLossTubeW, double qCoupleW)
++        {
++            switch (_g.Mode)
++            {
++                case RampControl.ConstantCurrent: return _g.DesignCurrentA;
++                case RampControl.ConstantVoltage: return _vRef / Math.Max(1e-12, RCircuit(tt, tf));
++                case RampControl.ConstantPower: return Math.Sqrt(_pRef / Math.Max(1e-12, RCircuit(tt, tf)));
++                default:
++                    double need = CapTube(tt) * _rateKPerS + qLossTubeW + qCoupleW;
++                    double i = need <= 0 ? 0 : Math.Sqrt(need / Math.Max(1e-12, RTube(tt)));
++                    return Math.Min(i, _iMax);
++            }
++        }
++
++        /// <summary>★ R48 G2：在 (管温, 法兰温, 段电流) 这一状态上的全部热流分量（符号见 <see cref="FlangeFlows"/>）</summary>
++        public FlangeFlows Flows(double timeS, double tt, double tf, double iSeg)
++        {
++            var f = new FlangeFlows { TimeS = timeS, TTubeC = tt, TFlangeC = tf, CurrentA = iSeg };
++            double iFl = _g.SharedFactor * iSeg;
++            f.GenW = iFl * iFl * RFlange(tf);
++            f.SurfaceW = FlangeSurfaceW(tf);
++            f.SurfaceDiscW = FlangeSurfaceDiscW(tf);
++            f.SurfaceTabW = FlangeSurfaceTabW(tf);
++            f.ClampW = ClampW(tf);
++            f.ClampTempC = _g.ClampConductanceWPerK > 0 ? ClampTempC(tf) : double.NaN;
++            f.FromTubeW = GCouple(0.5 * (tt + tf)) * (tt - tf);
++            f.CapJPerK = CapFlange(tf);
++            f.StorageW = f.GenW - f.SurfaceW - f.ClampW + f.FromTubeW;
++            f.TubeGenW = iSeg * iSeg * RTube(tt);
++            f.TubeLossW = TubeLossW(tt);
++            f.TubeStorageW = f.TubeGenW - f.TubeLossW - f.FromTubeW;
++            return f;
++        }
++    }
++
++    /// <summary>
++    /// ★★ R48 G2 复审（2026-09-15 Opus 5；审查意见 blocker「法兰节点温度的口径前后不一致」）：法兰节点在稳态场上的**逐项标定**结果（<see cref="CalibrateNode"/>）。
++    /// 节点口径只有一个：节点格 = <see cref="NodeCell"/>，节点温度 <see cref="TNodeC"/> = 这些格的体积加权均温；
++    /// 发热、表面散热、流进铜排、管孔流入四项都是**同一份格子**上的场值，标定到**同一个**节点温度上。
++    /// （第一版叫 ClampCalibration／CalibrateClamp，只标铜排通道；参考电阻挂管根温度、管孔按几何式，两处口径错互相抵消。）
++    /// </summary>
++    public sealed class NodeCalibration
++    {
++        /// <summary>场里舌端边界是哪一种（与热解同一判定 ShellThermal.ClampBoundaryOf）</summary>
++        public ShellThermal.ClampBoundary Mode;
++        /// <summary>铜排通道这一项标定成了没有（整片热稳定只要它）。自由端 = 本来没有这条通道，导度 0，也算成。</summary>
++        public bool ClampOk;
++        /// <summary>四项全部标定成了没有（升温两节点要它）。不成时 <see cref="Note"/> 写原因。</summary>
++        public bool Ok;
++        /// <summary>节点格（长度 = 网格格数；没有场时为空）、格数、体积 mm³；场里被边界钉住的格排除了没有</summary>
++        public bool[] NodeCell = Array.Empty<bool>();
++        public int NodeCells; public double NodeVolumeMm3; public bool BoundaryCellsExcluded;
++        /// <summary>节点温度 °C = 节点格体积加权均温（口径见类注释）</summary>
++        public double TNodeC = double.NaN;
++        /// <summary>场里节点的能量账 W：发热、表面散热（两面）、流进铜排、管孔流入；残差 = 发热 − 散热 − 铜排 + 管孔（排除边界格时就是场的能量残差，求和顺序不同）</summary>
++        public double QGenW = double.NaN, QLossW = double.NaN, QClampW = double.NaN, QFromTubeW = double.NaN, ResidualW = double.NaN;
++        /// <summary>场的管根温度 °C、场电流 A（本片接头电流）</summary>
++        public double TRootC = double.NaN, CurrentA = double.NaN;
++        /// <summary>铜排通道：导度 W/K = 流进铜排 ÷（节点温度 − 夹持参考温度）；夹持参考温度（定温 = 本片夹持温度；热导 = 冷端）；冷端；升温期夹持温度随法兰升的比例</summary>
++        public double GEffWPerK = double.NaN, TClampC = double.NaN, TColdC = double.NaN, FollowRatio = double.NaN;
++        /// <summary>发热：参考电阻 Ω = 节点发热 ÷ 场电流²，参考温度就是 <see cref="TNodeC"/></summary>
++        public double ResistanceRefOhm = double.NaN;
++        /// <summary>管孔：孔侧导度 W/K = 管孔流入 ÷（管根温度 − 节点温度）</summary>
++        public double HolePlateGWPerK = double.NaN;
++        public string Note = "";
++        /// <summary>
++        /// 整片热稳定用的夹持导度 W/K = G·(1 − r)：与升温两节点**同一个夹持假设**（夹持温度随法兰温度按比例升 ⇒ 流进铜排的热对法兰温度的导数是 G·(1 − r)）。
++        /// 铜排通道没标定成 = NaN（整片热稳定判不了）。热导边界 r = 0 ⇒ 就是 G；自由端 = 0。
++        /// </summary>
++        public double StabClampWPerK => ClampOk ? GEffWPerK * (1.0 - FollowRatio) : double.NaN;
++    }
++
++    /// <summary>标定要求的最小温差 K（节点温度比夹持参考温度高、管根与节点温度之差）：温差太小，导度 = 热 ÷ 温差 会把场里零点几瓦的通量误差放大成任意大的导度。1 K 在稳态（温差上百 K）上不起作用。</summary>
++    public const double CalibMinDeltaK = 1.0;
++
++    /// <summary>
++    /// ★★ R48 G2 复审（2026-09-15 Opus 5；物理把关人第十一轮 + 审查意见 blocker「节点口径」）：**法兰节点四项从稳态场标定**，一个节点口径。
++    ///
++    /// · 节点格：<paramref name="excludeBoundaryCells"/> = true ⇒ 场里**不被边界钉住**的格（<paramref name="boundaryCell"/> = ShellThermalResult.BoundaryCell，与场的能量账排除格同一判定；
++    ///   生产网格定温边界下就是整面接触的压接格）；false ⇒ 全部格（老口径对照用）。
++    /// · 节点温度：节点格体积加权均温 —— 与两节点模型法兰节点的热容同一份格子（LineRunner.FlangeLumped 的质量、面积用 <see cref="NodeCalibration.NodeCell"/>）。
++    /// · 发热 = Σ 节点格焦耳热（ShellThermalResult.CellGenW）⇒ 参考电阻 = 发热 ÷ 电流²，参考温度 = 节点温度；
++    /// · 表面散热 = Σ 节点格散热（CellLossW）⇒ 交给 <see cref="Inputs.SurfaceCalibLossW"/>，模型里算 κ；
++    /// · 流进铜排：排除边界格 ⇒ 场的直接通量 <paramref name="qToClampW"/>（ShellThermalResult.QToClampW，流进被钉住的压接格）；
++    ///   不排除 ⇒ 被钉住的格也在节点里，它们自身「发热 − 散热」按场的记账（定温格的收支归边界）同样归铜排；
++    ///   ⇒ G_夹 = 流进铜排 ÷（节点温度 − 夹持参考温度），参考温度按 ShellThermal.ClampBoundaryOf（定温 = 本片夹持温度；热导 = 冷端；自由端 = 没有通道）；
++    ///   升温期夹持随法兰按比例 r = (T_夹持 − T_冷端) ÷ (T_节点 − T_冷端)（定温）；热导 r = 0。依据与局限见 <see cref="Inputs.ClampFollowRatio"/>。
++    /// · 管孔：孔侧导度 = <paramref name="qFromTubeW"/> ÷（<paramref name="tRootC"/> − 节点温度）；流向与温差反号（均温比管根低、热却从法兰流进管，或反之）或温差不足 1 K ⇒ 标定不了：
++    ///   整片一个温度表示不了这条热流（热经孔面流进管 ⇒ 紧挨孔面的格里必有比管根热的，而整片平均比管根冷 —— 两者不在管根温度的同一侧；R48 G2 复审二 2026-09-15 Opus 5 改写原句「孔边与整片平均不在同一侧」，只说由流向推得出的，不说最热处在哪）。
++    /// ⚠ 不排除边界格时，孔边若按格定温（ShellThermal 的 holeFaceDirichlet = false）那圈孔格的收支也会被记到铜排名下；生产按面定温，不钉孔格。
++    /// <paramref name="plateInputs"/> 必须是本片热解实际用的那一份（LineRunner.PlateThermalInputs(...).P2），夹持温度与铜排热导逐片不同。
++    /// </summary>
++    public static NodeCalibration CalibrateNode(ShellMesh? mesh, double[]? tField, double[]? cellGenW, double[]? cellLossW, bool[]? boundaryCell,
++                                                double qToClampW, double qFromTubeW, double tRootC, double currentA,
++                                                DesignInputs plateInputs, bool excludeBoundaryCells)
++    {
++        var c = new NodeCalibration
++        {
++            Mode = ShellThermal.ClampBoundaryOf(plateInputs), TColdC = plateInputs.BusbarSinkTempC,
++            TRootC = tRootC, CurrentA = currentA, QFromTubeW = qFromTubeW, BoundaryCellsExcluded = excludeBoundaryCells,
++        };
++        bool free = c.Mode == ShellThermal.ClampBoundary.Free;
++        int n = mesh?.CellCount ?? 0;
++        bool field = mesh is not null && n > 0 && tField is not null && tField.Length == n
++                  && cellGenW is not null && cellGenW.Length == n && cellLossW is not null && cellLossW.Length == n
++                  && boundaryCell is not null && boundaryCell.Length == n;
++        if (!field)
++        {
++            if (free) { c.ClampOk = true; c.GEffWPerK = 0; c.FollowRatio = 0; }
++            c.Note = "本片没有带逐格发热与散热的稳态场，法兰节点标定不了" + (free ? "（舌端没有接铜排，经舌片流进铜排这一项本来就是 0）" : "");
++            return c;
++        }
++        c.NodeCell = new bool[n];
++        double v = 0, vt = 0, gen = 0, loss = 0, genB = 0, lossB = 0;
++        for (int k = 0; k < n; k++)
++        {
++            bool b = boundaryCell![k];
++            if (excludeBoundaryCells && b) continue;
++            c.NodeCell[k] = true; c.NodeCells++;
++            double w = mesh!.Area[k] * mesh.Thickness[k];
++            v += w; vt += w * tField![k];
++            gen += cellGenW![k]; loss += cellLossW![k];
++            if (b) { genB += cellGenW[k]; lossB += cellLossW[k]; }
++        }
++        c.NodeVolumeMm3 = v;
++        c.TNodeC = v > 0 ? vt / v : double.NaN;
++        c.QGenW = gen; c.QLossW = loss;
++        c.QClampW = qToClampW + (excludeBoundaryCells ? 0.0 : genB - lossB);
++        c.ResidualW = gen - loss - c.QClampW + qFromTubeW;
++
++        var why = new List<string>();
++        // ── 流进铜排
++        if (free) { c.ClampOk = true; c.GEffWPerK = 0; c.FollowRatio = 0; }
++        else
++        {
++            bool fixedT = c.Mode == ShellThermal.ClampBoundary.FixedTemp;
++            c.TClampC = fixedT ? plateInputs.BusbarClampTempC : plateInputs.BusbarSinkTempC;
++            double dT = c.TNodeC - c.TClampC;
++            if (!double.IsFinite(c.QClampW) || c.QClampW < 0 || !(dT >= CalibMinDeltaK))
++                why.Add($"经舌片流进铜排：场里带走 {c.QClampW:0.0} W、法兰均温 {c.TNodeC:0} °C、{(fixedT ? "夹持" : "铜排冷端")} {c.TClampC:0} °C（要求带走的热不为负、法兰均温比它至少高 1 K）");
++            else if (fixedT)
++            {
++                double span = c.TNodeC - c.TColdC;
++                double r = span >= CalibMinDeltaK ? (c.TClampC - c.TColdC) / span : double.NaN;
++                if (!(r >= 0 && r < 1))
++                    why.Add($"升温期夹持温度的比例：夹持 {c.TClampC:0} °C 不在铜排冷端 {c.TColdC:0} °C 与法兰均温 {c.TNodeC:0} °C 之间");
++                else { c.GEffWPerK = c.QClampW / dT; c.FollowRatio = r; c.ClampOk = true; }
++            }
++            else { c.GEffWPerK = c.QClampW / dT; c.FollowRatio = 0; c.ClampOk = true; }
++        }
++        // ── 发热
++        bool genOk = currentA > 0 && gen > 0 && double.IsFinite(gen);
++        if (genOk) c.ResistanceRefOhm = gen / (currentA * currentA);
++        else why.Add($"发热：节点发热 {gen:0.0} W、电流 {currentA:0.0} A");
++        // ── 表面散热（κ 在模型里算，这里只要求为正）
++        bool lossOk = loss > 0 && double.IsFinite(loss);
++        if (!lossOk) why.Add($"表面散热：节点散热 {loss:0.0} W");
++        // ── 管孔
++        double dTh = tRootC - c.TNodeC;
++        double gh = Math.Abs(dTh) >= CalibMinDeltaK ? qFromTubeW / dTh : double.NaN;
++        bool holeOk = gh > 0 && double.IsFinite(gh);
++        if (holeOk) c.HolePlateGWPerK = gh;
++        // R48 G2 复审二（2026-09-15 Opus 5）：带号数走 SizerResult.Signed（原 {x:+0.0;-0.0}，-0.05～0 之间 net8 印「-+0.0」，恰是本支会印的值）；
++        //   补半句「两节点模型的缺陷，不是对设计的判断」—— 这句会进判据表，工程师看了不该以为设计出了问题。
++        else why.Add($"管孔：场里管孔流入 {SizerResult.Signed(qFromTubeW)} W、管根 {tRootC:0} °C、法兰均温 {c.TNodeC:0} °C —— 流向与温差反号或温差不足 1 K，整片一个温度表示不了这条热流（两节点模型的缺陷，不是对设计的判断）");
++
++        c.Ok = c.ClampOk && genOk && lossOk && holeOk;
++        c.Note = c.Ok
++            ? $"法兰节点按本片稳态场标定：均温 {c.TNodeC:0} °C、发热 {gen:0} W、表面散热 {loss:0} W、流进铜排 {c.QClampW:0} W、管孔流入 {SizerResult.Signed(qFromTubeW)} W"
++            : "法兰节点标定不了：" + string.Join("；", why);
++        return c;
+     }
+ 
+     /// <summary>
+@@ -148,131 +651,42 @@ public static class RampTwoNode
+     public static RampTwoNodeResult Solve(DesignInputs p, Inputs g)
+     {
+         var res = new RampTwoNodeResult { Mode = g.Mode };
+-
+-        double ri = p.TubeIdMm * 0.5e-3, w = g.WallMm * 1e-3, rOut = ri + w;
+-        double areaTube = Math.PI * (rOut * rOut - ri * ri);          // m²
+-        double L = p.TubeLength;
+-
+-        // ── 散热表（空管：管内没有玻璃项）
+-        bool insulated = false;
+-        foreach (var lay in p.Layers) if (lay.Enabled && lay.ThicknessMm > 1e-6) insulated = true;
+-        double epsTube = insulated ? p.OuterEmissivity : p.PtEmissivity;
+-
+-        const double tabTop = 2000.0;      // 表的上界；超铂熔点后积分本就停了
+-        var tubeLoss = new LossTable(p.TAmbC, tabTop, 80,
+-            t => Insulation.CylinderLoss(t, p.TAmbC, rOut, p.Layers, epsTube,
+-                                         p.Posture == Orientation.Vertical, L, p.LossScale).QPerLength);
+-
+-        // ★ R48（2026-09-14，Opus 5；审查意见「圆盘保温 0 mm 时四个消费方物理含义不一致」）：法兰两张表面热流表改调**唯一配方**
+-        //   DesignScreen.PlateFluxWPerM2（特征长度 p.ConvCharLenM、包不包按 DesignScreen.FlangeFaceInsulated、两面都传风速）。
+-        //   修的病：保温面原先无条件走 PlateFlux，厚度 0 时退到外覆材料 ε=0.45，而同一判据表里的整片热稳定按裸铂 ε=0.18；
+-        //   保温面原先也不传风速（ShellThermal 传）。包着且默认风速 0 时调用参数与原来逐项相同 ⇒ 逐位不变。
+-        var fluxBare = new LossTable(p.TAmbC, tabTop, 80,
+-            t => DesignScreen.PlateFluxWPerM2(p, t, 0.0));
+-        var fluxIns = DesignScreen.FlangeFaceInsulated(p.FlangeInsulThickMm)
+-            ? new LossTable(p.TAmbC, tabTop, 80, t => DesignScreen.PlateFluxWPerM2(p, t, p.FlangeInsulThickMm))
+-            : fluxBare;
+-
+-        // 单片散热 W（两面各一份，mm² → m²）
+-        double FlangeLossW(double tf)
+-            => 2.0 * 1e-6 * (g.FlangeAreaInsulMm2 * fluxIns.Eval(tf)
+-                           + g.FlangeAreaBareMm2 * fluxBare.Eval(tf));
+-
+-        // ── 热容
+-        double massTube = Materials.PtDensity * areaTube * L;          // kg
+-        double massFlange = g.FlangeMassG * 1e-3;                      // kg
+-        double capInsulTube = 0;
+-        {
+-            double r = rOut;
+-            foreach (var lay in p.Layers)
+-            {
+-                if (!lay.Enabled || lay.ThicknessMm <= 1e-6) continue;
+-                double rNext = r + lay.ThicknessMm * 1e-3;
+-                // ×0.5 是梯度因子：保温内表面跟着金属走、外表面接近环境（与 RampSolver 同口径）
+-                capInsulTube += Math.PI * (rNext * rNext - r * r) * L
+-                                * lay.DensityKgM3 * lay.CpJKgK * 0.5;
+-                r = rNext;
+-            }
+-        }
+-        double capInsulFlange = 0;
+-        if (DesignScreen.FlangeFaceInsulated(p.FlangeInsulThickMm))   // R48（2026-09-14，Opus 5）：与散热同一判定（原 > 1e-6）
+-        {
+-            double volM3 = 2.0 * (g.FlangeAreaInsulMm2 * 1e-6) * (p.FlangeInsulThickMm * 1e-3);
+-            capInsulFlange = volM3 * p.Layer1.DensityKgM3 * p.Layer1.CpJKgK * 0.5;
+-        }
+-        double CapTube(double t) => massTube * Materials.PtCp(t) + capInsulTube;
+-        double CapFlange(double t) => massFlange * Materials.PtCp(t) + capInsulFlange;
+-
+-        // ── 耦合导度 G [W/K]：孔壁导热 与 管壁翅片导度 串联
+-        //    管侧用半无限翅片的入口导度 √(k·A·β)（HANDOVER §6 ② 的 |ΔT_dip| = D/√(kAβ) 同一式）
+-        double GCouple(double tMean)
+-        {
+-            double k = Materials.PtThermalK(tMean);                    // W/(m·K)
+-            double beta = Math.Max(1e-6, tubeLoss.Slope(tMean));       // W/(m·K)，空管无玻璃项
+-            double gTubeFin = Math.Sqrt(k * areaTube * beta);          // W/K（管子一侧）
+-            double aHole = 2 * Math.PI * (g.HoleRadiusMm * 1e-3) * (g.FlangeThickMm * 1e-3);  // m²
+-            double lChar = Math.Max(1e-3, (g.PlateEqOuterRadiusMm - g.HoleRadiusMm) * 0.5e-3);
+-            double gPlate = k * aHole / lChar;                         // W/K（法兰一侧）
+-            return 1.0 / (1.0 / Math.Max(1e-9, gTubeFin) + 1.0 / Math.Max(1e-9, gPlate));
+-        }
+-
+-        // ── 电学：管与两端**端片**串联（同一电流），共用片只是发热更凶
+-        double RTube(double t) => Materials.PtResistivity(t) * L / areaTube;
+-        double rhoRef = Math.Max(1e-30, Materials.PtResistivity(g.FlangeRefTempC));
+-        double RFlange(double t) => g.FlangeResistanceRefOhm * Materials.PtResistivity(t) / rhoRef;
+-        double RCircuit(double tt, double tf) => RTube(tt) + 2.0 * RFlange(tf);
+-
+-        // 恒压/恒功率的定值：取**目标温度**处跑出设计电流所需的 V 或 P
+-        double rAtTarget = RCircuit(g.TargetC, g.TargetC);
+-        double vRef = g.DesignCurrentA * rAtTarget;
+-        double pRef = g.DesignCurrentA * g.DesignCurrentA * rAtTarget;
+-
+-        // 温控模式：功率是被调量 —— 由「管子要跟住设定速率」的能量平衡反解电流
+-        //   C_管·(dT/dt)_设定 = I²R_管 − Q_散热(T_管) − G·(T_管 − T_法兰)
+-        // 冷态 Q_散热≈0 且 C·rate 极小 ⇒ 电流只有几十安，与顶满电流是两个世界。
+-        double iMax = g.MaxCurrentA > 0 ? g.MaxCurrentA : g.DesignCurrentA;
+-        double rateKPerS = g.RampRateKPerH / 3600.0;
+-
+-        double CurrentAt(double tt, double tf, double qLossTubeW, double qCoupleW)
+-        {
+-            switch (g.Mode)
+-            {
+-                case RampControl.ConstantCurrent: return g.DesignCurrentA;
+-                case RampControl.ConstantVoltage: return vRef / Math.Max(1e-12, RCircuit(tt, tf));
+-                case RampControl.ConstantPower: return Math.Sqrt(pRef / Math.Max(1e-12, RCircuit(tt, tf)));
+-                default:
+-                    double need = CapTube(tt) * rateKPerS + qLossTubeW + qCoupleW;
+-                    double i = need <= 0 ? 0 : Math.Sqrt(need / Math.Max(1e-12, RTube(tt)));
+-                    return Math.Min(i, iMax);
+-            }
+-        }
++        // R48 G2（2026-09-15 Opus 5）：方程本体搬进 Model（门与探针取分量调同一份）；积分循环逐行不变，只多减一项铜排通道
++        var m = new Model(p, g);
++        res.ClampConductanceWPerK = g.ClampConductanceWPerK; res.ClampFollowRatio = g.ClampFollowRatio;
++        res.ClampColdEndC = g.ClampColdEndC; res.TabInsulThickMm = g.TabInsulThickMm;
++        res.HolePlateConductanceWPerK = g.HolePlateConductanceWPerK; res.SurfaceScale = m.SurfaceScale;   // R48 G2 复审（2026-09-15 Opus 5）
++        double iMax = m.CurrentCapA;
+ 
+         // ── 积分（显式，步长自适应到「每步温升 ≤ 1 K」）
+         double tTube = g.FromC, tFl = g.FromC, time = 0, maxSec = g.MaxHours * 3600.0;
+-        res.CurrentStartA = CurrentAt(tTube, tFl, tubeLoss.Eval(tTube) * L, 0);
++        res.CurrentStartA = m.CurrentAt(tTube, tFl, m.TubeLossW(tTube), 0);
+         res.PeakCurrentA = res.CurrentStartA;
+-        res.CapTubeJPerK = CapTube(0.5 * (g.FromC + g.TargetC));
+-        res.CapFlangeJPerK = CapFlange(0.5 * (g.FromC + g.TargetC));
+-        res.CouplingWPerK = GCouple(0.5 * (g.FromC + g.TargetC));
++        res.CapTubeJPerK = m.CapTube(0.5 * (g.FromC + g.TargetC));
++        res.CapFlangeJPerK = m.CapFlange(0.5 * (g.FromC + g.TargetC));
++        res.CouplingWPerK = m.GCouple(0.5 * (g.FromC + g.TargetC));
++        // 峰值那一刻的状态（循环结束后在它上面取分量）；峰值没出现正值时就是起点
++        double pkTime = 0, pkTube = tTube, pkFl = tFl, pkI = res.CurrentStartA;
+ 
+         double nextSample = 0;
+         int guard = 0;
+         while (time < maxSec && guard++ < 4_000_000)
+         {
+-            double qTube = tubeLoss.Eval(tTube) * L;
+-            double qc = GCouple(0.5 * (tTube + tFl)) * (tTube - tFl);   // >0 = 管子加热法兰
++            double qTube = m.TubeLossW(tTube);
++            double qc = m.GCouple(0.5 * (tTube + tFl)) * (tTube - tFl);   // >0 = 管子加热法兰
+ 
+-            double i = CurrentAt(tTube, tFl, qTube, qc);
++            double i = m.CurrentAt(tTube, tFl, qTube, qc);
+             if (g.Mode == RampControl.TemperatureRamp && i >= iMax - 1e-9) res.CurrentClipped = true;
+             double iFl = g.SharedFactor * i;
+             res.PeakCurrentA = Math.Max(res.PeakCurrentA, i);
+ 
+-            double pTube = i * i * RTube(tTube);
+-            double pFl = iFl * iFl * RFlange(tFl);
+-            double qFl = FlangeLossW(tFl);
++            double pTube = i * i * m.RTube(tTube);
++            double pFl = iFl * iFl * m.RFlange(tFl);
++            double qFl = m.FlangeSurfaceW(tFl);
++            double qCl = m.ClampW(tFl);                                   // R48 G2：经舌片流进铜排（没有通道时恒 0.0）
+ 
+-            double dTt = (pTube - qTube - qc) / CapTube(tTube);
+-            double dTf = (pFl - qFl + qc) / CapFlange(tFl);
++            double dTt = (pTube - qTube - qc) / m.CapTube(tTube);
++            double dTf = (pFl - qFl - qCl + qc) / m.CapFlange(tFl);
+ 
+             if (time >= nextSample)
+             { res.Trace.Add((time, tTube, tFl, i)); nextSample = time + Math.Max(5.0, maxSec / 500.0); }
+@@ -282,6 +696,7 @@ public static class RampTwoNode
+             {
+                 res.MaxFlangeMinusTubeK = delta;
+                 res.TimeAtMaxDeltaS = time; res.TTubeAtMaxDeltaC = tTube;
++                pkTime = time; pkTube = tTube; pkFl = tFl; pkI = i;
+             }
+             res.TTubePeakC = Math.Max(res.TTubePeakC, tTube);
+             res.TFlangePeakC = Math.Max(res.TFlangePeakC, tFl);
+@@ -312,9 +727,11 @@ public static class RampTwoNode
+         }
+ 
+         res.TTubeEndC = tTube;
+-        res.CurrentEndA = CurrentAt(tTube, tFl, tubeLoss.Eval(tTube) * L,
+-                                    GCouple(0.5 * (tTube + tFl)) * (tTube - tFl));
++        res.CurrentEndA = m.CurrentAt(tTube, tFl, m.TubeLossW(tTube),
++                                      m.GCouple(0.5 * (tTube + tFl)) * (tTube - tFl));
+         res.Trace.Add((time, tTube, tFl, res.CurrentEndA));
++        res.AtPeak = m.Flows(pkTime, pkTube, pkFl, pkI);
++        res.AtEnd = m.Flows(time, tTube, tFl, res.CurrentEndA);
+         if (res.Note.Length == 0 && !res.TubeReached)
+             res.Note = $"限时 {g.MaxHours:0.#} h 内管只升到 {tTube:0.0} °C";
+         return res;
+diff --git a/Pt_Optimize/Core/ShellThermal.cs b/Pt_Optimize/Core/ShellThermal.cs
+index 149dc0c..705a182 100644
+--- a/Pt_Optimize/Core/ShellThermal.cs
++++ b/Pt_Optimize/Core/ShellThermal.cs
+@@ -61,6 +61,16 @@ public sealed class ShellThermalResult
+     /// 应接近 0；显著非零说明场解没收敛或边界处理有漏。
+     /// </summary>
+     public double EnergyResidualW;
++    /// <summary>
++    /// ★ R48 G2 复审（2026-09-15 Opus 5；审查意见「节点口径前后不一致」「探针壳解列与集总列不同口径」）：**逐格**的焦耳热 W、表面散热 W（两面），
++    /// 与这一格是不是被边界钉住、不入本片能量账（<see cref="BoundaryCell"/>，与 <see cref="EnergyResidualW"/> 排除的格同一个判定）。
++    /// 为什么要逐格：升温两节点的法兰节点要在稳态场上**逐项**标定（发热、表面散热、流进铜排、管孔），节点格的发热与散热只能由本热解给 ——
++    /// 散热表按格混合了圆盘／舌片两种保温，调用方重算就是手抄配方。求和顺序与 <see cref="QGenW"/>／<see cref="QLossW"/> 相同，那两个数逐位不变。
++    /// 求解没走到汇总（提前返回）时为空数组，调用方据此判「没有逐格账」。
++    /// </summary>
++    public double[] CellGenW = Array.Empty<double>(), CellLossW = Array.Empty<double>();
++    /// <summary>★ R48 G2 复审（2026-09-15 Opus 5）：被边界钉住、不入本片能量账的格（定温压接格；孔边不按面定温时的孔格）。见 <see cref="CellGenW"/>。</summary>
++    public bool[] BoundaryCell = Array.Empty<bool>();
+     public double PhiOverall;     // 自给率 = 自身发热 / 自身散热
+     public double TTabEndMeanC;   // 舌片末端平均温度（铜排压接点）
+ 
+@@ -191,6 +201,19 @@ public static class ShellThermal
+     /// <summary>散热表节点数：保持原来约 22 K 的节点间距（原 60 点铺 [环境, 设定+200]），至少 60。</summary>
+     public static int LossTableNodes(double tLoC, double tHiC) => Math.Max(60, (int)Math.Ceiling((tHiC - tLoC) / 22.0) + 1);
+ 
++    /// <summary>舌端（铜排压接段）边界的三种模式，见 <see cref="ClampBoundaryOf"/>。</summary>
++    public enum ClampBoundary { Conductance, FixedTemp, Free }
++
++    /// <summary>
++    /// ★ R48 G2（2026-09-15 Opus 5）：舌端边界是哪一种的**唯一判定** —— 本文件的热解（busG／clamped 两个位）与
++    /// 升温两节点的节点标定（RampTwoNode.CalibrateNode）共用这一份，免得「场按定温解、标定按热导读」各判各的。
++    /// 规则与原来就地写的两行逐字相同：铜排热导 ≥ 0 ⇒ 热导；否则夹持温度 ≥ 0 ⇒ 定温；否则自由端。
++    /// </summary>
++    public static ClampBoundary ClampBoundaryOf(DesignInputs p)
++        => p.BusbarConductanceWPerK >= 0 ? ClampBoundary.Conductance
++         : p.BusbarClampTempC >= 0 ? ClampBoundary.FixedTemp
++         : ClampBoundary.Free;
++
+     /// <summary>
+     /// 解温度场。
+     /// 边界：<see cref="ShellMesh.TagHole"/> 定温 = 管根温度；
+@@ -401,7 +424,7 @@ public static class ShellThermal
+         //   ① 热导（G ≥ 0）：q = G·(T − T_冷端)，**物理上唯一自洽的一种**，接头温度是输出
+         //   ② 定温（G < 0 且 ClampTempC ≥ 0）：假设铜排能把接触点按住
+         //   ③ 自由（都不给）：假设铜排完全不导热
+-        bool busG = p.BusbarConductanceWPerK >= 0;
++        bool busG = ClampBoundaryOf(p) == ClampBoundary.Conductance;   // R48 G2（2026-09-15 Opus 5）：改调唯一判定，规则逐字相同
+ 
+         // ── 定温边界
+         var isFixed = new bool[n];
+@@ -731,11 +754,14 @@ public static class ShellThermal
+ 
+         // ── 汇总
+         double gen = 0, loss = 0;
++        res.CellGenW = new double[n]; res.CellLossW = new double[n];   // R48 G2 复审（2026-09-15 Opus 5）：逐格账，求和顺序不变 ⇒ QGenW／QLossW 逐位不变
+         for (int i = 0; i < n; i++)
+         {
+             double t = m.Thickness[i], A = m.Area[i], ti = res.T[i];
+-            gen += Materials.PtResistivity(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t * A;
+-            loss += 2 * lossFor[i].Eval(ti) * A;
++            res.CellGenW[i] = Materials.PtResistivity(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t * A;
++            res.CellLossW[i] = 2 * lossFor[i].Eval(ti) * A;
++            gen += res.CellGenW[i];
++            loss += res.CellLossW[i];
+         }
+         res.QGenW = gen; res.QLossW = loss;
+         res.PhiOverall = loss > 1e-12 ? gen / loss : double.NaN;
+@@ -764,7 +790,7 @@ public static class ShellThermal
+         //   那个净流入正等于它们的散热减发热），但**账目是错的**：
+         //   90 mm 舌片有 40 mm 压接段，自由端时那 44 % 的发热与散热被整段抹掉，
+         //   还被贴上「铜排」的标签。§4.3c/§4.3d 的自由端数就是这么读出来的。
+-        bool clamped = !busG && p.BusbarClampTempC >= 0;
++        bool clamped = ClampBoundaryOf(p) == ClampBoundary.FixedTemp;   // R48 G2（2026-09-15 Opus 5）：唯一判定，= !busG && 夹持温度 ≥ 0
+         double qc = 0;
+         if (clamped)
+             for (int i = 0; i < n; i++)
+@@ -782,6 +808,8 @@ public static class ShellThermal
+         // R48（Opus 5）：面上施加定温时，孔单元是**普通自由单元**（它自己的发热与散热照常入账），
+         //   排除的只有真正被钉死的那些。
+         bool Excluded(int i) => (holeCell[i] && !holeFaceDirichlet) || (tabCell[i] && clamped);
++        res.BoundaryCell = new bool[n];                                  // R48 G2 复审（2026-09-15 Opus 5）：与本账同一个排除判定，交给节点标定
++        for (int i = 0; i < n; i++) res.BoundaryCell[i] = Excluded(i);
+         // R48 诊断（Opus 5）：那圈被排除在账外的孔单元，自身发热与散热各是多少（见 QHoleCellGenW 的注释）
+         for (int i = 0; i < n; i++)
+         {
+diff --git a/Pt_Optimize/Core/Sizer.cs b/Pt_Optimize/Core/Sizer.cs
+index 1d8c6b1..a15529c 100644
+--- a/Pt_Optimize/Core/Sizer.cs
++++ b/Pt_Optimize/Core/Sizer.cs
+@@ -155,9 +155,23 @@ public sealed class SizerResult
+     /// IEEE 里 `-0.0 == 0.0` 为真，所以一句 `v == 0 ? 0.0 : v` 就能归一。
+     /// 属于本项目已有专门测试的「格式串」family（UiWiring 第 8 项），只是那条规则查的是
+     /// `{x:0.1}`，查不到这一种。
++    ///
++    /// ★ R48 G2 复审二（2026-09-15 Opus 5）补：上面那句只掐得掉**恰好**等于负零的数。负数按格式**取整成零**时同病 ——
++    ///   net8 实测（本机临时控制台程序）：(-0.01)／(-0.04)／(-1e-9).ToString("+0.0;−0.0") 都得到 "-+0.0"（-0.05 以下正常印 "−0.1"）。
++    ///   .NET 的规则是负数取整成零就换用第一段，却仍在前面补文化的负号。于是再比一次：结果恰好是「负号 + 零按本格式印出来的样子」⇒ 印零。
++    ///   正常的负数（第二段自己带 '−' 或 '-'，取整后不为零）不会等于那个串，逐字不变。
+     /// </summary>
+-    public static string Signed(double v, string fmt = "+0.0;−0.0") =>
+-        (v == 0 ? 0.0 : v).ToString(fmt);
++    public static string Signed(double v, string fmt = "+0.0;−0.0")
++    {
++        double z = v == 0 ? 0.0 : v;
++        string s = z.ToString(fmt);
++        if (z < 0)
++        {
++            string zero = 0.0.ToString(fmt);
++            if (s == System.Globalization.NumberFormatInfo.CurrentInfo.NegativeSign + zero) return zero;
++        }
++        return s;
++    }
+ }
+ 
+ public static class Sizer
+diff --git a/Pt_Optimize/Program.cs b/Pt_Optimize/Program.cs
+index f13d18b..7432cf0 100644
+--- a/Pt_Optimize/Program.cs
++++ b/Pt_Optimize/Program.cs
+@@ -800,7 +800,7 @@ internal static class Program
+                     string verdict = k.Kind == CheckKind.Reference ? "—"
+                                    : k.Undetermined ? "?"
+                                    : k.Ok ? "✓" : "✗";
+-                    string act = double.IsNaN(k.Actual) ? "达不到" : k.Actual.ToString("0.000");
++                    string act = k.Withheld ? "暂不给数" : double.IsNaN(k.Actual) ? "达不到" : k.Actual.ToString("0.000");   // R48 G2 复审二（2026-09-15 Opus 5）
+                     Console.WriteLine($"{mark + k.Name,22}{act,12}{k.Limit,12:0.000}" +
+                                       $"  {verdict}   {k.Where}  [{k.Unit}]");
+                     if (k.Note.Length > 0) Console.WriteLine($"{"",22}  {k.Note}");
+@@ -1655,7 +1655,7 @@ internal static class Program
+                 {
+                     string mk = ck.Kind == CheckKind.HardSafety ? "★" : ck.Kind == CheckKind.Target ? "○" : "·";
+                     string vd = ck.Kind == CheckKind.Reference ? "—" : ck.Undetermined ? "?" : ck.Ok ? "✓" : "✗";
+-                    string act = double.IsNaN(ck.Actual) ? "达不到" : ck.Actual.ToString("0.000");
++                    string act = ck.Withheld ? "暂不给数" : double.IsNaN(ck.Actual) ? "达不到" : ck.Actual.ToString("0.000");   // R48 G2 复审二（2026-09-15 Opus 5）
+                     Console.WriteLine($"  {mk}{ck.Name,-20}{act,12} / {ck.Limit,-10:0.000} {vd}  {ck.Where}");
+                 }
+                 Console.WriteLine();
+@@ -2311,7 +2311,7 @@ internal static class Program
+                                     : ck.Kind == CheckKind.Target ? "○" : "·";
+                         string vd = ck.Kind == CheckKind.Reference ? "—"
+                                   : ck.Undetermined ? "?" : ck.Ok ? "✓" : "✗";
+-                        string act = double.IsNaN(ck.Actual) ? "达不到" : ck.Actual.ToString("0.000");
++                        string act = ck.Withheld ? "暂不给数" : double.IsNaN(ck.Actual) ? "达不到" : ck.Actual.ToString("0.000");   // R48 G2 复审二（2026-09-15 Opus 5）
+                         Console.WriteLine($"    {mark}{ck.Name,-20}{act,12} / {ck.Limit,-10:0.000} {vd}  {ck.Where}");
+                     }
+                     Console.WriteLine($"  ★ 整线总铂 {lr.TotalMassG:0} g（管 {lr.TubeMassG:0} + 法兰 {lr.FlangeMassG:0}）" +
+@@ -9066,13 +9066,18 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一
+                     double aTotal = f3.AreaMm2;
+                     double aIns = fi > 1e-6 ? aTotal : 0, aBare = fi > 1e-6 ? 0 : aTotal;
+ 
++                    // ★ R48 G2 复审（2026-09-15 Opus 5；审查意见 minor「命令行与界面的夹持导度来源不同」）：本片刚解过整线稳态场，
++                    //   夹持导度取 LineRunner.FlangeLumped 的同一份标定（G·(1 − r)，与界面判据表同一个来源、同一个夹持假设），不再按舌片几何另算；标定不出来 ⇒ 判不了
++                    var lumpB = LineRunner.FlangeLumped(lcB, rB.Flanges);
+                     var st = FlangeStability.Check(pB, f3.QGenW, tPlate, aIns, aBare, fi,
+                                  2 * tabWB * tThick, tabLB,
+-                                 2 * Math.PI * holeB * tThick, discB - holeB);
++                                 2 * Math.PI * holeB * tThick, discB - holeB,
++                                 clampConductanceWPerK: lumpB?.Calib.StabClampWPerK ?? double.NaN);
+                     Console.WriteLine($"{fi,12:0.0}{f3.Name,10}{f3.QGenW,9:0}{st.DGenDT,9:0.000}" +
+                         $"{st.DSurfDT,12:0.000}{st.DClampDT,8:0.000}{st.DTubeDT,8:0.000}" +
+                         $"{st.DLossDT,8:0.000}{st.Margin,8:0.00}  " +
+-                        (st.Stable ? "✓ 稳定" : "★ 热失控"));
++                        (st.Undetermined ? "? 判不了" : st.Stable ? "✓ 稳定" : "★ 热失控"));
++                    if (st.Undetermined) Console.WriteLine("            " + st.Note + (lumpB is null ? "" : "；" + lumpB.Calib.Note));
+                 }
+                 // ── 对照：**现役几何**（Ø120 + 200mm 舌 + 2mm 厚 + 纤维 2.5mm）
+                 //    这是验证本判据的关键 —— 现场确实烧过，模型能否复现？
+@@ -9107,10 +9112,13 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一
+                                 if (rO.Flanges[j3].QGenW > rO.Flanges[w2].QGenW) w2 = j3;
+                             var fO = rO.Flanges[w2];
+                             // ★ 在**工作温度**评，不是发散后的片温
++                            // R48 G2 复审（2026-09-15 Opus 5）：夹持导度同上取 LineRunner.FlangeLumped 的本片标定（现役无夹冷 = 自由端 ⇒ 0）
++                            var lumpO = LineRunner.FlangeLumped(lcO, rO.Flanges);
+                             var stO = FlangeStability.Check(pO, fO.QGenW, fO.TRootC,
+                                           fO.AreaMm2 * 0.21, fO.AreaMm2 * 0.79, 2.5,
+                                           2 * 40 * 2.0, 200,
+-                                          2 * Math.PI * 26 * 2.0, 60 - 26);
++                                          2 * Math.PI * 26 * 2.0, 60 - 26,
++                                          clampConductanceWPerK: lumpO?.Calib.StabClampWPerK ?? double.NaN);
+                             Console.WriteLine($"{"（现役）",12}{fO.Name,10}{fO.QGenW,9:0}{stO.DGenDT,9:0.000}" +
+                                 $"{stO.DSurfDT,12:0.000}{stO.DClampDT,8:0.000}{stO.DTubeDT,8:0.000}" +
+                                 $"{stO.DLossDT,8:0.000}{stO.Margin,8:0.00}  " +
+diff --git a/Pt_Optimize/UI/LineDesignPage.cs b/Pt_Optimize/UI/LineDesignPage.cs
+index 448ed41..658e9ab 100644
+--- a/Pt_Optimize/UI/LineDesignPage.cs
++++ b/Pt_Optimize/UI/LineDesignPage.cs
+@@ -4956,7 +4956,8 @@ public sealed class LineDesignPage : TabPage
+         {
+             string kind = c.Kind == CheckKind.HardSafety ? "硬"
+                         : c.Kind == CheckKind.Target ? "目标" : "参考";
+-            string act = double.IsNaN(c.Actual) ? "达不到" : c.Actual.ToString("0.000");
++            // R48 G2 复审二（2026-09-15 Opus 5）：暂不给数的参考量（ConstraintOut.Withheld）不许印成「达不到」
++            string act = c.Withheld ? "暂不给数" : double.IsNaN(c.Actual) ? "达不到" : c.Actual.ToString("0.000");
+             string lim = Math.Abs(c.Limit) < 1e-9 ? "> 0" : c.Limit.ToString("0.000");
+             string mg = "—";
+             if (c.Kind != CheckKind.Reference && !double.IsNaN(c.Actual))
+diff --git a/Pt_Optimize/UI/ManualPage.cs b/Pt_Optimize/UI/ManualPage.cs
+index 2fc8915..7c10a19 100644
+--- a/Pt_Optimize/UI/ManualPage.cs
++++ b/Pt_Optimize/UI/ManualPage.cs
+@@ -1309,7 +1309,8 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
+                   $"<tr><td>· 局部热稳定</td><td class=\"n\">&gt; 1.0 ×</td>" +
+                   "<td>最不稳定那一格离热失控还有几倍。参考量，设计记录实测 1.9–2.0 倍</td></tr>" +
+                   $"<tr><td>· 升温期法兰−管峰值</td><td class=\"n\">{lim.RampRateKPerH:0} K/h 下 215 K</td>" +
+-                  "<td>现场升温时法兰比管子热多少的全程最大值。215 不是通过线，是现役设备的实际量级，只作参考</td></tr>" +
++                  // R48 G2 复审二（2026-09-15 Opus 5）：这一行现在暂不给数、待复核（两节点模型补了铜排通道与舌片保温，复核前不可引用），说明书跟着改
++                  "<td>现场升温时法兰比管子热多少的全程最大值。<b>暂不给数，待复核</b>：计算模型刚补了经舌片流进铜排的散热与舌片保温，复核前不可引用。215 是旧模型对现役设备算的量级，不与它比</td></tr>" +
+                   "<tr><td>· 管↔法兰热收支</td><td class=\"n\">守恒时 0 W</td>" +
+                   "<td>管子失去的热与法兰收到的热对不对得上。参考量；实测各档都差几瓦，原因是共用片被两侧各扣一次，改判定会动所有历史结果，先量着</td></tr>" +
+                   "</table>");

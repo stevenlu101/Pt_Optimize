@@ -70,9 +70,7 @@ public static class DesignScreen
         double rRef = gen / (refCurrentA * refCurrentA);          // Ω @ tRef, refTempC
 
         double aDisc = 0, aTab = 0;
-        if (!double.IsNaN(tangentX))
-            for (int i = 0; i < mesh.CellCount; i++)
-                if (mesh.Centroid[i].X >= tangentX) aDisc += mesh.Area[i]; else aTab += mesh.Area[i];
+        if (!double.IsNaN(tangentX)) (aDisc, aTab) = AreaByTangent(mesh, tangentX);
 
         return new ShapeFactors
         {
@@ -83,6 +81,24 @@ public static class DesignScreen
             ShapeJ = sc.JMaxAPerMm2 * tRef / refCurrentA,
             ShapeJMean = sc.JMeanAPerMm2 * tRef / refCurrentA
         };
+    }
+
+    /// <summary>
+    /// 盘/舌面积 mm²（单面）按**切点**分：形心 x ≥ 切点 = 圆盘，否则舌片。<see cref="Extract"/> 与 LineRunner.FlangeLumped 共用这一份
+    /// （R48 2026-09-14 Opus 5 复审补：原先式子只在 Extract 里，LineRunner 为了这两个面积整个调 Extract、白解一遍电流场）。
+    /// <paramref name="excludeClampCells"/> = true 时跳过 <see cref="ShellMesh.ClampCell"/> 标记的压接格（整面接触口径下压接段在铜排下、不在铂的热平衡里）；
+    /// 网格不带压接格（老口径）时与 false 逐位相同。false 时累加顺序与改动前 Extract 里的循环逐字相同。
+    /// </summary>
+    public static (double DiscMm2, double TabMm2) AreaByTangent(ShellMesh mesh, double tangentX, bool excludeClampCells = false)
+    {
+        bool skip = excludeClampCells && mesh.ClampCell.Length == mesh.CellCount;
+        double aDisc = 0, aTab = 0;
+        for (int i = 0; i < mesh.CellCount; i++)
+        {
+            if (skip && mesh.ClampCell[i]) continue;
+            if (mesh.Centroid[i].X >= tangentX) aDisc += mesh.Area[i]; else aTab += mesh.Area[i];
+        }
+        return (aDisc, aTab);
     }
 
     /// <summary>
@@ -119,28 +135,37 @@ public static class DesignScreen
     public static double JLimitAPerMm2(DesignInputs p, double tempC, double tMm,
                                        double insulThickMm)
     {
-        double charLen = p.ConvCharLenM;   // ★ 唯一来源（2026-08-28）：不再各存一份
-        double q;
-        if (insulThickMm <= 1e-6)
-            q = Insulation.FlatOuterFlux(tempC, p.TAmbC, p.PtEmissivity, charLen,
-                                         p.LossScale, p.FlangeAirVelocityMPerS);
-        else
-        {
-            var layers = new List<InsulationLayer>
-            {
-                new() { Name = "法兰保温", ThicknessMm = insulThickMm,
-                        K0 = p.Layer1.K0, K1 = p.Layer1.K1, Enabled = true }
-            };
-            q = Insulation.PlateFlux(tempC, p.TAmbC, layers, p.OuterEmissivity, charLen, p.LossScale);
-        }
+        // R48（2026-09-14，Opus 5）：表面热流改调唯一配方 PlateFluxWPerM2（原本处手抄一份，阈值 1e-6、保温面不吹风）
+        double q = PlateFluxWPerM2(p, tempC, insulThickMm);
         return Math.Sqrt(2.0 * q / (Materials.PtResistivity(tempC) * tMm * 1e-3)) * 1e-6;
     }
 
-    /// <summary>单面热流密度 W/m²（法兰表面，按是否包纤维）</summary>
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5；审查意见「圆盘保温 0 mm 时四个消费方物理含义不一致」）：法兰表面（圆盘或舌片）**算不算包着保温**的唯一判定 ——
+    /// 厚度 ≥ <see cref="FlangeInsulMinMm"/> 才算包；NaN、0、比它薄 ⇒ 裸铂表面（ε = PtEmissivity）。
+    /// 为什么要这一处：「包了 0 mm」若走 Insulation.PlateFlux，没有有效层时退到外覆材料表面 ε = OuterEmissivity（默认 0.45），
+    /// 而裸铂 ε = 0.18，辐射差约 2.5 倍（ShellThermal 舌片保温那段注释 2026-08 就写过同一句，舌片修了、圆盘没修）。
+    /// 修前：FlangeStability／LocalStability 经本类按裸铂（阈值 1e-6），ShellThermal／PlateThermal2D／RampTwoNode 的圆盘面按 ε 0.45 ——
+    /// 同一片板主热解与热稳定判据用两种表面。逐片圆盘保温（每层 0.5 mm，0 层合法）让这件事更容易踩到。
+    /// </summary>
+    public static bool FlangeFaceInsulated(double insulThickMm)
+        => !double.IsNaN(insulThickMm) && insulThickMm >= FlangeInsulMinMm;
+
+    /// <summary>法兰表面算「包着」的最小保温厚度 mm（与 ShellThermal 舌片保温原有的 0.05 同值；保温按 0.5 mm 一层给，0.05 只用来区分「0 层」）。</summary>
+    public const double FlangeInsulMinMm = 0.05;
+
+    /// <summary>
+    /// 单面热流密度 W/m²（法兰表面，按是否包纤维）。
+    /// ★ R48（2026-09-14，Opus 5）：升为法兰表面热流的**唯一配方** —— ShellThermal（圆盘面、舌片面、裸面三张表）、PlateThermal2D、RampTwoNode、
+    /// FlangeStability、LocalStability 都从这里取，不再各写一份。两处改动：
+    ///   ① 包不包按 <see cref="FlangeFaceInsulated"/>（原阈值 1e-6，新旧只在 1e-6～0.05 mm 之间不同：那一段原按「包了极薄一层、外覆 ε 0.45」算，
+    ///      ShellThermal 的舌片面早就按裸铂算，现在 FlangeStability／LocalStability 跟它一致）；
+    ///   ② 保温面也传真实风速 FlangeAirVelocityMPerS（ShellThermal 2026-08-28 起就传，本处与 RampTwoNode 原不传；默认风速 0 ⇒ 默认口径逐位不变）。
+    /// </summary>
     public static double PlateFluxWPerM2(DesignInputs p, double tempC, double insulThickMm)
     {
         double charLen = p.ConvCharLenM;   // ★ 唯一来源（2026-08-28）：不再各存一份
-        if (insulThickMm <= 1e-6)
+        if (!FlangeFaceInsulated(insulThickMm))
             return Insulation.FlatOuterFlux(tempC, p.TAmbC, p.PtEmissivity, charLen,
                                             p.LossScale, p.FlangeAirVelocityMPerS);
         var layers = new List<InsulationLayer>
@@ -148,7 +173,8 @@ public static class DesignScreen
             new() { Name = "法兰保温", ThicknessMm = insulThickMm,
                     K0 = p.Layer1.K0, K1 = p.Layer1.K1, Enabled = true }
         };
-        return Insulation.PlateFlux(tempC, p.TAmbC, layers, p.OuterEmissivity, charLen, p.LossScale);
+        return Insulation.PlateFlux(tempC, p.TAmbC, layers, p.OuterEmissivity, charLen, p.LossScale,
+                                    p.FlangeAirVelocityMPerS);
     }
 
 }
