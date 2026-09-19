@@ -1,0 +1,3000 @@
+diff --git a/Pt_Optimize.Tests/CriteriaGlossaryTests.cs b/Pt_Optimize.Tests/CriteriaGlossaryTests.cs
+index 5832dea..9f52a92 100644
+--- a/Pt_Optimize.Tests/CriteriaGlossaryTests.cs
++++ b/Pt_Optimize.Tests/CriteriaGlossaryTests.cs
+@@ -73,7 +73,12 @@ public class CriteriaGlossaryTests
+         Assert.NotNull(Criteria.Of("②′"));
+         Assert.NotNull(Criteria.Of("②″"));
+         Assert.Equal("管孔净流入", Criteria.Of("②′")!.Name);
+-        Assert.Equal("圆盘区最高温", Criteria.Of("②″")!.Name);
++        // R48 B（2026-09-14 Opus 5）：有意改动 —— ②″ 这条降为参考量，Key 改成参考量的名字（代号 ②″ 不换主人）；依据 Pt_Optimize/Core/LineRunner.cs 的 LineResult.Key.DiscTemp。
++        //   旧期望 "圆盘区最高温" → 新期望 "圆盘区最高温 − 管温（旧判法）"。热偶读数基准的两条用新代号 ⑦／⑧，一并验拆得对。
++        Assert.Equal("圆盘区最高温 − 管温（旧判法）", Criteria.Of("②″")!.Name);
++        Assert.Equal("最热铂高出热偶读数", Criteria.Of("⑦")!.Name);
++        Assert.Equal("管根低于热偶读数", Criteria.Of("⑧")!.Name);
++        Assert.Equal(LineResult.Key.DiscTemp, Criteria.Of("②″")!.Key);   // 代号 ②″ 指的仍是那一条，不许悄悄换量
+     }
+ 
+     /// <summary>
+@@ -105,8 +110,13 @@ public class CriteriaGlossaryTests
+     {
+         string g = Criteria.Legend("②′", "②″", "③");
+         Assert.Contains("②′ = 管孔净流入（W，>）", g);
+-        Assert.Contains("②″ = 圆盘区最高温（K，≤）", g);
+-        Assert.Contains("③ = 法兰增量温降（K，≤）", g);
++        // R48 B（2026-09-14 Opus 5）：有意改动 —— ②″／③ 两条降为参考量，名字带「（旧判法）」（代号不变）；依据 Pt_Optimize/Core/LineRunner.cs 的 LineResult.Key。
++        //   旧 "②″ = 圆盘区最高温（K，≤）" → 新 "②″ = 圆盘区最高温 − 管温（旧判法）（K，≤）"；旧 "③ = 法兰增量温降（K，≤）" → 新 "③ = 法兰增量温降（旧判法）（K，≤）"。
++        Assert.Contains("②″ = 圆盘区最高温 − 管温（旧判法）（K，≤）", g);
++        Assert.Contains("③ = 法兰增量温降（旧判法）（K，≤）", g);
++        string g2 = Criteria.Legend("⑦", "⑧");
++        Assert.Contains("⑦ = 最热铂高出热偶读数（K，≤）", g2);
++        Assert.Contains("⑧ = 管根低于热偶读数（K，≤）", g2);
+     }
+ 
+     /// <summary>
+diff --git a/Pt_Optimize.Tests/CriteriaTableTests.cs b/Pt_Optimize.Tests/CriteriaTableTests.cs
+index b045988..ca75b5f 100644
+--- a/Pt_Optimize.Tests/CriteriaTableTests.cs
++++ b/Pt_Optimize.Tests/CriteriaTableTests.cs
+@@ -58,6 +58,10 @@ public class CriteriaTableTests
+             (LineResult.Key.Ramp,       KindOf(LineResult.Key.Ramp),       di.TubeJAllowAPerMm2),   // R20：① = 升温所需电流折成管 J ≤ 许用
+             (LineResult.Key.RampHours,  KindOf(LineResult.Key.RampHours),  lc.RampHours),
+             (LineResult.Key.NetFlux,    KindOf(LineResult.Key.NetFlux),    0.0),
++            // R48 B（2026-09-14 Opus 5）：有意改动 —— 热侧／冷侧换成热偶读数基准的两条新硬判据（限值 = 热偶误差，LineCase），旧判法两条降为参考量（KindOf 自然给「参考」）。
++            //   ⚠ 本档对着 HANDOVER §1.83 核；本路不许改 HANDOVER ⇒ §1.83 那张表合并时要照交接说明补两行、改两行，否则这几条会红（已在交付说明里列出）。
++            (LineResult.Key.HotOverTc,   KindOf(LineResult.Key.HotOverTc),   lc.HotOverTcMaxK),
++            (LineResult.Key.ColdUnderTc, KindOf(LineResult.Key.ColdUnderTc), lc.ColdUnderTcMaxK),
+             (LineResult.Key.DiscTemp,   KindOf(LineResult.Key.DiscTemp),   lc.DiscOverTempMaxK),
+             (LineResult.Key.FlangeDip,  KindOf(LineResult.Key.FlangeDip),  lc.RootDeltaMaxK),
+             (LineResult.Key.FreeTab,    KindOf(LineResult.Key.FreeTab),    GeometryScreen.FreeTabMinDefaultMm),
+diff --git a/Pt_Optimize.Tests/FieldConvergenceGateTests.cs b/Pt_Optimize.Tests/FieldConvergenceGateTests.cs
+index 3ff83ee..14434ba 100644
+--- a/Pt_Optimize.Tests/FieldConvergenceGateTests.cs
++++ b/Pt_Optimize.Tests/FieldConvergenceGateTests.cs
+@@ -77,6 +77,7 @@ public class FieldConvergenceGateTests
+         foreach (var k in new[]
+         {
+             "LineResult.Key.NetFlux", "LineResult.Key.DiscTemp", "LineResult.Key.FlangeDip",
++            "LineResult.Key.HotOverTc", "LineResult.Key.ColdUnderTc",   // R48 B（2026-09-14 Opus 5）：加严 —— 新两条硬判据同样吃法兰场
+             "LineResult.Key.Ramp", "LineResult.Key.FlangeStab", "LineResult.Key.LocalStab",
+             "LineResult.Key.RampField", "LineResult.Key.HeatBalance",
+         })
+diff --git a/Pt_Optimize.Tests/LongRunProgressTests.cs b/Pt_Optimize.Tests/LongRunProgressTests.cs
+index 62ab825..0aa369f 100644
+--- a/Pt_Optimize.Tests/LongRunProgressTests.cs
++++ b/Pt_Optimize.Tests/LongRunProgressTests.cs
+@@ -131,9 +131,11 @@ public class LongRunProgressTests
+     public void 每档的判据值当场落地()
+     {
+         string s = Core("MeshVerify.cs");
+-        Assert.Contains("②′ {a2p:0.000} W", s);
+-        Assert.Contains("②″ {a2pp:0.000} K", s);
+-        Assert.Contains("③ {a3:0.000} K", s);
++        // R48 B（2026-09-14 Opus 5）：有意改动 —— 进度行会上界面，代号换成全名，且 ②″／③ 两列换成热偶读数基准的热侧／冷侧；依据 Pt_Optimize/Core/MeshVerify.cs。
++        //   旧 "②′ {a2p:0.000} W" → 新 "管孔净流入 {a2p:0.000} W"；旧 "②″ {a2pp:0.000} K" → 新 "最热铂高出热偶读数 {a2pp:0.000} K"；旧 "③ {a3:0.000} K" → 新 "管根低于热偶读数 {a3:0.000} K"。
++        Assert.Contains("管孔净流入 {a2p:0.000} W", s);
++        Assert.Contains("最热铂高出热偶读数 {a2pp:0.000} K", s);
++        Assert.Contains("管根低于热偶读数 {a3:0.000} K", s);
+         Assert.Contains("较上一档：", s);
+     }
+ 
+@@ -277,6 +279,10 @@ public class LongRunProgressTests
+         Assert.Contains("LineResult.Key.NetFlux", s);
+         Assert.Contains("LineResult.Key.DiscTemp", s);
+         Assert.Contains("LineResult.Key.FlangeDip", s);
++        // R48 B（2026-09-14 Opus 5）：加严 —— 卡交付的热侧／冷侧换成热偶读数基准，求根每轮必须印这两条（旧判法两条留作对照照印）
++        Assert.Contains("LineResult.Key.HotOverTc", s);
++        Assert.Contains("LineResult.Key.ColdUnderTc", s);
++        Assert.Contains("逐片热偶基准", s);
+         // 不只印值，还要印「离限值多远」—— 只有值的话，读的人得自己去翻限值
+         Assert.Contains("裕", s);
+         Assert.Contains("超", s);
+diff --git a/Pt_Optimize.Tests/MeshVerifyTests.cs b/Pt_Optimize.Tests/MeshVerifyTests.cs
+index ec6ac49..466eb85 100644
+--- a/Pt_Optimize.Tests/MeshVerifyTests.cs
++++ b/Pt_Optimize.Tests/MeshVerifyTests.cs
+@@ -24,9 +24,20 @@ public class MeshVerifyTests
+     {
+         var t = MeshVerify.TolTemplate();
+         Assert.Equal(3, t.Count);
+-        Assert.Equal(0.5, t.First(x => x.Name == "②′").Tol, 9);
+-        Assert.Equal(0.2, t.First(x => x.Name == "②″").Tol, 9);
+-        Assert.Equal(1.0, t.First(x => x.Name == "③").Tol, 9);
++        // 2026-09-14 Opus 5（R48 B 复审）：有意改动 —— 复核的两条温度判据换成热偶读数基准的热侧／冷侧，名字改全名（判词进界面，不许带代号），容差重定。
++        //   旧：Name "②′" 0.5 ／ "②″" 0.2 ／ "③" 1.0
++        //   新：Name 「管孔净流入」0.5（不变）／「最热铂高出热偶读数」0.5 ／「管根低于热偶读数」0.5 = 热偶误差 5 K 的 10 %
++        //   原因与出处：Pt_Optimize/Core/MeshVerify.cs 的 TolTemplate 注释（新两条的基准是常数，耦合剩余误差直接进值，旧 0.2 K 不能照搬；冷侧限值 10→5，1.0 K 太松）。
++        //   ⚠ 0.5 K 还没在复核网格上实测过（交接待办）。
++        Assert.Equal(0.5, t.First(x => x.Name == Criteria.Plain(LineResult.Key.NetFlux)).Tol, 9);
++        Assert.Equal(0.5, t.First(x => x.Name == Criteria.Plain(LineResult.Key.HotOverTc)).Tol, 9);
++        Assert.Equal(0.5, t.First(x => x.Name == Criteria.Plain(LineResult.Key.ColdUnderTc)).Tol, 9);
++        Assert.Equal(0.1 * LineCase.ThermocoupleErrorK, MeshVerify.TcMeshTolK, 12);   // 比例从热偶误差来，不另写 0.5
++        Assert.All(t, d => Assert.False(Criteria.HasCode(d.Name), $"复核容差条目名「{d.Name}」带判据代号 —— 判词会原样印到界面上"));
++        // 命令行 --meshadapt 也只读这一份（此前手抄 0.5／0.2／1.0）
++        string prog = Src("Pt_Optimize/Program.cs");
++        Assert.Contains("var tolA = MeshVerify.TolTemplate();", prog);
++        Assert.DoesNotContain("Name = \"②″\", Change = a2pp - pv.n2pp, Tol = 0.2", prog);
+     }
+ 
+     [Fact]
+diff --git a/Pt_Optimize.Tests/MonotoneMeasuredTests.cs b/Pt_Optimize.Tests/MonotoneMeasuredTests.cs
+index 4521b1d..fe8e879 100644
+--- a/Pt_Optimize.Tests/MonotoneMeasuredTests.cs
++++ b/Pt_Optimize.Tests/MonotoneMeasuredTests.cs
+@@ -116,8 +116,10 @@ public class MonotoneMeasuredTests
+         var keys = Solver.Allocation.Select(a => a.Key).ToArray();
+         Assert.Equal(keys.Length, keys.Distinct().Count());
+         Assert.Contains(LineResult.Key.NetFlux, keys);
+-        Assert.Contains(LineResult.Key.FlangeDip, keys);
+-        Assert.Contains(LineResult.Key.DiscTemp, keys);
++        // R48 B（2026-09-14 Opus 5）：有意改动 —— 分派表的键换成热偶读数基准的冷侧／热侧（旧判法两条降为参考量，不再有分派），依据 Pt_Optimize/Core/Solver.cs 的 Allocation。
++        //   旧 FlangeDip → 新 ColdUnderTc；旧 DiscTemp → 新 HotOverTc。
++        Assert.Contains(LineResult.Key.ColdUnderTc, keys);
++        Assert.Contains(LineResult.Key.HotOverTc, keys);
+ 
+         // ★★ t₂ 是旋钮，且是 ②′ 的**首选**（顺序不是随意的：先试便宜的那个）
+         var netflux = Solver.Allocation.First(a => a.Key == LineResult.Key.NetFlux).Knobs;
+@@ -149,9 +151,18 @@ public class MonotoneMeasuredTests
+ 
+         // ★ 成对：r₂ 要和 t₂ 在同一条判据行上；r₁ 要和 t₁ 在同一条上
+         Assert.Contains(Solver.Knob.RingR2, netflux);
+-        var disc = Solver.Allocation.First(x => x.Key == LineResult.Key.DiscTemp).Knobs;
++        // R48 B（2026-09-14 Opus 5 复审）：有意改动 —— 热侧 ⑦ 那一排按新判据实测重排（依据 Pt_Optimize/Core/Solver.cs 的 Allocation 注释、
++        //   deliverable/r48B_敏感度矩阵_热偶基准_2026-09-14.txt）：旧 DiscTemp 行 { 舌保温, t₁, r₁ } → 新 HotOverTc 行 { t₂, r₂, t₁, r₁, 板厚 }。
++        //   新判据的基准是常数，抬舌保温只会让最热那一点更热（实测片1/片2 −273.5／−153.8，片0/片3 上侧解不出来）⇒ **舌保温不许回到热侧候选里**。
++        var disc = Solver.Allocation.First(x => x.Key == LineResult.Key.HotOverTc).Knobs;
+         Assert.Contains(Solver.Knob.Ring,   disc);
+         Assert.Contains(Solver.Knob.RingR1, disc);
++        Assert.Contains(Solver.Knob.RingT2, disc);
++        Assert.Contains(Solver.Knob.RingR2, disc);
++        Assert.DoesNotContain(Solver.Knob.Insul, disc);
++        Assert.Equal(Solver.Knob.Thick, disc[^1]);       // 板厚垫底（与管孔净流入那一排同一个理由：最花铂）
++        // 冷侧 ⑧ 仍是舌保温打头（新判据实测 +190.8／+107.1 每 mm，免费）
++        Assert.Equal(Solver.Knob.Insul, Solver.Allocation.First(x => x.Key == LineResult.Key.ColdUnderTc).Knobs[0]);
+ 
+         // ★ 「没有台阶就没得挪」这句话必须在代码里说得出来，不能只报「没变好」
+         string src = System.IO.File.ReadAllText(System.IO.Path.Combine(
+diff --git a/Pt_Optimize.Tests/NoCriterionCodeInUiTests.cs b/Pt_Optimize.Tests/NoCriterionCodeInUiTests.cs
+index 0355a05..ca86115 100644
+--- a/Pt_Optimize.Tests/NoCriterionCodeInUiTests.cs
++++ b/Pt_Optimize.Tests/NoCriterionCodeInUiTests.cs
+@@ -48,14 +48,44 @@ public class NoCriterionCodeInUiTests
+     };
+ 
+     /// <summary>判据名（已剥壳）—— 从 Key 常量反射取，不手抄。</summary>
++    /// <remarks>R48 B（2026-09-14 Opus 5）：旧判法两条降为参考量后名字带「（旧判法）」后缀（「法兰增量温降（旧判法）」「圆盘区最高温 − 管温（旧判法）」），
++    ///   「③ 法兰增量温降」这种**旧写法**就不再以任何判据名开头 ⇒ 门会悄悄漏掉它（自证那条当场红了）。
++    ///   ⇒ 带「（旧判法）」的名字把**词干**（去掉后缀、去掉「 − 管温」）也加进名单：旧代号配旧名字照样禁。这是加严，不是放宽。</remarks>
+     private static string[] PlainNames() =>
+         typeof(LineResult.Key)
+             .GetFields(BindingFlags.Public | BindingFlags.Static)
+             .Select(f => Criteria.Plain((string)f.GetValue(null)!))
++            .SelectMany(n => n.Contains("（旧判法）")
++                ? new[] { n, n.Split('（')[0].Trim(), n.Split('（')[0].Split(" − ")[0].Trim() }
++                : new[] { n })
+             .Where(n => n.Length >= 2)          // 「管 J」没有代号，不参与
+             .Distinct()
+             .ToArray();
+ 
++    /// <summary>
++    /// 判据代号的形状：圈号（只取生产代码那一份 <see cref="Criteria.CodeChars"/>）后面可带 ′ ″。
++    /// 2026-09-14 Opus 5（复审）：原来三处各手抄一遍「①…⑥」—— 热偶读数基准的两条用了新代号 ⑦⑧，手抄的门就看不见它们（门不许手抄生产配方）。
++    /// </summary>
++    private static readonly string CodePattern = "[" + Criteria.CodeChars + "][′″]?";
++
++    /// <summary>
++    /// 自证：新代号 ⑦⑧ 配新判据名，门照样抓得到（2026-09-14 Opus 5 复审补）。
++    /// </summary>
++    [Fact]
++    public void 自证_新代号配判据名也抓得到()
++    {
++        var names = PlainNames();
++        foreach (var offender in new[] { "卡的是 ⑦ 最热铂高出热偶读数", "卡的是 ⑧管根低于热偶读数" })
++        {
++            bool caught = Regex.Matches(offender, CodePattern).Any(m =>
++            {
++                string rest = offender[(m.Index + m.Length)..].TrimStart(' ', '　');
++                return names.Any(n => rest.StartsWith(n, StringComparison.Ordinal));
++            });
++            Assert.True(caught, $"门抓不到「{offender}」");
++        }
++    }
++
+     /// <summary>字符串字面量（去掉整行注释）。够用：本仓的界面文字都写在字面量里。</summary>
+     private static IEnumerable<(int Line, string Text)> Literals(string src)
+     {
+@@ -87,7 +117,7 @@ public class NoCriterionCodeInUiTests
+             string path = Path.Combine(root, rel);
+             if (!File.Exists(path)) continue;
+             foreach (var (line, text) in Literals(File.ReadAllText(path)))
+-                foreach (Match m in Regex.Matches(text, "[①②③④⑤⑥][′″]?"))
++                foreach (Match m in Regex.Matches(text, CodePattern))
+                 {
+                     // 代号后面（跳过空格与全角空格）是不是一个判据名
+                     string rest = text[(m.Index + m.Length)..].TrimStart(' ', '　');
+@@ -110,7 +140,7 @@ public class NoCriterionCodeInUiTests
+     {
+         var names = PlainNames();
+         const string offender = "卡的是 ③ 法兰增量温降，先解决它";
+-        bool caught = Regex.Matches(offender, "[①②③④⑤⑥][′″]?").Any(m =>
++        bool caught = Regex.Matches(offender, CodePattern).Any(m =>
+         {
+             string rest = offender[(m.Index + m.Length)..].TrimStart(' ', '　');
+             return names.Any(n => rest.StartsWith(n, StringComparison.Ordinal));
+@@ -127,7 +157,7 @@ public class NoCriterionCodeInUiTests
+     {
+         var names = PlainNames();
+         const string fine = "① 先加这一片的舌保温；② 再削薄该片板；③ 都用尽了才动形状";
+-        bool caught = Regex.Matches(fine, "[①②③④⑤⑥][′″]?").Any(m =>
++        bool caught = Regex.Matches(fine, CodePattern).Any(m =>
+         {
+             string rest = fine[(m.Index + m.Length)..].TrimStart(' ', '　');
+             return names.Any(n => rest.StartsWith(n, StringComparison.Ordinal));
+diff --git a/Pt_Optimize.Tests/RealDrawingParityTests.cs b/Pt_Optimize.Tests/RealDrawingParityTests.cs
+index 8fc45d1..f301ba4 100644
+--- a/Pt_Optimize.Tests/RealDrawingParityTests.cs
++++ b/Pt_Optimize.Tests/RealDrawingParityTests.cs
+@@ -104,7 +104,7 @@ public class RealDrawingParityTests
+         for (int i = 1; i < res.Trace.Count; i++)
+             Assert.True(res.Trace[i].Cells > res.Trace[i - 1].Cells, $"第 {i + 1} 档 {res.Trace[i].Cells} 格应多于上一档 {res.Trace[i - 1].Cells}");
+         foreach (var t in res.Trace)
+-            sb.AppendLine($"档 {t.Fine:0.000} mm：{t.Cells} 格　管孔净流入 {t.N2p:0.000} W　圆盘区最高温 {t.N2pp:0.000} K　法兰增量温降 {t.N3:0.000} K　场解 {t.Sec:0} s");
++            sb.AppendLine($"档 {t.Fine:0.000} mm：{t.Cells} 格　管孔净流入 {t.N2p:0.000} W　最热铂高出热偶读数 {t.N2pp:0.000} K　管根低于热偶读数 {t.N3:0.000} K　场解 {t.Sec:0} s");   // R48 B（2026-09-14 Opus 5）：MeshVerify.Trace 的两列换成热偶读数基准的新判据，标签跟着换
+         sb.AppendLine(res.Verdict);
+         if (res.MidBandConfirm is not null) sb.AppendLine(res.MidBandConfirm);
+         var floorNotes = res.Line!.Notes.Where(n => n.Contains("已到图纸分辨率", StringComparison.Ordinal)).ToArray();
+diff --git a/Pt_Optimize.Tests/RequiredChecksTests.cs b/Pt_Optimize.Tests/RequiredChecksTests.cs
+index 4562999..4eb0b5b 100644
+--- a/Pt_Optimize.Tests/RequiredChecksTests.cs
++++ b/Pt_Optimize.Tests/RequiredChecksTests.cs
+@@ -139,9 +139,10 @@ public class RequiredChecksTests
+     public void Undetermined_AndMissing_AreBothNotPass()
+     {
+         var und = Table();
++        // R48 B（2026-09-14 Opus 5）：有意改动 —— 自证用的硬安全线从「圆盘区最高温 − 管温」（DiscTemp，已降为参考量、不在必备名单）换成热偶读数基准的热侧 HotOverTc；依据 LineResult.Required。
+         var i = System.Array.FindIndex(und.Checks,
+-            c => c.Name.StartsWith(LineResult.Key.DiscTemp, System.StringComparison.Ordinal));
+-        Assert.True(i >= 0, "自证：表里本来就该有 ②″，否则下面验的是空气");
++            c => c.Name.StartsWith(LineResult.Key.HotOverTc, System.StringComparison.Ordinal));
++        Assert.True(i >= 0, "自证：表里本来就该有「最热铂高出热偶读数」，否则下面验的是空气");
+         und.Checks[i].Ok = false;
+         und.Checks[i].Undetermined = true;
+         und.Checks[i].Actual = double.NaN;
+diff --git a/Pt_Optimize.Tests/SensitivityMatrixTests.cs b/Pt_Optimize.Tests/SensitivityMatrixTests.cs
+index 33fd362..7e567df 100644
+--- a/Pt_Optimize.Tests/SensitivityMatrixTests.cs
++++ b/Pt_Optimize.Tests/SensitivityMatrixTests.cs
+@@ -126,7 +126,8 @@ public class SensitivityMatrixTests
+     public void 裕度走求解器那一份()
+     {
+         string s = Core("SensitivityMatrix.cs");
+-        Assert.Contains("Solver.PlateSlack(r, k, j, dipMax, discMax)", s);
++        // R48 B（2026-09-14 Opus 5）：有意改动 —— 限值变量随判据改名（冷侧／热侧），依据 Pt_Optimize/Core/SensitivityMatrix.cs。旧 "dipMax, discMax" → 新 "coldMax, hotMax"。
++        Assert.Contains("Solver.PlateSlack(r, k, j, coldMax, hotMax)", s);
+         Assert.DoesNotContain("f.QFromTubeW", s);      // 不许自己去 FlangeOut 里捞
+         Assert.DoesNotContain("TDiscMaxC", s);
+     }
+diff --git a/Pt_Optimize.Tests/SensitivitySignTests.cs b/Pt_Optimize.Tests/SensitivitySignTests.cs
+index 3ff7e31..864b082 100644
+--- a/Pt_Optimize.Tests/SensitivitySignTests.cs
++++ b/Pt_Optimize.Tests/SensitivitySignTests.cs
+@@ -29,35 +29,37 @@ namespace PtOptimize.Tests;
+ ///
+ /// ★ 处理方式：**两个数都留着、都标出测量工况、并要求使用者对手上的形状实测**。
+ ///   删掉建议是错的（②″ 真超限时它可能仍然对）；把单个数当普适也是错的。
++///
++/// ══ 2026-09-14 Opus 5（R48 B 复审）：钉 NextAction.DiscHot 的三条退役
++///
++/// DiscHot 是「圆盘区最高温 − 管温」超限时附在判据说明上的操作指令。R48 B 把那条降为参考量（旧判法，不卡交付），
++/// 参考行不再附操作指令 ⇒ DiscHot（连同 DipHigh）**再也没有任何地方挂它**，界面上看不到；它还带代号与命令行开关名，
++/// 本来也不许上界面。于是原来钉它的三条（「先警告再给操作」「两个工况的实测都在」「建议本身不许删」）守的是一段**死字串**，
++/// 等于门在空转 —— 常量删掉，这三条退役：
++///   · 操作指令先警告灵敏度会变号 —— 删（没有这段指令了）；
++///   · 两个工况的实测都留着并标明出处 —— **改钉界面上真看得见的那一处**：LineDesignPage 的「环倍率」提示（窄舌 −1.4／宽舌 +0.056、137 g）；
++///     「∂圆盘区最高温/∂板厚 = +0.214」只在 DiscHot 里有，随它一起离开 APP，数与出处留在本档上面的说明里；
++///   · 原建议保留而不是删掉 —— 删：它的理由是「②″ 真超限时加环可能仍然对，没资格否定」，而 ②″ 已不卡交付，
++///     加环现在是热侧「最热铂高出热偶读数」的候选，抬不抬由求解器对手上的形状当场实测（Solver.ChooseKnob），不靠这段文字。
+ /// </summary>
+ public class SensitivitySignTests
+ {
+     private static string Read(string dir, string f) =>
+         File.ReadAllText(Path.Combine(HandoverDoc.Root(), "Pt_Optimize", dir, f));
+ 
+-    /// <summary>②″ 超限时印给人的指令，必须**先**警告方向会变号。</summary>
+-    [Fact]
+-    public void 操作指令先警告灵敏度会变号()
+-    {
+-        string s = Read("Core", "NextAction.cs");
+-        int warn = s.IndexOf("随形状变号", System.StringComparison.Ordinal);
+-        int act = s.IndexOf("① 加大管孔渐变环的倍率", System.StringComparison.Ordinal);
+-
+-        Assert.True(warn > 0, "DiscHot 里没有「随形状变号」的警告");
+-        Assert.True(act > 0, "DiscHot 里找不到第 ① 条操作");
+-        Assert.True(warn < act, "★ 警告必须在操作之前 —— 人是照着顺序做的");
+-    }
+-
+-    /// <summary>两个方向的实测都要在，并且标明各自的工况。</summary>
++    /// <summary>两个方向的实测都要在，并且标明各自的工况 —— 钉在界面真显示的「环倍率」提示上（2026-09-14 Opus 5 由 NextAction 挪来）。</summary>
+     [Fact]
+     public void 两个工况的实测都留着并标明出处()
+     {
+-        string s = Read("Core", "NextAction.cs");
+-        Assert.Contains("**窄舌**", s);          // −1.4 是在哪测的
+-        Assert.Contains("宽舌", s);              // +0.056 是在哪测的
+-        Assert.Contains("+0.056", s);
+-        Assert.Contains("+0.214", s);
++        string s = Read("UI", "LineDesignPage.cs");
++        Assert.Contains("窄舌形状上曾测得", s);   // −1.4 是在哪测的
++        Assert.Contains("−1.4", s);
++        Assert.Contains("现役宽舌形状", s);        // 反方向是在哪测的
+         Assert.Contains("137 g", s);             // 代价也要说
++        // DiscHot／DipHigh 已删：不许留着一段没人挂的指令让门空转
++        string na = Read("Core", "NextAction.cs");
++        Assert.DoesNotContain("public const string DiscHot", na);
++        Assert.DoesNotContain("public const string DipHigh", na);
+     }
+ 
+     /// <summary>
+@@ -67,25 +69,9 @@ public class SensitivitySignTests
+     [Fact]
+     public void 要求对手上的形状实测并点名工具()
+     {
+-        foreach (var (dir, f) in new[] { ("Core", "NextAction.cs"), ("UI", "LineDesignPage.cs") })
+-        {
+-            string s = Read(dir, f);
+-            Assert.Contains("--monotone", s);
+-        }
+-        Assert.Contains("别照抄任何一个数", Read("Core", "NextAction.cs"));
+-        Assert.Contains("别照抄任何一个数", Read("UI", "LineDesignPage.cs"));
+-    }
+-
+-    /// <summary>
+-    /// **建议本身不许删**。②″ 真的超限时（窄舌、孔周拥塞），加环可能仍然对 ——
+-    /// 今天的扫描没有覆盖那个工况，没资格否定它。
+-    /// </summary>
+-    [Fact]
+-    public void 原建议保留而不是删掉()
+-    {
+-        string s = Read("Core", "NextAction.cs");
+-        Assert.Contains("加大管孔渐变环的倍率", s);
+-        Assert.Contains("加厚该片板", s);
+-        Assert.Contains("两条路子仍然值得试", s);
++        // 2026-09-14 Opus 5（复审）：NextAction.cs 那一半随 DiscHot 删掉（见类说明）；界面那一处照旧钉。
++        string s = Read("UI", "LineDesignPage.cs");
++        Assert.Contains("--monotone", s);
++        Assert.Contains("别照抄任何一个数", s);
+     }
+ }
+diff --git a/Pt_Optimize.Tests/ShapeFamilyTests.cs b/Pt_Optimize.Tests/ShapeFamilyTests.cs
+index 1221e68..28d69e1 100644
+--- a/Pt_Optimize.Tests/ShapeFamilyTests.cs
++++ b/Pt_Optimize.Tests/ShapeFamilyTests.cs
+@@ -416,7 +416,9 @@ public class ShapeFamilyTests
+         d.TabHoleSides[j0] = stray;
+ 
+         var lc = d.BuildCase(p, checkRamp: false);
+-        double dipMax = lc.RootDeltaMaxK, discMax = lc.DiscOverTempMaxK;
++        // R48 B（2026-09-14 Opus 5）：有意改动 —— 求解器的冷侧／热侧换成热偶读数基准，旧判法 FlangeDip 已没有逐片裕度（PlateSlack 传进去会抛）⇒ 键与限值一起换。
++        //   ⚠ 本条是慢测试，本路没跑；「起点就违反」的前提（下面 before &lt; 0）是旧判法上验过的，新判法上待慢跑确认。
++        double coldMax = lc.ColdUnderTcMaxK, hotMax = lc.HotOverTcMaxK;
+ 
+         var chooseKnob = typeof(Solver).GetMethod("ChooseKnob", BindingFlags.NonPublic | BindingFlags.Static);
+         Assert.NotNull(chooseKnob);
+@@ -425,7 +427,7 @@ public class ShapeFamilyTests
+         var sw = System.Diagnostics.Stopwatch.StartNew();
+         var args = new object?[]
+         {
+-            d, p, o, j0, knobs, LineResult.Key.FlangeDip, dipMax, discMax, res,
++            d, p, o, j0, knobs, LineResult.Key.ColdUnderTc, coldMax, hotMax, res,
+             (Action<string>)(s => { log.Add(s); }), CancellationToken.None, null,
+         };
+         object? raw;
+diff --git a/Pt_Optimize.Tests/SolverFamilyTests.cs b/Pt_Optimize.Tests/SolverFamilyTests.cs
+index fdcbba7..904f0bc 100644
+--- a/Pt_Optimize.Tests/SolverFamilyTests.cs
++++ b/Pt_Optimize.Tests/SolverFamilyTests.cs
+@@ -16,8 +16,9 @@ public class SolverFamilyTests
+     {
+         var no = new SolverOptions { AllowTabCuts = false };
+         var yes = new SolverOptions { AllowTabCuts = true };
+-        var kNo = Solver.KnobsFor(LineResult.Key.FlangeDip, no);
+-        var kYes = Solver.KnobsFor(LineResult.Key.FlangeDip, yes);
++        // R48 B（2026-09-14 Opus 5）：有意改动 —— 分派表「抽热太多」那一排的键从旧判法 FlangeDip 换成冷侧 ColdUnderTc（旋钮候选原样继承），依据 Pt_Optimize/Core/Solver.cs 的 Allocation。
++        var kNo = Solver.KnobsFor(LineResult.Key.ColdUnderTc, no);
++        var kYes = Solver.KnobsFor(LineResult.Key.ColdUnderTc, yes);
+         Assert.DoesNotContain(Solver.Knob.TabHoleR, kNo);
+         Assert.DoesNotContain(Solver.Knob.TabHoleAspect, kNo);
+         Assert.Contains(Solver.Knob.Insul, kNo);
+diff --git a/Pt_Optimize.Tests/SolverIsSeedFreeTests.cs b/Pt_Optimize.Tests/SolverIsSeedFreeTests.cs
+index 2661bd8..cf1e94c 100644
+--- a/Pt_Optimize.Tests/SolverIsSeedFreeTests.cs
++++ b/Pt_Optimize.Tests/SolverIsSeedFreeTests.cs
+@@ -129,8 +129,10 @@ public class SolverIsSeedFreeTests
+     {
+         string s = Src("Solver.cs");
+         Assert.Contains("return double.IsNaN(q) ? double.NaN : q;", s);            // ②′ 越大越好
+-        Assert.Contains("discMax - over", s);                                       // ②″ 越小越好
+-        Assert.Contains("dipMax - dip", s);                                         // ③  越小越好
++        // R48 B（2026-09-14 Opus 5）：有意改动 —— 热侧／冷侧换成热偶读数基准（ThermocoupleBasis），逐片裕度的写法随之改名；依据 Pt_Optimize/Core/Solver.cs 的 PlateSlack。
++        //   旧断言 "discMax - over" → 新 "hotMax - h"；旧 "dipMax - dip" → 新 "coldMax - cK"。方向不变：都是越小越好。
++        Assert.Contains("hotMax - h", s);                                           // ⑦ 热侧 越小越好
++        Assert.Contains("coldMax - cK", s);                                         // ⑧ 冷侧 越小越好
+         Assert.Contains("须 > 0，限值就是 0", s);
+     }
+ 
+diff --git a/Pt_Optimize.Tests/SolverPerPlateTests.cs b/Pt_Optimize.Tests/SolverPerPlateTests.cs
+index a45ef5e..be7e0ed 100644
+--- a/Pt_Optimize.Tests/SolverPerPlateTests.cs
++++ b/Pt_Optimize.Tests/SolverPerPlateTests.cs
+@@ -129,11 +129,15 @@ public class SolverPerPlateTests
+     public void 限值只从判据自己那里读()
+     {
+         string s = Src("Core", "Solver.cs");
+-        Assert.Contains("lc.RootDeltaMaxK", s);
+-        Assert.Contains("lc.DiscOverTempMaxK", s);
+-        // 不许把限值写成常数
++        // R48 B（2026-09-14 Opus 5）：有意改动 —— 求解器改追热偶读数基准的两条，限值字段换了（仍只从 LineCase 读）；依据 Pt_Optimize/Core/Solver.cs。
++        //   旧 "lc.RootDeltaMaxK" → 新 "lc.ColdUnderTcMaxK"；旧 "lc.DiscOverTempMaxK" → 新 "lc.HotOverTcMaxK"。
++        Assert.Contains("lc.ColdUnderTcMaxK", s);
++        Assert.Contains("lc.HotOverTcMaxK", s);
++        // 不许把限值写成常数（旧变量名与新变量名都查）
+         Assert.DoesNotContain("dipMax = 10", s);
+         Assert.DoesNotContain("discMax = 5", s);
++        Assert.DoesNotContain("coldMax = 5", s);
++        Assert.DoesNotContain("hotMax = 5", s);
+     }
+ 
+     /// <summary>
+diff --git a/Pt_Optimize.Tests/ThermocoupleBasisTests.cs b/Pt_Optimize.Tests/ThermocoupleBasisTests.cs
+new file mode 100644
+index 0000000..1e706dd
+--- /dev/null
++++ b/Pt_Optimize.Tests/ThermocoupleBasisTests.cs
+@@ -0,0 +1,365 @@
++using System;
++using System.IO;
++using System.Linq;
++using PtOptimize.Core;
++using Xunit;
++
++namespace PtOptimize.Tests;
++
++/// <summary>
++/// ★★★★★ R48 B（2026-09-14 Opus 5）：**判据口径改为热偶读数基准** 的快门。
++///
++/// 用户 2026-09-14 定：控温热偶在段中点、误差 5 ℃；「10 ℃ 是上下各 5 ℃」；共用法兰处基准取两侧热偶读数的对数平均。
++/// 物理把关人核过：基准只许用设定值算出的对数平均（LineSolver.ThermocoupleReferenceC），不许用模型算的交界管温。
++///
++/// 本档只用**合成的** SegmentOut／FlangeOut（手造的温度），毫秒级；验的是生产函数本身
++/// （LineSolver.ThermocoupleReferenceC、ThermocoupleBasis.At、LineRunner.ThermocoupleChecks、Solver.PlateSlack），不手抄任何配方。
++/// 合成数据的每个温度都故意取得互不相同，且把「接错一端」会读到的值放得很远 —— 读错端当场差几十 K。
++/// </summary>
++public class ThermocoupleBasisTests
++{
++    // ── 快门验数（出处：本工单规格，2026-09-14）：1150/1080 → 1114.71 °C，1080/1050 → 1064.94 °C，容差 0.01
++    [Fact]
++    public void 基准函数_端片取本段设定_共用片取开尔文对数平均()
++    {
++        var sp = new[] { 1150.0, 1080.0, 1050.0 };
++        Assert.Equal(1150.0, LineSolver.ThermocoupleReferenceC(sp, 0, 3), 9);
++        Assert.Equal(1114.71, LineSolver.ThermocoupleReferenceC(sp, 1, 3), 2);
++        Assert.True(Math.Abs(LineSolver.ThermocoupleReferenceC(sp, 1, 3) - 1114.71) < 0.01);
++        Assert.True(Math.Abs(LineSolver.ThermocoupleReferenceC(sp, 2, 3) - 1064.94) < 0.01);
++        Assert.Equal(1050.0, LineSolver.ThermocoupleReferenceC(sp, 3, 3), 9);
++
++        // 自证：必须是**开尔文**上的对数平均 —— 在摄氏上取会得 1114.63，差 0.08，超出 0.01 的容差，这条就抓得住
++        double wrongC = (1150.0 - 1080.0) / Math.Log(1150.0 / 1080.0);
++        Assert.True(Math.Abs(wrongC - 1114.71) > 0.05, $"摄氏对数平均 {wrongC:0.000} 与开尔文的分不开 —— 上面那条验不出温标写错");
++
++        // T₁ = T₂ 取 T₁；对称；落在两者之间
++        Assert.Equal(1100.0, LineSolver.LogMeanC(1100.0, 1100.0), 9);
++        Assert.Equal(LineSolver.LogMeanC(1150, 1080), LineSolver.LogMeanC(1080, 1150), 9);
++        double m = LineSolver.LogMeanC(1150, 1080);
++        Assert.True(m > 1080 && m < 1150 && m < 0.5 * (1150 + 1080), "对数平均应落在两者之间且略低于算术平均");
++        Assert.True(double.IsNaN(LineSolver.LogMeanC(double.NaN, 1080)));
++
++        // 片号越界要当场响，不许静默返回一个数
++        Assert.Throws<ArgumentOutOfRangeException>(() => LineSolver.ThermocoupleReferenceC(sp, 4, 3));
++        Assert.Throws<ArgumentOutOfRangeException>(() => LineSolver.ThermocoupleReferenceC(sp, -1, 3));
++        Assert.Throws<ArgumentException>(() => LineSolver.ThermocoupleReferenceC(new[] { 1150.0 }, 1, 3));
++    }
++
++    /// <summary>
++    /// 三段四片的合成整线。每个温度都互不相同；接头两端的「错误那一端」离正确值几十 K。
++    /// <code>
++    ///   段   设定   首端(A)  末端(B)   基线A    基线B
++    ///   HC1  1150   1146.0   1112.0   1147.5   1116.3
++    ///   HC2  1080   1113.5   1071.5   1116.1   1065.2
++    ///   HC3  1050   1064.5   1041.0   1065.0   1043.0
++    ///   片        圆盘峰   舌片区峰
++    ///   入口      1149.0   1152.0
++    ///   HC1|HC2   1117.5   1110.0
++    ///   HC2|HC3   1069.0   1060.0
++    ///   出口      1040.0   1038.0
++    /// </code>
++    /// </summary>
++    private static (SegmentOut[] Segs, FlangeOut[] Fl) Line()
++    {
++        var segs = new[]
++        {
++            new SegmentOut { Name = "HC1", SetpointC = 1150, TRootAC = 1146.0, TRootBC = 1112.0, BaseTRootAC = 1147.5, BaseTRootBC = 1116.3 },
++            new SegmentOut { Name = "HC2", SetpointC = 1080, TRootAC = 1113.5, TRootBC = 1071.5, BaseTRootAC = 1116.1, BaseTRootBC = 1065.2 },
++            new SegmentOut { Name = "HC3", SetpointC = 1050, TRootAC = 1064.5, TRootBC = 1041.0, BaseTRootAC = 1065.0, BaseTRootBC = 1043.0 },
++        };
++        var fl = new[]
++        {
++            new FlangeOut { Name = "入口",    TDiscMaxC = 1149.0, TTabMaxC = 1152.0 },
++            new FlangeOut { Name = "HC1|HC2", TDiscMaxC = 1117.5, TTabMaxC = 1110.0, Shared = true },
++            new FlangeOut { Name = "HC2|HC3", TDiscMaxC = 1069.0, TTabMaxC = 1060.0, Shared = true },
++            new FlangeOut { Name = "出口",    TDiscMaxC = 1040.0, TTabMaxC = 1038.0 },
++        };
++        return (segs, fl);
++    }
++
++    private static double Ref(int j) => LineSolver.ThermocoupleReferenceC(new[] { 1150.0, 1080.0, 1050.0 }, j, 3);
++
++    [Fact]
++    public void 逐片热侧冷侧_共用接头读段jm1末端与段j首端_端片只有一侧()
++    {
++        var (segs, fl) = Line();
++
++        // 入口：只有 HC1 首端；最热的是舌片区峰
++        var t0 = ThermocoupleBasis.At(segs, fl, 0);
++        Assert.Equal(1150.0, t0.RefC, 9);
++        Assert.Equal("舌片区峰", t0.HottestWhat);
++        Assert.Equal(1152.0 - 1150.0, t0.HotK, 9);
++        Assert.Equal(1150.0 - 1146.0, t0.ColdK, 9);
++        Assert.Equal("HC1 首端", t0.RootColdWhere);
++        Assert.Equal(1147.5, t0.ModelJointC, 9);
++
++        // HC1|HC2：两端 = HC1 末端 1112.0 与 HC2 首端 1113.5（读成 HC1 首端 1146 或 HC2 末端 1071.5 会差几十 K）
++        var t1 = ThermocoupleBasis.At(segs, fl, 1);
++        Assert.Equal(Ref(1), t1.RefC, 9);
++        Assert.Equal(1113.5, t1.RootHotC, 9);
++        Assert.Equal("HC2 首端", t1.RootHotWhere);
++        Assert.Equal(1112.0, t1.RootColdC, 9);
++        Assert.Equal("HC1 末端", t1.RootColdWhere);
++        Assert.Equal("圆盘峰", t1.HottestWhat);
++        Assert.Equal(1117.5 - Ref(1), t1.HotK, 9);
++        Assert.Equal(Ref(1) - 1112.0, t1.ColdK, 9);
++        Assert.Equal(0.5 * (1116.3 + 1116.1), t1.ModelJointC, 9);   // 基线也是同两端的平均
++
++        // HC2|HC3：最热的是管根（HC2 末端 1071.5 高过圆盘峰 1069.0）
++        var t2 = ThermocoupleBasis.At(segs, fl, 2);
++        Assert.Equal("管根（HC2 末端）", t2.HottestWhat);
++        Assert.Equal(1071.5 - Ref(2), t2.HotK, 9);
++        Assert.Equal(Ref(2) - 1064.5, t2.ColdK, 9);
++        Assert.Equal("HC3 首端", t2.RootColdWhere);
++
++        // 出口：只有 HC3 末端
++        var t3 = ThermocoupleBasis.At(segs, fl, 3);
++        Assert.Equal(1050.0, t3.RefC, 9);
++        Assert.Equal("管根（HC3 末端）", t3.HottestWhat);
++        Assert.Equal(1041.0 - 1050.0, t3.HotK, 9);
++        Assert.Equal(1050.0 - 1041.0, t3.ColdK, 9);
++        Assert.Equal(1043.0, t3.ModelJointC, 9);
++    }
++
++    [Fact]
++    public void 判据取最差片_限值只从LineCase读_说明里并列模型交界温度且不带代号()
++    {
++        var (segs, fl) = Line();
++        fl[2].DiscZoneRule = "圆盘区按 r ≤ 30.0 mm 圈";            // 分区规则要一路带到判据说明里（R48DiscZoneByRadiusTests 同一条规矩）
++        var c = new LineCase();
++        // 单一来源：两条限值都 = 热偶误差 5 K（出处：用户 2026-09-14「10 ℃ 是上下各 5 ℃」）
++        Assert.Equal(5.0, LineCase.ThermocoupleErrorK, 9);
++        Assert.Equal(LineCase.ThermocoupleErrorK, c.HotOverTcMaxK, 9);
++        Assert.Equal(LineCase.ThermocoupleErrorK, c.ColdUnderTcMaxK, 9);
++
++        var (hot, cold) = LineRunner.ThermocoupleChecks(c, segs, fl);
++
++        Assert.Equal(LineResult.Key.HotOverTc, hot.Name);
++        Assert.Equal(CheckKind.HardSafety, hot.Kind);
++        Assert.Equal("HC2|HC3", hot.Where);                      // 6.56 K 是四片里最热的
++        Assert.Equal(1071.5 - Ref(2), hot.Actual, 9);
++        Assert.False(hot.Ok);
++        Assert.Contains("对数平均", hot.Note);
++        Assert.Contains("模型算的无法兰交界管温", hot.Note);
++        Assert.Contains("圆盘区按 r ≤ 30.0 mm 圈", hot.Note);
++        Assert.Contains("管根（HC2 末端）", hot.Note);              // 最热的是谁要写出来
++
++        Assert.Equal(LineResult.Key.ColdUnderTc, cold.Name);
++        Assert.Equal(CheckKind.HardSafety, cold.Kind);
++        Assert.Equal("出口", cold.Where);                          // 9.0 K 是四片里最冷的
++        Assert.Equal(9.0, cold.Actual, 9);
++        Assert.False(cold.Ok);
++        Assert.Contains("HC3 末端", cold.Note);
++        Assert.Contains("模型算的无法兰交界管温", cold.Note);
++
++        // 说明会进界面（ToolTip）：不许有判据代号
++        Assert.False(Criteria.HasCode(hot.Note), "热侧说明里有判据代号：" + hot.Note);
++        Assert.False(Criteria.HasCode(cold.Note), "冷侧说明里有判据代号：" + cold.Note);
++
++        // 限值确实是从 LineCase 读的：放宽到 7 / 10，同一组数就过
++        c.HotOverTcMaxK = 7.0; c.ColdUnderTcMaxK = 10.0;
++        var (hot2, cold2) = LineRunner.ThermocoupleChecks(c, segs, fl);
++        Assert.True(hot2.Ok); Assert.Equal(7.0, hot2.Limit, 9);
++        Assert.True(cold2.Ok); Assert.Equal(10.0, cold2.Limit, 9);
++    }
++
++    [Fact]
++    public void 模型交界温度与基准差超过1度才写明()
++    {
++        var (segs, fl) = Line();
++        // HC1|HC2：基线平均 1116.2 vs 基准 1114.71 ⇒ 差 +1.49 > 1 ⇒ 写明
++        string n1 = ThermocoupleBasis.ModelJointNote(ThermocoupleBasis.At(segs, fl, 1));
++        Assert.Contains("差超过", n1);
++        Assert.Contains("判定按热偶读数算", n1);
++        // HC2|HC3：基线平均 1065.1 vs 基准 1064.94 ⇒ 差 +0.16 ≤ 1 ⇒ 只并列，不写「差超过」
++        string n2 = ThermocoupleBasis.ModelJointNote(ThermocoupleBasis.At(segs, fl, 2));
++        Assert.Contains("模型算的无法兰交界管温", n2);
++        Assert.DoesNotContain("差超过", n2);
++        // 没有基线 ⇒ 照实说算不出
++        segs[0].BaseTRootBC = double.NaN;                          // HC1|HC2 的一端（HC1 末端）没有基线
++        Assert.Contains("算不出", ThermocoupleBasis.ModelJointNote(ThermocoupleBasis.At(segs, fl, 1)));
++        Assert.DoesNotContain("算不出", ThermocoupleBasis.ModelJointNote(ThermocoupleBasis.At(segs, fl, 0)));   // 入口不读那一端
++    }
++
++    [Fact]
++    public void 任何一片判不了_整条判不了并点名()
++    {
++        var (segs, fl) = Line();
++        fl[1].TDiscMaxC = double.NaN;                              // HC1|HC2 圆盘区空
++        var (hot, cold) = LineRunner.ThermocoupleChecks(new LineCase(), segs, fl);
++        Assert.True(hot.Undetermined); Assert.False(hot.Ok);
++        Assert.Contains("HC1|HC2", hot.Where);
++        Assert.Contains("圆盘区没有单元", hot.Note);
++        Assert.False(cold.Undetermined);                           // 冷侧不吃圆盘峰，照判
++
++        (segs, fl) = Line();
++        segs[2].TRootBC = double.NaN;                              // 出口那一端管根算不出
++        (hot, cold) = LineRunner.ThermocoupleChecks(new LineCase(), segs, fl);
++        Assert.True(cold.Undetermined); Assert.Equal("出口", cold.Where);
++        Assert.True(hot.Undetermined);                             // 热侧也要读管根较热端
++        Assert.True(double.IsNaN(ThermocoupleBasis.At(segs, fl, 3).ColdK));
++        Assert.False(double.IsNaN(ThermocoupleBasis.At(segs, fl, 2).ColdK));   // 别的片不受牵连
++    }
++
++    [Fact]
++    public void 求解器逐片裕度走同一份读数_旧判法没有逐片裕度()
++    {
++        var (segs, fl) = Line();
++        var r = new LineResult { Segments = segs, Flanges = fl };
++        for (int j = 0; j < 4; j++)
++        {
++            var t = ThermocoupleBasis.At(r, j);
++            Assert.Equal(5.0 - t.HotK, Solver.PlateSlack(r, LineResult.Key.HotOverTc, j, 5.0, 5.0), 9);
++            Assert.Equal(4.0 - t.ColdK, Solver.PlateSlack(r, LineResult.Key.ColdUnderTc, j, 4.0, 5.0), 9);   // 参数顺序：冷侧限值在前
++        }
++        // 判不了 ⇒ NaN（调用方当成不过）
++        fl[0].TTabMaxC = double.NaN;
++        Assert.True(double.IsNaN(Solver.PlateSlack(r, LineResult.Key.HotOverTc, 0, 5, 5)));
++        // 旧判法降为参考量 ⇒ 不许再给逐片裕度（传进来当场响）
++        Assert.Throws<ArgumentOutOfRangeException>(() => Solver.PlateSlack(r, LineResult.Key.DiscTemp, 1, 5, 5));
++        Assert.Throws<ArgumentOutOfRangeException>(() => Solver.PlateSlack(r, LineResult.Key.FlangeDip, 1, 5, 5));
++        // 分派表与复核只追新判法
++        var keys = Solver.Allocation.Select(a => a.Key).ToArray();
++        Assert.Contains(LineResult.Key.HotOverTc, keys);
++        Assert.Contains(LineResult.Key.ColdUnderTc, keys);
++        Assert.DoesNotContain(LineResult.Key.DiscTemp, keys);
++        Assert.DoesNotContain(LineResult.Key.FlangeDip, keys);
++        Assert.Equal(new[] { LineResult.Key.NetFlux, LineResult.Key.ColdUnderTc, LineResult.Key.HotOverTc }, SensitivityMatrix.Keys);
++    }
++
++    [Fact]
++    public void 必备名单与对照表_新两条是硬线_旧两条是参考量()
++    {
++        var req = LineResult.Required.ToDictionary(q => q.Prefix, q => q.Kind);
++        Assert.Equal(CheckKind.HardSafety, req[LineResult.Key.HotOverTc]);
++        Assert.Equal(CheckKind.HardSafety, req[LineResult.Key.ColdUnderTc]);   // 冷侧升为硬线（旧判法是「目标」）
++        Assert.False(req.ContainsKey(LineResult.Key.DiscTemp));
++        Assert.False(req.ContainsKey(LineResult.Key.FlangeDip));
++
++        // 2026-09-14 Opus 5（复审）：代号**不换主人** —— 新两条用新代号 ⑦／⑧，②″／③ 永远指旧判法那两条（历史记录、按代号前缀取值的地方都不会悄悄换量）
++        Assert.Equal(LineResult.Key.HotOverTc, Criteria.Of("⑦")!.Key);
++        Assert.Equal(LineResult.Key.ColdUnderTc, Criteria.Of("⑧")!.Key);
++        Assert.Equal(LineResult.Key.DiscTemp, Criteria.Of("②″")!.Key);
++        Assert.Equal(LineResult.Key.FlangeDip, Criteria.Of("③")!.Key);
++        Assert.Null(Criteria.Of("·②″"));
++        Assert.Null(Criteria.Of("·③"));
++        Assert.True(Criteria.Of("⑦")!.Hard && Criteria.Of("⑧")!.Hard);
++        Assert.False(Criteria.Of("②″")!.Hard || Criteria.Of("③")!.Hard);
++        // 名字里不许有「口径」这类内部词（会上界面；ShellThermal 那条规矩）
++        foreach (var k in new[] { LineResult.Key.HotOverTc, LineResult.Key.ColdUnderTc, LineResult.Key.DiscTemp, LineResult.Key.FlangeDip })
++            Assert.DoesNotContain("口径", k);
++        Assert.Equal("圆盘区最高温 − 管温（旧判法）", Criteria.Plain(LineResult.Key.DiscTemp));
++        Assert.Equal("法兰增量温降（旧判法）", Criteria.Plain(LineResult.Key.FlangeDip));
++
++        // 说明文字写意图：热偶在段中点、误差、对数平均、并列模型交界温度；误差数字从 LineCase 插进来
++        string hotMeans = Criteria.Of("⑦")!.Means, coldMeans = Criteria.Of("⑧")!.Means;
++        Assert.Contains("段中点", hotMeans);
++        Assert.Contains($"误差 {LineCase.ThermocoupleErrorK:0} ℃", hotMeans);
++        Assert.Contains("对数平均", hotMeans);
++        Assert.Contains("模型算的无法兰交界管温", hotMeans);
++        Assert.Contains("对数平均", coldMeans);
++        Assert.False(Criteria.HasCode(hotMeans) || Criteria.HasCode(coldMeans));
++        // 「差超过几度才写明」的阈值只从 ThermocoupleBasis.ModelGapNoteK 读（2026-09-14 Opus 5 复审：原来四处写死「1 ℃」）
++        string gap = $"差超过 {ThermocoupleBasis.ModelGapNoteK:0} ℃";
++        Assert.Contains(gap, hotMeans);
++        Assert.Contains(gap, coldMeans);
++        Assert.Contains($"与基准差超过 {ThermocoupleBasis.ModelGapNoteK:0} ℃", Criteria.Html());
++        foreach (var (dir, f) in new[] { ("Core", "Criteria.cs"), ("UI", "ManualPage.cs") })
++        {
++            string src = File.ReadAllText(Path.Combine(HandoverDoc.Root(), "Pt_Optimize", dir, f));
++            Assert.DoesNotContain("差超过 1 ℃", src);
++            Assert.Contains("ThermocoupleBasis.ModelGapNoteK", src);
++        }
++        // 说明书不再说「管孔净流入」与新热侧是同一条线的两个视角（新热侧的基准是设定值，还算舌片区峰与管根较热端，两者推不出彼此）
++        Assert.DoesNotContain("「管孔净流入」与「最热铂高出热偶读数」是同一条安全线的两个视角", Criteria.Html());
++    }
++
++    [Fact]
++    public void 安装报告_逐片列热偶基准并写明差超过1度的片_参考量不印过()
++    {
++        var d = DesignSpec.Builtin[0].Clone();
++        d.SetpointC = new[] { 1150.0, 1080.0, 1050.0 }; d.SegLengthMm = new[] { 300.0, 300.0, 300.0 }; d = d.Fit();
++        var p = new DesignInputs();
++        var (segs, fl) = Line();
++        var lc = new LineCase();
++        var (hot, cold) = LineRunner.ThermocoupleChecks(lc, segs, fl);
++        var r = new LineResult
++        {
++            Ok = true, Converged = true, Segments = segs, Flanges = fl,
++            Checks = new[]
++            {
++                hot, cold,
++                new ConstraintOut { Name = LineResult.Key.FlangeDip, Actual = 3.2, Limit = lc.RootDeltaMaxK, Unit = "K", Ok = true, Kind = CheckKind.Reference, Where = "HC2" },
++            },
++        };
++        string t = InstallReport.Build(r, d, p, "", new DateTime(2026, 9, 14, 12, 0, 0));
++        Assert.Contains("热偶读数基准", t);
++        Assert.Contains("对数平均", t);
++        Assert.Contains("HC1|HC2：模型算的无法兰交界管温", t);     // 差 +1.49 ℃ ⇒ 逐片写明
++        Assert.DoesNotContain("HC2|HC3：模型算的无法兰交界管温", t); // 差 +0.16 ℃ ⇒ 只在表里并列
++        Assert.Contains("参考（不卡交付）", t);
++        // 判据代号不许出现（「③ 结果与出图」是页签名，不是判据代号 ⇒ 按「代号紧跟判据名」查，同 NoCriterionCodeInUiTests 的判法）
++        foreach (var bad in new[] { "②′", "②″", "⑦", "⑧", "③ 法兰", "③法兰" }) Assert.DoesNotContain(bad, t);
++    }
++
++    /// <summary>
++    /// 2026-09-14 Opus 5（复审）：ThermocoupleChecks 是公开函数 —— 片数与段数对不上时，两条都要报「判不了」，
++    /// 不许只判传进来的那几片、却照样给出「过／不过」（缺的片一次都没判过）。
++    /// </summary>
++    [Fact]
++    public void 片数与段数对不上_两条都判不了()
++    {
++        var (segs, fl) = Line();
++        var shortFl = fl.Take(3).ToArray();                        // 3 段只给 3 片（少了出口）
++        var (hot, cold) = LineRunner.ThermocoupleChecks(new LineCase(), segs, shortFl);
++        Assert.True(hot.Undetermined); Assert.False(hot.Ok);
++        Assert.True(cold.Undetermined); Assert.False(cold.Ok);
++        Assert.Contains("法兰片数 3 与段数 3 对不上", hot.Note);
++        Assert.Equal(LineResult.Key.HotOverTc, hot.Name);
++        Assert.Equal(LineResult.Key.ColdUnderTc, cold.Name);
++        // 自证：同一组数片数对上时是判得了的（不然上面验的是别的原因）
++        var (hot2, cold2) = LineRunner.ThermocoupleChecks(new LineCase(), segs, fl);
++        Assert.False(hot2.Undetermined); Assert.False(cold2.Undetermined);
++        // 多给一片同样判不了
++        var longFl = fl.Concat(new[] { new FlangeOut { Name = "多余", TDiscMaxC = 1000, TTabMaxC = 1000 } }).ToArray();
++        Assert.True(LineRunner.ThermocoupleChecks(new LineCase(), segs, longFl).Hot.Undetermined);
++        Assert.True(LineRunner.ThermocoupleChecks(new LineCase(), Array.Empty<SegmentOut>(), Array.Empty<FlangeOut>()).Cold.Undetermined);
++    }
++
++    /// <summary>
++    /// 2026-09-14 Opus 5（复审）：FlangeAutoSizer.CloneCase 带上四个判据限值（R48 B 那次加的）。
++    /// 此前一个都不带 ⇒ 改过限值的算例在图纸路径定尺寸／加密复算的副本里静默退回默认值；这一改是行为变化，没有门就会被人删掉。
++    /// </summary>
++    [Fact]
++    public void 算例副本带上四个判据限值()
++    {
++        var lc0 = new LineCase { HotOverTcMaxK = 3.5, ColdUnderTcMaxK = 4.25, DiscOverTempMaxK = 7.5, RootDeltaMaxK = 12.5 };
++        // 自证：四个值都不是默认值，否则「副本等于原值」验不出东西
++        var dflt = new LineCase();
++        Assert.NotEqual(dflt.HotOverTcMaxK, lc0.HotOverTcMaxK);
++        Assert.NotEqual(dflt.ColdUnderTcMaxK, lc0.ColdUnderTcMaxK);
++        Assert.NotEqual(dflt.DiscOverTempMaxK, lc0.DiscOverTempMaxK);
++        Assert.NotEqual(dflt.RootDeltaMaxK, lc0.RootDeltaMaxK);
++        var lc = FlangeAutoSizer.CloneCase(lc0);
++        Assert.Equal(3.5, lc.HotOverTcMaxK, 12);
++        Assert.Equal(4.25, lc.ColdUnderTcMaxK, 12);
++        Assert.Equal(7.5, lc.DiscOverTempMaxK, 12);
++        Assert.Equal(12.5, lc.RootDeltaMaxK, 12);
++    }
++
++    /// <summary>限值单一来源的源码门（照 SingleSourceLimitTests）：求解器与敏感度矩阵读的是新限值字段，不写常数。</summary>
++    [Fact]
++    public void 求解器限值只从LineCase的新字段读()
++    {
++        string root = HandoverDoc.Root();
++        string solver = File.ReadAllText(Path.Combine(root, "Pt_Optimize", "Core", "Solver.cs"));
++        string sens = File.ReadAllText(Path.Combine(root, "Pt_Optimize", "Core", "SensitivityMatrix.cs"));
++        Assert.Contains("lc.ColdUnderTcMaxK", solver);
++        Assert.Contains("lc.HotOverTcMaxK", solver);
++        Assert.Contains("lc0.ColdUnderTcMaxK", sens);
++        Assert.Contains("lc0.HotOverTcMaxK", sens);
++        Assert.DoesNotContain("coldMax = 5", solver);
++        Assert.DoesNotContain("hotMax = 5", solver);
++    }
++}
+diff --git a/Pt_Optimize/Core/Criteria.cs b/Pt_Optimize/Core/Criteria.cs
+index c7827e1..3774962 100644
+--- a/Pt_Optimize/Core/Criteria.cs
++++ b/Pt_Optimize/Core/Criteria.cs
+@@ -54,6 +54,13 @@ public static class Criteria
+         public string Key = "";
+     }
+ 
++    /// <summary>
++    /// **判据代号用到的圈号**（全程序只有这一份；拆代号、剥代号、查代号、门的正则都读它）。
++    /// ★ 2026-09-14 Opus 5（复审）：加 ⑦⑧ —— 热偶读数基准的热侧／冷侧用**新代号**，不占用 ②″／③（那两个代号永远指旧判法那两条）。
++    ///   此前这串字在本档里抄了四遍、在 NoCriterionCodeInUiTests 里又抄一遍；加一个代号就得改五处，漏一处门就漏看。
++    /// </summary>
++    public const string CodeChars = "①②③④⑤⑥⑦⑧";
++
+     private static Entry E(string key, string unit, string dir, string means, bool hard)
+     {
+         // 从 Key 里**拆**出代号与名字，不另写 —— 判据改名这里自动跟着改。
+@@ -63,10 +70,13 @@ public static class Criteria
+         {
+             name = k[1..].Trim();
+             // 「· ② 法兰最高温」这种：代号是 ·②
+-            if (name.Length > 0 && "①②③④⑤⑥".Contains(name[0]))
++            // R48 B（2026-09-14 Opus 5）：撇号要跟着圈号一起进代号（·②″ 这种写法），否则 ″ 会被当成名字的第一个字 —— 与下面不带「·」那一支同一个拆法。
++            if (name.Length > 0 && CodeChars.Contains(name[0]))
+             {
+-                code = "·" + name[0];
+-                name = name[1..].Trim();
++                int n = 1;
++                if (name.Length > 1 && (name[1] == '′' || name[1] == '″')) n = 2;
++                code = "·" + name[..n];
++                name = name[n..].Trim();
+             }
+             else
+             {
+@@ -77,7 +87,7 @@ public static class Criteria
+                 code = "";
+             }
+         }
+-        else if (k.Length > 0 && "①②③④⑤⑥".Contains(k[0]))
++        else if (k.Length > 0 && CodeChars.Contains(k[0]))
+         {
+             int n = 1;
+             if (k.Length > 1 && (k[1] == '′' || k[1] == '″')) n = 2;
+@@ -99,6 +109,27 @@ public static class Criteria
+         E(LineResult.Key.Ramp,      "A/mm²", "≤", "按设定速率（20 °C/h）空管升温所需电流折成的管 J 峰值；没被管 J 许用截住 = 升得到目标（闭式，R20）", true),
+         E(LineResult.Key.RampHours, "h",     "≤", "参考：集总模型（含法兰质量与自热）算的升温到位用时", false),
+         E(LineResult.Key.NetFlux,   "W",     ">", "热是从管子流进法兰（安全），还是倒灌进管子（**烧断的方向**）", true),
++        // ★★★★★ R48 B（2026-09-14 Opus 5）：热侧换成热偶读数基准（旧的「圆盘区最高温 − 管温」挪到下面参考量那一组，说明文字与修订史原样留着作对照）。
++        //   写意图，不写限值：限值只从 LineCase 读；「误差 5 ℃」是热偶的现场事实，也从 LineCase.ThermocoupleErrorK 插进来，不另抄。
++        E(LineResult.Key.HotOverTc, "K",     "≤", "法兰上（圆盘和舌片）以及它贴着的管根里，最热的那一点比控温热偶的读数高多少。"
++            + $"控温热偶装在每段中点，读数误差 {LineCase.ThermocoupleErrorK:0} ℃ —— 读数上下各这么多以内分不出来，"
++            + "所以任何一处铂比读数高出这个带，就可能已经越过设定而热偶看不出来。"
++            + "端片的基准是本段热偶的读数；两段共用的那一片，基准取两侧热偶读数的对数平均（按开尔文算）。"
++            + $"判据说明里并列「模型算的无法兰交界管温」作对照，它与基准差超过 {ThermocoupleBasis.ModelGapNoteK:0} ℃ 时会写明 —— 判定只按热偶读数，"   // 阈值只从 ThermocoupleBasis 读（2026-09-14 Opus 5 复审：原写死「1 ℃」）
++            + "因为模型交界温度会随设计变量挪动", true),
++        E(LineResult.Key.FreeTab,   "mm",    "≥", "舌片伸出来、没被压接吃掉的那一段够不够长 —— 现场铜排装得下吗", true),
++        E(LineResult.Key.DiscCover, "mm",    "≥", "圆盘半径够不够盖住管孔加焊脚 —— 盖不住就焊不出来", true),
++        E(LineResult.Key.TubeJ,     "A/mm²", "≤", "管子自身的电流密度上限", true),
++        E(LineResult.Key.SectionJ,  "A/mm²", "<", "法兰每一个必经截面（舌片各处含开孔、舌盘交界、孔缘环与各级环）的电流密度 = 升温设计电流 ÷ 截面积；按 10 定尺寸，全体要小于 11", true),
++
++        // ★★★★★ R48 B（2026-09-14 Opus 5）：冷侧取代旧判法「法兰增量温降（靶）」，升为硬安全线；原先「靶」这一组就空了，组标题一并删掉。
++        E(LineResult.Key.ColdUnderTc, "K",   "≤", "法兰所在接头处管根较冷的那一端，比控温热偶的读数低多少 —— 法兰抽热会把管根拉冷。"
++            + $"控温热偶装在每段中点、读数误差 {LineCase.ThermocoupleErrorK:0} ℃，管根低出这个带，热偶就看不出这一段已经偏冷。"
++            + "基准与上一条相同：端片取本段读数，共用的那一片取两侧读数的对数平均（按开尔文算）；"
++            + $"说明里同样并列「模型算的无法兰交界管温」作对照，差超过 {ThermocoupleBasis.ModelGapNoteK:0} ℃ 时写明", true),
++
++        // ── 参考量（印出来，不卡交付）
++        // R48 B（2026-09-14 Opus 5）：下面这条原是硬安全线（圆盘区最高温 − 管温），降为参考量（旧判法，代号 ②″ 不变）；说明文字与修订史原样留着。
+         // ★ R48（2026-09-14，Opus 5）：这句以前写「贴着管孔那一圈盘面」「孔周电流拥塞顶出来的尖峰」，
+         //   两处都与代码/实测对不上：
+         //   ① 代码圈的是 sqrt(x²+z²) ≤ 盘半径 —— **整块圆盘**，不是贴着孔那一圈（见 ShellThermal 的分区）；
+@@ -111,22 +142,15 @@ public static class Criteria
+         //   ④ 「它的温度**由**熔点和局部热失稳两条**管**」—— 局部热稳定现在是参考项，**不卡交付**。
+         //      说明书上写着有人管、实际没人卡，正是「不许把事情搞混」。
+         //      改成「另见」：只指路，不承诺它会挡住设计。升不升硬判据，等重解后在复核网格上看过裕度再定。
+-        E(LineResult.Key.DiscTemp,  "K",     "≤", "圆盘上最热的那一点，比管子高多少。圈的是圆盘整块 —— "
++        E(LineResult.Key.DiscTemp,  "K",     "≤", "（旧判法，只作对照，不卡交付）圆盘上最热的那一点，比贴着的管子高多少 —— 基准是模型算的管根温度，不是热偶读数。圈的是圆盘整块 —— "
+             + "从管孔边缘一直到圆盘外缘，不含伸出去的舌片。"
+             + "圈这块，是因为它经焊缝直接贴着管子：这块只要比管子热，热就直接进管；"
+             // 2026-09-14 再改（物理把关人）：「路上有散热」在圆盘包厚保温时不成立（实测四片圆盘散热只有 12～14 W，而法兰发热 440～800 W）。
+             //   换成与保温取值无关的说法：舌片的热要进管子，必须先把圆盘顶热，所以看圆盘就够了。
+             + "舌片上的热要进管子，必须先经过圆盘、先把圆盘顶热，所以看圆盘就够了，舌片不在这条里算。"
+-            + "舌片自己的温度另见熔点与局部热失稳两项", true),
+-        E(LineResult.Key.FreeTab,   "mm",    "≥", "舌片伸出来、没被压接吃掉的那一段够不够长 —— 现场铜排装得下吗", true),
+-        E(LineResult.Key.DiscCover, "mm",    "≥", "圆盘半径够不够盖住管孔加焊脚 —— 盖不住就焊不出来", true),
+-        E(LineResult.Key.TubeJ,     "A/mm²", "≤", "管子自身的电流密度上限", true),
+-        E(LineResult.Key.SectionJ,  "A/mm²", "<", "法兰每一个必经截面（舌片各处含开孔、舌盘交界、孔缘环与各级环）的电流密度 = 升温设计电流 ÷ 截面积；按 10 定尺寸，全体要小于 11", true),
+-
+-        // ── 靶（列进「必须出现」名单，但不算硬安全线）
+-        E(LineResult.Key.FlangeDip, "K",     "≤", "**法兰把管根拉冷了多少** —— 只算法兰的责任，不含控温点梯度", false),
+-
+-        // ── 参考量（印出来，不卡交付）
++            + "舌片自己的温度另见熔点与局部热失稳两项", false),
++        // R48 B（2026-09-14 Opus 5）：原是靶（法兰增量温降 ≤ 10），降为参考量（旧判法，代号 ③ 不变）。
++        E(LineResult.Key.FlangeDip, "K",     "≤", "（旧判法，只作对照，不卡交付）**法兰把管根拉冷了多少** = 无法兰基线 − 实际 —— 只算法兰的责任，不含控温点梯度", false),
+         E(LineResult.Key.TubeStrength,  "—",     "≤", "管子的强度用掉了几成（Pt 持久强度实测区间外时**判不了**）", false),
+         E(LineResult.Key.FlangeTopTemp, "K",     "≤", "整片法兰（含舌片）最高温比管温高多少", false),
+         E(LineResult.Key.SetpointDrift, "K",     "≤", "管温偏离本段控温点多少 —— **由控温点梯度决定，法兰管不着**", false),
+@@ -155,9 +179,9 @@ public static class Criteria
+     ///
+     /// 判据的 <see cref="LineResult.Key"/> 常数**自己就带着代号**：
+     /// <code>
+-    ///   NetFlux   = "②′管孔净流入"
+-    ///   DiscTemp  = "②″圆盘区最高温"
+-    ///   FlangeDip = "③ 法兰增量温降"
++    ///   NetFlux     = "②′管孔净流入"
++    ///   HotOverTc   = "⑦ 最热铂高出热偶读数"          （R48 B 2026-09-14 起的新判据，新代号）
++    ///   FlangeDip   = "③ 法兰增量温降（旧判法）"      （代号 ③ 不换主人，只降为参考量）
+     /// </code>
+     /// 而判据表直接印 <c>ConstraintOut.Name</c> ⇒ 代号是**从内核流到界面上**的，
+     /// 散落在各处提示语里的那些只是支流。
+@@ -184,7 +208,7 @@ public static class Criteria
+ 
+         // 「· ② 法兰最高温」这种：先剥分类标记，再剥代号
+         if (k.StartsWith("·", StringComparison.Ordinal)) k = k[1..].TrimStart();
+-        if (k.Length > 0 && "①②③④⑤⑥".Contains(k[0]))
++        if (k.Length > 0 && CodeChars.Contains(k[0]))
+         {
+             int n = 1;
+             if (k.Length > 1 && (k[1] == '′' || k[1] == '″')) n = 2;
+@@ -204,7 +228,7 @@ public static class Criteria
+     {
+         if (string.IsNullOrEmpty(text)) return false;
+         for (int i = 0; i < text.Length; i++)
+-            if ("①②③④⑤⑥".Contains(text[i])) return true;
++            if (CodeChars.Contains(text[i])) return true;
+         return false;
+     }
+ 
+@@ -294,9 +318,21 @@ public static class Criteria
+                         + $"<td class=\"n\">{e.Dir}</td><td>{BoldHtml(e.Means)}</td></tr>");   // R47 第三轮 N6：** 转粗体，不许字面印进说明书
+             sb.Append("</table>");
+         }
+-        sb.Append("<p>★ <b>「管孔净流入」与「圆盘区最高温」是同一条安全线的两个视角</b> —— ");
+-        sb.Append("前者从管子看热流方向（热该往法兰走，不该往管里灌），");
+-        sb.Append("后者从法兰看圆盘区温度。两条一起看才判得准，缺一条就会漏掉一个失效方向。</p>");
++        // R48 B（2026-09-14 Opus 5）：热侧换成热偶读数基准；再补一段说基准怎么取、为什么不用模型温度。
++        // ★ 2026-09-14 Opus 5（复审）：原来写「管孔净流入与最热铂高出热偶读数是同一条安全线的两个视角、缺一条就漏一个方向」——
++        //   对旧的「圆盘区最高温 − 管温」大致成立（两者都在问热会不会从法兰进管），对新热侧**不成立**：新热侧还算舌片区峰和管根较热端，
++        //   基准是设定值 ⇒ 净流入 > 0（热往法兰走）时它照样可以超限（例如共用接头的管根本身就比对数平均高），反过来也一样。
++        //   说明书在教工程师一个不对的推论 ⇒ 改成「各管各的」。
++        sb.Append("<p>★ <b>「管孔净流入」与「最热铂高出热偶读数」管的是两件不同的事，要分开看</b> —— ");
++        sb.Append("前者管<b>热流方向</b>：热该从管子流进法兰，不该倒灌进管子（烧断的方向）；");
++        sb.Append("后者管<b>铂比控温热偶的读数高出多少</b>：法兰上（圆盘、舌片）以及它贴着的管根，任何一处比读数高出误差带就说不清了。");
++        sb.Append("两者不能互相推出：热往法兰走时铂照样可以比读数高出误差带（比如两段共用的那一片，一侧管子本身就比两侧读数的对数平均热），");
++        sb.Append("反过来铂没有高出读数时热也可能在往管里灌。所以两条各自都要过。</p>");
++        sb.Append("<p>★ <b>「最热铂高出热偶读数」与「管根低于热偶读数」的基准都是控温热偶的读数</b>：热偶装在每段中点，");
++        sb.Append($"读数误差 {LineCase.ThermocoupleErrorK:0} ℃，上下各算一次，所以热侧、冷侧各自一条。");
++        sb.Append("端片取本段读数；两段共用的那一片取两侧读数的<b>对数平均</b>（按开尔文算）。");
++        sb.Append($"基准只用设定值算，不用模型算的交界管温 —— 那个温度会随设计变量挪动；它只在判据说明里并列作对照，与基准差超过 {ThermocoupleBasis.ModelGapNoteK:0} ℃ 时写明。");
++        sb.Append("「圆盘区最高温 − 管温」「法兰增量温降」是换基准之前的旧判法，现在只列在参考量里作对照，不卡交付。</p>");
+         return sb.ToString();
+     }
+ 
+@@ -328,7 +364,11 @@ public static class Criteria
+             sb.AppendLine();
+         }
+         sb.AppendLine("★ 代号里的 ′ 与 ″ 不是次要标记：**②′ 与 ②″ 是同一条安全线的两个视角** ——");
+-        sb.AppendLine("  ②′ 从管子看热流方向，②″ 从法兰看圆盘区温度。");
++        sb.AppendLine("  ②′ 从管子看热流方向，②″ 从法兰看圆盘区温度（贴着的管根作基准）。");
++        // R48 B（2026-09-14 Opus 5 复审）：代号**不换主人** —— ②″／③ 仍指原来那两条（2026-09-14 起降为参考量），新判据用新代号。
++        sb.AppendLine("★ 2026-09-14 起卡交付的热侧／冷侧换成热偶读数基准：⑦ 最热铂高出热偶读数、⑧ 管根低于热偶读数（新代号）；");
++        sb.AppendLine("  ②″／③ 仍指圆盘区最高温 − 管温／法兰增量温降（旧判法），降为参考量，历史记录、注释、HANDOVER 里的 ②″／③ 含义不变。");
++        sb.AppendLine("  ⚠ ②′ 与 ⑦ **不是**同一条线的两个视角：⑦ 的基准是设定值，还算舌片区峰与管根较热端，两条各自都要过。");
+         return sb.ToString();
+     }
+ }
+diff --git a/Pt_Optimize/Core/DesignSpec.cs b/Pt_Optimize/Core/DesignSpec.cs
+index 8bbbc45..9ad8e88 100644
+--- a/Pt_Optimize/Core/DesignSpec.cs
++++ b/Pt_Optimize/Core/DesignSpec.cs
+@@ -1196,7 +1196,9 @@ public sealed class DesignSpec
+                   " 另：本档的热学数字出自修网格前的网格（R47 之前）。在修好的网格上实算**管孔净流入 −14.675 W**（热往管里灌，不过）" +
+                   "、圆盘区最高温 3.007 K、法兰增量温降 −14.824 K、合计 3099.7 g ——" +
+                   "**本档的热学结论不可再引用**，只留作「舌片自由段这条判据抓得住它」的样本。",
+-        InvalidChecks = new[] { "⑤", LineResult.Key.NetFlux, LineResult.Key.DiscTemp, LineResult.Key.FlangeDip },
++        // R48 B（2026-09-14 Opus 5）：热学结论整档不可引用 ⇒ 热偶读数基准的热侧／冷侧两条新硬判据也在声明之内（旧判法两条已是参考量，留着不删）
++        InvalidChecks = new[] { "⑤", LineResult.Key.NetFlux, LineResult.Key.DiscTemp, LineResult.Key.FlangeDip,
++                                LineResult.Key.HotOverTc, LineResult.Key.ColdUnderTc },
+         RecordFromOldMesh = true,   // R48：记录值出自修网格前；热学结论不可引用（见 Invalid）
+         WallMm = 0.8, TabLengthMm = 90.0, TabHalfWidthMm = 15.0,
+         TabThickMm = new[] { 2.11, 3.33, 3.12, 1.76 },
+@@ -1218,7 +1220,9 @@ public sealed class DesignSpec
+                   " 另：本档的热学数字出自修网格前的网格（R47 之前）。在修好的网格上实算**管孔净流入 −12.494 W**（热往管里灌，不过）" +
+                   "、圆盘区最高温 3.538 K、法兰增量温降 −16.591 K、合计 2377.8 g ——" +
+                   "**本档的热学结论不可再引用**。",
+-        InvalidChecks = new[] { "⑤", LineResult.Key.NetFlux, LineResult.Key.DiscTemp, LineResult.Key.FlangeDip },
++        // R48 B（2026-09-14 Opus 5）：热学结论整档不可引用 ⇒ 热偶读数基准的热侧／冷侧两条新硬判据也在声明之内（旧判法两条已是参考量，留着不删）
++        InvalidChecks = new[] { "⑤", LineResult.Key.NetFlux, LineResult.Key.DiscTemp, LineResult.Key.FlangeDip,
++                                LineResult.Key.HotOverTc, LineResult.Key.ColdUnderTc },
+         RecordFromOldMesh = true,   // R48：记录值出自修网格前；热学结论不可引用（见 Invalid）
+         WallMm = 0.6, TabLengthMm = 90.0, TabHalfWidthMm = 15.0,
+         TabThickMm = new[] { 1.82, 2.85, 2.66, 1.49 },
+diff --git a/Pt_Optimize/Core/FlangeAutoSizer.cs b/Pt_Optimize/Core/FlangeAutoSizer.cs
+index 5dcb541..0706d76 100644
+--- a/Pt_Optimize/Core/FlangeAutoSizer.cs
++++ b/Pt_Optimize/Core/FlangeAutoSizer.cs
+@@ -372,9 +372,12 @@ public static class FlangeAutoSizer
+             bool searchSaidOk = res.Converged;
+             res.Converged = worst < opt.DrawTolW && v.Converged;
+ 
++            // R48 B（2026-09-14 Opus 5）：这句进界面 ⇒ 写全名不写代号；卡交付的冷侧／热侧换成热偶读数基准，旧判法的增量温降只作对照（本类的抽热靶仍是按它的 γ 定的，本类不追新两条）。
+             res.Message += $"　【全精度复核】抽热偏离靶 {worst:0.0} W" +
+-                           $"（②′ {v.ValueOf(LineResult.Key.NetFlux):+0.00;−0.00} W／" +
+-                           $"③ {v.ValueOf(LineResult.Key.FlangeDip):0.00} K）";
++                           $"（管孔净流入 {v.ValueOf(LineResult.Key.NetFlux):+0.00;−0.00} W／" +
++                           $"管根低于热偶读数 {v.ValueOf(LineResult.Key.ColdUnderTc):0.00} K／" +
++                           $"最热铂高出热偶读数 {v.ValueOf(LineResult.Key.HotOverTc):0.00} K／" +
++                           $"法兰增量温降（旧判法） {v.ValueOf(LineResult.Key.FlangeDip):0.00} K）";
+             if (!v.Converged) res.Message += "；⚠ 段↔法兰耦合未收敛，数值不可引用";
+             if (searchSaidOk && !res.Converged)
+                 res.Message += "；⚠ 搜索精度下判为达标，全精度下**不达标** —— 以本次为准";
+@@ -525,7 +528,9 @@ public static class FlangeAutoSizer
+             bool dipOk = dips.All(v => !double.IsNaN(v));
+             if (!dipOk)
+             {
+-                res.Message = "无法兰基线没算出来 ⇒ ③ 增量温降无从得知，定尺寸器**拒绝瞎调**。" +
++                // 2026-09-14 Opus 5（复审）：这几句经 SolveByLevel 的内层（SolveAuto）拼进 Message，再进界面「自动定厚」说明 ⇒ 写全名不写代号。
++                //   这里的「增量温降」是旧判法那条（③，代号不换主人），已降为参考量；本器的靶仍按它定。
++                res.Message = "无法兰基线没算出来 ⇒ 法兰增量温降（旧判法）无从得知，定尺寸器**拒绝瞎调**。" +
+                               "（原来会退回追「偏离本段控温点」，那是个够不着的靶。）";
+                 return res;
+             }
+@@ -540,7 +545,7 @@ public static class FlangeAutoSizer
+             tHist.Add((double[])t.Clone());        // 本轮**入口**的厚度，用来认极限环
+             progress?.Report($"第 {it + 1} 轮：抽热最大偏差 {worst:0.0} W　" +
+                              $"D {string.Join("/", draws.Select(v => v.ToString("+0.0;−0.0")))}　" +
+-                             $"③max {dips.Max():0.0}　厚度 " +
++                             $"法兰增量温降（旧判法）最大 {dips.Max():0.0}　厚度 " +
+                              string.Join("/", t.Select(x => x.ToString("0.00"))));
+ 
+             if (worst < opt.DrawTolW)
+@@ -549,8 +554,9 @@ public static class FlangeAutoSizer
+                 res.Message =
+                     $"{it + 1} 轮收敛：各片抽热已落进窗口（靶 {opt.DrawTargetW:0.#} W，" +
+                     $"实测 {draws.Min():+0.0;−0.0}…{draws.Max():+0.0;−0.0} W）。" +
+-                    $"③ 随之为 {dips.Max():0.00} K。\r\n" +
+-                    "  ②′>0 与 ③≤限 是同一个抽热的两侧（③ = 2.40·D 实测）⇒ **一个靶同时守住两条**。";
++                    $"法兰增量温降（旧判法）随之为 {dips.Max():0.00} K。\r\n" +
++                    "  管孔净流入 > 0 与 法兰增量温降（旧判法）≤ 限值 是同一个抽热的两侧（增量温降 = 2.40·D 实测）⇒ 一个靶守住这两条；" +
++                    "卡交付的「最热铂高出热偶读数」「管根低于热偶读数」基准是热偶读数，**本器不追它们**，要看判据表。";
+                 return res;
+             }
+ 
+@@ -642,8 +648,8 @@ public static class FlangeAutoSizer
+                               //   底下那两句本来就已经在指「更大的过流断面 / 缩小法兰」——**标题比正文说大了**。
+                               "**厚度这条路走到头了，不是迭代不够**（" + HandOffHint + "）。\r\n" +
+                               (tooThin
+-                               ? "  还想加厚 = 抽热不够 = 法兰太热、热在往管里灌（②′<0）⇒ 需要更大的过流断面或更少的发热。"
+-                               : "  还想削薄 = 抽热太多 = 把管根抽出深坑（③ 超限）⇒ 需要缩小法兰或加保温。");
++                               ? "  还想加厚 = 抽热不够 = 法兰太热、热在往管里灌（管孔净流入 < 0）⇒ 需要更大的过流断面或更少的发热。"
++                               : "  还想削薄 = 抽热太多 = 把管根抽出深坑（法兰增量温降超限，旧判法）⇒ 需要缩小法兰或加保温。");
+                 return res;
+             }
+         }
+@@ -1197,7 +1203,7 @@ public static class FlangeAutoSizer
+                 last.Message = (last.Message ?? "") +
+                     $"　⚠ 第 {round + 1} 轮中止：连续 {worsen} 轮越调越差"
+                     + $"（超管根 {hist[hist.Count - 1 - worsen]:0.0} → {worstOver:0.0} K）。"
+-                    + " 厚度这个旋钮在这张图上救不了 ③ ——"
++                    + " 厚度这个旋钮在这张图上救不了法兰增量温降（旧判法）——"
+                     + " ⇒ 回 Rhino 改梯度分布（孔边加厚、削薄外缘），或改环径。";
+                 last.Terminal = true;
+                 last.TerminalWhy = "连续几轮越调越差 —— 厚度这个旋钮在这张图上救不了它";
+@@ -1256,7 +1262,8 @@ public static class FlangeAutoSizer
+                              : verify.Segments.Max(x => Math.Max(0.0, x.FlangeDipK - opt.TargetK));
+                 bool searchSaidOk = last.Converged;
+                 last.Converged = worst < opt.TolK && verify.Converged;
+-                last.Message += $"　【全精度复核】管根温差偏离目标 {worst:0.0} K";
++                // 2026-09-14 Opus 5（复审）：这里的「管根温差」是旧判法的法兰增量温降（靶 TargetK），写明，别让人当成卡交付的冷侧。
++                last.Message += $"　【全精度复核】法兰增量温降（旧判法）偏离本器的靶 {worst:0.0} K";
+                 if (!verify.Converged) last.Message += "；⚠ 段↔法兰耦合未收敛，数值不可引用";
+                 if (searchSaidOk && !last.Converged)
+                     last.Message += "；⚠ 搜索精度下判为达标，全精度下**不达标** —— 以本次为准";
+@@ -1272,17 +1279,23 @@ public static class FlangeAutoSizer
+                 // 同一个解的 ②″ = 600 K、②′ = −591 W —— 全线倒灌，方案完全不可用。
+                 // 若只报「③ 达标」，工程师会把它当成可行方案。
+                 // ⇒ 达标之后**再看一眼判据表**，不过就明说是哪几条、以及为什么不是加减厚度能解决的。
++                // ★ 2026-09-14 Opus 5（复审）：这段经 autoNote 原样进界面。原文三个毛病一起改：
++                //   ① 判据名印 c.Name（带代号）⇒ 走 Criteria.Plain；
++                //   ② 开头恒写「③ 达标」—— 不管靶到底达没达标都这么写（bad 非空就进来）；
++                //   ③ R48 B 之后同一句里会出现「③ 达标」（旧判法的增量温降）与卡交付的冷侧新判据不过，读起来自相矛盾。
++                //   ⇒ 写全名、按实际写达标与否，并明说本器追的是旧判法的靶，不追热偶读数基准的两条。
++                bool dipMet = worst < opt.TolK;
+                 var bad = verify.Checks
+                     .Where(c => c.Kind != CheckKind.Reference && (!c.Ok || c.Undetermined))
+-                    .Select(c => $"{c.Name}={c.Actual:0.0}/{c.Limit:0.0}")
++                    .Select(c => $"{Criteria.Plain(c.Name)}={c.Actual:0.0}/{c.Limit:0.0}")
+                     .ToArray();
+                 if (bad.Length > 0)
+                 {
+                     last.Converged = false;
+                     last.Message +=
+-                        "；★ **③ 达标但整线判据不过**：" + string.Join("、", bad) +
+-                        "。本器只调**厚度**，管不到 ②′/②″ —— 那两条在完整控制律里靠" +
+-                        "「管孔渐变环倍率」与「逐片舌保温」调，不是加减厚度能补的。" +
++                        $"；★ **本器的靶（法兰增量温降，旧判法）{(dipMet ? "达标" : "未达标")}，但整线判据不过**：" + string.Join("、", bad) +
++                        "。本器只调**厚度**、只追旧判法的增量温降靶，管不到管孔净流入，也不追卡交付的「最热铂高出热偶读数」「管根低于热偶读数」" +
++                        "（它们的基准是热偶读数）—— 那几条在完整求解里靠「管孔渐变环倍率」「逐片舌保温」「板厚」一起调，不是只加减厚度能补的。" +
+                         " ⇒ 用「载入设计记录 → 核算整线」比对，或回图上改几何（环 / 槽位 / 舌长）。";
+                 }
+             }
+@@ -1379,6 +1392,9 @@ public static class FlangeAutoSizer
+         MeshFineRadiusMm = c.MeshFineRadiusMm,
+         MeshInnerMm = c.MeshInnerMm, MeshInnerRadiusMm = c.MeshInnerRadiusMm,
+         GlassInC = c.GlassInC, GlassOutMeasuredC = c.GlassOutMeasuredC,
+-        Base = c.Base, BaselineMassG = c.BaselineMassG, CheckRamp = c.CheckRamp
++        Base = c.Base, BaselineMassG = c.BaselineMassG, CheckRamp = c.CheckRamp,
++        // R48 B（2026-09-14 Opus 5）：判据限值也要带过去 —— 此前一条都没拷，副本一律退回默认值（改过限值的算例在定尺寸／加密复算里会静默换回默认）。
++        HotOverTcMaxK = c.HotOverTcMaxK, ColdUnderTcMaxK = c.ColdUnderTcMaxK,
++        DiscOverTempMaxK = c.DiscOverTempMaxK, RootDeltaMaxK = c.RootDeltaMaxK,
+     };
+ }
+diff --git a/Pt_Optimize/Core/InstallReport.cs b/Pt_Optimize/Core/InstallReport.cs
+index 2badcea..dc62ed6 100644
+--- a/Pt_Optimize/Core/InstallReport.cs
++++ b/Pt_Optimize/Core/InstallReport.cs
+@@ -127,8 +127,28 @@ public static class InstallReport
+         // 8 判据结论
+         sb.AppendLine("**8. 判据表**" + (meshNote.Length > 0 ? $"（{meshNote}）" : ""));
+         sb.AppendLine("判据\t实际\t限值\t单位\t判定\t位置");
++        // ★ R48 B（2026-09-14 Opus 5）：参考量印「参考（不卡交付）」，不印「过」—— 旧判法两条降级后还在表里，印「过」会被读成它们也把过关。
+         foreach (var c in r.Checks)
+-            sb.AppendLine($"{Criteria.Plain(c.Name)}\t{c.Actual:0.###}\t{c.Limit:0.###}\t{c.Unit}\t{(c.Undetermined ? "无法判定" : c.Ok ? "过" : "不过")}\t{c.Where}");   // 判据名走 Criteria.Plain：界面不许出现判据代号
++            sb.AppendLine($"{Criteria.Plain(c.Name)}\t{c.Actual:0.###}\t{c.Limit:0.###}\t{c.Unit}\t"
++                        + $"{(c.Kind == CheckKind.Reference ? (c.Undetermined ? "参考（算不出）" : "参考（不卡交付）") : c.Undetermined ? "无法判定" : c.Ok ? "过" : "不过")}\t{c.Where}");   // 判据名走 Criteria.Plain：界面不许出现判据代号
++        sb.AppendLine();
++
++        // ★★ R48 B（2026-09-14 Opus 5）：热侧／冷侧两条的**逐片读数** —— 基准怎么取、最热的是谁、管根哪一端最冷，
++        //   并列「模型算的无法兰交界管温」，差超过 1 ℃ 的逐片写明。读数只走 ThermocoupleBasis（与判据同一份），不在这里重算。
++        var hotC = r.Find(LineResult.Key.HotOverTc);
++        var coldC = r.Find(LineResult.Key.ColdUnderTc);
++        sb.AppendLine($"  热偶读数基准（控温热偶在段中点，读数误差 {LineCase.ThermocoupleErrorK:0} ℃；端片取本段读数，共用片取两侧读数的对数平均，按开尔文算）：");
++        sb.AppendLine($"片\t热偶读数基准 °C\t最热铂 °C\t最热的是\t高出 K（限 {hotC?.Limit ?? double.NaN:0.#}）\t管根较冷端 °C\t低于 K（限 {coldC?.Limit ?? double.NaN:0.#}）\t模型算的无法兰交界管温 °C\t与基准差 ℃");
++        var tcs = ThermocoupleBasis.All(r);
++        foreach (var t in tcs)
++            sb.AppendLine($"{t.Name}\t{t.RefC:0.00}\t{(t.HotBlind.Length > 0 ? "判不了" : t.HottestC.ToString("0.0"))}\t{(t.HotBlind.Length > 0 ? t.HotBlind : t.HottestWhat)}"
++                        + $"\t{(double.IsNaN(t.HotK) ? "—" : t.HotK.ToString("+0.00;−0.00"))}"
++                        + $"\t{(t.ColdBlind.Length > 0 ? "判不了" : $"{t.RootColdC:0.0}（{t.RootColdWhere}）")}"
++                        + $"\t{(double.IsNaN(t.ColdK) ? "—" : t.ColdK.ToString("+0.00;−0.00"))}"
++                        + $"\t{(double.IsNaN(t.ModelJointC) ? "没有基线" : t.ModelJointC.ToString("0.0"))}"
++                        + $"\t{(double.IsNaN(t.ModelMinusRefK) ? "—" : t.ModelMinusRefK.ToString("+0.0;−0.0"))}");
++        foreach (var t in tcs.Where(t => !double.IsNaN(t.ModelMinusRefK) && Math.Abs(t.ModelMinusRefK) > ThermocoupleBasis.ModelGapNoteK))
++            sb.AppendLine($"  · {t.Name}：{ThermocoupleBasis.ModelJointNote(t)}。");
+         sb.AppendLine();
+ 
+         // 9 出图与文件
+diff --git a/Pt_Optimize/Core/LevelSolver.cs b/Pt_Optimize/Core/LevelSolver.cs
+index 9d7e74e..ab84368 100644
+--- a/Pt_Optimize/Core/LevelSolver.cs
++++ b/Pt_Optimize/Core/LevelSolver.cs
+@@ -201,7 +201,7 @@ public static class LevelSolver
+                     }
+                     res.HitBound = true;
+                     res.StopWhy = "逐级过热都压住了，但这些判据**没有旋钮能治**（要回 Rhino 改轮廓）："
+-                                + string.Join("、", bad.Select(c => c.Name));
++                                + string.Join("、", bad.Select(c => Criteria.Plain(c.Name)));   // 2026-09-14 Opus 5（复审）：StopWhy 会被当成讯息给人看 ⇒ 判据名剥代号
+                     Log("  ✗ " + res.StopWhy);
+                     return false;
+                 }
+diff --git a/Pt_Optimize/Core/LineRunner.cs b/Pt_Optimize/Core/LineRunner.cs
+index 7617d92..dfb2a13 100644
+--- a/Pt_Optimize/Core/LineRunner.cs
++++ b/Pt_Optimize/Core/LineRunner.cs
+@@ -248,10 +248,31 @@ public sealed class LineCase
+     /// </summary>
+     public double RampRateKPerH = 20.0;
+     /// <summary>管根温差目标上限 K（③）。下限恒为 0：温差必须为正，即法兰比管冷。</summary>
++    /// <remarks>★ R48 B（2026-09-14 Opus 5）：「法兰增量温降」已降为**旧判法参考量**，本限值只给那一行与「偏离本段控温点」参考行显示用，
++    ///   不再卡交付。卡交付的冷侧限值是 <see cref="ColdUnderTcMaxK"/>。</remarks>
+     public double RootDeltaMaxK = 10.0;
+ 
++    /// <summary>
++    /// ★★★★★ R48 B（2026-09-14 Opus 5）：**控温热偶的读数误差** K —— 热侧、冷侧两条判据的限值都从它来。
++    ///
++    /// 出处（用户 2026-09-14 定）：控温热偶装在**每段中点**，误差 **5 ℃**；「10 ℃ 是上下各 5 ℃」——
++    /// 即旧判法「法兰增量温降 ≤ 10」那个 10 本来就是热偶上下两侧误差之和，拆开后每侧 5。
++    /// 于是判据的基准从「模型算的管温」换成「**热偶读数**」：法兰上最热的铂不许高出读数 5 K，
++    /// 管根最冷的那一端不许低于读数 5 K —— 超出这个带，热偶就看不出来了。
++    /// ⚠ 限值只许这一个来源（照 SingleSourceLimitTests 的做法）；Criteria 的说明文字要写误差也读这里，不许另抄一个 5。
++    /// </summary>
++    public const double ThermocoupleErrorK = 5.0;
++
++    /// <summary>R48 B（2026-09-14 Opus 5）：热侧判据「最热铂高出热偶读数」的上限 K（硬安全线）。默认 = 热偶误差。</summary>
++    public double HotOverTcMaxK = ThermocoupleErrorK;
++
++    /// <summary>R48 B（2026-09-14 Opus 5）：冷侧判据「管根低于热偶读数」的上限 K（硬安全线，取代旧判法「法兰增量温降 ≤ 10」）。默认 = 热偶误差。</summary>
++    public double ColdUnderTcMaxK = ThermocoupleErrorK;
++
+     /// <summary>
+     /// 判据 ②″（圆盘区最高温 − 管温）的上限 K。
++    /// ★ R48 B（2026-09-14 Opus 5）：这条已降为**参考量**「②″圆盘区最高温 − 管温（旧判法）」（代号 ②″ 不变），本限值只给那一行显示用；
++    ///   卡交付的热侧限值是 <see cref="HotOverTcMaxK"/>（基准换成热偶读数，不再是模型算的管温）。下面是它当年的出处，留作病历。
+     ///
+     /// ★★★★★ 2026-08-15：由 **0 改成 5.0**，来源是用户给的两个现场数：
+     ///   · **控温精度 ±5 K** —— 闭环把温度**稳住**的能力
+@@ -673,8 +694,26 @@ public sealed class LineResult
+         /// <summary>参考量：集总模型（含法兰质量与自热）算的升温到位用时 h（R20 前它是硬判据 ①）。</summary>
+         public const string RampHours = "· 升温到位用时（集总）";
+         public const string NetFlux = "②′管孔净流入";      // B：热流方向本身
+-        public const string DiscTemp = "②″圆盘区最高温";     // C：贴管子那一圈
+-        public const string FlangeDip = "③ 法兰增量温降";    // 法兰挖的坑
++
++        // ★★★★★ R48 B（2026-09-14 Opus 5）：**热侧、冷侧两条判据的基准换成热偶读数**（用户 2026-09-14 定：
++        //   控温热偶在段中点、误差 5 ℃；「10 ℃ 是上下各 5 ℃」；共用法兰处基准取两侧热偶读数的对数平均）。
++        //   物理把关人核过：基准只许用**设定值**算出的对数平均（LineSolver.ThermocoupleReferenceC），
++        //   不许用模型算的交界管温 —— 那个温度会被设计变量挪走，拿它当基准等于让靶跟着箭跑。
++        //
++        //   ⚠⚠ **代号不换主人**（2026-09-14 Opus 5 复审改）：新两条用**新代号** ⑦（热侧）／⑧（冷侧）；
++        //     「②″」「③」仍然、而且永远指旧的那两条（圆盘区最高温 − 管温／法兰增量温降），只是降为参考量、名字带「（旧判法）」。
++        //     第一版曾让 ②″／③ 改指新判据 —— 那样 HANDOVER、deliverable、存档判词与命令行历史输出里的每一个 ②″／③ 都成了歧义，
++        //     按代号前缀取值的地方（R47NavGridInstrumentTests、TabInsulPerPlateTests 的 StartsWith("③")）会悄悄换量而不报错。
++        //     代号只给命令行与开发文档用（界面一律走 Criteria.Plain 剥掉），新代号的代价只是 Criteria.CodeChars 多两个字。
++        //   ⚠ 「旧判法」而不写「旧口径」：这两个名字会上界面，「口径」是界面不该出现的内部词（ShellThermal 那条规矩，物理把关人 2026-09-14）。
++        /// <summary>热侧（硬安全线）：第 j 片 max(盘峰, 舌区峰, 该接头管根较热端) − 热偶读数基准 ≤ <see cref="LineCase.HotOverTcMaxK"/>。</summary>
++        public const string HotOverTc = "⑦ 最热铂高出热偶读数";
++        /// <summary>冷侧（硬安全线）：第 j 片 热偶读数基准 − 该接头管根较冷端 ≤ <see cref="LineCase.ColdUnderTcMaxK"/>。</summary>
++        public const string ColdUnderTc = "⑧ 管根低于热偶读数";
++        /// <summary>参考量（2026-09-14 前是硬安全线 ②″，代号不变）：圆盘区最高温 − 贴着的管根温度。旧判法，不卡交付，留作对照。</summary>
++        public const string DiscTemp = "②″圆盘区最高温 − 管温（旧判法）";     // C：贴管子那一圈
++        /// <summary>参考量（2026-09-14 前是目标 ③，代号不变）：无法兰基线 − 实际管根温度。旧判法，不卡交付，留作对照。</summary>
++        public const string FlangeDip = "③ 法兰增量温降（旧判法）";    // 法兰挖的坑
+ 
+         // ★ 2026-08-20 补三条。它们一直都是判据（都在 Judge 里、都是硬安全线），
+         //   只是此前没人用常量引用过 ⇒ 常量表缺了它们。界面门禁（UI/Flow.cs 的 GateSpec）
+@@ -740,12 +779,14 @@ public sealed class LineResult
+     {
+         (LineResult.Key.Ramp,      CheckKind.HardSafety, false),  // R20：闭式、每轮都在（此前走集总模型，CheckRamp=false 时合法缺席）
+         (LineResult.Key.NetFlux,   CheckKind.HardSafety, false),
+-        (LineResult.Key.DiscTemp,  CheckKind.HardSafety, false),
++        // R48 B（2026-09-14 Opus 5）：热侧换成热偶读数基准（原 DiscTemp 降为旧判法参考量，参考量不进名单）
++        (LineResult.Key.HotOverTc, CheckKind.HardSafety, false),
+         (Key.FreeTab,   CheckKind.HardSafety, false),
+         (Key.DiscCover, CheckKind.HardSafety, false),
+         (Key.TubeJ,     CheckKind.HardSafety, false),
+         (Key.SectionJ,  CheckKind.HardSafety, false),   // 2026-09-08 用户设计因果链第 ④ 步：截面 J 全体 < 11
+-        (LineResult.Key.FlangeDip, CheckKind.Target,     false),
++        // R48 B（2026-09-14 Opus 5）：冷侧取代旧判法「法兰增量温降 ≤ 10（目标）」，**升为硬安全线**（用户 2026-09-14：上下各 5 ℃）
++        (LineResult.Key.ColdUnderTc, CheckKind.HardSafety, false),
+     };
+ 
+     /// <summary>该出现却没出现的判据。**缺席 ≠ 通过。**</summary>
+@@ -1786,6 +1827,8 @@ public static class LineRunner
+     private static readonly string[] dependsOnFlangeFields =
+     {
+         LineResult.Key.NetFlux, LineResult.Key.DiscTemp, LineResult.Key.FlangeDip, LineResult.Key.Ramp,
++        // R48 B（2026-09-14 Opus 5）：热侧、冷侧新判据都吃法兰场（盘峰/舌区峰来自温度场，管根温度随法兰抽热动）
++        LineResult.Key.HotOverTc, LineResult.Key.ColdUnderTc,
+         LineResult.Key.FlangeStab, LineResult.Key.LocalStab, LineResult.Key.RampField, LineResult.Key.HeatBalance,
+         LineResult.Key.FlangeTopTemp, LineResult.Key.SelfSupply, LineResult.Key.FlangeJ, LineResult.Key.HeatResidual,
+     };
+@@ -1842,6 +1885,104 @@ public static class LineRunner
+     public static bool TangentFromField(ThicknessField f, out double xTangent, out string how)
+         => FlangeMesher.TangentFromField(f, out xTangent, out _, out _, out how);   // R47 复修 M1：推法只有一份（网格锚点也用它）
+ 
++    /// <summary>
++    /// ★★★★★ R48 B（2026-09-14 Opus 5）：**热侧「最热铂高出热偶读数」与冷侧「管根低于热偶读数」两条硬安全线的构造** —— Judge 只调这一处。
++    /// 提成公开函数是为了让快门能拿**合成的** SegmentOut／FlangeOut 直接验「取哪一片、共用接头读哪两端、判不了怎么报」，
++    /// 不必跑一次分钟级的整线解（Judge 本身还要解网格与升温两节点，够不着）。
++    /// 逐片读数只走 <see cref="ThermocoupleBasis"/>，限值只从 <see cref="LineCase.HotOverTcMaxK"/>／<see cref="LineCase.ColdUnderTcMaxK"/> 读。
++    /// </summary>
++    public static (ConstraintOut Hot, ConstraintOut Cold) ThermocoupleChecks(LineCase c, SegmentOut[] segs, FlangeOut[] flanges)
++    {
++        ConstraintOut hot, cold;
++        // ★ 2026-09-14 Opus 5（复审）：片数必须 = 段数 + 1。函数公开之后，传进来少几片时下面只按 flanges.Length 逐片判，
++        //   缺的那几片热侧、冷侧**一次都没判过**却照样给出「过／不过」—— 正是「任何一片判不了 ⇒ 整条判不了」没盖住的洞。
++        //   Judge 目前总传 n+1 片（RunOnce 按 FlangeCount 建数组），这道闸守的是以后别的调用方。
++        int nSeg = segs?.Length ?? 0, nFl = flanges?.Length ?? 0;
++        if (nSeg < 1 || nFl != LineSolver.FlangeCount(nSeg))
++        {
++            string why = nSeg < 1 ? "没有管段，热偶读数基准无从取"
++                                  : $"法兰片数 {nFl} 与段数 {nSeg} 对不上（应为 {LineSolver.FlangeCount(nSeg)} 片）";
++            ConstraintOut Blind(string name, double lim) => new()
++            {
++                Name = name, Unit = "K", Kind = CheckKind.HardSafety,
++                Actual = double.NaN, Limit = lim, Ok = false, Undetermined = true, Where = "—",
++                Note = $"★ **无法判定**：{why} —— 缺的那几片一次都没判过，只判剩下的几片等于让这条硬安全线在那几片上从来没判过。不要把它读成通过。",
++            };
++            return (Blind(LineResult.Key.HotOverTc, c.HotOverTcMaxK), Blind(LineResult.Key.ColdUnderTc, c.ColdUnderTcMaxK));
++        }
++        var tcJoints = Enumerable.Range(0, flanges!.Length)
++                                 .Select(j => ThermocoupleBasis.At(segs, flanges, j)).ToArray();
++        string PerPlate(Func<ThermocoupleBasis.Joint, double> v)
++            => "逐片：" + string.Join("／", tcJoints.Select(t => $"{t.Name} {v(t):+0.00;−0.00}")) + " K";
++        var blindHot = tcJoints.Where(t => t.HotBlind.Length > 0).ToArray();
++        if (tcJoints.Length > 0 && blindHot.Length == 0)
++        {
++            var wh = tcJoints.OrderByDescending(t => t.HotK).First();
++            var fh = flanges[wh.Plate];
++            bool hotOk = wh.HotK <= c.HotOverTcMaxK + 1e-6;
++            hot = new ConstraintOut
++            {
++                Name = LineResult.Key.HotOverTc, Unit = "K", Kind = CheckKind.HardSafety,
++                Actual = wh.HotK, Limit = c.HotOverTcMaxK, Ok = hotOk, Where = wh.Name,
++                Note = $"基准 = {wh.RefHow}；最热的是{wh.HottestWhat} {wh.HottestC:0.0} °C"
++                     + $"（圆盘峰 {wh.DiscPeakC:0.0}，峰位 r={fh.DiscMaxRMm:0.0} mm、J={fh.DiscMaxJAPerMm2:0.00}；"
++                     + $"舌片区峰 {wh.TabPeakC:0.0}" + (double.IsNaN(fh.TabMaxRMm) ? "" : $"，峰位 r={fh.TabMaxRMm:0.0} mm")
++                     + $"；管根 {wh.RootEnds}）；{ThermocoupleBasis.ModelJointNote(wh)}；{PerPlate(t => t.HotK)}"
++                     + $"。控温热偶在段中点、读数误差 {LineCase.ThermocoupleErrorK:0} ℃：比读数高出这个带就说不清了。"
++                     + $"分区：{fh.DiscZoneRule}；{fh.InsulRule}"   // R48 B：进界面的说明不写「口径」这类内部词（同 ShellThermal.DiscZoneRule 那条规矩）
++                     + (hotOk ? "" : NextAction.HotOverTcHigh)
++            };
++        }
++        else
++            hot = new ConstraintOut
++            {
++                Name = LineResult.Key.HotOverTc, Unit = "K", Kind = CheckKind.HardSafety,
++                Actual = double.NaN, Limit = c.HotOverTcMaxK, Ok = false, Undetermined = true,
++                Where = blindHot.Length > 0 ? string.Join("、", blindHot.Select(t => t.Name)) : "—",
++                Note = (blindHot.Length > 0
++                        ? $"★ **无法判定**：{blindHot.Length} 片判不了（" + string.Join("；", blindHot.Select(t => $"{t.Name}：{t.HotBlind}")) + "）。"
++                        + "**任何一片判不了，整条就判不了** —— 只报剩下几片里最热的那个，等于让这条硬安全线在那几片上从来没判过。"
++                        : "★ **无法判定**：没有法兰片。")
++                     + "常见成因：几何来自 .3dm 厚度场而盘/舌分区认不出来，或盘半径 ≤ 孔半径，"
++                     + "或舌半宽 = 盘半径（切点落在 x=0）且用双舌片 —— 那时分区规则会把整片都算成舌片、圆盘区成为空集。"
++            };
++
++        var blindCold = tcJoints.Where(t => t.ColdBlind.Length > 0).ToArray();
++        if (tcJoints.Length > 0 && blindCold.Length == 0)
++        {
++            var wc = tcJoints.OrderByDescending(t => t.ColdK).First();
++            bool coldOk = wc.ColdK <= c.ColdUnderTcMaxK + 1e-6;
++            // 无法兰时这一端就已经低出限值 ⇒ 那一部分不是法兰造成的，照实说（按基线的定义，不是推断）
++            string notFlange = !double.IsNaN(wc.ModelJointC) && wc.RefC - wc.ModelJointC > c.ColdUnderTcMaxK
++                ? $"　⚠ 无法兰时交界管温就已比基准低 {wc.RefC - wc.ModelJointC:0.0} ℃（超过限值）—— 这一部分不是法兰造成的，法兰旋钮治不了它，要看控温点、管保温与段长。"
++                : "";
++            cold = new ConstraintOut
++            {
++                Name = LineResult.Key.ColdUnderTc, Unit = "K", Kind = CheckKind.HardSafety,
++                Actual = wc.ColdK, Limit = c.ColdUnderTcMaxK, Ok = coldOk, Where = wc.Name,
++                Note = $"基准 = {wc.RefHow}；管根较冷的是 {wc.RootColdWhere} {wc.RootColdC:0.0} °C（{wc.RootEnds}）；"
++                     + $"{ThermocoupleBasis.ModelJointNote(wc)}；{PerPlate(t => t.ColdK)}"
++                     + $"。控温热偶在段中点、读数误差 {LineCase.ThermocoupleErrorK:0} ℃：管根比读数低出这个带，热偶就看不出来了。"
++                     + notFlange
++                     + (coldOk ? "" : NextAction.ColdUnderTcHigh)
++            };
++        }
++        else
++            cold = new ConstraintOut
++            {
++                Name = LineResult.Key.ColdUnderTc, Unit = "K", Kind = CheckKind.HardSafety,
++                Actual = double.NaN, Limit = c.ColdUnderTcMaxK, Ok = false, Undetermined = true,
++                Where = blindCold.Length > 0 ? string.Join("、", blindCold.Select(t => t.Name)) : "—",
++                Note = (blindCold.Length > 0
++                        ? $"★ **无法判定**：{blindCold.Length} 片判不了（" + string.Join("；", blindCold.Select(t => $"{t.Name}：{t.ColdBlind}")) + "）。"
++                        + "**任何一片判不了，整条就判不了** —— 只报剩下几片里最冷的那个，等于让这条硬安全线在那几片上从来没判过。"
++                        : "★ **无法判定**：没有法兰片。")
++                     + "不要把它读成通过。"
++            };
++        return (hot, cold);
++    }
++
++
+     private static ConstraintOut[] Judge(LineCase c, LineResult res, SegmentOut[] segs,
+                                          FlangeOut[] flanges, DesignInputs[] segParams)
+     {
+@@ -1965,20 +2106,35 @@ public static class LineRunner
+         //   ⚠ 实测（09-14，管壁 0.8）：两个内置设计的四片圆盘区都不空（NaN 0/4），
+         //     所以本次修改**不改变现役档的任何判定**。它堵的是换个几何才会发作的那个洞
+         //     （舌半宽 = 盘半径且用双舌片时，分区规则 |x| > |切点| 会让圆盘区成为空集）。
++        // ★★★★★ R48 B（2026-09-14 Opus 5）：**热侧硬安全线换成「最热铂高出热偶读数」**，上面这段讲的「圆盘区最高温 − 管温」降为旧判法参考量（紧跟在后）。
++        //
++        //   为什么换基准（用户 2026-09-14 定）：控温热偶在段中点、误差 5 ℃ —— 现场知道的是**读数**，不是模型算的管根温度。
++        //   旧判法拿「贴着的管根温度」作基准，而那个管根温度本身会被法兰抽热、段间导热挪动：
++        //   法兰把管根拉冷 2 K，旧判法的基准就跟着降 2 K，圆盘峰「看上去」反而更高 —— 靶跟着箭跑。
++        //   新判法：H_j = max(圆盘峰, 舌片区峰, 该接头管根较热端) − 热偶读数基准（ThermocoupleBasis，唯一来源）。
++        //   · 舌片区峰也算进来：舌片是同一块铂，比读数高出误差带同样说不清（旧判法把舌片交给熔点与局部失稳，现在那两项是参考）。
++        //   · 管根较热端也算进来：共用接头处管子本身可能被一侧控温点顶得比对数平均高。
++        //   ⚠ 判不了的片照旧：**任何一片判不了 ⇒ 整条判不了**，点名是哪几片、缺的是哪个量。
++        var tcChecks = ThermocoupleChecks(c, segs, flanges);   // R48 B（2026-09-14 Opus 5）：热侧、冷侧两条的构造提成公开函数，快门用合成数据直接验
++        checks.Add(tcChecks.Hot);
++
++        // ── 旧判法参考量：圆盘区最高温 − 贴着的管根温度（2026-09-14 前是硬安全线，现在只作对照，不卡交付）
++        //   R48 B（2026-09-14 Opus 5）：计算照旧（同一个最热片、同一段病灶位置），只改 Kind 与名字；
++        //   原附注里的操作建议（NextAction.DiscHot）是按旧判法测的斜率写的、且带代号与命令行开关名，不再附在参考行上；
++        //   2026-09-14 Opus 5（复审）：那个常量从此没人挂 ⇒ 连同 NextAction.DipHigh 一起删掉（死字串还钉着门，等于门在空转）。
+         var blindDisc = flanges.Where(f => double.IsNaN(f.TDiscMaxC)).ToArray();
+         var hottestDisc = blindDisc.Length > 0 ? null
+                         : flanges.OrderByDescending(f => f.TDiscMaxC - f.TRootC).FirstOrDefault();
+         if (hottestDisc is not null)
+             checks.Add(new ConstraintOut
+             {
+-                Name = "②″圆盘区最高温 − 管温", Unit = "K", Kind = CheckKind.HardSafety,
++                Name = LineResult.Key.DiscTemp, Unit = "K", Kind = CheckKind.Reference, Ok = true,
+                 Actual = hottestDisc.TDiscMaxC - hottestDisc.TRootC, Limit = c.DiscOverTempMaxK,
+-                Ok = hottestDisc.TDiscMaxC - hottestDisc.TRootC <= c.DiscOverTempMaxK + 1e-6,
+                 Where = hottestDisc.Name,
+                 // ★ 判据必须自带**病灶位置**：只报差值时，「盘峰贴在管孔上」与
+                 //   「轮毂上被自身发热顶起一个尖峰」给出同一个数，却要用相反的旋钮去治。
+                 //   r≈管外径 且 J≈0 ⇒ 病在管侧；r 更大且 J 不为零 ⇒ 病在法兰侧。
+-                Note = $"限值 = 现场控温精度 ±5 K（用户 2026-08-15）；原限值 0 判的是 14 mW 倒流（占段功率 5 ppm）。" +
++                Note = "旧判法参考量（不卡交付；卡交付的是「最热铂高出热偶读数」）：基准是模型算的贴着的管根温度。" +
+                        $"圆盘区 {hottestDisc.TDiscMaxC:0.0} vs 管根 {hottestDisc.TRootC:0.0} °C；" +
+                        $"峰位 r={hottestDisc.DiscMaxRMm:0.0} mm（x={hottestDisc.DiscMaxXMm:+0.0;−0.0}, " +
+                        $"z={hottestDisc.DiscMaxZMm:+0.0;−0.0}）J={hottestDisc.DiscMaxJAPerMm2:0.00} " +
+@@ -1986,26 +2142,17 @@ public static class LineRunner
+                        $"分区口径：{hottestDisc.DiscZoneRule}；{hottestDisc.InsulRule}；" +
+                        $"舌片区峰值 {hottestDisc.TTabMaxC:0.0} °C" +
+                        (double.IsNaN(hottestDisc.TabMaxRMm) ? "" : $"（峰位 r={hottestDisc.TabMaxRMm:0.0} mm）") +
+-                       "（另由熔点与局部失稳管）；" +
+-                       $"管孔净流入 {hottestDisc.QFromTubeW:+0;-0} W" +
+-                       (hottestDisc.TDiscMaxC - hottestDisc.TRootC > c.DiscOverTempMaxK
+-                        ? NextAction.DiscHot : "")
++                       $"；管孔净流入 {hottestDisc.QFromTubeW:+0;-0} W"
+             });
+         else
+             checks.Add(new ConstraintOut
+             {
+-                Name = "②″圆盘区最高温 − 管温", Unit = "K", Kind = CheckKind.HardSafety,
+-                Actual = double.NaN, Limit = c.DiscOverTempMaxK, Ok = false,
+-                Undetermined = true, Where = blindDisc.Length > 0 ? string.Join("、", blindDisc.Select(f => f.Name)) : "—",
+-                Note = (blindDisc.Length > 0 && blindDisc.Length < flanges.Length
+-                        ? $"★ **无法判定**：{blindDisc.Length} 片（{string.Join("、", blindDisc.Select(f => f.Name))}）"
+-                        + "的网格里没有落在圆盘区的单元，圆盘区温度算不出来。"
+-                        + "**任何一片判不了，整条就判不了** —— 只报剩下几片里最热的那个，"
+-                        + "等于让这条硬安全线在那几片上从来没判过，而数字看着很正常。"
+-                        : "★ **无法判定**：没有任何一片算出圆盘区温度（每一片的网格里都没有"
+-                        + "落在圆盘区的单元）。**不要把它读成通过** —— 这一关没被检查过。") +
+-                       "常见成因：几何来自 .3dm 厚度场而盘/舌分区认不出来，或盘半径 ≤ 孔半径，"
+-                       + "或舌半宽 = 盘半径（切点落在 x=0）且用双舌片 —— 那时分区规则 |x| > |切点| 会把整片都算成舌片。"
++                Name = LineResult.Key.DiscTemp, Unit = "K", Kind = CheckKind.Reference, Ok = true,
++                Actual = double.NaN, Limit = c.DiscOverTempMaxK, Undetermined = true,
++                Where = blindDisc.Length > 0 ? string.Join("、", blindDisc.Select(f => f.Name)) : "—",
++                Note = "旧判法参考量（不卡交付）：" + (blindDisc.Length > 0
++                        ? $"{blindDisc.Length} 片（{string.Join("、", blindDisc.Select(f => f.Name))}）的网格里没有落在圆盘区的单元，算不出。"
++                        : "没有法兰片，算不出。")
+             });
+ 
+         // ── ②′ 同一条安全线的管侧视角：**热不能往管子里灌**
+@@ -2060,6 +2207,19 @@ public static class LineRunner
+         //   ⚠ NaN 的来路：ApplyBaseline 逐段做 `baseline − 实际`，而基线是全有全无；
+         //     所以部分 NaN 只能来自某一段主解的管根温度是 NaN —— 正是 2026-08-24 那个「发散的那一片」，
+         //     只是层级从片换成段。结构上没有任何东西挡着。
++        // ★★★★★ R48 B（2026-09-14 Opus 5）：**冷侧硬安全线「管根低于热偶读数」取代上面这段讲的「法兰增量温降 ≤ 10（目标）」**。
++        //
++        //   用户 2026-09-14：「10 ℃ 是上下各 5 ℃」—— 旧判法的 10 本来就是热偶上下两侧误差之和。
++        //   新判法：C_j = 热偶读数基准 − 该接头管根较冷端 ≤ 热偶误差（ThermocoupleBasis，唯一来源），升为**硬安全线**。
++        //   ⚠ 与旧判法的差别不止限值：旧判法「无法兰基线 − 实际」把控温点梯度剔掉了（那是 2026-08-15 的理由），
++        //     新判法不剔 —— 基准是**设定值算出的**对数平均，与法兰设计无关、不会被设计变量挪动，所以同样不是「够不着的靶」；
++        //     而模型算的无法兰交界管温照旧并列在说明里，差超过 1 ℃ 时写明（ThermocoupleBasis.ModelJointNote）。
++        //   ⚠ 判不了照旧：**任何一片判不了 ⇒ 整条判不了**。
++        checks.Add(tcChecks.Cold);   // R48 B：冷侧（热偶读数基准）—— 构造在 ThermocoupleChecks（公开，快门直接验）
++
++        // ── 旧判法参考量：法兰增量温降 = 无法兰基线 − 实际（2026-09-14 前是目标，现在只作对照，不卡交付）
++        //   R48 B（2026-09-14 Opus 5）：计算照旧（两端取较差、任何一段判不了整条判不了），只改 Kind 与名字；
++        //   原附注里的操作建议（NextAction.DipHigh）按旧判法写，不再附在参考行上（常量已删，见上面圆盘区那条的说明）。
+         var blindDip = segs.Where(s => double.IsNaN(s.FlangeDipK)).ToArray();
+         var dips = blindDip.Length > 0 ? Array.Empty<SegmentOut>()
+                  : segs.Where(s => !double.IsNaN(s.FlangeDipK)).ToArray();
+@@ -2068,28 +2228,23 @@ public static class LineRunner
+             var deepest = dips.OrderByDescending(s => s.FlangeDipK).First();
+             checks.Add(new ConstraintOut
+             {
+-                Name = "③ 法兰增量温降 ≤ 上限", Unit = "K", Kind = CheckKind.Target,
+-                Actual = deepest.FlangeDipK, Limit = c.RootDeltaMaxK,
+-                Ok = deepest.FlangeDipK <= c.RootDeltaMaxK, Where = deepest.Name,
+-                Note = $"= 无法兰基线 − 实际（{deepest.BaseTRootAC:0.0}/{deepest.BaseTRootBC:0.0} " +
+-                       $"vs {deepest.TRootAC:0.0}/{deepest.TRootBC:0.0} °C）；控温点梯度不算在内。" +
+-                       (deepest.FlangeDipK > c.RootDeltaMaxK ? NextAction.DipHigh : NextAction.DrawWindow)
++                Name = LineResult.Key.FlangeDip, Unit = "K", Kind = CheckKind.Reference, Ok = true,
++                Actual = deepest.FlangeDipK, Limit = c.RootDeltaMaxK, Where = deepest.Name,
++                Note = "旧判法参考量（不卡交付；卡交付的是「管根低于热偶读数」）：" +
++                       $"= 无法兰基线 − 实际（{deepest.BaseTRootAC:0.0}/{deepest.BaseTRootBC:0.0} " +
++                       $"vs {deepest.TRootAC:0.0}/{deepest.TRootBC:0.0} °C）；控温点梯度不算在内。" + NextAction.DrawWindow
+             });
+         }
+         else
+         {
+             checks.Add(new ConstraintOut
+             {
+-                Name = "③ 法兰增量温降 ≤ 上限", Unit = "K", Kind = CheckKind.Target,
+-                Actual = double.NaN, Limit = c.RootDeltaMaxK, Ok = false,
+-                Undetermined = true,
++                Name = LineResult.Key.FlangeDip, Unit = "K", Kind = CheckKind.Reference, Ok = true,
++                Actual = double.NaN, Limit = c.RootDeltaMaxK, Undetermined = true,
+                 Where = blindDip.Length > 0 ? string.Join("、", blindDip.Select(x => x.Name)) : "—",
+-                Note = (blindDip.Length > 0 && blindDip.Length < segs.Length
+-                        ? $"★ **无法判定**：{blindDip.Length} 段（{string.Join("、", blindDip.Select(x => x.Name))}）"
+-                        + "的增量温降算不出来。**任何一段判不了，整条就判不了** —— "
+-                        + "只报剩下几段里最深的那个，等于让这条判据在那几段上从来没判过，而数字看着很正常。"
+-                        : "★ **无法判定**：无法兰基线没算出来（LineCase.BaselineRootC 为空且基线子解失败）。") +
+-                       "不要把它读成通过。"
++                Note = "旧判法参考量（不卡交付）：" + (blindDip.Length > 0 && blindDip.Length < segs.Length
++                        ? $"{blindDip.Length} 段（{string.Join("、", blindDip.Select(x => x.Name))}）的增量温降算不出来。"
++                        : "无法兰基线没算出来（LineCase.BaselineRootC 为空且基线子解失败）。")
+             });
+         }
+ 
+diff --git a/Pt_Optimize/Core/LineSolver.cs b/Pt_Optimize/Core/LineSolver.cs
+index d02aa59..1a86cd8 100644
+--- a/Pt_Optimize/Core/LineSolver.cs
++++ b/Pt_Optimize/Core/LineSolver.cs
+@@ -158,6 +158,50 @@ public static class LineSolver
+             : Math.Sqrt(il * il + ir * ir + il * ir);      // 120° 相位差下的矢量差
+     }
+ 
++    /// <summary>摄氏 → 开尔文的偏移（对数平均必须在绝对温标上取）。</summary>
++    public const double KelvinOffset = 273.15;
++
++    /// <summary>
++    /// ★★★★★ R48 B（2026-09-14 Opus 5）：第 <paramref name="flangeIndex"/> 片法兰的**热偶读数基准** °C —— 热侧、冷侧两条判据的唯一基准。
++    ///
++    /// 用户 2026-09-14 定：控温热偶在**每段中点**、误差 5 ℃；共用法兰处基准取**两侧热偶读数的对数平均**。
++    /// 片号与 <see cref="JointCurrentA"/> 同一套（n 段 n+1 片）：
++    /// <code>
++    ///   端片 j = 0      ：段 0 的设定
++    ///   端片 j = n      ：段 n−1 的设定
++    ///   共用片 0 &lt; j &lt; n：段 j−1 与段 j 设定的对数平均（开尔文算）(T₁−T₂)/ln(T₁/T₂)，T₁ = T₂ 时取 T₁
++    /// </code>
++    /// ⚠ 物理把关人核过：**只许用设定值**。模型算的交界管温会被设计变量（舌保温、板厚……）挪走，
++    ///   拿它当基准等于让靶跟着箭跑；它只作对照并列在判据说明里（见 <see cref="ThermocoupleBasis"/>）。
++    /// 快门验数（ThermocoupleBasisTests）：1150/1080 → 1114.71 °C，1080/1050 → 1064.94 °C。
++    /// </summary>
++    public static double ThermocoupleReferenceC(double[] setpointC, int flangeIndex, int segmentCount)
++    {
++        if (setpointC is null) throw new ArgumentNullException(nameof(setpointC));
++        if (segmentCount < 1 || setpointC.Length < segmentCount)
++            throw new ArgumentException($"段数 {segmentCount} 与设定值个数 {setpointC.Length} 对不上");
++        if (flangeIndex < 0 || flangeIndex > segmentCount)
++            throw new ArgumentOutOfRangeException(nameof(flangeIndex), flangeIndex, $"片号应在 0…{segmentCount}");
++        if (flangeIndex == 0) return setpointC[0];
++        if (flangeIndex == segmentCount) return setpointC[segmentCount - 1];
++        return LogMeanC(setpointC[flangeIndex - 1], setpointC[flangeIndex]);
++    }
++
++    /// <summary>
++    /// 两个摄氏温度在**开尔文**上的对数平均，返回 °C：(T₁−T₂)/ln(T₁/T₂)。
++    /// T₁ = T₂ 时取 T₁（极限值）；两者差小于 1e-6 K 时直接取算术平均（与对数平均差 O(ΔT²/T)，远小于 1e-12 K，
++    /// 且避开 ln(1+ε) 的舍入）。任一个是 NaN 返回 NaN。R48 B（2026-09-14 Opus 5）。
++    /// </summary>
++    public static double LogMeanC(double aC, double bC)
++    {
++        if (double.IsNaN(aC) || double.IsNaN(bC)) return double.NaN;
++        double t1 = aC + KelvinOffset, t2 = bC + KelvinOffset;
++        if (t1 <= 0 || t2 <= 0)
++            throw new ArgumentOutOfRangeException(nameof(aC), $"温度低于绝对零度：{aC} / {bC} °C");
++        if (Math.Abs(t1 - t2) < 1e-6) return 0.5 * (aC + bC);
++        return (t1 - t2) / Math.Log(t1 / t2) - KelvinOffset;
++    }
++
+     /// <summary>
+     /// 第 <paramref name="joint"/> 号接头那一片的厚度，以及**是被哪一段的需求定的**。
+     ///
+diff --git a/Pt_Optimize/Core/MeshVerify.cs b/Pt_Optimize/Core/MeshVerify.cs
+index e0dc7a4..5514e6a 100644
+--- a/Pt_Optimize/Core/MeshVerify.cs
++++ b/Pt_Optimize/Core/MeshVerify.cs
+@@ -84,14 +84,40 @@ public static class MeshVerify
+             Trace = new();
+     }
+ 
+-    /// <summary>每条判据的复核容差 —— 与 `--selfcheck` 的对账容差**同口径**，不另立一套。</summary>
++    /// <summary>
++    /// 每条判据的复核容差（相邻两档加密之间，这条判据允许动多少还算「数不再变」）。命令行 `--meshadapt` 也读这一份，不另抄。
++    ///
++    /// ★★★★★ 2026-09-14 Opus 5（复审）：复核的三条从「管孔净流入／圆盘区最高温 − 管温／法兰增量温降」换成
++    /// 「管孔净流入／最热铂高出热偶读数／管根低于热偶读数」（R48 B），**容差与名字一起重定**：
++    /// <code>
++    ///   判据                      旧容差                            新容差
++    ///   管孔净流入                0.5 W（= --selfcheck 对账容差）    0.5 W（不变）
++    ///   圆盘区最高温 − 管温       0.2 K（= --selfcheck）             —— 降为参考量，不再复核
++    ///   法兰增量温降              1.0 K（限值 10 的 10 %，= CoupleTolK）—— 降为参考量，不再复核
++    ///   最热铂高出热偶读数        —                                  0.5 K = 热偶误差 5 K 的 10 %
++    ///   管根低于热偶读数          —                                  0.5 K = 热偶误差 5 K 的 10 %
++    /// </code>
++    /// 为什么是「限值的 10 %」：旧的法兰增量温降就是这个比例（1.0／10）；两条新判据都是「某点温度 − 常数基准」，
++    /// 外层耦合的剩余误差**直接**进值，不像「盘峰 − 管根」那样被相减抵掉 —— 所以旧的 0.2 K 不能照搬（审查 2026-09-14：
++    /// 那次单次判定耦合剩余误差估计已有 0.29 K，deliverable/r48B_热偶基准_现役档单次判定_2026-09-14.txt）。
++    /// 冷侧限值从 10 降到 5，若沿用 1.0 K 就占到限值的 20 %，放行变松。
++    /// ⚠ 0.5 K **还没在复核网格上实测过**：两档耦合剩余误差之和可能超过它（上面那次 0.29 × 2 = 0.58 K）。
++    ///   届时贴着限值的设计会一直判不收敛 —— 进度行对这两条都会印「与耦合停机噪声分不开」，远离限值时由「结论稳」放行。
++    ///   该取多少要在复核网格上量过再定（交接列为待办）；改这里时 MeshVerifyTests 一起改。
++    /// ⚠ 名字用 <see cref="Criteria.Plain"/> 的全名：判词（<see cref="MeshAdapt.Verdict"/>）原样印 Delta.Name，经判据页输出框进界面，
++    ///   此前印的是「②″ +0.004/0.2」这种代号。
++    /// ⚠ 与 `--selfcheck` 不再「同口径」：自检对账核的是**记录栏位**（DiscOverK／FlangeDipK 装的是旧判法的数），容差仍是 0.20／1.00 K。
++    /// </summary>
+     public static IReadOnlyList<MeshAdapt.Delta> TolTemplate() => new[]
+     {
+-        new MeshAdapt.Delta { Name = "②′", Tol = 0.5 },
+-        new MeshAdapt.Delta { Name = "②″", Tol = 0.2 },
+-        new MeshAdapt.Delta { Name = "③",  Tol = 1.0 },
++        new MeshAdapt.Delta { Name = Criteria.Plain(LineResult.Key.NetFlux),     Tol = 0.5 },
++        new MeshAdapt.Delta { Name = Criteria.Plain(LineResult.Key.HotOverTc),   Tol = TcMeshTolK },
++        new MeshAdapt.Delta { Name = Criteria.Plain(LineResult.Key.ColdUnderTc), Tol = TcMeshTolK },
+     };
+ 
++    /// <summary>热侧／冷侧两条的复核容差 K = 热偶读数误差的 10 %（出处与理由见 <see cref="TolTemplate"/>）。2026-09-14 Opus 5。</summary>
++    public const double TcMeshTolK = 0.1 * LineCase.ThermocoupleErrorK;
++
+     /// <summary>
+     /// 对一个**已经算出来的设计**做网格无关复核。
+     ///
+@@ -361,7 +387,9 @@ public static class MeshVerify
+ 
+             double V(string k) => r.Checks
+                 .FirstOrDefault(c => c.Name.StartsWith(k, StringComparison.Ordinal))?.Actual ?? double.NaN;
+-            double a2p = V(LineResult.Key.NetFlux), a2pp = V(LineResult.Key.DiscTemp), a3 = V(LineResult.Key.FlangeDip);
++            // R48 B（2026-09-14 Opus 5）：复核的是**卡交付的**三条 —— 圆盘区最高温 − 管温／法兰增量温降换成热偶读数基准的热侧（⑦）／冷侧（⑧）
++            //   （旧判法已是参考量，不复核）。Trace 的 N2pp／N3 两列从此装 ⑦／⑧（字段名是历史名，没改）；容差随之重定，见 TolTemplate。
++            double a2p = V(LineResult.Key.NetFlux), a2pp = V(LineResult.Key.HotOverTc), a3 = V(LineResult.Key.ColdUnderTc);
+             double mass = r.Segments.Sum(s => s.MassG) + r.Flanges.Sum(f => f.MassG);
+ 
+             // ★ 峰位落在粗区就会被静默算漏 —— 每档核对一次
+@@ -389,7 +417,7 @@ public static class MeshVerify
+             //   而**日志里一个判据数字都没有**，被 kill 掉就等于四小时全丢。
+             //   「看得出还活着」只解决了一半；另一半是**中间结果要落地**。
+             progress?.Report($"加密复算：{h:0.000} mm 完成 —— {r.MeshCells} 单元，用时 {ThrottledProgress.Fmt(swOne.Elapsed)}（累计 {ThrottledProgress.Fmt(sw.Elapsed)}）"
+-                + $"　②′ {a2p:0.000} W　②″ {a2pp:0.000} K　③ {a3:0.000} K　合计 {mass:0} g"
++                + $"　管孔净流入 {a2p:0.000} W　最热铂高出热偶读数 {a2pp:0.000} K　管根低于热偶读数 {a3:0.000} K　合计 {mass:0} g"   // R48 B：进度行会上界面，写全名不写代号
+                 // ★ R48 续（2026-09-14，Opus 5）：每档都印外层耦合停在离不动点多远 —— 判据在两档间的变化
+                 //   若小于它，那次「在摆」分不清是网格还是耦合停机造成的（实测 ③ 变化 +0.820 K < 耦合容差 1.0 K）。
+                 + (double.IsNaN(r.CoupleRemainK) ? "" : $"　外层耦合剩余误差估计 {r.CoupleRemainK:0.00} K"
+@@ -452,16 +480,17 @@ public static class MeshVerify
+                             MarginOverChange = Margin(a2p, LineResult.Key.NetFlux, a2p - pv.n2p),
+                             Oscillating = s2p.osc, HalfRange = s2p.half, RatioR = s2p.ratio },
+                     new() { Name = tol[1].Name, Change = a2pp - pv.n2pp, Tol = tol[1].Tol,
+-                            MarginOverChange = Margin(a2pp, LineResult.Key.DiscTemp, a2pp - pv.n2pp),
++                            MarginOverChange = Margin(a2pp, LineResult.Key.HotOverTc, a2pp - pv.n2pp),
+                             Oscillating = s2pp.osc, HalfRange = s2pp.half, RatioR = s2pp.ratio },
+                     new() { Name = tol[2].Name, Change = a3 - pv.n3,     Tol = tol[2].Tol,
+-                            MarginOverChange = Margin(a3, LineResult.Key.FlangeDip, a3 - pv.n3),
++                            MarginOverChange = Margin(a3, LineResult.Key.ColdUnderTc, a3 - pv.n3),
+                             Oscillating = s3.osc, HalfRange = s3.half, RatioR = s3.ratio },
+                 };
+                 // 差值也当场报 —— 「收没收敛」是读的人最想先知道的那一条
+                 progress?.Report("   较上一档：" + string.Join("　", res.LastDeltas.Select(
+                     x => $"{x.Name} {x.Change:+0.000;-0.000}/{x.Tol:0.###}"
+-                       + (x.Name == tol[2].Name && !double.IsNaN(coupleNoiseK) && Math.Abs(x.Change) <= coupleNoiseK
++                       // 2026-09-14 Opus 5（复审）：热侧也要查 —— 两条都是「温度 − 常数基准」，耦合停机噪声直接进值（原来只查冷侧那一行）
++                       + ((x.Name == tol[1].Name || x.Name == tol[2].Name) && !double.IsNaN(coupleNoiseK) && Math.Abs(x.Change) <= coupleNoiseK
+                             ? $"（⚠ 变化 {Math.Abs(x.Change):0.000} K ≤ 这两档外层耦合剩余误差之和 {coupleNoiseK:0.00} K ⇒ **与耦合停机噪声分不开**）" : "")
+                        + (x.NotAsymptotic ? $"（**不在渐近区**：{x.WhyNotAsymptotic}；末三档极差半幅**至少** ±{x.HalfRange:0.###}"
+                                           + " —— 误差按它算，不按这一次的变化）" : "")
+diff --git a/Pt_Optimize/Core/NextAction.cs b/Pt_Optimize/Core/NextAction.cs
+index ec7fc91..c6196d6 100644
+--- a/Pt_Optimize/Core/NextAction.cs
++++ b/Pt_Optimize/Core/NextAction.cs
+@@ -20,11 +20,46 @@ namespace PtOptimize.Core;
+ /// </summary>
+ public static class NextAction
+ {
+-    /// <summary>抽热窗口的说明 —— ②′ 与 ③ 共用，因为它们是同一个量的两侧。</summary>
++    /// <summary>抽热窗口的说明 —— 管孔净流入与法兰增量温降（旧判法）共用，因为它们是同一个量的两侧。</summary>
++    /// <remarks>★ R48 B（2026-09-14 Opus 5）：这段会进判据说明（界面 ToolTip）⇒ 去掉代号与命令行开关名；
++    ///   「4.2 W」是按旧判法「增量温降 ≤ 10 K」除 γ=2.40 得的，冷侧判据换成「管根低于热偶读数」之后它**不再是交付窗口**，照实写明。
++    ///   实测出处不变：命令行 --window 六行（D 从 +0.6 到 +144 W 全部吻合 5 % 以内）。</remarks>
+     public const string DrawWindow =
+-        "　【抽热窗口】②′ 与 ③ 判的是**同一个量**：法兰从管子抽走的热 D。" +
+-        "实测 ③ = 2.40 × D（`--window` 六行，D 从 +0.6 到 +144 W 全部吻合 5 % 以内）⇒ " +
+-        "**安全区间是 0 < D ≤ 4.2 W**。D 太小=热往管里灌（烧断），D 太大=把管根抽出深坑。";
++        "　【抽热窗口】管孔净流入与法兰增量温降（旧判法）判的是**同一个量**：法兰从管子抽走的热 D。" +
++        "实测 增量温降 = 2.40 × D（六组实测，D 从 +0.6 到 +144 W 全部吻合 5 % 以内）⇒ " +
++        "按旧判法（增量温降 ≤ 10 K）安全区间是 0 < D ≤ 4.2 W。D 太小=热往管里灌（烧断），D 太大=把管根抽出深坑。" +
++        "⚠ 现在卡交付的冷侧是「管根低于热偶读数」（基准是热偶读数，不是无法兰基线），窗口上沿要看判据表那一行，不按 4.2 W。";
++
++    /// <summary>
++    /// R48 B（2026-09-14 Opus 5）：热侧「最热铂高出热偶读数」超限 —— 法兰偏热。
++    /// ⚠ 只写**方向**，不写斜率（斜率随设计点变，界面上不给数）。方向依据是新判据上的逐片实测
++    ///   （deliverable/r48B_敏感度矩阵_热偶基准_2026-09-14.txt：抬舌保温四片都更差或解不出来；加厚板、加环 t₁／t₂ 四片都有用）。
++    /// ★ 2026-09-14 Opus 5（复审）：第一版写「先减舌保温……点自动定厚会逐片处理」—— 可求解器**不会减保温**
++    ///   （从保温下界起步、只增不减，热侧候选里也没有保温；只有细网格那一遍的回收会把加过头的保温退回去），
++    ///   界面说法与求解器做法相反。现在分开写：自动定厚做什么、手动改参数时能做什么。
++    /// </summary>
++    public const string HotOverTcHigh =
++        "　【下一步】法兰上最热的铂（或管根较热端）比热偶读数高出了误差带 ⇒ 要让法兰**变冷**、多从管子抽一点热。" +
++        "「自动定厚」（解析几何；图纸模式下它只调各级板厚）在这一条不过时，会逐片试加管孔渐变环（外级、内级）和加厚该片板，按每克铂买到多少当场实测比价挑一根；" +
++        "它**不会**去减舌保温 —— 舌保温从下界起步，只在「管根低于热偶读数」不过时才加；做「◆ 细网格重解」时，那一遍会把导航网格上加过头的退回去。" +
++        "手动改参数时：这一片的舌保温若是你自己加厚的，先把它减回去（不花铂；实测加舌保温会让这一条变差）。" +
++        "先看说明里「最热的是谁」：是管根较热端比读数高（常见于两段共用的那一片，一侧管子本来就比两侧读数的对数平均热），" +
++        "多抽热能把它往下拉，但同一接头另一端也会被拉冷。" +
++        "若「管孔净流入」同时为负，热正往管里灌，先治那一条。" +
++        "⚠ 实测每一根旋钮对这一条和「管根低于热偶读数」都是反号的，两条要一起看。";
++
++    /// <summary>
++    /// R48 B（2026-09-14 Opus 5）：冷侧「管根低于热偶读数」超限 —— 法兰抽热太多，把管根拉冷到热偶看得出的程度。
++    /// ⚠ 只写**方向**，不写斜率（理由同 <see cref="HotOverTcHigh"/>）；方向依据与已删的旧 DipHigh 同一条实测（「让法兰变热、少抽」：加舌保温、开槽、削薄板）。
++    /// </summary>
++    // ★ 2026-09-14 Opus 5（复审）：与 HotOverTcHigh 同一个毛病一并改 —— 原文把「削薄该片板」和「自动定厚会逐片处理」写在一起，
++    //   可求解器的冷侧候选是 { 舌保温, 圆盘背侧减重槽, 舌孔孔径, 舌孔拉长 }，板厚从下界起步只增不减、**不会削薄**。分开写。
++    public const string ColdUnderTcHigh =
++        "　【下一步】管根比热偶读数低出了误差带 ⇒ 法兰抽热太多，要让法兰**变热**、少抽。" +
++        "「自动定厚」（解析几何；图纸模式下它只调各级板厚）在这一条不过时，会逐片试加这一片的舌保温（不花铂）、开圆盘背侧减重槽、开大舌片上的孔（选了挖舌孔时），按实测比价挑一根；" +
++        "它**不会**削薄板（板厚从下界起步只增不减）—— 板若是你手动加厚的，削薄它也能少抽热，但要守住截面电流密度。" +
++        "若说明里写着「无法兰时交界管温就已比基准低……（超过限值）」，那一部分不是法兰造成的，法兰旋钮治不了。" +
++        "⚠ 往这边调会让「最热铂高出热偶读数」与「管孔净流入」变差，要一起看。";
+ 
+     /// <summary>②′ ≤ 0：法兰在往管子里灌热。</summary>
+     public const string NetFluxLow =
+@@ -34,12 +69,10 @@ public static class NextAction
+         "② 保温已到下界 0.3 mm 仍在灌热 ⇒ 再**加厚该片板**（降电阻 ⇒ 降发热），但这要花铂；" +
+         "③ 若整片都过热，检查舌片是不是被拉得太长 —— 发热 ∝ 舌长。";
+ 
+-    /// <summary>③ &gt; 限值：抽得太多，把管根抽出坑。</summary>
+-    public const string DipHigh =
+-        "　【下一步】要让法兰**变热**，才会少抽：" +
+-        "① **先加这一片的舌保温**（免费，量程 0.3–80 mm，管外纤维无空间限制）；" +
+-        "② 保温已到上界仍抽太多 ⇒ 再**削薄该片板**（升电阻 ⇒ 升发热），顺带省铂；" +
+-        "③ 都用尽了才动形状：缩小盘径 / 收窄舌片（导热截面 ∝ 宽×厚）。" + DrawWindow;
++    // ★ 2026-09-14 Opus 5（R48 B 复审）：原 DipHigh（「法兰增量温降」超限时的指令）与 DiscHot（「圆盘区最高温 − 管温」超限时的指令）删掉。
++    //   两条判据降为参考量（旧判法）之后参考行不再附操作指令 ⇒ 这两个常量没有任何地方挂，界面上看不到；
++    //   DiscHot 还带代号与命令行开关名，本来就不许上界面。留着只会让钉它们的门（SensitivitySignTests）守一段死字串。
++    //   让法兰变热、少抽的那套处置已并进 ColdUnderTcHigh；环倍率随形状变号的实测留在界面「环倍率」提示里（LineDesignPage）。
+ 
+     /// <summary>法兰截面 J ≥ 11：电流通过某个必经截面的密度太高 —— 截面小了（用户 2026-09-08 设计因果链第 ④ 步）。</summary>
+     public const string SectionJHigh =
+@@ -47,20 +80,6 @@ public static class NextAction
+         "板厚抬到盘径盖不住管孔（判据「圆盘盖得住管孔＋焊脚」）就走「◇ 搜形状」加宽舌片／放大盘径。" +
+         "开孔与减重槽的上界也受这条约束，孔开得太大同样会红。";
+ 
+-    /// <summary>②″ &gt; 限值：圆盘区比管根还热。</summary>
+-    public const string DiscHot =
+-        "　【下一步】这是**局部电流拥塞**造成的尖峰，不是整片过热：" +
+-        "⚠⚠ **先读这句**（2026-08-28 实测）：下面两个灵敏度**随形状变号**，" +
+-        "是在**窄舌**形状、②″ 真的超限时测的。现役**宽舌**形状上 `--monotone` 实测的是" +
+-        "**相反方向**：d②″/d倍率 = **+0.056** K/单位（且倍率 1.0→2.5 多花 **137 g** 铂）、" +
+-        "∂②″/∂板厚 = **+0.214** K/mm。舌片宽了之后孔周本来就不拥塞，加环只是花铂。" +
+-        "⇒ **动手之前先用 `--monotone` 对你这个形状实测一遍**，别照抄任何一个数；" +
+-        "两条路子仍然值得试，但**方向要自己测出来**。" +
+-        "① 加大管孔渐变环的倍率（压孔周局部 J，作用范围只在 r ≤ 孔+6 mm，上限 2.5）；" +
+-        "② 环已到 2.5 仍压不住 ⇒ 加厚该片板；" +
+-        "③ 看本行的「峰位 r」：若峰落在舌根凹角（r ≈ 盘径附近）而不是孔边，" +
+-        "对症的是**舌根圆角 TabFilletMm**，不是环。";
+-
+     /// <summary>⑤ 自由段不足：铜排装不下。</summary>
+     public static string FreeTabShort(double tangentMm, double clampMm, double needMm) =>
+         $"　【下一步】这是**装配**问题，调热学旋钮没有用。" +
+diff --git a/Pt_Optimize/Core/SensitivityMatrix.cs b/Pt_Optimize/Core/SensitivityMatrix.cs
+index ed972d4..5415bf1 100644
+--- a/Pt_Optimize/Core/SensitivityMatrix.cs
++++ b/Pt_Optimize/Core/SensitivityMatrix.cs
+@@ -147,11 +147,13 @@ public static class SensitivityMatrix
+     public static readonly string[] Keys =
+     {
+         LineResult.Key.NetFlux,      // ②′
+-        LineResult.Key.FlangeDip,    // ③
+-        LineResult.Key.DiscTemp,     // ②″
++        // R48 B（2026-09-14 Opus 5）：法兰增量温降／圆盘区最高温 − 管温（③／②″）换成热偶读数基准的冷侧／热侧（⑧／⑦）
++        //   （与 Solver.Allocation 同步；旧判法已是参考量，没有逐片裕度）。代号用新的，②″／③ 不换主人。
++        LineResult.Key.ColdUnderTc,  // ⑧
++        LineResult.Key.HotOverTc,    // ⑦
+     };
+ 
+-    public static readonly string[] Codes = { "②′", "③", "②″" };
++    public static readonly string[] Codes = { "②′", "⑧", "⑦" };
+ 
+     /// <summary>把第 j 片的第 v 个量设成 <paramref name="value"/>。**唯一的写入口**。</summary>
+     public static void Set(DesignSpec d, Var v, int j, double value)
+@@ -320,7 +322,7 @@ public static class SensitivityMatrix
+                 Set(d0, v, j, Get(d0, v, j));
+ 
+         var lc0 = d0.BuildCase(baseIn, checkRamp: false);
+-        double dipMax = lc0.RootDeltaMaxK, discMax = lc0.DiscOverTempMaxK;
++        double coldMax = lc0.ColdUnderTcMaxK, hotMax = lc0.HotOverTcMaxK;   // R48 B（2026-09-14 Opus 5）：限值跟着判据换，仍只从 LineCase 读
+ 
+         LineResult? Run(DesignSpec d)
+         {
+@@ -332,7 +334,7 @@ public static class SensitivityMatrix
+         }
+ 
+         double[] Slacks(LineResult r, int j) =>
+-            Keys.Select(k => Solver.PlateSlack(r, k, j, dipMax, discMax)).ToArray();
++            Keys.Select(k => Solver.PlateSlack(r, k, j, coldMax, hotMax)).ToArray();
+ 
+         double Mass(LineResult r) => r.Segments.Sum(s => s.MassG) + r.Flanges.Sum(f => f.MassG);
+ 
+@@ -421,8 +423,8 @@ public static class SensitivityMatrix
+                     double off = 0;
+                     for (int k = 0; k < np; k++)
+                     {
+-                        double a = Solver.PlateSlack(rHi, Keys[i], k, dipMax, discMax);
+-                        double e = Solver.PlateSlack(b, Keys[i], k, dipMax, discMax);
++                        double a = Solver.PlateSlack(rHi, Keys[i], k, coldMax, hotMax);
++                        double e = Solver.PlateSlack(b, Keys[i], k, coldMax, hotMax);
+                         col[k] = (double.IsNaN(a) || double.IsNaN(e)) ? double.NaN : (a - e) / c.StepUp;
+                         if (k != j && !double.IsNaN(col[k])) off = Math.Max(off, Math.Abs(col[k]));
+                     }
+diff --git a/Pt_Optimize/Core/ShapeReview.cs b/Pt_Optimize/Core/ShapeReview.cs
+index cd3bc58..9832789 100644
+--- a/Pt_Optimize/Core/ShapeReview.cs
++++ b/Pt_Optimize/Core/ShapeReview.cs
+@@ -87,7 +87,8 @@ public static class ShapeReview
+         // 实测与限值原来挤在一格里写成「12.34 / 20.00」，是补空格年代的将就：
+         // 一格一个数才能各自按列右对齐，扫一眼就知道离限值还有多远。
+         foreach (var c in hard)
+-            sb.AppendLine($"　 {(c.Undetermined ? "?" : c.Ok ? "✓" : "✗")}\t{c.Name}\t" +
++            // R48 B（2026-09-14 Opus 5）：本报告进界面输出框，判据名一律走 Criteria.Plain 剥代号（界面不许出现判据代号）
++            sb.AppendLine($"　 {(c.Undetermined ? "?" : c.Ok ? "✓" : "✗")}\t{Criteria.Plain(c.Name)}\t" +
+                           $"{(double.IsNaN(c.Actual) ? "达不到" : c.Actual.ToString("0.00"))}\t{c.Limit:0.00}\t" +
+                           $"{c.Where}");
+         double floorD = d.DiscFloorMm(baseIn ?? new DesignInputs());
+@@ -98,7 +99,7 @@ public static class ShapeReview
+         if (missing.Length > 0)
+         {
+             sb.AppendLine();
+-            sb.AppendLine($"✗ **判据表不完整** —— 该出现却整条没出现：{string.Join("、", missing)}");
++            sb.AppendLine($"✗ **判据表不完整** —— 该出现却整条没出现：{string.Join("、", missing.Select(Criteria.Plain))}");
+             sb.AppendLine("　⇒ **不要把缺席读成通过。** 这一关根本没被检查过，"
+                         + "在补齐之前这个形状的好坏无从谈起。");
+             return sb.ToString();
+@@ -114,7 +115,7 @@ public static class ShapeReview
+             {
+                 int k = c.Note.IndexOf("【下一步】", StringComparison.Ordinal);
+                 string next = k >= 0 ? c.Note[k..].Split('。')[0] + "。" : "";
+-                sb.AppendLine($"　 ·\t{c.Name}\t{(c.Undetermined ? "无法判定" : $"{c.Actual:0.00}")}\t" +
++                sb.AppendLine($"　 ·\t{Criteria.Plain(c.Name)}\t{(c.Undetermined ? "无法判定" : $"{c.Actual:0.00}")}\t" +
+                               $"{(c.Undetermined ? "" : $"{c.Limit:0.00}")}\t{next}");
+             }
+             sb.AppendLine("　⇒ **到此为止。** 省铂是在能造能用的前提下才讨论的（用户 2026-08-15）。");
+@@ -178,23 +179,34 @@ public static class ShapeReview
+         double gUse = gMeasured ? dipAct / dWorstForG : GammaKPerW;
+         double dMax = (double.IsNaN(dipLim) ? 10.0 : dipLim) / gUse;
+ 
+-        sb.AppendLine("三、抽热窗口（②′ 与 ③ 是同一个量的两侧）");
++        // R48 B（2026-09-14 Opus 5）：卡交付的冷侧换成热偶读数基准（⑧）；γ 是按旧判法的增量温降（③）量的 ⇒ 这一节写全名、标明旧判法，不写代号。
++        sb.AppendLine("三、抽热窗口（管孔净流入与法兰增量温降（旧判法）是同一个量的两侧）");
+         sb.AppendLine(gMeasured
+-            ? $"　 γ = ③/D = {gUse:0.00} K/W　**本次实测**"
++            ? $"　 γ = 增量温降/D = {gUse:0.00} K/W　**本次实测**"
+               + (Math.Abs(gUse - GammaKPerW) > 0.1 * GammaKPerW
+                  ? $"（历史基准 {GammaKPerW:0.00}，差 {(gUse / GammaKPerW - 1) * 100:+0;-0} % —— **γ 是局部量，不是常数**）"
+                  : $"（历史基准 {GammaKPerW:0.00}，一致）")
+-            : $"　 γ 测不出来（最大抽热 {dWorstForG:0.00} W 太小，③/D 无意义）⇒ "
++            : $"　 γ 测不出来（最大抽热 {dWorstForG:0.00} W 太小，增量温降/D 无意义）⇒ "
+               + $"退回历史基准 {GammaKPerW:0.00} K/W，**下面这个窗口只是估计**");
+-        sb.AppendLine($"　 安全区间 0 < D ≤ {dMax:0.0} W（③ 限 {(double.IsNaN(dipLim) ? 10.0 : dipLim):0.0} K ÷ γ）"
++        sb.AppendLine($"　 旧判法安全区间 0 < D ≤ {dMax:0.0} W（增量温降限 {(double.IsNaN(dipLim) ? 10.0 : dipLim):0.0} K ÷ γ）"
+                       + "　本形状 D = " +
+                       string.Join(" / ", draws.Select(v => v.ToString("+0.0;-0.0"))) + " W");
+         double dLo = draws.Min(), dHi = draws.Max();
+         sb.AppendLine(dLo < 0.8
+             ? $"　 ⚠ 最低那片只有 {dLo:+0.0;-0.0} W，**贴着「热往管里灌」那一侧** —— 那是烧断的方向。"
+             : dHi > dMax * 0.8
+-            ? $"　 ⚠ 最高那片 {dHi:0.0} W，**贴着「把管根抽出深坑」那一侧**（③ 限 10 K）。"
++            ? $"　 ⚠ 最高那片 {dHi:0.0} W，**贴着「把管根抽出深坑」那一侧**（旧判法增量温降限 {(double.IsNaN(dipLim) ? 10.0 : dipLim):0} K）。"
+             : $"　 ✓ 四片都落在窗口中段（{dLo:0.0}–{dHi:0.0} W），两侧都有余量。");
++        // R48 B（2026-09-14 Opus 5）：窗口上沿现在以冷侧「管根低于热偶读数」为准（基准是热偶读数，不是无法兰基线），这里并列出来，不许让旧窗口冒充交付窗口。
++        {
++            var coldC = r.Find(LineResult.Key.ColdUnderTc);
++            var hotC = r.Find(LineResult.Key.HotOverTc);
++            string Row(ConstraintOut? c) => c is null ? "判据缺席"
++                : c.Undetermined ? "无法判定"
++                : $"{c.Actual:0.00}/{c.Limit:0.0} K（{(c.Ok ? "过" : "不过")}，取自 {c.Where}）";
++            sb.AppendLine($"　 ⚠ 上面的窗口是旧判法的。现在卡交付的是：{Criteria.Plain(LineResult.Key.ColdUnderTc)} {Row(coldC)}；"
++                        + $"{Criteria.Plain(LineResult.Key.HotOverTc)} {Row(hotC)}。");
++        }
+         sb.AppendLine();
+ 
+         // ───────────────────────────────────────────────────────────
+@@ -217,12 +229,12 @@ public static class ShapeReview
+ 
+         sb.AppendLine("四、优点（按裕度从宽到紧，**每条都带实测值**）");
+         foreach (var c in judged.Take(3))
+-            sb.AppendLine($"　 ·\t{c.Name}\t{c.Actual:0.00}\t{c.Limit:0.00}\t" +
++            sb.AppendLine($"　 ·\t{Criteria.Plain(c.Name)}\t{c.Actual:0.00}\t{c.Limit:0.00}\t" +
+                           $"裕度 **{Pct(c.MarginPct)}**\t{c.Where}");
+         if (d.RingMul.All(m => m <= 1.001))
+             sb.AppendLine("　 · **不需要管孔渐变环**（倍率 1.00）⇒ 少一道两级台阶的机加工。" +
+-                          "　依据：②″ = " + r.ValueOf(LineResult.Key.DiscTemp).ToString("0.00") +
+-                          " K（限 5）—— 孔周电流没有拥塞。");
++                          "　依据：圆盘区最高温 − 管温（旧判法）= " + r.ValueOf(LineResult.Key.DiscTemp).ToString("0.00") +
++                          $" K（旧判法参考限 {r.Find(LineResult.Key.DiscTemp)?.Limit ?? double.NaN:0}，不卡交付）—— 孔周电流没有拥塞。");   // R48 B：限值从判据读，不写死 5
+         if (d.TabInsulMm.All(v => v <= 1.0))
+             sb.AppendLine("　 · **舌片几乎不用包保温**（" + DesignSpec.Fmt(d.TabInsulMm, "0.0") +
+                           " mm）⇒ 现场少一道工序，且这个旋钮不花铂。");
+@@ -231,7 +243,7 @@ public static class ShapeReview
+         sb.AppendLine("五、缺点 / 咬住它的（**这些就是代价的来源**）");
+         var tight = judged.Reverse().Take(2).ToArray();
+         foreach (var c in tight)
+-            sb.AppendLine($"　 ·\t{c.Name}\t{c.Actual:0.00}\t{c.Limit:0.00}\t" +
++            sb.AppendLine($"　 ·\t{Criteria.Plain(c.Name)}\t{c.Actual:0.00}\t{c.Limit:0.00}\t" +
+                           $"只剩 **{Pct(c.MarginPct)}**\t{c.Where}");
+         // ⑤ 单独说：它贴着下界是**构造使然**，不是缺陷；但装配确实没有余量。
+         sb.AppendLine($"　 · 自由段 {d.FreeTabMm:0.0} mm **正好贴着装配下界** —— 这是构造使然" +
+@@ -287,7 +299,7 @@ public static class ShapeReview
+                 if (hotSpot is not null)
+                     sb.AppendLine($"　 · 实测孔周峰值：r={hotSpot.DiscMaxRMm:0.0} mm、" +
+                                   $"局部 J={hotSpot.DiscMaxJAPerMm2:0.00} A/mm²、" +
+-                                  $"②″={r.ValueOf(LineResult.Key.DiscTemp):0.00} K（{hotSpot.Name}）");
++                                  $"圆盘区最高温 − 管温（旧判法）={r.ValueOf(LineResult.Key.DiscTemp):0.00} K（{hotSpot.Name}）");
+                 sb.AppendLine("　 ⇒ **这笔账值不值，属于业主判断**：多的是铂钱，换的是装配与裕度。");
+             }
+             else if (dm < -1)
+diff --git a/Pt_Optimize/Core/Sizer.cs b/Pt_Optimize/Core/Sizer.cs
+index 53509c0..1d8c6b1 100644
+--- a/Pt_Optimize/Core/Sizer.cs
++++ b/Pt_Optimize/Core/Sizer.cs
+@@ -261,6 +261,8 @@ public static class Sizer
+         var lcLim = d.BuildCase(baseIn, checkRamp: false);
+         double dipLimK = lcLim.RootDeltaMaxK;                                   // ③ 的限值
+         double discTgtK = Math.Max(0.0, lcLim.DiscOverTempMaxK - opt.DiscOverMarginK);  // ②″ 靶 = 限值 − 裕度
++        // R48 B（2026-09-14 Opus 5）：本类（旧 D8，只剩命令行 --shape 在用）的控制律是按 ②″／③ 两条写的，而这两条已降为参考量（旧判法，代号不变）⇒
++        //   本类仍追它们；交付判定（AllOk）已换成热偶读数基准的 ⑦／⑧，两者可能对不上 —— 以复核那次的 AllOk 为准。界面走 Solver，不走本类。
+         Log($"分派：**舌保温 → 抽热 D（靶 {opt.DrawTargetW:0.0} W）**／**环倍率 → ②″（靶 {discTgtK:0.0} K ＝ 限值 {lcLim.DiscOverTempMaxK:0.0} − 裕度 {opt.DiscOverMarginK:0.0}）**／" +
+             $"**板厚 → 接力+省铂**（下界 {tLo:0.00} mm = max(焊接屈曲, 烧穿 {baseIn.WeldMinThicknessMm:0.0})）");
+         Log($"{"轮",4}{"板厚 mm",22}{"舌保温 mm",24}{"环倍率",22}{"抽热D W",26}{"③max",8}{"②″max",8}{"合计g",8}{"违反度",9}");
+diff --git a/Pt_Optimize/Core/Solver.cs b/Pt_Optimize/Core/Solver.cs
+index cee50c8..b07f418 100644
+--- a/Pt_Optimize/Core/Solver.cs
++++ b/Pt_Optimize/Core/Solver.cs
+@@ -260,8 +260,33 @@ public static class Solver
+         //   方向完全相反 ⇒ 前提自检当场淘汰它，于是这根旋钮**在任何地方都轮不到**。
+         //   正确的归属：孔面积 = π·R²·拉长比 ⇒ 拉长就是**顺着电流方向把孔加大**，
+         //   挖掉的料变多 ⇒ 治的是 ③（抽热），与孔径同排；而且同样面积下它比加大 R 更省 J。
+-        (LineResult.Key.FlangeDip, new[] { Knob.Insul, Knob.SlotSpan, Knob.TabHoleR, Knob.TabHoleAspect }),               // ③  对舌保温递增（实测 +570…+104 K/mm，且免费）
+-        (LineResult.Key.DiscTemp,  new[] { Knob.Insul, Knob.Ring, Knob.RingR1 }),    // ②″ 实测只有舌保温治得住；环倍率留作换形状时的候选
++        // ★★★★★ R48 B（2026-09-14 Opus 5）：判据换成热偶读数基准（⑦ 热侧／⑧ 冷侧），**两排都按新判据实测重排**：
++        //   · 冷侧 ⑧「管根低于热偶读数」← 旧 ③ 那一排原样继承：两者的病是同一个（法兰抽热太多把管根拉冷），治法方向相同；
++        //   · 热侧 ⑦「最热铂高出热偶读数」**不继承**旧 ②″ 那一排，改成与管孔净流入同一个方向（让法兰变冷）：
++        //       { t₂, r₂, t₁, r₁, 板厚 }，**不含舌保温**。
++        //
++        //   ══ 为什么热侧不许有舌保温（2026-09-14 复审，先推理、再实测坐实）
++        //   旧 ②″ =「盘峰 − 贴着的管根」，两头一起动，抬保温时管根涨得比盘峰快 ⇒ 旧裕度变好（上面 2026-08-30 那张表）。
++        //   新 ⑦ 的基准是**设定值算的常数** ⇒ ⑦ 只跟最热那一点走；抬保温 = 少散热 = 法兰与管根一起变热 ⇒ ⑦ 只会变差。
++        //   第一版把旧 ②″ 那一排（舌保温打头）原样继承过来，而求解器只增不减 ⇒ 热侧每次不过都先把保温抬到上界白算一次整线解，
++        //   上界还可能解不出来、报「上界存疑」。
++        //   实测（deliverable/r48B_敏感度矩阵_热偶基准_2026-09-14.txt，管壁 0.8 · 留余量，导航网格，逐片向上单侧导数；
++        //   那次二进制里热侧印作「②″」、冷侧印作「③」）：
++        //   <code>
++        //     ∂⑦裕度/∂旋钮（正 = 抬它有用）   片0        片1        片2        片3
++        //     舌保温 +1 mm                 解不出来   −273.50    −153.76    解不出来     ← 抬它只会更差，片0/片3 上侧直接发散
++        //     板厚   +0.1 mm               +566.64    +212.01    +212.15    +606.68
++        //     环倍率 t₁ +0.05              +42.41     +24.73     +20.87     +38.27
++        //     外级倍率 t₂ +0.05            +47.81     +35.79     +32.29     +42.82
++        //   </code>
++        //   四片方向一致；每克铂买到的裕度 t₂ 四片都最高（+6.90/+1.88/+1.76/+7.53），t₁（+4.37/+0.93/+0.81/+4.81）与板厚（+3.37/+1.23/+1.23/+3.65）互有高低
++        //   ⇒ 顺序同管孔净流入那一排：t₂ 打头、板厚垫底（顺序只影响比价平手时先挑谁，挑哪根由 Better 按「补不补得上 → 每克铂」定）。
++        //   r₁／r₂ 与各自的倍率成对入表（2026-09-05 的规矩）；倍率还是 1 时 ChooseKnob 按「没有台阶可挪」闭式跳过，不花场解。
++        //   ⚠ 这组数是在**远离可行域**的设计点上量的（管孔净流入 −19.9 W、⑦ +125.3 K），只作**方向**依据；抬哪根仍由 ChooseKnob 当场实测比价。
++        //   ⚠ 冷侧 ⑧ 同一张表上：舌保温 +190.83／+107.07（有用），板厚、t₁、t₂ 全为负 —— 与热侧**逐根反号**，两条要一起看（热偶误差带只有 ±5 K）。
++        //   ⚠ 上面几行里的斜率（+570…+104 K/mm、「只有舌保温治得住」）都是**旧判法**上量的，只对旧 ②″／③ 成立。
++        (LineResult.Key.ColdUnderTc, new[] { Knob.Insul, Knob.SlotSpan, Knob.TabHoleR, Knob.TabHoleAspect }),             // ⑧ 实测对舌保温递增（新判法 +190.8／+107.1 每 mm；旧判法 +570…+104，且免费）
++        (LineResult.Key.HotOverTc,   new[] { Knob.RingT2, Knob.RingR2, Knob.Ring, Knob.RingR1, Knob.Thick }),    // ⑦ 实测抬舌保温只会更差 ⇒ 不进候选；t₂/t₁/板厚 四片同号有用
+     };
+ 
+     /// <summary>R32：这条判据在这一族里可用的旋钮（不挖舌孔族剔掉舌孔两根）。ChooseKnob 与测试同一个口径。</summary>
+@@ -315,7 +340,9 @@ public static class Solver
+ 
+         // ★ 限值**只从 LineCase 读**（判据的唯一来源）。求解器不许自带第二份。
+         var lc = d.BuildCase(baseIn, checkRamp: false);
+-        double dipMax = lc.RootDeltaMaxK, discMax = lc.DiscOverTempMaxK;
++        // R48 B（2026-09-14 Opus 5）：热侧、冷侧换成热偶读数基准 ⇒ 限值换成 LineCase.ColdUnderTcMaxK／HotOverTcMaxK（仍只从 LineCase 读）。
++        //   旧判法两条（RootDeltaMaxK／DiscOverTempMaxK）降为参考量，求解器不再追它们。
++        double coldMax = lc.ColdUnderTcMaxK, hotMax = lc.HotOverTcMaxK;
+ 
+         // ★★★★★ 下角的又一来源：**按 J=10 定的截面**（用户 2026-09-08 设计因果链第 ①② 步）。
+         //   设计电流 = 20 °C/h 空管升温全程峰值；舌片各截面／舌盘交界弦／孔缘环与各级环的 I/A 都要 ≤ 10 ⇒ 板厚闭式下界。
+@@ -331,7 +358,8 @@ public static class Solver
+             "熔化在每遍开头只验一次：熔了就停（该解不存在，不抬厚度；用户 2026-09-09）");
+         Log($"传进来的旋钮值**一个都没用**（板厚 {string.Join("/", geometry.TabThickMm.Select(x => x.ToString("0.00")))} 被丢弃）—— " +
+             "这就是「与初值无关」的实现方式。");
+-        Log($"限值只从 LineCase 读：③ ≤ {dipMax:0.0} K　②″ ≤ {discMax:0.0} K");
++        Log($"限值只从 LineCase 读：{Criteria.Plain(LineResult.Key.ColdUnderTc)} ≤ {coldMax:0.0} K　"
++          + $"{Criteria.Plain(LineResult.Key.HotOverTc)} ≤ {hotMax:0.0} K（基准都是控温热偶读数；共用法兰取两侧读数的对数平均）");
+         // ★ R12：第一次场解之前还没有场 ⇒ 位置走默认规则，但要说出来（不许静默）
+         FieldPlacement(d, baseIn, null, Log);
+ 
+@@ -488,14 +516,20 @@ public static class Solver
+                         return $"{v:0.00}{(lessIsBetter ? "≤" : ">")}{lim:0.##}（{(slack >= 0 ? "裕" : "超")}{Math.Abs(slack):0.00}"
+                              + (who.Length > 0 ? $"，取自 {who}" : "") + "）";
+                     }
++                    // R48 B（2026-09-14 Opus 5）：主判据换成热偶读数基准的热侧／冷侧；旧判法两条只作对照印在括号里（参考量，不追）。
+                     Log($"　　　这一轮的判据：管孔净流入 {Gap(LineResult.Key.NetFlux, false)}"
+-                      + $"　圆盘区最高温 {Gap(LineResult.Key.DiscTemp, true)}"
+-                      + $"　法兰增量温降 {Gap(LineResult.Key.FlangeDip, true)}"
++                      + $"　最热铂高出热偶读数 {Gap(LineResult.Key.HotOverTc, true)}"
++                      + $"　管根低于热偶读数 {Gap(LineResult.Key.ColdUnderTc, true)}"
+                       + $"　法兰截面 J {Gap(LineResult.Key.SectionJ, true)}"
+-                      + $"　{(last.AllOk ? "**全过**" : "还没全过")}");
++                      + $"　{(last.AllOk ? "**全过**" : "还没全过")}"
++                      + $"　（旧判法对照，不追：圆盘区最高温 {CV(LineResult.Key.DiscTemp):0.00}，取自 {CW(LineResult.Key.DiscTemp)}"
++                      + $"／法兰增量温降 {CV(LineResult.Key.FlangeDip):0.00}，取自 {CW(LineResult.Key.FlangeDip)}）");
+                     // 逐片抽热也要印：判据只给最小的那一个，看不出是「整体都低」还是「某一片掉队」。
+                     Log("　　　逐片抽热：" + string.Join("　", last.Flanges.Select((f, jj) =>
+                         $"片{jj} {f.QFromTubeW:+0.00;-0.00} W")));
++                    // R48 B：热侧／冷侧也逐片印（取自 ThermocoupleBasis，与判据同一份）—— 最差片会随旋钮换人，同上理由。
++                    Log("　　　逐片热偶基准：" + string.Join("　", ThermocoupleBasis.All(last).Select(t =>
++                        $"片{t.Plate} 基准 {t.RefC:0.0} 热侧 {t.HotK:+0.00;-0.00} 冷侧 {t.ColdK:+0.00;-0.00} K")));
+                 }
+ 
+                 // ── 逐片逐条列违反
+@@ -503,7 +537,7 @@ public static class Solver
+                 for (int j = 0; j < np; j++)
+                     foreach (var (key, knobs) in Allocation)
+                     {
+-                        double sl = PlateSlack(last, key, j, dipMax, discMax);
++                        double sl = PlateSlack(last, key, j, coldMax, hotMax);
+                         if (double.IsNaN(sl))
+                         {
+                             res.StopWhy = $"第 {j} 片的「{Criteria.Plain(key)}」**判不了**（值是 NaN）—— 判不了不算过";
+@@ -524,7 +558,7 @@ public static class Solver
+                 // ★ 续轮的闸：上一轮是「补不上但留着」收的场 ⇒ 这一轮必须看到缺口变小
+                 if (partialLast)
+                 {
+-                    double gapNow = todo.Sum(t => -PlateSlack(last, t.Key, t.J, dipMax, discMax));
++                    double gapNow = todo.Sum(t => -PlateSlack(last, t.Key, t.J, coldMax, hotMax));
+                     if (!(gapNow < prevGap - 1e-6))
+                     {
+                         res.HitBound = true;
+@@ -539,7 +573,7 @@ public static class Solver
+                 }
+                 else if (todo.Count > 0)
+                 {
+-                    prevGap = todo.Sum(t => -PlateSlack(last, t.Key, t.J, dipMax, discMax));
++                    prevGap = todo.Sum(t => -PlateSlack(last, t.Key, t.J, coldMax, hotMax));
+                 }
+ 
+                 if (todo.Count == 0)
+@@ -594,7 +628,7 @@ public static class Solver
+                     //     按它挑。工程师不必知道有过一张矩阵，只看见一句人话。
+                     //
+                     //   代价：候选多一个就多一次场解。②′ 两个候选 ⇒ 每次抬多 1 次场解。
+-                    var pick = ChooseKnob(d, baseIn, o, j, knobs, key, dipMax, discMax, res, Log, cancel, inner);
++                    var pick = ChooseKnob(d, baseIn, o, j, knobs, key, coldMax, hotMax, res, Log, cancel, inner);
+                     if (pick.Knob is null)
+                     {
+                         firstBadWhy ??= pick.Why;
+@@ -602,7 +636,7 @@ public static class Solver
+                         continue;
+                     }
+                     var (ok, why, kept) = RaiseUntil(d, baseIn, o, j, pick.Knob.Value, key,
+-                                                     dipMax, discMax, res, Log, cancel, inner,
++                                                     coldMax, hotMax, res, Log, cancel, inner,
+                                                      pick.Before, pick.After);
+                     if (!ok)
+                     {
+@@ -697,7 +731,7 @@ public static class Solver
+             //   实测那正是「法兰侧九根旋钮全部无效、结构性停机」的原因，而把保温退回去当场全过。
+             //   理由与实测数据见 TightenOnJudgeMesh 的注释。
+             var tightProg = new ThrottledProgress(progress, 20, $"     · 回收 {opt.FineMm:0.000} mm ");
+-            TightenOnJudgeMesh(d, baseIn, opt, res, dipMax, discMax, Log, cancel, tightProg);
++            TightenOnJudgeMesh(d, baseIn, opt, res, coldMax, hotMax, Log, cancel, tightProg);
+             bool okFine = Rounds(opt, "第二遍：细网格上重新求根（**判据以此为准**）");
+             res.FineRefined = true; res.FineMmUsed = opt.FineMm; lastOpt = opt;
+             if (!okFine && res.StopWhy.Length == 0)
+@@ -706,7 +740,7 @@ public static class Solver
+         else if (opt.FineMm <= 0)
+         {
+             Log("⚠ **没做第二遍**（FineMm = 0）—— 这个解只在导航网格上成立、**不可交付**："
+-                + "实测 ③ 在两张网格上差 2.03 倍（A⑬）。");
++                + "实测法兰增量温降（旧判法）在两张网格上差 2.03 倍（A⑬）。");   // R48 B（2026-09-14 Opus 5）：这句经进度回报进界面输出框 ⇒ 写全名不写代号，并标明是旧判法的历史实测
+         }
+ 
+         if (res.StopWhy.Length == 0)
+@@ -753,13 +787,13 @@ public static class Solver
+     //   RaiseUntil 之后若发现旋钮其实没抬起来，调用方要拿它把形状退回去（见 Solve 里的用法）。
+     private static (Knob? Knob, string Why, double Before, double After, int Shape0) ChooseKnob(
+         DesignSpec d, DesignInputs baseIn, SolverOptions opt, int j, Knob[] knobs, string key,
+-        double dipMax, double discMax, SolverResult res, Action<string> Log,
++        double coldMax, double hotMax, SolverResult res, Action<string> Log,
+         CancellationToken cancel, IProgress<string>? inner)
+     {
+         if (knobs.Length == 1) return (knobs[0], "", double.NaN, double.NaN, -1);
+ 
+         var r0 = Eval(d, baseIn, opt, res, cancel, inner);
+-        double before = PlateSlack(r0, key, j, dipMax, discMax);
++        double before = PlateSlack(r0, key, j, coldMax, hotMax);
+         double mass0 = r0 is null ? double.NaN : MassOf(r0);
+         // 已经不违反 ⇒ 不必比价（RaiseUntil 会自己判「不抬」）。before 照样带出去。
+         if (before >= 0) return (knobs[0], "", before, double.NaN, -1);
+@@ -862,7 +896,7 @@ public static class Solver
+                 int shape0 = GetShape(d, k, j);       // 探前的形状，本轮没赢就退回这个
+                 shapeProbed.Add((k, shape0));
+                 (rk, hiProbe) = ProbeShapeFamily(d, baseIn, opt, j, k, key, family, lo, before, mass0,
+-                                                 dipMax, discMax, res, Log, cancel, inner);
++                                                 coldMax, hotMax, res, Log, cancel, inner);
+                 if (double.IsNaN(hiProbe)) { fails.Add($"{KnobName(k)} 形状族里没有一个装得下／解得出来"); continue; }
+             }
+             else
+@@ -873,7 +907,7 @@ public static class Solver
+             }
+             // 探针若不是在这根旋钮（选定形状后）自己的上界上量的，after 就不能当 knownAfter 交给 RaiseUntil
+             bool afterAtHi = Math.Abs(hiProbe - HiOfFor(d, baseIn, opt, k, j, res)) < 1e-9;
+-            double after = PlateSlack(rk, key, j, dipMax, discMax);
++            double after = PlateSlack(rk, key, j, coldMax, hotMax);
+             double dSlack = after - before;
+             double dMass = rk is null || double.IsNaN(mass0) ? double.NaN : MassOf(rk) - mass0;
+ 
+@@ -1026,7 +1060,7 @@ public static class Solver
+     /// </summary>
+     private static void TightenOnJudgeMesh(
+         DesignSpec d, DesignInputs baseIn, SolverOptions opt, SolverResult res,
+-        double dipMax, double discMax, Action<string> Log,
++        double coldMax, double hotMax, Action<string> Log,
+         CancellationToken cancel, IProgress<string>? inner)
+     {
+         // 有下角可退的自由旋钮（板厚不在内，理由见上）
+@@ -1037,7 +1071,8 @@ public static class Solver
+             (Knob.RingT2, opt.RingLo),
+         };
+         int np = d.TabThickMm.Length;
+-        var keys = new[] { LineResult.Key.NetFlux, LineResult.Key.DiscTemp, LineResult.Key.FlangeDip };
++        // R48 B（2026-09-14 Opus 5）：回收时要保护的是交付判据 —— 热侧／冷侧换成热偶读数基准那两条（旧判法已是参考量）
++        var keys = new[] { LineResult.Key.NetFlux, LineResult.Key.HotOverTc, LineResult.Key.ColdUnderTc };
+ 
+         var r0 = Eval(d, baseIn, opt, res, cancel, inner);
+         if (r0 is null)
+@@ -1051,7 +1086,7 @@ public static class Solver
+             if (r is null) return false;                       // 判不了一律当不成立，不许当成「还过着」
+             foreach (string k in mustPass)
+             {
+-                double sl = PlateSlack(r, k, j, dipMax, discMax);
++                double sl = PlateSlack(r, k, j, coldMax, hotMax);
+                 if (double.IsNaN(sl) || sl < 0) return false;
+             }
+             return true;
+@@ -1072,7 +1107,7 @@ public static class Solver
+                 // 现在这一片有哪些判据是过的 —— 回收不许把它们弄不过
+                 string[] mustPass = keys.Where(k =>
+                 {
+-                    double sl = PlateSlack(r0, k, j, dipMax, discMax);
++                    double sl = PlateSlack(r0, k, j, coldMax, hotMax);
+                     return !double.IsNaN(sl) && sl >= 0;
+                 }).ToArray();
+                 if (mustPass.Length == 0) continue;            // 一条都没过 ⇒ 没有要保护的，交给抬升那条路
+@@ -1118,7 +1153,7 @@ public static class Solver
+ 
+     private static (bool Ok, string Why, bool Kept) RaiseUntil(
+         DesignSpec d, DesignInputs baseIn, SolverOptions opt, int j, Knob knob, string key,
+-        double dipMax, double discMax, SolverResult res, Action<string> Log, CancellationToken cancel,
++        double coldMax, double hotMax, SolverResult res, Action<string> Log, CancellationToken cancel,
+         IProgress<string>? inner = null,
+         double knownBefore = double.NaN, double knownAfter = double.NaN)
+     {
+@@ -1137,7 +1172,7 @@ public static class Solver
+         {
+             var r0 = Eval(d, baseIn, opt, res, cancel, inner);
+             beforeUnknown = r0 is null;
+-            before = PlateSlack(r0, key, j, dipMax, discMax);
++            before = PlateSlack(r0, key, j, coldMax, hotMax);
+         }
+         else before = knownBefore;
+ 
+@@ -1184,7 +1219,7 @@ public static class Solver
+                 return (false, $"**{nm} 抬到上界 {hi:0.000} 时解不出来 ⇒ 判不了**（{res.NullWhy}）—— "
+                              + "不是「这根旋钮没用」，是**上界存疑**（多半把几何抬坏了）", false);
+             }
+-            after = PlateSlack(rHi, key, j, dipMax, discMax);
++            after = PlateSlack(rHi, key, j, coldMax, hotMax);
+         }
+         else after = knownAfter;
+ 
+@@ -1248,7 +1283,7 @@ public static class Solver
+                 return (false, $"**{nm} 在 {mid:0.000} 处解不出来 ⇒ 二分中止**（{res.NullWhy}；上界存疑）—— "
+                              + "不许拿判不了的点当「不过」往上推", false);
+             }
+-            if (PlateSlack(rMid, key, j, dipMax, discMax) >= 0) hi = mid; else lo = mid;
++            if (PlateSlack(rMid, key, j, coldMax, hotMax) >= 0) hi = mid; else lo = mid;
+         }
+ 
+         // ★ 量化在**解之内**，不在解之后（算法普查 A⑤）。
+@@ -1656,7 +1691,7 @@ public static class Solver
+     ///   「最差那片」——汇总量说得出「有一片超了」，说不出是哪一片，
+     ///   而逐片求解必须知道该抬哪一片的旋钮。
+     ///
+-    /// ⚠ 方向与整体判据同一口径：②′ 须 ≥ 0（越大越好），③ 与 ②″ 越小越好。
++    /// ⚠ 方向与整体判据同一口径：②′ 须 ≥ 0（越大越好），⑧ 冷侧与 ⑦ 热侧越小越好（R48 B 2026-09-14 起逐片裕度只给这三条；②″／③ 降为参考量，没有逐片裕度）。
+     ///   写反会把「越限」读成「有余量」，二分就朝错的方向收 —— 本仓库出过这个错。
+     /// </summary>
+     /// <summary>
+@@ -1664,7 +1699,7 @@ public static class Solver
+     /// ★ 逐片判据读取**全程序只有这一份** —— <see cref="SensitivityMatrix"/> 也走它，
+     ///   不许另立一份「差不多的」读法（那正是本仓库栽过多次的形状）。
+     /// </summary>
+-    public static double PlateSlack(LineResult? r, string key, int j, double dipMax, double discMax)
++    public static double PlateSlack(LineResult? r, string key, int j, double coldMax, double hotMax)
+     {
+         if (r is null) return double.NegativeInfinity;
+ 
+@@ -1674,17 +1709,20 @@ public static class Solver
+             double q = r.Flanges[j].QFromTubeW;
+             return double.IsNaN(q) ? double.NaN : q;              // 须 > 0，限值就是 0
+         }
+-        if (key == LineResult.Key.DiscTemp)
++        // ★★★★★ R48 B（2026-09-14 Opus 5）：热侧、冷侧换成**热偶读数基准**，逐片读数只走 ThermocoupleBasis（判据、报告同一份）。
++        //   旧判法两条（DiscTemp 的「盘峰 − 贴着的管根」、FlangeDip 的「无法兰基线 − 实际」）降为参考量，
++        //   **不再有逐片裕度** —— 求解器不追参考量；传进来就落到下面的 throw，当场响，不许静默给个旧判法的数。
++        if (key == LineResult.Key.HotOverTc)
+         {
+             if (j >= r.Flanges.Length) return double.NegativeInfinity;
+-            var f = r.Flanges[j];
+-            double over = f.TDiscMaxC - f.TRootC;
+-            return double.IsNaN(over) ? double.NaN : discMax - over;   // 越小越好
++            double h = ThermocoupleBasis.At(r, j).HotK;          // max(盘峰, 舌区峰, 管根较热端) − 基准；判不了 = NaN
++            return double.IsNaN(h) ? double.NaN : hotMax - h;       // 越小越好
+         }
+-        if (key == LineResult.Key.FlangeDip)
++        if (key == LineResult.Key.ColdUnderTc)
+         {
+-            double dip = PlateDip(r, j);
+-            return double.IsNaN(dip) ? double.NaN : dipMax - dip;      // 越小越好
++            if (j > r.Segments.Length) return double.NegativeInfinity;
++            double cK = ThermocoupleBasis.At(r, j).ColdK;        // 基准 − 管根较冷端；判不了 = NaN
++            return double.IsNaN(cK) ? double.NaN : coldMax - cK;    // 越小越好
+         }
+         throw new ArgumentOutOfRangeException(nameof(key), key, "没有这条判据的逐片口径");
+     }
+@@ -1711,23 +1749,8 @@ public static class Solver
+         return outp.ToArray();
+     }
+ 
+-    /// <summary>
+-    /// 第 j 片的③ 值：它负责的那些段端里**最差的那个**
+-    /// —— 与整体判据同一口径（两端取较差）。任一端判不了则整体判不了。
+-    /// </summary>
+-    private static double PlateDip(LineResult r, int j)
+-    {
+-        var ends = EndsOf(j, r.Segments.Length);
+-        if (ends.Length == 0) return double.NaN;
+-        double worst = double.NegativeInfinity;
+-        foreach (var (seg, aEnd) in ends)
+-        {
+-            double v = aEnd ? r.Segments[seg].FlangeDipAK : r.Segments[seg].FlangeDipBK;
+-            if (double.IsNaN(v)) return double.NaN;
+-            worst = Math.Max(worst, v);
+-        }
+-        return worst;
+-    }
++    // R48 B（2026-09-14 Opus 5）：原 PlateDip（第 j 片的旧判法增量温降，读 FlangeDipAK/BK）随旧判法降为参考量一起删掉 ——
++    //   接头两端的映射仍只有 EndsOf 一份，热偶基准读数由 ThermocoupleBasis.At 调它。
+ 
+     private static double MassOf(LineResult r) =>
+         r.Segments.Sum(s => s.MassG) + r.Flanges.Sum(f => f.MassG);
+@@ -1952,7 +1975,7 @@ public static class Solver
+     /// </summary>
+     private static (LineResult? R, double HiProbe) ProbeShapeFamily(
+         DesignSpec d, DesignInputs baseIn, SolverOptions opt, int j, Knob k, string key, int[] family,
+-        double lo, double before, double mass0, double dipMax, double discMax,
++        double lo, double before, double mass0, double coldMax, double hotMax,
+         SolverResult res, Action<string> Log, CancellationToken cancel, IProgress<string>? inner)
+     {
+         int shape0 = GetShape(d, k, j);
+@@ -1992,7 +2015,7 @@ public static class Solver
+             if (r is null) { lines.Add($"{Name(s)} 抬到上界 {hs:0.###} 时解不出来（{res.NullWhy}）"); continue; }
+             if (anyR is null) { anyR = r; anyHi = hs; }
+             if (s == shape0) { baseR = r; baseHi = hs; }
+-            double after = PlateSlack(r, key, j, dipMax, discMax);
++            double after = PlateSlack(r, key, j, coldMax, hotMax);
+             double dSlack = after - before;
+             double dMass = double.IsNaN(mass0) ? double.NaN : MassOf(r) - mass0;
+             bool closes = after >= 0;
+diff --git a/Pt_Optimize/Core/ThermocoupleBasis.cs b/Pt_Optimize/Core/ThermocoupleBasis.cs
+new file mode 100644
+index 0000000..1c77167
+--- /dev/null
++++ b/Pt_Optimize/Core/ThermocoupleBasis.cs
+@@ -0,0 +1,156 @@
++using System;
++using System.Collections.Generic;
++using System.Linq;
++
++namespace PtOptimize.Core;
++
++/// <summary>
++/// ★★★★★ R48 B（2026-09-14 Opus 5）：**热侧、冷侧两条判据的逐片读数** —— 判据（LineRunner.Judge）、求解器（Solver.PlateSlack）、
++/// 安装报告（InstallReport）三处只读这一份，不许各算各的（本仓「同一件事三处来源」栽过四次）。
++///
++/// ══ 口径（用户 2026-09-14 定；物理把关人核过基准只许用设定值）
++/// <code>
++///   基准 R_j    = LineSolver.ThermocoupleReferenceC(设定值, j, 段数)   端片取本段设定；共用片取两侧设定的对数平均（开尔文）
++///   热侧 H_j    = max(圆盘峰 TDiscMaxC, 舌片区峰 TTabMaxC, 该接头管根两端较热者) − R_j   ≤ LineCase.HotOverTcMaxK
++///   冷侧 C_j    = R_j − 该接头管根两端较冷者                                        ≤ LineCase.ColdUnderTcMaxK
++/// </code>
++/// 接头两端：第 j 片贴「段 j 的首端（A 端，TRootAC）」与「段 j−1 的末端（B 端，TRootBC）」；端片只有一侧。
++/// 映射只有一份：<see cref="Solver.EndsOf"/>（SolverPerPlateTests 钉着它不重不漏）。
++///
++/// ══ 为什么基准不用模型的交界管温
++/// 模型算的无法兰交界管温（<see cref="SegmentOut.BaseTRootAC"/>／<see cref="SegmentOut.BaseTRootBC"/>）随管保温、段长等设计变量挪动，
++/// 拿它当基准等于让靶跟着箭跑；而热偶读数是现场**真正看得到**的那个数。模型交界温度只**并列**在说明里作对照，
++/// 与基准差超过 <see cref="ModelGapNoteK"/> 时写明。
++///
++/// ══ 判不了
++/// 任何一个输入是 NaN（圆盘区／舌片区没有单元、管根温度算不出、设定值缺）⇒ 这一片这一侧**判不了**，
++/// 原因写进 <see cref="Joint.HotBlind"/>／<see cref="Joint.ColdBlind"/>。判据那边照「任何一片判不了 ⇒ 整条判不了」处理。
++/// </summary>
++public static class ThermocoupleBasis
++{
++    /// <summary>模型算的无法兰交界管温与热偶读数基准差多少 ℃ 以上要在说明里写明（2026-09-14 定：&gt; 1 ℃）。</summary>
++    public const double ModelGapNoteK = 1.0;
++
++    /// <summary>一片法兰（一个接头）的热偶基准读数。只装数，不做判定（判定在 LineRunner.Judge，限值只从 LineCase 读）。</summary>
++    public sealed class Joint
++    {
++        public int Plate;
++        public string Name = "";
++        /// <summary>热偶读数基准 °C。</summary>
++        public double RefC = double.NaN;
++        /// <summary>基准怎么来的（给人看，不带判据代号）。</summary>
++        public string RefHow = "";
++        public double DiscPeakC = double.NaN, TabPeakC = double.NaN;
++        /// <summary>该接头管根两端较热者／较冷者 °C 与各自是哪一端。</summary>
++        public double RootHotC = double.NaN, RootColdC = double.NaN;
++        public string RootHotWhere = "", RootColdWhere = "";
++        /// <summary>两端逐个列出，如「HC1 末端 1116.2／HC2 首端 1115.9 °C」。</summary>
++        public string RootEnds = "";
++        /// <summary>热侧取的最热那一点 °C 与它是谁（圆盘峰／舌片区峰／管根某端）。</summary>
++        public double HottestC = double.NaN;
++        public string HottestWhat = "";
++        /// <summary>模型算的**无法兰**交界管温 °C（接头各端基线的平均）；没有基线时 NaN。只作对照。</summary>
++        public double ModelJointC = double.NaN;
++        /// <summary>非空 = 这一侧判不了，写原因。</summary>
++        public string HotBlind = "", ColdBlind = "";
++
++        /// <summary>热侧 H_j K（判不了时 NaN）。</summary>
++        public double HotK => HotBlind.Length > 0 ? double.NaN : HottestC - RefC;
++        /// <summary>冷侧 C_j K（判不了时 NaN）。</summary>
++        public double ColdK => ColdBlind.Length > 0 ? double.NaN : RefC - RootColdC;
++        /// <summary>模型交界温度 − 基准 K（NaN = 没有基线）。</summary>
++        public double ModelMinusRefK => ModelJointC - RefC;
++    }
++
++    /// <summary>第 j 片的读数（从一次整线解里取）。</summary>
++    public static Joint At(LineResult r, int j) => At(r.Segments, r.Flanges, j);
++
++    /// <summary>
++    /// 第 j 片的读数。<paramref name="flanges"/> 可以短于 j+1（只用得到冷侧时），那样热侧判不了。
++    /// ⚠ 基准只用 <see cref="SegmentOut.SetpointC"/>（= LineCase.SetpointC 原值），不用任何模型温度。
++    /// </summary>
++    public static Joint At(SegmentOut[] segs, FlangeOut[] flanges, int j)
++    {
++        int n = segs?.Length ?? 0;
++        var t = new Joint { Plate = j };
++        if (n < 1 || j < 0 || j > n)
++        {
++            t.Name = $"片{j}";
++            t.HotBlind = t.ColdBlind = $"片号 {j} 不在 0…{n} 之内（段数 {n}）";
++            return t;
++        }
++        t.Name = j < (flanges?.Length ?? 0) && !string.IsNullOrEmpty(flanges![j].Name) ? flanges[j].Name
++               : j == 0 ? "入口" : j == n ? "出口" : $"{segs![j - 1].Name}|{segs[j].Name}";
++
++        var sp = segs!.Select(s => s.SetpointC).ToArray();
++        t.RefC = LineSolver.ThermocoupleReferenceC(sp, j, n);
++        t.RefHow = j == 0 || j == n
++            ? $"{segs[j == 0 ? 0 : n - 1].Name} 控温热偶读数 {t.RefC:0.0} °C（端片取本段）"
++            : $"{segs[j - 1].Name} {sp[j - 1]:0.0} 与 {segs[j].Name} {sp[j]:0.0} °C 两个热偶读数的对数平均 {t.RefC:0.00} °C（按开尔文算）";
++
++        // ── 接头两端（映射只有一份：Solver.EndsOf）
++        var ends = Solver.EndsOf(j, n);
++        var parts = new List<string>();
++        double hot = double.NegativeInfinity, cold = double.PositiveInfinity;
++        bool rootNaN = ends.Length == 0;
++        var baseVals = new List<double>();
++        bool baseNaN = ends.Length == 0;
++        foreach (var (seg, aEnd) in ends)
++        {
++            var s = segs[seg];
++            double v = aEnd ? s.TRootAC : s.TRootBC;
++            string where = $"{s.Name} {(aEnd ? "首端" : "末端")}";
++            parts.Add($"{where} {v:0.0}");
++            if (double.IsNaN(v)) { rootNaN = true; continue; }
++            if (v > hot) { hot = v; t.RootHotWhere = where; }
++            if (v < cold) { cold = v; t.RootColdWhere = where; }
++            double b = aEnd ? s.BaseTRootAC : s.BaseTRootBC;
++            if (double.IsNaN(b)) baseNaN = true; else baseVals.Add(b);
++        }
++        t.RootEnds = string.Join("／", parts) + " °C";
++        if (!rootNaN) { t.RootHotC = hot; t.RootColdC = cold; }
++        t.ModelJointC = baseNaN || baseVals.Count == 0 ? double.NaN : baseVals.Average();
++
++        if (double.IsNaN(t.RefC)) t.ColdBlind = "设定值缺（热偶读数基准算不出）";
++        else if (rootNaN) t.ColdBlind = "管根温度算不出（" + t.RootEnds + "）";
++
++        // ── 热侧：圆盘峰、舌片区峰、管根较热端 三者取最热
++        if (j >= (flanges?.Length ?? 0)) t.HotBlind = "没有这一片的法兰场";
++        else
++        {
++            var f = flanges![j];
++            t.DiscPeakC = f.TDiscMaxC; t.TabPeakC = f.TTabMaxC;
++            var why = new List<string>();
++            if (double.IsNaN(t.RefC)) why.Add("设定值缺（热偶读数基准算不出）");
++            if (double.IsNaN(f.TDiscMaxC)) why.Add("圆盘区没有单元（圆盘峰算不出）");
++            if (double.IsNaN(f.TTabMaxC)) why.Add("舌片区没有单元（舌片区峰算不出）");
++            if (rootNaN) why.Add("管根温度算不出");
++            if (why.Count > 0) t.HotBlind = string.Join("、", why);
++            else
++            {
++                t.HottestC = f.TDiscMaxC; t.HottestWhat = "圆盘峰";
++                if (f.TTabMaxC > t.HottestC) { t.HottestC = f.TTabMaxC; t.HottestWhat = "舌片区峰"; }
++                if (t.RootHotC > t.HottestC) { t.HottestC = t.RootHotC; t.HottestWhat = "管根（" + t.RootHotWhere + "）"; }
++            }
++        }
++        return t;
++    }
++
++    /// <summary>整线逐片读数（片数 = 段数 + 1）。</summary>
++    public static Joint[] All(LineResult r)
++        => Enumerable.Range(0, LineSolver.FlangeCount(r.Segments.Length)).Select(j => At(r, j)).ToArray();
++
++    /// <summary>
++    /// 「模型算的无法兰交界管温」那半句（判据说明与安装报告共用）。与基准差 &gt; <see cref="ModelGapNoteK"/> ℃ 时写明判定按哪个算。
++    /// </summary>
++    public static string ModelJointNote(Joint t)
++    {
++        if (double.IsNaN(t.ModelJointC))
++            return "模型算的无法兰交界管温：这次没有无法兰基线，算不出（不影响判定，判定只用热偶读数基准）";
++        double d = t.ModelMinusRefK;
++        return $"模型算的无法兰交界管温 {t.ModelJointC:0.0} °C，与热偶读数基准差 {d:+0.0;−0.0} ℃"
++             + (Math.Abs(d) > ModelGapNoteK
++                ? $"（差超过 {ModelGapNoteK:0} ℃ —— 判定按热偶读数算，不按模型交界温度：模型交界温度会随设计变量挪动，只作对照）"
++                : "");
++    }
++}
+diff --git a/Pt_Optimize/Program.cs b/Pt_Optimize/Program.cs
+index 437e3af..f13d18b 100644
+--- a/Pt_Optimize/Program.cs
++++ b/Pt_Optimize/Program.cs
+@@ -4456,11 +4456,11 @@ internal static class Program
+                         + "只用于对照。");
+                 var mvv = MeshVerify.Run(dv, p, maxCells: mcV, weldAsGeometricFeature: weldFeat,
+                               progress: new SyncProgress<string>(m3 => Console.WriteLine("     · " + m3)));
+-                Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"②″K",9}{"③K",9}{"合计g",9}{"用时s",8}");
++                Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"⑦K",9}{"⑧K",9}{"合计g",9}{"用时s",8}");
+                 foreach (var tv in mvv.Trace)
+                     Console.WriteLine($"{tv.Fine,10:0.000}{tv.Cells,9:0}{tv.N2p,9:0.000}{tv.N2pp,9:0.000}"
+                                     + $"{tv.N3,9:0.000}{tv.MassG,9:0}{tv.Sec,8:0.0}");
+-                Console.WriteLine(Criteria.Legend("②′", "②″", "③"));
++                Console.WriteLine(Criteria.Legend("②′", "⑦", "⑧"));
+                 Console.WriteLine();
+                 Console.WriteLine("   " + mvv.Verdict);
+                 // ★ 两条安全线的结论必须印 —— 不印等于没做（A⑭）
+@@ -4787,7 +4787,7 @@ internal static class Program
+                 var rC = RunT(false);
+                 swC.Stop();
+ 
+-                Console.WriteLine($"{"解法",-12}{"用时",10}{"单元",8}{"最高温 °C",12}{"②′W",10}{"②″K",10}{"③K",10}");
++                Console.WriteLine($"{"解法",-12}{"用时",10}{"单元",8}{"最高温 °C",12}{"②′W",10}{"⑦K",10}{"⑧K",10}");
+                 void RowT(string nm, LineResult r, TimeSpan el)
+                 {
+                     double V(string k) => r.Checks
+@@ -4795,7 +4795,7 @@ internal static class Program
+                     double tmax = r.Flanges.Length == 0 ? double.NaN : r.Flanges.Max(f => f.TMaxC);
+                     Console.WriteLine($"{nm,-12}{ThrottledProgress.Fmt(el),10}{r.MeshCells,8}"
+                         + $"{tmax,12:0.0000}{V(LineResult.Key.NetFlux),10:0.0000}"
+-                        + $"{V(LineResult.Key.DiscTemp),10:0.0000}{V(LineResult.Key.FlangeDip),10:0.0000}");
++                        + $"{V(LineResult.Key.HotOverTc),10:0.0000}{V(LineResult.Key.ColdUnderTc),10:0.0000}");   // R48 B（2026-09-14 Opus 5）：这两列是热偶读数基准的热侧／冷侧 ⇒ 列头用新代号 ⑦／⑧（②″／③ 永远指旧判法那两条）
+                 }
+                 RowT("GS 扫描", rG, swG.Elapsed);
+                 RowT("CG+Jacobi", rC, swC.Elapsed);
+@@ -4936,7 +4936,7 @@ internal static class Program
+                 void Sweep(string knob, double lo, double hi, Action<DesignSpec, double> set)
+                 {
+                     Console.WriteLine($"── 旋钮：**{knob}**　{lo:0.###} → {hi:0.###}");
+-                    Console.WriteLine($"{"值",10}{"抽热D W",11}{"②′W",10}{"②″K",10}{"③K",10}{"合计g",9}");
++                    Console.WriteLine($"{"值",10}{"抽热D W",11}{"②′W",10}{"⑦K",10}{"⑧K",10}{"合计g",9}");
+                     var ds = new List<double>(); var d3 = new List<double>(); var d2pp = new List<double>();
+                     for (int k = 0; k < pts; k++)
+                     {
+@@ -4951,10 +4951,10 @@ internal static class Program
+                         double draw = rr.Flanges.Sum(f3 => f3.QFromTubeW);
+                         double m3 = rr.Segments.Sum(s3 => s3.MassG) + rr.Flanges.Sum(f3 => f3.MassG);
+                         Console.WriteLine($"{v,10:0.###}{draw,11:0.000}{VV(LineResult.Key.NetFlux),10:0.000}"
+-                            + $"{VV(LineResult.Key.DiscTemp),10:0.000}{VV(LineResult.Key.FlangeDip),10:0.000}{m3,9:0}");
+-                        ds.Add(draw); d3.Add(VV(LineResult.Key.FlangeDip)); d2pp.Add(VV(LineResult.Key.DiscTemp));
++                            + $"{VV(LineResult.Key.HotOverTc),10:0.000}{VV(LineResult.Key.ColdUnderTc),10:0.000}{m3,9:0}");   // R48 B（2026-09-14 Opus 5）：单调性要测的是现役判据
++                        ds.Add(draw); d3.Add(VV(LineResult.Key.ColdUnderTc)); d2pp.Add(VV(LineResult.Key.HotOverTc));
+                     }
+-                    Console.WriteLine(Criteria.Legend("②′", "②″", "③"));
++                    Console.WriteLine(Criteria.Legend("②′", "⑦", "⑧"));
+                     static string Mono(List<double> xs)
+                     {
+                         if (xs.Count < 3) return "点太少，判不了";
+@@ -5064,7 +5064,7 @@ internal static class Program
+                            ? "　✗ **画不出来**" : "　✓"));
+                 Console.WriteLine();
+ 
+-                Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"②″K",9}{"③K",9}{"合计g",9}{"用时s",8}");
++                Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"⑦K",9}{"⑧K",9}{"合计g",9}{"用时s",8}");
+                 double hNow = h0; bool hitCap = false;
+                 (double n2p, double n2pp, double n3, double m)? prevA = null;
+                 List<MeshAdapt.Delta> lastDeltas = new();
+@@ -5082,19 +5082,22 @@ internal static class Program
+                     if (!rA.Ok) { Console.WriteLine($"{hNow,10:0.000}  ✗ {rA.Message}"); break; }
+                     double VA(string k) => rA.Checks
+                         .FirstOrDefault(c2 => c2.Name.StartsWith(k, StringComparison.Ordinal))?.Actual ?? double.NaN;
+-                    double a2p = VA(LineResult.Key.NetFlux), a2pp = VA(LineResult.Key.DiscTemp);
+-                    double a3 = VA(LineResult.Key.FlangeDip);
++                    double a2p = VA(LineResult.Key.NetFlux), a2pp = VA(LineResult.Key.HotOverTc);   // R48 B（2026-09-14 Opus 5）：加密看的是卡交付的判据
++                    double a3 = VA(LineResult.Key.ColdUnderTc);
+                     double massA = rA.Segments.Sum(s2 => s2.MassG) + rA.Flanges.Sum(f2 => f2.MassG);
+                     Console.WriteLine($"{hNow,10:0.000}{rA.MeshCells,9:0}{a2p,9:0.000}{a2pp,9:0.000}"
+                                     + $"{a3,9:0.000}{massA,9:0}{swA.Elapsed.TotalSeconds,8:0.0}");
+ 
+                     if (prevA is { } pv)
+                     {
++                        // 2026-09-14 Opus 5（复审）：容差与名字只读 MeshVerify.TolTemplate —— 此前这里手抄了 0.5／0.2／1.0 三个数，
++                        //   两条温度判据换成热偶读数基准、容差重定之后，手抄的那份就会与界面的复核各判各的。
++                        var tolA = MeshVerify.TolTemplate();
+                         lastDeltas = new List<MeshAdapt.Delta>
+                         {
+-                            new() { Name = "②′", Change = a2p - pv.n2p, Tol = 0.5 },
+-                            new() { Name = "②″", Change = a2pp - pv.n2pp, Tol = 0.2 },
+-                            new() { Name = "③",  Change = a3 - pv.n3,   Tol = 1.0 },
++                            new() { Name = tolA[0].Name, Change = a2p - pv.n2p,   Tol = tolA[0].Tol },
++                            new() { Name = tolA[1].Name, Change = a2pp - pv.n2pp, Tol = tolA[1].Tol },
++                            new() { Name = tolA[2].Name, Change = a3 - pv.n3,     Tol = tolA[2].Tol },
+                         };
+                         Console.WriteLine($"{"",10}{"Δ vs 上一档",9}"
+                             + $"{lastDeltas[0].Change,9:+0.000;−0.000}{lastDeltas[1].Change,9:+0.000;−0.000}"
+@@ -5166,7 +5169,7 @@ internal static class Program
+                         string.Join("　", fines.Select(f => $"{f:0.0}mm网格 {mm / f:0.0}格")));
+                 Console.WriteLine();
+ 
+-                Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"②″K",9}{"③K",9}{"管J",8}{"合计g",9}{"用时s",8}");
++                Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"⑦K",9}{"⑧K",9}{"管J",8}{"合计g",9}{"用时s",8}");
+                 (double f, double n2p, double n2pp, double n3, double j, double m)? prev = null;
+                 foreach (double f in fines.OrderByDescending(x => x))
+                 {
+@@ -5180,8 +5183,8 @@ internal static class Program
+                     if (!rM.Ok) { Console.WriteLine($"{f,10:0.00}  ✗ {rM.Message}"); continue; }
+                     double V(string k) => rM.Checks
+                         .FirstOrDefault(c2 => c2.Name.StartsWith(k, StringComparison.Ordinal))?.Actual ?? double.NaN;
+-                    double n2p = V(LineResult.Key.NetFlux), n2pp = V(LineResult.Key.DiscTemp);
+-                    double n3 = V(LineResult.Key.FlangeDip), jj = V(LineResult.Key.TubeJ);
++                    double n2p = V(LineResult.Key.NetFlux), n2pp = V(LineResult.Key.HotOverTc);   // R48 B（2026-09-14 Opus 5）：网格收敛看的是卡交付的判据
++                    double n3 = V(LineResult.Key.ColdUnderTc), jj = V(LineResult.Key.TubeJ);
+                     double mass = rM.Segments.Sum(s2 => s2.MassG) + rM.Flanges.Sum(f2 => f2.MassG);
+                     int cells = rM.Flanges.Length > 0 ? rM.MeshCells : 0;
+                     Console.WriteLine($"{f,10:0.00}{cells,9:0}{n2p,9:0.000}{n2pp,9:0.000}" +
+@@ -5598,7 +5601,7 @@ internal static class Program
+                         if (imc >= 0 && imc + 1 < args.Length && int.TryParse(args[imc + 1], out int mcv)) mcS = mcv;
+                         var mv = MeshVerify.Run(win.d, p, maxCells: mcS,
+                                      progress: new SyncProgress<string>(m2 => Console.WriteLine("     · " + m2)));
+-                        Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"②″K",9}{"③K",9}{"合计g",9}{"用时s",8}");
++                        Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"⑦K",9}{"⑧K",9}{"合计g",9}{"用时s",8}");
+                         foreach (var t in mv.Trace)
+                             Console.WriteLine($"{t.Fine,10:0.000}{t.Cells,9:0}{t.N2p,9:0.000}{t.N2pp,9:0.000}"
+                                             + $"{t.N3,9:0.000}{t.MassG,9:0}{t.Sec,8:0.0}");
+@@ -6589,9 +6592,9 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一
+                                           + (ok ? "" : oldMesh ? "　（修网格前的记录值，只报不判）" : $"　**超容差 {tol:0.###}**"));
+                     }
+                     Chk("①用时", V(LineResult.Key.RampHours), fd.RampH, 0.02, "h");   // R20：记录的 RampH 是集总用时，读参考行
+-                    Chk("②″", V("②″"), fd.DiscOverK,  0.20, "K");
++                    Chk("②″", V(LineResult.Key.DiscTemp), fd.DiscOverK,  0.20, "K");   // R48 B（2026-09-14 Opus 5）：记录栏位装的是旧判法 ⇒ 读旧判法参考行；用 Key 常量不用代号字面量（改名时编译期就断）
+                     Chk("②′", V("②′"), fd.HoleFluxW,  0.50, "W");
+-                    Chk("③",  V("③"),  fd.FlangeDipK, 1.00, "K");
++                    Chk("③",  V(LineResult.Key.FlangeDip),  fd.FlangeDipK, 1.00, "K");
+                     Chk("管J", V("管 J"), fd.TubeJ,    0.05, "A/mm²");
+                     Chk("合计", rc.TotalMassG, fd.TotalMassG, 2.0, "g");
+                 }
+@@ -6955,7 +6958,7 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一
+                         return double.NaN;
+                     }
+                     return (true, r.Converged, r.AllOk,
+-                            V("③"), V("②″"), V("②′"), V("管 J"),
++                            V(LineResult.Key.FlangeDip), V(LineResult.Key.DiscTemp), V("②′"), V("管 J"),   // R48 B（2026-09-14 Opus 5）：本实验的预言都是旧判法上写的 ⇒ 显式读旧判法参考行
+                             r.TotalMassG,
+                             r.Flanges.Max(x => x.TMaxC),
+                             r.Flanges.Max(x => Math.Abs(x.EnergyResidualW)),
+diff --git a/Pt_Optimize/UI/Flow.cs b/Pt_Optimize/UI/Flow.cs
+index aead584..b8ddfa2 100644
+--- a/Pt_Optimize/UI/Flow.cs
++++ b/Pt_Optimize/UI/Flow.cs
+@@ -601,7 +601,8 @@ public static class Flow
+                           "几何判据在本模式下**判不了**（形状由 .3dm 给定，「舌片自由段」与「圆盘盖得住管孔」无从判起）—— "
+                         + "⇒ 点「◈ 图纸几何 → 参数」：把图纸反推出来的几何（盘径／舌长／舌半宽／"
+                         + "管壁／板厚）交给**解析路**。那条路能改**形状**，那两条也就判得了。"
+-                        + "　实测：盘Ø120 即便板厚顶到工艺下界，圆盘区最高温与法兰增量温降仍差一个数量级 —— "
++                        // 2026-09-14 Opus 5（复审）：这条实测是换热偶读数基准之前、按旧判法的两条量的 ⇒ 写明，别让人以为是现在卡交付的判据
++                        + "　实测（旧判法）：盘Ø120 即便板厚顶到工艺下界，圆盘区最高温与法兰增量温降仍差一个数量级 —— "
+                         + "**卡住的往往是形状，不是厚度**。"
+                         + "　想留在图纸上也行：那就只能调厚度，改完回「整线核算」重解，或回 Rhino 改图。");
+                 return new("geom.analyze",
+@@ -638,7 +639,10 @@ public static class Flow
+             //     （拒绝写在 RunAsync，指路读这一位）。
+             if (st.SizerNoLevels)
+                 return new("geom.analyze",
+-                      "卡的是热-电量（法兰增量温降／管孔净流入／圆盘区最高温／管电流密度），"
++                      // 2026-09-14 Opus 5（复审）：原列「法兰增量温降／圆盘区最高温」—— 那两条已降为参考量、不卡交付，真正卡交付的热侧／冷侧两条反而没提。
++                      //   判据名走 Criteria.Plain(Key)：改名时这里跟着变，不再手抄。
++                      $"卡的是热-电量（{Criteria.Plain(LineResult.Key.NetFlux)}／{Criteria.Plain(LineResult.Key.HotOverTc)}／"
++                    + $"{Criteria.Plain(LineResult.Key.ColdUnderTc)}／管电流密度），"
+                     + "而厚度正是它们的旋钮 —— 但图纸**还没反推**成厚度场，无从算起。"
+                     + "⇒ 先点「分析几何变数」。");
+             // ★★★★★ 指「自动定厚」之前，先问它**上一次是不是已经宣告不可行**（2026-09-03）。
+@@ -674,7 +678,8 @@ public static class Flow
+             return new("core.verifyMesh",
+                   "判据全过且是当前参数的解 —— 但这些数是在**导航网格**上算的，还没验过准不准。"
+                 + "点「核算整线」，它会自己接着加密复算（把网格一档档加密，直到这个数不再变）。"
+-                + "　⚠ 值得等：0.6 档那个设计，粗网格算出「法兰增量温降 7.7 K」（限值 10，看着很宽），"
++                // 2026-09-14 Opus 5（复审）：历史实测是旧判法的数 ⇒ 标明（同 LineDesignPage 那一句）
++                + "　⚠ 值得等：0.6 档那个设计，粗网格算出「法兰增量温降（旧判法）7.7 K」（旧判法限值 10，看着很宽），"
+                 + "加密到位是 **9.5 K** —— 差 1.8 K，而这个差足以把「过」变成「不过」。");
+ 
+         return new("export.page3dm", "判据全过、是当前参数的解、而且已经加密复算到数不再变 —— 可以出图了");
+@@ -1017,7 +1022,7 @@ public static class Gate
+                       + "回「整线核算」页点「◆ 加密复算（算到数不再变）」——"
+                       + "它会把网格一档档加密，直到判据不再变（实测 10–40 分钟，随时可取消）。"
+                       + "　⚠ 不验就出图的风险是实打实的：0.6 档那个设计，"
+-                      + "粗网格算出「法兰增量温降 7.7 K」（限值 10，看着很宽），"
++                      + "粗网格算出「法兰增量温降（旧判法）7.7 K」（旧判法限值 10，看着很宽），"
+                       + "加密到位是 **9.5 K** —— 差 1.8 K，而这个差足以把「过」变成「不过」。", null);
+ 
+         return new Status(stage, true, bypassed, "", "", null);
+diff --git a/Pt_Optimize/UI/LineDesignPage.cs b/Pt_Optimize/UI/LineDesignPage.cs
+index f9b0a28..448ed41 100644
+--- a/Pt_Optimize/UI/LineDesignPage.cs
++++ b/Pt_Optimize/UI/LineDesignPage.cs
+@@ -928,13 +928,14 @@ public sealed class LineDesignPage : TabPage
+             "工艺下界 0.6 mm = **手工 TIG 烧穿下界**（自动 TIG 0.3、激光 0.1，差一个量级）。\n" +
+             "另一条独立的界是管 J ≤ 12 A/mm²（现场给定：一般上限 15，壁 0.6 时 12 是极限）。\n" +
+             "设计记录两档正是被这两条同点咬住（0.6）与全都留有余量（0.8）。\n" +
+-            $"参考斜率（0.8 档 2026-08 离线实测，**会随形状变**）：法兰增量温降 {dDip_dWall:+0.0;−0.0} K/mm　圆盘区最高温 +16.7 K/mm" +
++            // 2026-09-14 Opus 5（R48 B 复审）：这两条斜率是旧判法的两条（已降为参考量）上量的 ⇒ 标明，别让人拿去推卡交付的热侧／冷侧
++            $"参考斜率（旧判法的两条，0.8 档 2026-08 离线实测，**会随形状变**）：法兰增量温降 {dDip_dWall:+0.0;−0.0} K/mm　圆盘区最高温 +16.7 K/mm" +
+             $"　管J {dJ_dWall:+0.00;−0.00}　管重 +3051 g/mm\n" +
+             "⚠ 圆盘区最高温 那条只在**这个工作点附近**成立：圆盘区最高温 由两个竞争峰决定，符号会随构型翻。");
+         Row("纤维保温 mm", _tubeIns,
+             "无空间限制、不花铂 —— 但**不是免费的**：\n" +
+             $"  法兰增量温降 {dDip_dTubeIns:+0.0;−0.0} K/mm　圆盘区最高温 −3.1 K/mm" +
+-            $"　管J {dJ_dTubeIns:+0.00;−0.00} (A/mm²)/mm　（0.8 档 2026-08 离线实测）\n" +
++            $"　管J {dJ_dTubeIns:+0.00;−0.00} (A/mm²)/mm　（旧判法的两条，0.8 档 2026-08 离线实测）\n" +
+             "机理：保温厚 ⇒ 管散热少 ⇒ 电流小（利），但 β 变小而 法兰增量温降=D/√(kAβ) 里 β 在分母（不利）。\n" +
+             "现用的 5 mm 恰在拐点上 —— 这个值原本是没量过的默认值，碰巧是对的。");
+         Row("电流密度 J A/mm²", _jDesign,
+@@ -968,7 +969,7 @@ public sealed class LineDesignPage : TabPage
+         _layer3dm.TextChanged += (_, _) => InvalidateShapeIfDrawingChanged();   // R47 第三轮 N7：换图层 = 换图，分析结果作废
+         // ★ R47 B（2026-09-13）：图纸路径的舌保温改用逐片表（见 _tabIns3dmNote 的说明），这里只留一行指路。
+         Row("舌保温 mm（.3dm）", _tabIns3dmNote,
+-            $"舌片自己的保温厚度，是守 {Criteria.Explain("管孔净流入")}/{Criteria.Explain("③")} 的主力旋钮，逐片可不同。"
++            $"舌片自己的保温厚度，是守 {Criteria.Explain("管孔净流入")}/{Criteria.Plain(LineResult.Key.ColdUnderTc)} 的主力旋钮，逐片可不同。"
+             + Environment.NewLine
+             + "图纸模式与解析模式用**同一张**「逐片舌保温 mm」表（同一组上下界），求解器调的也是那张表里的值。"
+             + Environment.NewLine
+@@ -1356,7 +1357,7 @@ public sealed class LineDesignPage : TabPage
+             sbW.AppendLine(verified
+                 ? "■ 这些数已经加密复算过（算到不再变），可以按它们判断。"
+                 : "■ 这些数是在**粗网格**上算的，还没加密复算 —— **可能偏乐观**。" + Environment.NewLine
+-                  + "    实测同一个设计：粗网格 法兰增量温降 4.72 K（看着余量 53 %），" + Environment.NewLine
++                  + "    实测同一个设计：粗网格 法兰增量温降（旧判法）4.72 K（看着余量 53 %），" + Environment.NewLine
+                   + "    加密到数不再变是 10.33 K —— 已经越限。");
+             sbW.AppendLine();
+             sbW.AppendLine("存下来的档会**带着这段话**，下一个人打开就看得见。");
+@@ -2090,16 +2091,24 @@ public sealed class LineDesignPage : TabPage
+                 // ⚠ 查找键与显示名是**两件事**：键走 LineResult.Key 常量（判据改名编译期就断），
+                 //   显示走 Criteria.Plain（剥掉代号）。原来两处都写字面量 "③" ——
+                 //   于是代号从这里漏到屏幕上，而且判据一改名它会**悄悄查不到**（返回 0）。
++                // ★ R48 B（2026-09-14 Opus 5）：卡交付的热侧／冷侧换成热偶读数基准，**还没有实测斜率 ⇒ 不外推**，只报已解的值；
++                //   下面那条外推是旧判法「法兰增量温降」的（斜率是旧判法上量的），降为参考，限值从判据表读，不再写死 10。
++                double L(string k) { foreach (var c in _solvedRes.Checks) if (c.Name.StartsWith(k, StringComparison.Ordinal)) return c.Limit; return double.NaN; }
++                sb.AppendLine($"   {Criteria.Plain(LineResult.Key.HotOverTc)}\t{V(LineResult.Key.HotOverTc):0.00}\t**不外推**\t/ {L(LineResult.Key.HotOverTc):0.0}\t" +
++                              "基准换成热偶读数之后还没有实测斜率 —— 等真解");
++                sb.AppendLine($"   {Criteria.Plain(LineResult.Key.ColdUnderTc)}\t{V(LineResult.Key.ColdUnderTc):0.00}\t**不外推**\t/ {L(LineResult.Key.ColdUnderTc):0.0}\t" +
++                              "基准换成热偶读数之后还没有实测斜率 —— 等真解");
+                 P(Criteria.Plain(LineResult.Key.FlangeDip),
+                   V(LineResult.Key.FlangeDip),
+-                  V(LineResult.Key.FlangeDip) + dDip_dWall * dW + dDip_dPlate * dP + dDip_dTubeIns * dI, 10.0,
+-                  $"板厚 {dDip_dPlate:+0;−0} K/mm　管壁 {dDip_dWall:+0;−0}　管保温 {dDip_dTubeIns:+0;−0}");
++                  V(LineResult.Key.FlangeDip) + dDip_dWall * dW + dDip_dPlate * dP + dDip_dTubeIns * dI, L(LineResult.Key.FlangeDip),
++                  $"参考，不卡交付　板厚 {dDip_dPlate:+0;−0} K/mm　管壁 {dDip_dWall:+0;−0}　管保温 {dDip_dTubeIns:+0;−0}");
+                 P(Criteria.Plain(LineResult.Key.TubeJ),
+                   V(LineResult.Key.TubeJ), V(LineResult.Key.TubeJ) + dJ_dWall * dW + dJ_dTubeIns * dI, 12.0,
+                   $"管壁 {dJ_dWall:+0.00;−0.00}　管保温 {dJ_dTubeIns:+0.00;−0.00}");
+                 // ⚠ 列数必须与 P 完全一致，否则它会自成一张表、和上面两行对不齐
+-                sb.AppendLine($"   圆盘区最高温\t{V("圆盘区最高温"):0.00}\t**不外推**\t/ 5.0\t" +
+-                              "本构型上它不活跃（实测各斜率 |·| ≤ 0.15，且符号与旧构型相反）");
++                // R48 B：原来按字面量「圆盘区最高温」查 —— 旧判法改名后会悄悄查不到（NaN），改走 Key 常量；限值也从判据表读
++                sb.AppendLine($"   {Criteria.Plain(LineResult.Key.DiscTemp)}\t{V(LineResult.Key.DiscTemp):0.00}\t**不外推**\t/ {L(LineResult.Key.DiscTemp):0.0}\t" +
++                              "参考，不卡交付；本构型上它不活跃（实测各斜率 |·| ≤ 0.15，且符号与旧构型相反）");
+                 sb.AppendLine("   ⚠ 预测是**线性外推**，只说方向与量级，不是答案。");
+             }
+         }
+@@ -2485,7 +2494,7 @@ public sealed class LineDesignPage : TabPage
+             (fd.RingMul[0] <= 1.001
+                 ? "（=1.00 即**不需要环**）\r\n"
+                 : $"，r ≤ 孔+{fd.RingWidthMm:0} 与 孔+{2 * fd.RingWidthMm:0} 两级\r\n") +
+-            $"   · 逐片舌保温 {DesignSpec.Fmt(fd.TabInsulMm, "0.0")} mm（守 {Criteria.Explain("管孔净流入")}/{Criteria.Explain("③")} 的主力旋钮）\r\n" +
++            $"   · 逐片舌保温 {DesignSpec.Fmt(fd.TabInsulMm, "0.0")} mm（守 {Criteria.Explain("管孔净流入")}/{Criteria.Plain(LineResult.Key.ColdUnderTc)} 的主力旋钮）\r\n" +
+             $"   · 压接段 {fd.ClampLengthMm:0} mm　舌根圆角 R{fd.TabFilletMm:0}　等宽舌片　管孔两面角焊缝\r\n" +
+             (missing3dm.Length > 0
+                 ? "   ⇒ **图纸找不到，本档不能复现** —— 先把上面列的 .3dm 放回去（或在文件行重新选），再「分析几何变数」→「核算整线」。"
+@@ -2623,7 +2632,7 @@ public sealed class LineDesignPage : TabPage
+     /// </summary>
+     private static string AnalyticUsedWhat(DesignSpec d) =>
+         $"   · 压接段 {d.ClampLengthMm:0} mm（决定判据 {Criteria.Explain("⑤")}与舌片有效发热长度）\r\n" +
+-        $"   · 逐片舌保温 {DesignSpec.Fmt(d.TabInsulMm, "0.0")} mm（**守 {Criteria.Explain("管孔净流入")}/{Criteria.Explain("③")} 的主力旋钮**）\r\n" +
++        $"   · 逐片舌保温 {DesignSpec.Fmt(d.TabInsulMm, "0.0")} mm（**守 {Criteria.Explain("管孔净流入")}/{Criteria.Plain(LineResult.Key.ColdUnderTc)} 的主力旋钮**）\r\n" +
+         $"   · 管孔渐变环 ×{DesignSpec.Fmt(d.RingMul, "0.00")}" +
+         (d.RingMul[0] <= 1.001 ? "（=1.00 即不需要环）" : $"，环宽 {d.RingWidthMm:0} mm") + "\r\n" +
+         $"   · 舌根圆角 R{d.TabFilletMm:0}　等宽舌片　管孔两面角焊缝（焊脚 = max(板厚, 壁厚)）\r\n" +
+@@ -3800,7 +3809,9 @@ public sealed class LineDesignPage : TabPage
+                            + Environment.NewLine
+                            + "   　想让它也能逐级调，回 Rhino 给圆盘分级，再重新「分析几何变数」。"
+                          : "") +
+-                        Environment.NewLine + "   ⚠ 本器**只调板厚**，管不到 管孔净流入 净流入与 圆盘区最高温 圆盘峰 —— 请自行看判据表。" + floorNote);
++                        // 2026-09-14 Opus 5（复审）：原文点名「圆盘区最高温」—— 那条已降为参考量、不卡交付；本器够不着的卡交付判据是下面这三条（名字走 Key 常量）。
++                        Environment.NewLine + $"   ⚠ 本器**只调板厚**、追的是旧判法的法兰增量温降，管不到 {Criteria.Plain(LineResult.Key.NetFlux)}，"
++                        + $"也不追 {Criteria.Plain(LineResult.Key.HotOverTc)}／{Criteria.Plain(LineResult.Key.ColdUnderTc)} —— 请自行看判据表。" + floorNote);
+                 }
+                 else
+                 {
+@@ -3862,7 +3873,7 @@ public sealed class LineDesignPage : TabPage
+                         //   两者答的不是同一个问题。而正牌按钮当天已经补上了。
+                         _out.AppendText(Environment.NewLine
+                             + "   ⚠ 本次**只在导航网格上求根**，这些数还没验过准不准。"
+-                            + "同一个设计实测：粗网格算出 法兰增量温降 7.7 K（限值 10，看着很宽），"
++                            + "同一个设计实测：粗网格算出 法兰增量温降（旧判法）7.7 K（旧判法限值 10，看着很宽），"
+                             + "加密到位是 **9.5 K** —— 差 1.8 K，足以把「过」变成「不过」。"
+                             + Environment.NewLine
+                             + "   ⇒ **下一步点「◆ 加密复算（算到数不再变）」**（本页工具条，10～40 分钟，可取消）。"
+@@ -3874,9 +3885,13 @@ public sealed class LineDesignPage : TabPage
+                         string FamLine(SolverResult s, string nm)
+                         {
+                             var b = s.Best;
+-                            double dip = b?.Checks.FirstOrDefault(c => c.Name == LineResult.Key.FlangeDip)?.Actual ?? double.NaN;
+-                            double sj = b?.Checks.FirstOrDefault(c => c.Name == LineResult.Key.SectionJ)?.Actual ?? double.NaN;
+-                            return $"   {nm}　{(s.Feasible ? "可行" : "不可行")}　合计 {s.MassG:0.0} g　法兰增量温降 {dip:0.00} K　法兰截面 J {sj:0.00}　{s.StopWhy}";
++                            // R48 B（2026-09-14 Opus 5）：两族并列要比的是**卡交付的**冷侧／热侧（热偶读数基准），不是旧判法增量温降。
++                            //   顺带修一个老洞：原来按 `c.Name == Key` 精确匹配，而判据的 Name 比 Key 长（「③ 法兰增量温降 ≤ 上限」）⇒ 恒查不到、恒印 NaN。改走前缀（ValueOf）。
++                            double cold = b?.ValueOf(LineResult.Key.ColdUnderTc) ?? double.NaN;
++                            double hot = b?.ValueOf(LineResult.Key.HotOverTc) ?? double.NaN;
++                            double sj = b?.ValueOf(LineResult.Key.SectionJ) ?? double.NaN;
++                            return $"   {nm}　{(s.Feasible ? "可行" : "不可行")}　合计 {s.MassG:0.0} g　{Criteria.Plain(LineResult.Key.ColdUnderTc)} {cold:0.00} K"
++                                 + $"　{Criteria.Plain(LineResult.Key.HotOverTc)} {hot:0.00} K　法兰截面 J {sj:0.00}　{s.StopWhy}";
+                         }
+                         _out.AppendText(Environment.NewLine + "★ 两族并列（各自最优，不比重量 —— 你来选）：写回页面的是「不挖舌孔」；「挖舌孔」在「搜形状结果 ▾」里，选它就写回。"
+                             + Environment.NewLine + FamLine(srD8, "不挖舌孔") + Environment.NewLine + FamLine(srAlt, "挖舌孔　") + Environment.NewLine);
+@@ -4553,18 +4568,26 @@ public sealed class LineDesignPage : TabPage
+         }
+ 
+         string tipPlate =
+-            "**最强的旋钮**（0.8 档 2026-08 离线实测，端点均已收敛）：\n" +
++            "**最强的旋钮**（旧判法的两条，0.8 档 2026-08 离线实测，端点均已收敛）：\n" +
+             $"  法兰增量温降 {dDip_dPlate:+0.0;−0.0} K/mm　圆盘区最高温 −14.6 K/mm　法兰重 +264 g/mm\n" +
++            // 2026-09-14 Opus 5（R48 B 复审）：补上卡交付的两条（热偶读数基准）的方向，出处 deliverable/r48B_敏感度矩阵_热偶基准_2026-09-14.txt；只给方向不给数
++            $"  按热偶读数基准（2026-09-14 实测，四片同号）：加厚让「{Criteria.Plain(LineResult.Key.HotOverTc)}」变好、「{Criteria.Plain(LineResult.Key.ColdUnderTc)}」变差。\n" +
+             "⚠ 法兰增量温降是**正号** —— 加厚会把它推向限值。「哪里热就加厚哪里」在这里是反的：\n" +
+             "  加厚同时降单位面积发热（∝1/t）与增强横向导热（∝t），后者把热从管根抽走。\n" +
+             "共用片承 √3 倍电流、发热 3 倍 ⇒ 必须比端片厚，四片等厚不是最优。";
+         string tipIns =
+             $"D8 里它是**免费旋钮**：主要动「从管子抽多少热」"
+-            + $"（判据 {Criteria.Explain("管孔净流入")} 与 {Criteria.Explain("③")}），" + Environment.NewLine +
+-            "而对 圆盘区最高温（圆盘区局部峰值）几乎不动 —— 所以它先调，板厚只做接力与省铂。" + Environment.NewLine +
++            + $"（判据 {Criteria.Explain("管孔净流入")} 与 {Criteria.Plain(LineResult.Key.ColdUnderTc)}），" + Environment.NewLine +
++            // 2026-09-14 Opus 5（R48 B 复审）：原文「对 圆盘区最高温 几乎不动 —— 所以它先调」是旧判法上的结论；换成热偶读数基准后，
++            //   加保温让法兰与管根一起变热：冷侧变好、热侧与管孔净流入变差（deliverable/r48B_敏感度矩阵_热偶基准_2026-09-14.txt）⇒ 求解器只在冷侧不过时才加它。
++            $"加厚它让法兰和管根一起变热：「{Criteria.Plain(LineResult.Key.ColdUnderTc)}」变好，「{Criteria.Explain("管孔净流入")}」与「{Criteria.Plain(LineResult.Key.HotOverTc)}」变差（2026-09-14 实测）" + Environment.NewLine +
++            "—— 所以求解器只在前者不过时才加它（做「◆ 细网格重解」时，那一遍会把加过头的退回去）；板厚只做接力与省铂。" + Environment.NewLine +
+             "初始值取下界 0.3（≈裸舌）：那是真实状态，不是捏的数。优化器会自己往上加。";
+         string tipRing =
+-            "只压**管孔周围**的局部电流拥塞（判据 圆盘区最高温），作用范围 r ≤ 孔+6 mm。" + Environment.NewLine +
++            // 2026-09-14 Opus 5（R48 B 复审）：原写「（判据 圆盘区最高温）」—— 那条已降为参考量；分派表里环倍率现在是热侧的候选（Solver.Allocation）
++            "只压**管孔周围**的局部电流拥塞，作用范围 r ≤ 孔+6 mm。" + Environment.NewLine +
++            $"2026-09-14 起它是「{Criteria.Plain(LineResult.Key.HotOverTc)}」的候选旋钮（管壁 0.8 那一档实测加环让这一条变好、让「{Criteria.Plain(LineResult.Key.ColdUnderTc)}」变差）；" + Environment.NewLine +
++            "下面两组数是在旧判法「圆盘区最高温 − 管温」上量的：" + Environment.NewLine +
+             "⚠ **这个灵敏度随形状变号，别照抄任何一个数**（2026-08-28 实测）：" + Environment.NewLine +
+             "　· 窄舌形状上曾测得 d圆盘区最高温/d倍率 ≈ **−1.4** K/单位（加环压得住）；" + Environment.NewLine +
+             // ★ 2026-09-02：原文在这几行里直接印命令行开关名 `--monotone` 给现场工程师看。
+@@ -4589,7 +4612,8 @@ public sealed class LineDesignPage : TabPage
+             "　但方向是：只有 管孔净流入 变好，**法兰增量温降与圆盘区最高温都变坏** ⇒ 它们是「花铂换抽热」的旋钮，" + Environment.NewLine +
+             "　不是「治判据」的旋钮。所以**没有**进求解器的分配表（那要先做敏感度矩阵）。" + Environment.NewLine +
+             "── 谁在动它们（2026-08-30 起变了）" + Environment.NewLine +
+-            "　**t₂ 是求解器旋钮**：它是判据 管孔净流入 的**首选**候选，排在板厚前面 ——" + Environment.NewLine +
++            // 2026-09-14 Opus 5（R48 B 复审）：t₂／r₂ 也进了热侧那一排（Solver.Allocation）
++            $"　**t₂ 是求解器旋钮**：它是判据 管孔净流入 与「{Criteria.Plain(LineResult.Key.HotOverTc)}」的**首选**候选，排在板厚前面 ——" + Environment.NewLine +
+             "　实测每克铂买到的裕度是板厚的 **1.7–3.3 倍**，而每单位管孔净流入的法兰增量温降代价几乎相同。" + Environment.NewLine +
+             "　「自动定厚」解完会把 t₂ 写回这里并自动勾上「逐片自定」。" + Environment.NewLine +
+             "　**r₁ / r₂ 不是**求解器旋钮：t₁ = t₂ = 1.00 时台阶根本不存在，挪半径无效。" + Environment.NewLine +
+@@ -4628,7 +4652,7 @@ public sealed class LineDesignPage : TabPage
+           + Environment.NewLine
+           + "实测（盘Ø120 构型）：180° ⇒ 法兰抽热 −37 %，峰值电流密度 +2.3 %。"
+           + Environment.NewLine
+-          + "★ 判据「法兰增量温降」不过时，求解器会**自己调它**（与舌保温同排比价）。"
++          + $"★ 判据「{Criteria.Plain(LineResult.Key.ColdUnderTc)}」不过时，求解器会**自己调它**（与舌保温同排比价）。"   // R48 B（2026-09-14 Opus 5）：分派表那一排换成冷侧新判据
+           + Environment.NewLine
+           + "⚠ 上界由几何闭式定：内桥、外桥、周向桥都要留够，开过头会把圆盘割断。";
+         for (int i = 0; i < n; i++) Row($"{names[i]} 槽", _slotDeg[i], tipSlot);
+@@ -4638,7 +4662,7 @@ public sealed class LineDesignPage : TabPage
+         string tipHole =
+             "工程师图上本来就有的孔（装配／工艺／走线）—— APP 回答的是「**这个孔该多大**」。"
+           + Environment.NewLine
+-          + "孔越大：导热截面↓（少抽热，利于「法兰增量温降」），过流截面↓（该处电流密度↑）。"
++          + $"孔越大：导热截面↓（少抽热，利于「{Criteria.Plain(LineResult.Key.ColdUnderTc)}」），过流截面↓（该处电流密度↑）。"
+           + Environment.NewLine
+           + "★ 判据不过时求解器会**自己调它**，与舌保温、圆盘槽**同排按每克铂比价**。"
+           + Environment.NewLine
+@@ -4656,7 +4680,8 @@ public sealed class LineDesignPage : TabPage
+             + Environment.NewLine
+             + "⚠ 横着挡电流则相反：同样面积把峰值顶高 29 %。所以只让它顺流拉长，不给转角。"
+             + Environment.NewLine
+-            + "★ 判据「圆盘区最高温」不过时，求解器会**自己调它**，与舌保温、环倍率同排比价。";
++            // R48 B（2026-09-14 Opus 5）：原文写「圆盘区最高温」—— 与 Solver.Allocation 对不上（孔拉长 2026-09-05 就挪到抽热那一排了），这次一并改成冷侧新判据
++            + $"★ 判据「{Criteria.Plain(LineResult.Key.ColdUnderTc)}」不过时，求解器会**自己调它**，与舌保温、圆盘槽、舌孔孔径同排比价。";
+         for (int i = 0; i < n; i++) Row($"{names[i]} 孔拉长", _holeAsp[i], tipAsp);
+ 
+         // ★★★ R12／R13（2026-09-09）：位置由场定、形状由求解器比价选 —— 都是算出来的，只读显示
+diff --git a/Pt_Optimize/UI/ManualPage.cs b/Pt_Optimize/UI/ManualPage.cs
+index e99a6a8..2fc8915 100644
+--- a/Pt_Optimize/UI/ManualPage.cs
++++ b/Pt_Optimize/UI/ManualPage.cs
+@@ -872,12 +872,18 @@ public sealed class ManualPage : TabPage
+         //   工程师看不懂」）。此前这张表逐行带着 ①②′②″③⑤⑥ —— 而页签上的**阶段号**
+         //   也是 ①–⑤，形状相同、含义无关（判据 ⑤ 是舌片自由段，阶段 ⑤ 是交付），
+         //   摆在同一个界面上必然误读。
++        // ★ R48 B（2026-09-14 Opus 5）：热侧／冷侧换成热偶读数基准（两条新硬判据），旧判法两条降为参考。
++        //   设计记录**没有存**新判据的值（DiscOverK／FlangeDipK 两个栏位装的是旧判法的数）⇒ 新两行记录值印「记录里没有」，不许拿旧判法的数冒充；
++        //   限值从 LineCase 读，不写死。
++        var limC = new LineCase();
+         var crit = new (string n, string k, double a, double l, string u, bool less)[]
+         {
+             ("升温到位用时（集总，参考）", "参考",  fd.RampH,      72,    "h",      true),
+-            ("圆盘区最高温 − 管温",    "硬判据", fd.DiscOverK,  5.00,  "K",      true),
++            (Criteria.Plain(LineResult.Key.HotOverTc),   "硬判据", double.NaN, limC.HotOverTcMaxK,  "K", true),
++            (Criteria.Plain(LineResult.Key.ColdUnderTc), "硬判据", double.NaN, limC.ColdUnderTcMaxK, "K", true),
++            (Criteria.Plain(LineResult.Key.DiscTemp),    "参考", fd.DiscOverK,  limC.DiscOverTempMaxK,  "K",      true),   // 2026-09-14 Opus 5（复审）：名字走 Key 常量，不手抄
+             ("管孔净流入 须为正",      "硬判据", fd.HoleFluxW,  0,     "W",      false),
+-            ("法兰增量温降",           "目标",   fd.FlangeDipK, 10.00, "K",      true),
++            (Criteria.Plain(LineResult.Key.FlangeDip),   "参考", fd.FlangeDipK, limC.RootDeltaMaxK,    "K",      true),
+             ("管 J 电流密度",          "硬判据", fd.TubeJ,      12.00, "A/mm²",  true),
+             ("舌片自由段 ≥ 下界",      "硬判据", fd.FreeTabMm,  100.0, "mm",     false),
+             ("圆盘盖得住管孔＋焊脚",    "硬判据",
+@@ -1119,7 +1125,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
+                 + "<tr><td>还没算过</td><td><b>核算整线</b></td></tr>"
+                 + "<tr><td>上次没收敛</td><td><b>核算整线</b>（那组数一个都不能用）</td></tr>"
+                 + "<tr><td>算完之后参数又动过</td><td><b>核算整线</b> —— 现在显示的「全过」说的是上一组参数</td></tr>"
+-                + "<tr><td>判据没全过，卡的是热和电（管孔净流入／圆盘区最高温／法兰增量温降／管 J）</td><td><b>自动定厚</b></td></tr>"
++                + $"<tr><td>判据没全过，卡的是热和电（{Criteria.Plain(LineResult.Key.NetFlux)}／{Criteria.Plain(LineResult.Key.HotOverTc)}／{Criteria.Plain(LineResult.Key.ColdUnderTc)}／管 J）</td><td><b>自动定厚</b></td></tr>"
+                 + "<tr><td>判据没全过，卡的是<b>几何</b>（舌片自由段／圆盘盖得住管孔）</td>"
+                 + "<td><b>◇ 搜形状</b> —— 厚度改不动几何，白跑</td></tr>"
+                 + "<tr><td>.3dm 模式、图纸还没分析</td><td><b>分析几何变数</b> —— 不先分析，几何两条判据是「无法判定」，白跑一次分钟级的计算</td></tr>"
+@@ -1180,7 +1186,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
+                    ? $"管孔外面有<b>两级渐变环</b>（倍率 ×{fd.RingMul[0]:0.00}）压制孔周电流集中；环的半径和厚度都是相对量（相对管孔、相对板厚），板变厚环跟着变。" +
+                      $"环外级外半径 {fd.RingRadiiMm[1]:0.0} mm 大于盘半径 {fd.DiscRadiusMm:0.0} mm ⇒ 两级环几乎盖满整个圆盘。"
+                    : $"本档<b>没有渐变环</b>（倍率 1.00 = 等厚）：舌片加宽到 {2 * fd.TabHalfWidthMm:0} mm 之后，电流从管孔进来有足够的截面可走，孔周不再拥挤，" +
+-                     $"圆盘区最高温只有 {fd.DiscOverK:0.00} K（限 +5 K）。舌片一窄回去，尖峰和环都会回来。") +
++                     $"圆盘区最高温 − 管温（旧判法）只有 {fd.DiscOverK:0.00} K（旧判法限 +{new LineCase().DiscOverTempMaxK:0} K）。舌片一窄回去，尖峰和环都会回来。") +
+                   $"</div></div>");
+ 
+         sb.Append($"<div class=\"fig\">{SvgIso(fd, 0)}" +
+@@ -1219,6 +1225,8 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
+         sb.Append("<h2>5. 判据表怎么读</h2>");
+         sb.Append("<p>判据表每一行是一条要过的线。<b>裕度</b>是离限值还有多远：越大越稳；贴着限值的「过」不算真过。" +
+                   "「记录值」是粗网格（2 mm）上算的；「加密复算后的值」是把网格一档档加细、直到数不再变之后的数 —— <b>做决定看右边那列</b>。</p>");
++        // R48 B（2026-09-14 Opus 5）：复核值栏位（VerifiedFlangeDipK／VerifiedDiscOverK）装的是旧判法的数 —— 只配给旧判法那两行；新判据两行记录里没存。
++        bool NotStored(string name) => name == Criteria.Plain(LineResult.Key.HotOverTc) || name == Criteria.Plain(LineResult.Key.ColdUnderTc);
+         double VerifOf(string name) => name.StartsWith("法兰增量温降", StringComparison.Ordinal) ? fd.VerifiedFlangeDipK
+                                      : name.StartsWith("管孔净流入", StringComparison.Ordinal) ? fd.VerifiedHoleFluxW
+                                      : name.StartsWith("圆盘区最高温", StringComparison.Ordinal) ? fd.VerifiedDiscOverK
+@@ -1236,10 +1244,10 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
+             double v = VerifOf(n);
+             bool hasV = !double.IsNaN(v);
+             double forBar = hasV ? v : a;
+-            sb.Append($"<tr><td>{n}</td><td>{k}</td><td class=\"n\">{(double.IsNaN(a) ? "判不了（图纸档没有板厚）" : $"{a:0.000} {u}")}</td>" +
++            sb.Append($"<tr><td>{n}</td><td>{k}</td><td class=\"n\">{(NotStored(n) ? "记录里没有（新判据，核算整线后看判据表）" : double.IsNaN(a) ? "判不了（图纸档没有板厚）" : $"{a:0.000} {u}")}</td>" +
+                       (anyVerif ? $"<td class=\"n\"><b>{(hasV ? v.ToString("0.000") + " " + u : "—")}</b></td>" : "") +
+                       $"<td class=\"n\">{(Math.Abs(l) < 1e-9 ? "> 0" : (less ? "≤ " : "≥ ") + l.ToString("0.00"))}</td>" +
+-                      $"<td>{Bar(forBar, l, less)}</td></tr>");
++                      $"<td>{(NotStored(n) ? "—" : Bar(forBar, l, less))}</td></tr>");
+         }
+         sb.Append("</table>");
+         if (anyVerif && fd.VerifiedNote.Length > 0)
+@@ -1247,13 +1255,14 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
+                     + Md(fd.VerifiedNote) + "</div>");
+         if (anyVerif)
+             sb.Append("<div class=\"note\"><b>两列口径不一样，看右边那列。</b>" +
+-                      $"本档实测：法兰增量温降 <b>{fd.FlangeDipK:0.000} → {fd.VerifiedFlangeDipK:0.000} K</b>（限值 10）。" +
++                      $"本档实测：法兰增量温降（旧判法） <b>{fd.FlangeDipK:0.000} → {fd.VerifiedFlangeDipK:0.000} K</b>（旧判法限值 {limC.RootDeltaMaxK:0}）。" +
+                       "粗网格看着余量宽，加密之后并不宽 —— 这个差足以把「过」变成「不过」，所以出图前必须过「◆ 加密复算（算到数不再变）」。" +
+                       "「核算整线」会自己做这一步。<br>" +
+-                      "空着「—」的几条是几何算出来的闭式判据，不随网格变，没有复核值。</div>");
++                      "空着「—」的几条是几何算出来的闭式判据，不随网格变，没有复核值；"
++                      + "「最热铂高出热偶读数」「管根低于热偶读数」是换成热偶读数基准之后的判据，设计记录里还没存它们的值。</div>");
+         else
+             sb.Append("<div class=\"note\">⚠ <b>本档还没做过加密复算</b> —— 表里的数是粗网格（2 mm）上算的。" +
+-                      "同类设计粗细网格能差 3 K 以上（限值 10），不算到数不再变就不知道这张表准不准。「核算整线」会自己做这一步。</div>");
++                      "同类设计粗细网格能差 3 K 以上（法兰增量温降，旧判法限值 10），不算到数不再变就不知道这张表准不准。「核算整线」会自己做这一步。</div>");
+         sb.Append("<div class=\"note\"><b>看到 ✓ 先问两句：</b>这个裕度比计算噪声大吗？比现场仪器能分辨的尺度大吗？" +
+                   "曾经有人用 0.02～0.08 K 的差别决定 700 g 铂金，而那点温差只对应 14 mW，现场任何仪器都测不出来。</div>");
+ 
+@@ -1265,7 +1274,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
+                   "<td>不过就到此为止，后面完全不谈铂重。例子：舌长 90 那版热学全过、铂最轻，但铜排根本装不上</td></tr>" +
+                   "<tr><td>二、优化后</td><td>旋钮的收敛值 + 总铂 + 与设计记录的差</td><td>—</td></tr>" +
+                   "<tr><td><b>三、抽热窗口</b></td><td>各片从管子抽走的热落在窗口的哪一段</td>" +
+-                  "<td>「管孔净流入」与「法兰增量温降」是同一个量的两头：抽得太少热往管里灌（烧断），抽得太多把管根拉冷</td></tr>" +
++                  "<td>「管孔净流入」与「法兰增量温降（旧判法）」是同一个量的两头：抽得太少热往管里灌（烧断），抽得太多把管根拉冷。窗口上沿现在以「管根低于热偶读数」为准</td></tr>" +
+                   "<tr><td>四、优点</td><td>按裕度排序，每条带实测值与位置</td>" +
+                   "<td>「散热好」不算话，「圆盘区最高温裕度 104 %、峰值在 r = 28 mm」才算</td></tr>" +
+                   "<tr><td>五、缺点</td><td>裕度最紧的两条 + 哪个旋钮已经顶死</td>" +
+@@ -1280,8 +1289,12 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
+                   "<tr><th>判据</th><th>限值</th><th>出处</th></tr>" +
+                   $"<tr><td>升温（空管到目标）</td><td class=\"n\">{lim.RampHours:0} h</td><td>设计要求：不超过 3 天</td></tr>" +
+                   "<tr><td>管孔净流入</td><td class=\"n\">&gt; 0</td><td>热要从管子流进法兰；反过来就是法兰比管子热，管子会烧</td></tr>" +
+-                  $"<tr><td>圆盘区最高温</td><td class=\"n\">{lim.DiscOverTempMaxK:0} K</td><td>现场控温精度 ±5 K</td></tr>" +
+-                  $"<tr><td>法兰增量温降</td><td class=\"n\">{lim.RootDeltaMaxK:0} K</td><td>给定值，按热电偶误差取的数</td></tr>" +
++                  // ★ R48 B（2026-09-14 Opus 5）：热侧／冷侧的限值都来自控温热偶的读数误差（LineCase.ThermocoupleErrorK），基准是热偶读数；旧判法两条降为参考。
++                  $"<tr><td>最热铂高出热偶读数</td><td class=\"n\">{lim.HotOverTcMaxK:0} K</td><td>控温热偶装在每段中点，读数误差 {LineCase.ThermocoupleErrorK:0} ℃（「10 ℃ 是上下各 5 ℃」）：铂比读数高出这个带就说不清了。"
++                + "端片基准取本段读数，共用法兰取两侧读数的对数平均（开尔文）</td></tr>" +
++                  $"<tr><td>管根低于热偶读数</td><td class=\"n\">{lim.ColdUnderTcMaxK:0} K</td><td>同一个热偶误差的另一侧：管根比读数低出这个带，热偶就看不出这一段已经偏冷。基准同上</td></tr>" +
++                  $"<tr><td>· 圆盘区最高温 − 管温（旧判法）</td><td class=\"n\">{lim.DiscOverTempMaxK:0} K</td><td>换成热偶读数基准之前的硬判据（基准是模型算的管根温度），现在只作对照，不卡交付</td></tr>" +
++                  $"<tr><td>· 法兰增量温降（旧判法）</td><td class=\"n\">{lim.RootDeltaMaxK:0} K</td><td>换成热偶读数基准之前的目标（= 无法兰基线 − 实际；10 是热偶上下两侧误差之和），现在只作对照，不卡交付</td></tr>" +
+                   $"<tr><td>管 J</td><td class=\"n\">{dfl.TubeJAllowAPerMm2:0.#} A/mm²</td>" +
+                   "<td>现场经验：一般 15，管壁 0.6 时 12 是极限。<b>参数表里可改</b>，本行跟着它走</td></tr>" +
+                   $"<tr><td>法兰截面 J</td><td class=\"n\">设定 J + 1</td><td>设计电流除以法兰每一个必经截面的面积；按设定 J（预设 10）定尺寸，全体要小于 J + 1</td></tr>" +
+@@ -1300,8 +1313,10 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
+                   "<tr><td>· 管↔法兰热收支</td><td class=\"n\">守恒时 0 W</td>" +
+                   "<td>管子失去的热与法兰收到的热对不对得上。参考量；实测各档都差几瓦，原因是共用片被两侧各扣一次，改判定会动所有历史结果，先量着</td></tr>" +
+                   "</table>");
+-        sb.Append("<div class=\"note\"><b>「法兰增量温降」的 10 K 是按热电偶误差定的，不是物理极限。</b>" +
+-                  "所以不能说「超过 10 K 也安全」，也不能说「真实限值是多少」。能说的是：设计点别贴着 10 摆，也别拿它当调节目标。</div>");
++        sb.Append("<div class=\"note\"><b>「最热铂高出热偶读数」「管根低于热偶读数」的限值就是热偶的读数误差，不是物理极限。</b>" +
++                  "所以不能说「超过也安全」，也不能说「真实限值是多少」。能说的是：设计点别贴着限值摆。" +
++                  // 2026-09-14 Opus 5（复审）：阈值只从 ThermocoupleBasis.ModelGapNoteK 读（原写死「1 ℃」）
++                  $"<br>判据说明里并列的「模型算的无法兰交界管温」只作对照：它会随设计变量挪动，判定不看它；它与热偶读数基准差超过 {ThermocoupleBasis.ModelGapNoteK:0} ℃ 时说明里会写明。</div>");
+ 
+         sb.Append("<h2>6. 收敛信息</h2>");
+         sb.Append($"<p>判据表上方有一行收敛信息。本档外层耦合<b>剩余误差估计 {fd.ResidualK:0.00} K</b>，说的是「离真正的解还差多少」，不是「上一轮和这一轮差多少」。" +
+@@ -1355,8 +1370,10 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
+         sb.Append("<table class=\"nw\"><tr><th>量</th><th>现在按什么算</th><th>一旦不同，影响多大</th></tr>" +
+                   "<tr><td>法兰 J 的许用值</td><td>设定 J 预设 10（可改），极限 J + 1</td>" +
+                   "<td>J 每改 1，法兰截面和铂重都跟着变；这是最值得现场给一个数的量</td></tr>" +
+-                  "<tr><td>「法兰增量温降」的物理依据</td><td>只知道 10 K 来自热电偶误差</td>" +
+-                  "<td>决定能否把设计点从 10 K 往外放</td></tr>" +
++                  $"<tr><td>控温热偶的读数误差</td><td>按段中点热偶、上下各 {LineCase.ThermocoupleErrorK:0} ℃ 算</td>" +
++                  // 2026-09-14 Opus 5（复审）：原写「换热偶或重新标定后要改这个数」—— 界面上并没有这个输入（LineCase.ThermocoupleErrorK 是程序常数），
++                  //   工程师会以为参数表里有这一项。照实写：是程序内的常数，要改须改程序。
++                  "<td>热侧、冷侧两条的限值都是它。<b>这是程序里的常数，参数表里没有这一项</b>：换热偶或重新标定后误差不同，要请开发改程序，不是在界面上改</td></tr>" +
+                   "<tr><td>铜排表面状态</td><td>按氧化铜发射率 0.7 算</td>" +
+                   "<td>抛光铜只有 0.05，差 14 倍，散热段长度直接翻几倍</td></tr>" +
+                   "<tr><td>焊接方法</td><td>按手工 TIG（烧穿下界 0.6 mm）</td>" +
+diff --git a/tests/UiWiring/Program.cs b/tests/UiWiring/Program.cs
+index c0939a6..85487b4 100644
+--- a/tests/UiWiring/Program.cs
++++ b/tests/UiWiring/Program.cs
+@@ -753,6 +753,7 @@ class UiWiringTests {
+                     //   档里的旧复核值 10.329 K 是老轴上量的（老轴 −z 半边未加密），无效。
+                     //   档里的记录值**不改**（那是历史记录，档的 VerifiedNote 里已说明），本节只验两条路同解，不验「档还过不过」。
+                     const double dipR47 = 17.480, fluxR47 = 5.324, discR47 = -0.248, massR47 = 3545.2;
++                    // R48 B（2026-09-14 Opus 5）：②″／③ 降为参考量（旧判法），代号不换主人 ⇒ 按代号前缀读到的仍是这两条，与 R47 记录同一个量。
+                     Near("③", V("③"), dipR47, 1.00, "K");
+                     Near("②′", V("②′"), fluxR47, 0.50, "W");
+                     Near("②″", V("②″"), discR47, 0.20, "K");
+@@ -776,12 +777,20 @@ class UiWiringTests {
+                     //   档里的旧复核值 10.329 是老轴（−z 半边未加密）上的，无效，不能拿来「同向」佐证。这是实情、不是退化。
+                     //   处置照旧不是删断言：③ 的数由上面「复现设计记录 ③」钉着（容差 1 K），退化照样抓得住；
+                     //   除它与法兰截面 J 之外，其余一条都不许红。要它绿得重新解一次本档（求解器会自己抬舌保温／板厚）。
+-                    var stillBad = r1b.Failed.Where(f => !f.Contains("法兰 J") && !f.Contains("法兰截面 J") && !f.Contains("法兰增量温降")).ToArray();
++                    // ★★★★★ R48 B（2026-09-14 Opus 5 复审）：「法兰增量温降」的放行**撤掉**。它已降为参考量（旧判法），参考量不进 Failed，
++                    //   这条豁免从此什么都不放 —— 留着只会让人以为它还卡交付。
++                    //   ⚠ 热偶读数基准的两条新硬判据（最热铂高出热偶读数／管根低于热偶读数）**不放行**：没有依据。
++                    //     本档从没按这两条解过；R48 B 在同一设计（合计 3545.2 g）上实测热侧 +125.3 K（入口）、冷侧 −31.9 K（过），
++                    //     见 deliverable/r48B_热偶基准_现役档单次判定_2026-09-14.txt。放行热侧等于把一条实测超限 25 倍的硬线从门上摘掉。
++                    //   ⚠ 本节在**基线树上就已经红**（与 R48 B 无关）：R48 今天的保温按半径划等改动之后，同一设计的管孔净流入 −19.866 W、
++                    //     圆盘区最高温 − 管温 60.631 K，上面三条「复现设计记录」与这条都不过（基线树跑 UiWiring 实测 4 项不过，
++                    //     deliverable/r48B_UiWiring_基线树_2026-09-14.txt）。要它绿得重解本档，不是改门。
++                    var stillBad = r1b.Failed.Where(f => !f.Contains("法兰 J") && !f.Contains("法兰截面 J")).ToArray();
+                     var sectionJ = r1b.Checks.FirstOrDefault(c => c.Name.StartsWith("法兰截面 J", StringComparison.Ordinal));
+                     var dip3 = r1b.Checks.FirstOrDefault(c => c.Name.StartsWith("③", StringComparison.Ordinal));
+-                    Check("页面路径：除『法兰截面 J』与『法兰增量温降』外全过", stillBad.Length == 0,
++                    Check("页面路径：除『法兰截面 J』外全过", stillBad.Length == 0,
+                           stillBad.Length == 0
+-                            ? $"（法兰截面 J {sectionJ?.Actual:0.0}/{sectionJ?.Limit:0.0} —— 记录早于 J=10 链，板厚没按截面定；法兰增量温降 {dip3?.Actual:0.0}/{dip3?.Limit:0.0} —— R47 修好网格后本档不过：导航网格 17.48 K、加密到 0.125 mm 20.48 K 未收敛；旧复核值 10.329 是老轴上的，无效）"
++                            ? $"（法兰截面 J {sectionJ?.Actual:0.0}/{sectionJ?.Limit:0.0} —— 记录早于 J=10 链，板厚没按截面定；法兰增量温降（旧判法，参考）{dip3?.Actual:0.0}/{dip3?.Limit:0.0}）"
+                             : string.Join("；", stillBad));
+                 }
+             }
+@@ -2306,10 +2315,11 @@ class UiWiringTests {
+                 {
+                     // 自证：抽掉一条就必须被抓到。没有这条，上面那句在「机制失效」时也会绿。
+                     var kept31 = r31.Checks;
++                    // R48 B（2026-09-14 Opus 5）：必备名单里的「圆盘区最高温 − 管温」换成热偶读数基准的热侧 ⑦（旧那条降为参考量，抽掉它不该报缺席）
+                     r31.Checks = kept31.Where(c => !c.Name.StartsWith(
+-                        LineResult.Key.DiscTemp, StringComparison.Ordinal)).ToArray();
+-                    Check("抽掉 ②″ 之后当场报缺席、且不再全过（自证）",
+-                          r31.MissingChecks.Contains(LineResult.Key.DiscTemp) && !r31.AllOk,
++                        LineResult.Key.HotOverTc, StringComparison.Ordinal)).ToArray();
++                    Check("抽掉「最热铂高出热偶读数」之后当场报缺席、且不再全过（自证）",
++                          r31.MissingChecks.Contains(LineResult.Key.HotOverTc) && !r31.AllOk,
+                           $"缺席 [{string.Join("、", r31.MissingChecks)}]　AllOk={r31.AllOk}");
+                     r31.Checks = kept31;
+                     Check("还原后又是齐的（别把后面几节的表毁了）",
+@@ -2611,6 +2621,11 @@ class UiWiringTests {
+                 ("升温期限",  $"{limM.RampHours:0} h"),
+                 ("圆盘区最高温",   $"{limM.DiscOverTempMaxK:0} K"),
+                 ("法兰增量温降",  $"{limM.RootDeltaMaxK:0} K"),
++                // R48 B（2026-09-14 Opus 5）：热偶读数基准的两条新硬判据，限值也要与代码一致。
++                //   2026-09-14 复审：核**整行**（名字格 + 限值格），不核「5 K」这个孤字串 —— 旧判法「圆盘区最高温 − 管温」那一行本来就含「5 K」，
++                //   说明书把新两行整行删掉，孤字串那种核法照样绿。
++                ("最热铂高出热偶读数", $@"<tr><td>{Criteria.Plain(LineResult.Key.HotOverTc)}</td><td class=""n"">{limM.HotOverTcMaxK:0} K</td>"),
++                ("管根低于热偶读数",  $@"<tr><td>{Criteria.Plain(LineResult.Key.ColdUnderTc)}</td><td class=""n"">{limM.ColdUnderTcMaxK:0} K</td>"),
+                 ("舌片自由段下界", $"{GeometryScreen.FreeTabMinDefaultMm:0} mm"),
+                 ("管壁下界",    $"{DesignInputs.WeldMinDefaultMm:0.0} mm"),
+             };

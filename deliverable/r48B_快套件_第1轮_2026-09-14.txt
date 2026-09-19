@@ -1,0 +1,185 @@
+D:\WinForm\r48_B\Pt_Optimize.Tests\bin\Debug\net8.0-windows\Pt_Optimize.Tests.dll (.NETCoreApp,Version=v8.0)的测试运行
+VSTest 版本 18.0.1 (x64)
+
+正在启动测试执行，请稍候...
+总共 1 个测试文件与指定模式相匹配。
+[xUnit.net 00:00:00.17]     PtOptimize.Tests.SolverIsSeedFreeTests.逐片裕度的方向与整体判据一致 [FAIL]
+  失败 PtOptimize.Tests.SolverIsSeedFreeTests.逐片裕度的方向与整体判据一致 [14 ms]
+  错误消息:
+   Assert.Contains() Failure: Sub-string not found
+String:    "using System;\r\nusing System.Collections.G"···
+Not found: "discMax - over"
+  堆栈跟踪:
+     at PtOptimize.Tests.SolverIsSeedFreeTests.逐片裕度的方向与整体判据一致() in D:\WinForm\r48_B\Pt_Optimize.Tests\SolverIsSeedFreeTests.cs:line 132
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:00.20]     PtOptimize.Tests.SolverPerPlateTests.限值只从判据自己那里读 [FAIL]
+  失败 PtOptimize.Tests.SolverPerPlateTests.限值只从判据自己那里读 [11 ms]
+  错误消息:
+   Assert.Contains() Failure: Sub-string not found
+String:    "using System;\r\nusing System.Collections.G"···
+Not found: "lc.RootDeltaMaxK"
+  堆栈跟踪:
+     at PtOptimize.Tests.SolverPerPlateTests.限值只从判据自己那里读() in D:\WinForm\r48_B\Pt_Optimize.Tests\SolverPerPlateTests.cs:line 132
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:00.20]     PtOptimize.Tests.SolverFamilyTests.不挖舌孔族_舌孔两根旋钮不进候选_其余照旧 [FAIL]
+  失败 PtOptimize.Tests.SolverFamilyTests.不挖舌孔族_舌孔两根旋钮不进候选_其余照旧 [2 ms]
+  错误消息:
+   Assert.Contains() Failure: Item not found in collection
+Collection: []
+Not found:  Insul
+  堆栈跟踪:
+     at PtOptimize.Tests.SolverFamilyTests.不挖舌孔族_舌孔两根旋钮不进候选_其余照旧() in D:\WinForm\r48_B\Pt_Optimize.Tests\SolverFamilyTests.cs:line 23
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:00.22]     PtOptimize.Tests.R48UngatedFixesTests.增量温降判据不许静默丢掉判不了的段 [FAIL]
+  失败 PtOptimize.Tests.R48UngatedFixesTests.增量温降判据不许静默丢掉判不了的段 [42 ms]
+  错误消息:
+   Assert.Contains() Failure: Sub-string not found
+String:    "using System;\r\nusing System.Collections.G"···
+Not found: "blindDip.Length > 0 ? Array.Empty<Segment"···
+  堆栈跟踪:
+     at PtOptimize.Tests.R48UngatedFixesTests.增量温降判据不许静默丢掉判不了的段() in D:\WinForm\r48_B\Pt_Optimize.Tests\R48UngatedFixesTests.cs:line 119
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:00.44]     PtOptimize.Tests.DesignSpecStoreTests.样本必须覆盖每一个会进设计的字段 [FAIL]
+  失败 PtOptimize.Tests.DesignSpecStoreTests.样本必须覆盖每一个会进设计的字段 [1 ms]
+  错误消息:
+   Distinctive() 里这些字段还等于默认值 ⇒ 往返测试对它们是**空转**（漏存也验不出来）：DiscInsulMm。要么给它一个偏离默认的值，要么写清为什么它不进设计再加进豁免名单。
+  堆栈跟踪:
+     at PtOptimize.Tests.DesignSpecStoreTests.样本必须覆盖每一个会进设计的字段() in D:\WinForm\r48_B\Pt_Optimize.Tests\DesignSpecStoreTests.cs:line 271
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:00.45]     PtOptimize.Tests.NoCriterionCodeInUiTests.自证_门抓得到人造的违规 [FAIL]
+  失败 PtOptimize.Tests.NoCriterionCodeInUiTests.自证_门抓得到人造的违规 [< 1 ms]
+  错误消息:
+   门抓不到「③ 法兰增量温降」—— 那它什么都抓不到
+  堆栈跟踪:
+     at PtOptimize.Tests.NoCriterionCodeInUiTests.自证_门抓得到人造的违规() in D:\WinForm\r48_B\Pt_Optimize.Tests\NoCriterionCodeInUiTests.cs:line 118
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:00.46]     PtOptimize.Tests.LongRunProgressTests.每档的判据值当场落地 [FAIL]
+  失败 PtOptimize.Tests.LongRunProgressTests.每档的判据值当场落地 [5 ms]
+  错误消息:
+   Assert.Contains() Failure: Sub-string not found
+String:    "using System;\r\nusing System.Collections.G"···
+Not found: "②′ {a2p:0.000} W"
+  堆栈跟踪:
+     at PtOptimize.Tests.LongRunProgressTests.每档的判据值当场落地() in D:\WinForm\r48_B\Pt_Optimize.Tests\LongRunProgressTests.cs:line 134
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:00.53]     PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "· ②″圆盘区最高温 − 管温（旧口径）") [FAIL]
+[xUnit.net 00:00:00.54]     PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "· ③ 法兰增量温降（旧口径）") [FAIL]
+  失败 PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "· ②″圆盘区最高温 − 管温（旧口径）") [39 ms]
+  错误消息:
+   System.InvalidOperationException : Sequence contains no matching element
+  堆栈跟踪:
+     at System.Linq.ThrowHelper.ThrowNoMatchException()
+   at System.Linq.Enumerable.Single[TSource](IEnumerable`1 source, Func`2 predicate)
+   at PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(String key) in D:\WinForm\r48_B\Pt_Optimize.Tests\CriteriaTableTests.cs:line 181
+   at InvokeStub_CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(Object, Span`1)
+   at System.Reflection.MethodBaseInvoker.InvokeWithOneArg(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+  失败 PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "· ③ 法兰增量温降（旧口径）") [1 ms]
+  错误消息:
+   System.InvalidOperationException : Sequence contains no matching element
+  堆栈跟踪:
+     at System.Linq.ThrowHelper.ThrowNoMatchException()
+   at System.Linq.Enumerable.Single[TSource](IEnumerable`1 source, Func`2 predicate)
+   at PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(String key) in D:\WinForm\r48_B\Pt_Optimize.Tests\CriteriaTableTests.cs:line 181
+   at InvokeStub_CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(Object, Span`1)
+   at System.Reflection.MethodBaseInvoker.InvokeWithOneArg(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+[xUnit.net 00:00:00.58]     PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "· ②″圆盘区最高温 − 管温（旧口径）") [FAIL]
+  失败 PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "· ②″圆盘区最高温 − 管温（旧口径）") [14 ms]
+  错误消息:
+   §1.83 的表里找不到「· ②″圆盘区最高温 − 管温（旧口径）」—— 判据在代码里跑着，表上却没有它
+  堆栈跟踪:
+     at PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(String key) in D:\WinForm\r48_B\Pt_Optimize.Tests\CriteriaTableTests.cs:line 162
+   at InvokeStub_CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(Object, Span`1)
+   at System.Reflection.MethodBaseInvoker.InvokeWithOneArg(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+[xUnit.net 00:00:00.58]     PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "· ③ 法兰增量温降（旧口径）") [FAIL]
+[xUnit.net 00:00:00.59]     PtOptimize.Tests.MonotoneMeasuredTests.分配表按第9件的决定长成了这样 [FAIL]
+  失败 PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "· ③ 法兰增量温降（旧口径）") [1 ms]
+  错误消息:
+   §1.83 的表里找不到「· ③ 法兰增量温降（旧口径）」—— 判据在代码里跑着，表上却没有它
+  堆栈跟踪:
+     at PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(String key) in D:\WinForm\r48_B\Pt_Optimize.Tests\CriteriaTableTests.cs:line 162
+   at InvokeStub_CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(Object, Span`1)
+   at System.Reflection.MethodBaseInvoker.InvokeWithOneArg(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+  失败 PtOptimize.Tests.MonotoneMeasuredTests.分配表按第9件的决定长成了这样 [3 ms]
+  错误消息:
+   Assert.Contains() Failure: Item not found in collection
+Collection: ["②′管孔净流入", "③ 管根低于热偶读数", "②″最热铂高出热偶读数"]
+Not found:  "· ③ 法兰增量温降（旧口径）"
+  堆栈跟踪:
+     at PtOptimize.Tests.MonotoneMeasuredTests.分配表按第9件的决定长成了这样() in D:\WinForm\r48_B\Pt_Optimize.Tests\MonotoneMeasuredTests.cs:line 119
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:00.61]     PtOptimize.Tests.CriteriaTableTests.NoPhantomHardCriteria_InTheDoc [FAIL]
+  失败 PtOptimize.Tests.CriteriaTableTests.NoPhantomHardCriteria_InTheDoc [1 ms]
+  错误消息:
+   表上标「硬判据」的有 7 行，代码里的硬安全线有 8 条
+  堆栈跟踪:
+     at PtOptimize.Tests.CriteriaTableTests.NoPhantomHardCriteria_InTheDoc() in D:\WinForm\r48_B\Pt_Optimize.Tests\CriteriaTableTests.cs:line 204
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:00.68]     PtOptimize.Tests.SensitivityMatrixTests.裕度走求解器那一份 [FAIL]
+  失败 PtOptimize.Tests.SensitivityMatrixTests.裕度走求解器那一份 [< 1 ms]
+  错误消息:
+   Assert.Contains() Failure: Sub-string not found
+String:    "using System;\r\nusing System.Collections.G"···
+Not found: "Solver.PlateSlack(r, k, j, dipMax, discMa"···
+  堆栈跟踪:
+     at PtOptimize.Tests.SensitivityMatrixTests.裕度走求解器那一份() in D:\WinForm\r48_B\Pt_Optimize.Tests\SensitivityMatrixTests.cs:line 129
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:00.95]     PtOptimize.Tests.CriteriaGlossaryTests.散文里的代号被展开 [FAIL]
+[xUnit.net 00:00:00.95]     PtOptimize.Tests.CriteriaGlossaryTests.图例带名字单位与方向 [FAIL]
+[xUnit.net 00:00:00.95]     PtOptimize.Tests.CriteriaGlossaryTests.撇号拆得对 [FAIL]
+  失败 PtOptimize.Tests.CriteriaGlossaryTests.散文里的代号被展开 [11 ms]
+  错误消息:
+   Assert.Contains() Failure: Sub-string not found
+String:    "using System.Linq;\r\nusing PtOptimize.Core"···
+Not found: "Criteria.Explain("③")"
+  堆栈跟踪:
+     at PtOptimize.Tests.CriteriaGlossaryTests.散文里的代号被展开() in D:\WinForm\r48_B\Pt_Optimize.Tests\CriteriaGlossaryTests.cs:line 134
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  失败 PtOptimize.Tests.CriteriaGlossaryTests.图例带名字单位与方向 [< 1 ms]
+  错误消息:
+   Assert.Contains() Failure: Sub-string not found
+String:    "　代号：②′ = 管孔净流入（W，>）｜②″ = 最热铂高出热偶读数（K，≤）｜③"···
+Not found: "②″ = 圆盘区最高温（K，≤）"
+  堆栈跟踪:
+     at PtOptimize.Tests.CriteriaGlossaryTests.图例带名字单位与方向() in D:\WinForm\r48_B\Pt_Optimize.Tests\CriteriaGlossaryTests.cs:line 108
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  失败 PtOptimize.Tests.CriteriaGlossaryTests.撇号拆得对 [< 1 ms]
+  错误消息:
+   Assert.Equal() Failure: Strings differ
+           ↓ (pos 0)
+Expected: "圆盘区最高温"
+Actual:   "最热铂高出热偶读数"
+           ↑ (pos 0)
+  堆栈跟踪:
+     at PtOptimize.Tests.CriteriaGlossaryTests.撇号拆得对() in D:\WinForm\r48_B\Pt_Optimize.Tests\CriteriaGlossaryTests.cs:line 76
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:01.31]     PtOptimize.Tests.RequiredChecksTests.Undetermined_AndMissing_AreBothNotPass [FAIL]
+  失败 PtOptimize.Tests.RequiredChecksTests.Undetermined_AndMissing_AreBothNotPass [< 1 ms]
+  错误消息:
+   自证：表里本来就该有 ②″，否则下面验的是空气
+  堆栈跟踪:
+     at PtOptimize.Tests.RequiredChecksTests.Undetermined_AndMissing_AreBothNotPass() in D:\WinForm\r48_B\Pt_Optimize.Tests\RequiredChecksTests.cs:line 144
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:02.05]     PtOptimize.Tests.HandoverGateCountTests.Handover_StatedTestCount_MatchesReality [FAIL]
+  失败 PtOptimize.Tests.HandoverGateCountTests.Handover_StatedTestCount_MatchesReality [7 ms]
+  错误消息:
+   HANDOVER 说 dotnet test 应为 927/927，实际是 1023 条。改了测试就同步改文档 —— 别让接手的人以为是自己环境坏了
+  堆栈跟踪:
+     at PtOptimize.Tests.HandoverGateCountTests.Handover_StatedTestCount_MatchesReality() in D:\WinForm\r48_B\Pt_Optimize.Tests\HandoverGateCountTests.cs:line 113
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+
+失败!  - 失败:    19，通过:   908，已跳过:     0，总计:   927，持续时间: 2 m 38 s - Pt_Optimize.Tests.dll (net8.0)

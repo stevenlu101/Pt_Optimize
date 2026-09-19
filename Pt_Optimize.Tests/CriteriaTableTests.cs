@@ -58,6 +58,10 @@ public class CriteriaTableTests
             (LineResult.Key.Ramp,       KindOf(LineResult.Key.Ramp),       di.TubeJAllowAPerMm2),   // R20：① = 升温所需电流折成管 J ≤ 许用
             (LineResult.Key.RampHours,  KindOf(LineResult.Key.RampHours),  lc.RampHours),
             (LineResult.Key.NetFlux,    KindOf(LineResult.Key.NetFlux),    0.0),
+            // R48 B（2026-09-14 Opus 5）：有意改动 —— 热侧／冷侧换成热偶读数基准的两条新硬判据（限值 = 热偶误差，LineCase），旧判法两条降为参考量（KindOf 自然给「参考」）。
+            //   ⚠ 本档对着 HANDOVER §1.83 核；本路不许改 HANDOVER ⇒ §1.83 那张表合并时要照交接说明补两行、改两行，否则这几条会红（已在交付说明里列出）。
+            (LineResult.Key.HotOverTc,   KindOf(LineResult.Key.HotOverTc),   lc.HotOverTcMaxK),
+            (LineResult.Key.ColdUnderTc, KindOf(LineResult.Key.ColdUnderTc), lc.ColdUnderTcMaxK),
             (LineResult.Key.DiscTemp,   KindOf(LineResult.Key.DiscTemp),   lc.DiscOverTempMaxK),
             (LineResult.Key.FlangeDip,  KindOf(LineResult.Key.FlangeDip),  lc.RootDeltaMaxK),
             (LineResult.Key.FreeTab,    KindOf(LineResult.Key.FreeTab),    GeometryScreen.FreeTabMinDefaultMm),

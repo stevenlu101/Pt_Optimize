@@ -244,6 +244,16 @@ public class DesignSpecStoreTests
             "RampH", "DiscOverK", "HoleFluxW", "FlangeDipK", "TubeJ",
             "VerifiedMeshMm", "VerifiedFlangeDipK", "VerifiedHoleFluxW",
             "VerifiedDiscOverK", "VerifiedNote",
+            // R47 B（2026-09-13）：几何来源／图纸文件名／读档说明 —— 都是**出处**，解析 BuildCase 不读它们
+            //   （图纸路径的算例由页面 BuildCase 造，不经 DesignSpec）。往返由下面「旧档单个舌保温…」那条与 RoundTrip_图纸来源 钉。
+            "GeomSource", "FlangeFile3dm", "Notes",
+            // R47 第三轮 N5：图纸档逐片厚度倍数 k —— 只有图纸档才有，解析 BuildCase 不读它（图纸档的 BuildCase 直接拒绝）。
+            //   往返由下面 RoundTrip_图纸档厚度倍数k… 钉。
+            "ThicknessScale",
+            // R48（2026-09-13，Opus 5 加）：记录值是不是出自修网格前的网格 —— 这是**记录值的口径**，不是设计的一部分，
+            //   BuildCase 不读它；只给自检门 A 用（那一档的热学项与合计只报不判）。
+            //   由 OldMeshRecordTests 钉：现役档一律 false、作废两档 true 且失效告示写明热学结论不可引用。
+            "RecordFromOldMesh",
         };
         var def = new DesignSpec();
         var got = Distinctive();
@@ -403,6 +413,147 @@ public class DesignSpecStoreTests
             Assert.ThrowsAny<Exception>(() => Parse(broken));
         }
         finally { if (w is not null) { try { File.Delete(w); } catch { } } }
+    }
+
+    /// <summary>
+    /// ★ R47 B（2026-09-13）：**向后兼容** —— 旧档（或图纸路径早期只有一个标量舌保温的档）`tabInsulMm` 是**单个数**时，
+    /// 读回不崩、填成所有片同值，并且 DesignSpec.Notes 里说清楚（不许静默补）。旧键 `tabInsul3dmMm` 同样认。
+    /// 现行数组形态照旧：长度不对仍拒。
+    /// </summary>
+    [Fact]
+    public void Parse_旧档单个舌保温读回填成所有片并有说明()
+    {
+        var src = DesignSpec.Builtin[0].Clone();
+        src.Name = "★往返测试★ 旧舌保温 " + Guid.NewGuid().ToString("N")[..6];
+        string? w = null;
+        try
+        {
+            w = DesignSpecStore.Save(src);
+            string json = File.ReadAllText(w);
+            // 现行形态：数组
+            Assert.Matches("\"tabInsulMm\":\\s*\\[", json);
+            // ① 单个数（旧形态）
+            string old1 = System.Text.RegularExpressions.Regex.Replace(json, "\"tabInsulMm\":\\s*\\[[^\\]]*\\]", "\"tabInsulMm\": 2.8");
+            Assert.NotEqual(json, old1);
+            var back1 = Parse(old1);
+            Assert.Equal(src.FlangeCount, back1.TabInsulMm.Length);
+            Assert.All(back1.TabInsulMm, v => Assert.Equal(2.8, v, 12));
+            Assert.Contains("只记了一个舌保温", back1.Notes);
+            Assert.Contains("2.8", back1.Notes);
+            // ② 旧键 tabInsul3dmMm（图纸路径早期的单控件）
+            string old2 = System.Text.RegularExpressions.Regex.Replace(json, "\"tabInsulMm\":\\s*\\[[^\\]]*\\]", "\"tabInsul3dmMm\": 5.1");
+            var back2 = Parse(old2);
+            Assert.All(back2.TabInsulMm, v => Assert.Equal(5.1, v, 12));
+            Assert.Contains("只记了一个舌保温", back2.Notes);
+            // ③ 现行数组：长度不对仍拒（兼容读法不能把这道门放松）
+            string bad = System.Text.RegularExpressions.Regex.Replace(json, "\"tabInsulMm\":\\s*\\[[^\\]]*\\]", "\"tabInsulMm\": [1.0, 2.0]");
+            var ex = Record.Exception(() => Parse(bad));
+            Assert.NotNull(ex);
+            Assert.Contains("tabInsulMm", ex!.Message, StringComparison.Ordinal);
+            // ④ 按现行形态写的档读回 Notes 为空（说明只在补旧档时出现）
+            Assert.Equal("", Parse(json).Notes);
+        }
+        finally { if (w is not null) { try { File.Delete(w); } catch { } } }
+    }
+
+    /// <summary>★ R47 B：图纸路径出的档要记**几何来源**与**逐片 .3dm 文件名**，读回逐字相同；解析档不写这两项。</summary>
+    [Fact]
+    public void RoundTrip_图纸来源与文件名()
+    {
+        var src = DesignSpec.Builtin[0].Clone();
+        src.Name = "★往返测试★ 图纸来源 " + Guid.NewGuid().ToString("N")[..6];
+        src.GeomSource = DesignSpec.GeomSourceDrawing;
+        src.FlangeFile3dm = new[] { "D:/图/入口.3dm", "D:/图/共用.3dm", "D:/图/共用.3dm", "D:/图/出口.3dm" };
+        string? w = null;
+        try
+        {
+            w = DesignSpecStore.Save(src);
+            var back = Parse(File.ReadAllText(w));
+            Assert.Equal(DesignSpec.GeomSourceDrawing, back.GeomSource);
+            Assert.Equal(src.FlangeFile3dm, back.FlangeFile3dm);
+            Assert.Equal(src.TabInsulMm, back.TabInsulMm);
+        }
+        finally { if (w is not null) { try { File.Delete(w); } catch { } } }
+        // 解析档：两项都不写、读回为空（旧档也是空）
+        var an = DesignSpec.Builtin[0].Clone();
+        an.Name = "★往返测试★ 解析来源 " + Guid.NewGuid().ToString("N")[..6];
+        string? w2 = null;
+        try
+        {
+            w2 = DesignSpecStore.Save(an);
+            string json = File.ReadAllText(w2);
+            Assert.DoesNotContain("flangeFile3dm", json);
+            Assert.Equal("", Parse(json).GeomSource);
+            Assert.Empty(Parse(json).FlangeFile3dm);
+        }
+        finally { if (w2 is not null) { try { File.Delete(w2); } catch { } } }
+    }
+
+    /// <summary>
+    /// ★ R47 第三轮 N5：图纸档的**厚度倍数 k**存独立字段（逐片）、板厚栏写 NaN：存读逐字；解析档不写 k、板厚照旧；
+    /// 图纸档读回后 BuildCase／单次判定／加密复算一律拒绝造解析板并明说（不抛、不算）；Describe() 印「厚度倍数 k」不印「板厚」；
+    /// R47 第二轮之前把 k 记在板厚栏里的旧图纸档读回按 k 接、板厚栏改 NaN 并在 Notes 说明。
+    /// </summary>
+    [Fact]
+    public void RoundTrip_图纸档厚度倍数k存读逐字_板厚为NaN_拒绝造解析板_解析档不受影响()
+    {
+        var p = new DesignInputs();
+        var src = DesignSpec.Builtin[0].Clone();
+        src.Name = "★往返测试★ 图纸k " + Guid.NewGuid().ToString("N")[..6];
+        src.GeomSource = DesignSpec.GeomSourceDrawing;
+        src.FlangeFile3dm = new[] { "D:/图/入口.3dm", "D:/图/共用.3dm", "D:/图/共用.3dm", "D:/图/出口.3dm" };
+        src.ThicknessScale = new[] { 1.15, 0.90, 1.25, 1.05 };
+        src.TabThickMm = Enumerable.Repeat(double.NaN, 4).ToArray();
+        string? w = null;
+        try
+        {
+            w = DesignSpecStore.Save(src);
+            string json = File.ReadAllText(w);
+            Assert.Contains("thicknessScale", json);
+            var back = Parse(json);
+            Assert.True(back.IsDrawingRecord);
+            Assert.Equal(src.ThicknessScale, back.ThicknessScale);
+            Assert.All(back.TabThickMm, v => Assert.True(double.IsNaN(v), "图纸档的板厚栏该是 NaN"));
+            Assert.Contains("厚度倍数 k 1.15/0.90/1.25/1.05", back.Describe());
+            Assert.DoesNotContain("板厚", back.Describe());
+            // 拒绝造解析板：BuildCase 给 RefusedWhy，LineRunner.Run 原句返回不算；MeshVerify.Run 拒答不抛
+            var lc = back.BuildCase(p);
+            Assert.Contains("本档出自图纸路径", lc.RefusedWhy);
+            Assert.Empty(lc.FlangePlates);
+            var r = LineRunner.Run(lc);
+            Assert.False(r.Ok);
+            Assert.Contains("请在界面里载入并先分析几何", r.Message);
+            var mv = MeshVerify.Run(back, p);
+            Assert.False(mv.Converged);
+            Assert.Contains("本档出自图纸路径", mv.Verdict);
+            Assert.Null(mv.Line);
+            // 旧图纸档：k 记在 tabThickMm 里、没有 thicknessScale ⇒ 读回按 k 接、板厚 NaN、Notes 说明
+            var node = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
+            node.Remove("thicknessScale");
+            node["tabThickMm"] = new System.Text.Json.Nodes.JsonArray(1.15, 0.90, 1.25, 1.05);
+            var old = Parse(node.ToJsonString());
+            Assert.Equal(src.ThicknessScale, old.ThicknessScale);
+            Assert.All(old.TabThickMm, v => Assert.True(double.IsNaN(v)));
+            Assert.Contains("旧图纸档把厚度倍数 k 记在板厚栏里", old.Notes);
+        }
+        finally { if (w is not null) { try { File.Delete(w); } catch { } } }
+        // 解析档：不写 k、板厚逐字、BuildCase 照常
+        var an = DesignSpec.Builtin[0].Clone();
+        an.Name = "★往返测试★ 解析板厚 " + Guid.NewGuid().ToString("N")[..6];
+        string? w2 = null;
+        try
+        {
+            w2 = DesignSpecStore.Save(an);
+            string json2 = File.ReadAllText(w2);
+            Assert.DoesNotContain("thicknessScale", json2);
+            var back2 = Parse(json2);
+            Assert.False(back2.IsDrawingRecord);
+            Assert.Equal(an.TabThickMm, back2.TabThickMm);
+            Assert.Empty(back2.ThicknessScale);
+            Assert.Equal("", back2.BuildCase(p).RefusedWhy);
+            Assert.Contains("板厚", back2.Describe());
+        }
+        finally { if (w2 is not null) { try { File.Delete(w2); } catch { } } }
     }
 
     /// <summary>数组长度不对也要拒绝 —— 三片厚度的档会静默造出一台三片法兰的机器。</summary>
