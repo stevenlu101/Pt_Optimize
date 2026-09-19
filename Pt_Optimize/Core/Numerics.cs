@@ -12,6 +12,7 @@ public sealed class LossTable
 {
     private readonly IInterpolation _spline;
     private readonly double _lo, _hi;
+    private readonly double[] _x, _y;
 
     public LossTable(double tMin, double tMax, int n, Func<double, double> f)
     {
@@ -25,6 +26,32 @@ public sealed class LossTable
         }
         _spline = CubicSpline.InterpolateNatural(x, y);
         _lo = tMin; _hi = tMax;
+        _x = x; _y = y;
+    }
+
+    private LossTable(double[] x, double[] y, double lo, double hi)
+    {
+        _spline = CubicSpline.InterpolateNatural(x, y);
+        _lo = lo; _hi = hi; _x = x; _y = y;
+    }
+
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5）：两张表按份额混合 —— 节点值 y = y_b + f·(y_a − y_b)，再建自然样条。
+    /// 两张表节点 x 相同、端点条件相同（都是自然样条）时，样条对 y 线性 ⇒ 结果就是 f·a + (1−f)·b 这条样条本身，精确，不另算热流。
+    /// 用途：保温分界圆穿过的格子，一部分面积包法兰保温、一部分包舌保温，金属同温、两块面积并联 ⇒ **混合热流，不混合厚度**
+    /// （一维热阻对厚度非线性，按份额平均厚度再查表是另一个物理 —— 物理把关人第四轮条件 1）。
+    /// 写成 y_b + f·(y_a − y_b)：两张表逐位相同时结果逐位不变（正对照门靠这一点）。
+    /// 节点不同 ⇒ 抛异常，不许悄悄在不同温度网格上混。
+    /// </summary>
+    public static LossTable Blend(LossTable a, LossTable b, double f)
+    {
+        if (a._x.Length != b._x.Length || a._lo != b._lo || a._hi != b._hi)
+            throw new ArgumentException("两张损失表的温度节点不同，不能按份额混合");
+        for (int i = 0; i < a._x.Length; i++)
+            if (a._x[i] != b._x[i]) throw new ArgumentException("两张损失表的温度节点不同，不能按份额混合");
+        var y = new double[a._y.Length];
+        for (int i = 0; i < y.Length; i++) y[i] = b._y[i] + f * (a._y[i] - b._y[i]);
+        return new LossTable((double[])a._x.Clone(), y, a._lo, a._hi);
     }
 
     public double Eval(double t) => _spline.Interpolate(Math.Clamp(t, _lo, _hi));

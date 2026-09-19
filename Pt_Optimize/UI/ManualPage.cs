@@ -814,6 +814,7 @@ public sealed class ManualPage : TabPage
     /// </param>
     private static string Bar(double actual, double limit, bool lessIsBetter = true)
     {
+        if (double.IsNaN(actual)) return "<span class=\"pct\">判不了</span>";   // R47 第三轮 N5：图纸档没有板厚的那一行
         double raw = lessIsBetter ? limit - actual : actual - limit;
 
         // ★★★★★ 2026-09-02：**越限必须画成越限**，不许被 Clamp 抹成「余量 2 %」。
@@ -864,19 +865,25 @@ public sealed class ManualPage : TabPage
         double tangentM = Math.Sqrt(Math.Max(0, fd.DiscRadiusMm * fd.DiscRadiusMm
                         - Math.Min(fd.TabHalfWidthMm, fd.DiscRadiusMm)
                         * Math.Min(fd.TabHalfWidthMm, fd.DiscRadiusMm)));
-        double weldLegM = Math.Max(fd.TabThickMm.Max(), fd.WallMm);
+        double weldLegM = fd.IsDrawingRecord ? double.NaN : Math.Max(fd.TabThickMm.Max(), fd.WallMm);   // R47 第三轮 N5：图纸档没有板厚 ⇒ 这一行判不了
         // 末位 less = 判据方向：true 是「≤ 限值」，false 是「≥ 下界」。
         // ⚠ 方向必须逐条写明 —— ⑤ 是唯一一条「越大越好」的，漏了就会把更安全的设计显示成违规。
         // ★★★ 2026-08-30：**去掉判据代号**（用户：「UI 内严禁使用 ②′ 这类的表示，
         //   工程师看不懂」）。此前这张表逐行带着 ①②′②″③⑤⑥ —— 而页签上的**阶段号**
         //   也是 ①–⑤，形状相同、含义无关（判据 ⑤ 是舌片自由段，阶段 ⑤ 是交付），
         //   摆在同一个界面上必然误读。
+        // ★ R48 B（2026-09-14 Opus 5）：热侧／冷侧换成热偶读数基准（两条新硬判据），旧判法两条降为参考。
+        //   设计记录**没有存**新判据的值（DiscOverK／FlangeDipK 两个栏位装的是旧判法的数）⇒ 新两行记录值印「记录里没有」，不许拿旧判法的数冒充；
+        //   限值从 LineCase 读，不写死。
+        var limC = new LineCase();
         var crit = new (string n, string k, double a, double l, string u, bool less)[]
         {
             ("升温到位用时（集总，参考）", "参考",  fd.RampH,      72,    "h",      true),
-            ("圆盘区最高温 − 管温",    "硬判据", fd.DiscOverK,  5.00,  "K",      true),
+            (Criteria.Plain(LineResult.Key.HotOverTc),   "硬判据", double.NaN, limC.HotOverTcMaxK,  "K", true),
+            (Criteria.Plain(LineResult.Key.ColdUnderTc), "硬判据", double.NaN, limC.ColdUnderTcMaxK, "K", true),
+            (Criteria.Plain(LineResult.Key.DiscTemp),    "参考", fd.DiscOverK,  limC.DiscOverTempMaxK,  "K",      true),   // 2026-09-14 Opus 5（复审）：名字走 Key 常量，不手抄
             ("管孔净流入 须为正",      "硬判据", fd.HoleFluxW,  0,     "W",      false),
-            ("法兰增量温降",           "目标",   fd.FlangeDipK, 10.00, "K",      true),
+            (Criteria.Plain(LineResult.Key.FlangeDip),   "参考", fd.FlangeDipK, limC.RootDeltaMaxK,    "K",      true),
             ("管 J 电流密度",          "硬判据", fd.TubeJ,      12.00, "A/mm²",  true),
             ("舌片自由段 ≥ 下界",      "硬判据", fd.FreeTabMm,  100.0, "mm",     false),
             ("圆盘盖得住管孔＋焊脚",    "硬判据",
@@ -930,7 +937,13 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         sb.Append($"<h1>Pt_Optimize 使用说明</h1>");
         sb.Append($"<p class=\"lede\">当前设计记录：<b>{fd.Name}</b>　合计 <b>{fd.TotalMassG:0} g</b>" +
                   $"（管 {fd.TubeMassG:0} + 法兰 {fd.FlangeMassG:0}）<br>" +
-                  $"咬住它的：{fd.Binding}</p>");
+                  $"咬住它的：{Md(fd.Binding)}</p>");   // R47 第三轮 N6：Binding 里的 ** 走 Md() 转粗体，不许字面印出来
+        // ★ R47 第三轮 N5（2026-09-13）：图纸档没有解析板 —— 下面按解析几何画的图 2～4、逐片表、判据表里按板厚算的那一行
+        //   都造不出来；印这一句，不造解析法兰、不算。
+        if (fd.IsDrawingRecord)
+            sb.Append("<div class=\"note\" style=\"border-left-width:6px\"><b>本档出自图纸路径。</b>" +
+                      H(DesignSpec.DrawingRefusal) + "<br>下面按解析几何画的法兰图与逐片板厚表对图纸档不适用，已略去；" +
+                      $"图纸文件：{H(string.Join("、", fd.FlangeFile3dm.Distinct()))}；逐片厚度倍数 k：{H(DesignSpec.Fmt(fd.ThicknessScale, "0.00"))}。</div>");
 
         // ★★★ 失效告示必须在**标题下面第一块**（2026-08-17）。
         //   说明书是最容易被当成结论直接引用的一份东西：它有排版、有图、有判据表，
@@ -1112,7 +1125,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                 + "<tr><td>还没算过</td><td><b>核算整线</b></td></tr>"
                 + "<tr><td>上次没收敛</td><td><b>核算整线</b>（那组数一个都不能用）</td></tr>"
                 + "<tr><td>算完之后参数又动过</td><td><b>核算整线</b> —— 现在显示的「全过」说的是上一组参数</td></tr>"
-                + "<tr><td>判据没全过，卡的是热和电（管孔净流入／圆盘区最高温／法兰增量温降／管 J）</td><td><b>自动定厚</b></td></tr>"
+                + $"<tr><td>判据没全过，卡的是热和电（{Criteria.Plain(LineResult.Key.NetFlux)}／{Criteria.Plain(LineResult.Key.HotOverTc)}／{Criteria.Plain(LineResult.Key.ColdUnderTc)}／管 J）</td><td><b>自动定厚</b></td></tr>"
                 + "<tr><td>判据没全过，卡的是<b>几何</b>（舌片自由段／圆盘盖得住管孔）</td>"
                 + "<td><b>◇ 搜形状</b> —— 厚度改不动几何，白跑</td></tr>"
                 + "<tr><td>.3dm 模式、图纸还没分析</td><td><b>分析几何变数</b> —— 不先分析，几何两条判据是「无法判定」，白跑一次分钟级的计算</td></tr>"
@@ -1140,7 +1153,8 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                 + "「舌片自由段」与「圆盘盖得住管孔」两条几何判据要靠它才判得了；不先分析，这两条是「无法判定」，而<b>无法判定不算通过</b>，出图那一页永远开不了。</div>");
         sb.Append("<table class=\"nw\"><tr><th>这个模式下不一样的地方</th><th>说明</th></tr>"
                 + "<tr><td>四个厚度框的含义</td><td>不再是<b>板厚 mm</b>，而是<b>厚度倍数</b>（图纸整体 ×k，1.0 = 按原尺寸）。切换模式时两组值会自动交换</td></tr>"
-                + "<tr><td>舌保温 mm（.3dm）</td><td>可调；默认 0 = 裸舌</td></tr>"
+                + "<tr><td>舌保温</td><td>与解析模式共用「① 输入」页的逐片舌保温表，逐片可不同，0.3–80 mm（没有「裸舌」档：下界 0.3 与解析模式一致）</td></tr>"
+                + "<tr><td>加密复算／细网格重解</td><td>复核用的就是这张图纸（同一张厚度场，不换零件），要先「分析几何变数」；没分析过按钮灰着，鼠标停上去会说明理由</td></tr>"
                 + "<tr><td>「自动定厚」</td><td>逐级定厚（只调各级厚度倍数）。<b>要先分析</b>，否则没有分级可调</td></tr>"
                 + "<tr><td>「◇ 搜形状」</td><td>禁用 —— 形状由图纸给定；要搜形状先点「◈ 图纸几何 → 参数」把图纸变成参数</td></tr>"
                 + "<tr><td>出图</td><td>「导出本页 3DM」逐片按各自倍数另存：轮廓、管孔、开槽、各级台阶半径全不动，只有厚度按倍数变</td></tr></table>");
@@ -1161,6 +1175,10 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "两段电流相位差 120°，它要承担 √3 倍电流，发热是端片的 3 倍 ⇒ 现场失效多半出在共用片上。</div></div>");
 
         sb.Append("<h2>4. 法兰长什么样</h2>");
+        if (fd.IsDrawingRecord)
+            sb.Append("<div class=\"note\">本档的法兰几何在图纸 .3dm 里，不是程序生成的解析形状 —— 这一节的图与逐片板厚表按解析几何画，对图纸档不适用。" +
+                      "要看图纸的几何，请在「① 输入」页载入本档、点「分析几何变数」。</div>");
+        else {
         sb.Append($"<div class=\"fig\">{SvgPlate(fd)}" +
                   $"<div class=\"cap\"><b>图 2　法兰平面图。</b>板面在 XZ 平面、厚度沿 Y（与 3DM 图纸的方位一致）。" +
                   $"舌根圆角 R{fd.TabFilletMm:0} 不是装饰：电流最挤的地方就在这个凹角上。<br>" +
@@ -1168,7 +1186,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                    ? $"管孔外面有<b>两级渐变环</b>（倍率 ×{fd.RingMul[0]:0.00}）压制孔周电流集中；环的半径和厚度都是相对量（相对管孔、相对板厚），板变厚环跟着变。" +
                      $"环外级外半径 {fd.RingRadiiMm[1]:0.0} mm 大于盘半径 {fd.DiscRadiusMm:0.0} mm ⇒ 两级环几乎盖满整个圆盘。"
                    : $"本档<b>没有渐变环</b>（倍率 1.00 = 等厚）：舌片加宽到 {2 * fd.TabHalfWidthMm:0} mm 之后，电流从管孔进来有足够的截面可走，孔周不再拥挤，" +
-                     $"圆盘区最高温只有 {fd.DiscOverK:0.00} K（限 +5 K）。舌片一窄回去，尖峰和环都会回来。") +
+                     $"圆盘区最高温 − 管温（旧判法）只有 {fd.DiscOverK:0.00} K（旧判法限 +{new LineCase().DiscOverTempMaxK:0} K）。舌片一窄回去，尖峰和环都会回来。") +
                   $"</div></div>");
 
         sb.Append($"<div class=\"fig\">{SvgIso(fd, 0)}" +
@@ -1202,10 +1220,13 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                      "端片要靠保温保住热，共用片本身发热过剩、几乎要裸露散热。<b>不能做成同一规格。</b>"
                    : $"本档各片舌保温都在 {insLo:0.0}–{insHi:0.0} mm，<b>几乎等于不包</b>：舌片宽、电阻小、自身发热少，反而要留着散热能力才抽得动管子里的热。" +
                      "<br>舌保温不花铂（只是纤维），所以铂重只由板厚和舌片尺寸决定。") + "</p>");
+        }   // R47 第三轮 N5：解析档才画
 
         sb.Append("<h2>5. 判据表怎么读</h2>");
         sb.Append("<p>判据表每一行是一条要过的线。<b>裕度</b>是离限值还有多远：越大越稳；贴着限值的「过」不算真过。" +
                   "「记录值」是粗网格（2 mm）上算的；「加密复算后的值」是把网格一档档加细、直到数不再变之后的数 —— <b>做决定看右边那列</b>。</p>");
+        // R48 B（2026-09-14 Opus 5）：复核值栏位（VerifiedFlangeDipK／VerifiedDiscOverK）装的是旧判法的数 —— 只配给旧判法那两行；新判据两行记录里没存。
+        bool NotStored(string name) => name == Criteria.Plain(LineResult.Key.HotOverTc) || name == Criteria.Plain(LineResult.Key.ColdUnderTc);
         double VerifOf(string name) => name.StartsWith("法兰增量温降", StringComparison.Ordinal) ? fd.VerifiedFlangeDipK
                                      : name.StartsWith("管孔净流入", StringComparison.Ordinal) ? fd.VerifiedHoleFluxW
                                      : name.StartsWith("圆盘区最高温", StringComparison.Ordinal) ? fd.VerifiedDiscOverK
@@ -1223,10 +1244,10 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
             double v = VerifOf(n);
             bool hasV = !double.IsNaN(v);
             double forBar = hasV ? v : a;
-            sb.Append($"<tr><td>{n}</td><td>{k}</td><td class=\"n\">{a:0.000} {u}</td>" +
+            sb.Append($"<tr><td>{n}</td><td>{k}</td><td class=\"n\">{(NotStored(n) ? "记录里没有（新判据，核算整线后看判据表）" : double.IsNaN(a) ? "判不了（图纸档没有板厚）" : $"{a:0.000} {u}")}</td>" +
                       (anyVerif ? $"<td class=\"n\"><b>{(hasV ? v.ToString("0.000") + " " + u : "—")}</b></td>" : "") +
                       $"<td class=\"n\">{(Math.Abs(l) < 1e-9 ? "> 0" : (less ? "≤ " : "≥ ") + l.ToString("0.00"))}</td>" +
-                      $"<td>{Bar(forBar, l, less)}</td></tr>");
+                      $"<td>{(NotStored(n) ? "—" : Bar(forBar, l, less))}</td></tr>");
         }
         sb.Append("</table>");
         if (anyVerif && fd.VerifiedNote.Length > 0)
@@ -1234,13 +1255,14 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                     + Md(fd.VerifiedNote) + "</div>");
         if (anyVerif)
             sb.Append("<div class=\"note\"><b>两列口径不一样，看右边那列。</b>" +
-                      $"本档实测：法兰增量温降 <b>{fd.FlangeDipK:0.000} → {fd.VerifiedFlangeDipK:0.000} K</b>（限值 10）。" +
+                      $"本档实测：法兰增量温降（旧判法） <b>{fd.FlangeDipK:0.000} → {fd.VerifiedFlangeDipK:0.000} K</b>（旧判法限值 {limC.RootDeltaMaxK:0}）。" +
                       "粗网格看着余量宽，加密之后并不宽 —— 这个差足以把「过」变成「不过」，所以出图前必须过「◆ 加密复算（算到数不再变）」。" +
                       "「核算整线」会自己做这一步。<br>" +
-                      "空着「—」的几条是几何算出来的闭式判据，不随网格变，没有复核值。</div>");
+                      "空着「—」的几条是几何算出来的闭式判据，不随网格变，没有复核值；"
+                      + "「最热铂高出热偶读数」「管根低于热偶读数」是换成热偶读数基准之后的判据，设计记录里还没存它们的值。</div>");
         else
             sb.Append("<div class=\"note\">⚠ <b>本档还没做过加密复算</b> —— 表里的数是粗网格（2 mm）上算的。" +
-                      "同类设计粗细网格能差 3 K 以上（限值 10），不算到数不再变就不知道这张表准不准。「核算整线」会自己做这一步。</div>");
+                      "同类设计粗细网格能差 3 K 以上（法兰增量温降，旧判法限值 10），不算到数不再变就不知道这张表准不准。「核算整线」会自己做这一步。</div>");
         sb.Append("<div class=\"note\"><b>看到 ✓ 先问两句：</b>这个裕度比计算噪声大吗？比现场仪器能分辨的尺度大吗？" +
                   "曾经有人用 0.02～0.08 K 的差别决定 700 g 铂金，而那点温差只对应 14 mW，现场任何仪器都测不出来。</div>");
 
@@ -1252,7 +1274,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "<td>不过就到此为止，后面完全不谈铂重。例子：舌长 90 那版热学全过、铂最轻，但铜排根本装不上</td></tr>" +
                   "<tr><td>二、优化后</td><td>旋钮的收敛值 + 总铂 + 与设计记录的差</td><td>—</td></tr>" +
                   "<tr><td><b>三、抽热窗口</b></td><td>各片从管子抽走的热落在窗口的哪一段</td>" +
-                  "<td>「管孔净流入」与「法兰增量温降」是同一个量的两头：抽得太少热往管里灌（烧断），抽得太多把管根拉冷</td></tr>" +
+                  "<td>「管孔净流入」与「法兰增量温降（旧判法）」是同一个量的两头：抽得太少热往管里灌（烧断），抽得太多把管根拉冷。窗口上沿现在以「管根低于热偶读数」为准</td></tr>" +
                   "<tr><td>四、优点</td><td>按裕度排序，每条带实测值与位置</td>" +
                   "<td>「散热好」不算话，「圆盘区最高温裕度 104 %、峰值在 r = 28 mm」才算</td></tr>" +
                   "<tr><td>五、缺点</td><td>裕度最紧的两条 + 哪个旋钮已经顶死</td>" +
@@ -1267,8 +1289,12 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "<tr><th>判据</th><th>限值</th><th>出处</th></tr>" +
                   $"<tr><td>升温（空管到目标）</td><td class=\"n\">{lim.RampHours:0} h</td><td>设计要求：不超过 3 天</td></tr>" +
                   "<tr><td>管孔净流入</td><td class=\"n\">&gt; 0</td><td>热要从管子流进法兰；反过来就是法兰比管子热，管子会烧</td></tr>" +
-                  $"<tr><td>圆盘区最高温</td><td class=\"n\">{lim.DiscOverTempMaxK:0} K</td><td>现场控温精度 ±5 K</td></tr>" +
-                  $"<tr><td>法兰增量温降</td><td class=\"n\">{lim.RootDeltaMaxK:0} K</td><td>给定值，按热电偶误差取的数</td></tr>" +
+                  // ★ R48 B（2026-09-14 Opus 5）：热侧／冷侧的限值都来自控温热偶的读数误差（LineCase.ThermocoupleErrorK），基准是热偶读数；旧判法两条降为参考。
+                  $"<tr><td>最热铂高出热偶读数</td><td class=\"n\">{lim.HotOverTcMaxK:0} K</td><td>控温热偶装在每段中点，读数误差 {LineCase.ThermocoupleErrorK:0} ℃（「10 ℃ 是上下各 5 ℃」）：铂比读数高出这个带就说不清了。"
+                + "端片基准取本段读数，共用法兰取两侧读数的对数平均（开尔文）</td></tr>" +
+                  $"<tr><td>管根低于热偶读数</td><td class=\"n\">{lim.ColdUnderTcMaxK:0} K</td><td>同一个热偶误差的另一侧：管根比读数低出这个带，热偶就看不出这一段已经偏冷。基准同上</td></tr>" +
+                  $"<tr><td>· 圆盘区最高温 − 管温（旧判法）</td><td class=\"n\">{lim.DiscOverTempMaxK:0} K</td><td>换成热偶读数基准之前的硬判据（基准是模型算的管根温度），现在只作对照，不卡交付</td></tr>" +
+                  $"<tr><td>· 法兰增量温降（旧判法）</td><td class=\"n\">{lim.RootDeltaMaxK:0} K</td><td>换成热偶读数基准之前的目标（= 无法兰基线 − 实际；10 是热偶上下两侧误差之和），现在只作对照，不卡交付</td></tr>" +
                   $"<tr><td>管 J</td><td class=\"n\">{dfl.TubeJAllowAPerMm2:0.#} A/mm²</td>" +
                   "<td>现场经验：一般 15，管壁 0.6 时 12 是极限。<b>参数表里可改</b>，本行跟着它走</td></tr>" +
                   $"<tr><td>法兰截面 J</td><td class=\"n\">设定 J + 1</td><td>设计电流除以法兰每一个必经截面的面积；按设定 J（预设 10）定尺寸，全体要小于 J + 1</td></tr>" +
@@ -1283,12 +1309,15 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   $"<tr><td>· 局部热稳定</td><td class=\"n\">&gt; 1.0 ×</td>" +
                   "<td>最不稳定那一格离热失控还有几倍。参考量，设计记录实测 1.9–2.0 倍</td></tr>" +
                   $"<tr><td>· 升温期法兰−管峰值</td><td class=\"n\">{lim.RampRateKPerH:0} K/h 下 215 K</td>" +
-                  "<td>现场升温时法兰比管子热多少的全程最大值。215 不是通过线，是现役设备的实际量级，只作参考</td></tr>" +
+                  // R48 G2 复审二（2026-09-15 Opus 5）：这一行现在暂不给数、待复核（两节点模型补了铜排通道与舌片保温，复核前不可引用），说明书跟着改
+                  "<td>现场升温时法兰比管子热多少的全程最大值。<b>暂不给数，待复核</b>：计算模型刚补了经舌片流进铜排的散热与舌片保温，复核前不可引用。215 是旧模型对现役设备算的量级，不与它比</td></tr>" +
                   "<tr><td>· 管↔法兰热收支</td><td class=\"n\">守恒时 0 W</td>" +
                   "<td>管子失去的热与法兰收到的热对不对得上。参考量；实测各档都差几瓦，原因是共用片被两侧各扣一次，改判定会动所有历史结果，先量着</td></tr>" +
                   "</table>");
-        sb.Append("<div class=\"note\"><b>「法兰增量温降」的 10 K 是按热电偶误差定的，不是物理极限。</b>" +
-                  "所以不能说「超过 10 K 也安全」，也不能说「真实限值是多少」。能说的是：设计点别贴着 10 摆，也别拿它当调节目标。</div>");
+        sb.Append("<div class=\"note\"><b>「最热铂高出热偶读数」「管根低于热偶读数」的限值就是热偶的读数误差，不是物理极限。</b>" +
+                  "所以不能说「超过也安全」，也不能说「真实限值是多少」。能说的是：设计点别贴着限值摆。" +
+                  // 2026-09-14 Opus 5（复审）：阈值只从 ThermocoupleBasis.ModelGapNoteK 读（原写死「1 ℃」）
+                  $"<br>判据说明里并列的「模型算的无法兰交界管温」只作对照：它会随设计变量挪动，判定不看它；它与热偶读数基准差超过 {ThermocoupleBasis.ModelGapNoteK:0} ℃ 时说明里会写明。</div>");
 
         sb.Append("<h2>6. 收敛信息</h2>");
         sb.Append($"<p>判据表上方有一行收敛信息。本档外层耦合<b>剩余误差估计 {fd.ResidualK:0.00} K</b>，说的是「离真正的解还差多少」，不是「上一轮和这一轮差多少」。" +
@@ -1342,8 +1371,10 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         sb.Append("<table class=\"nw\"><tr><th>量</th><th>现在按什么算</th><th>一旦不同，影响多大</th></tr>" +
                   "<tr><td>法兰 J 的许用值</td><td>设定 J 预设 10（可改），极限 J + 1</td>" +
                   "<td>J 每改 1，法兰截面和铂重都跟着变；这是最值得现场给一个数的量</td></tr>" +
-                  "<tr><td>「法兰增量温降」的物理依据</td><td>只知道 10 K 来自热电偶误差</td>" +
-                  "<td>决定能否把设计点从 10 K 往外放</td></tr>" +
+                  $"<tr><td>控温热偶的读数误差</td><td>按段中点热偶、上下各 {LineCase.ThermocoupleErrorK:0} ℃ 算</td>" +
+                  // 2026-09-14 Opus 5（复审）：原写「换热偶或重新标定后要改这个数」—— 界面上并没有这个输入（LineCase.ThermocoupleErrorK 是程序常数），
+                  //   工程师会以为参数表里有这一项。照实写：是程序内的常数，要改须改程序。
+                  "<td>热侧、冷侧两条的限值都是它。<b>这是程序里的常数，参数表里没有这一项</b>：换热偶或重新标定后误差不同，要请开发改程序，不是在界面上改</td></tr>" +
                   "<tr><td>铜排表面状态</td><td>按氧化铜发射率 0.7 算</td>" +
                   "<td>抛光铜只有 0.05，差 14 倍，散热段长度直接翻几倍</td></tr>" +
                   "<tr><td>焊接方法</td><td>按手工 TIG（烧穿下界 0.6 mm）</td>" +

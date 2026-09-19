@@ -87,7 +87,8 @@ public static class ShapeReview
         // 实测与限值原来挤在一格里写成「12.34 / 20.00」，是补空格年代的将就：
         // 一格一个数才能各自按列右对齐，扫一眼就知道离限值还有多远。
         foreach (var c in hard)
-            sb.AppendLine($"　 {(c.Undetermined ? "?" : c.Ok ? "✓" : "✗")}\t{c.Name}\t" +
+            // R48 B（2026-09-14 Opus 5）：本报告进界面输出框，判据名一律走 Criteria.Plain 剥代号（界面不许出现判据代号）
+            sb.AppendLine($"　 {(c.Undetermined ? "?" : c.Ok ? "✓" : "✗")}\t{Criteria.Plain(c.Name)}\t" +
                           $"{(double.IsNaN(c.Actual) ? "达不到" : c.Actual.ToString("0.00"))}\t{c.Limit:0.00}\t" +
                           $"{c.Where}");
         double floorD = d.DiscFloorMm(baseIn ?? new DesignInputs());
@@ -98,7 +99,7 @@ public static class ShapeReview
         if (missing.Length > 0)
         {
             sb.AppendLine();
-            sb.AppendLine($"✗ **判据表不完整** —— 该出现却整条没出现：{string.Join("、", missing)}");
+            sb.AppendLine($"✗ **判据表不完整** —— 该出现却整条没出现：{string.Join("、", missing.Select(Criteria.Plain))}");
             sb.AppendLine("　⇒ **不要把缺席读成通过。** 这一关根本没被检查过，"
                         + "在补齐之前这个形状的好坏无从谈起。");
             return sb.ToString();
@@ -114,7 +115,7 @@ public static class ShapeReview
             {
                 int k = c.Note.IndexOf("【下一步】", StringComparison.Ordinal);
                 string next = k >= 0 ? c.Note[k..].Split('。')[0] + "。" : "";
-                sb.AppendLine($"　 ·\t{c.Name}\t{(c.Undetermined ? "无法判定" : $"{c.Actual:0.00}")}\t" +
+                sb.AppendLine($"　 ·\t{Criteria.Plain(c.Name)}\t{(c.Undetermined ? "无法判定" : $"{c.Actual:0.00}")}\t" +
                               $"{(c.Undetermined ? "" : $"{c.Limit:0.00}")}\t{next}");
             }
             sb.AppendLine("　⇒ **到此为止。** 省铂是在能造能用的前提下才讨论的（用户 2026-08-15）。");
@@ -178,23 +179,34 @@ public static class ShapeReview
         double gUse = gMeasured ? dipAct / dWorstForG : GammaKPerW;
         double dMax = (double.IsNaN(dipLim) ? 10.0 : dipLim) / gUse;
 
-        sb.AppendLine("三、抽热窗口（②′ 与 ③ 是同一个量的两侧）");
+        // R48 B（2026-09-14 Opus 5）：卡交付的冷侧换成热偶读数基准（⑧）；γ 是按旧判法的增量温降（③）量的 ⇒ 这一节写全名、标明旧判法，不写代号。
+        sb.AppendLine("三、抽热窗口（管孔净流入与法兰增量温降（旧判法）是同一个量的两侧）");
         sb.AppendLine(gMeasured
-            ? $"　 γ = ③/D = {gUse:0.00} K/W　**本次实测**"
+            ? $"　 γ = 增量温降/D = {gUse:0.00} K/W　**本次实测**"
               + (Math.Abs(gUse - GammaKPerW) > 0.1 * GammaKPerW
                  ? $"（历史基准 {GammaKPerW:0.00}，差 {(gUse / GammaKPerW - 1) * 100:+0;-0} % —— **γ 是局部量，不是常数**）"
                  : $"（历史基准 {GammaKPerW:0.00}，一致）")
-            : $"　 γ 测不出来（最大抽热 {dWorstForG:0.00} W 太小，③/D 无意义）⇒ "
+            : $"　 γ 测不出来（最大抽热 {dWorstForG:0.00} W 太小，增量温降/D 无意义）⇒ "
               + $"退回历史基准 {GammaKPerW:0.00} K/W，**下面这个窗口只是估计**");
-        sb.AppendLine($"　 安全区间 0 < D ≤ {dMax:0.0} W（③ 限 {(double.IsNaN(dipLim) ? 10.0 : dipLim):0.0} K ÷ γ）"
+        sb.AppendLine($"　 旧判法安全区间 0 < D ≤ {dMax:0.0} W（增量温降限 {(double.IsNaN(dipLim) ? 10.0 : dipLim):0.0} K ÷ γ）"
                       + "　本形状 D = " +
                       string.Join(" / ", draws.Select(v => v.ToString("+0.0;-0.0"))) + " W");
         double dLo = draws.Min(), dHi = draws.Max();
         sb.AppendLine(dLo < 0.8
             ? $"　 ⚠ 最低那片只有 {dLo:+0.0;-0.0} W，**贴着「热往管里灌」那一侧** —— 那是烧断的方向。"
             : dHi > dMax * 0.8
-            ? $"　 ⚠ 最高那片 {dHi:0.0} W，**贴着「把管根抽出深坑」那一侧**（③ 限 10 K）。"
+            ? $"　 ⚠ 最高那片 {dHi:0.0} W，**贴着「把管根抽出深坑」那一侧**（旧判法增量温降限 {(double.IsNaN(dipLim) ? 10.0 : dipLim):0} K）。"
             : $"　 ✓ 四片都落在窗口中段（{dLo:0.0}–{dHi:0.0} W），两侧都有余量。");
+        // R48 B（2026-09-14 Opus 5）：窗口上沿现在以冷侧「管根低于热偶读数」为准（基准是热偶读数，不是无法兰基线），这里并列出来，不许让旧窗口冒充交付窗口。
+        {
+            var coldC = r.Find(LineResult.Key.ColdUnderTc);
+            var hotC = r.Find(LineResult.Key.HotOverTc);
+            string Row(ConstraintOut? c) => c is null ? "判据缺席"
+                : c.Undetermined ? "无法判定"
+                : $"{c.Actual:0.00}/{c.Limit:0.0} K（{(c.Ok ? "过" : "不过")}，取自 {c.Where}）";
+            sb.AppendLine($"　 ⚠ 上面的窗口是旧判法的。现在卡交付的是：{Criteria.Plain(LineResult.Key.ColdUnderTc)} {Row(coldC)}；"
+                        + $"{Criteria.Plain(LineResult.Key.HotOverTc)} {Row(hotC)}。");
+        }
         sb.AppendLine();
 
         // ───────────────────────────────────────────────────────────
@@ -217,12 +229,12 @@ public static class ShapeReview
 
         sb.AppendLine("四、优点（按裕度从宽到紧，**每条都带实测值**）");
         foreach (var c in judged.Take(3))
-            sb.AppendLine($"　 ·\t{c.Name}\t{c.Actual:0.00}\t{c.Limit:0.00}\t" +
+            sb.AppendLine($"　 ·\t{Criteria.Plain(c.Name)}\t{c.Actual:0.00}\t{c.Limit:0.00}\t" +
                           $"裕度 **{Pct(c.MarginPct)}**\t{c.Where}");
         if (d.RingMul.All(m => m <= 1.001))
             sb.AppendLine("　 · **不需要管孔渐变环**（倍率 1.00）⇒ 少一道两级台阶的机加工。" +
-                          "　依据：②″ = " + r.ValueOf(LineResult.Key.DiscTemp).ToString("0.00") +
-                          " K（限 5）—— 孔周电流没有拥塞。");
+                          "　依据：圆盘区最高温 − 管温（旧判法）= " + r.ValueOf(LineResult.Key.DiscTemp).ToString("0.00") +
+                          $" K（旧判法参考限 {r.Find(LineResult.Key.DiscTemp)?.Limit ?? double.NaN:0}，不卡交付）—— 孔周电流没有拥塞。");   // R48 B：限值从判据读，不写死 5
         if (d.TabInsulMm.All(v => v <= 1.0))
             sb.AppendLine("　 · **舌片几乎不用包保温**（" + DesignSpec.Fmt(d.TabInsulMm, "0.0") +
                           " mm）⇒ 现场少一道工序，且这个旋钮不花铂。");
@@ -231,7 +243,7 @@ public static class ShapeReview
         sb.AppendLine("五、缺点 / 咬住它的（**这些就是代价的来源**）");
         var tight = judged.Reverse().Take(2).ToArray();
         foreach (var c in tight)
-            sb.AppendLine($"　 ·\t{c.Name}\t{c.Actual:0.00}\t{c.Limit:0.00}\t" +
+            sb.AppendLine($"　 ·\t{Criteria.Plain(c.Name)}\t{c.Actual:0.00}\t{c.Limit:0.00}\t" +
                           $"只剩 **{Pct(c.MarginPct)}**\t{c.Where}");
         // ⑤ 单独说：它贴着下界是**构造使然**，不是缺陷；但装配确实没有余量。
         sb.AppendLine($"　 · 自由段 {d.FreeTabMm:0.0} mm **正好贴着装配下界** —— 这是构造使然" +
@@ -287,7 +299,7 @@ public static class ShapeReview
                 if (hotSpot is not null)
                     sb.AppendLine($"　 · 实测孔周峰值：r={hotSpot.DiscMaxRMm:0.0} mm、" +
                                   $"局部 J={hotSpot.DiscMaxJAPerMm2:0.00} A/mm²、" +
-                                  $"②″={r.ValueOf(LineResult.Key.DiscTemp):0.00} K（{hotSpot.Name}）");
+                                  $"圆盘区最高温 − 管温（旧判法）={r.ValueOf(LineResult.Key.DiscTemp):0.00} K（{hotSpot.Name}）");
                 sb.AppendLine("　 ⇒ **这笔账值不值，属于业主判断**：多的是铂钱，换的是装配与裕度。");
             }
             else if (dm < -1)

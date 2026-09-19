@@ -619,6 +619,11 @@ public static class Geometry3dm
         public double[] Thickness { get; set; } = Array.Empty<double>();
         public int GroupCount { get; set; }
         public int PartsUsed { get; set; }
+        /// <summary>R47 A：几何包围盒（精确）。旧版子进程没有这四项 ⇒ 留 NaN，主程序退回栅格包络并在 Warning 里说。</summary>
+        public double XMinMaterial { get; set; } = double.NaN;
+        public double XMaxMaterial { get; set; } = double.NaN;
+        public double ZMinMaterial { get; set; } = double.NaN;
+        public double ZMaxMaterial { get; set; } = double.NaN;
     }
 
     /// <summary>同一 (文件, 图层, 平面, 步长) 只提一次 —— 每次提取要跑一遍 Rhino 子进程（数秒）</summary>
@@ -681,12 +686,18 @@ public static class Geometry3dm
         {
             X0 = dto.X0, Z0 = dto.Z0, Step = dto.Step,
             Nx = dto.Nx, Nz = dto.Nz, T = dto.Thickness,
-            GroupCount = dto.GroupCount, PlaneY = dto.PlaneY
+            GroupCount = dto.GroupCount, PlaneY = dto.PlaneY,
+            // R47 A（2026-09-13）：精确材料包络来自几何包围盒（子进程 thickness 模式的 xMinMaterial…）
+            XMinMaterial = dto.XMinMaterial, XMaxMaterial = dto.XMaxMaterial,
+            ZMinMaterial = dto.ZMinMaterial, ZMaxMaterial = dto.ZMaxMaterial,
         };
+        if (!f.HasExactEnvelope)
+            f.Warning = "几何量测子进程没有给出精确材料包络（旧版 Pt_Optimize.Geom）—— 网格轴将按栅格里有材料的格子铺，端点最多差一个栅格步。";
         // ⚠ 一个图层里有好几片、而调用方又没指定量哪一片 —— 这是**能正常跑完的错**：
         //   量到的是其中一片，另外几片被无声丢掉。必须让上层看得见。
         if (f.GroupCount > 1 && double.IsNaN(planeY))
-            f.Warning = $"图层「{layer}」里有 {f.GroupCount} 片互不相连的实体，" +
+            f.Warning = (f.Warning.Length > 0 ? f.Warning + "　" : "") +
+                        $"图层「{layer}」里有 {f.GroupCount} 片互不相连的实体，" +
                         $"本次只量了其中一片（中面 Y={f.PlaneY:0.0}）。" +
                         "要指定量哪一片，请给 planeY。";
         _tfCache[key] = f;

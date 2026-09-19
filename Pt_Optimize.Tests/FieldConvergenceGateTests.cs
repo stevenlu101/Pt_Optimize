@@ -77,6 +77,7 @@ public class FieldConvergenceGateTests
         foreach (var k in new[]
         {
             "LineResult.Key.NetFlux", "LineResult.Key.DiscTemp", "LineResult.Key.FlangeDip",
+            "LineResult.Key.HotOverTc", "LineResult.Key.ColdUnderTc",   // R48 B（2026-09-14 Opus 5）：加严 —— 新两条硬判据同样吃法兰场
             "LineResult.Key.Ramp", "LineResult.Key.FlangeStab", "LineResult.Key.LocalStab",
             "LineResult.Key.RampField", "LineResult.Key.HeatBalance",
         })

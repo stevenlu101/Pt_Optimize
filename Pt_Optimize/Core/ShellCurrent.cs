@@ -40,6 +40,9 @@ public static class ShellCurrent
     /// <summary>
     /// 解电位场。边界：<see cref="ShellMesh.TagTabEnd"/> 取 V=1，
     /// <see cref="ShellMesh.TagHole"/> 取 V=0，其余自然 Neumann（零通量，无需显式处理）。
+    /// ★ R48（2026-09-14，Opus 5）：生产网格还带 <see cref="ShellMesh.ClampCell"/>（压接段整面接触，FlangeMesher 的配方 ③）——
+    ///   那些格一并取 V=1，电极 = 整个压接面，电流主要从压接段内边（x = 舌尖 + 压接长）进铂。
+    /// ★ R48 F（2026-09-15，Opus 5）：<see cref="ShellMesh.ClampFaceDirichlet"/>（配方 ⑤，默认开）时 V=1 施加在压接面上而不是压接格形心，见 Solve 里那段。
     /// </summary>
     /// <param name="rhoRefOhmMm">参考电阻率 Ω·mm（= Ω·m × 1000）</param>
     /// <param name="tempC">可选单元温度，用于 σ(T)；null 则等温</param>
@@ -79,7 +82,34 @@ public static class ShellCurrent
             if (f.Tag == ShellMesh.TagTabEnd) { isFixed[f.A] = true; fixedVal[f.A] = 1.0; }
             else if (f.Tag == ShellMesh.TagHole) { isFixed[f.A] = true; fixedVal[f.A] = 0.0; }
         }
+        // ★ R48 生产配方（2026-09-14，Opus 5）：压接段整面接触 —— 形心在压接段内的格一并作电极（ShellMesh.ClampCell 空 = 老口径只钉外圈，逐位不变）。
+        //   整面口径下各量的语义逐条核过（2026-09-14 Opus 5）：
+        //   · 下面「总电流」只累加定温格与邻格的净电流 —— 压接格之间 V 相等、面电流为 0，只剩内边那一排面，正是进铂的电流，定标不受影响；
+        //   · 压接格内部 J ≈ 0（电流在铜排里走），内边那排压接格的 J 由最小二乘重构只拿到一侧面的通量，约为邻格的一半
+        //     （由下面的重构式推得：x 向两面只有一面有通量 jn ⇒ Jx = jn/2；推导，没有单测）—— 这是电极格本身的离散假象，量级 O(h)（配方 ④ 的细带让这排格随 h 变细）【R48 F 2026-09-15 Opus 5：面上定电位（配方 ⑤，缺省）下压接格 J 取 0，这排假象没有了；细带缺省也改为不铺】；定温模式下这些格被热场排除在账外，热导模式下计入发热；
+        //   · TotalGenW 因此不含压接段里的铂发热，这是模型的本意（deliverable/R48_压接整面接触AB_2026-09-14.txt：整面比外圈片0 发热少 60.6～63.4 W；
+        //     该文件列名写「舌区发热」，取的其实是热场整片 QGenW）。
+        if (m.ClampCell.Length == n)
+            for (int i = 0; i < n; i++) if (m.ClampCell[i]) { isFixed[i] = true; fixedVal[i] = 1.0; }
         for (int i = 0; i < n; i++) if (isFixed[i]) res.V[i] = fixedVal[i];
+
+        // ★★ R48 F（2026-09-15，Opus 5；物理把关人）：**压接面上定电位**（ShellMesh.ClampFaceDirichlet，默认开；只在整面接触时起作用）。
+        //   形心整格口径：内边那排压接格整格 V = 1，面导度按两格形心距 ⇒ 电极落在压接格形心，比真实内边往压接区里偏 h/2（自由舌片电长度偏长半格，一阶误差）。
+        //   面上口径：压接格仍是固定格（V = 1 搬到右端项，不作未知数），但**压接面**（一侧压接格、一侧自由格的内部面）的导度只取自由格一侧：
+        //     G = σ_自由·t_自由·L ÷ (自由格形心到面中点的距离)，距离 = ShellMesh.CentroidToFaceMm（边界面 DistAB 的同一个定义）
+        //   ⇒ 自由格方程里那一项正是 G·(1 − V_自由)，电位 1 落在真实内边上。下面的总电流（从固定格流出的净电流）自动就是穿过压接面的电流。
+        //   压接格内的 J 在面上口径下取 0（见重构那段）。开关关 ⇒ clampSet 为 null，下面每一步的算术与改动前逐位相同。
+        bool[]? clampSet = m.ClampFaceActive ? m.ClampSetCells() : null;
+        if (clampSet != null)
+            for (int i = 0; i < n; i++)
+            {
+                if (!clampSet[i]) continue;
+                // 自检：集合里的格必须都被上面钉住了 —— 没钉住说明两份定义漂开了，当场炸，不许把边界值施加到错的面上
+                if (!isFixed[i])
+                    throw new InvalidOperationException($"电流场：压接格集合（ShellMesh.ClampSetCells）里的格 {i} 没被钉成电极 —— 两份压接格定义漂开了。");
+                // 退化：同一格既带压接标签又带管孔标签、按面序被钉成 V=0（压接段贴到了管孔）⇒ 它不是电极，面上口径不认它，与它相邻的面照旧
+                if (fixedVal[i] != 1.0) clampSet[i] = false;
+            }
 
         // 面传导系数 G = σ_f · t_f · L / d   （调和平均取界面值，厚度突变处才不会失真）
         var g = new double[m.Faces.Count];
@@ -87,6 +117,12 @@ public static class ShellCurrent
         {
             var f = m.Faces[k];
             if (f.B < 0 || f.DistAB < 1e-12) continue;
+            if (clampSet != null && ShellMesh.IsClampFace(f, clampSet, out int fc) && !isFixed[fc])
+            {
+                double dFace = m.CentroidToFaceMm(fc, f);
+                g[k] = dFace < 1e-12 ? 0 : sig[fc] * m.Thickness[fc] * f.Length / dFace;   // 面上定电位：只取自由格一侧的半距
+                continue;
+            }
             double sA = sig[f.A] * m.Thickness[f.A], sB = sig[f.B] * m.Thickness[f.B];
             double sf = (sA * sB) > 0 ? 2 * sA * sB / (sA + sB) : 0;   // 调和平均
             g[k] = sf * f.Length / f.DistAB;
@@ -249,14 +285,22 @@ public static class ShellCurrent
             double L = f.Length;
 
             // 单元 A：外法向 n̂，法向分量 = +q/(L·t_A)
-            double jnA = q / Math.Max(1e-12, L * m.Thickness[f.A]);
-            mxx[f.A] += L * nx * nx; mxz[f.A] += L * nx * nz; mzz[f.A] += L * nz * nz;
-            bx[f.A] += L * jnA * nx; bz[f.A] += L * jnA * nz;
+            // R48 F（2026-09-15 Opus 5）：面上定电位时压接格不重构 J（电流在铜排里走，压接格 J = 0）；自由格一侧照常 ——
+            //   形心整格口径下内边那排压接格只拿到一侧面的通量、J 约为邻格一半，那是电极格的离散假象，面上口径下没有这排假象。
+            if (clampSet == null || !clampSet[f.A])
+            {
+                double jnA = q / Math.Max(1e-12, L * m.Thickness[f.A]);
+                mxx[f.A] += L * nx * nx; mxz[f.A] += L * nx * nz; mzz[f.A] += L * nz * nz;
+                bx[f.A] += L * jnA * nx; bz[f.A] += L * jnA * nz;
+            }
 
             // 单元 B：外法向 −n̂，流出 B 的电流 = −q ⇒ 法向分量 = (−q)/(L·t_B)，法向取 −n̂
-            double jnB = -q / Math.Max(1e-12, L * m.Thickness[f.B]);
-            mxx[f.B] += L * nx * nx; mxz[f.B] += L * nx * nz; mzz[f.B] += L * nz * nz;
-            bx[f.B] += L * jnB * (-nx); bz[f.B] += L * jnB * (-nz);
+            if (clampSet == null || !clampSet[f.B])
+            {
+                double jnB = -q / Math.Max(1e-12, L * m.Thickness[f.B]);
+                mxx[f.B] += L * nx * nx; mxz[f.B] += L * nx * nz; mzz[f.B] += L * nz * nz;
+                bx[f.B] += L * jnB * (-nx); bz[f.B] += L * jnB * (-nz);
+            }
         }
 
         double jmax = 0, jmean = 0, aSum = 0;
