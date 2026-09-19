@@ -163,19 +163,15 @@ public static class RampTwoNode
             t => Insulation.CylinderLoss(t, p.TAmbC, rOut, p.Layers, epsTube,
                                          p.Posture == Orientation.Vertical, L, p.LossScale).QPerLength);
 
-        double charLen = p.ConvCharLenM;   // ★ 唯一来源（2026-08-28）：不再各存一份
-        var flangeInsLayers = new List<InsulationLayer>
-        {
-            new() { Name = "法兰保温", ThicknessMm = p.FlangeInsulThickMm,
-                    K0 = p.Layer1.K0, K1 = p.Layer1.K1,
-                    DensityKgM3 = p.Layer1.DensityKgM3, CpJKgK = p.Layer1.CpJKgK,
-                    Enabled = p.FlangeInsulThickMm > 1e-6 }
-        };
-        var fluxIns = new LossTable(p.TAmbC, tabTop, 80,
-            t => Insulation.PlateFlux(t, p.TAmbC, flangeInsLayers, p.OuterEmissivity, charLen, p.LossScale));
+        // ★ R48（2026-09-14，Opus 5；审查意见「圆盘保温 0 mm 时四个消费方物理含义不一致」）：法兰两张表面热流表改调**唯一配方**
+        //   DesignScreen.PlateFluxWPerM2（特征长度 p.ConvCharLenM、包不包按 DesignScreen.FlangeFaceInsulated、两面都传风速）。
+        //   修的病：保温面原先无条件走 PlateFlux，厚度 0 时退到外覆材料 ε=0.45，而同一判据表里的整片热稳定按裸铂 ε=0.18；
+        //   保温面原先也不传风速（ShellThermal 传）。包着且默认风速 0 时调用参数与原来逐项相同 ⇒ 逐位不变。
         var fluxBare = new LossTable(p.TAmbC, tabTop, 80,
-            t => Insulation.FlatOuterFlux(t, p.TAmbC, p.PtEmissivity, charLen,
-                                          p.LossScale, p.FlangeAirVelocityMPerS));
+            t => DesignScreen.PlateFluxWPerM2(p, t, 0.0));
+        var fluxIns = DesignScreen.FlangeFaceInsulated(p.FlangeInsulThickMm)
+            ? new LossTable(p.TAmbC, tabTop, 80, t => DesignScreen.PlateFluxWPerM2(p, t, p.FlangeInsulThickMm))
+            : fluxBare;
 
         // 单片散热 W（两面各一份，mm² → m²）
         double FlangeLossW(double tf)
@@ -199,7 +195,7 @@ public static class RampTwoNode
             }
         }
         double capInsulFlange = 0;
-        if (p.FlangeInsulThickMm > 1e-6)
+        if (DesignScreen.FlangeFaceInsulated(p.FlangeInsulThickMm))   // R48（2026-09-14，Opus 5）：与散热同一判定（原 > 1e-6）
         {
             double volM3 = 2.0 * (g.FlangeAreaInsulMm2 * 1e-6) * (p.FlangeInsulThickMm * 1e-3);
             capInsulFlange = volM3 * p.Layer1.DensityKgM3 * p.Layer1.CpJKgK * 0.5;

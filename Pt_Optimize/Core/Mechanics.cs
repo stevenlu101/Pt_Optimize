@@ -38,6 +38,12 @@ public static class Mechanics
     /// <param name="glassHeadM">玻璃液柱高度 m（内压来源）</param>
     /// <param name="supportSpanMm">管的支承跨距 mm</param>
     /// <param name="sf">安全系数</param>
+    /// <summary>
+    /// R47 复修 M10：**只校核管**时的占位板 —— <see cref="Check"/> 的签名要一块板算舌片那几项，而 LineRunner 的 ④ 强度
+    /// 只读 TubeUtil／TubeAllowMPa（法兰不承重）。它不进任何法兰判定；图纸路径的保温分界那类**不许**再拿默认板。
+    /// </summary>
+    public static readonly FlangePlate TubeOnlyPlate = new();
+
     public static MechResult Check(DesignInputs p, double wallMm, double flangeThickMm,
                                    FlangePlate g, double? glassHeadOverrideM = null,
                                    double? supportSpanOverrideMm = null, double? sfOverride = null)

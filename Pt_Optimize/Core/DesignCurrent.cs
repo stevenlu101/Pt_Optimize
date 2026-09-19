@@ -66,19 +66,25 @@ public static class DesignCurrent
         // ★ 用 lc.Base 不用 p：BuildCase 把设计记录的**管保温层**（TubeInsulMm）与法兰保温写进的是 lc.Base，
         //   原始 p 带的是开箱默认。实测（2026-09-08 杠杆扫描）传 p 时管保温 5→80 mm 设计电流纹丝不动 —— 哑的。
         return Compute(plates, d.WallMm, lc.Base, lc.RampFromC, lc.RampTargetC, lc.RampRateKPerH,
-                       lc.SegmentCount, lc.SetpointC, Ref);
+                       lc.SegmentCount, lc.SetpointC, Ref, lc.DiscInsulEffectiveAt);   // R48（2026-09-14，Opus 5）：逐片圆盘保温同源
     }
 
     /// <summary>
     /// 核心：给定各片几何算每段峰值电流与每片接头电流。
     /// <paramref name="refFromField"/>：第 j 片若有场解，回 (法兰参考电阻 Ω, 参考温度 °C)；没有回 null 走闭式估计。
+    /// <paramref name="discInsulMmAt"/>：★ R48（2026-09-14，Opus 5）第 j 片圆盘保温 mm（传 LineCase.DiscInsulEffectiveAt）。
+    ///   只进两节点**对照**（不进尺寸链），但它印在「法兰截面 J」的 Note 里，原先读整线 p.FlangeInsulThickMm ⇒ 带逐片圆盘保温的设计那句对照是按整线值算的。
+    ///   2026-09-14 Opus 5 改为**必填**（审查意见）：原默认 null 时退回板件口径，而图纸路径的判据几何板件不带逐片值 ⇒ 新调用方忘了传就静默按整线算。
+    ///   没有 LineCase 的调用方显式传 <c>j =&gt; plates[j].DiscInsulEffectiveMm(p)</c>。
     /// </summary>
     public static Result Compute(FlangePlate[] plates, double wallMm, DesignInputs p,
                                  double fromC, double targetC, double rateKPerH,
                                  int segCount, double[] setpointC,
-                                 Func<int, (double rRef, double tRef)?> refFromField)
+                                 Func<int, (double rRef, double tRef)?> refFromField,
+                                 Func<int, double> discInsulMmAt)
     {
         if (plates is null || plates.Length == 0) throw new ArgumentException("没有法兰几何", nameof(plates));
+        if (discInsulMmAt is null) throw new ArgumentNullException(nameof(discInsulMmAt), "逐片圆盘保温取值必须给（LineCase.DiscInsulEffectiveAt），不许静默退回整线值");
         int n = segCount;
         var res = new Result
         {
@@ -116,7 +122,10 @@ public static class DesignCurrent
                 var g = P(j);
                 double vol = CoupledSolver.PlateVolumeMm3(g);
                 double area = CoupledSolver.PlateArea(g, 20001);
-                double aIns = AreaFromX(g, g.InsulBoundaryXResolved);
+                // ★ R48 续（2026-09-14，Opus 5）：保温面积按板件的唯一判定（FlangePlate.UnderDiscInsulation）划 ——
+                //   默认分界按半径（圆盘整块包法兰保温），显式分界仍按 x。本块是对照模型、不进尺寸链，
+                //   改它不动设计电流；改是为了对照值与主解（ShellThermal）同一个保温口径。
+                double aIns = double.IsNaN(g.InsulBoundaryXMm) ? AreaWithinDisc(g) : AreaFromX(g, g.InsulBoundaryXResolved);
                 double aBare = Math.Max(0, area - aIns);
                 bool shared = j > 0 && j < n;
 
@@ -141,13 +150,39 @@ public static class DesignCurrent
                     SharedFactor = shared ? Math.Sqrt(3.0) : 1.0,
                     Mode = RampControl.TemperatureRamp,
                 };
-                var rt = RampTwoNode.Solve(p, inp);
+                // ★ R48（2026-09-14，Opus 5）：RampTwoNode 读 p.FlangeInsulThickMm ⇒ 按本片圆盘保温克隆一份（值与整线相同就不克隆，旧口径逐位不变）
+                double insJ = discInsulMmAt(j);
+                DesignInputs pj = p;
+                if (!insJ.Equals(p.FlangeInsulThickMm)) { pj = SegmentSolver.Clone(p); pj.FlangeInsulThickMm = insJ; }
+                var rt = RampTwoNode.Solve(pj, inp);
                 if (rt.PeakCurrentA > peak) { peak = rt.PeakCurrentA; clipped = rt.CurrentClipped; }
             }
             res.TwoNodeSegPeakA[i] = peak;          // 只当对照印出来
         }
         for (int j = 0; j <= n; j++) res.PlateA[j] = LineSolver.JointCurrentA(res.SegPeakA, j);
         return res;
+    }
+
+    /// <summary>
+    /// R48 续（2026-09-14，Opus 5）：**圆盘整块**（r ≤ 盘半径）的板面积 mm²（扣管孔）——
+    /// 保温默认按半径划时，法兰保温包的就是这一块。与 <see cref="AreaFromX"/> 同一积分法：
+    /// 逐 x 取「板外形半宽」与「盘圆半宽」的较小者，扣管孔。舌片伸出盘圆的部分不计。
+    /// </summary>
+    public static double AreaWithinDisc(FlangePlate g, int n = 20001)
+    {
+        double r = g.DiscRadiusMm;
+        if (!(r > 0)) return 0;
+        double x0 = Math.Max(g.TabTipXMm, -r), x1 = r;
+        if (!(x1 > x0)) return 0;
+        double dx = (x1 - x0) / (n - 1), a = 0;
+        for (int i = 0; i < n; i++)
+        {
+            double x = x0 + i * dx, w = dx * (i == 0 || i == n - 1 ? 0.5 : 1.0);
+            double circ = Math.Sqrt(Math.Max(0, r * r - x * x));
+            double hole = Math.Abs(x) <= g.HoleRadiusMm ? Math.Sqrt(g.HoleRadiusMm * g.HoleRadiusMm - x * x) : 0;
+            a += 2 * Math.Max(0, Math.Min(g.HalfWidth(x), circ) - hole) * w;
+        }
+        return a;
     }
 
     /// <summary>x ≥ xFrom 那部分的板面积 mm²（扣管孔），与 <see cref="CoupledSolver.PlateArea"/> 同一积分法。</summary>
