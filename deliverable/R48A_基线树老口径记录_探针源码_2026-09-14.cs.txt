@@ -1,0 +1,57 @@
+using System;
+using System.IO;
+using System.Linq;
+using System.Text;
+using PtOptimize.Core;
+using Xunit;
+
+namespace PtOptimize.Tests;
+
+// 基线树（.basetree）上跑的一次性记录探针：老口径（改动前代码）下的舌端均温等量，给 R48ClampRecipeTests 门 (d) 作记录值。2026-09-14 Opus 5
+public class R48ABaselineProbe
+{
+    [Fact]
+    public void 记录()
+    {
+        var sb = new StringBuilder();
+        string outPath = Environment.GetEnvironmentVariable("R48A_OUT") ?? "baseline_out.txt";
+        void Say(string s) { sb.AppendLine(s); File.WriteAllText(outPath, sb.ToString(), new UTF8Encoding(false)); }
+        Say($"基线树探针 {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        var p = new DesignInputs();
+        var d = DesignSpec.W08.Clone();
+        d.TabThickMm = new[] { 0.73, 1.26, 1.26, 0.73 };
+        d.TabInsulMm = new[] { 4.60, 2.10, 2.90, 7.50 };
+        d.RingMul = new[] { 1.0, 1.0, 1.0, 1.0 };
+        d = d.Fit(); d.SizeTongues(p);
+        var (_, radius) = MeshVerify.RequiredMeshFor(d);
+        foreach (var name in new[] { "导航网格", "h=1 分级" })
+        {
+            var lc = d.BuildCase(p, checkRamp: false);
+            if (name != "导航网格") MeshAdapt.RefineWholeMesh(lc, 1.0, radius);
+            var g = d.Plate(0, d.DiscFloorMm(p)); g.HoleRadiusMm = lc.TubeIdMm * 0.5 + lc.WallMm;
+            var m = FlangeMesher.Build(g, 0, lc.MeshFineMm, lc.MeshCoarseMm, lc.MeshFineRadiusMm, lc.Base.BusbarClampLengthMm, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
+            double tSet = d.SetpointC[0];
+            var sc = ShellCurrent.SolveFor(lc, m, 1213, Materials.PtResistivity(tSet) * 1e3, tSet);
+            foreach (var mode in new[] { "定温", "自由端", "热导1.1" })
+            {
+                var p2 = SegmentSolver.Clone(lc.Base); p2.TSetC = tSet;
+                if (mode == "定温") p2.BusbarClampTempC = lc.ClampTempC[0];
+                else if (mode == "自由端") { p2.BusbarClampTempC = -1; p2.BusbarConductanceWPerK = -1; }
+                else { p2.BusbarClampTempC = -1; p2.BusbarConductanceWPerK = 1.1; }
+                var th = ShellThermal.Solve(m, sc.JMagAPerMm2, p2, 1172.63, g.InsulBoundaryXResolved, g.TwoTabs,
+                    tabBoundaryX: g.Tangent().X, tabInsulThickMm: g.TabInsulThickMm, discRadiusMm: g.DiscRadiusMm, insulDiscRadiusMm: g.InsulDiscRadiusMm);
+                Say($"{name}\t{mode}\tcells {m.CellCount}\tconv {th.Converged}\tTTabEndMeanC {th.TTabEndMeanC:R}\tQFromTubeW {th.QFromTubeW:R}\tQToClampW {th.QToClampW:R}\tBusEquivLenMm {th.BusEquivLenMm:R}\tQGenW {th.QGenW:R}\tTMaxC {th.TMaxC:R}");
+            }
+        }
+        {
+            var lc = d.BuildCase(p, checkRamp: false);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var r = LineRunner.Run(lc);
+            Say($"LineRunner 误差预算设计 导航网格：Ok {r.Ok} 收敛 {r.Converged}　{sw.Elapsed.TotalSeconds:0} s　{r.Message}");
+            foreach (var f in r.Flanges)
+                Say($"  {f.Name}　QGen {f.QGenW:0.000}　抽热 {f.QFromTubeW:0.000}　管根 {f.TRootC:0.00}　单元 {f.CellCount}");
+            foreach (var c in r.Checks.Where(c => c.Name.StartsWith(LineResult.Key.FlangeStab, StringComparison.Ordinal) || c.Name.StartsWith(LineResult.Key.RampField, StringComparison.Ordinal)))
+                Say($"  {c.Name}　Actual {c.Actual:R}　Where {c.Where}　{c.Note}");
+        }
+    }
+}

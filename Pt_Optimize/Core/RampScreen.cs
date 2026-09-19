@@ -16,9 +16,13 @@ namespace PtOptimize.Core;
 ///   判定逻辑，而界面的阶段门禁又要用它 —— 再抄一遍就是第五处。
 ///
 /// ⚠⚠ **这是快筛，不是交付判据。**
-///   ① 的交付判定由 <see cref="LineRunner"/>.Judge 在整线耦合解里给出（限 72 h）。
 ///   本类只回答「这个工作点是不是明显不成立」，用来在跑分钟级整线解**之前**先挡一道。
-///   两者若不一致，**一律以整线解为准**（界面的门禁按这个优先级读）。
+///   两者若不一致，**一律以整线解为准**（界面的门禁按这个优先级读，UI/Flow.FindCheck）。
+/// ★ 2026-09-15 Opus 5（J 路，合并把关待办 P2-14）文字照实改（判定口径不改，升温判据另有一路重做）：
+///   原句「① 的交付判定由 LineRunner.Judge 在整线耦合解里给出（限 72 h）」已过时 —— 整线判据表里的「① 升温」现在是**闭式**的：
+///   按升温速率空管升温、全程峰值电流 ÷ 管截面，看有没有被管 J 许用截住（LineRunner.Judge 那一条，DesignCurrent.Compute）；72 h 限时是另一行参考量「升温到位用时」。
+///   本快筛判的是**目标温度处稳态电流的热稳定裕度** I_stab / I —— **与整线那一条不是同一个量**，解前快筛过了不代表整线那一条会过，反之亦然。
+///   目标温度原写死 1150（与 LineCase.RampTargetC 缺省同值，潜伏），现在读 LineCase.RampTargetC（缺省取新算例的值，界面按本页算例的值传进来）。
 /// </summary>
 public static class RampScreen
 {
@@ -28,8 +32,11 @@ public static class RampScreen
     /// <summary>裕度薄的提醒线 —— 之上算稳，之间算薄，之下算不成立。</summary>
     public const double MarginThin = 1.5;
 
-    /// <summary>升温目标温度 °C（空管口径：升温时管内无玻璃）。</summary>
-    public const double TargetC = 1150;
+    /// <summary>
+    /// 升温目标温度 °C（空管口径：升温时管内无玻璃）。2026-09-15 Opus 5（J 路，P2-14）：原为 `const double TargetC = 1150`（写死），
+    /// 现读 <see cref="LineCase.RampTargetC"/> 的缺省（新算例的值）—— 目标温度只有 LineCase 这一个来源。
+    /// </summary>
+    public static double TargetC => new LineCase().RampTargetC;
 
     public sealed record Point(
         double InsulMm,
@@ -42,12 +49,21 @@ public static class RampScreen
         double Margin,
         double MassG)
     {
+        /// <summary>
+        /// ★ R48（2026-09-15，Opus 5；常驻数值把关人第十四轮「其余散热表超界检测」）：查表用到的温度（只有目标温度一个）不在散热表区间里 ⇒ 判不了。
+        /// 表是 [环境, 目标 + 300]，只在目标温度处取值与取斜率 ⇒ **上限按构造不会超**；能超的只有下限（目标温度低于环境温度，表把它钳到环境）。
+        /// 检测照样做：以后有人在别的温度上查这张表，这一位就会说话。
+        /// </summary>
+        public bool LossTableExceeded { get; init; }
+
         /// <summary>与界面表格里那一列完全一致的判定文字 —— 阈值只存在这一处。</summary>
-        public string Verdict => Margin > MarginThin ? "✓"
+        public string Verdict => LossTableExceeded ? "✗ 判不了（目标温度不在散热表范围内）"
+                               : Margin > MarginThin ? "✓"
                                : Margin > MarginHardMin ? "⚠ 裕度薄"
                                : "✗ 越热稳定极限";
 
-        public bool Ok => Margin > MarginHardMin;
+        /// <summary>判不了不算过（R48 2026-09-15 Opus 5：加了散热表超界这一条）。</summary>
+        public bool Ok => !LossTableExceeded && Margin > MarginHardMin;
     }
 
     /// <summary>
@@ -55,8 +71,9 @@ public static class RampScreen
     /// 逐字搬自原 AnalysisPage.Gate1 的内层循环，物理未动。
     /// </summary>
     public static Point Evaluate(DesignInputs baseInputs, double insulMm, double wallMm,
-                                 double tTargetC = TargetC)
+                                 double tTargetC = double.NaN)
     {
+        if (double.IsNaN(tTargetC)) tTargetC = TargetC;   // 2026-09-15 Opus 5（J 路）：不给 = LineCase.RampTargetC 的缺省
         var q = SegmentSolver.Clone(baseInputs);
         q.Layer1.ThicknessMm = insulMm; q.Layer1.Enabled = true;
         q.WallMinMm = wallMm; q.TSetC = tTargetC;
@@ -83,7 +100,8 @@ public static class RampScreen
 
         double massG = aMm2 * q.TubeLengthMm * Materials.PtDensity * 1e-6;
 
-        return new Point(insulMm, wallMm, lossW, iA, jA, iStab, margin, massG);
+        // R48（2026-09-15，Opus 5）：查表用到的温度只有 tTargetC（Eval 与 Slope 都在它上）—— 核它在不在表里
+        return new Point(insulMm, wallMm, lossW, iA, jA, iStab, margin, massG) { LossTableExceeded = !tab.Covers(tTargetC) };
     }
 
     /// <summary>
@@ -93,8 +111,9 @@ public static class RampScreen
     ///   但整线解一旦跑出来，门禁会**优先**取 Judge 给的那条（见 UI/Gate.FindCheck）。
     /// </summary>
     public static ConstraintOut Judge(DesignInputs baseInputs, double insulMm, double wallMm,
-                                      double tTargetC = TargetC)
+                                      double tTargetC = double.NaN)
     {
+        if (double.IsNaN(tTargetC)) tTargetC = TargetC;   // 2026-09-15 Opus 5（J 路）：不给 = LineCase.RampTargetC 的缺省
         var p = Evaluate(baseInputs, insulMm, wallMm, tTargetC);
         return new ConstraintOut
         {
@@ -105,8 +124,12 @@ public static class RampScreen
             Limit = MarginHardMin,
             LessIsBetter = false,
             Ok = p.Ok,
+            Undetermined = p.LossTableExceeded,                    // R48（2026-09-15，Opus 5）
             Where = $"保温 {insulMm:0.0} / 壁厚 {wallMm:0.00}",
-            Note = $"热稳定裕度 = I_stab/I = {p.IStabA:0}/{p.CurrentA:0}。"
+            Note = (p.LossTableExceeded
+                    ? $"★ **无法判定**：目标温度 {tTargetC:0} °C 不在管表面散热表范围内（表从环境温度 {baseInputs.TAmbC:0} °C 起），散热被钳住，下面的裕度不可引用。"
+                    : "")
+                 + $"热稳定裕度 = I_stab/I = {p.IStabA:0}/{p.CurrentA:0}。"
                  + (p.Margin <= MarginHardMin
                     ? "★★ **越过热稳定极限** ⇒ 该工作点的稳态解本就不存在，升温到不了目标。"
                       + "　【下一步】先降**目标温度**或换牌号 —— 见下面那条：加保温未必有用。"
@@ -130,7 +153,9 @@ public static class RampScreen
                  + $"　⚠ 实测包络内本裕度恒在 1.4–2.0（限 1.0）⇒ 它几乎不随设计变，"
                  + "别把它当会拦人的闸；且**加保温对它的作用随目标温度变号**"
                  + "（1150 °C 略降、1400 °C 才升）。"
-                 + " ⚠ 这是**闭式快筛**，① 的交付判定由整线耦合解给出（限 72 h）；两者不一致时以整线解为准。"
+                 // 2026-09-15 Opus 5（J 路，P2-14）：原句「① 的交付判定由整线耦合解给出（限 72 h）」已过时，照实改（判定口径不改）
+                 + $" ⚠ 这是**解前快筛**，判的是目标温度 {tTargetC:0} °C 处稳态电流的热稳定裕度；整线判据「升温」判的是按升温速率空管升温全程峰值电流的管电流密度有没有被许用截住 —— "
+                 + "两者不是同一个量，解出整线之后以整线解为准（整线判据表里「升温」那一条）。"
         };
     }
 }

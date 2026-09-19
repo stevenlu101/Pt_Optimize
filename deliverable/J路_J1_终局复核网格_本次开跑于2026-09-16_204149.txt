@@ -1,0 +1,27 @@
+#证据头 v1
+# 标题：J 路实验：J1_终局复核网格
+# git HEAD：0a15af83b9bff1f530f8e2b80ff8b9819d00d5b9
+# Core 改动指纹（Pt_Optimize/Core 相对 HEAD 的改动与未跟踪文件，SHA1）：72e09e0586c1021866abe1f91d614f83a350540c
+# 探针源码指纹（调用方源文件，SHA1）：Pt_Optimize.Tests/R48J_ExperimentProbeTests.cs 0bd2fcd09e91a9fb40b4847a7c5db73ae3624aed
+# 网格配方：生产配方常量 —— 压接整面接触 开；压接边界施加在压接面上；压接边界落成节点 是；压接细带单侧 0 × hFine；孔边判定带半宽 3 mm
+# 热解配方：生产配方常量 —— 分界格混合 开；表面散热表上限 1768.2 °C、节点按约 22 K 一个；管温施加在孔边界面上；压接格取整个压接面；压接边界施加在压接面上
+# 耦合容差：1 K
+# 共用片抽热：双扣（两段各扣一次）
+# 工况：带玻璃稳态
+#证据头结束
+[    0.1 s] 开跑 2026-09-16 20:41:49　出处：Pt_Optimize.Tests/R48J_ExperimentProbeTests.cs
+[    0.1 s] 算例：DesignSpec.W08（「管壁 0.8 · 留余量」），MeshVerify.RequiredMeshFor ⇒ 细网格 1 mm、细区半径 59 mm；SolverOptions.MaxRounds = 0（导航遍一轮都不跑 ⇒ 第一遍必然没走通 ⇒ lastOpt = 导航选项）
+[    0.1 s] 导航选项（Solver.NavOptionsOf）：FineMm=0 FineRadiusMm=59 ScreenCoarseMm=0
+[  182.6 s] Solve 返回：Feasible=False FineRefined=False StopWhy=「跑满 0 轮仍未全过 —— 结果**未收敛**，不作数」 Solves=2
+[  182.6 s] 求根算例（BuildCase + Solver.ApplyCaseMesh(导航选项)）：MeshFineMm=2　MeshCoarseMm=11　MeshFineRadiusMm=59　MeshInnerMm=2　MeshInnerRadiusMm=0
+[  182.6 s] 终局算例（Solver.FinishCase(导航选项)）　　　　　　　：MeshFineMm=2　MeshCoarseMm=11　MeshFineRadiusMm=59　MeshInnerMm=2　MeshInnerRadiusMm=0
+[  182.6 s] 片0 网格格数：求根 1096　终局 1096
+[  182.6 s] 片1 网格格数：求根 1096　终局 1096
+[  182.6 s] 片2 网格格数：求根 1096　终局 1096
+[  182.6 s] 片3 网格格数：求根 1096　终局 1096
+[  182.6 s] Solve 的 res.Best.MeshCells（终局复核那次整线解片0 的格数）= 1096
+[  272.9 s] 求根网格上整线解：Ok=True Converged=True AllOk=False　管孔净流入 须为正 51.585（限 0，过，取自 HC1|HC2）　最热铂高出热偶读数 -121.619（限 5，过，取自 HC1|HC2）　管根低于热偶读数 179.763（限 5，不过，取自 出口）
+[  272.9 s] 　逐片抽热 入口 +74.091 W　HC1|HC2 +51.585 W　HC2|HC3 +56.345 W　出口 +72.713 W
+[  272.9 s] 终局网格上整线解（res.Best）：Ok=True Converged=True AllOk=False　管孔净流入 须为正 51.585（限 0，过，取自 HC1|HC2）　最热铂高出热偶读数 -121.619（限 5，过，取自 HC1|HC2）　管根低于热偶读数 179.763（限 5，不过，取自 出口）
+[  272.9 s] 　逐片抽热 入口 +74.091 W　HC1|HC2 +51.585 W　HC2|HC3 +56.345 W　出口 +72.713 W
+[  272.9 s] 完

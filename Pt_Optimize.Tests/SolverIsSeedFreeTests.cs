@@ -129,8 +129,10 @@ public class SolverIsSeedFreeTests
     {
         string s = Src("Solver.cs");
         Assert.Contains("return double.IsNaN(q) ? double.NaN : q;", s);            // ②′ 越大越好
-        Assert.Contains("discMax - over", s);                                       // ②″ 越小越好
-        Assert.Contains("dipMax - dip", s);                                         // ③  越小越好
+        // R48 B（2026-09-14 Opus 5）：有意改动 —— 热侧／冷侧换成热偶读数基准（ThermocoupleBasis），逐片裕度的写法随之改名；依据 Pt_Optimize/Core/Solver.cs 的 PlateSlack。
+        //   旧断言 "discMax - over" → 新 "hotMax - h"；旧 "dipMax - dip" → 新 "coldMax - cK"。方向不变：都是越小越好。
+        Assert.Contains("hotMax - h", s);                                           // ⑦ 热侧 越小越好
+        Assert.Contains("coldMax - cK", s);                                         // ⑧ 冷侧 越小越好
         Assert.Contains("须 > 0，限值就是 0", s);
     }
 

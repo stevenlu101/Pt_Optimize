@@ -48,13 +48,43 @@ public class NoCriterionCodeInUiTests
     };
 
     /// <summary>判据名（已剥壳）—— 从 Key 常量反射取，不手抄。</summary>
+    /// <remarks>R48 B（2026-09-14 Opus 5）：旧判法两条降为参考量后名字带「（旧判法）」后缀（「法兰增量温降（旧判法）」「圆盘区最高温 − 管温（旧判法）」），
+    ///   「③ 法兰增量温降」这种**旧写法**就不再以任何判据名开头 ⇒ 门会悄悄漏掉它（自证那条当场红了）。
+    ///   ⇒ 带「（旧判法）」的名字把**词干**（去掉后缀、去掉「 − 管温」）也加进名单：旧代号配旧名字照样禁。这是加严，不是放宽。</remarks>
     private static string[] PlainNames() =>
         typeof(LineResult.Key)
             .GetFields(BindingFlags.Public | BindingFlags.Static)
             .Select(f => Criteria.Plain((string)f.GetValue(null)!))
+            .SelectMany(n => n.Contains("（旧判法）")
+                ? new[] { n, n.Split('（')[0].Trim(), n.Split('（')[0].Split(" − ")[0].Trim() }
+                : new[] { n })
             .Where(n => n.Length >= 2)          // 「管 J」没有代号，不参与
             .Distinct()
             .ToArray();
+
+    /// <summary>
+    /// 判据代号的形状：圈号（只取生产代码那一份 <see cref="Criteria.CodeChars"/>）后面可带 ′ ″。
+    /// 2026-09-14 Opus 5（复审）：原来三处各手抄一遍「①…⑥」—— 热偶读数基准的两条用了新代号 ⑦⑧，手抄的门就看不见它们（门不许手抄生产配方）。
+    /// </summary>
+    private static readonly string CodePattern = "[" + Criteria.CodeChars + "][′″]?";
+
+    /// <summary>
+    /// 自证：新代号 ⑦⑧ 配新判据名，门照样抓得到（2026-09-14 Opus 5 复审补）。
+    /// </summary>
+    [Fact]
+    public void 自证_新代号配判据名也抓得到()
+    {
+        var names = PlainNames();
+        foreach (var offender in new[] { "卡的是 ⑦ 最热铂高出热偶读数", "卡的是 ⑧管根低于热偶读数" })
+        {
+            bool caught = Regex.Matches(offender, CodePattern).Any(m =>
+            {
+                string rest = offender[(m.Index + m.Length)..].TrimStart(' ', '　');
+                return names.Any(n => rest.StartsWith(n, StringComparison.Ordinal));
+            });
+            Assert.True(caught, $"门抓不到「{offender}」");
+        }
+    }
 
     /// <summary>字符串字面量（去掉整行注释）。够用：本仓的界面文字都写在字面量里。</summary>
     private static IEnumerable<(int Line, string Text)> Literals(string src)
@@ -87,7 +117,7 @@ public class NoCriterionCodeInUiTests
             string path = Path.Combine(root, rel);
             if (!File.Exists(path)) continue;
             foreach (var (line, text) in Literals(File.ReadAllText(path)))
-                foreach (Match m in Regex.Matches(text, "[①②③④⑤⑥][′″]?"))
+                foreach (Match m in Regex.Matches(text, CodePattern))
                 {
                     // 代号后面（跳过空格与全角空格）是不是一个判据名
                     string rest = text[(m.Index + m.Length)..].TrimStart(' ', '　');
@@ -110,7 +140,7 @@ public class NoCriterionCodeInUiTests
     {
         var names = PlainNames();
         const string offender = "卡的是 ③ 法兰增量温降，先解决它";
-        bool caught = Regex.Matches(offender, "[①②③④⑤⑥][′″]?").Any(m =>
+        bool caught = Regex.Matches(offender, CodePattern).Any(m =>
         {
             string rest = offender[(m.Index + m.Length)..].TrimStart(' ', '　');
             return names.Any(n => rest.StartsWith(n, StringComparison.Ordinal));
@@ -127,7 +157,7 @@ public class NoCriterionCodeInUiTests
     {
         var names = PlainNames();
         const string fine = "① 先加这一片的舌保温；② 再削薄该片板；③ 都用尽了才动形状";
-        bool caught = Regex.Matches(fine, "[①②③④⑤⑥][′″]?").Any(m =>
+        bool caught = Regex.Matches(fine, CodePattern).Any(m =>
         {
             string rest = fine[(m.Index + m.Length)..].TrimStart(' ', '　');
             return names.Any(n => rest.StartsWith(n, StringComparison.Ordinal));

@@ -23,7 +23,8 @@ namespace PtOptimize.Tests;
 /// </summary>
 public class HolePlacementTests
 {
-    private static FlangePlate Heater1(double holeX, double holeR) => new()
+    // internal（2026-09-14 Opus 5）：R48ClampRecipeImpactTests 拆孔位对比那一行时调同一块板与同一个解法，不另抄一份
+    internal static FlangePlate Heater1(double holeX, double holeR) => new()
     {
         DiscRadiusMm = 60, HoleRadiusMm = 26,
         TabEndXMm = -199.5, TabEndHalfWidthMm = 40,
@@ -34,7 +35,7 @@ public class HolePlacementTests
             : Array.Empty<FlangePlate.TabHole>(),
     };
 
-    private static (double Q, double JPeak, double Vol, string Err) Run(FlangePlate g)
+    internal static (double Q, double JPeak, double Vol, string Err) Run(FlangePlate g)
     {
         try
         {

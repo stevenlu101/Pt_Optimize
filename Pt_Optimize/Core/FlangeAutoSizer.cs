@@ -99,6 +99,16 @@ public static class FlangeAutoSizer
         /// 除非你已用 --fidelity 验证过该形状上放粗无害，否则不要设。
         /// </summary>
         public double SearchMeshFineMm = 0;
+
+        /// <summary>
+        /// ★ R47 C（2026-09-13）：**终局细网格**口径 —— 与 <see cref="SearchMeshFineMm"/>（搜索期放粗）**分开**。
+        /// 0 = 不动（用 baseCase 自己的导航网格）。&gt; 0 时整个 <see cref="SolveByLevel"/>（搜索各轮 + 全精度复核）
+        /// 都在这张网格上跑：中带 FinalMeshFineMm／FinalMeshFineRadiusMm、内带 FinalMeshInnerMm／FinalMeshInnerRadiusMm，
+        /// 与加密复算（MeshVerify）收敛那一档同口径 —— 求根的网格与判决的网格才是同一张（A⑬）。
+        /// 病：「细网格重解」的 .3dm 分支此前 fineMm 没传进 SolveByLevel，实际在 2 mm 导航网格上再跑一次。
+        /// 解析路径的 Solver 早有 FineMm/FineRadiusMm 两遍求根，这里是图纸路径的对应物。
+        /// </summary>
+        public double FinalMeshFineMm = 0, FinalMeshFineRadiusMm = 0, FinalMeshInnerMm = 0, FinalMeshInnerRadiusMm = 0;
         /// <summary>
         /// 搜索期的**远场**网格步长 mm。★ 2026-08-17 起默认 **0 = 不放粗**。
         ///
@@ -357,14 +367,18 @@ public static class FlangeAutoSizer
             //   我把迭代靶换成抽热窗口，却漏了这里 —— 它还在用旧的单边 ③ 度量，
             //   于是出现「复核说达标、而 ②′ = −4.47 W」这种自相矛盾的输出。
             //   **改了靶就要把所有读靶的地方一起改**，这正是今天反复在犯的那一条。
-            double worst = v.Flanges.Length == 0 ? 0
-                         : v.Flanges.Max(f => Math.Abs(opt.DrawTargetW - f.QFromTubeW));
+            double worst = DrawOffTargetWorstW(v, opt.DrawTargetW);
             bool searchSaidOk = res.Converged;
             res.Converged = worst < opt.DrawTolW && v.Converged;
 
-            res.Message += $"　【全精度复核】抽热偏离靶 {worst:0.0} W" +
-                           $"（②′ {v.ValueOf(LineResult.Key.NetFlux):+0.00;−0.00} W／" +
-                           $"③ {v.ValueOf(LineResult.Key.FlangeDip):0.00} K）";
+            // R48 B（2026-09-14 Opus 5）：这句进界面 ⇒ 写全名不写代号；卡交付的冷侧／热侧换成热偶读数基准，旧判法的增量温降只作对照（本类的抽热靶仍是按它的 γ 定的，本类不追新两条）。
+            res.Message += (double.IsNaN(worst)
+                            ? "　【全精度复核】**判不了**：有片的抽热算不出（NaN）⇒ 不算达标（判不了不算过）"   // 2026-09-15 Opus 5（J 路，P1-8）
+                            : $"　【全精度复核】抽热偏离靶 {worst:0.0} W") +
+                           $"（管孔净流入 {v.ValueOf(LineResult.Key.NetFlux):+0.00;−0.00} W／" +
+                           $"管根低于热偶读数 {v.ValueOf(LineResult.Key.ColdUnderTc):0.00} K／" +
+                           $"最热铂高出热偶读数 {v.ValueOf(LineResult.Key.HotOverTc):0.00} K／" +
+                           $"法兰增量温降（旧判法） {v.ValueOf(LineResult.Key.FlangeDip):0.00} K）";
             if (!v.Converged) res.Message += "；⚠ 段↔法兰耦合未收敛，数值不可引用";
             if (searchSaidOk && !res.Converged)
                 res.Message += "；⚠ 搜索精度下判为达标，全精度下**不达标** —— 以本次为准";
@@ -386,6 +400,10 @@ public static class FlangeAutoSizer
                                CancellationToken cancel = default)
     {
         opt ??= new Options();
+        // ★ 2026-09-15 Opus 5（J 路）：CloneCase 现在带上 FlangePlates（此前漏拷）。解析板件在 LineRunner 里优先于图纸与厚度标度，
+        //   没有 makePlate 时本器靠 ThicknessScale 改厚度 ⇒ 底算例若带板件，标度会被静默忽略（此前是「未指定法兰几何」当场失败）。改成当场说。
+        if (makePlate is null && baseCase.FlangePlates.Length > 0)
+            throw new ArgumentException("定尺寸：底算例带着解析板件（FlangePlates）却没给 makePlate —— 厚度标度会被板件盖掉、改了等于没改。解析几何请给 makePlate，图纸路径的底算例不带板件。", nameof(makePlate));
         var t = (double[])initialThicknessMm.Clone();
         var res = new Result { ThicknessMm = t };
         // 每轮**入口**的厚度向量。认极限环要跟 2 轮前同相位比 —— 只留误差序列不够，
@@ -515,7 +533,9 @@ public static class FlangeAutoSizer
             bool dipOk = dips.All(v => !double.IsNaN(v));
             if (!dipOk)
             {
-                res.Message = "无法兰基线没算出来 ⇒ ③ 增量温降无从得知，定尺寸器**拒绝瞎调**。" +
+                // 2026-09-14 Opus 5（复审）：这几句经 SolveByLevel 的内层（SolveAuto）拼进 Message，再进界面「自动定厚」说明 ⇒ 写全名不写代号。
+                //   这里的「增量温降」是旧判法那条（③，代号不换主人），已降为参考量；本器的靶仍按它定。
+                res.Message = "无法兰基线没算出来 ⇒ 法兰增量温降（旧判法）无从得知，定尺寸器**拒绝瞎调**。" +
                               "（原来会退回追「偏离本段控温点」，那是个够不着的靶。）";
                 return res;
             }
@@ -530,7 +550,7 @@ public static class FlangeAutoSizer
             tHist.Add((double[])t.Clone());        // 本轮**入口**的厚度，用来认极限环
             progress?.Report($"第 {it + 1} 轮：抽热最大偏差 {worst:0.0} W　" +
                              $"D {string.Join("/", draws.Select(v => v.ToString("+0.0;−0.0")))}　" +
-                             $"③max {dips.Max():0.0}　厚度 " +
+                             $"法兰增量温降（旧判法）最大 {dips.Max():0.0}　厚度 " +
                              string.Join("/", t.Select(x => x.ToString("0.00"))));
 
             if (worst < opt.DrawTolW)
@@ -539,8 +559,9 @@ public static class FlangeAutoSizer
                 res.Message =
                     $"{it + 1} 轮收敛：各片抽热已落进窗口（靶 {opt.DrawTargetW:0.#} W，" +
                     $"实测 {draws.Min():+0.0;−0.0}…{draws.Max():+0.0;−0.0} W）。" +
-                    $"③ 随之为 {dips.Max():0.00} K。\r\n" +
-                    "  ②′>0 与 ③≤限 是同一个抽热的两侧（③ = 2.40·D 实测）⇒ **一个靶同时守住两条**。";
+                    $"法兰增量温降（旧判法）随之为 {dips.Max():0.00} K。\r\n" +
+                    "  管孔净流入 > 0 与 法兰增量温降（旧判法）≤ 限值 是同一个抽热的两侧（增量温降 = 2.40·D 实测）⇒ 一个靶守住这两条；" +
+                    "卡交付的「最热铂高出热偶读数」「管根低于热偶读数」基准是热偶读数，**本器不追它们**，要看判据表。";
                 return res;
             }
 
@@ -632,8 +653,8 @@ public static class FlangeAutoSizer
                               //   底下那两句本来就已经在指「更大的过流断面 / 缩小法兰」——**标题比正文说大了**。
                               "**厚度这条路走到头了，不是迭代不够**（" + HandOffHint + "）。\r\n" +
                               (tooThin
-                               ? "  还想加厚 = 抽热不够 = 法兰太热、热在往管里灌（②′<0）⇒ 需要更大的过流断面或更少的发热。"
-                               : "  还想削薄 = 抽热太多 = 把管根抽出深坑（③ 超限）⇒ 需要缩小法兰或加保温。");
+                               ? "  还想加厚 = 抽热不够 = 法兰太热、热在往管里灌（管孔净流入 < 0）⇒ 需要更大的过流断面或更少的发热。"
+                               : "  还想削薄 = 抽热太多 = 把管根抽出深坑（法兰增量温降超限，旧判法）⇒ 需要缩小法兰或加保温。");
                 return res;
             }
         }
@@ -837,6 +858,16 @@ public static class FlangeAutoSizer
         bool Locked(int j, int m) => levelLocked is not null && j < levelLocked.Length
                                      && m < levelLocked[j].Length && levelLocked[j][m];
         opt ??= new Options();
+        // ★ 2026-09-15 Opus 5（J 路）：与 Solve 那道闸同一件事 —— 逐级标度（LevelScale）只作用于图纸／厚度场路径，底算例带解析板件时加厚试探与全精度复核会静默算板件本身。
+        // ★ 2026-09-17 Opus 5（J 路，J7/J6 复核「应修 4」）：这道闸**比 Solve 那道严**，如实写明（此前交接文档与报告都写成「却没 makePlateByLevel 时才抛」，与代码不符 —— 代码不问 makePlateByLevel）。
+        //   严得有理由：给了 makePlateByLevel 也不安全。下面全精度复核那一段（本文件 `if (makePlateByLevel is not null && !baseIs3dm)`）在**底算例指着 .3dm** 时
+        //   故意不覆写 FlangePlates（报出去的数要来自真图纸），而 CloneCase 现在把底算例的板件拷进了 lcFinal ⇒ 板件在 LineRunner 里优先于图纸，复核会静默算板件。
+        //   ⇒ 不问 makePlateByLevel，底算例带板件一律当场抛。
+        if (baseCase.FlangePlates.Length > 0)
+            throw new ArgumentException("逐级定厚：底算例带着解析板件（FlangePlates）—— 逐级标度只改图纸厚度场，板件在前会被静默忽略。解析几何请给 makePlateByLevel、底算例不带板件。", nameof(baseCase));
+        // ★ R47 C（2026-09-13）：终局细网格 —— 设了就整个求解（各轮搜索 + 全精度复核）都在那张网格上，
+        //   下面所有 CloneCase(baseCase) 都从这份带网格口径的副本出发（求根与判决同一张网格）。
+        baseCase = ApplyFinalMesh(baseCase, opt);
         int nf = levelThicknessMm.Length;
         var scale = new double[nf][];
         for (int j = 0; j < nf; j++)
@@ -869,6 +900,8 @@ public static class FlangeAutoSizer
         const int MaxRaiseTries = 1;
 
         Result last = new();
+        // 2026-09-15 Opus 5（J 路，P1-8）：搜索期遇到判不了（NaN 级）就停下并记在这里；全精度复核之后一律不算达标。
+        string levelUndetWhy = "";
         // 每轮的内层残差（各级峰值超管根 K）。用来分「轮数不够」和「已经在原地打转」。
         var hist = new List<double>();
         int stalledAt = 0;
@@ -926,10 +959,14 @@ public static class FlangeAutoSizer
             double worstOver = 0;
             // ★ 最热的那一级：用来判「还值不值得继续迭代」
             double hottestC = double.NegativeInfinity; int hottestPlate = -1, hottestLevel = -1;
+            // ★ 2026-09-15 Opus 5（J 路，合并把关待办 P1-8）：峰值温度算不出（NaN）的级、各级温度对不上的片、整线解里缺的片都记下 ——
+            //   原来 NaN 级按「不比管根热」（e = 0）处理、不进最热级、熔点闸看不见它，片对不上直接 continue：看不全的部分被当成「没问题」。
+            var undetLevels = new List<string>();
+            if (lr.Flanges.Length < nf) undetLevels.Add($"整线解只有 {lr.Flanges.Length} 片（应 {nf} 片）");
             for (int j = 0; j < nf && j < lr.Flanges.Length; j++)
             {
                 var f = lr.Flanges[j];
-                if (f.LevelTMaxC.Length != scale[j].Length) continue;
+                if (f.LevelTMaxC.Length != scale[j].Length) { undetLevels.Add($"第 {j + 1} 片各级峰值温度 {f.LevelTMaxC.Length} 个、级数 {scale[j].Length} 对不上"); continue; }
                 double baseT = f.TRootC;
                 var adj = new double[scale[j].Length];
                 double logSum = 0; int cnt = 0;
@@ -937,6 +974,7 @@ public static class FlangeAutoSizer
                 {
                     if (Locked(j, m)) { adj[m] = 1.0; continue; }      // 锁死：一步都不走
                     double tm = f.LevelTMaxC[m];
+                    if (double.IsNaN(tm)) undetLevels.Add($"第 {j + 1} 片第 {m + 1} 级");   // 2026-09-15 Opus 5（J 路，P1-8）
                     double e = double.IsNaN(tm) ? 0 : tm - baseT;      // >0 = 该级比管根热
                     worstOver = Math.Max(worstOver, e);
                     if (!double.IsNaN(tm) && tm > hottestC)
@@ -973,6 +1011,13 @@ public static class FlangeAutoSizer
             }
             progress?.Report($"第 {round + 1} 轮 · 内层：各级峰值最高超管根 {worstOver:0.0} K" +
                              (hottestPlate >= 0 ? $"（第 {hottestPlate + 1} 片第 {hottestLevel + 1} 级 {hottestC:0} °C）" : "") + dirMark);
+            if (undetLevels.Count > 0)
+            {
+                // 2026-09-15 Opus 5（J 路，P1-8）：看不全就停 —— 最热的是哪一级、有没有越过熔点都说不了，再调比例是在看不见的地方凑数。
+                levelUndetWhy = $"第 {round + 1} 轮各级峰值温度算不出（NaN）：{string.Join("、", undetLevels)} —— 该级在网格上没有格子，或温度场没解到位；最热的是哪一级、有没有越过熔点都看不全";
+                progress?.Report("  ✗ 判不了：" + levelUndetWhy);
+                break;
+            }
 
             // ═══════════════════════════════════════════════════════════════
             // ★★★★★ **过热要能驱动加厚**（用户 2026-09-03）
@@ -1041,11 +1086,7 @@ public static class FlangeAutoSizer
                         var r = EvalScale(baseCase, levelThicknessMm, probe, cancel,
                                           inner: null, coarse: true);
                         if (r is null || jh >= r.Flanges.Length) return double.PositiveInfinity;
-                        var ff = r.Flanges[jh];
-                        double hot = double.NegativeInfinity;
-                        for (int m = 0; m < ff.LevelTMaxC.Length; m++)
-                            if (!double.IsNaN(ff.LevelTMaxC[m])) hot = Math.Max(hot, ff.LevelTMaxC[m]);
-                        return hot;
+                        return LevelHottestC(r.Flanges[jh]);
                     }
 
                     double hotHi = HotAt(hiK);
@@ -1070,15 +1111,18 @@ public static class FlangeAutoSizer
                                            inner: null, coarse: false);
                         if (rf is not null && jh < rf.Flanges.Length)
                         {
-                            var ffF = rf.Flanges[jh];
-                            double hotF = double.NegativeInfinity;
-                            for (int m2 = 0; m2 < ffF.LevelTMaxC.Length; m2++)
-                                if (!double.IsNaN(ffF.LevelTMaxC[m2]))
-                                    hotF = Math.Max(hotF, ffF.LevelTMaxC[m2]);
+                            double hotF = LevelHottestC(rf.Flanges[jh]);
                             progress?.Report($"     粗算说加不凉（{hotHi:0} °C）=> 原网格复核：{hotF:0} °C");
                             hotHi = hotF;
                         }
                         }
+                    }
+                    if (double.IsNaN(hotHi))
+                    {
+                        // 2026-09-15 Opus 5（J 路，P1-8）：加厚到上界那次解里有级算不出温度 ⇒ 既不能说「压住了」，也不能说「加厚救不了」（那是实测结论的口吻）。
+                        levelUndetWhy = $"第 {jh + 1} 片第 {mh + 1} 级加厚到工艺上界 ×{hiK:0.00} 那次解里，有级的峰值温度算不出（NaN）—— 加厚有没有用判不了";
+                        progress?.Report("  ✗ 判不了：" + levelUndetWhy);
+                        break;
                     }
                     if (!(hotHi < hottestC - 1e-9) || hotHi > opt.OverheatRaiseFromC)
                     {
@@ -1093,16 +1137,20 @@ public static class FlangeAutoSizer
                     }
                     else
                     {
-                        // ★ 加厚有用 ⇒ 二分找**最小**够用的倍数（最省铂）
-                        double lo = 1.0, hi = hiK;
-                        // ★ 4 步够了（2026-09-03）：每步都是一次解，8 步的精度
-                        //   （倍数 ±0.4 %）远细于图纸 0.01 mm 的格，白花四次解。
-                        for (int it = 0; it < 3 && hi - lo > 0.08; it++)
+                        // ★ 加厚有用 ⇒ 二分找**最小**够用的倍数（最省铂）。唯一实现见 MinRaiseFactor（门调同一份）。
+                        var rb = MinRaiseFactor(HotAt, hiK, opt.OverheatRaiseFromC);
+                        if (rb.Undetermined)
                         {
-                            double mid = 0.5 * (lo + hi);
-                            if (HotAt(mid) <= opt.OverheatRaiseFromC) hi = mid; else lo = mid;
+                            // 2026-09-17 Opus 5（J 路，J7 复核）：**二分这一步也要有 NaN 闸**。上一版只挡了上界那一次（下面 hotHi 那道）：
+                            //   二分里 `HotAt(mid) <= 阈值` 遇 NaN 为假 ⇒ 走 lo = mid，把「判不了」当成「还过热」，
+                            //   出口照印「压住了（最小够用的那一档，再薄就过热）」—— 那一档根本没量出来，是实测口吻的假话。
+                            //   现在与上界那一次同句式：记下判不了、停止迭代，收尾按「判不了不算过」写（见 levelUndetWhy 的出口）。
+                            levelUndetWhy = $"第 {jh + 1} 片第 {mh + 1} 级二分到 ×{rb.UndetAtK:0.00} 那次解里，有级的峰值温度算不出（NaN）"
+                                          + $"—— 加到工艺上界 ×{hiK:0.00} 是凉了，但**最小够用的是哪一档判不了**";
+                            progress?.Report("  ✗ 判不了：" + levelUndetWhy);
+                            break;
                         }
-                        curK = hi;
+                        curK = rb.K;
                         if (!Locked(jh, mh)) scale[jh][mh] *= curK;
                         // 只增不减：**这一级**的下界，外层与内层以后都不许削到它以下
                         overheatFloor[jh][mh] = Math.Max(overheatFloor[jh][mh], scale[jh][mh]);
@@ -1184,7 +1232,7 @@ public static class FlangeAutoSizer
                 last.Message = (last.Message ?? "") +
                     $"　⚠ 第 {round + 1} 轮中止：连续 {worsen} 轮越调越差"
                     + $"（超管根 {hist[hist.Count - 1 - worsen]:0.0} → {worstOver:0.0} K）。"
-                    + " 厚度这个旋钮在这张图上救不了 ③ ——"
+                    + " 厚度这个旋钮在这张图上救不了法兰增量温降（旧判法）——"
                     + " ⇒ 回 Rhino 改梯度分布（孔边加厚、削薄外缘），或改环径。";
                 last.Terminal = true;
                 last.TerminalWhy = "连续几轮越调越差 —— 厚度这个旋钮在这张图上救不了它";
@@ -1239,11 +1287,13 @@ public static class FlangeAutoSizer
             if (verify.Ok)
             {
                 last.Line = verify;
-                double worst = verify.Segments.Length == 0 ? 0
-                             : verify.Segments.Max(x => Math.Max(0.0, x.FlangeDipK - opt.TargetK));
+                double worst = DipOffTargetWorstK(verify, opt.TargetK);
                 bool searchSaidOk = last.Converged;
                 last.Converged = worst < opt.TolK && verify.Converged;
-                last.Message += $"　【全精度复核】管根温差偏离目标 {worst:0.0} K";
+                // 2026-09-14 Opus 5（复审）：这里的「管根温差」是旧判法的法兰增量温降（靶 TargetK），写明，别让人当成卡交付的冷侧。
+                last.Message += double.IsNaN(worst)
+                              ? "　【全精度复核】**判不了**：有段的法兰增量温降（旧判法）算不出（NaN）⇒ 不算达标（判不了不算过）"   // 2026-09-15 Opus 5（J 路，P1-8）
+                              : $"　【全精度复核】法兰增量温降（旧判法）偏离本器的靶 {worst:0.0} K";
                 if (!verify.Converged) last.Message += "；⚠ 段↔法兰耦合未收敛，数值不可引用";
                 if (searchSaidOk && !last.Converged)
                     last.Message += "；⚠ 搜索精度下判为达标，全精度下**不达标** —— 以本次为准";
@@ -1259,23 +1309,35 @@ public static class FlangeAutoSizer
                 // 同一个解的 ②″ = 600 K、②′ = −591 W —— 全线倒灌，方案完全不可用。
                 // 若只报「③ 达标」，工程师会把它当成可行方案。
                 // ⇒ 达标之后**再看一眼判据表**，不过就明说是哪几条、以及为什么不是加减厚度能解决的。
+                // ★ 2026-09-14 Opus 5（复审）：这段经 autoNote 原样进界面。原文三个毛病一起改：
+                //   ① 判据名印 c.Name（带代号）⇒ 走 Criteria.Plain；
+                //   ② 开头恒写「③ 达标」—— 不管靶到底达没达标都这么写（bad 非空就进来）；
+                //   ③ R48 B 之后同一句里会出现「③ 达标」（旧判法的增量温降）与卡交付的冷侧新判据不过，读起来自相矛盾。
+                //   ⇒ 写全名、按实际写达标与否，并明说本器追的是旧判法的靶，不追热偶读数基准的两条。
+                bool dipMet = worst < opt.TolK;
                 var bad = verify.Checks
                     .Where(c => c.Kind != CheckKind.Reference && (!c.Ok || c.Undetermined))
-                    .Select(c => $"{c.Name}={c.Actual:0.0}/{c.Limit:0.0}")
+                    .Select(c => $"{Criteria.Plain(c.Name)}={c.Actual:0.0}/{c.Limit:0.0}")
                     .ToArray();
                 if (bad.Length > 0)
                 {
                     last.Converged = false;
                     last.Message +=
-                        "；★ **③ 达标但整线判据不过**：" + string.Join("、", bad) +
-                        "。本器只调**厚度**，管不到 ②′/②″ —— 那两条在完整控制律里靠" +
-                        "「管孔渐变环倍率」与「逐片舌保温」调，不是加减厚度能补的。" +
+                        $"；★ **本器的靶（法兰增量温降，旧判法）{(dipMet ? "达标" : "未达标")}，但整线判据不过**：" + string.Join("、", bad) +
+                        "。本器只调**厚度**、只追旧判法的增量温降靶，管不到管孔净流入，也不追卡交付的「最热铂高出热偶读数」「管根低于热偶读数」" +
+                        "（它们的基准是热偶读数）—— 那几条在完整求解里靠「管孔渐变环倍率」「逐片舌保温」「板厚」一起调，不是只加减厚度能补的。" +
                         " ⇒ 用「载入设计记录 → 核算整线」比对，或回图上改几何（环 / 槽位 / 舌长）。";
                 }
             }
         }
         catch (OperationCanceledException) { throw; }
         catch { /* 复核失败就保留搜索期的结果，并在下面注明 */ }
+
+        if (levelUndetWhy.Length > 0)
+        {
+            last.Converged = false;
+            last.Message += "　✗ **判不了，停止迭代**：" + levelUndetWhy + " ⇒ 不算达标（判不了不算过）。";
+        }
 
         // 汇报最终的各级厚度
         var sb = new System.Text.StringBuilder(last.Message);
@@ -1317,8 +1379,104 @@ public static class FlangeAutoSizer
     /// 「新加了字段，一处拷了另一处没拷」——
     /// 而那种错误**不报错**，只是默默地用了默认值。
     /// ⚠ 它是**逐字段手写**的：LineCase 新增字段时必须同步加到这里，
-    ///   `LineCaseCloneTests` 盯着这件事。
+    ///   `LineCaseCloneTests` 盯着这件事（2026-09-15 Opus 5（J 路）：此前这个测试并不存在，这句注释是空头支票；现已补上，反射枚举全部公开字段与可写属性）。
     /// </summary>
+    /// <summary>
+    /// ★ R47 C（2026-09-13）：把 <see cref="Options.FinalMeshFineMm"/> 那组「终局细网格」口径套到算例上。
+    /// 没设（≤ 0）就原样返回；设了就返回一份副本，中带／内带都换成终局口径（内带没给就跟中带走）。
+    /// 单独成方法是为了让门（CliUiParityTests「细网格重解格数随 fineMm 变」）不必跑整线解就能钉住它。
+    /// </summary>
+    public static LineCase ApplyFinalMesh(LineCase c, Options opt)
+    {
+        if (opt is null || !(opt.FinalMeshFineMm > 0)) return c;
+        var lc = CloneCase(c);
+        // ★★★★★ R48 续（2026-09-14，Opus 5）：**这里此前不缩粗区 —— 图纸路径上同一个病还活着。**
+        //
+        //   原来直接写四个字段，唯独不动 MeshCoarseMm ⇒ 它留在 LineCase 默认 11 mm
+        //   ⇒ 细粗比随加密从 11 变 22 变 44，正是 R48 判定为事故根因的那件事，
+        //     而解析路径（Solver）09-13 就修了，**图纸路径整份留着**。
+        //   同时本方法上面的注释还宣称「与加密复算同口径 —— 求根的网格与判决的网格才是同一张」，
+        //   而图纸路径的**判决**那一侧（LineDesignPage 的加密复算工厂）走的是 RefineWholeMesh，
+        //   粗区是按比例缩的 ⇒ 同样标称 0.5 mm，求根 22 倍、复核 5.5 倍，**注释与实现相反**。
+        //   ⚠ 这一处是**生产路径**（图纸路径的「细网格重解」走 SolveByLevel → 本方法）；
+        //     同一批里 LevelSolver 也有同样两处，但它生产代码零调用，另行标注。
+        MeshAdapt.RefineWholeMesh(lc, opt.FinalMeshFineMm,
+                                  opt.FinalMeshFineRadiusMm, opt.FinalMeshInnerRadiusMm);
+        // 分区加密的老口径出口：内带与中带不同尺寸时才用得上（整档一起加密时它等于中带，这行不做事）
+        if (opt.FinalMeshInnerMm > 0 && Math.Abs(opt.FinalMeshInnerMm - opt.FinalMeshFineMm) > 1e-9)
+            lc.MeshInnerMm = opt.FinalMeshInnerMm;
+        return lc;
+    }
+
+    /// <summary>
+    /// 全精度复核（Verify）：各片抽热偏离靶的最大值 W。2026-09-15 Opus 5（J 路）：从 Verify 搬出，门调同一份。
+    /// ★ 合并把关待办 P1-8：任一片抽热 NaN ⇒ NaN（判不了）。原式 `Flanges.Max(...)`：.NET 的 Enumerable.Max 跳过 NaN（只有全是 NaN 才回 NaN），
+    ///   一片算不出、其余在靶上 ⇒ worst = 0 ⇒ `worst &lt; DrawTolW` 为真 ⇒ 当达标（deliverable/J路_J7_定尺寸器判定式遇NaN_本次开跑于2026-09-15_190531.txt）。
+    /// </summary>
+    public static double DrawOffTargetWorstW(LineResult v, double targetW)
+        => v.Flanges.Any(f => double.IsNaN(f.QFromTubeW)) ? double.NaN
+         : v.Flanges.Length == 0 ? 0 : v.Flanges.Max(f => Math.Abs(targetW - f.QFromTubeW));
+
+    /// <summary>
+    /// 逐级定厚的全精度复核：各段法兰增量温降（旧判法）超出靶的最大值 K。2026-09-15 Opus 5（J 路）：搬出。
+    /// ★ 合并把关待办 P1-8：任一段增量温降 NaN ⇒ NaN（判不了）；原式 Math.Max(0, NaN) = NaN 之后被 Enumerable.Max 跳过，同上当达标（同一份实验文件）。
+    /// </summary>
+    public static double DipOffTargetWorstK(LineResult v, double targetK)
+        => v.Segments.Any(x => double.IsNaN(x.FlangeDipK)) ? double.NaN
+         : v.Segments.Length == 0 ? 0 : v.Segments.Max(x => Math.Max(0.0, x.FlangeDipK - targetK));
+
+    /// <summary>
+    /// 一片各级峰值温度里最热的 °C（加厚试探与原网格复核用）。2026-09-15 Opus 5（J 路）：搬出。
+    /// ★ 合并把关待办 P1-8：任一级 NaN ⇒ NaN（判不了）；原式跳过 NaN，全是 NaN 时回 −∞ ⇒ 二分里 `HotAt ≤ 阈值` 为真 ⇒ 当「压住了」（同一份实验文件）。没有级（空数组）仍回 −∞。
+    /// </summary>
+    public static double LevelHottestC(FlangeOut ff)
+    {
+        if (ff.LevelTMaxC.Any(double.IsNaN)) return double.NaN;
+        // 2026-09-17 Opus 5（J 路，J7 复核「应修 5」）：上一行早返回之后，这里原来还留着 `if (!double.IsNaN(...))` ——
+        //   进不来的死代码，读的人会以为「NaN 级在这里被跳过」（正是改动前那条病）。删掉，行为逐位不变。
+        double hot = double.NegativeInfinity;
+        for (int m = 0; m < ff.LevelTMaxC.Length; m++) hot = Math.Max(hot, ff.LevelTMaxC[m]);
+        return hot;
+    }
+
+    /// <summary>
+    /// 加厚试探的二分：在「加到工艺上界 <paramref name="hiK"/> 已经凉下来了」之后，找**最小**够用的倍数（最省铂）。
+    /// 2026-09-17 Opus 5（J 路，J7 复核）：从 <see cref="SolveByLevel"/> 原样提出来（步数、步长门槛、比较式逐位不变），**外加一道 NaN 闸**。
+    ///
+    /// ★ 病（复核查出，改动前后都在）：原式 <c>if (HotAt(mid) &lt;= 阈值) hi = mid; else lo = mid;</c> ——
+    ///   <see cref="LevelHottestC"/> 现在任一级 NaN 就回 NaN，而 <c>NaN &lt;= 阈值</c> 为 <b>假</b> ⇒ 走 <c>lo = mid</c>，
+    ///   **把「判不了」当成「还过热」**；出口照印「压住了（最小够用的那一档，再薄就过热）」，而那一档一次都没量出来。
+    ///   方向上它比改前安全（偏厚、费铂），但仍是「判不了当结论」——本项目不许。
+    /// ⇒ 中间档出 NaN 就 <see cref="Result.Undetermined"/>：调用方按「判不了」收尾，不许印实测口吻的判词。
+    /// <paramref name="hotAt"/> 是「把这一级乘 k 之后本片各级峰值最高的那个温度 °C」（生产传的是粗网格试探解）。
+    /// </summary>
+    public readonly struct RaiseFactor
+    {
+        /// <summary>二分给出的倍数（判不了时是当前上界，调用方不该拿它当结论）</summary>
+        public readonly double K;
+        /// <summary>中间档算不出温度（NaN）⇒ 最小够用的那一档判不了</summary>
+        public readonly bool Undetermined;
+        /// <summary>判不了时，是在哪个倍数上算不出来的（NaN = 没发生）</summary>
+        public readonly double UndetAtK;
+        public RaiseFactor(double k, bool undet, double undetAtK) { K = k; Undetermined = undet; UndetAtK = undetAtK; }
+    }
+
+    /// <summary>见 <see cref="RaiseFactor"/>。</summary>
+    public static RaiseFactor MinRaiseFactor(Func<double, double> hotAt, double hiK, double limitC)
+    {
+        double lo = 1.0, hi = hiK;
+        // ★ 4 步够了（2026-09-03）：每步都是一次解，8 步的精度
+        //   （倍数 ±0.4 %）远细于图纸 0.01 mm 的格，白花四次解。
+        for (int it = 0; it < 3 && hi - lo > 0.08; it++)
+        {
+            double mid = 0.5 * (lo + hi);
+            double hot = hotAt(mid);
+            if (double.IsNaN(hot)) return new RaiseFactor(hi, true, mid);
+            if (hot <= limitC) hi = mid; else lo = mid;
+        }
+        return new RaiseFactor(hi, false, double.NaN);
+    }
+
     public static LineCase CloneCase(LineCase c) => new()
     {
         // ⚠ SegLengthMm 现在是**逐段数组**（用户 2026-09-03）。这里必须 Clone ——
@@ -1332,10 +1490,37 @@ public static class FlangeAutoSizer
         FlangeFile3dm = c.FlangeFile3dm, ThicknessScale = c.ThicknessScale,
         LevelScale = c.LevelScale, LevelThicknessMm = c.LevelThicknessMm,
         ThicknessStepMm = c.ThicknessStepMm,
+        // R47 B（2026-09-13）：图纸路径的逐片输入也要带过去，否则定尺寸里的副本退回裸舌／默认板
+        FlangeFields = c.FlangeFields, GeomForJudge = c.GeomForJudge,
+        TabInsul3dmPerPlateMm = c.TabInsul3dmPerPlateMm, TabInsul3dmMm = c.TabInsul3dmMm,
+        DiscInsul3dmPerPlateMm = c.DiscInsul3dmPerPlateMm,   // R48（2026-09-14，Opus 5）：图纸路径逐片圆盘保温，漏抄则副本退回整线值
         MeshFineMm = c.MeshFineMm, MeshCoarseMm = c.MeshCoarseMm,
         MeshFineRadiusMm = c.MeshFineRadiusMm,
         MeshInnerMm = c.MeshInnerMm, MeshInnerRadiusMm = c.MeshInnerRadiusMm,
         GlassInC = c.GlassInC, GlassOutMeasuredC = c.GlassOutMeasuredC,
-        Base = c.Base, BaselineMassG = c.BaselineMassG, CheckRamp = c.CheckRamp
+        Base = c.Base, BaselineMassG = c.BaselineMassG, CheckRamp = c.CheckRamp,
+        // ★ R48（2026-09-14，Opus 5）：工况位跟着副本走 —— 漏了它，定尺寸器里的副本悄悄变回带玻璃稳态。
+        //   2026-09-14 Opus 5（R48 审查第 9 条改口）：CloneCase **不复制** BaselineRootC；本类另在跨轮处传缓存（lc.BaselineRootC = baseA，
+        //   baseA = lc.BaselineRootC），那些副本都来自同一个 baseCase、工况位相同，所以不会混。以后有人把不同工况的算例接进同一次运行，那两处要带上工况。
+        //   控温点来源只作记录（控温点本身随 SetpointC 已带过来）。
+        EmptyTube = c.EmptyTube, EmptyTubeSetpointFrom = c.EmptyTubeSetpointFrom,
+        // R48 B（2026-09-14 Opus 5）：判据限值也要带过去 —— 此前一条都没拷，副本一律退回默认值（改过限值的算例在定尺寸／加密复算里会静默换回默认）。
+        HotOverTcMaxK = c.HotOverTcMaxK, ColdUnderTcMaxK = c.ColdUnderTcMaxK,
+        DiscOverTempMaxK = c.DiscOverTempMaxK, RootDeltaMaxK = c.RootDeltaMaxK,
+        // ★★ 2026-09-15 Opus 5（J 路，合并把关待办 P1-1）：下面这批此前都没拷，副本静默退回 LineCase 缺省值。
+        //   最要命的是 JDesignAPerMm2：判据「法兰截面 J」的限值 = J+1 只从它来，漏拷 ⇒ 图纸路径的细网格重解（ApplyFinalMesh）与加密复算工厂（LineDesignPage.VerifyFactory3dm）
+        //   一律按 J=10 判（实测 J 设 8：截面 J 9.993，直接解限 9 不过、副本限 11 过 —— deliverable/J路_J2_图纸路径截面J限值_本次开跑于2026-09-15_190514.txt）。
+        //   其余：逐片夹持温度、升温四量（进 ① 升温与设计电流）、舌片自由段下界、外层耦合五个数值参数、解析板件、拒算原因。
+        //   上面注释里说的 `LineCaseCloneTests` 此前并不存在；现由 LineCaseCloneTests 反射枚举 LineCase 全部公开字段与可写属性，漏一个就红。
+        JDesignAPerMm2 = c.JDesignAPerMm2,
+        FlangePlates = c.FlangePlates, RefusedWhy = c.RefusedWhy,
+        ClampTempC = c.ClampTempC,
+        RampFromC = c.RampFromC, RampTargetC = c.RampTargetC, RampHours = c.RampHours, RampRateKPerH = c.RampRateKPerH,
+        FreeTabMinMm = c.FreeTabMinMm,
+        CoupleRelax = c.CoupleRelax, CoupleMaxRounds = c.CoupleMaxRounds, UseAnderson = c.UseAnderson,
+        AndersonDepth = c.AndersonDepth, AndersonKappa = c.AndersonKappa, CoupleTolK = c.CoupleTolK,
+        // 故意不拷的三个（LineCaseCloneTests 按名单核「确实没拷」）：
+        //   BaselineRootC、WarmStart —— 缓存与热启动状态，只对同一几何成立，本类在跨轮处显式传（见上面 R48 审查第 9 条那段）；
+        //   CoupleTrace —— 探针的逐轮回调，副本是定尺寸器的试探解，挂上会把别的解的轮次混进探针记录（它的注释：不许在生产链路里挂）。
     };
 }
