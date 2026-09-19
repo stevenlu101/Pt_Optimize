@@ -116,7 +116,10 @@ public static class DesignCurrent
                 var g = P(j);
                 double vol = CoupledSolver.PlateVolumeMm3(g);
                 double area = CoupledSolver.PlateArea(g, 20001);
-                double aIns = AreaFromX(g, g.InsulBoundaryXResolved);
+                // ★ R48 续（2026-09-14，Opus 5）：保温面积按板件的唯一判定（FlangePlate.UnderDiscInsulation）划 ——
+                //   默认分界按半径（圆盘整块包法兰保温），显式分界仍按 x。本块是对照模型、不进尺寸链，
+                //   改它不动设计电流；改是为了对照值与主解（ShellThermal）同一个保温口径。
+                double aIns = double.IsNaN(g.InsulBoundaryXMm) ? AreaWithinDisc(g) : AreaFromX(g, g.InsulBoundaryXResolved);
                 double aBare = Math.Max(0, area - aIns);
                 bool shared = j > 0 && j < n;
 
@@ -148,6 +151,28 @@ public static class DesignCurrent
         }
         for (int j = 0; j <= n; j++) res.PlateA[j] = LineSolver.JointCurrentA(res.SegPeakA, j);
         return res;
+    }
+
+    /// <summary>
+    /// R48 续（2026-09-14，Opus 5）：**圆盘整块**（r ≤ 盘半径）的板面积 mm²（扣管孔）——
+    /// 保温默认按半径划时，法兰保温包的就是这一块。与 <see cref="AreaFromX"/> 同一积分法：
+    /// 逐 x 取「板外形半宽」与「盘圆半宽」的较小者，扣管孔。舌片伸出盘圆的部分不计。
+    /// </summary>
+    public static double AreaWithinDisc(FlangePlate g, int n = 20001)
+    {
+        double r = g.DiscRadiusMm;
+        if (!(r > 0)) return 0;
+        double x0 = Math.Max(g.TabTipXMm, -r), x1 = r;
+        if (!(x1 > x0)) return 0;
+        double dx = (x1 - x0) / (n - 1), a = 0;
+        for (int i = 0; i < n; i++)
+        {
+            double x = x0 + i * dx, w = dx * (i == 0 || i == n - 1 ? 0.5 : 1.0);
+            double circ = Math.Sqrt(Math.Max(0, r * r - x * x));
+            double hole = Math.Abs(x) <= g.HoleRadiusMm ? Math.Sqrt(g.HoleRadiusMm * g.HoleRadiusMm - x * x) : 0;
+            a += 2 * Math.Max(0, Math.Min(g.HalfWidth(x), circ) - hole) * w;
+        }
+        return a;
     }
 
     /// <summary>x ≥ xFrom 那部分的板面积 mm²（扣管孔），与 <see cref="CoupledSolver.PlateArea"/> 同一积分法。</summary>
