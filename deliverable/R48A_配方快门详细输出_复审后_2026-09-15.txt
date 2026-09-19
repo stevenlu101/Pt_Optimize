@@ -1,0 +1,70 @@
+D:\WinForm\r48_A\Pt_Optimize.Tests\bin\Debug\net8.0-windows\Pt_Optimize.Tests.dll (.NETCoreApp,Version=v8.0)的测试运行
+VSTest 版本 18.0.1 (x64)
+
+正在启动测试执行，请稍候...
+总共 1 个测试文件与指定模式相匹配。
+D:\WinForm\r48_A\Pt_Optimize.Tests\bin\Debug\net8.0-windows\Pt_Optimize.Tests.dll
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.28)
+[xUnit.net 00:00:00.04]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:00.12]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:00.13]   Starting:    Pt_Optimize.Tests
+  已通过 PtOptimize.Tests.R48ClampRecipeTests.c_整面接触格全部是电极且钉在夹持温度_定温热场闭合 [849 ms]
+  标准输出消息:
+ 导航网格：单元 1306　整面格 300　抽热 +12.2253 W　铜排带走 186.87 W　发热 391.01 W　残差 -0.000368 W
+ h=1 分级：单元 4722　整面格 840　抽热 +12.5591 W　铜排带走 188.21 W　发热 389.60 W　残差 -0.001112 W
+
+
+  已通过 PtOptimize.Tests.R48ClampRecipeTests.f_LineRunner建网格不覆写配方开关 [13 ms]
+  已通过 PtOptimize.Tests.R48ClampRecipeTests.d_显式老口径与改动前一致 [1 s]
+  标准输出消息:
+ 导航网格 老口径：单元 1006　外圈 36　记录：压接边界 x = -100 已落成节点
+ 导航网格 老口径 定温：舌端均温 450（面积加权会是 450）　抽热 -9.645643968612903　铜排等效长 0
+ 导航网格 老口径 自由端：舌端均温 1041.8128051597412（面积加权会是 1048.2643959335073）　抽热 -54.527245549214356　铜排等效长 0
+ 导航网格 老口径 热导：舌端均温 180.89233437852974（面积加权会是 195.5828637947671）　抽热 -5.7002974071605745　铜排等效长 1.8722891720599724
+ h=1 分级 老口径：单元 4122　抽热 -9.225247067674745 W
+ h=1 分级 显式 3 mm 细带、外圈：单元 4722　抽热 -7.3434 W
+
+
+  已通过 PtOptimize.Tests.R48ClampRecipeTests.h_整线网格带整面接触与细带_集总参考量排除了压接格 [7 s]
+  标准输出消息:
+ LineRunner.Run：7.1 s　Ok True　
+ 入口：单元 1306　压接格 300　记录：压接边界 x = -100 已落成节点；压接边界两侧各 6 mm 铺细步 2 mm
+ 出口：单元 1306　压接格 300　记录：压接边界 x = -100 已落成节点；压接边界两侧各 6 mm 铺细步 2 mm
+ 热稳定：判据表 8.036370539797604　排除 8.036370539797604　不排除 10.034564602019108
+ 升温法兰−管：判据表 413.92853382097974　排除 413.92853382097974　不排除 240.49713615602127
+
+
+  已通过 PtOptimize.Tests.R48ClampRecipeTests.a_整面接触格数等于形心在压接段内的格数_远多于外圈 [415 ms]
+  标准输出消息:
+ h=2：单元 1966　整面 600　形心在段内 600　闭式 600　老口径外圈 68　比 8.82
+ h=1：单元 7782　整面 2400　形心在段内 2400　闭式 2400　老口径外圈 138　比 17.39
+
+
+  已通过 PtOptimize.Tests.R48ClampRecipeTests.g_证据探针建网格必须显式写明两个开关 [32 ms]
+  标准输出消息:
+ 生产代码引的证据文件 14 个；受管探针 33 个：R47MeshDiagInstrumentTests.cs、R48ClampBandSelfSimilarTests.cs、R48ClampFullFaceTests.cs、R48ClampPhaseTests.cs、R48ClampRecipeImpactTests.cs、R48CoupleContinuationTests.cs、R48CoupleTolLadderTests.cs、R48DescentWindowTests.cs、R48DiscInsulLeverTests.cs、R48DiscZoneCoverageTests.cs、R48ErrorBudgetTests.cs、R48FaceDirichletTests.cs、R48HoleBandTests.cs、R48InsulBlendTests.cs、R48InsulBoundaryScanTests.cs、R48InsulRuleABTests.cs、R48InsulWindowTests.cs、R48JointCurrentCheckTests.cs、R48MeshStructureTests.cs、R48MidBandConvergenceTests.cs、R48NavGridBiasTests.cs、R48PerPlateGridTests.cs、R48Plate2OnlyTests.cs、R48PreResolveProbesTests.cs、R48RingResolutionTests.cs、R48SchemeATests.cs、R48SecondBatchTests.cs、R48TabRootConditionTests.cs、R48ThermalJitterTests.cs、R48ThickAnomalyTests.cs、R48TrootWiringTests.cs、R48TubeInsulScanTests.cs、R48UniformQuarterTests.cs；建网格调用 31 处
+ 配方声明引的证据：R48_实验a_压接段相位_2026-09-14.txt、R48_实验b_压接边界落节点_2026-09-14.txt、R48_实验c_温度场台阶抖动_2026-09-14.txt、R48_保温分界混合_门六_2026-09-14.txt、R48_保温分界混合_门七_2026-09-14.txt、R48_压接整面接触AB_2026-09-14.txt、R48_压接细带自相似_2026-09-14.txt、R48_组合配方收敛_2026-09-14.txt
+
+
+  已通过 PtOptimize.Tests.R48ClampRecipeTests.e_压接段盖到管孔时退回只钉外圈_警告进输出且说人话 [9 s]
+  标准输出消息:
+ 网格记录：压接边界 x = 40 不在材料范围内，没加；⚠ 压接长 40 mm 盖到了管孔：这块板没有足够长的舌片可供压接，本片电流与温度结果不可信
+ ⚠ 入口：压接长 40 mm 盖到了管孔：这块板没有足够长的舌片可供压接，本片电流与温度结果不可信
+⚠ 出口：压接长 40 mm 盖到了管孔：这块板没有足够长的舌片可供压接，本片电流与温度结果不可信
+
+
+[xUnit.net 00:00:19.69]   Finished:    Pt_Optimize.Tests
+  已通过 PtOptimize.Tests.R48ClampRecipeTests.b_不带开关的网格在压接边界两侧自相似细带内是细步 [502 ms]
+  标准输出消息:
+ 导航网格：hFine 2　细带单侧 6　窗口内整格 6 个：2 2 2 1.373 2 2　记录：压接边界 x = -100 已落成节点；压接边界两侧各 6 mm 铺细步 2 mm
+ 导航网格：不铺细带时窗口里最大格 11 mm　记录：压接边界 x = -100 已落成节点
+ h=1 分级：hFine 1　细带单侧 3　窗口内整格 6 个：1 1 1 0.723 1 1.011　记录：压接边界 x = -100 已落成节点；压接边界两侧各 3 mm 铺细步 1 mm
+ h=1 分级：不铺细带时窗口里最大格 5.5 mm　记录：压接边界 x = -100 已落成节点
+ 图纸路径缺省入口：单元 1306　压接格 300　外圈 48　记录：压接边界 x = -100 已落成节点；压接边界两侧各 6 mm 铺细步 2 mm
+
+
+
+测试运行成功。
+测试总数: 8
+     通过数: 8
+总时间: 19.9587 秒

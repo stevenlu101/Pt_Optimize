@@ -70,9 +70,7 @@ public static class DesignScreen
         double rRef = gen / (refCurrentA * refCurrentA);          // Ω @ tRef, refTempC
 
         double aDisc = 0, aTab = 0;
-        if (!double.IsNaN(tangentX))
-            for (int i = 0; i < mesh.CellCount; i++)
-                if (mesh.Centroid[i].X >= tangentX) aDisc += mesh.Area[i]; else aTab += mesh.Area[i];
+        if (!double.IsNaN(tangentX)) (aDisc, aTab) = AreaByTangent(mesh, tangentX);
 
         return new ShapeFactors
         {
@@ -83,6 +81,24 @@ public static class DesignScreen
             ShapeJ = sc.JMaxAPerMm2 * tRef / refCurrentA,
             ShapeJMean = sc.JMeanAPerMm2 * tRef / refCurrentA
         };
+    }
+
+    /// <summary>
+    /// 盘/舌面积 mm²（单面）按**切点**分：形心 x ≥ 切点 = 圆盘，否则舌片。<see cref="Extract"/> 与 LineRunner.FlangeLumped 共用这一份
+    /// （R48 2026-09-14 Opus 5 复审补：原先式子只在 Extract 里，LineRunner 为了这两个面积整个调 Extract、白解一遍电流场）。
+    /// <paramref name="excludeClampCells"/> = true 时跳过 <see cref="ShellMesh.ClampCell"/> 标记的压接格（整面接触口径下压接段在铜排下、不在铂的热平衡里）；
+    /// 网格不带压接格（老口径）时与 false 逐位相同。false 时累加顺序与改动前 Extract 里的循环逐字相同。
+    /// </summary>
+    public static (double DiscMm2, double TabMm2) AreaByTangent(ShellMesh mesh, double tangentX, bool excludeClampCells = false)
+    {
+        bool skip = excludeClampCells && mesh.ClampCell.Length == mesh.CellCount;
+        double aDisc = 0, aTab = 0;
+        for (int i = 0; i < mesh.CellCount; i++)
+        {
+            if (skip && mesh.ClampCell[i]) continue;
+            if (mesh.Centroid[i].X >= tangentX) aDisc += mesh.Area[i]; else aTab += mesh.Area[i];
+        }
+        return (aDisc, aTab);
     }
 
     /// <summary>

@@ -1,0 +1,2437 @@
+diff --git a/Pt_Optimize.Tests/HolePlacementTests.cs b/Pt_Optimize.Tests/HolePlacementTests.cs
+index d31730e..af82f35 100644
+--- a/Pt_Optimize.Tests/HolePlacementTests.cs
++++ b/Pt_Optimize.Tests/HolePlacementTests.cs
+@@ -23,7 +23,8 @@ namespace PtOptimize.Tests;
+ /// </summary>
+ public class HolePlacementTests
+ {
+-    private static FlangePlate Heater1(double holeX, double holeR) => new()
++    // internal（2026-09-14 Opus 5）：R48ClampRecipeImpactTests 拆孔位对比那一行时调同一块板与同一个解法，不另抄一份
++    internal static FlangePlate Heater1(double holeX, double holeR) => new()
+     {
+         DiscRadiusMm = 60, HoleRadiusMm = 26,
+         TabEndXMm = -199.5, TabEndHalfWidthMm = 40,
+@@ -34,7 +35,7 @@ public class HolePlacementTests
+             : Array.Empty<FlangePlate.TabHole>(),
+     };
+ 
+-    private static (double Q, double JPeak, double Vol, string Err) Run(FlangePlate g)
++    internal static (double Q, double JPeak, double Vol, string Err) Run(FlangePlate g)
+     {
+         try
+         {
+diff --git a/Pt_Optimize.Tests/R47MeshDiagInstrumentTests.cs b/Pt_Optimize.Tests/R47MeshDiagInstrumentTests.cs
+index f3fe3b5..ca41822 100644
+--- a/Pt_Optimize.Tests/R47MeshDiagInstrumentTests.cs
++++ b/Pt_Optimize.Tests/R47MeshDiagInstrumentTests.cs
+@@ -107,14 +107,15 @@ public class R47MeshDiagInstrumentTests
+                 double step = Math.Min(1.0, hF * k / 4.0);
+                 var fld = AnalyticSurrogate.Rasterize(g, step, 2.0);
+                 R($"倍率 {k}　新轴 精确几何（4×4 子采样）", BuildExactOnNewAxis(g, hF * k, hC * k, rF, cl));
+-                R($"倍率 {k}　新轴 解析 Build", FlangeMesher.Build(g, 0, hF * k, hC * k, rF, cl));
+-                R($"倍率 {k}　新轴 图纸 BuildFromField 步 {step}", FlangeMesher.BuildFromField(fld, g.HoleRadiusMm, 0, hF * k, hC * k, rF, cl));
+-                R($"倍率 {k}　新轴 图纸 + 形心取厚", WithCentroidThickness(FlangeMesher.BuildFromField(fld, g.HoleRadiusMm, 0, hF * k, hC * k, rF, cl), g));
++                // 口径钉住（2026-09-14 Opus 5）：生产默认已改为压接整面接触 + 自相似压接细带，本探针显式钉回改动前口径（只钉外圈、不铺细带），deliverable 里同名证据文件不换口径
++                R($"倍率 {k}　新轴 解析 Build", FlangeMesher.Build(g, 0, hF * k, hC * k, rF, cl, clampBandMm: 0, clampFullFace: false));
++                R($"倍率 {k}　新轴 图纸 BuildFromField 步 {step}", FlangeMesher.BuildFromField(fld, g.HoleRadiusMm, 0, hF * k, hC * k, rF, cl, clampBandMm: 0, clampFullFace: false));
++                R($"倍率 {k}　新轴 图纸 + 形心取厚", WithCentroidThickness(FlangeMesher.BuildFromField(fld, g.HoleRadiusMm, 0, hF * k, hC * k, rF, cl, clampBandMm: 0, clampFullFace: false), g));
+                 if (k == 1.0)
+                 {
+                     var fld2 = AnalyticSurrogate.Rasterize(g, 0.1, 2.0);
+-                    R($"倍率 {k}　新轴 图纸 步 0.1", FlangeMesher.BuildFromField(fld2, g.HoleRadiusMm, 0, hF * k, hC * k, rF, cl));
+-                    R($"倍率 {k}　新轴 图纸 步 0.1 + 形心取厚", WithCentroidThickness(FlangeMesher.BuildFromField(fld2, g.HoleRadiusMm, 0, hF * k, hC * k, rF, cl), g));
++                    R($"倍率 {k}　新轴 图纸 步 0.1", FlangeMesher.BuildFromField(fld2, g.HoleRadiusMm, 0, hF * k, hC * k, rF, cl, clampBandMm: 0, clampFullFace: false));
++                    R($"倍率 {k}　新轴 图纸 步 0.1 + 形心取厚", WithCentroidThickness(FlangeMesher.BuildFromField(fld2, g.HoleRadiusMm, 0, hF * k, hC * k, rF, cl, clampBandMm: 0, clampFullFace: false), g));
+                 }
+             }
+         }
+diff --git a/Pt_Optimize.Tests/R48ClampBandSelfSimilarTests.cs b/Pt_Optimize.Tests/R48ClampBandSelfSimilarTests.cs
+index def0bee..ff821f0 100644
+--- a/Pt_Optimize.Tests/R48ClampBandSelfSimilarTests.cs
++++ b/Pt_Optimize.Tests/R48ClampBandSelfSimilarTests.cs
+@@ -57,12 +57,14 @@ public class R48ClampBandSelfSimilarTests
+             var g = d.Plate(j, d.DiscFloorMm(p));
+             g.HoleRadiusMm = lcH.TubeIdMm * 0.5 + lcH.WallMm;
+             ShellMesh m;
+-            if (grp == "均匀") m = FlangeMesher.Build(g, 0, h, h, 1e6, lcH.Base.BusbarClampLengthMm);
++            // 口径钉住（2026-09-14 Opus 5）：生产默认已改为压接整面接触 + 自相似压接细带，本探针显式钉回改动前口径（只钉外圈、不铺细带），deliverable 里同名证据文件不换口径
++            //   （本文件是 FlangeMesher.BuildFromField 配方 ④ 的依据，它量的是只钉外圈口径；整面接触下的组合验证另见 R48ClampRecipeImpactTests、新文件名）
++            if (grp == "均匀") m = FlangeMesher.Build(g, 0, h, h, 1e6, lcH.Base.BusbarClampLengthMm, clampBandMm: 0, clampFullFace: false);
+             else
+             {
+                 MeshAdapt.RefineWholeMesh(lcH, h, radius);
+                 m = FlangeMesher.Build(g, 0, lcH.MeshFineMm, lcH.MeshCoarseMm, lcH.MeshFineRadiusMm, lcH.Base.BusbarClampLengthMm,
+-                                       lcH.MeshInnerMm, lcH.MeshInnerRadiusMm, clampBandMm: grp == "固定3mm" ? 3.0 : 3.0 * h);
++                                       lcH.MeshInnerMm, lcH.MeshInnerRadiusMm, clampBandMm: grp == "固定3mm" ? 3.0 : 3.0 * h, clampFullFace: false);
+             }
+             double tSet = d.SetpointC[Math.Min(j, d.SetpointC.Length - 1)];
+             var sc = ShellCurrent.SolveFor(lcH, m, iJ[j], Materials.PtResistivity(tSet) * 1e3, tSet);
+diff --git a/Pt_Optimize.Tests/R48ClampFullFaceTests.cs b/Pt_Optimize.Tests/R48ClampFullFaceTests.cs
+index 4e093a6..232cb96 100644
+--- a/Pt_Optimize.Tests/R48ClampFullFaceTests.cs
++++ b/Pt_Optimize.Tests/R48ClampFullFaceTests.cs
+@@ -68,7 +68,8 @@ public class R48ClampFullFaceTests
+                     var g = lc.FlangePlates[j];
+                     var (xa, za) = FlangeMesher.AnchorsOf(g);
+                     var tf = FlangeMesher.Rasterize(g, Math.Max(h / 4, 0.02));
+-                    var m = FlangeMesher.BuildFromField(tf, g.HoleRadiusMm, 0, h, h, 1e6, clampLen, h, 0, g.TwoTabs, xa, za, clampFullFace: full);
++                    // 口径钉住（2026-09-14 Opus 5）：生产默认改为铺自相似压接细带后，本探针显式不铺（跑出 AB 文件时细带缺省是 0），同名证据文件不换口径
++                    var m = FlangeMesher.BuildFromField(tf, g.HoleRadiusMm, 0, h, h, 1e6, clampLen, h, 0, g.TwoTabs, xa, za, clampBandMm: 0, clampFullFace: full);
+                     double tSet = d.SetpointC[Math.Min(j, d.SetpointC.Length - 1)];
+                     var sc = ShellCurrent.SolveFor(lc, m, iA, Materials.PtResistivity(tSet) * 1e3, tSet);
+                     var p2 = SegmentSolver.Clone(lc.Base); p2.TSetC = tSet;
+diff --git a/Pt_Optimize.Tests/R48ClampPhaseTests.cs b/Pt_Optimize.Tests/R48ClampPhaseTests.cs
+index 3d1ebd3..0f6bff8 100644
+--- a/Pt_Optimize.Tests/R48ClampPhaseTests.cs
++++ b/Pt_Optimize.Tests/R48ClampPhaseTests.cs
+@@ -137,8 +137,9 @@ public class R48ClampPhaseTests
+                 foreach (double R in new[] { 50.0, 59.0, 90.0, double.PositiveInfinity })
+                 {
+                     bool uni = double.IsPositiveInfinity(R);
++                    // 口径钉住（2026-09-14 Opus 5）：生产默认已改为压接整面接触 + 自相似压接细带，本探针显式钉回改动前口径（只钉外圈、不铺细带），deliverable 里同名证据文件不换口径
+                     var m = FlangeMesher.BuildFromField(tf, holeR, 0, h, uni ? h : coarseRatio * h, uni ? 1e6 : R,
+-                                                        clampLen, h, 0, g.TwoTabs, xa, za);
++                                                        clampLen, h, 0, g.TwoTabs, xa, za, clampBandMm: 0, clampFullFace: false);
+                     var sc = ShellCurrent.SolveFor(lc, m, iA[j], Materials.PtResistivity(tSet) * 1e3, tSet);
+                     var th = ShellThermal.Solve(m, sc.JMagAPerMm2, p2, tRoot[j], g.InsulBoundaryXResolved, g.TwoTabs,
+                                                 tabBoundaryX: g.Tangent().X, tabInsulThickMm: d.TabInsulMm[j],
+diff --git a/Pt_Optimize.Tests/R48ClampRecipeImpactTests.cs b/Pt_Optimize.Tests/R48ClampRecipeImpactTests.cs
+new file mode 100644
+index 0000000..df022db
+--- /dev/null
++++ b/Pt_Optimize.Tests/R48ClampRecipeImpactTests.cs
+@@ -0,0 +1,302 @@
++using System;
++using System.Collections.Generic;
++using System.IO;
++using System.Linq;
++using System.Text;
++using PtOptimize.Core;
++using Xunit;
++using Xunit.Abstractions;
++
++namespace PtOptimize.Tests;
++
++/// <summary>
++/// ★★★ R48 判定网格配方（压接整面接触 + 自相似压接细带）进生产默认之后的**补测与影响量**（2026-09-14，Opus 5 写；复审意见要的数）。
++/// 四个探针各写一个**新文件**（不覆盖改动前的证据文件）；每个建网格调用都显式写明两个开关（R48ClampRecipeTests 门 g 守着）。
++///
++///   一  组合配方收敛（四片）→ deliverable/R48_组合配方收敛_2026-09-14.txt
++///       自相似细带的原证据（R48_压接细带自相似_2026-09-14.txt）是在**只钉外圈**口径下量的；复审人在片0 上补量过组合（差 ≤ 0.0064 W），这里补全四片。
++///       设置同 R48ClampBandSelfSimilarTests（误差预算工作点、单片管侧固定），两组：整面接触均匀网格、整面接触 + 自相似细带 + 分级网格；h = 1／0.5／0.25。
++///       跑前写死的判读：四片三档「组合 − 整面均匀」都 ≤ 0.05 W（与 R48_压接细带自相似 同一门槛）⇒ 组合口径成立；
++///       比值只打印不判（复审人量到片0 整面均匀的步长 −0.0098 → +0.0652 W，不单调，比值没有意义）。
++///   二  片0 配方影响 → R48_判定网格配方影响_2026-09-14.txt
++///       只钉外圈 vs 整面（均匀三档）；老口径 vs 各开一个 vs 新配方（分级 h=1、导航网格）：抽热、圆盘区−管温（限值 LineCase.DiscOverTempMaxK）、法兰 J 峰与位置、发热。
++///   三  孔位对比 x = −185 那一行的分解 → R48_孔位对比x185分解_2026-09-14.txt
++///       HolePlacementTests 的板与解法（压接长取 DesignInputs 缺省 3 mm），整面、细带各开各关；每行记孔边最小格边，看各行孔边网格密度是否一致。
++///   四  整线（误差预算设计、导航网格）：整片热稳定与升温两节点「排除压接格」前后 → R48_集总模型排除压接格_2026-09-14.txt
++///       前后两个数由同一个生产函数 LineRunner.FlangeLumped 给（excludeClampCells false／true），并核对判据表里的数就是 true 那一份。
++/// </summary>
++[Trait("速度", "慢")]
++public class R48ClampRecipeImpactTests
++{
++    private readonly ITestOutputHelper _out;
++    public R48ClampRecipeImpactTests(ITestOutputHelper o) { _out = o; }
++
++    // 误差预算工作点：片电流与管根（出处 deliverable/R48_接头电流核对_2026-09-14.txt，R48ErrorBudgetTests／R48ClampBandSelfSimilarTests 同用）
++    private static readonly double[] IJ = { 1213, 1984, 1817, 1022 };
++    private static readonly double[] TRoot = { 1172.63, 1151.19, 1093.09, 1056.80 };
++
++    private static (DesignSpec d, DesignInputs p) Design()
++    {
++        var p = new DesignInputs();
++        var d = DesignSpec.W08.Clone();
++        d.TabThickMm = new[] { 0.73, 1.26, 1.26, 0.73 };
++        d.TabInsulMm = new[] { 4.60, 2.10, 2.90, 7.50 };
++        d.RingMul = new[] { 1.0, 1.0, 1.0, 1.0 };
++        d = d.Fit();
++        d.SizeTongues(p);
++        return (d, p);
++    }
++
++    private static FlangePlate PlateOf(DesignSpec d, DesignInputs p, LineCase lc, int j)
++    {
++        var g = d.Plate(j, d.DiscFloorMm(p));
++        g.HoleRadiusMm = lc.TubeIdMm * 0.5 + lc.WallMm;
++        return g;
++    }
++
++    private Action<string> Writer(string name)
++    {
++        var sb = new StringBuilder();
++        string file = Path.Combine(HandoverDoc.Root(), "deliverable", name);
++        return s =>
++        {
++            _out.WriteLine(s); sb.AppendLine(s);
++            try { File.WriteAllText(file, sb.ToString(), new UTF8Encoding(false)); } catch { }
++        };
++    }
++
++    private sealed record Sol(int Cells, int ClampCells, double Q, double DiscK, double JMax, double JX, double JZ, double QGen, string Note);
++
++    /// <summary>单片解（与 R48ErrorBudgetTests.Solve 同一套调用：SolveFor + ShellThermal，管侧固定、夹持定温）。</summary>
++    private static Sol Solve(DesignSpec d, LineCase lc, int j, ShellMesh m, FlangePlate g)
++    {
++        double tSet = d.SetpointC[Math.Min(j, d.SetpointC.Length - 1)];
++        var sc = ShellCurrent.SolveFor(lc, m, IJ[j], Materials.PtResistivity(tSet) * 1e3, tSet);
++        var p2 = SegmentSolver.Clone(lc.Base); p2.TSetC = tSet;
++        if (j < lc.ClampTempC.Length) p2.BusbarClampTempC = lc.ClampTempC[j];
++        var th = ShellThermal.Solve(m, sc.JMagAPerMm2, p2, TRoot[j], g.InsulBoundaryXResolved, g.TwoTabs,
++                                    tabBoundaryX: g.Tangent().X, tabInsulThickMm: g.TabInsulThickMm,
++                                    discRadiusMm: g.DiscRadiusMm, insulDiscRadiusMm: g.InsulDiscRadiusMm);
++        Assert.True(sc.Converged, $"片{j} 电流场没收敛");
++        Assert.True(th.Converged, $"片{j} 热场没收敛");
++        int iMax = 0;
++        for (int i = 1; i < m.CellCount; i++) if (sc.JMagAPerMm2[i] > sc.JMagAPerMm2[iMax]) iMax = i;
++        return new Sol(m.CellCount, m.ClampCell.Count(b => b), th.QFromTubeW, th.TDiscMaxC - TRoot[j], sc.JMagAPerMm2[iMax],
++                       m.Centroid[iMax].X, m.Centroid[iMax].Z, th.QGenW, m.ClampAnchorNote);
++    }
++
++    private static string Row(string name, Sol s)
++        => $"   {name,-26} {s.Cells,7} 格  压接格 {s.ClampCells,5}  抽热 {s.Q:+0.0000;-0.0000} W  圆盘区−管温 {s.DiscK:+0.000;-0.000} K"
++         + $"  J 峰 {s.JMax:0.00} A/mm²（x {s.JX:0.##}，z {s.JZ:0.##}）  发热 {s.QGen:0.0} W";
++
++    [Fact]
++    public void 一_组合配方收敛_整面均匀对整面自相似细带分级_四片()
++    {
++        var Say = Writer("R48_组合配方收敛_2026-09-14.txt");
++        Say($"R48 组合配方收敛（Opus 5）　{DateTime.Now:yyyy-MM-dd HH:mm}");
++        Say("配方：两组都是压接整面接触。「整面均匀」= 均匀 h、不铺细带（clampBandMm 0、clampFullFace true）；");
++        Say("      「组合」= MeshAdapt.RefineWholeMesh(h) 分级网格 + 自相似压接细带（clampBandMm NaN = 两侧各 3×hFine、clampFullFace true）= 生产配方。");
++        Say("工作点：电流 1213/1984/1817/1022 A，管根 1172.63/1151.19/1093.09/1056.80 °C（R48_接头电流核对_2026-09-14.txt）。");
++        Say("跑前写死的判读：四片三档「组合 − 整面均匀」都 ≤ 0.05 W ⇒ 组合口径成立；比值只打印。");
++        var (d, p) = Design();
++        var (_, radius) = MeshVerify.RequiredMeshFor(d);
++        double[] hs = { 1.0, 0.5, 0.25 };
++        bool ok = true;
++        for (int j = 0; j < 4; j++)
++        {
++            Say("");
++            Say($"── 片{j}");
++            var U = new Dictionary<double, Sol>();
++            var G = new Dictionary<double, Sol>();
++            {
++                var lcN = d.BuildCase(p, checkRamp: false);
++                var gN = PlateOf(d, p, lcN, j);
++                var mN = FlangeMesher.Build(gN, 0, lcN.MeshFineMm, lcN.MeshCoarseMm, lcN.MeshFineRadiusMm, lcN.Base.BusbarClampLengthMm,
++                                            lcN.MeshInnerMm, lcN.MeshInnerRadiusMm, clampBandMm: double.NaN, clampFullFace: true);
++                Say(Row("组合 导航网格（只打印）", Solve(d, lcN, j, mN, gN)));
++            }
++            foreach (double h in hs)
++            {
++                var lcU = d.BuildCase(p, checkRamp: false);
++                var gU = PlateOf(d, p, lcU, j);
++                var mU = FlangeMesher.Build(gU, 0, h, h, 1e6, lcU.Base.BusbarClampLengthMm, clampBandMm: 0, clampFullFace: true);
++                U[h] = Solve(d, lcU, j, mU, gU);
++                Say(Row($"整面均匀 h={h}", U[h]));
++
++                var lcG = d.BuildCase(p, checkRamp: false);
++                MeshAdapt.RefineWholeMesh(lcG, h, radius);
++                var gG = PlateOf(d, p, lcG, j);
++                var mG = FlangeMesher.Build(gG, 0, lcG.MeshFineMm, lcG.MeshCoarseMm, lcG.MeshFineRadiusMm, lcG.Base.BusbarClampLengthMm,
++                                            lcG.MeshInnerMm, lcG.MeshInnerRadiusMm, clampBandMm: double.NaN, clampFullFace: true);
++                G[h] = Solve(d, lcG, j, mG, gG);
++                Say(Row($"组合 h={h}", G[h]) + $"  − 整面均匀 {G[h].Q - U[h].Q:+0.0000;-0.0000} W");
++                if (Math.Abs(G[h].Q - U[h].Q) > 0.05) ok = false;
++            }
++            double RatioOf(Dictionary<double, Sol> s) => (s[0.25].Q - s[0.5].Q) / (s[0.5].Q - s[1.0].Q);
++            Say($"   步长：整面均匀 {U[0.5].Q - U[1.0].Q:+0.0000;-0.0000} → {U[0.25].Q - U[0.5].Q:+0.0000;-0.0000} W（比 {RatioOf(U):0.000}）；"
++              + $"组合 {G[0.5].Q - G[1.0].Q:+0.0000;-0.0000} → {G[0.25].Q - G[0.5].Q:+0.0000;-0.0000} W（比 {RatioOf(G):0.000}）");
++            Say($"   组合 − 整面均匀：{string.Join(" / ", hs.Select(h => (G[h].Q - U[h].Q).ToString("+0.0000;-0.0000")))} W"
++              + (hs.All(h => Math.Abs(G[h].Q - U[h].Q) <= 0.05) ? "　三档都 ≤ 0.05 ✓" : "　**有档 > 0.05**"));
++        }
++
++        // 压接边界两侧的格宽（片0；以 hFine 为单位）：细带是不是自相似，要看网格相对压接边界的位置
++        Say("");
++        Say("── 片0 压接边界 x = 舌尖 + 压接长 两侧的 x 向格宽 ÷ hFine（生产分级轴，组合配方；| 标压接边界）");
++        foreach (double h in new[] { 0.0, 1.0, 0.5, 0.25 })
++        {
++            var lc = d.BuildCase(p, checkRamp: false);
++            if (h > 0) MeshAdapt.RefineWholeMesh(lc, h, radius);
++            var g = PlateOf(d, p, lc, 0);
++            var m = FlangeMesher.Build(g, 0, lc.MeshFineMm, lc.MeshCoarseMm, lc.MeshFineRadiusMm, lc.Base.BusbarClampLengthMm,
++                                       lc.MeshInnerMm, lc.MeshInnerRadiusMm, clampBandMm: double.NaN, clampFullFace: true);
++            double hF = lc.MeshFineMm, ca = g.TabTipXMm + lc.Base.BusbarClampLengthMm;
++            var xs = m.Nodes.Select(v => v.X).Distinct().OrderBy(v => v).ToArray();
++            int k = Array.FindIndex(xs, x => Math.Abs(x - ca) < 1e-9);
++            Assert.True(k > 0, $"hFine {hF}：压接边界 {ca} 不是节点");
++            var left = Enumerable.Range(Math.Max(1, k - 5), k - Math.Max(1, k - 5) + 1).Select(i => (xs[i] - xs[i - 1]) / hF);
++            var right = Enumerable.Range(k + 1, Math.Min(xs.Length - 1, k + 5) - k).Select(i => (xs[i] - xs[i - 1]) / hF);
++            Say($"   {(h > 0 ? $"h={h}" : "导航网格"),-8} hFine {hF:0.###}：{string.Join(" ", left.Select(v => v.ToString("0.000")))} | "
++              + $"{string.Join(" ", right.Select(v => v.ToString("0.000")))}");
++        }
++        Say("");
++        Say(ok ? "★ 四片三档「组合 − 整面均匀」都 ≤ 0.05 W ⇒ 组合口径（整面接触 + 自相似细带 + 分级网格）成立。"
++               : "★ **有片有档 > 0.05 W** ⇒ 组合口径不成立，先查原因，不许把自相似细带的旧证据照搬到整面接触上。");
++        Assert.True(ok, "组合配方收敛没过，见 deliverable/R48_组合配方收敛_2026-09-14.txt");
++    }
++
++    [Fact]
++    public void 二_片0配方影响_抽热_圆盘区温差_J峰_发热()
++    {
++        var Say = Writer("R48_判定网格配方影响_2026-09-14.txt");
++        Say($"R48 判定网格配方对片0 生产数的影响（Opus 5）　{DateTime.Now:yyyy-MM-dd HH:mm}");
++        Say("工作点：片0 电流 1213 A、管根 1172.63 °C（R48_接头电流核对_2026-09-14.txt）；单片管侧固定、夹持定温（与 R48ErrorBudgetTests 同一套解法）。");
++        Say("口径：外圈 = clampFullFace false（改动前）；整面 = clampFullFace true；细带 3 mm／自相似 = clampBandMm 3／NaN。");
++        var (d, p) = Design();
++        var (_, radius) = MeshVerify.RequiredMeshFor(d);
++        var lc0 = d.BuildCase(p, checkRamp: false);
++        Say($"圆盘区−管温的限值 {lc0.DiscOverTempMaxK} K（LineCase.DiscOverTempMaxK）。");
++        Say("");
++        Say("── 均匀网格（不铺细带）");
++        foreach (double h in new[] { 1.0, 0.5, 0.25 })
++        {
++            var lc = d.BuildCase(p, checkRamp: false);
++            var g = PlateOf(d, p, lc, 0);
++            Say(Row($"外圈 h={h}", Solve(d, lc, 0, FlangeMesher.Build(g, 0, h, h, 1e6, lc.Base.BusbarClampLengthMm, clampBandMm: 0, clampFullFace: false), g)));
++            Say(Row($"整面 h={h}", Solve(d, lc, 0, FlangeMesher.Build(g, 0, h, h, 1e6, lc.Base.BusbarClampLengthMm, clampBandMm: 0, clampFullFace: true), g)));
++        }
++        foreach (double h in new[] { 0.0, 1.0 })
++        {
++            var lc = d.BuildCase(p, checkRamp: false);
++            if (h > 0) MeshAdapt.RefineWholeMesh(lc, h, radius);
++            var g = PlateOf(d, p, lc, 0);
++            Say("");
++            Say(h > 0 ? "── 分级网格 h=1（MeshAdapt.RefineWholeMesh，误差预算「分级」组同一做法）" : "── 导航网格（BuildCase 给的生产参数，不加密）");
++            ShellMesh B(double band, bool full) => FlangeMesher.Build(g, 0, lc.MeshFineMm, lc.MeshCoarseMm, lc.MeshFineRadiusMm, lc.Base.BusbarClampLengthMm,
++                                                                    lc.MeshInnerMm, lc.MeshInnerRadiusMm, clampBandMm: band, clampFullFace: full);
++            Say(Row("老口径（外圈、不铺细带）", Solve(d, lc, 0, B(0, false), g)));
++            Say(Row("外圈 + 固定 3 mm 细带", Solve(d, lc, 0, B(3.0, false), g)));
++            Say(Row("外圈 + 自相似细带", Solve(d, lc, 0, B(double.NaN, false), g)));
++            Say(Row("整面、不铺细带", Solve(d, lc, 0, B(0, true), g)));
++            Say(Row("新配方（整面 + 自相似细带）", Solve(d, lc, 0, B(double.NaN, true), g)));
++        }
++        Say("");
++        Say("读法：均匀网格与 h=1 分级的外圈口径下 J 峰落在压接角（x ≈ 舌尖 + 压接长、z ≈ ±舌半宽），均匀三档随 h 变细而长 ⇒ 是钉外圈的角点奇异，不是物理峰；");
++        Say("      导航网格（2 mm）太粗，角点奇异显不出来，峰落在孔边。整面接触各档的峰都在孔边（x ≈ −26～−27）。");
++    }
++
++    [Fact]
++    public void 三_孔位对比x185那一行的分解()
++    {
++        var Say = Writer("R48_孔位对比x185分解_2026-09-14.txt");
++        Say($"R48 孔位对比表的分解（Opus 5）　{DateTime.Now:yyyy-MM-dd HH:mm}");
++        var baseIn = new DesignInputs();
++        double clampLen = baseIn.BusbarClampLengthMm;
++        var g0 = HolePlacementTests.Heater1(0, 0);
++        Say($"板同 HolePlacementTests.Heater1：舌尖 x {g0.TabTipXMm}、压接长 {clampLen} mm（DesignInputs 缺省）⇒ 压接段 x ∈ [{g0.TabTipXMm}, {g0.TabTipXMm + clampLen}]；R8 孔；1000 A；"
++          + "网格 hFine 2、hCoarse 8、细区半径 50（HolePlacementTests.Run 同一调用，只多写两个开关）。");
++        Say("列：峰值 J 与所在格形心、孔边最小格边（形心距孔心 < 孔半径 + 1.5 mm 的格，√面积）、单元数。");
++        var configs = new (string name, double band, bool full)[]
++        {
++            ("老口径（外圈、不铺细带）", 0, false), ("只开整面接触", 0, true), ("只铺自相似细带", double.NaN, false), ("新配方（两个都开）", double.NaN, true)
++        };
++        foreach (double? hx in new double?[] { null, -20, -50, -100, -150, -185 })
++        {
++            var g = hx is null ? HolePlacementTests.Heater1(0, 0) : HolePlacementTests.Heater1(hx.Value, 8);
++            Say("");
++            Say(hx is null ? "── 无孔" : $"── 孔心 x = {hx}（孔占 x ∈ [{hx - 8}, {hx + 8}]）");
++            foreach (var (name, band, full) in configs)
++            {
++                var mesh = FlangeMesher.Build(g, 0, 2.0, 8.0, 50.0, clampLen, 0, 0, clampBandMm: band, clampFullFace: full);
++                var cur = ShellCurrent.SolveFor(new LineCase { Base = baseIn }, mesh, 1000, 1.1e-4, maxIter: 8000, tol: 1e-7);
++                int iMax = -1;
++                for (int i = 0; i < mesh.CellCount; i++)
++                    if (!double.IsNaN(cur.JMagAPerMm2[i]) && (iMax < 0 || cur.JMagAPerMm2[i] > cur.JMagAPerMm2[iMax])) iMax = i;
++                double jPk = iMax < 0 ? 0 : cur.JMagAPerMm2[iMax];
++                string edge = "—";
++                if (hx is not null)
++                {
++                    var near = Enumerable.Range(0, mesh.CellCount).Where(i =>
++                    {
++                        double dx = mesh.Centroid[i].X - hx.Value, dz = mesh.Centroid[i].Z;
++                        return Math.Sqrt(dx * dx + dz * dz) < 8 + 1.5;
++                    }).ToArray();
++                    edge = near.Length == 0 ? "（无）" : $"{near.Min(i => Math.Sqrt(mesh.Area[i])):0.000} mm（{near.Length} 格）";
++                }
++                Say($"   {name,-16} 峰值 J {jPk:0.000}（x {mesh.Centroid[Math.Max(iMax, 0)].X:0.##}，z {mesh.Centroid[Math.Max(iMax, 0)].Z:0.##}）　孔边最小格边 {edge}　{mesh.CellCount} 格");
++                if (double.IsNaN(band) && full)
++                {
++                    // 防漂移：本探针的复刻与 HolePlacementTests.Run（生产缺省）逐位同一个峰值
++                    var run = HolePlacementTests.Run(g);
++                    Assert.True(run.Err.Length == 0, run.Err);
++                    Assert.Equal(run.JPeak, jPk);
++                }
++            }
++        }
++        Say("");
++        Say("读法：孔（x ∈ [−193, −177]）不在压接段（[−199.5, −196.5]）里；哪一列把 x=−185 行的峰值从老口径改掉，看「只开整面」「只铺细带」两行。");
++    }
++
++    [Fact]
++    public void 四_整线集总模型排除压接格前后()
++    {
++        var Say = Writer("R48_集总模型排除压接格_2026-09-14.txt");
++        Say($"R48 整片热稳定与升温两节点：排除压接格前后（Opus 5）　{DateTime.Now:yyyy-MM-dd HH:mm}");
++        Say("算例：误差预算设计（R48ErrorBudgetTests.Design）、导航网格、生产配方；LineRunner.Run 一次，前后两个数都由 LineRunner.FlangeLumped 给。");
++        var (d, p) = Design();
++        var lc = d.BuildCase(p, checkRamp: false);
++        var sw = System.Diagnostics.Stopwatch.StartNew();
++        var r = LineRunner.Run(lc);
++        Assert.True(r.Ok, r.Message);
++        Say($"LineRunner.Run：收敛 {r.Converged}　{sw.Elapsed.TotalSeconds:0} s");
++        foreach (var f in r.Flanges)
++            Say($"   {f.Name,-8} 发热 {f.QGenW:0.000} W　抽热 {f.QFromTubeW:+0.000;-0.000} W　管根 {f.TRootC:0.00} °C　单元 {f.CellCount}"
++              + $"　压接格 {f.Mesh?.ClampCell.Count(b => b) ?? -1}　{(f.Mesh?.ClampAnchorNote.Contains("铺细步") == true ? "有细带" : "**没细带**")}");
++        Say("   改动前（老口径）同一算例：发热 467.069 / 710.923 / 578.428 / 311.183 W，抽热 −9.660 / −14.847 / −11.674 / −4.137 W，"
++          + "整片热稳定 14.4887（HC1|HC2），升温法兰−管峰值 71.6197 K —— 出处 deliverable/R48A_基线树老口径记录_2026-09-14.txt（基线树上跑的）");
++        Say("");
++        foreach (bool ex in new[] { false, true })
++        {
++            var o = LineRunner.FlangeLumped(lc, r.Flanges, excludeClampCells: ex)!;
++            Say($"── excludeClampCells = {ex}：最不利片 {r.Flanges[o.Index].Name}　排除了 {(o.ClampExcluded ? $"{o.ClampAreaMm2:0.0} mm² 压接格" : "（没排除）")}");
++            Say($"   热稳定输入：圆盘区 {o.DiscAreaMm2:0.0} mm²　舌片区 {o.TabAreaMm2:0.0} mm²　舌片导热长 {o.TabLenMm:0.0} mm");
++            Say($"   热稳定：裕度 {o.Stab.Margin:0.0000}　散热侧 表面 {o.Stab.DSurfDT:0.0000} + 夹持 {o.Stab.DClampDT:0.0000} + 管孔 {o.Stab.DTubeDT:0.0000} W/K　发热侧 {o.Stab.DGenDT:0.0000} W/K");
++            if (o.RampIn is { } gi)
++                Say($"   升温输入：质量 {gi.FlangeMassG:0.00} g　包保温 {gi.FlangeAreaInsulMm2:0.0} mm²　裸露 {gi.FlangeAreaBareMm2:0.0} mm²"
++                  + $"　等效外半径 {gi.PlateEqOuterRadiusMm:0.00} mm　平均厚 {gi.FlangeThickMm:0.0000} mm　参考电阻 {gi.FlangeResistanceRefOhm:E4} Ω");
++            Say(o.Ramp is { } rt
++                ? $"   升温：法兰−管峰值 {rt.MaxFlangeMinusTubeK:0.0000} K（{rt.TimeAtMaxDeltaS / 3600:0.0} h、管温 {rt.TTubeAtMaxDeltaC:0} °C）　法兰峰值 {rt.TFlangePeakC:0} °C"
++                : $"   升温：算不出来 {o.RampError}");
++        }
++        var yes = LineRunner.FlangeLumped(lc, r.Flanges, excludeClampCells: true)!;
++        var stab = r.Checks.First(c => c.Name.StartsWith(LineResult.Key.FlangeStab, StringComparison.Ordinal));
++        var ramp = r.Checks.First(c => c.Name.StartsWith(LineResult.Key.RampField, StringComparison.Ordinal));
++        Assert.Equal(yes.Stab.Margin, stab.Actual);
++        Assert.Equal(yes.Ramp!.MaxFlangeMinusTubeK, ramp.Actual);
++        Say("");
++        Say("✓ 判据表里的两条参考量就是 excludeClampCells = true 那一份。");
++        Say("");
++        Say("── 判据表（生产配方，导航网格）");
++        foreach (var c in r.Checks)
++            Say($"   {c.Name}　{c.Actual:0.####} {c.Unit}　限 {c.Limit:0.####}　{(c.Undetermined ? "判不了" : c.Ok ? "过" : "**不过**")}　{c.Where}");
++    }
++}
+diff --git a/Pt_Optimize.Tests/R48ClampRecipeTests.cs b/Pt_Optimize.Tests/R48ClampRecipeTests.cs
+new file mode 100644
+index 0000000..08ca369
+--- /dev/null
++++ b/Pt_Optimize.Tests/R48ClampRecipeTests.cs
+@@ -0,0 +1,490 @@
++using System;
++using System.Collections.Generic;
++using System.IO;
++using System.Linq;
++using System.Text.RegularExpressions;
++using PtOptimize.Core;
++using Xunit;
++using Xunit.Abstractions;
++
++namespace PtOptimize.Tests;
++
++/// <summary>
++/// ★★★★ R48 判定网格配方的快门（2026-09-14，Opus 5 写）：**压接整面接触 + 自相似压接细带**进了生产默认，门造在默认入口与下游上。
++///
++/// ══ 配方与依据（声明在 FlangeMesher.BuildFromField 的注释里，本门不重述算式，只调生产函数）
++///   · 整面接触：deliverable/R48_压接整面接触AB_2026-09-14.txt（整面 − 外圈：片0 抽热 +16.4～+17.6 W，片1 +32.1～+34.3 W）；
++///   · 自相似细带：deliverable/R48_压接细带自相似_2026-09-14.txt（只钉外圈口径下量的：两侧各 3·h 与均匀网格差 ≤ 0.028 W，比值差 ≤ 0.005）；
++///     整面接触下的组合验证见 R48ClampRecipeImpactTests（慢，新文件名）。
++///
++/// ══ 八道门（工单四道 + 第一轮补的两道 + 复审补的两道）
++///   (a) 解析板片0 均匀 h=2：默认网格的 ClampCell 数 = 形心在压接段内的格数 = 舌宽/h × 压接长/h（直舌的闭式数），
++///       外圈格（压接边界面相邻格）全在整面格里；与老口径外圈格数比。
++///   (b) **不带两个开关**调 Build（导航网格与 h=1 分级网格两种）：压接边界两侧 ResolveClampBandMm(NaN, hFine) 内的 x 向节点间距细到 hFine 量级；
++///       不铺细带时同一窗口里有远场粗格（证明门不是空转）；图纸路径 BuildFromField 不带开关同样整面 + 细带。
++///   (c) 不带开关的默认网格上 ShellCurrent 解后所有 ClampCell 的 V == 1、定温模式下所有 ClampCell 的 T == 夹持温度；热场收敛、能量闭合。
++///   (d) 显式 clampFullFace: false、clampBandMm: 0 与改动前一致：ClampCell 空、网格记录里没有细带；
++///       格数、抽热，以及**自由端与热导模式**下的舌端均温、铜排等效长度，对得上**基线树**（改动前代码）跑出来的记录（逐位）。
++///   (e) 退化几何（压接段盖到管孔）不填 ClampCell、退回只钉外圈，⚠ 警告进 LineRunner 输出，而且说人话（改后第一遍快套件抓到的）。
++///   (f) LineRunner 建网格不覆写这两个开关（生产链读的就是默认配方）。
++///   (g) 被生产代码或配方声明引作依据的证据探针，建网格时必须显式写明两个开关（复审 major：默认值一改，证据探针悄悄换口径、重跑还覆盖同名证据）。
++///   (h) 下游：LineRunner.Run 出来的每片网格都带整面接触与细带；判据表里整片热稳定、升温两节点两条参考量排除了压接格
++///       （复审 major：发热已不含压接段，而面积／质量还按整片算，两个参考量都偏乐观）；排除后升温那条偏保守的原因写进了界面附注。
++///
++/// ══ 与工单原文不同的两处（如实写明，2026-09-14 Opus 5）
++///   · 工单 (a) 要求 h=2 时整面格数 ≥ 10 × 外圈格数。本板舌宽 60、压接长 40：整面 30×20 = 600 格，外圈 30 + 2×19 = 68 格，比值 8.8 ——
++///     几何上到不了 10（实测 600／68，与 deliverable/R48_实验b_压接边界落节点_2026-09-14.txt 的 R=∞ 行「钉住格数 68」一致）。
++///     ⇒ h=2 断言闭式数 600 与外圈 68、比值 ≥ 8；另在 h=1 上断言 ≥ 10（2400 vs 138，外圈数同 R48_压接整面接触AB 文件 h=1 行）。
++///   · 工单 (b) 要求窗口内节点间距 ≤ hFine。生产的渐变轴（FlangeMesher.GradedAxisCentered）有两条规则让窗口里个别格略大于 hFine：
++///     进细带那一步之后的下一步受增长率 1.3 限制（实测 h=1 时 1.011 mm），压接锚点贴节点时允许把一格拉长到 1.25·hWant（R47 第三轮 N3）。
++///     这两条都是改动前就有的生产规则，自相似细带的证据文件也是在这套规则下跑出来的，不为了门去改它。
++///     ⇒ 断言：窗口内整格都 ≤ 1.25·hFine，超过 hFine 的至多 2 格，且窗口里至少有 2×3 − 2 格；不铺细带时窗口里必须有 &gt; 1.25·hFine 的格。
++/// </summary>
++public class R48ClampRecipeTests
++{
++    private readonly ITestOutputHelper _out;
++    public R48ClampRecipeTests(ITestOutputHelper o) { _out = o; }
++
++    /// <summary>同误差预算的设计（deliverable/R48_离散误差预算_2026-09-14.txt 的 R48ErrorBudgetTests.Design）。</summary>
++    private static (DesignSpec d, DesignInputs p) Design()
++    {
++        var p = new DesignInputs();
++        var d = DesignSpec.W08.Clone();
++        d.TabThickMm = new[] { 0.73, 1.26, 1.26, 0.73 };
++        d.TabInsulMm = new[] { 4.60, 2.10, 2.90, 7.50 };
++        d.RingMul = new[] { 1.0, 1.0, 1.0, 1.0 };
++        d = d.Fit();
++        d.SizeTongues(p);
++        return (d, p);
++    }
++
++    private static FlangePlate Plate0(DesignSpec d, DesignInputs p, LineCase lc)
++    {
++        var g = d.Plate(0, d.DiscFloorMm(p));
++        g.HoleRadiusMm = lc.TubeIdMm * 0.5 + lc.WallMm;
++        return g;
++    }
++
++    /// <summary>老口径的压接格：带压接标签的边界面相邻的格（与 R48ClampFullFaceTests 数「钉住格」同一个数法）。</summary>
++    private static int[] RingCellIds(ShellMesh m)
++        => m.Faces.Where(f => f.B < 0 && f.Tag == ShellMesh.TagTabEnd).Select(f => f.A).Distinct().ToArray();
++    private static int RingCells(ShellMesh m) => RingCellIds(m).Length;
++
++    /// <summary>形心在压接段内的格数 —— 判定调生产的 FlangeMesher.InClampSegment，舌尖取板件自己的 TabTipXMm（不取网格内部量）。</summary>
++    private static int CentroidInClamp(ShellMesh m, FlangePlate g, double clampLen)
++        => Enumerable.Range(0, m.CellCount).Count(i => FlangeMesher.InClampSegment(m.Centroid[i].X, g.TabTipXMm, clampLen, g.TwoTabs));
++
++    /// <summary>
++    /// 误差预算工作点上解片0：电流 1213 A、管根 1172.63 °C（出处 deliverable/R48_接头电流核对_2026-09-14.txt，误差预算同用）。
++    /// mode：定温（生产，夹持温度取算例）／自由端（夹持温度 −1、铜排热导 −1）／热导（夹持温度 −1、G = 1.1 W/K，DesignInputs.BusbarConductanceWPerK 说明里的典型值）。
++    /// 与基线树探针（deliverable/R48A_基线树老口径记录_探针源码_2026-09-14.cs.txt）同一套调用。
++    /// </summary>
++    private static (ShellCurrentResult sc, ShellThermalResult th) SolvePlate0(DesignSpec d, LineCase lc, FlangePlate g, ShellMesh m, string mode = "定温")
++    {
++        double tSet = d.SetpointC[0];
++        var sc = ShellCurrent.SolveFor(lc, m, 1213, Materials.PtResistivity(tSet) * 1e3, tSet);
++        var p2 = SegmentSolver.Clone(lc.Base); p2.TSetC = tSet;
++        switch (mode)
++        {
++            case "定温": if (lc.ClampTempC.Length > 0) p2.BusbarClampTempC = lc.ClampTempC[0]; break;
++            case "自由端": p2.BusbarClampTempC = -1; p2.BusbarConductanceWPerK = -1; break;
++            case "热导": p2.BusbarClampTempC = -1; p2.BusbarConductanceWPerK = 1.1; break;
++            default: throw new ArgumentException(mode);
++        }
++        var th = ShellThermal.Solve(m, sc.JMagAPerMm2, p2, 1172.63, g.InsulBoundaryXResolved, g.TwoTabs,
++                                    tabBoundaryX: g.Tangent().X, tabInsulThickMm: g.TabInsulThickMm,
++                                    discRadiusMm: g.DiscRadiusMm, insulDiscRadiusMm: g.InsulDiscRadiusMm);
++        return (sc, th);
++    }
++
++    /// <summary>生产导航网格参数（BuildCase 给的）与 h=1 整片加密（MeshAdapt.RefineWholeMesh，误差预算「分级」组同一做法）。</summary>
++    private static IEnumerable<(string name, LineCase lc)> GradedCases(DesignSpec d, DesignInputs p)
++    {
++        yield return ("导航网格", d.BuildCase(p, checkRamp: false));
++        var (_, radius) = MeshVerify.RequiredMeshFor(d);
++        var lcH = d.BuildCase(p, checkRamp: false);
++        MeshAdapt.RefineWholeMesh(lcH, 1.0, radius);
++        yield return ("h=1 分级", lcH);
++    }
++
++    /// <summary>
++    /// **缺省入口**：不带两个开关调生产的 Build（复审 minor 2026-09-14 Opus 5：第一轮 BuildGraded 显式传了 NaN／true，
++    /// 门量的是配方值不是缺省值，有人把缺省改回去门照样绿）。
++    /// </summary>
++    private static ShellMesh BuildDefault(FlangePlate g, LineCase lc)
++        => FlangeMesher.Build(g, 0, lc.MeshFineMm, lc.MeshCoarseMm, lc.MeshFineRadiusMm, lc.Base.BusbarClampLengthMm,
++                              lc.MeshInnerMm, lc.MeshInnerRadiusMm);
++
++    /// <summary>老口径（只钉外圈），细带宽度显式给（0 = 不铺）。</summary>
++    private static ShellMesh BuildRing(FlangePlate g, LineCase lc, double clampBandMm = 0)
++        => FlangeMesher.Build(g, 0, lc.MeshFineMm, lc.MeshCoarseMm, lc.MeshFineRadiusMm, lc.Base.BusbarClampLengthMm,
++                              lc.MeshInnerMm, lc.MeshInnerRadiusMm, clampBandMm: clampBandMm, clampFullFace: false);
++
++    [Fact]
++    public void a_整面接触格数等于形心在压接段内的格数_远多于外圈()
++    {
++        var (d, p) = Design();
++        var lc = d.BuildCase(p, checkRamp: false);
++        var g = Plate0(d, p, lc);
++        double clampLen = lc.Base.BusbarClampLengthMm;
++        // 闭式数的前提：直舌、没有延长段、舌尖到切点都是等宽 2·TabEndHalfWidthMm，压接段整段在直舌上
++        Assert.False(g.TwoTabs);
++        Assert.True(g.ExtensionMm < 1e-9, $"本门的闭式数假设没有延长段，实际 {g.ExtensionMm}");
++        Assert.Equal(g.TabEndHalfWidthMm, g.Tangent().HalfW, 9);
++        Assert.True(g.TabTipXMm + clampLen < g.Tangent().X, "压接段伸进了圆盘，闭式数不成立");
++
++        foreach (var (h, minRatio, ringRecord) in new[] { (2.0, 8.0, 68), (1.0, 10.0, 138) })
++        {
++            var m = FlangeMesher.Build(g, 0, h, h, 1e6, clampLen);                                  // 默认 = 生产配方
++            var mOld = FlangeMesher.Build(g, 0, h, h, 1e6, clampLen, clampBandMm: 0, clampFullFace: false);
++            int full = m.ClampCell.Count(b => b);
++            int inClamp = CentroidInClamp(m, g, clampLen);
++            long closed = (long)Math.Round(2 * g.TabEndHalfWidthMm / h) * (long)Math.Round(clampLen / h);
++            int ringOld = RingCells(mOld);
++            _out.WriteLine($"h={h}：单元 {m.CellCount}　整面 {full}　形心在段内 {inClamp}　闭式 {closed}　老口径外圈 {ringOld}　比 {full / (double)ringOld:0.00}");
++
++            Assert.Equal(m.CellCount, m.ClampCell.Length);
++            Assert.Equal(inClamp, full);
++            Assert.Equal(closed, full);
++            // 外圈格数的记录：h=2 → 68（deliverable/R48_实验b_压接边界落节点_2026-09-14.txt，片0 R=∞ 行），
++            //                 h=1 → 138（deliverable/R48_压接整面接触AB_2026-09-14.txt，片0 h=1 外圈行；两文件板外形相同，只差厚度与保温）
++            Assert.Equal(ringRecord, ringOld);
++            Assert.True(full >= minRatio * ringOld, $"h={h}：整面 {full} 格不到外圈 {ringOld} 格的 {minRatio} 倍");
++            // 默认网格上外圈标签照旧打，而且每个外圈格都在整面格里（并集 = 整面，见 BuildFromField 的注释）
++            var ringCells = RingCellIds(m);
++            Assert.Equal(ringOld, ringCells.Length);
++            Assert.All(ringCells, i => Assert.True(m.ClampCell[i], $"外圈格 {i}（x={m.Centroid[i].X:0.###}）不在整面格里"));
++        }
++    }
++
++    [Fact]
++    public void b_不带开关的网格在压接边界两侧自相似细带内是细步()
++    {
++        var (d, p) = Design();
++        foreach (var (name, lc) in GradedCases(d, p))
++        {
++            var g = Plate0(d, p, lc);
++            double hF = lc.MeshFineMm;
++            double band = FlangeMesher.ResolveClampBandMm(double.NaN, hF);
++            double ca = g.TabTipXMm + lc.Base.BusbarClampLengthMm;
++            Assert.Equal(FlangeMesher.ClampBandPerHFine * hF, band, 12);
++            // 窗口必须在细区外（否则细带本来就细，门量不到东西）
++            Assert.True(Math.Abs(ca) - band > lc.MeshFineRadiusMm, $"{name}：压接边界 {ca} 的细带窗口落在细区半径 {lc.MeshFineRadiusMm} 内，门空转");
++            Assert.True(lc.MeshCoarseMm > 1.25 * hF, $"{name}：远场步 {lc.MeshCoarseMm} 不比细步粗，门空转");
++
++            (double[] inside, double maxTouch, string note) Window(ShellMesh m)
++            {
++                var xs = m.Nodes.Select(v => v.X).Distinct().OrderBy(v => v).ToArray();
++                var ins = new List<double>(); double touch = 0;
++                for (int k = 0; k + 1 < xs.Length; k++)
++                {
++                    double a = xs[k], b = xs[k + 1];
++                    if (b > ca - band + 1e-9 && a < ca + band - 1e-9) touch = Math.Max(touch, b - a);
++                    if (a >= ca - band - 1e-9 && b <= ca + band + 1e-9) ins.Add(b - a);
++                }
++                Assert.Contains(xs, x => Math.Abs(x - ca) < 1e-9);                                   // 压接边界是节点（配方 ①）
++                return (ins.ToArray(), touch, m.ClampAnchorNote);
++            }
++
++            var mDef = BuildDefault(g, lc);
++            var (ins, _, note) = Window(mDef);
++            _out.WriteLine($"{name}：hFine {hF}　细带单侧 {band}　窗口内整格 {ins.Length} 个：{string.Join(" ", ins.Select(v => v.ToString("0.###")))}　记录：{note}");
++            Assert.Contains($"压接边界两侧各 {band:0.###} mm 铺细步 {hF:0.###} mm", note);
++            Assert.True(ins.Length >= 2 * FlangeMesher.ClampBandPerHFine - 2, $"{name}：窗口里只有 {ins.Length} 格");
++            Assert.All(ins, w => Assert.True(w <= 1.25 * hF + 1e-9, $"{name}：窗口内有 {w:0.###} mm 的格，超过 1.25·hFine"));
++            Assert.True(ins.Count(w => w > hF + 1e-9) <= 2, $"{name}：窗口内超过 hFine 的格多于 2 个：{string.Join(" ", ins.Select(v => v.ToString("0.###")))}");
++            Assert.True(mDef.ClampCell.Length == mDef.CellCount && mDef.ClampCell.Count(b => b) > RingCells(mDef), $"{name}：缺省入口没有整面接触");
++
++            // 非空转：显式不铺细带时，同一窗口里有远场粗格
++            var (_, touchOld, noteOld) = Window(BuildRing(g, lc));
++            _out.WriteLine($"{name}：不铺细带时窗口里最大格 {touchOld:0.###} mm　记录：{noteOld}");
++            Assert.True(touchOld > 1.25 * hF + 1e-9, $"{name}：不铺细带时窗口里最大格只有 {touchOld:0.###}，门空转");
++        }
++
++        // 图纸路径的缺省入口：BuildFromField 不带两个开关（厚度场由解析板栅格化，锚点从场推）同样整面接触 + 铺细带
++        {
++            var lc = d.BuildCase(p, checkRamp: false);
++            var g = Plate0(d, p, lc);
++            var f = AnalyticSurrogate.Rasterize(g, 0.5, 2.0);
++            var mF = FlangeMesher.BuildFromField(f, g.HoleRadiusMm, 0, lc.MeshFineMm, lc.MeshCoarseMm, lc.MeshFineRadiusMm,
++                                                 lc.Base.BusbarClampLengthMm, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
++            double band = FlangeMesher.ResolveClampBandMm(double.NaN, lc.MeshFineMm);
++            _out.WriteLine($"图纸路径缺省入口：单元 {mF.CellCount}　压接格 {mF.ClampCell.Count(b => b)}　外圈 {RingCells(mF)}　记录：{mF.ClampAnchorNote}");
++            Assert.True(mF.ClampCell.Length == mF.CellCount && mF.ClampCell.Count(b => b) > RingCells(mF), "图纸路径缺省入口没有整面接触");
++            Assert.Contains($"压接边界两侧各 {band:0.###} mm 铺细步 {lc.MeshFineMm:0.###} mm", mF.ClampAnchorNote);
++        }
++    }
++
++    [Fact]
++    public void c_整面接触格全部是电极且钉在夹持温度_定温热场闭合()
++    {
++        var (d, p) = Design();
++        foreach (var (name, lc) in GradedCases(d, p))
++        {
++            var g = Plate0(d, p, lc);
++            var m = BuildDefault(g, lc);
++            int nClamp = m.ClampCell.Count(b => b);
++            Assert.True(nClamp > RingCells(m), $"{name}：整面格 {nClamp} 不多于外圈格 {RingCells(m)}");
++            var (sc, th) = SolvePlate0(d, lc, g, m);
++            Assert.True(sc.Converged, $"{name}：电流场没收敛");
++            Assert.True(th.Converged, $"{name}：热场没收敛");
++            var bad = Enumerable.Range(0, m.CellCount).Where(i => m.ClampCell[i] && sc.V[i] != 1.0).Take(5).ToArray();
++            Assert.True(bad.Length == 0, $"{name}：压接格上 V ≠ 1：" + string.Join("；", bad.Select(i => $"x={m.Centroid[i].X:0.###} V={sc.V[i]:R}")));
++            Assert.True(sc.ConservationError < 1e-6, $"{name}：电流不守恒 {sc.ConservationError:E2}");
++            // 定温模式：整段压接格都要被钉在夹持温度上（复审 minor：第一轮断言「舌端平均温度 == 夹持温度」，而定温分支直接返回夹持温度，恒真）
++            Assert.True(lc.ClampTempC.Length > 0 && lc.ClampTempC[0] >= 0, "本门要定温模式");
++            double tClamp = lc.ClampTempC[0];
++            var hot = Enumerable.Range(0, m.CellCount).Where(i => m.ClampCell[i] && th.T[i] != tClamp).Take(5).ToArray();
++            Assert.True(hot.Length == 0, $"{name}：压接格没钉在夹持温度 {tClamp}：" + string.Join("；", hot.Select(i => $"x={m.Centroid[i].X:0.###} T={th.T[i]:R}")));
++            // 反证：压接段内边外侧紧邻的自由格不是夹持温度（否则上面那条也可能是整片被钉住）
++            double ca = g.TabTipXMm + lc.Base.BusbarClampLengthMm;
++            var free = Enumerable.Range(0, m.CellCount).Where(i => !m.ClampCell[i] && m.Centroid[i].X > ca && m.Centroid[i].X < ca + 2 * lc.MeshFineMm).ToArray();
++            Assert.NotEmpty(free);
++            Assert.All(free, i => Assert.True(th.T[i] > tClamp + 1e-6, $"{name}：压接段外的格 x={m.Centroid[i].X:0.###} 也是夹持温度"));
++            // 能量闭合（门槛同 R48FaceDirichletTests）：压接格整段排除在账外、铜排带走只剩内边那排面，账要平
++            Assert.True(Math.Abs(th.EnergyResidualW) < 1e-3 * Math.Max(1, th.QGenW),
++                $"{name}：能量不闭合 残差 {th.EnergyResidualW:0.0000} W、发热 {th.QGenW:0.0} W");
++            _out.WriteLine($"{name}：单元 {m.CellCount}　整面格 {nClamp}　抽热 {th.QFromTubeW:+0.0000;-0.0000} W　铜排带走 {th.QToClampW:0.00} W　发热 {th.QGenW:0.00} W　残差 {th.EnergyResidualW:+0.000000;-0.000000} W");
++        }
++    }
++
++    [Fact]
++    public void d_显式老口径与改动前一致()
++    {
++        var (d, p) = Design();
++        var cases = GradedCases(d, p).ToDictionary(c => c.name, c => c.lc);
++
++        // 导航网格（hFine 2、远场 11、细区半径 50）：老口径格数 1006、外圈 36 ——
++        // 记录出处 deliverable/R48_实验b_压接边界落节点_2026-09-14.txt 片0 h=2 R=50 行（改动前跑的，单元 1006、钉住格数 36）
++        {
++            var lc = cases["导航网格"];
++            Assert.Equal(2.0, lc.MeshFineMm); Assert.Equal(11.0, lc.MeshCoarseMm); Assert.Equal(50.0, lc.MeshFineRadiusMm);
++            var g = Plate0(d, p, lc);
++            var m = BuildRing(g, lc);
++            _out.WriteLine($"导航网格 老口径：单元 {m.CellCount}　外圈 {RingCells(m)}　记录：{m.ClampAnchorNote}");
++            Assert.Empty(m.ClampCell);
++            Assert.DoesNotContain("铺细步", m.ClampAnchorNote);
++            Assert.Contains("已落成节点", m.ClampAnchorNote);
++            Assert.Equal(1006, m.CellCount);
++            Assert.Equal(36, RingCells(m));
++
++            // ★ 复审补（2026-09-14 Opus 5；审查意见 minor「老口径不是逐位相同」）：三种舌端边界模式下的**逐位**记录。
++            //   记录值出处：deliverable/R48A_基线树老口径记录_2026-09-14.txt —— 在基线树（.basetree，改动前代码）上跑的探针
++            //   （源码 deliverable/R48A_基线树老口径记录_探针源码_2026-09-14.cs.txt，与本类 SolvePlate0 同一套调用），打印用 R 格式、可逐位比。
++            //   第一轮把舌端均温、铜排等效长度的面积加权也套到了老口径上，自由端与热导模式的这两个数就会变（非空转证据见下面的「面积加权」对照）。
++            var ring = RingCellIds(m);
++            foreach (var (mode, tTab, q, busLen) in new[]
++            {
++                ("定温",   450.0,              -9.645643968612903,   0.0),
++                ("自由端", 1041.8128051597412, -54.527245549214356,  0.0),
++                ("热导",   180.89233437852974, -5.7002974071605745,  1.8722891720599724),
++            })
++            {
++                var (_, th) = SolvePlate0(d, lc, g, m, mode);
++                double areaW = ring.Sum(i => th.T[i] * m.Area[i]) / ring.Sum(i => m.Area[i]);
++                _out.WriteLine($"导航网格 老口径 {mode}：舌端均温 {th.TTabEndMeanC:R}（面积加权会是 {areaW:R}）　抽热 {th.QFromTubeW:R}　铜排等效长 {th.BusEquivLenMm:R}");
++                Assert.True(th.Converged, $"{mode}：热场没收敛");
++                Assert.Equal(tTab, th.TTabEndMeanC);
++                Assert.Equal(q, th.QFromTubeW);
++                Assert.Equal(busLen, th.BusEquivLenMm);
++                if (mode != "定温")
++                    Assert.True(Math.Abs(areaW - tTab) > 1e-6, $"{mode}：面积加权与按格数平均分不开（{areaW:R}），这条对照空转");
++            }
++        }
++
++        // h=1 分级：同误差预算的「分级」组（clampBandMm 0，那时还没有整面接触）与「细带」组（clampBandMm 3）。
++        {
++            var lc = cases["h=1 分级"];
++            var g = Plate0(d, p, lc);
++            var mOld = BuildRing(g, lc);
++            var (_, thOld) = SolvePlate0(d, lc, g, mOld);
++            _out.WriteLine($"h=1 分级 老口径：单元 {mOld.CellCount}　抽热 {thOld.QFromTubeW:R} W");
++            Assert.Empty(mOld.ClampCell);
++            Assert.DoesNotContain("铺细步", mOld.ClampAnchorNote);
++            // 记录：deliverable/R48_离散误差预算_2026-09-14.txt 片0「分级 h=1.000　4122 格　抽热 -9.225 W」（打印三位小数 ⇒ 容差 0.0005）；
++            //       逐位值 −9.225247067674745 出自 deliverable/R48A_基线树老口径记录_2026-09-14.txt（复审补，2026-09-14 Opus 5）
++            Assert.Equal(4122, mOld.CellCount);
++            Assert.True(Math.Abs(thOld.QFromTubeW - (-9.225)) <= 0.0005 + 1e-9, $"老口径抽热 {thOld.QFromTubeW:0.0000}，记录 -9.225");
++            Assert.Equal(-9.225247067674745, thOld.QFromTubeW);
++
++            var mBand3 = BuildRing(g, lc, clampBandMm: 3.0);
++            var (_, thBand3) = SolvePlate0(d, lc, g, mBand3);
++            _out.WriteLine($"h=1 分级 显式 3 mm 细带、外圈：单元 {mBand3.CellCount}　抽热 {thBand3.QFromTubeW:+0.0000;-0.0000} W");
++            // 记录：R48_离散误差预算「细带 h=1.000　4722 格」；R48_压接细带自相似_2026-09-14.txt 片0 固定3mm 第一档 -7.3434 W（四位小数 ⇒ 容差 0.00005）
++            Assert.Equal(4722, mBand3.CellCount);
++            Assert.True(Math.Abs(thBand3.QFromTubeW - (-7.3434)) <= 0.00005 + 1e-9, $"显式 3 mm 细带抽热 {thBand3.QFromTubeW:0.00000}，记录 -7.3434");
++
++            // h=1 时自相似 3·h = 3 mm ⇒ 不带开关的缺省网格与显式 3 mm 的节点逐位相同，只多了整面接触
++            var mDef = BuildDefault(g, lc);
++            Assert.Equal(mBand3.Nodes.Count, mDef.Nodes.Count);
++            for (int k = 0; k < mDef.Nodes.Count; k++)
++            {
++                Assert.Equal(mBand3.Nodes[k].X, mDef.Nodes[k].X);
++                Assert.Equal(mBand3.Nodes[k].Z, mDef.Nodes[k].Z);
++            }
++            Assert.Equal(mBand3.CellCount, mDef.CellCount);
++            Assert.Empty(mBand3.ClampCell);
++            Assert.NotEmpty(mDef.ClampCell);
++        }
++    }
++
++    /// <summary>
++    /// (e) 退化几何（改后第一次跑快套件时 TabInsulPerPlateTests「推不出切点的场」红了才发现，2026-09-14 Opus 5 补）：
++    /// 没有舌片、材料全在压接长以内的图纸，整面接触会把电极压到管孔上 ⇒ 生成器不填 ClampCell、退回只钉外圈、写 ⚠ 记录，
++    /// 而且这句警告要进 LineRunner 的输出（门造在下游：赋了值不等于用它的人读得到）。板与算例同 TabInsulPerPlateTests 那条。
++    /// 复审补：这句进界面输出框，不许带网格内部说法。
++    /// </summary>
++    [Fact]
++    public void e_压接段盖到管孔时退回只钉外圈_警告进输出且说人话()
++    {
++        var p = new DesignInputs();
++        var d = R47NavGridInstrumentTests.Disc56TwoSegs();
++        d.SetpointC = new[] { 1150.0 }; d.SegLengthMm = new[] { 300.0 };
++        d = d.Fit();
++        var lc = d.BuildCase(p, checkRamp: false);
++        double holeR = lc.TubeIdMm * 0.5 + lc.WallMm;
++        var g = new FlangePlate { DiscRadiusMm = 28, HoleRadiusMm = holeR, TabEndXMm = 0, TabEndHalfWidthMm = 28, ThicknessMm = 1.0, TabParallel = true };
++        var f = AnalyticSurrogate.Rasterize(g, 0.5, 2.0);
++        Assert.True(lc.Base.BusbarClampLengthMm > 28, "本门要压接长盖过整片（材料 x ∈ [0, 28]）");
++
++        var m = FlangeMesher.BuildFromField(f, holeR, 0, lc.MeshFineMm, lc.MeshCoarseMm, lc.MeshFineRadiusMm,
++                                            lc.Base.BusbarClampLengthMm, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
++        _out.WriteLine("网格记录：" + m.ClampAnchorNote);
++        Assert.Empty(m.ClampCell);
++        Assert.Contains("盖到了管孔", m.ClampAnchorNote);
++        Assert.True(RingCells(m) > 0, "退回只钉外圈后应当还有外圈电极");
++
++        lc.FlangePlates = Array.Empty<FlangePlate>();
++        lc.FlangeFields = new[] { f, f };
++        lc.GeomForJudge = Array.Empty<FlangePlate>();
++        lc.TabInsul3dmPerPlateMm = new[] { 2.8, 2.8 };
++        var r = LineRunner.Run(lc);
++        Assert.True(r.Ok, r.Message);
++        var warn = r.Notes.Where(s => s.Contains("盖到了管孔")).ToArray();
++        _out.WriteLine(string.Join("\n", warn));
++        Assert.Equal(r.Flanges.Length, warn.Length);                       // 每片一句、按片去重
++        Assert.All(warn, s => Assert.StartsWith("⚠ ", s));
++        // 进界面的字串：不带网格内部说法（复审 minor 2026-09-14 Opus 5），也不带判据代号与开关名
++        foreach (string jargon in new[] { "整面接触", "外圈", "孔边格", "边界面", "clamp", "②", "③" })
++            Assert.All(warn, s => Assert.DoesNotContain(jargon, s));
++    }
++
++    /// <summary>
++    /// (f) 生产链读的是默认配方：出判据的 LineRunner 建网格时不许显式关掉整面接触或改细带宽度
++    /// （默认值在 FlangeMesher 一处定；调用点各自传参会让生产链与门量的不是同一张网格）。源码级，2026-09-14 Opus 5。
++    /// </summary>
++    [Fact]
++    public void f_LineRunner建网格不覆写配方开关()
++    {
++        string s = File.ReadAllText(Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "Core", "LineRunner.cs"));
++        Assert.Contains("FlangeMesher.Build(plate,", s);
++        Assert.Contains("FlangeMesher.BuildFromField(tf, holeR,", s);
++        Assert.Contains("FlangeMesher.Build(pl,", s);                  // 集总模型那一份（FlangeLumped）
++        Assert.DoesNotContain("clampFullFace", s);
++        Assert.DoesNotContain("clampBandMm", s);
++        // 生成器的缺省值就是配方
++        string mesh = File.ReadAllText(Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "Core", "ShellMesh.cs"));
++        Assert.Equal(2, Regex.Matches(mesh, @"double clampBandMm = double\.NaN, bool clampFullFace = true\)").Count);
++    }
++
++    /// <summary>
++    /// (g) ★ 复审 major（2026-09-14 Opus 5）：**证据探针必须显式钉住两个开关**。
++    /// 默认值一改，没传开关的探针悄悄换了口径，重跑还用同名文件覆盖被引的证据（R48_压接细带自相似 三组全变成整面接触，
++    /// 而配方 ④ 引的正是这份文件）。源码级：
++    ///   受管的测试文件 = 写了「生产代码（Pt_Optimize/Core）注释里引作依据的证据文件」的，或以字面量写 R48_…_日期.txt 证据文件的；
++    ///   其中每个 FlangeMesher.Build／BuildFromField 调用都必须写出 clampFullFace: 与 clampBandMm:（值随探针原义，老证据钉 false／0）。
++    /// 非空转：BuildFromField 配方声明里引的每个证据文件都要找得到写它的受管探针（实验 a 例外：R48ClampPhaseTests 已改写到实验 b 的文件，见该类注释）。
++    /// 本类自己不在扫描之列（门里要写那几个文件名）。
++    /// </summary>
++    [Fact]
++    public void g_证据探针建网格必须显式写明两个开关()
++    {
++        string root = HandoverDoc.Root();
++        const string namePat = @"R4\d_[^\s""'（）()，、；。：:<>／]*?_2026-\d\d-\d\d\.txt";
++        string core = string.Concat(Directory.GetFiles(Path.Combine(root, "Pt_Optimize", "Core"), "*.cs").Select(File.ReadAllText));
++        var cited = Regex.Matches(core, namePat).Select(x => x.Value).Distinct().ToArray();
++        var tests = Directory.GetFiles(Path.Combine(root, "Pt_Optimize.Tests"), "*.cs")
++                             .Where(f => Path.GetFileName(f) != nameof(R48ClampRecipeTests) + ".cs")
++                             .ToDictionary(f => Path.GetFileName(f), File.ReadAllText);
++        var gated = tests.Where(kv => cited.Any(n => kv.Value.Contains("\"" + n + "\""))
++                                   || Regex.IsMatch(kv.Value, @"""R48_[^""]*_2026-\d\d-\d\d\.txt"""))
++                         .ToDictionary(kv => kv.Key, kv => kv.Value);
++        var bad = new List<string>();
++        int calls = 0;
++        foreach (var (file, src) in gated)
++            foreach (Match mm in Regex.Matches(src, @"FlangeMesher\.Build(FromField)?\("))
++            {
++                int start = mm.Index + mm.Length, i = start, depth = 1;
++                while (i < src.Length && depth > 0) { if (src[i] == '(') depth++; else if (src[i] == ')') depth--; i++; }
++                string args = src.Substring(start, Math.Max(0, i - 1 - start));
++                calls++;
++                if (!Regex.IsMatch(args, @"\bclampFullFace\s*:") || !Regex.IsMatch(args, @"\bclampBandMm\s*:"))
++                    bad.Add($"{file} 第 {src.Take(mm.Index).Count(ch => ch == '\n') + 1} 行");
++            }
++        _out.WriteLine($"生产代码引的证据文件 {cited.Length} 个；受管探针 {gated.Count} 个：{string.Join("、", gated.Keys.OrderBy(k => k))}；建网格调用 {calls} 处");
++        Assert.True(bad.Count == 0, "这些证据探针建网格没显式写明 clampFullFace／clampBandMm（生产默认一改就悄悄换口径）：" + string.Join("；", bad));
++        Assert.True(calls >= 20, $"只扫到 {calls} 处建网格调用，门空转");
++
++        string sm = File.ReadAllText(Path.Combine(root, "Pt_Optimize", "Core", "ShellMesh.cs"));
++        int i0 = sm.IndexOf("判定网格配方声明", StringComparison.Ordinal);
++        Assert.True(i0 >= 0, "BuildFromField 的配方声明不见了");
++        int i1 = sm.IndexOf("</summary>", i0, StringComparison.Ordinal);
++        var declared = Regex.Matches(sm.Substring(i0, i1 - i0), namePat).Select(x => x.Value).Distinct().ToArray();
++        _out.WriteLine("配方声明引的证据：" + string.Join("、", declared));
++        Assert.True(declared.Length >= 7, $"配方声明只引了 {declared.Length} 个证据文件");
++        var orphan = declared.Where(n => !gated.Values.Any(s => s.Contains("\"" + n + "\""))).OrderBy(n => n).ToArray();
++        Assert.Equal(new[] { "R48_实验a_压接段相位_2026-09-14.txt" }, orphan);
++    }
++
++    /// <summary>
++    /// (h) ★ 复审 major 与 minor（2026-09-14 Opus 5）：**门造在下游**。
++    ///   · LineRunner.Run 出来的每片 Flanges[j].Mesh 都带整面接触（ClampCell 非空）与压接细带（ClampAnchorNote 含「铺细步」）；
++    ///   · 判据表里整片热稳定、升温两节点这两条参考量就是 LineRunner.FlangeLumped(excludeClampCells: true) 那一份，而且与不排除的那一份不同（非空转）；
++    ///     排除的方向：舌片区面积、体积、导热长都变小，少掉的面积正好是压接格面积。
++    /// 算例：设计记录 W08 只跑一段（两片端片），为了快；误差预算设计四片整线约 90 s，放在慢探针 R48ClampRecipeImpactTests 四 里。
++    /// </summary>
++    [Fact]
++    public void h_整线网格带整面接触与细带_集总参考量排除了压接格()
++    {
++        var p = new DesignInputs();
++        var d = DesignSpec.W08.Clone();
++        d.SetpointC = new[] { 1150.0 }; d.SegLengthMm = new[] { 300.0 };
++        d = d.Fit();
++        var lc = d.BuildCase(p, checkRamp: false);
++        var sw = System.Diagnostics.Stopwatch.StartNew();
++        var r = LineRunner.Run(lc);
++        _out.WriteLine($"LineRunner.Run：{sw.Elapsed.TotalSeconds:0.0} s　Ok {r.Ok}　{r.Message}");
++        Assert.True(r.Ok, r.Message);
++        Assert.NotEmpty(r.Flanges);
++        foreach (var f in r.Flanges)
++        {
++            Assert.NotNull(f.Mesh);
++            var m = f.Mesh!;
++            _out.WriteLine($"{f.Name}：单元 {m.CellCount}　压接格 {m.ClampCell.Count(b => b)}　记录：{m.ClampAnchorNote}");
++            Assert.True(m.ClampCell.Length == m.CellCount && m.ClampCell.Any(b => b), $"{f.Name}：整线出来的网格没有整面接触");
++            Assert.Contains("铺细步", m.ClampAnchorNote);
++        }
++
++        var yes = LineRunner.FlangeLumped(lc, r.Flanges, excludeClampCells: true)!;
++        var no = LineRunner.FlangeLumped(lc, r.Flanges, excludeClampCells: false)!;
++        Assert.True(yes.ClampExcluded && yes.ClampAreaMm2 > 0, "生产那一份没排除压接格");
++        Assert.False(no.ClampExcluded);
++        var stab = r.Checks.First(c => c.Name.StartsWith(LineResult.Key.FlangeStab, StringComparison.Ordinal));
++        var ramp = r.Checks.First(c => c.Name.StartsWith(LineResult.Key.RampField, StringComparison.Ordinal));
++        _out.WriteLine($"热稳定：判据表 {stab.Actual:R}　排除 {yes.Stab.Margin:R}　不排除 {no.Stab.Margin:R}");
++        _out.WriteLine($"升温法兰−管：判据表 {ramp.Actual:R}　排除 {yes.Ramp?.MaxFlangeMinusTubeK:R}　不排除 {no.Ramp?.MaxFlangeMinusTubeK:R}");
++        Assert.False(double.IsNaN(stab.Actual), "热稳定判不了，本门量不到东西");
++        Assert.Equal(yes.Stab.Margin, stab.Actual);
++        Assert.NotEqual(no.Stab.Margin, stab.Actual);
++        Assert.NotNull(yes.Ramp); Assert.NotNull(no.Ramp);
++        Assert.Equal(yes.Ramp!.MaxFlangeMinusTubeK, ramp.Actual);
++        Assert.NotEqual(no.Ramp!.MaxFlangeMinusTubeK, ramp.Actual);
++        Assert.True(yes.TabAreaMm2 < no.TabAreaMm2 && yes.VolumeMm3 < no.VolumeMm3 && yes.TabLenMm < no.TabLenMm,
++            "排除压接格后舌片区面积、体积、导热长应当都变小");
++        Assert.Equal(yes.ClampAreaMm2, (no.TabAreaMm2 + no.DiscAreaMm2) - (yes.TabAreaMm2 + yes.DiscAreaMm2), 6);
++        Assert.Equal(lc.Base.BusbarClampLengthMm, no.TabLenMm - yes.TabLenMm, 9);
++        // 排除后升温两节点偏保守（模型没有铜排通道）—— 这件事要写在界面那条参考量的附注里，不只写在代码注释里
++        Assert.Contains("偏保守", ramp.Note);
++        Assert.Contains("铜排", ramp.Note);
++    }
++}
+diff --git a/Pt_Optimize.Tests/R48ErrorBudgetTests.cs b/Pt_Optimize.Tests/R48ErrorBudgetTests.cs
+index 4e1ec17..04b7e73 100644
+--- a/Pt_Optimize.Tests/R48ErrorBudgetTests.cs
++++ b/Pt_Optimize.Tests/R48ErrorBudgetTests.cs
+@@ -28,6 +28,8 @@ namespace PtOptimize.Tests;
+ ///   均匀：Build(h, h, 细区无穷)；
+ ///   分级（生产配方）：MeshAdapt.RefineWholeMesh(h, 细区半径 RequiredMeshFor) 之后 FlangeMesher.Build，与 LineRunner 解析路径同一调用；
+ ///   分级 + 压接段细带：同上，压接边界两侧各 3 mm 铺细步（BuildFromField 的实验开关 clampBandMm，生产默认 0）。
++///   ⚠ 2026-09-14 Opus 5：生产默认已改为压接整面接触 + 自相似细带（见 FlangeMesher.BuildFromField 的配方声明）；本探针的建网格调用显式钉回改动前口径
++///   （只钉外圈；「均匀」「分级」不铺细带，「细带」组照旧 3 mm），deliverable/R48_离散误差预算_2026-09-14.txt 重跑不换口径。
+ ///   h = 1 / 0.5 / 0.25；均匀组片1、片2 再补 h = 0.125（两组三档，比值一致时安全系数可由 3 降到 1.25）。
+ ///
+ /// ══ 报什么（每片每组）
+@@ -83,13 +85,14 @@ public class R48ErrorBudgetTests
+             var g = d.Plate(j, d.DiscFloorMm(p));
+             g.HoleRadiusMm = lcH.TubeIdMm * 0.5 + lcH.WallMm;
+             ShellMesh m;
++            // 口径钉住（2026-09-14 Opus 5）：生产默认已改为压接整面接触 + 自相似压接细带，本探针显式钉回改动前口径（只钉外圈、不铺细带），deliverable 里同名证据文件不换口径
+             if (group == "均匀")
+-                m = FlangeMesher.Build(g, 0, h, h, 1e6, lcH.Base.BusbarClampLengthMm);
++                m = FlangeMesher.Build(g, 0, h, h, 1e6, lcH.Base.BusbarClampLengthMm, clampBandMm: 0, clampFullFace: false);
+             else
+             {
+                 MeshAdapt.RefineWholeMesh(lcH, h, radius);
+                 m = FlangeMesher.Build(g, 0, lcH.MeshFineMm, lcH.MeshCoarseMm, lcH.MeshFineRadiusMm, lcH.Base.BusbarClampLengthMm,
+-                                       lcH.MeshInnerMm, lcH.MeshInnerRadiusMm, clampBandMm: group == "细带" ? 3.0 : 0.0);
++                                       lcH.MeshInnerMm, lcH.MeshInnerRadiusMm, clampBandMm: group == "细带" ? 3.0 : 0.0, clampFullFace: false);
+             }
+             double tSet = d.SetpointC[Math.Min(j, d.SetpointC.Length - 1)];
+             var sc = ShellCurrent.SolveFor(lcH, m, iJ[j], Materials.PtResistivity(tSet) * 1e3, tSet);
+@@ -181,7 +184,7 @@ public class R48ErrorBudgetTests
+             var lcH = d.BuildCase(p, checkRamp: false);
+             var g = d.Plate(0, d.DiscFloorMm(p));
+             g.HoleRadiusMm = lcH.TubeIdMm * 0.5 + lcH.WallMm;
+-            var m = FlangeMesher.Build(g, 0, h, h, 1e6, lcH.Base.BusbarClampLengthMm);
++            var m = FlangeMesher.Build(g, 0, h, h, 1e6, lcH.Base.BusbarClampLengthMm, clampBandMm: 0, clampFullFace: false);   // 口径钉住，同上
+             double a = 0; int n = 0;
+             for (int i = 0; i < m.CellCount; i++)
+             {
+diff --git a/Pt_Optimize.Tests/R48FaceDirichletTests.cs b/Pt_Optimize.Tests/R48FaceDirichletTests.cs
+index 5fa23e7..b61949b 100644
+--- a/Pt_Optimize.Tests/R48FaceDirichletTests.cs
++++ b/Pt_Optimize.Tests/R48FaceDirichletTests.cs
+@@ -40,7 +40,8 @@ public class R48FaceDirichletTests
+         var (xa, za) = FlangeMesher.AnchorsOf(g);
+         var tf = FlangeMesher.Rasterize(g, Math.Max(h / 4, 0.02));
+         var m = FlangeMesher.BuildFromField(tf, g.HoleRadiusMm, 0, h, Math.Max(h, lc.MeshCoarseMm * h / lc.MeshFineMm),
+-                                            lc.MeshFineRadiusMm, lc.Base.BusbarClampLengthMm, 0, 0, g.TwoTabs, xa, za, 1.5 * h);
++                                            lc.MeshFineRadiusMm, lc.Base.BusbarClampLengthMm, 0, 0, g.TwoTabs, xa, za, 1.5 * h,
++                                            clampBandMm: 0, clampFullFace: false);   // 口径钉住（2026-09-14 Opus 5）：生产默认已改为压接整面接触 + 自相似压接细带，本探针显式钉回改动前口径（只钉外圈、不铺细带），deliverable 里同名证据文件不换口径
+         var sc = ShellCurrent.SolveFor(lc, m, iA, Materials.PtResistivity(tSet) * 1e3, tSet);
+         var p2 = SegmentSolver.Clone(lc.Base);
+         p2.TSetC = tSet;
+diff --git a/Pt_Optimize.Tests/R48HoleBandTests.cs b/Pt_Optimize.Tests/R48HoleBandTests.cs
+index 5984919..73e70a8 100644
+--- a/Pt_Optimize.Tests/R48HoleBandTests.cs
++++ b/Pt_Optimize.Tests/R48HoleBandTests.cs
+@@ -70,7 +70,8 @@ public class R48HoleBandTests
+                     var m = FlangeMesher.BuildFromField(tf, holeR, 0, hFine, hCoarse, lc.MeshFineRadiusMm,
+                                                         lc.Base.BusbarClampLengthMm, hInner, lc.MeshInnerRadiusMm,
+                                                         g.TwoTabs, FlangeMesher.AnchorsOf(g).X, FlangeMesher.AnchorsOf(g).Z,
+-                                                        bandOf(hHole));
++                                                        bandOf(hHole), clampBandMm: 0, clampFullFace: false);
++                    // 口径钉住（2026-09-14 Opus 5）：生产默认已改为压接整面接触 + 自相似压接细带，本探针显式钉回改动前口径（只钉外圈、不铺细带），deliverable 里同名证据文件不换口径
+                     var sc = ShellCurrent.SolveFor(lc, m, iA, Materials.PtResistivity(tSet) * 1e3, tSet);
+                     var p2 = SegmentSolver.Clone(lc.Base);
+                     p2.TSetC = tSet;
+diff --git a/Pt_Optimize.Tests/R48InsulBlendTests.cs b/Pt_Optimize.Tests/R48InsulBlendTests.cs
+index cad6300..368326f 100644
+--- a/Pt_Optimize.Tests/R48InsulBlendTests.cs
++++ b/Pt_Optimize.Tests/R48InsulBlendTests.cs
+@@ -78,7 +78,9 @@ public class R48InsulBlendTests
+         g.HoleRadiusMm = holeR;
+         var (xa, za) = FlangeMesher.AnchorsOf(g);
+         var tf = FlangeMesher.Rasterize(g, Math.Max(h / 4, 0.02));
+-        var m = FlangeMesher.BuildFromField(tf, holeR, 0, h, h, 1e6, lc.Base.BusbarClampLengthMm, h, 0, g.TwoTabs, xa, za);
++        // 口径钉住（2026-09-14 Opus 5）：生产默认已改为压接整面接触 + 自相似压接细带，本探针显式钉回改动前口径（只钉外圈、不铺细带），deliverable 里同名证据文件不换口径
++        //   （快门 ②③ 量的是份额与混合的构造性质，与压接口径无关；慢门 ⑤⑧ 写死的对照值是老口径下的数）
++        var m = FlangeMesher.BuildFromField(tf, holeR, 0, h, h, 1e6, lc.Base.BusbarClampLengthMm, h, 0, g.TwoTabs, xa, za, clampBandMm: 0, clampFullFace: false);
+         double tSet = d.SetpointC[Math.Min(j, d.SetpointC.Length - 1)];
+         var sc = ShellCurrent.SolveFor(lc, m, iA, Materials.PtResistivity(tSet) * 1e3, tSet);
+         return (m, sc.JMagAPerMm2, g);
+diff --git a/Pt_Optimize.Tests/R48InsulBoundaryScanTests.cs b/Pt_Optimize.Tests/R48InsulBoundaryScanTests.cs
+index d4abf5e..53b57ac 100644
+--- a/Pt_Optimize.Tests/R48InsulBoundaryScanTests.cs
++++ b/Pt_Optimize.Tests/R48InsulBoundaryScanTests.cs
+@@ -84,7 +84,8 @@ public class R48InsulBoundaryScanTests
+             g.HoleRadiusMm = holeR;
+             var (xa, za) = FlangeMesher.AnchorsOf(g);
+             var tf = FlangeMesher.Rasterize(g, h / 4);
+-            var m = FlangeMesher.BuildFromField(tf, holeR, 0, h, h, 1e6, clampLen, h, 0, g.TwoTabs, xa, za);
++            // 口径钉住（2026-09-14 Opus 5）：生产默认已改为压接整面接触 + 自相似压接细带，本探针显式钉回改动前口径（只钉外圈、不铺细带），deliverable 里同名证据文件不换口径
++            var m = FlangeMesher.BuildFromField(tf, holeR, 0, h, h, 1e6, clampLen, h, 0, g.TwoTabs, xa, za, clampBandMm: 0, clampFullFace: false);
+             double tSet = d.SetpointC[Math.Min(j, d.SetpointC.Length - 1)];
+             var sc = ShellCurrent.SolveFor(lc, m, iA[j], Materials.PtResistivity(tSet) * 1e3, tSet);
+             built[j] = (m, sc.JMagAPerMm2, g);
+diff --git a/Pt_Optimize.Tests/R48InsulRuleABTests.cs b/Pt_Optimize.Tests/R48InsulRuleABTests.cs
+index cdc8e7e..3fe004d 100644
+--- a/Pt_Optimize.Tests/R48InsulRuleABTests.cs
++++ b/Pt_Optimize.Tests/R48InsulRuleABTests.cs
+@@ -67,7 +67,9 @@ public class R48InsulRuleABTests
+             g.HoleRadiusMm = holeR;
+             var (xa, za) = FlangeMesher.AnchorsOf(g);
+             var tf = FlangeMesher.Rasterize(g, Math.Max(h / 4, 0.02));
+-            var m = FlangeMesher.BuildFromField(tf, holeR, 0, h, coarse, R, lc.Base.BusbarClampLengthMm, h, 0, g.TwoTabs, xa, za, 1.5 * h);
++            // 口径钉住（2026-09-14 Opus 5）：生产默认已改为压接整面接触 + 自相似压接细带，本探针显式钉回改动前口径（只钉外圈、不铺细带），deliverable 里同名证据文件不换口径
++            var m = FlangeMesher.BuildFromField(tf, holeR, 0, h, coarse, R, lc.Base.BusbarClampLengthMm, h, 0, g.TwoTabs, xa, za, 1.5 * h,
++                                                clampBandMm: 0, clampFullFace: false);
+             double tSet = d.SetpointC[Math.Min(j, d.SetpointC.Length - 1)];
+             var p2 = SegmentSolver.Clone(lc.Base); p2.TSetC = tSet;
+             if (j < lc.ClampTempC.Length) p2.BusbarClampTempC = lc.ClampTempC[j];
+diff --git a/Pt_Optimize.Tests/R48MeshStructureTests.cs b/Pt_Optimize.Tests/R48MeshStructureTests.cs
+index 1c26232..8a93fef 100644
+--- a/Pt_Optimize.Tests/R48MeshStructureTests.cs
++++ b/Pt_Optimize.Tests/R48MeshStructureTests.cs
+@@ -59,8 +59,11 @@ public class R48MeshStructureTests
+         foreach (double hMid in new[] { 1.0, 0.5, 0.25 })
+         {
+             var tf = FlangeMesher.Rasterize(g, Math.Max(0.25 / 4, 0.02));
++            // 口径钉住（2026-09-14 Opus 5）：生产默认已改为压接整面接触 + 自相似压接细带，本诊断显式钉回改动前口径，
++            //   deliverable/R48_网格结构对比_2026-09-13.txt 每次快套件重写都不换口径（细带会让格数多 13～14 %，那是另一张表，要用新文件名）
+             var m = FlangeMesher.BuildFromField(tf, holeR, 0, hMid, lc.MeshCoarseMm, lc.MeshFineRadiusMm,
+-                                                lc.Base.BusbarClampLengthMm, 0.25, innerR, g.TwoTabs, xa, za);
++                                                lc.Base.BusbarClampLengthMm, 0.25, innerR, g.TwoTabs, xa, za,
++                                                clampBandMm: 0, clampFullFace: false);
+             // 量：孔周第一圈格、舌片中段格、全局最大最小
+             double xTabMid = -0.5 * (g.DiscRadiusMm + Math.Abs(g.TabTipXMm));
+             var near = Enumerable.Range(0, m.CellCount)
+diff --git a/Pt_Optimize.Tests/R48PreResolveProbesTests.cs b/Pt_Optimize.Tests/R48PreResolveProbesTests.cs
+index 88d4825..181549a 100644
+--- a/Pt_Optimize.Tests/R48PreResolveProbesTests.cs
++++ b/Pt_Optimize.Tests/R48PreResolveProbesTests.cs
+@@ -110,8 +110,10 @@ public class R48PreResolveProbesTests
+                 foreach (double R in new[] { 50.0, 59.0, 90.0, double.PositiveInfinity })
+                 {
+                     bool uni = double.IsPositiveInfinity(R);
++                    // 口径钉住（2026-09-14 Opus 5）：生产默认已改为压接整面接触 + 自相似压接细带，本探针显式钉回改动前口径（只钉外圈、不铺细带），deliverable 里同名证据文件不换口径
+                     var m = FlangeMesher.BuildFromField(tf, holeR, 0, h, uni ? h : coarseRatio * h, uni ? 1e6 : R,
+-                                                        lc.Base.BusbarClampLengthMm, h, 0, g.TwoTabs, xa, za, 1.5 * h);
++                                                        lc.Base.BusbarClampLengthMm, h, 0, g.TwoTabs, xa, za, 1.5 * h,
++                                                        clampBandMm: 0, clampFullFace: false);
+                     var sc = ShellCurrent.SolveFor(lc, m, iA[j], Materials.PtResistivity(tSet) * 1e3, tSet);
+                     var th = ShellThermal.Solve(m, sc.JMagAPerMm2, p2, tRoot[j], g.InsulBoundaryXResolved, g.TwoTabs,
+                                                 tabBoundaryX: g.Tangent().X, tabInsulThickMm: d.TabInsulMm[j],
+diff --git a/Pt_Optimize.Tests/R48RingResolutionTests.cs b/Pt_Optimize.Tests/R48RingResolutionTests.cs
+index dbdecc0..253f2f3 100644
+--- a/Pt_Optimize.Tests/R48RingResolutionTests.cs
++++ b/Pt_Optimize.Tests/R48RingResolutionTests.cs
+@@ -64,8 +64,10 @@ public class R48RingResolutionTests
+                 double hCoarse = Math.Max(h, lc.MeshCoarseMm * h / lc.MeshFineMm);
+                 var tf = FlangeMesher.Rasterize(g, Math.Max(h / 4, 0.02));
+                 var (xa, za) = FlangeMesher.AnchorsOf(g);
++                // 口径钉住（2026-09-14 Opus 5）：生产默认已改为压接整面接触 + 自相似压接细带，本探针显式钉回改动前口径（只钉外圈、不铺细带），deliverable 里同名证据文件不换口径
+                 var m = FlangeMesher.BuildFromField(tf, holeR, 0, h, hCoarse, lc.MeshFineRadiusMm,
+-                                                    lc.Base.BusbarClampLengthMm, 0, 0, g.TwoTabs, xa, za, 1.5 * h);
++                                                    lc.Base.BusbarClampLengthMm, 0, 0, g.TwoTabs, xa, za, 1.5 * h,
++                                                    clampBandMm: 0, clampFullFace: false);
+                 var sc = ShellCurrent.SolveFor(lc, m, iA, Materials.PtResistivity(tSet) * 1e3, tSet);
+                 var p2 = SegmentSolver.Clone(lc.Base);
+                 p2.TSetC = tSet;
+diff --git a/Pt_Optimize.Tests/R48ThermalJitterTests.cs b/Pt_Optimize.Tests/R48ThermalJitterTests.cs
+index f10b4fc..7cc773d 100644
+--- a/Pt_Optimize.Tests/R48ThermalJitterTests.cs
++++ b/Pt_Optimize.Tests/R48ThermalJitterTests.cs
+@@ -101,7 +101,8 @@ public class R48ThermalJitterTests
+             }
+             var (xa, za) = FlangeMesher.AnchorsOf(g);
+             var tf = FlangeMesher.Rasterize(g, Math.Max(h / 4, 0.02));
+-            var m = FlangeMesher.BuildFromField(tf, holeR, 0, h, h, 1e6, clampLen, h, 0, g.TwoTabs, xa, za);
++            // 口径钉住（2026-09-14 Opus 5）：生产默认已改为压接整面接触 + 自相似压接细带，本探针显式钉回改动前口径（只钉外圈、不铺细带），deliverable 里同名证据文件不换口径
++            var m = FlangeMesher.BuildFromField(tf, holeR, 0, h, h, 1e6, clampLen, h, 0, g.TwoTabs, xa, za, clampBandMm: 0, clampFullFace: false);
+             double tSet = d.SetpointC[Math.Min(j, d.SetpointC.Length - 1)];
+             var sc = ShellCurrent.SolveFor(lc, m, iA[j], Materials.PtResistivity(tSet) * 1e3, tSet);
+             return (m, sc.JMagAPerMm2, g);
+diff --git a/Pt_Optimize.Tests/R48TrootWiringTests.cs b/Pt_Optimize.Tests/R48TrootWiringTests.cs
+index 16c95b2..2456fb9 100644
+--- a/Pt_Optimize.Tests/R48TrootWiringTests.cs
++++ b/Pt_Optimize.Tests/R48TrootWiringTests.cs
+@@ -47,7 +47,8 @@ public class R48TrootWiringTests
+                 var lc = d.BuildCase(p, checkRamp: false);
+                 var g = d.Plate(j, d.DiscFloorMm(p));
+                 g.HoleRadiusMm = lc.TubeIdMm * 0.5 + lc.WallMm;
+-                var m = FlangeMesher.Build(g, 0, h, h, 1e6, lc.Base.BusbarClampLengthMm);
++                // 口径钉住（2026-09-14 Opus 5）：生产默认已改为压接整面接触 + 自相似压接细带，本探针显式钉回改动前口径（只钉外圈、不铺细带），deliverable 里同名证据文件不换口径
++                var m = FlangeMesher.Build(g, 0, h, h, 1e6, lc.Base.BusbarClampLengthMm, clampBandMm: 0, clampFullFace: false);
+                 double tSet = d.SetpointC[Math.Min(j, d.SetpointC.Length - 1)];
+                 var sc = ShellCurrent.SolveFor(lc, m, iJ[j], Materials.PtResistivity(tSet) * 1e3, tSet);
+                 double Q(double tr)
+diff --git a/Pt_Optimize.Tests/R48UniformQuarterTests.cs b/Pt_Optimize.Tests/R48UniformQuarterTests.cs
+index 2031340..e63c746 100644
+--- a/Pt_Optimize.Tests/R48UniformQuarterTests.cs
++++ b/Pt_Optimize.Tests/R48UniformQuarterTests.cs
+@@ -85,7 +85,8 @@ public class R48UniformQuarterTests
+                 g.HoleRadiusMm = holeR;
+                 var (xa, za) = FlangeMesher.AnchorsOf(g);
+                 var tf = FlangeMesher.Rasterize(g, Math.Max(h / 4, 0.02));
+-                var m = FlangeMesher.BuildFromField(tf, holeR, 0, h, h, 1e6, clampLen, h, 0, g.TwoTabs, xa, za);
++                // 口径钉住（2026-09-14 Opus 5）：生产默认已改为压接整面接触 + 自相似压接细带，本探针显式钉回改动前口径（只钉外圈、不铺细带），deliverable 里同名证据文件不换口径
++                var m = FlangeMesher.BuildFromField(tf, holeR, 0, h, h, 1e6, clampLen, h, 0, g.TwoTabs, xa, za, clampBandMm: 0, clampFullFace: false);
+                 double tSet = d.SetpointC[Math.Min(j, d.SetpointC.Length - 1)];
+                 var sc = ShellCurrent.SolveFor(lc, m, iA[j], Materials.PtResistivity(tSet) * 1e3, tSet);
+                 var p2 = SegmentSolver.Clone(lc.Base); p2.TSetC = tSet;
+diff --git a/Pt_Optimize/Core/DesignScreen.cs b/Pt_Optimize/Core/DesignScreen.cs
+index 8756d6e..249a455 100644
+--- a/Pt_Optimize/Core/DesignScreen.cs
++++ b/Pt_Optimize/Core/DesignScreen.cs
+@@ -70,9 +70,7 @@ public static class DesignScreen
+         double rRef = gen / (refCurrentA * refCurrentA);          // Ω @ tRef, refTempC
+ 
+         double aDisc = 0, aTab = 0;
+-        if (!double.IsNaN(tangentX))
+-            for (int i = 0; i < mesh.CellCount; i++)
+-                if (mesh.Centroid[i].X >= tangentX) aDisc += mesh.Area[i]; else aTab += mesh.Area[i];
++        if (!double.IsNaN(tangentX)) (aDisc, aTab) = AreaByTangent(mesh, tangentX);
+ 
+         return new ShapeFactors
+         {
+@@ -85,6 +83,24 @@ public static class DesignScreen
+         };
+     }
+ 
++    /// <summary>
++    /// 盘/舌面积 mm²（单面）按**切点**分：形心 x ≥ 切点 = 圆盘，否则舌片。<see cref="Extract"/> 与 LineRunner.FlangeLumped 共用这一份
++    /// （R48 2026-09-14 Opus 5 复审补：原先式子只在 Extract 里，LineRunner 为了这两个面积整个调 Extract、白解一遍电流场）。
++    /// <paramref name="excludeClampCells"/> = true 时跳过 <see cref="ShellMesh.ClampCell"/> 标记的压接格（整面接触口径下压接段在铜排下、不在铂的热平衡里）；
++    /// 网格不带压接格（老口径）时与 false 逐位相同。false 时累加顺序与改动前 Extract 里的循环逐字相同。
++    /// </summary>
++    public static (double DiscMm2, double TabMm2) AreaByTangent(ShellMesh mesh, double tangentX, bool excludeClampCells = false)
++    {
++        bool skip = excludeClampCells && mesh.ClampCell.Length == mesh.CellCount;
++        double aDisc = 0, aTab = 0;
++        for (int i = 0; i < mesh.CellCount; i++)
++        {
++            if (skip && mesh.ClampCell[i]) continue;
++            if (mesh.Centroid[i].X >= tangentX) aDisc += mesh.Area[i]; else aTab += mesh.Area[i];
++        }
++        return (aDisc, aTab);
++    }
++
+     /// <summary>
+     /// **C2 的抽热预算** W：管根温差不超过 deltaMaxK 时，法兰最多能从管子抽走多少热。
+     ///
+diff --git a/Pt_Optimize/Core/LineRunner.cs b/Pt_Optimize/Core/LineRunner.cs
+index 7617d92..0ac0d14 100644
+--- a/Pt_Optimize/Core/LineRunner.cs
++++ b/Pt_Optimize/Core/LineRunner.cs
+@@ -1462,6 +1462,15 @@ public static class LineRunner
+                             c.MeshInnerMm, c.MeshInnerRadiusMm);
+             }
+ 
++            // ★ R48（2026-09-14，Opus 5）：网格生成器记下的**压接几何警告**（ClampAnchorNote 里以 ⚠ 开头的句子）接进本次输出。
++            //   此前只写在网格对象上、没人读（「压接长伸进了圆盘」那句从 R48 实验 b 起就在）；整面接触成了生产配方后，
++            //   「压接长盖到了管孔 ⇒ 这块板退回只按舌端外缘接电」是换了压接模型的大事，不许只留在网格上。按片去重，多次 Run 不越滚越长。
++            //   两句文字都会进界面输出框，写成现场工程师看得懂的话（2026-09-14 Opus 5 复审修）。
++            foreach (var w in mesh.ClampAnchorNote.Split('；').Select(s => s.Trim()).Where(s => s.StartsWith("⚠", StringComparison.Ordinal)))
++            {
++                string line = "⚠ " + flangeName(j) + "：" + w.TrimStart('⚠', ' ');
++                if (!res.Notes.Contains(line)) res.Notes.Add(line);
++            }
+             if (j == 0) { res.MeshCells = mesh.CellCount; res.MeshFineMm = c.MeshFineMm; }
+             double iJoint = LineSolver.JointCurrentA(amps, j);
+             var sc = ShellCurrent.SolveFor(c, mesh, iJoint,
+@@ -1842,6 +1851,137 @@ public static class LineRunner
+     public static bool TangentFromField(ThicknessField f, out double xTangent, out string how)
+         => FlangeMesher.TangentFromField(f, out xTangent, out _, out _, out how);   // R47 复修 M1：推法只有一份（网格锚点也用它）
+ 
++    /// <summary>
++    /// ★★ R48（2026-09-14，Opus 5 复审补；审查意见 major「集总模型漏改的调用点」）：**整片热稳定**（FlangeStability）与
++    /// **升温两节点**（RampTwoNode）两个集总模型的输入与求解，从 Judge 里提出来的公开函数 —— 门与探针拿同一份算
++    /// 「排除压接格」前后的数（R48ClampRecipeTests、R48ClampRecipeImpactTests），不手抄配方。
++    /// </summary>
++    public sealed class FlangeLumpedOut
++    {
++        /// <summary>最不利的一片（发热最大那片）的下标，及其板件与本函数建的网格</summary>
++        public int Index;
++        public FlangePlate Plate = null!;
++        public ShellMesh Mesh = null!;
++        /// <summary>排除压接格了没有（要求排除且网格带整面接触的压接格）</summary>
++        public bool ClampExcluded;
++        /// <summary>被排除的压接格面积 mm²（单面；没排除 = 0）</summary>
++        public double ClampAreaMm2;
++        /// <summary>热稳定用：圆盘区／舌片区单面面积 mm²（按切点分）、舌片到铜排的导热长 mm</summary>
++        public double DiscAreaMm2, TabAreaMm2, TabLenMm;
++        /// <summary>升温两节点用：包保温／裸露单面面积 mm²（按板件保温判定分）、体积 mm³、面积 mm²</summary>
++        public double RampInsulAreaMm2, RampBareAreaMm2, VolumeMm3, AreaMm2;
++        public FlangeStability.Result Stab = null!;
++        public RampTwoNode.Inputs? RampIn;
++        /// <summary>升温两节点结果；算不出来时为 null，原因在 <see cref="RampError"/></summary>
++        public RampTwoNodeResult? Ramp;
++        public string RampError = "";
++    }
++
++    /// <summary>
++    /// 见 <see cref="FlangeLumpedOut"/>。没有片或没有板件（解析板 FlangePlates／判据用等效片 GeomForJudge 都空）时返回 null。
++    ///
++    /// ══ excludeClampCells（生产传 true）—— 2026-09-14 Opus 5
++    ///   生产网格压接段整面接触（<see cref="ShellMesh.ClampCell"/>，FlangeMesher.BuildFromField 配方 ③）：压接段里的铂压在铜排下、钉在夹持温度上，
++    ///   ShellCurrent 把它当电极、不再算它的发热 ⇒ 壳解给的 QGenW 已不含这一段（量级见 deliverable/R48_判定网格配方影响_2026-09-14.txt）。
++    ///   发热降了而散热面积、质量、导热长还按整片算 ⇒ 热稳定裕度偏大、升温「法兰−管温」偏小，**两个都偏乐观**。
++    ///   ⇒ true 时：盘／舌散热面积、保温分区面积、质量（体积）、等效外半径与平均厚度（面积）都只数压接格以外的格；
++    ///     舌片到铜排的导热长减去压接长（定温边界从舌端挪到了压接段内边）。
++    ///   false，或网格不带压接格（老口径；压接段盖到管孔的退化几何回退）：与改动前逐位相同（面积、体积直接取网格原值，不重新累加）。
++    ///   ⚠ 舌片导热长仍从 |TabEndXMm| 起算（没计延长段，改动前就如此，本次不改）。
++    ///
++    /// ══ 量过的前后（deliverable/R48_集总模型排除压接格_2026-09-14.txt：误差预算设计、导航网格、生产配方，最不利片 HC1|HC2，排除 2400 mm²）
++    ///   整片热稳定裕度 16.397（不排除）→ 15.246（排除）；升温两节点「法兰−管」峰值 22.05 K → 144.29 K（质量 564 → 383 g、裸露面积 6979 → 4579 mm²）。
++    ///   改动前（老口径、同一算例）是 14.489 与 71.62 K（deliverable/R48A_基线树老口径记录_2026-09-14.txt，基线树上跑的）。
++    ///   ⚠ 升温两节点模型**本来就没有铜排导热这条通道**（RampTwoNode 类注释列的三条机理里没有它；改动前老口径靠压接段那块面积的表面散热顶着）。
++    ///     排除压接格后这条参考量少了那块面积、又没有铜排通道补上 ⇒ 现在偏保守一侧；要不要给 RampTwoNode 加铜排通道，待定（2026-09-14 Opus 5）。
++    /// </summary>
++    public static FlangeLumpedOut? FlangeLumped(LineCase c, IReadOnlyList<FlangeOut> flanges, bool excludeClampCells = true)
++    {
++        var plates = c.FlangePlates is { Length: > 0 } ? c.FlangePlates : c.GeomForJudge;
++        if (flanges.Count == 0 || plates is not { Length: > 0 }) return null;
++
++        // 最不利的一片 = 发热最大那片（dP/dT ∝ 发热）
++        int wj = 0;
++        for (int j = 1; j < flanges.Count; j++)
++            if (flanges[j].QGenW > flanges[wj].QGenW) wj = j;
++        var fw = flanges[wj];
++        var pl = plates[Math.Min(wj, plates.Length - 1)];
++
++        var mesh = FlangeMesher.Build(pl, 0, c.MeshFineMm, c.MeshCoarseMm,
++                                      c.MeshFineRadiusMm, c.Base.BusbarClampLengthMm,
++                                      c.MeshInnerMm, c.MeshInnerRadiusMm);
++        bool skip = excludeClampCells && mesh.CellCount > 0 && mesh.ClampCell.Length == mesh.CellCount;
++        var o = new FlangeLumpedOut { Index = wj, Plate = pl, Mesh = mesh, ClampExcluded = skip };
++
++        // 盘/舌面积按**切点**分 —— 与 DesignScreen.Extract 同一个口径（同一个函数 AreaByTangent），不另立标准。
++        // （原来调 DesignScreen.Extract 只取这两个面积，那里还解一遍电流场、结果没人用 ⇒ 改调它分面积的那一份，skip = false 时面积逐位相同。）
++        (o.DiscAreaMm2, o.TabAreaMm2) = DesignScreen.AreaByTangent(mesh, pl.Tangent().X, excludeClampCells: skip);
++        if (skip)
++        {
++            double a = 0, v = 0, ac = 0;
++            for (int k = 0; k < mesh.CellCount; k++)
++                if (mesh.ClampCell[k]) ac += mesh.Area[k];
++                else { a += mesh.Area[k]; v += mesh.Area[k] * mesh.Thickness[k]; }
++            o.AreaMm2 = a; o.VolumeMm3 = v; o.ClampAreaMm2 = ac;
++        }
++        else { o.AreaMm2 = mesh.TotalArea; o.VolumeMm3 = mesh.VolumeMm3; }
++        o.TabLenMm = Math.Abs(pl.TabEndXMm) - (skip ? c.Base.BusbarClampLengthMm : 0.0);
++        double tThick = double.IsNaN(pl.TabThicknessMm) ? pl.ThicknessMm : pl.TabThicknessMm;
++
++        // ⚠ 评估温度取**管根温度**，不取片上最高温：FlangeStability 的护栏写明
++        //   发散几何上片温会跑到几千度，拿那个温度判出来的全是垃圾。
++        o.Stab = FlangeStability.Check(
++            c.Base, fw.QGenW, fw.TRootC,
++            o.DiscAreaMm2, o.TabAreaMm2, pl.DiscInsulEffectiveMm(c.Base),   // R48：逐片圆盘保温（原读整线值）
++            2 * pl.TabEndHalfWidthMm * tThick, o.TabLenMm,
++            2 * Math.PI * pl.HoleRadiusMm * pl.ThicknessMm,
++            pl.DiscRadiusMm - pl.HoleRadiusMm,
++            pl.TabInsulThickMm);
++
++        try
++        {
++            double shareF = fw.Shared ? Math.Sqrt(3.0) : 1.0;
++            double iSeg = fw.CurrentA / Math.Max(1e-9, shareF);
++            double rRef = fw.QGenW / Math.Max(1e-9, fw.CurrentA * fw.CurrentA);
++            // ★ R48 续（2026-09-14，Opus 5）：保温面积按板件的唯一判定分（默认按半径），不再各抄一份 x 规则。
++            double aIns = 0, aBare = 0;
++            for (int k = 0; k < mesh.CellCount; k++)
++            {
++                if (skip && mesh.ClampCell[k]) continue;                  // R48 复审补（2026-09-14 Opus 5）：压接格不在铂的热平衡里
++                if (pl.UnderDiscInsulation(mesh.Centroid[k].X, mesh.Centroid[k].Z)) aIns += mesh.Area[k]; else aBare += mesh.Area[k];
++            }
++            o.RampInsulAreaMm2 = aIns; o.RampBareAreaMm2 = aBare;
++            double holeR = pl.HoleRadiusMm;
++            double tubeAreaMm2 = Math.PI * ((holeR * holeR)
++                               - (holeR - c.WallMm) * (holeR - c.WallMm));
++            var gRamp = new RampTwoNode.Inputs
++            {
++                WallMm = c.WallMm,
++                FlangeMassG = o.VolumeMm3 * Materials.PtDensity * 1e-6,
++                FlangeAreaInsulMm2 = aIns, FlangeAreaBareMm2 = aBare,
++                FlangeResistanceRefOhm = rRef, FlangeRefTempC = fw.TRootC,
++                HoleRadiusMm = holeR,
++                PlateEqOuterRadiusMm = Math.Sqrt(o.AreaMm2 / Math.PI + holeR * holeR),
++                FlangeThickMm = o.VolumeMm3 / Math.Max(1e-9, o.AreaMm2),
++                DesignCurrentA = iSeg,
++                MaxCurrentA = c.Base.TubeJAllowAPerMm2 * tubeAreaMm2,
++                FromC = c.RampFromC, TargetC = c.RampTargetC,
++                RampRateKPerH = c.RampRateKPerH,
++                MaxHours = (c.RampTargetC - c.RampFromC)
++                           / Math.Max(0.1, c.RampRateKPerH) * 1.4,
++                SharedFactor = shareF,
++                Mode = RampControl.TemperatureRamp,
++            };
++            o.RampIn = gRamp;
++            // R48（2026-09-14，Opus 5）：升温两节点也按本片圆盘保温（原读整线 c.Base）
++            var pRamp = SegmentSolver.Clone(c.Base);
++            pRamp.FlangeInsulThickMm = pl.DiscInsulEffectiveMm(c.Base);
++            o.Ramp = RampTwoNode.Solve(pRamp, gRamp);
++        }
++        catch (Exception ex) { o.Ramp = null; o.RampError = ex.Message; }
++        return o;
++    }
++
+     private static ConstraintOut[] Judge(LineCase c, LineResult res, SegmentOut[] segs,
+                                          FlangeOut[] flanges, DesignInputs[] segParams)
+     {
+@@ -2318,29 +2458,11 @@ public static class LineRunner
+             var plates = c.FlangePlates is { Length: > 0 } ? c.FlangePlates : c.GeomForJudge;
+             if (flanges.Length > 0 && plates is { Length: > 0 })
+             {
+-                // 最不利的一片 = 发热最大那片（dP/dT ∝ 发热）
+-                int wj = 0;
+-                for (int j = 1; j < flanges.Length; j++)
+-                    if (flanges[j].QGenW > flanges[wj].QGenW) wj = j;
+-                var fw = flanges[wj];
+-                var pl = plates[Math.Min(wj, plates.Length - 1)];
+-
+-                // 盘/舌面积按**切点**分 —— 与 DesignScreen.Extract 同一个口径，不另立标准
+-                var mesh = FlangeMesher.Build(pl, 0, c.MeshFineMm, c.MeshCoarseMm,
+-                                              c.MeshFineRadiusMm, c.Base.BusbarClampLengthMm,
+-                                              c.MeshInnerMm, c.MeshInnerRadiusMm);
+-                var sf = DesignScreen.Extract(mesh, 1000.0, 1050.0, pl.Tangent().X);
+-                double tThick = double.IsNaN(pl.TabThicknessMm) ? pl.ThicknessMm : pl.TabThicknessMm;
+-
+-                // ⚠ 评估温度取**管根温度**，不取片上最高温：FlangeStability 的护栏写明
+-                //   发散几何上片温会跑到几千度，拿那个温度判出来的全是垃圾。
+-                var st = FlangeStability.Check(
+-                    c.Base, fw.QGenW, fw.TRootC,
+-                    sf.DiscAreaMm2, sf.TabAreaMm2, pl.DiscInsulEffectiveMm(c.Base),   // R48：逐片圆盘保温（原读整线值）
+-                    2 * pl.TabEndHalfWidthMm * tThick, Math.Abs(pl.TabEndXMm),
+-                    2 * Math.PI * pl.HoleRadiusMm * pl.ThicknessMm,
+-                    pl.DiscRadiusMm - pl.HoleRadiusMm,
+-                    pl.TabInsulThickMm);
++                // ★ R48（2026-09-14，Opus 5 复审补）：最不利片的选取、建网格、两个集总模型的输入与求解整块提成 FlangeLumped（公开，门与探针调同一份）。
++                //   生产传 excludeClampCells: true —— 压接段整面接触后，压接格不在铂的热平衡里，面积／质量／导热长都要把它排除（见 FlangeLumped 的注释）。
++                var lumped = FlangeLumped(c, flanges, excludeClampCells: true)!;   // 与本 if 同一个前提（有片、有板件）⇒ 非空
++                var fw = flanges[lumped.Index];
++                var st = lumped.Stab;
+                 checks.Add(new ConstraintOut
+                 {
+                     Name = LineResult.Key.FlangeStab, Unit = "×", Kind = CheckKind.Reference,
+@@ -2372,40 +2494,9 @@ public static class LineRunner
+                 //  ⚠ **先按参考量进表，不升硬判据**：+215 K 是**现役基准**（设备在跑），
+                 //    拿它去判现役等于判掉自己。限值需要出处 —— 与「热稳定」当初一样，
+                 //    先把量露出来、攒跨几何的分布，有出处了再谈升硬判据。
+-                try
++                // 输入与求解在 FlangeLumped 里（原来这里的 try 包的就是那一段；异常信息原样带回 RampError）
++                if (lumped.Ramp is { } rt)
+                 {
+-                    double shareF = fw.Shared ? Math.Sqrt(3.0) : 1.0;
+-                    double iSeg = fw.CurrentA / Math.Max(1e-9, shareF);
+-                    double rRef = fw.QGenW / Math.Max(1e-9, fw.CurrentA * fw.CurrentA);
+-                    // ★ R48 续（2026-09-14，Opus 5）：保温面积按板件的唯一判定分（默认按半径），不再各抄一份 x 规则。
+-                    double aIns = 0, aBare = 0;
+-                    for (int k = 0; k < mesh.CellCount; k++)
+-                        if (pl.UnderDiscInsulation(mesh.Centroid[k].X, mesh.Centroid[k].Z)) aIns += mesh.Area[k]; else aBare += mesh.Area[k];
+-                    double holeR = pl.HoleRadiusMm;
+-                    double tubeAreaMm2 = Math.PI * ((holeR * holeR)
+-                                       - (holeR - c.WallMm) * (holeR - c.WallMm));
+-                    var gRamp = new RampTwoNode.Inputs
+-                    {
+-                        WallMm = c.WallMm,
+-                        FlangeMassG = mesh.VolumeMm3 * Materials.PtDensity * 1e-6,
+-                        FlangeAreaInsulMm2 = aIns, FlangeAreaBareMm2 = aBare,
+-                        FlangeResistanceRefOhm = rRef, FlangeRefTempC = fw.TRootC,
+-                        HoleRadiusMm = holeR,
+-                        PlateEqOuterRadiusMm = Math.Sqrt(mesh.TotalArea / Math.PI + holeR * holeR),
+-                        FlangeThickMm = mesh.VolumeMm3 / Math.Max(1e-9, mesh.TotalArea),
+-                        DesignCurrentA = iSeg,
+-                        MaxCurrentA = c.Base.TubeJAllowAPerMm2 * tubeAreaMm2,
+-                        FromC = c.RampFromC, TargetC = c.RampTargetC,
+-                        RampRateKPerH = c.RampRateKPerH,
+-                        MaxHours = (c.RampTargetC - c.RampFromC)
+-                                   / Math.Max(0.1, c.RampRateKPerH) * 1.4,
+-                        SharedFactor = shareF,
+-                        Mode = RampControl.TemperatureRamp,
+-                    };
+-                    // R48（2026-09-14，Opus 5）：升温两节点也按本片圆盘保温（原读整线 c.Base）
+-                    var pRamp = SegmentSolver.Clone(c.Base);
+-                    pRamp.FlangeInsulThickMm = pl.DiscInsulEffectiveMm(c.Base);
+-                    var rt = RampTwoNode.Solve(pRamp, gRamp);
+                     checks.Add(new ConstraintOut
+                     {
+                         Name = LineResult.Key.RampField, Unit = "K", Kind = CheckKind.Reference,
+@@ -2423,16 +2514,22 @@ public static class LineRunner
+                              + "要升硬判据得先有限值的出处（同「热稳定」当初的路子）。"
+                              + " ⚠ 判据 ① 用的 RampSolver 把法兰并进管子当同一个温度，"
+                              + "「法兰比管热」在那个模型里结构性地看不见；本条用两节点模型补上。"
++                             // ★ R48（2026-09-14，Opus 5 复审补）：排除压接格之后这个数的偏向要让看数的人知道（对话的知识落到界面上）——
++                             //   量过：误差预算设计 22.05 K（不排除）→ 144.29 K（排除），见 FlangeLumped 的注释与 deliverable/R48_集总模型排除压接格_2026-09-14.txt。
++                             + (lumped.ClampExcluded
++                                ? "　⚠ 压接段压在铜排下，不算进法兰这一节点（发热、质量、散热面积都不含它）；"
++                                  + "而两节点模型没有「经舌片传给铜排」这条散热通道，所以这个数偏高、偏保守。"
++                                : "")
+                     });
+                 }
+-                catch (Exception ex)
++                else
+                 {
+                     checks.Add(new ConstraintOut
+                     {
+                         Name = LineResult.Key.RampField, Unit = "K", Kind = CheckKind.Reference,
+                         Actual = double.NaN, Limit = 215.0, LessIsBetter = true,
+                         Ok = true, Undetermined = true, Where = "—",
+-                        Note = "★ **算不出来**：" + ex.Message
++                        Note = "★ **算不出来**：" + lumped.RampError
+                              + "　（参考量，不参与 AllOk；但算不出来就该说，不能装作没有这一条）"
+                     });
+                 }
+diff --git a/Pt_Optimize/Core/QuadMesher.cs b/Pt_Optimize/Core/QuadMesher.cs
+index fe1e4ba..bcd8760 100644
+--- a/Pt_Optimize/Core/QuadMesher.cs
++++ b/Pt_Optimize/Core/QuadMesher.cs
+@@ -127,12 +127,16 @@ public static class QuadMesher
+         {
+             // R47 F（2026-09-13）：管孔判定与 Build／BuildFromField 共用同一份（FlangeMesher.IsHoleFace）
+             if (FlangeMesher.IsHoleFace(mid, g.HoleRadiusMm)) return ShellMesh.TagHole;
+-            if (g.TwoTabs
+-                ? Math.Abs(mid.X) >= Math.Abs(g.TabTipXMm) - clampLenMm
+-                : mid.X <= g.TabTipXMm + clampLenMm) return ShellMesh.TagTabEnd;
++            // R48（2026-09-14，Opus 5）：压接判定同样收成一份（FlangeMesher.InClampSegment，式子逐字搬过去，结果逐位不变）。
++            if (FlangeMesher.InClampSegment(mid.X, g.TabTipXMm, clampLenMm, g.TwoTabs)) return ShellMesh.TagTabEnd;
+             return ShellMesh.TagFree;
+         });
+         m.ComputeHoleTagDiagnostics(g.HoleRadiusMm);
++        // ⚠ R48（2026-09-14，Opus 5）：本生成器**不填** ShellMesh.ClampCell（压接段整面接触），电流／温度场按老口径只钉外圈。
++        //   不补的理由：它不在生产链上 —— 全仓库只有 Program.cs 的 --quadbench（只建网格数单元、不解场）与 QuadMesherTests（只验网格结构）调它；
++        //   LineRunner、MeshVerify 等出判据的路径一律走 FlangeMesher.Build／BuildFromField（整面接触是那里的生产默认）。
++        //   哪天要拿它解场，先照 BuildFromField 那样按形心填 ClampCell（判定用 InClampSegment），否则压接段模型与生产不一致
++        //   （deliverable/R48_压接整面接触AB_2026-09-14.txt：只钉外圈 vs 整面，片0 抽热差 16～18 W）。
+         return m;
+     }
+ 
+diff --git a/Pt_Optimize/Core/ShellCurrent.cs b/Pt_Optimize/Core/ShellCurrent.cs
+index f51b50c..d8834a3 100644
+--- a/Pt_Optimize/Core/ShellCurrent.cs
++++ b/Pt_Optimize/Core/ShellCurrent.cs
+@@ -40,6 +40,8 @@ public static class ShellCurrent
+     /// <summary>
+     /// 解电位场。边界：<see cref="ShellMesh.TagTabEnd"/> 取 V=1，
+     /// <see cref="ShellMesh.TagHole"/> 取 V=0，其余自然 Neumann（零通量，无需显式处理）。
++    /// ★ R48（2026-09-14，Opus 5）：生产网格还带 <see cref="ShellMesh.ClampCell"/>（压接段整面接触，FlangeMesher 的配方 ③）——
++    ///   那些格一并取 V=1，电极 = 整个压接面，电流主要从压接段内边（x = 舌尖 + 压接长）进铂。
+     /// </summary>
+     /// <param name="rhoRefOhmMm">参考电阻率 Ω·mm（= Ω·m × 1000）</param>
+     /// <param name="tempC">可选单元温度，用于 σ(T)；null 则等温</param>
+@@ -79,7 +81,13 @@ public static class ShellCurrent
+             if (f.Tag == ShellMesh.TagTabEnd) { isFixed[f.A] = true; fixedVal[f.A] = 1.0; }
+             else if (f.Tag == ShellMesh.TagHole) { isFixed[f.A] = true; fixedVal[f.A] = 0.0; }
+         }
+-        // ★ R48 实验（2026-09-14，Opus 5）：压接段整面接触 —— 形心在压接段内的格一并作电极（ShellMesh.ClampCell 空 = 老口径，逐位不变）
++        // ★ R48 生产配方（2026-09-14，Opus 5）：压接段整面接触 —— 形心在压接段内的格一并作电极（ShellMesh.ClampCell 空 = 老口径只钉外圈，逐位不变）。
++        //   整面口径下各量的语义逐条核过（2026-09-14 Opus 5）：
++        //   · 下面「总电流」只累加定温格与邻格的净电流 —— 压接格之间 V 相等、面电流为 0，只剩内边那一排面，正是进铂的电流，定标不受影响；
++        //   · 压接格内部 J ≈ 0（电流在铜排里走），内边那排压接格的 J 由最小二乘重构只拿到一侧面的通量，约为邻格的一半
++        //     （由下面的重构式推得：x 向两面只有一面有通量 jn ⇒ Jx = jn/2；推导，没有单测）—— 这是电极格本身的离散假象，量级 O(h)（配方 ④ 的细带让这排格随 h 变细）；定温模式下这些格被热场排除在账外，热导模式下计入发热；
++        //   · TotalGenW 因此不含压接段里的铂发热，这是模型的本意（deliverable/R48_压接整面接触AB_2026-09-14.txt：整面比外圈片0 发热少 60.6～63.4 W；
++        //     该文件列名写「舌区发热」，取的其实是热场整片 QGenW）。
+         if (m.ClampCell.Length == n)
+             for (int i = 0; i < n; i++) if (m.ClampCell[i]) { isFixed[i] = true; fixedVal[i] = 1.0; }
+         for (int i = 0; i < n; i++) if (isFixed[i]) res.V[i] = fixedVal[i];
+diff --git a/Pt_Optimize/Core/ShellMesh.cs b/Pt_Optimize/Core/ShellMesh.cs
+index 6ccfc32..3be1ac8 100644
+--- a/Pt_Optimize/Core/ShellMesh.cs
++++ b/Pt_Optimize/Core/ShellMesh.cs
+@@ -81,11 +81,18 @@ public sealed class ShellMesh
+     /// </summary>
+     public ThicknessField? SourceField;
+     /// <summary>
+-    /// ★ R48 实验开关（2026-09-14，Opus 5；物理把关人第十轮）：**压接段整面接触**的格子（形心落在压接段内）。
+-    /// 空 = 老口径：只有带压接标签的边界面相邻的那一圈格被当作电极与定温格（实验 b 均匀 h=2 片0 钉 68 格，整面应 600 格）。
+-    /// 非空（长度 = 单元数）时 ShellCurrent 把这些格一并钉成 V=1，ShellThermal 一并当作压接格（定温或按铜排热导）。
+-    /// 物理依据：铜排单位长度导电能力约为舌片的 35 倍、在 450 °C 被夹住 ⇒ 接触面整体等电位、趋近夹持温度；
+-    /// 真正主要进电的内边（x = 舌尖 + 压接长）在老口径里是内部面，没被钉住。先做单片 A/B 量影响，再定是否进生产默认。
++    /// ★★ R48 生产配方（2026-09-14，Opus 5；物理把关人第十轮定的模型，同日由实验开关转为生产默认）：**压接段整面接触**的格子
++    /// （形心落在压接段内；判定 = <see cref="FlangeMesher.InClampSegment"/>，与压接边界面的标签同一个式子）。
++    /// <see cref="FlangeMesher.BuildFromField"/>（因而 <see cref="FlangeMesher.Build"/>）默认填它；非空（长度 = 单元数）时
++    /// ShellCurrent 把这些格一并钉成 V=1，ShellThermal 一并当作压接格（定温，或把铜排热导按面积分摊到整个接触面）。
++    /// 空 = 老口径（只钉外圈）：只有带压接标签的边界面相邻的那一圈格被当作电极与定温格（实验 b 均匀 h=2 片0 钉 68 格，整面 600 格）。
++    ///   老口径只剩三处来源（2026-09-14 Opus 5 复审补第三处）：显式传 clampFullFace: false 的探针；不在生产链上的 <see cref="QuadMesher"/>（只给 --quadbench 数单元、不解场）；
++    ///   **生产链上**压接段盖到管孔的退化几何（舌片比压接长还短或没有舌片）—— BuildFromField 不填、退回只钉外圈，⚠ 进 ClampAnchorNote 与 LineRunner 输出。
++    /// 物理依据：铜排单位长度导电能力约为舌片的 35 倍、在 450 °C 被夹住 ⇒ 接触面整体等电位、趋近夹持温度（零阶正确模型）；
++    /// 真正主要进电的内边（x = 舌尖 + 压接长）在老口径里是内部面，没被钉住。
++    /// 进生产的依据：deliverable/R48_压接整面接触AB_2026-09-14.txt（B2 工作点，均匀 h = 1／0.5／0.25，整面 − 外圈）：
++    ///   片0 抽热 +16.4～+17.6 W、舌区发热 −60.6～−63.4 W、舌区峰 −12.6～−12.8 K；片1 抽热 +32.1～+34.3 W ——
++    ///   三档加密差值稳定（是模型差，不是网格噪声），远超跑前写死的门槛（|Δ抽热| ≥ 0.5 W 或舌区峰变化 ≥ 2 K ⇒ 改）。
+     /// </summary>
+     public bool[] ClampCell = System.Array.Empty<bool>();
+ 
+@@ -615,6 +622,37 @@ public static class FlangeMesher
+         return Math.Abs(r - holeRadiusMm) < (bandMm > 0 ? bandMm : HoleTagBandMm);
+     }
+ 
++    /// <summary>
++    /// ★ R48（2026-09-14，Opus 5）：**x 在不在铜排压接段内** —— 单舌：x ≤ 舌尖 + 压接长；双舌：|x| ≥ |舌尖| − 压接长（两端都是压接段）。
++    /// 与管孔判定 <see cref="IsHoleFace"/> 同样**收成一份**：此前同一个式子写在三处（BuildFromField 的边界面标签、
++    /// BuildFromField 的整面接触格、QuadMesher 的边界面标签），式子逐字搬过来，结果逐位不变。
++    /// 边界面标签传面中点 x，整面接触格（<see cref="ShellMesh.ClampCell"/>）传格子形心 x。
++    /// </summary>
++    public static bool InClampSegment(double x, double tabTipX, double clampLenMm, bool twoTabs)
++        => twoTabs ? Math.Abs(x) >= Math.Abs(tabTipX) - clampLenMm : x <= tabTipX + clampLenMm;
++
++    /// <summary>
++    /// ★★ R48 生产配方（2026-09-14，Opus 5；数值把关人第十轮定的判读）：**压接细带自相似** —— 压接边界两侧各铺
++    /// <c>ClampBandPerHFine × hFine</c> 的细步（步长 = hFine），带宽随网格一起缩，每侧恒为 3 格。
++    /// 依据 deliverable/R48_压接细带自相似_2026-09-14.txt（误差预算工作点，四片 × h = 1／0.5／0.25）：
++    ///   自相似 3·h 与均匀网格之差三档都 ≤ 0.028 W、收敛比值差 ≤ 0.005（门槛 0.05 W／0.02）；
++    ///   固定 3 mm 细带比值 0.459～0.464 而均匀 0.482～0.491（不是自相似，h=2 时每侧只剩 1.5 格）⇒ 不用固定宽度。
++    ///   ⚠ 口径（2026-09-14 Opus 5 复审补）：上面这组数是**只钉外圈**口径下量的（那时整面接触还只是实验开关）。
++    ///   整面接触 + 自相似细带的组合另在 deliverable/R48_组合配方收敛_2026-09-14.txt 验过：四片三档与整面接触均匀网格之差 ≤ 0.011 W；
++    ///   但整面均匀网格本身步长不单调、不在渐近区，按比值外推的误差量不能从外圈口径照搬（见 BuildFromField 配方声明 ④）。
++    /// 为什么要细带（deliverable/R48_离散误差预算_2026-09-14.txt）：分级网格的压接边界落在远场粗格里，不铺细带时
++    ///   分级比均匀抽热偏低（片0 −1.893／−0.957／−0.490 W，h = 1／0.5／0.25，随 h 减半）；铺细带（该文件用的是固定 3 mm）后与均匀之差四片三档都 ≤ 0.022 W。
++    /// </summary>
++    public const double ClampBandPerHFine = 3.0;
++
++    /// <summary>
++    /// 压接细带单侧宽度 mm 的解析：<paramref name="clampBandMm"/> 为 NaN（缺省）⇒ 生产配方 <see cref="ClampBandPerHFine"/> × hFine；
++    /// 显式给数就照给的（0 或负 = 不铺，老探针「固定 3 mm」等原义不变）。
++    /// 公开出来是为了门调生产的这一份，不在测试里手抄 3×hFine（R48 2026-09-14 Opus 5）。
++    /// </summary>
++    public static double ResolveClampBandMm(double clampBandMm, double hFine)
++        => double.IsNaN(clampBandMm) ? ClampBandPerHFine * hFine : clampBandMm;
++
+     /// <summary>
+     /// ★★ R47（2026-09-13）：**解析板的栅格化** —— 生产路径也走它（<see cref="Build"/> = 栅格化 + <see cref="BuildFromField"/>）。
+     /// 节点 t = Inside ? ThicknessAt : 0，图幅 = 精确材料包络 ± <paramref name="marginMm"/>，包络四个数照解析板填（与步长、留白无关）。
+@@ -672,18 +710,22 @@ public static class FlangeMesher
+     /// <param name="hInner">**内带**（管孔 + 焊脚那一圈）网格尺寸 mm。
+     /// ≤ 0 = 不分内带，退回单带。见 <see cref="Band"/> 的说明。</param>
+     /// <param name="innerRadius">内带半径 mm（自管轴起算）。</param>
++    /// <param name="clampBandMm">压接细带单侧宽度 mm。缺省 NaN = 生产配方（两侧各 <see cref="ClampBandPerHFine"/>×hFine）；
++    /// 显式 0 = 不铺。原样转给 <see cref="BuildFromField"/>（R48 2026-09-14 Opus 5：默认由 0 改为 NaN，见那里的配方声明）。</param>
++    /// <param name="clampFullFace">压接段整面接触，缺省 true = 生产配方；显式 false = 老口径只钉外圈。原样转给 <see cref="BuildFromField"/>
++    /// （R48 2026-09-14 Opus 5：此前 Build 没有这个参数，整面接触只能走 BuildFromField 打开，两条入口口径不一）。</param>
+     public static ShellMesh Build(FlangePlate g, double yPlane = 0,
+                                   double hFine = 2.0, double hCoarse = 11.0,
+                                   double fineRadius = 45.0, double clampLenMm = 3.0,
+                                   double hInner = 0, double innerRadius = 0,
+-                                  double clampBandMm = 0)
++                                  double clampBandMm = double.NaN, bool clampFullFace = true)
+     {
+         double hFinest = hInner > 1e-9 && innerRadius > 1e-9 ? Math.Min(hFine, hInner) : hFine;
+         var f = Rasterize(g, RasterStepFor(hFinest), 0.0);
+         var (xa, za) = AnchorsOf(g);
+         return BuildFromField(f, g.HoleRadiusMm, yPlane, hFine, hCoarse, fineRadius, clampLenMm,
+                               hInner, innerRadius, twoTabs: g.TwoTabs, xAnchors: xa, zAnchors: za,
+-                              clampBandMm: clampBandMm);
++                              clampBandMm: clampBandMm, clampFullFace: clampFullFace);
+     }
+ 
+     /// <summary>
+@@ -816,6 +858,24 @@ public static class FlangeMesher
+     /// 材料判据 = 栅格 t &gt; 0；每个栅格节点代表以它为心、边长 = 栅格步的方格（节点值就是那一小块的厚度），
+     /// 单元的覆盖面积与体积按方格与单元的**重叠面积**积分（R47：不再用子采样点，没有平局）。
+     /// 覆盖率 &lt; 1/4 的格子丢弃（与旧口径同）。网格分级仍按孔周加密，轴从管轴中心向外铺。
++    ///
++    /// ══ 判定网格配方声明（2026-09-14，Opus 5）—— 下面四条都是生产默认，解析与图纸两条路径同一份：
++    ///   ① 压接锚点：x = 舌尖 + 压接长 落成网格节点（记进 <see cref="ShellMesh.ClampAnchorNote"/>）。依据 deliverable/R48_实验a_压接段相位_2026-09-14.txt
++    ///      （抽热离群与压接段相位同 R、偏移符号与抽热偏差符号九行全部一致）与 R48_实验b_压接边界落节点_2026-09-14.txt（落节点后四片边偏移全为 0）。
++    ///   ② 分界格混合：保温分界圆穿过的格子按有料面积份额混合两种保温的散热（份额量法在 <see cref="MaterialFraction"/>，混合在 ShellThermal）。
++    ///      依据 R48_实验c_温度场台阶抖动_2026-09-14.txt（形心归边时抽热随分界平移跳 0.40～0.90 W）、R48_保温分界混合_门六_2026-09-14.txt
++    ///      （h=0.5 外侧单侧混合残差 ≤ 0.1 W）与 R48_保温分界混合_门七_2026-09-14.txt（h=1 没看过的片1、片3 混合残差 ≤ 形心的 1/4）。
++    ///   ③ 压接整面接触：形心落在压接段内的格子全部作电极与压接格（<paramref name="clampFullFace"/> 缺省 true，见 <see cref="ShellMesh.ClampCell"/>）。
++    ///      依据 R48_压接整面接触AB_2026-09-14.txt（整面 − 外圈：片0 抽热 +16.4～+17.6 W、片1 +32.1～+34.3 W，三档加密稳定）。
++    ///      唯一例外：压接段盖到了管孔（退化几何，没有舌片的图纸）⇒ 不填、退回只钉外圈，⚠ 写进 ClampAnchorNote，LineRunner 接进输出。
++    ///   ④ 自相似压接细带：压接边界落成节点时，两侧各 <see cref="ClampBandPerHFine"/>×hFine 铺细步 hFine（<paramref name="clampBandMm"/> 缺省 NaN）。
++    ///      依据 R48_压接细带自相似_2026-09-14.txt（**只钉外圈口径下量的**：与均匀网格差 ≤ 0.028 W、收敛比值差 ≤ 0.005；固定 3 mm 不是自相似，比值偏 0.02～0.03）。
++    ///      组合口径（③ 整面接触 + ④ 自相似细带 + 分级网格）另验（2026-09-14 Opus 5 复审补）：R48_组合配方收敛_2026-09-14.txt ——
++    ///      误差预算工作点四片 × h = 1／0.5／0.25，与整面接触均匀网格之差全 ≤ 0.011 W（片0 −0.0064／−0.0018／−0.0002 W，最大是片1 h=1 的 −0.0107 W）。
++    ///      ⚠ 同一文件：整面接触均匀网格自己的抽热步长四片都不在渐近区（比值 −6.7／−3.0／1.47／0.95，片0 −0.0098 → +0.0652 W），
++    ///        R48_离散误差预算 里按只钉外圈的收敛比值算的理查森剩余 U **不能照搬**到整面口径；
++    ///        网格相对压接边界的位置也不随 h 自相似（压接边界自由侧那一格 0.686／0.723／1.230／1.146·hFine，h = 导航 2／1／0.5／0.25）。
++    ///   只在压接边界真落成节点时铺细带（离端点或已有锚点不足一个最细格就不落、也不铺，都写进 ClampAnchorNote）。
+     /// </summary>
+     /// <param name="holeRadiusMm">管孔半径，用于边界标记与细化中心</param>
+     /// <param name="hInner">内带网格尺寸 mm（管孔 + 焊脚那一圈），≤0 = 不分内带（R47 D）。</param>
+@@ -823,6 +883,10 @@ public static class FlangeMesher
+     /// <param name="twoTabs">双舌片：两端都是压接边（解析板经 Build 进来时按板的 TwoTabs 传）。</param>
+     /// <param name="xAnchors">x 轴必须落成节点的坐标（null = 从厚度场推：<see cref="AnchorsFromField"/>）。</param>
+     /// <param name="zAnchors">z 轴必须落成节点的坐标（null = 从厚度场推：±舌半宽）。</param>
++    /// <param name="clampBandMm">压接细带单侧宽度 mm（配方 ④）。缺省 NaN = 生产配方 <see cref="ClampBandPerHFine"/>×hFine；
++    /// 显式给正数 = 照给的宽度（老探针「固定 3 mm」「3·h」原义不变）；显式 0 = 不铺（改动前的行为）。解析见 <see cref="ResolveClampBandMm"/>。</param>
++    /// <param name="clampFullFace">压接段整面接触（配方 ③）。缺省 true = 生产配方，填 <see cref="ShellMesh.ClampCell"/>；
++    /// 显式 false = 老口径只钉外圈（ClampCell 留空，与改动前逐位相同）。</param>
+     public static ShellMesh BuildFromField(ThicknessField f, double holeRadiusMm,
+                                            double yPlane = 0,
+                                            double hFine = 2.0, double hCoarse = 11.0,
+@@ -830,7 +894,7 @@ public static class FlangeMesher
+                                            double hInner = 0, double innerRadius = 0,
+                                            bool twoTabs = false,
+                                            IReadOnlyList<double>? xAnchors = null, IReadOnlyList<double>? zAnchors = null,
+-                                           double holeTagBandMm = 0, double clampBandMm = 0, bool clampFullFace = false)
++                                           double holeTagBandMm = 0, double clampBandMm = double.NaN, bool clampFullFace = true)
+     {
+         var m = new ShellMesh();
+         string clampNote = "";
+@@ -884,18 +948,23 @@ public static class FlangeMesher
+                 { notes.Add($"压接边界 x = {ca:0.###} 离{(dTip < dAnc ? "端点" : "已有锚点")}只有 {Math.Min(dTip, dAnc):0.###} mm，不足一个最细格 {hMin:0.###}，没加（被钉住长度仍按最近节点取）"); continue; }
+                 have.Add(ca);
+                 notes.Add($"压接边界 x = {ca:0.###} 已落成节点");
+-                // ★ R48 实验（2026-09-14，Opus 5；数值把关人第八轮）：压接边界两侧各 clampBandMm 铺细步（默认 0 = 不铺，逐位不变）。
+-                //   实验 b 剩下的「分级比均匀偏低」随 h 减半、与细区半径无关，嫌疑在压接边界处粗格（5.5h）整格钉温。这里只开实验开关，接不接进生产等误差预算出来再定。
+-                if (clampBandMm > 0)
++                // ★ R48 生产配方 ④（2026-09-14，Opus 5；数值把关人第八轮提的细带、第十轮定的自相似）：压接边界两侧各 band 铺细步 hFine。
++                //   实验 b 剩下的「分级比均匀偏低」随 h 减半、与细区半径无关，病在压接边界处的粗格整格钉温
++                //   （deliverable/R48_离散误差预算_2026-09-14.txt：分级 − 均匀 片0 −1.893／−0.957／−0.490 W，铺细带后 ≤ 0.022 W）。
++                //   带宽缺省 = ClampBandPerHFine × hFine（自相似，依据 R48_压接细带自相似_2026-09-14.txt，见 ClampBandPerHFine）；
++                //   显式传 0 = 不铺，显式正数照给的（老探针原义不变）。
++                double band = ResolveClampBandMm(clampBandMm, hFine);
++                if (band > 0)
+                 {
+-                    xBands.Add(new Band(ca - clampBandMm, ca + clampBandMm, hFine));
+-                    notes.Add($"压接边界两侧各 {clampBandMm:0.###} mm 铺细步 {hFine:0.###} mm");
++                    xBands.Add(new Band(ca - band, ca + band, hFine));
++                    notes.Add($"压接边界两侧各 {band:0.###} mm 铺细步 {hFine:0.###} mm");
+                 }
+             }
+             // 几何退化：压接段伸进圆盘（压接长 ≥ 舌片自由段）⇒ 下面的判定会把圆盘边界面也标成压接面。原有的毛病，与锚点无关；先记下，不静默。
+             var tan = (xAnchors ?? Array.Empty<double>()).Where(v => v < 0).ToArray();   // 单舌：切点在管轴左侧，取离管轴最近的那个
+             if (!twoTabs && tan.Length > 0 && xMin + clampLenMm >= tan.Max() - 1e-9)
+-                notes.Add($"⚠ 压接段（到 x = {xMin + clampLenMm:0.###}）伸过了舌盘分界（x = {tan.Max():0.###}）—— 圆盘边界面也会被标成压接面，这块板几何上不成立");
++                // 2026-09-14 Opus 5 复审修：这句经 LineRunner 进界面输出框 ⇒ 改说人话（原文「圆盘边界面也会被标成压接面」是网格内部说法）。
++                notes.Add($"⚠ 压接长 {clampLenMm:0.###} mm 伸进了圆盘（压接段到 x = {xMin + clampLenMm:0.###} mm，舌片与圆盘在 x = {tan.Max():0.###} mm 相接）：舌片比压接长还短，这块板几何上不成立");
+             xAnchors = have;
+             clampNote = string.Join("；", notes);
+         }
+@@ -947,25 +1016,33 @@ public static class FlangeMesher
+         {
+             // 管孔：紧贴孔半径的那一圈边界面（槽的边界半径不同，不会误判）
+             if (IsHoleFace(mid, holeRadiusMm, holeTagBandMm)) return ShellMesh.TagHole;
+-            // 压接边：单舌在舌尖那一段；双舌两端都是
+-            if (twoTabs
+-                ? Math.Abs(mid.X) >= Math.Abs(tabTipX) - clampLenMm
+-                : mid.X <= tabTipX + clampLenMm) return ShellMesh.TagTabEnd;
++            // 压接边：单舌在舌尖那一段；双舌两端都是（R48 2026-09-14 Opus 5：式子收进 InClampSegment，逐字未改）
++            if (InClampSegment(mid.X, tabTipX, clampLenMm, twoTabs)) return ShellMesh.TagTabEnd;
+             return ShellMesh.TagFree;
+         });
+         m.ComputeHoleTagDiagnostics(holeRadiusMm);
+-        m.ClampAnchorNote = clampNote;
+         m.SourceField = f;
++        // ★ R48 生产配方 ③（2026-09-14，Opus 5）：压接段整面接触。与上面边界面标签同一个判定（同一 tabTipX、同一压接长），只是对格子形心判。
++        //   边界面标签照旧打（外圈格仍带 TagTabEnd），ShellCurrent／ShellThermal 取两者的并集。侧边面中点 x = 格形心 x ⇒ 压接边界落成节点时
++        //   外圈格是整面格的子集，并集就是整面；没落成节点（压接长不足一个最细格等，见 ClampAnchorNote）时舌尖那一列可能只带标签、形心在段外，并集照样把它钉住。
++        // ⚠ 退化几何：压接段盖到了管孔（带管孔标签的格形心也在压接段内，例如没有舌片、材料全在压接长以内的图纸）⇒ 整面接触会把
++        //   V=1 电极直接压在 V=0 的孔格上、整片钉成夹持温度，场没有意义（快套件 TabInsulPerPlateTests「推不出切点的场」就是这块板：
++        //   材料 x ∈ [0, 28]、压接长 40，整面口径下段 1 求解失败）。这种板**不填** ClampCell、退回只钉外圈，并把原因写进 ClampAnchorNote（不静默）。
++        //   外圈口径在这块板上同样没有物理意义，只是场解得出来、下游判据照常标「判不了」，与改动前一致。
+         if (clampFullFace)
+         {
+-            // 与上面 BuildFaces 的压接判定同一个表达式（同一 tabTipX、同一压接长），只是对格子形心判
+-            m.ClampCell = new bool[m.CellCount];
++            var cc = new bool[m.CellCount];
+             for (int i = 0; i < m.CellCount; i++)
+-            {
+-                double cx = m.Centroid[i].X;
+-                m.ClampCell[i] = twoTabs ? Math.Abs(cx) >= Math.Abs(tabTipX) - clampLenMm : cx <= tabTipX + clampLenMm;
+-            }
++                cc[i] = InClampSegment(m.Centroid[i].X, tabTipX, clampLenMm, twoTabs);
++            int holeInClamp = m.Faces.Where(fc => fc.B < 0 && fc.Tag == ShellMesh.TagHole && cc[fc.A]).Select(fc => fc.A).Distinct().Count();
++            if (holeInClamp == 0) m.ClampCell = cc;
++            else
++                clampNote += (clampNote.Length > 0 ? "；" : "")
++                           // 2026-09-14 Opus 5 复审修：这句经 LineRunner 进界面输出框 ⇒ 说人话，不写「整面接触」「外圈」「孔边格」这类网格内部说法
++                           //   （退回只钉外圈、段内孔边格数这两件事留在上面的代码注释里；孔边格数本身只作判定，不进文字）。
++                           + $"⚠ 压接长 {clampLenMm:0.###} mm 盖到了管孔：这块板没有足够长的舌片可供压接，本片电流与温度结果不可信";
+         }
++        m.ClampAnchorNote = clampNote;
+         return m;
+     }
+ 
+diff --git a/Pt_Optimize/Core/ShellThermal.cs b/Pt_Optimize/Core/ShellThermal.cs
+index d2ebe2b..5f13820 100644
+--- a/Pt_Optimize/Core/ShellThermal.cs
++++ b/Pt_Optimize/Core/ShellThermal.cs
+@@ -411,8 +411,20 @@ public static class ShellThermal
+                 if (!busG && p.BusbarClampTempC >= 0) { isFixed[f.A] = true; res.T[f.A] = p.BusbarClampTempC; }
+             }
+         }
+-        // ★ R48 实验（2026-09-14，Opus 5）：压接段整面接触 —— 形心在压接段内的格一并当压接格（ShellMesh.ClampCell 空 = 老口径，逐位不变）
+-        if (m.ClampCell.Length == n)
++        // ★ R48 生产配方（2026-09-14，Opus 5）：压接段整面接触 —— 形心在压接段内的格一并当压接格（ShellMesh.ClampCell 空 = 老口径只钉外圈，逐位不变）。
++        //   依据 deliverable/R48_压接整面接触AB_2026-09-14.txt；配方声明见 FlangeMesher.BuildFromField。
++        //   tabCell 从此是「整个接触面」而不只是外圈。下游用到它的量在整面口径下逐条核过（2026-09-14 Opus 5）：
++        //   · 铜排带走（QToClampW，定温）：只累加压接格与邻格的温差导热 —— 压接格之间同温、互相不传热，只剩内边与自由段的交界面，语义不变；
++        //   · 能量账与分区账的排除格（Excluded）、局部热稳定候选：定温时整段压接格都是边界、不入账，正确（老口径反而把压接段中间当自由格记账）；
++        //   · 铜排热导按面积分摊（gBus）：分摊到整个接触面，正是「接触面整体导热」的本意；老口径只摊到外圈；
++        //   · 局部热稳定的压接锚点 xClamp：取的是下标最后一个锚点格的 x，单舌时即离舌尖最远那一列（内边），整面与外圈同一列，语义不变；
++        //     ⚠ 双舌时那个式子落在 +x 端舌尖那一列（外边，不是内边）—— 两种口径一样、早就如此，双舌板只在命令行仪器里造，本次不改，记为待办；
++        //   · 铜排串联热阻的舌宽 = 压接格总面积 ÷ 压接长：整面口径下才真等于舌宽（老口径是外圈面积，约 2h + h·宽/压接长，不是舌宽）；
++        //   · 舌端平均温度 TTabEndMeanC、铜排串联热阻里的舌厚与舌端温度：原为按格数平均，整面 + 细带（配方 ④）后格子大小不一 ⇒ 整面口径下改面积加权，
++        //     老口径（ClampCell 空）保持按格数平均、与改动前逐位相同（2026-09-14 Opus 5 复审修），见各处注释。
++        //   · 下游集总模型（整片热稳定、升温两节点）从网格取面积、质量时同样要把压接格排除在外 —— 那两处在 LineRunner.FlangeLumped（2026-09-14 Opus 5 复审补）。
++        bool fullFace = m.ClampCell.Length == n;                             // 整面接触口径（生产配方）；false = 老口径只钉外圈
++        if (fullFace)
+             for (int i = 0; i < n; i++)
+                 if (m.ClampCell[i])
+                 {
+@@ -421,7 +433,7 @@ public static class ShellThermal
+                 }
+         for (int i = 0; i < n; i++) if (!isFixed[i]) res.T[i] = tRootC;
+ 
+-        // 总热导按舌端单元面积分摊
++        // 总热导按舌端单元面积分摊（R48 2026-09-14 Opus 5：生产网格上舌端单元 = 整个压接接触面，见上）
+         double tabAreaTot = 0;
+         for (int i = 0; i < n; i++) if (tabCell[i]) tabAreaTot += m.Area[i];
+         var gBus = new double[n];
+@@ -909,16 +921,34 @@ public static class ShellThermal
+             //
+             //   A_截面 = 舌宽 × 舌厚。舌宽由压接带反推：tabAreaTot / 压接段长度。
+             //   k 取舌端实际温度下的铂导热系数（PtThermalK 随 T 变，不用常数）。
++            //   ★ R48（2026-09-14，Opus 5）：「舌宽 = 压接格总面积 ÷ 压接长」只在整面接触口径下成立（老口径只有外圈面积，舌宽被算成约 2h + h·宽/压接长）。
++            //     整面接触（ShellMesh.ClampCell 非空）时舌厚与舌端温度按**面积加权**：整面 + 压接细带后格子大小不一（细带 hFine、段中远场粗格），
++            //     按格数平均会偏向细带那几列；面积加权与 gBus 按面积分摊同一个口径。只影响热导模式（busG），定温模式不进这段。
++            //   ★ 2026-09-14 Opus 5 复审修（审查意见 minor「老口径不是逐位相同」）：老口径（ClampCell 空）**保持按格数平均** ——
++            //     老口径只留给复现改动前的证据，必须与改动前逐位相同；第一轮把面积加权也套到了老口径上，热导／自由端模式的老数就变了。
++            //     记录值见 R48ClampRecipeTests 门 (d)（基线树上跑出来的）。
+             double busExtraMm = 0.0;
+             if (busG && tabAreaTot > 1e-9 && p.BusbarConductanceWPerK > 1e-12
+                 && p.BusbarClampLengthMm > 1e-9)
+             {
+                 double wTabMm = tabAreaTot / p.BusbarClampLengthMm;          // 舌宽 mm
+-                double tSum = 0, tCnt = 0, tTempSum = 0;
+-                for (int i = 0; i < n; i++)
+-                    if (tabCell[i]) { tSum += m.Thickness[i]; tTempSum += res.T[i]; tCnt++; }
+-                double tTabMm = tCnt > 0 ? tSum / tCnt : 0;                  // 舌厚 mm
+-                double tTabC = tCnt > 0 ? tTempSum / tCnt : p.TSetC;
++                double tTabMm, tTabC;
++                if (fullFace)
++                {
++                    double tVol = 0, tTempA = 0;
++                    for (int i = 0; i < n; i++)
++                        if (tabCell[i]) { tVol += m.Thickness[i] * m.Area[i]; tTempA += res.T[i] * m.Area[i]; }
++                    tTabMm = tVol / tabAreaTot;                              // 舌厚 mm（面积加权）
++                    tTabC = tTempA / tabAreaTot;                             // 舌端温度 °C（面积加权）
++                }
++                else
++                {
++                    double tSum = 0, tCnt = 0, tTempSum = 0;                 // 老口径：按格数平均（改动前原式，逐字未改）
++                    for (int i = 0; i < n; i++)
++                        if (tabCell[i]) { tSum += m.Thickness[i]; tTempSum += res.T[i]; tCnt++; }
++                    tTabMm = tCnt > 0 ? tSum / tCnt : 0;                     // 舌厚 mm
++                    tTabC = tCnt > 0 ? tTempSum / tCnt : p.TSetC;
++                }
+                 double aCrossM2 = wTabMm * tTabMm * 1e-6;                    // mm² → m²
+                 busExtraMm = Materials.PtThermalK(tTabC) * aCrossM2
+                            / p.BusbarConductanceWPerK * 1e3;                 // m → mm
+@@ -1014,8 +1044,27 @@ public static class ShellThermal
+         res.TDiscMaxC = double.IsNegativeInfinity(tDMax) ? double.NaN : tDMax;
+         res.TTabMaxC = double.IsNegativeInfinity(tTMax) ? double.NaN : tTMax;
+ 
+-        var tabT = Enumerable.Range(0, n).Where(i => tabCell[i]).Select(i => res.T[i]).ToArray();
+-        res.TTabEndMeanC = tabT.Length > 0 ? tabT.Average() : double.NaN;
++        // ★ R48（2026-09-14，Opus 5）：舌端平均温度由按格数平均改为**面积加权**。
++        //   为什么：生产网格上舌端单元是整个压接接触面（配方 ③），又铺了压接细带（配方 ④），段内格子从 hFine 到远场粗格大小不一，
++        //   按格数平均偏向细带那几列（压接段内边、贴着自由段的那几列）。热导模式下 QToClampW = Σ gBus·(T − T_冷端)、gBus 按面积分摊
++        //   ⇒ QToClampW = G·(面积加权均温 − T_冷端)，LineRunner 拿它反推「导热需截面」时两边必须同一个均温口径。
++        //   定温模式所有舌端格都钉在夹持温度上，直接取夹持温度（与原来的按格平均逐位相同，不引入面积加权的浮点尾巴）。
++        //   ★ 2026-09-14 Opus 5 复审修：面积加权只用在整面接触（ClampCell 非空）上；老口径（ClampCell 空）保持改动前的按格数平均原式，
++        //     热导／自由端模式下与改动前逐位相同（记录值：R48ClampRecipeTests 门 (d)，基线树上跑的）。
++        if (fullFace)
++        {
++            int nTab = 0; double aTab = 0, taTab = 0;
++            for (int i = 0; i < n; i++)
++                if (tabCell[i]) { nTab++; aTab += m.Area[i]; taTab += res.T[i] * m.Area[i]; }
++            res.TTabEndMeanC = nTab == 0 ? double.NaN
++                             : clamped ? p.BusbarClampTempC
++                             : taTab / aTab;
++        }
++        else
++        {
++            var tabT = Enumerable.Range(0, n).Where(i => tabCell[i]).Select(i => res.T[i]).ToArray();
++            res.TTabEndMeanC = tabT.Length > 0 ? tabT.Average() : double.NaN;
++        }
+         res.TMaxC = res.T.Max(); res.TMinC = res.T.Min();
+         return res;
+     }
+diff --git a/stream.patch b/stream.patch
+new file mode 100644
+index 0000000..98caf60
+--- /dev/null
++++ b/stream.patch
+@@ -0,0 +1,657 @@
++diff --git a/Pt_Optimize.Tests/R48ClampRecipeTests.cs b/Pt_Optimize.Tests/R48ClampRecipeTests.cs
++new file mode 100644
++index 0000000..1c63c34
++--- /dev/null
+++++ b/Pt_Optimize.Tests/R48ClampRecipeTests.cs
++@@ -0,0 +1,311 @@
+++using System;
+++using System.Collections.Generic;
+++using System.Linq;
+++using PtOptimize.Core;
+++using Xunit;
+++using Xunit.Abstractions;
+++
+++namespace PtOptimize.Tests;
+++
+++/// <summary>
+++/// ★★★★ R48 判定网格配方的快门（2026-09-14，Opus 5 写）：**压接整面接触 + 自相似压接细带**进了生产默认，门造在默认入口上。
+++///
+++/// ══ 配方与依据（声明在 FlangeMesher.BuildFromField 的注释里，本门不重述算式，只调生产函数）
+++///   · 整面接触：deliverable/R48_压接整面接触AB_2026-09-14.txt（整面 − 外圈：片0 抽热 +16.4～+17.6 W，片1 +32.1～+34.3 W）；
+++///   · 自相似细带：deliverable/R48_压接细带自相似_2026-09-14.txt（两侧各 3·h 与均匀网格差 ≤ 0.028 W，比值差 ≤ 0.005）。
+++///
+++/// ══ 六道门（工单四道 + 改后补的两道）
+++///   (a) 解析板片0 均匀 h=2：默认网格的 ClampCell 数 = 形心在压接段内的格数 = 舌宽/h × 压接长/h（直舌的闭式数），
+++///       外圈格（压接边界面相邻格）全在整面格里；与老口径外圈格数比。
+++///   (b) 默认 Build（导航网格与 h=1 分级网格两种）在压接边界两侧 ResolveClampBandMm(NaN, hFine) 内的 x 向节点间距细到 hFine 量级；
+++///       不铺细带时同一窗口里有远场粗格（证明门不是空转）。
+++///   (c) 默认网格上 ShellCurrent 解后所有 ClampCell 的 V == 1；定温模式热场收敛、能量闭合、舌端平均温度 = 夹持温度。
+++///   (d) 显式 clampFullFace: false、clampBandMm: 0 与改动前一致：ClampCell 空、网格记录里没有细带；
+++///       格数与抽热对得上改动前跑出来的记录（出处逐条写在断言旁）；显式 clampBandMm: 3 的老探针原义也不变。
+++///   (e) 退化几何（压接段盖到管孔）不填 ClampCell、退回只钉外圈，⚠ 警告进 LineRunner 输出（改后第一遍快套件抓到的，见该门注释）。
+++///   (f) LineRunner 建网格不覆写这两个开关（生产链读的就是默认配方）。
+++///
+++/// ══ 与工单原文不同的两处（如实写明，2026-09-14 Opus 5）
+++///   · 工单 (a) 要求 h=2 时整面格数 ≥ 10 × 外圈格数。本板舌宽 60、压接长 40：整面 30×20 = 600 格，外圈 30 + 2×19 = 68 格，比值 8.8 ——
+++///     几何上到不了 10（实测 600／68，与 deliverable/R48_实验b_压接边界落节点_2026-09-14.txt 的 R=∞ 行「钉住格数 68」一致）。
+++///     ⇒ h=2 断言闭式数 600 与外圈 68、比值 ≥ 8；另在 h=1 上断言 ≥ 10（2400 vs 138，外圈数同 R48_压接整面接触AB 文件 h=1 行）。
+++///   · 工单 (b) 要求窗口内节点间距 ≤ hFine。生产的渐变轴（FlangeMesher.GradedAxisCentered）有两条规则让窗口里个别格略大于 hFine：
+++///     进细带那一步之后的下一步受增长率 1.3 限制（实测 h=1 时 1.011 mm），压接锚点贴节点时允许把一格拉长到 1.25·hWant（R47 第三轮 N3）。
+++///     这两条都是改动前就有的生产规则，自相似细带的证据文件也是在这套规则下跑出来的，不为了门去改它。
+++///     ⇒ 断言：窗口内整格都 ≤ 1.25·hFine，超过 hFine 的至多 2 格，且窗口里至少有 2×3 − 2 格；不铺细带时窗口里必须有 &gt; 1.25·hFine 的格。
+++/// </summary>
+++public class R48ClampRecipeTests
+++{
+++    private readonly ITestOutputHelper _out;
+++    public R48ClampRecipeTests(ITestOutputHelper o) { _out = o; }
+++
+++    /// <summary>同误差预算的设计（deliverable/R48_离散误差预算_2026-09-14.txt 的 R48ErrorBudgetTests.Design）。</summary>
+++    private static (DesignSpec d, DesignInputs p) Design()
+++    {
+++        var p = new DesignInputs();
+++        var d = DesignSpec.W08.Clone();
+++        d.TabThickMm = new[] { 0.73, 1.26, 1.26, 0.73 };
+++        d.TabInsulMm = new[] { 4.60, 2.10, 2.90, 7.50 };
+++        d.RingMul = new[] { 1.0, 1.0, 1.0, 1.0 };
+++        d = d.Fit();
+++        d.SizeTongues(p);
+++        return (d, p);
+++    }
+++
+++    private static FlangePlate Plate0(DesignSpec d, DesignInputs p, LineCase lc)
+++    {
+++        var g = d.Plate(0, d.DiscFloorMm(p));
+++        g.HoleRadiusMm = lc.TubeIdMm * 0.5 + lc.WallMm;
+++        return g;
+++    }
+++
+++    /// <summary>老口径的压接格：带压接标签的边界面相邻的格（与 R48ClampFullFaceTests 数「钉住格」同一个数法）。</summary>
+++    private static int RingCells(ShellMesh m)
+++        => m.Faces.Where(f => f.B < 0 && f.Tag == ShellMesh.TagTabEnd).Select(f => f.A).Distinct().Count();
+++
+++    /// <summary>形心在压接段内的格数 —— 判定调生产的 FlangeMesher.InClampSegment，舌尖取板件自己的 TabTipXMm（不取网格内部量）。</summary>
+++    private static int CentroidInClamp(ShellMesh m, FlangePlate g, double clampLen)
+++        => Enumerable.Range(0, m.CellCount).Count(i => FlangeMesher.InClampSegment(m.Centroid[i].X, g.TabTipXMm, clampLen, g.TwoTabs));
+++
+++    /// <summary>误差预算工作点上解片0：电流 1213 A、管根 1172.63 °C（出处 deliverable/R48_接头电流核对_2026-09-14.txt，误差预算同用）。</summary>
+++    private static (ShellCurrentResult sc, ShellThermalResult th) SolvePlate0(DesignSpec d, LineCase lc, FlangePlate g, ShellMesh m)
+++    {
+++        double tSet = d.SetpointC[0];
+++        var sc = ShellCurrent.SolveFor(lc, m, 1213, Materials.PtResistivity(tSet) * 1e3, tSet);
+++        var p2 = SegmentSolver.Clone(lc.Base); p2.TSetC = tSet;
+++        if (lc.ClampTempC.Length > 0) p2.BusbarClampTempC = lc.ClampTempC[0];
+++        var th = ShellThermal.Solve(m, sc.JMagAPerMm2, p2, 1172.63, g.InsulBoundaryXResolved, g.TwoTabs,
+++                                    tabBoundaryX: g.Tangent().X, tabInsulThickMm: g.TabInsulThickMm,
+++                                    discRadiusMm: g.DiscRadiusMm, insulDiscRadiusMm: g.InsulDiscRadiusMm);
+++        return (sc, th);
+++    }
+++
+++    /// <summary>生产导航网格参数（BuildCase 给的）与 h=1 整片加密（MeshAdapt.RefineWholeMesh，误差预算「分级」组同一做法）。</summary>
+++    private static IEnumerable<(string name, LineCase lc)> GradedCases(DesignSpec d, DesignInputs p)
+++    {
+++        yield return ("导航网格", d.BuildCase(p, checkRamp: false));
+++        var (_, radius) = MeshVerify.RequiredMeshFor(d);
+++        var lcH = d.BuildCase(p, checkRamp: false);
+++        MeshAdapt.RefineWholeMesh(lcH, 1.0, radius);
+++        yield return ("h=1 分级", lcH);
+++    }
+++
+++    private static ShellMesh BuildGraded(FlangePlate g, LineCase lc, double clampBandMm = double.NaN, bool clampFullFace = true)
+++        => FlangeMesher.Build(g, 0, lc.MeshFineMm, lc.MeshCoarseMm, lc.MeshFineRadiusMm, lc.Base.BusbarClampLengthMm,
+++                              lc.MeshInnerMm, lc.MeshInnerRadiusMm, clampBandMm: clampBandMm, clampFullFace: clampFullFace);
+++
+++    [Fact]
+++    public void a_整面接触格数等于形心在压接段内的格数_远多于外圈()
+++    {
+++        var (d, p) = Design();
+++        var lc = d.BuildCase(p, checkRamp: false);
+++        var g = Plate0(d, p, lc);
+++        double clampLen = lc.Base.BusbarClampLengthMm;
+++        // 闭式数的前提：直舌、没有延长段、舌尖到切点都是等宽 2·TabEndHalfWidthMm，压接段整段在直舌上
+++        Assert.False(g.TwoTabs);
+++        Assert.True(g.ExtensionMm < 1e-9, $"本门的闭式数假设没有延长段，实际 {g.ExtensionMm}");
+++        Assert.Equal(g.TabEndHalfWidthMm, g.Tangent().HalfW, 9);
+++        Assert.True(g.TabTipXMm + clampLen < g.Tangent().X, "压接段伸进了圆盘，闭式数不成立");
+++
+++        foreach (var (h, minRatio, ringRecord) in new[] { (2.0, 8.0, 68), (1.0, 10.0, 138) })
+++        {
+++            var m = FlangeMesher.Build(g, 0, h, h, 1e6, clampLen);                                  // 默认 = 生产配方
+++            var mOld = FlangeMesher.Build(g, 0, h, h, 1e6, clampLen, clampBandMm: 0, clampFullFace: false);
+++            int full = m.ClampCell.Count(b => b);
+++            int inClamp = CentroidInClamp(m, g, clampLen);
+++            long closed = (long)Math.Round(2 * g.TabEndHalfWidthMm / h) * (long)Math.Round(clampLen / h);
+++            int ringOld = RingCells(mOld);
+++            _out.WriteLine($"h={h}：单元 {m.CellCount}　整面 {full}　形心在段内 {inClamp}　闭式 {closed}　老口径外圈 {ringOld}　比 {full / (double)ringOld:0.00}");
+++
+++            Assert.Equal(m.CellCount, m.ClampCell.Length);
+++            Assert.Equal(inClamp, full);
+++            Assert.Equal(closed, full);
+++            // 外圈格数的记录：h=2 → 68（deliverable/R48_实验b_压接边界落节点_2026-09-14.txt，片0 R=∞ 行），
+++            //                 h=1 → 138（deliverable/R48_压接整面接触AB_2026-09-14.txt，片0 h=1 外圈行；两文件板外形相同，只差厚度与保温）
+++            Assert.Equal(ringRecord, ringOld);
+++            Assert.True(full >= minRatio * ringOld, $"h={h}：整面 {full} 格不到外圈 {ringOld} 格的 {minRatio} 倍");
+++            // 默认网格上外圈标签照旧打，而且每个外圈格都在整面格里（并集 = 整面，见 BuildFromField 的注释）
+++            var ringCells = m.Faces.Where(f => f.B < 0 && f.Tag == ShellMesh.TagTabEnd).Select(f => f.A).Distinct().ToArray();
+++            Assert.Equal(ringOld, ringCells.Length);
+++            Assert.All(ringCells, i => Assert.True(m.ClampCell[i], $"外圈格 {i}（x={m.Centroid[i].X:0.###}）不在整面格里"));
+++        }
+++    }
+++
+++    [Fact]
+++    public void b_默认网格在压接边界两侧自相似细带内是细步()
+++    {
+++        var (d, p) = Design();
+++        foreach (var (name, lc) in GradedCases(d, p))
+++        {
+++            var g = Plate0(d, p, lc);
+++            double hF = lc.MeshFineMm;
+++            double band = FlangeMesher.ResolveClampBandMm(double.NaN, hF);
+++            double ca = g.TabTipXMm + lc.Base.BusbarClampLengthMm;
+++            Assert.Equal(FlangeMesher.ClampBandPerHFine * hF, band, 12);
+++            // 窗口必须在细区外（否则细带本来就细，门量不到东西）
+++            Assert.True(Math.Abs(ca) - band > lc.MeshFineRadiusMm, $"{name}：压接边界 {ca} 的细带窗口落在细区半径 {lc.MeshFineRadiusMm} 内，门空转");
+++            Assert.True(lc.MeshCoarseMm > 1.25 * hF, $"{name}：远场步 {lc.MeshCoarseMm} 不比细步粗，门空转");
+++
+++            (double[] inside, double maxTouch, string note) Window(ShellMesh m)
+++            {
+++                var xs = m.Nodes.Select(v => v.X).Distinct().OrderBy(v => v).ToArray();
+++                var ins = new List<double>(); double touch = 0;
+++                for (int k = 0; k + 1 < xs.Length; k++)
+++                {
+++                    double a = xs[k], b = xs[k + 1];
+++                    if (b > ca - band + 1e-9 && a < ca + band - 1e-9) touch = Math.Max(touch, b - a);
+++                    if (a >= ca - band - 1e-9 && b <= ca + band + 1e-9) ins.Add(b - a);
+++                }
+++                Assert.Contains(xs, x => Math.Abs(x - ca) < 1e-9);                                   // 压接边界是节点（配方 ①）
+++                return (ins.ToArray(), touch, m.ClampAnchorNote);
+++            }
+++
+++            var (ins, _, note) = Window(BuildGraded(g, lc));
+++            _out.WriteLine($"{name}：hFine {hF}　细带单侧 {band}　窗口内整格 {ins.Length} 个：{string.Join(" ", ins.Select(v => v.ToString("0.###")))}　记录：{note}");
+++            Assert.Contains($"压接边界两侧各 {band:0.###} mm 铺细步 {hF:0.###} mm", note);
+++            Assert.True(ins.Length >= 2 * FlangeMesher.ClampBandPerHFine - 2, $"{name}：窗口里只有 {ins.Length} 格");
+++            Assert.All(ins, w => Assert.True(w <= 1.25 * hF + 1e-9, $"{name}：窗口内有 {w:0.###} mm 的格，超过 1.25·hFine"));
+++            Assert.True(ins.Count(w => w > hF + 1e-9) <= 2, $"{name}：窗口内超过 hFine 的格多于 2 个：{string.Join(" ", ins.Select(v => v.ToString("0.###")))}");
+++
+++            // 非空转：显式不铺细带时，同一窗口里有远场粗格
+++            var (_, touchOld, noteOld) = Window(BuildGraded(g, lc, clampBandMm: 0, clampFullFace: false));
+++            _out.WriteLine($"{name}：不铺细带时窗口里最大格 {touchOld:0.###} mm　记录：{noteOld}");
+++            Assert.True(touchOld > 1.25 * hF + 1e-9, $"{name}：不铺细带时窗口里最大格只有 {touchOld:0.###}，门空转");
+++        }
+++    }
+++
+++    [Fact]
+++    public void c_整面接触格全部是电极_定温热场闭合()
+++    {
+++        var (d, p) = Design();
+++        foreach (var (name, lc) in GradedCases(d, p))
+++        {
+++            var g = Plate0(d, p, lc);
+++            var m = BuildGraded(g, lc);
+++            int nClamp = m.ClampCell.Count(b => b);
+++            Assert.True(nClamp > RingCells(m), $"{name}：整面格 {nClamp} 不多于外圈格 {RingCells(m)}");
+++            var (sc, th) = SolvePlate0(d, lc, g, m);
+++            Assert.True(sc.Converged, $"{name}：电流场没收敛");
+++            Assert.True(th.Converged, $"{name}：热场没收敛");
+++            var bad = Enumerable.Range(0, m.CellCount).Where(i => m.ClampCell[i] && sc.V[i] != 1.0).Take(5).ToArray();
+++            Assert.True(bad.Length == 0, $"{name}：压接格上 V ≠ 1：" + string.Join("；", bad.Select(i => $"x={m.Centroid[i].X:0.###} V={sc.V[i]:R}")));
+++            Assert.True(sc.ConservationError < 1e-6, $"{name}：电流不守恒 {sc.ConservationError:E2}");
+++            // 定温模式：整段压接格都被钉在夹持温度上 ⇒ 舌端平均温度就是夹持温度（ShellThermal 里 clamped 分支直接取它）
+++            Assert.True(lc.ClampTempC.Length > 0 && lc.ClampTempC[0] >= 0, "本门要定温模式");
+++            Assert.Equal(lc.ClampTempC[0], th.TTabEndMeanC);
+++            // 能量闭合（门槛同 R48FaceDirichletTests）：压接格整段排除在账外、铜排带走只剩内边那排面，账要平
+++            Assert.True(Math.Abs(th.EnergyResidualW) < 1e-3 * Math.Max(1, th.QGenW),
+++                $"{name}：能量不闭合 残差 {th.EnergyResidualW:0.0000} W、发热 {th.QGenW:0.0} W");
+++            _out.WriteLine($"{name}：单元 {m.CellCount}　整面格 {nClamp}　抽热 {th.QFromTubeW:+0.0000;-0.0000} W　铜排带走 {th.QToClampW:0.00} W　发热 {th.QGenW:0.00} W　残差 {th.EnergyResidualW:+0.000000;-0.000000} W");
+++        }
+++    }
+++
+++    [Fact]
+++    public void d_显式老口径与改动前一致()
+++    {
+++        var (d, p) = Design();
+++        var cases = GradedCases(d, p).ToDictionary(c => c.name, c => c.lc);
+++
+++        // 导航网格（hFine 2、远场 11、细区半径 50）：老口径格数 1006、外圈 36 ——
+++        // 记录出处 deliverable/R48_实验b_压接边界落节点_2026-09-14.txt 片0 h=2 R=50 行（改动前跑的，单元 1006、钉住格数 36）
+++        {
+++            var lc = cases["导航网格"];
+++            Assert.Equal(2.0, lc.MeshFineMm); Assert.Equal(11.0, lc.MeshCoarseMm); Assert.Equal(50.0, lc.MeshFineRadiusMm);
+++            var g = Plate0(d, p, lc);
+++            var m = BuildGraded(g, lc, clampBandMm: 0, clampFullFace: false);
+++            _out.WriteLine($"导航网格 老口径：单元 {m.CellCount}　外圈 {RingCells(m)}　记录：{m.ClampAnchorNote}");
+++            Assert.Empty(m.ClampCell);
+++            Assert.DoesNotContain("铺细步", m.ClampAnchorNote);
+++            Assert.Contains("已落成节点", m.ClampAnchorNote);
+++            Assert.Equal(1006, m.CellCount);
+++            Assert.Equal(36, RingCells(m));
+++        }
+++
+++        // h=1 分级：同误差预算的「分级」组（clampBandMm 0，那时还没有整面接触）与「细带」组（clampBandMm 3）。
+++        {
+++            var lc = cases["h=1 分级"];
+++            var g = Plate0(d, p, lc);
+++            var mOld = BuildGraded(g, lc, clampBandMm: 0, clampFullFace: false);
+++            var (_, thOld) = SolvePlate0(d, lc, g, mOld);
+++            _out.WriteLine($"h=1 分级 老口径：单元 {mOld.CellCount}　抽热 {thOld.QFromTubeW:+0.0000;-0.0000} W");
+++            Assert.Empty(mOld.ClampCell);
+++            Assert.DoesNotContain("铺细步", mOld.ClampAnchorNote);
+++            // 记录：deliverable/R48_离散误差预算_2026-09-14.txt 片0「分级 h=1.000　4122 格　抽热 -9.225 W」（打印三位小数 ⇒ 容差 0.0005）
+++            Assert.Equal(4122, mOld.CellCount);
+++            Assert.True(Math.Abs(thOld.QFromTubeW - (-9.225)) <= 0.0005 + 1e-9, $"老口径抽热 {thOld.QFromTubeW:0.0000}，记录 -9.225");
+++
+++            var mBand3 = BuildGraded(g, lc, clampBandMm: 3.0, clampFullFace: false);
+++            var (_, thBand3) = SolvePlate0(d, lc, g, mBand3);
+++            _out.WriteLine($"h=1 分级 显式 3 mm 细带、外圈：单元 {mBand3.CellCount}　抽热 {thBand3.QFromTubeW:+0.0000;-0.0000} W");
+++            // 记录：R48_离散误差预算「细带 h=1.000　4722 格」；R48_压接细带自相似_2026-09-14.txt 片0 固定3mm 第一档 -7.3434 W（四位小数 ⇒ 容差 0.00005）
+++            Assert.Equal(4722, mBand3.CellCount);
+++            Assert.True(Math.Abs(thBand3.QFromTubeW - (-7.3434)) <= 0.00005 + 1e-9, $"显式 3 mm 细带抽热 {thBand3.QFromTubeW:0.00000}，记录 -7.3434");
+++
+++            // h=1 时自相似 3·h = 3 mm ⇒ 默认网格的节点与显式 3 mm 逐位相同，只多了整面接触
+++            var mDef = BuildGraded(g, lc);
+++            Assert.Equal(mBand3.Nodes.Count, mDef.Nodes.Count);
+++            for (int k = 0; k < mDef.Nodes.Count; k++)
+++            {
+++                Assert.Equal(mBand3.Nodes[k].X, mDef.Nodes[k].X);
+++                Assert.Equal(mBand3.Nodes[k].Z, mDef.Nodes[k].Z);
+++            }
+++            Assert.Equal(mBand3.CellCount, mDef.CellCount);
+++            Assert.Empty(mBand3.ClampCell);
+++            Assert.NotEmpty(mDef.ClampCell);
+++        }
+++    }
+++
+++    /// <summary>
+++    /// (e) 退化几何（改后第一次跑快套件时 TabInsulPerPlateTests「推不出切点的场」红了才发现，2026-09-14 Opus 5 补）：
+++    /// 没有舌片、材料全在压接长以内的图纸，整面接触会把电极压到管孔上 ⇒ 生成器不填 ClampCell、退回只钉外圈、写 ⚠ 记录，
+++    /// 而且这句警告要进 LineRunner 的输出（门造在下游：赋了值不等于用它的人读得到）。板与算例同 TabInsulPerPlateTests 那条。
+++    /// </summary>
+++    [Fact]
+++    public void e_压接段盖到管孔时退回只钉外圈_警告进输出()
+++    {
+++        var p = new DesignInputs();
+++        var d = R47NavGridInstrumentTests.Disc56TwoSegs();
+++        d.SetpointC = new[] { 1150.0 }; d.SegLengthMm = new[] { 300.0 };
+++        d = d.Fit();
+++        var lc = d.BuildCase(p, checkRamp: false);
+++        double holeR = lc.TubeIdMm * 0.5 + lc.WallMm;
+++        var g = new FlangePlate { DiscRadiusMm = 28, HoleRadiusMm = holeR, TabEndXMm = 0, TabEndHalfWidthMm = 28, ThicknessMm = 1.0, TabParallel = true };
+++        var f = AnalyticSurrogate.Rasterize(g, 0.5, 2.0);
+++        Assert.True(lc.Base.BusbarClampLengthMm > 28, "本门要压接长盖过整片（材料 x ∈ [0, 28]）");
+++
+++        var m = FlangeMesher.BuildFromField(f, holeR, 0, lc.MeshFineMm, lc.MeshCoarseMm, lc.MeshFineRadiusMm,
+++                                            lc.Base.BusbarClampLengthMm, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
+++        _out.WriteLine("网格记录：" + m.ClampAnchorNote);
+++        Assert.Empty(m.ClampCell);
+++        Assert.Contains("盖到了管孔", m.ClampAnchorNote);
+++        Assert.True(RingCells(m) > 0, "退回只钉外圈后应当还有外圈电极");
+++
+++        lc.FlangePlates = Array.Empty<FlangePlate>();
+++        lc.FlangeFields = new[] { f, f };
+++        lc.GeomForJudge = Array.Empty<FlangePlate>();
+++        lc.TabInsul3dmPerPlateMm = new[] { 2.8, 2.8 };
+++        var r = LineRunner.Run(lc);
+++        Assert.True(r.Ok, r.Message);
+++        var warn = r.Notes.Where(s => s.Contains("盖到了管孔")).ToArray();
+++        _out.WriteLine(string.Join("\n", warn));
+++        Assert.Equal(r.Flanges.Length, warn.Length);                       // 每片一句、按片去重
+++        Assert.All(warn, s => Assert.StartsWith("⚠ ", s));
+++    }
+++
+++    /// <summary>
+++    /// (f) 生产链读的是默认配方：出判据的 LineRunner 建网格时不许显式关掉整面接触或改细带宽度
+++    /// （默认值在 FlangeMesher 一处定；调用点各自传参会让生产链与门量的不是同一张网格）。源码级，2026-09-14 Opus 5。
+++    /// </summary>
+++    [Fact]
+++    public void f_LineRunner建网格不覆写配方开关()
+++    {
+++        string s = System.IO.File.ReadAllText(System.IO.Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "Core", "LineRunner.cs"));
+++        Assert.Contains("FlangeMesher.Build(plate,", s);
+++        Assert.Contains("FlangeMesher.BuildFromField(tf, holeR,", s);
+++        Assert.DoesNotContain("clampFullFace", s);
+++        Assert.DoesNotContain("clampBandMm", s);
+++        // 生成器的缺省值就是配方
+++        string mesh = System.IO.File.ReadAllText(System.IO.Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "Core", "ShellMesh.cs"));
+++        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(mesh, @"double clampBandMm = double\.NaN, bool clampFullFace = true\)").Count);
+++    }
+++}
++diff --git a/Pt_Optimize/Core/LineRunner.cs b/Pt_Optimize/Core/LineRunner.cs
++index 7617d92..d47678f 100644
++--- a/Pt_Optimize/Core/LineRunner.cs
+++++ b/Pt_Optimize/Core/LineRunner.cs
++@@ -1462,6 +1462,14 @@ public static class LineRunner
++                             c.MeshInnerMm, c.MeshInnerRadiusMm);
++             }
++ 
+++            // ★ R48（2026-09-14，Opus 5）：网格生成器记下的**压接几何警告**（ClampAnchorNote 里以 ⚠ 开头的句子）接进本次输出。
+++            //   此前只写在网格对象上、没人读（「压接段伸过了舌盘分界」那句从 R48 实验 b 起就在）；整面接触成了生产配方后，
+++            //   「压接段盖到了管孔 ⇒ 这块板退回只钉外圈」是换了压接模型的大事，不许只留在网格上。按片去重，多次 Run 不越滚越长。
+++            foreach (var w in mesh.ClampAnchorNote.Split('；').Select(s => s.Trim()).Where(s => s.StartsWith("⚠", StringComparison.Ordinal)))
+++            {
+++                string line = "⚠ " + flangeName(j) + "：" + w.TrimStart('⚠', ' ');
+++                if (!res.Notes.Contains(line)) res.Notes.Add(line);
+++            }
++             if (j == 0) { res.MeshCells = mesh.CellCount; res.MeshFineMm = c.MeshFineMm; }
++             double iJoint = LineSolver.JointCurrentA(amps, j);
++             var sc = ShellCurrent.SolveFor(c, mesh, iJoint,
++diff --git a/Pt_Optimize/Core/QuadMesher.cs b/Pt_Optimize/Core/QuadMesher.cs
++index fe1e4ba..bcd8760 100644
++--- a/Pt_Optimize/Core/QuadMesher.cs
+++++ b/Pt_Optimize/Core/QuadMesher.cs
++@@ -127,12 +127,16 @@ public static class QuadMesher
++         {
++             // R47 F（2026-09-13）：管孔判定与 Build／BuildFromField 共用同一份（FlangeMesher.IsHoleFace）
++             if (FlangeMesher.IsHoleFace(mid, g.HoleRadiusMm)) return ShellMesh.TagHole;
++-            if (g.TwoTabs
++-                ? Math.Abs(mid.X) >= Math.Abs(g.TabTipXMm) - clampLenMm
++-                : mid.X <= g.TabTipXMm + clampLenMm) return ShellMesh.TagTabEnd;
+++            // R48（2026-09-14，Opus 5）：压接判定同样收成一份（FlangeMesher.InClampSegment，式子逐字搬过去，结果逐位不变）。
+++            if (FlangeMesher.InClampSegment(mid.X, g.TabTipXMm, clampLenMm, g.TwoTabs)) return ShellMesh.TagTabEnd;
++             return ShellMesh.TagFree;
++         });
++         m.ComputeHoleTagDiagnostics(g.HoleRadiusMm);
+++        // ⚠ R48（2026-09-14，Opus 5）：本生成器**不填** ShellMesh.ClampCell（压接段整面接触），电流／温度场按老口径只钉外圈。
+++        //   不补的理由：它不在生产链上 —— 全仓库只有 Program.cs 的 --quadbench（只建网格数单元、不解场）与 QuadMesherTests（只验网格结构）调它；
+++        //   LineRunner、MeshVerify 等出判据的路径一律走 FlangeMesher.Build／BuildFromField（整面接触是那里的生产默认）。
+++        //   哪天要拿它解场，先照 BuildFromField 那样按形心填 ClampCell（判定用 InClampSegment），否则压接段模型与生产不一致
+++        //   （deliverable/R48_压接整面接触AB_2026-09-14.txt：只钉外圈 vs 整面，片0 抽热差 16～18 W）。
++         return m;
++     }
++ 
++diff --git a/Pt_Optimize/Core/ShellCurrent.cs b/Pt_Optimize/Core/ShellCurrent.cs
++index f51b50c..d8834a3 100644
++--- a/Pt_Optimize/Core/ShellCurrent.cs
+++++ b/Pt_Optimize/Core/ShellCurrent.cs
++@@ -40,6 +40,8 @@ public static class ShellCurrent
++     /// <summary>
++     /// 解电位场。边界：<see cref="ShellMesh.TagTabEnd"/> 取 V=1，
++     /// <see cref="ShellMesh.TagHole"/> 取 V=0，其余自然 Neumann（零通量，无需显式处理）。
+++    /// ★ R48（2026-09-14，Opus 5）：生产网格还带 <see cref="ShellMesh.ClampCell"/>（压接段整面接触，FlangeMesher 的配方 ③）——
+++    ///   那些格一并取 V=1，电极 = 整个压接面，电流主要从压接段内边（x = 舌尖 + 压接长）进铂。
++     /// </summary>
++     /// <param name="rhoRefOhmMm">参考电阻率 Ω·mm（= Ω·m × 1000）</param>
++     /// <param name="tempC">可选单元温度，用于 σ(T)；null 则等温</param>
++@@ -79,7 +81,13 @@ public static class ShellCurrent
++             if (f.Tag == ShellMesh.TagTabEnd) { isFixed[f.A] = true; fixedVal[f.A] = 1.0; }
++             else if (f.Tag == ShellMesh.TagHole) { isFixed[f.A] = true; fixedVal[f.A] = 0.0; }
++         }
++-        // ★ R48 实验（2026-09-14，Opus 5）：压接段整面接触 —— 形心在压接段内的格一并作电极（ShellMesh.ClampCell 空 = 老口径，逐位不变）
+++        // ★ R48 生产配方（2026-09-14，Opus 5）：压接段整面接触 —— 形心在压接段内的格一并作电极（ShellMesh.ClampCell 空 = 老口径只钉外圈，逐位不变）。
+++        //   整面口径下各量的语义逐条核过（2026-09-14 Opus 5）：
+++        //   · 下面「总电流」只累加定温格与邻格的净电流 —— 压接格之间 V 相等、面电流为 0，只剩内边那一排面，正是进铂的电流，定标不受影响；
+++        //   · 压接格内部 J ≈ 0（电流在铜排里走），内边那排压接格的 J 由最小二乘重构只拿到一侧面的通量，约为邻格的一半
+++        //     （由下面的重构式推得：x 向两面只有一面有通量 jn ⇒ Jx = jn/2；推导，没有单测）—— 这是电极格本身的离散假象，量级 O(h)（配方 ④ 的细带让这排格随 h 变细）；定温模式下这些格被热场排除在账外，热导模式下计入发热；
+++        //   · TotalGenW 因此不含压接段里的铂发热，这是模型的本意（deliverable/R48_压接整面接触AB_2026-09-14.txt：整面比外圈片0 发热少 60.6～63.4 W；
+++        //     该文件列名写「舌区发热」，取的其实是热场整片 QGenW）。
++         if (m.ClampCell.Length == n)
++             for (int i = 0; i < n; i++) if (m.ClampCell[i]) { isFixed[i] = true; fixedVal[i] = 1.0; }
++         for (int i = 0; i < n; i++) if (isFixed[i]) res.V[i] = fixedVal[i];
++diff --git a/Pt_Optimize/Core/ShellMesh.cs b/Pt_Optimize/Core/ShellMesh.cs
++index 6ccfc32..9c13d42 100644
++--- a/Pt_Optimize/Core/ShellMesh.cs
+++++ b/Pt_Optimize/Core/ShellMesh.cs
++@@ -81,11 +81,17 @@ public sealed class ShellMesh
++     /// </summary>
++     public ThicknessField? SourceField;
++     /// <summary>
++-    /// ★ R48 实验开关（2026-09-14，Opus 5；物理把关人第十轮）：**压接段整面接触**的格子（形心落在压接段内）。
++-    /// 空 = 老口径：只有带压接标签的边界面相邻的那一圈格被当作电极与定温格（实验 b 均匀 h=2 片0 钉 68 格，整面应 600 格）。
++-    /// 非空（长度 = 单元数）时 ShellCurrent 把这些格一并钉成 V=1，ShellThermal 一并当作压接格（定温或按铜排热导）。
++-    /// 物理依据：铜排单位长度导电能力约为舌片的 35 倍、在 450 °C 被夹住 ⇒ 接触面整体等电位、趋近夹持温度；
++-    /// 真正主要进电的内边（x = 舌尖 + 压接长）在老口径里是内部面，没被钉住。先做单片 A/B 量影响，再定是否进生产默认。
+++    /// ★★ R48 生产配方（2026-09-14，Opus 5；物理把关人第十轮定的模型，同日由实验开关转为生产默认）：**压接段整面接触**的格子
+++    /// （形心落在压接段内；判定 = <see cref="FlangeMesher.InClampSegment"/>，与压接边界面的标签同一个式子）。
+++    /// <see cref="FlangeMesher.BuildFromField"/>（因而 <see cref="FlangeMesher.Build"/>）默认填它；非空（长度 = 单元数）时
+++    /// ShellCurrent 把这些格一并钉成 V=1，ShellThermal 一并当作压接格（定温，或把铜排热导按面积分摊到整个接触面）。
+++    /// 空 = 老口径（只钉外圈）：只有带压接标签的边界面相邻的那一圈格被当作电极与定温格（实验 b 均匀 h=2 片0 钉 68 格，整面 600 格）。
+++    ///   老口径只剩两处来源：显式传 clampFullFace: false 的探针；不在生产链上的 <see cref="QuadMesher"/>（只给 --quadbench 数单元、不解场）。
+++    /// 物理依据：铜排单位长度导电能力约为舌片的 35 倍、在 450 °C 被夹住 ⇒ 接触面整体等电位、趋近夹持温度（零阶正确模型）；
+++    /// 真正主要进电的内边（x = 舌尖 + 压接长）在老口径里是内部面，没被钉住。
+++    /// 进生产的依据：deliverable/R48_压接整面接触AB_2026-09-14.txt（B2 工作点，均匀 h = 1／0.5／0.25，整面 − 外圈）：
+++    ///   片0 抽热 +16.4～+17.6 W、舌区发热 −60.6～−63.4 W、舌区峰 −12.6～−12.8 K；片1 抽热 +32.1～+34.3 W ——
+++    ///   三档加密差值稳定（是模型差，不是网格噪声），远超跑前写死的门槛（|Δ抽热| ≥ 0.5 W 或舌区峰变化 ≥ 2 K ⇒ 改）。
++     /// </summary>
++     public bool[] ClampCell = System.Array.Empty<bool>();
++ 
++@@ -615,6 +621,34 @@ public static class FlangeMesher
++         return Math.Abs(r - holeRadiusMm) < (bandMm > 0 ? bandMm : HoleTagBandMm);
++     }
++ 
+++    /// <summary>
+++    /// ★ R48（2026-09-14，Opus 5）：**x 在不在铜排压接段内** —— 单舌：x ≤ 舌尖 + 压接长；双舌：|x| ≥ |舌尖| − 压接长（两端都是压接段）。
+++    /// 与管孔判定 <see cref="IsHoleFace"/> 同样**收成一份**：此前同一个式子写在三处（BuildFromField 的边界面标签、
+++    /// BuildFromField 的整面接触格、QuadMesher 的边界面标签），式子逐字搬过来，结果逐位不变。
+++    /// 边界面标签传面中点 x，整面接触格（<see cref="ShellMesh.ClampCell"/>）传格子形心 x。
+++    /// </summary>
+++    public static bool InClampSegment(double x, double tabTipX, double clampLenMm, bool twoTabs)
+++        => twoTabs ? Math.Abs(x) >= Math.Abs(tabTipX) - clampLenMm : x <= tabTipX + clampLenMm;
+++
+++    /// <summary>
+++    /// ★★ R48 生产配方（2026-09-14，Opus 5；数值把关人第十轮定的判读）：**压接细带自相似** —— 压接边界两侧各铺
+++    /// <c>ClampBandPerHFine × hFine</c> 的细步（步长 = hFine），带宽随网格一起缩，每侧恒为 3 格。
+++    /// 依据 deliverable/R48_压接细带自相似_2026-09-14.txt（误差预算工作点，四片 × h = 1／0.5／0.25）：
+++    ///   自相似 3·h 与均匀网格之差三档都 ≤ 0.028 W、收敛比值差 ≤ 0.005（门槛 0.05 W／0.02）；
+++    ///   固定 3 mm 细带比值 0.459～0.464 而均匀 0.482～0.491（不是自相似，h=2 时每侧只剩 1.5 格）⇒ 不用固定宽度。
+++    /// 为什么要细带（deliverable/R48_离散误差预算_2026-09-14.txt）：分级网格的压接边界落在远场粗格里，不铺细带时
+++    ///   分级比均匀抽热偏低（片0 −1.893／−0.957／−0.490 W，h = 1／0.5／0.25，随 h 减半）；铺细带（该文件用的是固定 3 mm）后与均匀之差四片三档都 ≤ 0.022 W。
+++    /// </summary>
+++    public const double ClampBandPerHFine = 3.0;
+++
+++    /// <summary>
+++    /// 压接细带单侧宽度 mm 的解析：<paramref name="clampBandMm"/> 为 NaN（缺省）⇒ 生产配方 <see cref="ClampBandPerHFine"/> × hFine；
+++    /// 显式给数就照给的（0 或负 = 不铺，老探针「固定 3 mm」等原义不变）。
+++    /// 公开出来是为了门调生产的这一份，不在测试里手抄 3×hFine（R48 2026-09-14 Opus 5）。
+++    /// </summary>
+++    public static double ResolveClampBandMm(double clampBandMm, double hFine)
+++        => double.IsNaN(clampBandMm) ? ClampBandPerHFine * hFine : clampBandMm;
+++
++     /// <summary>
++     /// ★★ R47（2026-09-13）：**解析板的栅格化** —— 生产路径也走它（<see cref="Build"/> = 栅格化 + <see cref="BuildFromField"/>）。
++     /// 节点 t = Inside ? ThicknessAt : 0，图幅 = 精确材料包络 ± <paramref name="marginMm"/>，包络四个数照解析板填（与步长、留白无关）。
++@@ -672,18 +706,22 @@ public static class FlangeMesher
++     /// <param name="hInner">**内带**（管孔 + 焊脚那一圈）网格尺寸 mm。
++     /// ≤ 0 = 不分内带，退回单带。见 <see cref="Band"/> 的说明。</param>
++     /// <param name="innerRadius">内带半径 mm（自管轴起算）。</param>
+++    /// <param name="clampBandMm">压接细带单侧宽度 mm。缺省 NaN = 生产配方（两侧各 <see cref="ClampBandPerHFine"/>×hFine）；
+++    /// 显式 0 = 不铺。原样转给 <see cref="BuildFromField"/>（R48 2026-09-14 Opus 5：默认由 0 改为 NaN，见那里的配方声明）。</param>
+++    /// <param name="clampFullFace">压接段整面接触，缺省 true = 生产配方；显式 false = 老口径只钉外圈。原样转给 <see cref="BuildFromField"/>
+++    /// （R48 2026-09-14 Opus 5：此前 Build 没有这个参数，整面接触只能走 BuildFromField 打开，两条入口口径不一）。</param>
++     public static ShellMesh Build(FlangePlate g, double yPlane = 0,
++                                   double hFine = 2.0, double hCoarse = 11.0,
++                                   double fineRadius = 45.0, double clampLenMm = 3.0,
++                                   double hInner = 0, double innerRadius = 0,
++-                                  double clampBandMm = 0)
+++                                  double clampBandMm = double.NaN, bool clampFullFace = true)
++     {
++         double hFinest = hInner > 1e-9 && innerRadius > 1e-9 ? Math.Min(hFine, hInner) : hFine;
++         var f = Rasterize(g, RasterStepFor(hFinest), 0.0);
++         var (xa, za) = AnchorsOf(g);
++         return BuildFromField(f, g.HoleRadiusMm, yPlane, hFine, hCoarse, fineRadius, clampLenMm,
++                               hInner, innerRadius, twoTabs: g.TwoTabs, xAnchors: xa, zAnchors: za,
++-                              clampBandMm: clampBandMm);
+++                              clampBandMm: clampBandMm, clampFullFace: clampFullFace);
++     }
++ 
++     /// <summary>
++@@ -816,6 +854,19 @@ public static class FlangeMesher
++     /// 材料判据 = 栅格 t &gt; 0；每个栅格节点代表以它为心、边长 = 栅格步的方格（节点值就是那一小块的厚度），
++     /// 单元的覆盖面积与体积按方格与单元的**重叠面积**积分（R47：不再用子采样点，没有平局）。
++     /// 覆盖率 &lt; 1/4 的格子丢弃（与旧口径同）。网格分级仍按孔周加密，轴从管轴中心向外铺。
+++    ///
+++    /// ══ 判定网格配方声明（2026-09-14，Opus 5）—— 下面四条都是生产默认，解析与图纸两条路径同一份：
+++    ///   ① 压接锚点：x = 舌尖 + 压接长 落成网格节点（记进 <see cref="ShellMesh.ClampAnchorNote"/>）。依据 deliverable/R48_实验a_压接段相位_2026-09-14.txt
+++    ///      （抽热离群与压接段相位同 R、偏移符号与抽热偏差符号九行全部一致）与 R48_实验b_压接边界落节点_2026-09-14.txt（落节点后四片边偏移全为 0）。
+++    ///   ② 分界格混合：保温分界圆穿过的格子按有料面积份额混合两种保温的散热（份额量法在 <see cref="MaterialFraction"/>，混合在 ShellThermal）。
+++    ///      依据 R48_实验c_温度场台阶抖动_2026-09-14.txt（形心归边时抽热随分界平移跳 0.40～0.90 W）与 R48_保温分界混合_门六／门七_2026-09-14.txt
+++    ///      （h=0.5 外侧单侧混合残差 ≤ 0.1 W；h=1 没看过的片1、片3 混合残差 ≤ 形心的 1/4）。
+++    ///   ③ 压接整面接触：形心落在压接段内的格子全部作电极与压接格（<paramref name="clampFullFace"/> 缺省 true，见 <see cref="ShellMesh.ClampCell"/>）。
+++    ///      依据 R48_压接整面接触AB_2026-09-14.txt（整面 − 外圈：片0 抽热 +16.4～+17.6 W、片1 +32.1～+34.3 W，三档加密稳定）。
+++    ///      唯一例外：压接段盖到了管孔（退化几何，没有舌片的图纸）⇒ 不填、退回只钉外圈，⚠ 写进 ClampAnchorNote，LineRunner 接进输出。
+++    ///   ④ 自相似压接细带：压接边界落成节点时，两侧各 <see cref="ClampBandPerHFine"/>×hFine 铺细步 hFine（<paramref name="clampBandMm"/> 缺省 NaN）。
+++    ///      依据 R48_压接细带自相似_2026-09-14.txt（与均匀网格差 ≤ 0.028 W、收敛比值差 ≤ 0.005；固定 3 mm 不是自相似，比值偏 0.02～0.03）。
+++    ///   只在压接边界真落成节点时铺细带（离端点或已有锚点不足一个最细格就不落、也不铺，都写进 ClampAnchorNote）。
++     /// </summary>
++     /// <param name="holeRadiusMm">管孔半径，用于边界标记与细化中心</param>
++     /// <param name="hInner">内带网格尺寸 mm（管孔 + 焊脚那一圈），≤0 = 不分内带（R47 D）。</param>
++@@ -823,6 +874,10 @@ public static class FlangeMesher
++     /// <param name="twoTabs">双舌片：两端都是压接边（解析板经 Build 进来时按板的 TwoTabs 传）。</param>
++     /// <param name="xAnchors">x 轴必须落成节点的坐标（null = 从厚度场推：<see cref="AnchorsFromField"/>）。</param>
++     /// <param name="zAnchors">z 轴必须落成节点的坐标（null = 从厚度场推：±舌半宽）。</param>
+++    /// <param name="clampBandMm">压接细带单侧宽度 mm（配方 ④）。缺省 NaN = 生产配方 <see cref="ClampBandPerHFine"/>×hFine；
+++    /// 显式给正数 = 照给的宽度（老探针「固定 3 mm」「3·h」原义不变）；显式 0 = 不铺（改动前的行为）。解析见 <see cref="ResolveClampBandMm"/>。</param>
+++    /// <param name="clampFullFace">压接段整面接触（配方 ③）。缺省 true = 生产配方，填 <see cref="ShellMesh.ClampCell"/>；
+++    /// 显式 false = 老口径只钉外圈（ClampCell 留空，与改动前逐位相同）。</param>
++     public static ShellMesh BuildFromField(ThicknessField f, double holeRadiusMm,
++                                            double yPlane = 0,
++                                            double hFine = 2.0, double hCoarse = 11.0,
++@@ -830,7 +885,7 @@ public static class FlangeMesher
++                                            double hInner = 0, double innerRadius = 0,
++                                            bool twoTabs = false,
++                                            IReadOnlyList<double>? xAnchors = null, IReadOnlyList<double>? zAnchors = null,
++-                                           double holeTagBandMm = 0, double clampBandMm = 0, bool clampFullFace = false)
+++                                           double holeTagBandMm = 0, double clampBandMm = double.NaN, bool clampFullFace = true)
++     {
++         var m = new ShellMesh();
++         string clampNote = "";
++@@ -884,12 +939,16 @@ public static class FlangeMesher
++                 { notes.Add($"压接边界 x = {ca:0.###} 离{(dTip < dAnc ? "端点" : "已有锚点")}只有 {Math.Min(dTip, dAnc):0.###} mm，不足一个最细格 {hMin:0.###}，没加（被钉住长度仍按最近节点取）"); continue; }
++                 have.Add(ca);
++                 notes.Add($"压接边界 x = {ca:0.###} 已落成节点");
++-                // ★ R48 实验（2026-09-14，Opus 5；数值把关人第八轮）：压接边界两侧各 clampBandMm 铺细步（默认 0 = 不铺，逐位不变）。
++-                //   实验 b 剩下的「分级比均匀偏低」随 h 减半、与细区半径无关，嫌疑在压接边界处粗格（5.5h）整格钉温。这里只开实验开关，接不接进生产等误差预算出来再定。
++-                if (clampBandMm > 0)
+++                // ★ R48 生产配方 ④（2026-09-14，Opus 5；数值把关人第八轮提的细带、第十轮定的自相似）：压接边界两侧各 band 铺细步 hFine。
+++                //   实验 b 剩下的「分级比均匀偏低」随 h 减半、与细区半径无关，病在压接边界处的粗格整格钉温
+++                //   （deliverable/R48_离散误差预算_2026-09-14.txt：分级 − 均匀 片0 −1.893／−0.957／−0.490 W，铺细带后 ≤ 0.022 W）。
+++                //   带宽缺省 = ClampBandPerHFine × hFine（自相似，依据 R48_压接细带自相似_2026-09-14.txt，见 ClampBandPerHFine）；
+++                //   显式传 0 = 不铺，显式正数照给的（老探针原义不变）。
+++                double band = ResolveClampBandMm(clampBandMm, hFine);
+++                if (band > 0)
++                 {
++-                    xBands.Add(new Band(ca - clampBandMm, ca + clampBandMm, hFine));
++-                    notes.Add($"压接边界两侧各 {clampBandMm:0.###} mm 铺细步 {hFine:0.###} mm");
+++                    xBands.Add(new Band(ca - band, ca + band, hFine));
+++                    notes.Add($"压接边界两侧各 {band:0.###} mm 铺细步 {hFine:0.###} mm");
++                 }
++             }
++             // 几何退化：压接段伸进圆盘（压接长 ≥ 舌片自由段）⇒ 下面的判定会把圆盘边界面也标成压接面。原有的毛病，与锚点无关；先记下，不静默。
++@@ -947,25 +1006,31 @@ public static class FlangeMesher
++         {
++             // 管孔：紧贴孔半径的那一圈边界面（槽的边界半径不同，不会误判）
++             if (IsHoleFace(mid, holeRadiusMm, holeTagBandMm)) return ShellMesh.TagHole;
++-            // 压接边：单舌在舌尖那一段；双舌两端都是
++-            if (twoTabs
++-                ? Math.Abs(mid.X) >= Math.Abs(tabTipX) - clampLenMm
++-                : mid.X <= tabTipX + clampLenMm) return ShellMesh.TagTabEnd;
+++            // 压接边：单舌在舌尖那一段；双舌两端都是（R48 2026-09-14 Opus 5：式子收进 InClampSegment，逐字未改）
+++            if (InClampSegment(mid.X, tabTipX, clampLenMm, twoTabs)) return ShellMesh.TagTabEnd;
++             return ShellMesh.TagFree;
++         });
++         m.ComputeHoleTagDiagnostics(holeRadiusMm);
++-        m.ClampAnchorNote = clampNote;
++         m.SourceField = f;
+++        // ★ R48 生产配方 ③（2026-09-14，Opus 5）：压接段整面接触。与上面边界面标签同一个判定（同一 tabTipX、同一压接长），只是对格子形心判。
+++        //   边界面标签照旧打（外圈格仍带 TagTabEnd），ShellCurrent／ShellThermal 取两者的并集。侧边面中点 x = 格形心 x ⇒ 压接边界落成节点时
+++        //   外圈格是整面格的子集，并集就是整面；没落成节点（压接长不足一个最细格等，见 ClampAnchorNote）时舌尖那一列可能只带标签、形心在段外，并集照样把它钉住。
+++        // ⚠ 退化几何：压接段盖到了管孔（带管孔标签的格形心也在压接段内，例如没有舌片、材料全在压接长以内的图纸）⇒ 整面接触会把
+++        //   V=1 电极直接压在 V=0 的孔格上、整片钉成夹持温度，场没有意义（快套件 TabInsulPerPlateTests「推不出切点的场」就是这块板：
+++        //   材料 x ∈ [0, 28]、压接长 40，整面口径下段 1 求解失败）。这种板**不填** ClampCell、退回只钉外圈，并把原因写进 ClampAnchorNote（不静默）。
+++        //   外圈口径在这块板上同样没有物理意义，只是场解得出来、下游判据照常标「判不了」，与改动前一致。
++         if (clampFullFace)
++         {
++-            // 与上面 BuildFaces 的压接判定同一个表达式（同一 tabTipX、同一压接长），只是对格子形心判
++-            m.ClampCell = new bool[m.CellCount];
+++            var cc = new bool[m.CellCount];
++             for (int i = 0; i < m.CellCount; i++)
++-            {
++-                double cx = m.Centroid[i].X;
++-                m.ClampCell[i] = twoTabs ? Math.Abs(cx) >= Math.Abs(tabTipX) - clampLenMm : cx <= tabTipX + clampLenMm;
++-            }
+++                cc[i] = InClampSegment(m.Centroid[i].X, tabTipX, clampLenMm, twoTabs);
+++            int holeInClamp = m.Faces.Where(fc => fc.B < 0 && fc.Tag == ShellMesh.TagHole && cc[fc.A]).Select(fc => fc.A).Distinct().Count();
+++            if (holeInClamp == 0) m.ClampCell = cc;
+++            else
+++                clampNote += (clampNote.Length > 0 ? "；" : "")
+++                           + $"⚠ 压接段（压接长 {clampLenMm:0.###} mm）盖到了管孔（{holeInClamp} 个孔边格在段内）—— 整面接触会把电极接到管孔上，这块板退回只钉外圈";
++         }
+++        m.ClampAnchorNote = clampNote;
++         return m;
++     }
++ 
++diff --git a/Pt_Optimize/Core/ShellThermal.cs b/Pt_Optimize/Core/ShellThermal.cs
++index d2ebe2b..9551ff6 100644
++--- a/Pt_Optimize/Core/ShellThermal.cs
+++++ b/Pt_Optimize/Core/ShellThermal.cs
++@@ -411,7 +411,16 @@ public static class ShellThermal
++                 if (!busG && p.BusbarClampTempC >= 0) { isFixed[f.A] = true; res.T[f.A] = p.BusbarClampTempC; }
++             }
++         }
++-        // ★ R48 实验（2026-09-14，Opus 5）：压接段整面接触 —— 形心在压接段内的格一并当压接格（ShellMesh.ClampCell 空 = 老口径，逐位不变）
+++        // ★ R48 生产配方（2026-09-14，Opus 5）：压接段整面接触 —— 形心在压接段内的格一并当压接格（ShellMesh.ClampCell 空 = 老口径只钉外圈，逐位不变）。
+++        //   依据 deliverable/R48_压接整面接触AB_2026-09-14.txt；配方声明见 FlangeMesher.BuildFromField。
+++        //   tabCell 从此是「整个接触面」而不只是外圈。下游用到它的量在整面口径下逐条核过（2026-09-14 Opus 5）：
+++        //   · 铜排带走（QToClampW，定温）：只累加压接格与邻格的温差导热 —— 压接格之间同温、互相不传热，只剩内边与自由段的交界面，语义不变；
+++        //   · 能量账与分区账的排除格（Excluded）、局部热稳定候选：定温时整段压接格都是边界、不入账，正确（老口径反而把压接段中间当自由格记账）；
+++        //   · 铜排热导按面积分摊（gBus）：分摊到整个接触面，正是「接触面整体导热」的本意；老口径只摊到外圈；
+++        //   · 局部热稳定的压接锚点 xClamp：取的是下标最后一个锚点格的 x，单舌时即离舌尖最远那一列（内边），整面与外圈同一列，语义不变；
+++        //     ⚠ 双舌时那个式子落在 +x 端舌尖那一列（外边，不是内边）—— 两种口径一样、早就如此，双舌板只在命令行仪器里造，本次不改，记为待办；
+++        //   · 铜排串联热阻的舌宽 = 压接格总面积 ÷ 压接长：整面口径下才真等于舌宽（老口径是外圈面积，约 2h + h·宽/压接长，不是舌宽）；
+++        //   · 舌端平均温度 TTabEndMeanC、铜排串联热阻里的舌厚与舌端温度：原为按格数平均，整面 + 细带（配方 ④）后格子大小不一 ⇒ 改面积加权，见各处注释。
++         if (m.ClampCell.Length == n)
++             for (int i = 0; i < n; i++)
++                 if (m.ClampCell[i])
++@@ -421,7 +430,7 @@ public static class ShellThermal
++                 }
++         for (int i = 0; i < n; i++) if (!isFixed[i]) res.T[i] = tRootC;
++ 
++-        // 总热导按舌端单元面积分摊
+++        // 总热导按舌端单元面积分摊（R48 2026-09-14 Opus 5：生产网格上舌端单元 = 整个压接接触面，见上）
++         double tabAreaTot = 0;
++         for (int i = 0; i < n; i++) if (tabCell[i]) tabAreaTot += m.Area[i];
++         var gBus = new double[n];
++@@ -909,16 +918,19 @@ public static class ShellThermal
++             //
++             //   A_截面 = 舌宽 × 舌厚。舌宽由压接带反推：tabAreaTot / 压接段长度。
++             //   k 取舌端实际温度下的铂导热系数（PtThermalK 随 T 变，不用常数）。
+++            //   ★ R48（2026-09-14，Opus 5）：「舌宽 = 压接格总面积 ÷ 压接长」只在整面接触口径下成立（老口径只有外圈面积，舌宽被算成约 2h + h·宽/压接长）。
+++            //     舌厚与舌端温度由按格数平均改为**面积加权**：整面 + 压接细带后格子大小不一（细带 hFine、段中远场粗格），
+++            //     按格数平均会偏向细带那几列；面积加权与 gBus 按面积分摊同一个口径。只影响热导模式（busG），定温模式不进这段。
++             double busExtraMm = 0.0;
++             if (busG && tabAreaTot > 1e-9 && p.BusbarConductanceWPerK > 1e-12
++                 && p.BusbarClampLengthMm > 1e-9)
++             {
++                 double wTabMm = tabAreaTot / p.BusbarClampLengthMm;          // 舌宽 mm
++-                double tSum = 0, tCnt = 0, tTempSum = 0;
+++                double tVol = 0, tTempA = 0;
++                 for (int i = 0; i < n; i++)
++-                    if (tabCell[i]) { tSum += m.Thickness[i]; tTempSum += res.T[i]; tCnt++; }
++-                double tTabMm = tCnt > 0 ? tSum / tCnt : 0;                  // 舌厚 mm
++-                double tTabC = tCnt > 0 ? tTempSum / tCnt : p.TSetC;
+++                    if (tabCell[i]) { tVol += m.Thickness[i] * m.Area[i]; tTempA += res.T[i] * m.Area[i]; }
+++                double tTabMm = tVol / tabAreaTot;                           // 舌厚 mm（面积加权）
+++                double tTabC = tTempA / tabAreaTot;                          // 舌端温度 °C（面积加权）
++                 double aCrossM2 = wTabMm * tTabMm * 1e-6;                    // mm² → m²
++                 busExtraMm = Materials.PtThermalK(tTabC) * aCrossM2
++                            / p.BusbarConductanceWPerK * 1e3;                 // m → mm
++@@ -1014,8 +1026,19 @@ public static class ShellThermal
++         res.TDiscMaxC = double.IsNegativeInfinity(tDMax) ? double.NaN : tDMax;
++         res.TTabMaxC = double.IsNegativeInfinity(tTMax) ? double.NaN : tTMax;
++ 
++-        var tabT = Enumerable.Range(0, n).Where(i => tabCell[i]).Select(i => res.T[i]).ToArray();
++-        res.TTabEndMeanC = tabT.Length > 0 ? tabT.Average() : double.NaN;
+++        // ★ R48（2026-09-14，Opus 5）：舌端平均温度由按格数平均改为**面积加权**。
+++        //   为什么：生产网格上舌端单元是整个压接接触面（配方 ③），又铺了压接细带（配方 ④），段内格子从 hFine 到远场粗格大小不一，
+++        //   按格数平均偏向细带那几列（压接段内边、贴着自由段的那几列）。热导模式下 QToClampW = Σ gBus·(T − T_冷端)、gBus 按面积分摊
+++        //   ⇒ QToClampW = G·(面积加权均温 − T_冷端)，LineRunner 拿它反推「导热需截面」时两边必须同一个均温口径。
+++        //   定温模式所有舌端格都钉在夹持温度上，直接取夹持温度（与原来的按格平均逐位相同，不引入面积加权的浮点尾巴）。
+++        {
+++            int nTab = 0; double aTab = 0, taTab = 0;
+++            for (int i = 0; i < n; i++)
+++                if (tabCell[i]) { nTab++; aTab += m.Area[i]; taTab += res.T[i] * m.Area[i]; }
+++            res.TTabEndMeanC = nTab == 0 ? double.NaN
+++                             : clamped ? p.BusbarClampTempC
+++                             : taTab / aTab;
+++        }
++         res.TMaxC = res.T.Max(); res.TMinC = res.T.Min();
++         return res;
++     }

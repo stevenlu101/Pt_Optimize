@@ -99,7 +99,25 @@ public static class Criteria
         E(LineResult.Key.Ramp,      "A/mm²", "≤", "按设定速率（20 °C/h）空管升温所需电流折成的管 J 峰值；没被管 J 许用截住 = 升得到目标（闭式，R20）", true),
         E(LineResult.Key.RampHours, "h",     "≤", "参考：集总模型（含法兰质量与自热）算的升温到位用时", false),
         E(LineResult.Key.NetFlux,   "W",     ">", "热是从管子流进法兰（安全），还是倒灌进管子（**烧断的方向**）", true),
-        E(LineResult.Key.DiscTemp,  "K",     "≤", "贴着管孔那一圈盘面比管子热多少；热是孔周电流拥塞顶出来的尖峰", true),
+        // ★ R48（2026-09-14，Opus 5）：这句以前写「贴着管孔那一圈盘面」「孔周电流拥塞顶出来的尖峰」，
+        //   两处都与代码/实测对不上：
+        //   ① 代码圈的是 sqrt(x²+z²) ≤ 盘半径 —— **整块圆盘**，不是贴着孔那一圈（见 ShellThermal 的分区）；
+        //   ② 「孔周电流拥塞」实测不成立 —— 峰位 r = 29.0～29.2 mm，而孔半径 25.8、孔边定温带只到 28.8，
+        //      峰在盘外缘内侧约 0.8 mm，不在孔边。机理未坐实 ⇒ **删掉那半句，不换另一个猜测**。
+        //   界面上曾因此出现两个互相矛盾的圆盘区定义（说明书页印这句，判据表印新口径的值）。
+        // ★ R48 续（2026-09-14，Opus 5；物理把关人两条意见）：
+        //   ③ 「舌片离管子几十毫米」在两个内置档上**不成立**（舌区峰 r = 31～33，离孔 5～7 mm）。
+        //      这句原本要说的是**中间隔着什么**，不是距离 ⇒ 改成拓扑说法，任何形状都成立。
+        //   ④ 「它的温度**由**熔点和局部热失稳两条**管**」—— 局部热稳定现在是参考项，**不卡交付**。
+        //      说明书上写着有人管、实际没人卡，正是「不许把事情搞混」。
+        //      改成「另见」：只指路，不承诺它会挡住设计。升不升硬判据，等重解后在复核网格上看过裕度再定。
+        E(LineResult.Key.DiscTemp,  "K",     "≤", "圆盘上最热的那一点，比管子高多少。圈的是圆盘整块 —— "
+            + "从管孔边缘一直到圆盘外缘，不含伸出去的舌片。"
+            + "圈这块，是因为它经焊缝直接贴着管子：这块只要比管子热，热就直接进管；"
+            // 2026-09-14 再改（物理把关人）：「路上有散热」在圆盘包厚保温时不成立（实测四片圆盘散热只有 12～14 W，而法兰发热 440～800 W）。
+            //   换成与保温取值无关的说法：舌片的热要进管子，必须先把圆盘顶热，所以看圆盘就够了。
+            + "舌片上的热要进管子，必须先经过圆盘、先把圆盘顶热，所以看圆盘就够了，舌片不在这条里算。"
+            + "舌片自己的温度另见熔点与局部热失稳两项", true),
         E(LineResult.Key.FreeTab,   "mm",    "≥", "舌片伸出来、没被压接吃掉的那一段够不够长 —— 现场铜排装得下吗", true),
         E(LineResult.Key.DiscCover, "mm",    "≥", "圆盘半径够不够盖住管孔加焊脚 —— 盖不住就焊不出来", true),
         E(LineResult.Key.TubeJ,     "A/mm²", "≤", "管子自身的电流密度上限", true),
@@ -273,13 +291,25 @@ public static class Criteria
                     + "<th>方向</th><th>它在管什么</th></tr>");
             foreach (var e in All.Where(x => x.Hard == hard))
                 sb.Append($"<tr><td><b>{Plain(e.Key)}</b></td><td class=\"n\">{e.Unit}</td>"
-                        + $"<td class=\"n\">{e.Dir}</td><td>{e.Means}</td></tr>");
+                        + $"<td class=\"n\">{e.Dir}</td><td>{BoldHtml(e.Means)}</td></tr>");   // R47 第三轮 N6：** 转粗体，不许字面印进说明书
             sb.Append("</table>");
         }
         sb.Append("<p>★ <b>「管孔净流入」与「圆盘区最高温」是同一条安全线的两个视角</b> —— ");
         sb.Append("前者从管子看热流方向（热该往法兰走，不该往管里灌），");
         sb.Append("后者从法兰看圆盘区温度。两条一起看才判得准，缺一条就会漏掉一个失效方向。</p>");
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// R47 第三轮 N6（2026-09-13）：「它在管什么」那一列的文案用 <c>**</c> 标粗（与判据 Note、页顶横幅同一套写法），
+    /// 进 HTML 要转成 &lt;b&gt;，否则说明书上就是两对字面星号（DocRefTests 钉着）。奇数个 ** 时最后一段照原样。
+    /// </summary>
+    public static string BoldHtml(string s)
+    {
+        string[] parts = System.Net.WebUtility.HtmlEncode(s).Split("**");
+        var b = new StringBuilder();
+        for (int i = 0; i < parts.Length; i++) b.Append(i % 2 == 1 ? "<b>" + parts[i] + "</b>" : parts[i]);
+        return b.ToString();
     }
 
     /// <summary>完整对照表，给 `--glossary` 与说明书用。</summary>

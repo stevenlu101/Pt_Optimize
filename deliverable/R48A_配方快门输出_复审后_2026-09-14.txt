@@ -1,0 +1,44 @@
+D:\WinForm\r48_A\Pt_Optimize.Tests\bin\Debug\net8.0-windows\Pt_Optimize.Tests.dll (.NETCoreApp,Version=v8.0)的测试运行
+VSTest 版本 18.0.1 (x64)
+
+正在启动测试执行，请稍候...
+总共 1 个测试文件与指定模式相匹配。
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.28)
+[xUnit.net 00:00:00.05]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:00.12]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:00.13]   Starting:    Pt_Optimize.Tests
+  已通过 PtOptimize.Tests.R48ClampRecipeTests.c_整面接触格全部是电极且钉在夹持温度_定温热场闭合 [827 ms]
+  已通过 PtOptimize.Tests.R48ClampRecipeTests.f_LineRunner建网格不覆写配方开关 [13 ms]
+  已通过 PtOptimize.Tests.R48ClampRecipeTests.d_显式老口径与改动前一致 [1 s]
+  已通过 PtOptimize.Tests.R48ClampRecipeTests.h_整线网格带整面接触与细带_集总参考量排除了压接格 [7 s]
+[xUnit.net 00:00:09.93]     PtOptimize.Tests.R48ClampRecipeTests.g_证据探针建网格必须显式写明两个开关 [FAIL]
+[xUnit.net 00:00:09.93]       配方声明只引了 5 个证据文件
+[xUnit.net 00:00:09.93]       Stack Trace:
+[xUnit.net 00:00:09.93]         D:\WinForm\r48_A\Pt_Optimize.Tests\R48ClampRecipeTests.cs(434,0): at PtOptimize.Tests.R48ClampRecipeTests.g_证据探针建网格必须显式写明两个开关()
+[xUnit.net 00:00:09.93]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+[xUnit.net 00:00:09.93]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:09.93]       Output:
+[xUnit.net 00:00:09.93]         生产代码引的证据文件 10 个；受管探针 33 个：R47MeshDiagInstrumentTests.cs、R48ClampBandSelfSimilarTests.cs、R48ClampFullFaceTests.cs、R48ClampPhaseTests.cs、R48ClampRecipeImpactTests.cs、R48CoupleContinuationTests.cs、R48CoupleTolLadderTests.cs、R48DescentWindowTests.cs、R48DiscInsulLeverTests.cs、R48DiscZoneCoverageTests.cs、R48ErrorBudgetTests.cs、R48FaceDirichletTests.cs、R48HoleBandTests.cs、R48InsulBlendTests.cs、R48InsulBoundaryScanTests.cs、R48InsulRuleABTests.cs、R48InsulWindowTests.cs、R48JointCurrentCheckTests.cs、R48MeshStructureTests.cs、R48MidBandConvergenceTests.cs、R48NavGridBiasTests.cs、R48PerPlateGridTests.cs、R48Plate2OnlyTests.cs、R48PreResolveProbesTests.cs、R48RingResolutionTests.cs、R48SchemeATests.cs、R48SecondBatchTests.cs、R48TabRootConditionTests.cs、R48ThermalJitterTests.cs、R48ThickAnomalyTests.cs、R48TrootWiringTests.cs、R48TubeInsulScanTests.cs、R48UniformQuarterTests.cs；建网格调用 31 处
+[xUnit.net 00:00:09.93]         配方声明引的证据：R48_实验a_压接段相位_2026-09-14.txt、R48_实验b_压接边界落节点_2026-09-14.txt、R48_实验c_温度场台阶抖动_2026-09-14.txt、R48_压接整面接触AB_2026-09-14.txt、R48_压接细带自相似_2026-09-14.txt
+  已通过 PtOptimize.Tests.R48ClampRecipeTests.a_整面接触格数等于形心在压接段内的格数_远多于外圈 [379 ms]
+  失败 PtOptimize.Tests.R48ClampRecipeTests.g_证据探针建网格必须显式写明两个开关 [32 ms]
+  错误消息:
+   配方声明只引了 5 个证据文件
+  堆栈跟踪:
+     at PtOptimize.Tests.R48ClampRecipeTests.g_证据探针建网格必须显式写明两个开关() in D:\WinForm\r48_A\Pt_Optimize.Tests\R48ClampRecipeTests.cs:line 434
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  标准输出消息:
+ 生产代码引的证据文件 10 个；受管探针 33 个：R47MeshDiagInstrumentTests.cs、R48ClampBandSelfSimilarTests.cs、R48ClampFullFaceTests.cs、R48ClampPhaseTests.cs、R48ClampRecipeImpactTests.cs、R48CoupleContinuationTests.cs、R48CoupleTolLadderTests.cs、R48DescentWindowTests.cs、R48DiscInsulLeverTests.cs、R48DiscZoneCoverageTests.cs、R48ErrorBudgetTests.cs、R48FaceDirichletTests.cs、R48HoleBandTests.cs、R48InsulBlendTests.cs、R48InsulBoundaryScanTests.cs、R48InsulRuleABTests.cs、R48InsulWindowTests.cs、R48JointCurrentCheckTests.cs、R48MeshStructureTests.cs、R48MidBandConvergenceTests.cs、R48NavGridBiasTests.cs、R48PerPlateGridTests.cs、R48Plate2OnlyTests.cs、R48PreResolveProbesTests.cs、R48RingResolutionTests.cs、R48SchemeATests.cs、R48SecondBatchTests.cs、R48TabRootConditionTests.cs、R48ThermalJitterTests.cs、R48ThickAnomalyTests.cs、R48TrootWiringTests.cs、R48TubeInsulScanTests.cs、R48UniformQuarterTests.cs；建网格调用 31 处
+ 配方声明引的证据：R48_实验a_压接段相位_2026-09-14.txt、R48_实验b_压接边界落节点_2026-09-14.txt、R48_实验c_温度场台阶抖动_2026-09-14.txt、R48_压接整面接触AB_2026-09-14.txt、R48_压接细带自相似_2026-09-14.txt
+
+
+  已通过 PtOptimize.Tests.R48ClampRecipeTests.e_压接段盖到管孔时退回只钉外圈_警告进输出且说人话 [8 s]
+[xUnit.net 00:00:19.31]   Finished:    Pt_Optimize.Tests
+  已通过 PtOptimize.Tests.R48ClampRecipeTests.b_不带开关的网格在压接边界两侧自相似细带内是细步 [395 ms]
+
+测试运行失败。
+测试总数: 8
+     通过数: 7
+     失败数: 1
+总时间: 19.5916 秒

@@ -1,0 +1,15 @@
+VSTest 版本 18.0.1 (x64)
+
+正在启动测试执行，请稍候...
+总共 1 个测试文件与指定模式相匹配。
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.28)
+[xUnit.net 00:00:00.04]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:00.12]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:00.12]   Starting:    Pt_Optimize.Tests
+[xUnit.net 00:01:04.15]   Finished:    Pt_Optimize.Tests
+  已通过 PtOptimize.Tests.R48ClampRecipeImpactTests.二_片0配方影响_抽热_圆盘区温差_J峰_发热 [1 m 4 s]
+
+测试运行成功。
+测试总数: 1
+     通过数: 1
+总时间: 1.0743 分钟
