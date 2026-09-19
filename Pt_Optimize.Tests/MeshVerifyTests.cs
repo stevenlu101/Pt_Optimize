@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Linq;
 using PtOptimize.Core;
 using Xunit;
@@ -22,11 +22,30 @@ public class MeshVerifyTests
     [Fact]
     public void 复核容差与自检对账同口径_不另立一套()
     {
-        var t = MeshVerify.TolTemplate();
+        // U 路（2026-09-18 Opus 5）：签名换成整线算例（容差跟着温差预算走）；这里造一个缺省算例 ⇒ 限值仍是默认 5 K，下面三个 0.5 逐位不变。
+        var t = MeshVerify.TolTemplate(new LineCase());   // K 路（2026-09-15 Opus 5）：复核名单按工况取；带玻璃稳态仍是这三条
         Assert.Equal(3, t.Count);
-        Assert.Equal(0.5, t.First(x => x.Name == "②′").Tol, 9);
-        Assert.Equal(0.2, t.First(x => x.Name == "②″").Tol, 9);
-        Assert.Equal(1.0, t.First(x => x.Name == "③").Tol, 9);
+        // 2026-09-14 Opus 5（R48 B 复审）：有意改动 —— 复核的两条温度判据换成热偶读数基准的热侧／冷侧，名字改全名（判词进界面，不许带代号），容差重定。
+        //   旧：Name "②′" 0.5 ／ "②″" 0.2 ／ "③" 1.0
+        //   新：Name 「管孔净流入」0.5（不变）／「最热铂高出热偶读数」0.5 ／「管根低于热偶读数」0.5 = 热偶误差 5 K 的 10 %
+        //   原因与出处：Pt_Optimize/Core/MeshVerify.cs 的 TolTemplate 注释（新两条的基准是常数，耦合剩余误差直接进值，旧 0.2 K 不能照搬；冷侧限值 10→5，1.0 K 太松）。
+        //   ⚠ 0.5 K 还没在复核网格上实测过（交接待办）。
+        Assert.Equal(0.5, t.First(x => x.Name == Criteria.Plain(LineResult.Key.NetFlux)).Tol, 9);
+        Assert.Equal(0.5, t.First(x => x.Name == Criteria.Plain(LineResult.Key.HotOverTc)).Tol, 9);
+        Assert.Equal(0.5, t.First(x => x.Name == Criteria.Plain(LineResult.Key.ColdUnderTc)).Tol, 9);
+        // U 路（2026-09-18 Opus 5）：容差 = **各自限值**的 10 %，限值 = 参数表的温差预算（缺省 = 热偶误差）⇒ 缺省下与旧口径逐位相同。
+        Assert.Equal(0.1 * LineCase.ThermocoupleErrorK, MeshVerify.TcMeshTolFrac * new LineCase().HotOverTcMaxK, 12);
+        Assert.Equal(0.1 * LineCase.ThermocoupleErrorK, MeshVerify.TcMeshTolFrac * new LineCase().ColdUnderTcMaxK, 12);
+        // 填成别的数时容差跟着走（不是又一个写死的 0.5）
+        var wide = new LineCase { Base = new DesignInputs { HotOverTcAllowK = 8.0, ColdUnderTcAllowK = 12.0 } };
+        Assert.Equal(0.8, MeshVerify.TolTemplate(wide).First(x => x.Name == Criteria.Plain(LineResult.Key.HotOverTc)).Tol, 9);
+        Assert.Equal(1.2, MeshVerify.TolTemplate(wide).First(x => x.Name == Criteria.Plain(LineResult.Key.ColdUnderTc)).Tol, 9);
+        Assert.Equal(0.5, MeshVerify.TolTemplate(wide).First(x => x.Name == Criteria.Plain(LineResult.Key.NetFlux)).Tol, 9);   // 净流入与温差预算无关
+        Assert.All(t, d => Assert.False(Criteria.HasCode(d.Name), $"复核容差条目名「{d.Name}」带判据代号 —— 判词会原样印到界面上"));
+        // 命令行 --meshadapt 也只读这一份（此前手抄 0.5／0.2／1.0）
+        string prog = Src("Pt_Optimize/Program.cs");
+        Assert.Contains("var tolA = MeshVerify.TolTemplate(lcA);", prog);
+        Assert.DoesNotContain("Name = \"②″\", Change = a2pp - pv.n2pp, Tol = 0.2", prog);
     }
 
     [Fact]

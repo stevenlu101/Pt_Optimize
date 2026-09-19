@@ -32,13 +32,21 @@ public class SolverFineRootTests
     private static string Core(string f) =>
         File.ReadAllText(Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "Core", f));
 
-    /// <summary>网格必须从选项取 —— 求根跑在哪张网格上不许由别处悄悄决定。</summary>
+    /// <summary>
+    /// 网格必须从选项取 —— 求根跑在哪张网格上不许由别处悄悄决定。
+    ///
+    /// ★ R48 改钉法（2026-09-13，Opus 5）：本门原来钉 <c>lc.MeshFineMm = o.FineMm;</c> 这一行，
+    ///   而那行**只设了尺寸这一维** —— 粗区留在 11 mm、内带不分。于是求根用的网格与加密复核用的网格
+    ///   标称同为 0.500 mm，结构却不是同一张（细粗比 22 倍 vs 5.5 倍），
+    ///   09-13 两个内置设计都因此得出相反结论（求根「全过」、复核 管孔净流入 −1.79 W）。
+    ///   现在钉的是「走共用配方 <see cref="MeshAdapt.RefineWholeMesh"/>」，三维一起接过去。
+    /// </summary>
     [Fact]
     public void 求根的网格由选项决定()
     {
         string s = Core("Solver.cs");
         Assert.Contains("public double FineMm;", s);
-        Assert.Contains("lc.MeshFineMm = o.FineMm;", s);
+        Assert.Contains("MeshAdapt.RefineWholeMesh(lc, o.FineMm, o.FineRadiusMm)", s);
         Assert.Contains("if (o.FineMm > 0)", s);
     }
 
@@ -146,9 +154,19 @@ public class SolverFineRootTests
         Assert.Contains("DesignInputs baseIn, SolverOptions lastOpt,", s);
         Assert.Contains("Finish(res, d, last, baseIn, lastOpt, cancel, progress);", s);
 
-        // 而且真的把网格设上去了
-        Assert.Contains("lcF.MeshFineMm = lastOpt.FineMm;", s);
-        Assert.Contains("if (lastOpt.FineRadiusMm > 0) lcF.MeshFineRadiusMm = lastOpt.FineRadiusMm;", s);
+        // 而且真的把网格设上去了 —— R48 起走共用配方（尺寸／粗区／内带三维一起），
+        // 不再只设尺寸那一维（只设尺寸正是 09-13「求根与复核结论相反」的来源）
+        //
+        // ★★★★★ 2026-09-17，Opus 5 改：**本条此前钉的是手抄过来的那一行**
+        //   `MeshAdapt.RefineWholeMesh(lcF, lastOpt.FineMm, lastOpt.FineRadiusMm)`，
+        //   而那一行只覆盖 `ApplyCaseMesh` 三支里的第一支（FineMm > 0）；
+        //   第二支「FineMm ≤ 0 且 FineRadiusMm > 0」（导航档统一细区半径）被漏掉 ⇒
+        //   「第二遍没跑而 FineRadiusMm > 0」的每一趟，终局复核退回算例缺省半径 50、
+        //   而求根用的是 59（同一设计、同一 2.0 mm，只差这一维 ⇒ 管孔净流入 +3.267 对 −6.533，符号相反）。
+        //   **门钉住手抄的那一行，正好把这个病锁在里面** —— 这就是「门不许手抄生产配方」那条规矩的实例：
+        //   钉配方的**调用**，不钉配方的**字面**。
+        Assert.Contains("ApplyCaseMesh(lcF, lastOpt);", s);
+        Assert.DoesNotContain("MeshAdapt.RefineWholeMesh(lcF", s);
 
         // ★ lastOpt 要随第二遍**改过去**；不改就永远是导航网格，等于没修
         Assert.Contains("lastOpt = opt;", s);

@@ -1,0 +1,2584 @@
+diff --git a/HANDOVER.md b/HANDOVER.md
+index 28f42b4..d041159 100644
+--- a/HANDOVER.md
++++ b/HANDOVER.md
+@@ -5,6 +5,104 @@
+ 
+ ---
+ 
++## 0.-11 ★★★★★ R48 U：**温差预算改成工程师填的两项输入；每片舌保温的可行窗口进生产** —— 2026-09-18，Opus 5
++
++> 用户 2026-09-17：「简单说：按半毫米一层缠，现在的判据下没有能造的设计……
++> 要你定一件事：**冷侧那 5 度能不能放宽**」；2026-09-18：「OK!了解了，请开工」。
++> 批的是**把限值改成界面输入**，不是「把限值改成 10」。⇒ 本节两件事：
++> ① 冷侧「管根低于热偶读数」与热侧「最热铂高出热偶读数」的限值从写死的 5 K 改成参数表里的两项，默认仍是 5；
++> ② L 路那支「每片舌保温可行窗口」的探针提成生产件，结果进判据页与安装报告 —— 工程师点得到。
++>
++> ⚠ 本节**一个默认值都没动**。放宽多少由填的人负责，界面上写明出处。
++
++### ① 温差预算：从写死的 5 改成两项输入
++
++| 文件 | 改动 | 为什么 |
++|---|---|---|
++| `Core/ParamCat.cs` | 新分类 `判据限值与窗口 = "0 判据限值与可行窗口"` | 1…9 已排满；这两项是「先定预算再谈设计」，排在参数表最前面正合次序 |
++| `Core/DesignInputs.cs` | 新增 `ColdUnderTcAllowK`／`HotOverTcAllowK`（默认 `LineCase.ThermocoupleErrorK` = 5.0）与 `MeasureInsulWindowAtFinalCheck`（默认开） | 默认值只有一处，说明里写出处（用户 2026-09-14「圆盘区 5 K = 热偶 1100 °C 误差」） |
++| `Core/LineRunner.cs` | `LineCase.HotOverTcMaxK`／`ColdUnderTcMaxK` 由**字段**改成**属性**：没显式设过就读 `Base` 的那两项（写法照本类 `TubeIdMm`／`SegLengthMm`／`GradeName` 已验过的哨兵路子） | 全仓 45 处 `new LineCase{...}` 一个都不用改，而限值从此只有一个来源；显式赋值（`CloneCase`／命令行／门造极端值）照旧管用 |
++| `Core/MeshVerify.cs` | `TcMeshTolK`（常数）→ `TcMeshTolFrac`（0.1）＋ `MeshTolerances` 那一列改成**按算例取的函数**；`TolTemplate(bool)`／`RefuseForState(bool)` → 收整线算例 | 复核容差的定义本来就是「**限值**的 10 %」；传 bool 就只能再抄一个 5。默认 5 K 下仍是 0.5／0.5／0.5，**逐位不变** |
++| `Core/Criteria.cs` | 热侧／冷侧两条的全表说明**一个限值数字都不印**，改成指到参数表那两项 | 全表会被不同预算的算例共用，印了就会出现「印出来的 ≠ 判的」 |
++| `Core/InsulationSearch.cs`／`Core/InstallReport.cs` | 报告里的限值改印**本次实际用的**那两个数 | 同上 |
++| `UI/ManualPage.cs` | 限值表挂**当前参数表**那份算例（`new LineCase { Base = dfl }`）；§10 那句「这是程序里的常数，参数表里没有这一项」删掉 —— 现在有了 | 说明书上留一句已经不成立的话，比不写更坏 |
++| `UI/Flow.cs` | 新分类登记进 `Flow.Params`（只对整线链有效）与 ①／② 两格的展开名单 | 不登记就落进一个界面上不存在的分组 |
++
++门：`R48UTempBudgetTests`（7 条快门）
++—— ① 默认 5 时参数表→算例→复核容差→判词限值栏**逐位不变**；
++② 填 7／12 时限值栏与复核容差按定义跟着变、判据值一位不动、收紧到 1 K 立刻翻回「不过」（自证不是恒过）；
++③ **源码门**：`LineCase.ThermocoupleErrorK` 只许当「默认值」用 —— 全仓扫非注释行，放行的只有四处定义／兜底
++＋显示文字里明写「默认」二字的解释句（那种句子旁边一定同时印着算例的真实限值）。改回 `public double HotOverTcMaxK = 常数` ⇒ 当场红；
++④ 界面门：两项可见可改、分类不是「只读」那两组、说明里带出处、不带判据代号也不带命令行开关名。
++
++### ② 每片舌保温的可行窗口：探针 → 生产件
++
++`Core/InsulWindow.cs`（新档）：`InsulWindow.Measure(design, baseIn, options, progress, cancel)`。
++逐片把舌保温在解值 ±1.0 mm 内按 0.1 mm 挪（其余片、其余旋钮**一位不动**），每点跑一次整线，
++可行 = 解出来了 ∧ 外层耦合收敛 ∧ `LineResult.AllOk`（**与交付判定同一份**）。返回每片：
++窗口 [下, 上]、宽度、边界探没探到、窗口里落得进的层数档（**0 层 = 裸舌合法**）、左右边界外第一条不过的判据。
++
++**判定口径跑前写死**（`InsulWindow.Result.Verdict`）：任一片窗口里一个能缠的档都没有
++⇒「**当前判据下无可制造设计**」，点名那几片，报最接近的设计（解值）与逐片差在哪条判据。
++**不改判据、不硬凑** —— 要放宽在参数表那两项里填。
++
++接线：`LineResult.TabInsulWindow`（null = 这一次没量，**不是「过了」**）→ ③ 页新页签「舌保温可行窗口」一张小表
++（片／解值／窗口／宽／可落层数／卡哪条）＋ 安装报告 §8b。终验（加密复算收敛之后）跑一次，
++优化循环里不跑；开关在参数表（默认开），**不是命令行开关**。图纸模式不量并说明为什么（那根旋钮不在图纸路径上）。
++L 路探针 `R48LInsulWindowTests` 改调它，本仓**不留第二份扫描实现**。
++
++门：`R48UInsulWindowGateTests`（6 条快门，全部毫秒级 —— 过不过由**注入的**评估函数给，
++窗口的切段／落档／判定这套**生产逻辑**原样受审）：
++造窗口 `[2.3, 2.3]` ⇒ 一个档都落不进、判「当前判据下无可制造设计」并点名；
++造 `[2.2, 2.8]` ⇒ 恰好落 2.5 一档、判「缠得出来」；裸舌 0 层算一档；边界没探到要说出来；
++接线门（安装报告、判据页、终验、探针、开关）任何一处改回不读窗口 ⇒ 红。
++
++### ③ 成本
++
++每点一次整线全耦合解 —— 判决网格上 0.5～1.5 min，四片 × 21 档 ≈ 1 小时。
++所以它**只在终验跑一次**；界面上逐点报进度、随时可取消；不想每次都等就在参数表里关掉。
++
++### ⑤ 实测（本轮三跑，都带开跑时刻）
++
++| 跑什么 | 输出文件（`deliverable/`） | 结果 |
++|---|---|---|
++| 端到端：W08 先求解再过三关（导航网格，不做第二遍）| `R48_L_端到端_求解再过三关_W08_本次开跑于2026-09-18_005505.txt` | 求解 213.2 分钟／93 次场解，**不可行**（结构性停机：⑥ 圆盘盖不住管孔＋焊脚，盘半径 30 ＜ 需要 31.8）。② 带玻璃稳态 判据表**限值栏原样印 5 K**（最热铂 18.621/5 不过、净流入 −3.221/0 不过、管根 4.255/5 过）⇒ 默认预算一路走到判据表，没有走样 |
++| 冷侧预算 5 vs 10 K 的可行窗口（**导航网格快筛**，同一次跑）| `R48_U_冷侧预算演示_导航网格_W08_本次开跑于2026-09-18_044247.txt` | 87.7 分钟。解值那一点 管根低于热偶读数 **19.875 K** ⇒ 5 与 10 两个预算下四片**都是「解值自己就不过」**，窗口都量不出来 |
++| 同上，**判决网格**（与交付判定同一张）| `R48_U_冷侧预算演示_判决网格_W08_本次开跑于2026-09-18_061106.txt` | 97.4 分钟。管根低于热偶读数 **19.004 K**，结论同上：放宽到 10 K 也不够，窗口宽度**一格都没变**（两个预算下都没有窗口） |
++
++### ⑥ ★★★★★ 上面那两份窗口演示**量的是一份已经过期的设计** —— 不是本轮改动引起的
++
++`R48LW08NavDesign`（照 `093013` 输出表复原的 W08 导航档 4245 g 那一份）在 **2026-09-17 22:04** 的 L 路上还读
++管根低于热偶读数 **4.637 K**、全判据通过（`R48_L_管根判据_收紧后可复现_本次开跑于2026-09-17_220419.txt`）。
++本树读到的是 **19.0～19.9 K**、四片全不过。差因**查得到、不是本轮的改动**：
++
++> `DesignSpec.FlangeInsulMm`（圆盘保温）在 r48_L 于 **2026-09-17 23:47–23:49**（`DesignSpec.cs`／`WrapLimits.cs`／`LineRunner.cs` 的 mtime）
++> 由 **20 → 10 mm**（另一路的工单：现场「圆盘与管子接触区都是 20 圈以下」，每圈 0.5 ⇒ 10）。
++> 本树的派生快照取自 **09-18 00:47**，因此含这一改；而那份复原设计是在 **20 mm** 下解出来的。
++> 圆盘保温减半 ⇒ 法兰更冷 ⇒ 管根被拉得更冷（4.6 → 19.0 K）、最热铂反而低于读数（−9.3 K）、抽热从 0.66 W 涨到 5.8 W。
++> 这三项一起动，形态与「圆盘保温减半」完全一致。
++
++⇒ **`R48LW08NavDesign` 在圆盘保温 10 mm 的世界里已经不是它自称的那份设计**，
++用它的三个测试（`R48LInsulWindowTests`／`R48LColdUnderTcConditioningTests`／`R48LSolveOrderTests`）
++的靶子都要重定。这件事归**改圆盘保温的那一路**，U 路一个字没动那两处（按工单）。
++⚠ 在重定之前，**不许**拿本轮那两份窗口演示去回答「冷侧放宽多少才够」——
++它们只证明了一件事：**那份复原设计在现在的圆盘保温下，冷侧差得远不是 5 与 10 之间的事**。
++
++### ④ 还开着
++
++1. **与 `012720`／`093013` 那两份没法逐位对拍**，差因有三条、都在本轮改动之外，逐条查得到：
++   ① §0.-9 求解器舌保温图纸格 0.1 → 0.5（09-17 白天）；② §0.-10 外层耦合停机容差改成判据相关（09-17 22:00 前后）；
++   ③ 圆盘保温默认 20 → 10（09-17 23:49，另一路）。⇒ 「默认 5 逐位不变」的证据不在这两份文件上，
++   而在**构造上**：默认时 `Base.HotOverTcAllowK`／`ColdUnderTcAllowK` 与原来的 `ThermocoupleErrorK` 是**同一个 const**，
++   下游拿到的是同一个 double；复核容差 `0.1 × 5.0` 与原常数 `0.1 * LineCase.ThermocoupleErrorK` 在 IEEE754 上都恰好是 0.5
++   （`R48UTempBudgetTests` 逐条钉到 12 位）。本轮端到端那一跑的判据表限值栏印的也正是 5 K。
++2. 冷侧 10 K 的窗口演示跑在**导航网格**上（只作演示），判决要在判决网格上重量。
++3. 可行窗口目前只量**舌保温**这一根旋钮。板厚、环倍率、圆盘保温的窗口同理该量，本轮没做。
++4. **本树里 W08 没有可交付设计**：端到端那一跑结构性停在「⑥ 圆盘盖不住管孔＋焊脚」（闭式反解：盘半径要 ≥ 31.8 mm）。
++   ⇒ 「窗口有多宽」这个问题在 W08 上现在**没有可量的对象**；要量得先把盘径放开（那是「搜形状」那条路，不在求解器手里）。
++5. 测试计数 1267 是**本树快照**的数（含另一路 09-17 深夜那几档 `R48LDiscInsul10*`／`R48LWrapTurnsGateTests`），
++   合并时以 r48_L 为准重新数。
++
+ ## 0.-10 ★★★★★ R48 L：**外层耦合的停机容差改成「判据相关」—— 管根那个数现在可复现了** —— 2026-09-17，Opus 5
+ 
+ > 承 §0.-8「还开着」第一条（**下一轮第一件事**）：「管根低于热偶读数」对输入的最后一位敏感 ——
+@@ -121,10 +219,11 @@
+ | 老路 `FlangeAutoSizer` 的搜索期容差、保温搜索 `InsulationSearch` 的 0.25 K | 留着（显式写明常数口径）| 见 ① 最后两行：一个是故意放粗的省时手段、一个的量化步长以「容差是常数」为前提。两条都不在交付链上（交付链是 `Solver.Solve`）|
+ | `Program.cs` 6805 那三个 1 K 门槛（冷/热启动一致性对拍）| 留着 | 那是开发期 CLI 对拍，门槛是 1 K 口径下定的；本轮没有重定，注释已写明 |
+ 
+-测试计数：`dotnet test` 应为 **1236/1236**（本轮 +16 = `R48LCoupleTolGateTests` 12 快门
++测试计数：`dotnet test` 应为 **1267/1267**（本轮 +16 = `R48LCoupleTolGateTests` 12 快门
+ ＋ `R48LCoupleTolTightenTests`（导航成本）／`R48LCoupleTolFineTests`（细网格成本）／
+ `R48LCoupleTolEmptyTubeTests`（空管成本）／`R48LCoupleTolReproducibleTests`（可复现 + 注射）各 1 慢门）。
+-快门全跑：**1087/1087 通过**（`速度!=慢`，2026-09-17 22:42）。
++快门全跑：**1087/1087 通过**（`速度!=慢`，2026-09-17 22:42）；U 路（2026-09-18 07:55）在本树上 **1113 通过 / 1114**，
++唯一一条失败的就是本节计数那一条，已按 §0.-11 同步到 1267。
+ 
+ ### ⑥ 还开着
+ 
+@@ -280,7 +379,7 @@ W06 最热铂 4.478（靶子 4.355，+0.123）／管根 4.818（靶子 4.889，
+ | `Pt_Optimize.Tests/R48DescentWindowTests.cs` 的 0.1 对齐 | 留着 | 那是 09-13 的**历史探针**，输出已归档；改了格子就与已归档的数对不上 |
+ | 二分容差 `BisectTolMm = 0.005` | 留着 | 必须**比格子细**：早停在 0.5 的格子上时 hi 可能停在根上方一格内，对齐后**多给一层**（真根 2.05、早停 hi=2.55 ⇒ 3.0 而不是 2.5）。代价是每根旋钮多跑几次场解（实测一根约 16 分钟）。门 `二分容差必须比图纸格细` |
+ 
+-测试计数：`dotnet test` 应为 **1236/1236**（本轮 +11 = `R48LQuantInsul05GateTests` 7 快门 ＋ `R48LQuantInsul05EndToEndTests` 2 慢门（W08/W06 端到端 0.5 格）＋ `R48LInsulWindowTests` 2 慢门（W08/W06 舌保温可行窗口））。
++测试计数：`dotnet test` 应为 **1267/1267**（本轮 +11 = `R48LQuantInsul05GateTests` 7 快门 ＋ `R48LQuantInsul05EndToEndTests` 2 慢门（W08/W06 端到端 0.5 格）＋ `R48LInsulWindowTests` 2 慢门（W08/W06 舌保温可行窗口））。
+ 
+ ### ⑥ 还开着
+ 
+@@ -6348,7 +6447,7 @@ Pt_Optimize.Tests/ · tests/UiWiring/ · Pt_Optimize.Geom/ · .githooks/   ← 
+ > 改 `.githooks/` 改的是「门跑不跑」。这两类原本都不在名单里 ⇒
+ > **唯一能让所有门失效的改动，恰恰是唯一不触发门的改动**。
+ 
+-`dotnet test` 应为 **1236/1236**（2026-09-17 由 HandoverGateCountTests 反射数出，Opus 5 记：**本轮（舌保温图纸格改成 0.5 = 包法每层 那一轮，§0.-9）+11** = R48LQuantInsul05GateTests 7 快门（格子 = 包法层厚且改回 0.1 ⇒ 红／解出来的值只能是裸舌或 0.5 的倍数／向上对齐图纸格只许有一份写法／回收判下角不许放半格／二分容差必须比图纸格细／解出来是几层必须印在界面与安装报告上／0.1 格的解落不到包法层上）＋R48LQuantInsul05EndToEndTests 2 慢门（W08、W06 端到端 0.5 格）＋R48LInsulWindowTests 2 慢门（W08、W06 逐片舌保温可行窗口）。**上一轮（半度差／三网格／台阶半径耦合上界那一轮）+4** = R48LSolveOrderTests 1 慢门（同一设计四种次序下 ② 的结果逐位相同 —— 守「每次解从干净状态起」）＋R48LThreeMeshTests 1 慢门（重解 A 导航档、反射逐字段比复原的那份、三网格各判一次 ②）＋R48LColdUnderTcConditioningTests 1 慢门（管根低于热偶读数对输入最后一位的敏感度）＋R48LRingRadiusCouplingGateTests 1 快门（内级环宽的上界必须被外级截住；改回旧常数上界 ⇒ 红）。**上一轮（细网格第二遍那一轮）+8** = R48LFinishMeshGateTests 6 快门（终局复核必须调那份唯一的网格配方 ApplyCaseMesh、不许再手抄加密调用／ApplyCaseMesh 的导航支真的改细区半径而不动尺寸与粗区／W08 与 W06 两个在跑的设计其网格无关口径半径都不等于算例缺省（否则上一条是空守）×2 档 Theory／升温全程的网格口径默认 null = 改前行为且接的是同一份配方／给了网格口径升温那一关真的换了网格）＋ R48LFineMeshEndToEndTests 2 慢门（W08／W06 细网格端到端）。**上一轮合并那一段记在下面**：**本轮把 K 路的分工况判据（工况 × 判据两列 Kind 表）合进 L 路工作树** —— 两路都自 **1134/1134** 分出，L 路自己走到 **1169/1169**、K 路自己走到 **1162/1162**，两边各自新增的门相加就是这个数；K 路那一段链与它落地的分工况口径接在下文「K 路此前 **1162/1162**」处）。**以下先是 L 路那条链**：L 路 **1169/1169**（2026-09-17，Opus 5 记：R48 L 路**第五轮**「端到端真的经过求解器 + 升温按该点实际电流判 J」合入，+12 = R48RampActualCurrentGateTests 8 快门（设计电流下过而实际电流下超必须判不过并点名／注入「改回只读设计电流」同一份输入被漏判成过且生产默认必须是新口径／实际电流那条与截面判据走同一份配方逐位相同／任一条算不出来都判不了不许当过 ×2 档 Theory／管 J 两条口径各判各的且点名到底是哪一条／源码钉死升温不许自己抄一份管截面积、几何选择只准走 LineCase.PlatesForJudge／自证门用的两个电流确实一过一超）＋ R48LSolverInLineGateTests 4 快门（端到端源码必须先 Solver.Solve 再拿 sr.Design 过三关、不许再出现 RampSweep.Run(seed／seed.BuildCase；求解器选项必须与界面「自动定厚」那一份一致（轮数 40／解法族下拉预设 0 = 不挖舌孔／FineMm 不许在端到端里另设）；求解器抛异常或无解时不许跑三关；SolverOptions 上不许有任何叫 Seed/Start/Initial 的字段）。**上一轮（第四轮）是 Opus 4.6 做的**（型号派错，工作保留），它留下两个洞，本轮只补这两个：
++`dotnet test` 应为 **1267/1267**（2026-09-17 由 HandoverGateCountTests 反射数出，Opus 5 记：**本轮（舌保温图纸格改成 0.5 = 包法每层 那一轮，§0.-9）+11** = R48LQuantInsul05GateTests 7 快门（格子 = 包法层厚且改回 0.1 ⇒ 红／解出来的值只能是裸舌或 0.5 的倍数／向上对齐图纸格只许有一份写法／回收判下角不许放半格／二分容差必须比图纸格细／解出来是几层必须印在界面与安装报告上／0.1 格的解落不到包法层上）＋R48LQuantInsul05EndToEndTests 2 慢门（W08、W06 端到端 0.5 格）＋R48LInsulWindowTests 2 慢门（W08、W06 逐片舌保温可行窗口）。**上一轮（半度差／三网格／台阶半径耦合上界那一轮）+4** = R48LSolveOrderTests 1 慢门（同一设计四种次序下 ② 的结果逐位相同 —— 守「每次解从干净状态起」）＋R48LThreeMeshTests 1 慢门（重解 A 导航档、反射逐字段比复原的那份、三网格各判一次 ②）＋R48LColdUnderTcConditioningTests 1 慢门（管根低于热偶读数对输入最后一位的敏感度）＋R48LRingRadiusCouplingGateTests 1 快门（内级环宽的上界必须被外级截住；改回旧常数上界 ⇒ 红）。**上一轮（细网格第二遍那一轮）+8** = R48LFinishMeshGateTests 6 快门（终局复核必须调那份唯一的网格配方 ApplyCaseMesh、不许再手抄加密调用／ApplyCaseMesh 的导航支真的改细区半径而不动尺寸与粗区／W08 与 W06 两个在跑的设计其网格无关口径半径都不等于算例缺省（否则上一条是空守）×2 档 Theory／升温全程的网格口径默认 null = 改前行为且接的是同一份配方／给了网格口径升温那一关真的换了网格）＋ R48LFineMeshEndToEndTests 2 慢门（W08／W06 细网格端到端）。**上一轮合并那一段记在下面**：**本轮把 K 路的分工况判据（工况 × 判据两列 Kind 表）合进 L 路工作树** —— 两路都自 **1134/1134** 分出，L 路自己走到 **1169/1169**、K 路自己走到 **1162/1162**，两边各自新增的门相加就是这个数；K 路那一段链与它落地的分工况口径接在下文「K 路此前 **1162/1162**」处）。**以下先是 L 路那条链**：L 路 **1169/1169**（2026-09-17，Opus 5 记：R48 L 路**第五轮**「端到端真的经过求解器 + 升温按该点实际电流判 J」合入，+12 = R48RampActualCurrentGateTests 8 快门（设计电流下过而实际电流下超必须判不过并点名／注入「改回只读设计电流」同一份输入被漏判成过且生产默认必须是新口径／实际电流那条与截面判据走同一份配方逐位相同／任一条算不出来都判不了不许当过 ×2 档 Theory／管 J 两条口径各判各的且点名到底是哪一条／源码钉死升温不许自己抄一份管截面积、几何选择只准走 LineCase.PlatesForJudge／自证门用的两个电流确实一过一超）＋ R48LSolverInLineGateTests 4 快门（端到端源码必须先 Solver.Solve 再拿 sr.Design 过三关、不许再出现 RampSweep.Run(seed／seed.BuildCase；求解器选项必须与界面「自动定厚」那一份一致（轮数 40／解法族下拉预设 0 = 不挖舌孔／FineMm 不许在端到端里另设）；求解器抛异常或无解时不许跑三关；SolverOptions 上不许有任何叫 Seed/Start/Initial 的字段）。**上一轮（第四轮）是 Opus 4.6 做的**（型号派错，工作保留），它留下两个洞，本轮只补这两个：
+ 
+ **洞 1：端到端没有经过求解器。** 第四轮把内置设计 W08／W06 **原样**过三关，截面 J 27.71/11 全不过 —— 那是**未求解的输入**，不是设计结果。本轮改成：内置输入（只提供几何与工况）→ **Solver.Solve**（生产入口，从约束盒下角二分求根，旋钮值一律丢弃，没有起点参数）→ 求得的设计过 ① 升温全程 → ② 带玻璃稳态 → ③ 空管到温 → 铂重；报告先印输入、再印解（各旋钮终值、求解耗时、场解次数、导航／终局网格）、再三关、再铂重，末尾附 Solver.Trace 全文。**实测**（deliverable/R48_L_端到端_求解再过三关_W08_本次开跑于2026-09-17_012720.txt 与 ..._W06_本次开跑于2026-09-17_024034.txt，同一次运行、不拼两份输出）：W08 求解 67.3 分钟／74 次场解，第 3 轮全过停在最小可行点 —— 板厚 0.73/1.26/1.26/0.73 mm、舌保温 5.1/2.3/3.6/10.4 mm、环倍率 t₁=t₂=1.00（无台阶）、舌片厚 2.03/3.51/3.51/2.03 mm（闭式 I/(J·舌宽)，不是旋钮）、盘径 30 mm／舌长 140 mm／舌半宽 30 mm（形状是输入）；三关 ① 过 ② 全判据通过 ③ 不过（最热铂高出热偶读数 78.366/5 K、管孔净流入 −33.518/0 W、管根低于热偶读数 5.048/5 K；截面 J 9.983/11 与管 J 9.494/12 过）；铂重 **管 2465 + 法兰 1780 = 4245 g**。W06 求解 48.8 分钟／59 次场解，第 2 轮全过 —— 板厚 0.64/1.10/1.10/0.64 mm、舌保温 6.5/3.1/4.6/13.3 mm、t₁=t₂=1.00、舌片厚 1.75/3.02/3.02/1.75 mm；三关 ① 过 ② 全判据通过 ③ 不过（81.390/5 K、−30.269/0 W、5.533/5 K；截面 J 9.995/11、管 J 10.948/12 过）；铂重 **管 1841 + 法兰 1537 = 3378 g**。⚠ 两档都**没做细网格第二遍**（求解器选项照界面预设 FineMm = 0，界面注释写「按钮要等得起」）⇒ 解只在导航网格（细区 2.0 mm）上成立、**不可交付**；本形状按网格无关口径要求 1.000 mm（细区半径 59.0 mm），两张网格之间历史上量到过 2.03 倍。这一句写在输出里，引用时不许略掉。⚠ ③ 空管态那三条是按**尚未落地**的旧口径判的（用户 2026-09-15 的分工况口径：空管只卡截面电流密度，热侧／冷侧 ±5 K 与管孔净流入只在带玻璃稳态卡）；按新口径空管只看截面 J，两档都过 —— **口径没落地之前这句话只是折算，不是判定**。
+ 
+diff --git a/Pt_Optimize.Tests/MeshVerifyTests.cs b/Pt_Optimize.Tests/MeshVerifyTests.cs
+index fb4aac8..c5382c1 100644
+--- a/Pt_Optimize.Tests/MeshVerifyTests.cs
++++ b/Pt_Optimize.Tests/MeshVerifyTests.cs
+@@ -1,4 +1,4 @@
+-using System.IO;
++﻿using System.IO;
+ using System.Linq;
+ using PtOptimize.Core;
+ using Xunit;
+@@ -22,7 +22,8 @@ public class MeshVerifyTests
+     [Fact]
+     public void 复核容差与自检对账同口径_不另立一套()
+     {
+-        var t = MeshVerify.TolTemplate(emptyTube: false);   // K 路（2026-09-15 Opus 5）：复核名单按工况取；带玻璃稳态仍是这三条
++        // U 路（2026-09-18 Opus 5）：签名换成整线算例（容差跟着温差预算走）；这里造一个缺省算例 ⇒ 限值仍是默认 5 K，下面三个 0.5 逐位不变。
++        var t = MeshVerify.TolTemplate(new LineCase());   // K 路（2026-09-15 Opus 5）：复核名单按工况取；带玻璃稳态仍是这三条
+         Assert.Equal(3, t.Count);
+         // 2026-09-14 Opus 5（R48 B 复审）：有意改动 —— 复核的两条温度判据换成热偶读数基准的热侧／冷侧，名字改全名（判词进界面，不许带代号），容差重定。
+         //   旧：Name "②′" 0.5 ／ "②″" 0.2 ／ "③" 1.0
+@@ -32,11 +33,18 @@ public class MeshVerifyTests
+         Assert.Equal(0.5, t.First(x => x.Name == Criteria.Plain(LineResult.Key.NetFlux)).Tol, 9);
+         Assert.Equal(0.5, t.First(x => x.Name == Criteria.Plain(LineResult.Key.HotOverTc)).Tol, 9);
+         Assert.Equal(0.5, t.First(x => x.Name == Criteria.Plain(LineResult.Key.ColdUnderTc)).Tol, 9);
+-        Assert.Equal(0.1 * LineCase.ThermocoupleErrorK, MeshVerify.TcMeshTolK, 12);   // 比例从热偶误差来，不另写 0.5
++        // U 路（2026-09-18 Opus 5）：容差 = **各自限值**的 10 %，限值 = 参数表的温差预算（缺省 = 热偶误差）⇒ 缺省下与旧口径逐位相同。
++        Assert.Equal(0.1 * LineCase.ThermocoupleErrorK, MeshVerify.TcMeshTolFrac * new LineCase().HotOverTcMaxK, 12);
++        Assert.Equal(0.1 * LineCase.ThermocoupleErrorK, MeshVerify.TcMeshTolFrac * new LineCase().ColdUnderTcMaxK, 12);
++        // 填成别的数时容差跟着走（不是又一个写死的 0.5）
++        var wide = new LineCase { Base = new DesignInputs { HotOverTcAllowK = 8.0, ColdUnderTcAllowK = 12.0 } };
++        Assert.Equal(0.8, MeshVerify.TolTemplate(wide).First(x => x.Name == Criteria.Plain(LineResult.Key.HotOverTc)).Tol, 9);
++        Assert.Equal(1.2, MeshVerify.TolTemplate(wide).First(x => x.Name == Criteria.Plain(LineResult.Key.ColdUnderTc)).Tol, 9);
++        Assert.Equal(0.5, MeshVerify.TolTemplate(wide).First(x => x.Name == Criteria.Plain(LineResult.Key.NetFlux)).Tol, 9);   // 净流入与温差预算无关
+         Assert.All(t, d => Assert.False(Criteria.HasCode(d.Name), $"复核容差条目名「{d.Name}」带判据代号 —— 判词会原样印到界面上"));
+         // 命令行 --meshadapt 也只读这一份（此前手抄 0.5／0.2／1.0）
+         string prog = Src("Pt_Optimize/Program.cs");
+-        Assert.Contains("var tolA = MeshVerify.TolTemplate(lcA.EmptyTube);", prog);
++        Assert.Contains("var tolA = MeshVerify.TolTemplate(lcA);", prog);
+         Assert.DoesNotContain("Name = \"②″\", Change = a2pp - pv.n2pp, Tol = 0.2", prog);
+     }
+ 
+diff --git a/Pt_Optimize.Tests/R48LInsulWindowTests.cs b/Pt_Optimize.Tests/R48LInsulWindowTests.cs
+index 0ba8f9b..3501961 100644
+--- a/Pt_Optimize.Tests/R48LInsulWindowTests.cs
++++ b/Pt_Optimize.Tests/R48LInsulWindowTests.cs
+@@ -1,11 +1,9 @@
+-﻿using System;
+-using System.Collections.Generic;
++using System;
+ using System.Diagnostics;
+ using System.IO;
+ using System.Linq;
+ using System.Text;
+ using System.Threading;
+-using System.Threading.Tasks;
+ using PtOptimize.Core;
+ using Xunit;
+ using Xunit.Abstractions;
+@@ -14,25 +12,21 @@ namespace PtOptimize.Tests;
+ 
+ // ════════════════════════════════════════════════════════════════════════════
+ //  R48 L 路　**舌保温的可行窗口有多宽** —— 2026-09-17，Opus 5。
++//  U 路改写（2026-09-18，Opus 5）：**扫描本身已经提成生产件** InsulWindow，
++//  本档从「自带一套扫描」改成「调生产件 + 把它的结果落成一份带时刻的证据」。
+ //
+-//  ══ 为什么要单跑这一组
++//  ══ 为什么要改
+ //
+-//  用户 2026-09-17 要的是「对**解出的设计**逐片扫舌保温，量可行窗口，窗口比制造精度窄的点名」。
+-//  而本轮把图纸格改成 0.5（= 包法每层）之后，W08 与 W06 **都没有解出可行设计**
+-//  （R48LQuantInsul05EndToEndTests 那两份输出：结构性停机）——
+-//  绕着一份不可行的设计扫，量到的不是「窗口」，只是「到处都不过」。
++//  原来这里有一份完整的扫描实现（并发、切段、落档、判读）。它量出来的结论
++//  （W08 共用1 那一片窗口 [2.3, 2.3]、里面一个 0.5 的倍数都没有）只活在一份 txt 里，
++//  工程师在 APP 上点不到；而一旦要让 APP 也会量，就会出现**第二份实现** ——
++//  两份迟早漂开，那正是本项目最常见的失效。⇒ 生产件只有 InsulWindow.Measure 一份，
++//  APP 的终验调它，本探针也调它，门（R48UInsulWindowGateTests）验的也是它。
+ //
+-//  ⇒ 这一组把窗口量在**已知可行的那两份设计**上（0.1 格那一跑交出来的）：
+-//    · W08：导航档解出来的那一份（4245 g），上一跑在**细网格**上重判三关**全过**（那一跑的 D 段）；
+-//    · W06：细网格档解出来的那一份（3379 g），求根与判决同一张网格、三关全过。
+-//    两份都按输出表复原（R48LW08NavDesign / R48LW06FineDesign），复原件先跑一次 ② 与靶子对照，
+-//    对不上就照实印、照实继续（不许拿「差不多」当同一份设计）。
+-//
+-//  ══ 判读（**跑前写死在代码里，跑完不挪**）
+-//    · 窗口宽 &lt; 每层 0.5 mm ⇒ **点名**：判据窗口窄于制造精度。判据不许因此放宽。
+-//    · 窗口里**一个 0.5 的倍数都没有** ⇒ 再点一次：这一片在 0.5 的格子上**没有可行的层数**，
+-//      不是求解器没找到 —— 是那张格子上不存在。
+-//    · 扫到 ±1.0 mm 边界仍全过 ⇒ 印「边界没探到，真实窗口更宽」，不许把 2.0 当成窗口宽。
++//  ══ 判读（**跑前写死在生产件里，跑完不挪**，见 InsulWindow 的类注释）
++//    · 窗口里一个能缠的档都没有 ⇒「当前判据下无可制造设计」，点名那几片；
++//    · 窗口宽 < 一层 ⇒ 点名「窗口窄于制造精度」。判据不许因此放宽（用户 2026-09-17）；
++//    · 扫到边界仍全过 ⇒ 印「边界没探到」，不许把 2.0 当窗口宽；
+ //    · 复原件与靶子对不上、或解值那一点自己就不过 ⇒ 照实印，不补、不挪。
+ // ════════════════════════════════════════════════════════════════════════════
+ 
+@@ -42,9 +36,7 @@ public class R48LInsulWindowTests
+     private readonly ITestOutputHelper _o;
+     public R48LInsulWindowTests(ITestOutputHelper o) { _o = o; }
+ 
+-    private const double ScanStepMm = 0.1, ScanHalfMm = 1.0;
+     private static readonly TimeSpan ScanCap = TimeSpan.FromHours(2.0);
+-    private static readonly int ScanDop = Math.Max(1, Math.Min(5, Environment.ProcessorCount - 2));
+ 
+     [Theory]
+     [InlineData("W08")]
+@@ -73,25 +65,25 @@ public class R48LInsulWindowTests
+         void W(string s = "") => sb.AppendLine(s);
+         void Flush() => File.WriteAllText(file, sb.ToString(), new UTF8Encoding(true));
+ 
+-        var o0 = new SolverOptions();
+-        double layer = InsulationSearch.LayerMm;
++        var opt = new InsulWindow.Options { Cap = ScanCap };
+         var (reqFine, reqRadius) = MeshVerify.RequiredMeshFor(d0);
+         var meshOpt = new SolverOptions { FineMm = reqFine, FineRadiusMm = reqRadius };
+ 
+         W($"R48 L 路　**舌保温的可行窗口有多宽**　{which}（{d0.Name}）");
+-        W($"开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}　工作树 {HandoverDoc.Root()}　写码 2026-09-17 Opus 5");
++        W($"开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}　工作树 {HandoverDoc.Root()}　写码 2026-09-17 Opus 5；2026-09-18 Opus 5 改调生产件 InsulWindow.Measure");
+         W($"网格 = 判决那张（细区 {reqFine:0.000} mm／细区半径 {reqRadius:0.0} mm，MeshVerify.RequiredMeshFor）。");
+-        W($"包法每层 {layer:0.###} mm（InsulationSearch.LayerMm）；求解器的舌保温图纸格本轮已改成同一个数。");
++        W($"包法每层 {InsulationSearch.LayerMm:0.###} mm（InsulationSearch.LayerMm）；求解器的舌保温图纸格本轮已改成同一个数。");
++        W($"温差预算（工程师填的，本次是默认）：最热铂高出热偶读数 ≤ {p.HotOverTcAllowK:0.###} K、管根低于热偶读数 ≤ {p.ColdUnderTcAllowK:0.###} K。");
+         W("");
+         W("── 这一份设计是**照表复原**的，不是求解器返回的对象");
+         W($"出处：{source}");
+         W("⚠ §0.-8 已实测：复原件与求解器那份在进几何的字段上差 1 ulp（舌保温、舌片厚各一处），");
+         W("　而「管根低于热偶读数」对那一个 ulp 敏感（同一网格摆 0.37–0.50 K）。靠近这条边界的窗口端点带着这一档噪声。");
+         W("");
+-        W("── 判读（**跑前写死，跑完不挪**）");
+-        W($"　① 窗口宽 < 每层 {layer:0.###} mm ⇒ **点名**：判据窗口窄于制造精度。判据不许因此放宽。");
+-        W($"　② 窗口里一个 {layer:0.###} 的倍数都没有 ⇒ 再点一次：这一片在这张格子上**没有可行的层数**。");
+-        W($"　③ 扫到 ±{ScanHalfMm:0.0} mm 边界仍全过 ⇒ 印「边界没探到」，不许把 {2 * ScanHalfMm:0.0} 当窗口宽。");
++        W("── 判读（**跑前写死在生产件 InsulWindow 里，跑完不挪**）");
++        W($"　① 窗口宽 < 每层 {InsulationSearch.LayerMm:0.###} mm ⇒ **点名**：判据窗口窄于制造精度。判据不许因此放宽。");
++        W($"　② 窗口里一个能缠的档都没有（含 0 层 = 裸舌 {opt.Solver.InsLoMm:0.###} mm）⇒ 判「当前判据下无可制造设计」并点名。");
++        W($"　③ 扫到 ±{opt.HalfWidthMm:0.0} mm 边界仍全过 ⇒ 印「边界没探到」，不许把 {2 * opt.HalfWidthMm:0.0} 当窗口宽。");
+         W("　④ 复原件与靶子对不上、或解值那一点自己就不过 ⇒ 照实印，不补、不挪。");
+         W("");
+ 
+@@ -134,156 +126,51 @@ public class R48LInsulWindowTests
+         W("");
+         Flush();
+ 
+-        // ── 逐片扫 ──
++        // ── 逐片扫：**调生产件**，本档不再自带一套扫描 ──
+         W("═══════ 逐片扫舌保温（其余片与其余旋钮一位不动）═══════");
+-        W($"范围 解值 ±{ScanHalfMm:0.0} mm，步长 {ScanStepMm:0.0} mm；并发 {ScanDop} 条整线解；"
+-          + "可行 = 整线解出来了 ∧ 外层耦合收敛 ∧ 卡交付的判据全过（LineResult.AllOk，与交付判定同一份）。");
++        W($"量法：生产件 InsulWindow.Measure（APP 终验点的就是它）。解值 ±{opt.HalfWidthMm:0.0} mm、步长 {opt.StepMm:0.0} mm、"
++          + $"并发 {opt.MaxDegreeOfParallelism} 条整线解；可行 = 整线解出来了 ∧ 外层耦合收敛 ∧ 卡交付的判据全过（LineResult.AllOk，与交付判定同一份）。");
+         W("");
+         Flush();
+ 
+-        var narrow = new List<string>();
+-        var noLayer = new List<string>();
+-        var summary = new List<string>();
+-        using var cts = new CancellationTokenSource(ScanCap);
+-        bool cut = false, parallelChecked = false, parallelSame = false;
++        var win = InsulWindow.Measure(d0, p, opt, probe, CancellationToken.None);
+ 
+-        for (int j = 0; j < d0.TabInsulMm.Length; j++)
++        foreach (var pw in win.Plates)
+         {
+-            double v0 = d0.TabInsulMm[j];
+-            int half = (int)Math.Round(ScanHalfMm / ScanStepMm);
+-            var pts = Enumerable.Range(-half, 2 * half + 1).Select(k => Math.Round(v0 + k * ScanStepMm, 6)).ToList();
+-            var ok = new bool?[pts.Count];
+-            var why = new string[pts.Count];
+-            var hot = new double[pts.Count];
+-            var cold = new double[pts.Count];
+-            var flux = new double[pts.Count];
+-            LineResult? atSolved = null;
+-            for (int i = 0; i < pts.Count; i++) { hot[i] = cold[i] = flux[i] = double.NaN; why[i] = ""; }
+-
+-            var sw = Stopwatch.StartNew();
+-            probe.Report($"── 片{j}：{pts.Count} 点（{pts[0]:0.0}…{pts[^1]:0.0} mm），并发 {ScanDop}");
+-            try
+-            {
+-                Parallel.For(0, pts.Count,
+-                    new ParallelOptions { MaxDegreeOfParallelism = ScanDop, CancellationToken = cts.Token }, i =>
+-                {
+-                    double v = pts[i];
+-                    if (v < o0.InsLoMm - 1e-9) { ok[i] = null; why[i] = "下界外（低于裸舌 0.30）"; return; }
+-                    var d = d0.Clone();
+-                    d.TabInsulMm[j] = v;
+-                    var lc = d.BuildCase(p);
+-                    Solver.ApplyCaseMesh(lc, meshOpt);
+-                    LineResult r;
+-                    try { r = LineRunner.Run(lc, null); }
+-                    catch (Exception ex) { ok[i] = null; why[i] = $"{ex.GetType().Name}：{ex.Message}"; return; }
+-                    hot[i] = Val(r, LineResult.Key.HotOverTc);
+-                    cold[i] = Val(r, LineResult.Key.ColdUnderTc);
+-                    flux[i] = Val(r, LineResult.Key.NetFlux);
+-                    if (!r.Ok) { ok[i] = null; why[i] = "整线解没解出来：" + r.Message; return; }
+-                    if (!r.Converged) { ok[i] = null; why[i] = $"外层耦合未收敛（剩余 {r.CoupleRemainK:0.000} K）"; return; }
+-                    ok[i] = r.AllOk;
+-                    if (!r.AllOk) why[i] = string.Join("／", r.Failed.Select(Criteria.Plain));
+-                    if (Math.Abs(v - v0) < 1e-12) atSolved = r;
+-                });
+-            }
+-            catch (OperationCanceledException)
+-            {
+-                cut = true;
+-                W($"★ 片{j} 扫描**被跑前写死的时间闸切断** —— 这一片的窗口不完整，不许当结果读。");
+-            }
+-            sw.Stop();
+-            probe.Report($"── 片{j} 结束，耗时 {sw.Elapsed.TotalMinutes:0.0} 分钟");
+-
+-            if (!parallelChecked && atSolved is not null)
+-            {
+-                parallelChecked = true;
+-                parallelSame = Val(atSolved, LineResult.Key.HotOverTc).Equals(Val(r0, LineResult.Key.HotOverTc))
+-                            && Val(atSolved, LineResult.Key.ColdUnderTc).Equals(Val(r0, LineResult.Key.ColdUnderTc))
+-                            && Val(atSolved, LineResult.Key.NetFlux).Equals(Val(r0, LineResult.Key.NetFlux));
+-                W($"并发自检（片{j} 的解值点 vs 上面那次 ②，同一设计同一网格）："
+-                  + (parallelSame ? "**逐位相同** ⇒ 并发没有串味，下面的扫描可读。" : "**对不上** ⇒ 并发下的数不可引用！"));
+-                W("");
+-            }
+-
+-            int c = pts.FindIndex(v => Math.Abs(v - v0) < 1e-12);
+-            string head;
+-            if (c < 0 || ok[c] != true)
+-            {
+-                head = $"片{j}　解值 {v0:0.0} mm　**解值那一点自己就不过**（{(c >= 0 ? why[c] : "没扫到")}）⇒ 以它为中心的窗口无从谈起";
+-                // 仍然把扫到的**可行段**列出来（有比没有强：那是这一片在这条线上唯一的可行去处）
+-                var segs = FeasibleSegments(pts, ok);
+-                head += segs.Count == 0 ? "；扫描范围内**一个可行点都没有**"
+-                      : "；扫描范围内的可行段：" + string.Join("、", segs.Select(s => $"[{s.Lo:0.0}, {s.Hi:0.0}] 宽 {s.Hi - s.Lo:0.0}"));
+-            }
+-            else
+-            {
+-                int a = c, b = c;
+-                while (a - 1 >= 0 && ok[a - 1] == true) a--;
+-                while (b + 1 < pts.Count && ok[b + 1] == true) b++;
+-                double lo = pts[a], hi = pts[b], width = hi - lo;
+-                bool openLo = a == 0, openHi = b == pts.Count - 1;
+-                var layers = new List<double>();
+-                for (double t = Math.Ceiling(lo / layer - 1e-9) * layer; t <= hi + 1e-9; t += layer)
+-                    if (t >= o0.InsLoMm - 1e-9) layers.Add(Math.Round(t, 6));
+-                head = $"片{j}　解值 {v0:0.0} mm　可行窗口 [{lo:0.0}, {hi:0.0}] mm　宽 {width:0.0} mm"
+-                     + (openLo || openHi ? $"（{(openLo ? "下" : "")}{(openLo && openHi ? "、" : "")}{(openHi ? "上" : "")}边界**没探到**，真实窗口更宽）" : "")
+-                     + $"　窗口里的 {layer:0.###} 档：{(layers.Count == 0 ? "**一个都没有**" : string.Join("/", layers.Select(t => t.ToString("0.0"))))}"
+-                     + $"　左边界外首个不过：{(a > 0 ? why[a - 1] : "—（没探到）")}"
+-                     + $"　右边界外首个不过：{(b < pts.Count - 1 ? why[b + 1] : "—（没探到）")}";
+-                if (!openLo && !openHi && width < layer - 1e-9) narrow.Add($"片{j}（宽 {width:0.0} mm）");
+-                if (layers.Count == 0) noLayer.Add($"片{j}");
+-            }
+-            summary.Add(head);
+-            W(head);
++            W(pw.SolvedFeasible
++                ? $"片{pw.Plate}（{pw.Name}）　解值 {pw.SolvedMm:0.###} mm　可行窗口 [{pw.LoMm:0.###}, {pw.HiMm:0.###}] mm　宽 {pw.WidthMm:0.###} mm"
++                  + (pw.OpenLo || pw.OpenHi ? $"（{(pw.OpenLo ? "下" : "")}{(pw.OpenLo && pw.OpenHi ? "、" : "")}{(pw.OpenHi ? "上" : "")}边界**没探到**，真实窗口更宽）" : "")
++                  + $"　窗口里的档：{(pw.LayerText.Length == 0 ? "**一个都没有**" : string.Join("/", pw.LayerText))}"
++                  + $"　左边界外首个不过：{(pw.BlockedBelow.Length == 0 ? "—（没探到）" : pw.BlockedBelow)}"
++                  + $"　右边界外首个不过：{(pw.BlockedAbove.Length == 0 ? "—（没探到）" : pw.BlockedAbove)}"
++                : $"片{pw.Plate}（{pw.Name}）　解值 {pw.SolvedMm:0.###} mm　**解值那一点自己就不过**（{pw.SolvedWhy}）⇒ 以它为中心的窗口无从谈起"
++                  + (pw.OtherFeasible.Length == 0 ? "；扫描范围内**一个可行点都没有**"
++                     : "；扫描范围内的可行段：" + string.Join("、", pw.OtherFeasible.Select(s => $"[{s.Lo:0.###}, {s.Hi:0.###}] 宽 {s.Hi - s.Lo:0.###}"))));
+             W("　逐点（值 mm｜可行？｜最热铂高出热偶读数｜管根低于热偶读数｜管孔净流入｜不过的是哪条）");
+-            for (int i = 0; i < pts.Count; i++)
+-                W($"　　{pts[i]:0.0}\t{(ok[i] is null ? "判不了" : ok[i] == true ? "过" : "不过")}\t"
+-                  + $"{Fmt(hot[i], "0.###")}\t{Fmt(cold[i], "0.###")}\t{Fmt(flux[i], "0.###")}\t{why[i]}"
+-                  + (Math.Abs(pts[i] - v0) < 1e-12 ? "\t← 解值" : "")
+-                  + (Math.Abs(pts[i] / layer - Math.Round(pts[i] / layer)) < 1e-9 ? "\t（0.5 档）" : ""));
++            foreach (var pt in pw.Points)
++                W($"　　{pt.Mm:0.###}\t{(pt.Feasible is null ? "判不了" : pt.Feasible == true ? "过" : "不过")}\t"
++                  + $"{Fmt(pt.HotK, "0.###")}\t{Fmt(pt.ColdK, "0.###")}\t{Fmt(pt.NetFluxW, "0.###")}\t{pt.Why}"
++                  + (pt.IsSolved ? "\t← 解值" : "") + (pt.OnLayerGrid ? "\t（现场能缠的档）" : ""));
+             W("");
+             Flush();
+         }
+ 
+-        W("═══════ 小结 ═══════");
+-        foreach (string s in summary) W(s);
+-        W("");
+-        W(narrow.Count == 0 ? "没有片的窗口窄于每层厚（在扫到的边界之内）。"
+-                            : $"**窗口窄于制造精度（每层 {layer:0.###} mm）的片**：" + string.Join("、", narrow) + " —— 点名。判据不放宽（用户 2026-09-17）。");
+-        W(noLayer.Count == 0 ? "每一片的窗口里都至少有一个 0.5 档可选。"
+-                             : "**窗口里一个 0.5 档都没有的片**：" + string.Join("、", noLayer)
+-                               + " —— 这一片在 0.5 的格子上**没有可行的层数**，不是求解器没找到。");
+-        if (cut) W("⚠ 扫描中途被时间闸切断，上面有片不完整。");
+-        if (parallelChecked && !parallelSame) W("⚠ 并发自检没对上 ⇒ 本文件的扫描数不可引用。");
++        W("═══════ 小结（生产件自己的报告，APP 判据页与安装报告印的就是这一份）═══════");
++        W(win.Report());
++        if (win.Cut) W("⚠ 扫描中途被时间闸切断，上面有片不完整。");
+         W("");
+         totalSw.Stop();
+         W($"── 总耗时 {totalSw.Elapsed.TotalHours:0.00} 小时（{DateTime.Now:yyyy-MM-dd HH:mm:ss}）");
+-        W("出处：整线解 = LineRunner.Run；网格配方 = Solver.ApplyCaseMesh；网格无关口径 = MeshVerify.RequiredMeshFor；"
++        W("出处：窗口 = InsulWindow.Measure；整线解 = LineRunner.Run；网格配方 = Solver.ApplyCaseMesh；网格无关口径 = MeshVerify.RequiredMeshFor；"
+           + "层厚 = InsulationSearch.LayerMm。每个数来自这一次运行（同一进程）；靶子那一列标着出处文件，是另一次跑。");
+         Flush();
+         _o.WriteLine(sb.ToString());
+ 
+-        Assert.True(parallelChecked, "一片都没扫到解值那一点 —— 扫描没跑起来");
+-    }
+-
+-    private static List<(double Lo, double Hi)> FeasibleSegments(List<double> pts, bool?[] ok)
+-    {
+-        var segs = new List<(double, double)>();
+-        int i = 0;
+-        while (i < pts.Count)
+-        {
+-            if (ok[i] == true)
+-            {
+-                int s = i;
+-                while (i + 1 < pts.Count && ok[i + 1] == true) i++;
+-                segs.Add((pts[s], pts[i]));
+-            }
+-            i++;
+-        }
+-        return segs;
++        Assert.NotEmpty(win.Plates);
++        Assert.All(win.Plates, pw => Assert.NotEmpty(pw.Points));
+     }
+ 
+-    private static LineResult SafeRun(LineCase lc, Probe? probe)
++    private static LineResult SafeRun(LineCase lc, IProgress<string>? probe)
+     {
+         try { return LineRunner.Run(lc, probe); }
+         catch (Exception ex) { return new LineResult { Ok = false, Message = $"{ex.GetType().Name}：{ex.Message}" }; }
+diff --git a/Pt_Optimize.Tests/R48UColdBudgetDemoTests.cs b/Pt_Optimize.Tests/R48UColdBudgetDemoTests.cs
+new file mode 100644
+index 0000000..a252bad
+--- /dev/null
++++ b/Pt_Optimize.Tests/R48UColdBudgetDemoTests.cs
+@@ -0,0 +1,182 @@
++using System;
++using System.Diagnostics;
++using System.IO;
++using System.Linq;
++using System.Text;
++using System.Threading;
++using PtOptimize.Core;
++using Xunit;
++using Xunit.Abstractions;
++
++namespace PtOptimize.Tests;
++
++// ════════════════════════════════════════════════════════════════════════════
++//  U 路　**冷侧预算放宽之后，每片舌保温的可行窗口宽多少** —— 2026-09-18，Opus 5。
++//
++//  ⚠⚠ 这是**演示，不是设计**。
++//     · 只为回答一句话：「冷侧那 5 度放宽到 10，窗口会变多宽」——
++//       用户 2026-09-17 问的是这一件事，2026-09-18 批的是「把限值改成界面输入」，
++//       **没有**批「把限值改成 10」。默认仍是 5，本档不动那个默认值。
++//     · 网格用的是**导航网格**（BuildCase 缺省：细区 2.0 mm／细区半径 50 mm），
++//       **不是判决那张**。导航网格上这两条温度判据实测偏大（见 MeshVerify 的注释表与
++//       HANDOVER §0.-8／§0.-10 的三网格对照）⇒ 这里量到的窗口只能看**相对变化**，
++//       绝对值不可引用、不可据以出图、不可写进交付。
++//     · 两个预算在**同一次运行、同一个进程、同一份设计、同一张网格**上量，只换那一个数 ——
++//       两份仪器输出拼一起的那种「差」在本档不存在。
++//
++//  设计：W08 导航档解出来的那一份（4245 g，照 R48LW08NavDesign 复原）。
++// ════════════════════════════════════════════════════════════════════════════
++
++[Trait("速度", "慢")]
++public class R48UColdBudgetDemoTests
++{
++    private readonly ITestOutputHelper _o;
++    public R48UColdBudgetDemoTests(ITestOutputHelper o) { _o = o; }
++
++    /// <summary>演示用的两个冷侧预算 K（跑前写死：默认值，与放宽一倍）。</summary>
++    private static readonly double[] ColdBudgets = { LineCase.ThermocoupleErrorK, 2 * LineCase.ThermocoupleErrorK };
++
++    /// <summary>导航网格快筛（便宜，只看相对变化）。</summary>
++    [Fact]
++    public void 冷侧预算放宽后的可行窗口_导航网格演示() => Run(nav: true);
++
++    /// <summary>
++    /// **判决用的那张网格**（与交付判定同一张）——回答用户 2026-09-17 那句「冷侧那 5 度放宽，窗口会变多宽」时，
++    /// 只有这一张网格上的数说得上话。仍是**演示**：默认值本轮一位没动。
++    /// </summary>
++    [Fact]
++    public void 冷侧预算放宽后的可行窗口_判决网格() => Run(nav: false);
++
++    private void Run(bool nav)
++    {
++        var d0 = R48LW08NavDesign.Build();
++        string stamp = DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
++        string dir = Path.Combine(HandoverDoc.Root(), "deliverable");
++        Directory.CreateDirectory(dir);
++        string file = Path.Combine(dir, $"R48_U_冷侧预算演示_{(nav ? "导航网格" : "判决网格")}_W08_本次开跑于{stamp}.txt");
++        var sw = Stopwatch.StartNew();
++        var sb = new StringBuilder();
++        void W(string s = "") => sb.AppendLine(s);
++        void Flush() => File.WriteAllText(file, sb.ToString(), new UTF8Encoding(true));
++
++        var navCase = new LineCase();
++        W("U 路　**冷侧预算放宽之后，每片舌保温的可行窗口宽多少**　W08（" + d0.Name + "）");
++        W($"开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}　工作树 {HandoverDoc.Root()}　写码 2026-09-18 Opus 5");
++        W();
++        W("⚠⚠ **这是演示，不是设计。**");
++        W("　· 回答的只有一句：冷侧那 5 度放宽，窗口会变多宽。默认值本轮一位没动，仍是 "
++          + $"{LineCase.ThermocoupleErrorK:0.###} K；放宽多少由工程师在参数表里填。");
++        if (nav)
++        {
++            W($"　· 网格 = **导航网格**（整线算例缺省：细区 {navCase.MeshFineMm:0.0} mm／粗区 {navCase.MeshCoarseMm:0.0} mm／细区半径 {navCase.MeshFineRadiusMm:0.0} mm），"
++              + "**不是判决那张**。导航网格上这两条温度判据实测偏大 ⇒ 本文件的窗口**只能看相对变化**，");
++            W("　　绝对值不可引用、不可据以出图、不可写进交付。要判决必须在判决网格上重量（InsulWindow 的默认口径）。");
++            W("　⚠ 这张导航网格是 BuildCase 的缺省配方（细区半径 50），**不是**求解器第一遍那张（细区半径 59）—— 两者不是同一个配方，别拿本文件的数去和求解轨迹对。");
++        }
++        else
++        {
++            var (rf, rr) = MeshVerify.RequiredMeshFor(d0);
++            W($"　· 网格 = **判决用的那张**（MeshVerify.RequiredMeshFor：细区 {rf:0.000} mm／细区半径 {rr:0.0} mm），与交付判定同一张。");
++        }
++        W("　· 两个预算在**同一次运行、同一个进程、同一份设计、同一张网格**上量，只换那一个数。");
++        W($"　· 设计出处：{R48LW08NavDesign.Source}");
++        W();
++
++        string live = Path.Combine(Path.GetTempPath(), $"R48_U_冷侧演示_{stamp}_进行中.log");
++        var probe = new Probe(live);
++        W($"进度活页（临时，非交付物）：{live}");
++        W();
++        Flush();
++
++        var results = new InsulWindow.Result[ColdBudgets.Length];
++        for (int b = 0; b < ColdBudgets.Length; b++)
++        {
++            double cold = ColdBudgets[b];
++            var p = new DesignInputs { ColdUnderTcAllowK = cold };     // 热侧不动 —— 用户问的是冷侧
++            W($"═══════ 冷侧预算 {cold:0.###} K（热侧仍 {p.HotOverTcAllowK:0.###} K）═══════");
++            probe.Report($"── 冷侧预算 {cold:0.###} K 开始");
++            var opt = new InsulWindow.Options { UseNavigationMesh = nav, Cap = TimeSpan.FromHours(3.0) };
++            var res = InsulWindow.Measure(d0, p, opt, probe, CancellationToken.None);
++            results[b] = res;
++
++            // 解值那一点的判据值：两个预算下**值应当一位不动**（放宽的是限值，不是数）——当场对给自己看
++            var solved = res.Plates.Select(x => x.Points.First(y => y.IsSolved)).ToArray();
++            W("解值那一点（四片同一次解，值与预算无关；限值那一列才跟着预算走）：");
++            W("片\t最热铂高出热偶读数 K\t管根低于热偶读数 K\t管孔净流入 W\t可行？");
++            for (int j = 0; j < res.Plates.Length; j++)
++                W($"{res.Plates[j].Name}\t{Fmt(solved[j].HotK)}\t{Fmt(solved[j].ColdK)}\t{Fmt(solved[j].NetFluxW)}\t"
++                  + (solved[j].Feasible is null ? "判不了" : solved[j].Feasible == true ? "过" : "不过"));
++            W();
++            W(res.Report());
++            W();
++            Flush();
++        }
++
++        // ═══════ 并列：窗口变宽多少 ═══════
++        W($"═══════ 窗口宽度对照（同一次运行、同一张{(nav ? "导航" : "判决")}网格，只换冷侧预算）═══════");
++        W($"片\t解值 mm\t冷侧 {ColdBudgets[0]:0.###} K 窗口\t宽 mm\t可落档\t冷侧 {ColdBudgets[1]:0.###} K 窗口\t宽 mm\t可落档\t宽了多少 mm");
++        var a = results[0]; var c2 = results[1];
++        for (int j = 0; j < Math.Min(a.Plates.Length, c2.Plates.Length); j++)
++        {
++            var pa = a.Plates[j]; var pb = c2.Plates[j];
++            W($"{pa.Name}\t{pa.SolvedMm:0.###}"
++              + $"\t{Win(pa)}\t{Wid(pa)}\t{Lay(pa)}"
++              + $"\t{Win(pb)}\t{Wid(pb)}\t{Lay(pb)}"
++              + $"\t{(double.IsNaN(pa.WidthMm) || double.IsNaN(pb.WidthMm) ? "—" : (pb.WidthMm - pa.WidthMm).ToString("+0.###;-0.###;0"))}");
++        }
++        W();
++        W($"结论（冷侧 {ColdBudgets[0]:0.###} K，= 现在的默认）：{a.Verdict}");
++        W($"结论（冷侧 {ColdBudgets[1]:0.###} K，**演示**）：{c2.Verdict}");
++        W();
++        W(nav ? "⚠ 再说一次：上面两行都是**导航网格**上的数，只能看相对变化。判决要在判决网格上重量。"
++              : "⚠ 上面两行是**判决网格**上的数（与交付判定同一张）。但这仍是**演示**：默认值本轮一位没动，放宽多少由工程师在参数表里填。");
++        W("⚠ 本档没有、也不许有「所以应该改成 10」这句话 —— 那是工程师在参数表里填的事。");
++        W();
++        sw.Stop();
++        W($"── 总耗时 {sw.Elapsed.TotalMinutes:0.0} 分钟（{DateTime.Now:yyyy-MM-dd HH:mm:ss}）");
++        W("出处：窗口 = InsulWindow.Measure（APP 终验点的就是它）；整线解 = LineRunner.Run；判定 = LineResult.AllOk；"
++          + "层厚 = InsulationSearch.LayerMm；裸舌 = SolverOptions.InsLoMm。每个数来自这一次运行（同一进程）。");
++        Flush();
++        _o.WriteLine(sb.ToString());
++
++        // 门：两个预算真的跑出了数，且**判据值与预算无关**（放宽的是限值）
++        Assert.Equal(a.Plates.Length, c2.Plates.Length);
++        Assert.All(a.Plates, x => Assert.NotEmpty(x.Points));
++        for (int j = 0; j < a.Plates.Length; j++)
++        {
++            var sa = a.Plates[j].Points.First(x => x.IsSolved);
++            var sbp = c2.Plates[j].Points.First(x => x.IsSolved);
++            Assert.Equal(sa.ColdK, sbp.ColdK, 9);      // 同一份设计同一张网格：判据值一位不动
++            Assert.Equal(sa.HotK, sbp.HotK, 9);
++        }
++        // 放宽只会让窗口**不变窄**（冷侧是上界那一侧的约束之一）
++        for (int j = 0; j < a.Plates.Length; j++)
++            if (!double.IsNaN(a.Plates[j].WidthMm) && !double.IsNaN(c2.Plates[j].WidthMm))
++                Assert.True(c2.Plates[j].WidthMm >= a.Plates[j].WidthMm - 1e-9,
++                    $"片{j}：放宽冷侧之后窗口反而变窄（{a.Plates[j].WidthMm:0.###} → {c2.Plates[j].WidthMm:0.###}）—— 先查是不是量错了");
++    }
++
++    private static string Fmt(double v) => double.IsNaN(v) ? "—" : v.ToString("0.###");
++    private static string Win(InsulWindow.PlateWindow p)
++        => p.SolvedFeasible ? $"[{p.LoMm:0.###}, {p.HiMm:0.###}]" + (p.OpenLo || p.OpenHi ? "（边界没探到）" : "") : "解值自己就不过";
++    private static string Wid(InsulWindow.PlateWindow p) => double.IsNaN(p.WidthMm) ? "—" : p.WidthMm.ToString("0.###");
++    private static string Lay(InsulWindow.PlateWindow p) => p.LayerMm.Length == 0 ? "**一个都没有**" : string.Join("/", p.LayerMm.Select(m => m.ToString("0.###")));
++
++    private sealed class Probe : IProgress<string>
++    {
++        private readonly string _path;
++        private readonly object _lock = new();
++        private readonly Stopwatch _sw = Stopwatch.StartNew();
++        private double _last;
++        public Probe(string path) { _path = path; File.WriteAllText(path, $"开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}\r\n"); }
++        public void Report(string value)
++        {
++            lock (_lock)
++            {
++                double now = _sw.Elapsed.TotalSeconds;
++                File.AppendAllText(_path, $"{DateTime.Now:HH:mm:ss} [+{now - _last,7:0.0}s 累计{now / 60,7:0.0}min]  {value}\r\n");
++                _last = now;
++            }
++        }
++    }
++}
+diff --git a/Pt_Optimize.Tests/R48UInsulWindowGateTests.cs b/Pt_Optimize.Tests/R48UInsulWindowGateTests.cs
+new file mode 100644
+index 0000000..c6ca125
+--- /dev/null
++++ b/Pt_Optimize.Tests/R48UInsulWindowGateTests.cs
+@@ -0,0 +1,235 @@
++using System;
++using System.IO;
++using System.Linq;
++using PtOptimize.Core;
++using Xunit;
++
++namespace PtOptimize.Tests;
++
++/// <summary>
++/// ★★★★★ U 路（2026-09-18，Opus 5）：**每片舌保温的可行窗口**进了生产件的门。
++///
++/// L 路的探针（<c>R48LInsulWindowTests</c>）09-17 量出 W08 四片的窗口宽 0.1／0.0／0.1／0.2 mm，
++/// 其中共用1 那一片的窗口是 [2.3, 2.3] —— **里面一个 0.5 的倍数都没有**。
++/// 那句结论只活在一份 txt 里，工程师点不到（记忆：对话的知识必须落到 APP 上）。
++/// ⇒ 提成 <see cref="InsulWindow.Measure"/>，挂到整线结果、判据页与安装报告上。
++///
++/// 本档的门（全部毫秒级：过不过由**注入的**评估函数给，窗口的切段／落档／判定这套
++/// **生产逻辑**原样受审 —— 手抄一份窗口算法来验窗口算法，守不住任何东西）：
++///   ① 造窗口 [2.3, 2.3] ⇒ 一个档都落不进、结论「当前判据下无可制造设计」并点名那几片；
++///   ② 造窗口 [2.2, 2.8] ⇒ 恰好落 2.5 一档，判「缠得出来」；
++///   ③ 0 层合法：窗口盖住裸舌 ⇒ 那一档算数，且写成「裸舌 0 层」；
++///   ④ 边界没探到要说出来，不许把扫描宽度当窗口宽；解值自己不过时照实报；
++///   ⑤ 接线门：整线结果带着它、安装报告与判据页**读的就是这一份**，终验会去量 ——
++///      任何一处改回不读窗口 ⇒ 红。
++/// </summary>
++public class R48UInsulWindowGateTests
++{
++    private static string Src(params string[] parts) => File.ReadAllText(Path.Combine(new[] { HandoverDoc.Root() }.Concat(parts).ToArray()));
++
++    /// <summary>一份四片的解析设计，四片舌保温都设成 <paramref name="solvedMm"/>。</summary>
++    private static DesignSpec Design(double solvedMm)
++    {
++        var d = DesignSpec.W08.Clone();
++        for (int j = 0; j < d.TabInsulMm.Length; j++) d.TabInsulMm[j] = solvedMm;
++        return d;
++    }
++
++    /// <summary>注入的「这一点过不过」：落在 [lo, hi] 内就算过，否则报一条点名的判据。不解场、毫秒级。</summary>
++    private static InsulWindow.Options Oracle(double lo, double hi)
++        => new()
++        {
++            MaxDegreeOfParallelism = 1,
++            Evaluate = (d, j, mm) => new InsulWindow.Point
++            {
++                Feasible = mm >= lo - 1e-9 && mm <= hi + 1e-9,
++                Why = mm < lo ? "管根低于热偶读数 6.700/5.000" : mm > hi ? "管孔净流入 须为正 -0.100/0.000" : "",
++            },
++        };
++
++    // ══════════════════════════════════════════════════════════════════════
++    //  ① 窗口 [2.3, 2.3] ⇒ 无档 ⇒ 无可制造设计，点名
++    // ══════════════════════════════════════════════════════════════════════
++    [Fact]
++    public void 窗口里一个档都没有时_判无可制造设计并点名()
++    {
++        var res = InsulWindow.Measure(Design(2.3), new DesignInputs(), Oracle(2.3, 2.3));
++
++        Assert.Equal(4, res.Plates.Length);
++        foreach (var p in res.Plates)
++        {
++            Assert.True(p.SolvedFeasible, $"{p.Name} 解值那一点应当过（注入的评估函数说它过）");
++            Assert.Equal(2.3, p.LoMm, 9);
++            Assert.Equal(2.3, p.HiMm, 9);
++            Assert.Equal(0.0, p.WidthMm, 9);
++            Assert.False(p.OpenLo); Assert.False(p.OpenHi);        // 两头都探到了
++            Assert.Empty(p.LayerMm);                                // 2.3 不是 0.5 的倍数，也不是裸舌
++            Assert.False(p.HasLayer);
++            Assert.Contains("管根低于热偶读数", p.BlockedBelow);      // 卡哪条要点名
++            Assert.Contains("管孔净流入", p.BlockedAbove);
++        }
++
++        Assert.False(res.Manufacturable);
++        Assert.Equal(4, res.NoLayerPlates.Length);
++        Assert.Contains("当前判据下无可制造设计", res.Verdict);
++        foreach (var p in res.Plates) Assert.Contains(p.Name, res.Verdict);      // 点名
++        Assert.Contains("判据没有被放宽", res.Verdict);                            // 不改判据、不硬凑
++        Assert.Equal(4, res.NarrowPlates.Length);                                 // 0.0 < 一层 0.5 ⇒ 也算窄
++        // 报告要把「最接近的设计」与差在哪条一起给出来
++        string rep = res.Report();
++        Assert.Contains("2.3", rep);
++        Assert.Contains("一个都没有", rep);
++        Assert.False(Criteria.HasCode(rep), "报告里不许出现判据代号");
++        Assert.DoesNotContain("--", rep);                                          // 界面上不许出现命令行开关名
++    }
++
++    // ══════════════════════════════════════════════════════════════════════
++    //  ② 窗口 [2.2, 2.8] ⇒ 落 2.5 一档
++    // ══════════════════════════════════════════════════════════════════════
++    [Fact]
++    public void 窗口盖住一个整数层时_那一档算得出来()
++    {
++        var res = InsulWindow.Measure(Design(2.3), new DesignInputs(), Oracle(2.2, 2.8));
++
++        foreach (var p in res.Plates)
++        {
++            Assert.Equal(2.2, p.LoMm, 9);
++            Assert.Equal(2.8, p.HiMm, 9);
++            Assert.Equal(0.6, p.WidthMm, 9);
++            Assert.Single(p.LayerMm);
++            Assert.Equal(2.5, p.LayerMm[0], 9);
++            Assert.Contains("5 层", p.LayerText[0]);                // 2.5 mm = 5 层（每层 0.5）
++            Assert.False(p.NarrowerThanOneLayer(res.LayerThickMm));  // 0.6 > 0.5
++        }
++        Assert.True(res.Manufacturable);
++        Assert.Empty(res.NoLayerPlates);
++        Assert.Contains("缠得出来", res.Verdict);
++        Assert.DoesNotContain("无可制造设计", res.Verdict);
++    }
++
++    // ══════════════════════════════════════════════════════════════════════
++    //  ③ 0 层（裸舌）是合法的一档
++    // ══════════════════════════════════════════════════════════════════════
++    [Fact]
++    public void 裸舌是合法的一档_零层不算没有档()
++    {
++        var o = new InsulWindow.Options();
++        double bare = o.Solver.InsLoMm;                            // 0.30，不在 0.5 的格子上
++        var res = InsulWindow.Measure(Design(bare), new DesignInputs(), Oracle(bare, bare + 0.15));
++
++        foreach (var p in res.Plates)
++        {
++            Assert.Single(p.LayerMm);
++            Assert.Equal(bare, p.LayerMm[0], 9);
++            Assert.Contains("裸舌 0 层", p.LayerText[0]);
++        }
++        Assert.True(res.Manufacturable);
++
++        // 下界之外的点不解、标「下界外」（不缠就是裸舌，再往下不是一个做得出来的设计）
++        var below = res.Plates[0].Points.Where(x => x.Mm < bare - 1e-9).ToArray();
++        Assert.NotEmpty(below);
++        Assert.All(below, x => Assert.Null(x.Feasible));
++        Assert.All(below, x => Assert.Contains("下界外", x.Why));
++
++        // 落档表只有一份写法，且它自己就认得裸舌与整数层
++        Assert.Equal(new[] { bare, 0.5, 1.0 }, InsulWindow.LayerGridWithin(0.0, 1.0, o.Solver));
++        Assert.Empty(InsulWindow.LayerGridWithin(2.3, 2.3, o.Solver));
++        Assert.Equal(new[] { 2.5 }, InsulWindow.LayerGridWithin(2.2, 2.8, o.Solver));
++    }
++
++    // ══════════════════════════════════════════════════════════════════════
++    //  ④ 边界没探到／解值自己不过 —— 照实报
++    // ══════════════════════════════════════════════════════════════════════
++    [Fact]
++    public void 边界没探到与解值自己不过_都照实报()
++    {
++        // 全程可行 ⇒ 两头都没探到，不许把扫描宽度 2.0 当成窗口宽
++        var open = InsulWindow.Measure(Design(2.3), new DesignInputs(), Oracle(-99, 99));
++        foreach (var p in open.Plates)
++        {
++            Assert.True(p.OpenLo && p.OpenHi);
++            Assert.Equal("", p.BlockedBelow);
++            Assert.Equal("", p.BlockedAbove);
++        }
++        Assert.Contains("边界没探到", open.Report());
++
++        // 解值那一点自己就不过 ⇒ 不给窗口，但把扫到的可行段列出来
++        var bad = InsulWindow.Measure(Design(2.3), new DesignInputs(), Oracle(3.0, 3.2));
++        foreach (var p in bad.Plates)
++        {
++            Assert.False(p.SolvedFeasible);
++            Assert.True(double.IsNaN(p.LoMm) && double.IsNaN(p.WidthMm));
++            Assert.False(p.HasLayer);
++            Assert.Contains("管根低于热偶读数", p.SolvedWhy);
++            Assert.Single(p.OtherFeasible);
++            Assert.Equal(3.0, p.OtherFeasible[0].Lo, 9);
++            Assert.Equal(3.2, p.OtherFeasible[0].Hi, 9);
++        }
++        Assert.Contains("当前判据下无可制造设计", bad.Verdict);   // 解值不过 ⇒ 也没有档
++        Assert.Contains("解值自己就不过", bad.Report());
++    }
++
++    // ══════════════════════════════════════════════════════════════════════
++    //  ⑤ 接线门：改回不读窗口 ⇒ 红
++    // ══════════════════════════════════════════════════════════════════════
++    [Fact]
++    public void 接线门_整线结果带着它_报告与判据页读的就是这一份_终验会去量()
++    {
++        // 整线结果带得动（默认 null = 这一次没量，不是「过了」）
++        var r = new LineResult();
++        Assert.Null(r.TabInsulWindow);
++        var res = InsulWindow.Measure(Design(2.3), new DesignInputs(), Oracle(2.2, 2.8));
++        r.TabInsulWindow = res;
++        Assert.Same(res, r.TabInsulWindow);
++
++        // 安装报告：读的就是这一份，没量时照实说没量（**不留空白**）
++        string rep = Src("Pt_Optimize", "Core", "InstallReport.cs");
++        Assert.Contains("r.TabInsulWindow is { } win", rep);
++        Assert.Contains("win.Report()", rep);
++        Assert.Contains("没量 ≠ 缠得出来", rep);
++        Assert.Contains("本报告不可作为安装依据", rep);
++
++        // ③ 判据页：一张小表，只读结果那一份，不重算
++        string page = Src("Pt_Optimize", "UI", "LineDesignPage.cs");
++        Assert.Contains("(\"舌保温可行窗口\", winHost)", page);
++        Assert.Contains("private void FillInsulWindow(LineResult r)", page);
++        Assert.Contains("FillInsulWindow(r);", page);
++        Assert.Contains("var win = r.TabInsulWindow;", page);
++        // 终验（加密复算收敛之后）去量一次；开关在参数表，不是命令行
++        Assert.Contains("_base.MeasureInsulWindowAtFinalCheck && res.Converged", page);
++        Assert.Contains("InsulWindow.Measure(d2, _base, null, prog, _cts.Token)", page);
++        Assert.Contains("_last.TabInsulWindow = win;", page);
++
++        // 探针改调生产件 —— 不许留第二份实现
++        string probe = Src("Pt_Optimize.Tests", "R48LInsulWindowTests.cs");
++        Assert.Contains("InsulWindow.Measure(", probe);
++        Assert.DoesNotContain("Parallel.For", probe);
++        Assert.DoesNotContain("while (a - 1 >= 0 && ok[a - 1] == true) a--;", probe);
++
++        // 开关本身：参数表里看得见，默认开
++        Assert.True(new DesignInputs().MeasureInsulWindowAtFinalCheck);
++        var pi = typeof(DesignInputs).GetProperty(nameof(DesignInputs.MeasureInsulWindowAtFinalCheck))!;
++        string disp = pi.GetCustomAttributes(typeof(System.ComponentModel.DisplayNameAttribute), false)
++                        .Cast<System.ComponentModel.DisplayNameAttribute>().First().DisplayName;
++        Assert.Equal("终验时量每片舌保温的可行窗口", disp);
++        Assert.False(Criteria.HasCode(disp));
++        Assert.DoesNotContain("--", disp);
++    }
++
++    /// <summary>默认口径：在**判决用的那张网格**上量；导航网格是可选的快筛，且报告要标明它不作判决。</summary>
++    [Fact]
++    public void 默认在判决网格上量_导航网格只作快筛且写明()
++    {
++        Assert.False(new InsulWindow.Options().UseNavigationMesh);
++        var nav = InsulWindow.Measure(Design(2.3), new DesignInputs(),
++                                      new InsulWindow.Options { UseNavigationMesh = true, MaxDegreeOfParallelism = 1, Evaluate = (d, j, mm) => new InsulWindow.Point { Feasible = true } });
++        Assert.True(nav.NavigationMesh);
++        Assert.Contains("只作快筛，不作判决", nav.Report());
++
++        var fine = InsulWindow.Measure(Design(2.3), new DesignInputs(), Oracle(2.2, 2.8));
++        Assert.False(fine.NavigationMesh);
++        var (wantFine, wantRadius) = MeshVerify.RequiredMeshFor(Design(2.3));
++        Assert.Equal(wantFine, fine.MeshFineMm, 9);          // 与交付判定同一张网格，不另抄配方
++        Assert.Equal(wantRadius, fine.MeshRadiusMm, 9);
++    }
++}
+diff --git a/Pt_Optimize.Tests/R48UTempBudgetTests.cs b/Pt_Optimize.Tests/R48UTempBudgetTests.cs
+new file mode 100644
+index 0000000..af8492a
+--- /dev/null
++++ b/Pt_Optimize.Tests/R48UTempBudgetTests.cs
+@@ -0,0 +1,245 @@
++using System;
++using System.ComponentModel;
++using System.IO;
++using System.Linq;
++using System.Reflection;
++using PtOptimize.Core;
++using Xunit;
++
++namespace PtOptimize.Tests;
++
++/// <summary>
++/// ★★★★★ U 路（2026-09-18，Opus 5）：**温差预算是工程师填的，不是写死的 5。**
++///
++/// 用户 2026-09-17：「简单说：按半毫米一层缠，现在的判据下没有能造的设计……要你定一件事：冷侧那 5 度能不能放宽」；
++/// 2026-09-18：「OK!了解了，请开工」。本路做的是**接线**，不替谁改数：
++///   · 参数表加两项「管根低于热偶读数 允许值 [K]」「最热铂高出热偶读数 允许值 [K]」，默认 5.0，说明里写出处；
++///   · 判据表、保温搜索、加密复算容差、说明书、安装报告**一律读这两项**，别处不许再有第二个 5。
++///
++/// 本档的四道门：
++///   ① 默认 5 时全链路逐位不变（默认值、算例限值、复核容差、判词里的限值栏）——「改了没走样」的证据；
++///   ② 填成别的数时判据裕度**按定义跟着变**（热侧 7、冷侧 12：同一份合成整线由「不过」翻成「过」，限值栏印新数）；
++///   ③ 源码门：热侧／冷侧的限值不许在判据、保温搜索、复核容差、说明书里写死 —— <see cref="LineCase.ThermocoupleErrorK"/>
++///      只许出现在「它自己的定义」与「两项输入的默认值」这三处，改回写死 ⇒ 红；
++///   ④ 界面门：两项真的在参数表里可见可改，且归到一个对整线链有效的分类下（不是「只读」那两组）。
++///
++/// ⚠ 全档毫秒级：热侧／冷侧两条用生产函数 <see cref="LineRunner.ThermocoupleChecks"/> 配**合成**的段／片温度
++///   （与 <see cref="ThermocoupleBasisTests"/> 同一套合成数），不跑分钟级的整线解，也不手抄任何生产配方。
++/// </summary>
++public class R48UTempBudgetTests
++{
++    // 与 ThermocoupleBasisTests.Line() 同一套合成整线（三段四片）。故意各不相同，读错一端差几十 K。
++    private static (SegmentOut[] Segs, FlangeOut[] Fl) Line()
++    {
++        var segs = new[]
++        {
++            new SegmentOut { Name = "HC1", SetpointC = 1150, TRootAC = 1146.0, TRootBC = 1112.0, BaseTRootAC = 1147.5, BaseTRootBC = 1116.3 },
++            new SegmentOut { Name = "HC2", SetpointC = 1080, TRootAC = 1113.5, TRootBC = 1071.5, BaseTRootAC = 1116.1, BaseTRootBC = 1065.2 },
++            new SegmentOut { Name = "HC3", SetpointC = 1050, TRootAC = 1064.5, TRootBC = 1041.0, BaseTRootAC = 1065.0, BaseTRootBC = 1043.0 },
++        };
++        var fl = new[]
++        {
++            new FlangeOut { Name = "入口",    TDiscMaxC = 1149.0, TTabMaxC = 1152.0 },
++            new FlangeOut { Name = "HC1|HC2", TDiscMaxC = 1117.5, TTabMaxC = 1110.0, Shared = true },
++            new FlangeOut { Name = "HC2|HC3", TDiscMaxC = 1069.0, TTabMaxC = 1060.0, Shared = true },
++            new FlangeOut { Name = "出口",    TDiscMaxC = 1040.0, TTabMaxC = 1038.0 },
++        };
++        return (segs, fl);
++    }
++
++    private static string Src(string rel) => File.ReadAllText(Path.Combine(HandoverDoc.Root(), rel.Replace('/', Path.DirectorySeparatorChar)));
++
++    // ══════════════════════════════════════════════════════════════════════
++    //  ① 默认 5 ⇒ 全链路逐位不变
++    // ══════════════════════════════════════════════════════════════════════
++    [Fact]
++    public void 默认预算仍是五度_从参数表一路到判据与复核容差都逐位不变()
++    {
++        var p = new DesignInputs();
++        Assert.Equal(5.0, LineCase.ThermocoupleErrorK, 12);
++        Assert.Equal(LineCase.ThermocoupleErrorK, p.ColdUnderTcAllowK, 12);
++        Assert.Equal(LineCase.ThermocoupleErrorK, p.HotOverTcAllowK, 12);
++
++        // 整线算例：没显式设过 ⇒ 读参数表
++        var lc = DesignSpec.W08.Clone().BuildCase(p, checkRamp: false);
++        Assert.Equal(5.0, lc.HotOverTcMaxK, 12);
++        Assert.Equal(5.0, lc.ColdUnderTcMaxK, 12);
++        Assert.Equal(5.0, new LineCase().HotOverTcMaxK, 12);
++        Assert.Equal(5.0, new LineCase().ColdUnderTcMaxK, 12);
++
++        // 加密复算容差：默认下仍是 0.5／0.5／0.5（K 路那三列，逐位不变）
++        var tol = MeshVerify.TolTemplate(new LineCase());
++        Assert.Equal(0.5, tol.First(t => t.Name == Criteria.Plain(LineResult.Key.NetFlux)).Tol, 12);
++        Assert.Equal(0.5, tol.First(t => t.Name == Criteria.Plain(LineResult.Key.HotOverTc)).Tol, 12);
++        Assert.Equal(0.5, tol.First(t => t.Name == Criteria.Plain(LineResult.Key.ColdUnderTc)).Tol, 12);
++
++        // 判词里的限值栏与判定：这份合成整线在 5 K 下热侧 6.56、冷侧 9.00，两条都不过（与 R48 B 那道门同一组数）
++        var (segs, fl) = Line();
++        var (hot, cold) = LineRunner.ThermocoupleChecks(new LineCase { Base = p }, segs, fl);
++        Assert.Equal(5.0, hot.Limit, 12);
++        Assert.Equal(5.0, cold.Limit, 12);
++        Assert.False(hot.Ok);
++        Assert.False(cold.Ok);
++        Assert.Equal("HC2|HC3", hot.Where);
++        Assert.Equal("出口", cold.Where);
++    }
++
++    // ══════════════════════════════════════════════════════════════════════
++    //  ② 填成别的数 ⇒ 判据裕度按定义跟着变
++    // ══════════════════════════════════════════════════════════════════════
++    [Fact]
++    public void 填成别的数时判据限值与复核容差都跟着走()
++    {
++        var (segs, fl) = Line();
++        double hot5 = LineRunner.ThermocoupleChecks(new LineCase(), segs, fl).Hot.Actual;
++        double cold5 = LineRunner.ThermocoupleChecks(new LineCase(), segs, fl).Cold.Actual;
++
++        // 冷侧 9.00 K：预算填 12 ⇒ 由「不过」翻成「过」，值一位不动（放宽的是限值，不是数）
++        var wide = new DesignInputs { HotOverTcAllowK = 7.0, ColdUnderTcAllowK = 12.0 };
++        var lc = DesignSpec.W08.Clone().BuildCase(wide, checkRamp: false);
++        Assert.Equal(7.0, lc.HotOverTcMaxK, 12);
++        Assert.Equal(12.0, lc.ColdUnderTcMaxK, 12);
++
++        var (hot, cold) = LineRunner.ThermocoupleChecks(new LineCase { Base = wide }, segs, fl);
++        Assert.Equal(7.0, hot.Limit, 12);
++        Assert.Equal(12.0, cold.Limit, 12);
++        Assert.Equal(hot5, hot.Actual, 12);      // 判据值与预算无关
++        Assert.Equal(cold5, cold.Actual, 12);
++        Assert.True(hot.Ok, $"热侧 {hot.Actual:0.000} K 在 7 K 预算下应当过");
++        Assert.True(cold.Ok, $"冷侧 {cold.Actual:0.000} K 在 12 K 预算下应当过");
++        // 收紧到判据值以下 ⇒ 立刻翻回「不过」（自证：不是恒过）
++        var tight = new DesignInputs { HotOverTcAllowK = 1.0, ColdUnderTcAllowK = 1.0 };
++        var (hotT, coldT) = LineRunner.ThermocoupleChecks(new LineCase { Base = tight }, segs, fl);
++        Assert.False(hotT.Ok);
++        Assert.False(coldT.Ok);
++
++        // 复核容差 = 各自限值的 10 %，跟着预算走
++        var tol = MeshVerify.TolTemplate(new LineCase { Base = wide });
++        Assert.Equal(0.7, tol.First(t => t.Name == Criteria.Plain(LineResult.Key.HotOverTc)).Tol, 12);
++        Assert.Equal(1.2, tol.First(t => t.Name == Criteria.Plain(LineResult.Key.ColdUnderTc)).Tol, 12);
++        Assert.Equal(0.5, tol.First(t => t.Name == Criteria.Plain(LineResult.Key.NetFlux)).Tol, 12);   // 净流入与预算无关
++
++        // 判词里要写出本次实际用的那个数，不许印默认值
++        Assert.Contains("7", hot.Note);
++        Assert.Contains("12", cold.Note);
++        Assert.DoesNotContain("误差 5 ℃", hot.Note);
++        Assert.DoesNotContain("误差 5 ℃", cold.Note);
++    }
++
++    [Fact]
++    public void 安装报告与说明书印的是本次填的预算_不是默认值()
++    {
++        var wide = new DesignInputs { HotOverTcAllowK = 7.0, ColdUnderTcAllowK = 12.0 };
++        // 安装报告的热偶基准段（只读结果与设计，不重算）
++        string rep = Src("Pt_Optimize/Core/InstallReport.cs");
++        Assert.Contains("lc.HotOverTcMaxK", rep);
++        Assert.Contains("lc.ColdUnderTcMaxK", rep);
++        Assert.DoesNotContain("LineCase.ThermocoupleErrorK", rep);
++
++        // 保温搜索报告：限值从整线算例读（两个数都从 LimitsOf 来），不许再插默认值
++        string ins = Src("Pt_Optimize/Core/InsulationSearch.cs");
++        Assert.DoesNotContain("{LineCase.ThermocoupleErrorK", ins);
++
++        // 说明书：限值那张表挂**当前参数表**那一份算例
++        string man = Src("Pt_Optimize/UI/ManualPage.cs");
++        Assert.Contains("var lim = new LineCase { Base = dfl };", man);
++        Assert.DoesNotContain("<b>这是程序里的常数，参数表里没有这一项</b>", man);   // 说明书正文里那句已经不成立
++        Assert.Contains("在「① 输入」页最上面那组", man);
++        var lim = new LineCase { Base = wide };
++        Assert.Equal(7.0, lim.HotOverTcMaxK, 12);
++        Assert.Equal(12.0, lim.ColdUnderTcMaxK, 12);
++    }
++
++    // ══════════════════════════════════════════════════════════════════════
++    //  ③ 源码门：不许改回写死
++    // ══════════════════════════════════════════════════════════════════════
++    [Fact]
++    public void 源码门_热冷两条限值不许在别处写死()
++    {
++        // 判据构造只从算例读
++        string lr = Src("Pt_Optimize/Core/LineRunner.cs");
++        Assert.Contains("c.HotOverTcMaxK", lr);
++        Assert.Contains("c.ColdUnderTcMaxK", lr);
++        Assert.Contains("Base is not null ? Base.HotOverTcAllowK : ThermocoupleErrorK", lr);
++        Assert.Contains("Base is not null ? Base.ColdUnderTcAllowK : ThermocoupleErrorK", lr);
++        // 改回「字段 = 常数」当场红
++        Assert.DoesNotContain("public double HotOverTcMaxK = ", lr);
++        Assert.DoesNotContain("public double ColdUnderTcMaxK = ", lr);
++
++        // ★ 全仓扫：ThermocoupleErrorK **只许当「默认值」用，不许当限值或容差用**。
++        //   凡是算限值、算容差、印限值那一列的地方，数必须从算例来（LineCase.HotOverTcMaxK／ColdUnderTcMaxK）——
++        //   在那里引用这个常数，就是又抄了一份限值，也就是「印出来的 ≠ 判的」的起点。
++        //   放行的只有四处定义／兜底（下面逐条写死），外加**显示文字里明写「默认」二字**的解释句
++        //   （那种句子旁边一定同时印着算例的真实限值，两个数并列，读的人分得清哪个是判的）。
++        var allowed = new[]
++        {
++            ("Pt_Optimize/Core/LineRunner.cs", "public const double ThermocoupleErrorK = 5.0;"),
++            ("Pt_Optimize/Core/LineRunner.cs", "Base is not null ? Base.HotOverTcAllowK : ThermocoupleErrorK"),
++            ("Pt_Optimize/Core/LineRunner.cs", "Base is not null ? Base.ColdUnderTcAllowK : ThermocoupleErrorK"),
++            ("Pt_Optimize/Core/DesignInputs.cs", "public double ColdUnderTcAllowK { get; set; } = LineCase.ThermocoupleErrorK;"),
++            ("Pt_Optimize/Core/DesignInputs.cs", "public double HotOverTcAllowK { get; set; } = LineCase.ThermocoupleErrorK;"),
++        };
++        var offenders = new System.Collections.Generic.List<string>();
++        foreach (string full in Directory.GetFiles(Path.Combine(HandoverDoc.Root(), "Pt_Optimize"), "*.cs", SearchOption.AllDirectories)
++                                        .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}")
++                                                 && !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")))
++        {
++            string name = Path.GetRelativePath(HandoverDoc.Root(), full).Replace('\\', '/');
++            foreach (string line in File.ReadAllText(full).Split('\n'))
++            {
++                if (!line.Contains("ThermocoupleErrorK")) continue;
++                string t = line.Trim();
++                if (t.StartsWith("//")) continue;          // 注释里说出处可以（/// 也以 // 开头）
++                if (allowed.Any(a => a.Item1 == name && t.Contains(a.Item2))) continue;
++                if (t.Contains("默认")) continue;                 // 显示文字里明写「默认」＋并列印算例限值
++                offenders.Add($"{name}：{t}");
++            }
++        }
++        Assert.True(offenders.Count == 0,
++            "热侧／冷侧的限值默认值被抄到了别处（印出来的迟早 ≠ 判的）：\n  " + string.Join("\n  ", offenders));
++
++        // 复核容差是「限值的比例」，不是写死的 0.5
++        string mv = Src("Pt_Optimize/Core/MeshVerify.cs");
++        Assert.Contains("c => TcMeshTolFrac * c.HotOverTcMaxK", mv);
++        Assert.Contains("c => TcMeshTolFrac * c.ColdUnderTcMaxK", mv);
++        Assert.Equal(0.1, MeshVerify.TcMeshTolFrac, 12);
++    }
++
++    // ══════════════════════════════════════════════════════════════════════
++    //  ④ 界面门：参数表里真的看得见、改得了
++    // ══════════════════════════════════════════════════════════════════════
++    [Theory]
++    [InlineData("ColdUnderTcAllowK", "管根低于热偶读数 允许值 [K]")]
++    [InlineData("HotOverTcAllowK", "最热铂高出热偶读数 允许值 [K]")]
++    public void 界面门_两项在参数表里可见可改且写了出处(string prop, string display)
++    {
++        var pi = typeof(DesignInputs).GetProperty(prop, BindingFlags.Public | BindingFlags.Instance);
++        Assert.NotNull(pi);
++        Assert.True(pi!.CanRead && pi.CanWrite, $"{prop} 要能改 —— 只读的输入等于没有这一项");
++        Assert.NotEqual(false, pi.GetCustomAttribute<BrowsableAttribute>()?.Browsable);
++        Assert.Equal(display, pi.GetCustomAttribute<DisplayNameAttribute>()?.DisplayName);
++
++        string cat = pi.GetCustomAttribute<CategoryAttribute>()?.Category ?? "";
++        Assert.Equal(ParamCat.判据限值与窗口, cat);
++        Assert.DoesNotContain("只读", cat);                      // 不许落进「改了不起作用」那两组
++
++        string desc = pi.GetCustomAttribute<DescriptionAttribute>()?.Description ?? "";
++        Assert.Contains("1100 °C", desc);                        // 出处：用户 2026-09-14「圆盘区 5 K = 热偶 1100 °C 误差」
++        Assert.Contains("热偶", desc);
++        Assert.Contains("默认 5", desc);
++        Assert.False(Criteria.HasCode(display), "界面上不许出现判据代号");
++        Assert.False(Criteria.HasCode(desc), "界面上不许出现判据代号");
++        Assert.DoesNotContain("--", desc);                        // 界面上不许出现命令行开关名
++    }
++
++    [Fact]
++    public void 界面门_新分类登记在参数分区与两格阶段里()
++    {
++        Assert.Contains(PtOptimize.UI.Flow.Params, x => x.CategoryPrefix == ParamCat.判据限值与窗口);
++        foreach (var st in new[] { PtOptimize.UI.StageId.输入, PtOptimize.UI.StageId.整线核算 })
++            Assert.Contains(ParamCat.判据限值与窗口, PtOptimize.UI.Flow.Stage(st).ParamCategoryPrefixes);
++        // 分类名不许带判据代号或开关名
++        Assert.False(Criteria.HasCode(ParamCat.判据限值与窗口));
++        Assert.DoesNotContain("--", ParamCat.判据限值与窗口);
++    }
++}
+diff --git a/Pt_Optimize.Tests/StateCriteriaGateTests.cs b/Pt_Optimize.Tests/StateCriteriaGateTests.cs
+index fc39177..4e46f21 100644
+--- a/Pt_Optimize.Tests/StateCriteriaGateTests.cs
++++ b/Pt_Optimize.Tests/StateCriteriaGateTests.cs
+@@ -1,4 +1,4 @@
+-using System;
++﻿using System;
+ using System.Collections.Generic;
+ using System.Diagnostics;
+ using System.IO;
+@@ -221,8 +221,8 @@ public class StateCriteriaGateTests
+         Assert.Contains("if (judged) { o.Determined = false; o.Why = $\"{StateNames[s]}：{sh.Why}\"; return o; }", ins);   // 2026-09-16（审查 S3）：空管态闭合不成立按冻结管根报参考值 —— 只有这道源码门
+         Assert.DoesNotContain("尚未落地", ins);
+         string mv = Code(Path.Combine("Pt_Optimize", "Core", "MeshVerify.cs"));
+-        Assert.Contains("var tol = TolTemplate(lc.EmptyTube);", mv);
+-        Assert.Contains("if (RefuseForState(lc.EmptyTube) is { } stateRefused)", mv);
++        Assert.Contains("var tol = TolTemplate(lc);", mv);
++        Assert.Contains("if (RefuseForState(lc) is { } stateRefused)", mv);
+     }
+ 
+     [Fact]
+@@ -238,7 +238,7 @@ public class StateCriteriaGateTests
+             }
+             Assert.Equal(PlateTerms.Any(pt => LineResult.StateKindOf(pt.LineKey, et) != CheckKind.Reference), StateHasHardPlateTerms(et, opt));
+             var want = MeshVerify.MeshTolerances.Where(m => LineResult.StateKindOf(m.Key, et) != CheckKind.Reference).Select(m => Criteria.Plain(m.Key)).ToArray();
+-            Assert.Equal(want, MeshVerify.TolTemplate(et).Select(x => x.Name).ToArray());
++            Assert.Equal(want, MeshVerify.TolTemplate(new LineCase { EmptyTube = et }).Select(x => x.Name).ToArray());
+             foreach (var q in LineResult.RequiredByState)
+             {
+                 var k = et ? q.EmptyTubeKind : q.GlassKind;
+@@ -249,8 +249,8 @@ public class StateCriteriaGateTests
+         // 现表：带玻璃三条卡、空管三条只作参考（改表时这里一起改 —— 这是「跑前写死」的口径，不是跟着表自动变的）
+         Assert.True(StateHasHardPlateTerms(false, opt));
+         Assert.False(StateHasHardPlateTerms(true, opt));
+-        Assert.Null(MeshVerify.RefuseForState(false));
+-        string? refused = MeshVerify.RefuseForState(true);
++        Assert.Null(MeshVerify.RefuseForState(new LineCase { EmptyTube = false }));
++        string? refused = MeshVerify.RefuseForState(new LineCase { EmptyTube = true });
+         Assert.NotNull(refused);
+         Assert.False(Criteria.HasCode(refused), refused);
+         Assert.Contains("不能据此说这个设计过了", refused);
+@@ -346,13 +346,13 @@ public class StateCriteriaGateTests
+         Assert.False(res.Converged);
+         Assert.Null(res.Line);
+         Assert.Empty(res.Trace);
+-        Assert.Equal(MeshVerify.RefuseForState(true), res.Verdict);
++        Assert.Equal(MeshVerify.RefuseForState(new LineCase { EmptyTube = true }), res.Verdict);
+         Assert.Contains("不能据此说这个设计过了", res.Verdict);
+         Assert.False(Criteria.HasCode(res.Verdict), res.Verdict);
+         Assert.DoesNotContain("--", res.Verdict);
+         Assert.True(sw.Elapsed.TotalSeconds < 30, $"拒答不该去解场（{sw.Elapsed.TotalSeconds:0} s）");
+         // 对照：带玻璃稳态不拒答（真解走主循环，见 MeshVerifyLineCaseTests 的慢门）
+-        Assert.Null(MeshVerify.RefuseForState(false));
++        Assert.Null(MeshVerify.RefuseForState(new LineCase { EmptyTube = false }));
+     }
+ 
+     [Theory]
+diff --git a/Pt_Optimize.Tests/ThermocoupleBasisTests.cs b/Pt_Optimize.Tests/ThermocoupleBasisTests.cs
+index 75d2acd..a428327 100644
+--- a/Pt_Optimize.Tests/ThermocoupleBasisTests.cs
++++ b/Pt_Optimize.Tests/ThermocoupleBasisTests.cs
+@@ -1,4 +1,4 @@
+-using System;
++﻿using System;
+ using System.IO;
+ using System.Linq;
+ using PtOptimize.Core;
+@@ -261,10 +261,15 @@ public class ThermocoupleBasisTests
+         Assert.Equal("圆盘区最高温 − 管温（旧判法）", Criteria.Plain(LineResult.Key.DiscTemp));
+         Assert.Equal("法兰增量温降（旧判法）", Criteria.Plain(LineResult.Key.FlangeDip));
+ 
+-        // 说明文字写意图：热偶在段中点、误差、对数平均、并列模型交界温度；误差数字从 LineCase 插进来
++        // 说明文字写意图：热偶在段中点、对数平均、并列模型交界温度。
++        // ★ U 路（2026-09-18，Opus 5）：限值改成参数表里的输入（默认 = 热偶在 1100 °C 的误差）⇒ 全表说明里**一个限值数字都不许印**
++        //   （同一张表会被不同预算的算例共用，印了就会出现「印出来的 ≠ 判的」）；改成指到参数表那两项。
+         string hotMeans = Criteria.Of("⑦")!.Means, coldMeans = Criteria.Of("⑧")!.Means;
+         Assert.Contains("段中点", hotMeans);
+-        Assert.Contains($"误差 {LineCase.ThermocoupleErrorK:0} ℃", hotMeans);
++        Assert.Contains("最热铂高出热偶读数 允许值", hotMeans);
++        Assert.Contains("管根低于热偶读数 允许值", coldMeans);
++        Assert.DoesNotContain($"{LineCase.ThermocoupleErrorK:0} ℃", hotMeans);
++        Assert.DoesNotContain($"{LineCase.ThermocoupleErrorK:0} ℃", coldMeans);
+         Assert.Contains("对数平均", hotMeans);
+         Assert.Contains("模型算的无法兰交界管温", hotMeans);
+         Assert.Contains("对数平均", coldMeans);
+diff --git a/Pt_Optimize/Core/Criteria.cs b/Pt_Optimize/Core/Criteria.cs
+index ff3d1e8..0228872 100644
+--- a/Pt_Optimize/Core/Criteria.cs
++++ b/Pt_Optimize/Core/Criteria.cs
+@@ -115,10 +115,13 @@ public static class Criteria
+         E(LineResult.Key.RampHours, "h",     "≤", "参考：集总模型（含法兰质量与自热）算的升温到位用时", false),
+         E(LineResult.Key.NetFlux,   "W",     ">", "热是从管子流进法兰（安全），还是倒灌进管子（**烧断的方向**）", true),
+         // ★★★★★ R48 B（2026-09-14 Opus 5）：热侧换成热偶读数基准（旧的「圆盘区最高温 − 管温」挪到下面参考量那一组，说明文字与修订史原样留着作对照）。
+-        //   写意图，不写限值：限值只从 LineCase 读；「误差 5 ℃」是热偶的现场事实，也从 LineCase.ThermocoupleErrorK 插进来，不另抄。
++        //   写意图，不写限值：限值只从 LineCase 读。
++        //   ★ U 路（2026-09-18，Opus 5）：限值改成工程师填的（参数表「最热铂高出热偶读数 允许值」，默认 = 热偶在 1100 °C 的误差）
++        //     ⇒ 这一列**连默认值都不再印**：本表是全表说明，会被不同预算的算例共用，印一个数就会出现「印出来的 ≠ 判的」。要看限值就看判据表那一列。
+         E(LineResult.Key.HotOverTc, "K",     "≤", "法兰上（圆盘和舌片）以及它贴着的管根里，最热的那一点比控温热偶的读数高多少。"
+-            + $"控温热偶装在每段中点，读数误差 {LineCase.ThermocoupleErrorK:0} ℃ —— 读数上下各这么多以内分不出来，"
++            + "控温热偶装在每段中点，读数上下一个误差带以内分不出来，"
+             + "所以任何一处铂比读数高出这个带，就可能已经越过设定而热偶看不出来。"
++            + "允许高出多少由参数表的「最热铂高出热偶读数 允许值」定（默认 = 热偶在 1100 °C 的误差），判据表那一列印的就是它。"
+             + "端片的基准是本段热偶的读数；两段共用的那一片，基准取两侧热偶读数的对数平均（按开尔文算）。"
+             + $"判据说明里并列「模型算的无法兰交界管温」作对照，它与基准差超过 {ThermocoupleBasis.ModelGapNoteK:0} ℃ 时会写明 —— 判定只按热偶读数，"   // 阈值只从 ThermocoupleBasis 读（2026-09-14 Opus 5 复审：原写死「1 ℃」）
+             + "因为模型交界温度会随设计变量挪动", true),
+@@ -131,7 +134,8 @@ public static class Criteria
+ 
+         // ★★★★★ R48 B（2026-09-14 Opus 5）：冷侧取代旧判法「法兰增量温降（靶）」，升为硬安全线；原先「靶」这一组就空了，组标题一并删掉。
+         E(LineResult.Key.ColdUnderTc, "K",   "≤", "法兰所在接头处管根较冷的那一端，比控温热偶的读数低多少 —— 法兰抽热会把管根拉冷。"
+-            + $"控温热偶装在每段中点、读数误差 {LineCase.ThermocoupleErrorK:0} ℃，管根低出这个带，热偶就看不出这一段已经偏冷。"
++            + "控温热偶装在每段中点，管根低出误差带，热偶就看不出这一段已经偏冷。"
++            + "允许低出多少由参数表的「管根低于热偶读数 允许值」定（默认 = 热偶在 1100 °C 的误差），判据表那一列印的就是它。"
+             + "基准与上一条相同：端片取本段读数，共用的那一片取两侧读数的对数平均（按开尔文算）；"
+             + $"说明里同样并列「模型算的无法兰交界管温」作对照，差超过 {ThermocoupleBasis.ModelGapNoteK:0} ℃ 时写明", true),
+ 
+@@ -348,7 +352,8 @@ public static class Criteria
+         sb.Append("两者不能互相推出：热往法兰走时铂照样可以比读数高出误差带（比如两段共用的那一片，一侧管子本身就比两侧读数的对数平均热），");
+         sb.Append("反过来铂没有高出读数时热也可能在往管里灌。所以两条各自都要过。</p>");
+         sb.Append("<p>★ <b>「最热铂高出热偶读数」与「管根低于热偶读数」的基准都是控温热偶的读数</b>：热偶装在每段中点，");
+-        sb.Append($"读数误差 {LineCase.ThermocoupleErrorK:0} ℃，上下各算一次，所以热侧、冷侧各自一条。");
++        // ★ U 路（2026-09-18，Opus 5）：两条限值是**参数表里的输入**（默认 = 热偶在 1100 °C 的误差），不在这里印数 —— 印了就会与判据表那一列漂开。
++        sb.Append("读数上下各算一次，所以热侧、冷侧各自一条；每一侧允许差多少由参数表的「管根低于热偶读数 允许值」「最热铂高出热偶读数 允许值」定，默认都是热偶在 1100 °C 的误差。");
+         sb.Append("端片取本段读数；两段共用的那一片取两侧读数的<b>对数平均</b>（按开尔文算）。");
+         sb.Append($"基准只用设定值算，不用模型算的交界管温 —— 那个温度会随设计变量挪动；它只在判据说明里并列作对照，与基准差超过 {ThermocoupleBasis.ModelGapNoteK:0} ℃ 时写明。");
+         sb.Append("「圆盘区最高温 − 管温」「法兰增量温降」是换基准之前的旧判法，现在只列在参考量里作对照，不卡交付。</p>");
+diff --git a/Pt_Optimize/Core/DesignInputs.cs b/Pt_Optimize/Core/DesignInputs.cs
+index 04e37de..6486fe2 100644
+--- a/Pt_Optimize/Core/DesignInputs.cs
++++ b/Pt_Optimize/Core/DesignInputs.cs
+@@ -75,6 +75,37 @@ public enum Orientation
+ /// </summary>
+ public class DesignInputs
+ {
++    // ---------- 0 判据限值与可行窗口 ----------
++    //
++    // ★★★★★ U 路（2026-09-18，Opus 5）：**温差预算改成工程师可填。**
++    //
++    //   用户 2026-09-17：「简单说：按半毫米一层缠，现在的判据下没有能造的设计……
++    //   要你定一件事：冷侧那 5 度能不能放宽」；2026-09-18：「OK!了解了，请开工」。
++    //   ⇒ 冷侧、热侧两条判据的限值从写死的 5 K 改成这两项输入，默认仍是 5 K。
++    //   **我不替填的人改这个数**：默认值一位不动，放宽多少由填的人负责，界面上写明出处。
++    //
++    //   限值只有一条路：这两项 → LineCase.ColdUnderTcMaxK／HotOverTcMaxK（整线算例读 Base）
++    //   → 判据表、保温搜索、加密复算容差、说明书。别处不许再写第二个数（门：R48UTempBudgetTests）。
++
++    [Category(ParamCat.判据限值与窗口), DisplayName("管根低于热偶读数 允许值 [K]"),
++     Description("法兰所在接头处管根较冷的那一端，允许比控温热偶的读数低多少 —— 法兰抽热会把管根拉冷。"
++               + "默认 5 = 控温热偶在 1100 °C 的误差（2026-09-14 现场给的：热偶装在每段中点，误差 5 ℃，「10 ℃ 是上下各 5 ℃」）。"
++               + "只在带玻璃稳态卡交付；空管到温稳态照常算、只作参考。")]
++    public double ColdUnderTcAllowK { get; set; } = LineCase.ThermocoupleErrorK;
++
++    [Category(ParamCat.判据限值与窗口), DisplayName("最热铂高出热偶读数 允许值 [K]"),
++     Description("法兰上（圆盘和舌片）以及它贴着的管根里，最热的那一点允许比控温热偶的读数高多少。"
++               + "默认 5 = 控温热偶在 1100 °C 的误差（出处同上一项）。"
++               + "只在带玻璃稳态卡交付；空管到温稳态照常算、只作参考。")]
++    public double HotOverTcAllowK { get; set; } = LineCase.ThermocoupleErrorK;
++
++    [Category(ParamCat.判据限值与窗口), DisplayName("终验时量每片舌保温的可行窗口"),
++     TypeConverter(typeof(ChineseBoolConverter)),
++     Description("终验（加密复算到数不再变）之后，逐片把舌保温上下各挪一点、其余一位不动，量出「这一片还能在多宽的范围里改仍然全过」。"
++               + "结果进判据页的小表与安装报告：窗口里落不进任何一档缠绕层数（现场一层 0.5 mm）的片会被点名。"
++               + "很慢（每片二十几次整线解，细网格上合计约一小时），只在终验跑一次，优化过程中不跑。不想等就关掉。")]
++    public bool MeasureInsulWindowAtFinalCheck { get; set; } = true;
++
+     // ---------- 1 工艺 ----------
+     [Category(ParamCat.页面接管), DisplayName("目标金属温度 [°C]"),
+      Description("⚠ 本项被「③ 整线核算」页的分段控温点表接管 —— 在这张表里改它，对「③ 整线核算」没有影响。　管中段控温点的金属温度设定值")]
+diff --git a/Pt_Optimize/Core/InstallReport.cs b/Pt_Optimize/Core/InstallReport.cs
+index 4e5f726..8b0ad9e 100644
+--- a/Pt_Optimize/Core/InstallReport.cs
++++ b/Pt_Optimize/Core/InstallReport.cs
+@@ -146,7 +146,10 @@ public static class InstallReport
+         //   并列「模型算的无法兰交界管温」，差超过 1 ℃ 的逐片写明。读数只走 ThermocoupleBasis（与判据同一份），不在这里重算。
+         var hotC = r.Find(LineResult.Key.HotOverTc);
+         var coldC = r.Find(LineResult.Key.ColdUnderTc);
+-        sb.AppendLine($"  热偶读数基准（控温热偶在段中点，读数误差 {LineCase.ThermocoupleErrorK:0} ℃；端片取本段读数，共用片取两侧读数的对数平均，按开尔文算）：");
++        // ★ U 路（2026-09-18，Opus 5）：允许差多少是参数表填的（默认 = 热偶在 1100 °C 的误差），本行印**本次实际用的**两个数，不抄默认值。
++        sb.AppendLine($"  热偶读数基准（控温热偶在段中点；端片取本段读数，共用片取两侧读数的对数平均，按开尔文算）。"
++                    + $"本次温差预算：最热铂高出读数 ≤ {lc.HotOverTcMaxK:0.###} K、管根低于读数 ≤ {lc.ColdUnderTcMaxK:0.###} K"
++                    + $"（参数表「最热铂高出热偶读数 允许值」「管根低于热偶读数 允许值」；默认 = 热偶在 1100 °C 的误差）：");
+         sb.AppendLine($"片\t热偶读数基准 °C\t最热铂 °C\t最热的是\t高出 K（限 {hotC?.Limit ?? double.NaN:0.#}）\t管根较冷端 °C\t低于 K（限 {coldC?.Limit ?? double.NaN:0.#}）\t模型算的无法兰交界管温 °C\t与基准差 ℃");
+         var tcs = ThermocoupleBasis.All(r);
+         foreach (var t in tcs)
+@@ -160,6 +163,23 @@ public static class InstallReport
+             sb.AppendLine($"  · {t.Name}：{ThermocoupleBasis.ModelJointNote(t)}。");
+         sb.AppendLine();
+ 
++        // ★ U 路（2026-09-18，Opus 5）：**每片舌保温的可行窗口**（终验量的那一份；没量就照实说没量，不留空白让人以为量过了）。
++        //   只印结果自己的报告，不在这里重算、不另抄一份判定口径。
++        sb.AppendLine("**8b. 每片舌保温的可行窗口（现场缠得出来吗）**");
++        if (r.TabInsulWindow is { } win)
++        {
++            sb.Append(win.Report());
++            if (!win.Manufacturable)
++                sb.AppendLine("  ⇒ **本报告不可作为安装依据**：上面点名的那几片，现场缠不出落在窗口里的层数。");
++        }
++        else
++        {
++            sb.AppendLine("  本次没量（它一点要一次整线解，只在终验跑一次）。"
++                        + "要它：到「① 输入」页把「终验时量每片舌保温的可行窗口」打开，再做一次加密复算到数不再变。");
++            sb.AppendLine("  ⚠ 没量 ≠ 缠得出来：解出来的舌保温未必落在现场能缠的层数上。");
++        }
++        sb.AppendLine();
++
+         // 9 出图与文件
+         sb.AppendLine("**9. 出图与文件**");
+         sb.AppendLine("  加工图：「③ 结果与出图」页「导出本页 3DM」（整机，各片各在自己的图层，写完自校三项）；本报告与 3DM 一起交给加工与现场。");
+diff --git a/Pt_Optimize/Core/InsulWindow.cs b/Pt_Optimize/Core/InsulWindow.cs
+new file mode 100644
+index 0000000..336e910
+--- /dev/null
++++ b/Pt_Optimize/Core/InsulWindow.cs
+@@ -0,0 +1,396 @@
++using System;
++using System.Collections.Generic;
++using System.Linq;
++using System.Text;
++using System.Threading;
++using System.Threading.Tasks;
++
++namespace PtOptimize.Core;
++
++/// <summary>
++/// ★★★★★ U 路（2026-09-18，Opus 5）：**每片舌保温的可行窗口** —— 从 L 路的探针提成生产件。
++///
++/// ══ 它回答什么
++///
++/// 求解器交出来的是**一个点**（每片一个舌保温值）。现场缠保温是**一层一层**缠的，每层
++/// <see cref="InsulationSearch.LayerMm"/> mm，而且不缠时是「裸舌」（等效 <see cref="SolverOptions.InsLoMm"/>）——
++/// 所以现场能做出来的只有 <c>{裸舌} ∪ {0.5 的正整数倍}</c> 这一串值。
++/// 于是「解出来了」不等于「造得出来」：解值旁边那个能落层的档，判据不一定还过。
++///
++/// 本件逐片把舌保温上下各挪一点（其余片、其余旋钮**一位不动**），逐点跑整线、按整线的交付判定
++/// （<see cref="LineResult.AllOk"/>，与交付同一份）判过不过，量出解值所在的那一段连续可行区间：
++///   · 区间 [下, 上]、宽度；
++///   · 区间里落得进的层数档（**0 层合法** —— 裸舌本来就是一种做法）；
++///   · 左右边界外**第一个不过的是哪条判据**。
++///
++/// ══ 判定口径（跑前写死，跑完不挪）
++///
++///   · 任一片的窗口里**一个能做的档都没有** ⇒ 结论「当前判据下无可制造设计」，点名是哪几片，
++///     并报最接近的设计（解值）与每片差在哪条判据、差多少。
++///     **不改判据、不硬凑**：判据要不要放宽是工程师在参数表里填的事（「管根低于热偶读数 允许值」等两项）。
++///   · 窗口宽 &lt; 一层 ⇒ 点名「窗口窄于制造精度」。
++///   · 扫到边界仍全过 ⇒ 记「边界没探到」，不许把扫描半宽的两倍当成窗口宽。
++///   · 解值那一点自己就不过 ⇒ 照实报，以它为中心的窗口无从谈起；扫到的可行段照样列出来。
++///
++/// ══ 成本
++///
++/// 每点一次整线全耦合解（判决网格上 0.5～1.5 min），四片 × 21 档 ≈ 1 小时。
++/// ⇒ **只在终验跑一次**（参数表「终验时量每片舌保温的可行窗口」，默认开），优化循环里不跑。
++/// 想快看一眼可以把 <see cref="Options.UseNavigationMesh"/> 打开走导航网格 —— 那只是快筛，
++/// 判决仍以判决网格为准（导航网格上这两条温度判据实测偏大，见 MeshVerify 的注释表）。
++///
++/// ⚠ 本类**不自己判判据**：过不过一律问 <see cref="LineRunner.Run"/> 出来的 <see cref="LineResult.AllOk"/>。
++///   网格配方也不自己抄，走 <see cref="Solver.ApplyCaseMesh"/> 与 <see cref="MeshVerify.RequiredMeshFor(DesignSpec,bool)"/>。
++/// </summary>
++public static class InsulWindow
++{
++    /// <summary>一次扫描里某一点的结果。</summary>
++    public sealed class Point
++    {
++        /// <summary>这一点的舌保温 mm。</summary>
++        public double Mm;
++        /// <summary>true = 可行（解出来了 ∧ 耦合收敛 ∧ 交付判据全过）；false = 不过；null = 判不了（含下界外）。</summary>
++        public bool? Feasible;
++        /// <summary>不过／判不了的原因（判据全名，不带代号）。</summary>
++        public string Why = "";
++        public double HotK = double.NaN, ColdK = double.NaN, NetFluxW = double.NaN;
++        /// <summary>这一点是不是现场做得出来的档（裸舌或整数层）。</summary>
++        public bool OnLayerGrid;
++        /// <summary>这一点是不是求解器交出来的那个值。</summary>
++        public bool IsSolved;
++    }
++
++    /// <summary>一片的窗口。</summary>
++    public sealed class PlateWindow
++    {
++        public int Plate;
++        public string Name = "";
++        /// <summary>求解器交出来的值 mm。</summary>
++        public double SolvedMm;
++        /// <summary>解值那一点自己过不过。</summary>
++        public bool SolvedFeasible;
++        /// <summary>解值所在的连续可行区间 [下, 上]；解值不可行时是 NaN。</summary>
++        public double LoMm = double.NaN, HiMm = double.NaN;
++        /// <summary>区间宽度 mm；解值不可行时是 NaN。</summary>
++        public double WidthMm = double.NaN;
++        /// <summary>扫到扫描下／上边界仍可行 ⇒ 这一头**没探到**，真实窗口更宽。</summary>
++        public bool OpenLo, OpenHi;
++        /// <summary>窗口里落得进的层数档 mm（裸舌记作第一档；空 = 一个都落不进）。</summary>
++        public double[] LayerMm = Array.Empty<double>();
++        /// <summary>那几档各是几层（与 <see cref="LayerMm"/> 同序，走 <see cref="InsulationSearch.LayersText"/>）。</summary>
++        public string[] LayerText = Array.Empty<string>();
++        /// <summary>窗口左／右边界外第一个不过的是哪条判据（含实际值／限值）。</summary>
++        public string BlockedBelow = "", BlockedAbove = "";
++        /// <summary>解值那一点不过时，不过的是哪几条。</summary>
++        public string SolvedWhy = "";
++        /// <summary>解值不可行时扫到的可行段（有比没有强）。</summary>
++        public (double Lo, double Hi)[] OtherFeasible = Array.Empty<(double, double)>();
++        public Point[] Points = Array.Empty<Point>();
++
++        /// <summary>这一片在现场的格子上有没有可落的档。</summary>
++        public bool HasLayer => LayerMm.Length > 0;
++        /// <summary>窗口窄于一层（两头都探到才算得准）。</summary>
++        public bool NarrowerThanOneLayer(double layerMm)
++            => SolvedFeasible && !OpenLo && !OpenHi && !double.IsNaN(WidthMm) && WidthMm < layerMm - 1e-9;
++    }
++
++    public sealed class Options
++    {
++        /// <summary>扫描半宽 mm（解值 ±）。</summary>
++        public double HalfWidthMm = 1.0;
++        /// <summary>扫描步长 mm。</summary>
++        public double StepMm = 0.1;
++        /// <summary>
++        /// false（默认）= 在**判决用的那张网格**上量（<see cref="MeshVerify.RequiredMeshFor(DesignSpec,bool)"/>，与交付判定同一张）；
++        /// true = 导航网格快筛（只统一细区半径，尺寸照 BuildCase）——**只作快筛，不作判决**。
++        /// </summary>
++        public bool UseNavigationMesh;
++        /// <summary>并发几条整线解。默认留两个核给界面。</summary>
++        public int MaxDegreeOfParallelism = Math.Max(1, Math.Min(5, Environment.ProcessorCount - 2));
++        /// <summary>跑前写死的时间闸：超了就切断，被切断的片**不完整、不许当结果读**。</summary>
++        public TimeSpan Cap = TimeSpan.FromHours(3);
++        /// <summary>求解器选项 —— 裸舌下界与舌保温图纸格都从它读，本类不抄常数。</summary>
++        public SolverOptions Solver = new();
++        /// <summary>
++        /// 可注入的「这一点过不过」。null（默认）= 真跑整线（<see cref="LineRunner.Run"/>）。
++        /// 只给门用：窗口的切段、落档、判定这套逻辑要能在毫秒内验，不必等一小时的整线解。
++        /// </summary>
++        public Func<DesignSpec, int, double, Point>? Evaluate;
++    }
++
++    /// <summary>整条线的窗口结果。</summary>
++    public sealed class Result
++    {
++        public PlateWindow[] Plates = Array.Empty<PlateWindow>();
++        /// <summary>一层多厚 mm（现场包法）。</summary>
++        public double LayerThickMm;
++        /// <summary>裸舌（0 层）的等效厚度 mm。</summary>
++        public double BareTabMm;
++        public double HalfWidthMm, StepMm;
++        public bool NavigationMesh;
++        public double MeshFineMm = double.NaN, MeshRadiusMm = double.NaN;
++        public double Seconds;
++        /// <summary>撞上时间闸被切断 ⇒ 有片不完整。</summary>
++        public bool Cut;
++        public string DesignName = "";
++
++        /// <summary>每一片的窗口里都至少落得进一档 ⇒ 这份设计现场做得出来。</summary>
++        public bool Manufacturable => Plates.Length > 0 && !Cut && Plates.All(p => p.HasLayer);
++        /// <summary>一个档都落不进的片。</summary>
++        public PlateWindow[] NoLayerPlates => Plates.Where(p => !p.HasLayer).ToArray();
++        /// <summary>窗口窄于一层的片（两头都探到）。</summary>
++        public PlateWindow[] NarrowPlates => Plates.Where(p => p.NarrowerThanOneLayer(LayerThickMm)).ToArray();
++
++        /// <summary>
++        /// 结论一句话。**判定口径跑前写死**：任一片落不进任何档 ⇒「当前判据下无可制造设计」，点名那几片。
++        /// 不改判据、不硬凑 —— 要放宽在参数表的两项温差预算里填。
++        /// </summary>
++        public string Verdict
++        {
++            get
++            {
++                if (Plates.Length == 0) return "没有量到任何一片 —— 判不了，不许当成过。";
++                if (Cut) return "⚠ 扫描撞上时间闸被切断，有片不完整 —— **判不了**，不要据此说这份设计造得出来或造不出来。";
++                var none = NoLayerPlates;
++                if (none.Length > 0)
++                    return $"**当前判据下无可制造设计**：{string.Join("、", none.Select(p => p.Name))} 的可行窗口里一个能缠的档都没有"
++                         + $"（现场一层 {LayerThickMm:0.###} mm，不缠时是裸舌 {BareTabMm:0.###} mm）。"
++                         + "最接近的设计就是求解器交出来的这一份，逐片差在哪条判据见下表。"
++                         + "判据没有被放宽 —— 要放宽，在输入页最上面那组「判据限值与可行窗口」里填"
++                         + "（「管根低于热偶读数 允许值」「最热铂高出热偶读数 允许值」）。";
++                var narrow = NarrowPlates;
++                return "每一片的窗口里都至少落得进一档 ⇒ 这份设计缠得出来。"
++                     + (narrow.Length == 0 ? "" : $"　⚠ 窗口窄于一层的片：{string.Join("、", narrow.Select(p => $"{p.Name}（宽 {p.WidthMm:0.###} mm）"))} —— 现场缠偏一层就出界。");
++            }
++        }
++
++        /// <summary>给输出框／安装报告的一张小表（制表位，界面由 TextFmt 排成 Excel 式）。</summary>
++        public string Table()
++        {
++            var sb = new StringBuilder();
++            sb.AppendLine("片\t解值 mm\t可行窗口 mm\t宽 mm\t可落层数\t左边界外不过的是\t右边界外不过的是");
++            foreach (var p in Plates)
++                sb.AppendLine($"{p.Name}\t{p.SolvedMm:0.###}\t"
++                    + (p.SolvedFeasible
++                        ? $"[{p.LoMm:0.###}, {p.HiMm:0.###}]{(p.OpenLo || p.OpenHi ? "（边界没探到）" : "")}\t{p.WidthMm:0.###}"
++                        : $"解值自己就不过（{p.SolvedWhy}）\t—")
++                    + $"\t{(p.LayerText.Length == 0 ? "**一个都没有**" : string.Join("／", p.LayerText))}"
++                    + $"\t{(p.BlockedBelow.Length == 0 ? "—（没探到）" : p.BlockedBelow)}"
++                    + $"\t{(p.BlockedAbove.Length == 0 ? "—（没探到）" : p.BlockedAbove)}");
++            return sb.ToString();
++        }
++
++        /// <summary>表 + 结论 + 口径（安装报告与界面都印这一份，来源只有一个）。</summary>
++        public string Report()
++        {
++            var sb = new StringBuilder();
++            sb.AppendLine($"**每片舌保温的可行窗口**（{DesignName}）");
++            sb.AppendLine($"  量法：逐片把舌保温在解值 ±{HalfWidthMm:0.###} mm 内按 {StepMm:0.###} mm 挪，其余片与其余旋钮一位不动，"
++                        + $"每点跑一次整线、按交付判定过不过；网格 = {(NavigationMesh ? "导航网格（**只作快筛，不作判决**）" : "判决用的那张")}"
++                        + (double.IsNaN(MeshFineMm) ? "" : $"（细区 {MeshFineMm:0.###} mm／半径 {MeshRadiusMm:0.#} mm）")
++                        + $"；用时 {Seconds / 60:0.0} 分钟。");
++            sb.AppendLine($"  现场包法：一层 {LayerThickMm:0.###} mm，不缠时是裸舌 {BareTabMm:0.###} mm（0 层也是一种做法）。");
++            sb.Append(Table());
++            sb.AppendLine("  结论：" + Verdict);
++            return sb.ToString();
++        }
++    }
++
++    /// <summary>
++    /// 现场做得出来的舌保温值：**裸舌** ∪ **一层厚的正整数倍**（出处见 <see cref="SolverOptions.QuantInsulMm"/> 的说明，
++    /// 那里写着「合法值 = {裸舌 0.30} ∪ {0.5 的正整数倍}」）。落在 <paramref name="loMm"/>…<paramref name="hiMm"/> 内的那些，升序。
++    /// ⚠ 只有这一份写法，窗口落档与门都从它读，不许在别处再数一遍格子。
++    /// </summary>
++    public static double[] LayerGridWithin(double loMm, double hiMm, SolverOptions o)
++    {
++        double bare = o.InsLoMm, q = PtOptimize.Core.Solver.KnobQuantum(o, PtOptimize.Core.Solver.Knob.Insul);
++        var list = new List<double>();
++        if (q <= 0) return list.ToArray();
++        if (bare >= loMm - 1e-9 && bare <= hiMm + 1e-9) list.Add(bare);          // 0 层 = 裸舌，合法
++        for (double t = Math.Ceiling(Math.Max(loMm, q) / q - 1e-9) * q; t <= hiMm + 1e-9; t += q)
++        {
++            double v = Math.Round(t, 9);
++            if (v >= loMm - 1e-9 && !list.Any(x => Math.Abs(x - v) < 1e-9)) list.Add(v);
++        }
++        list.Sort();
++        return list.ToArray();
++    }
++
++    /// <summary>
++    /// 量一份设计逐片的舌保温可行窗口。
++    /// </summary>
++    /// <param name="design">要量的那份设计（求解器交出来的、或照表复原的）。本方法只读它，逐点用 <see cref="DesignSpec.Clone"/> 改一片。</param>
++    /// <param name="baseIn">基准工艺参数（判据限值就从它来 —— 温差预算是工程师填的）。</param>
++    /// <param name="o">扫描选项；null = 默认（判决网格、±1.0 mm、0.1 步）。</param>
++    public static Result Measure(DesignSpec design, DesignInputs baseIn, Options? o = null,
++                                 IProgress<string>? progress = null, CancellationToken cancel = default)
++    {
++        if (design is null) throw new ArgumentNullException(nameof(design));
++        if (baseIn is null) throw new ArgumentNullException(nameof(baseIn));
++        o ??= new Options();
++        var sw = System.Diagnostics.Stopwatch.StartNew();
++        var d0 = design.Clone();
++        double layer = PtOptimize.Core.Solver.KnobQuantum(o.Solver, PtOptimize.Core.Solver.Knob.Insul);
++        var res = new Result
++        {
++            DesignName = d0.Name,
++            LayerThickMm = layer,
++            BareTabMm = o.Solver.InsLoMm,
++            HalfWidthMm = o.HalfWidthMm,
++            StepMm = o.StepMm,
++            NavigationMesh = o.UseNavigationMesh,
++        };
++
++        // 网格配方：判决那张（默认）或导航档。两支都走 Solver.ApplyCaseMesh，本类不抄配方。
++        var meshOpt = new SolverOptions();
++        if (!o.UseNavigationMesh)
++        {
++            var (fine, radius) = MeshVerify.RequiredMeshFor(d0);
++            meshOpt.FineMm = fine; meshOpt.FineRadiusMm = radius;
++            res.MeshFineMm = fine; res.MeshRadiusMm = radius;
++        }
++
++        Point RunOne(DesignSpec d, int j, double mm)
++        {
++            var pt = new Point { Mm = mm };
++            var lc = d.BuildCase(baseIn);
++            PtOptimize.Core.Solver.ApplyCaseMesh(lc, meshOpt);
++            LineResult r;
++            try { r = LineRunner.Run(lc, null, cancel); }
++            catch (OperationCanceledException) { throw; }
++            catch (Exception ex) { pt.Feasible = null; pt.Why = $"{ex.GetType().Name}：{ex.Message}"; return pt; }
++            double V(string k) => r.Checks.FirstOrDefault(c => c.Name.StartsWith(k, StringComparison.Ordinal))?.Actual ?? double.NaN;
++            pt.HotK = V(LineResult.Key.HotOverTc);
++            pt.ColdK = V(LineResult.Key.ColdUnderTc);
++            pt.NetFluxW = V(LineResult.Key.NetFlux);
++            if (!r.Ok) { pt.Feasible = null; pt.Why = "整线解没解出来：" + r.Message; return pt; }
++            if (!r.Converged) { pt.Feasible = null; pt.Why = $"外层耦合未收敛（剩余 {r.CoupleRemainK:0.000} K）"; return pt; }
++            pt.Feasible = r.AllOk;
++            if (!r.AllOk) pt.Why = WhyText(r);
++            return pt;
++        }
++
++        var eval = o.Evaluate ?? ((DesignSpec d, int j, double mm) => RunOne(d, j, mm));
++        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancel);
++        cts.CancelAfter(o.Cap);
++
++        int nPlate = d0.TabInsulMm.Length;
++        var windows = new List<PlateWindow>();
++        for (int j = 0; j < nPlate; j++)
++        {
++            double v0 = d0.TabInsulMm[j];
++            int half = (int)Math.Round(o.HalfWidthMm / o.StepMm);
++            var vals = Enumerable.Range(-half, 2 * half + 1).Select(k => Math.Round(v0 + k * o.StepMm, 6)).ToArray();
++            var pts = new Point[vals.Length];
++            var swJ = System.Diagnostics.Stopwatch.StartNew();
++            progress?.Report($"可行窗口：第 {j + 1}/{nPlate} 片，{vals.Length} 点（{vals[0]:0.0}…{vals[^1]:0.0} mm），并发 {o.MaxDegreeOfParallelism}");
++            int done = 0;
++            try
++            {
++                Parallel.For(0, vals.Length,
++                    new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, o.MaxDegreeOfParallelism), CancellationToken = cts.Token },
++                    i =>
++                    {
++                        Point pt;
++                        // 低于裸舌 = 根本不是一个做得出来的设计（不缠就是裸舌）⇒ 不解，标「下界外」。
++                        // ⚠ 这一条在**注入的评估函数之外**判：注入进来的那份不必知道下界在哪。
++                        if (vals[i] < o.Solver.InsLoMm - 1e-9)
++                            pt = new Point { Feasible = null, Why = $"下界外（低于裸舌 {o.Solver.InsLoMm:0.###} mm）" };
++                        else
++                        {
++                            var d = d0.Clone();
++                            d.TabInsulMm[j] = vals[i];
++                            pt = eval(d, j, vals[i]);
++                        }
++                        pt.Mm = vals[i];
++                        pts[i] = pt;
++                        int k = Interlocked.Increment(ref done);
++                        progress?.Report($"可行窗口：第 {j + 1}/{nPlate} 片 {k}/{vals.Length} 点　{vals[i]:0.0} mm ⇒ "
++                                       + (pt.Feasible is null ? "判不了" : pt.Feasible == true ? "过" : "不过"));
++                    });
++            }
++            catch (OperationCanceledException)
++            {
++                res.Cut = true;
++                progress?.Report($"⚠ 可行窗口：第 {j + 1} 片撞上时间闸被切断 —— 这一片不完整，不许当结果读。");
++            }
++            for (int i = 0; i < pts.Length; i++)
++                pts[i] ??= new Point { Mm = vals[i], Feasible = null, Why = "没跑到（扫描被切断）" };
++
++            var grid = LayerGridWithin(vals[0] - 1e-9, vals[^1] + 1e-9, o.Solver);
++            foreach (var pt in pts)
++            {
++                pt.OnLayerGrid = grid.Any(g => Math.Abs(g - pt.Mm) < 1e-9);
++                pt.IsSolved = Math.Abs(pt.Mm - v0) < 1e-12;
++            }
++
++            var w = new PlateWindow
++            {
++                Plate = j,
++                Name = PlateName(d0, j),
++                SolvedMm = v0,
++                Points = pts,
++            };
++            int c = Array.FindIndex(pts, x => x.IsSolved);
++            w.SolvedFeasible = c >= 0 && pts[c].Feasible == true;
++            if (!w.SolvedFeasible)
++            {
++                w.SolvedWhy = c >= 0 ? (pts[c].Why.Length > 0 ? pts[c].Why : "判不了") : "没扫到解值那一点";
++                w.OtherFeasible = FeasibleSegments(pts);
++            }
++            else
++            {
++                int a = c, b = c;
++                while (a - 1 >= 0 && pts[a - 1].Feasible == true) a--;
++                while (b + 1 < pts.Length && pts[b + 1].Feasible == true) b++;
++                w.LoMm = pts[a].Mm; w.HiMm = pts[b].Mm; w.WidthMm = w.HiMm - w.LoMm;
++                w.OpenLo = a == 0; w.OpenHi = b == pts.Length - 1;
++                w.BlockedBelow = a > 0 ? pts[a - 1].Why : "";
++                w.BlockedAbove = b < pts.Length - 1 ? pts[b + 1].Why : "";
++                w.LayerMm = LayerGridWithin(w.LoMm, w.HiMm, o.Solver);
++                w.LayerText = w.LayerMm.Select(m => $"{m:0.###}（{InsulationSearch.LayersText(m)}）").ToArray();
++            }
++            windows.Add(w);
++            progress?.Report($"可行窗口：第 {j + 1}/{nPlate} 片完成，用时 {swJ.Elapsed.TotalMinutes:0.0} 分钟　"
++                           + (w.SolvedFeasible
++                               ? $"窗口 [{w.LoMm:0.###}, {w.HiMm:0.###}] 宽 {w.WidthMm:0.###} mm，可落 {(w.LayerMm.Length == 0 ? "**一个档都没有**" : string.Join("/", w.LayerMm.Select(m => m.ToString("0.###"))))}"
++                               : $"解值那一点自己就不过（{w.SolvedWhy}）"));
++        }
++
++        res.Plates = windows.ToArray();
++        res.Seconds = sw.Elapsed.TotalSeconds;
++        return res;
++    }
++
++    /// <summary>不过的是哪几条 —— 判据全名 + 实际／限值（界面不许出现判据代号）。</summary>
++    private static string WhyText(LineResult r)
++    {
++        var bad = r.Checks.Where(c => c.Kind is CheckKind.HardSafety or CheckKind.Target && (!c.Ok || c.Undetermined)).ToArray();
++        if (bad.Length == 0) return string.Join("／", r.Failed.Select(Criteria.Plain));
++        return string.Join("／", bad.Select(c => $"{Criteria.Plain(c.Name)} "
++            + (c.Undetermined ? "判不了" : $"{c.Actual:0.###}/{c.Limit:0.###}")));
++    }
++
++    private static string PlateName(DesignSpec d, int j)
++    {
++        int nSeg = d.SetpointC?.Length ?? 0;
++        return j == 0 ? "入口" : nSeg > 0 && j >= nSeg ? "出口" : $"共用{j}";
++    }
++
++    private static (double Lo, double Hi)[] FeasibleSegments(Point[] pts)
++    {
++        var segs = new List<(double, double)>();
++        int i = 0;
++        while (i < pts.Length)
++        {
++            if (pts[i].Feasible == true)
++            {
++                int s = i;
++                while (i + 1 < pts.Length && pts[i + 1].Feasible == true) i++;
++                segs.Add((pts[s].Mm, pts[i].Mm));
++            }
++            i++;
++        }
++        return segs.ToArray();
++    }
++}
+diff --git a/Pt_Optimize/Core/InsulationSearch.cs b/Pt_Optimize/Core/InsulationSearch.cs
+index 7cb3c47..a1d663c 100644
+--- a/Pt_Optimize/Core/InsulationSearch.cs
++++ b/Pt_Optimize/Core/InsulationSearch.cs
+@@ -68,8 +68,8 @@ namespace PtOptimize.Core;
+ ///
+ /// ══ 判据（默认评估函数 <see cref="DefaultCriteria"/>，可注入）
+ ///   热偶读数基准：端片 = 本段设定；共用片 = 两侧设定的对数平均（开尔文里取），取 <see cref="ThermocoupleBasis.At(LineResult,int)"/> 的 RefC（用户 2026-09-14）。
+-///   · 热侧：<see cref="ThermocoupleBasis.HotSideK"/>（max(盘峰, 舌区峰, 管根较热端) − 基准）≤ 整线算例的 LineCase.HotOverTcMaxK（管根较热端 = 整线 FlangeOut.TRootC）；
+-///   · 冷侧：<see cref="ThermocoupleBasis.ColdSideK"/>（基准 − 管根较冷端）≤ 整线算例的 LineCase.ColdUnderTcMaxK；
++///   · 热侧：<see cref="ThermocoupleBasis.HotSideK"/>（max(盘峰, 舌区峰, 管根较热端) − 基准）≤ 整线算例的 LineCase.HotOverTcMaxK（= 参数表「最热铂高出热偶读数 允许值」；管根较热端 = 整线 FlangeOut.TRootC）；
++///   · 冷侧：<see cref="ThermocoupleBasis.ColdSideK"/>（基准 − 管根较冷端）≤ 整线算例的 LineCase.ColdUnderTcMaxK（= 参数表「管根低于热偶读数 允许值」）；
+ ///   · 管孔净流入 &gt; 0（= 本片从管子抽热为正）。
+ ///   归一裕度：热侧、冷侧 = (限值 − 值)/限值；净流入 = γ_均 × 净流入 ÷ 冷侧限值（把抽热折成它压低管根的开尔文，与冷侧同一把尺；γ_均 = 各端割线均值）。
+ ///   ★ 2026-09-15 Opus 5（合并）：B 已合入 —— 基准、热侧与冷侧的式子、两个限值都改调 B 的唯一实现（ThermocoupleBasis.At／HotSideK／ColdSideK、LineCase 的两个限值），
+@@ -450,7 +450,7 @@ public static class InsulationSearch
+         public bool EmptyTube;
+         /// <summary>热偶读数基准 °C。</summary>
+         public double ReferenceC;
+-        /// <summary>热侧、冷侧限值 K —— 取自本态整线算例 LineCase.HotOverTcMaxK／ColdUnderTcMaxK（2026-09-15 Opus 5（合并）：与整线判据同一份，原 Options 里另有两个 5 K）。</summary>
++        /// <summary>热侧、冷侧限值 K —— 取自本态整线算例 LineCase.HotOverTcMaxK／ColdUnderTcMaxK（2026-09-15 Opus 5（合并）：与整线判据同一份，原 Options 里另有两个 5 K；U 路 2026-09-18：那两个又只从参数表的温差预算读）。</summary>
+         public double HotLimitK = double.NaN, ColdLimitK = double.NaN;
+         /// <summary>管孔净流入 W（正 = 本片从管子抽热）。</summary>
+         public double NetInflowW;
+@@ -554,7 +554,8 @@ public static class InsulationSearch
+         /// </summary>
+         public double EffectiveMarginQuantum(double hotLimitK, double coldLimitK)
+             => MarginQuantum > 0 ? MarginQuantum : CoupleTolK / Math.Min(hotLimitK, coldLimitK);
+-        // 2026-09-15 Opus 5（合并）：原有 HotLimitK／ColdLimitK 两个选项（各 5.0）删去 —— 限值只从整线算例 LineCase.HotOverTcMaxK／ColdUnderTcMaxK 读（= LineCase.ThermocoupleErrorK），
++        // 2026-09-15 Opus 5（合并）：原有 HotLimitK／ColdLimitK 两个选项（各 5.0）删去 —— 限值只从整线算例 LineCase.HotOverTcMaxK／ColdUnderTcMaxK 读
++        //   （U 路 2026-09-18：那两个属性又只从参数表的两项温差预算读，默认 = 热偶在 1100 °C 的误差），
+         //   经 PlateWorkPoint／PlateStateView 带进评估函数、经 LimitsOf 带进量化步长，不再有第二个来源。
+         /// <summary>量本片自身响应 s、κ 时管根抬高的量 K（管根 ±5 K 内抽热线性，出处 deliverable\R48_管根接线与灵敏度_2026-09-14.txt）。</summary>
+         public double RootProbeK = 2.0;
+@@ -955,7 +956,8 @@ public static class InsulationSearch
+             $"网格（整线与内层同一份配方 Solver.ApplyCaseMesh，细区半径统一 {radius:0.0} mm）：内层单片 h = {o.InnerMeshMm} mm；整线工作点 {(o.WholeLineMeshMm > 0 ? $"h = {o.WholeLineMeshMm} mm" : "导航档（尺寸照 BuildCase，只统一半径）")}；"
+             + $"耦合容差 {o.CoupleTolK} K；共用片抽热 {(baseIn.SplitSharedFlangeDraw ? "两侧各半" : "两段各扣一次")}；"
+             + $"空管控温点 {(o.EmptyTubeSetpoint == EmptyTubeSetpoint.RampTarget ? "全线升温目标" : "沿用生产设定")}；并发度 {o.MaxDegreeOfParallelism}",
+-            "判据：" + $"{HotName} ≤ {hotLim:0.###} K、{ColdName} ≤ {coldLim:0.###} K（整线算例的限值，与整线判据同一份，默认 = 控温热偶读数误差 {LineCase.ThermocoupleErrorK:0.#} K；逐轮报告照印每项限值）；{InflowName}。热偶读数基准：端片 = 本段设定，共用片 = 两侧设定的对数平均（开尔文）。",
++            // ★ U 路（2026-09-18，Opus 5）：两条限值是参数表里的输入（默认 = 热偶在 1100 °C 的误差），这里印的是**本次实际用的**那两个数，不另抄默认值。
++            "判据：" + $"{HotName} ≤ {hotLim:0.###} K、{ColdName} ≤ {coldLim:0.###} K（整线算例的限值，与整线判据同一份 = 参数表填的「最热铂高出热偶读数 允许值」「管根低于热偶读数 允许值」，默认 = 热偶在 1100 °C 的误差；逐轮报告照印每项限值）；{InflowName}。热偶读数基准：端片 = 本段设定，共用片 = 两侧设定的对数平均（开尔文）。",
+             // K 路（2026-09-15，Opus 5）：原句「⚠ 分工况判据尚未落地 …」—— 已落地，改印落地后的实际口径（逐态由分工况表生成）
+             "分工况（整线判据的分工况表 LineResult.RequiredByState，与交付判定同一份；用户 2026-09-15：空管到温稳态只卡电流密度（管 J 与法兰截面 J）与场的有效性）："
+             + string.Join("｜", Enumerable.Range(0, 2).Select(StateLine))
+diff --git a/Pt_Optimize/Core/LineRunner.cs b/Pt_Optimize/Core/LineRunner.cs
+index 5d9f8af..db8aae6 100644
+--- a/Pt_Optimize/Core/LineRunner.cs
++++ b/Pt_Optimize/Core/LineRunner.cs
+@@ -327,11 +327,35 @@ public sealed class LineCase
+     /// </summary>
+     public const double ThermocoupleErrorK = 5.0;
+ 
+-    /// <summary>R48 B（2026-09-14 Opus 5）：热侧判据「最热铂高出热偶读数」的上限 K（硬安全线）。默认 = 热偶误差。</summary>
+-    public double HotOverTcMaxK = ThermocoupleErrorK;
++    // ★★★★★ U 路（2026-09-18，Opus 5）：**两条限值改成跟着工程师填的那两项走**（用户 2026-09-17/18：
++    //   「冷侧那 5 度能不能放宽」→「请开工」）。写法照本类 TubeIdMm／SegLengthMm／GradeName 那条已经验过的路子：
++    //   **哨兵 NaN = 跟着参数表走**，显式赋值仍然管用（CloneCase／ApplyFinalMesh 的传播、命令行造算例、门里造极端值）。
++    //   ⇒ 限值只有一个来源：DesignInputs.HotOverTcAllowK／ColdUnderTcAllowK（默认 5 K = 热偶在 1100 °C 的误差）。
++    //   ⚠ 别在别处再写一个 5：判据表、保温搜索、加密复算容差、说明书一律从这两个属性读（门：R48UTempBudgetTests）。
++    private double _hotOverTcMaxK = double.NaN;
++    private double _coldUnderTcMaxK = double.NaN;
+ 
+-    /// <summary>R48 B（2026-09-14 Opus 5）：冷侧判据「管根低于热偶读数」的上限 K（硬安全线，取代旧判法「法兰增量温降 ≤ 10」）。默认 = 热偶误差。</summary>
+-    public double ColdUnderTcMaxK = ThermocoupleErrorK;
++    /// <summary>
++    /// R48 B（2026-09-14 Opus 5）：热侧判据「最热铂高出热偶读数」的上限 K（硬安全线）。
++    /// U 路（2026-09-18 Opus 5）：没显式设过 ⇒ 读 <see cref="Base"/> 的「最热铂高出热偶读数 允许值」（<see cref="DesignInputs.HotOverTcAllowK"/>，默认 = 热偶误差）。
++    /// </summary>
++    public double HotOverTcMaxK
++    {
++        get => !double.IsNaN(_hotOverTcMaxK) ? _hotOverTcMaxK
++             : Base is not null ? Base.HotOverTcAllowK : ThermocoupleErrorK;
++        set => _hotOverTcMaxK = value;
++    }
++
++    /// <summary>
++    /// R48 B（2026-09-14 Opus 5）：冷侧判据「管根低于热偶读数」的上限 K（硬安全线，取代旧判法「法兰增量温降 ≤ 10」）。
++    /// U 路（2026-09-18 Opus 5）：没显式设过 ⇒ 读 <see cref="Base"/> 的「管根低于热偶读数 允许值」（<see cref="DesignInputs.ColdUnderTcAllowK"/>，默认 = 热偶误差）。
++    /// </summary>
++    public double ColdUnderTcMaxK
++    {
++        get => !double.IsNaN(_coldUnderTcMaxK) ? _coldUnderTcMaxK
++             : Base is not null ? Base.ColdUnderTcAllowK : ThermocoupleErrorK;
++        set => _coldUnderTcMaxK = value;
++    }
+ 
+     /// <summary>
+     /// 判据 ②″（圆盘区最高温 − 管温）的上限 K。
+@@ -890,6 +914,14 @@ public sealed class LineResult
+         return $"网格：{(mesh.Length == 0 ? "无记录" : string.Join(" ／ ", mesh))}；热解：{(th.Length == 0 ? "无记录" : string.Join(" ／ ", th))}";
+     }
+     public ConstraintOut[] Checks = Array.Empty<ConstraintOut>();
++
++    /// <summary>
++    /// ★ U 路（2026-09-18，Opus 5）：**每片舌保温的可行窗口**（<see cref="PtOptimize.Core.InsulWindow.Measure"/> 量出来的）。
++    /// null = 这一次没量 —— 它一点要一次整线解，只在终验跑一次（参数表「终验时量每片舌保温的可行窗口」），优化循环里不跑。
++    /// ⚠ 挂在这里只是**带着走**（判据表页、安装报告都从这一份读）；<see cref="LineRunner.Run"/> 自己一个字都不写它。
++    /// </summary>
++    public PtOptimize.Core.InsulWindow.Result? TabInsulWindow;
++
+     public double TubeMassG, FlangeMassG, TotalMassG, BaselineMassG, SavingPct;
+     public double GlassDropModelK, GlassDropMeasuredK;
+     public readonly List<string> Notes = new();
+@@ -3358,7 +3390,7 @@ public static class LineRunner
+                      + $"（圆盘峰 {wh.DiscPeakC:0.0}，峰位 r={fh.DiscMaxRMm:0.0} mm、J={fh.DiscMaxJAPerMm2:0.00}；"
+                      + $"舌片区峰 {wh.TabPeakC:0.0}" + (double.IsNaN(fh.TabMaxRMm) ? "" : $"，峰位 r={fh.TabMaxRMm:0.0} mm")
+                      + $"；管根 {wh.RootEnds}）；{ThermocoupleBasis.ModelJointNote(wh)}；{PerPlate(t => t.HotK)}"
+-                     + $"。控温热偶在段中点、读数误差 {LineCase.ThermocoupleErrorK:0} ℃：比读数高出这个带就说不清了。"
++                     + $"。控温热偶在段中点；允许高出 {c.HotOverTcMaxK:0.###} K（参数表「最热铂高出热偶读数 允许值」，默认 = 热偶在 1100 °C 的误差）：高出这个带就说不清了。"
+                      + $"分区：{fh.DiscZoneRule}；{fh.InsulRule}"   // R48 B：进界面的说明不写「口径」这类内部词（同 ShellThermal.DiscZoneRule 那条规矩）
+                      + (hotOk ? "" : NextAction.HotOverTcHigh)
+             };
+@@ -3392,7 +3424,7 @@ public static class LineRunner
+                 Actual = wc.ColdK, Limit = c.ColdUnderTcMaxK, Ok = coldOk, Where = wc.Name,
+                 Note = $"基准 = {wc.RefHow}；管根较冷的是 {wc.RootColdWhere} {wc.RootColdC:0.0} °C（{wc.RootEnds}）；"
+                      + $"{ThermocoupleBasis.ModelJointNote(wc)}；{PerPlate(t => t.ColdK)}"
+-                     + $"。控温热偶在段中点、读数误差 {LineCase.ThermocoupleErrorK:0} ℃：管根比读数低出这个带，热偶就看不出来了。"
++                     + $"。控温热偶在段中点；允许低出 {c.ColdUnderTcMaxK:0.###} K（参数表「管根低于热偶读数 允许值」，默认 = 热偶在 1100 °C 的误差）：低出这个带，热偶就看不出来了。"
+                      + notFlange
+                      + (coldOk ? "" : NextAction.ColdUnderTcHigh)
+             };
+diff --git a/Pt_Optimize/Core/MeshVerify.cs b/Pt_Optimize/Core/MeshVerify.cs
+index 7a71be5..039462f 100644
+--- a/Pt_Optimize/Core/MeshVerify.cs
++++ b/Pt_Optimize/Core/MeshVerify.cs
+@@ -117,33 +117,42 @@ public static class MeshVerify
+     ///   按整线判据的分工况表（<see cref="LineResult.StateKindOf"/>，与 LineRunner.Judge 同一份）过滤：本工况只作参考的不复核。
+     ///   带玻璃稳态 = 原来那三条（次序、名字、容差逐位不变）；空管到温稳态 = 空（用户 2026-09-15：空管态只卡电流密度（管 J 与法兰截面 J）与场的有效性，三条都只作参考；2026-09-16 Opus 5 改措辞）
+     ///   ⇒ <see cref="Run(Func{double, double, LineCase}, double, double, double, int, int, IProgress{string}?, CancellationToken)"/> 对复核名单与主循环读的三条对不上的算例拒答。
+-    public static IReadOnlyList<MeshAdapt.Delta> TolTemplate(bool emptyTube) => MeshTolerances
+-        .Where(m => LineResult.StateKindOf(m.Key, emptyTube) is not CheckKind.Reference)
+-        .Select(m => new MeshAdapt.Delta { Name = Criteria.Plain(m.Key), Tol = m.Tol })
++    /// ★ U 路（2026-09-18，Opus 5）：签名从 <c>bool emptyTube</c> 换成**整线算例** —— 热侧／冷侧的复核容差是
++    ///   「各自限值的 10 %」，而限值现在跟着工程师填的温差预算走（<see cref="LineCase.HotOverTcMaxK"/>／<see cref="LineCase.ColdUnderTcMaxK"/>）。
++    ///   传 bool 就只能再抄一个 5 —— 那正是本项目最常见的失效。工况仍从算例的 <see cref="LineCase.EmptyTube"/> 读。
++    public static IReadOnlyList<MeshAdapt.Delta> TolTemplate(LineCase c) => MeshTolerances
++        .Where(m => LineResult.StateKindOf(m.Key, c.EmptyTube) is not CheckKind.Reference)
++        .Select(m => new MeshAdapt.Delta { Name = Criteria.Plain(m.Key), Tol = m.Tol(c) })
+         .ToArray();
+ 
+     /// <summary>
+     /// K 路（2026-09-15，Opus 5）：随网格变、需要加密复核的判据与各自的容差（出处与理由见 <see cref="TolTemplate"/> 的注释表）。**只是容差表，不含工况**：
+     /// 哪个工况复核哪几条由 <see cref="TolTemplate"/> 按分工况表过滤。次序 = 主循环 Trace 的列次序（净流入／热侧／冷侧）。
+     /// </summary>
+-    public static readonly (string Key, double Tol)[] MeshTolerances =
++    /// ★ U 路（2026-09-18，Opus 5）：容差那一列改成**按算例取**的函数 —— 热侧／冷侧是各自限值的
++    ///   <see cref="TcMeshTolFrac"/>，限值跟着工程师填的温差预算走；净流入是绝对值，与温差预算无关。
++    public static readonly (string Key, Func<LineCase, double> Tol)[] MeshTolerances =
+     {
+-        (LineResult.Key.NetFlux,     0.5),
+-        (LineResult.Key.HotOverTc,   TcMeshTolK),
+-        (LineResult.Key.ColdUnderTc, TcMeshTolK),
++        (LineResult.Key.NetFlux,     _ => NetFluxMeshTolW),
++        (LineResult.Key.HotOverTc,   c => TcMeshTolFrac * c.HotOverTcMaxK),
++        (LineResult.Key.ColdUnderTc, c => TcMeshTolFrac * c.ColdUnderTcMaxK),
+     };
+ 
+-    /// <summary>热侧／冷侧两条的复核容差 K = 热偶读数误差的 10 %（出处与理由见 <see cref="TolTemplate"/>）。2026-09-14 Opus 5。</summary>
+-    public const double TcMeshTolK = 0.1 * LineCase.ThermocoupleErrorK;
++    /// <summary>管孔净流入这一条的复核容差 W（与温差预算无关；出处与理由见 <see cref="TolTemplate"/>）。2026-09-14 Opus 5。</summary>
++    public const double NetFluxMeshTolW = 0.5;
++
++    /// <summary>热侧／冷侧两条的复核容差 = **各自限值的这个比例**（出处与理由见 <see cref="TolTemplate"/>：旧的法兰增量温降就是 1.0／10）。2026-09-14 Opus 5；U 路 2026-09-18 由「热偶误差的 10 %」改写成「限值的 10 %」，默认 5 K 下逐位不变（0.5 K）。</summary>
++    public const double TcMeshTolFrac = 0.1;
+ 
+     /// <summary>
+     /// K 路（2026-09-15，Opus 5）：本工况能不能用加密复算的主循环 —— 主循环逐档读、比的是 <see cref="MeshTolerances"/> 那三列；
+     /// 本工况按分工况表该复核的（<see cref="TolTemplate"/>）不是恰好这三条 ⇒ 返回拒答原句（进判词、会上界面，不带判据代号），否则 null。
+     /// 空管到温稳态：三条都只作参考、没有随网格变的卡交付判据 ⇒ 拒答；该工况的场有效性（没收敛、越过熔点、散热表超界）由整线结果自己判（LineResult.FieldUndeterminedReasons）。
+     /// </summary>
+-    public static string? RefuseForState(bool emptyTube)
++    public static string? RefuseForState(LineCase c)
+     {
+-        var want = TolTemplate(emptyTube).Select(d => d.Name).ToArray();
++        bool emptyTube = c.EmptyTube;
++        var want = TolTemplate(c).Select(d => d.Name).ToArray();
+         var loop = MeshTolerances.Select(m => Criteria.Plain(m.Key)).ToArray();
+         if (want.SequenceEqual(loop)) return null;
+         return $"✗ 加密复算不适用于{(emptyTube ? "空管到温稳态" : "带玻璃稳态")}："
+@@ -406,7 +415,7 @@ public static class MeshVerify
+             var lc = caseFactory(h, h);
+             if (lc is null) throw new InvalidOperationException("加密复算：工厂没造出 LineCase");
+             // ★ K 路（2026-09-15，Opus 5）：主循环按「管孔净流入／最热铂高出热偶读数／管根低于热偶读数」三列写成；本工况的复核名单（按分工况表）与之不同 ⇒ 拒答、不算，不许拿位置去对名字。
+-            if (RefuseForState(lc.EmptyTube) is { } stateRefused)
++            if (RefuseForState(lc) is { } stateRefused)
+             {
+                 res.Verdict = stateRefused; res.Converged = false; res.SecondsTotal = sw.Elapsed.TotalSeconds;
+                 progress?.Report("⚠ " + stateRefused);
+@@ -470,7 +479,7 @@ public static class MeshVerify
+ 
+             if (prev is { } pv)
+             {
+-                var tol = TolTemplate(lc.EmptyTube);   // K 路（2026-09-15 Opus 5）：按工况取（上面已拒答名单对不上的工况）
++                var tol = TolTemplate(lc);   // K 路（2026-09-15 Opus 5）：按工况取（上面已拒答名单对不上的工况）
+                 // R48（2026-09-13，Opus 5）：除了「变化多大」，还要记「离限值多远」——
+                 //   收敛要的是**结论稳**（再加密也翻不过限值），不是小数点后几位不动。见 MeshAdapt.Delta.MarginOverChange。
+                 double Lim(string key)
+diff --git a/Pt_Optimize/Core/ParamCat.cs b/Pt_Optimize/Core/ParamCat.cs
+index 5ec0578..c8cf777 100644
+--- a/Pt_Optimize/Core/ParamCat.cs
++++ b/Pt_Optimize/Core/ParamCat.cs
+@@ -1,4 +1,4 @@
+-namespace PtOptimize.Core;
++﻿namespace PtOptimize.Core;
+ 
+ /// <summary>
+ /// ★★★★★ **参数表分类名的唯一来源**（2026-09-03）。
+@@ -20,6 +20,17 @@ namespace PtOptimize.Core;
+ /// </summary>
+ public static class ParamCat
+ {
++    /// <summary>
++    /// ★★★★★ U 路（2026-09-18，Opus 5）：**温差预算与可行窗口** —— 判据的两条限值从写死改成工程师填。
++    ///
++    /// 用户 2026-09-17：「简单说：按半毫米一层缠，现在的判据下没有能造的设计……要你定一件事：冷侧那 5 度能不能放宽」，
++    /// 2026-09-18：「OK!了解了，请开工」。⇒ 冷侧「管根低于热偶读数」与热侧「最热铂高出热偶读数」的限值成为输入项，
++    /// 默认仍是 5 K（出处：用户 2026-09-14「圆盘区 5 K = 热偶 1100 °C 误差」）。
++    ///
++    /// ⚠ 编号用 <b>0</b>：1…9 已经排满，而这两项是「先定预算再谈设计」的东西，排在最前面正合次序。
++    /// </summary>
++    public const string 判据限值与窗口 = "0 判据限值与可行窗口";
++
+     public const string 工艺条件 = "1 工艺条件";
+     public const string 电气 = "2 电气";
+     public const string 保温与表面 = "3 保温与表面";
+diff --git a/Pt_Optimize/Program.cs b/Pt_Optimize/Program.cs
+index 8602f48..f435262 100644
+--- a/Pt_Optimize/Program.cs
++++ b/Pt_Optimize/Program.cs
+@@ -5095,7 +5095,7 @@ internal static class Program
+                     {
+                         // 2026-09-14 Opus 5（复审）：容差与名字只读 MeshVerify.TolTemplate —— 此前这里手抄了 0.5／0.2／1.0 三个数，
+                         //   两条温度判据换成热偶读数基准、容差重定之后，手抄的那份就会与界面的复核各判各的。
+-                        var tolA = MeshVerify.TolTemplate(lcA.EmptyTube);   // K 路（2026-09-15 Opus 5）：复核名单按工况取（本命令只造带玻璃稳态算例，名单就是原来那三条）
++                        var tolA = MeshVerify.TolTemplate(lcA);   // K 路（2026-09-15 Opus 5）：复核名单按工况取（本命令只造带玻璃稳态算例，名单就是原来那三条）
+                         lastDeltas = new List<MeshAdapt.Delta>
+                         {
+                             new() { Name = tolA[0].Name, Change = a2p - pv.n2p,   Tol = tolA[0].Tol },
+diff --git a/Pt_Optimize/UI/Flow.cs b/Pt_Optimize/UI/Flow.cs
+index b8ddfa2..0452409 100644
+--- a/Pt_Optimize/UI/Flow.cs
++++ b/Pt_Optimize/UI/Flow.cs
+@@ -391,7 +391,7 @@ public static class Flow
+             new[] { ChainId.无 },
+             GateToUnlockNext: null,
+             new[] { "geom.analyze", "geom.toanalytic" },
+-            new[] { ParamCat.电气, ParamCat.保温与表面, ParamCat.玻璃物性,
++            new[] { ParamCat.判据限值与窗口, ParamCat.电气, ParamCat.保温与表面, ParamCat.玻璃物性,
+                     ParamCat.管几何, ParamCat.法兰与铜排, ParamCat.数值 }),
+ 
+         new(StageId.整线核算, 2, "② 法兰优化",
+@@ -425,7 +425,7 @@ public static class Flow
+             //   2026-08-20 建这个字段时就写错了，而它**一直没有消费者**，所以错了两周没人知道。
+             // ⚠ 2026-09-03 参数表类别改成人话（原来带链代号 A·B·C / C 整线，工程师看不懂）
+             //   ⇒ 这份名单必须同步。ParamFoldTests 盯着「每条前缀都要匹配到真类别」。
+-            new[] { ParamCat.电气, ParamCat.保温与表面, ParamCat.玻璃物性,
++            new[] { ParamCat.判据限值与窗口, ParamCat.电气, ParamCat.保温与表面, ParamCat.玻璃物性,
+                     ParamCat.管几何, ParamCat.法兰与铜排, ParamCat.数值 }),
+ 
+         new(StageId.交付, 3, "③ 结果与出图",
+@@ -472,6 +472,8 @@ public static class Flow
+     //   宁可看得见但明写着「无效」。
+     public static readonly ParamScope[] Params =
+     {
++        // ★ U 路（2026-09-18，Opus 5）：温差预算两项与「终验时量可行窗口」的开关 —— 只对整线链有效（判据只在整线链上判）。
++        new(ParamCat.判据限值与窗口, new[] { ChainId.C整线耦合 }, ""),
+         new(ParamCat.工艺条件, new[] { ChainId.A单段解析, ChainId.B分段解析 }, ""),
+         new(ParamCat.电气,
+             new[] { ChainId.A单段解析, ChainId.B分段解析, ChainId.C整线耦合 }, ""),
+diff --git a/Pt_Optimize/UI/LineDesignPage.cs b/Pt_Optimize/UI/LineDesignPage.cs
+index 339b41d..d6b16d4 100644
+--- a/Pt_Optimize/UI/LineDesignPage.cs
++++ b/Pt_Optimize/UI/LineDesignPage.cs
+@@ -308,6 +308,11 @@ public sealed class LineDesignPage : TabPage
+     private readonly ToolStripButton _btnReport;
+     private readonly DataGridView _kitGrid = GridFmt.NewGrid();
+     private readonly RichTextBox _report = new() { Dock = DockStyle.Fill, ReadOnly = true, WordWrap = false, BorderStyle = BorderStyle.None };
++    /// <summary>★ U 路（2026-09-18，Opus 5）：③ 页「舌保温可行窗口」表 —— 终验量出来的那一份（片／解值／窗口／宽／可落层数／卡哪条）。</summary>
++    private readonly DataGridView _winGrid = GridFmt.NewGrid();
++    // ⚠ 高度按**最长的那句结论**留（「当前判据下无可制造设计…」那一句两百多字）：留 46 px 时它会被裁掉半句，
++    //   而裁掉的正好是「判据没有被放宽、要放宽去哪儿填」那一截 —— 记忆：源码写了不等于布局给了。
++    private readonly Label _winNote = new() { Dock = DockStyle.Top, AutoSize = false, Height = UiScale.S(96), Padding = new Padding(4) };
+     private LineResult? _shown;   // 最近一次 Show() 的结果 —— 导出安装报告用它，不另存一份状态
+ 
+     /// <summary>
+@@ -1108,8 +1113,24 @@ public sealed class LineDesignPage : TabPage
+         _report.Font = UiScale.Ui();
+         TextFmt.Hook(_report);
+         _report.Text = "还没有结果 —— 点「核算整线」";
++
++        // ★ U 路（2026-09-18，Opus 5）：舌保温可行窗口表（终验量的那一份）。
++        GridFmt.FitFont(_winGrid, "舌保温可行窗口");
++        _winGrid.ReadOnly = true; _winGrid.AllowUserToAddRows = false; _winGrid.RowHeadersVisible = false;
++        _winGrid.AutoGenerateColumns = false; _winGrid.Dock = DockStyle.Fill;
++        foreach (var (name, header) in new[] {
++            ("Name", "片"), ("Solved", "解值 mm"), ("Window", "可行窗口 mm"), ("Width", "宽 mm"),
++            ("Layers", "可落层数（现场一层 0.5 mm，0 层 = 裸舌）"), ("Below", "往下第一个不过的是"), ("Above", "往上第一个不过的是") })
++            _winGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = name, HeaderText = header, SortMode = DataGridViewColumnSortMode.NotSortable });
++        _winNote.Font = UiScale.Ui();
++        _winNote.Text = "还没量 —— 终验（加密复算到数不再变）时会量一次。";
++        var winHost = new Panel { Dock = DockStyle.Fill };
++        winHost.Controls.Add(_winGrid);
++        winHost.Controls.Add(_winNote);
++
+         foreach (var (t, c) in new (string, Control)[]
+-        { ("法兰温度场", _pT), ("法兰电流密度场", _pJ), ("管轴向剖面", _pAx), ("配套清单", _kitGrid), ("安装报告", _report) })
++        { ("法兰温度场", _pT), ("法兰电流密度场", _pJ), ("管轴向剖面", _pAx), ("配套清单", _kitGrid),
++          ("舌保温可行窗口", winHost), ("安装报告", _report) })
+         {
+             var pg = new TabPage(t) { Padding = new Padding(2) };
+             pg.Controls.Add(c);
+@@ -4247,6 +4268,34 @@ public sealed class LineDesignPage : TabPage
+                     + Environment.NewLine);
+             else if (!res.Converged)
+                 _out.AppendText("⚠ **没验过** —— 判据还在随网格变，这个设计现在不能出图。" + Environment.NewLine);
++
++            // ★★★★★ U 路（2026-09-18，Opus 5）：**终验之后量一次「每片舌保温的可行窗口」。**
++            //
++            //   为什么在这里、而不是在优化循环里：一点 = 一次整线解，四片 × 二十一档 ≈ 一小时。
++            //   放进循环等于把求解拖慢两个数量级；而它要回答的问题（「这个解现场缠得出来吗」）
++            //   本来就只在**终局那一份设计**上才有意义 —— 中途的设计还会变。
++            //   ⚠ 只在复核收敛（数不再变）之后量：在还会变的那组数上量窗口，量到的不是窗口。
++            //   ⚠ 开关在参数表（默认开），不是命令行；关掉就跳过，界面照实说没量。
++            if (_base.MeasureInsulWindowAtFinalCheck && res.Converged && _last is { Ok: true })
++            {
++                if (drawing)
++                    _out.AppendText(Environment.NewLine
++                        + "◆ 图纸模式**不量**舌保温可行窗口：窗口是逐片挪解析设计那根舌保温旋钮量出来的，"
++                        + "图纸路径的保温不是这根旋钮 —— 说不了话就不说，别给一张看起来正常的空表。" + Environment.NewLine);
++                else
++                {
++                    _out.AppendText(Environment.NewLine
++                        + "◆ **量每片舌保温的可行窗口** —— 逐片把它上下挪一点（其余片、其余旋钮一位不动），"
++                        + "看这一片还能在多宽的范围里改仍然全过，窗口里落不落得进现场能缠的层数。" + Environment.NewLine
++                        + "　　很慢（每片二十几次整线解，合计约一小时），随时可点「取消」。"
++                        + "不想每次都等：到「① 输入」页把「终验时量每片舌保温的可行窗口」关掉。" + Environment.NewLine);
++                    var d2 = d;
++                    var win = await Task.Run(() => InsulWindow.Measure(d2, _base, null, prog, _cts.Token), _cts.Token);
++                    _last.TabInsulWindow = win;
++                    _out.AppendText(Environment.NewLine + win.Report() + Environment.NewLine);
++                    Show(_last);
++                }
++            }
+         }
+         catch (OperationCanceledException)
+         { _pipeAborted = true;   // 取消一步 = 停整条流水线
+@@ -5222,6 +5271,7 @@ public sealed class LineDesignPage : TabPage
+             FieldPlots.DrawEmpty(_pJ, "还没有结果 —— 点「核算整线」");
+             FieldPlots.DrawEmpty(_pAx, "还没有结果 —— 点「核算整线」");
+             _kitGrid.Rows.Clear(); _report.Text = "还没有结果 —— 点「核算整线」"; _shown = null;   // R46：空态也要清，别留上一次的
++            _winGrid.Rows.Clear(); _winNote.Text = "还没有结果 —— 点「核算整线」";                    // U 路 2026-09-18：窗口表同理
+             return;
+         }
+         _shown = r;
+@@ -5258,6 +5308,34 @@ public sealed class LineDesignPage : TabPage
+                               k.TabInsulMm.ToString("0.0"), $"{k.InsulFromXMm:0} … {k.InsulToXMm:0}（长 {k.InsulLenMm:0}）",
+                               k.WeldLegMm.ToString("0.00"), (k.ArmNote + (k.ArmNote.Length > 0 && k.Note.Length > 0 ? "；" : "") + k.Note));
+         _report.Text = InstallReport.Build(r, d, _base, MeshNoteForReport());
++        FillInsulWindow(r);
++    }
++
++    /// <summary>
++    /// ★ U 路（2026-09-18，Opus 5）：舌保温可行窗口表 —— **只读** <see cref="LineResult.TabInsulWindow"/>，
++    /// 一个数都不在这里重算（判定口径只有 InsulWindow.Result 那一份）。没量就照实说没量。
++    /// </summary>
++    private void FillInsulWindow(LineResult r)
++    {
++        _winGrid.Rows.Clear();
++        var win = r.TabInsulWindow;
++        if (win is null)
++        {
++            _winNote.Text = "本次没量。它一点要一次整线解（合计约一小时），只在终验跑一次 —— "
++                          + "到「① 输入」页把「终验时量每片舌保温的可行窗口」打开，再点「◆ 加密复算（算到数不再变）」。"
++                          + "　⚠ 没量 ≠ 缠得出来。";
++            return;
++        }
++        foreach (var p in win.Plates)
++            _winGrid.Rows.Add(p.Name,
++                p.SolvedMm.ToString("0.###"),
++                p.SolvedFeasible ? $"[{p.LoMm:0.###}, {p.HiMm:0.###}]" + (p.OpenLo || p.OpenHi ? "（边界没探到）" : "")
++                                 : $"解值自己就不过（{p.SolvedWhy}）",
++                p.SolvedFeasible ? p.WidthMm.ToString("0.###") : "—",
++                p.LayerText.Length == 0 ? "一个都没有" : string.Join("／", p.LayerText),
++                p.BlockedBelow.Length == 0 ? "—（没探到）" : p.BlockedBelow,
++                p.BlockedAbove.Length == 0 ? "—（没探到）" : p.BlockedAbove);
++        _winNote.Text = win.Verdict;
+     }
+ 
+     /// <summary>安装报告里判据表那一行的口径说明：加密复算过没过、到多细。</summary>
+diff --git a/Pt_Optimize/UI/ManualPage.cs b/Pt_Optimize/UI/ManualPage.cs
+index 7c10a19..7116d55 100644
+--- a/Pt_Optimize/UI/ManualPage.cs
++++ b/Pt_Optimize/UI/ManualPage.cs
+@@ -1282,17 +1282,19 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
+                   "<tr><td>六、代价</td><td>多花多少铂、换来了什么</td>" +
+                   "<td>只讲省了多少是广告；优点与代价成对出现</td></tr></table>");
+ 
+-        var lim = new LineCase();
+         var dfl = live ?? new DesignInputs();
++        // ★ U 路（2026-09-18，Opus 5）：算例的 Base 挂**当前参数表**那一份 —— 两条温差预算从此跟着工程师填的走，
++        //   说明书上印的限值与判据表判的是同一个数（原来 `new LineCase()` 挂的是全新默认件，永远印 5）。
++        var lim = new LineCase { Base = dfl };
+         sb.Append(Criteria.Html());
+         sb.Append("<h3>限值的出处（每条都有）</h3><table class=\"nw\">" +
+                   "<tr><th>判据</th><th>限值</th><th>出处</th></tr>" +
+                   $"<tr><td>升温（空管到目标）</td><td class=\"n\">{lim.RampHours:0} h</td><td>设计要求：不超过 3 天</td></tr>" +
+                   "<tr><td>管孔净流入</td><td class=\"n\">&gt; 0</td><td>热要从管子流进法兰；反过来就是法兰比管子热，管子会烧</td></tr>" +
+                   // ★ R48 B（2026-09-14 Opus 5）：热侧／冷侧的限值都来自控温热偶的读数误差（LineCase.ThermocoupleErrorK），基准是热偶读数；旧判法两条降为参考。
+-                  $"<tr><td>最热铂高出热偶读数</td><td class=\"n\">{lim.HotOverTcMaxK:0} K</td><td>控温热偶装在每段中点，读数误差 {LineCase.ThermocoupleErrorK:0} ℃（「10 ℃ 是上下各 5 ℃」）：铂比读数高出这个带就说不清了。"
++                  $"<tr><td>最热铂高出热偶读数</td><td class=\"n\">{lim.HotOverTcMaxK:0.###} K</td><td><b>参数表里可填</b>（「最热铂高出热偶读数 允许值」），本行跟着它走。默认 {LineCase.ThermocoupleErrorK:0} = 控温热偶在 1100 °C 的误差：热偶装在每段中点，误差 {LineCase.ThermocoupleErrorK:0} ℃（「10 ℃ 是上下各 5 ℃」），铂比读数高出这个带就说不清了。"
+                 + "端片基准取本段读数，共用法兰取两侧读数的对数平均（开尔文）</td></tr>" +
+-                  $"<tr><td>管根低于热偶读数</td><td class=\"n\">{lim.ColdUnderTcMaxK:0} K</td><td>同一个热偶误差的另一侧：管根比读数低出这个带，热偶就看不出这一段已经偏冷。基准同上</td></tr>" +
++                  $"<tr><td>管根低于热偶读数</td><td class=\"n\">{lim.ColdUnderTcMaxK:0.###} K</td><td><b>参数表里可填</b>（「管根低于热偶读数 允许值」），本行跟着它走。默认同上，是同一个热偶误差的另一侧：管根比读数低出这个带，热偶就看不出这一段已经偏冷。基准同上</td></tr>" +
+                   $"<tr><td>· 圆盘区最高温 − 管温（旧判法）</td><td class=\"n\">{lim.DiscOverTempMaxK:0} K</td><td>换成热偶读数基准之前的硬判据（基准是模型算的管根温度），现在只作对照，不卡交付</td></tr>" +
+                   $"<tr><td>· 法兰增量温降（旧判法）</td><td class=\"n\">{lim.RootDeltaMaxK:0} K</td><td>换成热偶读数基准之前的目标（= 无法兰基线 − 实际；10 是热偶上下两侧误差之和），现在只作对照，不卡交付</td></tr>" +
+                   $"<tr><td>管 J</td><td class=\"n\">{dfl.TubeJAllowAPerMm2:0.#} A/mm²</td>" +
+@@ -1371,10 +1373,10 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
+         sb.Append("<table class=\"nw\"><tr><th>量</th><th>现在按什么算</th><th>一旦不同，影响多大</th></tr>" +
+                   "<tr><td>法兰 J 的许用值</td><td>设定 J 预设 10（可改），极限 J + 1</td>" +
+                   "<td>J 每改 1，法兰截面和铂重都跟着变；这是最值得现场给一个数的量</td></tr>" +
+-                  $"<tr><td>控温热偶的读数误差</td><td>按段中点热偶、上下各 {LineCase.ThermocoupleErrorK:0} ℃ 算</td>" +
+-                  // 2026-09-14 Opus 5（复审）：原写「换热偶或重新标定后要改这个数」—— 界面上并没有这个输入（LineCase.ThermocoupleErrorK 是程序常数），
+-                  //   工程师会以为参数表里有这一项。照实写：是程序内的常数，要改须改程序。
+-                  "<td>热侧、冷侧两条的限值都是它。<b>这是程序里的常数，参数表里没有这一项</b>：换热偶或重新标定后误差不同，要请开发改程序，不是在界面上改</td></tr>" +
++                  $"<tr><td>控温热偶的读数误差</td><td>热侧、冷侧的允许值现在各是一项输入，本档填的是 {lim.HotOverTcMaxK:0.###} K／{lim.ColdUnderTcMaxK:0.###} K（默认都是 {LineCase.ThermocoupleErrorK:0}，= 段中点热偶在 1100 °C 的误差，上下各一次）</td>" +
++                  // ★ U 路（2026-09-18，Opus 5）：原写「这是程序里的常数，参数表里没有这一项」—— 现在有了（用户 2026-09-17/18 定：
++                  //   冷侧那 5 度能不能放宽，改成界面输入、默认仍是 5）。说明书照实改，别留一句已经不成立的话。
++                  "<td>热侧、冷侧两条的限值就是这两项。换热偶或重新标定后误差不同，<b>在「① 输入」页最上面那组「判据限值与可行窗口」里改</b>，不用改程序。放宽多少由填的人负责：改大它等于放宽温差预算</td></tr>" +
+                   "<tr><td>铜排表面状态</td><td>按氧化铜发射率 0.7 算</td>" +
+                   "<td>抛光铜只有 0.05，差 14 倍，散热段长度直接翻几倍</td></tr>" +
+                   "<tr><td>焊接方法</td><td>按手工 TIG（烧穿下界 0.6 mm）</td>" +
+diff --git "a/deliverable/R48_L_\347\253\257\345\210\260\347\253\257_\346\261\202\350\247\243\345\206\215\350\277\207\344\270\211\345\205\263_W08_\346\234\254\346\254\241\345\274\200\350\267\221\344\272\2162026-09-18_005505.txt" "b/deliverable/R48_L_\347\253\257\345\210\260\347\253\257_\346\261\202\350\247\243\345\206\215\350\277\207\344\270\211\345\205\263_W08_\346\234\254\346\254\241\345\274\200\350\267\221\344\272\2162026-09-18_005505.txt"
+new file mode 100644
+index 0000000..5e9e0dd
+--- /dev/null
++++ "b/deliverable/R48_L_\347\253\257\345\210\260\347\253\257_\346\261\202\350\247\243\345\206\215\350\277\207\344\270\211\345\205\263_W08_\346\234\254\346\254\241\345\274\200\350\267\221\344\272\2162026-09-18_005505.txt"
+@@ -0,0 +1,200 @@
++﻿R48 L 路　端到端：**先求解、再过三关**　输入几何「管壁 0.8 · 留余量」（W08）
++开跑 2026-09-18 00:55:05　工作树 D:\WinForm\r48_U　写码 2026-09-17 Opus 5
++链路（用户 2026-09-17 定稿）：内置输入 → **Solver 求解** → 求得的设计过 ① 升温全程 → ② 带玻璃稳态 → ③ 空管到温 → 铂重
++⚠ 上一轮（Opus 4.6）把内置设计原样过三关，那是**未求解的输入**，不是设计结果。本轮补上求解这一步。
++
++═══════ 输入（内置设计只提供几何与工况；五个旋钮一律被求解器丢掉）═══════
++管：内径 50 mm，壁厚 0.80 mm，管保温 5 mm，段长 300/300/300 mm，设定 1150/1080/1050 °C
++法兰：圆盘半径 30 mm，舌长 140 mm，舌半宽 30 mm，舌根圆角 3 mm，环宽 3 mm，管孔半径 25.8 mm
++工况：夹头 450 °C，压接段长 40 mm，设定电流密度 J 10 A/mm²（终验限值 11）
++设计输入表：默认（DesignInputs 默认构造）；现场实际服役 ≤6 个月（4380 h），默认取 1 年（8760 h）偏保守。
++★ 被丢掉的输入旋钮（只为让人看清「解与初值无关」）：板厚 0.89/2.45/2.35/0.73 mm／舌保温 0.40/0.40/0.50/0.30 mm／环倍率 1.00/1.00/1.00/1.00
++
++═══════ 求解器（从约束盒下角二分求根，不接受起点）═══════
++入口：Solver.Solve（Core/Solver.cs），选项取**生产界面自动定厚**那一份：轮数上限 40、解法族「不挖舌孔」（界面下拉预设）、第二遍细网格 **不做**（界面预设，界面注释写「按钮要等得起」）
++网格：导航网格 = 整线算例缺省（细区 2.0 mm／粗区 11.0 mm／细区半径 50.0 mm）；终局网格 = 第二遍用的那张。本形状按网格无关口径要求 1.000 mm（细区半径 59.0 mm）—— 见下面「终局网格」一行。
++
++进度活页（临时，非交付物）：C:\Users\admin\AppData\Local\Temp\R48_L_端到端_W08_2026-09-18_005505_进行中.log
++
++求解耗时 213.2 分钟（12791 s），场解 93 次。
++结论：**不可行**（求解器没把全部判据补上）　停因：**⑥ 圆盘盖不住管孔＋焊脚**：盘半径 30.000 mm ＜ 需要 31.800 mm（缺 1.800 mm；管孔 25.800 + 焊脚 6.000）。 ⑥ **没有旋钮能治** —— 抬板厚只会让焊脚更长、⑥ 更差。　【处方】盘半径改到 ≥ 31.800 mm 再解。这是**闭式反解**，不是搜出来的 —— 不用试，就是这个数。
++　⚠ 结构性停机（旋钮顶到上界／分派前提不成立／交棒）：再算一次会得到同一句话，不是「没搜到」。
++终局网格：**没做第二遍** ⇒ 这个解只在导航网格上成立、**不可交付**
++　（本形状按网格无关口径要求 1.000 mm；导航 2.0 mm 与细网格之间的差在历史实测上到过 2.03 倍 —— 下面三关的数因此**未经细网格复核**，引用时这一句不许略掉。）
++
++── 求解器解出来的设计（各旋钮终值，逐片）
++片	板厚 mm	舌保温 mm	环倍率 t₁	外级 t₂	内级 r₁ mm	外级 r₂ mm	舌片厚 mm	槽张角 °	舌孔 R mm	孔拉长比	槽心 °(场定)	孔心 x mm(场定)	盘槽当地电流 °(场定)
++0	6.00	6.0	1.00	1.00	28.8	31.8	2.03	0	0.0	1.00	143	-2	-17
++1	6.00	3.0	2.50	1.00	28.8	31.8	3.51	0	0.0	1.00	153	-2	-14
++2	6.00	4.5	2.50	1.00	28.8	31.8	3.51	0	0.0	1.00	153	-2	-14
++3	4.73	13.5	2.50	1.00	28.8	31.8	2.03	0	0.0	1.00	116	-2	-14
++（后三列 NaN = 该片没有被场定过／走默认规则。它们进几何，复原设计时不能漏。）
++（圆盘半径 30 mm、舌长 140 mm、舌半宽 30 mm —— 形状是输入，求解器不动它。）
++
++═══════ ① 升温全程（准静态轨迹，空管，夹头 = 设计的夹头温度）═══════
++J 一律两条并列：**设计电流**（20 °C/h 升温全程峰值，闭式，对所有设定点是同一个数）与**该设定点实际解出来的电流**。
++结论：过
++耗时 505 s，8 个设定点。
++8 个设定点全部场有效；管 J 与截面 J 在**设计电流**与**该点实际电流**两条上都不超限。
++── 两条电流口径在每一点、每一片上**结论相同**（没有一处只在其中一条上超限）。
++
++设定点	夹头	各段实际电流 A	管J(实际)	管J(设计)	截面J(实际)	截面J(设计)	场有效	备注
++300	450	505/496/499	3.96	9.51	4.15	9.98	是	
++450	450	661/655/656	5.18	9.51	5.43	9.98	是	
++600	450	792/786/786	6.20	9.51	6.50	9.98	是	
++750	450	912/906/906	7.15	9.51	7.49	9.98	是	
++900	450	1027/1020/1019	8.04	9.51	8.43	9.98	是	
++1000	450	1101/1094/1092	8.63	9.51	9.04	9.98	是	
++1080	450	1160/1152/1150	9.09	9.51	9.52	9.98	是	
++1150	450	1211/1202/1200	9.48	9.51	9.94	9.98	是	
++（管 J 限值 12 A/mm²；截面 J 限值 11 A/mm²。两列都取该点最坏的那一片／那一段。）
++
++── 最高设定点 1150 °C 的逐片截面 J（两条并列）
++片	实际电流 A	截面J(实际)	最紧截面(实际)	截面J(设计)	最紧截面(设计)
++入口	1211	9.94	舌片 x=-100	9.97	舌片 x=-100
++HC1|HC2	2090	9.92	舌片 x=-100	9.98	舌片 x=-100
++HC2|HC3	2081	9.88	舌片 x=-100	9.98	舌片 x=-100
++出口	1200	9.85	舌片 x=-100	9.97	舌片 x=-100
++
++── 伸长报告（1150 °C，T装 = 20 °C；>1000 °C 标外推）
++  片 0「入口」：管根−舌板平均温差 +153.7 K，舌板相对管位移 -0.1761 mm，舌尖总位移 +1.1613 mm，盘外缘径向伸长 +0.3520 mm，压接段伸长 +0.1641 mm（外推：纯铂膨胀数据只到 1000 °C）
++  片 1「HC1|HC2」：管根−舌板平均温差 +159.1 K，舌板相对管位移 -0.1839 mm，舌尖总位移 +1.1973 mm，盘外缘径向伸长 +0.3652 mm，压接段伸长 +0.1641 mm（外推：纯铂膨胀数据只到 1000 °C）
++  片 2「HC2|HC3」：管根−舌板平均温差 +156.3 K，舌板相对管位移 -0.1822 mm，舌尖总位移 +1.2453 mm，盘外缘径向伸长 +0.3793 mm，压接段伸长 +0.1641 mm（外推：纯铂膨胀数据只到 1000 °C）
++  片 3「出口」：管根−舌板平均温差 +133.7 K，舌板相对管位移 -0.1543 mm，舌尖总位移 +1.2527 mm，盘外缘径向伸长 +0.3732 mm，压接段伸长 +0.1641 mm（外推：纯铂膨胀数据只到 1000 °C）
++  段 0「HC1」：管段总伸长 +3.5572 mm（外推）
++  段 1「HC2」：管段总伸长 +3.5961 mm（外推）
++  段 2「HC3」：管段总伸长 +3.6072 mm（外推）
++
++═══════ ② 带玻璃稳态（法兰设计成不成功）═══════
++结论：有判据不过或判不了：最热铂高出热偶读数 18.6/5.0；管孔净流入 须为正 -3.2/0.0；圆盘盖得住管孔＋焊脚 -1.8/0.0
++耗时 227 s，铂重 4622 g，耦合收敛 True，剩余误差估计 0.074 K。
++  交付判据逐条：
++    最热铂高出热偶读数：实际 18.621 / 限值 5 K，**不过**，位置 HC1|HC2
++    管孔净流入 须为正：实际 -3.221 / 限值 0 W，**不过**，位置 HC1|HC2
++    管根低于热偶读数：实际 4.255 / 限值 5 K，过，位置 入口
++    升温：实际 9.507 / 限值 12 A/mm²，过，位置 全线
++    法兰截面 J：实际 9.983 / 限值 11 A/mm²，过，位置 HC1|HC2 舌片 x=-100
++    管 J：实际 9.505 / 限值 12 A/mm²，过，位置 HC1
++    圆盘盖得住管孔＋焊脚：实际 -1.8 / 限值 0 mm，**不过**，位置 入口
++    舌片自由段 ≥ 下界：实际 100 / 限值 100 mm，过，位置 入口
++    接合区保温缠得出来：实际 10 / 限值 10 mm，过，位置 入口 圆盘保温
++
++═══════ ③ 空管到温稳态 ═══════
++口径（生产代码的原话，LineResult.StateDowngradeNote）：
++  空管到温稳态：用户 2026-09-15 定只卡电流密度（管 J 与法兰截面 J，各按其许用值，「只要 J<11 即可」）与场的有效性，本条在空管态照常计算、只作参考，不卡交付；带玻璃稳态下本条仍是硬判据。
++本工况判定用的必备名单（LineResult.RequiredFor(空管到温稳态)）：
++  升温、舌片自由段、圆盘盖得住管孔、接合区保温缠得出来、管 J、法兰截面 J
++带玻璃稳态的必备名单（对照；② 用的是这一份）：
++  升温、管孔净流入、最热铂高出热偶读数、舌片自由段、圆盘盖得住管孔、接合区保温缠得出来、管 J、法兰截面 J、管根低于热偶读数
++结论：有判据不过或判不了：圆盘盖得住管孔＋焊脚 -1.8/0.0
++耗时 53 s，铂重 4622 g，耦合收敛 True，剩余误差估计 0.021 K。
++工况位（LineResult.EmptyTube，由整线算例盖章）：True
++场的有效性（不是判据、两态都要过）：没有判不了的
++必备名单里缺席的：无
++  逐条（**卡交付的与只作参考的一起印**，值照常算 —— 参考量不是「没算」）：
++    升温到位用时（集总）：实际 0.084 / 限值 72 h，过，位置 HC2　[只作参考]
++    法兰最高温 − 管温（整片，含舌片）：实际 44.995 / 限值 0 K，过，位置 出口　[只作参考]
++    最热铂高出热偶读数：实际 93.84 / 限值 5 K，**不过**，位置 出口　[只作参考]
++    圆盘区最高温 − 管温（旧判法）：实际 27.118 / 限值 5 K，过，位置 出口　[只作参考]
++    管孔净流入 须为正：实际 -38.123 / 限值 0 W，**不过**，位置 HC2|HC3　[只作参考]
++    管根低于热偶读数：实际 6.937 / 限值 5 K，**不过**，位置 入口　[只作参考]
++    法兰增量温降（旧判法）：实际 6.917 / 限值 10 K，过，位置 HC1　[只作参考]
++    偏离本段控温点：实际 -28.344 / 限值 10 K，过，位置 HC1　[只作参考]
++    管强度利用率：实际 1.064 / 限值 1 —，过，位置 HC3　[只作参考]
++    法兰自给率 Φ_max：实际 2.715 / 限值 1 —，过，位置 出口　[只作参考]
++    法兰 J_max：实际 16.292 / 限值 10 A/mm²，过，位置 入口　[只作参考]
++    升温：实际 9.507 / 限值 12 A/mm²，过，位置 全线　[卡交付（硬安全线）]
++    法兰截面 J：实际 9.983 / 限值 11 A/mm²，过，位置 HC1|HC2 舌片 x=-100　[卡交付（硬安全线）]
++    管 J：实际 9.485 / 限值 12 A/mm²，过，位置 HC1　[卡交付（硬安全线）]
++    圆盘盖得住管孔＋焊脚：实际 -1.8 / 限值 0 mm，**不过**，位置 入口　[卡交付（硬安全线）]
++    舌片自由段 ≥ 下界：实际 100 / 限值 100 mm，过，位置 入口　[卡交付（硬安全线）]
++    接合区保温缠得出来：实际 10 / 限值 10 mm，过，位置 入口 圆盘保温　[卡交付（硬安全线）]
++    法兰热平衡残差：实际 0.001 / 限值 0 W，过，位置 HC1|HC2　[只作参考]
++    整片热稳定：实际 57.938 / 限值 1 ×，过，位置 HC2|HC3　[只作参考]
++    升温期法兰−管峰值：实际 暂不给数 / 限值 215 K，**无法判定**，位置 —　[只作参考]
++    管↔法兰热收支：实际 -55.339 / 限值 0 W，过，位置 整线　[只作参考]
++    局部热稳定：实际 5.154 / 限值 1 ×，过，位置 入口 舌 r=35.0　[只作参考]
++    玻璃温降 vs 实测：实际 非數值 / 限值 20 K，**无法判定**，位置 整线　[只作参考]
++  旧口径（两态都卡这三条）下会被判不过的，是这几条在空管态降为参考量的：最热铂高出热偶读数 93.84/5 K；管孔净流入 须为正 -38.123/0 W；管根低于热偶读数 6.937/5 K　—— 值一个没变，变的只是它们在**空管到温稳态**卡不卡交付。
++
++═══════ 铂重（求得的设计）═══════
++管 2465 g + 法兰 2158 g = 合计 4622 g　（出自 ② 那一次整线解；③ 那一次算出 4622 g，同一几何、应逐位相同）
++
++═══════ 一句话 ═══════
++W08：求解器**没解出可行设计**，三关 ① 过　② 不过／判不了　③ 不过／判不了，铂重 4622 g（**只在导航网格上**，未做细网格第二遍 ⇒ 不可交付）。
++
++═══════ 求解轨迹（Solver.Trace 全文 —— 求根过程唯一的可回溯记录）═══════
++★ 舌片厚按 I/(J·舌宽) 定：片0 — → 2.03 mm（设计电流 1214 A ÷ (J 10 × 舌片最窄有效宽)，向上落图纸格 0.01，不低于板料 0.60）
++★ 下角因 J=10 截面上抬：片0 0.60 → 0.73 mm（设计电流 1214 A；最紧截面 圆盘 r=26.6 100.3 mm² ⇒ J 12.1 > 10）
++★ 舌片厚按 I/(J·舌宽) 定：片1 — → 3.51 mm（设计电流 2102 A ÷ (J 10 × 舌片最窄有效宽)，向上落图纸格 0.01，不低于板料 0.60）
++★ 下角因 J=10 截面上抬：片1 0.60 → 1.26 mm（设计电流 2102 A；最紧截面 圆盘 r=26.6 100.3 mm² ⇒ J 21.0 > 10）
++★ 舌片厚按 I/(J·舌宽) 定：片2 — → 3.51 mm（设计电流 2102 A ÷ (J 10 × 舌片最窄有效宽)，向上落图纸格 0.01，不低于板料 0.60）
++★ 下角因 J=10 截面上抬：片2 0.60 → 1.26 mm（设计电流 2102 A；最紧截面 圆盘 r=26.6 100.3 mm² ⇒ J 21.0 > 10）
++★ 舌片厚按 I/(J·舌宽) 定：片3 — → 2.03 mm（设计电流 1214 A ÷ (J 10 × 舌片最窄有效宽)，向上落图纸格 0.01，不低于板料 0.60）
++★ 下角因 J=10 截面上抬：片3 0.60 → 0.73 mm（设计电流 1214 A；最紧截面 圆盘 r=26.6 100.3 mm² ⇒ J 12.1 > 10）
++设计电流（温控 20 °C/h 空管升温 25→1150 °C，管子准静态 I²R=散热+C·Ṫ 全程峰值）：段 1214/1214/1214 A ⇒ 片 1214/2102/2102/1214 A（共用片矢量合成）　对照·两节点旧模型（含法兰自热；没有经舌片流进铜排的通道、舌片按裸铂；不可引用）1117/654/1118 A（不进尺寸链）
++下角的闭式部分：板厚 0.73/1.26/1.26/0.73 mm（逐片；= max(焊接屈曲/烧穿 0.60, 按 J=10 的圆盘侧截面 0.73/1.26/1.26/0.73)）／舌片厚 2.03/3.51/3.51/2.03 mm（= I/(J·舌宽)，闭式，不是旋钮）／舌保温 0.30 mm（裸舌）／环倍率 t₁ 1.00／外级倍率 t₂ 1.00（都=无台阶）　× 4 片　—— J=10 是工程师在 ① 输入设定的（预设 10，计算极限值 J+1=11）；熔化在每遍开头只验一次：熔了就停（该解不存在，不抬厚度；用户 2026-09-09）
++传进来的旋钮值**一个都没用**（板厚 0.89/2.45/2.35/0.73 被丢弃）—— 这就是「与初值无关」的实现方式。
++限值只从 LineCase 读：管根低于热偶读数 ≤ 5.0 K　最热铂高出热偶读数 ≤ 5.0 K（基准都是控温热偶读数；共用法兰取两侧读数的对数平均）
++★ 场定孔位：还没有收敛的场 ⇒ 槽心 0°（背对舌片）／舌孔取自由段中点（默认规则）；第一次场解之后按场重定
++── 第一遍：导航网格上定位（导航网格）
++   · 验下角：板厚 0.73/1.26/1.26/0.73 mm 处 4 片都不熔（场已收敛）⇒ 按设定 J 的截面站得住
++起点 = **约束盒的下角**（不是种子）：板厚 0.73/1.26/1.26/0.73 mm（逐片；= max(焊接屈曲, 烧穿, 按 J=10 的截面)；熔化只验不抬）／舌保温 0.30 mm（裸舌）／环倍率 t₁ 1.00／外级倍率 t₂ 1.00（都=无台阶）　× 4 片
++★ 场定孔位：片0 槽心 103°（当地电流 -27°）／舌孔孔心按场定 x=-2.0（开孔前每轮更新）　片1 槽心 106°（当地电流 -27°）／舌孔孔心按场定 x=-2.0（开孔前每轮更新）　片2 槽心 106°（当地电流 -27°）／舌孔孔心按场定 x=-2.0（开孔前每轮更新）　片3 槽心 103°（当地电流 -27°）／舌孔孔心按场定 x=-2.0（开孔前每轮更新）（移除优先级 = 导热贡献 ÷ 电流密度，取最新收敛的场；没有切口或位置没变 ⇒ 几何不变、不重解）
++第  1 轮　合计 4245 g　板厚 0.73/1.26/1.26/0.73　舌保温 0.30/0.30/0.30/0.30　环倍率t₁ 1.00/1.00/1.00/1.00　外级t₂ 1/1/1/1　内级r₁ 3*/3*/3*/3*　外级r₂ 6*/6*/6*/6*　圆盘槽 0/0/0/0°　孔径 0/0/0/0　孔拉长 1/1/1/1　槽心 103/106/106/103°　孔心 -2/-2/-2/-2　盘形 弯椭圆槽/弯椭圆槽/弯椭圆槽/弯椭圆槽　孔形 圆/圆/圆/圆
++　　　这一轮的判据：管孔净流入 55.16>0（裕55.16，取自 HC1|HC2）　最热铂高出热偶读数 -130.19≤5（裕135.19，取自 HC1|HC2）　管根低于热偶读数 187.79≤5（超182.79，取自 出口）　法兰截面 J 9.98≤11（裕1.02，取自 HC1|HC2 舌片 x=-100）　还没全过　（旧判法对照，不追：圆盘区最高温 -0.31，取自 HC2|HC3／法兰增量温降 186.59，取自 HC1）
++　　　逐片抽热：片0 +78.01 W　片1 +55.16 W　片2 +59.51 W　片3 +75.95 W
++　　　逐片热偶基准：片0 基准 1150.0 热侧 -186.49 冷侧 +186.49 K　片1 基准 1114.7 热侧 -130.19 冷侧 +131.16 K　片2 基准 1064.9 热侧 -142.84 冷侧 +143.19 K　片3 基准 1050.0 热侧 -187.79 冷侧 +187.79 K
++     片0「管根低于热偶读数」裕度 -181.492 ⇒ 候选 舌保温 / 圆盘背侧减重槽张角 / 舌板开孔孔径 / 舌板开孔顺流拉长比（抬哪个由前提自检当场实测决定）
++     片1「管根低于热偶读数」裕度 -126.163 ⇒ 候选 舌保温 / 圆盘背侧减重槽张角 / 舌板开孔孔径 / 舌板开孔顺流拉长比（抬哪个由前提自检当场实测决定）
++     片2「管根低于热偶读数」裕度 -138.188 ⇒ 候选 舌保温 / 圆盘背侧减重槽张角 / 舌板开孔孔径 / 舌板开孔顺流拉长比（抬哪个由前提自检当场实测决定）
++     片3「管根低于热偶读数」裕度 -182.794 ⇒ 候选 舌保温 / 圆盘背侧减重槽张角 / 舌板开孔孔径 / 舌板开孔顺流拉长比（抬哪个由前提自检当场实测决定）
++     · 片0 候选淘汰：圆盘背侧减重槽张角 **开不出槽**（槽带 r32.6–34.6 宽 2.0 mm，但周向留不出桥）；舌板开孔孔径 本族不挖舌孔（解法选的是「不挖舌孔」）；舌板开孔顺流拉长比 本族不挖舌孔（解法选的是「不挖舌孔」） ⇒ 抬**舌保温**
++  ↑ 片0 舌保温 → 6.000　（已实测：抬到上界这条判据确实变好 ⇒ 可以二分求根；解出 5.9128，向上对齐到图纸格 0.5）
++     · 片1 候选淘汰：圆盘背侧减重槽张角 **开不出槽**（槽带 r33.1–35.1 宽 2.0 mm，但周向留不出桥）；舌板开孔孔径 本族不挖舌孔（解法选的是「不挖舌孔」）；舌板开孔顺流拉长比 本族不挖舌孔（解法选的是「不挖舌孔」） ⇒ 抬**舌保温**
++  ↑ 片1 舌保温 → 3.000　（已实测：抬到上界这条判据确实变好 ⇒ 可以二分求根；解出 2.6086，向上对齐到图纸格 0.5）
++     · 片2 候选淘汰：圆盘背侧减重槽张角 **开不出槽**（槽带 r33.1–35.1 宽 2.0 mm，但周向留不出桥）；舌板开孔孔径 本族不挖舌孔（解法选的是「不挖舌孔」）；舌板开孔顺流拉长比 本族不挖舌孔（解法选的是「不挖舌孔」） ⇒ 抬**舌保温**
++  ↑ 片2 舌保温 → 4.500　（已实测：抬到上界这条判据确实变好 ⇒ 可以二分求根；解出 4.0418，向上对齐到图纸格 0.5）
++     · 片3 候选淘汰：圆盘背侧减重槽张角 **开不出槽**（槽带 r32.6–34.6 宽 2.0 mm，但周向留不出桥）；舌板开孔孔径 本族不挖舌孔（解法选的是「不挖舌孔」）；舌板开孔顺流拉长比 本族不挖舌孔（解法选的是「不挖舌孔」） ⇒ 抬**舌保温**
++  ↑ 片3 舌保温 → 13.500　（已实测：抬到上界这条判据确实变好 ⇒ 可以二分求根；解出 13.0550，向上对齐到图纸格 0.5）
++★ 场定孔位：片0 槽心 143°（当地电流 -17°）／舌孔孔心按场定 x=-2.0（开孔前每轮更新）　片1 槽心 153°（当地电流 -14°）／舌孔孔心按场定 x=-2.0（开孔前每轮更新）　片2 槽心 153°（当地电流 -14°）／舌孔孔心按场定 x=-2.0（开孔前每轮更新）　片3 槽心 116°（当地电流 -14°）／舌孔孔心按场定 x=-2.0（开孔前每轮更新）（移除优先级 = 导热贡献 ÷ 电流密度，取最新收敛的场；没有切口或位置没变 ⇒ 几何不变、不重解）
++第  2 轮　合计 4245 g　板厚 0.73/1.26/1.26/0.73　舌保温 6.00/3.00/4.50/13.50　环倍率t₁ 1.00/1.00/1.00/1.00　外级t₂ 1/1/1/1　内级r₁ 3*/3*/3*/3*　外级r₂ 6*/6*/6*/6*　圆盘槽 0/0/0/0°　孔径 0/0/0/0　孔拉长 1/1/1/1　槽心 143/153/153/116°　孔心 -2/-2/-2/-2　盘形 弯椭圆槽/弯椭圆槽/弯椭圆槽/弯椭圆槽　孔形 圆/圆/圆/圆
++　　　这一轮的判据：管孔净流入 -3.26>0（超3.26，取自 HC1|HC2）　最热铂高出热偶读数 18.64≤5（超13.64，取自 HC1|HC2）　管根低于热偶读数 4.13≤5（裕0.87，取自 入口）　法兰截面 J 9.98≤11（裕1.02，取自 HC1|HC2 舌片 x=-100）　还没全过　（旧判法对照，不追：圆盘区最高温 11.42，取自 入口／法兰增量温降 4.22，取自 HC1）
++　　　逐片抽热：片0 +1.78 W　片1 -3.26 W　片2 -1.54 W　片3 -0.04 W
++　　　逐片热偶基准：片0 基准 1150.0 热侧 +9.55 冷侧 +4.13 K　片1 基准 1114.7 热侧 +18.64 冷侧 -8.33 K　片2 基准 1064.9 热侧 +11.33 冷侧 -3.85 K　片3 基准 1050.0 热侧 +8.16 冷侧 +2.88 K
++     片0「最热铂高出热偶读数」裕度 -4.555 ⇒ 候选 外级倍率 t₂ / 外级半径 r₂ / 环倍率 t₁ / 内级半径 r₁ / 板厚（抬哪个由前提自检当场实测决定）
++     片1「管孔净流入」裕度 -3.255 ⇒ 候选 外级倍率 t₂ / 外级半径 r₂ / 板厚（抬哪个由前提自检当场实测决定）
++     片1「最热铂高出热偶读数」裕度 -13.645 ⇒ 候选 外级倍率 t₂ / 外级半径 r₂ / 环倍率 t₁ / 内级半径 r₁ / 板厚（抬哪个由前提自检当场实测决定）
++     片2「管孔净流入」裕度 -1.545 ⇒ 候选 外级倍率 t₂ / 外级半径 r₂ / 板厚（抬哪个由前提自检当场实测决定）
++     片2「最热铂高出热偶读数」裕度 -6.326 ⇒ 候选 外级倍率 t₂ / 外级半径 r₂ / 环倍率 t₁ / 内级半径 r₁ / 板厚（抬哪个由前提自检当场实测决定）
++     片3「管孔净流入」裕度 -0.043 ⇒ 候选 外级倍率 t₂ / 外级半径 r₂ / 板厚（抬哪个由前提自检当场实测决定）
++     片3「最热铂高出热偶读数」裕度 -3.161 ⇒ 候选 外级倍率 t₂ / 外级半径 r₂ / 环倍率 t₁ / 内级半径 r₁ / 板厚（抬哪个由前提自检当场实测决定）
++     · 片0 实测比价：外级倍率 t₂ 补不上、每克铂买 0.003（裕度 +0.01／铂 +2.5 g）　环倍率 t₁ 补不上、每克铂买 0.010（裕度 +0.06／铂 +6.0 g）　板厚 补不上、每克铂买 0.002（裕度 +0.11／铂 +67.3 g） ⇒ 抬**板厚**（都补不上，先用买得最多的顶上去，下一轮缺口变小再挑便宜的）
++     · 片0 板厚 抬到上界仍不过，但**把缺口从 -4.55 拉到 -4.44** ⇒ 留着，下一轮缺口变小再挑别的（不退回 —— 退回就永远凑不出组合）
++  ✗ **片0 板厚 抬到上界 6.000 仍不过**「最热铂高出热偶读数」⇒ **这根旋钮到顶了** —— 求解器手上只有**法兰侧**九根旋钮；**盘径与舌半宽**（R3 里「增宽」那条路）不在它手里，归「◇ 搜形状」。**一个出口只能对它自己有的旋钮下结论。**
++     · 片1 实测比价：外级倍率 t₂ 补不上、每克铂买 0.003（裕度 +0.01／铂 +4.3 g）　板厚 补不上、每克铂买 0.001（裕度 +0.03／铂 +62.5 g） ⇒ 抬**板厚**（都补不上，先用买得最多的顶上去，下一轮缺口变小再挑便宜的）
++     · 片1 板厚 抬到上界仍不过，但**把缺口从 -3.26 拉到 -3.22** ⇒ 留着，下一轮缺口变小再挑别的（不退回 —— 退回就永远凑不出组合）
++  ✗ **片1 板厚 抬到上界 6.000 仍不过**「管孔净流入」⇒ **这根旋钮到顶了** —— 求解器手上只有**法兰侧**九根旋钮；**盘径与舌半宽**（R3 里「增宽」那条路）不在它手里，归「◇ 搜形状」。**一个出口只能对它自己有的旋钮下结论。**
++     · 片1 实测比价：外级倍率 t₂ 补不上、每克铂买 0.000（裕度 +0.00／铂 +20.3 g）　环倍率 t₁ 补不上、每克铂买 0.000（裕度 +0.01／铂 +49.3 g） ⇒ 抬**环倍率 t₁**（都补不上，先用买得最多的顶上去，下一轮缺口变小再挑便宜的）
++     · 片1 环倍率 t₁ 抬到上界仍不过，但**把缺口从 -13.63 拉到 -13.62** ⇒ 留着，下一轮缺口变小再挑别的（不退回 —— 退回就永远凑不出组合）
++  ✗ **片1 环倍率 t₁ 抬到上界 2.500 仍不过**「最热铂高出热偶读数」⇒ **这根旋钮到顶了** —— 求解器手上只有**法兰侧**九根旋钮；**盘径与舌半宽**（R3 里「增宽」那条路）不在它手里，归「◇ 搜形状」。**一个出口只能对它自己有的旋钮下结论。**
++     · 片2 实测比价：外级倍率 t₂ 补不上、每克铂买 0.000（裕度 +0.00／铂 +4.3 g）　板厚 补不上、每克铂买 0.000（裕度 +0.02／铂 +62.5 g） ⇒ 抬**板厚**（都补不上，先用买得最多的顶上去，下一轮缺口变小再挑便宜的）
++     · 片2 板厚 抬到上界仍不过，但**把缺口从 -1.55 拉到 -1.53** ⇒ 留着，下一轮缺口变小再挑别的（不退回 —— 退回就永远凑不出组合）
++  ✗ **片2 板厚 抬到上界 6.000 仍不过**「管孔净流入」⇒ **这根旋钮到顶了** —— 求解器手上只有**法兰侧**九根旋钮；**盘径与舌半宽**（R3 里「增宽」那条路）不在它手里，归「◇ 搜形状」。**一个出口只能对它自己有的旋钮下结论。**
++     · 片2 候选淘汰：外级倍率 t₂ 抬到底也没变好（-6.259→-6.270）；外级半径 r₂ 外级还是**平的**（倍率 = 1），没有台阶可挪；先让倍率造出台阶；内级半径 r₁ 内级还是**平的**（倍率 = 1），没有台阶可挪；先让倍率造出台阶；板厚 已在上界 ⇒ 抬**环倍率 t₁**
++     · 片2 环倍率 t₁ 抬到上界仍不过，但**把缺口从 -6.26 拉到 -6.26** ⇒ 留着，下一轮缺口变小再挑别的（不退回 —— 退回就永远凑不出组合）
++  ✗ **片2 环倍率 t₁ 抬到上界 2.500 仍不过**「最热铂高出热偶读数」⇒ **这根旋钮到顶了** —— 求解器手上只有**法兰侧**九根旋钮；**盘径与舌半宽**（R3 里「增宽」那条路）不在它手里，归「◇ 搜形状」。**一个出口只能对它自己有的旋钮下结论。**
++     · 片3 实测比价：外级倍率 t₂ 补不上、每克铂买 0.001（裕度 +0.00／铂 +2.5 g）　板厚 补得上、每克铂买 0.001（裕度 +0.04／铂 +67.3 g） ⇒ 抬**板厚**（补得上里面最省铂）
++  ↑ 片3 板厚 → 4.730　（已实测：抬到上界这条判据确实变好 ⇒ 可以二分求根；解出 4.7237，向上对齐到图纸格 0.01）
++  ✗ **⑥ 圆盘盖不住管孔＋焊脚**：盘半径 30.000 mm ＜ 需要 31.800 mm（缺 1.800 mm；管孔 25.800 + 焊脚 6.000）。 ⑥ **没有旋钮能治** —— 抬板厚只会让焊脚更长、⑥ 更差。　【处方】盘半径改到 ≥ 31.800 mm 再解。这是**闭式反解**，不是搜出来的 —— 不用试，就是这个数。
++  ✗ **⑥ 圆盘盖不住管孔＋焊脚**：盘半径 30.000 mm ＜ 需要 31.800 mm（缺 1.800 mm；管孔 25.800 + 焊脚 6.000）。 ⑥ **没有旋钮能治** —— 抬板厚只会让焊脚更长、⑥ 更差。　【处方】盘半径改到 ≥ 31.800 mm 再解。这是**闭式反解**，不是搜出来的 —— 不用试，就是这个数。
++     ⇒ 这一条治不了，**先把其余片做完**再收场
++     · 片3 实测比价：外级倍率 t₂ 补不上、每克铂买 0.000（裕度 +0.00／铂 +16.0 g）　环倍率 t₁ 补不上、每克铂买 0.000（裕度 +0.01／铂 +38.9 g）　板厚 补不上、每克铂买 0.000（裕度 +0.00／铂 +19.9 g） ⇒ 抬**环倍率 t₁**（都补不上，先用买得最多的顶上去，下一轮缺口变小再挑便宜的）
++     · 片3 环倍率 t₁ 抬到上界仍不过，但**把缺口从 -3.07 拉到 -3.07** ⇒ 留着，下一轮缺口变小再挑别的（不退回 —— 退回就永远凑不出组合）
++  ✗ **片3 环倍率 t₁ 抬到上界 2.500 仍不过**「最热铂高出热偶读数」⇒ **这根旋钮到顶了** —— 求解器手上只有**法兰侧**九根旋钮；**盘径与舌半宽**（R3 里「增宽」那条路）不在它手里，归「◇ 搜形状」。**一个出口只能对它自己有的旋钮下结论。**
++  ✗ **⑥ 圆盘盖不住管孔＋焊脚**：盘半径 30.000 mm ＜ 需要 31.800 mm（缺 1.800 mm；管孔 25.800 + 焊脚 6.000）。 ⑥ **没有旋钮能治** —— 抬板厚只会让焊脚更长、⑥ 更差。　【处方】盘半径改到 ≥ 31.800 mm 再解。这是**闭式反解**，不是搜出来的 —— 不用试，就是这个数。
++⚠ **没做第二遍**（FineMm = 0）—— 这个解只在导航网格上成立、**不可交付**：实测法兰增量温降（旧判法）在两张网格上差 2.03 倍（A⑬）。
++
++── 总耗时 226.3 分钟（2026-09-18 04:41:22）
++出处：求解 = Solver.Solve（Core/Solver.cs）；升温全程 = RampSweep.Run（Core/RampSweep.cs）；带玻璃与空管 = LineRunner.Run（Core/LineRunner.cs）。
++每个数来自同一次运行，不拼两份输出。
+diff --git "a/deliverable/R48_U_\345\206\267\344\276\247\351\242\204\347\256\227\346\274\224\347\244\272_\345\210\244\345\206\263\347\275\221\346\240\274_W08_\346\234\254\346\254\241\345\274\200\350\267\221\344\272\2162026-09-18_061106.txt" "b/deliverable/R48_U_\345\206\267\344\276\247\351\242\204\347\256\227\346\274\224\347\244\272_\345\210\244\345\206\263\347\275\221\346\240\274_W08_\346\234\254\346\254\241\345\274\200\350\267\221\344\272\2162026-09-18_061106.txt"
+new file mode 100644
+index 0000000..50441a1
+--- /dev/null
++++ "b/deliverable/R48_U_\345\206\267\344\276\247\351\242\204\347\256\227\346\274\224\347\244\272_\345\210\244\345\206\263\347\275\221\346\240\274_W08_\346\234\254\346\254\241\345\274\200\350\267\221\344\272\2162026-09-18_061106.txt"
+@@ -0,0 +1,64 @@
++﻿U 路　**冷侧预算放宽之后，每片舌保温的可行窗口宽多少**　W08（管壁 0.8 · 留余量（照 A 导航档输出表复原））
++开跑 2026-09-18 06:11:06　工作树 D:\WinForm\r48_U　写码 2026-09-18 Opus 5
++
++⚠⚠ **这是演示，不是设计。**
++　· 回答的只有一句：冷侧那 5 度放宽，窗口会变多宽。默认值本轮一位没动，仍是 5 K；放宽多少由工程师在参数表里填。
++　· 网格 = **判决用的那张**（MeshVerify.RequiredMeshFor：细区 1.000 mm／细区半径 59.0 mm），与交付判定同一张。
++　· 两个预算在**同一次运行、同一个进程、同一份设计、同一张网格**上量，只换那一个数。
++　· 设计出处：deliverable/R48_L_端到端_细网格_W08_本次开跑于2026-09-17_093013.txt　§「旋钮终值（逐片）」表的 A 导航档四行
++
++进度活页（临时，非交付物）：C:\Users\admin\AppData\Local\Temp\R48_U_冷侧演示_2026-09-18_061106_进行中.log
++
++═══════ 冷侧预算 5 K（热侧仍 5 K）═══════
++解值那一点（四片同一次解，值与预算无关；限值那一列才跟着预算走）：
++片	最热铂高出热偶读数 K	管根低于热偶读数 K	管孔净流入 W	可行？
++入口	-9.259	19.004	5.793	不过
++共用1	-9.259	19.004	5.793	不过
++共用2	-9.259	19.004	5.793	不过
++出口	-9.259	19.004	5.793	不过
++
++**每片舌保温的可行窗口**（管壁 0.8 · 留余量（照 A 导航档输出表复原））
++  量法：逐片把舌保温在解值 ±1 mm 内按 0.1 mm 挪，其余片与其余旋钮一位不动，每点跑一次整线、按交付判定过不过；网格 = 判决用的那张（细区 1 mm／半径 59 mm）；用时 48.2 分钟。
++  现场包法：一层 0.5 mm，不缠时是裸舌 0.3 mm（0 层也是一种做法）。
++片	解值 mm	可行窗口 mm	宽 mm	可落层数	左边界外不过的是	右边界外不过的是
++入口	5.1	解值自己就不过（管根低于热偶读数 19.004/5）	—	**一个都没有**	—（没探到）	—（没探到）
++共用1	2.3	解值自己就不过（管根低于热偶读数 19.004/5）	—	**一个都没有**	—（没探到）	—（没探到）
++共用2	3.6	解值自己就不过（管根低于热偶读数 19.004/5）	—	**一个都没有**	—（没探到）	—（没探到）
++出口	10.4	解值自己就不过（管根低于热偶读数 19.004/5）	—	**一个都没有**	—（没探到）	—（没探到）
++  结论：**当前判据下无可制造设计**：入口、共用1、共用2、出口 的可行窗口里一个能缠的档都没有（现场一层 0.5 mm，不缠时是裸舌 0.3 mm）。最接近的设计就是求解器交出来的这一份，逐片差在哪条判据见下表。判据没有被放宽 —— 要放宽，在输入页最上面那组「判据限值与可行窗口」里填（「管根低于热偶读数 允许值」「最热铂高出热偶读数 允许值」）。
++
++
++═══════ 冷侧预算 10 K（热侧仍 5 K）═══════
++解值那一点（四片同一次解，值与预算无关；限值那一列才跟着预算走）：
++片	最热铂高出热偶读数 K	管根低于热偶读数 K	管孔净流入 W	可行？
++入口	-9.259	19.004	5.793	不过
++共用1	-9.259	19.004	5.793	不过
++共用2	-9.259	19.004	5.793	不过
++出口	-9.259	19.004	5.793	不过
++
++**每片舌保温的可行窗口**（管壁 0.8 · 留余量（照 A 导航档输出表复原））
++  量法：逐片把舌保温在解值 ±1 mm 内按 0.1 mm 挪，其余片与其余旋钮一位不动，每点跑一次整线、按交付判定过不过；网格 = 判决用的那张（细区 1 mm／半径 59 mm）；用时 49.1 分钟。
++  现场包法：一层 0.5 mm，不缠时是裸舌 0.3 mm（0 层也是一种做法）。
++片	解值 mm	可行窗口 mm	宽 mm	可落层数	左边界外不过的是	右边界外不过的是
++入口	5.1	解值自己就不过（管根低于热偶读数 19.004/10）	—	**一个都没有**	—（没探到）	—（没探到）
++共用1	2.3	解值自己就不过（管根低于热偶读数 19.004/10）	—	**一个都没有**	—（没探到）	—（没探到）
++共用2	3.6	解值自己就不过（管根低于热偶读数 19.004/10）	—	**一个都没有**	—（没探到）	—（没探到）
++出口	10.4	解值自己就不过（管根低于热偶读数 19.004/10）	—	**一个都没有**	—（没探到）	—（没探到）
++  结论：**当前判据下无可制造设计**：入口、共用1、共用2、出口 的可行窗口里一个能缠的档都没有（现场一层 0.5 mm，不缠时是裸舌 0.3 mm）。最接近的设计就是求解器交出来的这一份，逐片差在哪条判据见下表。判据没有被放宽 —— 要放宽，在输入页最上面那组「判据限值与可行窗口」里填（「管根低于热偶读数 允许值」「最热铂高出热偶读数 允许值」）。
++
++
++═══════ 窗口宽度对照（同一次运行、同一张判决网格，只换冷侧预算）═══════
++片	解值 mm	冷侧 5 K 窗口	宽 mm	可落档	冷侧 10 K 窗口	宽 mm	可落档	宽了多少 mm
++入口	5.1	解值自己就不过	—	**一个都没有**	解值自己就不过	—	**一个都没有**	—
++共用1	2.3	解值自己就不过	—	**一个都没有**	解值自己就不过	—	**一个都没有**	—
++共用2	3.6	解值自己就不过	—	**一个都没有**	解值自己就不过	—	**一个都没有**	—
++出口	10.4	解值自己就不过	—	**一个都没有**	解值自己就不过	—	**一个都没有**	—
++
++结论（冷侧 5 K，= 现在的默认）：**当前判据下无可制造设计**：入口、共用1、共用2、出口 的可行窗口里一个能缠的档都没有（现场一层 0.5 mm，不缠时是裸舌 0.3 mm）。最接近的设计就是求解器交出来的这一份，逐片差在哪条判据见下表。判据没有被放宽 —— 要放宽，在输入页最上面那组「判据限值与可行窗口」里填（「管根低于热偶读数 允许值」「最热铂高出热偶读数 允许值」）。
++结论（冷侧 10 K，**演示**）：**当前判据下无可制造设计**：入口、共用1、共用2、出口 的可行窗口里一个能缠的档都没有（现场一层 0.5 mm，不缠时是裸舌 0.3 mm）。最接近的设计就是求解器交出来的这一份，逐片差在哪条判据见下表。判据没有被放宽 —— 要放宽，在输入页最上面那组「判据限值与可行窗口」里填（「管根低于热偶读数 允许值」「最热铂高出热偶读数 允许值」）。
++
++⚠ 上面两行是**判决网格**上的数（与交付判定同一张）。但这仍是**演示**：默认值本轮一位没动，放宽多少由工程师在参数表里填。
++⚠ 本档没有、也不许有「所以应该改成 10」这句话 —— 那是工程师在参数表里填的事。
++
++── 总耗时 97.3 分钟（2026-09-18 07:48:27）
++出处：窗口 = InsulWindow.Measure（APP 终验点的就是它）；整线解 = LineRunner.Run；判定 = LineResult.AllOk；层厚 = InsulationSearch.LayerMm；裸舌 = SolverOptions.InsLoMm。每个数来自这一次运行（同一进程）。
+diff --git "a/deliverable/R48_U_\345\206\267\344\276\247\351\242\204\347\256\227\346\274\224\347\244\272_\345\257\274\350\210\252\347\275\221\346\240\274_W08_\346\234\254\346\254\241\345\274\200\350\267\221\344\272\2162026-09-18_044247.txt" "b/deliverable/R48_U_\345\206\267\344\276\247\351\242\204\347\256\227\346\274\224\347\244\272_\345\257\274\350\210\252\347\275\221\346\240\274_W08_\346\234\254\346\254\241\345\274\200\350\267\221\344\272\2162026-09-18_044247.txt"
+new file mode 100644
+index 0000000..eafc912
+--- /dev/null
++++ "b/deliverable/R48_U_\345\206\267\344\276\247\351\242\204\347\256\227\346\274\224\347\244\272_\345\257\274\350\210\252\347\275\221\346\240\274_W08_\346\234\254\346\254\241\345\274\200\350\267\221\344\272\2162026-09-18_044247.txt"
+@@ -0,0 +1,65 @@
++﻿U 路　**冷侧预算放宽之后，每片舌保温的可行窗口宽多少**　W08（管壁 0.8 · 留余量（照 A 导航档输出表复原））
++开跑 2026-09-18 04:42:47　工作树 D:\WinForm\r48_U　写码 2026-09-18 Opus 5
++
++⚠⚠ **这是演示，不是设计。**
++　· 回答的只有一句：冷侧那 5 度放宽，窗口会变多宽。默认值本轮一位没动，仍是 5 K；放宽多少由工程师在参数表里填。
++　· 网格 = **导航网格**（整线算例缺省：细区 2.0 mm／粗区 11.0 mm／细区半径 50.0 mm），**不是判决那张**。导航网格上这两条温度判据实测偏大 ⇒ 本文件的窗口**只能看相对变化**，
++　　绝对值不可引用、不可据以出图、不可写进交付。要判决必须在判决网格上重量（InsulWindow 的默认口径）。
++　· 两个预算在**同一次运行、同一个进程、同一份设计、同一张网格**上量，只换那一个数。
++　· 设计出处：deliverable/R48_L_端到端_细网格_W08_本次开跑于2026-09-17_093013.txt　§「旋钮终值（逐片）」表的 A 导航档四行
++
++进度活页（临时，非交付物）：C:\Users\admin\AppData\Local\Temp\R48_U_冷侧演示_2026-09-18_044247_进行中.log
++
++═══════ 冷侧预算 5 K（热侧仍 5 K）═══════
++解值那一点（四片同一次解，值与预算无关；限值那一列才跟着预算走）：
++片	最热铂高出热偶读数 K	管根低于热偶读数 K	管孔净流入 W	可行？
++入口	-9.408	19.875	6.234	不过
++共用1	-9.408	19.875	6.234	不过
++共用2	-9.408	19.875	6.234	不过
++出口	-9.408	19.875	6.234	不过
++
++**每片舌保温的可行窗口**（管壁 0.8 · 留余量（照 A 导航档输出表复原））
++  量法：逐片把舌保温在解值 ±1 mm 内按 0.1 mm 挪，其余片与其余旋钮一位不动，每点跑一次整线、按交付判定过不过；网格 = 导航网格（**只作快筛，不作判决**）；用时 46.4 分钟。
++  现场包法：一层 0.5 mm，不缠时是裸舌 0.3 mm（0 层也是一种做法）。
++片	解值 mm	可行窗口 mm	宽 mm	可落层数	左边界外不过的是	右边界外不过的是
++入口	5.1	解值自己就不过（管根低于热偶读数 19.875/5）	—	**一个都没有**	—（没探到）	—（没探到）
++共用1	2.3	解值自己就不过（管根低于热偶读数 19.875/5）	—	**一个都没有**	—（没探到）	—（没探到）
++共用2	3.6	解值自己就不过（管根低于热偶读数 19.875/5）	—	**一个都没有**	—（没探到）	—（没探到）
++出口	10.4	解值自己就不过（管根低于热偶读数 19.875/5）	—	**一个都没有**	—（没探到）	—（没探到）
++  结论：**当前判据下无可制造设计**：入口、共用1、共用2、出口 的可行窗口里一个能缠的档都没有（现场一层 0.5 mm，不缠时是裸舌 0.3 mm）。最接近的设计就是求解器交出来的这一份，逐片差在哪条判据见下表。判据没有被放宽 —— 要放宽，在输入页最上面那组「判据限值与可行窗口」里填（「管根低于热偶读数 允许值」「最热铂高出热偶读数 允许值」）。
++
++
++═══════ 冷侧预算 10 K（热侧仍 5 K）═══════
++解值那一点（四片同一次解，值与预算无关；限值那一列才跟着预算走）：
++片	最热铂高出热偶读数 K	管根低于热偶读数 K	管孔净流入 W	可行？
++入口	-9.408	19.875	6.234	不过
++共用1	-9.408	19.875	6.234	不过
++共用2	-9.408	19.875	6.234	不过
++出口	-9.408	19.875	6.234	不过
++
++**每片舌保温的可行窗口**（管壁 0.8 · 留余量（照 A 导航档输出表复原））
++  量法：逐片把舌保温在解值 ±1 mm 内按 0.1 mm 挪，其余片与其余旋钮一位不动，每点跑一次整线、按交付判定过不过；网格 = 导航网格（**只作快筛，不作判决**）；用时 41.3 分钟。
++  现场包法：一层 0.5 mm，不缠时是裸舌 0.3 mm（0 层也是一种做法）。
++片	解值 mm	可行窗口 mm	宽 mm	可落层数	左边界外不过的是	右边界外不过的是
++入口	5.1	解值自己就不过（管根低于热偶读数 19.875/10）	—	**一个都没有**	—（没探到）	—（没探到）
++共用1	2.3	解值自己就不过（管根低于热偶读数 19.875/10）	—	**一个都没有**	—（没探到）	—（没探到）
++共用2	3.6	解值自己就不过（管根低于热偶读数 19.875/10）	—	**一个都没有**	—（没探到）	—（没探到）
++出口	10.4	解值自己就不过（管根低于热偶读数 19.875/10）	—	**一个都没有**	—（没探到）	—（没探到）
++  结论：**当前判据下无可制造设计**：入口、共用1、共用2、出口 的可行窗口里一个能缠的档都没有（现场一层 0.5 mm，不缠时是裸舌 0.3 mm）。最接近的设计就是求解器交出来的这一份，逐片差在哪条判据见下表。判据没有被放宽 —— 要放宽，在输入页最上面那组「判据限值与可行窗口」里填（「管根低于热偶读数 允许值」「最热铂高出热偶读数 允许值」）。
++
++
++═══════ 窗口宽度对照（同一次运行、同一张导航网格，只换冷侧预算）═══════
++片	解值 mm	冷侧 5 K 窗口	宽 mm	可落档	冷侧 10 K 窗口	宽 mm	可落档	宽了多少 mm
++入口	5.1	解值自己就不过	—	**一个都没有**	解值自己就不过	—	**一个都没有**	—
++共用1	2.3	解值自己就不过	—	**一个都没有**	解值自己就不过	—	**一个都没有**	—
++共用2	3.6	解值自己就不过	—	**一个都没有**	解值自己就不过	—	**一个都没有**	—
++出口	10.4	解值自己就不过	—	**一个都没有**	解值自己就不过	—	**一个都没有**	—
++
++结论（冷侧 5 K，= 现在的默认）：**当前判据下无可制造设计**：入口、共用1、共用2、出口 的可行窗口里一个能缠的档都没有（现场一层 0.5 mm，不缠时是裸舌 0.3 mm）。最接近的设计就是求解器交出来的这一份，逐片差在哪条判据见下表。判据没有被放宽 —— 要放宽，在输入页最上面那组「判据限值与可行窗口」里填（「管根低于热偶读数 允许值」「最热铂高出热偶读数 允许值」）。
++结论（冷侧 10 K，**演示**）：**当前判据下无可制造设计**：入口、共用1、共用2、出口 的可行窗口里一个能缠的档都没有（现场一层 0.5 mm，不缠时是裸舌 0.3 mm）。最接近的设计就是求解器交出来的这一份，逐片差在哪条判据见下表。判据没有被放宽 —— 要放宽，在输入页最上面那组「判据限值与可行窗口」里填（「管根低于热偶读数 允许值」「最热铂高出热偶读数 允许值」）。
++
++⚠ 再说一次：上面两行都是**导航网格**上的数，只能看相对变化。判决要在判决网格上重量。
++⚠ 本档没有、也不许有「所以应该改成 10」这句话 —— 那是工程师在参数表里填的事。
++
++── 总耗时 87.7 分钟（2026-09-18 06:10:27）
++出处：窗口 = InsulWindow.Measure（APP 终验点的就是它）；整线解 = LineRunner.Run；判定 = LineResult.AllOk；层厚 = InsulationSearch.LayerMm；裸舌 = SolverOptions.InsLoMm。每个数来自这一次运行（同一进程）。
+diff --git a/tests/UiWiring/Program.cs b/tests/UiWiring/Program.cs
+index fb836fc..f34e16b 100644
+--- a/tests/UiWiring/Program.cs
++++ b/tests/UiWiring/Program.cs
+@@ -579,6 +579,49 @@ class UiWiringTests {
+             var btn46 = (ToolStripButton)F(page, "_btnReport")!;
+             Check("「导出安装报告」键在 ③ 页工具条上", btn46.Owner is not null && btn46.Text == Flow.Cmd("report.install").Text, btn46.Text);
+ 
++            // ★ U 路（2026-09-18，Opus 5）：③ 页多一个「舌保温可行窗口」页签。
++            //   这一次没量（终验才量）⇒ 表是空的、说明必须写明「没量」——
++            //   一张空表配一句空话，读的人会当成「量过了、没问题」，那正是本项目最怕的形状。
++            Check("③ 页有「舌保温可行窗口」页签", tabNames46.Contains("舌保温可行窗口"), string.Join("／", tabNames46));
++            var winGrid = (DataGridView)F(page, "_winGrid")!;
++            var winNote = (Label)F(page, "_winNote")!;
++            Check("没量时窗口表是空的", winGrid.Rows.Count == 0, $"{winGrid.Rows.Count} 行");
++            Check("没量时说明写明「没量」且说了去哪儿打开",
++                  winNote.Text.Contains("本次没量") && winNote.Text.Contains("终验时量每片舌保温的可行窗口"), winNote.Text);
++            Check("没量 ≠ 缠得出来 这句话在", winNote.Text.Contains("没量 ≠ 缠得出来"), "");
++            Check("安装报告里有可行窗口那一节", rep46.Text.Contains("每片舌保温的可行窗口"), "");
++            // 造一份窗口结果挂上去 ⇒ 表要真的填出来（接线不是写好没人用的字段）
++            var winDemo = InsulWindow.Measure(
++                DesignSpec.W08.Clone(), new DesignInputs(),
++                new InsulWindow.Options { MaxDegreeOfParallelism = 1, HalfWidthMm = 0.3, StepMm = 0.1,
++                                          Evaluate = (dd, jj, mm) => new InsulWindow.Point { Feasible = true } });
++            rBad.TabInsulWindow = winDemo;
++            mShow?.Invoke(page, new object?[] { rBad, null });
++            Check("挂上窗口结果后表逐片填出来",
++                  winGrid.Rows.Count == winDemo.Plates.Length && winGrid.Rows.Count > 0,
++                  $"{winGrid.Rows.Count} 行 / {winDemo.Plates.Length} 片");
++            Check("窗口表的结论那一行来自结果自己", winNote.Text == winDemo.Verdict, winNote.Text);
++            Check("窗口表里不出现判据代号", !Criteria.HasCode(winNote.Text), winNote.Text);
++            rBad.TabInsulWindow = null;
++            mShow?.Invoke(page, new object?[] { rBad, null });
++
++            // ★ U 路：参数表里那两项温差预算 —— 看得见、改得了、说明里写了出处
++            var gridU = (PropertyGrid)F(main, "_grid")!;
++            var inU = (DesignInputs)F(main, "_in")!;
++            var propsU = TypeDescriptor.GetProperties(inU);
++            foreach (string want in new[] { "管根低于热偶读数 允许值 [K]", "最热铂高出热偶读数 允许值 [K]" })
++            {
++                var pd = propsU.Cast<PropertyDescriptor>().FirstOrDefault(x => x.DisplayName == want);
++                Check($"参数表里有「{want}」", pd is not null, pd?.Category ?? "★ 没有这一项");
++                if (pd is null) continue;
++                Check($"「{want}」改得了（不是只读）", !pd.IsReadOnly, "");
++                Check($"「{want}」归在「{ParamCat.判据限值与窗口}」下", pd.Category == ParamCat.判据限值与窗口, pd.Category);
++                Check($"「{want}」说明里写了出处", pd.Description.Contains("1100 °C") && pd.Description.Contains("默认 5"), pd.Description);
++            }
++            Check("默认仍是 5 K（本轮一位没动）",
++                  Math.Abs(inU.ColdUnderTcAllowK - 5.0) < 1e-12 && Math.Abs(inU.HotOverTcAllowK - 5.0) < 1e-12,
++                  $"{inU.ColdUnderTcAllowK} / {inU.HotOverTcAllowK}");
++            Check("参数表控件真的绑着这份输入", ReferenceEquals(gridU.SelectedObject, inU), "");
+         }
+ 
+         Head("14 搜形状：按钮在、不自己跑、.3dm 模式下要**明确拒绝**而不是空转");

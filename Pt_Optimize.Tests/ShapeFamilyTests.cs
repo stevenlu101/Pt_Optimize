@@ -416,7 +416,9 @@ public class ShapeFamilyTests
         d.TabHoleSides[j0] = stray;
 
         var lc = d.BuildCase(p, checkRamp: false);
-        double dipMax = lc.RootDeltaMaxK, discMax = lc.DiscOverTempMaxK;
+        // R48 B（2026-09-14 Opus 5）：有意改动 —— 求解器的冷侧／热侧换成热偶读数基准，旧判法 FlangeDip 已没有逐片裕度（PlateSlack 传进去会抛）⇒ 键与限值一起换。
+        //   ⚠ 本条是慢测试，本路没跑；「起点就违反」的前提（下面 before &lt; 0）是旧判法上验过的，新判法上待慢跑确认。
+        double coldMax = lc.ColdUnderTcMaxK, hotMax = lc.HotOverTcMaxK;
 
         var chooseKnob = typeof(Solver).GetMethod("ChooseKnob", BindingFlags.NonPublic | BindingFlags.Static);
         Assert.NotNull(chooseKnob);
@@ -425,7 +427,7 @@ public class ShapeFamilyTests
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var args = new object?[]
         {
-            d, p, o, j0, knobs, LineResult.Key.FlangeDip, dipMax, discMax, res,
+            d, p, o, j0, knobs, LineResult.Key.ColdUnderTc, coldMax, hotMax, res,
             (Action<string>)(s => { log.Add(s); }), CancellationToken.None, null,
         };
         object? raw;
