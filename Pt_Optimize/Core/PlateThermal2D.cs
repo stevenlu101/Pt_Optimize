@@ -45,18 +45,15 @@ public static class PlateThermal2D
         var res = new PlateThermalResult();
 
         // 分段表面热流 q″(T) [W/mm²]（原始单位 W/m² → ×1e-6）
-        double charLen = 0.05;   // 特征长度 m，用于自然对流关联式
+        // ★ R48（2026-09-14，Opus 5；审查意见「圆盘保温 0 mm 时四个消费方物理含义不一致」）：两张表改调**唯一配方** DesignScreen.PlateFluxWPerM2。
+        //   修的病：保温面原先无条件走 PlateFlux，厚度 0 时退到外覆材料 ε=0.45（裸铂 0.18）；另外本处原写死特征长度 0.05、保温面不传风速。
+        //   默认 ConvCharLenM = 0.05、风速 0 ⇒ 包着时逐位不变。
         var bareTab = new LossTable(p.TAmbC, p.TSetC + 200, 60,
-            x => Insulation.FlatOuterFlux(x, p.TAmbC, p.PtEmissivity, charLen,
-                                          p.LossScale, p.FlangeAirVelocityMPerS) * 1e-6);
-        var insLayers = new List<InsulationLayer>
-        {
-            new() { Name="法兰保温", ThicknessMm = p.FlangeInsulThickMm,
-                    K0 = p.Layer1.K0, K1 = p.Layer1.K1, Enabled = p.FlangeInsulThickMm > 1e-6 }
-        };
-        var insTab = new LossTable(p.TAmbC, p.TSetC + 200, 60,
-            x => Insulation.PlateFlux(x, p.TAmbC, insLayers, p.OuterEmissivity, charLen,
-                                      p.LossScale) * 1e-6);
+            x => DesignScreen.PlateFluxWPerM2(p, x, 0.0) * 1e-6);
+        var insTab = DesignScreen.FlangeFaceInsulated(p.FlangeInsulThickMm)
+            ? new LossTable(p.TAmbC, p.TSetC + 200, 60,
+                x => DesignScreen.PlateFluxWPerM2(p, x, p.FlangeInsulThickMm) * 1e-6)
+            : bareTab;
 
         // 默认（NaN）解析为切点 = 仅圆盘保温、舌片裸露，见 FlangePlate.InsulBoundaryXMm
         double insulX = g.InsulBoundaryXResolved;

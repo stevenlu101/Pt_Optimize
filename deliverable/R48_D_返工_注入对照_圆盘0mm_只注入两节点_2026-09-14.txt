@@ -1,0 +1,38 @@
+D:\WinForm\r48_D\Pt_Optimize.Tests\bin\Debug\net8.0-windows\Pt_Optimize.Tests.dll (.NETCoreApp,Version=v8.0)的测试运行
+VSTest 版本 18.0.1 (x64)
+
+正在启动测试执行，请稍候...
+总共 1 个测试文件与指定模式相匹配。
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.28)
+[xUnit.net 00:00:00.20]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:00.28]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:00.28]   Starting:    Pt_Optimize.Tests
+[xUnit.net 00:00:01.23]     PtOptimize.Tests.R48DiscInsulPerPlateGateTests.圆盘保温0mm时四个消费方都按裸铂表面 [FAIL]
+[xUnit.net 00:00:01.23]       Assert.Equal() Failure: Values differ
+[xUnit.net 00:00:01.23]       Expected: 728.63350526051408
+[xUnit.net 00:00:01.23]       Actual:   584.71976343562494
+[xUnit.net 00:00:01.23]       Stack Trace:
+[xUnit.net 00:00:01.23]         D:\WinForm\r48_D\Pt_Optimize.Tests\R48DiscInsulPerPlateGateTests.cs(664,0): at PtOptimize.Tests.R48DiscInsulPerPlateGateTests.圆盘保温0mm时四个消费方都按裸铂表面()
+[xUnit.net 00:00:01.24]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+[xUnit.net 00:00:01.24]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:01.24]       Output:
+[xUnit.net 00:00:01.24]         圆盘保温 0 mm：壳解散热 676.8967879008815 / 676.8967879008815 W；旧链抽热 332.7242702271244 / 332.7242702271244 W；两节点法兰峰 728.6335052605141 / 584.7197634356249 °C、法兰−管峰 0 / 0 K、峰值电流 1763.0112744754003 / 1773.6698614936345 A、到温 True；热稳定表面导数 2.4755005537887427 / 2.4755005537887427 W/K（外覆 ε 0.45 / 0.90）
+[xUnit.net 00:00:01.24]   Finished:    Pt_Optimize.Tests
+  失败 PtOptimize.Tests.R48DiscInsulPerPlateGateTests.圆盘保温0mm时四个消费方都按裸铂表面 [927 ms]
+  错误消息:
+   Assert.Equal() Failure: Values differ
+Expected: 728.63350526051408
+Actual:   584.71976343562494
+  堆栈跟踪:
+     at PtOptimize.Tests.R48DiscInsulPerPlateGateTests.圆盘保温0mm时四个消费方都按裸铂表面() in D:\WinForm\r48_D\Pt_Optimize.Tests\R48DiscInsulPerPlateGateTests.cs:line 664
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  标准输出消息:
+ 圆盘保温 0 mm：壳解散热 676.8967879008815 / 676.8967879008815 W；旧链抽热 332.7242702271244 / 332.7242702271244 W；两节点法兰峰 728.6335052605141 / 584.7197634356249 °C、法兰−管峰 0 / 0 K、峰值电流 1763.0112744754003 / 1773.6698614936345 A、到温 True；热稳定表面导数 2.4755005537887427 / 2.4755005537887427 W/K（外覆 ε 0.45 / 0.90）
+
+
+
+测试运行失败。
+测试总数: 1
+     失败数: 1
+总时间: 1.5163 秒

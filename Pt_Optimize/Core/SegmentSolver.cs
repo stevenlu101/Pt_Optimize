@@ -371,7 +371,16 @@ public static class SegmentSolver
             switch (what)
             {
                 case "insul": q.Layer1.ThicknessMm = v; q.Layer1.Enabled = v > 1e-6; break;
-                case "flangeInsul": q.FlangeInsulThickMm = v; q.FlangeInsulated = v > 1e-6; break;
+                // ★ R48（2026-09-14，Opus 5；数值把关人要求查「flangeInsul」在什么链路上被用）：改为**拒绝**。
+                //   本扫描每一点只调一维管段 Solve，而 Solve 与它调的散热／保温表**一处都不读** FlangeInsulThickMm／FlangeInsulated
+                //   （全仓 grep：读它们的只有 ShellThermal、PlateThermal2D、RampTwoNode 与 LineRunner 的逐片热解）
+                //   ⇒ 这一支对**任何**设计扫出来都是「第一列在变、其余列全同」，与下面 flangeTf 同一族；
+                //   带逐片圆盘保温的设计更扫不到（逐片值在板件 FlangePlate.DiscInsulThickMm 上，这里连板件都没有）。
+                //   全仓无调用方（界面只接了 insul／eps）。「Solve 不读圆盘保温」由 R48DiscInsulPerPlateGateTests 钉住，哪天管段模型读了它那条会红。
+                case "flangeInsul":
+                    throw new ArgumentException(
+                        "扫描量「flangeInsul」不可用：一维管段模型不含法兰，圆盘保温（含逐片设定）在这里不起作用，扫出来每一行都相同。"
+                        + "圆盘保温的影响要在整线核算里看。", nameof(what));
                 case "eps": q.PtEmissivity = v; break;
                 case "J": q.JAllowAPerMm2 = v; break;
 
@@ -383,7 +392,7 @@ public static class SegmentSolver
                 //   —— 「安静地给出可信外观的错误结果」，本项目的头号失效模式。
                 default:
                     throw new ArgumentException(
-                        $"未知的扫描量「{what}」。可用：insul / flangeInsul / eps / J", nameof(what));
+                        $"未知的扫描量「{what}」。可用：insul / eps / J", nameof(what));   // R48（2026-09-14，Opus 5）：flangeInsul 已拒绝，见上
             }
             var r = Solve(q);
             if (!r.Ok) continue;

@@ -814,6 +814,7 @@ public sealed class ManualPage : TabPage
     /// </param>
     private static string Bar(double actual, double limit, bool lessIsBetter = true)
     {
+        if (double.IsNaN(actual)) return "<span class=\"pct\">判不了</span>";   // R47 第三轮 N5：图纸档没有板厚的那一行
         double raw = lessIsBetter ? limit - actual : actual - limit;
 
         // ★★★★★ 2026-09-02：**越限必须画成越限**，不许被 Clamp 抹成「余量 2 %」。
@@ -864,7 +865,7 @@ public sealed class ManualPage : TabPage
         double tangentM = Math.Sqrt(Math.Max(0, fd.DiscRadiusMm * fd.DiscRadiusMm
                         - Math.Min(fd.TabHalfWidthMm, fd.DiscRadiusMm)
                         * Math.Min(fd.TabHalfWidthMm, fd.DiscRadiusMm)));
-        double weldLegM = Math.Max(fd.TabThickMm.Max(), fd.WallMm);
+        double weldLegM = fd.IsDrawingRecord ? double.NaN : Math.Max(fd.TabThickMm.Max(), fd.WallMm);   // R47 第三轮 N5：图纸档没有板厚 ⇒ 这一行判不了
         // 末位 less = 判据方向：true 是「≤ 限值」，false 是「≥ 下界」。
         // ⚠ 方向必须逐条写明 —— ⑤ 是唯一一条「越大越好」的，漏了就会把更安全的设计显示成违规。
         // ★★★ 2026-08-30：**去掉判据代号**（用户：「UI 内严禁使用 ②′ 这类的表示，
@@ -930,7 +931,13 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
         sb.Append($"<h1>Pt_Optimize 使用说明</h1>");
         sb.Append($"<p class=\"lede\">当前设计记录：<b>{fd.Name}</b>　合计 <b>{fd.TotalMassG:0} g</b>" +
                   $"（管 {fd.TubeMassG:0} + 法兰 {fd.FlangeMassG:0}）<br>" +
-                  $"咬住它的：{fd.Binding}</p>");
+                  $"咬住它的：{Md(fd.Binding)}</p>");   // R47 第三轮 N6：Binding 里的 ** 走 Md() 转粗体，不许字面印出来
+        // ★ R47 第三轮 N5（2026-09-13）：图纸档没有解析板 —— 下面按解析几何画的图 2～4、逐片表、判据表里按板厚算的那一行
+        //   都造不出来；印这一句，不造解析法兰、不算。
+        if (fd.IsDrawingRecord)
+            sb.Append("<div class=\"note\" style=\"border-left-width:6px\"><b>本档出自图纸路径。</b>" +
+                      H(DesignSpec.DrawingRefusal) + "<br>下面按解析几何画的法兰图与逐片板厚表对图纸档不适用，已略去；" +
+                      $"图纸文件：{H(string.Join("、", fd.FlangeFile3dm.Distinct()))}；逐片厚度倍数 k：{H(DesignSpec.Fmt(fd.ThicknessScale, "0.00"))}。</div>");
 
         // ★★★ 失效告示必须在**标题下面第一块**（2026-08-17）。
         //   说明书是最容易被当成结论直接引用的一份东西：它有排版、有图、有判据表，
@@ -1140,7 +1147,8 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                 + "「舌片自由段」与「圆盘盖得住管孔」两条几何判据要靠它才判得了；不先分析，这两条是「无法判定」，而<b>无法判定不算通过</b>，出图那一页永远开不了。</div>");
         sb.Append("<table class=\"nw\"><tr><th>这个模式下不一样的地方</th><th>说明</th></tr>"
                 + "<tr><td>四个厚度框的含义</td><td>不再是<b>板厚 mm</b>，而是<b>厚度倍数</b>（图纸整体 ×k，1.0 = 按原尺寸）。切换模式时两组值会自动交换</td></tr>"
-                + "<tr><td>舌保温 mm（.3dm）</td><td>可调；默认 0 = 裸舌</td></tr>"
+                + "<tr><td>舌保温</td><td>与解析模式共用「① 输入」页的逐片舌保温表，逐片可不同，0.3–80 mm（没有「裸舌」档：下界 0.3 与解析模式一致）</td></tr>"
+                + "<tr><td>加密复算／细网格重解</td><td>复核用的就是这张图纸（同一张厚度场，不换零件），要先「分析几何变数」；没分析过按钮灰着，鼠标停上去会说明理由</td></tr>"
                 + "<tr><td>「自动定厚」</td><td>逐级定厚（只调各级厚度倍数）。<b>要先分析</b>，否则没有分级可调</td></tr>"
                 + "<tr><td>「◇ 搜形状」</td><td>禁用 —— 形状由图纸给定；要搜形状先点「◈ 图纸几何 → 参数」把图纸变成参数</td></tr>"
                 + "<tr><td>出图</td><td>「导出本页 3DM」逐片按各自倍数另存：轮廓、管孔、开槽、各级台阶半径全不动，只有厚度按倍数变</td></tr></table>");
@@ -1161,6 +1169,10 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                   "两段电流相位差 120°，它要承担 √3 倍电流，发热是端片的 3 倍 ⇒ 现场失效多半出在共用片上。</div></div>");
 
         sb.Append("<h2>4. 法兰长什么样</h2>");
+        if (fd.IsDrawingRecord)
+            sb.Append("<div class=\"note\">本档的法兰几何在图纸 .3dm 里，不是程序生成的解析形状 —— 这一节的图与逐片板厚表按解析几何画，对图纸档不适用。" +
+                      "要看图纸的几何，请在「① 输入」页载入本档、点「分析几何变数」。</div>");
+        else {
         sb.Append($"<div class=\"fig\">{SvgPlate(fd)}" +
                   $"<div class=\"cap\"><b>图 2　法兰平面图。</b>板面在 XZ 平面、厚度沿 Y（与 3DM 图纸的方位一致）。" +
                   $"舌根圆角 R{fd.TabFilletMm:0} 不是装饰：电流最挤的地方就在这个凹角上。<br>" +
@@ -1202,6 +1214,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
                      "端片要靠保温保住热，共用片本身发热过剩、几乎要裸露散热。<b>不能做成同一规格。</b>"
                    : $"本档各片舌保温都在 {insLo:0.0}–{insHi:0.0} mm，<b>几乎等于不包</b>：舌片宽、电阻小、自身发热少，反而要留着散热能力才抽得动管子里的热。" +
                      "<br>舌保温不花铂（只是纤维），所以铂重只由板厚和舌片尺寸决定。") + "</p>");
+        }   // R47 第三轮 N5：解析档才画
 
         sb.Append("<h2>5. 判据表怎么读</h2>");
         sb.Append("<p>判据表每一行是一条要过的线。<b>裕度</b>是离限值还有多远：越大越稳；贴着限值的「过」不算真过。" +
@@ -1223,7 +1236,7 @@ border:1px solid var(--rule);border-radius:3px;font-size:.88em}
             double v = VerifOf(n);
             bool hasV = !double.IsNaN(v);
             double forBar = hasV ? v : a;
-            sb.Append($"<tr><td>{n}</td><td>{k}</td><td class=\"n\">{a:0.000} {u}</td>" +
+            sb.Append($"<tr><td>{n}</td><td>{k}</td><td class=\"n\">{(double.IsNaN(a) ? "判不了（图纸档没有板厚）" : $"{a:0.000} {u}")}</td>" +
                       (anyVerif ? $"<td class=\"n\"><b>{(hasV ? v.ToString("0.000") + " " + u : "—")}</b></td>" : "") +
                       $"<td class=\"n\">{(Math.Abs(l) < 1e-9 ? "> 0" : (less ? "≤ " : "≥ ") + l.ToString("0.00"))}</td>" +
                       $"<td>{Bar(forBar, l, less)}</td></tr>");

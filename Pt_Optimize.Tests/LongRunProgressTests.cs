@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Collections.Generic;
 using System.IO;
 using PtOptimize.Core;
@@ -137,17 +138,36 @@ public class LongRunProgressTests
     }
 
     /// <summary>
-    /// ★ 中带确认是整趟里**最贵的单步**（实测 ≥ 3 时 43 分），
-    /// 它必须报进度、必须给下界估时 —— 此前两样都没有，实测静默 29 分钟。
+    /// ★ 中带确认曾是整趟里**最贵的单步**（实测 ≥ 3 时 43 分），它必须报进度、必须给下界估时 ——
+    /// 此前两样都没有，实测静默 29 分钟，被当成死机。
+    ///
+    /// ★★ R48（2026-09-13，Opus 5）改写：主循环已改成**整档一起加密**，中带不再固定，
+    ///   「判据不再变」本身就覆盖了中带粗糙度这一条 ⇒ 中带确认**不再解场**（只记一句说明）。
+    ///   原来那三条断言钉的是它解场时的进度与估时，对象没了就会永远红。
+    ///   但**那条安全线不能跟着消失**：真正要守的是「MeshVerify 里任何一次整线场解都带着进度回调」——
+    ///   哪天有人把中带确认恢复回来（或加别的长跑步骤），忘了给进度，这里照样要红。
+    ///   ⇒ 断言改成钉这件更本质的事，外加钉住「中带确认现在为什么不解场」这句说明还在。
     /// </summary>
     [Fact]
-    public void 中带确认有进度也有估时()
+    public void MeshVerify里的长跑场解都带着进度回调()
     {
         string s = Core("MeshVerify.cs");
-        Assert.Contains("var rc = LineRunner.Run(lcC, innerC, cancel);", s);
-        Assert.Contains("**至少 {floorC}**", s);
-        Assert.Contains("这是下界，不是估计", s);
-        Assert.Contains("中带确认：场解完成 —— 用时", s);
+        // ① 每一处 LineRunner.Run(...) 都不许传 null 进度：静默长跑正是当年被 kill 掉四小时的那个病
+        var calls = System.Text.RegularExpressions.Regex.Matches(s, @"LineRunner\.Run\(([^;]*?)\);");
+        Assert.True(calls.Count > 0, "MeshVerify 里一处整线场解都找不到 —— 文件被改过？");
+        foreach (System.Text.RegularExpressions.Match c in calls)
+        {
+            string args = c.Groups[1].Value;
+            Assert.DoesNotContain("null", args);
+            Assert.True(args.Contains("inner") || args.Contains("progress"),
+                $"这处场解没带进度回调：LineRunner.Run({args}) —— 长跑必须看得出还活着");
+        }
+        // ② 每档的耗时与估时照旧要报
+        Assert.Contains("本档估", s);
+        Assert.Contains("**偏乐观**", s);
+        // ③ 中带确认为什么不再解场，要在代码里说清楚（将来改回分区加密时必须恢复）
+        Assert.Contains("整档一起加密", s);
+        Assert.Contains("若哪天主循环改回", s);
     }
 
     /// <summary>
@@ -238,5 +258,45 @@ public class LongRunProgressTests
         private readonly List<string> _to;
         public Sink(List<string> to) => _to = to;
         public void Report(string value) => _to.Add(value);
+    }
+
+    /// <summary>
+    /// ★★ R48（2026-09-13，Opus 5；用户 09-13 定的规矩）：**长跑每一轮都要有「结果」，不能只有「输入」**。
+    ///
+    /// 用户原话：「以后跑长测试还是要放探针，或者每轮计算口会有结果出来，以利分析是否有问题」。
+    /// 求根一趟一两个小时，此前每轮只印九根旋钮与铂重（都是**输入**），
+    /// 判据值（**输出**）要等收尾才出来 —— 跑到一半看不出离目标多远、方向对不对，白跑也只能等到最后才知道。
+    /// 这与「九根旋钮全印」是同一族教训：那条治的是「看不见的几何」，这条治的是「看不见的进展」。
+    /// </summary>
+    [Fact]
+    public void 求根每一轮都要印判据值与离限值多远()
+    {
+        string s = Core("Solver.cs");
+        Assert.Contains("这一轮的判据", s);
+        // 三条主判据都要有，缺一条就等于那一条的进展看不见
+        Assert.Contains("LineResult.Key.NetFlux", s);
+        Assert.Contains("LineResult.Key.DiscTemp", s);
+        Assert.Contains("LineResult.Key.FlangeDip", s);
+        // 不只印值，还要印「离限值多远」—— 只有值的话，读的人得自己去翻限值
+        Assert.Contains("裕", s);
+        Assert.Contains("超", s);
+        // ★ R48（2026-09-14，Opus 5）：还要印**取自哪一片／哪一段**，以及**逐片抽热**。
+        //   09-14 实测：净流入取最小那片、增量温降取最差那段，而「最差是谁」会随旋钮换人 ——
+        //   同一个动作（只削片2 0.2 mm）在一个基线上让增量温降一点没动、在另一个基线上直接顶穿
+        //   （5.377→5.377 对 0.586→13.806）。只印判据值，读的人必然拿两点之差推错因果。
+        Assert.Contains("取自 ", s);
+        Assert.Contains("逐片抽热", s);
+        // 这一行必须紧跟在旋钮那一行之后（同一轮的输入与输出要挨着，别隔着几十行）
+        // ★ R48（2026-09-14，Opus 5）：量距离前**先把注释行剔掉**。
+        //   本门原来量的是源码字符距离，于是「在两行之间补一段说明」会让门变红 ——
+        //   它守的是**输出**里两行挨着，跟中间写了多少注释无关。
+        //   把注释算进距离，等于惩罚写注释，而这个仓库恰恰要求注释写清楚为什么。
+        //   （09-14 我补「最差是哪片会换」那段注释时当场撞上，改的是门，不是删注释。）
+        string code = string.Join("\n", s.Split('\n')
+            .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
+        int knobs = code.IndexOf("孔形 {string.Join", StringComparison.Ordinal);
+        int crit = code.IndexOf("这一轮的判据", StringComparison.Ordinal);
+        Assert.True(knobs > 0 && crit > knobs && crit - knobs < 2000,
+            "判据那一行离旋钮那一行太远 —— 同一轮的输入与输出要挨着印");
     }
 }

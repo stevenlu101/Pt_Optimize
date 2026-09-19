@@ -282,7 +282,9 @@ public static class LineSolver
         ExtensionMm = s.ExtensionMm,
         ExtHalfWidthMm = s.ExtHalfWidthMm,
         ThickenRadiusMm = s.ThickenRadiusMm,
-        ThickenedMm = s.ThickenedMm
+        ThickenedMm = s.ThickenedMm,
+        // R48（2026-09-14，Opus 5）：逐片圆盘保温跟着板件走 —— 漏抄它，CoupledSolver 里本片就退回整线值（手抄清单的老病，其余没抄的字段本批未动）
+        DiscInsulThickMm = s.DiscInsulThickMm,
     };
 
     /// <summary>为该段挑最省成本的可行牌号</summary>

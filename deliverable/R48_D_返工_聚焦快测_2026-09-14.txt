@@ -1,0 +1,64 @@
+D:\WinForm\r48_D\Pt_Optimize.Tests\bin\Debug\net8.0-windows\Pt_Optimize.Tests.dll (.NETCoreApp,Version=v8.0)的测试运行
+VSTest 版本 18.0.1 (x64)
+
+正在启动测试执行，请稍候...
+总共 1 个测试文件与指定模式相匹配。
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.28)
+[xUnit.net 00:00:00.04]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:00.11]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:00.12]   Starting:    Pt_Optimize.Tests
+  已通过 PtOptimize.Tests.ConvCharLenTests.强制对流下它是强相关的_现场一吹风就咬 [2 ms]
+  已通过 PtOptimize.Tests.ConvCharLenTests.自然对流的h确实随特征长度变_所以这个数是承重的 [< 1 ms]
+  已通过 PtOptimize.Tests.ConvCharLenTests.默认值保持现状_不擅自改动设计记录的口径 [< 1 ms]
+  已通过 PtOptimize.Tests.SilentKnobTests.自证_改焊接参数确实会改下界_否则上一条没有意义 [5 ms]
+  已通过 PtOptimize.Tests.SilentKnobTests.自证_串联导度必定小于两者中较小的那个 [< 1 ms]
+  已通过 PtOptimize.Tests.SilentKnobTests.自证_风速为零时强制对流本来就是零_所以默认口径不受影响 [< 1 ms]
+  已通过 PtOptimize.Tests.SilentKnobTests.复核报告必须用真实输入问下界 [3 ms]
+  已通过 PtOptimize.Tests.SilentKnobTests.热导模式下夹持通道要按串联算_不是判成零 [< 1 ms]
+  已通过 PtOptimize.Tests.ConvCharLenTests.四处各存一份已经收敛到唯一来源 [6 ms]
+  已通过 PtOptimize.Tests.SilentKnobTests.吹风必须能吹到保温面 [2 ms]
+  已通过 PtOptimize.Tests.R48DiscInsulPerPlateGateTests.源码门_Core里读圆盘保温的地方只有审过的几处 [18 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.Parse_RejectsMissingRequired(drop: "checks") [33 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.Parse_RejectsMissingRequired(drop: "tabThickMm") [2 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.Parse_RejectsMissingRequired(drop: "name") [1 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.Parse_RejectsMissingRequired(drop: "discRadiusMm") [1 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.Parse_RejectsMissingRequired(drop: "wallMm") [1 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_RebuildsIdenticalCase(idx: 0) [9 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_RebuildsIdenticalCase(idx: 2) [5 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_RebuildsIdenticalCase(idx: 1) [4 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_RebuildsIdenticalCase(idx: 3) [4 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_图纸档厚度倍数k存读逐字_板厚为NaN_拒绝造解析板_解析档不受影响 [23 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_保住加密复算的口径 [6 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_LosesNoField [16 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.Save_RefusesOverwrite [< 1 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.样本必须覆盖每一个会进设计的字段 [1 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_逐片圆盘保温部分设定_NaN存成null读回仍沿用整线 [10 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_渐变环旋钮的部分设定也要保住 [4 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_图纸来源与文件名 [11 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.Parse_旧档单个舌保温读回填成所有片并有说明 [5 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_逐片圆盘保温_存读逐片_算例取值相同 [5 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.Parse_RejectsWrongArrayLength [4 ms]
+�ܱ��� 5 mm��1214 A��40 mm��642 A
+��Ƶ������¿� 20 ��C/h �չ����� 25��1150 ��C������׼��̬ I2R=ɢ��+C��? ȫ�̷�ֵ������ 1214/1214 A ? Ƭ 1214/2102/1214 A������Ƭʸ���ϳɣ������ա����ڵ㺬�������� 1173/1164 A�������ߴ�����
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_KeepsRecordedChecks [4 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.Parse_旧档没有逐片圆盘保温键_读回为空_算例逐位不变 [10 ms]
+  已通过 PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_没验过就该还是没验过 [3 ms]
+  已通过 PtOptimize.Tests.DesignCurrentTests.管保温加厚_设计电流下降 [488 ms]
+  已通过 PtOptimize.Tests.DesignCurrentTests.两段三片_端片等于段峰值_共用片矢量合成 [214 ms]
+  已通过 PtOptimize.Tests.R48DiscInsulPerPlateGateTests.设计电流的两节点对照_逐片圆盘保温必填_ForLine按片取值 [983 ms]
+  已通过 PtOptimize.Tests.R48DiscInsulPerPlateGateTests.圆盘保温0mm时四个消费方都按裸铂表面 [1 s]
+  已通过 PtOptimize.Tests.R48DiscInsulPerPlateGateTests.配套清单与安装报告印的逐片圆盘保温与算例同源 [7 ms]
+  已通过 PtOptimize.Tests.R48DiscInsulPerPlateGateTests.唯一取值口径的约定 [< 1 ms]
+  已通过 PtOptimize.Tests.R48DiscInsulPerPlateGateTests.一维管段不读圆盘保温_扫描flangeInsul拒绝并说明 [1 s]
+  已通过 PtOptimize.Tests.R48DiscInsulPerPlateGateTests.旧耦合链的二维法兰热解按板件圆盘保温 [4 s]
+  已通过 PtOptimize.Tests.DesignCurrentTests.管J许用压小_升温电流被截住_判据一不过 [41 s]
+�� 1 ��ֵ 1214 A��׼��̬(1150 ��C) 1214 A���� 1.000
+R_��(1150) = 1.106 m����I2R = 1630 W
+[xUnit.net 00:00:43.31]   Finished:    Pt_Optimize.Tests
+  已通过 PtOptimize.Tests.DesignCurrentTests.法兰更重_设计电流不降 [419 ms]
+  已通过 PtOptimize.Tests.DesignCurrentTests.独立核数_升温末端电流约等于准静态电流 [209 ms]
+
+测试运行成功。
+测试总数: 45
+     通过数: 45
+总时间: 43.5712 秒

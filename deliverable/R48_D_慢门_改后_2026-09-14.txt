@@ -1,0 +1,17 @@
+D:\WinForm\r48_D\Pt_Optimize.Tests\bin\Debug\net8.0-windows\Pt_Optimize.Tests.dll (.NETCoreApp,Version=v8.0)的测试运行
+VSTest 版本 18.0.1 (x64)
+
+正在启动测试执行，请稍候...
+总共 1 个测试文件与指定模式相匹配。
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.28)
+[xUnit.net 00:00:00.05]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:00.16]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:00.16]   Starting:    Pt_Optimize.Tests
+  已通过 PtOptimize.Tests.R48DiscInsulPerPlateGateTests.解析路径_逐片5与整线5逐位相同_整线20对照不同 [4 m 21 s]
+[xUnit.net 00:06:36.47]   Finished:    Pt_Optimize.Tests
+  已通过 PtOptimize.Tests.R48DiscInsulPerPlateGateTests.图纸路径_逐片数组与整线值逐位相同_逐片各异时各片用各自的值 [2 m 14 s]
+
+测试运行成功。
+测试总数: 2
+     通过数: 2
+总时间: 6.6167 分钟

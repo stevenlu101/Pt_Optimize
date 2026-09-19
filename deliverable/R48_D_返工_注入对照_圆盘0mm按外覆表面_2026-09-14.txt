@@ -1,0 +1,65 @@
+D:\WinForm\r48_D\Pt_Optimize.Tests\bin\Debug\net8.0-windows\Pt_Optimize.Tests.dll (.NETCoreApp,Version=v8.0)的测试运行
+VSTest 版本 18.0.1 (x64)
+
+正在启动测试执行，请稍候...
+总共 1 个测试文件与指定模式相匹配。
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.28)
+[xUnit.net 00:00:00.20]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:00.28]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:00.29]   Starting:    Pt_Optimize.Tests
+[xUnit.net 00:00:00.33]     PtOptimize.Tests.R48DiscInsulPerPlateGateTests.源码门_Core里读圆盘保温的地方只有审过的几处 [FAIL]
+[xUnit.net 00:00:00.33]       「PlateFlux(」的调用点变了（吃圆盘保温的热解要按片给值；法兰表面热流只许一份配方）：
+  钉的 Core/DesignScreen.cs×1
+  实测 Core/DesignScreen.cs×1、Core/PlateThermal2D.cs×1、Core/RampTwoNode.cs×1、Core/ShellThermal.cs×1
+[xUnit.net 00:00:00.33]       Stack Trace:
+[xUnit.net 00:00:00.33]         D:\WinForm\r48_D\Pt_Optimize.Tests\R48DiscInsulPerPlateGateTests.cs(569,0): at PtOptimize.Tests.R48DiscInsulPerPlateGateTests.源码门_Core里读圆盘保温的地方只有审过的几处()
+[xUnit.net 00:00:00.33]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+[xUnit.net 00:00:00.33]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  失败 PtOptimize.Tests.R48DiscInsulPerPlateGateTests.源码门_Core里读圆盘保温的地方只有审过的几处 [18 ms]
+  错误消息:
+   「PlateFlux(」的调用点变了（吃圆盘保温的热解要按片给值；法兰表面热流只许一份配方）：
+  钉的 Core/DesignScreen.cs×1
+  实测 Core/DesignScreen.cs×1、Core/PlateThermal2D.cs×1、Core/RampTwoNode.cs×1、Core/ShellThermal.cs×1
+  堆栈跟踪:
+     at PtOptimize.Tests.R48DiscInsulPerPlateGateTests.源码门_Core里读圆盘保温的地方只有审过的几处() in D:\WinForm\r48_D\Pt_Optimize.Tests\R48DiscInsulPerPlateGateTests.cs:line 569
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  已通过 PtOptimize.Tests.R48DiscInsulPerPlateGateTests.设计电流的两节点对照_逐片圆盘保温必填_ForLine按片取值 [993 ms]
+[xUnit.net 00:00:01.99]     PtOptimize.Tests.R48DiscInsulPerPlateGateTests.圆盘保温0mm时四个消费方都按裸铂表面 [FAIL]
+[xUnit.net 00:00:01.99]       Assert.Equal() Failure: Collections differ
+[xUnit.net 00:00:01.99]                  ↓ (pos 0)
+[xUnit.net 00:00:01.99]       Expected: [199.671158616421, 199.57757456784509, 199.44839830507615, 199.31277432333661, 199.18542205697523, ···]
+[xUnit.net 00:00:01.99]       Actual:   [183.93736446629492, 183.85507387382719, 183.74148067254717, 183.62221350638586, 183.51021816051087, ···]
+[xUnit.net 00:00:01.99]                  ↑ (pos 0)
+[xUnit.net 00:00:01.99]       Stack Trace:
+[xUnit.net 00:00:01.99]         D:\WinForm\r48_D\Pt_Optimize.Tests\R48DiscInsulPerPlateGateTests.cs(661,0): at PtOptimize.Tests.R48DiscInsulPerPlateGateTests.圆盘保温0mm时四个消费方都按裸铂表面()
+[xUnit.net 00:00:01.99]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+[xUnit.net 00:00:01.99]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:01.99]       Output:
+[xUnit.net 00:00:01.99]         圆盘保温 0 mm：壳解散热 934.3829066853574 / 1220.233184373845 W；旧链抽热 487.1581594374702 / 671.0631132123158 W；两节点法兰−管峰 0 / 0 K；热稳定表面导数 2.4755005537887427 / 2.4755005537887427 W/K（外覆 ε 0.45 / 0.90）
+  失败 PtOptimize.Tests.R48DiscInsulPerPlateGateTests.圆盘保温0mm时四个消费方都按裸铂表面 [669 ms]
+  错误消息:
+   Assert.Equal() Failure: Collections differ
+           ↓ (pos 0)
+Expected: [199.671158616421, 199.57757456784509, 199.44839830507615, 199.31277432333661, 199.18542205697523, ···]
+Actual:   [183.93736446629492, 183.85507387382719, 183.74148067254717, 183.62221350638586, 183.51021816051087, ···]
+           ↑ (pos 0)
+  堆栈跟踪:
+     at PtOptimize.Tests.R48DiscInsulPerPlateGateTests.圆盘保温0mm时四个消费方都按裸铂表面() in D:\WinForm\r48_D\Pt_Optimize.Tests\R48DiscInsulPerPlateGateTests.cs:line 661
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  标准输出消息:
+ 圆盘保温 0 mm：壳解散热 934.3829066853574 / 1220.233184373845 W；旧链抽热 487.1581594374702 / 671.0631132123158 W；两节点法兰−管峰 0 / 0 K；热稳定表面导数 2.4755005537887427 / 2.4755005537887427 W/K（外覆 ε 0.45 / 0.90）
+
+
+  已通过 PtOptimize.Tests.R48DiscInsulPerPlateGateTests.配套清单与安装报告印的逐片圆盘保温与算例同源 [14 ms]
+  已通过 PtOptimize.Tests.R48DiscInsulPerPlateGateTests.唯一取值口径的约定 [< 1 ms]
+  已通过 PtOptimize.Tests.R48DiscInsulPerPlateGateTests.一维管段不读圆盘保温_扫描flangeInsul拒绝并说明 [1 s]
+[xUnit.net 00:00:07.57]   Finished:    Pt_Optimize.Tests
+  已通过 PtOptimize.Tests.R48DiscInsulPerPlateGateTests.旧耦合链的二维法兰热解按板件圆盘保温 [4 s]
+
+测试运行失败。
+测试总数: 7
+     通过数: 5
+     失败数: 2
+总时间: 7.8266 秒

@@ -1,0 +1,1738 @@
+diff --git a/Pt_Optimize.Tests/ConvCharLenTests.cs b/Pt_Optimize.Tests/ConvCharLenTests.cs
+index d47d152..1199552 100644
+--- a/Pt_Optimize.Tests/ConvCharLenTests.cs
++++ b/Pt_Optimize.Tests/ConvCharLenTests.cs
+@@ -40,13 +40,22 @@ public class ConvCharLenTests
+     {
+         string root = HandoverDoc.Root();
+         foreach (var f in new[] { "Pt_Optimize/Core/ShellThermal.cs",
+-                                  "Pt_Optimize/Core/DesignScreen.cs",
+-                                  "Pt_Optimize/Core/RampTwoNode.cs" })
++                                  "Pt_Optimize/Core/DesignScreen.cs" })
+         {
+             string s = File.ReadAllText(Path.Combine(root, f));
+             Assert.DoesNotContain("double charLen = 0.05;", s);   // 不许再各存一份
+             Assert.Contains("p.ConvCharLenM", s);                 // 都从同一处取
+         }
++        // ★ R48（2026-09-14，Opus 5）有意改断言：RampTwoNode 原断言「文件里含 p.ConvCharLenM」→ 新断言「法兰表面热流经唯一配方 DesignScreen.PlateFluxWPerM2」
++        //   （那份配方自己读 p.ConvCharLenM，上面钉着）；PlateThermal2D 原写死 `double charLen = 0.05;`，同批改走唯一配方，一并钉进来。
++        //   原因：审查意见「圆盘保温 0 mm 时四个消费方物理含义不一致」的修法是法兰表面热流只留一份配方，这两个文件不再自己持有特征长度。
++        //   依据文件：Pt_Optimize/Core/RampTwoNode.cs、Pt_Optimize/Core/PlateThermal2D.cs、Pt_Optimize/Core/DesignScreen.cs。
++        foreach (var f in new[] { "Pt_Optimize/Core/RampTwoNode.cs", "Pt_Optimize/Core/PlateThermal2D.cs" })
++        {
++            string s = File.ReadAllText(Path.Combine(root, f));
++            Assert.DoesNotContain("charLen = 0.05", s);
++            Assert.Contains("DesignScreen.PlateFluxWPerM2(", s);
++        }
+     }
+ 
+     /// <summary>
+diff --git a/Pt_Optimize.Tests/DesignSpecStoreTests.cs b/Pt_Optimize.Tests/DesignSpecStoreTests.cs
+index 0d0a7c9..133e7b9 100644
+--- a/Pt_Optimize.Tests/DesignSpecStoreTests.cs
++++ b/Pt_Optimize.Tests/DesignSpecStoreTests.cs
+@@ -145,6 +145,11 @@ public class DesignSpecStoreTests
+         d.RingWidthMm = 4.25;
+         d.FlangeInsulMm = 17.5;
+         d.FlangeInsulated = false;           // 默认是 true
++        // ★ R48（2026-09-14，Opus 5）：逐片圆盘保温进了设计（DesignSpec.DiscInsulMm → FlangePlate.DiscInsulThickMm），默认是空数组 ⇒
++        //   不给值「样本必须覆盖每一个会进设计的字段」当场红、往返对它空转。四片四个不同的数，且都不等于 FlangeInsulMm（错位、退回整线值都看得出）。
++        //   ⚠ 本样本 FlangeInsulated = false ⇒ 算例里实际取值全是 0；板件上的 DiscInsulThickMm 仍逐片进 LineCase 序列化，往返照样钉得住。
++        //     「包着时逐片取值往返后相同」另见 RoundTrip_逐片圆盘保温_存读逐片_算例取值相同。
++        d.DiscInsulMm = new[] { 3.5, 7.0, 12.5, 16.0 };
+         d.ClampLengthMm = 37.0;
+         d.ClampTempC = 285.0;
+         d.SetpointC = new[] { 1141.0, 1071.0, 1041.0 };
+@@ -216,10 +221,108 @@ public class DesignSpecStoreTests
+             Assert.NotEqual(def.RingWidthMm, src.RingWidthMm);
+             Assert.NotEqual(def.ClampLengthMm, src.ClampLengthMm);
+             Assert.NotEqual(def.FlangeInsulated, src.FlangeInsulated);
++            // R48（2026-09-14，Opus 5）：逐片圆盘保温逐片读回，且真的进了算例的板件（不是只在 DesignSpec 上）
++            Assert.NotEmpty(src.DiscInsulMm);
++            Assert.Equal(src.DiscInsulMm, back.DiscInsulMm);
++            var lcBack = back.BuildCase(p, checkRamp: true);
++            Assert.Equal(src.DiscInsulMm, lcBack.FlangePlates.Select(g => g.DiscInsulThickMm).ToArray());
+         }
+         finally { if (w is not null) { try { File.Delete(w); } catch { } } }
+     }
+ 
++    /// <summary>
++    /// ★ R48（2026-09-14，Opus 5）：逐片圆盘保温**包着时**（FlangeInsulated = true）的往返 —— Distinctive() 为了覆盖 FlangeInsulated 用的是「不包」，
++    /// 那样算例里实际取值全是 0，逐片值错了也看不出。这里存→读后，算例逐片实际取值（LineCase.DiscInsulEffectiveAt）必须与存之前逐位相同、
++    /// 且与 DesignSpec.DiscInsulMmOf 相同（同源），并且四片确实各不相同（不是整线值）。
++    /// </summary>
++    [Fact]
++    public void RoundTrip_逐片圆盘保温_存读逐片_算例取值相同()
++    {
++        var src = Distinctive();
++        src.FlangeInsulated = true;
++        src.Name = "★往返测试★ 逐片圆盘保温 " + Guid.NewGuid().ToString("N")[..6];
++        var p = new DesignInputs();
++        string? w = null;
++        try
++        {
++            w = DesignSpecStore.Save(src);
++            string json = File.ReadAllText(w);
++            Assert.Contains("\"discInsulMm\"", json);
++            var back = Parse(json);
++            Assert.Equal(src.DiscInsulMm, back.DiscInsulMm);
++            var a = src.BuildCase(p, checkRamp: true);
++            var b = back.BuildCase(p, checkRamp: true);
++            Assert.Equal(src.FlangeCount, a.FlangeCount);
++            for (int j = 0; j < src.FlangeCount; j++)
++            {
++                Assert.Equal(src.DiscInsulMm[j], a.DiscInsulEffectiveAt(j));          // 包着 ⇒ 取的是本片的值
++                Assert.Equal(a.DiscInsulEffectiveAt(j), b.DiscInsulEffectiveAt(j));   // 往返逐位相同
++                Assert.Equal(back.DiscInsulMmOf(j), b.DiscInsulEffectiveAt(j));       // 清单口径与算例同源
++            }
++            Assert.Equal(src.FlangeCount, a.FlangePlates.Select(g => g.DiscInsulEffectiveMm(a.Base)).Distinct().Count());
++            Assert.NotEqual(src.FlangeInsulMm, a.DiscInsulEffectiveAt(0));
++        }
++        finally { if (w is not null) { try { File.Delete(w); } catch { } } }
++    }
++
++    /// <summary>
++    /// ★ R48（2026-09-14，Opus 5）：**旧档**（没有 discInsulMm 键 —— 该键 2026-09-14 才加）读回 DiscInsulMm 为空，BuildCase 造出的算例
++    /// 与原设计**逐位相同**（整份 LineCase 序列化比，含板件 DiscInsulThickMm = NaN 与逐片实际取值 = 整线值）。
++    /// 另钉写法：没有逐片值的设计存出来**不写**这个键（旧档逐字不变的前提）；有值的档把键删掉 ⇒ 与「从来没设过」的设计逐位相同。
++    /// </summary>
++    [Fact]
++    public void Parse_旧档没有逐片圆盘保温键_读回为空_算例逐位不变()
++    {
++        var p = new DesignInputs();
++        string J(LineCase c) => System.Text.Json.JsonSerializer.Serialize(c,
++            new System.Text.Json.JsonSerializerOptions
++            {
++                IncludeFields = true,
++                NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals,
++            });
++        // ① 内置档（从来没有逐片圆盘保温）：写出来不带键 ⇒ 这就是旧档的形态
++        var an = DesignSpec.Builtin[0].Clone();
++        Assert.Empty(an.DiscInsulMm);
++        an.Name = "★往返测试★ 旧档圆盘保温 " + Guid.NewGuid().ToString("N")[..6];
++        // ② 带逐片值的档，删掉键 ⇒ 模拟「该键出现之前写的档」
++        var withDisc = Distinctive();
++        withDisc.FlangeInsulated = true;
++        withDisc.Name = "★往返测试★ 删键 " + Guid.NewGuid().ToString("N")[..6];
++        string? w1 = null, w2 = null;
++        try
++        {
++            w1 = DesignSpecStore.Save(an);
++            string json1 = File.ReadAllText(w1);
++            Assert.DoesNotContain("discInsulMm", json1);
++            var back1 = Parse(json1);
++            Assert.Empty(back1.DiscInsulMm);
++            var lc0 = an.BuildCase(p, checkRamp: true);
++            var lc1 = back1.BuildCase(p, checkRamp: true);
++            Assert.Equal(J(lc0), J(lc1));
++            for (int j = 0; j < lc1.FlangeCount; j++)
++            {
++                Assert.True(double.IsNaN(lc1.FlangePlates[j].DiscInsulThickMm), $"片{j} 旧档的板件不该带逐片圆盘保温");
++                Assert.Equal(lc1.Base.FlangeInsulThickMm, lc1.DiscInsulEffectiveAt(j));
++                Assert.Equal(an.DiscInsulMmOf(j), lc1.DiscInsulEffectiveAt(j));
++            }
++
++            w2 = DesignSpecStore.Save(withDisc);
++            var node = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(w2))!.AsObject();
++            Assert.True(node.Remove("discInsulMm"), "档里本该有 discInsulMm 键（否则本例空转）");
++            var back2 = Parse(node.ToJsonString());
++            Assert.Empty(back2.DiscInsulMm);
++            var never = withDisc.Clone();
++            never.DiscInsulMm = Array.Empty<double>();
++            Assert.Equal(J(never.BuildCase(p, checkRamp: true)), J(back2.BuildCase(p, checkRamp: true)));
++            Assert.NotEqual(J(withDisc.BuildCase(p, checkRamp: true)), J(back2.BuildCase(p, checkRamp: true)));   // 删键确实改到了算例（门咬得住）
++        }
++        finally
++        {
++            if (w1 is not null) { try { File.Delete(w1); } catch { } }
++            if (w2 is not null) { try { File.Delete(w2); } catch { } }
++        }
++    }
++
+     /// <summary>
+     /// ★★★★★ **样本自己不许过期**（2026-09-02）。
+     ///
+@@ -366,6 +469,65 @@ public class DesignSpecStoreTests
+         finally { if (w is not null) { try { File.Delete(w); } catch { } } }
+     }
+ 
++    /// <summary>
++    /// ★ R48（2026-09-14，Opus 5；审查意见：「某片 NaN = 沿用整线」已是逐片圆盘保温的正式语义，而档的 discInsulMm 原是 double[]、JSON 写不了 NaN，
++    /// 带 NaN 的设计一存就抛、报错看不出是哪个字段）：**部分设定**存得下、读得回 —— 逐片 NaN ↔ null（与 ringMul2 同一做法），
++    /// 读回后算例逐片实际取值与存之前逐位相同、与清单口径 DiscInsulMmOf 同源；全是 NaN 与空同义：不写键、读回为空、算例同「从没设过」。
++    /// </summary>
++    [Fact]
++    public void RoundTrip_逐片圆盘保温部分设定_NaN存成null读回仍沿用整线()
++    {
++        var p = new DesignInputs();
++        var src = Distinctive();
++        src.FlangeInsulated = true;
++        src.DiscInsulMm = new[] { 3.5, double.NaN, 12.5, double.NaN };
++        src.Name = "★往返测试★ 部分圆盘保温 " + Guid.NewGuid().ToString("N")[..6];
++        var allNaN = src.Clone();
++        allNaN.DiscInsulMm = new[] { double.NaN, double.NaN, double.NaN, double.NaN };
++        allNaN.Name = "★往返测试★ 全NaN圆盘保温 " + Guid.NewGuid().ToString("N")[..6];
++        string? w1 = null, w2 = null;
++        try
++        {
++            w1 = DesignSpecStore.Save(src);                       // 修前：这里抛（JSON 写不了 NaN）
++            string json1 = File.ReadAllText(w1);
++            Assert.Contains("\"discInsulMm\"", json1);
++            var back = Parse(json1);
++            Assert.Equal(4, back.DiscInsulMm.Length);
++            Assert.Equal(3.5, back.DiscInsulMm[0]);
++            Assert.True(double.IsNaN(back.DiscInsulMm[1]));
++            Assert.Equal(12.5, back.DiscInsulMm[2]);
++            Assert.True(double.IsNaN(back.DiscInsulMm[3]));
++            var a = src.BuildCase(p, checkRamp: true);
++            var b = back.BuildCase(p, checkRamp: true);
++            for (int j = 0; j < src.FlangeCount; j++)
++            {
++                Assert.Equal(a.DiscInsulEffectiveAt(j), b.DiscInsulEffectiveAt(j));
++                Assert.Equal(back.DiscInsulMmOf(j), b.DiscInsulEffectiveAt(j));
++            }
++            Assert.Equal(src.FlangeInsulMm, b.DiscInsulEffectiveAt(1));   // NaN 那片沿用整线
++            Assert.Equal(12.5, b.DiscInsulEffectiveAt(2));
++
++            w2 = DesignSpecStore.Save(allNaN);
++            string json2 = File.ReadAllText(w2);
++            Assert.DoesNotContain("discInsulMm", json2);
++            var back2 = Parse(json2);
++            Assert.Empty(back2.DiscInsulMm);
++            var never = allNaN.Clone(); never.DiscInsulMm = Array.Empty<double>();
++            var lcNever = never.BuildCase(p, checkRamp: true);
++            var lcBack2 = back2.BuildCase(p, checkRamp: true);
++            for (int j = 0; j < src.FlangeCount; j++)
++            {
++                Assert.Equal(lcNever.DiscInsulEffectiveAt(j), lcBack2.DiscInsulEffectiveAt(j));
++                Assert.Equal(allNaN.DiscInsulMmOf(j), lcBack2.DiscInsulEffectiveAt(j));
++            }
++        }
++        finally
++        {
++            if (w1 is not null) { try { File.Delete(w1); } catch { } }
++            if (w2 is not null) { try { File.Delete(w2); } catch { } }
++        }
++    }
++
+     /// <summary>五个回归基准值也要原样带回来 —— 少一个，A 段就无从对账。</summary>
+     [Fact]
+     public void RoundTrip_KeepsRecordedChecks()
+diff --git a/Pt_Optimize.Tests/R48DiscInsulPerPlateGateTests.cs b/Pt_Optimize.Tests/R48DiscInsulPerPlateGateTests.cs
+new file mode 100644
+index 0000000..479970b
+--- /dev/null
++++ b/Pt_Optimize.Tests/R48DiscInsulPerPlateGateTests.cs
+@@ -0,0 +1,688 @@
++using System;
++using System.Collections.Generic;
++using System.Diagnostics;
++using System.IO;
++using System.Linq;
++using System.Text;
++using System.Text.RegularExpressions;
++using PtOptimize.Core;
++using Xunit;
++using Xunit.Abstractions;
++
++namespace PtOptimize.Tests;
++
++/// <summary>
++/// ★ R48（2026-09-14，Opus 5；数值把关人查出逐片圆盘保温还没接全）：**下游行为门**。
++///
++/// 逐片圆盘保温（DesignSpec.DiscInsulMm → FlangePlate.DiscInsulThickMm；图纸路径 LineCase.DiscInsul3dmPerPlateMm）
++/// 读值只有一个口径：<see cref="LineCase.DiscInsulEffectiveAt"/>。本组不查「哪几行调了它」，查**结果**：
++///   · 设计甲 整线 FlangeInsulMm = 20、逐片 {5,5,5,5}；设计乙 整线 5、逐片空 ⇒ 每一片实际都是 5 mm。
++///     两者 LineRunner.Run 的逐片抽热、盘峰、舌区峰、全部判据行（含整片热稳定、升温期法兰−管峰值、法兰截面 J 的两节点对照）
++///     必须**逐位相同** —— 链路上任何一处还读整线的 20，这里就不同。
++///   · 对照丙 整线 20、逐片空 ⇒ 必须与乙不同（证明门咬得住：圆盘保温确实改得动这些量）。
++///   · 图纸路径（内存厚度场）同样一组，外加对照丙′（判据几何带值、热解不读，必须写备注）；再加一条逐片各不相同的，
++///     用生产的 LineRunner.PlateThermalInputs + SolvePlateThermal 逐片重解壳，本片的保温对得上、别片的对不上（下标没错位）。
++/// 快门：配套清单与安装报告印出的逐片厚度 = DesignSpec.DiscInsulMmOf = LineCase.DiscInsulEffectiveAt（同源）；
++///       取值约定（规则本体 FlangePlate.DiscInsulEffective）；一维管段不读圆盘保温 ⇒ 扫描「flangeInsul」拒绝；旧耦合链按板件；
++///       设计电流两节点对照的取值必填且按片；圆盘保温 0 mm 时四个消费方都按裸铂表面；源码门（Core＋UI 读者与调用点钉行数、禁用整线读法）。
++/// 结果另写 deliverable/R48_逐片圆盘保温下游行为门_第二版_2026-09-14.txt 与 …_图纸路径_第二版_2026-09-14.txt（出处：本文件；
++/// 2026-09-14 Opus 5：第一版两份是返工前的输出，保留不改写）。
++/// </summary>
++public class R48DiscInsulPerPlateGateTests
++{
++    private readonly ITestOutputHelper _out;
++    public R48DiscInsulPerPlateGateTests(ITestOutputHelper o) { _out = o; }
++
++    private static readonly object FileLock = new();
++    private void Say(StringBuilder sb, string file, string s)
++    {
++        _out.WriteLine(s); sb.AppendLine(s);
++        lock (FileLock) { try { File.WriteAllText(file, sb.ToString(), new UTF8Encoding(false)); } catch { } }
++    }
++
++    /// <summary>两次整线解逐位比：段、逐片、全部判据行、求解备注。返回差异清单（空 = 逐位相同）。</summary>
++    internal static List<string> Diff(LineResult a, LineResult b)
++    {
++        var d = new List<string>();
++        void D(string what, double x, double y) { if (!x.Equals(y)) d.Add($"{what}：{x:R} ≠ {y:R}"); }
++        void S(string what, string x, string y) { if (!string.Equals(x, y, StringComparison.Ordinal)) d.Add($"{what}：「{x}」≠「{y}」"); }
++        void B(string what, bool x, bool y) { if (x != y) d.Add($"{what}：{x} ≠ {y}"); }
++        B("Ok", a.Ok, b.Ok); B("收敛", a.Converged, b.Converged); S("Message", a.Message, b.Message);
++        if (a.Segments.Length != b.Segments.Length) d.Add($"段数 {a.Segments.Length} ≠ {b.Segments.Length}");
++        for (int i = 0; i < Math.Min(a.Segments.Length, b.Segments.Length); i++)
++        {
++            var (x, y) = (a.Segments[i], b.Segments[i]);
++            D($"段{i} 电流", x.CurrentA, y.CurrentA); D($"段{i} 管根A", x.TRootAC, y.TRootAC); D($"段{i} 管根B", x.TRootBC, y.TRootBC);
++            D($"段{i} 增量温降", x.FlangeDipK, y.FlangeDipK);
++        }
++        if (a.Flanges.Length != b.Flanges.Length) d.Add($"片数 {a.Flanges.Length} ≠ {b.Flanges.Length}");
++        for (int j = 0; j < Math.Min(a.Flanges.Length, b.Flanges.Length); j++)
++        {
++            var (x, y) = (a.Flanges[j], b.Flanges[j]);
++            D($"片{j} 抽热", x.QFromTubeW, y.QFromTubeW); D($"片{j} 盘峰", x.TDiscMaxC, y.TDiscMaxC); D($"片{j} 舌区峰", x.TTabMaxC, y.TTabMaxC);
++            D($"片{j} 最高温", x.TMaxC, y.TMaxC); D($"片{j} 发热", x.QGenW, y.QGenW); D($"片{j} 散热", x.QLossW, y.QLossW);
++            D($"片{j} 舌端温", x.TTabEndC, y.TTabEndC); D($"片{j} 夹持带走", x.QClampW, y.QClampW);
++            D($"片{j} 局部热稳定", x.LocalStabMargin, y.LocalStabMargin); D($"片{j} 能量残差", x.EnergyResidualW, y.EnergyResidualW);
++            S($"片{j} 圆盘区规则", x.DiscZoneRule, y.DiscZoneRule); S($"片{j} 保温规则", x.InsulRule, y.InsulRule);
++        }
++        if (a.Checks.Length != b.Checks.Length) d.Add($"判据行数 {a.Checks.Length} ≠ {b.Checks.Length}");
++        for (int k = 0; k < Math.Min(a.Checks.Length, b.Checks.Length); k++)
++        {
++            var (x, y) = (a.Checks[k], b.Checks[k]);
++            S($"判据{k} 名", x.Name, y.Name);
++            D($"判据「{x.Name}」实际", x.Actual, y.Actual); D($"判据「{x.Name}」限值", x.Limit, y.Limit);
++            B($"判据「{x.Name}」过", x.Ok, y.Ok); B($"判据「{x.Name}」无法判定", x.Undetermined, y.Undetermined);
++            S($"判据「{x.Name}」位置", x.Where, y.Where); S($"判据「{x.Name}」说明", x.Note, y.Note);
++        }
++        if (a.Notes.Count != b.Notes.Count) d.Add($"求解备注条数 {a.Notes.Count} ≠ {b.Notes.Count}");
++        for (int k = 0; k < Math.Min(a.Notes.Count, b.Notes.Count); k++) S($"求解备注{k}", a.Notes[k], b.Notes[k]);
++        return d;
++    }
++
++    private static ConstraintOut Row(LineResult r, string key)
++    {
++        var c = r.Checks.FirstOrDefault(x => x.Name.StartsWith(key, StringComparison.Ordinal));
++        Assert.True(c is not null, $"判据表里没有「{key}」这一行 —— 门比不到它");
++        return c!;
++    }
++
++    // ════════════════════════════════════════════════════════════════
++    //  慢门一：解析路径（W08、默认三段、导航网格、不加密）
++    // ════════════════════════════════════════════════════════════════
++
++    [Trait("速度", "慢")]
++    [Fact]
++    public void 解析路径_逐片5与整线5逐位相同_整线20对照不同()
++    {
++        var sb = new StringBuilder();
++        string file = Path.Combine(HandoverDoc.Root(), "deliverable", "R48_逐片圆盘保温下游行为门_第二版_2026-09-14.txt");
++        void Say(string s) => this.Say(sb, file, s);
++        Say($"R48 逐片圆盘保温下游行为门 第二版（Opus 5）　{DateTime.Now:yyyy-MM-dd HH:mm}　出处：Pt_Optimize.Tests/R48DiscInsulPerPlateGateTests.cs");
++        Say("── 慢门一：解析路径　基准 DesignSpec.W08（默认段数）、LineCase 默认导航网格、BuildCase(p) 默认判升温");
++
++        var p = new DesignInputs();
++        DesignSpec Make(double whole, double[] perPlate)
++        {
++            var d = DesignSpec.W08.Clone();
++            d.FlangeInsulMm = whole; d.FlangeInsulated = true;
++            d.DiscInsulMm = (double[])perPlate.Clone();
++            return d.Fit();
++        }
++        int nf = DesignSpec.W08.Clone().Fit().FlangeCount;
++        var dA = Make(20.0, Enumerable.Repeat(5.0, nf).ToArray());   // 甲
++        var dB = Make(5.0, Array.Empty<double>());                    // 乙
++        var dC = Make(20.0, Array.Empty<double>());                   // 丙（对照）
++        var lcA = dA.BuildCase(p); var lcB = dB.BuildCase(p); var lcC = dC.BuildCase(p);
++
++        // 前提：甲乙的整线值确实不同、逐片实际取值确实相同 —— 否则「逐位相同」是空转
++        Assert.Equal(20.0, lcA.Base.FlangeInsulThickMm);
++        Assert.Equal(5.0, lcB.Base.FlangeInsulThickMm);
++        Assert.Equal(20.0, lcC.Base.FlangeInsulThickMm);
++        for (int j = 0; j < nf; j++)
++        {
++            Assert.Equal(5.0, lcA.FlangePlates[j].DiscInsulThickMm);
++            Assert.True(double.IsNaN(lcB.FlangePlates[j].DiscInsulThickMm));
++            Assert.Equal(5.0, lcA.DiscInsulEffectiveAt(j));
++            Assert.Equal(5.0, lcB.DiscInsulEffectiveAt(j));
++            Assert.Equal(20.0, lcC.DiscInsulEffectiveAt(j));
++        }
++        Say($"网格：细 {lcA.MeshFineMm} ／粗 {lcA.MeshCoarseMm} ／内带 {lcA.MeshInnerMm} mm；段数 {lcA.SegmentCount}、片数 {nf}");
++
++        LineResult Run(string name, LineCase lc)
++        {
++            var sw = Stopwatch.StartNew();
++            var r = LineRunner.Run(lc);
++            Say($"[{name}] Ok {r.Ok}　收敛 {r.Converged}　耗时 {sw.Elapsed.TotalSeconds:0} s　{(r.Ok ? "" : r.Message)}");
++            for (int j = 0; j < r.Flanges.Length; j++)
++            {
++                var f = r.Flanges[j];
++                Say($"    片{j} {f.Name}：抽热 {f.QFromTubeW:R} W　盘峰 {f.TDiscMaxC:R} °C　舌区峰 {f.TTabMaxC:R} °C");
++            }
++            foreach (var key in new[] { LineResult.Key.FlangeStab, LineResult.Key.RampField, LineResult.Key.SectionJ })
++            {
++                var c = r.Checks.FirstOrDefault(x => x.Name.StartsWith(key, StringComparison.Ordinal));
++                Say($"    {key}：{(c is null ? "（没有这一行）" : $"实际 {c.Actual:R}　{c.Note}")}");
++            }
++            return r;
++        }
++        var rA = Run("甲 整线20 逐片5", lcA);
++        var rB = Run("乙 整线5 逐片空", lcB);
++        var rC = Run("丙 整线20 逐片空（对照）", lcC);
++        Assert.True(rA.Ok, rA.Message); Assert.True(rB.Ok, rB.Message); Assert.True(rC.Ok, rC.Message);
++
++        // 三条会读圆盘保温的参考行都在、都判得出（否则比的是两个 NaN）
++        foreach (var r in new[] { rA, rB })
++        {
++            Assert.False(Row(r, LineResult.Key.FlangeStab).Undetermined, Row(r, LineResult.Key.FlangeStab).Note);
++            Assert.False(double.IsNaN(Row(r, LineResult.Key.RampField).Actual), Row(r, LineResult.Key.RampField).Note);
++            Assert.Contains("两节点", Row(r, LineResult.Key.SectionJ).Note);
++        }
++
++        var diffAB = Diff(rA, rB);
++        Say($"甲 vs 乙：{(diffAB.Count == 0 ? "逐位相同" : $"{diffAB.Count} 处不同")}");
++        foreach (var s in diffAB.Take(40)) Say("    " + s);
++
++        var diffBC = Diff(rB, rC);
++        bool stabDiff = diffBC.Any(s => s.StartsWith($"判据「{LineResult.Key.FlangeStab}", StringComparison.Ordinal));
++        bool rampDiff = diffBC.Any(s => s.StartsWith($"判据「{LineResult.Key.RampField}」实际", StringComparison.Ordinal));
++        bool secJDiff = diffBC.Any(s => s.StartsWith($"判据「{LineResult.Key.SectionJ}」说明", StringComparison.Ordinal));
++        bool drawDiff = diffBC.Any(s => s.Contains(" 抽热："));
++        Say($"乙 vs 丙（对照，门咬不咬得住）：{diffBC.Count} 处不同；逐片抽热 {(drawDiff ? "变" : "不变")}、整片热稳定 {(stabDiff ? "变" : "不变")}、"
++          + $"升温期法兰−管峰值 {(rampDiff ? "变" : "不变")}、法兰截面 J 说明（两节点对照）{(secJDiff ? "变" : "不变")}");
++        foreach (var s in diffBC.Where(s => s.StartsWith("判据「" + LineResult.Key.SectionJ, StringComparison.Ordinal))) Say("    " + s);
++
++        Assert.True(diffAB.Count == 0, "逐片 5 与整线 5 的整线解不同 ⇒ 链路上还有地方读整线圆盘保温：\n" + string.Join("\n", diffAB.Take(20)));
++        Assert.True(drawDiff, "对照丙（整线 20）与乙（整线 5）的逐片抽热相同 ⇒ 圆盘保温改不动热场，本门是空转");
++        Assert.True(stabDiff, "对照丙与乙的整片热稳定相同 ⇒ 这一行对圆盘保温不敏感，门在它上面空转");
++        Assert.True(rampDiff, "对照丙与乙的升温期法兰−管峰值相同 ⇒ 这一行对圆盘保温不敏感，门在它上面空转");
++        Assert.True(secJDiff, "对照丙与乙的法兰截面 J 说明相同 ⇒ 两节点对照对圆盘保温不敏感（取整后看不出），门在它上面空转");
++    }
++
++    // ════════════════════════════════════════════════════════════════
++    //  慢门二：图纸路径（内存厚度场；与 TabInsulPerPlateTests 同一做法）
++    // ════════════════════════════════════════════════════════════════
++
++    /// <summary>
++    /// 图纸路径（内存厚度场）：
++    ///   · 甲′（整线 20、逐片数组 5）≡ 乙′（整线 5、数组空）逐位相同，且三条读圆盘保温的参考行（整片热稳定、升温期法兰−管峰值、法兰截面 J 的两节点对照）在图纸路径上都判得出；
++    ///   · 丙′（整线 20、数组空，但**判据几何上带了逐片 5**）与乙′ 在逐片抽热和这三行上**必须不同** —— 既证明这几处在图纸路径上对圆盘保温敏感（门不空转），
++    ///     也证明判据几何上的 5 没有漏进这几处（漏进哪处，哪处就与乙′ 相同）；求解备注必须逐片写明「判据几何上的值没有用上」；
++    ///   · 丁′（逐片 3.5/7.5/12）：用生产的 LineRunner.PlateThermalInputs + SolvePlateThermal 在整线解的网格、电流场、管根温度上逐片重解，
++    ///     显式给本片的值 ⇒ 温度场与抽热逐位相同；给别片的值 ⇒ 对不上（下标没错位）。
++    ///     2026-09-14 Opus 5 改：原先这段在测试里手抄了逐片热解配方（审查意见「门不许手抄生产配方」），现调生产函数。
++    /// </summary>
++    [Trait("速度", "慢")]
++    [Fact]
++    public void 图纸路径_逐片数组与整线值逐位相同_逐片各异时各片用各自的值()
++    {
++        var sb = new StringBuilder();
++        string file = Path.Combine(HandoverDoc.Root(), "deliverable", "R48_逐片圆盘保温下游行为门_图纸路径_第二版_2026-09-14.txt");
++        void Say(string s) => this.Say(sb, file, s);
++        Say($"R48 逐片圆盘保温下游行为门·图纸路径 第二版（Opus 5）　{DateTime.Now:yyyy-MM-dd HH:mm}　出处：Pt_Optimize.Tests/R48DiscInsulPerPlateGateTests.cs");
++        Say("── 基准 R47NavGridInstrumentTests.Disc56TwoSegs（两段三片）；解析板栅格化成厚度场（步 0.5、留白 2），GeomForJudge = 同一组板，舌保温逐片 = 设计值");
++
++        var p = new DesignInputs();
++        var d0 = R47NavGridInstrumentTests.Disc56TwoSegs();
++        d0.FlangeInsulated = true;
++        int nf = d0.FlangeCount;
++        Assert.Equal(3, nf);
++        LineCase Make(double whole, double[] perPlate, double[]? onJudgeGeom = null)
++        {
++            var d = d0.Clone();
++            d.FlangeInsulMm = whole;
++            var lc = d.BuildCase(p, checkRamp: false);
++            double holeR = lc.TubeIdMm * 0.5 + lc.WallMm;
++            var plates = Enumerable.Range(0, nf).Select(j => { var g = d0.Plate(j, d0.DiscFloorMm(p)); g.HoleRadiusMm = holeR; return g; }).ToArray();
++            lc.FlangePlates = Array.Empty<FlangePlate>();
++            lc.FlangeFields = plates.Select(g => AnalyticSurrogate.Rasterize(g, 0.5, 2.0)).ToArray();
++            if (onJudgeGeom is not null) for (int j = 0; j < nf; j++) plates[j].DiscInsulThickMm = onJudgeGeom[j];
++            lc.GeomForJudge = plates;
++            lc.TabInsul3dmPerPlateMm = (double[])d0.TabInsulMm.Clone();
++            lc.DiscInsul3dmPerPlateMm = (double[])perPlate.Clone();
++            return lc;
++        }
++        var lcA = Make(20.0, new[] { 5.0, 5.0, 5.0 });                                        // 甲′
++        var lcB = Make(5.0, Array.Empty<double>());                                            // 乙′
++        var lcC = Make(20.0, Array.Empty<double>(), onJudgeGeom: new[] { 5.0, 5.0, 5.0 });     // 丙′：对照 + 判据几何带值
++        double[] own = { 3.5, 7.5, 12.0 };
++        var lcD = Make(20.0, own);                                                             // 丁′：逐片各异
++        Assert.True(double.IsNaN(lcA.GeomForJudge[0].DiscInsulThickMm), "等效片不带逐片圆盘保温（与界面一致），取值只能来自 DiscInsul3dmPerPlateMm");
++        for (int j = 0; j < nf; j++)
++        {
++            Assert.Equal(5.0, lcA.DiscInsulEffectiveAt(j));
++            Assert.Equal(5.0, lcB.DiscInsulEffectiveAt(j));
++            Assert.Equal(20.0, lcC.DiscInsulEffectiveAt(j));
++            Assert.True(lcC.JudgeGeomDiscInsulIgnored(j, out double onG, out double used) && onG == 5.0 && used == 20.0);
++            Assert.False(lcA.JudgeGeomDiscInsulIgnored(j, out _, out _));
++            Assert.Equal(own[j], lcD.DiscInsulEffectiveAt(j));
++        }
++        // CloneCase（定尺寸与加密复算的副本）要带上它
++        Assert.Equal(own, FlangeAutoSizer.CloneCase(lcD).DiscInsul3dmPerPlateMm);
++
++        LineResult Run(string name, LineCase lc)
++        {
++            var sw = Stopwatch.StartNew();
++            var r = LineRunner.Run(lc);
++            Say($"[{name}] Ok {r.Ok}　收敛 {r.Converged}　耗时 {sw.Elapsed.TotalSeconds:0} s　{(r.Ok ? "" : r.Message)}");
++            for (int j = 0; j < r.Flanges.Length; j++)
++                Say($"    片{j} {r.Flanges[j].Name}：抽热 {r.Flanges[j].QFromTubeW:R} W　盘峰 {r.Flanges[j].TDiscMaxC:R} °C　舌区峰 {r.Flanges[j].TTabMaxC:R} °C");
++            foreach (var key in new[] { LineResult.Key.FlangeStab, LineResult.Key.RampField, LineResult.Key.SectionJ })
++            {
++                var c = r.Checks.FirstOrDefault(x => x.Name.StartsWith(key, StringComparison.Ordinal));
++                Say($"    {key}：{(c is null ? "（没有这一行）" : $"实际 {c.Actual:R}　{c.Note}")}");
++            }
++            foreach (var s in r.Notes.Where(s => s.Contains("判据几何上带了本片圆盘保温"))) Say("    备注：" + s);
++            return r;
++        }
++        var rA = Run("甲′ 整线20 逐片5", lcA);
++        var rB = Run("乙′ 整线5 逐片空", lcB);
++        var rC = Run("丙′ 整线20 逐片空（对照；判据几何带逐片5）", lcC);
++        var rD = Run("丁′ 整线20 逐片 3.5/7.5/12", lcD);
++        Assert.True(rA.Ok, rA.Message); Assert.True(rB.Ok, rB.Message); Assert.True(rC.Ok, rC.Message); Assert.True(rD.Ok, rD.Message);
++
++        // 三条会读圆盘保温的参考行在图纸路径上都在、都判得出（否则「逐位相同」比的是两个 NaN）
++        foreach (var r in new[] { rA, rB })
++        {
++            Assert.False(Row(r, LineResult.Key.FlangeStab).Undetermined, Row(r, LineResult.Key.FlangeStab).Note);
++            Assert.False(double.IsNaN(Row(r, LineResult.Key.FlangeStab).Actual), Row(r, LineResult.Key.FlangeStab).Note);
++            Assert.False(double.IsNaN(Row(r, LineResult.Key.RampField).Actual), Row(r, LineResult.Key.RampField).Note);
++            Assert.Contains("两节点", Row(r, LineResult.Key.SectionJ).Note);
++        }
++
++        var diffAB = Diff(rA, rB);
++        Say($"甲′ vs 乙′：{(diffAB.Count == 0 ? "逐位相同" : $"{diffAB.Count} 处不同")}");
++        foreach (var s in diffAB.Take(40)) Say("    " + s);
++        Assert.True(diffAB.Count == 0, "图纸路径逐片 5 与整线 5 不同 ⇒ 图纸路径上还有地方读整线圆盘保温：\n" + string.Join("\n", diffAB.Take(20)));
++
++        var diffBC = Diff(rB, rC);
++        bool stabDiff = diffBC.Any(s => s.StartsWith($"判据「{LineResult.Key.FlangeStab}", StringComparison.Ordinal));
++        bool rampDiff = diffBC.Any(s => s.StartsWith($"判据「{LineResult.Key.RampField}」实际", StringComparison.Ordinal));
++        bool secJDiff = diffBC.Any(s => s.StartsWith($"判据「{LineResult.Key.SectionJ}」说明", StringComparison.Ordinal));
++        bool drawDiff = diffBC.Any(s => s.Contains(" 抽热："));
++        Say($"乙′ vs 丙′（对照，门咬不咬得住；判据几何上的 5 有没有漏进来）：{diffBC.Count} 处不同；逐片抽热 {(drawDiff ? "变" : "不变")}、整片热稳定 {(stabDiff ? "变" : "不变")}、"
++          + $"升温期法兰−管峰值 {(rampDiff ? "变" : "不变")}、法兰截面 J 说明（两节点对照）{(secJDiff ? "变" : "不变")}");
++        foreach (var s in diffBC.Where(s => s.StartsWith("判据「" + LineResult.Key.SectionJ, StringComparison.Ordinal))) Say("    " + s);
++        Assert.True(drawDiff, "丙′（整线 20）与乙′（整线 5）的逐片抽热相同 ⇒ 圆盘保温在图纸路径上改不动热场，或判据几何上的 5 漏进了逐片热解");
++        Assert.True(stabDiff, "丙′ 与乙′ 的整片热稳定相同 ⇒ 这一行在图纸路径上对圆盘保温不敏感，或读了判据几何上的 5");
++        Assert.True(rampDiff, "丙′ 与乙′ 的升温期法兰−管峰值相同 ⇒ 这一行在图纸路径上对圆盘保温不敏感，或读了判据几何上的 5");
++        Assert.True(secJDiff, "丙′ 与乙′ 的法兰截面 J 说明相同 ⇒ 两节点对照在图纸路径上对圆盘保温不敏感，或读了判据几何上的 5");
++        // 判据几何带了值而没用上 ⇒ 备注逐片写明；没带、或用的就是它 ⇒ 不写
++        for (int j = 0; j < nf; j++)
++        {
++            string name = rC.Flanges[j].Name;
++            Assert.Contains(rC.Notes, s => s.Contains("判据几何上带了本片圆盘保温 5.0 mm", StringComparison.Ordinal)
++                                         && s.Contains("按 20.0 mm 算", StringComparison.Ordinal)
++                                         && s.Contains(name, StringComparison.Ordinal));
++        }
++        foreach (var r in new[] { rA, rB, rD })
++            Assert.DoesNotContain(r.Notes, s => s.Contains("判据几何上带了本片圆盘保温", StringComparison.Ordinal));
++
++        // 丁′：逐片单独重解壳 —— 网格、电流场、管根温度取整线解的（FlangeOut.Mesh／JField／TRootC；JField 是最后一次电流场，σ(T) 开着也对得上），
++        //       输入组装与热解都调生产函数，只把圆盘保温显式换成本片／别片的值。
++        for (int j = 0; j < nf; j++)
++        {
++            var f = rD.Flanges[j];
++            Assert.NotNull(f.Mesh);
++            ShellThermalResult Th(double discInsul)
++            {
++                var s = LineRunner.PlateThermalInputs(lcD, j, f.CurrentA, f.Mesh!.SourceField);
++                s.P2.FlangeInsulThickMm = discInsul;
++                return LineRunner.SolvePlateThermal(f.Mesh, f.JField, f.TRootC, s);
++            }
++            var thOwn = Th(own[j]); var thOther = Th(own[(j + 1) % nf]);
++            Say($"丁′ 片{j} {f.Name}：整线抽热 {f.QFromTubeW:R} W；单独重解 本片圆盘保温 {own[j]} ⇒ {thOwn.QFromTubeW:R} W；别片 {own[(j + 1) % nf]} ⇒ {thOther.QFromTubeW:R} W");
++            Assert.Equal(f.QFromTubeW, thOwn.QFromTubeW);
++            Assert.Equal(f.TField, thOwn.T);
++            Assert.True(Math.Abs(f.QFromTubeW - thOther.QFromTubeW) > 1e-3, $"片{j} 换成别片的圆盘保温应当对不上，否则这条门没咬住");
++        }
++    }
++
++    // ════════════════════════════════════════════════════════════════
++    //  快门
++    // ════════════════════════════════════════════════════════════════
++
++    /// <summary>从文字里抠出「逐片 a / b / c mm」的逐片厚度（配套清单与安装报告同一写法）。</summary>
++    private static List<double[]> PerPlateNumbers(string text)
++        => Regex.Matches(text, @"圆盘双面包，逐片 ([0-9.]+(?: / [0-9.]+)*) mm")
++                .Select(m => m.Groups[1].Value.Split(" / ").Select(double.Parse).ToArray()).ToList();
++
++    /// <summary>
++    /// 配套清单（FlangeKit.Text）与安装报告（InstallReport.Build，第 4、5 节各印一次）印出的逐片圆盘保温
++    /// = DesignSpec.DiscInsulMmOf(j) = BuildCase 后 LineCase.DiscInsulEffectiveAt(j)（算例里实际用的）——三者同源。
++    /// 值取 0.5 mm 的倍数（用户 2026-09-14「每层 0.5 mm」），印一位小数读回是精确的。
++    /// </summary>
++    [Fact]
++    public void 配套清单与安装报告印的逐片圆盘保温与算例同源()
++    {
++        var p = new DesignInputs();
++        var d = DesignSpec.W08.Clone().Fit();
++        d.DiscInsulMm = new[] { 3.5, 5.0, 7.5, 10.0 };
++        d.FlangeInsulated = true;
++        Assert.Equal(4, d.FlangeCount);
++        var lc = d.BuildCase(p);
++        int nf = d.FlangeCount;
++        var r = new LineResult
++        {
++            Ok = true, Converged = true, TubeMassG = 1800, FlangeMassG = 1200, TotalMassG = 3000,
++            Segments = Enumerable.Range(0, d.SetpointC.Length).Select(i => new SegmentOut { Name = $"HC{i + 1}", SetpointC = d.SetpointC[i], CurrentA = 979 }).ToArray(),
++            Flanges = Enumerable.Range(0, nf).Select(j => new FlangeOut { Name = $"片{j}", CurrentA = 979, BusSectionForCurrentMm2 = 489.5, MassG = 300 }).ToArray(),
++        };
++        string kit = FlangeKit.Text(FlangeKit.Build(r, d, p), d, p);
++        string rep = InstallReport.Build(r, d, p, "", new DateTime(2026, 9, 14, 12, 0, 0));
++        var kitNums = PerPlateNumbers(kit);
++        var repNums = PerPlateNumbers(rep);
++        Assert.Single(kitNums);
++        Assert.Equal(2, repNums.Count);   // 第 4 节（配套清单）＋ 第 5 节（保温）
++        foreach (var arr in kitNums.Concat(repNums))
++        {
++            Assert.Equal(nf, arr.Length);
++            for (int j = 0; j < nf; j++)
++            {
++                Assert.Equal(d.DiscInsulMmOf(j), arr[j]);
++                Assert.Equal(lc.DiscInsulEffectiveAt(j), arr[j]);
++            }
++        }
++        Assert.Equal(d.DiscInsulMm, Enumerable.Range(0, nf).Select(lc.DiscInsulEffectiveAt).ToArray());
++
++        // 逐片全相同 ⇒ 印一个数；不包 ⇒ 印「圆盘不包」且算例取值全 0
++        var same = d.Clone(); same.DiscInsulMm = new[] { 6.5, 6.5, 6.5, 6.5 };
++        Assert.Contains("圆盘双面包 6.5 mm", FlangeKit.Text(FlangeKit.Build(r, same, p), same, p));
++        var bare = d.Clone(); bare.FlangeInsulated = false;
++        var lcBare = bare.BuildCase(p);
++        Assert.Contains("圆盘不包", InstallReport.Build(r, bare, p));
++        Assert.All(Enumerable.Range(0, nf), j => { Assert.Equal(0.0, bare.DiscInsulMmOf(j)); Assert.Equal(0.0, lcBare.DiscInsulEffectiveAt(j)); });
++        // 某片 NaN ⇒ 板件按沿用整线，清单口径也回整线值（2026-09-14 前 DiscInsulMmOf 回 NaN，与算例不同源）
++        var partial = d.Clone(); partial.DiscInsulMm = new[] { 3.5, double.NaN, 7.5, 10.0 };
++        var lcPartial = partial.BuildCase(p);
++        Assert.All(Enumerable.Range(0, nf), j => Assert.Equal(partial.DiscInsulMmOf(j), lcPartial.DiscInsulEffectiveAt(j)));
++        Assert.Equal(partial.FlangeInsulMm, lcPartial.DiscInsulEffectiveAt(1));
++    }
++
++    /// <summary>
++    /// LineCase.DiscInsulEffectiveAt 的取值约定（解析 = 板件；图纸 = 数组，NaN／空／越界 = 整线，整线不包 = 0），
++    /// 规则本体 FlangePlate.DiscInsulEffective 与三个调用口（板件、LineCase 图纸分支、DesignSpec.DiscInsulMmOf）同源，
++    /// 以及「判据几何带了逐片值而图纸路径没用上」的判定。
++    /// </summary>
++    [Fact]
++    public void 唯一取值口径的约定()
++    {
++        // 规则本体
++        Assert.Equal(7.0, FlangePlate.DiscInsulEffective(double.NaN, 7.0, true));
++        Assert.Equal(3.0, FlangePlate.DiscInsulEffective(3.0, 7.0, true));
++        Assert.Equal(0.0, FlangePlate.DiscInsulEffective(3.0, 0.0, false));
++        Assert.Equal(0.0, FlangePlate.DiscInsulEffective(double.NaN, 0.0, false));
++        Assert.Equal(7.0, FlangePlate.DiscInsulEffective(new[] { 3.0 }, 1, 7.0, true));    // 越界 = 沿用整线
++        Assert.Equal(7.0, FlangePlate.DiscInsulEffective(null, 0, 7.0, true));
++
++        var baseP = new DesignInputs { FlangeInsulThickMm = 9.0, FlangeInsulated = true };
++        // 图纸路径
++        var lc = new LineCase { Base = baseP };
++        Assert.Equal(9.0, lc.DiscInsulEffectiveAt(0));
++        lc.DiscInsul3dmPerPlateMm = new[] { 2.5, double.NaN, 4.0 };
++        Assert.Equal(2.5, lc.DiscInsulEffectiveAt(0));
++        Assert.Equal(9.0, lc.DiscInsulEffectiveAt(1));      // NaN = 沿用整线
++        Assert.Equal(4.0, lc.DiscInsulEffectiveAt(2));
++        // ★ 2026-09-14 Opus 5 有意改（本路自己的新测试，非既有记录值）：越界 旧 4.0（短了用最后一片）→ 新 9.0（沿用整线）。
++        //   原因：审查意见「短数组约定不一致」—— DesignSpec.Plate／DiscInsulMmOf 越界是整线，图纸数组却是最后一片；统一成整线（圆盘保温有整线值可退，不猜）。
++        //   依据文件：Pt_Optimize/Core/PlateCurrent2D.cs（FlangePlate.DiscInsulEffective 数组形态）。
++        Assert.Equal(9.0, lc.DiscInsulEffectiveAt(5));
++        lc.Base = new DesignInputs { FlangeInsulThickMm = 0.0, FlangeInsulated = false };
++        Assert.Equal(0.0, lc.DiscInsulEffectiveAt(0));      // 整线不包 ⇒ 有值也 0
++        // 解析路径：板件优先，数组不读
++        var an = new LineCase
++        {
++            Base = baseP,
++            FlangePlates = new[] { new FlangePlate { DiscInsulThickMm = 1.5 }, new FlangePlate() },
++            DiscInsul3dmPerPlateMm = new[] { 7.0, 7.0 },
++        };
++        Assert.Equal(1.5, an.DiscInsulEffectiveAt(0));
++        Assert.Equal(9.0, an.DiscInsulEffectiveAt(1));
++        Assert.Equal(an.FlangePlates[0].DiscInsulEffectiveMm(an.Base), an.DiscInsulEffectiveAt(0));
++        Assert.False(an.JudgeGeomDiscInsulIgnored(0, out _, out _));   // 解析路径不适用
++        // 定尺寸／加密复算的副本带上图纸路径的逐片值
++        Assert.Equal(lc.DiscInsul3dmPerPlateMm, FlangeAutoSizer.CloneCase(lc).DiscInsul3dmPerPlateMm);
++
++        // 设计记录的短数组（没 Fit）：清单口径与算例同样按整线
++        var p = new DesignInputs();
++        var d = DesignSpec.W08.Clone().Fit();
++        d.FlangeInsulated = true; d.FlangeInsulMm = 11.5;
++        d.DiscInsulMm = new[] { 2.5, 6.0 };
++        var lcD = d.BuildCase(p);
++        for (int j = 0; j < d.FlangeCount; j++) Assert.Equal(d.DiscInsulMmOf(j), lcD.DiscInsulEffectiveAt(j));
++        Assert.Equal(11.5, lcD.DiscInsulEffectiveAt(d.FlangeCount - 1));
++        Assert.Equal(d.WholeLineDiscInsulMm, lcD.Base.FlangeInsulThickMm);
++
++        // 图纸路径：判据几何带了逐片值而热解没用上 ⇒ true（LineRunner 据此写备注）；没带、或用的就是它 ⇒ false
++        var dr = new LineCase
++        {
++            Base = baseP,
++            GeomForJudge = new[] { new FlangePlate { DiscInsulThickMm = 5.0 }, new FlangePlate() },
++        };
++        Assert.True(dr.JudgeGeomDiscInsulIgnored(0, out double onG, out double used));
++        Assert.Equal(5.0, onG); Assert.Equal(9.0, used);
++        Assert.False(dr.JudgeGeomDiscInsulIgnored(1, out _, out _));
++        dr.DiscInsul3dmPerPlateMm = new[] { 5.0, double.NaN };
++        Assert.False(dr.JudgeGeomDiscInsulIgnored(0, out _, out _));
++    }
++
++    /// <summary>
++    /// SegmentSolver.Sweep 的「flangeInsul」查链路：每一点只调一维管段 Solve，而 Solve **不读**圆盘保温（下面实测两端 0 与 50 mm 逐位相同）
++    /// ⇒ 这一支对任何设计（含带逐片值的）都扫不出东西，2026-09-14 起拒绝并说明。哪天管段模型开始读圆盘保温，第一段会红，届时再议。
++    /// </summary>
++    [Fact]
++    public void 一维管段不读圆盘保温_扫描flangeInsul拒绝并说明()
++    {
++        var p0 = new DesignInputs { FlangeInsulThickMm = 0.0, FlangeInsulated = false };
++        var p1 = SegmentSolver.Clone(p0); p1.FlangeInsulThickMm = 50.0; p1.FlangeInsulated = true;
++        var a = SegmentSolver.Solve(p0); var b = SegmentSolver.Solve(p1);
++        Assert.True(a.Ok && b.Ok, a.Message + b.Message);
++        Assert.Equal(a.CurrentA, b.CurrentA);
++        Assert.Equal(a.TFlangeAC, b.TFlangeAC);
++        Assert.Equal(a.TFlangeBC, b.TFlangeBC);
++        Assert.Equal(a.LossPerMeterWPerM, b.LossPerMeterWPerM);
++        Assert.Equal(a.TMinC, b.TMinC);
++        Assert.Equal(a.DevitMarginMinK, b.DevitMarginMinK);
++        Assert.Equal(a.TMetal, b.TMetal);
++
++        var ex = Assert.Throws<ArgumentException>(() => SegmentSolver.Sweep(new DesignInputs(), "flangeInsul", 0, 20, 3));
++        Assert.Contains("不起作用", ex.Message);
++        Assert.Contains("整线核算", ex.Message);
++        var ex2 = Assert.Throws<ArgumentException>(() => SegmentSolver.Sweep(new DesignInputs(), "没有这个量", 0, 1, 2));
++        Assert.DoesNotContain("flangeInsul", ex2.Message);   // 「可用」清单里不再列它
++    }
++
++    /// <summary>
++    /// CoupledSolver（旧链，LineSolver 与 CLI 诊断用）里 PlateThermal2D 读的圆盘保温也按板件取：
++    /// 板件 5 + 整线 20 与 板件空 + 整线 5 逐位相同；板件空 + 整线 20 对照不同。粗网格 h=4、外层 1 轮，只验接线不验精度。
++    /// </summary>
++    [Fact]
++    public void 旧耦合链的二维法兰热解按板件圆盘保温()
++    {
++        CoupledResult Solve(double whole, double plate)
++        {
++            var p = new DesignInputs { FlangeInsulThickMm = whole, FlangeInsulated = true };
++            var g = new FlangePlate { DiscInsulThickMm = plate };
++            return CoupledSolver.Solve(p, g, h: 4.0, maxOuter: 1);
++        }
++        var a = Solve(20.0, 5.0); var b = Solve(5.0, double.NaN); var c = Solve(20.0, double.NaN);
++        Assert.True(a.Tube.Ok && b.Tube.Ok && c.Tube.Ok);
++        Assert.Equal(b.Flange.QFromTubeW, a.Flange.QFromTubeW);
++        Assert.Equal(b.Flange.TMaxC, a.Flange.TMaxC);
++        Assert.Equal(b.FlangeDrawW, a.FlangeDrawW);
++        Assert.NotEqual(b.Flange.QFromTubeW, c.Flange.QFromTubeW);
++    }
++
++    /// <summary>
++    /// 同型病灶门（源码）：Core 与 UI 里**读圆盘保温**、**吃圆盘保温的热解调用点**、**法兰表面热流配方**都钉成「每个文件几行」——
++    /// 数变了（新增一处、或同一文件里又多写一处）这里就红：新读者得先想清楚逐片圆盘保温从哪取（LineCase.DiscInsulEffectiveAt 或 FlangePlate.DiscInsulEffectiveMm），
++    /// 再改名单并写明为什么。另禁两种写法：`.Base.FlangeInsulThickMm`（从算例整线值直接读），和 ShellThermal／PlateThermal2D／RampTwoNode 的 Solve 直接吃 `c.Base`／`lc.Base`。
++    /// 2026-09-14 Opus 5 改（审查意见「名单按整个文件放行、只扫 Core」）：原为文件名单，LineRunner、DesignCurrent 整文件放行，
++    /// 在里面再写一处整线读法照样绿；现钉行数、加禁用写法、扫描扩到 UI。行为本身由两条慢门钉；这条让「又多了一处」在快套件里就看得见。
++    /// </summary>
++    [Fact]
++    public void 源码门_Core里读圆盘保温的地方只有审过的几处()
++    {
++        string app = Path.Combine(HandoverDoc.Root(), "Pt_Optimize");
++        // 含 FlangeInsulThickMm 的代码行数（整行注释不算）
++        var readersExpected = new Dictionary<string, int>
++        {
++            ["Core/DesignInputs.cs"] = 1,     // 定义
++            ["Core/DesignSpec.cs"] = 1,       // BuildCase 写整线值（WholeLineDiscInsulMm）
++            ["Core/PlateCurrent2D.cs"] = 1,   // FlangePlate.DiscInsulEffectiveMm → 规则本体
++            ["Core/LineRunner.cs"] = 3,       // DiscInsulEffectiveAt 图纸分支退整线；PlateThermalInputs 的 p2；升温两节点 pRamp
++            ["Core/DesignCurrent.cs"] = 1,    // 两节点对照按片克隆
++            ["Core/CoupledSolver.cs"] = 1,    // 旧链按板件克隆
++            ["Core/ShellThermal.cs"] = 4,     // 热解本体：圆盘保温面判定与取值、局部热稳定两处（调用方负责给本片的值）
++            ["Core/PlateThermal2D.cs"] = 2,   // 热解本体：判定与取值
++            ["Core/RampTwoNode.cs"] = 4,      // 热解本体：判定与取值、保温热容判定与体积
++            ["UI/AnalysisPage.cs"] = 1,       // 厚度灵敏度页写整线 20（没有逐片设计）
++            ["UI/LineDesignPage.cs"] = 1,     // 「法兰保温／法兰保温厚」控件写整线值
++        };
++        // 调用点代码行数
++        var callsExpected = new Dictionary<string, Dictionary<string, int>>
++        {
++            ["ShellThermal.Solve("] = new() { ["Core/LineRunner.cs"] = 1 },                              // LineRunner.SolvePlateThermal
++            ["PlateThermal2D.Solve("] = new() { ["Core/CoupledSolver.cs"] = 1 },
++            ["RampTwoNode.Solve("] = new() { ["Core/LineRunner.cs"] = 1, ["Core/DesignCurrent.cs"] = 1 },
++            ["FlangeStability.Check("] = new() { ["Core/LineRunner.cs"] = 1 },
++            ["DesignCurrent.Compute("] = new() { ["Core/LineRunner.cs"] = 1 },
++            // 法兰表面热流只有 DesignScreen.PlateFluxWPerM2 一份配方（Insulation.cs 是定义处，不扫）
++            ["PlateFlux("] = new() { ["Core/DesignScreen.cs"] = 1 },
++            ["FlatOuterFlux("] = new() { ["Core/DesignScreen.cs"] = 1 },
++        };
++        var banned = new (Regex Re, string Why)[]
++        {
++            (new Regex(@"\.Base\.FlangeInsulThickMm"), "从算例的整线值直接读圆盘保温"),
++            (new Regex(@"\b(ShellThermal|PlateThermal2D|RampTwoNode)\.Solve\([^;]*?\b\w+\.Base\b", RegexOptions.Singleline), "热解直接吃算例的整线 DesignInputs"),
++        };
++
++        var readersGot = new Dictionary<string, int>();
++        var callsGot = callsExpected.Keys.ToDictionary(k => k, _ => new Dictionary<string, int>());
++        var bad = new List<string>();
++        int files = 0;
++        foreach (var dir in new[] { "Core", "UI" })
++            foreach (var path in Directory.GetFiles(Path.Combine(app, dir), "*.cs", SearchOption.AllDirectories))
++            {
++                files++;
++                string rel = Path.GetRelativePath(app, path).Replace('\\', '/');
++                var code = File.ReadAllLines(path).Select(l => l.Trim()).Where(l => !l.StartsWith("//", StringComparison.Ordinal)).ToArray();
++                int nRead = code.Count(l => l.Contains("FlangeInsulThickMm", StringComparison.Ordinal));
++                if (nRead > 0) readersGot[rel] = nRead;
++                if (rel != "Core/Insulation.cs")
++                    foreach (var call in callsExpected.Keys)
++                    {
++                        int nCall = code.Count(l => l.Contains(call, StringComparison.Ordinal));
++                        if (nCall > 0) callsGot[call][rel] = nCall;
++                    }
++                string joined = string.Join("\n", code);
++                foreach (var (re, why) in banned)
++                    foreach (Match m in re.Matches(joined))
++                        bad.Add($"{rel}：{why}（{m.Value.Split('\n')[0]}）");
++            }
++        Assert.True(files > 60, $"只读到 {files} 个 Core／UI 源文件，路径不对");
++
++        static string Show(Dictionary<string, int> d) => string.Join("、", d.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => $"{kv.Key}×{kv.Value}"));
++        static bool Same(Dictionary<string, int> a, Dictionary<string, int> b) => a.Count == b.Count && a.All(kv => b.TryGetValue(kv.Key, out int v) && v == kv.Value);
++        Assert.True(Same(readersExpected, readersGot),
++            "读 FlangeInsulThickMm 的代码行变了（逐片圆盘保温要从唯一口径取，改名单要写明为什么）：\n  钉的 " + Show(readersExpected) + "\n  实测 " + Show(readersGot));
++        foreach (var call in callsExpected.Keys)
++            Assert.True(Same(callsExpected[call], callsGot[call]),
++                $"「{call}」的调用点变了（吃圆盘保温的热解要按片给值；法兰表面热流只许一份配方）：\n  钉的 " + Show(callsExpected[call]) + "\n  实测 " + Show(callsGot[call]));
++        Assert.True(bad.Count == 0, "禁用写法：\n" + string.Join("\n", bad));
++        // 自证：禁用写法的正则真能咬住（否则正则写错了等于放行）
++        Assert.Matches(banned[0].Re, "double x = c.Base.FlangeInsulThickMm;");
++        Assert.Matches(banned[1].Re, "var th = ShellThermal.Solve(mesh, jm,\n c.Base, tRoot, insulX);");
++        Assert.DoesNotMatch(banned[1].Re, "var st = FlangeStability.Check(c.Base, q, t);");
++    }
++
++    /// <summary>
++    /// ★ R48（2026-09-14，Opus 5；审查意见）：DesignCurrent.Compute 的逐片圆盘保温取值改为**必填**（原默认 null 时退回板件口径，
++    /// 图纸路径的判据几何板件不带逐片值 ⇒ 新调用方忘了传就静默按整线算）；并在快套件里钉住求解器用的 ForLine 这一口：
++    /// 设计甲（整线 20、逐片 5）与设计乙（整线 5）的两节点对照电流逐位相同，对照丙（整线 20）不同。
++    /// </summary>
++    [Fact]
++    public void 设计电流的两节点对照_逐片圆盘保温必填_ForLine按片取值()
++    {
++        var p = new DesignInputs();
++        DesignSpec Make(double whole, double[] perPlate)
++        {
++            var d = DesignSpec.W08.Clone().Fit();
++            d.FlangeInsulated = true; d.FlangeInsulMm = whole; d.DiscInsulMm = perPlate;
++            return d;
++        }
++        var dA = Make(20.0, new[] { 5.0, 5.0, 5.0, 5.0 });
++        var lc = dA.BuildCase(p, checkRamp: false);
++        var ex = Assert.Throws<ArgumentNullException>(() => DesignCurrent.Compute(lc.FlangePlates, dA.WallMm, lc.Base, lc.RampFromC, lc.RampTargetC,
++                                                                                 lc.RampRateKPerH, lc.SegmentCount, lc.SetpointC, _ => null, null!));
++        Assert.Equal("discInsulMmAt", ex.ParamName);
++
++        var a = DesignCurrent.ForLine(dA, p);
++        var b = DesignCurrent.ForLine(Make(5.0, Array.Empty<double>()), p);
++        var c = DesignCurrent.ForLine(Make(20.0, Array.Empty<double>()), p);
++        _out.WriteLine($"两节点对照 A：甲 {string.Join("/", a.TwoNodeSegPeakA.Select(x => x.ToString("R")))}；乙 {string.Join("/", b.TwoNodeSegPeakA.Select(x => x.ToString("R")))}；丙 {string.Join("/", c.TwoNodeSegPeakA.Select(x => x.ToString("R")))}");
++        Assert.Equal(b.TwoNodeSegPeakA, a.TwoNodeSegPeakA);
++        Assert.Equal(b.SegPeakA, a.SegPeakA);
++        Assert.NotEqual(b.TwoNodeSegPeakA, c.TwoNodeSegPeakA);
++    }
++
++    /// <summary>
++    /// ★ R48（2026-09-14，Opus 5；审查意见「圆盘保温 0 mm 时四个消费方物理含义不一致」）：圆盘保温 0 mm（整线不包、或逐片 0 层 —— 用户 2026-09-14「每层 0.5 mm」，0 层合法）时，
++    /// 壳热解 ShellThermal（含其中的局部热稳定）、旧链二维热解 PlateThermal2D（经 CoupledSolver）、升温两节点 RampTwoNode、整片热稳定 FlangeStability
++    /// 取的都是**裸铂表面**：把外覆材料发射率 OuterEmissivity 从 0.45 改到 0.90，四者结果逐位不变（管子设成裸管，免得管侧用到它）。
++    /// 对照：同样改动在 5 mm 圆盘保温下四者都变 —— 证明圆盘面确实进了这些结果，门不空转。
++    /// 修前 ShellThermal／PlateThermal2D／RampTwoNode 的圆盘面在 0 mm 时走 PlateFlux 的「无有效层」分支 = 外覆材料表面，这里前三者会红。
++    /// </summary>
++    [Fact]
++    public void 圆盘保温0mm时四个消费方都按裸铂表面()
++    {
++        DesignInputs P(double discInsulMm, double epsOuter)
++        {
++            var q = new DesignInputs { FlangeInsulThickMm = discInsulMm, FlangeInsulated = true, OuterEmissivity = epsOuter };
++            q.Layer1.Enabled = false; q.Layer2.Enabled = false; q.Layer3.Enabled = false;   // 裸管：管侧散热不读 OuterEmissivity
++            return q;
++        }
++        Assert.False(DesignScreen.FlangeFaceInsulated(0.0));
++        Assert.False(DesignScreen.FlangeFaceInsulated(double.NaN));
++        Assert.True(DesignScreen.FlangeFaceInsulated(0.5));   // 一层
++
++        // ① ShellThermal：默认板、粗网格、均匀电流密度（只验表面口径，不验精度）；圆盘按半径包保温、舌片裸
++        var g = new FlangePlate { HoleRadiusMm = 26.0 };
++        var mesh = FlangeMesher.Build(g, 0, 4.0, 11.0, 50.0, 40.0);
++        var jm = Enumerable.Repeat(1.0, mesh.CellCount).ToArray();
++        ShellThermalResult Shell(DesignInputs q) => ShellThermal.Solve(mesh, jm, q, 1150.0, g.InsulBoundaryXResolved, false,
++                                                                      tabBoundaryX: g.Tangent().X, tabInsulThickMm: double.NaN,
++                                                                      discRadiusMm: g.DiscRadiusMm, insulDiscRadiusMm: g.InsulDiscRadiusMm);
++        // ② PlateThermal2D（经旧耦合链）
++        CoupledResult Old(DesignInputs q) => CoupledSolver.Solve(q, new FlangePlate(), h: 4.0, maxOuter: 1);
++        // ③ RampTwoNode：一片 8000 mm² 包保温面 + 1500 mm² 裸面。这组输入下法兰始终不比管热（法兰−管峰恒 0，比它等于空转），
++        //    起作用的是法兰峰值温度与峰值电流 —— 注入对照（2026-09-14 Opus 5，只把两节点的圆盘面改回外覆表面）：0 mm 时法兰峰 728.6 / 584.7 °C，红在这一行。
++        RampTwoNodeResult Ramp(DesignInputs q) => RampTwoNode.Solve(q, new RampTwoNode.Inputs
++        {
++            WallMm = 1.0, FlangeMassG = 300, FlangeAreaInsulMm2 = 8000, FlangeAreaBareMm2 = 1500,
++            FlangeResistanceRefOhm = 2e-4, FlangeRefTempC = 1150, HoleRadiusMm = 26, PlateEqOuterRadiusMm = 60, FlangeThickMm = 1.5,
++            DesignCurrentA = 900, MaxCurrentA = 3000, FromC = 25, TargetC = 1150, RampRateKPerH = 20, MaxHours = 1125.0 / 20 * 1.4,
++            SharedFactor = 1.0, Mode = RampControl.TemperatureRamp,
++        });
++        // ④ FlangeStability：同样的面积分法
++        FlangeStability.Result Stab(DesignInputs q) => FlangeStability.Check(q, 60.0, 1150.0, 8000, 1500, q.FlangeInsulThickMm,
++                                                                             2 * 20 * 1.5, 50, 2 * Math.PI * 26 * 1.5, 30, double.NaN);
++
++        foreach (double ins in new[] { 0.0, 5.0 })
++        {
++            var q1 = P(ins, 0.45); var q2 = P(ins, 0.90);
++            var s1 = Shell(q1); var s2 = Shell(q2);
++            var o1 = Old(q1); var o2 = Old(q2);
++            var r1 = Ramp(q1); var r2 = Ramp(q2);
++            var f1 = Stab(q1); var f2 = Stab(q2);
++            _out.WriteLine($"圆盘保温 {ins} mm：壳解散热 {s1.QLossW:R} / {s2.QLossW:R} W；旧链抽热 {o1.Flange.QFromTubeW:R} / {o2.Flange.QFromTubeW:R} W；"
++                         + $"两节点法兰峰 {r1.TFlangePeakC:R} / {r2.TFlangePeakC:R} °C、法兰−管峰 {r1.MaxFlangeMinusTubeK:R} / {r2.MaxFlangeMinusTubeK:R} K、峰值电流 {r1.PeakCurrentA:R} / {r2.PeakCurrentA:R} A、到温 {r1.TubeReached}；热稳定表面导数 {f1.DSurfDT:R} / {f2.DSurfDT:R} W/K（外覆 ε 0.45 / 0.90）");
++            Assert.True(o1.Tube.Ok && o2.Tube.Ok);
++            if (ins == 0.0)
++            {
++                Assert.Equal(s1.T, s2.T); Assert.Equal(s1.QLossW, s2.QLossW); Assert.Equal(s1.QFromTubeW, s2.QFromTubeW);
++                Assert.Equal(s1.LocalStabMargin, s2.LocalStabMargin);
++                Assert.Contains("按裸铂表面散热", s1.InsulRule);   // 保温规则说明写明（界面读得到）
++                Assert.Equal(o1.Flange.QFromTubeW, o2.Flange.QFromTubeW); Assert.Equal(o1.Flange.TMaxC, o2.Flange.TMaxC);
++                Assert.Equal(r1.MaxFlangeMinusTubeK, r2.MaxFlangeMinusTubeK); Assert.Equal(r1.TFlangePeakC, r2.TFlangePeakC);
++                Assert.Equal(r1.PeakCurrentA, r2.PeakCurrentA);
++                Assert.Equal(f1.DSurfDT, f2.DSurfDT);
++            }
++            else
++            {
++                Assert.NotEqual(s1.QLossW, s2.QLossW);
++                Assert.DoesNotContain("按裸铂表面散热", s1.InsulRule);
++                Assert.NotEqual(o1.Flange.QFromTubeW, o2.Flange.QFromTubeW);
++                Assert.NotEqual(r1.TFlangePeakC, r2.TFlangePeakC);
++                Assert.NotEqual(f1.DSurfDT, f2.DSurfDT);
++            }
++        }
++
++        // 逐片 0 层进得了算例：DesignSpec 逐片 {0, 5, 5, 5} ⇒ 第 0 片实际取 0，按裸铂
++        var d = DesignSpec.W08.Clone().Fit();
++        d.FlangeInsulated = true; d.DiscInsulMm = new[] { 0.0, 5.0, 5.0, 5.0 };
++        var lc = d.BuildCase(new DesignInputs());
++        Assert.Equal(0.0, lc.DiscInsulEffectiveAt(0));
++        Assert.False(DesignScreen.FlangeFaceInsulated(lc.DiscInsulEffectiveAt(0)));
++        Assert.True(DesignScreen.FlangeFaceInsulated(lc.DiscInsulEffectiveAt(1)));
++    }
++}
+diff --git a/Pt_Optimize.Tests/R48DiscZoneByRadiusTests.cs b/Pt_Optimize.Tests/R48DiscZoneByRadiusTests.cs
+index e826278..e75a201 100644
+--- a/Pt_Optimize.Tests/R48DiscZoneByRadiusTests.cs
++++ b/Pt_Optimize.Tests/R48DiscZoneByRadiusTests.cs
+@@ -60,7 +60,11 @@ public class R48DiscZoneByRadiusTests
+         Assert.Contains("> discRadiusMm", th);          // 盘外 = 舌片区
+ 
+         string lr = Src("Pt_Optimize/Core/LineRunner.cs");
+-        Assert.Contains("discRadiusMm: discRForZone", lr);          // 接线在这
++        // ★ R48（2026-09-14，Opus 5）有意改断言：旧「discRadiusMm: discRForZone」→ 新「s.DiscRadiusMm = discRForZone」＋「discRadiusMm: s.DiscRadiusMm」。
++        //   原因：审查意见「门手抄了逐片热解配方」，逐片热解输入组装搬进 LineRunner.PlateThermalInputs、调用搬进 LineRunner.SolvePlateThermal（纯搬移），
++        //   接线从局部变量改经 PlateThermalSetup 字段过手；两段合起来仍是「盘半径真的接进 ShellThermal」。依据文件：Pt_Optimize/Core/LineRunner.cs。
++        Assert.Contains("s.DiscRadiusMm = discRForZone", lr);       // 接线在这（组装）
++        Assert.Contains("discRadiusMm: s.DiscRadiusMm", lr);        // 接线在这（进 ShellThermal）
+         Assert.Contains("discRForZone = plate.DiscRadiusMm", lr);   // 解析路径
+         Assert.Contains("discRForZone = eqJ.DiscRadiusMm", lr);     // 图纸路径
+     }
+diff --git a/Pt_Optimize.Tests/R48InsulByRadiusTests.cs b/Pt_Optimize.Tests/R48InsulByRadiusTests.cs
+index a4cb83c..56b31a8 100644
+--- a/Pt_Optimize.Tests/R48InsulByRadiusTests.cs
++++ b/Pt_Optimize.Tests/R48InsulByRadiusTests.cs
+@@ -142,7 +142,11 @@ public class R48InsulByRadiusTests
+         Assert.Contains("bool insulOnTab = insulByRadius", th);       // 候选预筛跟着保温走
+ 
+         string lr = Code("Pt_Optimize/Core/LineRunner.cs");
+-        Assert.Contains("insulDiscRadiusMm: insulRForZone", lr);
++        // ★ R48（2026-09-14，Opus 5）有意改断言：旧「insulDiscRadiusMm: insulRForZone」→ 新「s.InsulDiscRadiusMm = insulRForZone」＋「insulDiscRadiusMm: s.InsulDiscRadiusMm」。
++        //   原因：审查意见「门手抄了逐片热解配方」，逐片热解输入组装搬进 LineRunner.PlateThermalInputs、调用搬进 LineRunner.SolvePlateThermal（纯搬移），
++        //   接线从局部变量改经 PlateThermalSetup 字段过手；两段合起来仍是「保温半径真的接进 ShellThermal」。依据文件：Pt_Optimize/Core/LineRunner.cs。
++        Assert.Contains("s.InsulDiscRadiusMm = insulRForZone", lr);
++        Assert.Contains("insulDiscRadiusMm: s.InsulDiscRadiusMm", lr);
+         Assert.Contains("insulRForZone = plate.InsulDiscRadiusMm", lr);
+         Assert.Contains("insulRForZone = eqJ.InsulDiscRadiusMm", lr);
+         Assert.Contains("pl.UnderDiscInsulation(mesh.Centroid[k].X, mesh.Centroid[k].Z)", lr);   // 两节点参考量
+diff --git a/Pt_Optimize.Tests/SilentKnobTests.cs b/Pt_Optimize.Tests/SilentKnobTests.cs
+index 71bb341..57cc82f 100644
+--- a/Pt_Optimize.Tests/SilentKnobTests.cs
++++ b/Pt_Optimize.Tests/SilentKnobTests.cs
+@@ -31,8 +31,16 @@ public class SilentKnobTests
+         Assert.Contains("charLength, sc, airVelocity)", s);
+         // ShellThermal 的保温面与舌片保温面都要传真实风速
+         // 三处外表面都要传：裸露面（本来就传）+ 法兰保温面 + 舌片保温面（这两处是补的）
+-        int n = Core("ShellThermal.cs").Split("p.FlangeAirVelocityMPerS)").Length - 1;
+-        Assert.True(n >= 3, $"三处外表面都该传真实风速，实测 {n} 处");
++        // ★ R48（2026-09-14，Opus 5）有意改断言：旧断言「ShellThermal.cs 里 `p.FlangeAirVelocityMPerS)` 出现 ≥ 3 次」→
++        //   新断言「ShellThermal 三张表面表都经唯一配方 DesignScreen.PlateFluxWPerM2，且该配方裸面、保温面都真把风速传下去（实测热流随风速变）」。
++        //   原因：审查意见查出圆盘保温 0 mm 时 ShellThermal／RampTwoNode／PlateThermal2D 与 FlangeStability 用两种表面（ε 0.45 对 0.18），
++        //   修法是法兰表面热流只留 DesignScreen.PlateFluxWPerM2 一份配方，ShellThermal 里不再各自写 PlateFlux／FlatOuterFlux，旧的字面计数必然归零。
++        //   依据文件：Pt_Optimize/Core/ShellThermal.cs（表面表）、Pt_Optimize/Core/DesignScreen.cs（PlateFluxWPerM2）。
++        int n = Core("ShellThermal.cs").Split("DesignScreen.PlateFluxWPerM2(p, x,").Length - 1;
++        Assert.True(n >= 3, $"三处外表面（裸面、法兰保温面、舌片保温面）都该经唯一配方取热流，实测 {n} 处");
++        var still = new DesignInputs(); var windy = new DesignInputs { FlangeAirVelocityMPerS = 5.0 };
++        Assert.True(DesignScreen.PlateFluxWPerM2(windy, 900, 0.0) > DesignScreen.PlateFluxWPerM2(still, 900, 0.0), "裸面吹不到风");
++        Assert.True(DesignScreen.PlateFluxWPerM2(windy, 900, 20.0) > DesignScreen.PlateFluxWPerM2(still, 900, 20.0), "保温面吹不到风");
+     }
+ 
+     [Fact]
+diff --git a/Pt_Optimize/Core/CoupledSolver.cs b/Pt_Optimize/Core/CoupledSolver.cs
+index c674e09..41c0555 100644
+--- a/Pt_Optimize/Core/CoupledSolver.cs
++++ b/Pt_Optimize/Core/CoupledSolver.cs
+@@ -108,7 +108,11 @@ public static class CoupledSolver
+             // ② 二维法兰：按实际电流定标 J，再解温度场
+             double I = tube.CurrentA;
+             var cur = ScaleCurrent(curRef, I / 1000.0);
+-            var th = PlateThermal2D.Solve(g, cur, p, tRootC: tube.TFlangeAC, maxIter: 120000, tol: 1e-5);
++            // ★ R48（2026-09-14，Opus 5）：PlateThermal2D 读 p.FlangeInsulThickMm ⇒ 按本片圆盘保温取（FlangePlate.DiscInsulEffectiveMm，
++            //   与 LineRunner 同一口径）再克隆 p 给它；板件没带逐片值时取回的就是 p 的整线值，数与原来相同。
++            var pTh = SegmentSolver.Clone(p);
++            pTh.FlangeInsulThickMm = g.DiscInsulEffectiveMm(p);
++            var th = PlateThermal2D.Solve(g, cur, pTh, tRootC: tube.TFlangeAC, maxIter: 120000, tol: 1e-5);
+             res.Flange = th;
+ 
+             // 用新温度场按 σ(T) 重解电流场（铂 700–1300 °C 间 ρe 变化 48 %，
+diff --git a/Pt_Optimize/Core/DesignCurrent.cs b/Pt_Optimize/Core/DesignCurrent.cs
+index caf1540..6ce7d9b 100644
+--- a/Pt_Optimize/Core/DesignCurrent.cs
++++ b/Pt_Optimize/Core/DesignCurrent.cs
+@@ -66,19 +66,25 @@ public static class DesignCurrent
+         // ★ 用 lc.Base 不用 p：BuildCase 把设计记录的**管保温层**（TubeInsulMm）与法兰保温写进的是 lc.Base，
+         //   原始 p 带的是开箱默认。实测（2026-09-08 杠杆扫描）传 p 时管保温 5→80 mm 设计电流纹丝不动 —— 哑的。
+         return Compute(plates, d.WallMm, lc.Base, lc.RampFromC, lc.RampTargetC, lc.RampRateKPerH,
+-                       lc.SegmentCount, lc.SetpointC, Ref);
++                       lc.SegmentCount, lc.SetpointC, Ref, lc.DiscInsulEffectiveAt);   // R48（2026-09-14，Opus 5）：逐片圆盘保温同源
+     }
+ 
+     /// <summary>
+     /// 核心：给定各片几何算每段峰值电流与每片接头电流。
+     /// <paramref name="refFromField"/>：第 j 片若有场解，回 (法兰参考电阻 Ω, 参考温度 °C)；没有回 null 走闭式估计。
++    /// <paramref name="discInsulMmAt"/>：★ R48（2026-09-14，Opus 5）第 j 片圆盘保温 mm（传 LineCase.DiscInsulEffectiveAt）。
++    ///   只进两节点**对照**（不进尺寸链），但它印在「法兰截面 J」的 Note 里，原先读整线 p.FlangeInsulThickMm ⇒ 带逐片圆盘保温的设计那句对照是按整线值算的。
++    ///   2026-09-14 Opus 5 改为**必填**（审查意见）：原默认 null 时退回板件口径，而图纸路径的判据几何板件不带逐片值 ⇒ 新调用方忘了传就静默按整线算。
++    ///   没有 LineCase 的调用方显式传 <c>j =&gt; plates[j].DiscInsulEffectiveMm(p)</c>。
+     /// </summary>
+     public static Result Compute(FlangePlate[] plates, double wallMm, DesignInputs p,
+                                  double fromC, double targetC, double rateKPerH,
+                                  int segCount, double[] setpointC,
+-                                 Func<int, (double rRef, double tRef)?> refFromField)
++                                 Func<int, (double rRef, double tRef)?> refFromField,
++                                 Func<int, double> discInsulMmAt)
+     {
+         if (plates is null || plates.Length == 0) throw new ArgumentException("没有法兰几何", nameof(plates));
++        if (discInsulMmAt is null) throw new ArgumentNullException(nameof(discInsulMmAt), "逐片圆盘保温取值必须给（LineCase.DiscInsulEffectiveAt），不许静默退回整线值");
+         int n = segCount;
+         var res = new Result
+         {
+@@ -144,7 +150,11 @@ public static class DesignCurrent
+                     SharedFactor = shared ? Math.Sqrt(3.0) : 1.0,
+                     Mode = RampControl.TemperatureRamp,
+                 };
+-                var rt = RampTwoNode.Solve(p, inp);
++                // ★ R48（2026-09-14，Opus 5）：RampTwoNode 读 p.FlangeInsulThickMm ⇒ 按本片圆盘保温克隆一份（值与整线相同就不克隆，旧口径逐位不变）
++                double insJ = discInsulMmAt(j);
++                DesignInputs pj = p;
++                if (!insJ.Equals(p.FlangeInsulThickMm)) { pj = SegmentSolver.Clone(p); pj.FlangeInsulThickMm = insJ; }
++                var rt = RampTwoNode.Solve(pj, inp);
+                 if (rt.PeakCurrentA > peak) { peak = rt.PeakCurrentA; clipped = rt.CurrentClipped; }
+             }
+             res.TwoNodeSegPeakA[i] = peak;          // 只当对照印出来
+diff --git a/Pt_Optimize/Core/DesignScreen.cs b/Pt_Optimize/Core/DesignScreen.cs
+index 8756d6e..4e31a53 100644
+--- a/Pt_Optimize/Core/DesignScreen.cs
++++ b/Pt_Optimize/Core/DesignScreen.cs
+@@ -119,28 +119,37 @@ public static class DesignScreen
+     public static double JLimitAPerMm2(DesignInputs p, double tempC, double tMm,
+                                        double insulThickMm)
+     {
+-        double charLen = p.ConvCharLenM;   // ★ 唯一来源（2026-08-28）：不再各存一份
+-        double q;
+-        if (insulThickMm <= 1e-6)
+-            q = Insulation.FlatOuterFlux(tempC, p.TAmbC, p.PtEmissivity, charLen,
+-                                         p.LossScale, p.FlangeAirVelocityMPerS);
+-        else
+-        {
+-            var layers = new List<InsulationLayer>
+-            {
+-                new() { Name = "法兰保温", ThicknessMm = insulThickMm,
+-                        K0 = p.Layer1.K0, K1 = p.Layer1.K1, Enabled = true }
+-            };
+-            q = Insulation.PlateFlux(tempC, p.TAmbC, layers, p.OuterEmissivity, charLen, p.LossScale);
+-        }
++        // R48（2026-09-14，Opus 5）：表面热流改调唯一配方 PlateFluxWPerM2（原本处手抄一份，阈值 1e-6、保温面不吹风）
++        double q = PlateFluxWPerM2(p, tempC, insulThickMm);
+         return Math.Sqrt(2.0 * q / (Materials.PtResistivity(tempC) * tMm * 1e-3)) * 1e-6;
+     }
+ 
+-    /// <summary>单面热流密度 W/m²（法兰表面，按是否包纤维）</summary>
++    /// <summary>
++    /// ★ R48（2026-09-14，Opus 5；审查意见「圆盘保温 0 mm 时四个消费方物理含义不一致」）：法兰表面（圆盘或舌片）**算不算包着保温**的唯一判定 ——
++    /// 厚度 ≥ <see cref="FlangeInsulMinMm"/> 才算包；NaN、0、比它薄 ⇒ 裸铂表面（ε = PtEmissivity）。
++    /// 为什么要这一处：「包了 0 mm」若走 Insulation.PlateFlux，没有有效层时退到外覆材料表面 ε = OuterEmissivity（默认 0.45），
++    /// 而裸铂 ε = 0.18，辐射差约 2.5 倍（ShellThermal 舌片保温那段注释 2026-08 就写过同一句，舌片修了、圆盘没修）。
++    /// 修前：FlangeStability／LocalStability 经本类按裸铂（阈值 1e-6），ShellThermal／PlateThermal2D／RampTwoNode 的圆盘面按 ε 0.45 ——
++    /// 同一片板主热解与热稳定判据用两种表面。逐片圆盘保温（每层 0.5 mm，0 层合法）让这件事更容易踩到。
++    /// </summary>
++    public static bool FlangeFaceInsulated(double insulThickMm)
++        => !double.IsNaN(insulThickMm) && insulThickMm >= FlangeInsulMinMm;
++
++    /// <summary>法兰表面算「包着」的最小保温厚度 mm（与 ShellThermal 舌片保温原有的 0.05 同值；保温按 0.5 mm 一层给，0.05 只用来区分「0 层」）。</summary>
++    public const double FlangeInsulMinMm = 0.05;
++
++    /// <summary>
++    /// 单面热流密度 W/m²（法兰表面，按是否包纤维）。
++    /// ★ R48（2026-09-14，Opus 5）：升为法兰表面热流的**唯一配方** —— ShellThermal（圆盘面、舌片面、裸面三张表）、PlateThermal2D、RampTwoNode、
++    /// FlangeStability、LocalStability 都从这里取，不再各写一份。两处改动：
++    ///   ① 包不包按 <see cref="FlangeFaceInsulated"/>（原阈值 1e-6，新旧只在 1e-6～0.05 mm 之间不同：那一段原按「包了极薄一层、外覆 ε 0.45」算，
++    ///      ShellThermal 的舌片面早就按裸铂算，现在 FlangeStability／LocalStability 跟它一致）；
++    ///   ② 保温面也传真实风速 FlangeAirVelocityMPerS（ShellThermal 2026-08-28 起就传，本处与 RampTwoNode 原不传；默认风速 0 ⇒ 默认口径逐位不变）。
++    /// </summary>
+     public static double PlateFluxWPerM2(DesignInputs p, double tempC, double insulThickMm)
+     {
+         double charLen = p.ConvCharLenM;   // ★ 唯一来源（2026-08-28）：不再各存一份
+-        if (insulThickMm <= 1e-6)
++        if (!FlangeFaceInsulated(insulThickMm))
+             return Insulation.FlatOuterFlux(tempC, p.TAmbC, p.PtEmissivity, charLen,
+                                             p.LossScale, p.FlangeAirVelocityMPerS);
+         var layers = new List<InsulationLayer>
+@@ -148,7 +157,8 @@ public static class DesignScreen
+             new() { Name = "法兰保温", ThicknessMm = insulThickMm,
+                     K0 = p.Layer1.K0, K1 = p.Layer1.K1, Enabled = true }
+         };
+-        return Insulation.PlateFlux(tempC, p.TAmbC, layers, p.OuterEmissivity, charLen, p.LossScale);
++        return Insulation.PlateFlux(tempC, p.TAmbC, layers, p.OuterEmissivity, charLen, p.LossScale,
++                                    p.FlangeAirVelocityMPerS);
+     }
+ 
+ }
+diff --git a/Pt_Optimize/Core/DesignSpec.cs b/Pt_Optimize/Core/DesignSpec.cs
+index 8bbbc45..a8d7819 100644
+--- a/Pt_Optimize/Core/DesignSpec.cs
++++ b/Pt_Optimize/Core/DesignSpec.cs
+@@ -183,17 +183,26 @@ public sealed class DesignSpec
+     /// <summary>
+     /// ★ R48（2026-09-14，Opus 5）：**逐片圆盘保温** mm（第一个是入口片、最后一个是出口片）。空 = 全线沿用 <see cref="FlangeInsulMm"/>（旧口径，逐位不变）。
+     /// 非空时每片取自己的值，经 <see cref="Plate"/> 写进 FlangePlate.DiscInsulThickMm，LineRunner 逐片热解时用它。
+-    /// ⚠ 存档（DesignSpecStore）与界面还没接 —— 目前只给探针与求解器改造用，接之前不许在界面上假装有这个量。
++    /// ⚠ 界面还没接 —— 目前只给探针与求解器改造用，接之前不许在界面上假装有这个量。
++    ///   （2026-09-14 Opus 5 更正：存档已接，DesignSpecStore 的 discInsulMm 键，缺键 = 空；往返与旧档由 DesignSpecStoreTests 钉。）
+     /// </summary>
+     public double[] DiscInsulMm = System.Array.Empty<double>();
+ 
+     /// <summary>
+     /// ★ R48（2026-09-14，Opus 5）：第 j 片圆盘保温在**算例里实际用的**厚度 mm —— 与 BuildCase（FlangeInsulThickMm = FlangeInsulated ? FlangeInsulMm : 0）
+-    /// 加 Plate（DiscInsulThickMm = DiscInsulMm[j]）再经 FlangePlate.DiscInsulEffectiveMm 取出来的逐位相同。
++    /// 加 Plate（DiscInsulThickMm = DiscInsulMm[j]）再经 LineCase.DiscInsulEffectiveAt 取出来的逐位相同（R48DiscInsulPerPlateGateTests 钉）。
+     /// 配套清单与安装报告从这里取，不再读页面的 DesignInputs（那份在 BuildCase 之前，数可能不是算的那个）。
++    /// 2026-09-14 Opus 5 补：某片是 NaN 时板件按「沿用整线」算，这里同样回整线值（原先回 NaN，与算例不同源）。
++    /// 2026-09-14 Opus 5 再补（审查意见「规则写了三份」）：规则本体改调 FlangePlate.DiscInsulEffective，整线值取 <see cref="WholeLineDiscInsulMm"/>（BuildCase 也取它），构造上同源。
+     /// </summary>
+     public double DiscInsulMmOf(int j)
+-        => !FlangeInsulated ? 0.0 : (j >= 0 && j < DiscInsulMm.Length ? DiscInsulMm[j] : FlangeInsulMm);
++        => FlangePlate.DiscInsulEffective(DiscInsulMm, j, WholeLineDiscInsulMm, FlangeInsulated);
++
++    /// <summary>
++    /// ★ R48（2026-09-14，Opus 5）：算例里的**整线**圆盘保温 mm（不包 = 0）。BuildCase 写 DesignInputs.FlangeInsulThickMm 与 <see cref="DiscInsulMmOf"/> 退整线时都取这一处，
++    /// 不再各写一遍「FlangeInsulated ? FlangeInsulMm : 0」。
++    /// </summary>
++    public double WholeLineDiscInsulMm => FlangeInsulated ? FlangeInsulMm : 0;
+ 
+     // ── 压接
+     public double ClampLengthMm = 40.0;
+@@ -926,7 +935,7 @@ public sealed class DesignSpec
+         //   写死的后果：界面把「法兰保温 / 法兰保温厚」两个控件接过来之后，
+         //   它们会被这一行**静默吃掉** —— 用户在界面上把保温改成 0，模型里仍然是 20 mm。
+         //   那就是第七项「表达不了」，而且比前六项更隐蔽（控件在、能动、不起作用）。
+-        p.FlangeInsulThickMm = FlangeInsulated ? FlangeInsulMm : 0;
++        p.FlangeInsulThickMm = WholeLineDiscInsulMm;   // = FlangeInsulated ? FlangeInsulMm : 0（R48 2026-09-14 Opus 5：提成一处，DiscInsulMmOf 同取）
+         p.FlangeInsulated = FlangeInsulated;
+         p.BusbarClampLengthMm = ClampLengthMm;
+         p.BusbarClampTempC = ClampTempC;
+@@ -949,7 +958,6 @@ public sealed class DesignSpec
+             //   ⚠ 扫「循环 <4」抓不到这两行：它们是字面枚举，不是循环。
+             FlangePlates = Enumerable.Range(0, FlangeCount)
+                                      .Select(j => Plate(j, discFloor)).ToArray(),
+-            HasPerPlateDiscInsul = DiscInsulMm.Length > 0,   // R48
+             ClampTempC = Enumerable.Repeat(ClampTempC, FlangeCount).ToArray()
+         };
+     }
+diff --git a/Pt_Optimize/Core/DesignSpecStore.cs b/Pt_Optimize/Core/DesignSpecStore.cs
+index 09332a1..a1df318 100644
+--- a/Pt_Optimize/Core/DesignSpecStore.cs
++++ b/Pt_Optimize/Core/DesignSpecStore.cs
+@@ -82,8 +82,10 @@ public static class DesignSpecStore
+         /// 用 JsonElement 是为了不改 JSON 形态就两种都认得；旧键 tabInsul3dmMm（标量）同样认。
+         /// </summary>
+         public JsonElement? tabInsulMm { get; set; }
+-        /// <summary>R48（2026-09-14，Opus 5）：逐片圆盘保温 mm；缺 = 全线沿用 flangeInsulMm（旧档逐位不变）。</summary>
+-        public double[]? discInsulMm { get; set; }
++        /// <summary>R48（2026-09-14，Opus 5）：逐片圆盘保温 mm；缺 = 全线沿用 flangeInsulMm（旧档逐位不变）。
++        /// 2026-09-14 Opus 5 补（审查意见：「某片 NaN = 沿用整线」已是正式语义，而 JSON 写不了 NaN，带 NaN 的设计一存就抛、报错看不出哪个字段）：
++        /// 类型改 double?[]，逐片 NaN ↔ null（与下面 ringW1Mm 等同一做法，部分设定也存得准）；全是 NaN 与空同义，不写键。</summary>
++        public double?[]? discInsulMm { get; set; }
+         public double? tabInsul3dmMm { get; set; }
+         /// <summary>★ R47 B：几何来源（解析／图纸 .3dm）与图纸路径逐片 .3dm 文件名。旧档没有 ⇒ 空。</summary>
+         public string? geomSource { get; set; }
+@@ -318,7 +320,7 @@ public static class DesignSpecStore
+         if (d.discInsulMm is { Length: > 0 } di)
+         {
+             if (di.Length != fd.FlangeCount) throw new InvalidDataException($"discInsulMm 应有 {fd.FlangeCount} 个，实为 {di.Length} 个");
+-            fd.DiscInsulMm = di;
++            fd.DiscInsulMm = NaA(di);   // 2026-09-14 Opus 5：null ⇒ NaN（该片沿用整线）
+         }
+         if (d.flangeInsulated is { } fe) fd.FlangeInsulated = fe;
+         if (d.clampLengthMm is { } cl) fd.ClampLengthMm = cl;
+@@ -429,8 +431,8 @@ public static class DesignSpecStore
+             clampLengthMm = fd.ClampLengthMm,
+             tabThickMm = fd.TabThickMm.Select(Nz).ToArray(),                 // R47 第三轮 N5：图纸档的 NaN 存成 null
+             thicknessScale = fd.ThicknessScale.Length > 0 ? fd.ThicknessScale : null,   // 图纸档逐片 k
+-            tabInsulMm = JsonSerializer.SerializeToElement(fd.TabInsulMm),
+-            discInsulMm = fd.DiscInsulMm.Length > 0 ? fd.DiscInsulMm : null,   // R48：空 = 不写（旧档逐字不变）   // 逐片数组（读时也认旧档的单个数，见 TabInsulFrom）
++            tabInsulMm = JsonSerializer.SerializeToElement(fd.TabInsulMm),   // 逐片数组（读时也认旧档的单个数，见 TabInsulFrom）—— 2026-09-14 Opus 5：这条注释原挂在下一行，挪回本行
++            discInsulMm = fd.DiscInsulMm.Length > 0 ? NzA(fd.DiscInsulMm) : null,   // R48：空 = 不写（旧档逐字不变）；2026-09-14 Opus 5：逐片 NaN 存成 null（全 NaN 与空同义，不写）
+             geomSource = fd.GeomSource.Length > 0 ? fd.GeomSource : null,      // R47 B：几何来源／图纸文件名
+             flangeFile3dm = fd.FlangeFile3dm.Length > 0 ? fd.FlangeFile3dm : null,
+             ringMul = fd.RingMul,
+diff --git a/Pt_Optimize/Core/FlangeAutoSizer.cs b/Pt_Optimize/Core/FlangeAutoSizer.cs
+index 5dcb541..dbf7c6d 100644
+--- a/Pt_Optimize/Core/FlangeAutoSizer.cs
++++ b/Pt_Optimize/Core/FlangeAutoSizer.cs
+@@ -1375,6 +1375,7 @@ public static class FlangeAutoSizer
+         // R47 B（2026-09-13）：图纸路径的逐片输入也要带过去，否则定尺寸里的副本退回裸舌／默认板
+         FlangeFields = c.FlangeFields, GeomForJudge = c.GeomForJudge,
+         TabInsul3dmPerPlateMm = c.TabInsul3dmPerPlateMm, TabInsul3dmMm = c.TabInsul3dmMm,
++        DiscInsul3dmPerPlateMm = c.DiscInsul3dmPerPlateMm,   // R48（2026-09-14，Opus 5）：图纸路径逐片圆盘保温，漏抄则副本退回整线值
+         MeshFineMm = c.MeshFineMm, MeshCoarseMm = c.MeshCoarseMm,
+         MeshFineRadiusMm = c.MeshFineRadiusMm,
+         MeshInnerMm = c.MeshInnerMm, MeshInnerRadiusMm = c.MeshInnerRadiusMm,
+diff --git a/Pt_Optimize/Core/LineRunner.cs b/Pt_Optimize/Core/LineRunner.cs
+index 7617d92..9f184a8 100644
+--- a/Pt_Optimize/Core/LineRunner.cs
++++ b/Pt_Optimize/Core/LineRunner.cs
+@@ -117,6 +117,45 @@ public sealed class LineCase
+ 
+     private double _tabInsul3dmAll = double.NaN;
+ 
++    /// <summary>
++    /// ★ R48（2026-09-14，Opus 5；数值把关人查出逐片圆盘保温在图纸路径上没有入口）：`.3dm` 模式下的**逐片**圆盘保温厚度 mm（长度 = 片数）。
++    /// NaN、**空数组**或**下标越界** = 该片沿用整线 <see cref="DesignInputs.FlangeInsulThickMm"/>（旧口径，逐位不变）；整线「不包」（FlangeInsulated = false）时有值也按 0。
++    /// 2026-09-14 Opus 5 更正（审查意见「短数组约定不一致」）：原写「短了用最后一片，与 TabInsul3dmPerPlateMm 同约定」，
++    ///   与 DesignSpec 的逐片圆盘保温（越界 = 整线）不一致；现统一为越界 = 整线，规则本体在 FlangePlate.DiscInsulEffective（数组形态）。
++    /// 解析路径（<see cref="FlangePlates"/> 非空）不读本字段 —— 板件自己带 FlangePlate.DiscInsulThickMm。
++    /// 读值一律走 <see cref="DiscInsulEffectiveAt"/>，别直接读数组、板件或 Base。
++    /// </summary>
++    public double[] DiscInsul3dmPerPlateMm = Array.Empty<double>();
++
++    /// <summary>
++    /// ★ R48（2026-09-14，Opus 5）：第 j 片圆盘保温在热解里**实际用的**厚度 mm —— 全仓唯一取值口径。
++    /// 解析路径 = FlangePlates[j].DiscInsulEffectiveMm(Base)；图纸路径 = <see cref="DiscInsul3dmPerPlateMm"/> 的值（非 NaN 时；整线不包仍 0），
++    /// 否则 Base.FlangeInsulThickMm。LineRunner 的逐片热解、整片热稳定、升温两节点参考项、设计电流的两节点对照都调它。
++    /// 2026-09-14 Opus 5：两支都改调规则本体 FlangePlate.DiscInsulEffective（原图纸分支手写一份）；图纸分支越界 = 整线（原为用最后一片）。
++    /// </summary>
++    public double DiscInsulEffectiveAt(int j)
++    {
++        if (FlangePlates.Length > 0)
++            return FlangePlates[Math.Min(Math.Max(j, 0), FlangePlates.Length - 1)].DiscInsulEffectiveMm(Base);
++        return FlangePlate.DiscInsulEffective(DiscInsul3dmPerPlateMm, j, Base.FlangeInsulThickMm, Base.FlangeInsulated);
++    }
++
++    /// <summary>
++    /// ★ R48（2026-09-14，Opus 5；审查意见「程序化造的图纸路径算例静默丢值」）：图纸路径上，第 j 片的**判据几何**（GeomForJudge）带了逐片圆盘保温，
++    /// 而热解实际用的（<see cref="DiscInsulEffectiveAt"/>，只读 <see cref="DiscInsul3dmPerPlateMm"/>）与它不同 ⇒ 回 true 并给出两个值。
++    /// 解析路径、判据几何没带逐片值、或两者相同 ⇒ false。LineRunner 据此在求解备注里写明「判据几何上的值没有用上」，不静默。
++    /// 为什么不直接取判据几何上的值：图纸路径的取值约定（规格 2026-09-14）是「数组，否则整线」，判据几何是反推的等效片，不是设定的出处。
++    /// </summary>
++    public bool JudgeGeomDiscInsulIgnored(int j, out double onJudgeGeomMm, out double usedMm)
++    {
++        onJudgeGeomMm = double.NaN; usedMm = DiscInsulEffectiveAt(j);
++        if (FlangePlates.Length > 0) return false;
++        var g = GeomForJudgeAt(j);
++        if (g is null || double.IsNaN(g.DiscInsulThickMm)) return false;
++        onJudgeGeomMm = g.DiscInsulEffectiveMm(Base);
++        return !onJudgeGeomMm.Equals(usedMm);
++    }
++
+     /// <summary>
+     /// `.3dm` 模式下的**舌片保温厚度** mm。NaN 或 &lt; 0.05 = 舌片裸露（原行为）。
+     /// ★ R47 B：已降为「同一值填所有片」的便捷入口 —— 逐片值在 <see cref="TabInsul3dmPerPlateMm"/>，
+@@ -373,12 +412,6 @@ public sealed class LineCase
+     /// </summary>
+     public Action<int, LineResult, double, double, double, double, double, string>? CoupleTrace;
+ 
+-    /// <summary>
+-    /// ★ R48（2026-09-14，Opus 5）：造算例的设计是否带了逐片圆盘保温（DesignSpec.DiscInsulMm 非空）。
+-    /// 图纸路径（没有解析板件）目前**不支持**逐片圆盘保温 —— 为 true 且走图纸时，LineRunner 在 Notes 里写明「逐片圆盘保温被忽略，按整线值算」，不静默。
+-    /// </summary>
+-    public bool HasPerPlateDiscInsul;
+-
+     /// <summary>其余物性、保温、电气、环境沿用 DesignInputs</summary>
+     public DesignInputs Base = new();
+ 
+@@ -800,6 +833,31 @@ public sealed class LineResult
+         .ToArray();
+ }
+ 
++/// <summary>
++/// ★ R48（2026-09-14，Opus 5；审查意见「门不许手抄生产配方」）：第 j 片**壳热解**的输入 —— 网格与电流场之外的全部。
++/// 由 <see cref="LineRunner.PlateThermalInputs"/> 组装、<see cref="LineRunner.SolvePlateThermal"/> 消费；整线求解（RunOnce 逐片循环）与门共用这一份。
++/// </summary>
++public sealed class PlateThermalSetup
++{
++    /// <summary>本片的物性／保温／夹持：克隆自 LineCase.Base，写入本片控温点、夹持温度、按电流定的铜排热导、本片圆盘保温（LineCase.DiscInsulEffectiveAt）。</summary>
++    public DesignInputs P2 = new();
++    /// <summary>保温分界 x（按 x 划时用）。图纸路径推不出分界 ⇒ +∞（整片按裸露）且 <see cref="InsulUndetermined"/>。</summary>
++    public double InsulX = double.PositiveInfinity;
++    /// <summary>舌盘分界 x（NaN = ShellThermal 自己的默认）。</summary>
++    public double TabBoundaryX = double.NaN;
++    /// <summary>双舌片对称保温。</summary>
++    public bool SymmetricInsul;
++    /// <summary>本片舌保温 mm（解析 = 板件；图纸 = LineCase.TabInsul3dmAt）。</summary>
++    public double TabInsulThickMm = double.NaN;
++    /// <summary>圆盘区与保温边界按半径划时的盘半径、保温半径（NaN = 退回按 x，InsulRule／DiscZoneRule 写明）。</summary>
++    public double DiscRadiusMm = double.NaN, InsulDiscRadiusMm = double.NaN;
++    /// <summary>按本片电流定的铜排热导 W/K 与载流需截面 mm²；-1／0 = 没有按电流定。</summary>
++    public double BusGWPerK = -1, BusSectionForCurrentMm2;
++    /// <summary>保温分界的出处说明与「判不了」位（进 FlangeOut）。</summary>
++    public string InsulNote = "";
++    public bool InsulUndetermined;
++}
++
+ /// <summary>
+ /// **整线求解的唯一入口** —— CLI 与 WinForms 都只调 <see cref="Run"/>，
+ /// 于是两边不可能跑出不同结果（此前 CLI 与 UI 各自拼装流程，是长期的不一致来源）。
+@@ -1481,81 +1539,16 @@ public static class LineRunner
+                          : j >= n ? segs[n - 1].TRootBC
+                          : Math.Max(segs[j - 1].TRootBC, segs[j].TRootAC);
+ 
+-            var p2 = SegmentSolver.Clone(c.Base);
+-            p2.TSetC = c.SetpointC[Math.Min(j, n - 1)];
+-            if (j < c.ClampTempC.Length) p2.BusbarClampTempC = c.ClampTempC[j];
+-            // ★ R48（2026-09-14，Opus 5）：逐片圆盘保温 —— 板件带了自己的值就用它（FlangePlate.DiscInsulThickMm），否则沿用整线值（逐位不变）。
+-            if (analytic && plate is not null)
+-                p2.FlangeInsulThickMm = plate.DiscInsulEffectiveMm(c.Base);
+-            else if (c.HasPerPlateDiscInsul && j == 0 && !res.Notes.Any(x => x.StartsWith("⚠ 设计带了逐片圆盘保温", StringComparison.Ordinal)))
+-                res.Notes.Add("⚠ 设计带了逐片圆盘保温，但图纸路径还不支持 —— 本次按整线圆盘保温 "
+-                              + $"{c.Base.FlangeInsulThickMm:0.0} mm 算，逐片值被忽略。");
+-            // ★★★★★ 逐片热导 G（2026-08-28，B 项）：**由该片自己的电流算出来**，不再靠人抄。
+-            //
+-            //   此前 --busg 要人手填「40,21.8,300」，那个 40×21.8 是从 `--cli --busbar`
+-            //   选型表里**抄**过来的 —— 同一个数两处来源，而且抄的是**共用片**那一行。
+-            //   可四片电流本来就不同（实测 685/1099/975/542 A），
+-            //   共用片走 √3 倍电流 ⇒ 需要的铜排更粗 ⇒ **G 本来就该逐片不同**。
+-            //
+-            //   第一性原理链（不循环）：A_j = I_j / J许用 ⇒ G_j = k_Cu·A_j/L。
+-            //   截面只依赖**载流**，不依赖夹持温度 —— 所以可以在解之前定下来。
+-            //   ⚠ 选型表里「导热需截面」那一支要 heatW 与夹持温度，是**循环**的，
+-            //     故不进这条链；它在解完之后作为**一致性检查**（见 BusbarConsistency）。
+-            double busGThis = -1, busSecCurMm2 = 0;
+-            if (c.Base.BusbarConductanceWPerK >= 0 && c.Base.BusbarJAllowAPerMm2 > 1e-9
+-                && c.Base.BusbarLenToSinkMm > 1e-9)
+-            {
+-                double aMm2 = iJoint / c.Base.BusbarJAllowAPerMm2;
+-                busSecCurMm2 = aMm2;
+-                p2.BusbarConductanceWPerK = busGThis =
+-                    BusbarSizing.CuK * (aMm2 * 1e-6) / (c.Base.BusbarLenToSinkMm * 1e-3);
+-            }
+-            // 保温分界：解析几何用该片自己的分界（可为「全裸」= +∞ 之外）。
+-            // ★ R47 B（2026-09-13）：图纸路径**逐片、从几何来**。此前 insulX 用 new FlangePlate() 默认板的切点
+-            //   （盘 R60／舌 −200 那块与图纸无关的板）、tabBoundaryX 永远取 GeomForJudge[0]。
+-            //   现在：GeomForJudge[j]（分析几何变数反推的等效片，与 ⑤⑥ 同一组几何）→ 没有就从材料包络推切点
+-            //   → 推不出就把 ②′ 与 ③ 判成无法判定。**不许再用默认板**。
+-            double insulX, tabBoundX = double.NaN;
+-            // ★ R48（2026-09-14，Opus 5）：圆盘区按**半径**圈（见 ShellThermal 里那段），所以要把盘半径接进去。
+-            //   接不到就是 NaN ⇒ ShellThermal 退回旧的按切点口径，并把「退回了」写进 DiscZoneRule 让人看得见。
+-            //   ⚠ 本项目栽过两次的形态：**赋了值 ≠ 用它的人读得到**。这一行就是那根接线。
+-            double discRForZone = double.NaN;
+-            // ★ R48 续（2026-09-14，Opus 5）：**保温边界**也按半径 —— 由板件的唯一判定给出
+-            //   （FlangePlate.InsulDiscRadiusMm：默认分界给盘半径，显式分界给 NaN 仍按 x）。
+-            //   拿不到板件（图纸路径推不出等效片）时是 NaN ⇒ 退回按 x，并由 InsulRule 写明。
+-            double insulRForZone = double.NaN;
+-            string insulNote = ""; bool insulUndet = false;
+-            if (analytic) { insulX = plate!.InsulBoundaryXResolved; discRForZone = plate.DiscRadiusMm; insulRForZone = plate.InsulDiscRadiusMm; }
+-            else
+-            {
+-                var eqJ = c.GeomForJudgeAt(j);
+-                if (eqJ is not null)
+-                {
+-                    insulX = eqJ.InsulBoundaryXResolved; tabBoundX = eqJ.Tangent().X;
+-                    discRForZone = eqJ.DiscRadiusMm;
+-                    insulRForZone = eqJ.InsulDiscRadiusMm;
+-                    insulNote = $"保温分界 x={insulX:0.0}／舌盘分界 x={tabBoundX:0.0}，来自本片分析几何变数的等效片";
+-                }
+-                else if (fieldUsed is not null && TangentFromField(fieldUsed, out double xT, out string howT))
+-                {
+-                    insulX = xT; tabBoundX = xT;
+-                    insulNote = $"保温分界／舌盘分界 x={xT:0.0}，{howT}（没有分析几何变数，比等效片粗）";
+-                }
+-                else
+-                {
+-                    insulX = double.PositiveInfinity;   // 没有分界 ⇒ 整片按裸露算，但判据要标成判不了
+-                    insulUndet = true;
+-                    insulNote = "图纸没有切点，保温分界判不了" + (fieldUsed is null ? "" : "（材料包络推不出舌盘分界）");
+-                }
+-            }
+-            ShellThermalResult Thermal(ShellCurrentResult cur) =>
+-                ShellThermal.Solve(mesh, cur.JMagAPerMm2, p2, tRoot, insulX,
+-                                   symmetricInsul: analytic && plate!.TwoTabs,
+-                                   tabBoundaryX: analytic ? plate!.Tangent().X : tabBoundX,
+-                                   tabInsulThickMm: analytic ? plate!.TabInsulThickMm
+-                                                             : c.TabInsul3dmAt(j),
+-                                   discRadiusMm: discRForZone,
+-                                   insulDiscRadiusMm: insulRForZone);
++            // ★ R48（2026-09-14，Opus 5；审查意见「门手抄了逐片热解配方」）：本片 p2、铜排热导、保温分界、半径口径的组装搬进 PlateThermalInputs，
++            //   壳热解调用搬进 SolvePlateThermal —— 本循环与 R48DiscInsulPerPlateGateTests 共用这一份，门里只换圆盘保温厚度。纯搬移，数逐位不变。
++            var ts = PlateThermalInputs(c, j, iJoint, fieldUsed);
++            double busGThis = ts.BusGWPerK, busSecCurMm2 = ts.BusSectionForCurrentMm2;
++            string insulNote = ts.InsulNote; bool insulUndet = ts.InsulUndetermined;
++            // ★ R48（2026-09-14，Opus 5；审查意见「程序化造的图纸路径算例静默丢值」）：判据几何带了逐片圆盘保温而热解没用上 ⇒ 写进求解备注，不静默。
++            if (!analytic && c.JudgeGeomDiscInsulIgnored(j, out double discOnGeomMm, out double discUsedMm))
++                res.Notes.Add($"⚠ {flangeName(j)}：判据几何上带了本片圆盘保温 {discOnGeomMm:0.0} mm，但图纸路径的圆盘保温只取图纸路径的逐片设定（没有设定则沿用整线）"
++                              + $" —— 本次按 {discUsedMm:0.0} mm 算，判据几何上的值没有用上。");
++            ShellThermalResult Thermal(ShellCurrentResult cur) => SolvePlateThermal(mesh, cur.JMagAPerMm2, tRoot, ts);
+             var th = Thermal(sc);
+ 
+             // ★★★★★ σ(T) 耦合（2026-08-28 第一性原理通查查出，默认**关**）。
+@@ -1833,6 +1826,104 @@ public static class LineRunner
+             }
+     }
+ 
++    /// <summary>
++    /// ★ R48（2026-09-14，Opus 5；审查意见：R48DiscInsulPerPlateGateTests 的逐片重解手抄了本处的逐片热解配方 —— 生产一改，门要么红、要么逼人再抄一遍）：
++    /// 第 j 片壳热解的输入组装。原在 RunOnce 逐片循环里就地写，**原样搬出**（数逐位不变），整线求解与门共用。
++    /// <paramref name="iJoint"/> = 本片接头电流 A（按电流定铜排热导）；<paramref name="fieldUsed"/> = 图纸路径本片实际用的厚度场（推切点的退路；
++    /// 解析路径不读它）。图纸路径上它就是本片网格的 ShellMesh.SourceField（ShellMesh.BuildFromField 写入的正是传进去的场）。
++    /// </summary>
++    public static PlateThermalSetup PlateThermalInputs(LineCase c, int j, double iJoint, ThicknessField? fieldUsed)
++    {
++        int n = c.SegmentCount;
++        bool analytic = c.FlangePlates.Length > 0;
++        var plate = analytic ? c.FlangePlates[Math.Min(j, c.FlangePlates.Length - 1)] : null;
++        var s = new PlateThermalSetup();
++        var p2 = SegmentSolver.Clone(c.Base);
++        p2.TSetC = c.SetpointC[Math.Min(j, n - 1)];
++        if (j < c.ClampTempC.Length) p2.BusbarClampTempC = c.ClampTempC[j];
++        // ★ R48（2026-09-14，Opus 5）：逐片圆盘保温 —— 唯一取值 LineCase.DiscInsulEffectiveAt（解析 = 板件；图纸 = DiscInsul3dmPerPlateMm；
++        //   都没有 = 整线值，与 p2 克隆来的逐位相同）。原先分两支写、图纸路径只留一句「逐片值被忽略」，现两条路同一个入口。
++        p2.FlangeInsulThickMm = c.DiscInsulEffectiveAt(j);
++        // ★★★★★ 逐片热导 G（2026-08-28，B 项）：**由该片自己的电流算出来**，不再靠人抄。
++        //
++        //   此前 --busg 要人手填「40,21.8,300」，那个 40×21.8 是从 `--cli --busbar`
++        //   选型表里**抄**过来的 —— 同一个数两处来源，而且抄的是**共用片**那一行。
++        //   可四片电流本来就不同（实测 685/1099/975/542 A），
++        //   共用片走 √3 倍电流 ⇒ 需要的铜排更粗 ⇒ **G 本来就该逐片不同**。
++        //
++        //   第一性原理链（不循环）：A_j = I_j / J许用 ⇒ G_j = k_Cu·A_j/L。
++        //   截面只依赖**载流**，不依赖夹持温度 —— 所以可以在解之前定下来。
++        //   ⚠ 选型表里「导热需截面」那一支要 heatW 与夹持温度，是**循环**的，
++        //     故不进这条链；它在解完之后作为**一致性检查**（见 BusbarConsistency）。
++        if (c.Base.BusbarConductanceWPerK >= 0 && c.Base.BusbarJAllowAPerMm2 > 1e-9
++            && c.Base.BusbarLenToSinkMm > 1e-9)
++        {
++            double aMm2 = iJoint / c.Base.BusbarJAllowAPerMm2;
++            s.BusSectionForCurrentMm2 = aMm2;
++            p2.BusbarConductanceWPerK = s.BusGWPerK =
++                BusbarSizing.CuK * (aMm2 * 1e-6) / (c.Base.BusbarLenToSinkMm * 1e-3);
++        }
++        // 保温分界：解析几何用该片自己的分界（可为「全裸」= +∞ 之外）。
++        // ★ R47 B（2026-09-13）：图纸路径**逐片、从几何来**。此前 insulX 用 new FlangePlate() 默认板的切点
++        //   （盘 R60／舌 −200 那块与图纸无关的板）、tabBoundaryX 永远取 GeomForJudge[0]。
++        //   现在：GeomForJudge[j]（分析几何变数反推的等效片，与 ⑤⑥ 同一组几何）→ 没有就从材料包络推切点
++        //   → 推不出就把 ②′ 与 ③ 判成无法判定。**不许再用默认板**。
++        double insulX, tabBoundX = double.NaN;
++        // ★ R48（2026-09-14，Opus 5）：圆盘区按**半径**圈（见 ShellThermal 里那段），所以要把盘半径接进去。
++        //   接不到就是 NaN ⇒ ShellThermal 退回旧的按切点口径，并把「退回了」写进 DiscZoneRule 让人看得见。
++        //   ⚠ 本项目栽过两次的形态：**赋了值 ≠ 用它的人读得到**。这一行就是那根接线。
++        double discRForZone = double.NaN;
++        // ★ R48 续（2026-09-14，Opus 5）：**保温边界**也按半径 —— 由板件的唯一判定给出
++        //   （FlangePlate.InsulDiscRadiusMm：默认分界给盘半径，显式分界给 NaN 仍按 x）。
++        //   拿不到板件（图纸路径推不出等效片）时是 NaN ⇒ 退回按 x，并由 InsulRule 写明。
++        double insulRForZone = double.NaN;
++        string insulNote = ""; bool insulUndet = false;
++        if (analytic) { insulX = plate!.InsulBoundaryXResolved; discRForZone = plate.DiscRadiusMm; insulRForZone = plate.InsulDiscRadiusMm; }
++        else
++        {
++            var eqJ = c.GeomForJudgeAt(j);
++            if (eqJ is not null)
++            {
++                insulX = eqJ.InsulBoundaryXResolved; tabBoundX = eqJ.Tangent().X;
++                discRForZone = eqJ.DiscRadiusMm;
++                insulRForZone = eqJ.InsulDiscRadiusMm;
++                insulNote = $"保温分界 x={insulX:0.0}／舌盘分界 x={tabBoundX:0.0}，来自本片分析几何变数的等效片";
++            }
++            else if (fieldUsed is not null && TangentFromField(fieldUsed, out double xT, out string howT))
++            {
++                insulX = xT; tabBoundX = xT;
++                insulNote = $"保温分界／舌盘分界 x={xT:0.0}，{howT}（没有分析几何变数，比等效片粗）";
++            }
++            else
++            {
++                insulX = double.PositiveInfinity;   // 没有分界 ⇒ 整片按裸露算，但判据要标成判不了
++                insulUndet = true;
++                insulNote = "图纸没有切点，保温分界判不了" + (fieldUsed is null ? "" : "（材料包络推不出舌盘分界）");
++            }
++        }
++        s.P2 = p2;
++        s.InsulX = insulX;
++        s.SymmetricInsul = analytic && plate!.TwoTabs;
++        s.TabBoundaryX = analytic ? plate!.Tangent().X : tabBoundX;
++        s.TabInsulThickMm = analytic ? plate!.TabInsulThickMm : c.TabInsul3dmAt(j);
++        s.DiscRadiusMm = discRForZone;
++        s.InsulDiscRadiusMm = insulRForZone;
++        s.InsulNote = insulNote; s.InsulUndetermined = insulUndet;
++        return s;
++    }
++
++    /// <summary>
++    /// ★ R48（2026-09-14，Opus 5）：第 j 片壳热解（ShellThermal.Solve）—— 边界与物性全部取自 <see cref="PlateThermalInputs"/> 的结果。
++    /// 原是 RunOnce 里的局部函数 Thermal，原样搬出；σ(T) 内循环仍在 RunOnce 里（它重解电流场后再调本函数）。
++    /// </summary>
++    public static ShellThermalResult SolvePlateThermal(ShellMesh mesh, double[] jMagAPerMm2, double tRootC, PlateThermalSetup s)
++        => ShellThermal.Solve(mesh, jMagAPerMm2, s.P2, tRootC, s.InsulX,
++                              symmetricInsul: s.SymmetricInsul,
++                              tabBoundaryX: s.TabBoundaryX,
++                              tabInsulThickMm: s.TabInsulThickMm,
++                              discRadiusMm: s.DiscRadiusMm,
++                              insulDiscRadiusMm: s.InsulDiscRadiusMm);
++
+     /// <summary>
+     /// R47 B：从材料包络推舌盘分界（切点）—— 舌尖那一列的材料半宽 w、全场最大半宽 R（盘半径）：
+     /// 盘的圆弧半宽 √(R²−x²) 首次等于舌半宽 w 的地方就是舌盘分界，x = −√(R²−w²)（w ≥ R 时为 0，即盘Ø56／舌 56 那种）。
+@@ -2190,7 +2281,8 @@ public static class LineRunner
+                 var dcr = DesignCurrent.Compute(platesJ, c.WallMm, c.Base, c.RampFromC, c.RampTargetC, c.RampRateKPerH,
+                               segs.Length, c.SetpointC,
+                               jj => jj < flanges.Length && flanges[jj] is { } f0 && f0.QGenW > 0 && f0.CurrentA > 0
+-                                    ? (f0.QGenW / (f0.CurrentA * f0.CurrentA), f0.TRootC) : null);
++                                    ? (f0.QGenW / (f0.CurrentA * f0.CurrentA), f0.TRootC) : null,
++                              c.DiscInsulEffectiveAt);   // R48（2026-09-14，Opus 5）：两节点对照印在本条 Note 里，原读整线圆盘保温
+                 // ── ① 升温（R20，用户 2026-09-08 纠正：全体截面 J<11 就不会熔，不判峰值；
+                 //    ① = 升温所需电流没被管 J 许用上限截住 ⇒ 按 20 °C/h 升得到目标）。闭式、与网格无关、每轮都在。
+                 bool rampUndet = double.IsNaN(dcr.RampTubeJPeakAPerMm2);
+@@ -2336,7 +2428,7 @@ public static class LineRunner
+                 //   发散几何上片温会跑到几千度，拿那个温度判出来的全是垃圾。
+                 var st = FlangeStability.Check(
+                     c.Base, fw.QGenW, fw.TRootC,
+-                    sf.DiscAreaMm2, sf.TabAreaMm2, pl.DiscInsulEffectiveMm(c.Base),   // R48：逐片圆盘保温（原读整线值）
++                    sf.DiscAreaMm2, sf.TabAreaMm2, c.DiscInsulEffectiveAt(wj),   // R48（2026-09-14，Opus 5）：逐片圆盘保温走唯一取值（图纸路径的 GeomForJudge 板件不带逐片值，原读法在那条路上仍是整线值）
+                     2 * pl.TabEndHalfWidthMm * tThick, Math.Abs(pl.TabEndXMm),
+                     2 * Math.PI * pl.HoleRadiusMm * pl.ThicknessMm,
+                     pl.DiscRadiusMm - pl.HoleRadiusMm,
+@@ -2402,9 +2494,9 @@ public static class LineRunner
+                         SharedFactor = shareF,
+                         Mode = RampControl.TemperatureRamp,
+                     };
+-                    // R48（2026-09-14，Opus 5）：升温两节点也按本片圆盘保温（原读整线 c.Base）
++                    // R48（2026-09-14，Opus 5）：升温两节点也按本片圆盘保温（原读整线 c.Base），走唯一取值 LineCase.DiscInsulEffectiveAt
+                     var pRamp = SegmentSolver.Clone(c.Base);
+-                    pRamp.FlangeInsulThickMm = pl.DiscInsulEffectiveMm(c.Base);
++                    pRamp.FlangeInsulThickMm = c.DiscInsulEffectiveAt(wj);
+                     var rt = RampTwoNode.Solve(pRamp, gRamp);
+                     checks.Add(new ConstraintOut
+                     {
+diff --git a/Pt_Optimize/Core/LineSolver.cs b/Pt_Optimize/Core/LineSolver.cs
+index d02aa59..f4424e8 100644
+--- a/Pt_Optimize/Core/LineSolver.cs
++++ b/Pt_Optimize/Core/LineSolver.cs
+@@ -282,7 +282,9 @@ public static class LineSolver
+         ExtensionMm = s.ExtensionMm,
+         ExtHalfWidthMm = s.ExtHalfWidthMm,
+         ThickenRadiusMm = s.ThickenRadiusMm,
+-        ThickenedMm = s.ThickenedMm
++        ThickenedMm = s.ThickenedMm,
++        // R48（2026-09-14，Opus 5）：逐片圆盘保温跟着板件走 —— 漏抄它，CoupledSolver 里本片就退回整线值（手抄清单的老病，其余没抄的字段本批未动）
++        DiscInsulThickMm = s.DiscInsulThickMm,
+     };
+ 
+     /// <summary>为该段挑最省成本的可行牌号</summary>
+diff --git a/Pt_Optimize/Core/PlateCurrent2D.cs b/Pt_Optimize/Core/PlateCurrent2D.cs
+index a512876..7204e91 100644
+--- a/Pt_Optimize/Core/PlateCurrent2D.cs
++++ b/Pt_Optimize/Core/PlateCurrent2D.cs
+@@ -332,9 +332,29 @@ public sealed class FlangePlate
+     /// ★ R48（2026-09-14，Opus 5；常驻数值把关人第十二轮查出三处还读整线值）：本片圆盘保温的**唯一**取值口径 ——
+     /// 板件带了逐片值就用它（整线「不包」时为 0），否则沿用整线 <paramref name="p"/>.FlangeInsulThickMm。
+     /// 热场、整片热稳定、升温两节点参考项都经它取，不许各写一份。
++    /// 2026-09-14 Opus 5 补（审查意见「同一条规则写了三份」）：规则本体提到 <see cref="DiscInsulEffective(double, double, bool)"/>，本处只是板件的调用口。
+     /// </summary>
+     public double DiscInsulEffectiveMm(DesignInputs p)
+-        => double.IsNaN(DiscInsulThickMm) ? p.FlangeInsulThickMm : (p.FlangeInsulated ? DiscInsulThickMm : 0.0);
++        => DiscInsulEffective(DiscInsulThickMm, p.FlangeInsulThickMm, p.FlangeInsulated);
++
++    /// <summary>
++    /// ★ R48（2026-09-14，Opus 5；审查意见：同一条规则原先在板件、LineCase 图纸分支、DesignSpec.DiscInsulMmOf 各写一份，
++    /// 三份「同源」只靠测试比出来相等）：逐片圆盘保温的**规则本体**，全仓只此一份 ——
++    /// 逐片值是 NaN ⇒ 沿用整线值 <paramref name="wholeLineMm"/>（调用方给「算例里的整线值」，不包时就是 0）；
++    /// 逐片值有数 ⇒ 包着取它、整线「不包」取 0。
++    /// </summary>
++    public static double DiscInsulEffective(double perPlateMm, double wholeLineMm, bool flangeInsulated)
++        => double.IsNaN(perPlateMm) ? wholeLineMm : (flangeInsulated ? perPlateMm : 0.0);
++
++    /// <summary>
++    /// ★ R48（2026-09-14，Opus 5）：数组形态的同一规则。**短数组约定（全仓统一）：下标越界 = 该片没有逐片值 = 与 NaN 同义，沿用整线**。
++    /// 用它的是 DesignSpec.DiscInsulMmOf（设计记录的逐片数组）与 LineCase.DiscInsulEffectiveAt 的图纸分支（DiscInsul3dmPerPlateMm）；
++    /// 板件本身（DesignSpec.Plate）越界也填 NaN，三处一致。
++    /// ⚠ 与舌保温 LineCase.TabInsul3dmAt 的「短了用最后一片」**不同**：舌保温没有整线值可退，圆盘保温有，缺值就退整线，不猜。
++    /// </summary>
++    public static double DiscInsulEffective(double[]? perPlateMm, int j, double wholeLineMm, bool flangeInsulated)
++        => DiscInsulEffective(perPlateMm is not null && j >= 0 && j < perPlateMm.Length ? perPlateMm[j] : double.NaN,
++                              wholeLineMm, flangeInsulated);
+ 
+     /// <summary>解析后的保温分界：NaN ⇒ 切点（仅圆盘保温）</summary>
+     public double InsulBoundaryXResolved
+diff --git a/Pt_Optimize/Core/PlateThermal2D.cs b/Pt_Optimize/Core/PlateThermal2D.cs
+index fa76ab1..4f57501 100644
+--- a/Pt_Optimize/Core/PlateThermal2D.cs
++++ b/Pt_Optimize/Core/PlateThermal2D.cs
+@@ -45,18 +45,15 @@ public static class PlateThermal2D
+         var res = new PlateThermalResult();
+ 
+         // 分段表面热流 q″(T) [W/mm²]（原始单位 W/m² → ×1e-6）
+-        double charLen = 0.05;   // 特征长度 m，用于自然对流关联式
++        // ★ R48（2026-09-14，Opus 5；审查意见「圆盘保温 0 mm 时四个消费方物理含义不一致」）：两张表改调**唯一配方** DesignScreen.PlateFluxWPerM2。
++        //   修的病：保温面原先无条件走 PlateFlux，厚度 0 时退到外覆材料 ε=0.45（裸铂 0.18）；另外本处原写死特征长度 0.05、保温面不传风速。
++        //   默认 ConvCharLenM = 0.05、风速 0 ⇒ 包着时逐位不变。
+         var bareTab = new LossTable(p.TAmbC, p.TSetC + 200, 60,
+-            x => Insulation.FlatOuterFlux(x, p.TAmbC, p.PtEmissivity, charLen,
+-                                          p.LossScale, p.FlangeAirVelocityMPerS) * 1e-6);
+-        var insLayers = new List<InsulationLayer>
+-        {
+-            new() { Name="法兰保温", ThicknessMm = p.FlangeInsulThickMm,
+-                    K0 = p.Layer1.K0, K1 = p.Layer1.K1, Enabled = p.FlangeInsulThickMm > 1e-6 }
+-        };
+-        var insTab = new LossTable(p.TAmbC, p.TSetC + 200, 60,
+-            x => Insulation.PlateFlux(x, p.TAmbC, insLayers, p.OuterEmissivity, charLen,
+-                                      p.LossScale) * 1e-6);
++            x => DesignScreen.PlateFluxWPerM2(p, x, 0.0) * 1e-6);
++        var insTab = DesignScreen.FlangeFaceInsulated(p.FlangeInsulThickMm)
++            ? new LossTable(p.TAmbC, p.TSetC + 200, 60,
++                x => DesignScreen.PlateFluxWPerM2(p, x, p.FlangeInsulThickMm) * 1e-6)
++            : bareTab;
+ 
+         // 默认（NaN）解析为切点 = 仅圆盘保温、舌片裸露，见 FlangePlate.InsulBoundaryXMm
+         double insulX = g.InsulBoundaryXResolved;
+diff --git a/Pt_Optimize/Core/RampTwoNode.cs b/Pt_Optimize/Core/RampTwoNode.cs
+index 7baa470..2313266 100644
+--- a/Pt_Optimize/Core/RampTwoNode.cs
++++ b/Pt_Optimize/Core/RampTwoNode.cs
+@@ -163,19 +163,15 @@ public static class RampTwoNode
+             t => Insulation.CylinderLoss(t, p.TAmbC, rOut, p.Layers, epsTube,
+                                          p.Posture == Orientation.Vertical, L, p.LossScale).QPerLength);
+ 
+-        double charLen = p.ConvCharLenM;   // ★ 唯一来源（2026-08-28）：不再各存一份
+-        var flangeInsLayers = new List<InsulationLayer>
+-        {
+-            new() { Name = "法兰保温", ThicknessMm = p.FlangeInsulThickMm,
+-                    K0 = p.Layer1.K0, K1 = p.Layer1.K1,
+-                    DensityKgM3 = p.Layer1.DensityKgM3, CpJKgK = p.Layer1.CpJKgK,
+-                    Enabled = p.FlangeInsulThickMm > 1e-6 }
+-        };
+-        var fluxIns = new LossTable(p.TAmbC, tabTop, 80,
+-            t => Insulation.PlateFlux(t, p.TAmbC, flangeInsLayers, p.OuterEmissivity, charLen, p.LossScale));
++        // ★ R48（2026-09-14，Opus 5；审查意见「圆盘保温 0 mm 时四个消费方物理含义不一致」）：法兰两张表面热流表改调**唯一配方**
++        //   DesignScreen.PlateFluxWPerM2（特征长度 p.ConvCharLenM、包不包按 DesignScreen.FlangeFaceInsulated、两面都传风速）。
++        //   修的病：保温面原先无条件走 PlateFlux，厚度 0 时退到外覆材料 ε=0.45，而同一判据表里的整片热稳定按裸铂 ε=0.18；
++        //   保温面原先也不传风速（ShellThermal 传）。包着且默认风速 0 时调用参数与原来逐项相同 ⇒ 逐位不变。
+         var fluxBare = new LossTable(p.TAmbC, tabTop, 80,
+-            t => Insulation.FlatOuterFlux(t, p.TAmbC, p.PtEmissivity, charLen,
+-                                          p.LossScale, p.FlangeAirVelocityMPerS));
++            t => DesignScreen.PlateFluxWPerM2(p, t, 0.0));
++        var fluxIns = DesignScreen.FlangeFaceInsulated(p.FlangeInsulThickMm)
++            ? new LossTable(p.TAmbC, tabTop, 80, t => DesignScreen.PlateFluxWPerM2(p, t, p.FlangeInsulThickMm))
++            : fluxBare;
+ 
+         // 单片散热 W（两面各一份，mm² → m²）
+         double FlangeLossW(double tf)
+@@ -199,7 +195,7 @@ public static class RampTwoNode
+             }
+         }
+         double capInsulFlange = 0;
+-        if (p.FlangeInsulThickMm > 1e-6)
++        if (DesignScreen.FlangeFaceInsulated(p.FlangeInsulThickMm))   // R48（2026-09-14，Opus 5）：与散热同一判定（原 > 1e-6）
+         {
+             double volM3 = 2.0 * (g.FlangeAreaInsulMm2 * 1e-6) * (p.FlangeInsulThickMm * 1e-3);
+             capInsulFlange = volM3 * p.Layer1.DensityKgM3 * p.Layer1.CpJKgK * 0.5;
+diff --git a/Pt_Optimize/Core/SegmentSolver.cs b/Pt_Optimize/Core/SegmentSolver.cs
+index b43d1e6..3f3a21c 100644
+--- a/Pt_Optimize/Core/SegmentSolver.cs
++++ b/Pt_Optimize/Core/SegmentSolver.cs
+@@ -371,7 +371,16 @@ public static class SegmentSolver
+             switch (what)
+             {
+                 case "insul": q.Layer1.ThicknessMm = v; q.Layer1.Enabled = v > 1e-6; break;
+-                case "flangeInsul": q.FlangeInsulThickMm = v; q.FlangeInsulated = v > 1e-6; break;
++                // ★ R48（2026-09-14，Opus 5；数值把关人要求查「flangeInsul」在什么链路上被用）：改为**拒绝**。
++                //   本扫描每一点只调一维管段 Solve，而 Solve 与它调的散热／保温表**一处都不读** FlangeInsulThickMm／FlangeInsulated
++                //   （全仓 grep：读它们的只有 ShellThermal、PlateThermal2D、RampTwoNode 与 LineRunner 的逐片热解）
++                //   ⇒ 这一支对**任何**设计扫出来都是「第一列在变、其余列全同」，与下面 flangeTf 同一族；
++                //   带逐片圆盘保温的设计更扫不到（逐片值在板件 FlangePlate.DiscInsulThickMm 上，这里连板件都没有）。
++                //   全仓无调用方（界面只接了 insul／eps）。「Solve 不读圆盘保温」由 R48DiscInsulPerPlateGateTests 钉住，哪天管段模型读了它那条会红。
++                case "flangeInsul":
++                    throw new ArgumentException(
++                        "扫描量「flangeInsul」不可用：一维管段模型不含法兰，圆盘保温（含逐片设定）在这里不起作用，扫出来每一行都相同。"
++                        + "圆盘保温的影响要在整线核算里看。", nameof(what));
+                 case "eps": q.PtEmissivity = v; break;
+                 case "J": q.JAllowAPerMm2 = v; break;
+ 
+@@ -383,7 +392,7 @@ public static class SegmentSolver
+                 //   —— 「安静地给出可信外观的错误结果」，本项目的头号失效模式。
+                 default:
+                     throw new ArgumentException(
+-                        $"未知的扫描量「{what}」。可用：insul / flangeInsul / eps / J", nameof(what));
++                        $"未知的扫描量「{what}」。可用：insul / eps / J", nameof(what));   // R48（2026-09-14，Opus 5）：flangeInsul 已拒绝，见上
+             }
+             var r = Solve(q);
+             if (!r.Ok) continue;
+diff --git a/Pt_Optimize/Core/ShellThermal.cs b/Pt_Optimize/Core/ShellThermal.cs
+index d2ebe2b..67cdd74 100644
+--- a/Pt_Optimize/Core/ShellThermal.cs
++++ b/Pt_Optimize/Core/ShellThermal.cs
+@@ -302,32 +302,27 @@ public static class ShellThermal
+         //     （**保持现状**，不是有依据）。灵敏度记在 HANDOVER §0.0.3 ⑱。
+         double charLen = p.ConvCharLenM;
+         res.CharLenM = charLen;
++        // ★★ R48（2026-09-14，Opus 5；审查意见「圆盘保温 0 mm 时四个消费方物理含义不一致」）：三张表面热流表都改调**唯一配方**
++        //   DesignScreen.PlateFluxWPerM2（裸面／保温面都传真实风速 p.FlangeAirVelocityMPerS，包不包按 DesignScreen.FlangeFaceInsulated）。
++        //   修的病：圆盘保温表原先无条件走 PlateFlux，厚度 0（整线「不包」、或逐片 0 层）时退到外覆材料 ε=0.45，
++        //   而本文件的局部热稳定（LocalStability → PlateFluxWPerM2）与整片热稳定（FlangeStability）按裸铂 ε=0.18 —— 同一片板两种表面，辐射差约 2.5 倍。
++        //   包着时（≥ 0.05 mm）调用参数与原来逐项相同 ⇒ 默认口径逐位不变；变的只有「圆盘 0 mm」这一种。
+         var bareTab = new LossTable(p.TAmbC, p.TSetC + 200, 60,
+-            x => Insulation.FlatOuterFlux(x, p.TAmbC, p.PtEmissivity, charLen,
+-                                          p.LossScale, p.FlangeAirVelocityMPerS) * 1e-6);
+-        var insLayers = new List<InsulationLayer>
+-        {
+-            new() { Name = "法兰保温", ThicknessMm = p.FlangeInsulThickMm,
+-                    K0 = p.Layer1.K0, K1 = p.Layer1.K1, Enabled = p.FlangeInsulThickMm > 1e-6 }
+-        };
+-        var insTab = new LossTable(p.TAmbC, p.TSetC + 200, 60,
+-            // ★ 风速必须传进保温面（2026-08-28）：此前保温区走 airVelocity=0 的默认值，
+-            //   于是同一片法兰上裸露区吹得到风、保温区吹不到 —— 而默认圆盘正是包着的那一半。
+-            x => Insulation.PlateFlux(x, p.TAmbC, insLayers, p.OuterEmissivity, charLen,
+-                                      p.LossScale, p.FlangeAirVelocityMPerS) * 1e-6);
++            x => DesignScreen.PlateFluxWPerM2(p, x, 0.0) * 1e-6);
++        // ★ 风速必须传进保温面（2026-08-28）：此前保温区走 airVelocity=0 的默认值，
++        //   于是同一片法兰上裸露区吹得到风、保温区吹不到 —— 而默认圆盘正是包着的那一半。（R48 起由唯一配方负责传）
++        bool discInsul = DesignScreen.FlangeFaceInsulated(p.FlangeInsulThickMm);
++        var insTab = discInsul
++            ? new LossTable(p.TAmbC, p.TSetC + 200, 60,
++                x => DesignScreen.PlateFluxWPerM2(p, x, p.FlangeInsulThickMm) * 1e-6)
++            : bareTab;
+ 
+         // 舌片自己的保温（见参数注释）。厚度 0 也不等于裸露 —— 裸露是铂表面 ε=0.18，
+         // 而「包了 0 mm」在 PlateFlux 里走的是外覆材料 ε=0.45，两者差 2.5 倍。
+-        bool tabInsul = !double.IsNaN(tabInsulThickMm) && tabInsulThickMm >= 0.05;
+-        var tabInsLayers = new List<InsulationLayer>
+-        {
+-            new() { Name = "舌片保温", ThicknessMm = tabInsul ? tabInsulThickMm : 0,
+-                    K0 = p.Layer1.K0, K1 = p.Layer1.K1, Enabled = tabInsul }
+-        };
++        bool tabInsul = DesignScreen.FlangeFaceInsulated(tabInsulThickMm);   // = !NaN && ≥ 0.05（R48 2026-09-14 Opus 5：与圆盘同一判定）
+         var tabInsTab = tabInsul
+             ? new LossTable(p.TAmbC, p.TSetC + 200, 60,
+-                x => Insulation.PlateFlux(x, p.TAmbC, tabInsLayers, p.OuterEmissivity, charLen,
+-                                          p.LossScale, p.FlangeAirVelocityMPerS) * 1e-6)
++                x => DesignScreen.PlateFluxWPerM2(p, x, tabInsulThickMm) * 1e-6)
+             : bareTab;
+ 
+         var insulated = new bool[n];
+@@ -381,6 +376,8 @@ public static class ShellThermal
+             ? $"保温：r ≤ {insulDiscRadiusMm:0.0} mm 包法兰保温，其余包舌保温"
+               + (noField ? "（这张网格没有厚度场，分界圆上的格子按形心整格归一边）" : $"（分界圆上 {nBlend} 格按有料面积份额混合两种保温的散热）")
+             : $"保温：x ≥ {insulBoundaryX:0.0} 包法兰保温（按指定分界，或没拿到盘半径）";
++        // R48（2026-09-14，Opus 5）：圆盘保温 0 mm 时上面那句「包法兰保温」只是分区，表面按裸铂算 —— 写明，免得读成「包了一层 0 mm 的保温」
++        if (!discInsul) res.InsulRule += "；法兰保温厚度为 0 ⇒ 这一区按裸铂表面散热";
+ 
+         // ── 舌端边界的三种模式（见 DesignInputs.BusbarConductanceWPerK 的注释）
+         //   ① 热导（G ≥ 0）：q = G·(T − T_冷端)，**物理上唯一自洽的一种**，接头温度是输出
