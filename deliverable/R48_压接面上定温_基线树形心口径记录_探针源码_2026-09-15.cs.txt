@@ -1,0 +1,67 @@
+using System;
+using System.IO;
+using System.Linq;
+using System.Text;
+using PtOptimize.Core;
+using Xunit;
+using Xunit.Abstractions;
+
+namespace PtOptimize.Tests;
+
+/// <summary>
+/// R48 F 基线树记录探针（2026-09-15 Opus 5）：在**改动前代码**（.basetree + A/C/D 合入）上跑，打印压接整面接触、形心整格口径下的逐位记录（R 格式），
+/// 供 R48ClampFaceGateTests「开关关时逐位等于形心口径」一门引用。跑完即删、源码存 deliverable（不进快套件）。
+/// 工作点：第二批 B2 设计片0（1072 A、管根 1139.95 °C，出处 R48_第二批保温扫描_B2_2026-09-14.txt）；网格：导航网格（BuildCase 生产参数）与均匀 h=2；
+/// 三种舌端模式：定温（算例夹持温度）／自由端（夹持温度 −1、铜排热导 −1）／热导（夹持温度 −1、G = 1.1 W/K，同 R48ClampRecipeTests.SolvePlate0）。
+/// </summary>
+public class R48ClampFaceBaselineProbe
+{
+    private readonly ITestOutputHelper _out;
+    public R48ClampFaceBaselineProbe(ITestOutputHelper o) { _out = o; }
+
+    [Fact]
+    public void 基线树记录_形心整格口径()
+    {
+        var sb = new StringBuilder();
+        void Say(string s) { _out.WriteLine(s); sb.AppendLine(s); }
+        var p = new DesignInputs { SplitSharedFlangeDraw = true };
+        var d = DesignSpec.W08.Clone();
+        d.TabThickMm = new[] { 0.73, 1.26, 1.26, 0.73 };
+        d.RingMul = new[] { 1.0, 1.0, 1.0, 1.0 };
+        d.TubeInsulMm = 7.5;
+        d.DiscInsulMm = new[] { 10.5, 3.5, 5.0, 10.0 };
+        d.TabInsulMm = new[] { 5.0, 3.5, 5.0, 10.5 };
+        d = d.Fit();
+        d.SizeTongues(p);
+        var lc = d.BuildCase(p, checkRamp: false);
+        var g = lc.FlangePlates[0];
+        const double iA = 1072.0, tRoot = 1139.95;
+        Say($"R48 F 基线树记录（改动前代码，形心整格口径）　{DateTime.Now:yyyy-MM-dd HH:mm}");
+        foreach (string grid in new[] { "导航网格", "均匀h2" })
+        {
+            var m = grid == "导航网格"
+                ? FlangeMesher.Build(g, 0, lc.MeshFineMm, lc.MeshCoarseMm, lc.MeshFineRadiusMm, lc.Base.BusbarClampLengthMm, lc.MeshInnerMm, lc.MeshInnerRadiusMm)
+                : FlangeMesher.Build(g, 0, 2.0, 2.0, 1e6, lc.Base.BusbarClampLengthMm);
+            double tSet = d.SetpointC[0];
+            var sc = ShellCurrent.SolveFor(lc, m, iA, Materials.PtResistivity(tSet) * 1e3, tSet);
+            double vHash = 0; for (int i = 0; i < m.CellCount; i++) vHash += sc.V[i] * (i + 1);
+            double jHash = 0; for (int i = 0; i < m.CellCount; i++) jHash += sc.JMagAPerMm2[i] * (i + 1);
+            Say($"{grid}：单元 {m.CellCount}　压接格 {m.ClampCell.Count(b => b)}");
+            Say($"{grid} 电流：vHash {vHash:R}　jHash {jHash:R}　TotalGenW {sc.TotalGenW:R}　CurrentInA {sc.CurrentInA:R}　JMax {sc.JMaxAPerMm2:R}　ConservationError {sc.ConservationError:R}");
+            foreach (string mode in new[] { "定温", "自由端", "热导" })
+            {
+                var ts = LineRunner.PlateThermalInputs(lc, 0, iA, null);
+                switch (mode)
+                {
+                    case "自由端": ts.P2.BusbarClampTempC = -1; ts.P2.BusbarConductanceWPerK = -1; break;
+                    case "热导": ts.P2.BusbarClampTempC = -1; ts.P2.BusbarConductanceWPerK = 1.1; break;
+                }
+                var th = LineRunner.SolvePlateThermal(m, sc.JMagAPerMm2, tRoot, ts);
+                double tHash = 0; for (int i = 0; i < m.CellCount; i++) tHash += th.T[i] * (i + 1);
+                Say($"{grid} {mode}：tHash {tHash:R}　QFromTubeW {th.QFromTubeW:R}　QToClampW {th.QToClampW:R}　TTabEndMeanC {th.TTabEndMeanC:R}　BusEquivLenMm {th.BusEquivLenMm:R}"
+                  + $"　LocalStabMargin {th.LocalStabMargin:R}　LocalStabLatLenMm {th.LocalStabLatLenMm:R}　QGenW {th.QGenW:R}　EnergyResidualW {th.EnergyResidualW:R}　TTabMaxC {th.TTabMaxC:R}　TDiscMaxC {th.TDiscMaxC:R}　收敛 {th.Converged}");
+            }
+        }
+        File.WriteAllText(Path.Combine(HandoverDoc.Root(), "deliverable", "R48_压接面上定温_基线树形心口径记录_2026-09-15.txt"), sb.ToString(), new UTF8Encoding(false));
+    }
+}

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -45,6 +45,19 @@ public static class MeshVerify
         public LineResult? Line;
         public bool Converged;
         public bool HitCellCap;
+
+        /// <summary>
+        /// ★★★★★ R48（2026-09-14，Opus 5）：**这个量在这个网格族上判不了** ——
+        /// 加到单元上限了，而序列仍不在渐近区（在摆或不缩）。
+        ///
+        /// 与 <see cref="Converged"/> = false 的区别：后者含「还能再加一档」，前者是**到头了**。
+        /// 振荡不会因为再加密而消失，所以这是个终态，不是「跑久一点就好」。
+        ///
+        /// ⚠ **调用方必须读它**：判不了时**不许**拿这次的解去顶替原来的解
+        /// （LineDesignPage.VerifyMeshAsync 此前只看 Converged 就换 _last）。
+        /// 赋了值没人读，是本仓库当天已经栽了三次的形态。
+        /// </summary>
+        public bool Undecidable;
         /// <summary>最后两档之间每条判据动了多少。</summary>
         public List<MeshAdapt.Delta> LastDeltas = new();
         /// <summary>一句话结论。**没收敛必须明说**，不许含糊。</summary>
@@ -71,13 +84,73 @@ public static class MeshVerify
             Trace = new();
     }
 
-    /// <summary>每条判据的复核容差 —— 与 `--selfcheck` 的对账容差**同口径**，不另立一套。</summary>
-    public static IReadOnlyList<MeshAdapt.Delta> TolTemplate() => new[]
+    /// <summary>
+    /// 每条判据的复核容差（相邻两档加密之间，这条判据允许动多少还算「数不再变」）。命令行 `--meshadapt` 也读这一份，不另抄。
+    ///
+    /// ★★★★★ 2026-09-14 Opus 5（复审）：复核的三条从「管孔净流入／圆盘区最高温 − 管温／法兰增量温降」换成
+    /// 「管孔净流入／最热铂高出热偶读数／管根低于热偶读数」（R48 B），**容差与名字一起重定**：
+    /// <code>
+    ///   判据                      旧容差                            新容差
+    ///   管孔净流入                0.5 W（= --selfcheck 对账容差）    0.5 W（不变）
+    ///   圆盘区最高温 − 管温       0.2 K（= --selfcheck）             —— 降为参考量，不再复核
+    ///   法兰增量温降              1.0 K（限值 10 的 10 %，= CoupleTolK）—— 降为参考量，不再复核
+    ///   最热铂高出热偶读数        —                                  0.5 K = 热偶误差 5 K 的 10 %
+    ///   管根低于热偶读数          —                                  0.5 K = 热偶误差 5 K 的 10 %
+    /// </code>
+    /// ⚠ R48 L（2026-09-17，Opus 5）：上表里那句「= CoupleTolK」说的是**当时**的耦合停机容差（1 K）。
+    ///   现在外层耦合的停机容差是**按判据裕度算出来的**（<see cref="LineRunner.CoupleTolKFor"/>，实测落在 0.036～0.1 K），
+    ///   无法兰基线那一层才留着 1 K（<see cref="LineCase.BaselineTolK"/>，它服务的正是这条已降为参考量的「法兰增量温降」）。
+    ///   ⚠⚠ **本表自己还没按同一条原则重定**：两条新判据的复核容差 0.5 K，比在跑的那份设计的裕度（0.44～0.49 K）**还粗** ——
+    ///   与本轮修掉的那个病是同一个形状，只是发在「网格复核」这一层。要动它得先实测，见 HANDOVER §0.-10 ⑥ 第 7 条。
+    /// 为什么是「限值的 10 %」：旧的法兰增量温降就是这个比例（1.0／10）；两条新判据都是「某点温度 − 常数基准」，
+    /// 外层耦合的剩余误差**直接**进值，不像「盘峰 − 管根」那样被相减抵掉 —— 所以旧的 0.2 K 不能照搬（审查 2026-09-14：
+    /// 那次单次判定耦合剩余误差估计已有 0.29 K，deliverable/r48B_热偶基准_现役档单次判定_2026-09-14.txt）。
+    /// 冷侧限值从 10 降到 5，若沿用 1.0 K 就占到限值的 20 %，放行变松。
+    /// ⚠ 0.5 K **还没在复核网格上实测过**：两档耦合剩余误差之和可能超过它（上面那次 0.29 × 2 = 0.58 K）。
+    ///   届时贴着限值的设计会一直判不收敛 —— 进度行对这两条都会印「与耦合停机噪声分不开」，远离限值时由「结论稳」放行。
+    ///   该取多少要在复核网格上量过再定（交接列为待办）；改这里时 MeshVerifyTests 一起改。
+    /// ⚠ 名字用 <see cref="Criteria.Plain"/> 的全名：判词（<see cref="MeshAdapt.Verdict"/>）原样印 Delta.Name，经判据页输出框进界面，
+    ///   此前印的是「②″ +0.004/0.2」这种代号。
+    /// ⚠ 与 `--selfcheck` 不再「同口径」：自检对账核的是**记录栏位**（DiscOverK／FlangeDipK 装的是旧判法的数），容差仍是 0.20／1.00 K。
+    /// </summary>
+    /// ★★★★★ K 路（2026-09-15，Opus 5；审查 P1-9「第三处写死三条」）：**复核哪几条不在这里写死** —— 随网格变的判据各自的容差放在 <see cref="MeshTolerances"/>，
+    ///   按整线判据的分工况表（<see cref="LineResult.StateKindOf"/>，与 LineRunner.Judge 同一份）过滤：本工况只作参考的不复核。
+    ///   带玻璃稳态 = 原来那三条（次序、名字、容差逐位不变）；空管到温稳态 = 空（用户 2026-09-15：空管态只卡电流密度（管 J 与法兰截面 J）与场的有效性，三条都只作参考；2026-09-16 Opus 5 改措辞）
+    ///   ⇒ <see cref="Run(Func{double, double, LineCase}, double, double, double, int, int, IProgress{string}?, CancellationToken)"/> 对复核名单与主循环读的三条对不上的算例拒答。
+    public static IReadOnlyList<MeshAdapt.Delta> TolTemplate(bool emptyTube) => MeshTolerances
+        .Where(m => LineResult.StateKindOf(m.Key, emptyTube) is not CheckKind.Reference)
+        .Select(m => new MeshAdapt.Delta { Name = Criteria.Plain(m.Key), Tol = m.Tol })
+        .ToArray();
+
+    /// <summary>
+    /// K 路（2026-09-15，Opus 5）：随网格变、需要加密复核的判据与各自的容差（出处与理由见 <see cref="TolTemplate"/> 的注释表）。**只是容差表，不含工况**：
+    /// 哪个工况复核哪几条由 <see cref="TolTemplate"/> 按分工况表过滤。次序 = 主循环 Trace 的列次序（净流入／热侧／冷侧）。
+    /// </summary>
+    public static readonly (string Key, double Tol)[] MeshTolerances =
     {
-        new MeshAdapt.Delta { Name = "②′", Tol = 0.5 },
-        new MeshAdapt.Delta { Name = "②″", Tol = 0.2 },
-        new MeshAdapt.Delta { Name = "③",  Tol = 1.0 },
+        (LineResult.Key.NetFlux,     0.5),
+        (LineResult.Key.HotOverTc,   TcMeshTolK),
+        (LineResult.Key.ColdUnderTc, TcMeshTolK),
     };
+
+    /// <summary>热侧／冷侧两条的复核容差 K = 热偶读数误差的 10 %（出处与理由见 <see cref="TolTemplate"/>）。2026-09-14 Opus 5。</summary>
+    public const double TcMeshTolK = 0.1 * LineCase.ThermocoupleErrorK;
+
+    /// <summary>
+    /// K 路（2026-09-15，Opus 5）：本工况能不能用加密复算的主循环 —— 主循环逐档读、比的是 <see cref="MeshTolerances"/> 那三列；
+    /// 本工况按分工况表该复核的（<see cref="TolTemplate"/>）不是恰好这三条 ⇒ 返回拒答原句（进判词、会上界面，不带判据代号），否则 null。
+    /// 空管到温稳态：三条都只作参考、没有随网格变的卡交付判据 ⇒ 拒答；该工况的场有效性（没收敛、越过熔点、散热表超界）由整线结果自己判（LineResult.FieldUndeterminedReasons）。
+    /// </summary>
+    public static string? RefuseForState(bool emptyTube)
+    {
+        var want = TolTemplate(emptyTube).Select(d => d.Name).ToArray();
+        var loop = MeshTolerances.Select(m => Criteria.Plain(m.Key)).ToArray();
+        if (want.SequenceEqual(loop)) return null;
+        return $"✗ 加密复算不适用于{(emptyTube ? "空管到温稳态" : "带玻璃稳态")}："
+             + (want.Length == 0 ? "本工况没有进加密复算比对列的卡交付判据（空管到温稳态只卡电流密度（管 J 与法兰截面 J）与场的有效性；两条电流密度判据两态都不在逐档比对列里）"
+                                 : $"本工况要复核的是「{string.Join("、", want)}」，加密复算逐档比的是「{string.Join("、", loop)}」")
+             + "　⇒ 不在这个工况上做加密复算，**不能据此说这个设计过了**；该工况的场有没有解到位看整线结果自己的判定。";
+    }
 
     /// <summary>
     /// 对一个**已经算出来的设计**做网格无关复核。
@@ -128,9 +201,45 @@ public static class MeshVerify
         var feats = weldAsGeometricFeature
                   ? new[] { d.TabFilletMm, d.RingWidthMm, weldLeg }
                   : new[] { d.TabFilletMm, d.RingWidthMm };
-        return (MeshAdapt.RequiredFineMm(feats),
+        return (FineFromFeatures(feats),
                 MeshAdapt.RequiredFineRadiusMm(
                     new[] { d.DiscRadiusMm, Math.Abs(d.TabLengthMm) * 0.35 }, d.HoleRadiusMm));
+    }
+
+    /// <summary>「特征尺寸 → 网格尺寸」只有这一处（解析设计与图纸路径共用）：最小特征 ÷ 每特征格数。</summary>
+    private static double FineFromFeatures(IEnumerable<double> featureSizesMm) => MeshAdapt.RequiredFineMm(featureSizesMm);
+
+    /// <summary>
+    /// ★ R47 C（2026-09-13）：**图纸路径**的「这个几何要多细的网格」—— 特征尺寸从 <see cref="PlateShapeAnalyzer"/>
+    /// 的分级取（各级的环宽、槽的径向宽；焊脚可选 = max(最厚一级, 管壁)），不再拿解析设计的圆角／环宽去猜图纸。
+    /// 取不到（图纸没分析出任何一级）就**拒答**：返回 Refused 非空，调用方把它原样写进结果，不抛。
+    /// 病：此前 .3dm 模式的加密复算拿 PageToDesignSpec 造的解析板复核 —— 验的是另一个零件。
+    /// </summary>
+    public static (double FineMm, double RadiusMm, double InnerRadiusMm, string? Refused)
+        RequiredMeshFor(PlateShapeAnalyzer.Shape sh, double wallMm, bool weldAsGeometricFeature = false)
+    {
+        if (sh is null) throw new ArgumentNullException(nameof(sh));
+        var feats = new List<double>();
+        // 环宽（盘半径 − 孔半径）：与解析设计的 RingWidthMm 同一个量，是圆盘上最小的几何特征之一
+        if (sh.HoleRadiusMm > 0 && sh.DiscRadiusMm > sh.HoleRadiusMm + 1e-9) feats.Add(sh.DiscRadiusMm - sh.HoleRadiusMm);
+        // 各级的径向宽：**只取宽于 3 个栅格步的级** —— 分析器按 0.011 mm 聚类厚度，焊缝的凹圆弧、倒角这类
+        //   连续过渡会被切成几十条发丝级「级」（实测 0.006 mm 宽 ⇒ 起始网格 0.002 mm，直接把内存吃光）；
+        //   窄于 3 格的级本来就在栅格的分辨能力之下，不是图纸上的设计特征。
+        double floorW = double.IsNaN(sh.StepMm) || sh.StepMm <= 0 ? 0 : 3.0 * sh.StepMm;
+        foreach (var lv in sh.Levels)
+            if (lv.RInnerMm < double.MaxValue && lv.ROuterMm - lv.RInnerMm >= Math.Max(floorW, 1e-9)) feats.Add(lv.ROuterMm - lv.RInnerMm);
+        if (sh.Slot.Found && sh.Slot.ROuterMm > sh.Slot.RInnerMm + 1e-9) feats.Add(sh.Slot.ROuterMm - sh.Slot.RInnerMm);
+        double tMax = sh.Levels.Count > 0 ? sh.Levels.Max(l => l.ThicknessMm) : 0;
+        double weldLeg = Math.Max(tMax, wallMm);
+        if (weldAsGeometricFeature && weldLeg > 1e-9) feats.Add(weldLeg);
+        if (feats.Count == 0 || !(sh.HoleRadiusMm > 0))
+            return (double.NaN, double.NaN, double.NaN,
+                    "图纸没分析出特征尺寸（没有厚度分级或没有管孔），加密复算不能判 —— 请先做「分析几何变数」并确认图层里有这片法兰。");
+        double fine = FineFromFeatures(feats);
+        double tabLen = double.IsNaN(sh.TabEndXMm) ? 0 : Math.Abs(sh.TabEndXMm);
+        double radius = MeshAdapt.RequiredFineRadiusMm(new[] { sh.DiscRadiusMm, tabLen * 0.35 }, sh.HoleRadiusMm);
+        double innerR = MeshAdapt.InnerRadiusFor(sh.HoleRadiusMm, weldLeg);
+        return (fine, radius, innerR, null);
     }
 
     public static Result Run(DesignSpec d, DesignInputs baseIn,
@@ -140,10 +249,95 @@ public static class MeshVerify
                              CancellationToken cancel = default)
     {
         if (d is null) throw new ArgumentNullException(nameof(d));
+        // ★ R47 第三轮 N5（2026-09-13）：图纸档没有解析板 —— 拒答、不抛、不算（Converged=false，Verdict 原句）。
+        if (d.IsDrawingRecord)
+        {
+            var refused = new Result { Converged = false, Verdict = DesignSpec.DrawingRefusal + $"（档「{d.Name}」）" };
+            progress?.Report("⚠ " + refused.Verdict);
+            return refused;
+        }
+        var (h0, radius) = RequiredMeshFor(d, weldAsGeometricFeature);
+        double weldLegV = Math.Max(d.TabThickMm.Max(), d.WallMm);
+        double innerR = MeshAdapt.InnerRadiusFor(d.HoleRadiusMm, weldLegV);
+        // ★ R47 C（2026-09-13）：每档造 LineCase 的活抽成工厂，本重载只负责「解析设计怎么造」。
+        //   .3dm 模式由页面把自己的 LineCase（FlangePlates 为空、FlangeFile3dm 非空）交给下面那个工厂重载，
+        //   不再拿 PageToDesignSpec 造的解析板去复核另一个零件。
+        return Run(AnalyticCaseFactory(d, baseIn, radius, innerR),
+                   h0, radius, innerR, maxCells, maxRounds, progress, cancel);
+    }
+
+    /// <summary>
+    /// ★★★★★ R48（2026-09-13，Opus 5）：**解析路径「这一档的算例长什么样」—— 公开，只有这一处。**
+    ///
+    /// 抽出来是为了让门能拿到**生产代码真正用的那个工厂**去比对。
+    /// 此前它是 <see cref="Run(DesignSpec,DesignInputs,int,int,bool,IProgress{string}?,CancellationToken)"/>
+    /// 里的一个匿名 lambda，测试够不着 ⇒ 只能自己手抄一份配方去对比 ——
+    /// 而「各自手抄一份」正是 09-13 那次事故的形态本身：
+    /// 求根抄的那份漏了粗区与内带，于是求根说「全过」、复核说 管孔净流入 −1.79 W。
+    /// 手抄的门守不住手抄的病。
+    ///
+    /// 加密的配方本身在 <see cref="MeshAdapt.RefineWholeMesh"/>（全项目唯一一处）：
+    /// 粗区按比例缩、内带与中带同尺寸 ⇒ 细粗比恒定、加密是自相似的。
+    /// 实测同一设计（管壁 0.8，整线全耦合）：
+    /// 只缩细区 管孔净流入 5.090／7.134／5.068 W（跳，加密也不收敛）；
+    /// 整张缩 5.919／6.196／6.325 W、法兰增量温降 22.719／22.113／21.846 K（差值比 0.47 与 0.44，干净的一阶收敛）。
+    /// </summary>
+    /// <param name="hInnerOverride">分区加密的老口径出口：内带与中带不同尺寸时才用得上。
+    ///   整档一起加密（R48 起的默认）时它等于中带，这里不做任何事。</param>
+    public static Func<double, double, LineCase> AnalyticCaseFactory(
+        DesignSpec d, DesignInputs baseIn, double radiusMm, double innerRadiusMm)
+    {
+        if (d is null) throw new ArgumentNullException(nameof(d));
+        return (hMid, hInnerOverride) =>
+        {
+            var lc = d.BuildCase(baseIn, checkRamp: true);
+            MeshAdapt.RefineWholeMesh(lc, hMid, radiusMm, innerRadiusMm);
+            if (hInnerOverride > 0 && Math.Abs(hInnerOverride - hMid) > 1e-9) lc.MeshInnerMm = hInnerOverride;
+            return lc;
+        };
+    }
+
+    /// <summary>
+    /// ★ R47 C（2026-09-13）：图纸路径的复核入口 —— 特征尺寸从分析结果取（<see cref="RequiredMeshFor(PlateShapeAnalyzer.Shape,double,bool)"/>），
+    /// 取不到就拒答（Result.Verdict 写清楚、Converged=false，不抛）。<paramref name="caseFactory"/> 由调用方给：
+    /// 每档 (中带 h, 内带 h) 造一个走图纸路径的 LineCase（FlangePlates 为空、FlangeFile3dm 或 FlangeFields 非空），
+    /// 栅格步长由 LineRunner 按网格自己收（min(ThicknessStepMm, h/4)）。
+    /// </summary>
+    public static Result Run(PlateShapeAnalyzer.Shape shape, double wallMm,
+                             Func<double, double, LineCase> caseFactory,
+                             int maxCells = 40000, int maxRounds = 6,
+                             bool weldAsGeometricFeature = false,
+                             IProgress<string>? progress = null,
+                             CancellationToken cancel = default)
+    {
+        var (h0, radius, innerR, refused) = RequiredMeshFor(shape, wallMm, weldAsGeometricFeature);
+        if (refused is not null)
+        {
+            var r0 = new Result { Verdict = "✗ " + refused + "　⇒ **不能说这个设计过了**", Converged = false };
+            progress?.Report(r0.Verdict);
+            return r0;
+        }
+        return Run(caseFactory, h0, radius, innerR, maxCells, maxRounds, progress, cancel);
+    }
+
+    /// <summary>
+    /// ★ R47 C（2026-09-13）：**工厂重载** —— 逐档加密的主循环。<paramref name="caseFactory"/>(中带 h, 内带 h) 每档造一个 LineCase；
+    /// 解析设计与图纸路径共用这一段，差别只在工厂怎么造。
+    /// </summary>
+    /// <param name="h0">起始网格 mm（由几何特征算出，不是挑的数）。</param>
+    /// <param name="radius">中带（细化）半径 mm。</param>
+    /// <param name="innerR">内带半径 mm。</param>
+    public static Result Run(Func<double, double, LineCase> caseFactory,
+                             double h0, double radius, double innerR,
+                             int maxCells = 40000, int maxRounds = 6,
+                             IProgress<string>? progress = null,
+                             CancellationToken cancel = default)
+    {
+        if (caseFactory is null) throw new ArgumentNullException(nameof(caseFactory));
+        if (!(h0 > 0)) throw new ArgumentOutOfRangeException(nameof(h0), "起始网格必须为正");
         var res = new Result();
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
-        var (h0, radius) = RequiredMeshFor(d, weldAsGeometricFeature);
         // ★★ 按特征分区（A⑭，2026-08-29）：**只加密内带**。
         //   此前是把「按最小特征（焊脚）定的极细尺寸」铺满「按最大特征（盘径/舌长）定的大区域」，
         //   每加密一档单元数 ×4 —— 0.6 档实测收到 0.146 mm 时约 8 万单元，
@@ -151,13 +345,12 @@ public static class MeshVerify
         //   现在：中带（盘 + 舌根）固定在特征尺寸 h0 上；内带（孔 + 焊脚那一圈）逐档减半。
         //   ⚠ 这么做的合法性由**本循环自己**检验：判据不再变才算网格无关；
         //     并在收敛后**额外做一次「中带也加密」的确认**（见下面 confirm）。
-        double weldLegV = Math.Max(d.TabThickMm.Max(), d.WallMm);
-        double innerR = MeshAdapt.InnerRadiusFor(d.HoleRadiusMm, weldLegV);
         double hMid = h0;
         double h = h0;
 
         (double n2p, double n2pp, double n3, double m)? prev = null;
-        List<MeshAdapt.Delta>? prevDeltas = null;     // 上一对差值 —— 判「变化在不在缩小」要它
+        List<MeshAdapt.Delta>? prevDeltas = null;
+        double prevRemainK = double.NaN;   // R48 续：上一档外层耦合剩余误差，档间噪声 = 两档之和     // 上一对差值 —— 判「变化在不在缩小」要它
         for (int it = 0; it < maxRounds; it++)
         {
             cancel.ThrowIfCancellationRequested();
@@ -198,11 +391,27 @@ public static class MeshVerify
                     + $" ⇒ 本档估 **~{ThrottledProgress.Fmt(TimeSpan.FromSeconds(lastT.Sec * grow))}**）";
             }
             progress?.Report($"加密复算：{h:0.000} mm（第 {it + 1} 档）{eta}…");
-            var lc = d.BuildCase(baseIn, checkRamp: true);
-            lc.MeshFineMm = hMid;                 // 中带：固定在特征尺寸
-            lc.MeshFineRadiusMm = radius;
-            lc.MeshInnerMm = h;                   // 内带：逐档减半的就是它
-            lc.MeshInnerRadiusMm = innerR;
+            // ★★ R48（2026-09-13，Opus 5）：**整档一起加密**，中带跟着 h 走，不再「中带钉死、只减内带」。
+            //
+            // 为什么改（实测，不是道理）：分区加密让网格在舌片上变成 44:1 的长条 ——
+            //   内带半径 = 孔半径 + 2×焊脚 + 3，对现役两档算出来 31.3／30.8 mm，**比盘半径还大**
+            //   ⇒ 整个 z 范围都落在内带里被铺成最细，而 x 方向在舌片上渐变到粗区 11 mm。
+            //   电流沿 x 流，偏偏 x 分辨率最差 ⇒ x 节点一动焦耳热就动 6～7 %，
+            //   实测逐片焦耳热 489／**458**／488 W（中带 1.0／0.5／0.25）——两头一致、中间掉下去，
+            //   这不是收敛序列的样子，而「中带确认」恰恰拿减半那一档做对照 ⇒ 这道门永远判不过。
+            // 整档加密反而**更省**：正方形格 0.5 mm 单片 13846 格，分区（中带 1.0／内带 0.25）要 28034 格。
+            // ⚠ 当初分区是为了治「极细特征（焊脚 0.146 mm）把细格铺满大区域」那件事（见本文件开头）。
+            //   那条顾虑仍在，靠 maxCells 与「判据不再变就停」兜住：实测 0.5 mm 上抽热误差已 0.4 W，
+            //   窗口 3.3 W 容得下，根本不必细到特征尺寸。
+            var lc = caseFactory(h, h);
+            if (lc is null) throw new InvalidOperationException("加密复算：工厂没造出 LineCase");
+            // ★ K 路（2026-09-15，Opus 5）：主循环按「管孔净流入／最热铂高出热偶读数／管根低于热偶读数」三列写成；本工况的复核名单（按分工况表）与之不同 ⇒ 拒答、不算，不许拿位置去对名字。
+            if (RefuseForState(lc.EmptyTube) is { } stateRefused)
+            {
+                res.Verdict = stateRefused; res.Converged = false; res.SecondsTotal = sw.Elapsed.TotalSeconds;
+                progress?.Report("⚠ " + stateRefused);
+                return res;
+            }
             var swOne = System.Diagnostics.Stopwatch.StartNew();
             // ★ 内层**一直在报**（外层耦合 n/600、段 i/n），此前这里传 null 把它全扔了。
             //   限流转发：内层一秒可能报几十条，全转会把日志淡掉（淡掉 = 等于没报）。
@@ -219,15 +428,28 @@ public static class MeshVerify
 
             double V(string k) => r.Checks
                 .FirstOrDefault(c => c.Name.StartsWith(k, StringComparison.Ordinal))?.Actual ?? double.NaN;
-            double a2p = V(LineResult.Key.NetFlux), a2pp = V(LineResult.Key.DiscTemp), a3 = V(LineResult.Key.FlangeDip);
+            // R48 B（2026-09-14 Opus 5）：复核的是**卡交付的**三条 —— 圆盘区最高温 − 管温／法兰增量温降换成热偶读数基准的热侧（⑦）／冷侧（⑧）
+            //   （旧判法已是参考量，不复核）。Trace 的 N2pp／N3 两列从此装 ⑦／⑧（字段名是历史名，没改）；容差随之重定，见 TolTemplate。
+            double a2p = V(LineResult.Key.NetFlux), a2pp = V(LineResult.Key.HotOverTc), a3 = V(LineResult.Key.ColdUnderTc);
             double mass = r.Segments.Sum(s => s.MassG) + r.Flanges.Sum(f => f.MassG);
 
             // ★ 峰位落在粗区就会被静默算漏 —— 每档核对一次
-            double peakR = r.Flanges.Length == 0 ? double.NaN
-                         : r.Flanges.Select(f => f.DiscMaxRMm)
+            // ★★ R48 续（2026-09-14，Opus 5；物理把关人查出这道门「永远不会响」）：
+            //   原来只看圆盘区峰位，而圆盘区现在按 r ≤ 盘半径圈 ⇒ 峰位**必然** ≤ 盘半径 < 细化半径，门形同虚设。
+            //   现在取三种热点里最远的那个：圆盘区峰、舌片区峰（TabMaxRMm，两个内置档在 31–33，
+            //   换个几何可以远在舌片上）、局部热稳定最不稳那一格（LocalStabRMm）。
+            //   任一片三者全算不出 ⇒ 判不了（原来 Where(!NaN) 会把那一片静默丢掉 —— 与 ⑤⑥ 同病）。
+            var blindPeak = r.Flanges.Where(f => double.IsNaN(f.DiscMaxRMm) && double.IsNaN(f.TabMaxRMm)
+                                              && double.IsNaN(f.LocalStabRMm)).Select(f => f.Name).ToArray();
+            double peakR = r.Flanges.Length == 0 || blindPeak.Length > 0 ? double.NaN
+                         : r.Flanges.SelectMany(f => new[] { f.DiscMaxRMm, f.TabMaxRMm, f.LocalStabRMm })
                             .Where(v => !double.IsNaN(v)).DefaultIfEmpty(double.NaN).Max();
             string? peakBad = MeshAdapt.PeakVerdict(peakR, innerR, radius);
-            if (peakBad is not null) { progress?.Report("   " + peakBad); res.PeakOutsideFine = peakBad; }
+            if (peakBad is not null && blindPeak.Length > 0) peakBad += $"（算不出热点位置的片：{string.Join("、", blindPeak)}）";
+            // ★ R48 续（2026-09-14，Opus 5）：**每档以这一档为准**，不许只设不清 ——
+            //   原来早档峰在粗区、后档盖住了，那句话照样一直挂在结果上。
+            res.PeakOutsideFine = peakBad;
+            if (peakBad is not null) progress?.Report("   " + peakBad);
 
             res.Line = r; res.FineMm = h; res.Cells = r.MeshCells;
             res.Trace.Add((h, r.MeshCells, a2p, a2pp, a3, mass, swOne.Elapsed.TotalSeconds));
@@ -236,21 +458,86 @@ public static class MeshVerify
             //   而**日志里一个判据数字都没有**，被 kill 掉就等于四小时全丢。
             //   「看得出还活着」只解决了一半；另一半是**中间结果要落地**。
             progress?.Report($"加密复算：{h:0.000} mm 完成 —— {r.MeshCells} 单元，用时 {ThrottledProgress.Fmt(swOne.Elapsed)}（累计 {ThrottledProgress.Fmt(sw.Elapsed)}）"
-                + $"　②′ {a2p:0.000} W　②″ {a2pp:0.000} K　③ {a3:0.000} K　合计 {mass:0} g");
+                + $"　管孔净流入 {a2p:0.000} W　最热铂高出热偶读数 {a2pp:0.000} K　管根低于热偶读数 {a3:0.000} K　合计 {mass:0} g"   // R48 B：进度行会上界面，写全名不写代号
+                // ★ R48 续（2026-09-14，Opus 5）：每档都印外层耦合停在离不动点多远 —— 判据在两档间的变化
+                //   若小于它，那次「在摆」分不清是网格还是耦合停机造成的（实测 ③ 变化 +0.820 K < 耦合容差 1.0 K）。
+                + (double.IsNaN(r.CoupleRemainK) ? "" : $"　外层耦合剩余误差估计 {r.CoupleRemainK:0.00} K"
+                    + (double.IsNaN(prevRemainK) ? "" : $"（与上一档合计 {r.CoupleRemainK + prevRemainK:0.00} K）")));
+            // 档间变化是**两次独立停机之差**，噪声上界是两档剩余误差之和，不是只看这一档（2026-09-14 数值把关人查出）。
+            double coupleNoiseK = double.IsNaN(r.CoupleRemainK) ? double.NaN
+                                : r.CoupleRemainK + (double.IsNaN(prevRemainK) ? 0 : prevRemainK);
+            prevRemainK = r.CoupleRemainK;
 
             if (prev is { } pv)
             {
-                var tol = TolTemplate();
+                var tol = TolTemplate(lc.EmptyTube);   // K 路（2026-09-15 Opus 5）：按工况取（上面已拒答名单对不上的工况）
+                // R48（2026-09-13，Opus 5）：除了「变化多大」，还要记「离限值多远」——
+                //   收敛要的是**结论稳**（再加密也翻不过限值），不是小数点后几位不动。见 MeshAdapt.Delta.MarginOverChange。
+                double Lim(string key)
+                {
+                    var c = r.Checks.FirstOrDefault(x => x.Name.StartsWith(key, StringComparison.Ordinal));
+                    return c is null ? double.NaN : c.Limit;
+                }
+                double Margin(double value, string key, double change)
+                {
+                    double lim = Lim(key);
+                    if (double.IsNaN(lim) || double.IsNaN(value) || Math.Abs(change) < 1e-12) return double.NaN;
+                    return Math.Abs(value - lim) / Math.Abs(change);
+                }
+                // ★★★★★ R48 续（2026-09-14，Opus 5）：**振荡要认出来，不能拿最后一次变化当误差。**
+                //
+                //   实测三档 +0.841 → −1.693 → −1.350：Δ₁ = −2.534、Δ₂ = +0.343，**换号**。
+                //   Δ 换号 = oscillatory convergence，其定义就是「不在渐近区」，此时
+                //   「Δ 小 ⇒ 收敛」与 Richardson 一律失效，不确定度要用**振荡半幅** (max−min)/2 = ±1.267，
+                //   而判词当时用的是 Δ₂ = 0.344 —— **差 3.7 倍**。
+                //   ⇒ 这里把「历史三档的极差」与「相邻两次变化之比 r」一并算出来交给 Delta，
+                //     由它决定该用哪个误差尺度、门槛该是几倍（见 MeshAdapt.Delta 的注释）。
+                //   ⚠ 只有三档以上才谈得上振荡；两档时 Oscillating 一律为 false（没有 Δ₁ 可比）。
+                (bool osc, double half, double ratio) Shape(Func<(double Fine, int Cells, double N2p,
+                        double N2pp, double N3, double MassG, double Sec), double> pick, double now, double change)
+                {
+                    // ⚠⚠ res.Trace **已经包含当前这一档**（本方法上面几行就 Add 过了）。
+                    //   第一版在这里又 hist.Add(now) 加了一遍 ⇒ hist[^2] 与 hist[^3] 变成
+                    //   f_k 与 f_{k−1} ⇒ prevChange 恒等于 change ⇒ Oscillating 恒 false、RatioR 恒 1.0
+                    //   ⇒ **整个特性是个 no-op**。（2026-09-14 常驻数值讨论人查出；这是同一天第三次栽在
+                    //   「赋了值没人读」上。）不许再往 hist 里补当前档。
+                    var hist = res.Trace.Select(pick).Where(v => !double.IsNaN(v)).ToList();
+                    if (hist.Count < 3) return (false, double.NaN, double.NaN);
+                    double prevChange = hist[^2] - hist[^3];
+                    bool o = prevChange * change < 0 && Math.Abs(prevChange) > 1e-12;
+                    // 半幅只取**最后三档**：最粗那档按构造就不在渐近区（起点是「特征画得出来」的下限），
+                    // 而全档极差只增不减 —— 一个不随加密变小的量不是不确定度，是历史记录。
+                    var last3 = hist.Skip(Math.Max(0, hist.Count - 3)).ToList();
+                    double h = (last3.Max() - last3.Min()) * 0.5;
+                    double r = Math.Abs(prevChange) > 1e-12 ? Math.Abs(change / prevChange) : double.NaN;
+                    return (o, h, r);
+                }
+                var s2p  = Shape(t => t.N2p,  a2p,  a2p - pv.n2p);
+                var s2pp = Shape(t => t.N2pp, a2pp, a2pp - pv.n2pp);
+                var s3   = Shape(t => t.N3,   a3,   a3 - pv.n3);
                 res.LastDeltas = new List<MeshAdapt.Delta>
                 {
-                    new() { Name = tol[0].Name, Change = a2p - pv.n2p,   Tol = tol[0].Tol },
-                    new() { Name = tol[1].Name, Change = a2pp - pv.n2pp, Tol = tol[1].Tol },
-                    new() { Name = tol[2].Name, Change = a3 - pv.n3,     Tol = tol[2].Tol },
+                    new() { Name = tol[0].Name, Change = a2p - pv.n2p,   Tol = tol[0].Tol,
+                            MarginOverChange = Margin(a2p, LineResult.Key.NetFlux, a2p - pv.n2p),
+                            Oscillating = s2p.osc, HalfRange = s2p.half, RatioR = s2p.ratio },
+                    new() { Name = tol[1].Name, Change = a2pp - pv.n2pp, Tol = tol[1].Tol,
+                            MarginOverChange = Margin(a2pp, LineResult.Key.HotOverTc, a2pp - pv.n2pp),
+                            Oscillating = s2pp.osc, HalfRange = s2pp.half, RatioR = s2pp.ratio },
+                    new() { Name = tol[2].Name, Change = a3 - pv.n3,     Tol = tol[2].Tol,
+                            MarginOverChange = Margin(a3, LineResult.Key.ColdUnderTc, a3 - pv.n3),
+                            Oscillating = s3.osc, HalfRange = s3.half, RatioR = s3.ratio },
                 };
                 // 差值也当场报 —— 「收没收敛」是读的人最想先知道的那一条
                 progress?.Report("   较上一档：" + string.Join("　", res.LastDeltas.Select(
-                    x => $"{x.Name} {x.Change:+0.000;-0.000}/{x.Tol:0.###}")))
-                    ;
+                    x => $"{x.Name} {x.Change:+0.000;-0.000}/{x.Tol:0.###}"
+                       // 2026-09-14 Opus 5（复审）：热侧也要查 —— 两条都是「温度 − 常数基准」，耦合停机噪声直接进值（原来只查冷侧那一行）
+                       + ((x.Name == tol[1].Name || x.Name == tol[2].Name) && !double.IsNaN(coupleNoiseK) && Math.Abs(x.Change) <= coupleNoiseK
+                            ? $"（⚠ 变化 {Math.Abs(x.Change):0.000} K ≤ 这两档外层耦合剩余误差之和 {coupleNoiseK:0.00} K ⇒ **与耦合停机噪声分不开**）" : "")
+                       + (x.NotAsymptotic ? $"（**不在渐近区**：{x.WhyNotAsymptotic}；末三档极差半幅**至少** ±{x.HalfRange:0.###}"
+                                          + " —— 误差按它算，不按这一次的变化）" : "")
+                       + (x.Within && !x.Oscillating ? "" : x.ConclusionStable
+                            ? $"（数在动，但离限值还有 {x.MarginOverChange:0.#} 倍这个动幅 ⇒ 结论翻不过来）"
+                            : "（**还没算准**）"))));
                 // ★★ 判据要**上一对**差值（趋势），只有一对时一律不算收敛 ——
                 //   2026-08-30 实测：一对差值小可能纯属两级跨在拐点两侧（见 MeshAdapt.Converged）。
                 if (MeshAdapt.Converged(res.LastDeltas, prevDeltas)) { res.Converged = true; break; }
@@ -262,68 +549,43 @@ public static class MeshVerify
         }
 
         res.SecondsTotal = sw.Elapsed.TotalSeconds;
-        res.Verdict = MeshAdapt.Verdict(res.FineMm, res.LastDeltas, res.HitCellCap);
+        // ★★★★★ R48 续（2026-09-14，Opus 5）：**加密阶梯必须有一个有名字的失败出口。**
+        //
+        //   「不在渐近区」做成一票否决之后，出现了一个没有出口的状态：
+        //   序列在摆 ⇒ 永远判不了收敛，而振荡**不会因为再加密就消失**（实测那组三条里两条在摆）。
+        //   此前 Verdict 的「不在渐近区」那一支**完全没有用 hitCap**，于是这两件事印出来是同一句话：
+        //     「还在爬，再加一档就好」  与  「已经 61154 单元、单档 68 分钟、到顶了」
+        //   ⇒ 加一个第三态：**判不了**（到上限且仍不在渐近区）。
+        //   这与本项目「判据只能过／不过／**无法判定**」那条铁律是同一条规矩，只是搬到了网格这一层。
+        // ★★ R48 续（2026-09-14，Opus 5；物理把关人列为「重解前必做」）：**峰在粗区 ⇒ 不许判收敛。**
+        //   PeakVerdict 原来只打印、只挂在结果上：既不影响 Converged，界面也一处不读 ——
+        //   于是「这次的圆盘区最高温不算数」这句话，工程师看不到，放行逻辑也不管。赋了值没人读。
+        //   现在最后一档峰若仍在粗区，Converged 置假（界面据此不换 _last），并把原话接进判词。
+        if (res.PeakOutsideFine is not null) res.Converged = false;
+        res.Undecidable = res.HitCellCap && !res.Converged
+                       && res.LastDeltas.Any(d => d.NotAsymptotic);
+        // ★ 峰在粗区时判词**必须以 ✗ 开头**（2026-09-14 数值把关人查出）：原来把原话接在判词后面，
+        //   而三条变化都落进容差时判词第一句是「✓ 数已经不再变了」—— 读的人只看第一句。
+        string deltaVerdict = MeshAdapt.Verdict(res.FineMm, res.LastDeltas, res.HitCellCap);
+        res.Verdict = res.PeakOutsideFine is null
+            ? deltaVerdict
+            : "✗ **本次复核不算数** —— " + res.PeakOutsideFine.TrimStart('★', ' ')
+              + "　（网格变化本身：" + deltaVerdict + "）";
 
-        // ★★ **中带确认**（A⑭ 的安全线）：只加密内带的话，判据可能收敛到一个
-        //   **由中带的粗糙度决定**的错值上 —— 而「内带加密判据不动」这个证据
-        //   **看不出**这件事。所以收敛之后额外做一次「中带也减半」的对照。
-        //   ⚠ 代价**不是**「可以忽略」—— 这句话原先是拿粗阶梯那一趟（8 分钟）
-        //     当了普适结论。2026-08-29 实测：0.6 档细阶梯（--weldfeature）上，
-        //     内带 0.146 mm 那一档 39618 单元用了 **3 时 43 分**，而中带减半会**再加**
-        //     一批单元（中带面积远大于内带）⇒ 这一步是整趟里**最贵的单步**。
-        //     所以它必须报进度、必须给估时 —— 这两样它此前一样都没有。
+        // ★★ **中带确认**的历史与理由（留着，别再写第二遍）：
+        //   它当初（A⑭）要验的是「只加密内带够不够 —— 判据会不会收敛到一个由**中带粗糙度**决定的错值上」，
+        //   因为「内带加密判据不动」这个证据看不出那件事。那时它是整趟里最贵的单步
+        //   （2026-08-29 实测：内带 0.146 mm 那档 39618 单元跑了 3 时 43 分，中带减半还要再加一批单元）。
+        //
+        // ★★ R48（2026-09-13，Opus 5）：主循环已改成**整档一起加密**（中带与内带同尺寸，见上面 caseFactory 那处），
+        //   中带不再固定 ⇒ 主循环的停止条件「判据变化落进容差」本身就是「整张网格都不再影响判据」的证据，
+        //   再单独跑一次「中带减半」等于把下一档重算一遍，白花几十分钟。
+        //   ⚠ 若哪天主循环改回「中带钉死、只减内带」，这一步必须一并恢复 —— 否则那条安全线就没了。
         if (res.Line is { Ok: true } && res.Trace.Count > 0)
         {
-            try
-            {
-                // ★ 单元只增不减 ⇒ 上一档的**实测**耗时是这一步的**下界**，不是估计。
-                //   报下界的好处：错也只会错成「比说的久」，不会错成「比说的短」——
-                //   后者才是会让人去 kill 掉一个正常任务的那一种错。
-                string floorC = ThrottledProgress.Fmt(TimeSpan.FromSeconds(res.Trace[^1].Sec));
-                progress?.Report($"中带确认：把中带 {hMid:0.000} → {hMid * 0.5:0.000} mm 再算一次，看判据动不动"
-                    + $"（单元只增不减 ⇒ **至少 {floorC}**；这是下界，不是估计）…");
-                var lcC = d.BuildCase(baseIn, checkRamp: true);
-                lcC.MeshFineMm = hMid * 0.5;
-                lcC.MeshFineRadiusMm = radius;
-                lcC.MeshInnerMm = res.FineMm;
-                lcC.MeshInnerRadiusMm = innerR;
-                // ★★ 此前这里传 null，内层进度被**整个扔掉**。2026-08-29 实测：
-                //   0.6 档细阶梯跑到这一步，日志**静默 29 分钟**没有一行输出 ——
-                //   正是用户点名的那个病（「跑这么长时间…容易误认死机」）。
-                //   当时的门写成匹配变量名 `lc`，而这一处叫 `lcC`，**从缝里漏了过去**；
-                //   门已改成不认变量名（见 LongRunProgressTests）。
-                var swC = System.Diagnostics.Stopwatch.StartNew();
-                var innerC = new ThrottledProgress(progress, 20, "     · 中带确认 ");
-                var rc = LineRunner.Run(lcC, innerC, cancel);
-                swC.Stop();
-                progress?.Report($"中带确认：场解完成 —— 用时 {ThrottledProgress.Fmt(swC.Elapsed)}");
-                if (!rc.Ok) res.MidBandConfirm = "⚠ 中带确认解不出来：" + rc.Message + " ⇒ **这一条没验到**";
-                else
-                {
-                    double W(LineResult x, string k) => x.Checks
-                        .FirstOrDefault(c => c.Name.StartsWith(k, StringComparison.Ordinal))?.Actual ?? double.NaN;
-                    var tolC = TolTemplate();
-                    var dl = new List<MeshAdapt.Delta>
-                    {
-                        new() { Name = tolC[0].Name, Tol = tolC[0].Tol,
-                                Change = W(rc, LineResult.Key.NetFlux)   - W(res.Line, LineResult.Key.NetFlux) },
-                        new() { Name = tolC[1].Name, Tol = tolC[1].Tol,
-                                Change = W(rc, LineResult.Key.DiscTemp)  - W(res.Line, LineResult.Key.DiscTemp) },
-                        new() { Name = tolC[2].Name, Tol = tolC[2].Tol,
-                                Change = W(rc, LineResult.Key.FlangeDip) - W(res.Line, LineResult.Key.FlangeDip) },
-                    };
-                    bool ok = dl.All(x => Math.Abs(x.Change) <= x.Tol);
-                    string detail = string.Join("／", dl.Select(x => $"{x.Name} {x.Change:+0.000;-0.000}/{x.Tol:0.###}"));
-                    res.MidBandConfirm = ok
-                        ? $"✓ 中带确认通过：中带减半后判据变化都在容差内（{detail}）"
-                          + " ⇒ **分区没有把判据算偏**。"
-                        : $"★★ **中带确认没过**（{detail}）⇒ 只加密内带**不够**："
-                          + "判据还受中带粗糙度影响，本次「数已经不再变」的结论**不成立**。";
-                }
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex) { res.MidBandConfirm = "⚠ 中带确认异常：" + ex.Message + " ⇒ **这一条没验到**"; }
-            if (res.MidBandConfirm is not null) progress?.Report("   " + res.MidBandConfirm);
+            res.MidBandConfirm = "· 中带确认：R48 起主循环**整档一起加密**（中带与内带同尺寸），"
+                + "「判据不再变」本身已经覆盖了中带粗糙度这一条，故不再单独解一遍场。";
+            progress?.Report("   " + res.MidBandConfirm);
         }
 
         res.SecondsTotal = sw.Elapsed.TotalSeconds;
