@@ -4428,6 +4428,9 @@ internal static class Program
             //   `--cli --monotone [--wall 0.8] [--pts 7]`
             // ★ 网格无关复核：**判据以它为准**（导航网格上的「全过」可能是离散误差的假象）。
             //   同一段输出被 --judge 与 --solve 共用 —— 两处各写一份就会「一处改了另一处没改」。
+            // ★ R48（2026-09-14，Opus 5）：求根那一遍到底说了什么 —— 复核判「不过」时要照实引用它，
+            //   不能一律安一句「它说全过」。null = 本次没跑求根（只做复核）。
+            bool? solvedFeasible = null;
             void VerifyMesh(DesignSpec dv, string tag)
             {
                 int mcV = 40000;
@@ -4453,20 +4456,48 @@ internal static class Program
                         + "只用于对照。");
                 var mvv = MeshVerify.Run(dv, p, maxCells: mcV, weldAsGeometricFeature: weldFeat,
                               progress: new SyncProgress<string>(m3 => Console.WriteLine("     · " + m3)));
-                Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"②″K",9}{"③K",9}{"合计g",9}{"用时s",8}");
+                Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"⑦K",9}{"⑧K",9}{"合计g",9}{"用时s",8}");
                 foreach (var tv in mvv.Trace)
                     Console.WriteLine($"{tv.Fine,10:0.000}{tv.Cells,9:0}{tv.N2p,9:0.000}{tv.N2pp,9:0.000}"
                                     + $"{tv.N3,9:0.000}{tv.MassG,9:0}{tv.Sec,8:0.0}");
-                Console.WriteLine(Criteria.Legend("②′", "②″", "③"));
+                Console.WriteLine(Criteria.Legend("②′", "⑦", "⑧"));
                 Console.WriteLine();
                 Console.WriteLine("   " + mvv.Verdict);
                 // ★ 两条安全线的结论必须印 —— 不印等于没做（A⑭）
                 if (mvv.MidBandConfirm is not null) Console.WriteLine("   " + mvv.MidBandConfirm);
                 if (mvv.PeakOutsideFine is not null) Console.WriteLine("   " + mvv.PeakOutsideFine);
-                if (mvv.Line is { } lvv && !lvv.AllOk)
+                // ★★★★★ R48 续（2026-09-14，Opus 5）：**判不了不许说成「不过」。**
+                //   界面那一侧（LineDesignPage.VerifyMeshAsync）已经认 Undecidable，命令行这一侧没认 ——
+                //   撞上单元上限、序列仍在摆时，下面那一支照样印「在算得准的网格上，这个设计不过」。
+                //   可那时网格根本没算准，「不过」与「过」都没有依据。同一个状态位两个出口一个读一个不读，
+                //   是本仓库栽过多次的形态；这里补上，并且让它**排在**「不过」那一支之前、互斥。
+                if (mvv.Undecidable)
                 {
+                    Console.WriteLine("⛔ **判不了** —— 已经加密到单元上限，而判据值仍在摆（不是还没收敛）。"
+                        + "**不要把它读成「不过」，也不要读成「过」**：这一关没有被检查过。");
+                    Console.WriteLine("   【下一步】① 换个网格族再验一次（改细区半径或起步档），看结论会不会跟着变；"
+                        + "② 换族之后结论一致的那部分才可引用；③ 若判据值本来就贴着限值，先问这条限值有没有留够噪声裕量。");
+                }
+                else if (mvv.Line is { } lvv && !lvv.AllOk)
+                {
+                    // ★ R48（2026-09-13，Opus 5）：这句以前一律写「导航网格上的全过」——
+                    //   而开了 --fine 时，说「全过」的是**求根的细网格那一遍**，不是导航网格。
+                    //   把没做过的事安给导航网格，读的人会去找错地方（最高准则：不许把事情搞混）。
+                    // ★ R48（2026-09-14，Opus 5）：这句只准说**求根那一遍真的说过的话**。
+                    //   09-13 的版本一律写「导航网格上的『全过』是假象」——开了 --fine 时说全过的是细网格那一遍。
+                    //   我 09-13 把它改成「求根那一遍报的『全过』…」，09-14 实跑又发现**照样是错的**：
+                    //   这次求解器**根本没报全过**（它是结构性停机，报「法兰侧九根旋钮穷尽」），
+                    //   那句话又把没做过的事安给了它。⇒ 现在按求解器**实际的停机结论**分三种说。
+                    double hLast = mvv.Trace.Count > 0 ? mvv.Trace[^1].Fine : 0;
+                    string claimed = solvedFeasible is true
+                        ? (args.Contains("--fine")
+                           ? "求根那一遍（--fine）报的「全过」是在更粗的网格上得到的"
+                           : "导航网格上的「全过」是离散误差造成的假象")
+                        : solvedFeasible is false
+                           ? "求根那一遍本来就没说它全过（看上面的停因）"
+                           : "本次没有求根那一遍可比（只做了复核）";
                     Console.WriteLine("✗ **在算得准的网格上，这个设计不过** —— "
-                        + "导航网格上的「全过」是离散误差造成的假象，不要拿它出图。");
+                        + claimed + $"；判据以本复核为准（已加密到 {hLast:0.000} mm）。不要拿它出图。");
                     // ★★ 说了「不过」就必须说**是哪一条**（2026-08-30）。
                     //   此前这里只有上面那一句：2026-08-29 那趟 0.6 档跑了 4 小时 22 分，
                     //   末行报「不过」，而日志里**找不到任何一条判据的名字** ——
@@ -4595,6 +4626,8 @@ internal static class Program
                 var gj = DesignSpec.Select(args);
                 Console.WriteLine("=== 单次判定（同一设计，只看判据）===");
                 Console.WriteLine($"用例：{gj.Name}");
+                // ★ R47 第三轮 N5：图纸档没有解析板 —— 明说、不算（BuildCase 也会拒，这里先说清楚再退出）
+                if (gj.IsDrawingRecord) { Console.WriteLine("✗ " + DesignSpec.DrawingRefusal); Environment.ExitCode = 1; return; }
                 Console.WriteLine("基线收敛口径："
                     + (p.BaselineTolAmplified ? "**与主环同口径**（真残差 × 放大 25）"
                                               : "**历史口径**（欠松弛步直接比容差）"));
@@ -4703,6 +4736,7 @@ internal static class Program
                 }
 
                 var r1 = RunOnce(geoS, "单次求解");
+                solvedFeasible = r1.Feasible;   // ★ R48：复核判「不过」时要照实引用求根那一遍的结论，不许替它说话
                 if (args.Contains("--verifymesh") && r1.Design is not null)
                     VerifyMesh(r1.Design, "求解器解出来的那一点");
                 else
@@ -4753,7 +4787,7 @@ internal static class Program
                 var rC = RunT(false);
                 swC.Stop();
 
-                Console.WriteLine($"{"解法",-12}{"用时",10}{"单元",8}{"最高温 °C",12}{"②′W",10}{"②″K",10}{"③K",10}");
+                Console.WriteLine($"{"解法",-12}{"用时",10}{"单元",8}{"最高温 °C",12}{"②′W",10}{"⑦K",10}{"⑧K",10}");
                 void RowT(string nm, LineResult r, TimeSpan el)
                 {
                     double V(string k) => r.Checks
@@ -4761,7 +4795,7 @@ internal static class Program
                     double tmax = r.Flanges.Length == 0 ? double.NaN : r.Flanges.Max(f => f.TMaxC);
                     Console.WriteLine($"{nm,-12}{ThrottledProgress.Fmt(el),10}{r.MeshCells,8}"
                         + $"{tmax,12:0.0000}{V(LineResult.Key.NetFlux),10:0.0000}"
-                        + $"{V(LineResult.Key.DiscTemp),10:0.0000}{V(LineResult.Key.FlangeDip),10:0.0000}");
+                        + $"{V(LineResult.Key.HotOverTc),10:0.0000}{V(LineResult.Key.ColdUnderTc),10:0.0000}");   // R48 B（2026-09-14 Opus 5）：这两列是热偶读数基准的热侧／冷侧 ⇒ 列头用新代号 ⑦／⑧（②″／③ 永远指旧判法那两条）
                 }
                 RowT("GS 扫描", rG, swG.Elapsed);
                 RowT("CG+Jacobi", rC, swC.Elapsed);
@@ -4902,7 +4936,7 @@ internal static class Program
                 void Sweep(string knob, double lo, double hi, Action<DesignSpec, double> set)
                 {
                     Console.WriteLine($"── 旋钮：**{knob}**　{lo:0.###} → {hi:0.###}");
-                    Console.WriteLine($"{"值",10}{"抽热D W",11}{"②′W",10}{"②″K",10}{"③K",10}{"合计g",9}");
+                    Console.WriteLine($"{"值",10}{"抽热D W",11}{"②′W",10}{"⑦K",10}{"⑧K",10}{"合计g",9}");
                     var ds = new List<double>(); var d3 = new List<double>(); var d2pp = new List<double>();
                     for (int k = 0; k < pts; k++)
                     {
@@ -4917,10 +4951,10 @@ internal static class Program
                         double draw = rr.Flanges.Sum(f3 => f3.QFromTubeW);
                         double m3 = rr.Segments.Sum(s3 => s3.MassG) + rr.Flanges.Sum(f3 => f3.MassG);
                         Console.WriteLine($"{v,10:0.###}{draw,11:0.000}{VV(LineResult.Key.NetFlux),10:0.000}"
-                            + $"{VV(LineResult.Key.DiscTemp),10:0.000}{VV(LineResult.Key.FlangeDip),10:0.000}{m3,9:0}");
-                        ds.Add(draw); d3.Add(VV(LineResult.Key.FlangeDip)); d2pp.Add(VV(LineResult.Key.DiscTemp));
+                            + $"{VV(LineResult.Key.HotOverTc),10:0.000}{VV(LineResult.Key.ColdUnderTc),10:0.000}{m3,9:0}");   // R48 B（2026-09-14 Opus 5）：单调性要测的是现役判据
+                        ds.Add(draw); d3.Add(VV(LineResult.Key.ColdUnderTc)); d2pp.Add(VV(LineResult.Key.HotOverTc));
                     }
-                    Console.WriteLine(Criteria.Legend("②′", "②″", "③"));
+                    Console.WriteLine(Criteria.Legend("②′", "⑦", "⑧"));
                     static string Mono(List<double> xs)
                     {
                         if (xs.Count < 3) return "点太少，判不了";
@@ -5030,7 +5064,7 @@ internal static class Program
                            ? "　✗ **画不出来**" : "　✓"));
                 Console.WriteLine();
 
-                Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"②″K",9}{"③K",9}{"合计g",9}{"用时s",8}");
+                Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"⑦K",9}{"⑧K",9}{"合计g",9}{"用时s",8}");
                 double hNow = h0; bool hitCap = false;
                 (double n2p, double n2pp, double n3, double m)? prevA = null;
                 List<MeshAdapt.Delta> lastDeltas = new();
@@ -5048,19 +5082,22 @@ internal static class Program
                     if (!rA.Ok) { Console.WriteLine($"{hNow,10:0.000}  ✗ {rA.Message}"); break; }
                     double VA(string k) => rA.Checks
                         .FirstOrDefault(c2 => c2.Name.StartsWith(k, StringComparison.Ordinal))?.Actual ?? double.NaN;
-                    double a2p = VA(LineResult.Key.NetFlux), a2pp = VA(LineResult.Key.DiscTemp);
-                    double a3 = VA(LineResult.Key.FlangeDip);
+                    double a2p = VA(LineResult.Key.NetFlux), a2pp = VA(LineResult.Key.HotOverTc);   // R48 B（2026-09-14 Opus 5）：加密看的是卡交付的判据
+                    double a3 = VA(LineResult.Key.ColdUnderTc);
                     double massA = rA.Segments.Sum(s2 => s2.MassG) + rA.Flanges.Sum(f2 => f2.MassG);
                     Console.WriteLine($"{hNow,10:0.000}{rA.MeshCells,9:0}{a2p,9:0.000}{a2pp,9:0.000}"
                                     + $"{a3,9:0.000}{massA,9:0}{swA.Elapsed.TotalSeconds,8:0.0}");
 
                     if (prevA is { } pv)
                     {
+                        // 2026-09-14 Opus 5（复审）：容差与名字只读 MeshVerify.TolTemplate —— 此前这里手抄了 0.5／0.2／1.0 三个数，
+                        //   两条温度判据换成热偶读数基准、容差重定之后，手抄的那份就会与界面的复核各判各的。
+                        var tolA = MeshVerify.TolTemplate();
                         lastDeltas = new List<MeshAdapt.Delta>
                         {
-                            new() { Name = "②′", Change = a2p - pv.n2p, Tol = 0.5 },
-                            new() { Name = "②″", Change = a2pp - pv.n2pp, Tol = 0.2 },
-                            new() { Name = "③",  Change = a3 - pv.n3,   Tol = 1.0 },
+                            new() { Name = tolA[0].Name, Change = a2p - pv.n2p,   Tol = tolA[0].Tol },
+                            new() { Name = tolA[1].Name, Change = a2pp - pv.n2pp, Tol = tolA[1].Tol },
+                            new() { Name = tolA[2].Name, Change = a3 - pv.n3,     Tol = tolA[2].Tol },
                         };
                         Console.WriteLine($"{"",10}{"Δ vs 上一档",9}"
                             + $"{lastDeltas[0].Change,9:+0.000;−0.000}{lastDeltas[1].Change,9:+0.000;−0.000}"
@@ -5132,7 +5169,7 @@ internal static class Program
                         string.Join("　", fines.Select(f => $"{f:0.0}mm网格 {mm / f:0.0}格")));
                 Console.WriteLine();
 
-                Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"②″K",9}{"③K",9}{"管J",8}{"合计g",9}{"用时s",8}");
+                Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"⑦K",9}{"⑧K",9}{"管J",8}{"合计g",9}{"用时s",8}");
                 (double f, double n2p, double n2pp, double n3, double j, double m)? prev = null;
                 foreach (double f in fines.OrderByDescending(x => x))
                 {
@@ -5146,8 +5183,8 @@ internal static class Program
                     if (!rM.Ok) { Console.WriteLine($"{f,10:0.00}  ✗ {rM.Message}"); continue; }
                     double V(string k) => rM.Checks
                         .FirstOrDefault(c2 => c2.Name.StartsWith(k, StringComparison.Ordinal))?.Actual ?? double.NaN;
-                    double n2p = V(LineResult.Key.NetFlux), n2pp = V(LineResult.Key.DiscTemp);
-                    double n3 = V(LineResult.Key.FlangeDip), jj = V(LineResult.Key.TubeJ);
+                    double n2p = V(LineResult.Key.NetFlux), n2pp = V(LineResult.Key.HotOverTc);   // R48 B（2026-09-14 Opus 5）：网格收敛看的是卡交付的判据
+                    double n3 = V(LineResult.Key.ColdUnderTc), jj = V(LineResult.Key.TubeJ);
                     double mass = rM.Segments.Sum(s2 => s2.MassG) + rM.Flanges.Sum(f2 => f2.MassG);
                     int cells = rM.Flanges.Length > 0 ? rM.MeshCells : 0;
                     Console.WriteLine($"{f,10:0.00}{cells,9:0}{n2p,9:0.000}{n2pp,9:0.000}" +
@@ -5564,7 +5601,7 @@ internal static class Program
                         if (imc >= 0 && imc + 1 < args.Length && int.TryParse(args[imc + 1], out int mcv)) mcS = mcv;
                         var mv = MeshVerify.Run(win.d, p, maxCells: mcS,
                                      progress: new SyncProgress<string>(m2 => Console.WriteLine("     · " + m2)));
-                        Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"②″K",9}{"③K",9}{"合计g",9}{"用时s",8}");
+                        Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"⑦K",9}{"⑧K",9}{"合计g",9}{"用时s",8}");
                         foreach (var t in mv.Trace)
                             Console.WriteLine($"{t.Fine,10:0.000}{t.Cells,9:0}{t.N2p,9:0.000}{t.N2pp,9:0.000}"
                                             + $"{t.N3,9:0.000}{t.MassG,9:0}{t.Sec,8:0.0}");
@@ -6537,17 +6574,27 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
                                 Console.WriteLine($"         {c.Name} {c.Actual:0.000} / {c.Limit:0.000}　{c.Where}");
                         }
                     }
+                    // ★ R48（2026-09-13，Opus 5 加）：记录值出自修网格前的档（DesignSpec.RecordFromOldMesh）——
+                    //   R47 把网格轴修对后抽热约为原来的 4～8 倍（旧轴在管孔一侧留了 8.46 mm 的粗格从未被加密），
+                    //   旧记录的热学项与铂重**必然对不上**，那是旧数不可比，不是本次退化 ⇒ 这类档**只报不判**。
+                    //   ⚠ 只对**已作废、不再重解**的档成立；现役档一律要按 R48 重解并写回新记录值 ——
+                    //   拿这个开关掩盖现役档对不上，等于把这道门关掉。
+                    bool oldMesh = fd.RecordFromOldMesh;
+                    if (oldMesh)
+                        Console.WriteLine("      · 本档记录值出自**修网格前**的网格（R47 之前）⇒ 热学项与合计只报不判；"
+                                        + "本档已作废、不再重解，热学结论不可引用（见失效告示）。");
                     void Chk(string nm, double got, double want, double tol, string unit)
                     {
                         bool ok = Math.Abs(got - want) <= tol;
-                        if (!ok) bad++;
-                        Console.WriteLine($"      {(ok ? "✓" : "✗")} {nm,-6}{got,9:0.000} {unit,-6} 记录 {want,8:0.000}" +
-                                          $"　差 {got - want,+7:0.000}" + (ok ? "" : $"　**超容差 {tol:0.###}**"));
+                        if (!ok && !oldMesh) bad++;
+                        Console.WriteLine($"      {(ok ? "✓" : oldMesh ? "·" : "✗")} {nm,-6}{got,9:0.000} {unit,-6} 记录 {want,8:0.000}" +
+                                          $"　差 {got - want,+7:0.000}"
+                                          + (ok ? "" : oldMesh ? "　（修网格前的记录值，只报不判）" : $"　**超容差 {tol:0.###}**"));
                     }
                     Chk("①用时", V(LineResult.Key.RampHours), fd.RampH, 0.02, "h");   // R20：记录的 RampH 是集总用时，读参考行
-                    Chk("②″", V("②″"), fd.DiscOverK,  0.20, "K");
+                    Chk("②″", V(LineResult.Key.DiscTemp), fd.DiscOverK,  0.20, "K");   // R48 B（2026-09-14 Opus 5）：记录栏位装的是旧判法 ⇒ 读旧判法参考行；用 Key 常量不用代号字面量（改名时编译期就断）
                     Chk("②′", V("②′"), fd.HoleFluxW,  0.50, "W");
-                    Chk("③",  V("③"),  fd.FlangeDipK, 1.00, "K");
+                    Chk("③",  V(LineResult.Key.FlangeDip),  fd.FlangeDipK, 1.00, "K");
                     Chk("管J", V("管 J"), fd.TubeJ,    0.05, "A/mm²");
                     Chk("合计", rc.TotalMassG, fd.TotalMassG, 2.0, "g");
                 }
@@ -6911,7 +6958,7 @@ Console.WriteLine("   ⇒ 本节验的是「**内核有没有漂**」（同一�
                         return double.NaN;
                     }
                     return (true, r.Converged, r.AllOk,
-                            V("③"), V("②″"), V("②′"), V("管 J"),
+                            V(LineResult.Key.FlangeDip), V(LineResult.Key.DiscTemp), V("②′"), V("管 J"),   // R48 B（2026-09-14 Opus 5）：本实验的预言都是旧判法上写的 ⇒ 显式读旧判法参考行
                             r.TotalMassG,
                             r.Flanges.Max(x => x.TMaxC),
                             r.Flanges.Max(x => Math.Abs(x.EnergyResidualW)),

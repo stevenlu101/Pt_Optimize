@@ -1,0 +1,26 @@
+慢门（Trait 速度=慢）整套实跑 2026-09-11 凌晨～上午，非 Rhino 的 23 条（排除 Export3dmMatchesSolvedTests／ExportOptimized3dmTests／ShapeFamilyTests 三个要开 Rhino 的类，另跑）：
+
+已通过 PtOptimize.Tests.MeltIsNotASolutionTests.逐片熔化位与整线位一致 [4 s]
+已通过 PtOptimize.Tests.HoleMeshResolutionTests.孔那一带细化前后峰值电流密度差多少 [11 s]
+已通过 PtOptimize.Tests.BranchMarksAreReachedTests.熔化时只抬最热那一片_这条分支走到了 [11 s]
+已通过 PtOptimize.Tests.BranchMarksAreReachedTests.下角熔化就停_不抬厚度_这条分支走到了 [3 s]
+已通过 PtOptimize.Tests.BranchMarksAreReachedTests.厚度到顶仍熔就交棒_这条分支走到了 [3 s]
+已通过 PtOptimize.Tests.ShapeDrainSurveyTests.量盘70舌70在J10截面下的抽热与三 [25 s]
+已通过 PtOptimize.Tests.FlangePeakSurveyTests.量0点8档整片峰值 [38 s]
+失败 PtOptimize.Tests.PerPlateDivergeTests.爆炸不许被印成没变好 [1 m 20 s]
+已通过 PtOptimize.Tests.SingleSolveCostTests.单次场解与建几何各要多久 [1 m 38 s]
+已通过 PtOptimize.Tests.LeverSurveyTests.量管保温与法兰全包对三的杠杆 [2 m 52 s]
+已通过 PtOptimize.Tests.TongueResizeReachableTests.大管径_内径80_Ø96_舌保温封3mm [15 m 17 s]
+已通过 PtOptimize.Tests.ReconcileTraceTests.打出0点8档的求解轨迹 [21 m 35 s]
+已通过 PtOptimize.Tests.SketchShapeTests.用户拍脑袋的Y形_按J定臂厚后核算 [28 m 54 s]
+已通过 PtOptimize.Tests.ShapePointTraceTests.打出盘70舌70的求解轨迹 [30 m 17 s]
+已通过 PtOptimize.Tests.TongueResizeReachableTests.对照_内径50_Ø56_舌保温封3mm [20 m 36 s]
+已通过 PtOptimize.Tests.ComboAccumulateTests.单根补不上时求解器自己攒出组合 [1 h 10 m]
+已通过 PtOptimize.Tests.ShapeSearchParallelResultTests.搜形状_串行并行逐位相同 [1 h 44 m]
+已通过 PtOptimize.Tests.BestShapeFineMeshTests.盘56舌56_细网格复算 [1 h 45 m]
+已通过 PtOptimize.Tests.SolveCostRegressionTests.续轮吃掉多少成本 [2 h 9 m]
+已通过 PtOptimize.Tests.BestShapeFineMeshTests.盘58舌58_细网格复算 [37 m 42 s]
+
+汇总：23 条里 22 条通过、1 条失败（PerPlateDivergeTests.爆炸不许被印成没变好：门自己的防空转断言——这一跑一行「没变好」都没印）。
+处置：坏例在 J 定截面新链下第一轮就停在「法兰截面 J（没有旋钮能治）」，换成 R36 对拍里确实印过「没变好」的候选（2 段、盘Ø66／舌宽35、MaxRounds=2）；单独重跑：
+已通过! - 失败:     0，通过:     2，已跳过:     0，总计:     2，持续时间: 13 m 3 s - Pt_Optimize.Tests.dll (net8.0)

@@ -1,0 +1,2766 @@
+diff --git a/Pt_Optimize.Tests/FieldConvergenceGateTests.cs b/Pt_Optimize.Tests/FieldConvergenceGateTests.cs
+index 14434ba..368a472 100644
+--- a/Pt_Optimize.Tests/FieldConvergenceGateTests.cs
++++ b/Pt_Optimize.Tests/FieldConvergenceGateTests.cs
+@@ -82,6 +82,8 @@ public class FieldConvergenceGateTests
+             "LineResult.Key.RampField", "LineResult.Key.HeatBalance",
+         })
+             Assert.Contains(k, s);
++        // 2026-09-15 Opus 5（审查意见 minor）：集总升温用时读逐片焦耳热与质量、吃法兰场 —— 按名单本体查（上面的源码包含查不出它：「Key.Ramp」是它的前缀）
++        Assert.Contains(LineResult.Key.RampHours, LineRunner.DependsOnFlangeFields);
+     }
+ 
+     /// <summary>
+diff --git a/Pt_Optimize.Tests/R48ClampFullFaceTests.cs b/Pt_Optimize.Tests/R48ClampFullFaceTests.cs
+index 232cb96..3bb17e6 100644
+--- a/Pt_Optimize.Tests/R48ClampFullFaceTests.cs
++++ b/Pt_Optimize.Tests/R48ClampFullFaceTests.cs
+@@ -1,4 +1,5 @@
+ using System;
++using System.Collections.Generic;
+ using System.IO;
+ using System.Linq;
+ using System.Text;
+@@ -37,10 +38,14 @@ public class R48ClampFullFaceTests
+     {
+         var sb = new StringBuilder();
+         string file = Path.Combine(Root(), "deliverable", "R48_压接整面接触AB_2026-09-14.txt");
++        // ★ R48 G1（2026-09-15，Opus 5；数值把关人第十三轮）：写文件改走 EvidenceFile —— 文件头写明代码（git HEAD、Core 改动指纹）与配方；
++        //   同名文件已存在且头不同（或是没有头的旧证据）⇒ 不覆盖，改写到带时间戳的新文件。算法一行不动。
++        //   证据头里的网格／热解配方要实建网格才知道，算例建好后才打开（下面 ev 赋值处）；在那之前 Say 只进缓冲，打开时整份写出。
++        EvidenceFile? ev = null;
+         void Say(string s)
+         {
+             _out.WriteLine(s); sb.AppendLine(s);
+-            try { File.WriteAllText(file, sb.ToString(), new UTF8Encoding(false)); } catch { }
++            try { ev?.Write(sb.ToString()); } catch { }
+         }
+         Say($"R48 压接段 只钉外圈 vs 整面接触（Opus 5）　{DateTime.Now:yyyy-MM-dd HH:mm}　工作点同第二批 B2");
+         var p = new DesignInputs { SplitSharedFlangeDraw = true };
+@@ -57,6 +62,36 @@ public class R48ClampFullFaceTests
+         Say($"舌片厚 {string.Join("/", d.TongueThickMm.Select(v => v.ToString("0.00")))} mm　压接长 {clampLen:0.0} mm　夹持温度 {string.Join("/", lc.ClampTempC.Select(v => v.ToString("0")))} °C　铜排热导 {lc.Base.BusbarConductanceWPerK}");
+         var cases = new[] { (j: 0, iA: 1072.0, tRoot: 1139.95), (j: 1, iA: 1737.0, tRoot: 1120.76) };
+         bool change = false;
++
++        // R48 G1（2026-09-15，Opus 5）：建网格与本片物性从 Solve 里原样提成 Setup（证据头要用同一份实建网格的配方），调用与参数逐字未改；
++        //   p2 的组装原在电流场解之后，挪到之前 —— 它不读电流场，数不变。
++        (FlangePlate g, ShellMesh m, DesignInputs p2) Setup(int j, double h, bool full)
++        {
++            var g = lc.FlangePlates[j];
++            var (xa, za) = FlangeMesher.AnchorsOf(g);
++            var tf = FlangeMesher.Rasterize(g, Math.Max(h / 4, 0.02));
++            // 口径钉住（2026-09-14 Opus 5）：生产默认改为铺自相似压接细带后，本探针显式不铺（跑出 AB 文件时细带缺省是 0），同名证据文件不换口径
++            var m = FlangeMesher.BuildFromField(tf, g.HoleRadiusMm, 0, h, h, 1e6, clampLen, h, 0, g.TwoTabs, xa, za, clampBandMm: 0, clampFullFace: full);
++            double tSet0 = d.SetpointC[Math.Min(j, d.SetpointC.Length - 1)];
++            var p20 = SegmentSolver.Clone(lc.Base); p20.TSetC = tSet0;
++            if (j < lc.ClampTempC.Length) p20.BusbarClampTempC = lc.ClampTempC[j];
++            p20.FlangeInsulThickMm = g.DiscInsulEffectiveMm(lc.Base);
++            return (g, m, p20);
++        }
++        {
++            var meshLines = new List<string>(); var thLines = new List<string>();
++            foreach (bool full in new[] { false, true })
++            {
++                var (g0, m0, p20) = Setup(0, 1.0, full);
++                string lab = full ? "B 整面接触" : "A 只钉外圈";
++                meshLines.Add($"{lab}（片0 h=1 实建；片1、其余档同开关，均匀网格）：{m0.Recipe!.Describe()}");
++                thLines.Add($"{lab}：{ShellThermal.RecipeFor(m0, p20, insulDiscRadiusMm: g0.InsulDiscRadiusMm).Describe()}");
++            }
++            ev = EvidenceFile.Open(file, EvidenceHeader.Build("R48 压接段只钉外圈 vs 整面接触", meshLines, thLines, double.NaN, null, false));
++            _out.WriteLine($"证据文件：{ev.Path}（{ev.Reason}）");
++            try { ev.Write(sb.ToString()); } catch { }
++            if (ev.Redirected) Say("⚠ 证据文件改道：" + ev.Reason);
++        }
+         foreach (var (j, iA, tRoot) in cases)
+         {
+             Say($"── 片{j}　电流 {iA:0} A　管根 {tRoot:0.00} °C");
+@@ -65,16 +100,9 @@ public class R48ClampFullFaceTests
+             {
+                 (double q, double tab, double disc, double gen, double clamp, int pinned, int cells) Solve(bool full)
+                 {
+-                    var g = lc.FlangePlates[j];
+-                    var (xa, za) = FlangeMesher.AnchorsOf(g);
+-                    var tf = FlangeMesher.Rasterize(g, Math.Max(h / 4, 0.02));
+-                    // 口径钉住（2026-09-14 Opus 5）：生产默认改为铺自相似压接细带后，本探针显式不铺（跑出 AB 文件时细带缺省是 0），同名证据文件不换口径
+-                    var m = FlangeMesher.BuildFromField(tf, g.HoleRadiusMm, 0, h, h, 1e6, clampLen, h, 0, g.TwoTabs, xa, za, clampBandMm: 0, clampFullFace: full);
++                    var (g, m, p2) = Setup(j, h, full);
+                     double tSet = d.SetpointC[Math.Min(j, d.SetpointC.Length - 1)];
+                     var sc = ShellCurrent.SolveFor(lc, m, iA, Materials.PtResistivity(tSet) * 1e3, tSet);
+-                    var p2 = SegmentSolver.Clone(lc.Base); p2.TSetC = tSet;
+-                    if (j < lc.ClampTempC.Length) p2.BusbarClampTempC = lc.ClampTempC[j];
+-                    p2.FlangeInsulThickMm = g.DiscInsulEffectiveMm(lc.Base);
+                     var th = ShellThermal.Solve(m, sc.JMagAPerMm2, p2, tRoot, g.InsulBoundaryXResolved, g.TwoTabs,
+                                                 tabBoundaryX: g.Tangent().X, tabInsulThickMm: g.TabInsulThickMm,
+                                                 discRadiusMm: g.DiscRadiusMm, insulDiscRadiusMm: g.InsulDiscRadiusMm);
+diff --git a/Pt_Optimize.Tests/R48ClampRecipeImpactTests.cs b/Pt_Optimize.Tests/R48ClampRecipeImpactTests.cs
+index df022db..43d76a0 100644
+--- a/Pt_Optimize.Tests/R48ClampRecipeImpactTests.cs
++++ b/Pt_Optimize.Tests/R48ClampRecipeImpactTests.cs
+@@ -270,7 +270,7 @@ public class R48ClampRecipeImpactTests
+         Say($"LineRunner.Run：收敛 {r.Converged}　{sw.Elapsed.TotalSeconds:0} s");
+         foreach (var f in r.Flanges)
+             Say($"   {f.Name,-8} 发热 {f.QGenW:0.000} W　抽热 {f.QFromTubeW:+0.000;-0.000} W　管根 {f.TRootC:0.00} °C　单元 {f.CellCount}"
+-              + $"　压接格 {f.Mesh?.ClampCell.Count(b => b) ?? -1}　{(f.Mesh?.ClampAnchorNote.Contains("铺细步") == true ? "有细带" : "**没细带**")}");
++              + $"　压接格 {f.Mesh?.ClampCell.Count(b => b) ?? -1}　{(f.MeshRecipe?.ClampBandMm > 0 ? "有细带" : "**没细带**")}");
+         Say("   改动前（老口径）同一算例：发热 467.069 / 710.923 / 578.428 / 311.183 W，抽热 −9.660 / −14.847 / −11.674 / −4.137 W，"
+           + "整片热稳定 14.4887（HC1|HC2），升温法兰−管峰值 71.6197 K —— 出处 deliverable/R48A_基线树老口径记录_2026-09-14.txt（基线树上跑的）");
+         Say("");
+diff --git a/Pt_Optimize.Tests/R48ClampRecipeTests.cs b/Pt_Optimize.Tests/R48ClampRecipeTests.cs
+index 0d26379..05fab30 100644
+--- a/Pt_Optimize.Tests/R48ClampRecipeTests.cs
++++ b/Pt_Optimize.Tests/R48ClampRecipeTests.cs
+@@ -25,8 +25,9 @@ namespace PtOptimize.Tests;
+ ///   (c) 不带开关的默认网格上 ShellCurrent 解后所有 ClampCell 的 V == 1、定温模式下所有 ClampCell 的 T == 夹持温度；热场收敛、能量闭合。
+ ///   (d) 显式 clampFullFace: false、clampBandMm: 0 与改动前一致：ClampCell 空、网格记录里没有细带；
+ ///       格数、抽热，以及**自由端与热导模式**下的舌端均温、铜排等效长度，对得上**基线树**（改动前代码）跑出来的记录（逐位）。
++///       【2026-09-15 Opus 5：散热表换过之后，逐位比用只供测试的旧表参数（设定 + 200 K、60 节点）；新表下的容差由新旧表之差推出，见门内注释】
+ ///   (e) 退化几何（压接段盖到管孔）不填 ClampCell、退回只钉外圈，⚠ 警告进 LineRunner 输出，而且说人话（改后第一遍快套件抓到的）。
+-///   (f) LineRunner 建网格不覆写这两个开关（生产链读的就是默认配方）。
++///   (f) LineRunner 建网格不覆写这两个开关（生产链读的就是默认配方）。【2026-09-15 Opus 5：降为辅助，主证据是 R48RecipeFingerprintTests 的行为门】
+ ///   (g) 被生产代码或配方声明引作依据的证据探针，建网格时必须显式写明两个开关（复审 major：默认值一改，证据探针悄悄换口径、重跑还覆盖同名证据）。
+ ///   (h) 下游：LineRunner.Run 出来的每片网格都带整面接触与细带；判据表里整片热稳定、升温两节点两条参考量排除了压接格
+ ///       （复审 major：发热已不含压接段，而面积／质量还按整片算，两个参考量都偏乐观）；排除后升温那条偏保守的原因写进了界面附注。
+@@ -79,7 +80,8 @@ public class R48ClampRecipeTests
+     /// mode：定温（生产，夹持温度取算例）／自由端（夹持温度 −1、铜排热导 −1）／热导（夹持温度 −1、G = 1.1 W/K，DesignInputs.BusbarConductanceWPerK 说明里的典型值）。
+     /// 与基线树探针（deliverable/R48A_基线树老口径记录_探针源码_2026-09-14.cs.txt）同一套调用。
+     /// </summary>
+-    private static (ShellCurrentResult sc, ShellThermalResult th) SolvePlate0(DesignSpec d, LineCase lc, FlangePlate g, ShellMesh m, string mode = "定温")
++    private static (ShellCurrentResult sc, ShellThermalResult th, DesignInputs p2) SolvePlate0(DesignSpec d, LineCase lc, FlangePlate g, ShellMesh m, string mode = "定温",
++                                                                                           double lossTableHiC = double.NaN, int lossTableNodes = 0)
+     {
+         double tSet = d.SetpointC[0];
+         var sc = ShellCurrent.SolveFor(lc, m, 1213, Materials.PtResistivity(tSet) * 1e3, tSet);
+@@ -91,10 +93,12 @@ public class R48ClampRecipeTests
+             case "热导": p2.BusbarClampTempC = -1; p2.BusbarConductanceWPerK = 1.1; break;
+             default: throw new ArgumentException(mode);
+         }
++        // lossTableHiC／lossTableNodes：只有门 d 传（复现基线树的表，2026-09-15 Opus 5）；缺省 = 生产表
+         var th = ShellThermal.Solve(m, sc.JMagAPerMm2, p2, 1172.63, g.InsulBoundaryXResolved, g.TwoTabs,
+                                     tabBoundaryX: g.Tangent().X, tabInsulThickMm: g.TabInsulThickMm,
+-                                    discRadiusMm: g.DiscRadiusMm, insulDiscRadiusMm: g.InsulDiscRadiusMm);
+-        return (sc, th);
++                                    discRadiusMm: g.DiscRadiusMm, insulDiscRadiusMm: g.InsulDiscRadiusMm,
++                                    lossTableHiC: lossTableHiC, lossTableNodes: lossTableNodes);
++        return (sc, th, p2);
+     }
+ 
+     /// <summary>生产导航网格参数（BuildCase 给的）与 h=1 整片加密（MeshAdapt.RefineWholeMesh，误差预算「分级」组同一做法）。</summary>
+@@ -189,6 +193,9 @@ public class R48ClampRecipeTests
+             var mDef = BuildDefault(g, lc);
+             var (ins, _, note) = Window(mDef);
+             _out.WriteLine($"{name}：hFine {hF}　细带单侧 {band}　窗口内整格 {ins.Length} 个：{string.Join(" ", ins.Select(v => v.ToString("0.###")))}　记录：{note}");
++            // 2026-09-15 Opus 5（审查意见 minor：门里残留按文字判配方）：主断言读结构化配方；网格记录那句文字只作「给人看的记录写对了」的辅助核对
++            Assert.Equal(band, mDef.Recipe!.ClampBandMm, 12);
++            Assert.Equal(FlangeMesher.ProductionMeshRule, mDef.Recipe.Rule);
+             Assert.Contains($"压接边界两侧各 {band:0.###} mm 铺细步 {hF:0.###} mm", note);
+             Assert.True(ins.Length >= 2 * FlangeMesher.ClampBandPerHFine - 2, $"{name}：窗口里只有 {ins.Length} 格");
+             Assert.All(ins, w => Assert.True(w <= 1.25 * hF + 1e-9, $"{name}：窗口内有 {w:0.###} mm 的格，超过 1.25·hFine"));
+@@ -211,6 +218,8 @@ public class R48ClampRecipeTests
+             double band = FlangeMesher.ResolveClampBandMm(double.NaN, lc.MeshFineMm);
+             _out.WriteLine($"图纸路径缺省入口：单元 {mF.CellCount}　压接格 {mF.ClampCell.Count(b => b)}　外圈 {RingCells(mF)}　记录：{mF.ClampAnchorNote}");
+             Assert.True(mF.ClampCell.Length == mF.CellCount && mF.ClampCell.Count(b => b) > RingCells(mF), "图纸路径缺省入口没有整面接触");
++            Assert.Equal(band, mF.Recipe!.ClampBandMm, 12);                               // 2026-09-15 Opus 5：结构化配方为主
++            Assert.Equal(FlangeMesher.ProductionMeshRule, mF.Recipe.Rule);
+             Assert.Contains($"压接边界两侧各 {band:0.###} mm 铺细步 {lc.MeshFineMm:0.###} mm", mF.ClampAnchorNote);
+         }
+     }
+@@ -225,7 +234,7 @@ public class R48ClampRecipeTests
+             var m = BuildDefault(g, lc);
+             int nClamp = m.ClampCell.Count(b => b);
+             Assert.True(nClamp > RingCells(m), $"{name}：整面格 {nClamp} 不多于外圈格 {RingCells(m)}");
+-            var (sc, th) = SolvePlate0(d, lc, g, m);
++            var (sc, th, _) = SolvePlate0(d, lc, g, m);
+             Assert.True(sc.Converged, $"{name}：电流场没收敛");
+             Assert.True(th.Converged, $"{name}：热场没收敛");
+             var bad = Enumerable.Range(0, m.CellCount).Where(i => m.ClampCell[i] && sc.V[i] != 1.0).Take(5).ToArray();
+@@ -263,15 +272,30 @@ public class R48ClampRecipeTests
+             var m = BuildRing(g, lc);
+             _out.WriteLine($"导航网格 老口径：单元 {m.CellCount}　外圈 {RingCells(m)}　记录：{m.ClampAnchorNote}");
+             Assert.Empty(m.ClampCell);
++            // 2026-09-15 Opus 5（审查意见 minor）：结构化配方为主（老口径：整面接触未生效、细带 0、锚点落成节点），记录文字辅助
++            Assert.False(m.Recipe!.ClampFullFace);
++            Assert.Equal(0.0, m.Recipe.ClampBandMm);
++            Assert.True(m.Recipe.ClampAnchorOnNode);
+             Assert.DoesNotContain("铺细步", m.ClampAnchorNote);
+             Assert.Contains("已落成节点", m.ClampAnchorNote);
+             Assert.Equal(1006, m.CellCount);
+             Assert.Equal(36, RingCells(m));
+ 
+             // ★ 复审补（2026-09-14 Opus 5；审查意见 minor「老口径不是逐位相同」）：三种舌端边界模式下的**逐位**记录。
+-            //   记录值出处：deliverable/R48A_基线树老口径记录_2026-09-14.txt —— 在基线树（.basetree，改动前代码）上跑的探针
++            //   记录值出处：deliverable/R48A_基线树老口径记录_2026-09-14.txt —— 在基线树（改动前代码）上跑的探针
+             //   （源码 deliverable/R48A_基线树老口径记录_探针源码_2026-09-14.cs.txt，与本类 SolvePlate0 同一套调用），打印用 R 格式、可逐位比。
+             //   第一轮把舌端均温、铜排等效长度的面积加权也套到了老口径上，自由端与热导模式的这两个数就会变（非空转证据见下面的「面积加权」对照）。
++            //
++            // ★★ 2026-09-15 Opus 5 正规化（常驻数值把关人第十四轮判：09-15 上午那版「看过自由端差 1.14e-4 W 之后把相对 1e-6 放到 1e-5」是**事后挪门槛**，必须改）。
++            //   散热表上限从「设定 + 200 K、60 节点」改为「铂熔点、约 22 K 一个节点」（ShellThermal.LossTableHiC／LossTableNodes）之后，本门分两步：
++            //   ① **逐位**：给 ShellThermal.Solve 传只供测试用的 lossTableHiC = 设定 + 200、lossTableNodes = 60（= 基线树的表），
++            //      与基线树记录比，容差相对 1e-12 —— 表换回去就该逐位相同；不同就说明除散热表以外还有东西动了。
++            //   ② **新表下的容差由表本身推出**（式子跑前定下，不看新旧结果之差）：
++            //      δq = 在工作温度区间（新旧两次解的场温度范围取并）上逐 1 K 比较新旧两张表（裸面／圆盘保温面／舌保温面三张取最坏）的最大相对差 |q新 − q旧| ÷ q旧；
++            //      放大系数：抽热 = 总散热 ÷ |抽热|（表面散热整体偏 δq，最多 δq·总散热 的热要改从管子来或不来）⇒ 界 = 3 · δq · 总散热（W）；
++            //                温度（舌端均温）= q ÷ (dq/dT)（在该温度上，三张新表取最大）⇒ 界 = 3 · δq · q/(dq/dT)（K）；
++            //                铜排等效长 = k(T)·A/G 随舌端温度走 ⇒ 界 = 等效长 · |dk/dT ÷ k| · 温度界（mm）；
++            //      3 是数值把关人给的安全系数。**推导界 ≥ 实测差才过**，两者都打印。
+             var ring = RingCellIds(m);
+             foreach (var (mode, tTab, q, busLen) in new[]
+             {
+@@ -280,21 +304,39 @@ public class R48ClampRecipeTests
+                 ("热导",   180.89233437852974, -5.7002974071605745,  1.8722891720599724),
+             })
+             {
+-                var (_, th) = SolvePlate0(d, lc, g, m, mode);
+-                double areaW = ring.Sum(i => th.T[i] * m.Area[i]) / ring.Sum(i => m.Area[i]);
+-                _out.WriteLine($"导航网格 老口径 {mode}：舌端均温 {th.TTabEndMeanC:R}（面积加权会是 {areaW:R}）　抽热 {th.QFromTubeW:R}　铜排等效长 {th.BusEquivLenMm:R}");
+-                Assert.True(th.Converged, $"{mode}：热场没收敛");
+-                // ⚠ 2026-09-15 Opus 5：表面散热表上限从「设定 + 200 K」改为铂熔点、节点间距保持约 22 K（ShellThermal.LossTableHiC／LossTableNodes，
+-                //   数值把关人第十三轮查出原上限超界静默钳住）⇒ 样条节点变了，上面三组逐位记录（基线树跑的）不再逐位相同。
+-                //   实测：定温模式抽热 −9.645643968612903 → −9.645643852053805（相对差 1.2e-8）。本门要守的是「显式老口径网格行为不变」，
+-                //   不是散热表节点 —— 改为相对比对并把新旧差打印出来。容差先定 1e-6，实跑自由端模式抽热差 −1.14e-4 W（相对 2.1e-6：
+-                //   自由端舌片更热、离旧上限更近，样条节点变化影响大一些）⇒ 看过数据后放到相对 1e-5，照实记在这里；再大就说明除散热表以外还有东西动了。
+-                _out.WriteLine($"   与基线树逐位记录之差：舌端均温 {th.TTabEndMeanC - tTab:E2}　抽热 {th.QFromTubeW - q:E2}　铜排等效长 {th.BusEquivLenMm - busLen:E2}");
+-                Assert.True(Math.Abs(th.TTabEndMeanC - tTab) <= 1e-5 * Math.Max(1.0, Math.Abs(tTab)), $"{mode}：舌端均温偏离基线记录 {th.TTabEndMeanC - tTab:E2}");
+-                Assert.True(Math.Abs(th.QFromTubeW - q) <= 1e-5 * Math.Max(1.0, Math.Abs(q)), $"{mode}：抽热偏离基线记录 {th.QFromTubeW - q:E2}");
+-                Assert.True(Math.Abs(th.BusEquivLenMm - busLen) <= 1e-5 * Math.Max(1.0, Math.Abs(busLen)), $"{mode}：铜排等效长偏离基线记录 {th.BusEquivLenMm - busLen:E2}");
++                double tSet = d.SetpointC[0];
++                // ① 旧表（基线树的表）⇒ 逐位
++                var (_, thOld, p2) = SolvePlate0(d, lc, g, m, mode, lossTableHiC: tSet + 200, lossTableNodes: 60);
++                double areaW = ring.Sum(i => thOld.T[i] * m.Area[i]) / ring.Sum(i => m.Area[i]);
++                _out.WriteLine($"导航网格 老口径 {mode}（旧表 设定+200、60 节点）：舌端均温 {thOld.TTabEndMeanC:R}（面积加权会是 {areaW:R}）　抽热 {thOld.QFromTubeW:R}　铜排等效长 {thOld.BusEquivLenMm:R}");
++                Assert.True(thOld.Converged, $"{mode}：热场没收敛（旧表）");
++                Assert.Equal(tSet + 200, thOld.Recipe.LossTableHiC);
++                Assert.Equal(60, thOld.Recipe.LossTableNodes);
++                AssertBitwise($"{mode} 旧表 舌端均温", thOld.TTabEndMeanC, tTab);
++                AssertBitwise($"{mode} 旧表 抽热", thOld.QFromTubeW, q);
++                AssertBitwise($"{mode} 旧表 铜排等效长", thOld.BusEquivLenMm, busLen);
+                 if (mode != "定温")
+                     Assert.True(Math.Abs(areaW - tTab) > 1e-6, $"{mode}：面积加权与按格数平均分不开（{areaW:R}），这条对照空转");
++
++                // ② 新表（生产缺省）⇒ 与记录之差 ≤ 由表推出的界
++                var (_, thNew, _) = SolvePlate0(d, lc, g, m, mode);
++                Assert.True(thNew.Converged, $"{mode}：热场没收敛（新表）");
++                Assert.Equal(ShellThermal.ProductionThermalRule.LossTableHiC, thNew.Recipe.LossTableHiC);
++                var bound = TableBound(p2, g.TabInsulThickMm, tSet + 200, 60, thOld, thNew);
++                double qOverSlope = bound.QOverSlopeAt(thOld.TTabEndMeanC);
++                double bQ = 3 * bound.DeltaQ * thOld.QLossW;
++                double bT = 3 * bound.DeltaQ * qOverSlope;
++                double kT = Materials.PtThermalK(thOld.TTabEndMeanC);
++                double dkdT = Materials.PtThermalK(thOld.TTabEndMeanC + 0.5) - Materials.PtThermalK(thOld.TTabEndMeanC - 0.5);   // 中心差分，步 1 K
++                double bL = Math.Abs(thOld.BusEquivLenMm) * Math.Abs(dkdT / kT) * bT;
++                double dT = thNew.TTabEndMeanC - tTab, dQ = thNew.QFromTubeW - q, dL = thNew.BusEquivLenMm - busLen;
++                _out.WriteLine($"   新表（上限 {thNew.Recipe.LossTableHiC:0.#} °C、{thNew.Recipe.LossTableNodes} 节点）：工作区间 {bound.LoC:0.#}～{bound.HiC:0.#} °C 上 δq = {bound.DeltaQ:E3}（最坏在 {bound.WorstAtC:0} °C）；"
++                             + $"总散热 {thOld.QLossW:0.###} W；q/(dq/dT) @ 舌端均温 = {qOverSlope:0.###} K");
++                _out.WriteLine($"   推导界 vs 实测差：抽热 {bQ:E3} vs {dQ:E3} W　舌端均温 {bT:E3} vs {dT:E3} K　铜排等效长 {bL:E3} vs {dL:E3} mm");
++                Assert.True(bound.DeltaQ > 0, "新旧两张表在工作区间上逐点相同 —— 本门的第 ② 步空转");
++                Assert.True(Math.Abs(dQ) <= bQ, $"{mode}：抽热偏离基线记录 {dQ:E3} W，超过由散热表推出的界 {bQ:E3}");
++                Assert.True(Math.Abs(dT) <= bT, $"{mode}：舌端均温偏离基线记录 {dT:E3} K，超过由散热表推出的界 {bT:E3}");
++                Assert.True(Math.Abs(dL) <= bL, $"{mode}：铜排等效长偏离基线记录 {dL:E3} mm，超过由散热表推出的界 {bL:E3}");
+             }
+         }
+ 
+@@ -303,20 +345,26 @@ public class R48ClampRecipeTests
+             var lc = cases["h=1 分级"];
+             var g = Plate0(d, p, lc);
+             var mOld = BuildRing(g, lc);
+-            var (_, thOld) = SolvePlate0(d, lc, g, mOld);
+-            _out.WriteLine($"h=1 分级 老口径：单元 {mOld.CellCount}　抽热 {thOld.QFromTubeW:R} W");
++            double tSet = d.SetpointC[0];
++            var (_, thOldT, p2) = SolvePlate0(d, lc, g, mOld, lossTableHiC: tSet + 200, lossTableNodes: 60);
++            var (_, thOld, _) = SolvePlate0(d, lc, g, mOld);
++            _out.WriteLine($"h=1 分级 老口径：单元 {mOld.CellCount}　抽热（旧表）{thOldT.QFromTubeW:R} W　（新表）{thOld.QFromTubeW:R} W");
+             Assert.Empty(mOld.ClampCell);
++            Assert.Equal(0.0, mOld.Recipe!.ClampBandMm);                                  // 2026-09-15 Opus 5：结构化配方为主，记录文字辅助
+             Assert.DoesNotContain("铺细步", mOld.ClampAnchorNote);
+             // 记录：deliverable/R48_离散误差预算_2026-09-14.txt 片0「分级 h=1.000　4122 格　抽热 -9.225 W」（打印三位小数 ⇒ 容差 0.0005）；
+             //       逐位值 −9.225247067674745 出自 deliverable/R48A_基线树老口径记录_2026-09-14.txt（复审补，2026-09-14 Opus 5）
+             Assert.Equal(4122, mOld.CellCount);
+             Assert.True(Math.Abs(thOld.QFromTubeW - (-9.225)) <= 0.0005 + 1e-9, $"老口径抽热 {thOld.QFromTubeW:0.0000}，记录 -9.225");
+-            // 2026-09-15 Opus 5：同上（散热表上限改为铂熔点），逐位改相对 1e-5
+-            _out.WriteLine($"   h=1 分级老口径 与基线树逐位记录之差 {thOld.QFromTubeW - (-9.225247067674745):E2}");
+-            Assert.True(Math.Abs(thOld.QFromTubeW - (-9.225247067674745)) <= 1e-5 * 9.225247067674745, $"h=1 分级老口径抽热偏离基线记录 {thOld.QFromTubeW + 9.225247067674745:E2}");
++            // 2026-09-15 Opus 5 正规化（同上）：旧表逐位，新表按表推出的界
++            AssertBitwise("h=1 分级老口径 旧表 抽热", thOldT.QFromTubeW, -9.225247067674745);
++            var bound = TableBound(p2, g.TabInsulThickMm, tSet + 200, 60, thOldT, thOld);
++            double bQ = 3 * bound.DeltaQ * thOldT.QLossW, dQ = thOld.QFromTubeW - (-9.225247067674745);
++            _out.WriteLine($"   新表：工作区间 {bound.LoC:0.#}～{bound.HiC:0.#} °C 上 δq = {bound.DeltaQ:E3}；总散热 {thOldT.QLossW:0.###} W ⇒ 抽热界 {bQ:E3} W，实测差 {dQ:E3} W");
++            Assert.True(Math.Abs(dQ) <= bQ, $"h=1 分级老口径抽热偏离基线记录 {dQ:E3} W，超过由散热表推出的界 {bQ:E3}");
+ 
+             var mBand3 = BuildRing(g, lc, clampBandMm: 3.0);
+-            var (_, thBand3) = SolvePlate0(d, lc, g, mBand3);
++            var (_, thBand3, _) = SolvePlate0(d, lc, g, mBand3);
+             _out.WriteLine($"h=1 分级 显式 3 mm 细带、外圈：单元 {mBand3.CellCount}　抽热 {thBand3.QFromTubeW:+0.0000;-0.0000} W");
+             // 记录：R48_离散误差预算「细带 h=1.000　4722 格」；R48_压接细带自相似_2026-09-14.txt 片0 固定3mm 第一档 -7.3434 W（四位小数 ⇒ 容差 0.00005）
+             Assert.Equal(4722, mBand3.CellCount);
+@@ -336,6 +384,40 @@ public class R48ClampRecipeTests
+         }
+     }
+ 
++    /// <summary>逐位比（相对 1e-12；记录为 0 时要求恰为 0）。2026-09-15 Opus 5。</summary>
++    private void AssertBitwise(string what, double actual, double record)
++    {
++        double diff = actual - record;
++        _out.WriteLine($"   逐位：{what} {actual:R} vs 记录 {record:R}，差 {diff:E2}");
++        Assert.True(Math.Abs(diff) <= 1e-12 * Math.Abs(record), $"{what}：{actual:R} 与基线树记录 {record:R} 不逐位相同（差 {diff:E3}）");
++    }
++
++    /// <summary>门 d 第 ② 步的表差：工作区间、新旧表最大相对差 δq 与最坏处，以及某温度上三张新表 q/(dq/dT) 的最大值。2026-09-15 Opus 5。</summary>
++    private sealed record TableDiff(double LoC, double HiC, double DeltaQ, double WorstAtC, Func<double, double> QOverSlopeAt);
++
++    /// <summary>
++    /// 新旧两套表（调生产的 ShellThermal.SurfaceLossTablesFor，只换上限与节点数，不手抄热流配方）在工作温度区间上逐 1 K 比（区间右端点也比）。
++    /// 工作区间 = 新旧两次解的场温度范围取并 —— 用的是**温度范围**，不是结果之差。2026-09-15 Opus 5。
++    /// </summary>
++    private static TableDiff TableBound(DesignInputs p2, double tabInsulMm, double oldHiC, int oldNodes, ShellThermalResult thOld, ShellThermalResult thNew)
++    {
++        var tOld = ShellThermal.SurfaceLossTablesFor(p2, tabInsulMm, oldHiC, oldNodes);
++        var tNew = ShellThermal.SurfaceLossTablesFor(p2, tabInsulMm);
++        double lo = Math.Min(thOld.TMinC, thNew.TMinC), hi = Math.Max(thOld.TMaxC, thNew.TMaxC);
++        double worst = 0, at = lo;
++        var pairs = new[] { (Old: tOld.Bare, New: tNew.Bare), (Old: tOld.Disc, New: tNew.Disc), (Old: tOld.Tab, New: tNew.Tab) };
++        var ts = Enumerable.Range(0, (int)Math.Floor(hi - lo) + 1).Select(k => lo + k).Append(hi);
++        foreach (double t in ts)
++            foreach (var pr in pairs)
++            {
++                double qo = pr.Old.Eval(t), qn = pr.New.Eval(t);
++                double rel = Math.Abs(qn - qo) / Math.Abs(qo);
++                if (rel > worst) { worst = rel; at = t; }
++            }
++        double QOverSlope(double t) => pairs.Max(pr => Math.Abs(pr.New.Eval(t) / pr.New.Slope(t)));
++        return new TableDiff(lo, hi, worst, at, QOverSlope);
++    }
++
+     /// <summary>
+     /// (e) 退化几何（改后第一次跑快套件时 TabInsulPerPlateTests「推不出切点的场」红了才发现，2026-09-14 Opus 5 补）：
+     /// 没有舌片、材料全在压接长以内的图纸，整面接触会把电极压到管孔上 ⇒ 生成器不填 ClampCell、退回只钉外圈、写 ⚠ 记录，
+@@ -359,6 +441,10 @@ public class R48ClampRecipeTests
+                                             lc.Base.BusbarClampLengthMm, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
+         _out.WriteLine("网格记录：" + m.ClampAnchorNote);
+         Assert.Empty(m.ClampCell);
++        // 2026-09-15 Opus 5（审查意见 minor：门里残留按记录文字判「盖到了管孔」）：主断言读网格上的布尔位与结构化配方；记录文字只作辅助核对
++        Assert.True(m.ClampCoversHole);
++        Assert.True(m.Recipe!.ClampCoversHole);
++        Assert.False(m.Recipe.ClampFullFace);
+         Assert.Contains("盖到了管孔", m.ClampAnchorNote);
+         Assert.True(RingCells(m) > 0, "退回只钉外圈后应当还有外圈电极");
+ 
+@@ -368,6 +454,7 @@ public class R48ClampRecipeTests
+         lc.TabInsul3dmPerPlateMm = new[] { 2.8, 2.8 };
+         var r = LineRunner.Run(lc);
+         Assert.True(r.Ok, r.Message);
++        Assert.All(r.Flanges, fo => Assert.True(fo.ClampCoversHole, fo.Name + " 应带压接盖孔位"));   // 2026-09-15 Opus 5：位带到了下游
+         var warn = r.Notes.Where(s => s.Contains("盖到了管孔")).ToArray();
+         _out.WriteLine(string.Join("\n", warn));
+         Assert.Equal(r.Flanges.Length, warn.Length);                       // 每片一句、按片去重
+@@ -380,6 +467,9 @@ public class R48ClampRecipeTests
+     /// <summary>
+     /// (f) 生产链读的是默认配方：出判据的 LineRunner 建网格时不许显式关掉整面接触或改细带宽度
+     /// （默认值在 FlangeMesher 一处定；调用点各自传参会让生产链与门量的不是同一张网格）。源码级，2026-09-14 Opus 5。
++    /// ⚠ 2026-09-15 Opus 5（数值把关人第十三轮）：本门降为**辅助**。主证据改为行为门 R48RecipeFingerprintTests.a ——
++    ///   LineRunner.Run 算出来的每片网格／热解实际配方（ShellMesh.Recipe／ShellThermalResult.Recipe）== 生产配方常量。
++    ///   字符串门看不见生成器里的退回分支（例如压接段盖到管孔时整面接触不生效）与没落成节点的锚点，行为门看得见。
+     /// </summary>
+     [Fact]
+     public void f_LineRunner建网格不覆写配方开关()
+@@ -446,7 +536,7 @@ public class R48ClampRecipeTests
+ 
+     /// <summary>
+     /// (h) ★ 复审 major 与 minor（2026-09-14 Opus 5）：**门造在下游**。
+-    ///   · LineRunner.Run 出来的每片 Flanges[j].Mesh 都带整面接触（ClampCell 非空）与压接细带（ClampAnchorNote 含「铺细步」）；
++    ///   · LineRunner.Run 出来的每片 Flanges[j].Mesh 都带整面接触（ClampCell 非空）与压接细带（2026-09-15 Opus 5 起读整线带出的结构化网格配方：细带宽度 = 生产值、规则 = 生产常量；原先查 ClampAnchorNote 含「铺细步」）；
+     ///   · 判据表里整片热稳定、升温两节点这两条参考量就是 LineRunner.FlangeLumped(excludeClampCells: true) 那一份，而且与不排除的那一份不同（非空转）；
+     ///     排除的方向：舌片区面积、体积、导热长都变小，少掉的面积正好是压接格面积。
+     /// 算例：设计记录 W08 只跑一段（两片端片），为了快；误差预算设计四片整线约 90 s，放在慢探针 R48ClampRecipeImpactTests 四 里。
+@@ -470,7 +560,11 @@ public class R48ClampRecipeTests
+             var m = f.Mesh!;
+             _out.WriteLine($"{f.Name}：单元 {m.CellCount}　压接格 {m.ClampCell.Count(b => b)}　记录：{m.ClampAnchorNote}");
+             Assert.True(m.ClampCell.Length == m.CellCount && m.ClampCell.Any(b => b), $"{f.Name}：整线出来的网格没有整面接触");
+-            Assert.Contains("铺细步", m.ClampAnchorNote);
++            // 2026-09-15 Opus 5（审查意见 minor：原先查 ClampAnchorNote 里有没有「铺细步」，是字符串协议）：改读整线带出的结构化网格配方
++            Assert.NotNull(f.MeshRecipe);
++            Assert.Same(m.Recipe, f.MeshRecipe);
++            Assert.Equal(FlangeMesher.ResolveClampBandMm(double.NaN, lc.MeshFineMm), f.MeshRecipe!.ClampBandMm, 12);
++            Assert.Equal(FlangeMesher.ProductionMeshRule, f.MeshRecipe.Rule);
+         }
+ 
+         var yes = LineRunner.FlangeLumped(lc, r.Flanges, excludeClampCells: true)!;
+diff --git a/Pt_Optimize.Tests/R48ErrorBudgetTests.cs b/Pt_Optimize.Tests/R48ErrorBudgetTests.cs
+index 04b7e73..72f294a 100644
+--- a/Pt_Optimize.Tests/R48ErrorBudgetTests.cs
++++ b/Pt_Optimize.Tests/R48ErrorBudgetTests.cs
+@@ -55,10 +55,14 @@ public class R48ErrorBudgetTests
+     {
+         var sb = new StringBuilder();
+         string file = Path.Combine(Root(), "deliverable", "R48_离散误差预算_2026-09-14.txt");
++        // ★ R48 G1（2026-09-15，Opus 5；数值把关人第十三轮）：写文件改走 EvidenceFile —— 文件头写明代码（git HEAD、Core 改动指纹）与配方；
++        //   同名文件已存在且头不同（或是没有头的旧证据）⇒ 不覆盖，改写到带时间戳的新文件。算法一行不动。
++        //   证据头里的网格／热解配方要实建网格才知道，建网格函数就位后才打开（下面 ev 赋值处）；在那之前 Say 只进缓冲，打开时整份写出。
++        EvidenceFile? ev = null;
+         void Say(string s)
+         {
+             _out.WriteLine(s); sb.AppendLine(s);
+-            try { File.WriteAllText(file, sb.ToString(), new UTF8Encoding(false)); } catch { }
++            try { ev?.Write(sb.ToString()); } catch { }
+         }
+         Say($"R48 离散误差预算（Opus 5）　{DateTime.Now:yyyy-MM-dd HH:mm}　整线工作点（R48_接头电流核对_2026-09-14.txt）");
+ 
+@@ -79,7 +83,9 @@ public class R48ErrorBudgetTests
+         double[] tRoot = { 1172.63, 1151.19, 1093.09, 1056.80 };
+         Say($"电流 {string.Join("/", iJ)} A；管根 {string.Join("/", tRoot.Select(v => v.ToString("0.00")))} °C；生产细区半径 {radius:0}");
+ 
+-        (double q, double disc, int cells, string note) Solve(int j, string group, double h, double tr)
++        // R48 G1（2026-09-15，Opus 5）：建网格与本片物性从 Solve 里原样提成 Setup（证据头要用同一份实建网格的配方），调用与参数逐字未改；
++        //   p2 的组装原在电流场解之后，挪到之前 —— 它不读电流场，数不变。
++        (LineCase lcH, FlangePlate g, ShellMesh m, DesignInputs p2) Setup(int j, string group, double h)
+         {
+             var lcH = d.BuildCase(p, checkRamp: false);
+             var g = d.Plate(j, d.DiscFloorMm(p));
+@@ -94,10 +100,17 @@ public class R48ErrorBudgetTests
+                 m = FlangeMesher.Build(g, 0, lcH.MeshFineMm, lcH.MeshCoarseMm, lcH.MeshFineRadiusMm, lcH.Base.BusbarClampLengthMm,
+                                        lcH.MeshInnerMm, lcH.MeshInnerRadiusMm, clampBandMm: group == "细带" ? 3.0 : 0.0, clampFullFace: false);
+             }
++            double tSet0 = d.SetpointC[Math.Min(j, d.SetpointC.Length - 1)];
++            var p20 = SegmentSolver.Clone(lcH.Base); p20.TSetC = tSet0;
++            if (j < lcH.ClampTempC.Length) p20.BusbarClampTempC = lcH.ClampTempC[j];
++            return (lcH, g, m, p20);
++        }
++
++        (double q, double disc, int cells, string note) Solve(int j, string group, double h, double tr)
++        {
++            var (lcH, g, m, p2) = Setup(j, group, h);
+             double tSet = d.SetpointC[Math.Min(j, d.SetpointC.Length - 1)];
+             var sc = ShellCurrent.SolveFor(lcH, m, iJ[j], Materials.PtResistivity(tSet) * 1e3, tSet);
+-            var p2 = SegmentSolver.Clone(lcH.Base); p2.TSetC = tSet;
+-            if (j < lcH.ClampTempC.Length) p2.BusbarClampTempC = lcH.ClampTempC[j];
+             var th = ShellThermal.Solve(m, sc.JMagAPerMm2, p2, tr, g.InsulBoundaryXResolved, g.TwoTabs,
+                                         tabBoundaryX: g.Tangent().X, tabInsulThickMm: g.TabInsulThickMm,
+                                         discRadiusMm: g.DiscRadiusMm, insulDiscRadiusMm: g.InsulDiscRadiusMm);
+@@ -107,6 +120,20 @@ public class R48ErrorBudgetTests
+ 
+         string[] groups = { "均匀", "分级", "细带" };
+         double[] hs = { 1.0, 0.5, 0.25 };
++        {
++            // R48 G1（2026-09-15，Opus 5）：证据头 —— 三组各在片0 h=1 上实建一张网格，配方取网格与热解自己记的（ShellMesh.Recipe／ShellThermal.RecipeFor）
++            var meshLines = new List<string>(); var thLines = new List<string>();
++            foreach (var grp in groups)
++            {
++                var (_, g0, m0, p20) = Setup(0, grp, 1.0);
++                meshLines.Add($"{grp}（片0 h=1 实建；其余片、其余档同开关）：{m0.Recipe!.Describe()}");
++                thLines.Add($"{grp}：{ShellThermal.RecipeFor(m0, p20, insulDiscRadiusMm: g0.InsulDiscRadiusMm).Describe()}");
++            }
++            ev = EvidenceFile.Open(file, EvidenceHeader.Build("R48 离散误差预算（整线工作点上的单片离散误差）", meshLines, thLines, double.NaN, null, false));
++            _out.WriteLine($"证据文件：{ev.Path}（{ev.Reason}）");
++            try { ev.Write(sb.ToString()); } catch { }
++            if (ev.Redirected) Say("⚠ 证据文件改道：" + ev.Reason);
++        }
+         var Q = new Dictionary<(int j, string g, double h), double>();
+         var D = new Dictionary<(int j, string g, double h), double>();
+         bool dHalves = true, bandHelps = true;
+diff --git a/Pt_Optimize.Tests/R48LossTableRangeTests.cs b/Pt_Optimize.Tests/R48LossTableRangeTests.cs
+new file mode 100644
+index 0000000..8459cec
+--- /dev/null
++++ b/Pt_Optimize.Tests/R48LossTableRangeTests.cs
+@@ -0,0 +1,262 @@
++using System;
++using System.Linq;
++using PtOptimize.Core;
++using Xunit;
++using Xunit.Abstractions;
++
++namespace PtOptimize.Tests;
++
++/// <summary>
++/// ★★★ R48 G1（2026-09-15，Opus 5 写；依据常驻数值把关人第十四轮「其余散热表超界检测」）：法兰散热表那次（ShellThermal.LossTableHiC）之外，
++/// 其余四处散热表逐个加「查表用到的温度 vs 表区间」检测，每处一条快门（构造一个会超界的输入，并有不超界的对照）。
++///
++/// ══ 四处表与它们的上限（逐个查过源码）
++///   · SegmentSolver 管段表：上限 设定（带玻璃时与玻璃进口取大）+ 400 K；解出的管最高温超过它 ⇒ SolveResult.LossTableExceeded、Note 明写；
++///     整线里 LineRunner 把吃管温的判据一律判不了（不吃管温的：舌片自由段、圆盘盖得住管孔、法兰截面 J、① 升温；实测电流模式下另加管 J）。
++///     构造：空管，按 1150 °C 反算的电流、控温点却填 600 °C（表上限 1000 °C）—— 实测电流模式下控温点填低了就是这样。
++///   · RampSolver 集总升温表（优先：整线「升温到位用时（集总）」参考量在用）：查表用到起点、积分最高温、参考温度（段设定）、目标温度 ⇒
++///     RampResult.LossTableExceeded；整线那条参考量判不了。
++///     ★ 2026-09-15 Opus 5（审查意见 minor）：表上限由「目标 + 200 K」改为「目标、参考温度、起点三者之最 + 200 K」⇒ 原构造「升温目标 900、段设定 1150」
++///     是界面可填的合法输入，现在不再出表、这条参考量照常出数（对照门）；超界构造改为下限那头：参考温度 / 升温目标低于环境温度。
++///     ★ 2026-09-15 Opus 5（审查意见 major）：起点与积分最高温只查上限 —— 表下限 = 环境温度，界面把环境温度填到 35 °C 时写死的起点 25 °C 低于下限，
++///     原先判超界是误报（低于环境处钳住只会多扣散热、用时偏长，偏保守；推导在 RampSolver.Solve 注释）。对照门：环境 35 °C 整线，这条参考量不许判不了。
++///   · RampScreen 闭式快筛表：[环境, 目标 + 300]，只在目标温度处查 ⇒ **上限按构造不会超**，能超的只有下限（目标低于环境）⇒ Point.LossTableExceeded，Judge 判不了。
++///   · DesignScreen.DrawBudgetW 抽热预算表：[环境, 管温 + 300]，只在管温处取斜率 ⇒ 同上，上限不会超；管温低于环境 ⇒ 返回 NaN。
++/// </summary>
++public class R48LossTableRangeTests
++{
++    private readonly ITestOutputHelper _out;
++    public R48LossTableRangeTests(ITestOutputHelper o) { _out = o; }
++
++    private static DesignInputs EmptyTube(double tSet)
++        => new() { ThroughputTPerDay = 0, HGlass = 0, TSetC = tSet, SizeWall = false };
++
++    [Fact]
++    public void 管段表_解出的管最高温超出上限要写明()
++    {
++        var p1150 = EmptyTube(1150);
++        Assert.True(SegmentSolver.IsEmptyTube(p1150));
++        var r1150 = SegmentSolver.Solve(p1150);
++        Assert.True(r1150.Ok, r1150.Message);
++        _out.WriteLine($"设定 1150：电流 {r1150.CurrentA:0.0} A　管最高 {r1150.TMaxC:0.0} °C　表上限 {r1150.LossTableHiC:0}　超界 {r1150.LossTableExceeded}");
++        Assert.Equal(SegmentSolver.TubeLossTableHiC(p1150), r1150.LossTableHiC);
++        Assert.Equal(1550.0, r1150.LossTableHiC);
++        Assert.False(r1150.LossTableExceeded);                 // 对照：不超界
++
++        var p600 = EmptyTube(600);
++        var r600 = SegmentSolver.SolveAtCurrent(p600, r1150.CurrentA);
++        Assert.True(r600.Ok, r600.Message);
++        _out.WriteLine($"设定 600、同电流：管最高 {r600.TMaxC:0.0} °C　表上限 {r600.LossTableHiC:0}　超界 {r600.LossTableExceeded}　{r600.Note}");
++        Assert.Equal(1000.0, r600.LossTableHiC);
++        Assert.True(r600.TMaxC > r600.LossTableHiC, $"构造没超界：管最高 {r600.TMaxC:0.0}");
++        Assert.True(r600.LossTableExceeded);
++        Assert.Contains("超出管表面散热表上限", r600.Note);
++        Assert.Contains(SegmentSolver.EmptyTubeNote, r600.Note);   // 空管说明还在（追加，不覆盖）
++    }
++
++    [Fact]
++    public void 管段表_整线里超界则吃管温的判据判不了()
++    {
++        var p = new DesignInputs();
++        var d = DesignSpec.W08.Clone();
++        d.SetpointC = new[] { 1150.0 }; d.SegLengthMm = new[] { 300.0 };
++        d = d.Fit();
++        var lc = d.BuildCase(p, checkRamp: false);
++        // 构造输入：空管到温稳态，按 1150 °C 反算的电流当实测电流，控温点却填 600 °C（管表上限 = 600 + 400 = 1000 °C）
++        var q = SegmentSolver.Clone(lc.Base);
++        q.TubeIdMm = lc.TubeIdMm; q.WallMinMm = lc.WallMm; q.TubeLengthMm = lc.SegLengthMm[0]; q.SizeWall = false;
++        q.TSetC = 1150; q.ThroughputTPerDay = 0; q.HGlass = 0;
++        var s1150 = SegmentSolver.Solve(q);
++        Assert.True(s1150.Ok, s1150.Message);
++        lc.EmptyTube = true;
++        lc.UseMeasuredCurrent = true;
++        lc.MeasuredCurrentA = new[] { s1150.CurrentA };
++        lc.SetpointC = new[] { 600.0 };
++        var r = LineRunner.Run(lc);
++        // ⚠ 不断言 r.Ok：表在 1000 °C 以上钳住散热 ⇒ 发热随 ρ(T) 涨而散热不涨，管温一路冲到约 2200 °C（上面单段那条门实测），
++        //   法兰跟着越过熔点、整线 Ok = false —— 这正是「超界静默钳住造出假的热失控」的样子（同一电流、真散热下管温约 1150 °C）。
++        //   本门要的是：判据表照样出来，而且吃管温的全部判不了，不是一张看起来正常的表。
++        _out.WriteLine($"整线 Ok {r.Ok}　熔化位 {r.OverMelt}　{r.Message}");
++        Assert.NotEmpty(r.Segments);
++        Assert.NotEmpty(r.Checks);
++        var s = r.Segments[0];
++        _out.WriteLine($"段 {s.Name}：电流 {s.CurrentA:0.0} A　管最高 {s.TubeTMaxC:0.0} °C　表上限 {s.TubeLossTableHiC:0}　超界 {s.TubeLossTableExceeded}");
++        Assert.True(s.TubeLossTableExceeded);
++        // ★ 2026-09-15 Opus 5（审查意见 minor）：管表超界时法兰越过熔点是钳位造出来的可能 ⇒ 熔化位不置、头条说「熔不熔判不了」，Ok 仍为 false。
++        //   先确认构造真的造出了「法兰越过熔点」（否则下面几条是空转）：09-15 上一版实测出口片峰值 2199 °C。
++        foreach (var fo in r.Flanges) _out.WriteLine($"  {fo.Name}：峰值 {fo.TMaxC:0} °C　熔化位 {fo.OverMelt}");
++        Assert.Contains(r.Flanges, fo => fo.TMaxC > Materials.PtMeltC);
++        Assert.False(r.Ok);
++        Assert.False(r.OverMelt, "管表超界造出的越过熔点不许置熔化位");
++        Assert.All(r.Flanges, fo => Assert.False(fo.OverMelt, fo.Name + " 不许置熔化位"));
++        Assert.Contains("熔不熔判不了", r.Message);
++        Assert.Contains("管表面散热表的温度上限", r.Message);
++        Assert.DoesNotContain("该解不存在", r.Message);
++        Assert.Contains(r.Notes, n => n.StartsWith("✗ 管温超出管表面散热表的温度上限", StringComparison.Ordinal));
++        // ★ 2026-09-15 Opus 5（审查意见 minor「豁免名单自相矛盾」）：「① 升温」（闭式，与截面 J 同出 DesignCurrent.Compute）进豁免名单；
++        //   本算例是实测电流模式 ⇒ 「管 J」= 实测电流 ÷ 截面，也豁免。名单按模式取生产函数，不在门里另写一份。
++        Assert.True(lc.UseMeasuredCurrent);
++        var independentKeys = LineRunner.IndependentOfTubeFieldFor(lc.UseMeasuredCurrent);
++        Assert.Contains(LineResult.Key.Ramp, independentKeys);
++        Assert.Contains(LineResult.Key.TubeJ, independentKeys);
++        Assert.DoesNotContain(LineResult.Key.TubeJ, LineRunner.IndependentOfTubeFieldFor(false));   // 控温反算：电流由管温场二分出来，管 J 吃管温场
++        int marked = 0;
++        foreach (var ck in r.Checks)
++        {
++            bool independent = independentKeys.Any(k => ck.Name.StartsWith(k, StringComparison.Ordinal));
++            _out.WriteLine($"  {Criteria.Plain(ck.Name)}：判不了 {ck.Undetermined}　不吃管温 {independent}");
++            if (independent) { Assert.DoesNotContain("管表面散热表", ck.Note); continue; }
++            marked++;
++            Assert.True(ck.Undetermined, ck.Name + " 应判不了");
++            Assert.False(ck.Ok, ck.Name + " 判不了不算过");
++            Assert.Contains("管温超出管表面散热表的温度上限", ck.Note);
++        }
++        Assert.True(marked >= 8, $"只标了 {marked} 条");
++        // 两条硬判据在表上、没被这一遍标掉（「① 升温」本身判不判得了由它自己的闭式量定，本门不管）
++        foreach (var key in new[] { LineResult.Key.Ramp, LineResult.Key.TubeJ })
++        {
++            var ckI = r.Checks.Single(c => c.Name.StartsWith(key, StringComparison.Ordinal));
++            Assert.DoesNotContain("管表面散热表", ckI.Note);
++        }
++        var tubeJ = r.Checks.Single(c => c.Name.StartsWith(LineResult.Key.TubeJ, StringComparison.Ordinal));
++        Assert.False(tubeJ.Undetermined, tubeJ.Note);
++        Assert.Equal(s1150.CurrentA / (Math.PI * (Math.Pow(lc.TubeIdMm * 0.5 + lc.WallMm, 2) - Math.Pow(lc.TubeIdMm * 0.5, 2))), tubeJ.Actual, 9);
++        Assert.False(r.AllOk);
++    }
++
++    /// <summary>
++    /// ★ 2026-09-15 Opus 5（审查意见 minor：「升温目标比控温点低 200 K 以上」是界面可填的合法输入，原表上限 目标 + 200 K 让这条参考量白丢；附注用了内部参数名「参考温度」）：
++    /// 表上限改为 目标、参考温度、起点三者之最 + 200 K。门槛跑前写死：
++    ///   ① 合法输入（目标 900、参考温度 1150）不出表，上限 = 1150 + 200；参考温度与起点都不高于目标时上限仍 = 目标 + 200（表逐位不变的前提，直接核上限的值）；
++    ///   ② 超界构造改为下限那头（参考温度 20 °C 低于环境 25 °C）⇒ 超界、结构化列表标明是参考温度；
++    ///   ③ 整线：目标 900、段设定 1150 ⇒ 用时照常出数，不因散热表判不了；升温目标 20 °C（低于环境）⇒ 判不了，附注用界面叫法（升温目标）、给出该怎么办，
++    ///     不出现内部参数名「参考温度」，「钳住」不重复。
++    /// </summary>
++    [Fact]
++    public void 集总升温表_查表温度出表则直接写明且整线参考量判不了()
++    {
++        var p = new DesignInputs();
++        // ① 合法输入：目标 900、参考温度 1150 ⇒ 上限 = 1350，不出表
++        var legal = RampSolver.Solve(p, 0.8, 200, 20, 1000, tRefC: 1150, fromC: 25, targetC: 900, maxHours: 72);
++        var same = RampSolver.Solve(p, 0.8, 200, 20, 1000, tRefC: 1150, fromC: 25, targetC: 1150, maxHours: 72);
++        _out.WriteLine($"目标 900、参考 1150：表 {legal.LossTableLoC:0}～{legal.LossTableHiC:0}　超界 {legal.LossTableExceeded}　到位 {legal.Reached}　用时 {legal.HoursToTarget:0.#####} h");
++        _out.WriteLine($"目标 1150、参考 1150：表 {same.LossTableLoC:0}～{same.LossTableHiC:0}　超界 {same.LossTableExceeded}");
++        Assert.Equal(1350.0, legal.LossTableHiC);
++        Assert.False(legal.LossTableExceeded, legal.LossTableNote);
++        Assert.Empty(legal.LossTableOut);
++        Assert.Equal(1150.0 + 200, same.LossTableHiC);             // 参考温度不高于目标 ⇒ 上限仍是 目标 + 200（原式）
++        Assert.False(same.LossTableExceeded);
++
++        // ② 超界构造：参考温度 20 °C 低于环境 25 °C（表下限）
++        var bad = RampSolver.Solve(p, 0.8, 200, 20, 1000, tRefC: 20, fromC: 25, targetC: 1150, maxHours: 72);
++        _out.WriteLine($"参考 20：表 {bad.LossTableLoC:0}～{bad.LossTableHiC:0}　超界 {bad.LossTableExceeded}　{bad.LossTableNote}");
++        Assert.True(bad.LossTableExceeded);
++        Assert.Equal(new[] { (RampTableProbe.Reference, 20.0) }, bad.LossTableOut);
++        Assert.NotEqual("", bad.LossTableNote);
++
++        var d = DesignSpec.W08.Clone();
++        d.SetpointC = new[] { 1150.0 }; d.SegLengthMm = new[] { 300.0 };
++        d = d.Fit();
++        // ③a 整线合法输入：升温目标 900、段设定 1150 ⇒ 「升温到位用时（集总）」不因散热表判不了
++        {
++            var lc = d.BuildCase(p, checkRamp: true);
++            lc.CheckRamp = true;
++            lc.RampTargetC = 900;
++            var r = LineRunner.Run(lc);
++            Assert.True(r.Ok, r.Message);
++            var ck = r.Checks.Single(c => c.Name.StartsWith(LineResult.Key.RampHours, StringComparison.Ordinal));
++            _out.WriteLine($"整线 目标 900：{Criteria.Plain(ck.Name)} = {ck.Actual:0.###} h　判不了 {ck.Undetermined}　{ck.Note}");
++            Assert.DoesNotContain("散热表", ck.Note);
++            Assert.False(ck.Undetermined, ck.Note);
++        }
++        // ③b 整线超界：升温目标 20 °C（低于环境 25 °C）⇒ 判不了
++        {
++            var lc = d.BuildCase(p, checkRamp: true);
++            lc.CheckRamp = true;
++            lc.RampTargetC = 20;
++            var r = LineRunner.Run(lc);
++            Assert.True(r.Ok, r.Message);
++            var ck = r.Checks.Single(c => c.Name.StartsWith(LineResult.Key.RampHours, StringComparison.Ordinal));
++            _out.WriteLine($"整线 目标 20：{Criteria.Plain(ck.Name)} 判不了 {ck.Undetermined}　{ck.Note}");
++            Assert.True(ck.Undetermined);
++            Assert.False(ck.Ok);
++            string mine = ck.Note.Split("（原注：")[0];
++            Assert.Contains("管表面散热表没覆盖到这些温度", mine);
++            Assert.Contains("升温目标 20 °C", mine);
++            Assert.Contains("请核对环境温度、升温目标与各段控温点", mine);
++            Assert.DoesNotContain("参考温度", mine);
++            Assert.True(mine.Split("钳").Length <= 2, "「钳住」说了不止一遍：" + mine);
++        }
++    }
++
++    /// <summary>
++    /// ★ 2026-09-15 Opus 5（审查意见 major）：**环境温度高于写死的起点 25 °C 时，集总升温用时不许误判「无法判定」**。
++    /// 表下限 = 环境温度；起点低于它只会让散热被多扣（用时偏长、偏保守，推导在 RampSolver.Solve 注释，不依赖数据）⇒ 起点与积分最高温只查上限。
++    /// 界面可达：「环境温度」界面可改、整线页开着升温检查、LineCase.RampFromC = 25 写死。门槛跑前写死：判不了 = false、附注里不许出现散热表字样。
++    /// 2026-09-15 Opus 5（审查意见 minor 之后）：表上限 ≥ 起点 + 200 K 按构造成立，「起点高于上限」再也造不出来，原「起点 1120、目标 900」那条对照改为
++    /// 核上限随起点抬高（= 1120 + 200）且不超界；两头都查的那一类（参考温度）低于环境仍判超界。
++    /// </summary>
++    [Fact]
++    public void 集总升温表_环境温度高于起点不算超界()
++    {
++        // 直接：审查意见的复现输入（RampSolver.Solve(p, 0.8, 200, 20, 1000, 1150, 25, 1150, 72)）
++        var p35 = new DesignInputs { TAmbC = 35 };
++        var r35 = RampSolver.Solve(p35, 0.8, 200, 20, 1000, tRefC: 1150, fromC: 25, targetC: 1150, maxHours: 72);
++        _out.WriteLine($"环境 35 °C：表 {r35.LossTableLoC:0}～{r35.LossTableHiC:0}　超界 {r35.LossTableExceeded}　到位 {r35.Reached}　用时 {r35.HoursToTarget:0.#####} h　{r35.LossTableNote}");
++        Assert.Equal(35.0, r35.LossTableLoC);
++        Assert.True(25 < r35.LossTableLoC, "构造要让起点低于表下限");
++        Assert.False(r35.LossTableExceeded, r35.LossTableNote);
++        Assert.Equal("", r35.LossTableNote);
++        // 起点高于目标（目标 900，起点填 1120）：上限随起点抬到 1320，不再超界（2026-09-15 Opus 5，表上限规则改后）
++        var hiStart = RampSolver.Solve(p35, 0.8, 200, 20, 1000, tRefC: 900, fromC: 1120, targetC: 900, maxHours: 72);
++        _out.WriteLine($"起点 1120、上限 {hiStart.LossTableHiC:0}：超界 {hiStart.LossTableExceeded}　{hiStart.LossTableNote}");
++        Assert.Equal(1320.0, hiStart.LossTableHiC);
++        Assert.False(hiStart.LossTableExceeded, hiStart.LossTableNote);
++        // 参考温度两头都查：环境 35 °C、参考温度 30 °C ⇒ 超界
++        var lowRef = RampSolver.Solve(p35, 0.8, 200, 20, 1000, tRefC: 30, fromC: 25, targetC: 1150, maxHours: 72);
++        Assert.True(lowRef.LossTableExceeded);
++        Assert.Contains(lowRef.LossTableOut, o => o.Probe == RampTableProbe.Reference && o.TempC == 30.0);
++        Assert.DoesNotContain(lowRef.LossTableOut, o => o.Probe == RampTableProbe.Start);   // 起点 25 低于下限 35，只查上限，不算
++
++        // 整线：默认设计（W08）取一段 300 mm（与上一条门同一个缩短算例）、环境 35 °C、开升温检查 ⇒ 「升温到位用时（集总）」不许因为散热表判不了。
++        //   为什么缩成一段：原病是**每一段**的起点都低于表下限、逐段同样触发，一段就走到同一条代码；W08 三段整线在快套件里单条要 1 分 14 秒
++        //   （2026-09-15 Opus 5 本地实跑一次，三段版本同样通过），一段约 8 秒。
++        var d = DesignSpec.W08.Clone();
++        d.SetpointC = new[] { 1150.0 }; d.SegLengthMm = new[] { 300.0 };
++        d = d.Fit();
++        var lc = d.BuildCase(p35, checkRamp: true);
++        Assert.True(lc.CheckRamp);
++        Assert.Equal(25.0, lc.RampFromC);
++        Assert.Equal(35.0, lc.Base.TAmbC);
++        var r = LineRunner.Run(lc);
++        Assert.True(r.Ok, r.Message);
++        var ck = r.Checks.First(c => c.Name.StartsWith(LineResult.Key.RampHours, StringComparison.Ordinal));
++        _out.WriteLine($"整线（环境 35 °C）：{Criteria.Plain(ck.Name)} = {ck.Actual:0.###} h　判不了 {ck.Undetermined}　{ck.Note}");
++        Assert.DoesNotContain("管表面散热表", ck.Note);
++        Assert.False(ck.Undetermined, ck.Note);
++    }
++
++    [Fact]
++    public void 闭式快筛与抽热预算表_查表温度出了表区间就判不了()
++    {
++        var p = new DesignInputs();
++        Assert.Equal(25.0, p.TAmbC);
++        // RampScreen：目标 1150 在表里；目标 20 °C 低于环境 25 °C（表下限）⇒ 判不了
++        var good = RampScreen.Evaluate(p, 20, 0.8, 1150);
++        var low = RampScreen.Evaluate(p, 20, 0.8, 20);
++        _out.WriteLine($"快筛：目标 1150 超界 {good.LossTableExceeded} {good.Verdict}；目标 20 超界 {low.LossTableExceeded} {low.Verdict}");
++        Assert.False(good.LossTableExceeded);
++        Assert.True(low.LossTableExceeded);
++        Assert.False(low.Ok);
++        var j = RampScreen.Judge(p, 20, 0.8, 20);
++        Assert.True(j.Undetermined); Assert.False(j.Ok);
++        Assert.Contains("无法判定", j.Note);
++        Assert.False(RampScreen.Judge(p, 20, 0.8, 1150).Undetermined);
++
++        // DrawBudgetW：管温 1150 有数；管温 20 °C 低于环境 ⇒ NaN
++        double b = DesignScreen.DrawBudgetW(p, 0.8, 1150), bLow = DesignScreen.DrawBudgetW(p, 0.8, 20);
++        _out.WriteLine($"抽热预算：管温 1150 → {b:0.000} W；管温 20 → {bLow}");
++        Assert.True(double.IsFinite(b) && b > 0);
++        Assert.True(double.IsNaN(bLow));
++    }
++}
+diff --git a/Pt_Optimize.Tests/R48RecipeFingerprintTests.cs b/Pt_Optimize.Tests/R48RecipeFingerprintTests.cs
+new file mode 100644
+index 0000000..ebbd698
+--- /dev/null
++++ b/Pt_Optimize.Tests/R48RecipeFingerprintTests.cs
+@@ -0,0 +1,487 @@
++using System;
++using System.IO;
++using System.Linq;
++using System.Text;
++using System.Text.RegularExpressions;
++using PtOptimize.Core;
++using Xunit;
++using Xunit.Abstractions;
++
++namespace PtOptimize.Tests;
++
++/// <summary>
++/// ★★★★ R48 G1（2026-09-15，Opus 5 写；依据常驻数值把关人第十三、十四轮）：**配方指纹、证据防覆盖、压接盖孔改布尔判不了**的快门。
++///
++/// ══ 门
++///   (a) 行为门（取代 R48ClampRecipeTests.f 的源码字符串检查作主证据）：生产链 LineRunner.Run（导航网格一次）算出来的**每一片**
++///       网格配方 ShellMesh.Recipe.Rule == FlangeMesher.ProductionMeshRule、热解配方 ShellThermalResult.Recipe.Rule == ShellThermal.ProductionThermalRule，
++///       LineResult.RecipeDeviations 为空；非空转：显式老口径网格、没落成节点的锚点、老表热解、孔边整格定温各自的规则都与生产不同。
++///       ★ 2026-09-15 Opus 5（审查意见 minor）：舌端边界方式不进规则，原先只断言片 0 是定温 —— 改为**逐片**断言整份实际热解配方（含舌端方式、表节点数、孔边界面数）
++///       等于用生产函数 LineRunner.PlateThermalInputs 组出本片输入、再经 ShellThermal.RecipeFor 预判出来的那一份（不手抄判定）；
++///       另加非空转：网格上没有孔边界面（图纸孔比管外半径大出孔边判定带以外）⇒ 热解配方记「管温没有施加」，规则与生产不同。
++///   (f) 压接段伸进圆盘（2026-09-15 Opus 5，审查意见 minor「同一种病只修了一半」）：网格布尔位 → FlangeOut.ClampIntoDisc → 吃法兰场的判据与参考行判不了，附注说人话；
++///       几何判据「舌片自由段」与不吃法兰场的「管 J」不被这一遍标掉。
++///   (b) 压接段盖到管孔：网格上的布尔位 ShellMesh.ClampCoversHole 为真（正常板为假）；LineRunner 不再按「；」切分 ClampAnchorNote 找「⚠」；
++///       保温分界判得了（给了判据几何）而压接盖孔时，吃法兰场的判据照样判不了、附注说人话 —— 与保温分界那一遍分得开。
++///       （保温分界也判不了的那块板的门在 TabInsulPerPlateTests「推不出切点的场」。）
++///   (c) 证据头：git HEAD 与 Core 改动指纹是 40 位十六进制；探针源码指纹是调用方的相对路径 + 40 位十六进制；ForLineCase 的头含生产配方、耦合容差、共用片抽热、工况。
++///   (d) 证据防覆盖：新文件照写；同头覆盖；头不同或没有头 ⇒ 不覆盖、改写到带时间戳的新文件、原文件逐字节不变；打开一次之后反复写落在同一个文件；
++///       只有探针源码不同（Core 与配方都相同）也改道（2026-09-15 Opus 5，审查意见 minor）。
++///   (e) 工单点名的五个探针都改用 EvidenceFile 写文件（源码门，辅助）。
++/// </summary>
++public class R48RecipeFingerprintTests
++{
++    private readonly ITestOutputHelper _out;
++    public R48RecipeFingerprintTests(ITestOutputHelper o) { _out = o; }
++
++    [Fact]
++    public void a_生产链每片网格与热解配方等于生产配方常量()
++    {
++        var p = new DesignInputs();
++        var d = DesignSpec.W08.Clone();
++        d.SetpointC = new[] { 1150.0 }; d.SegLengthMm = new[] { 300.0 };
++        d = d.Fit();
++        var lc = d.BuildCase(p, checkRamp: false);
++        var r = LineRunner.Run(lc);
++        Assert.True(r.Ok, r.Message);
++        Assert.NotEmpty(r.Flanges);
++        _out.WriteLine("生产网格配方常量：" + FlangeMesher.ProductionMeshRule.Describe());
++        _out.WriteLine("生产热解配方常量：" + ShellThermal.ProductionThermalRule.Describe());
++        _out.WriteLine("整线汇总：" + r.RecipeSummary());
++        foreach (var f in r.Flanges)
++        {
++            Assert.NotNull(f.MeshRecipe); Assert.NotNull(f.ThermalRecipe);
++            _out.WriteLine($"{f.Name}：网格 {f.MeshRecipe!.Describe()}　热解 {f.ThermalRecipe!.Describe()}");
++            Assert.Equal(FlangeMesher.ProductionMeshRule, f.MeshRecipe.Rule);
++            Assert.Equal(ShellThermal.ProductionThermalRule, f.ThermalRecipe.Rule);
++            // 带出来的就是网格与热解自己的那一份（不是另拼的）
++            Assert.Same(f.Mesh!.Recipe, f.MeshRecipe);
++            Assert.Equal(lc.MeshFineMm, f.MeshRecipe.HFineMm);
++            Assert.Equal(FlangeMesher.ResolveClampBandMm(double.NaN, lc.MeshFineMm), f.MeshRecipe.ClampBandMm, 12);
++            Assert.False(f.ClampCoversHole);
++            // ★ 2026-09-15 Opus 5（审查意见 minor：混合开关原按输入重判）：热解配方的「分界格混合 开」现在是在求解里数出来的；
++            //   再确认混合**真的发生了** —— 生产板舌片穿过保温分界圆（舌半宽 < 盘半径、舌片伸出圆外），分界圆上必有格子一部分有料在圆内、一部分在圆外 ⇒ 真混合格数 > 0。
++            //   门槛由几何定、跑前写死，不看数。
++            _out.WriteLine($"{f.Name}：真按份额混合的分界格 {f.ThermalRecipe.InsulBlendCells} 格");
++            Assert.True(f.ThermalRecipe.InsulBlendCells > 0, f.Name + " 分界格混合记「开」却一格都没混合");
++        }
++        Assert.Empty(r.RecipeDeviations);
++        AssertEachPlateRecipeFollowsProductionInputs(lc, r);
++
++        // 图纸路径（LineRunner 走 BuildFromField 那一支）：同一组板栅格化成内存厚度场、判据几何给板本身 ⇒ 每片配方同样等于生产常量
++        // 2026-09-15 Opus 5（审查意见 minor「行为门只核片 0 的舌端方式」）：这一次改跑两段（三片，中间一片是共用片），逐片核舌端方式等整份配方
++        {
++            var d2 = DesignSpec.W08.Clone();
++            d2.SetpointC = new[] { 1150.0, 1150.0 }; d2.SegLengthMm = new[] { 300.0, 300.0 };
++            d2 = d2.Fit();
++            var lcF = d2.BuildCase(p, checkRamp: false);
++            var plates = lcF.FlangePlates.Select(pl => { pl.HoleRadiusMm = lcF.TubeIdMm * 0.5 + lcF.WallMm; return pl; }).ToArray();
++            lcF.FlangeFields = plates.Select(pl => AnalyticSurrogate.Rasterize(pl, 0.5, 2.0)).ToArray();
++            lcF.GeomForJudge = plates;
++            lcF.TabInsul3dmPerPlateMm = plates.Select(pl => pl.TabInsulThickMm).ToArray();
++            lcF.FlangePlates = Array.Empty<FlangePlate>();
++            var rF = LineRunner.Run(lcF);
++            Assert.True(rF.Ok, rF.Message);
++            _out.WriteLine("图纸路径汇总：" + rF.RecipeSummary());
++            Assert.Equal(3, rF.Flanges.Length);
++            Assert.Contains(rF.Flanges, fo => fo.Shared);
++            Assert.All(rF.Flanges, fo =>
++            {
++                Assert.Equal(FlangeMesher.ProductionMeshRule, fo.MeshRecipe!.Rule);
++                Assert.Equal(ShellThermal.ProductionThermalRule, fo.ThermalRecipe!.Rule);
++            });
++            Assert.Empty(rF.RecipeDeviations);
++            AssertEachPlateRecipeFollowsProductionInputs(lcF, rF);
++
++            // 非空转：共用片的输入若换成自由端（夹持温度 −1、不给铜排热导），同一个预判给出的舌端方式就与这次实际的不同 —— 逐片比对看得见漂移
++            int js = Array.FindIndex(rF.Flanges, fo => fo.Shared);
++            var lcDrift = d2.BuildCase(p, checkRamp: false);
++            lcDrift.FlangeFields = lcF.FlangeFields; lcDrift.GeomForJudge = lcF.GeomForJudge; lcDrift.TabInsul3dmPerPlateMm = lcF.TabInsul3dmPerPlateMm;
++            lcDrift.FlangePlates = Array.Empty<FlangePlate>();
++            lcDrift.Base.BusbarConductanceWPerK = -1;
++            lcDrift.ClampTempC = Enumerable.Range(0, rF.Flanges.Length).Select(j => j == js ? -1.0 : (j < lcF.ClampTempC.Length ? lcF.ClampTempC[j] : lcF.Base.BusbarClampTempC)).ToArray();
++            var setupDrift = LineRunner.PlateThermalInputs(lcDrift, js, rF.Flanges[js].CurrentA, rF.Flanges[js].Mesh!.SourceField);
++            var predDrift = ShellThermal.RecipeFor(rF.Flanges[js].Mesh!, setupDrift.P2, insulDiscRadiusMm: setupDrift.InsulDiscRadiusMm);
++            _out.WriteLine($"非空转：共用片 {rF.Flanges[js].Name} 输入改自由端后预判舌端 {predDrift.ClampMode}，这次实际 {rF.Flanges[js].ThermalRecipe!.ClampMode}");
++            Assert.Equal(ClampBoundaryMode.Free, predDrift.ClampMode);
++            Assert.NotEqual(predDrift.ClampMode, rF.Flanges[js].ThermalRecipe!.ClampMode);
++        }
++
++        // ── 非空转：几种非生产配方的规则都与常量不同
++        var g = lc.FlangePlates[0];
++        var mOld = FlangeMesher.Build(g, 0, lc.MeshFineMm, lc.MeshCoarseMm, lc.MeshFineRadiusMm, lc.Base.BusbarClampLengthMm,
++                                      lc.MeshInnerMm, lc.MeshInnerRadiusMm, clampBandMm: 0, clampFullFace: false);
++        _out.WriteLine("显式老口径网格：" + mOld.Recipe!.Describe());
++        Assert.NotEqual(FlangeMesher.ProductionMeshRule, mOld.Recipe.Rule);
++        Assert.False(mOld.Recipe.ClampFullFace); Assert.Equal(0.0, mOld.Recipe.ClampBandMm);
++        Assert.True(mOld.Recipe.ClampAnchorOnNode);
++
++        // 压接长不足一个最细格 ⇒ 锚点不落节点、也不铺细带（生成器照写记录）
++        var mShort = FlangeMesher.Build(g, 0, lc.MeshFineMm, lc.MeshCoarseMm, lc.MeshFineRadiusMm, 0.5 * lc.MeshFineMm,
++                                        lc.MeshInnerMm, lc.MeshInnerRadiusMm, clampBandMm: double.NaN, clampFullFace: true);
++        _out.WriteLine($"压接长 {0.5 * lc.MeshFineMm} mm 的网格：{mShort.Recipe!.Describe()}　记录：{mShort.ClampAnchorNote}");
++        Assert.False(mShort.Recipe.ClampAnchorOnNode);
++        Assert.Equal(0.0, mShort.Recipe.ClampBandMm);
++        Assert.NotEqual(FlangeMesher.ProductionMeshRule, mShort.Recipe.Rule);
++        // ★ 2026-09-15 Opus 5（审查意见 minor：两份配方对「整面接触」的定义不一致）：这张网格 ClampCell 长度 = 单元数但没有一格为真 ——
++        //   网格配方记「未生效」，热解配方（预判与求解里数出来的）也必须记「只取压接外缘一圈」，不许再记「整个压接面」。
++        Assert.Equal(mShort.CellCount, mShort.ClampCell.Length);
++        Assert.DoesNotContain(true, mShort.ClampCell);
++        Assert.False(mShort.Recipe.ClampFullFace);
++        var pShort = LineRunner.PlateThermalInputs(lc, 0, r.Flanges[0].CurrentA, null);
++        var jShort = new double[mShort.CellCount];   // 只看配方，不看数：电流密度取 0 即可
++        var thShort = ShellThermal.Solve(mShort, jShort, pShort.P2, r.Flanges[0].TRootC, pShort.InsulX, pShort.SymmetricInsul,
++                                         tabBoundaryX: pShort.TabBoundaryX, tabInsulThickMm: pShort.TabInsulThickMm,
++                                         discRadiusMm: pShort.DiscRadiusMm, insulDiscRadiusMm: pShort.InsulDiscRadiusMm);
++        _out.WriteLine("同一张网格的热解配方：" + thShort.Recipe.Describe());
++        Assert.False(thShort.Recipe.ClampFullFace);
++        Assert.False(ShellThermal.RecipeFor(mShort, pShort.P2, insulDiscRadiusMm: pShort.InsulDiscRadiusMm).ClampFullFace);
++        Assert.Equal(mShort.Recipe.ClampFullFace, thShort.Recipe.ClampFullFace);
++
++        // 热解：老表（设定 + 200、60 节点）与孔边整格定温，规则都与常量不同；RecipeFor 与 Solve 填的一致
++        var m0 = r.Flanges[0].Mesh!;
++        var setup = LineRunner.PlateThermalInputs(lc, 0, r.Flanges[0].CurrentA, null);
++        var thOldTab = ShellThermal.Solve(m0, r.Flanges[0].JField, setup.P2, r.Flanges[0].TRootC, setup.InsulX, setup.SymmetricInsul,
++                                          tabBoundaryX: setup.TabBoundaryX, tabInsulThickMm: setup.TabInsulThickMm,
++                                          discRadiusMm: setup.DiscRadiusMm, insulDiscRadiusMm: setup.InsulDiscRadiusMm,
++                                          lossTableHiC: setup.P2.TSetC + 200, lossTableNodes: 60);
++        _out.WriteLine("老表热解：" + thOldTab.Recipe.Describe());
++        Assert.NotEqual(ShellThermal.ProductionThermalRule, thOldTab.Recipe.Rule);
++        Assert.False(thOldTab.Recipe.LossTableNodesByRule);
++        var recHole = ShellThermal.RecipeFor(m0, setup.P2, holeFaceDirichlet: false, insulDiscRadiusMm: setup.InsulDiscRadiusMm);
++        Assert.NotEqual(ShellThermal.ProductionThermalRule, recHole.Rule);
++        // 2026-09-15 Opus 5：孔边整格定温真解一次 —— 求解里数出来的（真钉住了孔边格）也记「钉住孔边整格」，与预判一致（不一致 Solve 会抛）
++        var thHole = ShellThermal.Solve(m0, r.Flanges[0].JField, setup.P2, r.Flanges[0].TRootC, setup.InsulX, setup.SymmetricInsul,
++                                        tabBoundaryX: setup.TabBoundaryX, tabInsulThickMm: setup.TabInsulThickMm, holeFaceDirichlet: false,
++                                        discRadiusMm: setup.DiscRadiusMm, insulDiscRadiusMm: setup.InsulDiscRadiusMm);
++        _out.WriteLine("孔边整格定温热解：" + thHole.Recipe.Describe());
++        Assert.False(thHole.Recipe.HoleFaceDirichlet);
++        Assert.Equal(recHole.Rule, thHole.Recipe.Rule);
++        var recProd = ShellThermal.RecipeFor(m0, setup.P2, insulDiscRadiusMm: setup.InsulDiscRadiusMm);
++        Assert.Equal(r.Flanges[0].ThermalRecipe!.Rule, recProd.Rule);
++        Assert.Equal(r.Flanges[0].ThermalRecipe!.LossTableNodes, recProd.LossTableNodes);
++        Assert.Equal(ClampBoundaryMode.Fixed, r.Flanges[0].ThermalRecipe!.ClampMode);
++
++        // ★ 2026-09-15 Opus 5（审查意见 minor：网格上没有孔边界面时，热解配方原记「管温施加在孔边界面上」、规则等于生产）：
++        //   构造 = 图纸孔半径比管外半径大 5 mm（> 孔边判定带 3 mm）⇒ 孔边一个面都判不成管孔 ⇒ 管温根本没施加。
++        //   门槛跑前写死：孔边界面数 0、HoleFaceDirichlet 假、规则不等于生产、描述写「没有施加」；Solve 数出来的与 RecipeFor 预判一致（不一致 Solve 会抛）。
++        {
++            double holeR = lc.TubeIdMm * 0.5 + lc.WallMm;
++            var gBig = d.BuildCase(p, checkRamp: false).FlangePlates[0];   // 另建一份板，不改本门整线用过的那块
++            gBig.HoleRadiusMm = holeR + 5;
++            var fBig = AnalyticSurrogate.Rasterize(gBig, 0.5, 2.0);
++            var mNoHole = FlangeMesher.BuildFromField(fBig, holeR, 0, lc.MeshFineMm, lc.MeshCoarseMm, lc.MeshFineRadiusMm,
++                                                      lc.Base.BusbarClampLengthMm, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
++            Assert.DoesNotContain(mNoHole.Faces, fc => fc.B < 0 && fc.Tag == ShellMesh.TagHole);   // 构造成立
++            var recNoHole = ShellThermal.RecipeFor(mNoHole, setup.P2, insulDiscRadiusMm: setup.InsulDiscRadiusMm);
++            var thNoHole = ShellThermal.Solve(mNoHole, new double[mNoHole.CellCount], setup.P2, r.Flanges[0].TRootC, setup.InsulX, setup.SymmetricInsul,
++                                              tabBoundaryX: setup.TabBoundaryX, tabInsulThickMm: setup.TabInsulThickMm,
++                                              discRadiusMm: setup.DiscRadiusMm, insulDiscRadiusMm: setup.InsulDiscRadiusMm);
++            _out.WriteLine("没有孔边界面的网格：预判「" + recNoHole.Describe() + "」　求解「" + thNoHole.Recipe.Describe() + "」");
++            foreach (var rec in new[] { recNoHole, thNoHole.Recipe })
++            {
++                Assert.Equal(0, rec.HoleFaceCount);
++                Assert.False(rec.HoleFaceDirichlet);
++                Assert.False(rec.Rule.HasHoleBoundary);
++                Assert.NotEqual(ShellThermal.ProductionThermalRule, rec.Rule);
++                Assert.Contains("管温没有施加", rec.Describe());
++                Assert.Contains("管温没有施加", rec.Rule.Describe());
++            }
++            Assert.True(r.Flanges[0].ThermalRecipe!.HoleFaceCount > 0);
++            Assert.Contains("管温施加在孔边界面上", ShellThermal.ProductionThermalRule.Describe());
++        }
++    }
++
++    /// <summary>
++    /// ★ 2026-09-15 Opus 5（审查意见 minor「行为门只核片 0 的舌端方式」）：逐片 —— 整线实际热解配方 == 用生产函数组出的本片输入
++    /// （LineRunner.PlateThermalInputs，与 RunOnce 逐片热解同一个入口）经 ShellThermal.RecipeFor 预判出来的那一份。
++    /// 舌端方式不进规则（算例的选择），但它必须等于本片输入决定的方式；不手抄「夹持温度 ≥ 0 ⇒ 定温」这类判定。
++    /// </summary>
++    private void AssertEachPlateRecipeFollowsProductionInputs(LineCase c, LineResult r)
++    {
++        for (int j = 0; j < r.Flanges.Length; j++)
++        {
++            var fo = r.Flanges[j];
++            Assert.NotNull(fo.Mesh); Assert.NotNull(fo.ThermalRecipe);
++            var setup = LineRunner.PlateThermalInputs(c, j, fo.CurrentA, fo.Mesh!.SourceField);
++            var pred = ShellThermal.RecipeFor(fo.Mesh!, setup.P2, insulDiscRadiusMm: setup.InsulDiscRadiusMm);
++            var act = fo.ThermalRecipe!;
++            _out.WriteLine($"  逐片 {fo.Name}（共用片 {fo.Shared}）：实际舌端 {act.ClampMode}、预判 {pred.ClampMode}；孔边界面 {act.HoleFaceCount}；表 {act.LossTableNodes} 节点");
++            Assert.Equal(pred.ClampMode, act.ClampMode);
++            Assert.Equal(pred.Rule, act.Rule);
++            Assert.Equal(pred.LossTableLoC, act.LossTableLoC);
++            Assert.Equal(pred.LossTableNodes, act.LossTableNodes);
++            Assert.Equal(pred.HoleFaceCount, act.HoleFaceCount);
++            Assert.True(act.HoleFaceCount > 0, fo.Name + " 没有孔边界面");
++        }
++    }
++
++    /// <summary>(b) 网格布尔位 + LineRunner 不读文字 + 保温分界判得了而压接盖孔时照样判不了。板同 R48ClampRecipeTests.e／TabInsulPerPlateTests「推不出切点的场」。</summary>
++    [Fact]
++    public void b_压接段盖到管孔改读布尔位_吃法兰场的判据判不了()
++    {
++        var p = new DesignInputs();
++        var d = R47NavGridInstrumentTests.Disc56TwoSegs();
++        d.SetpointC = new[] { 1150.0 }; d.SegLengthMm = new[] { 300.0 };
++        d = d.Fit();
++        // 2026-09-15 Opus 5（审查意见 minor）：开升温检查，「升温到位用时（集总）」在表上 ⇒ 下面按名单遍历时一并断言它判不了
++        var lc = d.BuildCase(p, checkRamp: true);
++        double holeR = lc.TubeIdMm * 0.5 + lc.WallMm;
++        var g = new FlangePlate { DiscRadiusMm = 28, HoleRadiusMm = holeR, TabEndXMm = 0, TabEndHalfWidthMm = 28, ThicknessMm = 1.0, TabParallel = true };
++        var f = AnalyticSurrogate.Rasterize(g, 0.5, 2.0);
++        Assert.True(lc.Base.BusbarClampLengthMm > 28, "本门要压接长盖过整片（材料 x ∈ [0, 28]）");
++
++        var m = FlangeMesher.BuildFromField(f, holeR, 0, lc.MeshFineMm, lc.MeshCoarseMm, lc.MeshFineRadiusMm,
++                                            lc.Base.BusbarClampLengthMm, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
++        Assert.True(m.ClampCoversHole);
++        Assert.True(m.Recipe!.ClampCoversHole);
++        Assert.False(m.Recipe.ClampFullFace);
++        Assert.NotEqual(FlangeMesher.ProductionMeshRule, m.Recipe.Rule);
++        // 正常板：位为假
++        var lcW = DesignSpec.W08.Clone().Fit().BuildCase(p, checkRamp: false);
++        var mW = FlangeMesher.Build(lcW.FlangePlates[0], 0, lcW.MeshFineMm, lcW.MeshCoarseMm, lcW.MeshFineRadiusMm, lcW.Base.BusbarClampLengthMm,
++                                    lcW.MeshInnerMm, lcW.MeshInnerRadiusMm, clampBandMm: double.NaN, clampFullFace: true);
++        Assert.False(mW.ClampCoversHole);
++        Assert.False(mW.ClampIntoDisc);
++
++        // 源码（辅助）：LineRunner 不再按「；」切 ClampAnchorNote 找「⚠」
++        string src = File.ReadAllText(Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "Core", "LineRunner.cs"));
++        var code = string.Join("\n", src.Split('\n').Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
++        Assert.DoesNotContain("ClampAnchorNote.Split", code);
++        Assert.DoesNotContain("ClampAnchorNote", code);
++
++        // 保温分界判得了（给判据几何 = 这块板本身）⇒ 判不了只能来自压接盖孔那一遍
++        lc.FlangePlates = Array.Empty<FlangePlate>();
++        lc.FlangeFields = new[] { f, f };
++        lc.GeomForJudge = new[] { g, g };
++        lc.TabInsul3dmPerPlateMm = new[] { 2.8, 2.8 };
++        var r = LineRunner.Run(lc);
++        Assert.True(r.Ok, r.Message);
++        Assert.All(r.Flanges, fo => Assert.False(fo.InsulBoundaryUndetermined, fo.Name + " 本门要保温分界判得了"));
++        Assert.All(r.Flanges, fo => Assert.True(fo.ClampCoversHole, fo.Name + " 应带压接盖孔位"));
++        int seen = 0;
++        foreach (var key in LineRunner.DependsOnFlangeFields)
++            foreach (var ck in r.Checks.Where(c => c.Name.StartsWith(key, StringComparison.Ordinal)))
++            {
++                seen++;
++                _out.WriteLine($"{Criteria.Plain(ck.Name)}：判不了 {ck.Undetermined}　{ck.Note}");
++                Assert.True(ck.Undetermined, ck.Name + " 应无法判定");
++                Assert.False(ck.Ok, ck.Name + " 判不了不算过");
++                Assert.Contains("盖到了管孔", ck.Note);
++                Assert.DoesNotContain("保温分界判不了", ck.Note);
++                // 本遍加的那段（「（原注：」之前）说人话：不带网格内部说法与英文字段名；原注是各判据自己的，不归本门管
++                string mine = ck.Note.Split("（原注：")[0];
++                foreach (string jargon in new[] { "整面接触", "外圈", "孔边格", "边界面", "ClampCell", "clamp" })
++                    Assert.DoesNotContain(jargon, mine);
++            }
++        Assert.True(seen >= 6, $"只找到 {seen} 条吃法兰场的判据／参考行");
++        // 2026-09-15 Opus 5：集总升温用时（读逐片焦耳热与质量）在名单里、在表上、判不了
++        Assert.Contains(LineResult.Key.RampHours, LineRunner.DependsOnFlangeFields);
++        var ckRamp = r.Checks.Single(c => c.Name.StartsWith(LineResult.Key.RampHours, StringComparison.Ordinal));
++        Assert.True(ckRamp.Undetermined, ckRamp.Note);
++        Assert.Contains("盖到了管孔", ckRamp.Note);
++        // 不吃法兰场的（管 J）不许被顺手标掉
++        Assert.Contains(r.Checks, c => c.Name.StartsWith(LineResult.Key.TubeJ, StringComparison.Ordinal) && !c.Note.Contains("盖到了管孔"));
++        Assert.False(r.AllOk);
++        // 警告句仍进输出（每片一句），配方汇总里列出这两片与生产不同
++        Assert.Equal(r.Flanges.Length, r.Notes.Count(s => s.StartsWith("⚠ ", StringComparison.Ordinal) && s.Contains("盖到了管孔")));
++        Assert.Contains(r.RecipeDeviations, s => s.Contains("网格配方与生产不同"));
++    }
++
++    /// <summary>
++    /// (f) ★ 2026-09-15 Opus 5（审查意见 minor「压接段伸进圆盘：同一种病只修了一半」）：网格位 ShellMesh.ClampIntoDisc → FlangeOut.ClampIntoDisc →
++    /// 吃法兰场的判据与参考行一律判不了（MarkUndeterminedIfClampIntoDisc，名单同 DependsOnFlangeFields），附注说人话。
++    /// 板：W08 一段算例的两块端片改成 盘半径 45、舌半宽 25（舌盘分界 x = −√(45² − 25²) ≈ −37.4 mm），舌尖放在让压接段内边落在
++    /// 舌盘分界与「管孔半径 + 4 mm」正中间 —— 伸进了圆盘，但离管孔还远（盖不到管孔，与门 b 那种退化分开）。构造条件跑前写死并先断言成立。
++    /// </summary>
++    [Fact]
++    public void f_压接段伸进圆盘改读布尔位_吃法兰场的判据判不了()
++    {
++        var p = new DesignInputs();
++        var d = DesignSpec.W08.Clone();
++        d.SetpointC = new[] { 1150.0 }; d.SegLengthMm = new[] { 300.0 };
++        d = d.Fit();
++        var lc = d.BuildCase(p, checkRamp: true);
++        double holeR = lc.TubeIdMm * 0.5 + lc.WallMm, clamp = lc.Base.BusbarClampLengthMm;
++        foreach (var g in lc.FlangePlates)
++        {
++            g.DiscRadiusMm = 45; g.TabEndHalfWidthMm = 25; g.HoleRadiusMm = holeR; g.TabParallel = true;   // 等宽舌：舌盘分界与舌尖位置无关
++            double xT = g.Tangent().X;
++            double clampEnd = 0.5 * (xT + (-(holeR + 4)));
++            g.TabEndXMm = clampEnd - clamp + g.ExtensionMm;       // 舌尖 x = TabEndXMm − ExtensionMm
++            Assert.Equal(xT, g.Tangent().X);
++            _out.WriteLine($"板：舌尖 {g.TabTipXMm:0.###}　舌盘分界 {xT:0.###}　压接段内边 {g.TabTipXMm + clamp:0.###}　管孔半径 {holeR}");
++            Assert.False(g.TwoTabs);
++            Assert.True(g.TabTipXMm + clamp > xT + 1, "构造：压接段要伸进圆盘");
++            Assert.True(g.TabTipXMm + clamp < -(holeR + 3), "构造：压接段不许够到管孔");
++        }
++        var m = FlangeMesher.Build(lc.FlangePlates[0], 0, lc.MeshFineMm, lc.MeshCoarseMm, lc.MeshFineRadiusMm, clamp,
++                                   lc.MeshInnerMm, lc.MeshInnerRadiusMm, clampBandMm: double.NaN, clampFullFace: true);
++        Assert.True(m.ClampIntoDisc);
++        Assert.False(m.ClampCoversHole);
++
++        var r = LineRunner.Run(lc);
++        Assert.True(r.Ok, r.Message);
++        Assert.All(r.Flanges, fo => Assert.True(fo.ClampIntoDisc, fo.Name + " 应带压接伸进圆盘位"));
++        Assert.All(r.Flanges, fo => Assert.False(fo.ClampCoversHole, fo.Name + " 本门要压接段盖不到管孔"));
++        Assert.All(r.Flanges, fo => Assert.False(fo.InsulBoundaryUndetermined));
++        int seen = 0;
++        foreach (var key in LineRunner.DependsOnFlangeFields)
++            foreach (var ck in r.Checks.Where(c => c.Name.StartsWith(key, StringComparison.Ordinal)))
++            {
++                seen++;
++                _out.WriteLine($"{Criteria.Plain(ck.Name)}：判不了 {ck.Undetermined}　{ck.Note}");
++                Assert.True(ck.Undetermined, ck.Name + " 应无法判定");
++                Assert.False(ck.Ok, ck.Name + " 判不了不算过");
++                string mine = ck.Note.Split("（原注：")[0];
++                Assert.Contains("伸进了圆盘", mine);
++                Assert.Contains("请加长舌片或缩短压接长", mine);
++                Assert.DoesNotContain("盖到了管孔", ck.Note);
++                foreach (string jargon in new[] { "整面接触", "外圈", "孔边格", "边界面", "ClampCell", "clamp", "x =" })
++                    Assert.DoesNotContain(jargon, mine);
++            }
++        Assert.True(seen >= 6, $"只找到 {seen} 条吃法兰场的判据／参考行");
++        Assert.Contains(r.Checks, c => c.Name.StartsWith(LineResult.Key.RampHours, StringComparison.Ordinal) && c.Undetermined);
++        // 不吃法兰场的（舌片自由段这条几何判据、管 J）不被这一遍标掉
++        foreach (var key in new[] { LineResult.Key.FreeTab, LineResult.Key.TubeJ })
++            Assert.Contains(r.Checks, c => c.Name.StartsWith(key, StringComparison.Ordinal) && !c.Note.Contains("伸进了圆盘"));
++        Assert.False(r.AllOk);
++        Assert.Equal(r.Flanges.Length, r.Notes.Count(s => s.StartsWith("⚠ ", StringComparison.Ordinal) && s.Contains("伸进了圆盘")));
++    }
++
++    [Fact]
++    public void c_证据头写明代码与配方()
++    {
++        string root = HandoverDoc.Root();
++        string head = EvidenceHeader.GitHead(root), sha = EvidenceHeader.CoreDiffSha1(root);
++        _out.WriteLine($"git HEAD {head}　Core 改动指纹 {sha}");
++        Assert.Matches("^[0-9a-f]{40}$", head);
++        Assert.Matches("^[0-9a-f]{40}$", sha);
++        Assert.Equal(sha, EvidenceHeader.CoreDiffSha1(root));              // 同一份代码两次算出同一个指纹
++        // 2026-09-15 Opus 5（审查意见 minor）：探针源码指纹 = 调用方相对路径 + SHA1（编译器填调用方路径）
++        string probe = EvidenceHeader.ProbeSourceFingerprint(ThisFile(), root);
++        _out.WriteLine("探针源码指纹 " + probe);
++        Assert.Matches("^Pt_Optimize\\.Tests/R48RecipeFingerprintTests\\.cs [0-9a-f]{40}$", probe);
++
++        var p = new DesignInputs { SplitSharedFlangeDraw = true };
++        var d = DesignSpec.W08.Clone().Fit();
++        var lc = d.BuildCase(p, checkRamp: false);
++        lc.CoupleTolK = 0.25;
++        string h = EvidenceHeader.ForLineCase("门 c 标题", lc, root: root);
++        _out.WriteLine(h);
++        Assert.StartsWith(EvidenceHeader.BeginMark + "\n", h);
++        Assert.EndsWith(EvidenceHeader.EndMark + "\n", h);
++        Assert.Contains("# git HEAD：" + head, h);
++        Assert.Contains(sha, h);
++        Assert.Contains(FlangeMesher.ProductionMeshRule.Describe(), h);
++        Assert.Contains(ShellThermal.ProductionThermalRule.Describe(), h);
++        Assert.Contains("# 耦合容差：0.25 K", h);
++        Assert.Contains("# 共用片抽热：各半（只算一次）", h);
++        Assert.Contains("# 工况：带玻璃稳态", h);
++        Assert.Contains("# 探针源码指纹（调用方源文件，SHA1）：" + probe + "\n", h);   // ForLineCase 把调用方路径原样往下传，不是 Evidence.cs 自己
++        Assert.Equal(h, EvidenceHeader.Extract(h + "正文第一行\n第二行\n"));
++        lc.EmptyTube = true; lc.Base.SplitSharedFlangeDraw = false;
++        string h2 = EvidenceHeader.ForLineCase("门 c 标题", lc, root: root);
++        Assert.Contains("# 工况：空管到温稳态（无玻璃）", h2);
++        Assert.Contains("# 共用片抽热：双扣（两段各扣一次）", h2);
++        Assert.NotEqual(h, h2);
++    }
++
++    [Fact]
++    public void d_证据文件头不同就不覆盖()
++    {
++        string dir = Path.Combine(Path.GetTempPath(), "r48g1_evidence_" + Guid.NewGuid().ToString("N"));
++        Directory.CreateDirectory(dir);
++        try
++        {
++            string root = HandoverDoc.Root();
++            string hA = EvidenceHeader.Build("证据门", new[] { "网格 A" }, new[] { "热解 A" }, double.NaN, null, false, root: root);
++            string hB = EvidenceHeader.Build("证据门", new[] { "网格 B" }, new[] { "热解 A" }, double.NaN, null, false, root: root);
++            string file = Path.Combine(dir, "证据门样本.txt");
++
++            // 新文件：照写；打开一次后反复写在同一个文件
++            var ev = EvidenceFile.Open(file, hA);
++            Assert.False(ev.Redirected); Assert.Equal(file, ev.Path);
++            ev.Write("第一行\n"); ev.Write("第一行\n第二行\n");
++            Assert.Equal(hA + "第一行\n第二行\n", File.ReadAllText(file));
++
++            // 同头：覆盖
++            var same = EvidenceFile.Write(file, hA, "重跑\n");
++            Assert.False(same.Redirected);
++            Assert.Equal(hA + "重跑\n", File.ReadAllText(file));
++
++            // 头不同：不覆盖，改写到带时间戳的新文件；原文件逐字节不变；反复写都落在新文件
++            byte[] before = File.ReadAllBytes(file);
++            var now = new DateTime(2026, 9, 15, 10, 20, 30);
++            var diff = EvidenceFile.Open(file, hB, now);
++            _out.WriteLine("头不同：" + diff.Reason);
++            Assert.True(diff.Redirected);
++            Assert.NotEqual(file, diff.Path);
++            Assert.Contains("_重跑20260915-102030", Path.GetFileName(diff.Path));
++            Assert.Contains("证据头不同", diff.Reason);
++            Assert.Contains("网格 B", diff.Reason);
++            diff.Write("B 一\n"); diff.Write("B 一\nB 二\n");
++            Assert.Equal(before, File.ReadAllBytes(file));
++            Assert.Equal(hB + "B 一\nB 二\n", File.ReadAllText(diff.Path));
++            Assert.Equal(2, Directory.GetFiles(dir).Length);
++            // 同一秒再来一次：不撞名
++            var diff2 = EvidenceFile.Open(file, hB, now);
++            Assert.True(diff2.Redirected);
++            Assert.NotEqual(diff.Path, diff2.Path);
++
++            // 没有头的旧证据：不覆盖
++            string old = Path.Combine(dir, "旧证据样本.txt");
++            File.WriteAllText(old, "改动前写的旧证据，没有证据头\n", new UTF8Encoding(false));
++            byte[] oldBytes = File.ReadAllBytes(old);
++            var evOld = EvidenceFile.Write(old, hA, "新正文\n");
++            _out.WriteLine("没有头：" + evOld.Reason);
++            Assert.True(evOld.Redirected);
++            Assert.Contains("没有证据头", evOld.Reason);
++            Assert.Equal(oldBytes, File.ReadAllBytes(old));
++            Assert.Equal(hA + "新正文\n", File.ReadAllText(evOld.Path));
++
++            // ★ 2026-09-15 Opus 5（审查意见 minor）：Core、配方、工况全相同，**只有探针源码不同** ⇒ 头不同 ⇒ 也要改道（原先会整份覆盖）
++            string srcDirA = Path.Combine(dir, "srcA"), srcDirB = Path.Combine(dir, "srcB");
++            Directory.CreateDirectory(srcDirA); Directory.CreateDirectory(srcDirB);
++            string probeA = Path.Combine(srcDirA, "某探针Tests.cs"), probeB = Path.Combine(srcDirB, "某探针Tests.cs");
++            File.WriteAllText(probeA, "// 探针输入：保温 20 mm\r\n", new UTF8Encoding(false));
++            File.WriteAllText(probeB, "// 探针输入：保温 25 mm\n", new UTF8Encoding(false));
++            string hPA = EvidenceHeader.Build("证据门", new[] { "网格 A" }, new[] { "热解 A" }, double.NaN, null, false, root: root, callerFile: probeA);
++            string hPB = EvidenceHeader.Build("证据门", new[] { "网格 A" }, new[] { "热解 A" }, double.NaN, null, false, root: root, callerFile: probeB);
++            var onlyProbe = hPA.Split('\n').Except(hPB.Split('\n')).ToArray();
++            Assert.Single(onlyProbe);
++            Assert.StartsWith("# 探针源码指纹", onlyProbe[0]);
++            string pfile = Path.Combine(dir, "只改探针样本.txt");
++            EvidenceFile.Write(pfile, hPA, "保温 20 的数\n");
++            byte[] pBefore = File.ReadAllBytes(pfile);
++            var evP = EvidenceFile.Write(pfile, hPB, "保温 25 的数\n");
++            _out.WriteLine("只改探针源码：" + evP.Reason);
++            Assert.True(evP.Redirected);
++            Assert.Contains("探针源码指纹", evP.Reason);
++            Assert.Equal(pBefore, File.ReadAllBytes(pfile));
++            // 行尾不同、内容相同 ⇒ 同一个指纹（autocrlf 不同的工作树不因行尾改道）
++            File.WriteAllText(probeB, "// 探针输入：保温 20 mm\n", new UTF8Encoding(false));
++            Assert.Equal(EvidenceHeader.ProbeSourceFingerprint(probeA, root), EvidenceHeader.ProbeSourceFingerprint(probeB, root));
++
++            // 头格式不对：当场炸
++            Assert.Throws<ArgumentException>(() => EvidenceFile.Open(Path.Combine(dir, "x.txt"), "不是证据头"));
++        }
++        finally { try { Directory.Delete(dir, true); } catch { } }
++    }
++
++    private static string ThisFile([System.Runtime.CompilerServices.CallerFilePath] string f = "") => f;
++
++    /// <summary>(e) 工单点名的五个证据探针改用 EvidenceFile（源码门，辅助）：写文件只走 EvidenceFile，不再 File.WriteAllText 整份覆盖。</summary>
++    [Fact]
++    public void e_五个证据探针改用证据文件写()
++    {
++        string dir = Path.Combine(HandoverDoc.Root(), "Pt_Optimize.Tests");
++        foreach (var name in new[] { "R48SecondBatchTests", "R48TubeInsulScanTests", "R48SchemeATests", "R48ErrorBudgetTests", "R48ClampFullFaceTests" })
++        {
++            string s = File.ReadAllText(Path.Combine(dir, name + ".cs"));
++            Assert.Contains("EvidenceFile.Open(", s);
++            Assert.Contains("EvidenceHeader.", s);
++            Assert.DoesNotMatch(new Regex(@"File\.WriteAllText\(\s*file\b"), s);
++        }
++    }
++}
+diff --git a/Pt_Optimize.Tests/R48SchemeATests.cs b/Pt_Optimize.Tests/R48SchemeATests.cs
+index d23754b..6f324f8 100644
+--- a/Pt_Optimize.Tests/R48SchemeATests.cs
++++ b/Pt_Optimize.Tests/R48SchemeATests.cs
+@@ -45,10 +45,14 @@ public class R48SchemeATests
+     {
+         var sb = new StringBuilder();
+         string file = Path.Combine(Root(), "deliverable", $"R48_方案A_X{x:0.0}mm_2026-09-14.txt");
++        // ★ R48 G1（2026-09-15，Opus 5；数值把关人第十三轮）：写文件改走 EvidenceFile —— 文件头写明代码（git HEAD、Core 改动指纹）、配方、耦合容差、共用片抽热与工况；
++        //   同名文件已存在且头不同（或是没有头的旧证据）⇒ 不覆盖，改写到带时间戳的新文件。算法一行不动。
++        //   证据头要算例，算例建好后才打开（下面 ev 赋值处）；在那之前 Say 只进缓冲，打开时整份写出。
++        EvidenceFile? ev = null;
+         void Say(string s)
+         {
+             _out.WriteLine(s); sb.AppendLine(s);
+-            try { File.WriteAllText(file, sb.ToString(), new UTF8Encoding(false)); } catch { }
++            try { ev?.Write(sb.ToString()); } catch { }
+         }
+         var p = new DesignInputs();
+         var d = DesignSpec.W08.Clone();
+@@ -61,6 +65,10 @@ public class R48SchemeATests
+         var (_, radius) = MeshVerify.RequiredMeshFor(d);
+         var lc = d.BuildCase(p, checkRamp: false);
+         MeshAdapt.RefineWholeMesh(lc, 0.5, radius);
++        ev = EvidenceFile.Open(file, EvidenceHeader.ForLineCase($"R48 方案 A X={x:0.0} mm", lc));
++        _out.WriteLine($"证据文件：{ev.Path}（{ev.Reason}）");
++        try { ev.Write(sb.ToString()); } catch { }
++        if (ev.Redirected) Say("⚠ 证据文件改道：" + ev.Reason);
+ 
+         Say($"R48 方案 A（Opus 5）　{DateTime.Now:yyyy-MM-dd HH:mm}　管壁 0.8 落点几何，圆盘保温 = 舌保温 = X，保温按半径，0.5 mm，细区半径 {radius:0}");
+         Say($"设定 X = {x:0.0}；算例实际圆盘保温 {lc.Base.FlangeInsulThickMm:0.0} mm，舌保温 {string.Join("/", d.TabInsulMm.Select(v => v.ToString("0.0")))} mm"
+@@ -80,6 +88,9 @@ public class R48SchemeATests
+         double V(string k) => r.Checks.FirstOrDefault(c => c.Name.StartsWith(k, StringComparison.Ordinal))?.Actual ?? double.NaN;
+         string W(string k) => r.Checks.FirstOrDefault(c => c.Name.StartsWith(k, StringComparison.Ordinal))?.Where ?? "";
+         Say($"用时 {sw.Elapsed.TotalMinutes:0.0} 分　外层耦合收敛 {r.Converged}　耦合剩余估计 {r.CoupleRemainK:0.00} K　{r.MeshCells} 单元　合计铂重 {r.TotalMassG:0} g");
++        // R48 G1（2026-09-15，Opus 5）：逐片实际配方（证据头写的是生产配方常量；这里印跑出来的，对不上的片单列）
++        Say("   配方（逐片实际）：" + r.RecipeSummary());
++        foreach (var dev in r.RecipeDeviations) Say("   ⚠ 配方与生产不同：" + dev);
+         Say($"段稳态电流 {string.Join(" / ", r.Segments.Select(s => s.CurrentA.ToString("0")))} A；接头电流 {string.Join(" / ", r.Flanges.Select(f => f.CurrentA.ToString("0")))} A");
+         Say($"判据（四片取最值，只作参考）：管孔净流入 {V(LineResult.Key.NetFlux):+0.000;-0.000} W（{W(LineResult.Key.NetFlux)}）"
+           + $"　圆盘区最高温 {V(LineResult.Key.DiscTemp):+0.000;-0.000} K（{W(LineResult.Key.DiscTemp)}）"
+diff --git a/Pt_Optimize.Tests/R48SecondBatchTests.cs b/Pt_Optimize.Tests/R48SecondBatchTests.cs
+index dd97d0a..e0d4e9b 100644
+--- a/Pt_Optimize.Tests/R48SecondBatchTests.cs
++++ b/Pt_Optimize.Tests/R48SecondBatchTests.cs
+@@ -48,10 +48,14 @@ public class R48SecondBatchTests
+     {
+         var sb = new StringBuilder();
+         string file = Path.Combine(Root(), "deliverable", $"R48_第二批保温扫描_{tag}_2026-09-14.txt");
++        // ★ R48 G1（2026-09-15，Opus 5；数值把关人第十三轮）：写文件改走 EvidenceFile —— 文件头写明代码（git HEAD、Core 改动指纹）、配方、耦合容差、共用片抽热与工况；
++        //   同名文件已存在且头不同（或是没有头的旧证据）⇒ 不覆盖，改写到带时间戳的新文件。算法一行不动。
++        //   证据头要算例，算例建好后才打开（下面 ev 赋值处）；在那之前 Say 只进缓冲，打开时整份写出。
++        EvidenceFile? ev = null;
+         void Say(string s)
+         {
+             _out.WriteLine(s); sb.AppendLine(s);
+-            try { File.WriteAllText(file, sb.ToString(), new UTF8Encoding(false)); } catch { }
++            try { ev?.Write(sb.ToString()); } catch { }
+         }
+         var p = new DesignInputs { SplitSharedFlangeDraw = split };
+         var d = DesignSpec.W08.Clone();
+@@ -67,6 +71,10 @@ public class R48SecondBatchTests
+         MeshAdapt.RefineWholeMesh(lc, 0.5, radius);
+         lc.CoupleTolK = 0.25;
+         lc.CoupleMaxRounds = Math.Max(lc.CoupleMaxRounds, 4000);
++        ev = EvidenceFile.Open(file, EvidenceHeader.ForLineCase($"R48 第二批保温扫描 {tag}", lc));
++        _out.WriteLine($"证据文件：{ev.Path}（{ev.Reason}）");
++        try { ev.Write(sb.ToString()); } catch { }
++        if (ev.Redirected) Say("⚠ 证据文件改道：" + ev.Reason);
+         Say($"R48 第二批保温扫描 {tag}（Opus 5）　{DateTime.Now:yyyy-MM-dd HH:mm}　0.5 mm 细区半径 {radius:0}　耦合容差 {lc.CoupleTolK} K　共用片抽热{(split ? "各半（只算一次）" : "双扣（两段各扣一次）")}");
+         var plates = lc.FlangePlates;
+         Say($"设定 管保温 {tube:0.0}　逐片圆盘 {string.Join("/", d.DiscInsulMm.Select(v => v.ToString("0.0")))}　逐片舌 {string.Join("/", d.TabInsulMm.Select(v => v.ToString("0.0")))} mm；"
+@@ -85,6 +93,9 @@ public class R48SecondBatchTests
+         var r = LineRunner.Run(lc, tick, default);
+         Assert.True(r.Ok, "整线解不出来：" + r.Message);
+         Say($"用时 {sw.Elapsed.TotalMinutes:0.0} 分　耦合收敛 {r.Converged}　剩余估计 {r.CoupleRemainK:0.000} K　合计铂重 {r.TotalMassG:0} g　全过 {r.AllOk}");
++        // R48 G1（2026-09-15，Opus 5）：逐片实际配方（证据头写的是生产配方常量；这里印跑出来的，对不上的片单列）
++        Say("   配方（逐片实际）：" + r.RecipeSummary());
++        foreach (var dev in r.RecipeDeviations) Say("   ⚠ 配方与生产不同：" + dev);
+         foreach (var n in r.Notes.Where(x => x.Contains("外层耦合"))) Say("   " + n);
+         Say("   判据全表：");
+         foreach (var c in r.Checks)
+diff --git a/Pt_Optimize.Tests/R48TubeInsulScanTests.cs b/Pt_Optimize.Tests/R48TubeInsulScanTests.cs
+index 376cb42..1aa732e 100644
+--- a/Pt_Optimize.Tests/R48TubeInsulScanTests.cs
++++ b/Pt_Optimize.Tests/R48TubeInsulScanTests.cs
+@@ -48,10 +48,14 @@ public class R48TubeInsulScanTests
+     {
+         var sb = new StringBuilder();
+         string file = Path.Combine(Root(), "deliverable", $"R48_第一轮保温扫描_{tag}_2026-09-14.txt");
++        // ★ R48 G1（2026-09-15，Opus 5；数值把关人第十三轮）：写文件改走 EvidenceFile —— 文件头写明代码（git HEAD、Core 改动指纹）、配方、耦合容差、共用片抽热与工况；
++        //   同名文件已存在且头不同（或是没有头的旧证据）⇒ 不覆盖，改写到带时间戳的新文件。算法一行不动。
++        //   证据头要算例，算例建好后才打开（下面 ev 赋值处）；在那之前 Say 只进缓冲，打开时整份写出。
++        EvidenceFile? ev = null;
+         void Say(string s)
+         {
+             _out.WriteLine(s); sb.AppendLine(s);
+-            try { File.WriteAllText(file, sb.ToString(), new UTF8Encoding(false)); } catch { }
++            try { ev?.Write(sb.ToString()); } catch { }
+         }
+         var p = new DesignInputs { LossScale = lossScale };
+         var d = DesignSpec.W08.Clone();
+@@ -65,6 +69,10 @@ public class R48TubeInsulScanTests
+         var (_, radius) = MeshVerify.RequiredMeshFor(d);
+         var lc = d.BuildCase(p, checkRamp: false);
+         MeshAdapt.RefineWholeMesh(lc, 0.5, radius);
++        ev = EvidenceFile.Open(file, EvidenceHeader.ForLineCase($"R48 第一轮保温扫描 {tag}", lc));
++        _out.WriteLine($"证据文件：{ev.Path}（{ev.Reason}）");
++        try { ev.Write(sb.ToString()); } catch { }
++        if (ev.Redirected) Say("⚠ 证据文件改道：" + ev.Reason);
+         Say($"R48 第一轮保温扫描 {tag}（Opus 5）　{DateTime.Now:yyyy-MM-dd HH:mm}　0.5 mm 细区半径 {radius:0}　管壁 {d.WallMm:0.00}");
+         Say($"设定 管保温 {tube:0.0}／圆盘 {disc:0.0}／舌 {tab:0.0} mm　物性 ×{lossScale:0.00}；算例实际：管保温层 {lc.Base.Layer1.ThicknessMm:0.0}（启用 {lc.Base.Layer1.Enabled}）"
+           + $"　圆盘 {lc.Base.FlangeInsulThickMm:0.0}　物性 ×{lc.Base.LossScale:0.00}"
+@@ -85,6 +93,9 @@ public class R48TubeInsulScanTests
+         double V(string k) => r.Checks.FirstOrDefault(c => c.Name.StartsWith(k, StringComparison.Ordinal))?.Actual ?? double.NaN;
+         string W(string k) => r.Checks.FirstOrDefault(c => c.Name.StartsWith(k, StringComparison.Ordinal))?.Where ?? "";
+         Say($"用时 {sw.Elapsed.TotalMinutes:0.0} 分　耦合收敛 {r.Converged}　剩余估计 {r.CoupleRemainK:0.00} K　合计铂重 {r.TotalMassG:0} g　全过 {r.AllOk}");
++        // R48 G1（2026-09-15，Opus 5）：逐片实际配方（证据头写的是生产配方常量；这里印跑出来的，对不上的片单列）
++        Say("   配方（逐片实际）：" + r.RecipeSummary());
++        foreach (var dev in r.RecipeDeviations) Say("   ⚠ 配方与生产不同：" + dev);
+         Say($"判据：净流入 {V(LineResult.Key.NetFlux):+0.000;-0.000} W（{W(LineResult.Key.NetFlux)}）　圆盘区 {V(LineResult.Key.DiscTemp):+0.000;-0.000} K（{W(LineResult.Key.DiscTemp)}）"
+           + $"　增量温降 {V(LineResult.Key.FlangeDip):+0.000;-0.000} K（{W(LineResult.Key.FlangeDip)}）　截面 J {V(LineResult.Key.SectionJ):0.00}　管强度利用率 {V(LineResult.Key.TubeStrength):0.000}");
+         for (int i = 0; i < r.Segments.Length; i++)
+diff --git a/Pt_Optimize.Tests/TabInsulPerPlateTests.cs b/Pt_Optimize.Tests/TabInsulPerPlateTests.cs
+index 3633cf1..7bfa684 100644
+--- a/Pt_Optimize.Tests/TabInsulPerPlateTests.cs
++++ b/Pt_Optimize.Tests/TabInsulPerPlateTests.cs
+@@ -104,7 +104,8 @@ public class TabInsulPerPlateTests
+         var d = R47NavGridInstrumentTests.Disc56TwoSegs();
+         d.SetpointC = new[] { 1150.0 }; d.SegLengthMm = new[] { 300.0 };
+         d = d.Fit();
+-        var lc = d.BuildCase(p, checkRamp: false);
++        // 2026-09-15 Opus 5（审查意见 minor：集总升温用时漏在名单外）：开升温检查，让「升温到位用时（集总）」这条参考量出现在表上，下面一并断言它判不了
++        var lc = d.BuildCase(p, checkRamp: true);
+         double holeR = lc.TubeIdMm * 0.5 + lc.WallMm;
+         // 半个圆盘：舌端 x = 0 ⇒ 材料全在 x ≥ 0，XMinMaterial = 0，推不出舌盘分界
+         var g = new FlangePlate { DiscRadiusMm = 28, HoleRadiusMm = holeR, TabEndXMm = 0, TabEndHalfWidthMm = 28, ThicknessMm = 1.0, TabParallel = true };
+@@ -125,6 +126,7 @@ public class TabInsulPerPlateTests
+         Assert.Contains(LineResult.Key.SelfSupply, LineRunner.DependsOnFlangeFields);
+         Assert.Contains(LineResult.Key.HeatResidual, LineRunner.DependsOnFlangeFields);
+         Assert.Contains(LineResult.Key.DiscTemp, LineRunner.DependsOnFlangeFields);
++        Assert.Contains(LineResult.Key.RampHours, LineRunner.DependsOnFlangeFields);   // 2026-09-15 Opus 5：读逐片焦耳热与质量，吃法兰场
+         int seen = 0;
+         foreach (var key in LineRunner.DependsOnFlangeFields)
+             foreach (var ck in r.Checks.Where(c => c.Name.StartsWith(key, StringComparison.Ordinal)))
+@@ -133,10 +135,21 @@ public class TabInsulPerPlateTests
+                 Assert.True(ck.Undetermined, ck.Name + " 应无法判定");
+                 Assert.False(ck.Ok, ck.Name + " 判不了不算过");
+                 Assert.Contains("保温分界判不了", ck.Note);
++                // ★ R48 G1（2026-09-15，Opus 5；数值把关人第十四轮）：这块板（材料 x ∈ [0, 28]、压接长 40）的压接段同时盖到了管孔 ——
++                //   由网格布尔位 ShellMesh.ClampCoversHole 判（不再从 ClampAnchorNote 里找「⚠」），吃法兰场的判据要带上这一条说明。
++                Assert.Contains("盖到了管孔", ck.Note);
++                Assert.Contains("请加长舌片或缩短压接长", ck.Note);
+             }
++        Assert.All(r.Flanges, fo => Assert.True(fo.ClampCoversHole, fo.Name + " 压接段盖到了管孔，位应为真"));
+         Assert.True(seen >= 6, $"这张表上只找到 {seen} 条吃法兰场的判据／参考行，名单是不是没对上");
+-        foreach (var key in new[] { LineResult.Key.NetFlux, LineResult.Key.FlangeDip, LineResult.Key.FlangeTopTemp, LineResult.Key.SelfSupply, LineResult.Key.HeatResidual })
++        foreach (var key in new[] { LineResult.Key.NetFlux, LineResult.Key.FlangeDip, LineResult.Key.FlangeTopTemp, LineResult.Key.SelfSupply, LineResult.Key.HeatResidual,
++                                    LineResult.Key.RampHours })
+             Assert.Contains(r.Checks, c => c.Name.StartsWith(key, StringComparison.Ordinal) && c.Undetermined);
++        // 2026-09-15 Opus 5：开了升温检查 ⇒ 集总升温用时这条参考量在表上，且判不了、附注带保温分界与压接盖孔两条原因
++        var ckRamp = r.Checks.Single(c => c.Name.StartsWith(LineResult.Key.RampHours, StringComparison.Ordinal));
++        Assert.True(ckRamp.Undetermined); Assert.False(ckRamp.Ok);
++        Assert.Contains("保温分界判不了", ckRamp.Note);
++        Assert.Contains("盖到了管孔", ckRamp.Note);
+         // 不吃法兰场的（管 J）不许被顺手标掉
+         Assert.Contains(r.Checks, c => c.Name.StartsWith(LineResult.Key.TubeJ, StringComparison.Ordinal) && !c.Note.Contains("保温分界判不了"));
+         Assert.False(r.AllOk);
+diff --git a/Pt_Optimize/Core/DesignScreen.cs b/Pt_Optimize/Core/DesignScreen.cs
+index 151b238..3d8d64b 100644
+--- a/Pt_Optimize/Core/DesignScreen.cs
++++ b/Pt_Optimize/Core/DesignScreen.cs
+@@ -108,6 +108,9 @@ public static class DesignScreen
+     ///
+     /// β 是管的单位长度散热斜率（含玻璃项），A_管 是管的导热截面。
+     /// **这个数只有几瓦量级** —— 法兰必须近乎完全热自给，这是整个问题最紧的一条。
++    ///
++    /// ★ R48（2026-09-15，Opus 5；常驻数值把关人第十四轮「其余散热表超界检测」）：查表用到的温度只有管温 <paramref name="tubeTempC"/>（取斜率），
++    /// 表是 [环境, 管温 + 300] ⇒ 上限按构造不会超；管温低于环境温度时斜率被钳到环境处 ⇒ **返回 NaN（判不了）**，不返回一个钳出来的数。
+     /// </summary>
+     public static double DrawBudgetW(DesignInputs p, double wallMm, double tubeTempC,
+                                      double deltaMaxK = 10.0)
+@@ -123,6 +126,7 @@ public static class DesignScreen
+             t => Insulation.CylinderLoss(t, p.TAmbC, rOut, p.Layers, eps,
+                      p.Posture == Orientation.Vertical, p.TubeLength, p.LossScale).QPerLength);
+ 
++        if (!lossTab.Covers(tubeTempC)) return double.NaN;                         // R48（2026-09-15，Opus 5）：超出表区间 ⇒ 判不了
+         double beta = lossTab.Slope(tubeTempC) + p.HGlass * Math.PI * p.TubeId;   // W/(m·K)
+         double k = Materials.PtThermalK(tubeTempC);
+         return deltaMaxK * Math.Sqrt(k * area * beta);
+diff --git a/Pt_Optimize/Core/Evidence.cs b/Pt_Optimize/Core/Evidence.cs
+new file mode 100644
+index 0000000..9ef78a3
+--- /dev/null
++++ b/Pt_Optimize/Core/Evidence.cs
+@@ -0,0 +1,281 @@
++﻿using System;
++using System.Collections.Generic;
++using System.Diagnostics;
++using System.IO;
++using System.Linq;
++using System.Runtime.CompilerServices;
++using System.Security.Cryptography;
++using System.Text;
++
++namespace PtOptimize.Core;
++
++/// <summary>
++/// ★★ R48（2026-09-15，Opus 5；常驻数值把关人第十三、十四轮）：**证据文件头** —— 每份被引作依据的探针输出，开头写明它是哪份代码、哪套配方跑出来的。
++///
++/// 为什么要它：deliverable 里的证据文件被生产代码注释引作依据（例如压接细带自相似那份），而探针重跑时用**同名文件整份覆盖**。
++/// 生产默认一改（整面接触、散热表上限……），重跑出来的是另一套口径的数，却顶着原来的文件名 —— 被引的那份证据悄悄换了内容，引用它的注释还在原地说「依据是它」。
++/// 文件头把「哪份代码」（git HEAD + Pt_Optimize/Core 相对 HEAD 的改动指纹）与「哪套配方」（网格配方、热解配方、耦合容差、共用片抽热、工况）写死在文件里，
++/// <see cref="EvidenceFile"/> 据此决定能不能覆盖。
++///
++/// 头的格式（逐行，行首 #，首尾两行是标记）：
++/// <code>
++/// #证据头 v1
++/// # 标题：…
++/// # git HEAD：…
++/// # Core 改动指纹：…
++/// # 探针源码指纹：…（调用方 .cs 的相对路径 + SHA1）
++/// # 网格配方：…（可多行）
++/// # 热解配方：…（可多行）
++/// # 耦合容差：…
++/// # 共用片抽热：…
++/// # 工况：…
++/// #证据头结束
++/// </code>
++/// 头里不写时间（时间写进正文）：同一份代码、同一套配方重跑，头逐字相同，允许覆盖。
++/// </summary>
++public static class EvidenceHeader
++{
++    public const string BeginMark = "#证据头 v1";
++    public const string EndMark = "#证据头结束";
++
++    /// <summary>从 <paramref name="start"/>（缺省 = 程序所在目录）往上找含 Pt_Optimize.sln 的目录；找不到返回 null。</summary>
++    public static string? RepoRoot(string? start = null)
++    {
++        var dir = new DirectoryInfo(start ?? AppContext.BaseDirectory);
++        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Pt_Optimize.sln"))) dir = dir.Parent;
++        return dir?.FullName;
++    }
++
++    /// <summary>跑一条 git 命令，返回标准输出的原始字节；失败返回 null 并给出原因。</summary>
++    private static byte[]? Git(string root, string args, out string why)
++    {
++        why = "";
++        try
++        {
++            // 2026-09-15 Opus 5（审查意见 minor）：全局参数 -c core.quotepath=off 让未跟踪文件的中文路径原样出来；diff 另加 --no-ext-diff --no-textconv --no-color（见 CoreDiffSha1）
++            var psi = new ProcessStartInfo("git", "-c core.quotepath=off " + args)
++            {
++                WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true,
++                UseShellExecute = false, CreateNoWindow = true,
++            };
++            using var pr = Process.Start(psi);
++            if (pr is null) { why = "git 起不来"; return null; }
++            using var ms = new MemoryStream();
++            var copy = pr.StandardOutput.BaseStream.CopyToAsync(ms);
++            string err = pr.StandardError.ReadToEnd();
++            if (!pr.WaitForExit(60_000)) { try { pr.Kill(); } catch { } why = "git 超过 60 s 没返回"; return null; }
++            copy.Wait(60_000);
++            if (pr.ExitCode != 0) { why = $"git {args} 退出码 {pr.ExitCode}：{err.Trim()}"; return null; }
++            return ms.ToArray();
++        }
++        catch (Exception ex) { why = "git 不可用：" + ex.Message; return null; }
++    }
++
++    /// <summary>git HEAD 的提交号；取不到返回「未知（原因）」。</summary>
++    public static string GitHead(string root)
++    {
++        var b = Git(root, "rev-parse HEAD", out string why);
++        return b is null ? $"未知（{why}）" : Encoding.UTF8.GetString(b).Trim();
++    }
++
++    /// <summary>
++    /// Pt_Optimize/Core 相对 HEAD 的改动指纹：SHA1(<c>git diff HEAD --binary -- Pt_Optimize/Core</c> 的输出 + 该目录下未跟踪文件的「路径 + 内容」)。
++    /// 用 <c>diff HEAD</c> 而不是工单原文的 <c>git diff</c>：后者只比「暂存区 vs 工作树」，已暂存的改动（并行开发的工作树里全部改动都已暂存）会漏掉，
++    /// 两份不同的代码会得到同一个指纹。未跟踪的新文件 git diff 也看不见，另外并进来。没有任何改动时就是空串的 SHA1。
++    /// </summary>
++    public static string CoreDiffSha1(string root)
++    {
++        // 2026-09-15 Opus 5（审查意见 minor）：加 --no-ext-diff --no-textconv --no-color —— 用户配置了外部 diff、textconv 或强制彩色输出时，指纹照样只由内容定
++        var diff = Git(root, "diff HEAD --binary --no-ext-diff --no-textconv --no-color -- Pt_Optimize/Core", out string why);
++        if (diff is null) return $"未知（{why}）";
++        var untracked = Git(root, "ls-files --others --exclude-standard -- Pt_Optimize/Core", out why);
++        if (untracked is null) return $"未知（{why}）";
++        using var sha = SHA1.Create();
++        using var ms = new MemoryStream();
++        ms.Write(diff);
++        foreach (var rel in Encoding.UTF8.GetString(untracked).Split('\n').Select(s => s.Trim()).Where(s => s.Length > 0).OrderBy(s => s, StringComparer.Ordinal))
++        {
++            ms.Write(Encoding.UTF8.GetBytes("\n未跟踪：" + rel + "\n"));
++            string full = Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar));
++            if (File.Exists(full)) ms.Write(File.ReadAllBytes(full));
++        }
++        return Convert.ToHexString(sha.ComputeHash(ms.ToArray())).ToLowerInvariant();
++    }
++
++    /// <summary>
++    /// ★ 2026-09-15 Opus 5（审查意见 minor：证据头只给 Core 做指纹）：**探针自己的源码指纹** = 「相对仓库根的路径 + SHA1(文件内容，行尾统一成 \n)」。
++    /// 为什么：并行工作树里改动都没提交、HEAD 不动；只改探针自己的输入（保温值、网格档、显式开关）不改 Core 就重跑，原先的头逐字相同，
++    /// 会整份覆盖被 Core 注释引作依据的同名证据 —— 正是数值把关人要挡的「被引证据悄悄换内容」。
++    /// 内容哈希而不是 git diff：不管提没提交、暂没暂存都一样；行尾统一：autocrlf 不同的工作树里同一份源码得同一个指纹。
++    /// 路径写相对仓库根（不在仓库里就只写文件名）：同一份探针在不同工作树里重跑，头不因绝对路径不同而不同。
++    /// ⚠ 只覆盖调用方这一个 .cs：探针若从别的测试文件取输入（辅助类），那份文件的改动不在指纹里 —— 工单点名的五个探针都没有这种跨文件输入（2026-09-15 查过）。
++    /// </summary>
++    public static string ProbeSourceFingerprint(string callerFile, string? root)
++    {
++        if (string.IsNullOrEmpty(callerFile)) return "未知（没拿到调用方源文件路径）";
++        string? path = File.Exists(callerFile) ? callerFile : null;
++        // 编译机路径与运行机不同时（例如在别处编好拷过来），按「Pt_Optimize.Tests/…」这一段在仓库根下再找一次
++        if (path is null && root is not null)
++        {
++            string norm = callerFile.Replace('\\', '/');
++            int k = norm.LastIndexOf("/Pt_Optimize", StringComparison.Ordinal);
++            if (k >= 0)
++            {
++                string cand = System.IO.Path.Combine(root, norm[(k + 1)..].Replace('/', System.IO.Path.DirectorySeparatorChar));
++                if (File.Exists(cand)) path = cand;
++            }
++        }
++        if (path is null) return $"未知（找不到源文件 {System.IO.Path.GetFileName(callerFile)}）";
++        string rel = System.IO.Path.GetFileName(path);
++        if (root is not null)
++        {
++            string full = System.IO.Path.GetFullPath(path), r = System.IO.Path.GetFullPath(root).TrimEnd('\\', '/') + System.IO.Path.DirectorySeparatorChar;
++            if (full.StartsWith(r, StringComparison.OrdinalIgnoreCase)) rel = full[r.Length..].Replace('\\', '/');
++        }
++        byte[] bytes = File.ReadAllBytes(path);
++        string text = Encoding.UTF8.GetString(bytes).Replace("\r\n", "\n");
++        using var sha = SHA1.Create();
++        return rel + " " + Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
++    }
++
++    /// <summary>
++    /// 组一份证据头。<paramref name="coupleTolK"/> NaN = 不适用（单片、管侧固定的探针）；<paramref name="splitSharedDraw"/>／<paramref name="emptyTube"/> null = 不适用。
++    /// <paramref name="root"/> 缺省 = <see cref="RepoRoot"/>；找不到仓库时 git 两行写「未知」。
++    /// <paramref name="callerFile"/> 由编译器填调用方源文件路径（<see cref="CallerFilePathAttribute"/>），**调用方不要传**；门要造「探针源码不同」的对照时才显式传。
++    /// </summary>
++    public static string Build(string title, IEnumerable<string> meshRecipes, IEnumerable<string> thermalRecipes,
++                               double coupleTolK, bool? splitSharedDraw, bool? emptyTube,
++                               IEnumerable<string>? extra = null, string? root = null,
++                               [CallerFilePath] string callerFile = "")
++    {
++        root ??= RepoRoot();
++        var sb = new StringBuilder();
++        void L(string s) => sb.Append(s).Append('\n');
++        L(BeginMark);
++        L("# 标题：" + OneLine(title));
++        L("# git HEAD：" + (root is null ? "未知（找不到仓库根）" : GitHead(root)));
++        L("# Core 改动指纹（Pt_Optimize/Core 相对 HEAD 的改动与未跟踪文件，SHA1）：" + (root is null ? "未知（找不到仓库根）" : CoreDiffSha1(root)));
++        L("# 探针源码指纹（调用方源文件，SHA1）：" + OneLine(ProbeSourceFingerprint(callerFile, root)));
++        foreach (var m in meshRecipes) L("# 网格配方：" + OneLine(m));
++        foreach (var t in thermalRecipes) L("# 热解配方：" + OneLine(t));
++        L("# 耦合容差：" + (double.IsNaN(coupleTolK) ? "不适用（单片、管侧固定）" : $"{coupleTolK:R} K"));
++        L("# 共用片抽热：" + (splitSharedDraw is null ? "不适用" : splitSharedDraw.Value ? "各半（只算一次）" : "双扣（两段各扣一次）"));
++        L("# 工况：" + (emptyTube is null ? "不适用" : emptyTube.Value ? "空管到温稳态（无玻璃）" : "带玻璃稳态"));
++        foreach (var e in extra ?? Array.Empty<string>()) L("# " + OneLine(e));
++        L(EndMark);
++        return sb.ToString();
++    }
++
++    /// <summary>
++    /// 整线探针用：网格与热解配方写**生产配方常量**（LineRunner 建网格、解热场不接受改配方，由 R48RecipeFingerprintTests 的行为门守），
++    /// 耦合容差、共用片抽热、工况取自算例。跑完之后逐片实际配方另由探针印进正文（LineResult.RecipeSummary／RecipeDeviations）。
++    /// </summary>
++    public static string ForLineCase(string title, LineCase lc, IEnumerable<string>? extra = null, string? root = null,
++                                     [CallerFilePath] string callerFile = "")
++        => Build(title,
++                 new[] { "生产配方常量 —— " + FlangeMesher.ProductionMeshRule.Describe() },
++                 new[] { "生产配方常量 —— " + ShellThermal.ProductionThermalRule.Describe() },
++                 lc.CoupleTolK, lc.Base.SplitSharedFlangeDraw, lc.EmptyTube, extra, root, callerFile);   // 调用方路径原样往下传（不传就成了本文件）
++
++    private static string OneLine(string s) => (s ?? "").Replace("\r", " ").Replace("\n", " ");
++
++    /// <summary>从文本开头取证据头（含首尾标记，行尾统一成 \n）；没有头返回 null。</summary>
++    public static string? Extract(string text)
++    {
++        var t = (text ?? "").Replace("\r\n", "\n");
++        if (t.StartsWith("﻿", StringComparison.Ordinal)) t = t[1..];
++        if (!t.StartsWith(BeginMark + "\n", StringComparison.Ordinal)) return null;
++        int end = t.IndexOf("\n" + EndMark + "\n", StringComparison.Ordinal);
++        if (end < 0)
++        {
++            // 头在文件末尾、没有正文
++            if (t.EndsWith("\n" + EndMark, StringComparison.Ordinal)) return t + "\n";
++            return null;
++        }
++        return t[..(end + EndMark.Length + 2)];
++    }
++}
++
++/// <summary>
++/// ★★ R48（2026-09-15，Opus 5）：写证据文件 —— **同名文件已存在且证据头不同（或没有证据头）就不覆盖**，改写到带时间戳的新文件名，并在结果里说明。
++///
++/// 用法（探针逐行追加、每行整份重写的那种）：<c>var ev = EvidenceFile.Open(path, header); … ev.Write(正文)</c> ——
++/// 目标路径在 <see cref="Open"/> 时定一次，之后每次 <see cref="Write(string)"/> 都写同一个文件（否则第二行又会被判「头不同」再换一个名字）。
++/// 一次写完的用 <see cref="Write(string, string, string)"/>。编码 UTF-8 无 BOM，行尾照正文。
++/// </summary>
++public sealed class EvidenceFile
++{
++    /// <summary>调用方要写的路径。</summary>
++    public string RequestedPath { get; }
++    /// <summary>实际写的路径（没改道时 = <see cref="RequestedPath"/>）。</summary>
++    public string Path { get; }
++    public string Header { get; }
++    /// <summary>改道了没有（同名文件已存在且证据头不同或没有证据头）。</summary>
++    public bool Redirected { get; }
++    /// <summary>为什么这样写（人话；没改道时说明是新文件还是同头覆盖）。</summary>
++    public string Reason { get; }
++
++    private EvidenceFile(string requested, string path, string header, bool redirected, string reason)
++    { RequestedPath = requested; Path = path; Header = header; Redirected = redirected; Reason = reason; }
++
++    /// <summary>定目标路径（只定一次）。<paramref name="now"/> 缺省 = 当前时间（测试可注入）。</summary>
++    public static EvidenceFile Open(string path, string header, DateTime? now = null)
++    {
++        string h = NormalizeHeader(header);
++        if (EvidenceHeader.Extract(h) is null)
++            throw new ArgumentException("证据头格式不对：要以「" + EvidenceHeader.BeginMark + "」起、以「" + EvidenceHeader.EndMark + "」止（用 EvidenceHeader.Build 组）", nameof(header));
++        if (!File.Exists(path))
++            return new EvidenceFile(path, path, h, false, "新文件");
++        string? old;
++        try { old = EvidenceHeader.Extract(File.ReadAllText(path, Encoding.UTF8)); }
++        catch (Exception ex) { old = null; _ = ex; }
++        if (old is not null && old == h)
++            return new EvidenceFile(path, path, h, false, "同名文件已存在且证据头逐字相同（同一份代码、同一套配方）⇒ 覆盖");
++        string dir = System.IO.Path.GetDirectoryName(path) ?? ".";
++        string stem = System.IO.Path.GetFileNameWithoutExtension(path), ext = System.IO.Path.GetExtension(path);
++        string stamp = (now ?? DateTime.Now).ToString("yyyyMMdd-HHmmss");
++        string target = System.IO.Path.Combine(dir, $"{stem}_重跑{stamp}{ext}");
++        for (int k = 2; File.Exists(target); k++) target = System.IO.Path.Combine(dir, $"{stem}_重跑{stamp}_{k}{ext}");
++        string why = old is null
++            ? "同名文件已存在但没有证据头（改动前写的旧证据）"
++            : "同名文件已存在且证据头不同（" + DiffLines(old, h) + "）";
++        return new EvidenceFile(path, target, h, true,
++            $"{why} ⇒ 不覆盖，改写到 {System.IO.Path.GetFileName(target)}");
++    }
++
++    /// <summary>把证据头 + 正文整份写到 <see cref="Path"/>。</summary>
++    public void Write(string body)
++    {
++        string dir = System.IO.Path.GetDirectoryName(Path) ?? ".";
++        if (dir.Length > 0) Directory.CreateDirectory(dir);
++        File.WriteAllText(Path, Header + (body ?? ""), new UTF8Encoding(false));
++    }
++
++    /// <summary>一次写完：定路径 + 写。返回的对象里有实际路径与改道原因。</summary>
++    public static EvidenceFile Write(string path, string header, string body)
++    {
++        var ev = Open(path, header);
++        ev.Write(body);
++        return ev;
++    }
++
++    private static string NormalizeHeader(string header)
++    {
++        var h = (header ?? "").Replace("\r\n", "\n");
++        if (!h.EndsWith("\n", StringComparison.Ordinal)) h += "\n";
++        return h;
++    }
++
++    /// <summary>两份头里不同的行（最多列三行，给改道原因用）。</summary>
++    private static string DiffLines(string a, string b)
++    {
++        var la = a.Split('\n'); var lb = b.Split('\n');
++        var onlyOld = la.Except(lb).Where(s => s.Length > 0).ToArray();
++        var onlyNew = lb.Except(la).Where(s => s.Length > 0).ToArray();
++        string Short(string s) => s.Length > 80 ? s[..80] + "…" : s;
++        var parts = new List<string>();
++        parts.AddRange(onlyOld.Take(3).Select(s => "旧：" + Short(s)));
++        parts.AddRange(onlyNew.Take(3).Select(s => "新：" + Short(s)));
++        return parts.Count == 0 ? "行序不同" : string.Join("；", parts);
++    }
++}
+diff --git a/Pt_Optimize/Core/LineRunner.cs b/Pt_Optimize/Core/LineRunner.cs
+index 0599474..bf851a7 100644
+--- a/Pt_Optimize/Core/LineRunner.cs
++++ b/Pt_Optimize/Core/LineRunner.cs
+@@ -557,6 +557,13 @@ public sealed class SegmentOut
+     /// 门拿它核 LineRunner 在空管段写了带玻璃的形状 hg；用户 2026-09-14 要报告给保温厚度分布，将来印分布读它。只报数，不进判据。
+     /// </summary>
+     public double[] EndInsulExtraProfileMm = Array.Empty<double>();
++    /// <summary>
++    /// ★ R48（2026-09-15，Opus 5；数值把关人第十四轮）：本段管解最高温超出管散热表上限（<see cref="SolveResult.LossTableExceeded"/> 原样带出）⇒
++    /// 超出的那段散热被钳住，管温场不是这个设计的场 ⇒ LineRunner.MarkUndeterminedIfTubeLossTableExceeded 把吃管温的判据判不了。
++    /// </summary>
++    public bool TubeLossTableExceeded;
++    /// <summary>本段管散热表上限 °C（<see cref="SolveResult.LossTableHiC"/>）与管解最高温 °C。</summary>
++    public double TubeLossTableHiC = double.NaN, TubeTMaxC = double.NaN;
+     public double[] X = Array.Empty<double>();
+     public double[] TMetal = Array.Empty<double>();
+     public double[] TGlass = Array.Empty<double>();
+@@ -652,6 +659,19 @@ public sealed class FlangeOut
+     /// </summary>
+     public string InsulBoundaryNote = "";
+     public bool InsulBoundaryUndetermined;
++    /// <summary>
++    /// ★ R48（2026-09-15，Opus 5）：本片**压接段盖到了管孔**（<see cref="ShellMesh.ClampCoversHole"/> 原样带出）⇒ 吃法兰场的判据与参考行判不了，
++    /// 与 <see cref="InsulBoundaryUndetermined"/> 同一种处置（名单 <see cref="LineRunner.DependsOnFlangeFields"/>）。
++    /// </summary>
++    public bool ClampCoversHole;
++    /// <summary>
++    /// ★ R48（2026-09-15，Opus 5；审查意见 minor「同一种病只修了一半」）：本片**压接段伸进了圆盘**（<see cref="ShellMesh.ClampIntoDisc"/> 原样带出）——
++    /// 舌片比压接长还短，这块板几何上不成立 ⇒ 与 <see cref="ClampCoversHole"/> 同一种处置（LineRunner.MarkUndeterminedIfClampIntoDisc，名单同 <see cref="LineRunner.DependsOnFlangeFields"/>）。
++    /// </summary>
++    public bool ClampIntoDisc;
++    /// <summary>★ R48（2026-09-15，Opus 5）：本片网格与热解实际生效的配方（结构化指纹，见 <see cref="PtOptimize.Core.MeshRecipe"/>／<see cref="PtOptimize.Core.ThermalRecipe"/>）。</summary>
++    public MeshRecipe? MeshRecipe;
++    public ThermalRecipe? ThermalRecipe;
+     /// <summary>R47 F：管孔定温环吃到孔边以外多少 mm（TagHole 面最大半径 − 孔半径），与焊脚以外被钉住的边界长 mm。</summary>
+     public double HoleTagOverMm = double.NaN, HoleTagBeyondWeldMm = double.NaN;
+ 
+@@ -749,6 +769,29 @@ public sealed class LineResult
+ 
+     public SegmentOut[] Segments = Array.Empty<SegmentOut>();
+     public FlangeOut[] Flanges = Array.Empty<FlangeOut>();
++
++    /// <summary>
++    /// ★ R48（2026-09-15，Opus 5）：配方汇总 —— 逐片与生产配方常量（<see cref="FlangeMesher.ProductionMeshRule"/>／<see cref="ShellThermal.ProductionThermalRule"/>）比，
++    /// 不同的片列出来（片名 + 哪一份 + 实际配方）。空 = 每一片网格与热解都是生产配方。没带配方（非生产生成器）的片也列出来，不许当成一样。
++    /// </summary>
++    public string[] RecipeDeviations => Flanges
++        .Where(f => f is not null)
++        .SelectMany(f => new[]
++        {
++            f.MeshRecipe is null ? $"{f.Name}：网格没有配方记录"
++              : f.MeshRecipe.Rule != FlangeMesher.ProductionMeshRule ? $"{f.Name}：网格配方与生产不同 —— {f.MeshRecipe.Describe()}" : null,
++            f.ThermalRecipe is null ? $"{f.Name}：热解没有配方记录"
++              : f.ThermalRecipe.Rule != ShellThermal.ProductionThermalRule ? $"{f.Name}：热解配方与生产不同 —— {f.ThermalRecipe.Describe()}" : null,
++        })
++        .Where(s => s is not null).Select(s => s!).ToArray();
++
++    /// <summary>R48（2026-09-15，Opus 5）：逐片配方的一行汇总（证据文件头用）；各片相同就只印一次。</summary>
++    public string RecipeSummary()
++    {
++        var mesh = Flanges.Where(f => f?.MeshRecipe is not null).Select(f => f.MeshRecipe!.Rule.Describe()).Distinct().ToArray();
++        var th = Flanges.Where(f => f?.ThermalRecipe is not null).Select(f => f.ThermalRecipe!.Describe()).Distinct().ToArray();
++        return $"网格：{(mesh.Length == 0 ? "无记录" : string.Join(" ／ ", mesh))}；热解：{(th.Length == 0 ? "无记录" : string.Join(" ／ ", th))}";
++    }
+     public ConstraintOut[] Checks = Array.Empty<ConstraintOut>();
+     public double TubeMassG, FlangeMassG, TotalMassG, BaselineMassG, SavingPct;
+     public double GlassDropModelK, GlassDropMeasuredK;
+@@ -769,6 +812,8 @@ public sealed class LineResult
+     ///   「熔化」与别的失败**处置完全不同** —— 别的失败是「算不出来」，
+     ///   熔化是**方向信息**：这一处太薄了，加厚就能走出去。
+     ///   定尺寸器靠它把「没解」变成「往加厚那边走」，而不是拿到 NaN 卡死。
++    /// ★ 2026-09-15 Opus 5：有段的管温超出管表面散热表上限（<see cref="SegmentOut.TubeLossTableExceeded"/>）时法兰越过熔点**不置这一位**
++    ///   —— 那时的熔化可能是管表钳住造出来的，熔不熔判不了；<see cref="Ok"/> 照样为 false，<see cref="Message"/> 说「熔不熔判不了」。
+     /// </summary>
+     public bool OverMelt;
+     public string Message = "";
+@@ -1575,6 +1620,7 @@ public static class LineRunner
+                 MassG = area * c.SegLengthMm[i] * Materials.PtDensity * 1e-6,
+                 BetaWPerMK = sr.BetaWPerMK, DecayLengthMm = sr.DecayLengthMm,   // R48（2026-09-14，Opus 5）：只报数
+                 EndInsulExtraProfileMm = SegmentSolver.EndInsulExtraProfileMm(p, c.WallMm),   // R48 审查第 5 条（2026-09-14，Opus 5）：只报数
++                TubeLossTableExceeded = sr.LossTableExceeded, TubeLossTableHiC = sr.LossTableHiC, TubeTMaxC = sr.TMaxC,   // R48（2026-09-15，Opus 5）
+                 X = sr.X, TMetal = sr.TMetal, TGlass = sr.TGlass
+             };
+             tg = sr.TGlassOutC;
+@@ -1674,15 +1720,18 @@ public static class LineRunner
+                             c.MeshInnerMm, c.MeshInnerRadiusMm);
+             }
+ 
+-            // ★ R48（2026-09-14，Opus 5）：网格生成器记下的**压接几何警告**（ClampAnchorNote 里以 ⚠ 开头的句子）接进本次输出。
+-            //   此前只写在网格对象上、没人读（「压接长伸进了圆盘」那句从 R48 实验 b 起就在）；整面接触成了生产配方后，
+-            //   「压接长盖到了管孔 ⇒ 这块板退回只按舌端外缘接电」是换了压接模型的大事，不许只留在网格上。按片去重，多次 Run 不越滚越长。
+-            //   两句文字都会进界面输出框，写成现场工程师看得懂的话（2026-09-14 Opus 5 复审修）。
+-            foreach (var w in mesh.ClampAnchorNote.Split('；').Select(s => s.Trim()).Where(s => s.StartsWith("⚠", StringComparison.Ordinal)))
+-            {
+-                string line = "⚠ " + flangeName(j) + "：" + w.TrimStart('⚠', ' ');
+-                if (!res.Notes.Contains(line)) res.Notes.Add(line);
+-            }
++            // ★ R48（2026-09-14 起，Opus 5）：网格生成器判出的**压接几何退化**（压接段伸进圆盘、压接段盖到管孔）接进本次输出，每片一句、按片去重（多次 Run 不越滚越长）。
++            //   来历：此前只写在网格对象上、没人读（「压接长伸进了圆盘」从 R48 实验 b 起就在）；整面接触成了生产配方后，
++            //   「压接长盖到了管孔 ⇒ 这块板退回只按舌端外缘接电」是换了压接模型的大事，不许只留在网格上。文字进界面输出框，写成现场工程师看得懂的话。
++            // ★ 2026-09-15 Opus 5（数值把关人第十四轮；审查意见 minor「旧注释与现做法相反」改写本段）：**读网格上的布尔位**（ShellMesh.ClampIntoDisc／ClampCoversHole），
++            //   不读 ClampAnchorNote 的文字（09-14 那版按「；」切开找「⚠」，是字符串协议，生成器里改一个标点这里就瞎）。说明文字由本处按位与数生成（ClampIntoDiscText／ClampCoversHoleText）。
++            //   两种退化的片另由 MarkUndeterminedIfClampCoversHole／MarkUndeterminedIfClampIntoDisc 把吃法兰场的判据判不了（此前只报一句警告，判据照常出数）。
++            foreach (var line in new[]
++                     {
++                         mesh.ClampIntoDisc ? "⚠ " + flangeName(j) + "：" + ClampIntoDiscText(mesh) : null,
++                         mesh.ClampCoversHole ? "⚠ " + flangeName(j) + "：" + ClampCoversHoleText(mesh.ClampLenMm) : null,
++                     })
++                if (line is not null && !res.Notes.Contains(line)) res.Notes.Add(line);
+             if (j == 0) { res.MeshCells = mesh.CellCount; res.MeshFineMm = c.MeshFineMm; }
+             double iJoint = LineSolver.JointCurrentA(amps, j);
+             var sc = ShellCurrent.SolveFor(c, mesh, iJoint,
+@@ -1768,6 +1817,9 @@ public static class LineRunner
+             flanges[j] = new FlangeOut
+             {
+                 InsulBoundaryNote = insulNote, InsulBoundaryUndetermined = insulUndet,
++                ClampCoversHole = mesh.ClampCoversHole,                       // R48（2026-09-15，Opus 5）：读位，见 MarkUndeterminedIfClampCoversHole
++                ClampIntoDisc = mesh.ClampIntoDisc,                           // 2026-09-15 Opus 5：读位，见 MarkUndeterminedIfClampIntoDisc
++                MeshRecipe = mesh.Recipe, ThermalRecipe = th.Recipe,          // R48（2026-09-15，Opus 5）：配方指纹原样带出
+                 HoleTagOverMm = mesh.HoleTagMaxROverMm,
+                 HoleTagBeyondWeldMm = mesh.HoleTagLengthBeyondMm(weldLegJ),
+                 LevelTMaxC = lvTmax, LevelThickMm = lvTh,
+@@ -1838,10 +1890,26 @@ public static class LineRunner
+                 //   ⚠⚠ 督导原话照记：他**没有**造出「现役判据全过却熔化」的算例，
+                 //     证明的是「没有任何东西挡着它」。两句话不一样，不夸大。
+                 res.Ok = false;
+-                res.OverMelt = true;
+-                flanges[j].OverMelt = true;      // ★ 逐片的位：求解器按它决定抬哪一片的下角
+-                res.Message = $"{flanges[j].Name}：峰值 {th.TMaxC:0} °C 已越过铂熔点 "
+-                            + $"{Materials.PtMeltC:0} °C —— **该解不存在**（不是「不够好」，是物理上不成立）";
++                // ★ 2026-09-15 Opus 5（审查意见 minor：管表超界造出的假熔化仍被报成「该解不存在」）：
++                //   有段的管解最高温超出管表面散热表上限（SegmentOut.TubeLossTableExceeded，段解在法兰之前、上面已填好）⇒ 超出部分管散热被钳住、
++                //   发热随 ρ(T) 涨而散热不涨 ⇒ 管算偏热（实测单段 2200 °C，同一电流真散热下约 1150 °C，R48LossTableRangeTests），法兰边界跟着偏热。
++                //   这时法兰越过熔点**可能是钳位造出来的**，既不能说熔、也不能说不熔 ⇒ **熔化位不置**（求解器的 MeltFloor 读到熔化位会给
++                //   「截面漏一刀或 J 设太高」的诊断，那是另一件事），头条改说「判不了」；Ok 仍为 false（这个场不是这个设计的场，不许当解交出去）。
++                //   只有实测电流模式会走到这里（控温反算时中点就是设定，管温到不了设定 + 400 K）。
++                var tubeOverTable = segs.Where(s => s is not null && s.TubeLossTableExceeded).ToArray();
++                if (tubeOverTable.Length > 0)
++                {
++                    res.Message = $"{flanges[j].Name}：峰值 {th.TMaxC:0} °C 越过了铂熔点 {Materials.PtMeltC:0} °C，"
++                                + $"但管温已超出管表面散热表的温度上限（{string.Join("、", tubeOverTable.Select(s => $"{s.Name} 最高 {s.TubeTMaxC:0} °C，表上限 {s.TubeLossTableHiC:0} °C"))}），"
++                                + "超出部分散热被钳住、管算偏热 —— 这个峰值不是这个设计的真值，**熔不熔判不了**。请核对控温点与实测电流";
++                }
++                else
++                {
++                    res.OverMelt = true;
++                    flanges[j].OverMelt = true;      // ★ 逐片的位：求解器按它决定抬哪一片的下角
++                    res.Message = $"{flanges[j].Name}：峰值 {th.TMaxC:0} °C 已越过铂熔点 "
++                                + $"{Materials.PtMeltC:0} °C —— **该解不存在**（不是「不够好」，是物理上不成立）";
++                }
+                 res.Notes.Add("✗ " + res.Message);
+             }
+             else if (th.OverFitRange)
+@@ -1887,6 +1955,9 @@ public static class LineRunner
+         res.Checks = Judge(c, res, segs, flanges, segParams);
+         MarkUndeterminedIfFieldsFailed(res, flanges);
+         MarkUndeterminedIfInsulBoundaryUnknown(res, flanges);
++        MarkUndeterminedIfClampCoversHole(res, flanges);
++        MarkUndeterminedIfClampIntoDisc(res, flanges);
++        MarkUndeterminedIfTubeLossTableExceeded(res, segs, c.UseMeasuredCurrent);
+         return res;
+     }
+ 
+@@ -1949,6 +2020,10 @@ public static class LineRunner
+         LineResult.Key.HotOverTc, LineResult.Key.ColdUnderTc,
+         LineResult.Key.FlangeStab, LineResult.Key.LocalStab, LineResult.Key.RampField, LineResult.Key.HeatBalance,
+         LineResult.Key.FlangeTopTemp, LineResult.Key.SelfSupply, LineResult.Key.FlangeJ, LineResult.Key.HeatResidual,
++        // ★ 2026-09-15 Opus 5（审查意见 minor：名单原有缺口）：集总升温用时参考量读逐片 QGenW（法兰电流场算的焦耳热）与 MassG（网格体积），
++        //   吃法兰场，却不以名单里任何一项开头（Ramp 是「① 升温」、RampField 是「· 升温期法兰−管峰值」）⇒ 场没解到位、保温分界判不了、
++        //   压接盖到管孔这三遍都漏掉了它，坏场上照样报用时。补进名单。
++        LineResult.Key.RampHours,
+     };
+     /// <summary>同一份名单的只读出口（测试拿它核对）；名单本体是上面那个字段（FieldConvergenceGateTests 的源码门按它的名字找）。</summary>
+     public static IReadOnlyList<string> DependsOnFlangeFields => dependsOnFlangeFields;
+@@ -1994,6 +2069,99 @@ public static class LineRunner
+             }
+     }
+ 
++    /// <summary>R48（2026-09-15，Opus 5）：「压接段盖到了管孔」的说明文字（进界面输出框与判据附注，说人话、不带网格内部说法）。文字与 2026-09-14 生成器里那句相同。</summary>
++    public static string ClampCoversHoleText(double clampLenMm)
++        => $"压接长 {clampLenMm:0.###} mm 盖到了管孔：这块板没有足够长的舌片可供压接，本片电流与温度结果不可信";
++
++    /// <summary>R48（2026-09-15，Opus 5）：「压接段伸进了圆盘」的说明文字（按 <see cref="ShellMesh.ClampIntoDisc"/> 与两个 x 生成；文字与 2026-09-14 生成器里那句相同）。</summary>
++    public static string ClampIntoDiscText(ShellMesh m)
++        => $"压接长 {m.ClampLenMm:0.###} mm 伸进了圆盘（压接段到 x = {m.ClampEndXMm:0.###} mm，舌片与圆盘在 x = {m.ClampTangentXMm:0.###} mm 相接）：舌片比压接长还短，这块板几何上不成立";
++
++    /// <summary>
++    /// ★★ R48（2026-09-15，Opus 5；数值把关人第十四轮）：**压接段盖到了管孔的片 ⇒ 吃法兰场的判据与参考行一律判不了**。
++    /// 照 <see cref="MarkUndeterminedIfInsulBoundaryUnknown"/> 的做法，名单同 <see cref="DependsOnFlangeFields"/>。
++    /// 此前（2026-09-14）这种板只在输出里报一句「⚠ …结果不可信」，判据照常出数、Ok 照常为真 —— 嘴上说不可信、表上当可信用。
++    /// 读的是网格上的布尔位（<see cref="FlangeOut.ClampCoversHole"/> ← <see cref="ShellMesh.ClampCoversHole"/>），不读文字。
++    /// </summary>
++    private static void MarkUndeterminedIfClampCoversHole(LineResult res, FlangeOut[] flanges)
++    {
++        var bad = flanges.Where(f => f is not null && f.ClampCoversHole).ToArray();
++        if (bad.Length == 0) return;
++        string who = string.Join("、", bad.Select(f => f.Name));
++        double len = bad.Select(f => f.Mesh?.ClampLenMm ?? double.NaN).FirstOrDefault(v => !double.IsNaN(v), double.NaN);
++        foreach (var ck in res.Checks)
++            if (EatsFlangeFields(ck))
++            {
++                ck.Undetermined = true; ck.Ok = false;
++                ck.Note = $"★ **无法判定**：压接长 {len:0.###} mm 盖到了管孔（{who}）—— 这块板没有足够长的舌片可供压接，"
++                        + "电流从哪里进、压接处多热都算不成这个设计的样子，吃法兰场的判据与参考行都不可信。请加长舌片或缩短压接长。"
++                        + (string.IsNullOrEmpty(ck.Note) ? "" : "　（原注：" + ck.Note + "）");
++            }
++    }
++
++    /// <summary>
++    /// ★★ R48（2026-09-15，Opus 5）：「压接段伸进了圆盘」的片 ⇒ 吃法兰场的判据与参考行一律判不了（审查意见 minor「同一种病只修了一半」）。
++    /// 与 <see cref="MarkUndeterminedIfClampCoversHole"/> 同一个做法、同一份名单：此前这种板只进一句「⚠ …这块板几何上不成立」，吃法兰场的判据照常出数 ——
++    /// 正是盖到管孔那次修掉的「嘴上说不可信、表上当可信用」。几何上的「舌片自由段」判据自己会不过，但图纸路径没有判据几何时那条本身判不了，兜不住别的判据。
++    /// 读网格上的布尔位（<see cref="FlangeOut.ClampIntoDisc"/> ← <see cref="ShellMesh.ClampIntoDisc"/>），不读文字。
++    /// </summary>
++    private static void MarkUndeterminedIfClampIntoDisc(LineResult res, FlangeOut[] flanges)
++    {
++        var bad = flanges.Where(f => f is not null && f.ClampIntoDisc).ToArray();
++        if (bad.Length == 0) return;
++        string who = string.Join("、", bad.Select(f => f.Name));
++        double len = bad.Select(f => f.Mesh?.ClampLenMm ?? double.NaN).FirstOrDefault(v => !double.IsNaN(v), double.NaN);
++        foreach (var ck in res.Checks)
++            if (EatsFlangeFields(ck))
++            {
++                ck.Undetermined = true; ck.Ok = false;
++                ck.Note = $"★ **无法判定**：压接长 {len:0.###} mm 伸进了圆盘（{who}）—— 舌片比压接长还短，这块板几何上不成立，"
++                        + "电流从哪里进、压接处多热都算不成这个设计的样子，吃法兰场的判据与参考行都不可信。请加长舌片或缩短压接长。"
++                        + (string.IsNullOrEmpty(ck.Note) ? "" : "　（原注：" + ck.Note + "）");
++            }
++    }
++
++    /// <summary>
++    /// R48（2026-09-15，Opus 5）：**不吃管温场**的判据名单 —— 纯几何（舌片自由段、圆盘盖得住管孔）、闭式截面电流密度（设计电流 ÷ 必经截面积，与工况无关，
++    /// 见 Judge 里那条的附注）。管散热表超界时除了这几条，其余一律判不了（管温场错了，电流、管根、法兰边界全跟着错）。
++    /// ★ 2026-09-15 Opus 5（审查意见 minor「豁免名单自相矛盾」）：加「① 升温」—— 它与「法兰截面 J」出自同一个 DesignCurrent.Compute，
++    ///   实际值是管子准静态电流沿 起点→目标 取峰值 ÷ 管截面（RampTwoNode.QuasiStaticCurrentA，闭式、不读段解与法兰场），附注里也只印这个闭式电流；
++    ///   原先豁免了截面 J 却把它打成判不了，硬判据被白白判不了。实测电流模式另见 <see cref="IndependentOfTubeFieldFor"/>。
++    /// </summary>
++    private static readonly string[] independentOfTubeField = { LineResult.Key.FreeTab, LineResult.Key.DiscCover, LineResult.Key.SectionJ, LineResult.Key.Ramp };
++    /// <summary>同一份名单的只读出口（测试核对用）；与电流模式无关的那部分。</summary>
++    public static IReadOnlyList<string> IndependentOfTubeField => independentOfTubeField;
++
++    /// <summary>
++    /// 2026-09-15 Opus 5（审查意见 minor）：按电流模式给出不吃管温场的判据名单。**实测电流模式**下「管 J」= 实测电流 ÷ 管截面
++    /// （段解 SolveAtCurrent 原样带回给定电流），不吃管温场，一并豁免；控温反算模式下电流由管温场二分出来，管 J 吃管温场，不豁免。
++    /// </summary>
++    public static IReadOnlyList<string> IndependentOfTubeFieldFor(bool useMeasuredCurrent)
++        => useMeasuredCurrent ? independentOfTubeField.Append(LineResult.Key.TubeJ).ToArray() : independentOfTubeField;
++
++    /// <summary>
++    /// ★★ R48（2026-09-15，Opus 5；数值把关人第十四轮「其余散热表超界检测」）：**有段的管解最高温超出管散热表上限 ⇒ 吃管温场的判据一律判不了**。
++    /// 管散热表（SegmentSolver 里的 TubeLossTable）上限是 设定（带玻璃时与玻璃进口取大）+ 400 K，超出的部分 LossTable.Eval 静默钳住 ——
++    /// 与法兰散热表那次（ShellThermal.LossTableHiC 的注释）同一个病：超出的那段散热冻在上限处，管算偏热、负反馈被削弱。
++    /// 典型触发：实测电流模式下控温点填得比实际低很多。
++    /// </summary>
++    private static void MarkUndeterminedIfTubeLossTableExceeded(LineResult res, SegmentOut[] segs, bool useMeasuredCurrent)
++    {
++        var bad = segs.Where(s => s is not null && s.TubeLossTableExceeded).ToArray();
++        if (bad.Length == 0) return;
++        string who = string.Join("、", bad.Select(s => $"{s.Name} 最高 {s.TubeTMaxC:0} °C，表上限 {s.TubeLossTableHiC:0} °C"));
++        res.Notes.Add($"✗ 管温超出管表面散热表的温度上限（{who}），超出部分散热被钳住 ⇒ **吃管温的判据一律判不了**（判不了不算过）");
++        var independent = IndependentOfTubeFieldFor(useMeasuredCurrent);   // 2026-09-15 Opus 5：实测电流模式下管 J 也豁免
++        foreach (var ck in res.Checks)
++            if (!independent.Any(k => ck.Name.StartsWith(k, StringComparison.Ordinal)))
++            {
++                ck.Undetermined = true; ck.Ok = false;
++                ck.Note = $"★ **无法判定**：管温超出管表面散热表的温度上限（{who}）—— 超出部分的散热被钳在上限处，管温、电流与法兰边界都不是这个设计的真值。"
++                        + "请核对控温点与实测电流。"
++                        + (string.IsNullOrEmpty(ck.Note) ? "" : "　（原注：" + ck.Note + "）");
++            }
++    }
++
+     /// <summary>
+     /// ★ R48（2026-09-14，Opus 5；审查意见：R48DiscInsulPerPlateGateTests 的逐片重解手抄了本处的逐片热解配方 —— 生产一改，门要么红、要么逼人再抄一遍）：
+     /// 第 j 片壳热解的输入组装。原在 RunOnce 逐片循环里就地写，**原样搬出**（数逐位不变），整线求解与门共用。
+@@ -2341,6 +2509,11 @@ public static class LineRunner
+         if (c.CheckRamp)
+         {
+             RampResult? worst = null; string where = "";
++            // ★ R48（2026-09-15，Opus 5；数值把关人第十四轮）：RampSolver 解完自己核查表用到的温度在不在管散热表里（RampResult.LossTableExceeded）。
++            //   **任何一段超界 ⇒ 这条参考量判不了**（与「任何一片判不了整条就判不了」同一条规矩），不是只看最不利那段。
++            //   2026-09-15 Opus 5（审查意见 minor）：表上限已改为 目标、本段控温点、起点三者之最 + 200 K（RampSolver 建表处），「升温目标比控温点低 200 K 以上」
++            //   这种合法输入不再出表；这里的检测留作兜底（能触发的主要是控温点或升温目标低于环境温度）。说明文字按结构化的 LossTableOut 在本处生成，用界面上的叫法。
++            var rampOverTable = new List<(string Seg, RampResult R)>();
+             for (int i = 0; i < n; i++)
+             {
+                 double massPairG = flanges[i].MassG + flanges[i + 1].MassG;
+@@ -2361,6 +2534,7 @@ public static class LineRunner
+                     || (rr.Reached == worst.Reached &&
+                         (rr.Reached ? rr.HoursToTarget > worst.HoursToTarget : rr.TPeakC < worst.TPeakC));
+                 if (worse) { worst = rr; where = segs[i].Name; }
++                if (rr.LossTableExceeded) rampOverTable.Add((segs[i].Name, rr));
+             }
+             // ⚠ 这里**故意不写 else**：n < 1 在 RunOnce 入口就被挡掉（「段数不能为 0」），
+             //   所以 n >= 1 ⇒ 循环至少跑一轮 ⇒ worst 必非 null。写个 else 就是一段
+@@ -2369,8 +2543,10 @@ public static class LineRunner
+             //   ① 在必备名单里，缺了 AllOk 直接为 false 并在 Failed 里报「判据缺席」。
+             // ★ R20（用户 2026-09-08）：判据 ① 改闭式（见下面「① 升温」那条），这条集总升温用时**降为参考量**——
+             //   它仍是有用的对照（含法兰质量与自热），但硬判据只有一条、不许两处来源。
++            // 2026-09-15 Opus 5（审查意见 minor：原先超界标记靠「表上最后一条恰好是用时」，中间插一条判据就静默跳过）：留住这条的引用直接改。
++            ConstraintOut? ckHours = null;
+             if (worst is not null)
+-                checks.Add(new ConstraintOut
++                checks.Add(ckHours = new ConstraintOut
+                 {
+                     Name = LineResult.Key.RampHours, Unit = "h", Kind = CheckKind.Reference,
+                     Actual = worst.Reached ? worst.HoursToTarget : double.NaN,
+@@ -2394,6 +2570,24 @@ public static class LineRunner
+                         // R48 审查第 4 条（2026-09-14，Opus 5）：段电流与法兰焦耳热取本次稳态 ⇒ 空管时标明随工况变
+                         + StateDependentTag(c)
+                 });
++            // R48（2026-09-15，Opus 5）：散热表超界 ⇒ 判不了（原值只供诊断）
++            if (rampOverTable.Count > 0)
++            {
++                // 有段超界却没有这条可标 ⇒ 程序错（worst 必非 null，见上面那段说明），当场炸，不静默跳过
++                var ckR = ckHours ?? throw new InvalidOperationException("集总升温散热表超界，却没有「升温到位用时」这条可标判不了 —— 程序错");
++                // 界面上的叫法：参考温度在整线里就是本段控温点
++                static string Probe(RampTableProbe w) => w switch
++                {
++                    RampTableProbe.Start => "升温起点", RampTableProbe.Peak => "升温达到的最高温",
++                    RampTableProbe.Reference => "本段控温点", _ => "升温目标",
++                };
++                string who = string.Join("；", rampOverTable.Select(o =>
++                    $"{o.Seg}：{string.Join("、", o.R.LossTableOut.Select(x => $"{Probe(x.Probe)} {x.TempC:0.#} °C"))} 不在 {o.R.LossTableLoC:0.#}～{o.R.LossTableHiC:0.#} °C 内"));
++                ckR.Undetermined = true; ckR.Ok = false;
++                ckR.Note = "★ **无法判定**：升温积分要查的管表面散热表没覆盖到这些温度（" + who + "），表外那部分散热只能按表端点的值算，用时不是这个设计的真值。"
++                         + "原值仅供诊断，不得引用。请核对环境温度、升温目标与各段控温点（控温点与升温目标都要高于环境温度）。"
++                         + "　（原注：" + ckR.Note + "）";
++            }
+         }
+ 
+         // ── ② 硬安全线：法兰温度 ≤ 管温（用户原话）。**按温度直接判，不用 Φ 代理**。
+diff --git a/Pt_Optimize/Core/Numerics.cs b/Pt_Optimize/Core/Numerics.cs
+index d000f03..e3a8eb5 100644
+--- a/Pt_Optimize/Core/Numerics.cs
++++ b/Pt_Optimize/Core/Numerics.cs
+@@ -54,6 +54,18 @@ public sealed class LossTable
+         return new LossTable((double[])a._x.Clone(), y, a._lo, a._hi);
+     }
+ 
++    /// <summary>
++    /// ★ R48（2026-09-15，Opus 5；常驻数值把关人第十四轮）：表覆盖的温度区间与节点数 —— <see cref="Eval"/>／<see cref="Slope"/> 超出区间**静默钳住**，
++    /// 用这张表的求解器解完要自己拿解出的温度对一下（<see cref="Covers"/>），超界就把用它的判据判不了或写进结果。
++    /// </summary>
++    public double LoC => _lo;
++    /// <summary>表的温度上限 °C（见 <see cref="LoC"/>）。</summary>
++    public double HiC => _hi;
++    /// <summary>表的节点数。</summary>
++    public int Nodes => _x.Length;
++    /// <summary>温度 <paramref name="t"/> 在不在表覆盖的闭区间里（NaN 不算在）。</summary>
++    public bool Covers(double t) => t >= _lo && t <= _hi;
++
+     public double Eval(double t) => _spline.Interpolate(Math.Clamp(t, _lo, _hi));
+ 
+     /// <summary>解析一阶导数（样条微分），用于线性化的切线斜率。</summary>
+diff --git a/Pt_Optimize/Core/RampScreen.cs b/Pt_Optimize/Core/RampScreen.cs
+index f4d2da9..606d5cb 100644
+--- a/Pt_Optimize/Core/RampScreen.cs
++++ b/Pt_Optimize/Core/RampScreen.cs
+@@ -42,12 +42,21 @@ public static class RampScreen
+         double Margin,
+         double MassG)
+     {
++        /// <summary>
++        /// ★ R48（2026-09-15，Opus 5；常驻数值把关人第十四轮「其余散热表超界检测」）：查表用到的温度（只有目标温度一个）不在散热表区间里 ⇒ 判不了。
++        /// 表是 [环境, 目标 + 300]，只在目标温度处取值与取斜率 ⇒ **上限按构造不会超**；能超的只有下限（目标温度低于环境温度，表把它钳到环境）。
++        /// 检测照样做：以后有人在别的温度上查这张表，这一位就会说话。
++        /// </summary>
++        public bool LossTableExceeded { get; init; }
++
+         /// <summary>与界面表格里那一列完全一致的判定文字 —— 阈值只存在这一处。</summary>
+-        public string Verdict => Margin > MarginThin ? "✓"
++        public string Verdict => LossTableExceeded ? "✗ 判不了（目标温度不在散热表范围内）"
++                               : Margin > MarginThin ? "✓"
+                                : Margin > MarginHardMin ? "⚠ 裕度薄"
+                                : "✗ 越热稳定极限";
+ 
+-        public bool Ok => Margin > MarginHardMin;
++        /// <summary>判不了不算过（R48 2026-09-15 Opus 5：加了散热表超界这一条）。</summary>
++        public bool Ok => !LossTableExceeded && Margin > MarginHardMin;
+     }
+ 
+     /// <summary>
+@@ -83,7 +92,8 @@ public static class RampScreen
+ 
+         double massG = aMm2 * q.TubeLengthMm * Materials.PtDensity * 1e-6;
+ 
+-        return new Point(insulMm, wallMm, lossW, iA, jA, iStab, margin, massG);
++        // R48（2026-09-15，Opus 5）：查表用到的温度只有 tTargetC（Eval 与 Slope 都在它上）—— 核它在不在表里
++        return new Point(insulMm, wallMm, lossW, iA, jA, iStab, margin, massG) { LossTableExceeded = !tab.Covers(tTargetC) };
+     }
+ 
+     /// <summary>
+@@ -105,8 +115,12 @@ public static class RampScreen
+             Limit = MarginHardMin,
+             LessIsBetter = false,
+             Ok = p.Ok,
++            Undetermined = p.LossTableExceeded,                    // R48（2026-09-15，Opus 5）
+             Where = $"保温 {insulMm:0.0} / 壁厚 {wallMm:0.00}",
+-            Note = $"热稳定裕度 = I_stab/I = {p.IStabA:0}/{p.CurrentA:0}。"
++            Note = (p.LossTableExceeded
++                    ? $"★ **无法判定**：目标温度 {tTargetC:0} °C 不在管表面散热表范围内（表从环境温度 {baseInputs.TAmbC:0} °C 起），散热被钳住，下面的裕度不可引用。"
++                    : "")
++                 + $"热稳定裕度 = I_stab/I = {p.IStabA:0}/{p.CurrentA:0}。"
+                  + (p.Margin <= MarginHardMin
+                     ? "★★ **越过热稳定极限** ⇒ 该工作点的稳态解本就不存在，升温到不了目标。"
+                       + "　【下一步】先降**目标温度**或换牌号 —— 见下面那条：加保温未必有用。"
+diff --git a/Pt_Optimize/Core/RampSolver.cs b/Pt_Optimize/Core/RampSolver.cs
+index bb0e297..b2be94d 100644
+--- a/Pt_Optimize/Core/RampSolver.cs
++++ b/Pt_Optimize/Core/RampSolver.cs
+@@ -1,4 +1,5 @@
+ using System;
++using System.Linq;
+ 
+ namespace PtOptimize.Core;
+ 
+@@ -35,6 +36,43 @@ public sealed class RampResult
+     public bool StabilityLimited;
+     public double CapMetalJPerK, CapInsulJPerK;   // 热容分解，便于判断谁主导
+     public string Note = "";
++
++    /// <summary>
++    /// ★ R48（2026-09-15，Opus 5；常驻数值把关人第十四轮「其余散热表超界检测」）：本次管散热表覆盖的温度区间 °C
++    /// （下限 = 环境温度；上限 = 目标、参考温度、起点三者之最 + 200 K，见 <see cref="RampSolver.Solve"/> 里建表处的注释）。
++    /// </summary>
++    public double LossTableLoC = double.NaN, LossTableHiC = double.NaN;
++    /// <summary>
++    /// 本次积分**实际查表用到的温度**里有超出表区间、而且钳住的方向会让结果偏乐观或说不清的 ⇒ <see cref="Reached"/>／<see cref="HoursToTarget"/> 不可引用。
++    /// 查表用到的温度 = 起始温度、积分达到的最高温 <see cref="TPeakC"/>、参考温度（法兰散热按它缩放）、目标温度（热稳定极限的斜率）。
++    /// ★ 2026-09-15 Opus 5（审查意见 major：环境温度 35 °C 时起点 25 °C 被误判超界）：积分走过的温度（起始温度、积分最高温）**只查上限**，
++    ///   低于表下限（= 环境温度）不算超界 —— 推导见 <see cref="RampSolver.Solve"/> 里那段注释，不依赖任何实测数据；
++    ///   参考温度与目标温度两头都查（它们进的是比值与斜率，钳住的方向说不清）。
++    /// ★ 2026-09-15 Opus 5（审查意见 minor）：表上限改为三者之最 + 200 K 之后，上限那头按构造只剩「积分最高温冲过 最高已知温度 + 200 K」才会超
++    ///   （积分一步 2 s，要升温速率超过 100 K/s 才冲得过去，检测照留）；能触发的主要是下限那头：参考温度（整线里 = 本段控温点）或目标温度低于环境温度，以及 NaN。
++    /// 用它的判据（LineRunner 的集总升温用时参考量）超界即判不了。
++    /// </summary>
++    public bool LossTableExceeded;
++    /// <summary>
++    /// ★ 2026-09-15 Opus 5（审查意见 minor：原先只有一句带内部参数名「参考温度」的文字，整线附注照抄进界面）：超界的查表温度，结构化 —— 哪一个、多少 °C。
++    /// 调用方按自己的叫法生成说明文字（整线里参考温度就是本段控温点），不从 <see cref="LossTableNote"/> 里抠字。空 = 没超界。
++    /// </summary>
++    public (RampTableProbe Probe, double TempC)[] LossTableOut = Array.Empty<(RampTableProbe, double)>();
++    /// <summary>超界时的一句通用说明（空 = 没超界）；给没有自己叫法的调用方用。</summary>
++    public string LossTableNote = "";
++}
++
++/// <summary>R48（2026-09-15，Opus 5）：集总升温积分里查管散热表用到的四个温度（<see cref="RampResult.LossTableOut"/> 标明是哪一个超界）。</summary>
++public enum RampTableProbe
++{
++    /// <summary>升温起点（<c>fromC</c>）。</summary>
++    Start,
++    /// <summary>积分达到的最高温（<see cref="RampResult.TPeakC"/>）。</summary>
++    Peak,
++    /// <summary>参考工况温度（<c>tRefC</c>，法兰散热按它缩放；整线里 = 本段控温点）。</summary>
++    Reference,
++    /// <summary>升温目标（<c>targetC</c>，热稳定极限取这里的斜率）。</summary>
++    Target,
+ }
+ 
+ public static class RampSolver
+@@ -70,7 +108,16 @@ public static class RampSolver
+ 
+         // CylinderLoss 内部要迭代求外表面温度，积分里逐步调用太慢（下面二分会调数十万次），
+         // 与 SegmentSolver 一样先打成样条表，顺带拿到解析斜率供 I_stab 用。
+-        var lossTab = new LossTable(p.TAmbC, targetC + 200, 60,
++        // ★ R48（2026-09-15，Opus 5；审查意见 minor「升温目标比控温点低 200 K 以上是界面可填的合法输入，原上限 目标 + 200 K 让参考温度出表，这条参考量白丢」）：
++        //   上限由「目标 + 200 K」改为「查表会用到的已知温度（目标、参考温度、起点）里最高的 + 200 K」。
++        //   200 K 是原式给目标留的余量，原样沿用到三者之最（规则由查表用到哪些温度推出，不看任何实测数据）。
++        //   数值变化范围（如实写）：参考温度与起点都不高于目标 ⇒ 三者之最 = 目标 ⇒ 表逐位不变（生产整线：控温点 ≤ 升温目标 1150 °C、起点 25 °C 就是这种）；
++        //   参考温度或起点高于目标 ⇒ 表变宽、60 个样条节点的间距变大 ⇒ 数会变：原先超出 目标 + 200 K 的部分是被钳住算错的，现在按真值查；
++        //   在 目标～目标 + 200 K 之间的，只有插值级的差。NaN 不参与取最大（比较为假），照旧由下面的超界检测报出来。
++        double tHiKnown = targetC;
++        if (tRefC > tHiKnown) tHiKnown = tRefC;
++        if (fromC > tHiKnown) tHiKnown = fromC;
++        var lossTab = new LossTable(p.TAmbC, tHiKnown + 200, 60,
+             tC => Insulation.CylinderLoss(tC, p.TAmbC, rOut, p.Layers, eps,
+                                           p.Posture == Orientation.Vertical, L,
+                                           p.LossScale).QPerLength);
+@@ -168,6 +215,37 @@ public static class RampSolver
+         res.TPeakC = tPeak;
+         if (!res.Reached) res.HoursToTarget = double.NaN;
+ 
++        // ★ R48（2026-09-15，Opus 5）：解完核一下查表用到的温度在不在表里（LossTable.Eval／Slope 超界静默钳住）。
++        //   四个温度就是上面真正喂给 LossPerM／lossTab.Slope 的那几个：起点、积分最高温、参考温度、目标温度。
++        // ★ 2026-09-15 Opus 5（审查意见 major）：**积分走过的温度只查上限**。原先四个温度两头都查 ⇒ 界面「环境温度」填 35 °C 时，
++        //   写死的起点 25 °C 低于表下限（= 环境温度）⇒ 每一段都判超界 ⇒ 每个设计的集总升温用时都「无法判定」，是误报。
++        //   推导（不依赖任何实测数据，只用模型本身的性质）：
++        //     ① 表下限 = 环境温度 T_amb（上面 new LossTable(p.TAmbC, …)）；
++        //     ② 表面散热 q(T) 对温度单调不减（温差越大散热越多，CylinderLoss 的对流、辐射、导热各项都是），故 T < T_amb 时 q(T) ≤ q(T_amb)；
++        //     ③ 积分里散热只以两种形式进净功率：管 −LossPerM(t)·L、法兰 −flangeLossRefW·LossPerM(t)/lossRef（lossRef 与 t 无关、为正）——
++        //        钳住 ⇒ 用 q(T_amb) 代替 q(t) ⇒ 两项都只会**多扣**，净功率只会偏小；发热项 I²R(t) 与热容不查表，不受影响；
++        //     ④ 净功率偏小 ⇒ 升温更慢 ⇒ 算出的用时只会偏长、「限时内到得了」只会被误判成到不了，不会反过来。
++        //   ⇒ 低于表下限的钳住是**偏保守**的，不会把不能用的说成能用，不需要判不了；超上限则相反（少扣散热、偏乐观），照判。
++        //   参考温度（进比值 LossPerM(t)/lossRef 的分母）与目标温度（进热稳定极限的斜率）钳住后方向说不清，仍两头都查。
++        res.LossTableLoC = lossTab.LoC; res.LossTableHiC = lossTab.HiC;
++        // 2026-09-15 Opus 5：超界的温度记成结构化列表（哪一个、多少度），说明文字由调用方按自己的叫法生成；这里只留一句通用的
++        var outOfTable = new System.Collections.Generic.List<(RampTableProbe Probe, double TempC)>();
++        foreach (var (what, tq) in new[] { (RampTableProbe.Start, fromC), (RampTableProbe.Peak, tPeak) })
++            if (!(tq <= lossTab.HiC)) outOfTable.Add((what, tq));      // NaN 也算超界
++        foreach (var (what, tq) in new[] { (RampTableProbe.Reference, tRefC), (RampTableProbe.Target, targetC) })
++            if (!lossTab.Covers(tq)) outOfTable.Add((what, tq));
++        if (outOfTable.Count > 0)
++        {
++            res.LossTableExceeded = true;
++            res.LossTableOut = outOfTable.ToArray();
++            string Name(RampTableProbe w) => w switch
++            {
++                RampTableProbe.Start => "起始温度", RampTableProbe.Peak => "积分最高温", RampTableProbe.Reference => "参考工况温度", _ => "目标温度",
++            };
++            res.LossTableNote = $"{string.Join("、", outOfTable.Select(o => $"{Name(o.Probe)} {o.TempC:0.#} °C"))} 不在管表面散热表 {lossTab.LoC:0.#}～{lossTab.HiC:0.#} °C 内，"
++                              + "表外那部分散热只能按表端点的值算";
++        }
++
+         double rT = Materials.PtResistivity(targetC) * L / area;
+         res.PowerAtTargetW = current * current * rT;
+         res.LossAtTargetW = LossPerM(targetC) * L + NetFlangePairW(targetC, current);
+diff --git a/Pt_Optimize/Core/SegmentSolver.cs b/Pt_Optimize/Core/SegmentSolver.cs
+index 23d348a..15c3648 100644
+--- a/Pt_Optimize/Core/SegmentSolver.cs
++++ b/Pt_Optimize/Core/SegmentSolver.cs
+@@ -53,6 +53,18 @@ public sealed class SolveResult
+ 
+     /// <summary>R48（2026-09-14，Opus 5）：求解**成功**时的工况说明（<see cref="Message"/> 留给失败原因）。空 = 无说明。</summary>
+     public string Note = "";
++
++    /// <summary>
++    /// ★ R48（2026-09-15，Opus 5；常驻数值把关人第十四轮「其余散热表超界检测」）：管表面散热表的温度上限 °C
++    /// （<see cref="SegmentSolver.TubeLossTableHiC"/>：设定 + 400 K，带玻璃时设定与玻璃进口取大）。
++    /// </summary>
++    public double LossTableHiC = double.NaN;
++    /// <summary>
++    /// 解出的管最高温 <see cref="TMaxC"/> 超出了 <see cref="LossTableHiC"/> ⇒ 超出的那段散热被钳在上限处（LossTable.Eval 静默钳住），管算偏热、负反馈被削弱，
++    /// 这张管温场不是这个设计的场。求解本身照常返回（<see cref="Ok"/> 不动 —— 不许把熔化方向这类信息吞掉），原因追加进 <see cref="Note"/>；
++    /// 用它的整线判据由 LineRunner.MarkUndeterminedIfTubeLossTableExceeded 判不了。典型触发：实测电流模式下控温点填得比实际低很多。
++    /// </summary>
++    public bool LossTableExceeded;
+ }
+ 
+ public static class SegmentSolver
+@@ -163,6 +175,14 @@ public static class SegmentSolver
+         res.TMinC = double.MaxValue; res.TMaxC = double.MinValue;
+         for (int i = 0; i < n; i++)
+         { res.TMinC = Math.Min(res.TMinC, tm[i]); res.TMaxC = Math.Max(res.TMaxC, tm[i]); }
++        // ★ R48（2026-09-15，Opus 5）：管最高温 vs 管散热表上限（超界静默钳住）—— 结果里明写，Ok 不动（见 SolveResult.LossTableExceeded）。
++        res.LossTableHiC = TubeLossTableHiC(p);
++        if (res.TMaxC > res.LossTableHiC)
++        {
++            res.LossTableExceeded = true;
++            res.Note = (res.Note.Length > 0 ? res.Note + "；" : "")
++                     + $"管最高温 {res.TMaxC:0} °C 超出管表面散热表上限 {res.LossTableHiC:0} °C（控温点或玻璃进口取大 + 400 K），超出部分散热被钳住，本段管温不可信";
++        }
+         res.DevitMarginMinK = res.TMinC - p.TLiquidusC;
+         res.DevitRisk = res.DevitMarginMinK < p.DevitMarginK;
+         // ★ R48 审查第 6 条（2026-09-14，Opus 5）：析晶是玻璃的事 —— 空管没有玻璃，析晶裕度不适用（记 NaN，风险位 false，原因在 Note）。
+@@ -256,11 +276,18 @@ public static class SegmentSolver
+     ///   带玻璃的式子一字不动（逐位不变）。
+     /// </remarks>
+     private static LossTable TubeLossTable(DesignInputs p, double rOut, double L)
+-        => new(p.TAmbC, (IsEmptyTube(p) ? p.TSetC : Math.Max(p.TSetC, p.TGlassInC)) + 400, 60,
++        => new(p.TAmbC, TubeLossTableHiC(p), 60,
+                t => Insulation.CylinderLoss(t, p.TAmbC, rOut, p.Layers,
+                         EffectiveEmissivity(p), p.Posture == Orientation.Vertical, L,
+                         p.LossScale).QPerLength);
+ 
++    /// <summary>
++    /// ★ R48（2026-09-15，Opus 5）：管表面散热表的温度上限 °C —— 自 <see cref="TubeLossTable"/> 原样提出（式子逐字未改），
++    /// 解完拿它核管最高温（<see cref="SolveResult.LossTableExceeded"/>）。端部渐变保温的那几张表 TSetC／TGlassInC 与主表相同，上限也相同。
++    /// </summary>
++    public static double TubeLossTableHiC(DesignInputs p)
++        => (IsEmptyTube(p) ? p.TSetC : Math.Max(p.TSetC, p.TGlassInC)) + 400;
++
+     /// <summary>Brent 法搜索电流，使管中点金属温度 = 设定值。</summary>
+     private static double FindCurrent(DesignInputs p, double wall, double area,
+                                       out double[] tm, out double[] tg)
+diff --git a/Pt_Optimize/Core/ShellMesh.cs b/Pt_Optimize/Core/ShellMesh.cs
+index 3be1ac8..7d32664 100644
+--- a/Pt_Optimize/Core/ShellMesh.cs
++++ b/Pt_Optimize/Core/ShellMesh.cs
+@@ -96,6 +96,30 @@ public sealed class ShellMesh
+     /// </summary>
+     public bool[] ClampCell = System.Array.Empty<bool>();
+ 
++    /// <summary>
++    /// ★★ R48（2026-09-15，Opus 5；常驻数值把关人第十三、十四轮）：**压接段盖到了管孔**（退化几何：没有舌片、或舌片比压接长还短，
++    /// 形心在压接段内的格里有带管孔标签的格）。为 true 时 <see cref="ClampCell"/> 不填、退回只钉外圈，这块板的场没有物理意义。
++    /// 由 <see cref="FlangeMesher.BuildFromField"/> 在要求整面接触时判定并填写（显式 clampFullFace: false 的老口径不判，恒 false）。
++    /// 下游读这一位（LineRunner 把吃法兰场的判据判不了），**不许**再去 <see cref="ClampAnchorNote"/> 里按「⚠」找字 ——
++    /// 那份文字只是给人看的记录，改一个标点门就瞎（2026-09-14 那版就是按「；」切分找「⚠」）。
++    /// </summary>
++    public bool ClampCoversHole;
++    /// <summary>
++    /// R48（2026-09-15，Opus 5）：**压接段伸进了圆盘**（单舌：舌尖 + 压接长 ≥ 舌盘分界 x）—— 舌片比压接长还短，这块板几何上不成立。
++    /// 与 <see cref="ClampCoversHole"/> 同样由生成器判定、下游读位；配套两个数给说明文字用：压接段内边 x 与舌盘分界 x（mm，没有就是 NaN）。
++    /// </summary>
++    public bool ClampIntoDisc;
++    public double ClampEndXMm = double.NaN, ClampTangentXMm = double.NaN;
++    /// <summary>R48（2026-09-15，Opus 5）：生成器用的压接长 mm（给说明文字用；非 BuildFromField 生成的网格为 NaN）。</summary>
++    public double ClampLenMm = double.NaN;
++
++    /// <summary>
++    /// ★★ R48（2026-09-15，Opus 5；数值把关人第十三轮「配方要能指回出处」）：这张网格**实际生效**的判定网格配方（结构化指纹）。
++    /// <see cref="FlangeMesher.BuildFromField"/>（因而 <see cref="FlangeMesher.Build"/>）建完网格后按网格本身量出来填写，不是抄参数；
++    /// 其他生成器留 null。门拿 <see cref="MeshRecipe.Rule"/> 与 <see cref="FlangeMesher.ProductionMeshRule"/> 比。
++    /// </summary>
++    public MeshRecipe? Recipe;
++
+     public int CellCount => Cells.Count;
+     public double TotalArea => Area.Sum();
+     public double VolumeMm3 => Enumerable.Range(0, CellCount).Sum(i => Area[i] * Thickness[i]);
+@@ -336,6 +360,53 @@ public sealed class ShellMesh
+     }
+ }
+ 
++/// <summary>
++/// ★★ R48（2026-09-15，Opus 5；常驻数值把关人第十三、十四轮）：一张网格**实际生效**的判定网格配方 —— 结构化指纹，不用字符串协议。
++///
++/// 为什么要它：证据文件与门此前只能靠「源码里有没有写 clampFullFace」「ClampAnchorNote 里有没有『铺细步』」这类字符串判断口径，
++/// 生成器里一个退回分支（压接段盖到管孔 ⇒ 不填整面接触）或一个没落成节点的锚点，字符串门都看不见。
++/// ★ 2026-09-15 Opus 5（审查意见 minor：原注释说「每个量都是从网格本身量的」，不实）—— 分两类，如实写：
++/// 【从建好的网格上量的】
++///   · <see cref="ClampFullFace"/>：<see cref="ShellMesh.ClampCell"/> 真的填了（长度 = 单元数、至少一格为真）；热解配方的同名项用同一个定义（ShellThermal.RecipeFor），
++///     热解里另由「真的并进压接格的格数 &gt; 0」量一遍；
++///   · <see cref="ClampCoversHole"/>：压接段盖到管孔、整面接触退回只钉外圈（<see cref="ShellMesh.ClampCoversHole"/>：带管孔标签的边界面所在格的形心落在压接段内）；
++///   · <see cref="ClampAnchorOnNode"/>：每个压接边界 x（单舌一个、双舌两个）都在建好的 x 节点里（容差 1e-9 mm）。
++/// 【生效参数的记录（不是从节点间距量的）】
++///   · <see cref="ClampBandMm"/>：压接边界落成节点后加进细分带的那个单侧宽度 mm（有一个边界没落成节点、或显式不铺 = 0）；<see cref="ClampBandPerHFine"/> = 它 ÷ hFine（取 9 位小数，免得 3·h÷h 的浮点尾巴让规则比不上）；
++///     没从节点间距量：分级轴（GradedAxisCentered）在带的入口按增长率收步长、锚点那一格允许拉长到想要步长的 1.25 倍，带入口与锚点处的格可以比 hFine 长，
++///     「步长 ≤ hFine 的范围」量出来与参数对不齐，要比就得临时编一个容差 —— 那是看了数据再定门槛，不做；
++///   · <see cref="HFineMm"/>：细步参数 mm；
++///   · <see cref="HoleTagBandMm"/>：孔边判定带半宽 mm（生效值：传 ≤ 0 时是 <see cref="FlangeMesher.HoleTagBandMm"/>）。
++/// </summary>
++public sealed class MeshRecipe
++{
++    public bool ClampFullFace { get; init; }
++    public bool ClampCoversHole { get; init; }
++    public bool ClampAnchorOnNode { get; init; }
++    public double ClampBandMm { get; init; } = double.NaN;
++    public double HFineMm { get; init; } = double.NaN;
++    public double ClampBandPerHFine { get; init; } = double.NaN;
++    public double HoleTagBandMm { get; init; } = double.NaN;
++
++    /// <summary>与网格尺寸无关的那部分（规则）—— 生产配方常量就是这个类型，门用 == 比。</summary>
++    public MeshRecipeRule Rule => new(ClampFullFace, ClampAnchorOnNode, ClampBandPerHFine, HoleTagBandMm);
++
++    /// <summary>一行文字（证据文件头与探针打印用）。</summary>
++    public string Describe()
++        => $"压接整面接触 {(ClampFullFace ? "生效" : "未生效")}{(ClampCoversHole ? "（压接段盖到管孔，退回只钉外圈）" : "")}"
++         + $"；压接边界落成节点 {(ClampAnchorOnNode ? "是" : "否")}"
++         + $"；压接细带单侧 {ClampBandMm:0.###} mm（= {ClampBandPerHFine:0.###} × hFine {HFineMm:0.###} mm）"
++         + $"；孔边判定带半宽 {HoleTagBandMm:0.###} mm";
++}
++
++/// <summary>R48（2026-09-15，Opus 5）：判定网格配方里与网格尺寸无关的规则部分（<see cref="MeshRecipe.Rule"/>）。</summary>
++public readonly record struct MeshRecipeRule(bool ClampFullFace, bool ClampAnchorOnNode, double ClampBandPerHFine, double HoleTagBandMm)
++{
++    public string Describe()
++        => $"压接整面接触 {(ClampFullFace ? "开" : "关")}；压接边界落成节点 {(ClampAnchorOnNode ? "是" : "否")}；"
++         + $"压接细带单侧 {ClampBandPerHFine:0.###} × hFine；孔边判定带半宽 {HoleTagBandMm:0.###} mm";
++}
++
+ /// <summary>
+ /// 厚度场 t(x, z) —— 由 <c>Pt_Optimize.Geom thickness</c> 从 .3dm 逐点射线量出。
+ ///
+@@ -653,6 +724,15 @@ public static class FlangeMesher
+     public static double ResolveClampBandMm(double clampBandMm, double hFine)
+         => double.IsNaN(clampBandMm) ? ClampBandPerHFine * hFine : clampBandMm;
+ 
++    /// <summary>
++    /// ★★ R48 生产网格配方常量（2026-09-15，Opus 5；数值把关人第十三轮）：生产链上每一片网格的 <see cref="MeshRecipe.Rule"/> 都必须等于它。
++    /// 四项就是配方声明（见 <see cref="BuildFromField"/> 的注释）里与网格尺寸无关的规则：③ 压接整面接触生效、① 压接边界落成节点、
++    /// ④ 压接细带单侧 <see cref="ClampBandPerHFine"/> × hFine、孔边判定带半宽 <see cref="HoleTagBandMm"/>。
++    /// 门（R48RecipeFingerprintTests）拿 LineRunner.Run 算出来的每片网格与它比 —— 行为门，取代「LineRunner 源码里没写 clampFullFace」那道字符串门的主证据地位。
++    /// </summary>
++    public static readonly MeshRecipeRule ProductionMeshRule = new(
++        ClampFullFace: true, ClampAnchorOnNode: true, ClampBandPerHFine: ClampBandPerHFine, HoleTagBandMm: HoleTagBandMm);
++
+     /// <summary>
+     /// ★★ R47（2026-09-13）：**解析板的栅格化** —— 生产路径也走它（<see cref="Build"/> = 栅格化 + <see cref="BuildFromField"/>）。
+     /// 节点 t = Inside ? ThicknessAt : 0，图幅 = 精确材料包络 ± <paramref name="marginMm"/>，包络四个数照解析板填（与步长、留白无关）。
+@@ -898,6 +978,9 @@ public static class FlangeMesher
+     {
+         var m = new ShellMesh();
+         string clampNote = "";
++        // R48 配方指纹（2026-09-15 Opus 5）：压接边界候选 x 与实际铺下的细带单侧宽度（多个边界取最小；没有候选 = 没铺）
++        double[] clampCand = Array.Empty<double>();
++        double bandLaid = double.PositiveInfinity;
+         // ★ R47 A（2026-09-13）：轴的范围取**真实材料包络**，不再取图幅 f.X0/f.Z0（那含 1～2 mm 留白，
+         //   舌片直边落在格子中间 ⇒ 面积折了面长没折 ⇒ 图纸路径抽热多算 23 W，见 ThicknessField.XMinMaterial 的注释）。
+         //   没有精确包络时退回栅格 t>0 的包络，ThicknessField.Warning 里会说。
+@@ -938,14 +1021,15 @@ public static class FlangeMesher
+                 : new[] { xMin + clampLenMm };
+             var have = new List<double>(xAnchors ?? Array.Empty<double>());
+             var notes = new List<string>();
++            clampCand = cand;
+             foreach (double ca in cand)
+             {
+                 if (!(clampLenMm > 0) || double.IsNaN(ca) || ca <= xMin + 1e-9 || ca >= xMax - 1e-9)
+-                { notes.Add($"压接边界 x = {ca:0.###} 不在材料范围内，没加"); continue; }
++                { notes.Add($"压接边界 x = {ca:0.###} 不在材料范围内，没加"); bandLaid = 0; continue; }
+                 double dTip = Math.Min(ca - xMin, xMax - ca);
+                 double dAnc = have.Count == 0 ? double.PositiveInfinity : have.Min(v => Math.Abs(v - ca));
+                 if (dTip < hMin - 1e-9 || dAnc < hMin - 1e-9)
+-                { notes.Add($"压接边界 x = {ca:0.###} 离{(dTip < dAnc ? "端点" : "已有锚点")}只有 {Math.Min(dTip, dAnc):0.###} mm，不足一个最细格 {hMin:0.###}，没加（被钉住长度仍按最近节点取）"); continue; }
++                { notes.Add($"压接边界 x = {ca:0.###} 离{(dTip < dAnc ? "端点" : "已有锚点")}只有 {Math.Min(dTip, dAnc):0.###} mm，不足一个最细格 {hMin:0.###}，没加（被钉住长度仍按最近节点取）"); bandLaid = 0; continue; }
+                 have.Add(ca);
+                 notes.Add($"压接边界 x = {ca:0.###} 已落成节点");
+                 // ★ R48 生产配方 ④（2026-09-14，Opus 5；数值把关人第八轮提的细带、第十轮定的自相似）：压接边界两侧各 band 铺细步 hFine。
+@@ -959,12 +1043,18 @@ public static class FlangeMesher
+                     xBands.Add(new Band(ca - band, ca + band, hFine));
+                     notes.Add($"压接边界两侧各 {band:0.###} mm 铺细步 {hFine:0.###} mm");
+                 }
++                // R48 配方指纹（2026-09-15 Opus 5）：实际铺下的细带单侧宽度 —— 多个压接边界取最小（有一个没铺就是 0）
++                bandLaid = Math.Min(bandLaid, Math.Max(0, band));
+             }
+             // 几何退化：压接段伸进圆盘（压接长 ≥ 舌片自由段）⇒ 下面的判定会把圆盘边界面也标成压接面。原有的毛病，与锚点无关；先记下，不静默。
+             var tan = (xAnchors ?? Array.Empty<double>()).Where(v => v < 0).ToArray();   // 单舌：切点在管轴左侧，取离管轴最近的那个
+             if (!twoTabs && tan.Length > 0 && xMin + clampLenMm >= tan.Max() - 1e-9)
++            {
+                 // 2026-09-14 Opus 5 复审修：这句经 LineRunner 进界面输出框 ⇒ 改说人话（原文「圆盘边界面也会被标成压接面」是网格内部说法）。
++                // 2026-09-15 Opus 5：LineRunner 不再读这句文字，改读 ShellMesh.ClampIntoDisc 与两个 x（说明文字由 LineRunner.ClampIntoDiscText 按这三个量生成）。
+                 notes.Add($"⚠ 压接长 {clampLenMm:0.###} mm 伸进了圆盘（压接段到 x = {xMin + clampLenMm:0.###} mm，舌片与圆盘在 x = {tan.Max():0.###} mm 相接）：舌片比压接长还短，这块板几何上不成立");
++                m.ClampIntoDisc = true; m.ClampEndXMm = xMin + clampLenMm; m.ClampTangentXMm = tan.Max();
++            }
+             xAnchors = have;
+             clampNote = string.Join("；", notes);
+         }
+@@ -1037,12 +1127,31 @@ public static class FlangeMesher
+             int holeInClamp = m.Faces.Where(fc => fc.B < 0 && fc.Tag == ShellMesh.TagHole && cc[fc.A]).Select(fc => fc.A).Distinct().Count();
+             if (holeInClamp == 0) m.ClampCell = cc;
+             else
++            {
++                // R48（2026-09-15 Opus 5）：下游读这一位，不读下面这句文字
++                m.ClampCoversHole = true;
+                 clampNote += (clampNote.Length > 0 ? "；" : "")
+                            // 2026-09-14 Opus 5 复审修：这句经 LineRunner 进界面输出框 ⇒ 说人话，不写「整面接触」「外圈」「孔边格」这类网格内部说法
+                            //   （退回只钉外圈、段内孔边格数这两件事留在上面的代码注释里；孔边格数本身只作判定，不进文字）。
+                            + $"⚠ 压接长 {clampLenMm:0.###} mm 盖到了管孔：这块板没有足够长的舌片可供压接，本片电流与温度结果不可信";
++            }
+         }
+         m.ClampAnchorNote = clampNote;
++        m.ClampLenMm = clampLenMm;
++        // ★ R48 配方指纹（2026-09-15，Opus 5）：从建好的网格本身量 —— 整面接触看 ClampCell 真填了没有，锚点看压接边界 x 真在节点里没有。
++        bool anchorOnNode = clampCand.Length > 0
++                         && clampCand.All(ca => !double.IsNaN(ca) && xs.Any(x => Math.Abs(x - ca) <= 1e-9));
++        double bandMm = clampCand.Length == 0 || double.IsPositiveInfinity(bandLaid) ? 0.0 : bandLaid;
++        m.Recipe = new MeshRecipe
++        {
++            ClampFullFace = m.ClampCell.Length == m.CellCount && m.CellCount > 0 && m.ClampCell.Any(b => b),
++            ClampCoversHole = m.ClampCoversHole,
++            ClampAnchorOnNode = anchorOnNode,
++            ClampBandMm = bandMm,
++            HFineMm = hFine,
++            ClampBandPerHFine = hFine > 0 ? Math.Round(bandMm / hFine, 9) : double.NaN,
++            HoleTagBandMm = holeTagBandMm > 0 ? holeTagBandMm : HoleTagBandMm,
++        };
+         return m;
+     }
+ 
+diff --git a/Pt_Optimize/Core/ShellThermal.cs b/Pt_Optimize/Core/ShellThermal.cs
+index 149dc0c..ef0b494 100644
+--- a/Pt_Optimize/Core/ShellThermal.cs
++++ b/Pt_Optimize/Core/ShellThermal.cs
+@@ -174,14 +174,144 @@ public sealed class ShellThermalResult
+     /// <summary>步长判据的结论。⚠ 它**不**保证解到位，见 <see cref="ResidualW"/>。</summary>
+     public bool Converged;
+ 
++    /// <summary>
++    /// ★★ R48（2026-09-15，Opus 5；数值把关人第十三轮）：这次热解**实际生效**的热解配方（结构化指纹）。由 <see cref="ShellThermal.Solve"/> 填，
++    /// 门拿 <see cref="ThermalRecipe.Rule"/> 与 <see cref="ShellThermal.ProductionThermalRule"/> 比；证据文件头原样印 <see cref="ThermalRecipe.Describe"/>。
++    /// </summary>
++    public ThermalRecipe Recipe = new();
++
+     /// <summary>场里有金属越过铂熔点 ⇒ **该解不存在**，不管能量账闭合得多好。</summary>
+     public bool OverMelt => TMaxC > Materials.PtMeltC;
+     /// <summary>场里有金属越过电阻率拟合覆盖区（1500 °C）⇒ 数值是外推的，不可引用。</summary>
+     public bool OverFitRange => TMaxC > Materials.PtFitMaxC;
+ }
+ 
++/// <summary>R48（2026-09-15，Opus 5）：保温分界圆上的格子按份额混合两种保温的散热 —— 这一次实际怎样。</summary>
++public enum InsulBlendState
++{
++    /// <summary>保温按半径划、网格带厚度场 ⇒ 分界格按有料面积份额混合（生产配方 ②）。</summary>
++    On,
++    /// <summary>保温按半径划，但网格没有厚度场 ⇒ 分界格按形心整格归一边。</summary>
++    OffNoField,
++    /// <summary>保温按 x 划（指定分界或没拿到保温半径）⇒ 没有分界圆，谈不上混合。</summary>
++    NotByRadius,
++}
++
++/// <summary>R48（2026-09-15，Opus 5）：舌端（铜排压接）边界这一次按哪种方式施加。见 ShellThermal.Solve 里「舌端边界的三种模式」。</summary>
++public enum ClampBoundaryMode
++{
++    /// <summary>定温：压接格钉在夹持温度（BusbarClampTempC ≥ 0 且没给铜排热导）。</summary>
++    Fixed,
++    /// <summary>热导：铜排热导 G 按面积分摊到压接格（BusbarConductanceWPerK ≥ 0）。</summary>
++    Conductance,
++    /// <summary>自由：两样都没给，舌端是自然边界。</summary>
++    Free,
++}
++
++/// <summary>
++/// ★★ R48（2026-09-15，Opus 5；常驻数值把关人第十三、十四轮）：一次壳热解**实际生效**的热解配方（结构化指纹）。
++///   · <see cref="InsulBlend"/>：分界格混合开没开（见 <see cref="InsulBlendState"/>）；
++///   · <see cref="LossTableLoC"/>／<see cref="LossTableHiC"/>／<see cref="LossTableNodes"/>：表面散热表的温度区间与节点数；
++///   · <see cref="HoleFaceDirichlet"/>：管温施加在孔边界面上（true，生产）还是把孔边整格钉住（false，老口径）；
++///     <see cref="HoleFaceCount"/>：网格上的孔边界面数（管温从这些面进来）。
++///     ★ 2026-09-15 Opus 5（审查意见 minor：网格上一个孔边界面都没有时，原先记 HoleFaceDirichlet = true、规则等于生产，指纹却说「管温施加在孔边界面上」，
++///       而那时管温根本没施加 —— 图纸孔半径与管外半径差超过孔边判定带 3 mm 就会这样）：改为**没有孔边界面 ⇒ HoleFaceDirichlet = false**，
++///       规则另带 <see cref="ThermalRecipeRule.HasHoleBoundary"/>（孔边界面数 &gt; 0），生产常量要求为真 ⇒ 行为门与 LineResult.RecipeDeviations 直接看得见；
++///   · <see cref="ClampMode"/>：舌端边界定温／热导／自由（算例的选择，不进规则）；<see cref="ClampFullFace"/>：压接格取整面接触（网格 ClampCell）还是只取外圈。
++/// ★ 2026-09-15 Opus 5（审查意见 minor：原先 Solve 的「逐项核对」拿 RecipeFor 里的同一个式子互比，改坏生效分支照样通过）——
++///   <see cref="ShellThermal.Solve"/> 填的这一份改为**在求解里数出来**：分界格混合看保温分区循环里真按半径划、真因为没有厚度场跳过混合的格数，
++///   孔边看真钉住的孔边格数与孔边界面导度真有没有非零，压接整面看真并进压接格的格数，表看真建出来的那张表；
++///   <see cref="ShellThermal.RecipeFor"/> 只按输入**预判**（探针跑前写证据头用），Solve 拿两份比，对不上当场炸。
++///   <see cref="ClampMode"/> 仍按输入分支记（算例的选择，不进规则）。
++/// </summary>
++public sealed class ThermalRecipe
++{
++    public InsulBlendState InsulBlend { get; init; } = InsulBlendState.NotByRadius;
++    /// <summary>
++    /// 2026-09-15 Opus 5：本次**真按有料面积份额混合了**的分界格数（0 &lt; 份额 &lt; 1 的格）；−1 = 没解、只是预判（<see cref="ShellThermal.RecipeFor"/>）。
++    /// 与算例几何有关，不进规则、不进 <see cref="Describe"/>（整线汇总按描述去重）；门拿它确认混合真的发生了。
++    /// </summary>
++    public int InsulBlendCells { get; init; } = -1;
++    public double LossTableLoC { get; init; } = double.NaN;
++    public double LossTableHiC { get; init; } = double.NaN;
++    public int LossTableNodes { get; init; }
++    /// <summary>管温施加在孔边界面上（生产）。2026-09-15 Opus 5：网格上没有孔边界面时为 false（那时管温没有施加，谈不上施加在哪）。</summary>
++    public bool HoleFaceDirichlet { get; init; }
++    /// <summary>2026-09-15 Opus 5：网格上的孔边界面数（边界面且带管孔标签；Solve 在组装边界时数，RecipeFor 按同一个定义数）。与网格尺寸有关，不进规则；规则只看它是否 &gt; 0。</summary>
++    public int HoleFaceCount { get; init; }
++    public ClampBoundaryMode ClampMode { get; init; } = ClampBoundaryMode.Free;
++    public bool ClampFullFace { get; init; }
++
++    /// <summary>节点数是不是按 <see cref="ShellThermal.LossTableNodes"/> 这条规则（约 22 K 一个节点）定的。</summary>
++    public bool LossTableNodesByRule => LossTableNodes == ShellThermal.LossTableNodes(LossTableLoC, LossTableHiC);
++
++    /// <summary>与算例无关的规则部分 —— 生产配方常量就是这个类型，门用 == 比（舌端定温方式是算例的选择，不进规则）。</summary>
++    public ThermalRecipeRule Rule => new(InsulBlend, LossTableHiC, LossTableNodesByRule, HoleFaceCount > 0, HoleFaceDirichlet, ClampFullFace);
++
++    public string Describe()
++        => "分界格混合 " + (InsulBlend switch { InsulBlendState.On => "开", InsulBlendState.OffNoField => "关（网格没有厚度场）", _ => "不适用（保温按 x 划）" })
++         + $"；表面散热表 {LossTableLoC:0.#}～{LossTableHiC:0.#} °C、{LossTableNodes} 节点{(LossTableNodesByRule ? "" : "（不是按约 22 K 一个节点的规则）")}"
++         + $"；管温{(HoleFaceCount <= 0 ? "没有施加（网格上没有孔边界面）" : HoleFaceDirichlet ? "施加在孔边界面上" : "钉住孔边整格")}"
++         + "；舌端 " + (ClampMode switch { ClampBoundaryMode.Fixed => "定温", ClampBoundaryMode.Conductance => "按铜排热导", _ => "自由" })
++         + (ClampFullFace ? "（整个压接面）" : "（只取压接外缘一圈）");
++}
++
++/// <summary>R48（2026-09-15，Opus 5）：热解配方里与算例无关的规则部分（<see cref="ThermalRecipe.Rule"/>）。</summary>
++/// <remarks>2026-09-15 Opus 5：加 <see cref="HasHoleBoundary"/>（网格上有孔边界面，管温才施加得上）；有孔边界面时描述文字与原先逐字相同。</remarks>
++public readonly record struct ThermalRecipeRule(InsulBlendState InsulBlend, double LossTableHiC, bool LossTableNodesByRule, bool HasHoleBoundary, bool HoleFaceDirichlet, bool ClampFullFace)
++{
++    public string Describe()
++        => "分界格混合 " + (InsulBlend switch { InsulBlendState.On => "开", InsulBlendState.OffNoField => "关（网格没有厚度场）", _ => "不适用（保温按 x 划）" })
++         + $"；表面散热表上限 {LossTableHiC:0.#} °C、节点{(LossTableNodesByRule ? "按约 22 K 一个" : "不按规则")}"
++         + $"；管温{(!HasHoleBoundary ? "没有施加（网格上没有孔边界面）" : HoleFaceDirichlet ? "施加在孔边界面上" : "钉住孔边整格")}；压接格取{(ClampFullFace ? "整个压接面" : "压接外缘一圈")}";
++}
++
++/// <summary>R48（2026-09-15，Opus 5）：一次壳热解用的三张表面热流表（<see cref="ShellThermal.SurfaceLossTablesFor"/>）。没包保温的面与裸面是同一个实例。</summary>
++public sealed class SurfaceLossTables
++{
++    public LossTable Bare = null!, Disc = null!, Tab = null!;
++    public bool DiscInsulated, TabInsulated;
++}
++
+ public static class ShellThermal
+ {
++    /// <summary>
++    /// ★★ R48 生产热解配方常量（2026-09-15，Opus 5；数值把关人第十三轮）：生产链上每一片热解的 <see cref="ThermalRecipe.Rule"/> 都必须等于它 ——
++    /// 分界格混合开、散热表上限 = 铂熔点且节点按约 22 K 规则、网格上有孔边界面且管温施加在孔边界面上、压接格取整面接触。
++    /// （2026-09-15 Opus 5：加「有孔边界面」一项，见 <see cref="ThermalRecipe.HoleFaceCount"/>）
++    /// </summary>
++    public static readonly ThermalRecipeRule ProductionThermalRule = new(
++        InsulBlend: InsulBlendState.On, LossTableHiC: LossTableHiC, LossTableNodesByRule: true, HasHoleBoundary: true, HoleFaceDirichlet: true, ClampFullFace: true);
++
++    /// <summary>
++    /// ★ R48（2026-09-15，Opus 5）：三张法兰表面热流表（裸面／圆盘保温面／舌保温面）W/mm² —— 自 <see cref="Solve"/> 原样提出（算式逐字未改），
++    /// 门（R48ClampRecipeTests 门 d 推容差）拿同一份比新旧表，不手抄配方。<paramref name="hiC"/> NaN ⇒ <see cref="LossTableHiC"/>；
++    /// <paramref name="nodes"/> ≤ 0 ⇒ <see cref="LossTableNodes"/>(环境, 上限)。
++    /// </summary>
++    public static SurfaceLossTables SurfaceLossTablesFor(DesignInputs p, double tabInsulThickMm, double hiC = double.NaN, int nodes = 0)
++    {
++        double tHi = double.IsNaN(hiC) ? LossTableHiC : hiC;
++        int nLossTab = nodes > 0 ? nodes : LossTableNodes(p.TAmbC, tHi);
++        var bareTab = new LossTable(p.TAmbC, tHi, nLossTab,
++            x => DesignScreen.PlateFluxWPerM2(p, x, 0.0) * 1e-6);
++        // ★ 风速必须传进保温面（2026-08-28）：此前保温区走 airVelocity=0 的默认值，
++        //   于是同一片法兰上裸露区吹得到风、保温区吹不到 —— 而默认圆盘正是包着的那一半。（R48 起由唯一配方负责传）
++        bool discInsul = DesignScreen.FlangeFaceInsulated(p.FlangeInsulThickMm);
++        var insTab = discInsul
++            ? new LossTable(p.TAmbC, tHi, nLossTab,
++                x => DesignScreen.PlateFluxWPerM2(p, x, p.FlangeInsulThickMm) * 1e-6)
++            : bareTab;
++
++        // 舌片自己的保温（见 Solve 参数注释）。厚度 0 也不等于裸露 —— 裸露是铂表面 ε=0.18，
++        // 而「包了 0 mm」在 PlateFlux 里走的是外覆材料 ε=0.45，两者差 2.5 倍。
++        bool tabInsul = DesignScreen.FlangeFaceInsulated(tabInsulThickMm);   // = !NaN && ≥ 0.05（R48 2026-09-14 Opus 5：与圆盘同一判定）
++        var tabInsTab = tabInsul
++            ? new LossTable(p.TAmbC, tHi, nLossTab,
++                x => DesignScreen.PlateFluxWPerM2(p, x, tabInsulThickMm) * 1e-6)
++            : bareTab;
++        return new SurfaceLossTables { Bare = bareTab, Disc = insTab, Tab = tabInsTab, DiscInsulated = discInsul, TabInsulated = tabInsul };
++    }
++
+     /// <summary>
+     /// ★ R48（2026-09-15，Opus 5）：法兰表面散热表的温度上限 °C = 铂熔点。原「设定 + 200 K」会被共用片与厚保温格点超过并静默钳住（见 Solve 里的注释）。
+     /// PlateThermal2D 同用这一份。
+@@ -290,8 +420,13 @@ public static class ShellThermal
+                                            double tabInsulThickMm = double.NaN,
+                                            bool holeFaceDirichlet = true,
+                                            double discRadiusMm = double.NaN,
+-                                           double insulDiscRadiusMm = double.NaN)
++                                           double insulDiscRadiusMm = double.NaN,
++                                           double lossTableHiC = double.NaN,
++                                           int lossTableNodes = 0)
+     {
++        // ★ R48（2026-09-15，Opus 5；数值把关人第十四轮）：lossTableHiC／lossTableNodes **只供测试用** —— 门 d 要用改动前的表（设定 + 200 K、60 节点）
++        //   复现基线树的逐位记录，才能把「散热表换了」与「别的东西动了」分开。缺省（NaN／0）= 生产：上限 LossTableHiC、节点 LossTableNodes(环境, 上限)。
++        //   生产代码不许传这两个参数（生产链配方由 R48RecipeFingerprintTests 的行为门守：每片热解的 Recipe.Rule == ProductionThermalRule）。
+         int n = m.CellCount;
+         var res = new ShellThermalResult { T = new double[n] };
+         if (n == 0) return res;
+@@ -322,26 +457,14 @@ public static class ShellThermal
+         //   共用片 1 取段 1 设定 1080 ⇒ 上限 1280 °C，而方案 A X=7 片1 管根 1304.89、舌区峰 1369 °C，第一轮 R4 舌区峰 1286.59 °C 都超了：
+         //   超出的格子散热冻在上限处，法兰算偏热、负反馈被削弱，可能造出假的热失控。
+         //   改为统一上限 = 铂熔点（LossTableHiC），节点数按原间距（约 22 K）放大；解完若最高温超过它，LineRunner 把本片判成「场没解到位」。
+-        double tHi = LossTableHiC;
+-        int nLossTab = LossTableNodes(p.TAmbC, tHi);
++        // R48（2026-09-15，Opus 5）：三张表的建法原样提成 SurfaceLossTablesFor（门 d 推容差要比新旧表，调同一份），算式逐字未改。
++        var tables = SurfaceLossTablesFor(p, tabInsulThickMm, lossTableHiC, lossTableNodes);
++        double tHi = tables.Bare.HiC;
+         res.LossTableHiC = tHi;
+-        var bareTab = new LossTable(p.TAmbC, tHi, nLossTab,
+-            x => DesignScreen.PlateFluxWPerM2(p, x, 0.0) * 1e-6);
+-        // ★ 风速必须传进保温面（2026-08-28）：此前保温区走 airVelocity=0 的默认值，
+-        //   于是同一片法兰上裸露区吹得到风、保温区吹不到 —— 而默认圆盘正是包着的那一半。（R48 起由唯一配方负责传）
+-        bool discInsul = DesignScreen.FlangeFaceInsulated(p.FlangeInsulThickMm);
+-        var insTab = discInsul
+-            ? new LossTable(p.TAmbC, tHi, nLossTab,
+-                x => DesignScreen.PlateFluxWPerM2(p, x, p.FlangeInsulThickMm) * 1e-6)
+-            : bareTab;
+-
+-        // 舌片自己的保温（见参数注释）。厚度 0 也不等于裸露 —— 裸露是铂表面 ε=0.18，
+-        // 而「包了 0 mm」在 PlateFlux 里走的是外覆材料 ε=0.45，两者差 2.5 倍。
+-        bool tabInsul = DesignScreen.FlangeFaceInsulated(tabInsulThickMm);   // = !NaN && ≥ 0.05（R48 2026-09-14 Opus 5：与圆盘同一判定）
+-        var tabInsTab = tabInsul
+-            ? new LossTable(p.TAmbC, tHi, nLossTab,
+-                x => DesignScreen.PlateFluxWPerM2(p, x, tabInsulThickMm) * 1e-6)
+-            : bareTab;
++        bool discInsul = tables.DiscInsulated;
++        var insTab = tables.Disc;
++        bool tabInsul = tables.TabInsulated;
++        var tabInsTab = tables.Tab;
+ 
+         var insulated = new bool[n];
+         var lossFor = new LossTable[n];
+@@ -361,9 +484,12 @@ public static class ShellThermal
+         var insulFrac = new double[n];
+         int nBlend = 0;
+         bool noField = insulByRadius && m.SourceField is null;
++        // R48 配方指纹（2026-09-15 Opus 5）：在循环里数「真按半径划的格」「因为没有厚度场真跳过混合的格」—— 配方的混合状态按这两个数记，不按输入重判
++        int nByRadiusCells = 0, nNoFieldCells = 0;
+         for (int i = 0; i < n; i++)
+         {
+             double cx = m.Centroid[i].X, cz = m.Centroid[i].Z;
++            if (insulByRadius) nByRadiusCells++;
+             insulated[i] = insulByRadius
+                          ? FlangePlate.InsideInsulCircle(cx, cz, insulDiscRadiusMm)
+                          : symmetricInsul
+@@ -371,7 +497,8 @@ public static class ShellThermal
+                              : cx >= insulBoundaryX;
+             lossFor[i] = insulated[i] ? insTab : tabInsTab;
+             insulFrac[i] = double.NaN;
+-            if (!insulByRadius || noField) continue;
++            if (!insulByRadius) continue;
++            if (noField) { nNoFieldCells++; continue; }
+             // 只有格子矩形跨过分界圆才可能 0 < f < 1：最近点半径 < R < 最远角半径
+             var nd = m.Cells[i];
+             double x0 = double.PositiveInfinity, x1 = double.NegativeInfinity, z0 = double.PositiveInfinity, z1 = double.NegativeInfinity;
+@@ -407,18 +534,20 @@ public static class ShellThermal
+         var isFixed = new bool[n];
+         var holeCell = new bool[n];
+         var tabCell = new bool[n];
++        int nHoleFaces = 0, nHolePinned = 0, nFullFaceCells = 0;   // R48 配方指纹（2026-09-15 Opus 5）：真遇到的孔边界面、真钉住的孔边格、真并进的压接格
+         foreach (var f in m.Faces)
+         {
+             if (f.B >= 0) continue;
+             if (f.Tag == ShellMesh.TagHole)
+             {
+                 holeCell[f.A] = true;
++                nHoleFaces++;
+                 // ★ R48（2026-09-13，Opus 5）：holeFaceDirichlet = true 时**不把整格钉死**，
+                 //   改在孔边界**面**上施加管温（见下面 gHole）。理由：钉整格等于把定温位置放在**形心**上，
+                 //   而形心距真实孔边界有半个格子 ⇒ 边界位置带 O(h) 误差 ⇒ 抽热只有一阶收敛
+                 //   （实测正方形网格五档：7.441/7.485/8.487/9.491/10.059，差值比 0.57 ≈ 一阶）。
+                 //   面上施加则定温落在真实边界，形心到面正好是 MeshFace.DistAB（边界面的定义就是形心到边中点）。
+-                if (!holeFaceDirichlet) { isFixed[f.A] = true; res.T[f.A] = tRootC; }
++                if (!holeFaceDirichlet) { isFixed[f.A] = true; res.T[f.A] = tRootC; nHolePinned++; }
+             }
+             else if (f.Tag == ShellMesh.TagTabEnd)
+             {
+@@ -444,6 +573,7 @@ public static class ShellThermal
+                 if (m.ClampCell[i])
+                 {
+                     tabCell[i] = true;
++                    nFullFaceCells++;
+                     if (!busG && p.BusbarClampTempC >= 0) { isFixed[i] = true; res.T[i] = p.BusbarClampTempC; }
+                 }
+         for (int i = 0; i < n; i++) if (!isFixed[i]) res.T[i] = tRootC;
+@@ -1081,6 +1211,60 @@ public static class ShellThermal
+             res.TTabEndMeanC = tabT.Length > 0 ? tabT.Average() : double.NaN;
+         }
+         res.TMaxC = res.T.Max(); res.TMinC = res.T.Min();
++        // ★ R48 配方指纹（2026-09-15，Opus 5）：本次实际生效的热解配方。
++        // ★ 2026-09-15 Opus 5（审查意见 minor）：原先 res.Recipe 直接取 RecipeFor（按输入预判），再拿与 RecipeFor 同一个式子「核对」—— 自己比自己，
++        //   改坏生效分支（例如混合循环提前 continue、孔边界面导度那段提前 return）照样通过。改为**按上面循环里数出来的量记**，再与 RecipeFor 的预判比：
++        //   · 分界格混合：一格都没按半径划 ⇒ 不适用；有格因为没有厚度场跳过了混合 ⇒ 关；否则开（真混合了几格另记 InsulBlendCells）；
++        //   · 孔边面上定温：有孔边界面、没有一格被钉住、孔边界面导度真有非零；
++        //     ★ 2026-09-15 Opus 5（审查意见 minor）：原式「没有孔边界面也记 true」—— 那时管温根本没施加，指纹却说施加在孔边界面上。
++        //       改为没有孔边界面 ⇒ false，并记孔边界面数（规则里的 HasHoleBoundary = 数 > 0，生产常量要求为真）；
++        //   · 压接整面：真并进压接格的格数 > 0（与网格配方同一个定义：ClampCell 至少一格为真）；
++        //   · 表：真建出来的那张表的区间与节点数。
++        var modeUsed = busG ? ClampBoundaryMode.Conductance : clamped ? ClampBoundaryMode.Fixed : ClampBoundaryMode.Free;
++        res.Recipe = new ThermalRecipe
++        {
++            InsulBlend = nByRadiusCells == 0 ? InsulBlendState.NotByRadius : nNoFieldCells > 0 ? InsulBlendState.OffNoField : InsulBlendState.On,
++            InsulBlendCells = nBlend,
++            LossTableLoC = tables.Bare.LoC, LossTableHiC = tables.Bare.HiC, LossTableNodes = tables.Bare.Nodes,
++            HoleFaceDirichlet = nHoleFaces > 0 && nHolePinned == 0 && gHole.Any(g => g > 0),
++            HoleFaceCount = nHoleFaces,
++            ClampMode = modeUsed,
++            ClampFullFace = nFullFaceCells > 0,
++        };
++        var rc = res.Recipe;
++        var pred = RecipeFor(m, p, holeFaceDirichlet, insulDiscRadiusMm, lossTableHiC, lossTableNodes);
++        if (pred.InsulBlend != rc.InsulBlend || pred.LossTableLoC != rc.LossTableLoC || pred.LossTableHiC != rc.LossTableHiC || pred.LossTableNodes != rc.LossTableNodes
++            || pred.HoleFaceDirichlet != rc.HoleFaceDirichlet || pred.HoleFaceCount != rc.HoleFaceCount
++            || pred.ClampMode != rc.ClampMode || pred.ClampFullFace != rc.ClampFullFace)
++            throw new InvalidOperationException("热解配方：按输入的预判（RecipeFor）与求解里数出来的对不上 —— 生效分支与配方记录漂开了，配方指纹不许说假话。"
++                + $"预判「{pred.Describe()}」，实际「{rc.Describe()}」");
+         return res;
+     }
++
++    /// <summary>
++    /// ★ R48（2026-09-15，Opus 5）：在网格 <paramref name="m"/>、物性 <paramref name="p"/> 上按 <see cref="Solve"/> 的参数解一次热场**会用哪套热解配方** ——
++    /// <see cref="Solve"/> 自己填 <see cref="ShellThermalResult.Recipe"/> 就调这一处（并逐项核对实际用到的量），探针跑前写证据头也调它，不另判一遍。
++    /// 参数与 <see cref="Solve"/> 同名同义（<paramref name="lossTableHiC"/>／<paramref name="lossTableNodes"/> 缺省 = 生产表）。
++    /// </summary>
++    public static ThermalRecipe RecipeFor(ShellMesh m, DesignInputs p, bool holeFaceDirichlet = true, double insulDiscRadiusMm = double.NaN,
++                                          double lossTableHiC = double.NaN, int lossTableNodes = 0)
++    {
++        bool byRadius = insulDiscRadiusMm > 1e-9;
++        bool busG = p.BusbarConductanceWPerK >= 0;
++        double hi = double.IsNaN(lossTableHiC) ? LossTableHiC : lossTableHiC;
++        int nodes = lossTableNodes > 0 ? lossTableNodes : LossTableNodes(p.TAmbC, hi);
++        // 孔边界面数：与 Solve 组装边界时同一个定义（边界面 B < 0 且带管孔标签）
++        int holeFaces = m.Faces.Count(f => f.B < 0 && f.Tag == ShellMesh.TagHole);
++        return new ThermalRecipe
++        {
++            InsulBlend = m.CellCount == 0 || !byRadius ? InsulBlendState.NotByRadius : m.SourceField is null ? InsulBlendState.OffNoField : InsulBlendState.On,
++            LossTableLoC = p.TAmbC, LossTableHiC = hi, LossTableNodes = Math.Max(8, nodes),        // LossTable 构造时节点数至少 8
++            // ★ 2026-09-15 Opus 5（审查意见 minor）：没有孔边界面 ⇒ 管温没施加 ⇒ 记 false（原先记 true，指纹说假话），孔边界面数另记
++            HoleFaceDirichlet = holeFaceDirichlet && holeFaces > 0,
++            HoleFaceCount = holeFaces,
++            ClampMode = busG ? ClampBoundaryMode.Conductance : p.BusbarClampTempC >= 0 ? ClampBoundaryMode.Fixed : ClampBoundaryMode.Free,
++            // 2026-09-15 Opus 5（审查意见 minor：与网格配方定义不一致）：与 MeshRecipe.ClampFullFace 同一个定义 —— 长度 = 单元数且至少一格为真
++            ClampFullFace = m.ClampCell.Length == m.CellCount && m.ClampCell.Any(b => b),
++        };
++    }
+ }

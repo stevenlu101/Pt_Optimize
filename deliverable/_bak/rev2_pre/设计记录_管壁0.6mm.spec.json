@@ -1,0 +1,1 @@
+{"name":"管壁 0.6 · 底档","wallMm":0.6,"tubeIdMm":50,"segLenMm":300,"segCount":3,"discR":30,"holeR":25.6,"tabX":-140,"tabHW":30,"filletR":3,"clampLenMm":40,"ringR":[28.6,31.6],"plates":[{"name":"入口","t":0.64,"ring":[0.64,0.64]},{"name":"共用1","t":1.86,"ring":[1.86,1.86]},{"name":"共用2","t":1.73,"ring":[1.73,1.73]},{"name":"出口","t":0.62,"ring":[0.62,0.62]}]}

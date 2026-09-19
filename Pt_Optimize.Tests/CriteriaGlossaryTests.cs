@@ -73,7 +73,12 @@ public class CriteriaGlossaryTests
         Assert.NotNull(Criteria.Of("②′"));
         Assert.NotNull(Criteria.Of("②″"));
         Assert.Equal("管孔净流入", Criteria.Of("②′")!.Name);
-        Assert.Equal("圆盘区最高温", Criteria.Of("②″")!.Name);
+        // R48 B（2026-09-14 Opus 5）：有意改动 —— ②″ 这条降为参考量，Key 改成参考量的名字（代号 ②″ 不换主人）；依据 Pt_Optimize/Core/LineRunner.cs 的 LineResult.Key.DiscTemp。
+        //   旧期望 "圆盘区最高温" → 新期望 "圆盘区最高温 − 管温（旧判法）"。热偶读数基准的两条用新代号 ⑦／⑧，一并验拆得对。
+        Assert.Equal("圆盘区最高温 − 管温（旧判法）", Criteria.Of("②″")!.Name);
+        Assert.Equal("最热铂高出热偶读数", Criteria.Of("⑦")!.Name);
+        Assert.Equal("管根低于热偶读数", Criteria.Of("⑧")!.Name);
+        Assert.Equal(LineResult.Key.DiscTemp, Criteria.Of("②″")!.Key);   // 代号 ②″ 指的仍是那一条，不许悄悄换量
     }
 
     /// <summary>
@@ -105,8 +110,13 @@ public class CriteriaGlossaryTests
     {
         string g = Criteria.Legend("②′", "②″", "③");
         Assert.Contains("②′ = 管孔净流入（W，>）", g);
-        Assert.Contains("②″ = 圆盘区最高温（K，≤）", g);
-        Assert.Contains("③ = 法兰增量温降（K，≤）", g);
+        // R48 B（2026-09-14 Opus 5）：有意改动 —— ②″／③ 两条降为参考量，名字带「（旧判法）」（代号不变）；依据 Pt_Optimize/Core/LineRunner.cs 的 LineResult.Key。
+        //   旧 "②″ = 圆盘区最高温（K，≤）" → 新 "②″ = 圆盘区最高温 − 管温（旧判法）（K，≤）"；旧 "③ = 法兰增量温降（K，≤）" → 新 "③ = 法兰增量温降（旧判法）（K，≤）"。
+        Assert.Contains("②″ = 圆盘区最高温 − 管温（旧判法）（K，≤）", g);
+        Assert.Contains("③ = 法兰增量温降（旧判法）（K，≤）", g);
+        string g2 = Criteria.Legend("⑦", "⑧");
+        Assert.Contains("⑦ = 最热铂高出热偶读数（K，≤）", g2);
+        Assert.Contains("⑧ = 管根低于热偶读数（K，≤）", g2);
     }
 
     /// <summary>

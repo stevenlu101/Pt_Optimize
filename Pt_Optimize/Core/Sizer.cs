@@ -261,6 +261,8 @@ public static class Sizer
         var lcLim = d.BuildCase(baseIn, checkRamp: false);
         double dipLimK = lcLim.RootDeltaMaxK;                                   // ③ 的限值
         double discTgtK = Math.Max(0.0, lcLim.DiscOverTempMaxK - opt.DiscOverMarginK);  // ②″ 靶 = 限值 − 裕度
+        // R48 B（2026-09-14 Opus 5）：本类（旧 D8，只剩命令行 --shape 在用）的控制律是按 ②″／③ 两条写的，而这两条已降为参考量（旧判法，代号不变）⇒
+        //   本类仍追它们；交付判定（AllOk）已换成热偶读数基准的 ⑦／⑧，两者可能对不上 —— 以复核那次的 AllOk 为准。界面走 Solver，不走本类。
         Log($"分派：**舌保温 → 抽热 D（靶 {opt.DrawTargetW:0.0} W）**／**环倍率 → ②″（靶 {discTgtK:0.0} K ＝ 限值 {lcLim.DiscOverTempMaxK:0.0} − 裕度 {opt.DiscOverMarginK:0.0}）**／" +
             $"**板厚 → 接力+省铂**（下界 {tLo:0.00} mm = max(焊接屈曲, 烧穿 {baseIn.WeldMinThicknessMm:0.0})）");
         Log($"{"轮",4}{"板厚 mm",22}{"舌保温 mm",24}{"环倍率",22}{"抽热D W",26}{"③max",8}{"②″max",8}{"合计g",8}{"违反度",9}");

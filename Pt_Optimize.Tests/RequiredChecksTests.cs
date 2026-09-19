@@ -139,9 +139,10 @@ public class RequiredChecksTests
     public void Undetermined_AndMissing_AreBothNotPass()
     {
         var und = Table();
+        // R48 B（2026-09-14 Opus 5）：有意改动 —— 自证用的硬安全线从「圆盘区最高温 − 管温」（DiscTemp，已降为参考量、不在必备名单）换成热偶读数基准的热侧 HotOverTc；依据 LineResult.Required。
         var i = System.Array.FindIndex(und.Checks,
-            c => c.Name.StartsWith(LineResult.Key.DiscTemp, System.StringComparison.Ordinal));
-        Assert.True(i >= 0, "自证：表里本来就该有 ②″，否则下面验的是空气");
+            c => c.Name.StartsWith(LineResult.Key.HotOverTc, System.StringComparison.Ordinal));
+        Assert.True(i >= 0, "自证：表里本来就该有「最热铂高出热偶读数」，否则下面验的是空气");
         und.Checks[i].Ok = false;
         und.Checks[i].Undetermined = true;
         und.Checks[i].Actual = double.NaN;
