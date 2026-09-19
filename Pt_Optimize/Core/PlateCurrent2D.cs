@@ -320,9 +320,100 @@ public sealed class FlangePlate
     /// </summary>
     public double TabInsulThickMm = double.NaN;
 
+    /// <summary>
+    /// ★★ R48 R（2026-09-17，Opus 5）：**沿舌轴 x 的分段常值舌保温剖面**。null（默认）= 整条舌板用
+    /// <see cref="TabInsulThickMm"/> 那一个数，**逐位与从前相同**。
+    ///
+    /// 非 null 时：舌片区每一格按自己形心的 x 取 <see cref="PtOptimize.Core.TabInsulProfile.At"/> 的厚度，
+    /// <see cref="TabInsulThickMm"/> 在热解里**不再被读**（它只留作报告里的代表值）。
+    /// 散热配方一字不动（仍是 DesignScreen.PlateFluxWPerM2、包不包仍按 DesignScreen.FlangeFaceInsulated）
+    /// —— 换的只是「这一格包多厚」。为什么要它：见 <see cref="PtOptimize.Core.TabInsulProfile"/> 的类注释。
+    /// </summary>
+    public TabInsulProfile? TabInsulProfile;
+
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5）：**本片圆盘保温厚度** mm（按半径圈、r ≤ 盘半径那块）。NaN = 沿用整线的 DesignInputs.FlangeInsulThickMm（旧口径，逐位不变）。
+    /// 为什么要逐片：用户 2026-09-14「圆盘包多厚是开放边界条件让你算的，每层 0.5 mm」「保温是用绕的，可以不等厚」；
+    /// 实测端片与共用片、入口与出口要的圆盘保温差好几毫米（R48_第一轮保温扫描_*），全线一个值做不出可行设计。
+    /// 由 LineRunner 在逐片热解时写进本片的 p2.FlangeInsulThickMm；FlangeInsulated = false 时仍为 0。
+    /// </summary>
+    public double DiscInsulThickMm = double.NaN;
+
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5；常驻数值把关人第十二轮查出三处还读整线值）：本片圆盘保温的**唯一**取值口径 ——
+    /// 板件带了逐片值就用它（整线「不包」时为 0），否则沿用整线 <paramref name="p"/>.FlangeInsulThickMm。
+    /// 热场、整片热稳定、升温两节点参考项都经它取，不许各写一份。
+    /// 2026-09-14 Opus 5 补（审查意见「同一条规则写了三份」）：规则本体提到 <see cref="DiscInsulEffective(double, double, bool)"/>，本处只是板件的调用口。
+    /// </summary>
+    public double DiscInsulEffectiveMm(DesignInputs p)
+        => DiscInsulEffective(DiscInsulThickMm, p.FlangeInsulThickMm, p.FlangeInsulated);
+
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5；审查意见：同一条规则原先在板件、LineCase 图纸分支、DesignSpec.DiscInsulMmOf 各写一份，
+    /// 三份「同源」只靠测试比出来相等）：逐片圆盘保温的**规则本体**，全仓只此一份 ——
+    /// 逐片值是 NaN ⇒ 沿用整线值 <paramref name="wholeLineMm"/>（调用方给「算例里的整线值」，不包时就是 0）；
+    /// 逐片值有数 ⇒ 包着取它、整线「不包」取 0。
+    /// </summary>
+    public static double DiscInsulEffective(double perPlateMm, double wholeLineMm, bool flangeInsulated)
+        => double.IsNaN(perPlateMm) ? wholeLineMm : (flangeInsulated ? perPlateMm : 0.0);
+
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5）：数组形态的同一规则。**短数组约定（全仓统一）：下标越界 = 该片没有逐片值 = 与 NaN 同义，沿用整线**。
+    /// 用它的是 DesignSpec.DiscInsulMmOf（设计记录的逐片数组）与 LineCase.DiscInsulEffectiveAt 的图纸分支（DiscInsul3dmPerPlateMm）；
+    /// 板件本身（DesignSpec.Plate）越界也填 NaN，三处一致。
+    /// ⚠ 与舌保温 LineCase.TabInsul3dmAt 的「短了用最后一片」**不同**：舌保温没有整线值可退，圆盘保温有，缺值就退整线，不猜。
+    /// </summary>
+    public static double DiscInsulEffective(double[]? perPlateMm, int j, double wholeLineMm, bool flangeInsulated)
+        => DiscInsulEffective(perPlateMm is not null && j >= 0 && j < perPlateMm.Length ? perPlateMm[j] : double.NaN,
+                              wholeLineMm, flangeInsulated);
+
     /// <summary>解析后的保温分界：NaN ⇒ 切点（仅圆盘保温）</summary>
     public double InsulBoundaryXResolved
         => double.IsNaN(InsulBoundaryXMm) ? Tangent().X : InsulBoundaryXMm;
+
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5）：「按半径包法兰保温」这条规则的**唯一**算式：r ≤ 保温半径（含边界）。
+    /// <see cref="UnderDiscInsulation"/>、ShellThermal 的形心判定、分界格有料份额（FlangeMesher.MaterialFraction 的判定）都调它，不另写。
+    /// </summary>
+    public static bool InsideInsulCircle(double x, double z, double radiusMm) => x * x + z * z <= radiusMm * radiusMm;
+
+    /// <summary>
+    /// ★★★★★ R48（2026-09-14，Opus 5；物理把关人确认「必须在重解之前做」）：
+    /// **某一点包的是法兰保温（圆盘整块）还是舌保温 —— 全项目唯一的判定。**
+    ///
+    /// ══ 旧口径错在哪
+    ///
+    /// <see cref="InsulBoundaryXMm"/> = NaN 的文档原意是「**仅圆盘保温**」，实现却是 <c>x ≥ 切点x</c>。
+    /// 两个内置档**舌半宽 = 盘半径**（都是 30）⇒ 切点落在 x = 0 ⇒ **−x 那半个圆盘被算成舌片**，
+    /// 包的是**舌保温旋钮**的厚度（片0 落点 4.6 mm，片3 7.5 mm），而不是圆盘保温。
+    /// （2026-09-14 更正，Opus 5：此处原写「法兰保温 2.5 mm」，那是 DesignInputs 的默认值；整线算例由 DesignSpec.BuildCase 造，
+    ///   圆盘保温实际取 DesignSpec.FlangeInsulMm = **20 mm**，而这个 20 在仓库里查不到出处，见 R48DiscInsulLeverTests。）
+    /// 实测「圆盘区最高温」的峰在 r ≈ 29、x = −29 —— **正好在那半个盘面上、舌保温旋钮底下**。
+    /// 于是求解器「抬舌保温 −6.965 → −49.012」混着两件事：舌片热回灌，与**旋钮直接给峰加保温**。
+    /// 而现场安装清单（<see cref="FlangeKit"/>）写的是「舌保温覆盖 = 圆盘切点到压接段前那一段」，
+    /// 工人从盘边开始缠，**不会去缠那半个盘面** ⇒ 模型包的保温和现场包的保温不是同一块。
+    ///
+    /// ══ 新口径
+    ///
+    /// 默认（NaN）按**半径**：r ≤ 盘半径 ⇒ 法兰保温；其余（伸出去的舌片）⇒ 舌保温。按零件本身的分块来分。
+    /// 显式指定了分界（±1e9 全包/全裸、命令行实验的 −200 等）⇒ **原样按 x**，那是调用方的意图，不许悄悄改。
+    ///
+    /// ⚠ 接缝 r = 盘半径 恰好穿过全片最热的地方（盘区峰 r≈29、舌区峰 r≈31～33）。
+    ///   现场接缝会有缝或搭接，模型对接缝位置敏感 ⇒ 安装清单须写明搭接不留缝；接缝挪 ±3 mm 的敏感度待量。
+    /// </summary>
+    public bool UnderDiscInsulation(double x, double z)
+        => double.IsNaN(InsulBoundaryXMm) && DiscRadiusMm > 0
+            ? InsideInsulCircle(x, z, DiscRadiusMm)
+            // 显式分界 ⇒ 按 x；**盘半径无效**（NaN / ≤ 0）⇒ 同样退回按 x（分界取切点）。
+            //   ★ 2026-09-14 物理把关人查出：原来盘半径 NaN 时 x²+z² ≤ NaN 恒假 ⇒ 整片悄悄包舌保温，
+            //     而求解器那边退回按 x —— 两边结果碰巧一样，但「同一条规则的两种表达」并不成立。现在两边走同一条退回路径。
+            : (TwoTabs ? Math.Abs(x) <= Math.Abs(InsulBoundaryXResolved) : x >= InsulBoundaryXResolved);
+
+    /// <summary>
+    /// 交给不持有板件的求解器（<see cref="ShellThermal"/>）用：按半径划保温时给盘半径，按 x 划时给 NaN。
+    /// 与 <see cref="UnderDiscInsulation"/> 同一条规则的两种表达 —— 求解器拿到它必须照同一条规则判。
+    /// </summary>
+    public double InsulDiscRadiusMm => double.IsNaN(InsulBoundaryXMm) && DiscRadiusMm > 0 ? DiscRadiusMm : double.NaN;
 
     /// <summary>孔周局部加厚：半径 ≤ ThickenRadiusMm 的区域厚度取 ThickenedMm</summary>
     /// <summary>末端延长段：自 TabEndXMm 再伸 ExtensionMm，半宽由 40 线性张开到 ExtHalfWidthMm</summary>

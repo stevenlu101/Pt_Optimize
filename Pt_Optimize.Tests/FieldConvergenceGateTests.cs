@@ -77,10 +77,13 @@ public class FieldConvergenceGateTests
         foreach (var k in new[]
         {
             "LineResult.Key.NetFlux", "LineResult.Key.DiscTemp", "LineResult.Key.FlangeDip",
+            "LineResult.Key.HotOverTc", "LineResult.Key.ColdUnderTc",   // R48 B（2026-09-14 Opus 5）：加严 —— 新两条硬判据同样吃法兰场
             "LineResult.Key.Ramp", "LineResult.Key.FlangeStab", "LineResult.Key.LocalStab",
             "LineResult.Key.RampField", "LineResult.Key.HeatBalance",
         })
             Assert.Contains(k, s);
+        // 2026-09-15 Opus 5（审查意见 minor）：集总升温用时读逐片焦耳热与质量、吃法兰场 —— 按名单本体查（上面的源码包含查不出它：「Key.Ramp」是它的前缀）
+        Assert.Contains(LineResult.Key.RampHours, LineRunner.DependsOnFlangeFields);
     }
 
     /// <summary>

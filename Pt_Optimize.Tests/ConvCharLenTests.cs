@@ -40,12 +40,21 @@ public class ConvCharLenTests
     {
         string root = HandoverDoc.Root();
         foreach (var f in new[] { "Pt_Optimize/Core/ShellThermal.cs",
-                                  "Pt_Optimize/Core/DesignScreen.cs",
-                                  "Pt_Optimize/Core/RampTwoNode.cs" })
+                                  "Pt_Optimize/Core/DesignScreen.cs" })
         {
             string s = File.ReadAllText(Path.Combine(root, f));
             Assert.DoesNotContain("double charLen = 0.05;", s);   // 不许再各存一份
             Assert.Contains("p.ConvCharLenM", s);                 // 都从同一处取
+        }
+        // ★ R48（2026-09-14，Opus 5）有意改断言：RampTwoNode 原断言「文件里含 p.ConvCharLenM」→ 新断言「法兰表面热流经唯一配方 DesignScreen.PlateFluxWPerM2」
+        //   （那份配方自己读 p.ConvCharLenM，上面钉着）；PlateThermal2D 原写死 `double charLen = 0.05;`，同批改走唯一配方，一并钉进来。
+        //   原因：审查意见「圆盘保温 0 mm 时四个消费方物理含义不一致」的修法是法兰表面热流只留一份配方，这两个文件不再自己持有特征长度。
+        //   依据文件：Pt_Optimize/Core/RampTwoNode.cs、Pt_Optimize/Core/PlateThermal2D.cs、Pt_Optimize/Core/DesignScreen.cs。
+        foreach (var f in new[] { "Pt_Optimize/Core/RampTwoNode.cs", "Pt_Optimize/Core/PlateThermal2D.cs" })
+        {
+            string s = File.ReadAllText(Path.Combine(root, f));
+            Assert.DoesNotContain("charLen = 0.05", s);
+            Assert.Contains("DesignScreen.PlateFluxWPerM2(", s);
         }
     }
 

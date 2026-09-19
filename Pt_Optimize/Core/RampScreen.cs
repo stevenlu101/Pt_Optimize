@@ -42,12 +42,21 @@ public static class RampScreen
         double Margin,
         double MassG)
     {
+        /// <summary>
+        /// ★ R48（2026-09-15，Opus 5；常驻数值把关人第十四轮「其余散热表超界检测」）：查表用到的温度（只有目标温度一个）不在散热表区间里 ⇒ 判不了。
+        /// 表是 [环境, 目标 + 300]，只在目标温度处取值与取斜率 ⇒ **上限按构造不会超**；能超的只有下限（目标温度低于环境温度，表把它钳到环境）。
+        /// 检测照样做：以后有人在别的温度上查这张表，这一位就会说话。
+        /// </summary>
+        public bool LossTableExceeded { get; init; }
+
         /// <summary>与界面表格里那一列完全一致的判定文字 —— 阈值只存在这一处。</summary>
-        public string Verdict => Margin > MarginThin ? "✓"
+        public string Verdict => LossTableExceeded ? "✗ 判不了（目标温度不在散热表范围内）"
+                               : Margin > MarginThin ? "✓"
                                : Margin > MarginHardMin ? "⚠ 裕度薄"
                                : "✗ 越热稳定极限";
 
-        public bool Ok => Margin > MarginHardMin;
+        /// <summary>判不了不算过（R48 2026-09-15 Opus 5：加了散热表超界这一条）。</summary>
+        public bool Ok => !LossTableExceeded && Margin > MarginHardMin;
     }
 
     /// <summary>
@@ -83,7 +92,8 @@ public static class RampScreen
 
         double massG = aMm2 * q.TubeLengthMm * Materials.PtDensity * 1e-6;
 
-        return new Point(insulMm, wallMm, lossW, iA, jA, iStab, margin, massG);
+        // R48（2026-09-15，Opus 5）：查表用到的温度只有 tTargetC（Eval 与 Slope 都在它上）—— 核它在不在表里
+        return new Point(insulMm, wallMm, lossW, iA, jA, iStab, margin, massG) { LossTableExceeded = !tab.Covers(tTargetC) };
     }
 
     /// <summary>
@@ -105,8 +115,12 @@ public static class RampScreen
             Limit = MarginHardMin,
             LessIsBetter = false,
             Ok = p.Ok,
+            Undetermined = p.LossTableExceeded,                    // R48（2026-09-15，Opus 5）
             Where = $"保温 {insulMm:0.0} / 壁厚 {wallMm:0.00}",
-            Note = $"热稳定裕度 = I_stab/I = {p.IStabA:0}/{p.CurrentA:0}。"
+            Note = (p.LossTableExceeded
+                    ? $"★ **无法判定**：目标温度 {tTargetC:0} °C 不在管表面散热表范围内（表从环境温度 {baseInputs.TAmbC:0} °C 起），散热被钳住，下面的裕度不可引用。"
+                    : "")
+                 + $"热稳定裕度 = I_stab/I = {p.IStabA:0}/{p.CurrentA:0}。"
                  + (p.Margin <= MarginHardMin
                     ? "★★ **越过热稳定极限** ⇒ 该工作点的稳态解本就不存在，升温到不了目标。"
                       + "　【下一步】先降**目标温度**或换牌号 —— 见下面那条：加保温未必有用。"

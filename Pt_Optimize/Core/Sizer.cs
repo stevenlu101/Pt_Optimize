@@ -155,9 +155,23 @@ public sealed class SizerResult
     /// IEEE 里 `-0.0 == 0.0` 为真，所以一句 `v == 0 ? 0.0 : v` 就能归一。
     /// 属于本项目已有专门测试的「格式串」family（UiWiring 第 8 项），只是那条规则查的是
     /// `{x:0.1}`，查不到这一种。
+    ///
+    /// ★ R48 G2 复审二（2026-09-15 Opus 5）补：上面那句只掐得掉**恰好**等于负零的数。负数按格式**取整成零**时同病 ——
+    ///   net8 实测（本机临时控制台程序）：(-0.01)／(-0.04)／(-1e-9).ToString("+0.0;−0.0") 都得到 "-+0.0"（-0.05 以下正常印 "−0.1"）。
+    ///   .NET 的规则是负数取整成零就换用第一段，却仍在前面补文化的负号。于是再比一次：结果恰好是「负号 + 零按本格式印出来的样子」⇒ 印零。
+    ///   正常的负数（第二段自己带 '−' 或 '-'，取整后不为零）不会等于那个串，逐字不变。
     /// </summary>
-    public static string Signed(double v, string fmt = "+0.0;−0.0") =>
-        (v == 0 ? 0.0 : v).ToString(fmt);
+    public static string Signed(double v, string fmt = "+0.0;−0.0")
+    {
+        double z = v == 0 ? 0.0 : v;
+        string s = z.ToString(fmt);
+        if (z < 0)
+        {
+            string zero = 0.0.ToString(fmt);
+            if (s == System.Globalization.NumberFormatInfo.CurrentInfo.NegativeSign + zero) return zero;
+        }
+        return s;
+    }
 }
 
 public static class Sizer
@@ -261,6 +275,8 @@ public static class Sizer
         var lcLim = d.BuildCase(baseIn, checkRamp: false);
         double dipLimK = lcLim.RootDeltaMaxK;                                   // ③ 的限值
         double discTgtK = Math.Max(0.0, lcLim.DiscOverTempMaxK - opt.DiscOverMarginK);  // ②″ 靶 = 限值 − 裕度
+        // R48 B（2026-09-14 Opus 5）：本类（旧 D8，只剩命令行 --shape 在用）的控制律是按 ②″／③ 两条写的，而这两条已降为参考量（旧判法，代号不变）⇒
+        //   本类仍追它们；交付判定（AllOk）已换成热偶读数基准的 ⑦／⑧，两者可能对不上 —— 以复核那次的 AllOk 为准。界面走 Solver，不走本类。
         Log($"分派：**舌保温 → 抽热 D（靶 {opt.DrawTargetW:0.0} W）**／**环倍率 → ②″（靶 {discTgtK:0.0} K ＝ 限值 {lcLim.DiscOverTempMaxK:0.0} − 裕度 {opt.DiscOverMarginK:0.0}）**／" +
             $"**板厚 → 接力+省铂**（下界 {tLo:0.00} mm = max(焊接屈曲, 烧穿 {baseIn.WeldMinThicknessMm:0.0})）");
         Log($"{"轮",4}{"板厚 mm",22}{"舌保温 mm",24}{"环倍率",22}{"抽热D W",26}{"③max",8}{"②″max",8}{"合计g",8}{"违反度",9}");
