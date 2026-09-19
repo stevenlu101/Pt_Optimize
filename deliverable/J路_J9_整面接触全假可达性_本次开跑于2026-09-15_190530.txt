@@ -1,0 +1,54 @@
+#证据头 v1
+# 标题：J 路实验：J9_整面接触全假可达性
+# git HEAD：0a15af83b9bff1f530f8e2b80ff8b9819d00d5b9
+# Core 改动指纹（Pt_Optimize/Core 相对 HEAD 的改动与未跟踪文件，SHA1）：701df6467dafc354b2e4ea8ae82893527ab3ecef
+# 探针源码指纹（调用方源文件，SHA1）：Pt_Optimize.Tests/R48J_ExperimentProbeTests.cs ba0ecc20124a12fa86be07699f3f854a7fd37148
+# 耦合容差：不适用（单片、管侧固定）
+# 共用片抽热：不适用
+# 工况：不适用
+#证据头结束
+[    0.1 s] 开跑 2026-09-15 19:05:30　出处：Pt_Optimize.Tests/R48J_ExperimentProbeTests.cs
+[    0.1 s] 算例 W08 片0 板件；界面压接长控件下限 3 mm（LineDesignPage._clampLen）；DesignSpec.W08.ClampLengthMm = 40
+[    0.1 s] h     4 mm　压接长   0.5 mm：ClampCell 长度=格数 True　至少一格为真 False　ClampFaceActive True　网格配方整面接触 False　★ 两种定义不一致　记录：压接边界 x = -139.5 离端点只有 0.5 mm，不足一个最细格 4，没加（被钉住长度仍按最近节点取）
+[    0.1 s] h     4 mm　压接长     1 mm：ClampCell 长度=格数 True　至少一格为真 False　ClampFaceActive True　网格配方整面接触 False　★ 两种定义不一致　记录：压接边界 x = -139 离端点只有 1 mm，不足一个最细格 4，没加（被钉住长度仍按最近节点取）
+[    0.1 s] h     4 mm　压接长   1.5 mm：ClampCell 长度=格数 True　至少一格为真 False　ClampFaceActive True　网格配方整面接触 False　★ 两种定义不一致　记录：压接边界 x = -138.5 离端点只有 1.5 mm，不足一个最细格 4，没加（被钉住长度仍按最近节点取）
+[    0.1 s] h     4 mm　压接长     2 mm：ClampCell 长度=格数 True　至少一格为真 False　ClampFaceActive True　网格配方整面接触 False　★ 两种定义不一致　记录：压接边界 x = -138 离端点只有 2 mm，不足一个最细格 4，没加（被钉住长度仍按最近节点取）
+[    0.2 s] h     4 mm　压接长     3 mm：ClampCell 长度=格数 True　至少一格为真 False　ClampFaceActive True　网格配方整面接触 False　★ 两种定义不一致　记录：压接边界 x = -137 离端点只有 3 mm，不足一个最细格 4，没加（被钉住长度仍按最近节点取）
+[    0.2 s] h     4 mm　压接长     5 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -135 已落成节点
+[    0.2 s] h     4 mm　压接长    40 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -100 已落成节点
+[    0.2 s] h     3 mm　压接长   0.5 mm：ClampCell 长度=格数 True　至少一格为真 False　ClampFaceActive True　网格配方整面接触 False　★ 两种定义不一致　记录：压接边界 x = -139.5 离端点只有 0.5 mm，不足一个最细格 3，没加（被钉住长度仍按最近节点取）
+[    0.2 s] h     3 mm　压接长     1 mm：ClampCell 长度=格数 True　至少一格为真 False　ClampFaceActive True　网格配方整面接触 False　★ 两种定义不一致　记录：压接边界 x = -139 离端点只有 1 mm，不足一个最细格 3，没加（被钉住长度仍按最近节点取）
+[    0.2 s] h     3 mm　压接长   1.5 mm：ClampCell 长度=格数 True　至少一格为真 False　ClampFaceActive True　网格配方整面接触 False　★ 两种定义不一致　记录：压接边界 x = -138.5 离端点只有 1.5 mm，不足一个最细格 3，没加（被钉住长度仍按最近节点取）
+[    0.2 s] h     3 mm　压接长     2 mm：ClampCell 长度=格数 True　至少一格为真 False　ClampFaceActive True　网格配方整面接触 False　★ 两种定义不一致　记录：压接边界 x = -138 离端点只有 2 mm，不足一个最细格 3，没加（被钉住长度仍按最近节点取）
+[    0.2 s] h     3 mm　压接长     3 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -137 已落成节点
+[    0.2 s] h     3 mm　压接长     5 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -135 已落成节点
+[    0.2 s] h     3 mm　压接长    40 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -100 已落成节点
+[    0.2 s] h     2 mm　压接长   0.5 mm：ClampCell 长度=格数 True　至少一格为真 False　ClampFaceActive True　网格配方整面接触 False　★ 两种定义不一致　记录：压接边界 x = -139.5 离端点只有 0.5 mm，不足一个最细格 2，没加（被钉住长度仍按最近节点取）
+[    0.2 s] h     2 mm　压接长     1 mm：ClampCell 长度=格数 True　至少一格为真 False　ClampFaceActive True　网格配方整面接触 False　★ 两种定义不一致　记录：压接边界 x = -139 离端点只有 1 mm，不足一个最细格 2，没加（被钉住长度仍按最近节点取）
+[    0.2 s] h     2 mm　压接长   1.5 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -138.5 离端点只有 1.5 mm，不足一个最细格 2，没加（被钉住长度仍按最近节点取）
+[    0.2 s] h     2 mm　压接长     2 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -138 已落成节点
+[    0.2 s] h     2 mm　压接长     3 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -137 已落成节点
+[    0.2 s] h     2 mm　压接长     5 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -135 已落成节点
+[    0.2 s] h     2 mm　压接长    40 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -100 已落成节点
+[    0.2 s] h     1 mm　压接长   0.5 mm：ClampCell 长度=格数 True　至少一格为真 False　ClampFaceActive True　网格配方整面接触 False　★ 两种定义不一致　记录：压接边界 x = -139.5 离端点只有 0.5 mm，不足一个最细格 1，没加（被钉住长度仍按最近节点取）
+[    0.2 s] h     1 mm　压接长     1 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -139 已落成节点
+[    0.3 s] h     1 mm　压接长   1.5 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -138.5 已落成节点
+[    0.3 s] h     1 mm　压接长     2 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -138 已落成节点
+[    0.3 s] h     1 mm　压接长     3 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -137 已落成节点
+[    0.3 s] h     1 mm　压接长     5 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -135 已落成节点
+[    0.3 s] h     1 mm　压接长    40 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -100 已落成节点
+[    0.3 s] h   0.5 mm　压接长   0.5 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -139.5 已落成节点
+[    0.4 s] h   0.5 mm　压接长     1 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -139 已落成节点
+[    0.4 s] h   0.5 mm　压接长   1.5 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -138.5 已落成节点
+[    0.5 s] h   0.5 mm　压接长     2 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -138 已落成节点
+[    0.5 s] h   0.5 mm　压接长     3 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -137 已落成节点
+[    0.6 s] h   0.5 mm　压接长     5 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -135 已落成节点
+[    0.6 s] h   0.5 mm　压接长    40 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -100 已落成节点
+[    0.7 s] h  0.25 mm　压接长   0.5 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -139.5 已落成节点
+[    0.9 s] h  0.25 mm　压接长     1 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -139 已落成节点
+[    1.0 s] h  0.25 mm　压接长   1.5 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -138.5 已落成节点
+[    1.2 s] h  0.25 mm　压接长     2 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -138 已落成节点
+[    1.4 s] h  0.25 mm　压接长     3 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -137 已落成节点
+[    1.5 s] h  0.25 mm　压接长     5 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -135 已落成节点
+[    1.7 s] h  0.25 mm　压接长    40 mm：ClampCell 长度=格数 True　至少一格为真 True　ClampFaceActive True　网格配方整面接触 True　　记录：压接边界 x = -100 已落成节点
+[    1.7 s] 完

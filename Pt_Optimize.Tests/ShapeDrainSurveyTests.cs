@@ -43,8 +43,8 @@ public class ShapeDrainSurveyTests
         sb.AppendLine();
         foreach (var c in r.Checks.Where(c => c.Kind != CheckKind.Reference))
             sb.AppendLine($"  {c.Name}\t实际 {c.Actual:0.000}\t限 {c.Limit:0.###}\t{(c.Undetermined ? "判不了" : c.Ok ? "过" : "不过")}\t{c.Where}");
-        Directory.CreateDirectory(Path.Combine(HandoverDoc.Root(), "deliverable"));
-        File.WriteAllText(Path.Combine(HandoverDoc.Root(), "deliverable", "形状抽热_盘70舌70.txt"), sb.ToString());
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        File.WriteAllText(DeliverableOut.Stamped("形状抽热_盘70舌70.txt"), sb.ToString());
         Console.WriteLine(sb.ToString());
         Assert.True(r.Ok, r.Message);
     }

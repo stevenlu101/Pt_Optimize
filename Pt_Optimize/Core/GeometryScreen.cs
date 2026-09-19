@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace PtOptimize.Core;
@@ -136,15 +137,39 @@ public static class GeometryScreen
         // 下界取 孔半径 + 焊脚：焊脚 = max(板厚, 壁厚)，它必须落在盘面上才焊得住。
         if (plates is { Length: > 0 })
         {
+            // ★★★★★ R48 续（2026-09-14，Opus 5）：与 ⑤ **一模一样的洞**，一起补。
+            //   `worstRing` 起于 +∞，而 `NaN < +∞` 为 **false** ⇒ 算不出的片被**静默跳过**；
+            //   全部片都算不出时 worstRing 停在 +∞ ⇒ 这条**硬安全线**报 `Ok = (+∞ >= 0) = true`。
+            //   ⚠ 可达：图纸路径的等效片 DiscRadiusMm 完全可能是 NaN（与 ⑤ 同一条路：
+            //     PlateShapeAnalyzer 认不出就不赋值，LineDesignPage 原样塞进等效片）。
+            //   ⑥ 挡的是「圆盘盖不住管孔＋焊脚 ⇒ 焊不出来」，而那种几何**料最少**，
+            //   优化器会主动往那里跑 —— 假通过的代价特别大。
+            //   ⚠ 我第一次只改了 ⑤ 没改 ⑥（物理把关人查出）。同一个文件里同形的两处，
+            //     只改一处比不改更坏：会让人以为这一类已经清了。
             double worstRing = double.PositiveInfinity; string whereRing = "";
             string[] pn6 = { "入口", "共用1", "共用2", "出口" };
+            var blindRing = new List<string>();
             for (int j = 0; j < plates.Length; j++)
             {
                 var g6 = plates[j];
+                string nm6 = j < pn6.Length ? pn6[j] : $"片{j + 1}";
                 double leg = Math.Max(g6.WeldFilletLegMm, 0);
                 double ringW = g6.DiscRadiusMm - g6.HoleRadiusMm - leg;   // 焊脚外还剩多少盘
-                if (ringW < worstRing) { worstRing = ringW; whereRing = j < pn6.Length ? pn6[j] : $"片{j + 1}"; }
+                if (double.IsNaN(ringW)) { blindRing.Add(nm6); continue; }
+                if (ringW < worstRing) { worstRing = ringW; whereRing = nm6; }
             }
+            if (blindRing.Count > 0)
+                checks.Add(new ConstraintOut
+                {
+                    Name = "⑥ 圆盘盖得住管孔＋焊脚", Unit = "mm", Kind = CheckKind.HardSafety,
+                    Actual = double.NaN, Limit = 0, LessIsBetter = false,
+                    Ok = false, Undetermined = true, Where = string.Join("、", blindRing),
+                    Note = $"★ **无法判定**：{blindRing.Count} 片（{string.Join("、", blindRing)}）的盘半径或孔半径算不出来。"
+                         + "**任何一片判不了，整条就判不了** —— 这条挡的是「焊不焊得出来」，凭初值报「过」等于没检查。"
+                         + "　【下一步】① 回 ① 页点「分析几何变数」，确认图层里这片法兰的圆盘与管孔都认出来了；"
+                         + "② 若图纸里本来就没有圆盘，这个零件不适用本判据，请改用解析几何路径。"
+                });
+            else
             checks.Add(new ConstraintOut
             {
                 Name = "⑥ 圆盘盖得住管孔＋焊脚", Unit = "mm", Kind = CheckKind.HardSafety,
@@ -187,18 +212,47 @@ public static class GeometryScreen
         // 太短会把管根抽冷，所以它在热学上也不该压缩。
         if (plates is { Length: > 0 })
         {
+            // ★★★★★ R48 续（2026-09-14，Opus 5）：**算不出来的片必须让整条判不了，不许报「过」。**
+            //
+            //   原来：worstFree 起于 +∞，逐片 `if (free < worstFree)`。而 free 是 NaN 时
+            //   `NaN < +∞` 为 **false** ⇒ 那一片被**静默跳过**；所有片都 NaN 时 worstFree 停在 **+∞**
+            //   ⇒ 这条**硬安全线**报 `Ok = (+∞ >= 100) = true`，`Where` 还是空串。
+            //   比一般的静默滤除更坏：连「剩下的片」都没有，是凭初值报的「过」。
+            //   ⚠ 可达：图纸路径 `PlateShapeAnalyzer` 的 TabEndXMm 默认就是 NaN，只有认出伸出的舌片才赋值；
+            //     `LineDesignPage` 把分析结果原样塞进等效片，四片全 NaN。
+            //     同一个前提在 `ShapeToAnalytic` 那条路上是**抛异常**的 —— 仓库已经知道这种输入存在。
+            //   ⑤ 挡的正是「设计记录的舌长装不下铜排」这类不可造几何，假通过的代价很大。
             double worstFree = double.PositiveInfinity; string whereFree = "";
             double worstTangent = 0;
             string[] pn5 = { "入口", "共用1", "共用2", "出口" };
+            var blindFree = new List<string>();
             for (int j = 0; j < plates.Length; j++)
             {
                 var g5 = plates[j];
+                string nm5 = j < pn5.Length ? pn5[j] : $"片{j + 1}";
                 double tabLen = Math.Abs(g5.TabEndXMm);
                 double tangent = Math.Abs(g5.Tangent().X);
                 double free = tabLen - tangent - clampLenMm;
+                if (double.IsNaN(free)) { blindFree.Add(nm5); continue; }
                 if (free < worstFree)
-                { worstFree = free; worstTangent = tangent; whereFree = j < pn5.Length ? pn5[j] : $"片{j + 1}"; }
+                { worstFree = free; worstTangent = tangent; whereFree = nm5; }
             }
+            if (blindFree.Count > 0)
+            {
+                checks.Add(new ConstraintOut
+                {
+                    Name = "⑤ 舌片自由段 ≥ 下界", Unit = "mm", Kind = CheckKind.HardSafety,
+                    Actual = double.NaN, Limit = freeMinMm, LessIsBetter = false,
+                    Ok = false, Undetermined = true, Where = string.Join("、", blindFree),
+                    Note = $"★ **无法判定**：{blindFree.Count} 片（{string.Join("、", blindFree)}）的舌长算不出来"
+                         + "（图纸里没认出伸出圆盘的舌片 ⇒ 舌尖位置是空的）。"
+                         + "**任何一片判不了，整条就判不了** —— 这条挡的是「压接块放不放得下」，"
+                         + "凭初值报「过」等于没检查。"
+                         + "　【下一步】① 回 ① 页点「分析几何变数」，确认图层里这片法兰的舌片画全了；"
+                         + "② 若这个零件本来就没有伸出的舌片，它不适用本判据，请改用解析几何路径。"
+                });
+            }
+            else
             checks.Add(new ConstraintOut
             {
                 Name = "⑤ 舌片自由段 ≥ 下界", Unit = "mm", Kind = CheckKind.HardSafety,

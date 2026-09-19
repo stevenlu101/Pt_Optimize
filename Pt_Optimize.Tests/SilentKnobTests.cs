@@ -31,8 +31,16 @@ public class SilentKnobTests
         Assert.Contains("charLength, sc, airVelocity)", s);
         // ShellThermal 的保温面与舌片保温面都要传真实风速
         // 三处外表面都要传：裸露面（本来就传）+ 法兰保温面 + 舌片保温面（这两处是补的）
-        int n = Core("ShellThermal.cs").Split("p.FlangeAirVelocityMPerS)").Length - 1;
-        Assert.True(n >= 3, $"三处外表面都该传真实风速，实测 {n} 处");
+        // ★ R48（2026-09-14，Opus 5）有意改断言：旧断言「ShellThermal.cs 里 `p.FlangeAirVelocityMPerS)` 出现 ≥ 3 次」→
+        //   新断言「ShellThermal 三张表面表都经唯一配方 DesignScreen.PlateFluxWPerM2，且该配方裸面、保温面都真把风速传下去（实测热流随风速变）」。
+        //   原因：审查意见查出圆盘保温 0 mm 时 ShellThermal／RampTwoNode／PlateThermal2D 与 FlangeStability 用两种表面（ε 0.45 对 0.18），
+        //   修法是法兰表面热流只留 DesignScreen.PlateFluxWPerM2 一份配方，ShellThermal 里不再各自写 PlateFlux／FlatOuterFlux，旧的字面计数必然归零。
+        //   依据文件：Pt_Optimize/Core/ShellThermal.cs（表面表）、Pt_Optimize/Core/DesignScreen.cs（PlateFluxWPerM2）。
+        int n = Core("ShellThermal.cs").Split("DesignScreen.PlateFluxWPerM2(p, x,").Length - 1;
+        Assert.True(n >= 3, $"三处外表面（裸面、法兰保温面、舌片保温面）都该经唯一配方取热流，实测 {n} 处");
+        var still = new DesignInputs(); var windy = new DesignInputs { FlangeAirVelocityMPerS = 5.0 };
+        Assert.True(DesignScreen.PlateFluxWPerM2(windy, 900, 0.0) > DesignScreen.PlateFluxWPerM2(still, 900, 0.0), "裸面吹不到风");
+        Assert.True(DesignScreen.PlateFluxWPerM2(windy, 900, 20.0) > DesignScreen.PlateFluxWPerM2(still, 900, 20.0), "保温面吹不到风");
     }
 
     [Fact]

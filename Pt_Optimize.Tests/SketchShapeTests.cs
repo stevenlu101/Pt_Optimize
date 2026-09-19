@@ -35,7 +35,8 @@ public class SketchShapeTests
             d.TabHoleRotDeg[j] = 90;                   // 宽端朝盘（0° 顶点朝 +z ⇒ 90° 顶点朝铜排）
             d.TabInsulMm[j] = 3.0;
         }
-        string dump = Path.Combine(HandoverDoc.Root(), "deliverable", "拍脑袋Y形_核算.txt");
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        string dump = DeliverableOut.Stamped("拍脑袋Y形_核算.txt");
         Directory.CreateDirectory(Path.GetDirectoryName(dump)!);
         var sb = new System.Text.StringBuilder();
         sb.AppendLine("═══ 用户拍脑袋的侧 Y 形（2026-09-10 图），按图上比例：Ø56／内径 50／舌长 146／舌端半宽 15 锥形／圆角三角槽 宽端朝盘 ═══");

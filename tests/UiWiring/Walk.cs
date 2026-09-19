@@ -187,7 +187,7 @@ static class Walk
         LineResult? r;
         {
             var t0 = Environment.TickCount64;
-            Call(line, "RunAsync", false, false);
+            Call(line, "RunAsync", false, false, 0.0, null);
             bool fin = Wait(() => F(line, "_cts") is null, 900_000);
             OK("在超时内跑完", fin, $"{(Environment.TickCount64 - t0) / 1000.0:0.0} s");
             r = (LineResult?)F(line, "LastResult");
@@ -291,24 +291,27 @@ static class Walk
             // 用户 2026-08-23：「0.5-1.0 一定有解，加厚造成抽热，那就加厚保温」。
             // ShellThermal 的参数文档也早写着这一条。此前 .3dm 路径把舌保温**写死为裸露**，
             // 所以那个零点根本不在可达范围内 —— 现在它是个可调量了。
-            var ti = (NumericUpDown)F(line, "_tabIns3dm")!;
+            // ★ R47 B（2026-09-13）：图纸路径的舌保温改用 ① 页那张**逐片**表（_tabIns，两种几何来源共用），
+            //   单控件 _tabIns3dm 已去掉。扫描时四片填同一值；下界是表的下界（0.3 mm，与解析一致），裸舌不再是可填的值。
+            var tiAll = (NumericUpDown[])F(line, "_tabIns")!;
+            void SetIns(double v) { foreach (var q in tiAll) q.Value = (decimal)Math.Clamp(v, (double)q.Minimum, (double)q.Maximum); }
             var tp0 = (NumericUpDown[])F(line, "_tPlate")!;
             Set(line, "_suppressAuto", true);
             foreach (var n in tp0) n.Value = 1.0m;          // 图纸原尺寸
             Set(line, "_suppressAuto", false);
-            double[] tins = { 0.0, 0.2, 0.4, 0.8, 1.5 };
+            double[] tins = { 0.3, 0.5, 0.8, 1.5, 3.0 };
             Console.WriteLine($"  {"舌保温 mm",11}{"③ 温降 K",12}{"②′ W",11}{"②″ K",10}{"法兰最高 °C",13}  判定");
             var rec = new System.Collections.Generic.List<(double t, double dip, double flux)>();
             foreach (double t in tins)
             {
-                Set(line, "_suppressAuto", true); ti.Value = (decimal)t; Set(line, "_suppressAuto", false);
-                Call(line, "RunAsync", false, false);
+                Set(line, "_suppressAuto", true); SetIns(t); Set(line, "_suppressAuto", false);
+                Call(line, "RunAsync", false, false, 0.0, null);
                 if (!Wait(() => F(line, "_cts") is null, 600_000)) { Console.WriteLine($"  {t,11:0.00}　★ 超时"); continue; }
                 var rt = (LineResult?)F(line, "LastResult");
                 if (rt is null) { Console.WriteLine($"  {t,11:0.00}　★ 无结果"); continue; }
                 double dip = rt.ValueOf(LineResult.Key.FlangeDip), fx = rt.ValueOf(LineResult.Key.NetFlux);
                 rec.Add((t, dip, fx));
-                Console.WriteLine($"  {(t == 0 ? "0（裸舌）" : t.ToString("0.00")),11}{dip,12:0.0}{fx,11:0.00}"
+                Console.WriteLine($"  {t.ToString("0.00"),11}{dip,12:0.0}{fx,11:0.00}"
                                 + $"{rt.ValueOf(LineResult.Key.DiscTemp),10:0.00}"
                                 + $"{(rt.Flanges.Length > 0 ? rt.Flanges.Max(f => f.TMaxC) : 0),13:0.0}"
                                 + "  " + (rt.AllOk ? "✓ 全过" : "✗ " + string.Join("/", rt.Failed.Take(1))));
@@ -323,7 +326,7 @@ static class Walk
                 OK("★ 舌保温能把 ③ 压到限值（10 K）以内", best <= 10.0,
                    best <= 10.0 ? $"最好 |③| = {best:0.0} K" : $"最好也只有 |③| = {best:0.0} K");
             }
-            Set(line, "_suppressAuto", true); ti.Value = 0m; Set(line, "_suppressAuto", false);
+            Set(line, "_suppressAuto", true); SetIns(0.3); Set(line, "_suppressAuto", false);
         }
 
         // ═══════════════════════════════════════════════════════════
@@ -341,7 +344,7 @@ static class Walk
                 Set(line, "_suppressAuto", true);
                 foreach (var n in tp2) n.Value = (decimal)k;
                 Set(line, "_suppressAuto", false);
-                Call(line, "RunAsync", false, false);
+                Call(line, "RunAsync", false, false, 0.0, null);
                 if (!Wait(() => F(line, "_cts") is null, 600_000))
                 { Console.WriteLine($"  ×{k:0.0}　★ 超时"); continue; }
                 var rk = (LineResult?)F(line, "LastResult");
@@ -378,7 +381,7 @@ static class Walk
             var lv0 = (double[][]?)F(line, "_levels");
             Console.WriteLine($"  起点各级厚度 {string.Join("/", lv0![0].Select(v => v.ToString("0.00")))}");
             var t0 = Environment.TickCount64;
-            Call(line, "RunAsync", true, false);
+            Call(line, "RunAsync", true, false, 0.0, null);
             bool fin = Wait(() => F(line, "_cts") is null, 1_800_000);
             OK("④ 在超时内跑完", fin, $"{(Environment.TickCount64 - t0) / 1000.0:0.0} s");
 
@@ -525,7 +528,9 @@ static class Walk
         Call(line, "AnalyzeShape"); Pump(400);
 
         var tp = (NumericUpDown[])F(line, "_tPlate")!;
-        var ti = (NumericUpDown)F(line, "_tabIns3dm")!;
+        // R47 B（2026-09-13）：舌保温改用 ① 页逐片表（_tabIns），四片填同一值；下界 0.3 = 表的下界（裸舌不再可填）
+        var tiAll = (NumericUpDown[])F(line, "_tabIns")!;
+        void SetIns(double v) { foreach (var q in tiAll) q.Value = (decimal)Math.Clamp(v, (double)q.Minimum, (double)q.Maximum); }
         var sh = F(line, "_shape");
         // ★ 下界 k ≥ 0.6，不是 0.5（用户 2026-08-23：「0.5 以下没有意义」，理由更具体）：
         //   本图三级厚度是 1.0 @ R26–36 / 2.0 @ R36–46 / 3.0 @ R46–203，
@@ -534,14 +539,14 @@ static class Walk
         //   （舌片在 3.0 那级，与圆盘同板切出、无焊缝 ⇒ 不受该下界约束，见 §4.6。）
         //   k = 0.5 时那圈只有 0.5 mm，已经低于手工 TIG 烧穿下界 —— 数再好也造不出来。
         double[] ks = { 0.60, 0.75, 0.90, 1.00 };
-        double[] ts = { 0.0, 0.5, 1.5 };
+        double[] ts = { 0.3, 0.5, 1.5 };
 
         H($"③ 温降 K 的二维图　行 = 厚度标度　列 = 舌保温 mm　（图纸 {Path.GetFileName(file)}）");
         Console.WriteLine("  三级原厚 1/2/3 mm ⇒ 标度 k 后为 k×(1/2/3)。限值 ③ ≤ 10 K，②′ 须 > 0。");
         Console.WriteLine("  ⚠ 最薄那级（R26–36，紧贴管孔、要焊管）受焊接下界约束 ⇒ k ≥ 0.60。");
         Console.WriteLine();
         Console.Write($"  {"k / 保温",10}");
-        foreach (double t in ts) Console.Write($"{(t == 0 ? "裸舌" : t.ToString("0.0") + " mm"),16}");
+        foreach (double t in ts) Console.Write($"{t.ToString("0.0") + " mm",16}");
         Console.WriteLine();
 
         var best = (dip: double.MaxValue, k: 0.0, t: 0.0, flux: 0.0);
@@ -553,9 +558,9 @@ static class Walk
             {
                 Set(line, "_suppressAuto", true);
                 foreach (var n in tp) n.Value = (decimal)k;
-                ti.Value = (decimal)t;
+                SetIns(t);
                 Set(line, "_suppressAuto", false);
-                Call(line, "RunAsync", false, false);
+                Call(line, "RunAsync", false, false, 0.0, null);
                 if (!Wait(() => F(line, "_cts") is null, 600_000)) { Console.Write($"{"超时",16}"); continue; }
                 var r = (LineResult?)F(line, "LastResult");
                 if (r is null) { Console.Write($"{"—",16}"); continue; }
@@ -770,7 +775,7 @@ static class Walk
         LineResult? r3;
         {
             var t0 = Environment.TickCount64;
-            Call(line, "RunAsync", false, false);
+            Call(line, "RunAsync", false, false, 0.0, null);
             bool fin = Wait(() => F(line, "_cts") is null && F(line, "LastResult") is not null, 600_000);
             OK("③ 在超时内跑完", fin);
             r3 = (LineResult?)F(line, "LastResult");
@@ -859,7 +864,7 @@ static class Walk
             Console.WriteLine($"  起点厚度 {string.Join("/", seed.Select(v => v.ToString("0.00")))}（设计记录 ×0.75）");
 
             var t0 = Environment.TickCount64;
-            Call(line, "RunAsync", true, false);
+            Call(line, "RunAsync", true, false, 0.0, null);
             bool fin = Wait(() => F(line, "_cts") is null, 900_000);
             OK("④ 在超时内跑完", fin, $"{(Environment.TickCount64 - t0) / 1000.0:0.0} s");
 
@@ -1177,12 +1182,12 @@ static class Walk
             switch (ns.CmdId)
             {
                 case "core.runLine":
-                    Call(line, "RunAsync", false, false);
+                    Call(line, "RunAsync", false, false, 0.0, null);
                     if (!Wait(() => F(line, "_cts") is null && F(line, "LastResult") is not null, 900_000))
                     { OK("整线解在预算内跑完", false, "★ 超时"); return _bad; }
                     break;
                 case "core.autoThick":
-                    Call(line, "RunAsync", true, false);
+                    Call(line, "RunAsync", true, false, 0.0, null);
                     // ⚠ 60 分钟，与 Reconcile 对齐（2026-09-02）。原来是 30 分钟 ——
                     //   一个随手写的数，而它正是让链路后半段**从没被走到过**的原因。
                     if (!Wait(() => F(line, "_cts") is null, 3_600_000))
@@ -1653,7 +1658,7 @@ static class Walk
         //   ⚠ 绿的时候也要打耗时。不打，下一次逼近预算边缘时同样只会看到「超时」两个字，
         //     照样分不清是慢了还是错了。
         long t0Auto = Environment.TickCount64;
-        Call(line, "RunAsync", true, false);
+        Call(line, "RunAsync", true, false, 0.0, null);
         bool fin = Wait(() => F(line, "_cts") is null, 10_800_000);
         double minAuto = (Environment.TickCount64 - t0Auto) / 60000.0;
         OK("自动定厚在预算内跑完", fin,

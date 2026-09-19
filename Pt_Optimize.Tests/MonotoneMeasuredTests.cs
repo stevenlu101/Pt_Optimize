@@ -116,8 +116,10 @@ public class MonotoneMeasuredTests
         var keys = Solver.Allocation.Select(a => a.Key).ToArray();
         Assert.Equal(keys.Length, keys.Distinct().Count());
         Assert.Contains(LineResult.Key.NetFlux, keys);
-        Assert.Contains(LineResult.Key.FlangeDip, keys);
-        Assert.Contains(LineResult.Key.DiscTemp, keys);
+        // R48 B（2026-09-14 Opus 5）：有意改动 —— 分派表的键换成热偶读数基准的冷侧／热侧（旧判法两条降为参考量，不再有分派），依据 Pt_Optimize/Core/Solver.cs 的 Allocation。
+        //   旧 FlangeDip → 新 ColdUnderTc；旧 DiscTemp → 新 HotOverTc。
+        Assert.Contains(LineResult.Key.ColdUnderTc, keys);
+        Assert.Contains(LineResult.Key.HotOverTc, keys);
 
         // ★★ t₂ 是旋钮，且是 ②′ 的**首选**（顺序不是随意的：先试便宜的那个）
         var netflux = Solver.Allocation.First(a => a.Key == LineResult.Key.NetFlux).Knobs;
@@ -149,9 +151,18 @@ public class MonotoneMeasuredTests
 
         // ★ 成对：r₂ 要和 t₂ 在同一条判据行上；r₁ 要和 t₁ 在同一条上
         Assert.Contains(Solver.Knob.RingR2, netflux);
-        var disc = Solver.Allocation.First(x => x.Key == LineResult.Key.DiscTemp).Knobs;
+        // R48 B（2026-09-14 Opus 5 复审）：有意改动 —— 热侧 ⑦ 那一排按新判据实测重排（依据 Pt_Optimize/Core/Solver.cs 的 Allocation 注释、
+        //   deliverable/r48B_敏感度矩阵_热偶基准_2026-09-14.txt）：旧 DiscTemp 行 { 舌保温, t₁, r₁ } → 新 HotOverTc 行 { t₂, r₂, t₁, r₁, 板厚 }。
+        //   新判据的基准是常数，抬舌保温只会让最热那一点更热（实测片1/片2 −273.5／−153.8，片0/片3 上侧解不出来）⇒ **舌保温不许回到热侧候选里**。
+        var disc = Solver.Allocation.First(x => x.Key == LineResult.Key.HotOverTc).Knobs;
         Assert.Contains(Solver.Knob.Ring,   disc);
         Assert.Contains(Solver.Knob.RingR1, disc);
+        Assert.Contains(Solver.Knob.RingT2, disc);
+        Assert.Contains(Solver.Knob.RingR2, disc);
+        Assert.DoesNotContain(Solver.Knob.Insul, disc);
+        Assert.Equal(Solver.Knob.Thick, disc[^1]);       // 板厚垫底（与管孔净流入那一排同一个理由：最花铂）
+        // 冷侧 ⑧ 仍是舌保温打头（新判据实测 +190.8／+107.1 每 mm，免费）
+        Assert.Equal(Solver.Knob.Insul, Solver.Allocation.First(x => x.Key == LineResult.Key.ColdUnderTc).Knobs[0]);
 
         // ★ 「没有台阶就没得挪」这句话必须在代码里说得出来，不能只报「没变好」
         string src = System.IO.File.ReadAllText(System.IO.Path.Combine(

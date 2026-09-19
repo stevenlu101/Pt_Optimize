@@ -33,8 +33,8 @@ public class ExportYSketch3dmTests
             d.TabHoleRotDeg[j] = 90;
             d.TabInsulMm[j] = 3.0;
         }
-        string dir = Path.Combine(HandoverDoc.Root(), "deliverable", "拍脑袋Y形_解出");
-        Directory.CreateDirectory(dir);
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）；出图目录同样带时刻
+        string dir = DeliverableOut.StampedDir("拍脑袋Y形_解出");
         string txt = Path.Combine(dir, "核算与出图.txt");
         var sb = new StringBuilder();
         sb.AppendLine("═══ 用户手画的侧 Y 形（2026-09-10 图）：与 SketchShapeTests 同一构型，交给求解器定旋钮后出 3DM ═══");

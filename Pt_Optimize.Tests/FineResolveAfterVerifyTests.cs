@@ -49,7 +49,7 @@ public class FineResolveAfterVerifyTests
             Ok = true,
             Converged = true,
             RampChecked = true,
-            Checks = LineResult.Required
+            Checks = LineResult.RequiredFor(emptyTube: false)   // K 路（2026-09-15 Opus 5）：必备名单按工况取；界面只解带玻璃稳态
                 .Where(q => !bad.Name.StartsWith(q.Prefix, StringComparison.Ordinal))
                 .Select(q => C(q.Prefix + " 底表", true, q.Kind))
                 .Concat(new[] { bad }).ToArray(),

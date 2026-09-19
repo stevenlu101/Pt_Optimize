@@ -85,6 +85,67 @@ public static class UiShot
             }
         }
 
+        // ★ R47 B（2026-09-13）：① 页**图纸模式**也要抓 —— 图纸路径的舌保温改用 ① 页那张逐片表，
+        //   「源码写了不等于布局给了」，切到 Rhino .3dm 之后那张表与图纸段的说明行得目视。逐屏往下滚各来一张。
+        {
+            var rb3dm = Descendants(form).OfType<RadioButton>().FirstOrDefault(r => r.Text.Contains(".3dm", StringComparison.Ordinal));
+            var inputPage = tabs.TabPages.Cast<TabPage>().FirstOrDefault(t => t.Text.Contains("输入", StringComparison.Ordinal));
+            if (rb3dm is not null && inputPage is not null)
+            {
+                tabs.SelectedTab = inputPage; Pump(300);
+                rb3dm.Checked = true; Pump(600);
+                string name = Safe(inputPage.Text) + "_图纸模式";
+                string file = Path.Combine(dir, $"01x_{name}.png");
+                Shoot(form, file);
+                index.Add($"{Path.GetFileName(file)}　←　页签「{inputPage.Text}」切到 Rhino .3dm（图纸模式）");
+                int sk = 0;
+                foreach (var sc in Descendants(inputPage).OfType<ScrollableControl>().Where(c => c.AutoScroll && c.VerticalScroll.Visible && c.ClientSize.Height > 0))
+                {
+                    int total = sc.DisplayRectangle.Height, view = sc.ClientSize.Height;
+                    for (int y = view; y < total; y += view)
+                    {
+                        sc.AutoScrollPosition = new Point(0, y);
+                        Pump(300);
+                        string sfile = Path.Combine(dir, $"01xs{++sk}_{name}_往下滚{sk}.png");
+                        Shoot(form, sfile);
+                        index.Add($"{Path.GetFileName(sfile)}　←　页签「{inputPage.Text}」图纸模式滚到第 {sk + 1} 屏");
+                    }
+                    sc.AutoScrollPosition = new Point(0, 0);
+                    Pump(200);
+                }
+                var rbAn = Descendants(form).OfType<RadioButton>().FirstOrDefault(r => r.Text.Contains("解析", StringComparison.Ordinal));
+                if (rbAn is not null) { rbAn.Checked = true; Pump(300); }
+            }
+        }
+
+        // ★★★★★ 2026-09-18，Opus 5：**牌号下拉也要抓**（数据不全的牌号灰显不可选，用户 2026-09-16）。
+        //
+        //   下拉是**弹出窗口**，不是窗体里的控件 —— Form.DrawToBitmap 抓不到它。
+        //   抓不到就等于没抓：这一版改的正是那张列表长什么样（哪几行灰、行末写什么），
+        //   而「源码写了不等于布局给了」是本项目抓 UI 的全部理由。
+        //   ⇒ 把**生产那份工厂**（GradeNameEditor.BuildList）造出来的控件放进一个临时窗体单独画一张。
+        //   ⚠ 画的是生产控件本身，不是仿造的示意图；灰不灰由 GradeChoices 判，这里一个字都不判。
+        {
+            using var host = new Form
+            {
+                StartPosition = FormStartPosition.Manual,
+                Location = new Point(0, 0),
+                FormBorderStyle = FormBorderStyle.FixedToolWindow,
+                Text = "参数表「铂材牌号」下拉",
+                ShowInTaskbar = false,
+            };
+            var gpanel = GradeNameEditor.BuildList(PtOptimize.Core.GradeChoices.DefaultGrade, _ => { });
+            host.ClientSize = new Size(gpanel.Width, gpanel.Height);
+            gpanel.Dock = DockStyle.Fill;
+            host.Controls.Add(gpanel);
+            host.Show();
+            Pump(600);
+            string gfile = Path.Combine(dir, "90_牌号下拉_数据不全的灰显不可选.png");
+            Shoot(host, gfile);
+            index.Add($"{Path.GetFileName(gfile)}　←　参数表「铂材牌号」下拉（全集照列；灰行 = 数据不全、不可选，行末写明缺哪几类）");
+            host.Close();
+        }
+
         // R35（用户 2026-09-11「所有 Excel 表格物件都检查一遍，不要有字体被挡住」）：窗体是真 Show 出来的，
         //   这里量的是真像素 —— 每张表的表头高与每一行行高都得装得下自己的字。走查里窗体没 Show，量不到这个。
         int grids = 0, bad = 0;
