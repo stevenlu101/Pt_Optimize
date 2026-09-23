@@ -1,0 +1,181 @@
+// ════ 存档（审查 T4，2026-09-23 补）：这份源码生成了 deliverable/R48_F7_改前探针_热点半径与新旧细区半径_W08W06_本次开跑于2026-09-23_141431.txt（F7 门 e 的活参照、开 − 关归因的「改前」列）。
+// 原样拷自会话临时目录 scratchpad/c4_probe_prechange_source.cs（mtime 2026-09-23 14:16；探针 14:14:31 开跑），一字未改；用 .txt 后缀免得被测试工程编译。
+// 只能在 F7 之前的树上编译（用单参 MeshVerify.RequiredMeshFor(d) 旧签名、MeshAdapt.RequiredFineRadiusMm(new[]{disc}, hole)）；当时放进 cff38c6 的 Pt_Optimize.Tests 里跑。
+// 10.9-6 在合并树上重出 F7 门 e 参照时：把本档放进「合并前一刻」的树（F7′ 之前）作为一个测试档跑，产出的档替换 141431 作参照。
+// ⚠ 141431 档头没有印 git HEAD／脏状态；「改前树 = cff38c6 ＋ 本源码」的依据只有实施记录。以后产出参照的探针，档头要印 git rev-parse HEAD 与 git status --short 摘要。
+// ════════════════════════════════════════════════════════════════════════════
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.RegularExpressions;
+using PtOptimize.Core;
+using Xunit;
+using Xunit.Abstractions;
+
+namespace PtOptimize.Tests;
+
+// ════════════════════════════════════════════════════════════════════════════
+//  F7 细区半径与舌长解耦（执行计划各组详稿 C4；业主决定 决 29 (1)，HANDOVER §0.-21）—— 2026-09-23，Opus 5.5（C4）
+//  改前探针（只印）：W08／W06 现役设计（门 f 的输入 = R48NMeshGateTests.Design，圆盘保温 10／20）判决网格上的热点半径位置、旧半径、新半径、格数。
+// ════════════════════════════════════════════════════════════════════════════
+public class R48F7FineRadiusDecoupleTests
+{
+    private readonly ITestOutputHelper _o;
+    public R48F7FineRadiusDecoupleTests(ITestOutputHelper o) { _o = o; }
+    internal const string Sign = "2026-09-23，Opus 5.5（C4）";
+
+    // ── 改前树与改后树之间，本档只有这三行不同（改前树没有改回参数）：
+    static double OldRadius(DesignSpec d) => MeshVerify.RequiredMeshFor(d).RadiusMm;                                  // 改前树：生产 = 旧规则
+    static double NewRadius(DesignSpec d) => MeshAdapt.RequiredFineRadiusMm(new[] { d.DiscRadiusMm }, d.HoleRadiusMm);  // 改前树：新规则只作预判
+    const bool SolveNew = false;                                                                                         // 改前树：新半径只数格、不解
+
+    static string Sha(string s) => Convert.ToHexString(SHA256.HashData(new UTF8Encoding(false).GetBytes(s))).ToLowerInvariant();
+
+    /// <summary>全量转储（R48LineDumpTests.Dump，含文字），两处耗时改写成占位（与 R48PropsWiringGateTests 门 1 同一做法）。</summary>
+    static string DumpNoTiming(LineCase lc, LineResult r)
+    {
+        string full = Regex.Replace(R48LineDumpTests.Dump(lc, r, withText: true), @"(结果\.JacobianAmpSec = )[^\n]*", "$1<耗时>");
+        return Regex.Replace(full, @"用时 [0-9.]+ s", "用时 <耗时> s");
+    }
+
+    /// <summary>热点句：改前树上照抄 MeshVerify.Run 里那三行（改后树换成 MeshVerify 抽出来的同一段）。</summary>
+    static (double peakR, string? verdict) Hotspot(LineResult r, double innerR, double radius)
+    {
+        var blindPeak = r.Flanges.Where(f => double.IsNaN(f.DiscMaxRMm) && double.IsNaN(f.TabMaxRMm)
+                                          && double.IsNaN(f.LocalStabRMm)).Select(f => f.Name).ToArray();
+        double peakR = r.Flanges.Length == 0 || blindPeak.Length > 0 ? double.NaN
+                     : r.Flanges.SelectMany(f => new[] { f.DiscMaxRMm, f.TabMaxRMm, f.LocalStabRMm })
+                        .Where(v => !double.IsNaN(v)).DefaultIfEmpty(double.NaN).Max();
+        string? peakBad = MeshAdapt.PeakVerdict(peakR, innerR, radius);
+        if (peakBad is not null && blindPeak.Length > 0) peakBad += $"（算不出热点位置的片：{string.Join("、", blindPeak)}）";
+        return (peakR, peakBad);
+    }
+
+    internal sealed class Row
+    {
+        public string Which = "", Tag = "", Grade = "", Rule = ""; public double Disc, FineMm, RadiusMm, InnerR, Sec;
+        public bool Ok, Converged; public string Message = "";
+        public double Hot = double.NaN, Cold = double.NaN, Flux = double.NaN, Mass = double.NaN;
+        public int Cells, Rounds; public string Sha = "", HotspotTable = "", Verdict = "";
+        public double PeakR = double.NaN;
+    }
+
+    /// <summary>与 R48NMeshGateTests.SolveLine 同一条路（ApplySectionFloor → BuildCase → Solver.ApplyCaseMesh → LineRunner.Run），细区半径由调用方给（旧规则／新规则）。</summary>
+    static Row SolveRow(string which, double disc, DesignSpec d, DesignInputs p, double fineMm, Func<DesignSpec, double> radiusOf, string grade, string rule)
+    {
+        var row = new Row { Which = which, Tag = $"盘{disc:0}", Disc = disc, Grade = grade, Rule = rule };
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            var dummy = new SolverResult { Design = d };
+            Solver.ApplySectionFloor(d, p, new SolverOptions(), dummy, null, null);
+            double radius = radiusOf(d);
+            var lc = d.BuildCase(p);
+            Solver.ApplyCaseMesh(lc, new SolverOptions { FineMm = fineMm, FineRadiusMm = radius });
+            row.FineMm = lc.MeshFineMm; row.RadiusMm = lc.MeshFineRadiusMm;
+            row.InnerR = MeshAdapt.InnerRadiusFor(d.HoleRadiusMm, Math.Max(d.TabThickMm.Max(), d.WallMm));
+            var r = LineRunner.Run(lc);
+            row.Ok = r.Ok; row.Converged = r.Converged; row.Message = r.Ok ? (r.Converged ? "" : "外层耦合未收敛") : r.Message;
+            row.Cells = r.MeshCells; row.Rounds = r.CoupleRounds;
+            if (r.Ok)
+            {
+                row.Hot = r.ValueOf(LineResult.Key.HotOverTc); row.Cold = r.ValueOf(LineResult.Key.ColdUnderTc); row.Flux = r.ValueOf(LineResult.Key.NetFlux);
+                row.Mass = r.TotalMassG;
+                var sb = new StringBuilder();
+                foreach (var f in r.Flanges)
+                    sb.Append($"{f.Name}：盘区峰 r={f.DiscMaxRMm:0.00}　舌区峰 r={f.TabMaxRMm:0.00}　局部热稳定 r={f.LocalStabRMm:0.00}（{(f.LocalStabOnTab ? "舌" : "盘")}）；");
+                row.HotspotTable = sb.ToString();
+                var (peakR, verdict) = Hotspot(r, row.InnerR, row.RadiusMm);
+                row.PeakR = peakR; row.Verdict = verdict ?? "null（盖住了）";
+                row.Sha = Sha(DumpNoTiming(lc, r));
+            }
+        }
+        catch (Exception ex) { row.Ok = false; row.Message = $"{ex.GetType().Name}：{ex.Message}"; }
+        row.Sec = sw.Elapsed.TotalSeconds;
+        return row;
+    }
+
+    /// <summary>只数格（不解）：与 R48NMeshGateTests.Build 同一条路，细区半径由调用方给。返回片 0 的格数（= LineResult.MeshCells 的口径）。</summary>
+    static int CellsOnly(DesignSpec d, DesignInputs p, double fineMm, Func<DesignSpec, double> radiusOf)
+    {
+        var dummy = new SolverResult { Design = d };
+        Solver.ApplySectionFloor(d, p, new SolverOptions(), dummy, null, null);
+        double radius = radiusOf(d);
+        var lc = d.BuildCase(p);
+        Solver.ApplyCaseMesh(lc, new SolverOptions { FineMm = fineMm, FineRadiusMm = radius });
+        var g = lc.FlangePlates[0];
+        g.HoleRadiusMm = lc.TubeIdMm * 0.5 + lc.WallMm;
+        return LineRunner.PlateMeshAnalytic(lc, 0).CellCount;
+    }
+
+    static string R(double v) => v.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+
+    [Trait("速度", "慢")]
+    [Fact]
+    public void 探针_改前量_W08W06判决网格热点半径与新旧半径_只印()
+    {
+        string file = DeliverableOut.Stamped("R48_F7_改前探针_热点半径与新旧细区半径_W08W06.txt");
+        var sb = new StringBuilder(); void W(string t = "") => sb.AppendLine(t);
+        var swAll = Stopwatch.StartNew();
+        W("F7 改前探针（只印，不判）：W08／W06 现役设计 × 圆盘保温 10／20 × 判决（W08 另加导航）　旧细区半径（生产）上解整线，印热点位置；新半径只预判、只数格");
+        W($"开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}　工作树 {HandoverDoc.Root()}　写码 {Sign}　并发 3　机器争用下（另有两名子代理在跑测试，load 10～14），耗时只作量级");
+        W("设计：R48NMeshGateTests.Design（W08 = " + R48LW08NavDesign.Source + "；W06 = " + R48LW06FineDesign.Source + "），圆盘保温按 门 f 的写法（FlangeInsulated、FlangeInsulMm = 10／20、逐片留空）。");
+        W("旧半径 = MeshVerify.RequiredMeshFor（改前 = max(盘半径, 0.35·|舌长|, 孔半径) + MeshAdapt.PeakMarginMm）；新半径预判 = max(盘半径, 孔半径) + MeshAdapt.PeakMarginMm（决 29 (1)）。");
+        W("热点 = MeshVerify.Run 里核「细区盖没盖住热点」那一段取的三种：每片 盘区峰 DiscMaxRMm、舌区峰 TabMaxRMm、局部热稳定 LocalStabRMm，全线取最远；判法 MeshAdapt.PeakVerdict（峰 + 10 ≤ 半径 才算盖住）。");
+        W("⚠ 新半径那一列的热点句是**拿旧网格上的峰位预判**，不是新网格上解出来的；新网格上的真值见改后的归因档。");
+        W();
+        var p = new DesignInputs();
+        var jobs = new List<(string which, double disc, DesignSpec d, double fine, string grade)>();
+        foreach (var which in new[] { "W08", "W06" })
+        {
+            var d0 = R48NMeshGateTests.Design(which);
+            var (reqFine, _) = MeshVerify.RequiredMeshFor(d0);
+            foreach (double disc in new[] { 10.0, 20.0 })
+                foreach (var (grade, fine) in which == "W08" ? new[] { ("判决", reqFine), ("导航", 0.0) } : new[] { ("判决", reqFine) })
+                {
+                    var d = d0.Clone();
+                    d.FlangeInsulated = true; d.FlangeInsulMm = disc; d.DiscInsulMm = Array.Empty<double>();
+                    jobs.Add((which, disc, d, fine, grade));
+                }
+        }
+        // 设计本身的几何（旧／新半径的输入）
+        foreach (var which in new[] { "W08", "W06" })
+        {
+            var d0 = R48NMeshGateTests.Design(which);
+            W($"{which}：盘半径 {d0.DiscRadiusMm:0.###} mm　舌长 {d0.TabLengthMm:0.###} mm（0.35·|舌长| = {0.35 * Math.Abs(d0.TabLengthMm):0.###}）　孔半径 {d0.HoleRadiusMm:0.###} mm　⇒ 旧半径 {OldRadius(d0.Clone()):0.###}　新半径 {NewRadius(d0.Clone()):0.###} mm");
+        }
+        W();
+        var rows = new Row[jobs.Count]; var newCells = new int[jobs.Count];
+        System.Threading.Tasks.Parallel.For(0, jobs.Count, new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = 3 }, i =>
+        {
+            var j = jobs[i];
+            rows[i] = SolveRow(j.which, j.disc, j.d.Clone(), p, j.fine, OldRadius, j.grade, "旧");
+            newCells[i] = CellsOnly(j.d.Clone(), p, j.fine, NewRadius);
+        });
+        W("设计\t标签\t档\t细区mm\t旧半径\t新半径(预判)\t旧格数\t新格数(只数格)\t最热铂高出热偶读数K\t管根低于热偶读数K\t管孔净流入W\t铂重g\t耦合轮\t耗时s(争用下)\t最远热点r\t热点句(旧半径，本网格)\t热点句(新半径预判，用旧网格峰位)");
+        for (int i = 0; i < jobs.Count; i++)
+        {
+            var r = rows[i]; var j = jobs[i];
+            double nr = NewRadius(j.d.Clone());
+            string pre = double.IsNaN(r.PeakR) ? "判不了" : (MeshAdapt.PeakVerdict(r.PeakR, r.InnerR, nr) ?? "null（盖住了）");
+            W($"{r.Which}\t{r.Tag}\t{r.Grade}\t{r.FineMm:0.000}\t{r.RadiusMm:0.0}\t{nr:0.0}\t{r.Cells}\t{newCells[i]}\t{r.Hot:0.000}\t{r.Cold:0.000}\t{r.Flux:0.000}\t{r.Mass:0.0}\t{r.Rounds}\t{r.Sec:0}\t{r.PeakR:0.00}\t{r.Verdict}\t{pre}"
+              + (r.Ok && r.Converged ? "" : $"\t**判不了：{r.Message}**"));
+        }
+        W();
+        W("── 逐片热点位置（旧半径网格）");
+        foreach (var r in rows) W($"{r.Which} {r.Tag} {r.Grade}：{r.HotspotTable}");
+        W();
+        W("── 全精度（R 格式）与全量转储 SHA-256（R48LineDumpTests.Dump 含文字，耗时两处改占位）—— 改后树用改回参数重跑同一行，逐位对拍用");
+        foreach (var r in rows) W($"{r.Which}\t{r.Tag}\t{r.Grade}\t旧\t半径 {R(r.RadiusMm)}\t格 {r.Cells}\t最热铂 {R(r.Hot)}\t管根 {R(r.Cold)}\t净流入 {R(r.Flux)}\t铂重 {R(r.Mass)}\t轮 {r.Rounds}\tSHA {r.Sha}");
+        W();
+        W($"── 总耗时 {swAll.Elapsed.TotalMinutes:0.0} 分钟（争用下量得）　{Sign}");
+        W("出处：整线解 = LineRunner.Run；网格 = Solver.ApplyCaseMesh（判决 FineMm = MeshVerify.RequiredMeshFor(设计).FineMm，导航 0）；读数 = LineResult.ValueOf；热点 = LineResult.Flanges 的 DiscMaxRMm／TabMaxRMm／LocalStabRMm。");
+        File.WriteAllText(file, sb.ToString(), new UTF8Encoding(true));
+        _o.WriteLine(file); _o.WriteLine(sb.ToString());
+        Assert.True(rows.All(r => r.Ok), "有一行没解出：" + string.Join("；", rows.Where(r => !r.Ok).Select(r => r.Which + r.Tag + r.Grade + "：" + r.Message)));
+    }
+}

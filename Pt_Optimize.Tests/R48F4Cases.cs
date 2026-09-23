@@ -59,13 +59,13 @@ internal static class R48F4Cases
     internal static (LineCase lc, DesignSpec d) JudgeCase(string which, double discInsulMm, Action<LineCase>? tweak = null)
     {
         var d0 = R48NMeshGateTests.Design(which);
-        var (reqFine, _) = MeshVerify.RequiredMeshFor(d0);
+        var reqFine = MeshVerify.RequiredFineMmFor(d0);   // （合并 C4′ 时改，变因 = 决 29 自适应：RequiredMeshFor 签名加工艺参数 DesignInputs，细区半径改为计划初值 max(盘半径, 孔半径) + 热长度，W08 53.697 mm；细步单独取 RequiredFineMmFor）
         var d = d0.Clone();
         if (!double.IsNaN(discInsulMm)) { d.FlangeInsulated = true; d.FlangeInsulMm = discInsulMm; d.DiscInsulMm = Array.Empty<double>(); }
         var p = new DesignInputs();
         var dummy = new SolverResult { Design = d };
         Solver.ApplySectionFloor(d, p, new SolverOptions(), dummy, null, null);
-        var (_, reqRadius) = MeshVerify.RequiredMeshFor(d);
+        var (_, reqRadius) = MeshVerify.RequiredMeshFor(d, p);   // 合并 C4′ 时改：计划初值（不放大；门 f 同一口径）
         var lc = d.BuildCase(p);
         Solver.ApplyCaseMesh(lc, new SolverOptions { FineMm = reqFine, FineRadiusMm = reqRadius });
         tweak?.Invoke(lc);

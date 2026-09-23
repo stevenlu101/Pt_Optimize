@@ -109,7 +109,7 @@ public class R48LQuantInsul05EndToEndTests
 
         var o0 = new SolverOptions();
         double q = Solver.KnobQuantum(o0, Solver.Knob.Insul);
-        var (reqFine, reqRadius) = MeshVerify.RequiredMeshFor(seed);
+        var (reqFine, reqRadius) = MeshVerify.RequiredMeshFor(seed, p);
         var navCase = new LineCase();
 
         W($"R48 L 路　端到端 **图纸格 0.5**　输入几何「{seed.Name}」（{which}）");

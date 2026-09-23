@@ -47,7 +47,7 @@ namespace PtOptimize.Tests;
 //          门 b 的轮数界 1 没有出处（见上）；首跑的红不是「停机量恰贴阈值」那种（停机前后 32:2.678→33:0.117、28:2.137→29:0.311，都不贴 1），是过渡段放大；红照报，并印出两跑下穿前后各轮的 q/tol。
 //          温度判据那一半是一致性核对，分辨不出改回（见上）。常红的门在红／绿状态上区分不出同一 Fact 里其余子项（改回复现、温度半边）将来的新红（失败信息会逐条列出）。
 //          锚点（Rec 119／98／49，091703／065617；转储诊断 PreLinux 084640；NewMembers 正则）都是 8b90b5f 单树证据。与同波 C2（F3 热场）、C4（F7 细区半径 59 → 40，CostKitCase／GateFCase 经
-//          MeshVerify.RequiredMeshFor）、C3（算例.ZoneByMaterialFraction 1 行）、RING（每片 5 行 HoleBand*）合并后，这两条在 Linux 上一定红，原因不是 SEG，不能读成 SEG 回归；
+//          MeshVerify.RequiredMeshFor）〔合并 C4′ 后改：C4′ 是决 29 自适应，半径 = 计划初值 W08 53.697（不是 40），且每份转储多 1+3 行记录（算例.MeshFineRadiusPlan／各片 Recipe.FineRadiusMm）〕、C3（算例.ZoneByMaterialFraction 1 行）、RING（每片 5 行 HoleBand*）合并后，这两条在 Linux 上一定红，原因不是 SEG，不能读成 SEG 回归；
 //          门 b「改回 ⇒ 差 > 1」依赖一次彩票抽签，合并树的网格上可能抽不出来。合并后怎么处置【待决定】（实施记录 §7）。
 // ════════════════════════════════════════════════════════════════════════════
 [Trait("速度", "慢")]
@@ -87,13 +87,13 @@ public class R48SegContinuousRootSlowTests
     static LineCase GateFCase(double disc, bool cont)
     {
         var d0 = R48NMeshGateTests.Design("W08");
-        var (reqFine, _) = MeshVerify.RequiredMeshFor(d0);
+        var reqFine = MeshVerify.RequiredFineMmFor(d0);   // （合并 C4′ 时改，变因 = 决 29 自适应：RequiredMeshFor 签名加工艺参数 DesignInputs，细区半径改为计划初值 max(盘半径, 孔半径) + 热长度，W08 53.697 mm；细步单独取 RequiredFineMmFor）
         var d = d0.Clone();
         d.FlangeInsulated = true; d.FlangeInsulMm = disc; d.DiscInsulMm = Array.Empty<double>();
         var p = new DesignInputs { SegCurrentContinuousRoot = cont };
         var dummy = new SolverResult { Design = d };
         Solver.ApplySectionFloor(d, p, new SolverOptions(), dummy, null, null);
-        var (_, reqRadius) = MeshVerify.RequiredMeshFor(d);
+        var (_, reqRadius) = MeshVerify.RequiredMeshFor(d, p);   // 合并 C4′ 时改：计划初值（不放大；门 f 同一口径）
         var lc = d.BuildCase(p);
         Solver.ApplyCaseMesh(lc, new SolverOptions { FineMm = reqFine, FineRadiusMm = reqRadius });
         return lc;

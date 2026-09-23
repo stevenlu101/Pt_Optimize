@@ -46,7 +46,7 @@ public class R48ClampBandSelfSimilarTests
         d.RingMul = new[] { 1.0, 1.0, 1.0, 1.0 };
         d = d.Fit();
         d.SizeTongues(p);
-        var (_, radius) = MeshVerify.RequiredMeshFor(d);
+        var (_, radius) = MeshVerify.RequiredMeshFor(d, p);
         double[] iJ = { 1213, 1984, 1817, 1022 };
         double[] tRoot = { 1172.63, 1151.19, 1093.09, 1056.80 };
         double[] hs = { 1.0, 0.5, 0.25 };

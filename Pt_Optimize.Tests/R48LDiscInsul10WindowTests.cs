@@ -71,7 +71,7 @@ public abstract class R48LDiscInsul10WindowBase
 
         var o0 = new SolverOptions();
         double layer = InsulationSearch.LayerMm;
-        var (reqFine, reqRadius) = MeshVerify.RequiredMeshFor(d0);
+        var (reqFine, reqRadius) = MeshVerify.RequiredMeshFor(d0, p);
         var meshOpt = new SolverOptions { FineMm = reqFine, FineRadiusMm = reqRadius };
 
         W($"R48 L 路　**圆盘保温 {WrapLimits.JointZoneMaxMm:0.#} mm 下的舌保温可行窗口**　{which}（{d0.Name}）");

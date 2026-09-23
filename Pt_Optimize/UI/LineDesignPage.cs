@@ -340,6 +340,8 @@ public sealed class LineDesignPage : TabPage
     private readonly ToolStripButton _btnFineResolve;
     private MeshVerify.Result? _meshVerify;
     private object? _verifiedSnap;
+    /// <summary>F7′ 审查 R-7／F2（2026-09-23）：加密复算热点拒答那一次的参数快照；只有它等于当前参数时才发布「做过了、判不了」（改了设计就作废）。</summary>
+    private object? _refusedSnap;
     /// <summary>「分析几何变数」——只在 .3dm 模式且入口片已选时可用，由 SyncGeomSource 控。</summary>
     private readonly ToolStripButton _btnAnalyze;
     private readonly ToolStripButton _btnExportRead;
@@ -1310,6 +1312,8 @@ public sealed class LineDesignPage : TabPage
                   + "不必回导航网格重新走一遍「核算整线」。"
                 : _meshVerify is { Converged: true }
                     ? "参数（含法兰几何来源／图纸文件）在上次加密复算之后又动过了 —— 先点「核算整线」按现在这组重解，再点「◆ 加密复算」。"
+                    : _refusedSnap is not null && Equals(_refusedSnap, CurrentSnap()) && _meshVerify is { Converged: false, PeakOutsideFine: { Length: > 0 } }
+                    ? "「◆ 加密复算」对这组参数做过了，但判不了（细区盖不住热点：放大到上限仍不满足热点检查，或峰位算不出）—— 没有一张可接着用的细网格口径，细网格重解无从谈起。"   // F7′ 审查 F2
                     : "还没做过「◆ 加密复算」—— 细网格重解要接着那一次的网格口径，没有它就无从谈起。";
         _btnAnalyze.ToolTipText = an
             ? "只在「Rhino .3dm 文件」模式下可用 —— 解析形状是程序生成的，没有图纸需要反推。"
@@ -1408,6 +1412,8 @@ public sealed class LineDesignPage : TabPage
         var over = r.Checks.Where(c => (c.Kind is CheckKind.HardSafety or CheckKind.Target)
                                        && (!c.Ok || c.Undetermined)).ToArray();
         bool verified = _meshVerify is { Converged: true } && Equals(_verifiedSnap, CurrentSnap());
+        // F7′ 审查 F2（2026-09-23）：当前参数上加密复算做过了、但热点拒答 ⇒ 不许说成「还没加密复算」。
+        bool refusedNow = _refusedSnap is not null && Equals(_refusedSnap, CurrentSnap()) && _meshVerify is { Converged: false, PeakOutsideFine: { Length: > 0 } };
         if (over.Length > 0 || !verified)
         {
             var sbW = new System.Text.StringBuilder();
@@ -1427,6 +1433,10 @@ public sealed class LineDesignPage : TabPage
             }
             sbW.AppendLine(verified
                 ? "■ 这些数已经加密复算过（算到不再变），可以按它们判断。"
+                : refusedNow
+                ? "■ 加密复算对这组参数**做过了，但判不了**（细区盖不住热点：细区半径已放大到上限，或峰位算不出）—— 温度类判据不算数；"
+                  + "表里的数是**粗网格**上的，不能当成已验过的数。" + Environment.NewLine
+                  + "    " + (_meshVerify?.PeakOutsideFine ?? "").TrimStart('★', ' ')
                 : "■ 这些数是在**粗网格**上算的，还没加密复算 —— **可能偏乐观**。" + Environment.NewLine
                   + "    实测同一个设计：粗网格 法兰增量温降（旧判法）4.72 K（看着余量 53 %），" + Environment.NewLine
                   + "    加密到数不再变是 10.33 K —— 已经越限。");
@@ -3593,7 +3603,7 @@ public sealed class LineDesignPage : TabPage
                 //   第二遍在**判据所在的那张网格**上重新求根（A⑬）。
                 //   否则给出的是「粗网格上的刚好」——实测 ③ 在两张网格上差 **2.03 倍**。
                 //   网格该多细与复核同一个来源（MeshVerify.RequiredMeshFor）。
-                var (finFine, finFineR) = MeshVerify.RequiredMeshFor(win.d);
+                var (finFine, finFineR) = MeshVerify.RequiredMeshFor(win.d, _base);   // F7′（2026-09-23）：半径 = 细区半径计划初值，Solver 解后按热点自适应放大
                 int finRound = 0;
                 var fin = await Task.Run(() => Solver.Solve(win.d, _base,
                               new SolverOptions { AllowTabCuts = allowCuts, MaxRounds = finalRounds,
@@ -3915,7 +3925,13 @@ public sealed class LineDesignPage : TabPage
                     //      门会**继续开着** —— 假绿灯。
                     // 本分支（.3dm 逐级定厚）把**所有**厚度都写回了控件 ⇒ 页面状态完整代表这个解
                     // ⇒ 可以标成「已解且新鲜」。
-                    if (r.Line is { Ok: true, Converged: true })
+                    // ★ F7′（2026-09-23，决 29 自适应；审查 R2）：细网格重解（图纸路径）走 FlangeAutoSizer，它不放大细区半径 ⇒ 解完核一次热点
+                    //   （判法 MeshVerify.HotspotVerdict，与加密复算同一份）；盖不住就说「不算数」、不当已解。
+                    string hot3dm = fine3dm is not null && r.Line is { Ok: true } rl3
+                                    && MeshVerify.HotspotVerdict(rl3, fine3dm.InnerRadiusMm, fine3dm.RadiusMm) is { } hv3
+                        ? Environment.NewLine + "   " + hv3 + "　⇒ 细网格重解（图纸路径）不放大细区半径，这一次的温度类判据不算数；先点「◆ 加密复算」（它会按热点放大），再重解。"
+                        : "";
+                    if (r.Line is { Ok: true, Converged: true } && hot3dm.Length == 0)
                     { _solvedRes = r.Line; _solvedSnap = CurrentSnap(); }
                     PushFlow();
                     // ★ 等厚板（1 级）要**说清只有外层在动**（2026-09-03 放行 1 级之后）。
@@ -3931,7 +3947,7 @@ public sealed class LineDesignPage : TabPage
                          : "") +
                         // 2026-09-14 Opus 5（复审）：原文点名「圆盘区最高温」—— 那条已降为参考量、不卡交付；本器够不着的卡交付判据是下面这三条（名字走 Key 常量）。
                         Environment.NewLine + $"   ⚠ 本器**只调板厚**、追的是旧判法的法兰增量温降，管不到 {Criteria.Plain(LineResult.Key.NetFlux)}，"
-                        + $"也不追 {Criteria.Plain(LineResult.Key.HotOverTc)}／{Criteria.Plain(LineResult.Key.ColdUnderTc)} —— 请自行看判据表。" + floorNote);
+                        + $"也不追 {Criteria.Plain(LineResult.Key.HotOverTc)}／{Criteria.Plain(LineResult.Key.ColdUnderTc)} —— 请自行看判据表。" + floorNote + hot3dm);
                 }
                 else
                 {
@@ -3947,7 +3963,8 @@ public sealed class LineDesignPage : TabPage
                     //     （> 0）时，第二遍**直接在那张细网格上求根**——与「搜形状」精算胜出
                     //     形状用的是同一条路（两遍 Solve），网格口径同一个来源
                     //     （MeshVerify.RequiredMeshFor），求根的网格与判决的网格才是同一张。
-                    double fineRadiusD8 = fineMm > 0 ? MeshVerify.RequiredMeshFor(seedD8).RadiusMm : 0;
+                    // F7′（2026-09-23，决 29 自适应）：fineMm = 0 时也不再落回算例缺省 50 —— Solver 自己取细区半径计划（审查 P6）。
+                    double fineRadiusD8 = fineMm > 0 ? MeshVerify.RequiredMeshFor(seedD8, _base).RadiusMm : 0;
                     // ★ R32：解法族 —— 0 不挖舌孔／1 挖舌孔／2 两个都算并列给出（先不挖再挖，同一个起点各自走到最小可行点，不比重量）
                     int fam = _family.SelectedIndex;
                     SolverOptions OptsFor(bool cuts) => new SolverOptions { MaxRounds = 40, FineMm = fineMm, FineRadiusMm = fineRadiusD8, AllowTabCuts = cuts };
@@ -4049,7 +4066,9 @@ public sealed class LineDesignPage : TabPage
                         $"　合计 {srD8.MassG:0} g\r\n" +
                         "   ★ 三个旋钮**都已带回本页工作设计**（2026-08-25 起）：\r\n" +
                         "     板厚写进控件；舌保温与环倍率本页无控件，但已由本页承载并参与后续求解\r\n" +
-                        "     ⇒「回「整线核算」重解」会**复现这张表**，不会把它们丢回设计记录值。\r\n" +
+                        "     ⇒「回「整线核算」重解」不会把它们丢回设计记录值；但**数会有小的出入**（F7′ 审查 F5）：\r\n" +
+                        "     自动定厚在细区半径计划初值（W08 约 53.7 mm）的导航网格上求根与复核，「整线核算」仍用算例缺省细区半径 50 mm，\r\n" +
+                        "     判据贴着限值时可能翻；几何是同一个构造器（见下）。\r\n" +
                         "     （在此之前只带板厚 ⇒ 重解必然退回失败 ⇒ 提示与定尺寸两步死循环。）\r\n" +
                         $"   ⚠ 本次解的是**设计记录那套完整几何**（含渐变环/角焊缝/等宽舌片/舌根圆角），\r\n" +
                         $"     「整线核算」页用的是**同一个几何构造器**（UiWiring §16 逐字段钉着），不是另一片简化法兰；压接段取设计记录值 {seedD8.ClampLengthMm:0} mm。");
@@ -4310,6 +4329,7 @@ public sealed class LineDesignPage : TabPage
             //   MeshVerify 主循环已经不许不可引用的档进比较；这里再读同一个 MeshVerify.TierUnusableWhy，戳与判据表换不换两处同一个条件。
             bool verifiedUsable = res.Converged && res.Line is { Ok: true } && MeshVerify.TierUnusableWhy(res.Line).Length == 0;
             _verifiedSnap = verifiedUsable ? snapAtStart : null;
+            _refusedSnap = (!res.Converged && res.PeakOutsideFine is { Length: > 0 }) ? snapAtStart : null;   // 审查 R-7／F2：拒答也记快照
 
             // ★★★★★ **把复核解出来的那组判据接过来**（2026-09-02，`--follow 0.8` 走查抓到）。
             //
@@ -4367,8 +4387,13 @@ public sealed class LineDesignPage : TabPage
                     + "② 换族之后结论一致的那部分才可引用；"
                     + "③ 若判据值本来就贴着限值，先问这条限值有没有留够噪声裕量。"
                     + Environment.NewLine);
+            // ★ F7′（2026-09-23，审查 P4）：热点拒答（放大到上限仍盖不住／峰位算不出）不是「还在随网格变」—— 原因要说对。
+            else if (res.PeakOutsideFine is { Length: > 0 })
+                _out.AppendText("⛔ **判不了** —— 加密复算做过了，但细区盖不住热点（上一行：细区半径已放大到上限，或峰位算不出）：这一次的温度类判据不算数。"
+                    + "不是「还在随网格变」，也不是「没做过加密复算」。这个设计现在不能出图。" + Environment.NewLine);
             else if (!res.Converged)
                 _out.AppendText("⚠ **没验过** —— 判据还在随网格变，这个设计现在不能出图。" + Environment.NewLine);
+            if (res.RadiusPlan is { } rpUi) _out.AppendText("　" + rpUi.Describe() + Environment.NewLine);   // F7′：初值、放大与终值
 
             // ★★★★★ U 路（2026-09-18，Opus 5）：**终验之后量一次「每片舌保温的可行窗口」。**
             //
@@ -4402,7 +4427,8 @@ public sealed class LineDesignPage : TabPage
                     ? "图纸模式不跑：这两关要按解析设计逐设定点重造算例，而图纸路径上没有那套旋钮 —— "
                       + "说不了话就不说，别给一张看起来正常的空表"
                     : $"参数表里「{FinalCheckReport.SwitchLabel}」关掉了 —— **没跑不等于过**";
-                var (_, fineRadius) = drawing ? (0.0, 0.0) : MeshVerify.RequiredMeshFor(d);
+                // F7′（2026-09-23，决 29 自适应）：三关跑在复核**收敛那一张**网格上 —— 细区半径取复核计划的终值（放大过就是放大后的），不是初值。
+                double fineRadius = drawing ? 0.0 : (res.RadiusPlan ?? MeshVerify.FineRadiusPlanFor(d, _base)).RadiusMm;
                 var mesh3 = new SolverOptions { FineMm = res.FineMm, FineRadiusMm = fineRadius };
                 if (on)
                     _out.AppendText(Environment.NewLine
@@ -4441,7 +4467,10 @@ public sealed class LineDesignPage : TabPage
                         + "　　很慢（每片二十几次整线解，合计约一小时），随时可点「取消」。"
                         + "不想每次都等：到「① 输入」页把「终验时量每片舌保温的可行窗口」关掉。" + Environment.NewLine);
                     var d2 = d;
-                    var win = await Task.Run(() => InsulWindow.Measure(d2, _base, null, prog, _cts.Token), _cts.Token);
+                    // F7′ 审查 F4（2026-09-23）：窗口从加密复算计划的**终值**起扫（与上面三关同一族网格；计划只增不减，终值作起点合乎决 29），
+                    //   原先传 null ⇒ 窗口回到初值、复算放大过就白扫一趟（约一小时）再放大重扫。本支只在 res.Converged 时走，计划不会是拒答态。
+                    var winOpt = new InsulWindow.Options { RadiusPlan = res.RadiusPlan };
+                    var win = await Task.Run(() => InsulWindow.Measure(d2, _base, winOpt, prog, _cts.Token), _cts.Token);
                     _last.TabInsulWindow = win;
                     _out.AppendText(Environment.NewLine + win.Report() + Environment.NewLine);
                     Show(_last);
@@ -4476,11 +4505,12 @@ public sealed class LineDesignPage : TabPage
         if (_shape is not { } sh)
             return (null, "图纸模式下加密复算要先点「分析几何变数」—— 起始网格从图纸的特征尺寸（环宽、各级径向宽）算，没分析过就取不到。");
         double wall = (double)_wall.Value;
-        var (_, radius, innerR, refused) = MeshVerify.RequiredMeshFor(sh, wall);
-        if (refused is not null) return (null, refused);
         LineCase lc0;
         try { lc0 = BuildCase(); }
         catch (Exception ex) { return (null, "图纸模式下造不出算例：" + ex.Message); }
+        // F7′（2026-09-23）：细区半径初值的热长度按本页走图纸路径的整线算例量（lc0）；MeshVerify 主循环按计划覆盖半径并自适应放大。
+        var (_, radius, innerR, refused) = MeshVerify.RequiredMeshFor(sh, wall, lc0);
+        if (refused is not null) return (null, refused);
         if (lc0.FlangePlates.Length > 0 || lc0.FlangeFile3dm.Length == 0)
             return (null, "图纸模式下 BuildCase 造出来的不是图纸路径的算例（FlangePlates 非空或没有 .3dm）—— 这是程序错，不复核。");
         return ((hMid, hInner) =>
@@ -4552,8 +4582,14 @@ public sealed class LineDesignPage : TabPage
                 _out.AppendText(Environment.NewLine + "⚠ 图纸模式下细网格重解要先点「分析几何变数」—— 网格口径从图纸的特征尺寸算。" + Environment.NewLine);
                 return;
             }
-            var (h0, radius, innerR, refused) = MeshVerify.RequiredMeshFor(sh, (double)_wall.Value);
+            LineCase lcR;
+            try { lcR = BuildCase(); }
+            catch (Exception ex) { _out.AppendText(Environment.NewLine + "⚠ 图纸模式下造不出算例：" + ex.Message + Environment.NewLine); return; }
+            var (h0, radius0, innerR, refused) = MeshVerify.RequiredMeshFor(sh, (double)_wall.Value, lcR);
             if (refused is not null) { _out.AppendText(Environment.NewLine + "⚠ " + refused + Environment.NewLine); return; }
+            // ★ F7′（2026-09-23，决 29 自适应；审查 R2）：细区半径取加密复算**收敛那一张**的终值（放大过就是放大后的），不是初值；
+            //   FlangeAutoSizer 不走计划的放大 ⇒ 解完在下面核一次热点，盖不住就照实说「不算数」（不静默出数）。
+            double radius = _meshVerify.RadiusPlan?.RadiusMm ?? radius0;
             double innerH = _meshVerify.FineMm > 0 ? _meshVerify.FineMm : h0;
             _out.AppendText(Environment.NewLine
                 + $"◆ 细网格重解（图纸路径）：加密复算在内带 {innerH:0.000} mm／中带 {h0:0.000} mm 上判据不过 ⇒ 在这张网格上重新求根"
@@ -4562,7 +4598,7 @@ public sealed class LineDesignPage : TabPage
             return;
         }
         var d = PageToDesignSpec();
-        var (fineMm, _) = MeshVerify.RequiredMeshFor(d);
+        double fineMm = MeshVerify.RequiredFineMmFor(d);   // F7′（2026-09-23）：细区半径由 Solver 自己取计划、解后自适应放大
         _out.AppendText(Environment.NewLine
             + $"◆ 细网格重解：加密复算在 {fineMm:0.000} mm 上判据不过 ⇒ 在这张网格上重新求根"
             + Environment.NewLine);
@@ -5070,6 +5106,11 @@ public sealed class LineDesignPage : TabPage
         f.SizerProvedInfeasible = _sizerInfeasible;
         f.SolverUndetermined = _solverUndetermined; f.SolverUndeterminedWhy = _solverUndeterminedWhy;   // R48 M（2026-09-18，Fable 5.1）：判不了这一位同样在 PushFlow 发布
         f.MeshVerified = _meshVerify is { Converged: true };
+        // F7′（2026-09-23，审查 P4）：做过加密复算但热点拒答 ⇒ 另记原句，提示与报告不再说成「还没加密复算」。
+        //   审查 R-7／F2：只在拒答那次的参数快照等于当前参数时发布（改了设计 ⇒ 退回「还没对当前设计做加密复算」）；来源分「到上限」与「峰位算不出」两种。
+        bool refusedFresh = _refusedSnap is not null && Equals(_refusedSnap, CurrentSnap());
+        f.MeshVerifyRefusedWhy = refusedFresh && _meshVerify is { Converged: false, PeakOutsideFine: { Length: > 0 } pw } ? pw : "";
+        f.MeshVerifyRefusedAtCap = f.MeshVerifyRefusedWhy.Length > 0 && _meshVerify?.RadiusPlan?.Refused is { Length: > 0 };
         f.VerifiedSnap = _verifiedSnap;
         f.VerifyNote = _meshVerify?.Verdict ?? "";
 
@@ -5534,7 +5575,12 @@ public sealed class LineDesignPage : TabPage
     {
         var st = Shared;
         if (st is null) return "";
-        return st.MeshVerified && st.VerifiedFresh ? "判据已加密复算到数不再变" : "判据是导航网格上的数，还没加密复算";
+        return st.MeshVerified && st.VerifiedFresh ? "判据已加密复算到数不再变"
+             : st.MeshVerifyRefusedWhy.Length > 0
+                ? (st.MeshVerifyRefusedAtCap
+                   ? "加密复算做过了但判不了（细区已放大到板料外缘，仍不满足热点检查 —— 口径拒答；温度类判据不算数）—— 判据表里是导航网格上的数"
+                   : "加密复算做过了但判不了（峰位算不出，判不了细区盖没盖住热点；温度类判据不算数）—— 判据表里是导航网格上的数")   // F7′（2026-09-23，审查 P4；R-7／F2 分两句）   // F7′（2026-09-23，审查 P4）
+             : "判据是导航网格上的数，还没加密复算";
     }
 
     /// <summary>R46：安装报告写成 .md（制表位表转成管道表）。抽成两层：带对话框的给按钮，写文件的给走查。</summary>

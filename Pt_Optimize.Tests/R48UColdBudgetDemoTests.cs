@@ -75,7 +75,7 @@ public class R48UColdBudgetDemoTests
         }
         else
         {
-            var (rf, rr) = MeshVerify.RequiredMeshFor(d0);
+            var (rf, rr) = MeshVerify.RequiredMeshFor(d0, new DesignInputs());
             W($"　· 网格 = **判决用的那张**（MeshVerify.RequiredMeshFor：细区 {rf:0.000} mm／细区半径 {rr:0.0} mm），与交付判定同一张。");
         }
         W("　· 两个预算在**同一次运行、同一个进程、同一份设计、同一张网格**上量，只换那一个数。");

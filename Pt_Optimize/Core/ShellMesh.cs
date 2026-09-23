@@ -733,6 +733,11 @@ public sealed class MeshRecipe
     public int FloatingComponents { get; init; }
     /// <summary>2026-09-23（RING 审查后，M1）：浮空分量的单元面积和 mm²（<see cref="ShellMesh.Area"/> 之和）。</summary>
     public double FloatingAreaMm2 { get; init; }
+    /// ★ F7′（2026-09-23，Opus 5.5，C4′；决 29 自适应）：**生效参数的记录**（不是从节点间距量的，同 <see cref="ClampBandMm"/> 那一类）——
+    /// 本网格铺中带细步（|x| ≤ R 且 |z| ≤ R 的方带）用的细区半径 R mm。它由细区半径计划（<see cref="MeshAdapt.FineRadiusPlanOf"/>）给，
+    /// 计划本身（初值、余量₀ 与输入、每次放大）记在算例 <see cref="LineCase.MeshFineRadiusPlan"/> 与证据头里。与网格尺寸有关、随解放大，不进规则。
+    /// </summary>
+    public double FineRadiusMm { get; init; } = double.NaN;
 
     /// <summary>与网格尺寸无关的那部分（规则）—— 生产配方常量就是这个类型，门用 == 比。</summary>
     /// <remarks>2026-09-23（F6 审查后）：F6 三项开关的真值与量出来的量都进规则（分开的六项），任何一项与生产不同都报出来。</remarks>
@@ -755,7 +760,8 @@ public sealed class MeshRecipe
          // 2026-09-23（RING 审查后，M2）：量得只查孔圆穿过的格边上带内那一段，包层上按构造为真；原句「孔圆内侧没有料」没这两个限定
          + $"量得{(HoleBandCircle ? $"孔圆穿过的格边上带内 r ∈ [rh − b, rh) 没有料（{(HoleBandMm > 0 ? $"b = {HoleBandMm:0.###} mm，包层按构造成立" : "老栅格 b 取一个栅格步，解析板等 b 取 rh")}；带外 r < rh − b 与格内不查）" : "孔圆穿过的格边上带内孔圆内侧有料（或没有弧面）")}"   // 2026-09-23 决 101 A
          // 2026-09-23（RING 审查后，M1）：连通分量与浮空料块（只量不剔除）
-         + $"；连通分量 {MeshComponents}{(FloatingComponents > 0 ? $"，⚠ 其中 {FloatingComponents} 块（合计 {FloatingAreaMm2:0.###} mm²）不与管孔面、压接格相连（浮空：没有电位与温度边界）" : "，没有浮空料块")}";
+         + $"；连通分量 {MeshComponents}{(FloatingComponents > 0 ? $"，⚠ 其中 {FloatingComponents} 块（合计 {FloatingAreaMm2:0.###} mm²）不与管孔面、压接格相连（浮空：没有电位与温度边界）" : "，没有浮空料块")}"
+         + $"；细区半径 {FineRadiusMm:0.###} mm（生效参数；计划见算例 MeshFineRadiusPlan）";   // F7′（2026-09-23，决 29 自适应）
 }
 
 /// <summary>R48（2026-09-15，Opus 5）：判定网格配方里与网格尺寸无关的规则部分（<see cref="MeshRecipe.Rule"/>）。</summary>
@@ -1872,6 +1878,7 @@ public static class FlangeMesher
             MeshComponents = conn.Components,
             FloatingComponents = conn.Floating,
             FloatingAreaMm2 = conn.FloatingAreaMm2,
+            FineRadiusMm = fineRadius,   // F7′（2026-09-23）：生效参数的记录
         };
         return m;
     }

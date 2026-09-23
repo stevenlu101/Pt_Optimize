@@ -62,7 +62,7 @@ public class R48NSliverGateTests
         var d = R48NMeshGateTests.Design(which);
         var dummy = new SolverResult { Design = d };
         Solver.ApplySectionFloor(d, p, new SolverOptions(), dummy, null, null);
-        var (_, reqRadius) = MeshVerify.RequiredMeshFor(d);
+        var (_, reqRadius) = MeshVerify.RequiredMeshFor(d, p);
         var lc = d.BuildCase(p);
         Solver.ApplyCaseMesh(lc, new SolverOptions { FineMm = fineMm, FineRadiusMm = reqRadius });
         var g = lc.FlangePlates[0];
@@ -334,7 +334,7 @@ public class R48NSliverGateTests
                 var d = R48NMeshGateTests.Design("W08"); R48NMeshGateTests.SetRW(d, R, 30.0);
                 var dummy = new SolverResult { Design = d };
                 Solver.ApplySectionFloor(d, p, new SolverOptions(), dummy, null, null);
-                var (_, reqRadius) = MeshVerify.RequiredMeshFor(d);
+                var (_, reqRadius) = MeshVerify.RequiredMeshFor(d, p);
                 var lc = d.BuildCase(p);
                 Solver.ApplyCaseMesh(lc, new SolverOptions { FineMm = 0, FineRadiusMm = reqRadius });
                 var m = LineRunner.PlateMeshAnalyticWith(lc, 0, rules, null);

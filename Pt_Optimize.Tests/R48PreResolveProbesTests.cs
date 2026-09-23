@@ -161,7 +161,7 @@ public class R48PreResolveProbesTests
     {
         var sb = new StringBuilder(); var say = Logger("R48_探针二_共用片双扣对照_2026-09-14.txt", sb);
         say($"R48 探针二：共用片双扣开关对照（Opus 5）　{DateTime.Now:yyyy-MM-dd HH:mm}　管壁 0.8 落点，保温按半径，0.5 mm");
-        var (_, radius) = MeshVerify.RequiredMeshFor(Landing());
+        var (_, radius) = MeshVerify.RequiredMeshFor(Landing(), new DesignInputs());
         var res = new Dictionary<bool, LineResult>();
         foreach (bool split in new[] { false, true })
         {
@@ -217,7 +217,7 @@ public class R48PreResolveProbesTests
     {
         var sb = new StringBuilder(); var say = Logger("R48_探针三_片0保温两根杠杆_2026-09-14.txt", sb);
         say($"R48 探针三：片0 保温两根杠杆（Opus 5）　{DateTime.Now:yyyy-MM-dd HH:mm}　管壁 0.8 落点，保温按半径，0.5 mm，细区半径 59");
-        var (_, radius) = MeshVerify.RequiredMeshFor(Landing());
+        var (_, radius) = MeshVerify.RequiredMeshFor(Landing(), new DesignInputs());
 
         string Row(LineResult r, DesignSpec d, DesignInputs p, double caseDiscInsul)
         {
@@ -284,7 +284,7 @@ public class R48PreResolveProbesTests
     {
         var sb = new StringBuilder(); var say = Logger("R48_探针四_耦合停机噪声_2026-09-14.txt", sb);
         say($"R48 探针四：外层耦合停机噪声实测（Opus 5）　{DateTime.Now:yyyy-MM-dd HH:mm}　管壁 0.8 落点，保温按半径，0.5 mm，细区半径 59");
-        var (_, radius) = MeshVerify.RequiredMeshFor(Landing());
+        var (_, radius) = MeshVerify.RequiredMeshFor(Landing(), new DesignInputs());
         var res = new Dictionary<double, LineResult>();
         foreach (double tol in new[] { 1.0, 0.05 })
         {

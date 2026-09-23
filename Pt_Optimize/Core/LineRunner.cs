@@ -271,6 +271,13 @@ public sealed class LineCase
     public double MeshFineMm = 2.0, MeshCoarseMm = 11.0, MeshFineRadiusMm = 50.0;
 
     /// <summary>
+    /// ★ F7′（2026-09-23，Opus 5.5，C4′；决 29 自适应）：**这张网格的细区半径是从哪来的** —— 细区半径计划（<see cref="MeshAdapt.FineRadiusPlanOf"/>：初值、余量₀ 与输入、每次放大的原因与数、终值）。
+    /// 由用计划造算例的一方写（MeshVerify 加密复算、Solver 求根与终局复核、保温搜索、可行窗口）；null = 本算例没经过计划（<see cref="MeshFineRadiusMm"/> 是算例缺省或调用方直接给的）。
+    /// 只作记录与证据头（EvidenceHeader.ForLineCase），LineRunner 不读它 —— 网格只读 <see cref="MeshFineRadiusMm"/>。
+    /// </summary>
+    public FineRadiusPlan? MeshFineRadiusPlan;
+
+    /// <summary>
     /// **内带**网格尺寸 mm（管孔 + 焊脚那一圈）。**0 = 不分内带**，与 2026-08-29 之前逐位一致。
     ///
     /// ★ 为什么要分（算法普查 A⑭）：此前只有一条细化带，而它的两个参数来自相反的两端 ——

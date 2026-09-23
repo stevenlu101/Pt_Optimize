@@ -66,7 +66,7 @@ public class R48TubeInsulScanTests
         d.TabInsulMm = new[] { tab, tab, tab, tab };
         d = d.Fit();
         d.SizeTongues(p);
-        var (_, radius) = MeshVerify.RequiredMeshFor(d);
+        var (_, radius) = MeshVerify.RequiredMeshFor(d, p);
         var lc = d.BuildCase(p, checkRamp: false);
         MeshAdapt.RefineWholeMesh(lc, 0.5, radius);
         ev = EvidenceFile.Open(file, EvidenceHeader.ForLineCase($"R48 第一轮保温扫描 {tag}", lc));

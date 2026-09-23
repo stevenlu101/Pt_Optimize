@@ -56,7 +56,7 @@ public class R48NMeshInjectTests
     {
         var dummy = new SolverResult { Design = d };
         Solver.ApplySectionFloor(d, p, new SolverOptions(), dummy, null, null);
-        var (_, reqRadius) = MeshVerify.RequiredMeshFor(d);
+        var (_, reqRadius) = MeshVerify.RequiredMeshFor(d, p);
         var lc = d.BuildCase(p);
         Solver.ApplyCaseMesh(lc, new SolverOptions { FineMm = fineMm, FineRadiusMm = reqRadius });
         var g = lc.FlangePlates[Math.Min(plate, lc.FlangePlates.Length - 1)];
@@ -348,7 +348,7 @@ public class R48NMeshInjectTests
         W($"改前值写死（出自 网格修复_改前快照_门f_现役数_{which}_本次开跑于2026-09-18_195938.txt）；位移门槛（跑前写死）|Δ| ≤ {ShiftTolK} K／{ShiftTolW} W／{ShiftTolG} g；超了红着交、写明原因，不挪。");
         W($"基准设计：{(which == "W08" ? R48LW08NavDesign.Source : R48LW06FineDesign.Source)}");
         W(); W(R48NMeshGateTests.LineHead);
-        var (reqFine, _) = MeshVerify.RequiredMeshFor(d0);
+        var reqFine = MeshVerify.RequiredFineMmFor(d0);
         var jobs = new List<(double disc, DesignSpec d)>();
         foreach (double disc in new[] { 10.0, 20.0 })
         {

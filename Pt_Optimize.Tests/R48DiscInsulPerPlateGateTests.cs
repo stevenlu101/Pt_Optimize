@@ -75,9 +75,16 @@ public class R48DiscInsulPerPlateGateTests
             S($"判据「{x.Name}」位置", x.Where, y.Where); S($"判据「{x.Name}」说明", x.Note, y.Note);
         }
         if (a.Notes.Count != b.Notes.Count) d.Add($"求解备注条数 {a.Notes.Count} ≠ {b.Notes.Count}");
-        for (int k = 0; k < Math.Min(a.Notes.Count, b.Notes.Count); k++) S($"求解备注{k}", a.Notes[k], b.Notes[k]);
+        for (int k = 0; k < Math.Min(a.Notes.Count, b.Notes.Count); k++) S($"求解备注{k}", NoWallClock(a.Notes[k]), NoWallClock(b.Notes[k]));
         return d;
     }
+
+    /// <summary>
+    /// 2026-09-23（P4）：求解备注「★ 停机放大口径」那一句尾巴上的「量雅可比用时 x s」是挂钟秒数（LineRunner.Run 用秒表量 MeasureJacobianAmp 的耗时，
+    /// 同一算例任意两跑都不同），不是模型的数 ⇒ 与 R48LineDumpTests 去文字转储对挂钟成员的做法一样：只把秒数写成占位「&lt;挂钟&gt;」，这一句其余文字与别的备注照旧逐字比。
+    /// 不去掉这条备注、不跳过比较；「雅可比读缓存」与「量雅可比用时」两种写法仍互不相等。
+    /// </summary>
+    internal static string NoWallClock(string s) => Regex.Replace(s, @"量雅可比用时 [0-9]+(?:\.[0-9]+)? s", "量雅可比用时 <挂钟> s");
 
     private static ConstraintOut Row(LineResult r, string key)
     {

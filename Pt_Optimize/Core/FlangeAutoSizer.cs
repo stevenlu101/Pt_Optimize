@@ -1411,6 +1411,10 @@ public static class FlangeAutoSizer
         // 分区加密的老口径出口：内带与中带不同尺寸时才用得上（整档一起加密时它等于中带，这行不做事）
         if (opt.FinalMeshInnerMm > 0 && Math.Abs(opt.FinalMeshInnerMm - opt.FinalMeshFineMm) > 1e-9)
             lc.MeshInnerMm = opt.FinalMeshInnerMm;
+        // F7′ 审查 M2（2026-09-23）：照抄来的计划记录若与这里实际用的半径对不上（RefineWholeMesh 刚按 FinalMeshFineRadiusMm 改过半径）⇒ 清掉，
+        //   免得证据头印一份与网格不符的计划（清掉后证据头照实写「未经细区半径计划（算例 MeshFineRadiusMm = …）」）。
+        if (lc.MeshFineRadiusPlan is { } fp && BitConverter.DoubleToInt64Bits(fp.RadiusMm) != BitConverter.DoubleToInt64Bits(lc.MeshFineRadiusMm))
+            lc.MeshFineRadiusPlan = null;
         return lc;
     }
 
@@ -1502,6 +1506,7 @@ public static class FlangeAutoSizer
         DiscInsul3dmPerPlateMm = c.DiscInsul3dmPerPlateMm,   // R48（2026-09-14，Opus 5）：图纸路径逐片圆盘保温，漏抄则副本退回整线值
         MeshFineMm = c.MeshFineMm, MeshCoarseMm = c.MeshCoarseMm,
         MeshFineRadiusMm = c.MeshFineRadiusMm,
+        MeshFineRadiusPlan = c.MeshFineRadiusPlan,   // F7′ 审查 M2（2026-09-23，变因「F7′ 决 29：记录字段随副本走」）：只作记录（LineRunner 不读）；record 不可变，共用引用无害
         MeshInnerMm = c.MeshInnerMm, MeshInnerRadiusMm = c.MeshInnerRadiusMm,
         GlassInC = c.GlassInC, GlassOutMeasuredC = c.GlassOutMeasuredC,
         Base = c.Base, BaselineMassG = c.BaselineMassG, CheckRamp = c.CheckRamp,

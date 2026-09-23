@@ -78,7 +78,7 @@ public class RealDrawingParityTests
 
         var f0 = Geometry3dm.LoadThickness(file, "入口", double.NaN, 0.5);
         var sh = PlateShapeAnalyzer.Analyze(f0);
-        var (h0, radius, innerR, refused) = MeshVerify.RequiredMeshFor(sh, lc0.WallMm);
+        var (h0, radius, innerR, refused) = MeshVerify.RequiredMeshFor(sh, lc0.WallMm, lc0);
         Assert.Null(refused);
         var sb = new StringBuilder();
         sb.AppendLine($"R47 复修 M4 真图纸加密复算（{Path.GetFileName(file)}「入口」层，1 段两片）　{DateTime.Now:yyyy-MM-dd HH:mm}　起始网格 {h0:0.000} mm　中带半径 {radius:0.0}　内带半径 {innerR:0.0}");

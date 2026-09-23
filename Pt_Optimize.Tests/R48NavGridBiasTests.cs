@@ -63,7 +63,7 @@ public class R48NavGridBiasTests
         d0.RingMul = new[] { 1.0, 1.0, 1.0, 1.0 };
         d0 = d0.Fit();
         d0.SizeTongues(p);
-        var (_, radius) = MeshVerify.RequiredMeshFor(d0);
+        var (_, radius) = MeshVerify.RequiredMeshFor(d0, p);
 
         foreach (double h in new[] { 2.0, 1.0, 0.5, 0.25 })
         {

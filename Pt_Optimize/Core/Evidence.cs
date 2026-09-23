@@ -180,7 +180,9 @@ public static class EvidenceHeader
                  //   （LineRunner.CoupleTolKFor，结果里的 LineResult.CoupleTolKUsed）。不补这一行，读的人会把上限当成实际用的那个数。
                  // R48 M（2026-09-18，Fable 5.1）：认证误差口径也进头（门 R48MStopTolGateTests.门_证据头写认证误差口径）
                  // ★ 2026-09-23（SEG，决 97 A）：段电流收尾口径也进头 —— 改回（中点）跑出来的证据与生产（连续根）不是一个口径，头上要看得出来。
-                 (extra ?? Array.Empty<string>()).Concat(new[] { "耦合容差口径：" + CoupleTolNote(lc), "认证误差口径：" + CertErrNote(lc), "段电流收尾：" + SegRootNote(lc) }),
+                 (extra ?? Array.Empty<string>()).Concat(new[] { "耦合容差口径：" + CoupleTolNote(lc), "认证误差口径：" + CertErrNote(lc), "段电流收尾：" + SegRootNote(lc),
+                     // ★ F7′（2026-09-23，决 29 自适应）：细区半径从哪来（计划的初值、余量₀ 与输入、放大、终值）；没经计划就照实写算例上的数。
+                     "细区半径：" + (lc.MeshFineRadiusPlan?.Describe() ?? $"未经细区半径计划（算例 MeshFineRadiusMm = {lc.MeshFineRadiusMm:R} mm）") }),
                  root, callerFile);   // 调用方路径原样往下传（不传就成了本文件）
 
     /// <summary>R48 L（2026-09-17，Opus 5）：停机容差口径的一句话 —— 上限、是否按判据裕度收紧、比例与下限。只有这一份写法。</summary>
