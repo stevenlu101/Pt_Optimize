@@ -1,0 +1,13 @@
+using System; using System.IO; using System.Reflection; using System.Security.Cryptography; using System.Text; using PtOptimize.Core;
+// 接线门 1 剥离版转储（逐字照 scratchpad/ring/ZZRingRevertProbeTests.RING_接线门1转储）：QuickCase → LineRunner.Run → R48LineDumpTests.Dump(withText) → 两处耗时占位
+var asmT = typeof(PtOptimize.Tests.R48LineDumpTests).Assembly;
+var bf = BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static;
+var qc = asmT.GetType("PtOptimize.Tests.R48PropsWiringGateTests").GetMethod("QuickCase", bf);
+var lc = (LineCase)qc.Invoke(null, new object[] { null });
+var r = LineRunner.Run(lc);
+if (!r.Ok) throw new Exception(r.Message);
+string full = System.Text.RegularExpressions.Regex.Replace(PtOptimize.Tests.R48LineDumpTests.Dump(lc, r, withText: true), @"(结果\.JacobianAmpSec = )[^\n]*", "$1<耗时>");
+full = System.Text.RegularExpressions.Regex.Replace(full, @"用时 [0-9.]+ s", "用时 <耗时> s");
+string sha = Convert.ToHexString(SHA256.HashData(new UTF8Encoding(false).GetBytes(full))).ToLowerInvariant();
+File.WriteAllText(args[0], full, new UTF8Encoding(false)); File.WriteAllText(args[0] + ".sha", sha + "\n");
+Console.WriteLine(sha);

@@ -1,0 +1,111 @@
+Test run for /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll (.NETCoreApp,Version=v8.0)
+Microsoft (R) Test Execution Command Line Tool Version 17.8.0 (x64)
+Copyright (c) Microsoft Corporation.  All rights reserved.
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll
+[xUnit.net 00:00:00.01] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.31)
+[xUnit.net 00:00:00.36]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:01.75]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:01.85]   Starting:    Pt_Optimize.Tests
+舌半宽 25　倍率 1：830 格　发热 519.0 W　抽热 -29.503 W
+舌半宽 25　倍率 0.25：10610 格　发热 517.7 W　抽热 -29.093 W
+舌半宽 22.7　倍率 1：768 格　发热 588.1 W　抽热 -76.517 W
+舌半宽 22.7　倍率 0.25：9850 格　发热 586.7 W　抽热 -76.363 W
+  Passed PtOptimize.Tests.MeshAxisTests.量舌半宽25与22p7的盘56片1导航网格与加密抽热 [12 s]
+盘Ø56 片1 倍率 0.5：生产 Build（解析板精确积分）3216 格／5700 节点 发热 450.7 W 抽热 27.725 W；图纸(步 0.25) 3216 格／5700 节点 发热 450.7 W 抽热 27.708 W（图纸 − Build：发热 0.000 %、抽热 -0.017 W）；老生成器（4×4 子采样、形心取厚、只钉外圈，只印）3132 格／5643 节点 发热 538.7 W 抽热 -1.036 W
+  Passed PtOptimize.Tests.DrawingPathParityTests.图纸路径对生产Build_生产栅格步_发热差小于0p1percent_抽热差小于1W(which: 0, meshScale: 0.5) [3 s]
+Builtin[0] 片0 倍率 0.5：生产 Build（解析板精确积分）3684 格／6222 节点 发热 961.6 W 抽热 17.671 W；图纸(步 0.25) 3688 格／6222 节点 发热 961.7 W 抽热 17.596 W（图纸 − Build：发热 0.010 %、抽热 -0.075 W）；老生成器（4×4 子采样、形心取厚、只钉外圈，只印）3598 格／6161 节点 发热 1146.3 W 抽热 15.584 W
+  Passed PtOptimize.Tests.DrawingPathParityTests.图纸路径对生产Build_生产栅格步_发热差小于0p1percent_抽热差小于1W(which: 1, meshScale: 0.5) [2 s]
+Builtin[0] 片0 倍率 1：生产 Build（解析板精确积分）1026 格／1674 节点 发热 964.7 W 抽热 16.983 W；图纸(步 0.5) 1030 格／1674 节点 发热 964.9 W 抽热 16.850 W（图纸 − Build：发热 0.020 %、抽热 -0.133 W）；老生成器（4×4 子采样、形心取厚、只钉外圈，只印）984 格／1643 节点 发热 1093.1 W 抽热 16.018 W
+  Passed PtOptimize.Tests.DrawingPathParityTests.图纸路径对生产Build_生产栅格步_发热差小于0p1percent_抽热差小于1W(which: 1, meshScale: 1) [1 s]
+盘Ø56 片1 倍率 1：生产 Build（解析板精确积分）904 格／1537 节点 发热 451.5 W 抽热 27.317 W；图纸(步 0.5) 904 格／1537 节点 发热 451.5 W 抽热 27.296 W（图纸 − Build：发热 0.000 %、抽热 -0.021 W）；老生成器（4×4 子采样、形心取厚、只钉外圈，只印）864 格／1508 节点 发热 513.1 W 抽热 5.897 W
+  Passed PtOptimize.Tests.DrawingPathParityTests.图纸路径对生产Build_生产栅格步_发热差小于0p1percent_抽热差小于1W(which: 0, meshScale: 1) [1 s]
+Builtin[0] 片0 栅格步 1：图纸 1030 格 发热 965.306 W 抽热 16.447 W（图纸 − Build：发热 +0.063 %、抽热 -0.536 W）
+Builtin[0] 片0 栅格步 0.5：图纸 1030 格 发热 964.896 W 抽热 16.850 W（图纸 − Build：发热 +0.020 %、抽热 -0.133 W）
+Builtin[0] 片0 栅格步 0.1：图纸 1026 格 发热 964.737 W 抽热 16.947 W（图纸 − Build：发热 +0.004 %、抽热 -0.037 W）
+  Passed PtOptimize.Tests.DrawingPathParityTests.图纸路径栅格步0p1对生产Build_发热差小于0p1percent_抽热差小于0p1W_随步长收窄(which: 1) [3 s]
+盘Ø56 片1 栅格步 1：图纸 904 格 发热 451.485 W 抽热 27.204 W（图纸 − Build：发热 -+0.000 %、抽热 -0.113 W）
+盘Ø56 片1 栅格步 0.5：图纸 904 格 发热 451.485 W 抽热 27.296 W（图纸 − Build：发热 -+0.000 %、抽热 -0.021 W）
+盘Ø56 片1 栅格步 0.1：图纸 904 格 发热 451.485 W 抽热 27.311 W（图纸 − Build：发热 -+0.000 %、抽热 -0.006 W）
+  Passed PtOptimize.Tests.DrawingPathParityTests.图纸路径栅格步0p1对生产Build_发热差小于0p1percent_抽热差小于0p1W_随步长收窄(which: 0) [3 s]
+加密复算：2.000 mm（第 1 档）…
+     · 2.000 mm [已跑 5 s] 无法兰基线 1 轮起（最多 600）：上轮判收敛量 — K，容差 1 K…
+     · 2.000 mm [已跑 26 s] 外层耦合 3/600（ω=0.35）：回灌法兰抽热 + 段间端温…（期间另有 12 条未显示）
+     · 2.000 mm [已跑 47 s] 法兰 1/2：提厚度场 + 建网格 + 解场…（期间另有 17 条未显示）
+加密复算：2.000 mm 完成 —— 988 单元，用时 54 s（累计 54 s）　管孔净流入 32.050 W　最热铂高出热偶读数 -82.033 K　管根低于热偶读数 82.433 K　合计 1337 g　外层耦合剩余误差估计 0.00 K
+加密复算：1.000 mm（第 2 档）（按单元数 ×4（**偏乐观** —— 实测耗时涨得比单元数快得多），上一档 54 s ⇒ 本档估 **~4 分**）…
+     · 1.000 mm [已跑 4 s] 无法兰基线 1 轮起（最多 600）：上轮判收敛量 — K，容差 1 K…
+     · 1.000 mm [已跑 25 s] 法兰 1/2：提厚度场 + 建网格 + 解场…（期间另有 10 条未显示）
+     · 1.000 mm [已跑 46 s] 外层耦合 7/600（ω=0.35）：回灌法兰抽热 + 段间端温…（期间另有 17 条未显示）
+加密复算：1.000 mm 完成 —— 3328 单元，用时 56 s（累计 2 分）　管孔净流入 32.224 W　最热铂高出热偶读数 -82.482 K　管根低于热偶读数 82.885 K　合计 1337 g　外层耦合剩余误差估计 0.00 K（与上一档合计 0.00 K）
+   较上一档：管孔净流入 +0.174/0.5　最热铂高出热偶读数 -0.449/0.5　管根低于热偶读数 +0.451/0.5
+   · 中带确认：R48 起主循环**整档一起加密**（中带与内带同尺寸），「判据不再变」本身已经覆盖了中带粗糙度这一条，故不再单独解一遍场。
+  Passed PtOptimize.Tests.MeshVerifyLineCaseTests.真解_图纸路径加密复算每档格数递增 [1 m 50 s]
+  Passed PtOptimize.Tests.R47MeshDiagInstrumentTests.量两条路在导航网格上剩下的差与旧轴新轴的收敛 [35 s]
+片0 入口：整线抽热 9.677 W；单独重解 本片舌保温 5.1 ⇒ 16.160 W；别片舌保温 2.8 ⇒ 56.148 W
+[xUnit.net 00:05:57.07]     PtOptimize.Tests.TabInsulPerPlateTests.三片各自的舌保温进了各自那片的热解 [FAIL]
+[xUnit.net 00:05:57.08]       Assert.Equal() Failure: Values are not within 6 decimal places
+[xUnit.net 00:05:57.08]       Expected: 9.6766670000000001 (rounded from 9.6766673230227678)
+[xUnit.net 00:05:57.08]       Actual:   16.159894999999999 (rounded from 16.159894632000441)
+[xUnit.net 00:05:57.09]       Stack Trace:
+[xUnit.net 00:05:57.09]         /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/Pt_Optimize.Tests/TabInsulPerPlateTests.cs(70,0): at PtOptimize.Tests.TabInsulPerPlateTests.三片各自的舌保温进了各自那片的热解()
+[xUnit.net 00:05:57.09]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+[xUnit.net 00:05:57.09]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  Failed PtOptimize.Tests.TabInsulPerPlateTests.三片各自的舌保温进了各自那片的热解 [3 m]
+  Error Message:
+   Assert.Equal() Failure: Values are not within 6 decimal places
+Expected: 9.6766670000000001 (rounded from 9.6766673230227678)
+Actual:   16.159894999999999 (rounded from 16.159894632000441)
+  Stack Trace:
+     at PtOptimize.Tests.TabInsulPerPlateTests.三片各自的舌保温进了各自那片的热解() in /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/Pt_Optimize.Tests/TabInsulPerPlateTests.cs:line 70
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+R47 导航网格基线数（改后）　2026-09-23 14:53
+设计「管壁 0.8 · 留余量」段数 3　网格 hFine 2 hCoarse 11 fineR 50 hInner 0 innerR 0　用时 518 s
+[管壁 0.8 · 留余量] 收敛 True　全判据 False　网格 1026 格　合计铂重 3547.9 g（法兰 1083.2）　
+  段1 HC1：③ 增量温降 -20.143 K（A -50.175 / B -20.143）　管根 1200.3/1136.7 °C　基线 1150.1/1116.6 °C　I 1212.6 A
+  段2 HC2：③ 增量温降 -16.499 K（A -20.123 / B -16.499）　管根 1135.8/1082.0 °C　基线 1115.6/1065.5 °C　I 1076.3 A
+  段3 HC3：③ 增量温降 -16.490 K（A -16.490 / B -42.366）　管根 1081.7/1089.4 °C　基线 1065.2/1047.0 °C　I 1022.4 A
+  片0 入口：抽热 -21.505 W　铂重 148.62 g　J峰 30.854 A/mm²　发热 970.1 W　最高温 1265.4 °C
+  片1 HC1|HC2：抽热 -8.675 W　铂重 414.99 g　J峰 18.120 A/mm²　发热 865.6 W　最高温 1152.1 °C
+  片2 HC2|HC3：抽热 -7.025 W　铂重 397.68 g　J峰 17.318 A/mm²　发热 736.4 W　最高温 1095.7 °C
+  片3 出口：抽热 -17.825 W　铂重 121.89 g　J峰 31.935 A/mm²　发热 799.7 W　最高温 1155.4 °C
+  判据 ②″圆盘区最高温 − 管温（旧判法）：51.849 / 5 K　✓　出口
+  判据 ②′管孔净流入 须为正：-21.505 / 0 W　✗　入口
+  判据 ③ 法兰增量温降（旧判法）：-16.490 / 10 K　✓　HC3
+  记录字段口径：TotalMassG 3547.9　TubeMassG 2464.8　FlangeMassG 1083.2　RampH 9.507　DiscOverK 51.849　HoleFluxW -21.505　FlangeDipK -16.490　TubeJ 9.498
+设计「管壁 0.6 · 底档」段数 3　网格 hFine 2 hCoarse 11 fineR 50 hInner 0 innerR 0　用时 288 s
+[管壁 0.6 · 底档] 收敛 True　全判据 False　网格 1034 格　合计铂重 2658.9 g（法兰 817.6）　
+  段1 HC1：③ 增量温降 -34.404 K（A -69.484 / B -34.404）　管根 1219.5/1151.1 °C　基线 1150.0/1116.7 °C　I 1044.6 A
+  段2 HC2：③ 增量温降 -29.571 K（A -34.380 / B -29.571）　管根 1150.0/1095.2 °C　基线 1115.6/1065.6 °C　I 926.5 A
+  段3 HC3：③ 增量温降 -29.561 K（A -29.561 / B -45.786）　管根 1094.7/1092.8 °C　基线 1065.2/1047.0 °C　I 879.7 A
+  片0 入口：抽热 -25.694 W　铂重 107.07 g　J峰 38.215 A/mm²　发热 1031.9 W　最高温 1311.7 °C
+  片1 HC1|HC2：抽热 -12.683 W　铂重 314.60 g　J峰 20.377 A/mm²　发热 864.5 W　最高温 1174.6 °C
+  片2 HC2|HC3：抽热 -10.793 W　铂重 292.27 g　J峰 20.051 A/mm²　发热 758.6 W　最高温 1117.5 °C
+  片3 出口：抽热 -16.616 W　铂重 103.70 g　J峰 33.245 A/mm²　发热 702.7 W　最高温 1165.6 °C
+  判据 ②″圆盘区最高温 − 管温（旧判法）：78.906 / 5 K　✓　入口
+  判据 ②′管孔净流入 须为正：-25.694 / 0 W　✗　入口
+  判据 ③ 法兰增量温降（旧判法）：-29.561 / 10 K　✓　HC3
+  记录字段口径：TotalMassG 2658.9　TubeMassG 1841.3　FlangeMassG 817.6　RampH 10.963　DiscOverK 78.906　HoleFluxW -25.694　FlangeDipK -29.561　TubeJ 10.952
+设计「盘Ø56 记录（两段）」段数 2　网格 hFine 2 hCoarse 11 fineR 50 hInner 0 innerR 0　用时 159 s
+[盘Ø56 记录（两段）] 收敛 True　全判据 False　网格 904 格　合计铂重 2605.5 g（法兰 962.3）　
+  段1 HC1：③ 增量温降 27.813 K（A 24.554 / B 27.813）　管根 1125.6/1088.9 °C　基线 1150.1/1116.7 °C　I 979.8 A
+  段2 HC2：③ 增量温降 29.279 K（A 27.812 / B 29.279）　管根 1088.0/1048.0 °C　基线 1115.8/1077.3 °C　I 835.5 A
+  片0 入口：抽热 9.666 W　铂重 257.92 g　J峰 14.187 A/mm²　发热 307.7 W　最高温 1127.3 °C
+  片1 HC1|HC2：抽热 10.765 W　铂重 446.44 g　J峰 13.161 A/mm²　发热 450.0 W　最高温 1090.2 °C
+  片2 出口：抽热 11.422 W　铂重 257.92 g　J峰 12.097 A/mm²　发热 213.9 W　最高温 1048.1 °C
+  判据 ②″圆盘区最高温 − 管温（旧判法）：1.714 / 5 K　✓　入口
+  判据 ②′管孔净流入 须为正：9.666 / 0 W　✓　入口
+  判据 ③ 法兰增量温降（旧判法）：29.279 / 10 K　✓　HC2
+  记录字段口径：TotalMassG 2605.5　TubeMassG 1643.2　FlangeMassG 962.3　RampH 7.670　DiscOverK 1.714　HoleFluxW 9.666　FlangeDipK 29.279　TubeJ 7.674
+
+[xUnit.net 00:22:01.91]   Finished:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.R47NavGridInstrumentTests.量导航网格上的基线数 [16 m 4 s]
+
+Test Run Failed.
+Total tests: 11
+     Passed: 10
+     Failed: 1
+ Total time: 22.0596 Minutes

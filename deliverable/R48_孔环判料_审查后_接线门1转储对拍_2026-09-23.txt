@@ -1,0 +1,25 @@
+R48PropsWiringGateTests 门 1（纯铂整线小算例，全量转储含文字、两处耗时改写成占位）—— 决 101 A 孔环判料 **审查后修改**（M1 连通分量观测量）前后对拍（Linux 镜像，2026-09-23，RING 修订）
+取数：树外剥离版探针 scratchpad/rvfix_dump/Program.cs（逐字照 ZZRingRevertProbeTests.RING_接线门1转储：QuickCase → LineRunner.Run → R48LineDumpTests.Dump(withText) → 两处耗时占位 → SHA-256；经反射调 internal 的 QuickCase），
+  审查前 = wtRING 审查前的镜像二进制（Pt_Optimize.dll md5 f6637b1396570d885cb6c909a78a0b09、Pt_Optimize.Tests.dll md5 0c7d0834659f7669a3717bcd98cdb008，拷出后 16:21 起跑）；
+  审查后 = wtRING 审查后修改（Core：MeshConnectivity、MeshRecipe 三个新成员、说明句）增量编译的镜像二进制，16:28 起跑。
+审查前 SHA-256：01f51c8989e43cbbf46868c7e7a4b514253d2b319a1e84ca746f5b844ba6a3ac（= 门 1 上一记录 01f51c89…）
+审查后 SHA-256：07f9639043b10da075bd4aacac621dd20760e2d6df79f06e70ba3b6051905fef
+审查后去掉 9 个新成员行（.Mesh.Recipe.MeshComponents／FloatingComponents／FloatingAreaMm2，每片 3 行）后：01f51c8989e43cbbf46868c7e7a4b514253d2b319a1e84ca746f5b844ba6a3ac，与审查前 cmp 逐字节相同
+行数：审查前 1265，审查后 1274（3 片 × 3 行 = 9 行新增，0 行删除、0 行改动；配方说明句的改写（M2）不进这份转储）
+结论：变因 = 配方新增观测量进了转储（值：分量 1、浮空 0、浮空面积 0）；数值场一位没动。
+── diff 审查前 审查后（全文）
+679a680,681
+> 结果.Flanges[0].Mesh.Recipe.FloatingAreaMm2 = 0
+> 结果.Flanges[0].Mesh.Recipe.FloatingComponents = 0
+692a695
+> 结果.Flanges[0].Mesh.Recipe.MeshComponents = 1
+879a883,884
+> 结果.Flanges[1].Mesh.Recipe.FloatingAreaMm2 = 0
+> 结果.Flanges[1].Mesh.Recipe.FloatingComponents = 0
+892a898
+> 结果.Flanges[1].Mesh.Recipe.MeshComponents = 1
+1079a1086,1087
+> 结果.Flanges[2].Mesh.Recipe.FloatingAreaMm2 = 0
+> 结果.Flanges[2].Mesh.Recipe.FloatingComponents = 0
+1092a1101
+> 结果.Flanges[2].Mesh.Recipe.MeshComponents = 1

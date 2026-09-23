@@ -1,0 +1,30 @@
+R48PropsWiringGateTests 门 1（纯铂整线小算例，全量转储含文字、两处耗时改写成占位）—— 决 101 A 孔环按解析圆判料前后对拍（Linux 镜像，2026-09-23，RING）
+取数：同一剥离版探针（ZZRingRevertProbeTests.RING_接线门1转储：QuickCase → LineRunner.Run → R48LineDumpTests.Dump(withText) → 两处耗时占位，写文件后算 SHA-256；探针源码副本 deliverable/R48_孔环按解析圆判料_证据_2026-09-23/探针源码_ZZRingRevertProbeTests.cs.txt），
+  改前 = 1816fc6 的 git archive（工作树 .linux_base_src，不含本改动）另建镜像，14:29 起跑；改后 = 1816fc6 ＋ 本改动（工作树 wtRING），14:34 起跑。
+改前 SHA-256：fb2c32488eb4d3c408c6655cb544b856498a78174de21a2ff0726ca1e0083cf2（= 门 1 原 LinuxRecord fb2c3248…，探针复现了门 1）
+改后 SHA-256：01f51c8989e43cbbf46868c7e7a4b514253d2b319a1e84ca746f5b844ba6a3ac
+改后去掉 15 个新成员行（.Mesh.Recipe.HoleBandCircle／HoleBandCircleSwitch／HoleBandMm 与 .Mesh.Recipe.Rule.HoleBandCircle／HoleBandCircleSwitch，每片 5 行）后：fb2c32488eb4d3c408c6655cb544b856498a78174de21a2ff0726ca1e0083cf2，与改前 cmp 逐字节相同
+行数：改前 1250，改后 1265（3 片 × 5 行 = 15 行新增，0 行删除、0 行改动）
+结论：变因 = 配方新增成员进了转储；数值场一位没动（本算例走解析路径，包层只包栅格厚度场，按构造不经过）。
+── diff 改前 改后（全文）
+682a683,685
+> 结果.Flanges[0].Mesh.Recipe.HoleBandCircle = true
+> 结果.Flanges[0].Mesh.Recipe.HoleBandCircleSwitch = true
+> 结果.Flanges[0].Mesh.Recipe.HoleBandMm = 0
+696a700,701
+> 结果.Flanges[0].Mesh.Recipe.Rule.HoleBandCircle = true
+> 结果.Flanges[0].Mesh.Recipe.Rule.HoleBandCircleSwitch = true
+877a883,885
+> 结果.Flanges[1].Mesh.Recipe.HoleBandCircle = true
+> 结果.Flanges[1].Mesh.Recipe.HoleBandCircleSwitch = true
+> 结果.Flanges[1].Mesh.Recipe.HoleBandMm = 0
+891a900,901
+> 结果.Flanges[1].Mesh.Recipe.Rule.HoleBandCircle = true
+> 结果.Flanges[1].Mesh.Recipe.Rule.HoleBandCircleSwitch = true
+1072a1083,1085
+> 结果.Flanges[2].Mesh.Recipe.HoleBandCircle = true
+> 结果.Flanges[2].Mesh.Recipe.HoleBandCircleSwitch = true
+> 结果.Flanges[2].Mesh.Recipe.HoleBandMm = 0
+1086a1100,1101
+> 结果.Flanges[2].Mesh.Recipe.Rule.HoleBandCircle = true
+> 结果.Flanges[2].Mesh.Recipe.Rule.HoleBandCircleSwitch = true
