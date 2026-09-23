@@ -1,0 +1,44 @@
+Test run for /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll (.NETCoreApp,Version=v8.0)
+Microsoft (R) Test Execution Command Line Tool Version 17.8.0 (x64)
+Copyright (c) Microsoft Corporation.  All rights reserved.
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.31)
+[xUnit.net 00:00:00.15]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:00.51]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:00.52]   Starting:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.R48SegContinuousRootSlowTests.诊断_六个转储算例_改回逐位等于改前_连续根位移逐行印出 [29 m 54 s]
+  Standard Output Messages:
+ /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/deliverable/R48_段电流连续根_转储六例_改回与连续根_本次开跑于2026-09-23_140005.txt
+
+
+[xUnit.net 01:28:31.19]     PtOptimize.Tests.R48SegContinuousRootSlowTests.门b_整线1e6级扰动停机轮数差不超1轮_改回红_并出门f两行开关归因 [FAIL]
+[xUnit.net 01:28:31.19]       开：停机轮 33 对 29，差 4 > 1
+[xUnit.net 01:28:31.19]       见 /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/deliverable/R48_段电流连续根_门b与门f两行开关归因_本次开跑于2026-09-23_140005.txt
+[xUnit.net 01:28:31.19]       Stack Trace:
+[xUnit.net 01:28:31.19]         /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/Pt_Optimize.Tests/R48SegContinuousRootSlowTests.cs(184,0): at PtOptimize.Tests.R48SegContinuousRootSlowTests.门b_整线1e6级扰动停机轮数差不超1轮_改回红_并出门f两行开关归因()
+[xUnit.net 01:28:31.19]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+[xUnit.net 01:28:31.19]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 01:28:31.19]       Output:
+[xUnit.net 01:28:31.19]         /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/deliverable/R48_段电流连续根_门b与门f两行开关归因_本次开跑于2026-09-23_140005.txt
+[xUnit.net 01:28:31.20]   Finished:    Pt_Optimize.Tests
+  Failed PtOptimize.Tests.R48SegContinuousRootSlowTests.门b_整线1e6级扰动停机轮数差不超1轮_改回红_并出门f两行开关归因 [58 m 36 s]
+  Error Message:
+   开：停机轮 33 对 29，差 4 > 1
+见 /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/deliverable/R48_段电流连续根_门b与门f两行开关归因_本次开跑于2026-09-23_140005.txt
+  Stack Trace:
+     at PtOptimize.Tests.R48SegContinuousRootSlowTests.门b_整线1e6级扰动停机轮数差不超1轮_改回红_并出门f两行开关归因() in /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/Pt_Optimize.Tests/R48SegContinuousRootSlowTests.cs:line 184
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  Standard Output Messages:
+ /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/deliverable/R48_段电流连续根_门b与门f两行开关归因_本次开跑于2026-09-23_140005.txt
+
+
+
+Test Run Failed.
+Total tests: 2
+     Passed: 1
+     Failed: 1
+ Total time: 1.4755 Hours

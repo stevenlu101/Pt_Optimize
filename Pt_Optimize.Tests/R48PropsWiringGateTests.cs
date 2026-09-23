@@ -66,13 +66,22 @@ public class R48PropsWiringGateTests
     ///     每片 3 行、3 片共 9 行（值 1／0／0）；**数值场一位没动**）：01f51c89… → 新值（下面的常量）。证明办法同上：审查前的镜像二进制（md5 f6637b13…／0c7d0834…）与审查后镜像
     ///     用同一剥离版转储各跑一次，审查后去掉这 9 行与审查前 cmp 逐字节相同（SHA 回到 01f51c89…），diff 只有这 9 行新增。
     ///     对拍证据：deliverable/R48_孔环判料_审查后_接线门1转储对拍_2026-09-23.txt。Windows 剥离树同样要带上这 3 个成员。
+    ///   - 2026-09-23 **再重记**（SEG，决 97 A「段电流连续根」，变因 = 改回参数 DesignInputs.SegCurrentContinuousRoot 这个新公开成员进了转储，
+    ///     「算例.Base.SegCurrentContinuousRoot = true」**1 行**；**数值场一位没动** —— 本算例按实测电流求解（UseMeasuredCurrent），不经 FindCurrent）：旧 fb2c3248… → 新值（下面的常量）。
+    ///     证明：同一剥离版探针在本树上改回（false）与连续根（true）各转储一次，两份只差这 1 行（diff 1 行）；各去掉这 1 行后 SHA 都回到 fb2c3248…。
+    ///     对拍证据：deliverable/R48_段电流连续根_接线门1转储对拍_2026-09-23.txt。Windows 记录仍空（见下）。
+    ///   - 2026-09-23 合并 SEG 进分支时（编排会话）：上面 RING 的两条与下面 SEG 的一条都是**各自单树**上的记录；合并树的转储同时多出 RING 的 24 行与 SEG 的 1 行，
+    ///     下面的常量暂取 RING 单树的值（07f96390…），**在合并树上本门为红、属已知、非回归**；本波五条规则改动合并完后按变因「五条合并」统一重录一次。
     /// Windows：**还没有记录** —— Windows 上本门红并印出本机的 SHA。填数的做法：在 F6 合入之后、接线之前的那个状态（本分支上接线提交 265ff6a 的父提交 ＋ F6 提交的 Core/ShellMesh、
     ///   ShellCurrent、ShellThermal、QuadMesher、LineRunner 五档，或直接用 git 把接线提交 revert 掉）只加门 1 的剥离版跑出那个数；**不要在合并树上记**。
     ///   「a468063 只加本档」那句旧说明不可行：本档其余 8 条门引用 PtProps，在 a468063 上编译不过。
     ///   2026-09-23（§0.-20）补：那棵剥离树还要带上孔弧覆盖诊断（Core/ShellMesh.cs 的 4 个字段与 MeasureHoleArcCoverage／ComputeHoleArcCoverage、生成器里那一行调用），
     ///   否则转储每片少 4 行、记下的数与本树对不上；诊断不动数值场（Linux 对拍见上）。
+    ///   2026-09-23（SEG）补：那棵剥离树还要带上 DesignInputs.SegCurrentContinuousRoot（公开属性，缺省 true，转储 1 行「算例.Base.SegCurrentContinuousRoot = true」），
+    ///   否则记下的数与本树对不上；本算例按实测电流求解、不经 FindCurrent，数值场不变（Linux 对拍见上）。也可以在剥离树上取数、与本树比对前先去掉这一行。
     /// </summary>
     private const string LinuxRecord = "07f9639043b10da075bd4aacac621dd20760e2d6df79f06e70ba3b6051905fef";
+    // 合并 SEG 后：SEG 单树记录为 8e0ffad1e2f972256b28e34a64f9ae00efd139f6d7ffd8ca0c1fe46adc5e69b6；合并树实数待本波合并完统一重录（见头注）。
     private const string WindowsRecord = "";
 
     /// <summary>电、热物性按牌号取的牌号（纯铂之外）。口径：MaterialDb.DataCompleteness 的电阻率与热导率／比热两类都算自有。</summary>

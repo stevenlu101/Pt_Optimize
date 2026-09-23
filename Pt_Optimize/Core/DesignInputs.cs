@@ -701,6 +701,17 @@ public class DesignInputs
     public const double SegCurrentTolADefault = 0.005, SegPicardTolKDefault = 0.001, SegBvpTolKDefault = 0.0005;
     public const double SegCurrentTolALegacy = 0.05, SegPicardTolKLegacy = 0.01, SegBvpTolKLegacy = 0.005;
 
+    /// <summary>
+    /// ★ 2026-09-23（SEG，决 97 A「段电流连续根」；业主 2026-09-23「其余先按路线甲」）：段电流二分**收尾返回连续根**（末括号内线性插值，
+    /// <see cref="Roots.MonotoneContinuous"/>），不再返回括号中点。二分本身（xTol = <see cref="SegCurrentTolA"/>、求值次序）一位没动。
+    /// 病与归因：deliverable/R48_耦合轮数归因_段电流二分格彩票_2026-09-23.md（中点 ⇒ 段电流落在约 2.6e−3 A 一格 ⇒ 外层耦合 G(x) 分段常数 ⇒ 停机轮数彩票 29 → 60 → 119）。
+    /// **改回参数**：生产不设（= true，连续根）；false = 老中点，与改前逐位相同（门 R48SegContinuousRootTests）。只给门与「开 − 关」归因用。
+    /// 放在参数表对象上是因为段解只看得到它，且参数表复制（Clone 走 JSON）会带着它 —— 与段解地板三项同一做法。
+    /// </summary>
+    [Browsable(false)]
+    [TypeConverter(typeof(ChineseBoolConverter))]
+    public bool SegCurrentContinuousRoot { get; set; } = true;
+
     // ---------- 派生 ----------
     [Browsable(false)] public double TubeId => TubeIdMm * 1e-3;
     [Browsable(false)] public double TubeLength => TubeLengthMm * 1e-3;

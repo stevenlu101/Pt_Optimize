@@ -1,0 +1,14 @@
+R48 段电流连续根（决 97 A）　接线门 1（R48PropsWiringGateTests.门_纯铂默认逐位不变_整线小算例）Linux 记录重录的对拍
+跑于 2026-09-23 13:59:29　工作树 /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG　分支头 8b90b5f + 本改动（未提交）　Linux 镜像 .NET 8
+做法：临时探针（取完即删）用门 1 的 QuickCase 与同一去耗时转储（R48LineDumpTests.Dump 全文 + JacobianAmpSec／「用时 x s」占位），改回（SegCurrentContinuousRoot=false）与连续根（true）各跑一次。
+
+改回	全 730b993b644be94bd54eeb6b0961717274d60eac49de6f8ef5d07eda7e77eea8	去新增行 fb2c32488eb4d3c408c6655cb544b856498a78174de21a2ff0726ca1e0083cf2	去掉 1 行
+连续根	全 8e0ffad1e2f972256b28e34a64f9ae00efd139f6d7ffd8ca0c1fe46adc5e69b6	去新增行 fb2c32488eb4d3c408c6655cb544b856498a78174de21a2ff0726ca1e0083cf2	去掉 1 行
+
+两份转储逐行 diff（改回 < ／ 连续根 >）：
+83c83
+< 算例.Base.SegCurrentContinuousRoot = false
+---
+> 算例.Base.SegCurrentContinuousRoot = true
+
+判读：数值场一位没动（本算例按实测电流，不经 FindCurrent）；去掉新增行后两份都等于旧记录 fb2c3248…；新记录 = 连续根全文 SHA 8e0ffad1…（生产默认 true）。转储行数 1251。

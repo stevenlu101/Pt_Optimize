@@ -113,6 +113,49 @@ public static class Roots
         }
         return 0.5 * (lo + hi);
     }
+
+    /// <summary>
+    /// ★ 2026-09-23（SEG，决 97 A「段电流连续根」；归因 deliverable/R48_耦合轮数归因_段电流二分格彩票_2026-09-23.md）：
+    /// 与 <see cref="Monotone"/> **同一个括号化、同一个二分**（求值次序、次数逐个相同，段解分辨率不降），只改收尾：
+    /// 末括号 [lo, hi] 内按两端函数值线性插值（一步割线／试位）返回 x̂ = lo + (hi − lo)·f(lo)/(f(lo) − f(hi))，不再返回中点。
+    ///
+    /// 为什么：返回中点 ⇒ 根只能落在二分格上（格距 = 末括号宽，段电流约 2.6e−3 A 一格），x̂ 对输入是**分段常数**；
+    ///   外层耦合的 G(x) 因此跟着分段常数，停机轮数成了首达时间彩票（29 → 60 → 119）。插值收尾让 x̂ 随输入连续变化。
+    ///
+    /// 误差（数学推出，门 R48SegContinuousRootTests.a 用它）：f 在末括号上二阶连续、|f′| ≥ m₁、|f″| ≤ M₂、括号宽 h，真根 r ∈ [lo, hi]。
+    ///   线性插值余项 f(x) − L(x) = ½f″(ξ)(x − lo)(x − hi)；在 r 处 L(r) = −½f″(ξ)(r − lo)(r − hi)，L 的斜率 = 割线斜率 s = f′(η)（中值定理），|s| ≥ m₁；
+    ///   x̂ 是 L 的零点 ⇒ |x̂ − r| = |L(r)|/|s| ≤ M₂·(r − lo)(hi − r)/(2m₁) ≤ **M₂·h²/(8·m₁)**。（中点收尾的界是 h/2。）
+    ///   f 带求值噪声 |ε| ≤ ε̄ 时另加 ε̄/m₁（两端值各偏 ε̄，插值点至多移 ε̄/|s|）。
+    /// 括号不变式 f(lo)·f(hi) ≤ 0 在二分中一直成立 ⇒ f(lo)/(f(lo) − f(hi)) ∈ [0, 1] ⇒ x̂ 永远在末括号里；两端值相等（只可能同为 0）或非有限 ⇒ 退回中点。
+    ///
+    /// <paramref name="continuous"/> = false 是**改回**参数（只给门与「开 − 关」归因用，生产不传）：返回与 <see cref="Monotone"/> 逐位相同的中点
+    ///   （lo、hi、fa 的更新与 Monotone 逐字相同；多记的 fb 不参与二分）。
+    /// </summary>
+    public static double MonotoneContinuous(Func<double, double> f, double lo, double hi,
+                                            double xTol, int maxIter = 200, bool continuous = true)
+    {
+        double fa = f(lo), fb = f(hi);
+        int expand = 0;
+        while (fa * fb > 0 && expand++ < 12)
+        {
+            double span = hi - lo;
+            if (Math.Abs(fa) < Math.Abs(fb)) { lo = Math.Max(1e-9, lo - span); fa = f(lo); }
+            else { hi += span; fb = f(hi); }
+        }
+        if (double.IsNaN(fa) || double.IsNaN(fb) || fa * fb > 0)
+            throw new RootNotBracketedException(
+                $"无法括号化：f({lo:G6})={fa:G6}, f({hi:G6})={fb:G6}");
+
+        for (int i = 0; i < maxIter && (hi - lo) > xTol; i++)
+        {
+            double m = 0.5 * (lo + hi), fm = f(m);
+            if (double.IsNaN(fm)) break;
+            if (fm * fa > 0) { lo = m; fa = fm; } else { hi = m; fb = fm; }
+        }
+        if (continuous && fa != fb && double.IsFinite(fa) && double.IsFinite(fb))
+            return lo + (hi - lo) * (fa / (fa - fb));
+        return 0.5 * (lo + hi);
+    }
 }
 
 /// <summary>

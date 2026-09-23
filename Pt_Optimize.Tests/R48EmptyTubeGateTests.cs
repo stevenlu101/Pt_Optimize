@@ -77,7 +77,13 @@ public class R48EmptyTubeGateTests
 
     /// <summary>R48 M（2026-09-18，Fable 5.1）：新段解地板下三个算例的指纹记录值（管腔辐射门 R48CavityRadiationGateTests 也读这三个）。</summary>
     //   本轮实跑（2026-09-18 22:26 快套件）：新地板 A I=1817.3785245058946（旧地板 1817.3693389729033，差 0.009 A）；旧地板下三个旧值逐位相同。
-    internal const ulong NewFloorFpA = 0x7A3DF51B3B6CE931UL, NewFloorFpB = 0x59133E0A112F3092UL, NewFloorFpC = 0x478D61917F1886FDUL;
+    //   ★ 2026-09-23（SEG，决 97 A「段电流连续根」，**重录并写明变因**）：A 走 FindCurrent（反算电流），段电流收尾改成末括号内线性插值 ⇒ A 的电流与场变（B、C 按给定电流解，不经 FindCurrent，逐位不变）。
+    //     A 0x7A3DF51B3B6CE931（中点，改前）→ 新值（下面的常量，2026-09-23 Linux 镜像实跑，连跑两次逐位相同）；I 1817.3785245058946 → 1817.3768434910771（−1.681e−3 A，在末括号半宽 xTol/2 内）。
+    //     旧值不删：改回（DesignInputs.SegCurrentContinuousRoot = false）注射回去 ⇒ 必须逐位等于旧值（MidpointFpA），证明除收尾外一位没动。Windows 未实跑核对（旧值两边相同，推断新值也同）。
+    internal const ulong NewFloorFpA = 0x0F808130FB7E6297UL, NewFloorFpB = 0x59133E0A112F3092UL, NewFloorFpC = 0x478D61917F1886FDUL;
+    /// <summary>2026-09-23（SEG）：改回口径（中点）下 A 的指纹 = 改前生产值（R48 M 2026-09-18 记）。</summary>
+    internal const ulong MidpointFpA = 0x7A3DF51B3B6CE931UL;
+    internal static DesignInputs Midpoint(DesignInputs p) { p.SegCurrentContinuousRoot = false; return p; }
 
     [Fact]
     public void 带玻璃_逐位不变_三个算例指纹()
@@ -89,7 +95,8 @@ public class R48EmptyTubeGateTests
         //   同三个算例在**新地板**下场与电流在第 3～4 位小数上变。处置不是改数凑绿，而是**两层各核各的**：
         //   ① 旧地板注射回去（LegacyFloor）⇒ 三个旧记录值必须逐位相同（证明除地板外一位都没动）；
         //   ② 新地板（生产默认）⇒ 另记三个新值（本轮实跑两次逐位相同才记）。
-        var aL = SegmentSolver.Solve(LegacyFloor(new DesignInputs()));
+        // ★ 2026-09-23（SEG，决 97 A）：旧地板那一层同时注射改回（中点）—— 旧记录是在中点收尾下记的；B、C 不经 FindCurrent，两种收尾逐位相同（下面核）。
+        var aL = SegmentSolver.Solve(Midpoint(LegacyFloor(new DesignInputs())));
         var bL = SegmentSolver.SolveAtCurrent(LegacyFloor(CaseB()), 1500);
         var cL = SegmentSolver.SolveAtCurrent(LegacyFloor(new DesignInputs { HGlass = 0, TSetC = 1300 }), 1400);
         _o.WriteLine($"旧地板：A fp=0x{Fingerprint(aL):X16}　B fp=0x{Fingerprint(bL):X16}　C fp=0x{Fingerprint(cL):X16}");
@@ -119,6 +126,15 @@ public class R48EmptyTubeGateTests
         Assert.Equal(NewFloorFpB, Fingerprint(b));
         Assert.Equal(NewFloorFpC, Fingerprint(c));
         Assert.True(double.IsFinite(a.DevitMarginMinK), "带玻璃的析晶裕度应照常出数");
+        // ★ 2026-09-23（SEG，决 97 A）：新地板 + 改回（中点）⇒ 改前生产值逐位；B、C 两种收尾逐位相同（不经 FindCurrent）；A 两种收尾不同（开关真的接进段解）
+        var aMid = SegmentSolver.Solve(Midpoint(new DesignInputs()));
+        var bMid = SegmentSolver.SolveAtCurrent(Midpoint(CaseB()), 1500);
+        var cMid = SegmentSolver.SolveAtCurrent(Midpoint(new DesignInputs { HGlass = 0, TSetC = 1300 }), 1400);
+        _o.WriteLine($"新地板＋改回（中点）：A fp=0x{Fingerprint(aMid):X16}　I={aMid.CurrentA:R}");
+        Assert.Equal(MidpointFpA, Fingerprint(aMid));
+        Assert.Equal(Fingerprint(b), Fingerprint(bMid));
+        Assert.Equal(Fingerprint(c), Fingerprint(cMid));
+        Assert.NotEqual(Fingerprint(aMid), Fingerprint(a));
     }
 
     [Fact]

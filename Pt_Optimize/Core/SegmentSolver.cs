@@ -420,7 +420,10 @@ public static class SegmentSolver
         // 残差对 I 单调递增，但每次求值要解一遍非线性 BVP，带迭代噪声 → 用二分
         // ★ R48 M（2026-09-18，Fable 5.1）：xTol 0.05 → DesignInputs.SegCurrentTolA（0.005 A）。二分返回括号中点 ⇒ 电流落在 xTol/2 的格子上，
         //   1150 °C 附近 dT/dI ≈ 1.9 K/A ⇒ 0.05 A 的格子让管温一格跳 0.05 K —— 那正是外层耦合真残差／步长打转的地板（出处见 DesignInputs 那段注记）。
-        double I = Roots.Monotone(Residual, 1, iHi, xTol: p.SegCurrentTolA, maxIter: 60);
+        // ★ 2026-09-23（SEG，决 97 A）：收尾返回末括号内的线性插值根（连续根），不再返回中点 —— 中点让段电流只能落在约 2.6e−3 A 一格的二分格上，
+        //   外层耦合的 G(x) 因此分段常数、停机轮数成彩票（deliverable/R48_耦合轮数归因_段电流二分格彩票_2026-09-23.md）。二分与 xTol 一位没动。
+        //   改回：DesignInputs.SegCurrentContinuousRoot = false ⇒ 与改前逐位相同的中点。
+        double I = Roots.MonotoneContinuous(Residual, 1, iHi, xTol: p.SegCurrentTolA, maxIter: 60, continuous: p.SegCurrentContinuousRoot);
 
         Profile(p, wall, area, I, out tm, out tg);
         return I;

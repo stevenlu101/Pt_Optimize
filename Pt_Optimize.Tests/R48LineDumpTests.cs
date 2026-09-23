@@ -112,7 +112,7 @@ public class R48LineDumpTests
         return (p, d);
     }
 
-    private static LineCase CaseOf(string name)
+    internal static LineCase CaseOf(string name)   // 2026-09-23 SEG：private → internal（R48SegContinuousRootSlowTests 的改回转储复用同一组算例；只改可见性）
     {
         switch (name)
         {
