@@ -56,6 +56,8 @@ public static class RemovalPriority
         if (mesh is null) throw new ArgumentNullException(nameof(mesh));
         int n = mesh.CellCount;
         if (tField is null || tField.Length < n) throw new ArgumentException("温度场与网格对不上", nameof(tField));
+        // R48 物性接线（2026-09-23，Opus 5.5）：k 仍按纯铂 —— k 在这里是整片一个常数，只乘出绝对瓦数；生产唯一用途（去料优先级排序与挖孔位置）
+        //   对它的标度不变。按牌号换 k 只改测试打印的瓦数量级、不改任何排序。门 R48PropsWiringGateTests 源码门的例外名单逐条写了原因。
         double k = Materials.PtThermalK(tRootC);      // W/(m·K)
         var q = new double[n];
         foreach (var f in mesh.Faces)

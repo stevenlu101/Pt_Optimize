@@ -82,6 +82,10 @@ public class R48LineDumpTests
     ///   盘56两段_解析_电导率随温度：1141272d… → 98f545541794521f70abcf8eb5de5822df436f142db413e70ead000fdd7017fd（全文 c82112b59b161c59…）；
     ///   盘56两段_图纸路径：be7d58aa… → 97a638fba8e11936584b2178ce8c6867f1debd1e28716c79284eda55e0092632（全文 c3fc8ec5e004c010…）。
     ///   出处 deliverable\R48_整线全量转储_SHA256汇总_本次开跑于2026-09-18_120159_1904.txt（Core 改动指纹 a0171e82…，git HEAD 0a15af83…）；确定性由紧跟的第二跑复核（见 HANDOVER「合并 2026-09-18」）。
+    /// 2026-09-23 Fable 5.1（云端 Linux 会话，HANDOVER §0.-18）：**记录没重记、口径改了一处** —— 去文字转储对挂钟成员（JacobianAmpSec／RampSeconds／EmptyTubeSeconds）写占位「<挂钟>」。
+    ///   变因：§0.-16M 之后 LineResult 带着量雅可比的用时，这条门在 Windows 上也已经不可能两跑同值（合并树上本门红着、且 09-18 12:13 之后没有任何两跑相同的记录）。
+    ///   六条记录仍是 09-18 的 Windows 数，Linux 上因 libm 三角函数与 Windows 差 1e-9 量级、本就不逐位（§0.-17 丙），所以此处**不用 Linux 数改记录**；下次 Windows 实跑按新口径重录，并要求紧跟第二跑逐位相同。
+    ///   本会话的 Linux 参照：合并树 01:34 那跑与物性接线树 03:52 那跑（deliverable\R48_整线全量转储_*_本次开跑于2026-09-23_035235_20631.txt）六份转储除 JacobianAmpSec 外逐行相同 —— 这是「按牌号接线后纯铂逐位不变」的全线证据。
     /// </summary>
     private static readonly Dictionary<string, string> Records = new()
     {
@@ -250,6 +254,11 @@ public class R48LineDumpTests
             }
         }
 
+        // 2026-09-23 Fable 5.1：**挂钟量不是模型的数**。§0.-16M 把量雅可比的用时 JacobianAmpSec（秒）加进 LineResult 之后，同一棵树任意两跑的「去文字」SHA 必不同
+        //   （本会话实测：物性接线树 03:52 那跑对合并树 01:34 那跑，六份转储逐行只差 结果.JacobianAmpSec 与 Notes 里印它的那半句；Notes 是文字，去文字口径本就不看）。
+        //   去文字口径下按成员名写占位「<挂钟>」，全文 SHA 照写原值。六条记录仍是 09-18 12:01 的 Windows 数（那时还没有 JacobianAmpSec），下次 Windows 重录按本口径。
+        private static readonly HashSet<string> WallClock = new(StringComparer.Ordinal) { "JacobianAmpSec", "RampSeconds", "EmptyTubeSeconds" };
+
         // 2026-09-16 Opus 5（I 路审查意见 5）：去文字原写「<文字 N 字>」，改措辞变字数也会动去文字 SHA ⇒ 改成只写占位「<文字>」（六条记录同日重记）
         private string Text(string s) => _text ? "\"" + s.Replace("\\", "\\\\").Replace("\r", "\\r").Replace("\n", "\\n") + "\"" : "<文字>";
 
@@ -310,6 +319,7 @@ public class R48LineDumpTests
                 object? mv;
                 try { mv = get(); }
                 catch (Exception ex) { Sb.Append(path).Append('.').Append(name).Append(" = <取值抛 ").Append((ex.InnerException ?? ex).GetType().Name).Append(">\n"); continue; }
+                if (!_text && WallClock.Contains(name)) { Sb.Append(path).Append('.').Append(name).Append(" = <挂钟>\n"); continue; }
                 Value(path + "." + name, mv, depth + 1);
             }
         }

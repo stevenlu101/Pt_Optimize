@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -18,12 +18,19 @@ namespace PtOptimize.Tests;
 //    也就是说：界面上换牌号，强度那一路会变，电、热那一路一位都不动，
 //    而说明告诉工程师两者都按牌号走。**让人以为的与事实不一样**。
 //
-//  本轮的处置（工单：本轮不改求解链）：
-//    ① 说明改成现状的真话（DesignInputs.GradeNameNote）；
-//    ② 先把差量量出来存档（下面那条会写一份带开跑时刻的文件）；
-//    ③ 这条源码门两头钉：
-//       · 谁把电阻率／热导率／比热接成按牌号而没回来改这句话 ⇒ 红；
-//       · 谁把这句话改回「电阻率与持久强度均取该牌号的实测数据」那句假话 ⇒ 红。
+//  2026-09-18 那一轮的处置（工单：那一轮不改求解链）：
+//    ① 说明改成当时的真话（DesignInputs.GradeNameNote：「电阻率、热导率、比热目前一律按纯铂算」）；
+//    ② 先把差量量出来存档（下面那条慢门会写一份带开跑时刻的文件）；
+//    ③ 源码门两头钉「说明 ↔ 源码」。
+//
+//  ★ 2026-09-23（Opus 5.5，R48 物性接线）**改门，变因 = 求解链接了线**：电阻率（含 dρ/dT、电阻温度系数）、热导率、比热一律经 PtProps.For(牌号) 取，
+//    说明随之改成新的真话（「也按所选牌号」「仍按纯铂的：密度、熔点」「数据不全一起按纯铂」）。门仍然两头钉，只是钉的现状换了：
+//       · 求解链里直读纯铂那几支的只许剩两处例外（DesignScreen 电阻率、RemovalPriority 热导率，原因见 R48PropsWiringGateTests 源码门）⇒ 多一处就红；
+//       · 按牌号取物性的档必须恰好是接线的那 13 档（经 PtProps.For；外加安装报告与 LineSolver 只读说明文字那两档）⇒ 少一档（改回直读纯铂）就红；
+//       · 说明里不许再出现「目前一律按纯铂算」，也不许回到 2026-09-18 以前那句假话；
+//       · 说明里说「密度按纯铂」⇒ 核实整线链的铂重用的是 Materials.PtDensity、不是材料库里的合金密度；
+//       · Core/*.cs 里绕过 PtProps 直读按牌号曲线（.ResistivityOhmM(／.ThermalKWPerMK(／.CpJPerKgK(）的只许 PtProps／MaterialDb／PtResistivityData 名单上那几处；
+//       · 说明里写「焊缝屈曲下界仍按纯铂」⇔ WeldDistortion.cs 真的还读 Materials.PtCpMeanToMelt。
 // ════════════════════════════════════════════════════════════════════════════
 
 public class R48MGradeNoteTruthTests
@@ -44,6 +51,7 @@ public class R48MGradeNoteTruthTests
             "PtThermalExpansion.cs",
             "GradeChoices.cs",
             "DesignInputs.cs",        // 参数表：说明文字本身住在这里
+            "PtProps.cs",             // 访问口本身，纯铂一支在这里调原函数（2026-09-23 Opus 5.5 加，R48 物性接线）
         };
         return Directory.GetFiles(core, "*.cs")
                         .Where(f => !skip.Contains(Path.GetFileName(f)))
@@ -60,27 +68,77 @@ public class R48MGradeNoteTruthTests
         Assert.DoesNotContain("电阻率与持久强度均取该牌号的实测数据", note);
 
         // ── 现状核对（源码）──
-        var byGrade = new List<string>();     // 求解链里**按牌号**取电／热物性的地方
+        var byGrade = new List<string>();     // 求解链里**按牌号**取电／热物性的地方（经 PtProps.For）
         var pureP = new List<string>();       // 求解链里读**写死纯铂**那几支的地方
         foreach (string f in SolveChainFiles())
         {
             string s = File.ReadAllText(f);
             string name = Path.GetFileName(f);
-            foreach (string pat in new[] { "Materials.PtResistivity(", "Materials.PtThermalK(", "Materials.PtCp(" })
-                if (s.Contains(pat, StringComparison.Ordinal)) pureP.Add($"{name} ← {pat.TrimEnd('(')}");
-            foreach (string pat in new[] { ".ResistivityOhmM(", ".ThermalKWPerMK(", ".CpJPerKgK(" })
-                if (s.Contains(pat, StringComparison.Ordinal)) byGrade.Add($"{name} ← {pat.Trim('.', '(')}");
+            foreach (string pat in new[] { "Materials.PtResistivity(", "Materials.PtThermalK(", "Materials.PtCp(", "Materials.PtTcr(", "Materials.RhoRef *", "Materials.BetaFit" })
+                if (s.Contains(pat, StringComparison.Ordinal)) pureP.Add($"{name} ← {pat.TrimEnd('(', ' ', '*')}");
+            if (s.Contains("PtProps.For(", StringComparison.Ordinal)) byGrade.Add(name);
         }
-        _o.WriteLine("求解链读写死纯铂那几支的地方：" + string.Join("；", pureP.Distinct()));
-        _o.WriteLine("求解链按牌号取电／热物性的地方：" + (byGrade.Count == 0 ? "（一处都没有）" : string.Join("；", byGrade.Distinct())));
+        _o.WriteLine("求解链读写死纯铂那几支的地方：" + (pureP.Count == 0 ? "（一处都没有）" : string.Join("；", pureP.Distinct())));
+        _o.WriteLine("求解链按牌号取电／热物性的档：" + string.Join("、", byGrade.OrderBy(x => x, StringComparer.Ordinal)));
 
-        // 现状：电阻率／热导率／比热**还是纯铂**
-        Assert.True(pureP.Count > 0, "求解链里一处都不读纯铂那几支了？那说明已经改了接线 —— 回来改这句说明");
-        Assert.True(byGrade.Count == 0,
-            "求解链已经按牌号取电／热物性了：" + string.Join("；", byGrade.Distinct())
-            + " —— 好事，但参数表「铂材牌号」的说明（DesignInputs.GradeNameNote）还写着「目前一律按纯铂算」，"
-            + "请同时把那句话改成新的真话，并把差量那份文件的结论一起更新。");
-        Assert.Contains("电阻率、热导率、比热目前一律按纯铂算", note);
+        // 现状（2026-09-23 起）：电阻率／热导率／比热**按牌号**；直读纯铂的只剩两处有因的例外
+        // 变因（Opus 5.5，R48 物性接线）：原断言「pureP 非空、byGrade 为空、说明含『目前一律按纯铂算』」钉的是接线前的现状；接线后改钉新现状。
+        Assert.Equal(new[] { "DesignScreen.cs ← Materials.PtResistivity", "RemovalPriority.cs ← Materials.PtThermalK" },
+                     pureP.Distinct().OrderBy(x => x, StringComparer.Ordinal).ToArray());
+        // 13 档求解链 + InstallReport.cs（安装报告「牌号」那一句读 PtProps.For(p).IsFallback 写明按此牌号还是退回纯铂，非纯铂时再全文印 PtProps.Note）
+        //   + LineSolver.cs（复审同日加：参考工具页逐行牌号那一路，JointGradeNotes 读 PtProps.For(该行牌号).Note 带出退回说明；它不取物性值）
+        Assert.Equal(new[] { "CoupledSolver.cs", "DesignCurrent.cs", "DesignScreen.cs", "FlangeStability.cs", "InstallReport.cs", "LineRunner.cs", "LineSolver.cs", "LocalStability.cs",
+                             "PlateThermal2D.cs", "RampScreen.cs", "RampSolver.cs", "RampTwoNode.cs", "SegmentSolver.cs", "ShellCurrent.cs", "ShellThermal.cs" },
+                     byGrade.OrderBy(x => x, StringComparer.Ordinal).ToArray());
+        string core = Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "Core");
+        Assert.Contains("PtProps? props = null", File.ReadAllText(Path.Combine(core, "ShellCurrent.cs")));
+        Assert.Contains("PtProps? props = null", File.ReadAllText(Path.Combine(core, "PlateCurrent2D.cs")));
+        Assert.Contains("电阻率（含电阻温度系数）、热导率、比热也按所选牌号", note);
+        Assert.Contains("仍按纯铂的：**密度**", note);
+        Assert.Contains("数据不全", note);
+        Assert.DoesNotContain("目前一律按纯铂算", note);
+        // 按牌号的曲线只许经 PtProps 读：Core 下全体 *.cs（不止上面的求解链档）里直接调 .ResistivityOhmM(／.ThermalKWPerMK(／.CpJPerKgK( 的，
+        //   只许是下面名单（逐档逐式计数，多一处少一处都红）：
+        //   PtProps.cs 各 1：访问口本身，按牌号那一支；
+        //   MaterialDb.cs 电阻率 1：Pt-Rh/80-20 的参考热导率（Wiedemann–Franz 推算，只作参考、不入判定，PtProps 不读它）；
+        //   PtResistivityData.cs 电阻率 1：覆盖查询 Read 给出的值就是原函数。
+        //   覆盖：Core/*.cs 源码字面。不覆盖：Program.cs（命令行的按牌号对照表）、UI/、经别名或反射的调用。
+        //   （2026-09-23 Opus 5.5 R48 物性接线复审补上：接线前这条由「byGrade 为空」兼管，改钉新现状后它丢了，这里补回。）
+        var directAllowed = new Dictionary<(string, string), int>
+        {
+            [("PtProps.cs", ".ResistivityOhmM(")] = 1, [("PtProps.cs", ".ThermalKWPerMK(")] = 1, [("PtProps.cs", ".CpJPerKgK(")] = 1,
+            [("MaterialDb.cs", ".ResistivityOhmM(")] = 1,
+            [("PtResistivityData.cs", ".ResistivityOhmM(")] = 1,
+        };
+        var directBad = new List<string>();
+        foreach (string f in Directory.GetFiles(core, "*.cs"))
+        {
+            string name = Path.GetFileName(f), s = File.ReadAllText(f);
+            foreach (string pat in new[] { ".ResistivityOhmM(", ".ThermalKWPerMK(", ".CpJPerKgK(" })
+            {
+                int cnt = s.Split(pat).Length - 1;
+                int want = directAllowed.TryGetValue((name, pat), out int w) ? w : 0;
+                if (cnt != want) directBad.Add($"{name} 里 {pat} {cnt} 处（应 {want}）");
+            }
+        }
+        Assert.True(directBad.Count == 0, "绕过 PtProps 直读按牌号曲线的地方与名单不符：" + string.Join("；", directBad));
+
+        // 焊缝屈曲下界仍按纯铂：说明里写了这一条例外 ⇔ WeldDistortion.cs 真的还读**四个**纯铂常数
+        //   Materials.PtAlphaExp／PtCpMeanToMelt／PtLatentFusion／PtPoisson（谁把其中任一个接成按牌号，说明里这句就成了假话，回来改）。
+        //   2026-09-23 复审：原来只查 PtCpMeanToMelt 一个，钉子比它自己的说法窄；改成四个都查、且说明里要有「仍按纯铂」四字。
+        string weld = File.ReadAllText(Path.Combine(core, "WeldDistortion.cs"));
+        string[] weldConsts = { "Materials.PtAlphaExp", "Materials.PtCpMeanToMelt", "Materials.PtLatentFusion", "Materials.PtPoisson" };
+        var weldMissing = weldConsts.Where(k => !weld.Contains(k, StringComparison.Ordinal)).ToList();
+        bool weldPure = weldMissing.Count == 0;
+        bool noteSaysWeldPure = note.Contains("焊缝屈曲下界", StringComparison.Ordinal) && note.Contains("仍按纯铂", StringComparison.Ordinal);
+        Assert.True(weldPure == noteSaysWeldPure,
+            $"WeldDistortion.cs 读四个纯铂常数 = {weldPure}（缺：{string.Join("、", weldMissing)}），说明里写「焊缝屈曲下界…仍按纯铂」= {noteSaysWeldPure}，两者要一致");
+        Assert.True(noteSaysWeldPure, "说明里应写明焊缝屈曲下界仍按纯铂（今天 WeldDistortion.ForPt 读的是四个纯铂常数）");
+
+        // 「密度按纯铂」是真的：整线链的铂重用 Materials.PtDensity，不读材料库的合金密度
+        string lineRunner = File.ReadAllText(Path.Combine(core, "LineRunner.cs"));
+        Assert.Contains("Materials.PtDensity", lineRunner);
+        Assert.DoesNotContain("DensityKgM3", lineRunner);
 
         // 持久强度那一半是真的按牌号（说明里写了「持久强度按牌号」，这里核实）
         Assert.Contains("持久强度按牌号", note);
@@ -117,6 +175,10 @@ public class R48MGradeNoteTruthTests
 
         W("R48 M　**物性：按牌号 vs 求解链写死的纯铂　逐点差量**");
         W($"开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}　工作树 {HandoverDoc.Root()}　写码 2026-09-18 Opus 5");
+        W();
+        W("═══════ 2026-09-23 起的读法（Opus 5.5，R48 物性接线）═══════");
+        W("接线前的差量：本文件量的是「若求解链按纯铂算」与按牌号的差；2026-09-23 起求解链已按牌号取（PtProps），这份差量即接线带来的物性变化。");
+        W("下面「为什么量这个」一节是 2026-09-18 写的原文（当时求解链写死纯铂），保留作出处。");
         W();
         W("═══════ 为什么量这个 ═══════");
         W("参数表「铂材牌号」的说明原写「电阻率与持久强度均取该牌号的实测数据」，而求解链的电阻率读的是");
@@ -180,7 +242,7 @@ public class R48MGradeNoteTruthTests
         W();
         W("═══════ 读法 ═══════");
         W("· 「按牌号」那一列给 —— 的地方＝该牌号这一类没有数据（热导率与比热只有 Pt 与 Pt-10Rh 两族有）。");
-        W("· 差 % 不是误差，是**接不接线的后果**：现在求解链一律按纯铂算，选了别的牌号，电与热那一路就差这么多。");
+        W("· 差 % 是接线前后物性的变化（纯铂与 Tanaka-ZGS-Pt 为 0）：2026-09-23 起求解链按牌号取，选了 Pt-Rh/90-10 等牌号，电与热那一路相对纯铂就差这么多。");
         W("· 差的方向与下游的关系没在这里推（要推得连判据一起重跑）—— 本文件只给差量本身。");
         W();
         W("出处汇总：本文件每一个数都来自这一次运行（同一进程、同一份代码），没有拼接任何旧文件。");

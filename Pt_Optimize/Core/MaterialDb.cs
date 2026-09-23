@@ -5,7 +5,7 @@ using System.Linq;
 namespace PtOptimize.Core;
 
 /// <summary>
-/// 铂系材料数据库 —— 全部来自用户提供的实测工作簿，非文献估算。
+/// 铂系材料数据库 —— 电阻率、持久强度来自用户提供的实测工作簿；热导率、比热来自文献与厂方图（逐条出处见 SetThermal）。
 ///
 ///   电阻率：鉑金電氣計算.xlsx    ρ(T) = ρ₀·[1 + α(T−T₀) + β(T−T₀)²]   [μΩ·cm]
 ///   持久强度：鉑金材料蠕變應力壽命估算.xlsx
@@ -348,7 +348,7 @@ public static class MaterialDb
     ///     JM Tech. Rev. 2005/1962/1961/2023 四篇、Touloukian TPRC Vol.1（未 OCR）、各供应商页逐条查过都没有温度函数。
     ///     按项目规矩「找不到就写找不到」⇒ 不入库，只存 Wiedemann–Franz 推算当**参考值**（<see cref="PtGrade.ThermalKAdvisory"/>）。
     ///
-    /// 纯铂两条指回 <see cref="Materials.PtThermalK"/>／<see cref="Materials.PtCp"/>（求解链用的就是它们），
+    /// 纯铂两条指回 <see cref="Materials.PtThermalK"/>／<see cref="Materials.PtCp"/>（牌号为纯铂时求解链经 <see cref="PtProps"/> 调的就是它们），
     /// 表里放的是**拟合／核对所用的原始点**，不另立一份数值来源。
     ///
     /// 借用（同名义成分，随值带出、报告点名）：Tanaka-ZGS-Pt ← Pt；Tanaka-ZGS-PtRh10 与 Umicore-PtRh10 ← Pt-Rh/90-10。

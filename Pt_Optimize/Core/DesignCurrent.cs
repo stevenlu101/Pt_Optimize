@@ -141,7 +141,7 @@ public static class DesignCurrent
 
                 var rf = refFromField(j);
                 double tRef = rf?.tRef ?? setpointC[Math.Min(i, setpointC.Length - 1)];
-                double rRef = rf?.rRef ?? ClosedFormResistanceOhm(g, tRef);
+                double rRef = rf?.rRef ?? ClosedFormResistanceOhm(g, tRef, PtProps.For(p));   // R48 物性接线（2026-09-23，Opus 5.5）：ρ 按牌号
 
                 var inp = new RampTwoNode.Inputs
                 {
@@ -214,9 +214,10 @@ public static class DesignCurrent
     /// 法兰参考电阻的闭式估计 Ω：舌片 ρ·L/(w·t) + 圆盘径向扩散 ρ·ln(R/r)/(2π t)。
     /// 只在还没有场解时用；它只影响两节点模型里法兰节点的温度，不影响管电流的量级。
     /// </summary>
-    public static double ClosedFormResistanceOhm(FlangePlate g, double tC)
+    /// <param name="props">电阻率按牌号的取值口（R48 物性接线，2026-09-23，Opus 5.5）；null ⇒ <see cref="PtProps.Pure"/>（纯铂，与改前逐位相同）。生产 Core 调用点一律显式传。</param>
+    public static double ClosedFormResistanceOhm(FlangePlate g, double tC, PtProps? props = null)
     {
-        double rho = Materials.PtResistivity(tC);                     // Ω·m
+        double rho = (props ?? PtProps.Pure).Rho(tC);                 // Ω·m
         double tTab = (double.IsNaN(g.TabThicknessMm) ? g.ThicknessMm : g.TabThicknessMm) * 1e-3;
         var (xT, hwT) = g.Tangent();
         double lTab = Math.Max(1e-3, (xT - g.TabTipXMm) * 1e-3);

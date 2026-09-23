@@ -77,6 +77,7 @@ public static class RampScreen
         var q = SegmentSolver.Clone(baseInputs);
         q.Layer1.ThicknessMm = insulMm; q.Layer1.Enabled = true;
         q.WallMinMm = wallMm; q.TSetC = tTargetC;
+        var props = PtProps.For(q);   // R48 物性接线（2026-09-23，Opus 5.5）：ρ、dρ/dT 按牌号（纯铂逐位不变）
 
         double ri = q.TubeIdMm * 0.5e-3, ww = wallMm * 1e-3, rOut = ri + ww;
         double aM2 = Math.PI * (rOut * rOut - ri * ri), aMm2 = aM2 * 1e6;
@@ -89,12 +90,12 @@ public static class RampScreen
                      q.TubeLength, q.LossScale).QPerLength);
 
         double lossW = tab.Eval(tTargetC) * q.TubeLength;
-        double rOhm = Materials.PtResistivity(tTargetC) * q.TubeLength / aM2;
+        double rOhm = props.Rho(tTargetC) * q.TubeLength / aM2;
         double iA = Math.Sqrt(lossW / rOhm), jA = iA / aMm2;
 
         // 热稳定极限：I_stab = √(βA / (dρe/dT))。越过它稳态解不存在（不是「不够好」，是没有解）。
         double beta = tab.Slope(tTargetC);
-        double drho = Materials.RhoRef * (Materials.AlphaFit + 2 * Materials.BetaFit * tTargetC);
+        double drho = props.DRhoDT(tTargetC);
         double iStab = Math.Sqrt(Math.Max(1e-9, beta * aM2 / drho));
         double margin = iStab / Math.Max(1e-9, iA);
 

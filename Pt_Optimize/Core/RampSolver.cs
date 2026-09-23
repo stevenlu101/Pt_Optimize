@@ -93,6 +93,7 @@ public static class RampSolver
                                    double flangeCurrentRefA, double tRefC,
                                    double fromC, double targetC, double maxHours)
     {
+        var props = PtProps.For(p);   // R48 物性接线（2026-09-23，Opus 5.5）：ρ、cp 按牌号（纯铂逐位不变）；质量仍按纯铂密度
         var res = new RampResult();
 
         double ri = p.TubeIdMm * 0.5e-3, w = wallMm * 1e-3, rOut = ri + w;
@@ -132,14 +133,14 @@ public static class RampSolver
         //    法兰电阻由参考工况反推：R_f = QGen_ref / I_ref²，随温度按 ρe(T) 缩放。
         double rFlangeRef = flangeGenRefW > 0 && flangeCurrentRefA > 1e-9
             ? flangeGenRefW / (flangeCurrentRefA * flangeCurrentRefA) : 0;   // Ω @ tRefC
-        double rhoRefT = Math.Max(1e-30, Materials.PtResistivity(tRefC));
+        double rhoRefT = Math.Max(1e-30, props.Rho(tRefC));
         // Φ≈1 ⇒ 参考工况下单片法兰的散热 ≈ 其自身发热
         double flangeLossRefW = flangeGenRefW;
 
         double NetFlangePairW(double tC, double iA)
         {
             if (rFlangeRef <= 0) return 0;
-            double gen = iA * iA * rFlangeRef * (Materials.PtResistivity(tC) / rhoRefT);
+            double gen = iA * iA * rFlangeRef * (props.Rho(tC) / rhoRefT);
             double loss = flangeLossRefW * (LossPerM(tC) / lossRef);
             return 2 * (loss - gen);          // 两片；>0 表示净耗，<0 表示净帮忙
         }
@@ -147,7 +148,7 @@ public static class RampSolver
         // ── 热容
         double massTube = Materials.PtDensity * area * L;      // kg
         double massFlange = massFlangePairG * 1e-3;            // kg
-        double CapMetal(double tC) => (massTube + massFlange) * Materials.PtCp(tC);
+        double CapMetal(double tC) => (massTube + massFlange) * props.Cp(tC);
 
         // 保温层热容：各层体积×密度×比热。乘 0.5 是梯度因子 ——
         // 保温层内表面跟着金属走、外表面接近环境，平均温升约为内表面的一半。
@@ -167,7 +168,7 @@ public static class RampSolver
         // ── 空管热稳定极限：β 不含玻璃项（这正是与稳态解的分野）
         //    稳态解里 β = lossTab.Slope + hg·π·D，空管时后一项为零，极限随之收紧。
         double betaEmpty = lossTab.Slope(targetC);            // W/(m·K)
-        double drhoDt = Materials.RhoRef * (Materials.AlphaFit + 2 * Materials.BetaFit * targetC);
+        double drhoDt = props.DRhoDT(targetC);
         res.IStabA = Math.Sqrt(Math.Max(1e-9, betaEmpty * area / Math.Max(1e-30, drhoDt)));
 
         // ── 电流：J_allow 是**上限而非必须值**。厚壁时 I=J_allow·A 会越过热稳定极限
@@ -189,7 +190,7 @@ public static class RampSolver
 
         while (time < maxSec)
         {
-            double R = Materials.PtResistivity(t) * L / area;   // Ω
+            double R = props.Rho(t) * L / area;   // Ω
             double pElec = current * current * R;
             double net = pElec - LossPerM(t) * L - NetFlangePairW(t, current);
             double cap = CapMetal(t) + capInsul;
@@ -246,7 +247,7 @@ public static class RampSolver
                               + "表外那部分散热只能按表端点的值算";
         }
 
-        double rT = Materials.PtResistivity(targetC) * L / area;
+        double rT = props.Rho(targetC) * L / area;
         res.PowerAtTargetW = current * current * rT;
         res.LossAtTargetW = LossPerM(targetC) * L + NetFlangePairW(targetC, current);
         if (res.Note.Length == 0 && !res.Reached)

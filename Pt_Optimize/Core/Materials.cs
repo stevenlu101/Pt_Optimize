@@ -10,7 +10,7 @@ namespace PtOptimize.Core;
 ///   · 导热系数 = Touloukian/TPRC 与 Kaye &amp; Laby 推荐值那一支；0–700 °C 与 K&amp;L 一致到 ≤2.5 %，
 ///     700 °C 以上是**推荐值外推、无本项目实测**，带宽 ±8 %（物理把关人 2026-09-18 定稿）。
 ///   · 比热 = Kaye &amp; Laby 第 2.3.6 小节四点最小二乘（本轮重定；旧式斜率只有文献的一半）。
-/// 按牌号的温度函数（含 Pt-10%Rh 的实测热导率与比热表）在 <see cref="MaterialDb"/>。
+/// 按牌号的温度函数（含 Pt-10%Rh 的实测热导率与比热表）在 <see cref="MaterialDb"/>；求解链经 <see cref="PtProps"/> 按牌号取，纯铂一支调的就是本类这几支。
 /// 可在 UI 中被输入值覆盖的部分已单独暴露。
 /// </summary>
 public static class Materials

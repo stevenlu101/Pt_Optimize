@@ -85,7 +85,8 @@ public static class CoupledSolver
         double aTubeMm2 = Math.PI * (Math.Pow(p.TubeIdMm * 0.5 + p.WallMinMm, 2)
                                      - Math.Pow(p.TubeIdMm * 0.5, 2));
         // 电流场首解用等温 σ；温度场出来后按 σ(T) 重解，二者互相迭代
-        var curRef = PlateCurrent2D.Solve(g, 1000.0, Materials.PtResistivity(p.TSetC), h);
+        var props = PtProps.For(p);   // R48 物性接线（2026-09-23，Opus 5.5）：电阻率按牌号
+        var curRef = PlateCurrent2D.Solve(g, 1000.0, props.Rho(p.TSetC), h, props: props);
         res.Current = curRef;
         double[,]? tField = null;
 
@@ -118,8 +119,8 @@ public static class CoupledSolver
             // 用新温度场按 σ(T) 重解电流场（铂 700–1300 °C 间 ρe 变化 48 %，
             // 冷区更导电会把电流拉过去，等温 σ 会算偏 J 分布）
             tField = th.T;
-            curRef = PlateCurrent2D.Solve(g, 1000.0, Materials.PtResistivity(p.TSetC), h,
-                                          tempField: tField, tRefC: p.TSetC);
+            curRef = PlateCurrent2D.Solve(g, 1000.0, props.Rho(p.TSetC), h,
+                                          tempField: tField, tRefC: p.TSetC, props: props);
             res.Current = curRef;
             res.JFlangeMaxAPerMm2 = cur.JMaxAPerMm2;
             res.JTubeAPerMm2 = I / aTubeMm2;

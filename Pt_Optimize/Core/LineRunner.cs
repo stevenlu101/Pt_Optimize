@@ -1430,6 +1430,32 @@ public static class LineRunner
             c.SegLengthMm = len;
         }
         if (string.IsNullOrEmpty(c.GradeName)) c.GradeName = c.Base.GradeName;
+        // ★ R48 物性接线（2026-09-23，Opus 5.5）：整线只认**一个**牌号来源。段解与强度读 c.GradeName，法兰热解／升温／热稳定／设计电流读 c.Base.GradeName ——
+        //   两者不同就会一半按这个牌号、一半按那个牌号算，结果里却看不出来。生产里没有任何地方显式设 LineCase.GradeName（只有本函数与 FlangeAutoSizer.CloneCase 的复制），
+        //   所以这里不一致只可能是有人新写了一处：当场抛，不静默取其一。门 R48PropsWiringGateTests.门_整线牌号只有一个来源。
+        else if (!string.Equals(c.GradeName, c.Base.GradeName, StringComparison.Ordinal))
+            throw new InvalidOperationException($"整线牌号「{c.GradeName}」与参数表牌号「{c.Base.GradeName}」不一致 —— 电、热物性与强度只认一个牌号来源，请只在参数表里选牌号");
+    }
+
+    /// <summary>
+    /// ★ R48 物性接线（2026-09-23，Opus 5.5）：选的不是纯铂时，在结果说明**末尾**加一条「电、热物性按哪个牌号取／退回纯铂」
+    /// （<see cref="PtProps.Note"/>），外加本算例温度区间超出所选牌号数据点之处（<see cref="PtProps.RangeNote"/>）。
+    /// 纯铂 ⇒ 什么都不加（结果逐位不变）。温度区间 = 升温起止温度（<see cref="LineCase.RampFromC"/>、<see cref="LineCase.RampTargetC"/>）、各段金属温度、各片法兰最低／最高温（解出来的片）。
+    /// 升温起止温度**不论开没开升温核算都并入**：设计电流闭式（<see cref="DesignCurrent.Compute"/>）每轮都跑，
+    /// 它从 RampFromC 升到目标，一路按牌号读 ρ、cp、k。
+    /// 成功与失败的出口都加（首轮失败、耦合中途失败、正常收尾三处）。
+    /// </summary>
+    private static void AddGradeNote(LineCase c, LineResult res)
+    {
+        var props = PtProps.For(c);
+        if (props.IsPure && !props.IsFallback) return;
+        double lo = double.PositiveInfinity, hi = double.NegativeInfinity;
+        void Take(double t) { if (double.IsFinite(t)) { lo = Math.Min(lo, t); hi = Math.Max(hi, t); } }
+        Take(c.RampFromC); Take(c.RampTargetC);   // 设计电流闭式每轮都从 RampFromC 算起，与 CheckRamp 无关
+        foreach (var s in res.Segments) foreach (double t in s.TMetal) Take(t);
+        foreach (var f in res.Flanges) if (f.TMaxC > 0) { Take(f.TMinC); Take(f.TMaxC); }
+        string range = double.IsFinite(lo) ? props.RangeNote(lo, hi) : "";
+        res.Notes.Add("★ " + props.Note + (range.Length > 0 ? "；" + range : ""));
     }
 
     /// <summary>
@@ -1606,7 +1632,7 @@ public static class LineRunner
         var res = RunOnce(c, progress, cancel,
                           warmDraw?.Select(MeanDraw).ToArray(),
                           warmDraw, warmNb, baseline);
-        if (!res.Ok) return res;
+        if (!res.Ok) { AddGradeNote(c, res); return res; }
         if (baseFailMsg.Length > 0) res.Notes.Add("★ 无法兰基线失败 ⇒ 判据③无法判定：" + baseFailMsg);
 
         // ── 外层耦合：段 ↔ 法兰。首轮段解用抽热 0，拿到壳温度场后回灌重解。
@@ -1770,7 +1796,7 @@ public static class LineRunner
             var next = RunOnce(c, progress, cancel, (double[])draws.Clone(),
                                ((double L, double R)[])drawsLR.Clone(),
                                ((double L, double R)[])nbT.Clone(), baseline);
-            if (!next.Ok) return next;
+            if (!next.Ok) { AddGradeNote(c, next); return next; }   // R48 物性接线：耦合中途失败也带牌号说明（纯铂不加）
             // ★★★★★ 收敛度量必须**无分支**（2026-08-15）。
             //
             // 原来用 `TRootC` 这一个标量 —— 它在两端之间会**切换报哪一端**。
@@ -1973,6 +1999,7 @@ public static class LineRunner
                 : "★ 残差**没有在收缩** ⇒ 加轮数大概率没用：该工况可能真的热失控，或迭代进了极限环。");
             res.Message = "段↔法兰耦合未收敛（" + (shrinking ? "慢，加轮数可解" : "未收缩，疑似失控") + "）";
         }
+        AddGradeNote(c, res);   // R48 物性接线（2026-09-23，Opus 5.5）：纯铂不加
         return res;
     }
 
@@ -3333,7 +3360,7 @@ public static class LineRunner
     {
         int n = c.SegmentCount;
         double tSet = c.SetpointC[Math.Min(j, n - 1)];
-        return ShellCurrent.SolveFor(c, mesh, iJointA, Materials.PtResistivity(tSet) * 1e3, tSet, tempC: tempC);
+        return ShellCurrent.SolveFor(c, mesh, iJointA, PtProps.For(c).Rho(tSet) * 1e3, tSet, tempC: tempC);
     }
 
     /// <summary>

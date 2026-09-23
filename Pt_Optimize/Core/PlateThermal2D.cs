@@ -43,6 +43,7 @@ public static class PlateThermal2D
         double h = cur.H, t = g.ThicknessMm;
         var mask = cur.Mask;
         var res = new PlateThermalResult();
+        var props = PtProps.For(p);   // R48 物性接线（2026-09-23，Opus 5.5）：k、ρ 按牌号（纯铂逐位不变）
 
         // 分段表面热流 q″(T) [W/mm²]（原始单位 W/m² → ×1e-6）
         // ★ R48（2026-09-14，Opus 5；审查意见「圆盘保温 0 mm 时四个消费方物理含义不一致」）：两张表改调**唯一配方** DesignScreen.PlateFluxWPerM2。
@@ -75,7 +76,7 @@ public static class PlateThermal2D
                 { fix[i, j] = true; T[i, j] = p.BusbarClampTempC; }
             }
 
-        double kPt = Materials.PtThermalK(p.TSetC);      // W/(mm·K) 换算见下
+        double kPt = props.K(p.TSetC);      // W/(mm·K) 换算见下
         double kmm = kPt * 1e-3;                          // W/(m·K) → W/(mm·K)
         double cond = kmm * t;                            // W/K，面导度系数
 
@@ -101,7 +102,7 @@ public static class PlateThermal2D
                     // 单元能量平衡（除以 h²）：
                     //   cond·Σ(T_nb − T)/h² + q_v·t − 2·q″(T) = 0
                     double jm = cur.Jmag[i, j];                       // A/mm²
-                    double rhoMm = Materials.PtResistivity(ts) * 1e3; // Ω·mm
+                    double rhoMm = props.Rho(ts) * 1e3; // Ω·mm
                     double qvT = rhoMm * jm * jm * t;                 // W/mm²（已乘厚度）
 
                     double a = cond / (h * h) * cnt + 2 * qp;
@@ -131,7 +132,7 @@ public static class PlateThermal2D
                     else res.TMinBareC = Math.Min(res.TMinBareC, ts);
 
                     double jm = cur.Jmag[i, j];
-                    gen += Materials.PtResistivity(ts) * 1e3 * jm * jm * t * h * h;
+                    gen += props.Rho(ts) * 1e3 * jm * jm * t * h * h;
                     loss += 2 * (Insulated(i) ? insTab : bareTab).Eval(ts) * h * h;
                 }
                 else
@@ -179,7 +180,7 @@ public static class PlateThermal2D
                 if (mask[i, j + 1]) { s += T[i, j + 1] - ts; c++; }
                 if (c == 0) { skipped++; continue; }          // 孤立格点：无方程
                 double jm = cur.Jmag[i, j];
-                double qv = Materials.PtResistivity(ts) * 1e3 * jm * jm * t;
+                double qv = props.Rho(ts) * 1e3 * jm * jm * t;
                 double ql = 2 * (Insulated(i) ? insTab : bareTab).Eval(ts);
                 double R = cond * s + (qv - ql) * h * h;
                 rAbs += Math.Abs(R); rSigned += R;
