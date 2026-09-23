@@ -1,0 +1,97 @@
+using System;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text;
+using PtOptimize.Core;
+using Xunit;
+
+namespace PtOptimize.Tests;
+
+/// <summary>P4（2026-09-23，临时探针，只印不判）：TabInsulPerPlateTests 慢门「三片各自的舌保温…」整线对单独重解差的根因 —— 逐项把测试手抄配方对齐到生产 PlateThermalInputs／SolvePlateThermal。</summary>
+public class P4TabInsulProbeTests
+{
+    [Trait("速度", "慢")]
+    [Fact]
+    public void 探针_逐项对齐参数()
+    {
+        var sb = new StringBuilder();
+        string file = DeliverableOut.Stamped("R48_P4_舌保温逐片门_逐项对齐探针.txt");
+        void Say(string s) { sb.AppendLine(s); File.WriteAllText(file, sb.ToString(), new UTF8Encoding(false)); }
+        Say($"P4 舌保温逐片门逐项对齐探针　{DateTime.Now:yyyy-MM-dd HH:mm:ss}　Linux 镜像、同机并跑（4 核）；出处 Pt_Optimize.Tests/P4TabInsulProbeTests.cs（临时，未入库）");
+        var p = new DesignInputs();
+        var d = R47NavGridInstrumentTests.Disc56TwoSegs();
+        var lc = d.BuildCase(p);
+        double holeR = lc.TubeIdMm * 0.5 + lc.WallMm;
+        int nf = lc.FlangeCount;
+        var plates = Enumerable.Range(0, nf).Select(j => { var g = d.Plate(j, d.DiscFloorMm(p)); g.HoleRadiusMm = holeR; return g; }).ToArray();
+        double[] ins = { 5.1, 2.8, 8.6 };
+        lc.FlangePlates = Array.Empty<FlangePlate>();
+        lc.FlangeFields = plates.Select(g => AnalyticSurrogate.Rasterize(g, 0.5, 2.0)).ToArray();
+        lc.GeomForJudge = plates;
+        lc.TabInsul3dmPerPlateMm = ins;
+        lc.CheckRamp = false;
+        var r = LineRunner.Run(lc);
+        Say($"整线 Ok {r.Ok}　收敛 {r.Converged}　SigmaOfTCoupling {lc.Base.SigmaOfTCoupling}　ZoneByMaterialFraction {lc.ZoneByMaterialFraction}");
+        int n = lc.SegmentCount;
+        for (int j = 0; j < nf; j++)
+        {
+            var f = r.Flanges[j]; var g = plates[j];
+            double tSet = lc.SetpointC[Math.Min(j, n - 1)];
+            var meshT = FlangeMesher.BuildFromField(lc.FlangeFields[j], holeR, 0, lc.MeshFineMm, lc.MeshCoarseMm, lc.MeshFineRadiusMm,
+                                                    lc.Base.BusbarClampLengthMm, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
+            var meshP = f.Mesh!;
+            bool meshSame = meshT.CellCount == meshP.CellCount && meshT.Thickness.SequenceEqual(meshP.Thickness);
+            double rhoT = Materials.PtResistivity(tSet) * 1e3, rhoP = PtProps.For(lc).Rho(tSet) * 1e3;
+            Say($"── 片{j} {f.Name}：整线抽热 {f.QFromTubeW:R} W；CurrentA {f.CurrentA:R}；TRootC {f.TRootC:R}");
+            Say($"   网格：测试自建 {meshT.CellCount} 格／整线 {meshP.CellCount} 格，厚度逐位相同 {meshSame}；SourceField 同一对象 {ReferenceEquals(meshP.SourceField, lc.FlangeFields[j])}");
+            Say($"   电阻率 ×1e3：测试 Materials.PtResistivity {rhoT:R}／生产 PtProps.For(lc).Rho {rhoP:R}　相同 {rhoT.Equals(rhoP)}");
+            var ts = LineRunner.PlateThermalInputs(lc, j, f.CurrentA, meshP.SourceField);
+            Say($"   生产 PlateThermalInputs：InsulX {ts.InsulX:R}　TabBoundaryX {ts.TabBoundaryX:R}　TabInsul {ts.TabInsulThickMm:R}　DiscRadius {ts.DiscRadiusMm:R}　InsulDiscRadius {ts.InsulDiscRadiusMm:R}　Symmetric {ts.SymmetricInsul}　ZoneByMatFrac {ts.ZoneByMaterialFraction}　BusG {ts.BusGWPerK:R}");
+            Say($"   测试手抄：InsulX {g.InsulBoundaryXResolved:R}　TabBoundaryX {g.Tangent().X:R}　TabInsul {ins[j]:R}　DiscRadius （未传 ⇒ NaN）　InsulDiscRadius （未传 ⇒ NaN）　Symmetric false　ZoneByMatFrac （缺省 true）　BusG f.BusGWPerK {f.BusGWPerK:R}");
+            // p2 逐成员比
+            var p2T = SegmentSolver.Clone(lc.Base);
+            p2T.TSetC = tSet;
+            if (j < lc.ClampTempC.Length) p2T.BusbarClampTempC = lc.ClampTempC[j];
+            if (f.BusGWPerK >= 0) p2T.BusbarConductanceWPerK = f.BusGWPerK;
+            foreach (var pr in typeof(DesignInputs).GetProperties(BindingFlags.Public | BindingFlags.Instance).Where(q => q.CanRead && q.GetIndexParameters().Length == 0))
+            {
+                object? a = pr.GetValue(p2T), b = pr.GetValue(ts.P2);
+                if (a is double da && b is double db ? !da.Equals(db) : (a is string || a is bool || a is int) && !Equals(a, b))
+                    Say($"   p2 不同：{pr.Name} 测试 {a}／生产 {b}");
+            }
+            foreach (var fl in typeof(DesignInputs).GetFields(BindingFlags.Public | BindingFlags.Instance))
+            {
+                object? a = fl.GetValue(p2T), b = fl.GetValue(ts.P2);
+                if (a is double da && b is double db ? !da.Equals(db) : (a is string || a is bool || a is int) && !Equals(a, b))
+                    Say($"   p2 不同（字段）：{fl.Name} 测试 {a}／生产 {b}");
+            }
+            var scT = ShellCurrent.SolveFor(lc, meshT, f.CurrentA, rhoT, tSet);
+            var scP = LineRunner.PlateCurrentField(lc, meshP, j, f.CurrentA);
+            Say($"   电流场：测试（自建网格＋测试电阻率）JMag 与整线 JField 逐位相同 {scT.JMagAPerMm2.SequenceEqual(f.JField!)}；生产 PlateCurrentField JMag 与 JField 逐位相同 {scP.JMagAPerMm2.SequenceEqual(f.JField!)}");
+            double Q0(double disc, double insulDisc, DesignInputs pp, ShellMesh m, ShellCurrentResult sc)
+                => ShellThermal.Solve(m, sc.HeatJAPerMm2, pp, f.TRootC, g.InsulBoundaryXResolved, false,
+                                      tabBoundaryX: g.Tangent().X, tabInsulThickMm: ins[j], discRadiusMm: disc, insulDiscRadiusMm: insulDisc,
+                                      jLocalAPerMm2: sc.JMagAPerMm2).QFromTubeW;
+            double s0 = Q0(double.NaN, double.NaN, p2T, meshT, scT);
+            Say($"   S0 测试原配方 ⇒ {s0:R} W（差 {s0 - f.QFromTubeW:+0.000;-0.000} W）");
+            double s1 = Q0(g.DiscRadiusMm, double.NaN, p2T, meshT, scT);
+            Say($"   S1 = S0 ＋ discRadiusMm {g.DiscRadiusMm:R} ⇒ {s1:R} W（差 {s1 - f.QFromTubeW:+0.000;-0.000}）");
+            double s1b = Q0(double.NaN, g.InsulDiscRadiusMm, p2T, meshT, scT);
+            Say($"   S1′ = S0 ＋ 只 insulDiscRadiusMm {g.InsulDiscRadiusMm:R} ⇒ {s1b:R} W（差 {s1b - f.QFromTubeW:+0.000;-0.000}）");
+            double s2 = Q0(g.DiscRadiusMm, g.InsulDiscRadiusMm, p2T, meshT, scT);
+            Say($"   S2 = S0 ＋ 两个半径 ⇒ {s2:R} W（差 {s2 - f.QFromTubeW:+0.000;-0.000}）");
+            double s3 = Q0(g.DiscRadiusMm, g.InsulDiscRadiusMm, ts.P2, meshT, scT);
+            Say($"   S3 = S2 ＋ p2 换生产组装 ⇒ {s3:R} W（差 {s3 - f.QFromTubeW:+0.000;-0.000}）");
+            double s4 = Q0(g.DiscRadiusMm, g.InsulDiscRadiusMm, ts.P2, meshP, scP);
+            Say($"   S4 = S3 ＋ 网格与电流场换整线那份（f.Mesh＋PlateCurrentField）⇒ {s4:R} W（差 {s4 - f.QFromTubeW:+0.000;-0.000}；逐位 {s4.Equals(f.QFromTubeW)}）");
+            var ts5 = LineRunner.PlateThermalInputs(lc, j, f.CurrentA, meshP.SourceField); ts5.TabInsulThickMm = ins[j];
+            var th5 = LineRunner.SolvePlateThermal(meshP, scP.HeatJAPerMm2, f.TRootC, ts5, jLocalAPerMm2: scP.JMagAPerMm2);
+            Say($"   S5 生产 PlateThermalInputs＋SolvePlateThermal（舌保温显式本片）⇒ {th5.QFromTubeW:R} W；逐位 {th5.QFromTubeW.Equals(f.QFromTubeW)}；温度场逐位 {th5.T.SequenceEqual(f.TField!)}");
+            var ts6 = LineRunner.PlateThermalInputs(lc, j, f.CurrentA, meshP.SourceField); ts6.TabInsulThickMm = ins[(j + 1) % nf];
+            var th6 = LineRunner.SolvePlateThermal(meshP, scP.HeatJAPerMm2, f.TRootC, ts6, jLocalAPerMm2: scP.JMagAPerMm2);
+            Say($"   S6 同 S5 但舌保温换别片 {ins[(j + 1) % nf]} ⇒ {th6.QFromTubeW:R} W；差 {th6.QFromTubeW - f.QFromTubeW:+0.000000;-0.000000} W");
+        }
+        Say("完");
+    }
+}

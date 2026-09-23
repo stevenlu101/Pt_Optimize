@@ -1,0 +1,27 @@
+Wed Sep 23 19:00:26 UTC 2026
+Test run for /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtP1/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll (.NETCoreApp,Version=v8.0)
+Microsoft (R) Test Execution Command Line Tool Version 17.8.0 (x64)
+Copyright (c) Microsoft Corporation.  All rights reserved.
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.31)
+[xUnit.net 00:00:00.12]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:00.63]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:00.64]   Starting:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.ZZP1HoleJumpTests.扫孔半径_25p5到26p5_步0p005(v: 5) [46 s]
+  Passed PtOptimize.Tests.ZZP1HoleJumpTests.扫孔半径_25p5到26p5_步0p005(v: 2) [44 s]
+  Passed PtOptimize.Tests.ZZP1HoleJumpTests.扫孔半径_25p5到26p5_步0p005(v: 7) [44 s]
+  Passed PtOptimize.Tests.ZZP1HoleJumpTests.扫孔半径_25p5到26p5_步0p005(v: 0) [43 s]
+  Passed PtOptimize.Tests.ZZP1HoleJumpTests.扫孔半径_25p5到26p5_步0p005(v: 4) [44 s]
+  Passed PtOptimize.Tests.ZZP1HoleJumpTests.扫孔半径_25p5到26p5_步0p005(v: 1) [1 m 30 s]
+  Passed PtOptimize.Tests.ZZP1HoleJumpTests.扫孔半径_25p5到26p5_步0p005(v: 3) [44 s]
+[xUnit.net 00:06:45.67]   Finished:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.ZZP1HoleJumpTests.扫孔半径_25p5到26p5_步0p005(v: 6) [46 s]
+
+Test Run Successful.
+Total tests: 8
+     Passed: 8
+ Total time: 6.7744 Minutes
+exit 0
+Wed Sep 23 19:07:14 UTC 2026
