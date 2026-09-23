@@ -108,7 +108,7 @@ public class R48ClampRecipeImpactTests
         Say("工作点：电流 1213/1984/1817/1022 A，管根 1172.63/1151.19/1093.09/1056.80 °C（R48_接头电流核对_2026-09-14.txt）。");
         Say("跑前写死的判读：四片三档「组合 − 整面均匀」都 ≤ 0.05 W ⇒ 组合口径成立；比值只打印。");
         var (d, p) = Design();
-        var (_, radius) = MeshVerify.RequiredMeshFor(d);
+        var (_, radius) = MeshVerify.RequiredMeshFor(d, p);
         double[] hs = { 1.0, 0.5, 0.25 };
         bool ok = true;
         for (int j = 0; j < 4; j++)
@@ -181,7 +181,7 @@ public class R48ClampRecipeImpactTests
         Say("工作点：片0 电流 1213 A、管根 1172.63 °C（R48_接头电流核对_2026-09-14.txt）；单片管侧固定、夹持定温（与 R48ErrorBudgetTests 同一套解法）。");
         Say("口径：外圈 = clampFullFace false（改动前）；整面 = clampFullFace true；细带 3 mm／自相似 = clampBandMm 3／3×hFine（形心整格）。");
         var (d, p) = Design();
-        var (_, radius) = MeshVerify.RequiredMeshFor(d);
+        var (_, radius) = MeshVerify.RequiredMeshFor(d, p);
         var lc0 = d.BuildCase(p, checkRamp: false);
         Say($"圆盘区−管温的限值 {lc0.DiscOverTempMaxK} K（LineCase.DiscOverTempMaxK）。");
         Say("");

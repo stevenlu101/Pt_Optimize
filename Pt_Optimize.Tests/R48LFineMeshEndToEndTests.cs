@@ -92,15 +92,19 @@ public class R48LFineMeshEndToEndTests
         var sb = new StringBuilder();
         void W(string s = "") => sb.AppendLine(s);
 
-        var (reqFine, reqRadius) = MeshVerify.RequiredMeshFor(seed);
+        var (reqFine, reqRadius) = MeshVerify.RequiredMeshFor(seed, p);
         var navCase = new LineCase();
+        // ★ F7′（2026-09-23，决 29 自适应；审查 P6）：导航档的细区半径也来自细区半径计划（Solver 在 FineRadiusMm = 0 时自己取计划初值），
+        //   不再是整线算例缺省 50；C 段与 A 段三关的「导航网格」照同一个半径统一（Solver.ApplyCaseMesh 导航支：尺寸与粗区不动，只统一半径）。
+        var navPlan = MeshVerify.FineRadiusPlanFor(seed, p);
+        var navMesh = new SolverOptions { FineMm = 0, FineRadiusMm = navPlan.RadiusMm, RadiusPlan = navPlan };
 
         W($"R48 L 路　端到端 **细网格第二遍**　输入几何「{seed.Name}」（{which}）");
         W($"开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}　工作树 {HandoverDoc.Root()}　写码 2026-09-17 Opus 5");
         W("上一轮（同日凌晨）只在导航网格上求根，求解器自己印着「没做第二遍 ⇒ 不可交付」。本轮补第二遍。");
         W("");
         W("═══════ 本轮跑什么（同一个进程、同一份代码，不拼两份仪器输出）═══════");
-        W($"A 段 导航档　　：Solver.Solve，细区 {navCase.MeshFineMm:0.0} mm／粗区 {navCase.MeshCoarseMm:0.0} mm／细区半径 {navCase.MeshFineRadiusMm:0.0} mm（整线算例缺省，界面「自动定厚」预设）→ 三关 → 铂重");
+        W($"A 段 导航档　　：Solver.Solve，细区 {navCase.MeshFineMm:0.0} mm／粗区 {navCase.MeshCoarseMm:0.0} mm（整线算例缺省）／细区半径初值 {navPlan.RadiusMm:0.0} mm（细区半径计划，F7′；解后按热点放大，终值见求解轨迹）（界面「自动定厚」预设）→ 三关 → 铂重");
         W($"B 段 细网格档　：Solver.Solve，第二遍细区 {reqFine:0.000} mm／细区半径 {reqRadius:0.0} mm"
           + "（MeshVerify.RequiredMeshFor —— 与「◆ 加密复算」同一个来源），**三关也跑在这张网格上** → 铂重");
         W("C 段 纯网格效应：**B 段解出来的那一份设计**，② 再在导航网格上算一次 —— 同一设计、只换网格。");
@@ -128,8 +132,10 @@ public class R48LFineMeshEndToEndTests
           + $"设定电流密度 J {seed.JDesignAPerMm2:0.#} A/mm²（终验限值 {seed.JCheckAPerMm2:0.#}）");
         W($"设计输入表：默认（DesignInputs 默认构造）；服役 {p.DesignLifeHours} h。");
         W($"网格无关口径要求：细区 {reqFine:0.000} mm，细区半径 {reqRadius:0.0} mm"
-          + "（MeshVerify.RequiredMeshFor(设计)：特征尺寸 = 舌根圆角与环宽，半径 = max(盘半径, 0.35×舌长, 管孔半径) + 余量）。");
-        W("　⚠ 这一对只由**形状**决定（圆角／环宽／盘半径／舌长／管孔半径），而求解器一根形状旋钮都不动 ⇒ 解前解后是同一对（下面当场核对）。");
+          + "（MeshVerify.RequiredMeshFor(设计, 工艺参数)：细区尺寸 = 特征尺寸（舌根圆角与环宽）÷ 3；细区半径**初值** = max(盘半径, 管孔半径) + 设计热长度 ℓ_t —— F7′（2026-09-23，决 29 自适应）起不含舌长，解后按热点放大）。");
+        W("　细区半径计划：" + navPlan.Describe());
+        W("　⚠ 这一对（尺寸与半径**初值**）只由形状（圆角／环宽／盘半径／管孔半径）与管的热长度（控温点、管、保温、牌号）决定，与舌长无关；"
+          + "求解器一根形状旋钮都不动 ⇒ 解前解后是同一对（下面当场核对）。半径的**终值**另由解出来的热点位置决定（只增不减），各段终值印在各自的求解轨迹里。");
         W("");
 
         string live = Path.Combine(Path.GetTempPath(), $"R48_L_细网格_{which}_{stamp}_进行中.log");
@@ -148,7 +154,7 @@ public class R48LFineMeshEndToEndTests
         GateSet? navGates = null;
         if (navSr is { Design: not null })
         {
-            navGates = RunThreeGates(W, navSr.Design, p, meshOpt: null, probe, "A 导航档", navCase);
+            navGates = RunThreeGates(W, navSr.Design, p, meshOpt: NavMeshOf(navSr, navMesh), probe, "A 导航档", navCase);
             W();
         }
 
@@ -159,10 +165,11 @@ public class R48LFineMeshEndToEndTests
         var fineOpt = FineOptions(reqFine, reqRadius);
         W("⚠ **两档的「第一遍」也不是同一张网格**（Solver.Solve 里 navOpt = opt.Clone() 之后只把 FineMm 归零，"
           + "**FineRadiusMm 原样带过去**）：");
-        W($"　A 档第一遍：细区 {navCase.MeshFineMm:0.0} mm，细区半径 {navCase.MeshFineRadiusMm:0.0} mm（选项里 FineRadiusMm = {navOpt.FineRadiusMm:0.#} ⇒ 不统一，沿用整线算例缺省）");
+        W($"　A 档第一遍：细区 {navCase.MeshFineMm:0.0} mm，细区半径 {navPlan.RadiusMm:0.0} mm（选项里 FineRadiusMm = {navOpt.FineRadiusMm:0.#} ⇒ F7′ 起 Solver 取细区半径计划初值，不再沿用整线算例缺省 {navCase.MeshFineRadiusMm:0.#}）");
         W($"　B 档第一遍：细区 {navCase.MeshFineMm:0.0} mm，细区半径 **{fineOpt.FineRadiusMm:0.0} mm**（选项里 FineRadiusMm = {fineOpt.FineRadiusMm:0.#} ⇒ 按网格无关口径统一）");
         W("　⇒ 两档第一遍**只差细区半径这一维**（尺寸、粗区、旋钮盒、轮数上限、解法族全同）。"
-          + "这一维的历史实测记在 Solver.Solve 的注释里：同一设计、同一 2.0 mm，只差它 ⇒ 管孔净流入 +3.267（半径 50）对 −6.533（半径 59），差 9.8 W、符号相反。");
+          + "这一维的历史实测记在 Solver.Solve 的注释里：同一设计、同一 2.0 mm，只差它 ⇒ 管孔净流入 +3.267（半径 50）对 −6.533（半径 59），差 9.8 W、符号相反。"
+          + "F7′ 起两档第一遍的半径初值同为细区半径计划的初值；放大之后各自的终值见各自的求解轨迹。");
         var (fineSr, fineSolveS, fineCut) = SolveWithCap(seed.Clone(), p, fineOpt, probe, FineCap, "B 细网格档");
         ReportSolve(W, "B 细网格档", fineSr, fineSolveS, fineCut, reqFine, reqRadius, navCase);
 
@@ -171,7 +178,7 @@ public class R48LFineMeshEndToEndTests
         if (fineSr is { Design: not null })
         {
             // 解前解后网格口径必须是同一对（形状没被动过）——当场核对，不是假设
-            var (reqFine2, reqRadius2) = MeshVerify.RequiredMeshFor(fineSr.Design);
+            var (reqFine2, reqRadius2) = MeshVerify.RequiredMeshFor(fineSr.Design, p);
             W($"解后重算网格无关口径：细区 {reqFine2:0.000} mm／半径 {reqRadius2:0.0} mm　"
               + (Math.Abs(reqFine2 - reqFine) < 1e-9 && Math.Abs(reqRadius2 - reqRadius) < 1e-9
                  ? "⇒ 与解前**逐位相同**（形状旋钮确实一根没动）"
@@ -186,7 +193,8 @@ public class R48LFineMeshEndToEndTests
             W("同一设计、同一工况、同一份代码，只换网格 —— 这是唯一能回答「这条判据能不能在导航网格上判」的对照。");
             var cSw = Stopwatch.StartNew();
             probe.Report("── C 段：B 段的设计在导航网格上再算一次 ②");
-            var lcC = fineSr.Design.BuildCase(p);           // 不调 ApplyCaseMesh ⇒ 导航网格（整线算例缺省）
+            var lcC = fineSr.Design.BuildCase(p);
+            Solver.ApplyCaseMesh(lcC, NavMeshOf(fineSr, navMesh));   // F7′：导航网格 = 整线算例缺省尺寸 ＋ 细区半径计划的半径（与求解器第一遍同一支）
             fineGlassOnNav = SafeRun(lcC, probe);
             cSw.Stop();
             probe.Report($"── C 段结束，耗时 {cSw.Elapsed.TotalSeconds:0} s");
@@ -332,13 +340,20 @@ public class R48LFineMeshEndToEndTests
         if (sr.HitBound) W("　⚠ 结构性停机（旋钮顶到上界／分派前提不成立／交棒）：再算一次会得到同一句话，不是「没搜到」。");
         if (sr.Undetermined) W("　⚠ 判不了：" + sr.UndeterminedWhy.Replace("**", "") + "（既不当过也不当不过；再算一次不一定得到同一句话）");
         if (sr.NullWhy.Length > 0) W($"　⚠ 最近一次场解没解出来的原因：{sr.NullWhy}");
+        if (sr.RadiusPlan is { } rpS) W("细区半径（F7′ 计划终态）：" + rpS.Describe());
         W($"终局网格：{(sr.FineRefined ? $"细网格 {sr.FineMmUsed:0.000} mm（第二遍求根与终局复核跑在判决的那张网格上）" : $"**没做第二遍** ⇒ 只在导航网格 {navCase.MeshFineMm:0.0} mm 上成立、**不可交付**")}");
         if (!sr.FineRefined)
             W($"　（本形状按网格无关口径要求 {reqFine:0.000} mm／半径 {reqRadius:0.0} mm；导航与细网格之间的差在历史实测上到过 2.03 倍。）");
         W("");
     }
 
-    /// <summary>三关。<paramref name="meshOpt"/> = null ⇒ 导航网格（整线算例缺省）；给了 ⇒ 三关都跑在那张网格上。</summary>
+    /// <summary>F7′（2026-09-23）：导航网格的选项 —— 尺寸照整线算例缺省，细区半径取那一次求解的计划终值（没有就取计划初值）。</summary>
+    private static SolverOptions NavMeshOf(SolverResult sr, SolverOptions navMesh)
+        => sr.RadiusPlan is { } rp && rp.TabLengthFactor == 0
+            ? new SolverOptions { FineMm = 0, FineRadiusMm = rp.RadiusMm, RadiusPlan = rp }
+            : navMesh;
+
+    /// <summary>三关。<paramref name="meshOpt"/> = null ⇒ 导航网格（整线算例缺省）；FineMm = 0 且给了半径 ⇒ 导航网格统一半径；FineMm &gt; 0 ⇒ 三关都跑在那张网格上。</summary>
     private static GateSet RunThreeGates(Action<string> W, DesignSpec solved, DesignInputs p,
                                          SolverOptions? meshOpt, Probe probe, string tag, LineCase navCase)
     {
@@ -353,7 +368,7 @@ public class R48LFineMeshEndToEndTests
         sw.Stop(); g.RampS = sw.Elapsed.TotalSeconds;
         probe.Report($"── ① 结束（{tag}）：{g.Ramp.Verdict}，耗时 {g.RampS:0} s");
         W($"结论：{g.Ramp.Verdict}　耗时 {g.RampS:0} s，{g.Ramp.Points.Length} 个设定点，"
-          + $"网格 = {(meshOpt is null ? $"导航（细区 {navCase.MeshFineMm:0.0} mm）" : $"细网格（细区 {meshOpt.FineMm:0.000} mm／半径 {meshOpt.FineRadiusMm:0.0} mm）")}");
+          + $"网格 = {(meshOpt is null ? $"导航（细区 {navCase.MeshFineMm:0.0} mm）" : meshOpt.FineMm <= 0 ? $"导航（细区 {navCase.MeshFineMm:0.0} mm／半径 {meshOpt.FineRadiusMm:0.0} mm）" : $"细网格（细区 {meshOpt.FineMm:0.000} mm／半径 {meshOpt.FineRadiusMm:0.0} mm）")}");
         if (g.Ramp.VerdictDetail.Length > 0) W(g.Ramp.VerdictDetail);
         W(g.Ramp.DisagreeNotes.Length == 0
           ? "两条电流口径（设计电流／该点实际电流）在每一点、每一片上**结论相同**。"

@@ -4468,6 +4468,7 @@ internal static class Program
                 // ★ 两条安全线的结论必须印 —— 不印等于没做（A⑭）
                 if (mvv.MidBandConfirm is not null) Console.WriteLine("   " + mvv.MidBandConfirm);
                 if (mvv.PeakOutsideFine is not null) Console.WriteLine("   " + mvv.PeakOutsideFine);
+                if (mvv.RadiusPlan is { } rpA) Console.WriteLine("   " + rpA.Describe());   // F7′（2026-09-23）：细区半径的初值、放大与终值
                 // ★★★★★ R48 续（2026-09-14，Opus 5）：**判不了不许说成「不过」。**
                 //   界面那一侧（LineDesignPage.VerifyMeshAsync）已经认 Undecidable，命令行这一侧没认 ——
                 //   撞上单元上限、序列仍在摆时，下面那一支照样印「在算得准的网格上，这个设计不过」。
@@ -4479,6 +4480,13 @@ internal static class Program
                         + "**不要把它读成「不过」，也不要读成「过」**：这一关没有被检查过。");
                     Console.WriteLine("   【下一步】① 换个网格族再验一次（改细区半径或起步档），看结论会不会跟着变；"
                         + "② 换族之后结论一致的那部分才可引用；③ 若判据值本来就贴着限值，先问这条限值有没有留够噪声裕量。");
+                }
+                else if (mvv.PeakOutsideFine is not null)
+                {
+                    // ★ F7′（2026-09-23，审查 P3）：「本次复核不算数」之后不许再宣布「判据以复核为准」或「这个设计不过」——
+                    //   那一档的温度类判据不算数，说过说不过都没有依据。自适应之后只剩两种来由：放大到上限仍盖不住，或峰位算不出。
+                    Console.WriteLine("⛔ **本次复核不算数**（上一行）—— 不能说这个设计过，也不能说不过；表里最后一档的数不作结论。"
+                        + (mvv.RadiusPlan is { } rpv ? "　" + rpv.Describe() : ""));
                 }
                 else if (mvv.Line is { } lvv && !lvv.AllOk)
                 {
@@ -4524,7 +4532,7 @@ internal static class Program
                 // 只解**电位场**、逐网格档计时 —— CG 换 GS 的收益只在大网格上显形，
                 // 而 --judge 跑在导航网格（几百单元/片）上根本量不出来。
                 var gc = DesignSpec.Select(args);
-                var (hFeatC, radC) = MeshVerify.RequiredMeshFor(gc);
+                var (hFeatC, radC) = MeshVerify.RequiredMeshFor(gc, p);   // F7′（2026-09-23）：细区半径 = 计划初值（热长度按本工艺参数算）
                 double weldC = Math.Max(gc.TabThickMm.Max(), gc.WallMm);
                 double innerRc = MeshAdapt.InnerRadiusFor(gc.HoleRadiusMm, weldC);
                 var plateC = gc.Plate(1, gc.DiscFloorMm(p));   // 共用片：单元最多
@@ -4564,7 +4572,7 @@ internal static class Program
             {
                 // 只建网格、不解场 —— 量的是「同一个分区规则下，四叉树比张量网格省多少单元」。
                 var gq = DesignSpec.Select(args);
-                var (hFeat, radQ) = MeshVerify.RequiredMeshFor(gq);
+                var (hFeat, radQ) = MeshVerify.RequiredMeshFor(gq, p);   // F7′（2026-09-23）：同上
                 double weldQ = Math.Max(gq.TabThickMm.Max(), gq.WallMm);
                 double innerRq = MeshAdapt.InnerRadiusFor(gq.HoleRadiusMm, weldQ);
                 var plateQ = gq.Plate(0, gq.DiscFloorMm(p));
@@ -4661,12 +4669,12 @@ internal static class Program
                 //   求根的网格和判决的网格必须是同一张，否则求出来的根照样不作数。
                 if (args.Contains("--fine"))
                 {
-                    var (fm, fr) = MeshVerify.RequiredMeshFor(geoS);
+                    var (fm, fr) = MeshVerify.RequiredMeshFor(geoS, p);   // F7′（2026-09-23）：fr = 细区半径计划初值；Solver 解后按热点自适应放大（决 29），终值印在求解轨迹里
                     int ifm = Array.IndexOf(args, "--fine");
                     if (ifm >= 0 && ifm + 1 < args.Length
                         && double.TryParse(args[ifm + 1], out double fmv) && fmv > 0) fm = fmv;
                     soOpt.FineMm = fm; soOpt.FineRadiusMm = fr;
-                    Console.WriteLine($"★ 第二遍求根将跑在**细网格 {fm:0.000} mm**（半径 {fr:0.0} mm）—— "
+                    Console.WriteLine($"★ 第二遍求根将跑在**细网格 {fm:0.000} mm**（半径初值 {fr:0.0} mm，解后按热点自适应放大）—— "
                         + "判据以它为准。这会显著变慢，但导航网格上的根**不可交付**。");
                 }
                 else
@@ -5071,6 +5079,13 @@ internal static class Program
                            ? "　✗ **画不出来**" : "　✓"));
                 Console.WriteLine();
 
+                // ★ F7′（2026-09-23，Opus 5.5，C4′；审查 L3／R3／P5／F7）：细区半径**不再手抄旧公式**（原为 max(盘半径, 0.35·舌长, 孔半径) + 10 的一份手抄），
+                //   改取全仓唯一来源 —— 细区半径计划的初值（MeshVerify.FineRadiusPlanFor；决 29 自适应）。本仪器是老的「只减细区」对照，**不放大**：
+                //   每档照印热点盖没盖住（MeshVerify.HotspotVerdict，判法一个数不动）；要自适应放大请用 --judge／--solve 的网格无关复核（VerifyMesh → MeshVerify.Run，与界面「◆ 加密复算」同一条路）。
+                var planA = MeshVerify.FineRadiusPlanFor(fdA, p);
+                double radiusA = planA.RadiusMm;
+                double innerRA = MeshAdapt.InnerRadiusFor(fdA.HoleRadiusMm, weldLeg);
+                Console.WriteLine("细区半径：" + planA.Describe() + "（本仪器不放大）");
                 Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"⑦K",9}{"⑧K",9}{"合计g",9}{"用时s",8}");
                 double hNow = h0; bool hitCap = false;
                 (double n2p, double n2pp, double n3, double m)? prevA = null;
@@ -5079,8 +5094,8 @@ internal static class Program
                 {
                     var lcA = fdA.BuildCase(p, checkRamp: false);
                     lcA.MeshFineMm = hNow;
-                    lcA.MeshFineRadiusMm = MeshAdapt.RequiredFineRadiusMm(
-                        new[] { fdA.DiscRadiusMm, Math.Abs(fdA.TabLengthMm) * 0.35 }, fdA.HoleRadiusMm);
+                    lcA.MeshFineRadiusMm = radiusA;
+                    lcA.MeshFineRadiusPlan = planA;
                     var swA = System.Diagnostics.Stopwatch.StartNew();
                     LineResult rA;
                     try { rA = LineRunner.Run(lcA); }
@@ -5094,6 +5109,8 @@ internal static class Program
                     double massA = rA.Segments.Sum(s2 => s2.MassG) + rA.Flanges.Sum(f2 => f2.MassG);
                     Console.WriteLine($"{hNow,10:0.000}{rA.MeshCells,9:0}{a2p,9:0.000}{a2pp,9:0.000}"
                                     + $"{a3,9:0.000}{massA,9:0}{swA.Elapsed.TotalSeconds,8:0.0}");
+                    if (MeshVerify.HotspotVerdict(rA, innerRA, radiusA) is { } hotA)
+                        Console.WriteLine("   " + hotA + "（本仪器不放大；这一档的温度类判据不算数）");
 
                     if (prevA is { } pv)
                     {
@@ -5614,7 +5631,12 @@ internal static class Program
                                             + $"{t.N3,9:0.000}{t.MassG,9:0}{t.Sec,8:0.0}");
                         Console.WriteLine();
                         Console.WriteLine("   " + mv.Verdict);
-                        if (mv.Line is { } lv)
+                        if (mv.RadiusPlan is { } rpS) Console.WriteLine("   " + rpS.Describe());   // F7′（2026-09-23）
+                        if (mv.PeakOutsideFine is not null)
+                            // ★ F7′（2026-09-23，审查 P3）：「本次复核不算数」之后不许宣布「判据以复核为准」。
+                            Console.WriteLine("⛔ **本次复核不算数** —— " + mv.PeakOutsideFine.TrimStart('★', ' ')
+                                + "　不能说这个设计过，也不能说不过；最后一档的数不作结论。");
+                        else if (mv.Line is { } lv)
                         {
                             Console.WriteLine();
                             Console.WriteLine("★★ **判据以复核为准**（下表是网格无关的那一次解）：");

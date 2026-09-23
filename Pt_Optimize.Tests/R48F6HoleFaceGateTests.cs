@@ -374,7 +374,7 @@ public class R48F6HoleFaceGateTests
     internal static (LineCase lc, FlangePlate g, ShellMesh m) BudgetMesh(double h, MeshRules? rules)
     {
         var (d, p) = BudgetDesign();
-        var (_, radius) = MeshVerify.RequiredMeshFor(d);
+        var (_, radius) = MeshVerify.RequiredMeshFor(d, p);
         var lc = d.BuildCase(p, checkRamp: false);
         if (h < 2) MeshAdapt.RefineWholeMesh(lc, h, radius);
         var g = d.Plate(0, d.DiscFloorMm(p)); g.HoleRadiusMm = lc.TubeIdMm * 0.5 + lc.WallMm;

@@ -53,7 +53,7 @@ public class R48SolveMeshMatchTests
         var d = DesignSpec.W08.Clone();
         d.TabThickMm = new[] { 0.73, 1.26, 1.26, 0.73 };
         var p = new DesignInputs();
-        var (_, radius) = MeshVerify.RequiredMeshFor(d);
+        var (_, radius) = MeshVerify.RequiredMeshFor(d, p);
         double innerR = MeshAdapt.InnerRadiusFor(d.HoleRadiusMm, Math.Max(d.TabThickMm.Max(), d.WallMm));
 
         // ── 求根那一路：Solver.EvalRaw 就是这两行（checkRamp 在导航/求根阶段为 false）
@@ -83,7 +83,7 @@ public class R48SolveMeshMatchTests
         var d = DesignSpec.W08.Clone();
         var p = new DesignInputs();
         double born = d.BuildCase(p, checkRamp: false) is { } b0 ? b0.MeshCoarseMm / b0.MeshFineMm : double.NaN;
-        var (_, radius) = MeshVerify.RequiredMeshFor(d);
+        var (_, radius) = MeshVerify.RequiredMeshFor(d, p);
         double innerR = MeshAdapt.InnerRadiusFor(d.HoleRadiusMm, Math.Max(d.TabThickMm.Max(), d.WallMm));
         var factory = MeshVerify.AnalyticCaseFactory(d, p, radius, innerR);
 

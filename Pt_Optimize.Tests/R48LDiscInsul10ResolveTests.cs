@@ -79,7 +79,7 @@ public abstract class R48LDiscInsul10ResolveBase
         var o0 = new SolverOptions();
         double q = Solver.KnobQuantum(o0, Solver.Knob.Insul);
         var navCase = new LineCase();
-        var (reqFine, reqRadius) = MeshVerify.RequiredMeshFor(seed);
+        var (reqFine, reqRadius) = MeshVerify.RequiredMeshFor(seed, p);
         var opt = FineOptions(reqFine, reqRadius);
 
         W($"R48 L 路　**圆盘保温 {WrapLimits.JointZoneMaxMm:0.#} mm 下重解一次**　输入几何「{seed.Name}」（{which}）");

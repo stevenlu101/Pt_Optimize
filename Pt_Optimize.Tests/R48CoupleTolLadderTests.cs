@@ -62,7 +62,7 @@ public class R48CoupleTolLadderTests
         d.RingMul = new[] { 1.0, 1.0, 1.0, 1.0 };
         d = d.Fit();
         d.SizeTongues(p);
-        var (_, radius) = MeshVerify.RequiredMeshFor(d);
+        var (_, radius) = MeshVerify.RequiredMeshFor(d, p);
         var lc = d.BuildCase(p, checkRamp: false);
         MeshAdapt.RefineWholeMesh(lc, 0.5, radius);
         lc.CoupleTolK = tol;

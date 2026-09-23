@@ -37,7 +37,7 @@ public class R48J_SolverMeshAndMarkerGateTests
     {
         var p = new DesignInputs();
         var d = DesignSpec.W08.Clone().Fit();
-        var (fine, radius) = MeshVerify.RequiredMeshFor(d);
+        var (fine, radius) = MeshVerify.RequiredMeshFor(d, p);
         Assert.NotEqual(new LineCase().MeshFineRadiusMm, radius);   // 非空转：W08 的细区半径不是缺省 50
         var opts = new[]
         {
@@ -208,7 +208,7 @@ public class R48J_SolverMeshAndMarkerGateTests
         var d = DesignSpec.W08.Clone();
         d.SetpointC = new[] { 1150.0 }; d.SegLengthMm = new[] { 300.0 };
         d = d.Fit();
-        var (_, radius) = MeshVerify.RequiredMeshFor(d);
+        var (_, radius) = MeshVerify.RequiredMeshFor(d, p);
         var fac = MeshVerify.AnalyticCaseFactory(d, p, radius, radius);
         var res = MeshVerify.Run((a, b) => { var lc = fac(a, b); lc.CoupleMaxRounds = 1; lc.CheckRamp = false; return lc; },
                                  2.0, radius, radius, maxCells: 40000, maxRounds: 3);

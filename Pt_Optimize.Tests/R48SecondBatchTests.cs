@@ -66,7 +66,7 @@ public class R48SecondBatchTests
         d.TabInsulMm = new[] { 5.0, 3.5, 5.0, 10.5 };
         d = d.Fit();
         d.SizeTongues(p);
-        var (_, radius) = MeshVerify.RequiredMeshFor(d);
+        var (_, radius) = MeshVerify.RequiredMeshFor(d, p);
         var lc = d.BuildCase(p, checkRamp: false);
         MeshAdapt.RefineWholeMesh(lc, 0.5, radius);
         lc.CoupleTolK = 0.25;

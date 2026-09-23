@@ -35,7 +35,7 @@ public class MeshVerifyLineCaseTests
     {
         var (lc0, g, f) = Drawing1Seg();
         var sh = PlateShapeAnalyzer.Analyze(f);
-        var (h0, radius, innerR, refused) = MeshVerify.RequiredMeshFor(sh, lc0.WallMm);
+        var (h0, radius, innerR, refused) = MeshVerify.RequiredMeshFor(sh, lc0.WallMm, lc0);
         Assert.Null(refused);
         Assert.True(h0 > 0 && radius > g.HoleRadiusMm && innerR > g.HoleRadiusMm);
         // 盘Ø56／孔 25.8 ⇒ 环宽 2.2 mm ⇒ 起始网格 ≈ 0.73 mm；焊缝凹圆弧切出来的发丝级不许把它拖到 0.01 mm 以下
@@ -72,7 +72,7 @@ public class MeshVerifyLineCaseTests
     public void 图纸没分析出特征尺寸时拒答不抛()
     {
         var empty = new PlateShapeAnalyzer.Shape();       // 没有分级、没有管孔
-        var (fine, _, _, refused) = MeshVerify.RequiredMeshFor(empty, 0.8);
+        var (fine, _, _, refused) = MeshVerify.RequiredMeshFor(empty, 0.8, new LineCase());
         Assert.NotNull(refused);
         Assert.True(double.IsNaN(fine));
         Assert.Contains("加密复算不能判", refused);
@@ -90,7 +90,7 @@ public class MeshVerifyLineCaseTests
     {
         var (lc0, g, f) = Drawing1Seg();
         var sh = PlateShapeAnalyzer.Analyze(f);
-        var (_, radius, innerR, refused) = MeshVerify.RequiredMeshFor(sh, lc0.WallMm);
+        var (_, radius, innerR, refused) = MeshVerify.RequiredMeshFor(sh, lc0.WallMm, lc0);
         Assert.Null(refused);
         // 工厂重载直接给起始网格 2 mm（导航口径），两档就够看「格数递增、走图纸路径」；特征尺寸那条由上面的快门验
         var res = MeshVerify.Run((hMid, hInner) =>

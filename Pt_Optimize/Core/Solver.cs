@@ -314,6 +314,10 @@ public static class Solver
 
         // 下界也得落在图纸格子上（向**上**对齐：向下会掉到屈曲/烧穿下界以下）
         double tLo = ThickLowerCornerMm(d, baseIn, opt);   // 2026-09-15 Opus 5（I 路）：式子原样提成公开函数，保温搜索每层调同一份（数逐位不变）
+        // F7′ 审查 F1（2026-09-23）：「把旋钮放回约束盒下角」收成本地函数（纯搬移，语句逐字不变）—— 细区半径放大后只导航重做那一遍也调这同一份，
+        //   让重做仍从下角出发（与初值无关），而不是从旧半径上的根只上不下地往上走。
+        void ToLowerCorner()
+        {
         for (int j = 0; j < np; j++)
         {
             d.TabThickMm[j] = tLo;
@@ -326,6 +330,8 @@ public static class Solver
             if (j < d.TongueThickMm.Length) d.TongueThickMm[j] = double.NaN;
         }
         if (d.TongueThickMm.Length != np) d.TongueThickMm = Enumerable.Repeat(double.NaN, np).ToArray();
+        }
+        ToLowerCorner();
         // ★ R12（2026-09-09）：槽心角／舌孔孔心／长椭圆轴向是**从场算出来的**，不是输入 ——
         //   传进来的一律丢掉（NaN = 默认规则），第一次场解之后由 FieldPlacement 按场重定。
         //   与「板厚被丢弃」同一条铁律：解与初值无关。槽张角／孔径／形状族照旧带进来（工程师图上本来就有的孔）。
@@ -383,6 +389,22 @@ public static class Solver
             Log("  ✗ " + res.StopWhy);
             return res;
         }
+
+        // ★★★★★ F7′（2026-09-23，Opus 5.5，C4′；决 29 改定为「自适应」）：**细区半径由计划给**（全仓唯一来源 MeshAdapt.FineRadiusPlanOf）。
+        //   · 调用方给了计划（门的改回／归因）⇒ 用它；给了半径 ⇒ 等于本设计计划初值时用计划（带出处），否则当「调用方给定初值」的自适应计划；
+        //   · 什么都没给且不是粗筛 ⇒ 也用计划（原先落回算例缺省 50，导航与判决不同族 —— 审查 P6）；粗筛（ScreenCoarseMm）不交付，照旧不动。
+        //   · 解后核热点：导航遍之后（有第二遍时）放大给第二遍用；终局复核之后再核，盖不住 ⇒ 放大、在新半径上重做最后一遍与终局复核；到上限仍盖不住 ⇒ 判不了（Undetermined），不静默出数。
+        //   计划不放大（改回、adaptive = false）⇒ 一处都不核热点、不放大。⚠ 审查 R-1／T6：这**不等于**与改前逐位同一个行为 ——
+        //   调用方没给半径的导航求根，改前落回算例缺省 50，改回计划给的是旧规则 59；要复现改前的导航半径须另开只供门用的
+        //   SolverOptions.NavUsesCaseDefaultRadius（生产不传）。改回计划下本方法没有实场逐位门（门 e 只验固定半径单次场解）。
+        opt = opt.Clone();   // 半径会放大：不改调用方的选项对象
+        FineRadiusPlan? plan = RadiusPlanOf(d, baseIn, opt, lc);
+        if (plan is not null)
+        {
+            opt.FineRadiusMm = plan.RadiusMm; opt.RadiusPlan = plan; res.RadiusPlan = plan;
+            Log("细区半径：" + plan.Describe());
+        }
+        double InnerROf() => MeshAdapt.InnerRadiusFor(d.HoleRadiusMm, Math.Max(d.TabThickMm.Max(), d.WallMm));
 
         LineResult? last = null;
 
@@ -752,11 +774,39 @@ public static class Solver
         //   修法：导航那一遍的**尺寸不变**（它就是要粗、要快），但**半径跟着统一** ——
         //   这样三遍（导航／细网格求根／复核）才真的同属一族，差别只剩 h 一个。
         var navOpt = NavOptionsOf(opt);
-        bool okNav = Rounds(navOpt, "第一遍：导航网格上定位");
+        // F7′（2026-09-23）：两遍各收成一个本地函数 —— 细区半径放大之后「重做最后一遍」调的仍是同一遍（门 SolverFineRootTests：Rounds 恰好两处调用）。
+        bool NavPass(string tag) => Rounds(navOpt, tag);
+        bool okNav = NavPass("第一遍：导航网格上定位");
         // ★ 终局复核必须跑在**最后一遍求根所用的那张网格**上（见 Finish）。
         var lastOpt = navOpt;
 
+        // ★ F7′（2026-09-23）：导航遍解完、有第二遍时先核一次热点 —— 盖不住就放大，第二遍（与终局复核）直接用放大后的半径。
+        //   导航遍本身不重做：它只负责把根定位到附近，第二遍从它出发、在判决网格上重新求根（TightenOnJudgeMesh 先收回抬过头的旋钮）。
+        if (plan is { Adaptive: true } && okNav && opt.FineMm > 0 && last is { Ok: true })
+        {
+            string? v = MeshVerify.HotspotVerdict(last, InnerROf(), plan.RadiusMm);
+            double pk = MeshVerify.HotspotRadiusMm(last);
+            if (v is not null && !double.IsNaN(pk))
+            {
+                var lcN = d.BuildCase(baseIn, checkRamp: false);
+                ApplyCaseMesh(lcN, navOpt);
+                var g = MeshAdapt.GrowFineRadius(plan, pk, InnerROf(), lcN.MeshCoarseMm, MeshAdapt.PlateOuterRadiusMm(lcN).Mm, "求根第一遍（导航网格）解后");
+                if (g.Grew)
+                {
+                    plan = g.Plan; res.RadiusPlan = plan; opt.RadiusPlan = plan; opt.FineRadiusMm = plan.RadiusMm;
+                    Log("细区没盖住热点 ⇒ 放大：" + plan.Steps[^1].Why + "（第二遍与终局复核用放大后的半径）");
+                }
+                else Log("⚠ " + (g.Verdict ?? "") + "（导航遍；半径已在上限，第二遍照常求根，终局复核后再核一次 —— 判不判拒答以那一次为准）");
+            }
+        }
+
         // 第二遍：细网格。第一遍没走通就不做 —— StopWhy 已经说明了原因。
+        bool FinePass(string tag)
+        {
+            var tightProg = new ThrottledProgress(progress, 20, $"     · 回收 {opt.FineMm:0.000} mm ");
+            TightenOnJudgeMesh(d, baseIn, opt, res, coldMax, hotMax, Log, cancel, tightProg);
+            return Rounds(opt, tag);
+        }
         if (okNav && opt.FineMm > 0)
         {
             res.Feasible = false; res.StopWhy = ""; res.HitBound = false;
@@ -765,9 +815,7 @@ public static class Solver
             //   不做这一步，第二遍会带着第一遍在粗网格上求出的（偏高的）根往下走，而它只上不下 ——
             //   实测那正是「法兰侧九根旋钮全部无效、结构性停机」的原因，而把保温退回去当场全过。
             //   理由与实测数据见 TightenOnJudgeMesh 的注释。
-            var tightProg = new ThrottledProgress(progress, 20, $"     · 回收 {opt.FineMm:0.000} mm ");
-            TightenOnJudgeMesh(d, baseIn, opt, res, coldMax, hotMax, Log, cancel, tightProg);
-            bool okFine = Rounds(opt, "第二遍：细网格上重新求根（**判据以此为准**）");
+            bool okFine = FinePass("第二遍：细网格上重新求根（**判据以此为准**）");
             res.FineRefined = true; res.FineMmUsed = opt.FineMm; lastOpt = opt;
             if (!okFine && res.StopWhy.Length == 0)
                 res.StopWhy = $"细网格第二遍跑满 {opt.MaxRounds} 轮仍未全过 —— **未收敛**，不作数";
@@ -781,7 +829,58 @@ public static class Solver
         if (res.StopWhy.Length == 0)
             res.StopWhy = $"跑满 {opt.MaxRounds} 轮仍未全过 —— 结果**未收敛**，不作数";
 
-        return Finish(res, d, last, baseIn, lastOpt, cancel, progress);
+        // ★ F7′（2026-09-23）：终局复核之后核热点；盖不住 ⇒ 放大、在新半径上重做最后一遍求根与终局复核（半径只增不减、每次至少一粗格、上限板料外缘 ⇒ 有限次）；
+        //   到上限仍盖不住，或峰位算不出 ⇒ 判不了（Undetermined，原句进 StopWhy／Message），不静默出数。
+        while (true)
+        {
+            Finish(res, d, last, baseIn, lastOpt, cancel, progress);
+            if (plan is not { Adaptive: true } || res.Best is not { Ok: true }) break;
+            string? v = MeshVerify.HotspotVerdict(res.Best, InnerROf(), plan.RadiusMm);
+            if (v is null) break;
+            double pk = MeshVerify.HotspotRadiusMm(res.Best);
+            string? why = null;
+            if (double.IsNaN(pk)) why = v;
+            else
+            {
+                var lcF = FinishCase(d, baseIn, lastOpt);
+                var g = MeshAdapt.GrowFineRadius(plan, pk, InnerROf(), lcF.MeshCoarseMm, MeshAdapt.PlateOuterRadiusMm(lcF).Mm, "终局复核解后");
+                plan = g.Plan; res.RadiusPlan = plan; opt.RadiusPlan = plan; opt.FineRadiusMm = plan.RadiusMm;
+                if (g.Refused) why = g.Verdict;
+                else if (g.Grew)
+                {
+                    Log("细区没盖住热点 ⇒ 放大：" + plan.Steps[^1].Why + "；在新半径上重做最后一遍求根与终局复核（旧半径上的解不算数）");
+                    res.Feasible = false; res.StopWhy = ""; res.HitBound = false; res.Message = "";
+                    res.Undetermined = false; res.UndeterminedWhy = "";
+                    if (lastOpt.FineMm > 0)
+                    {
+                        bool okFine2 = FinePass("第二遍（细区半径放大后重做）：细网格上重新求根（**判据以此为准**）");
+                        lastOpt = opt;
+                        if (!okFine2 && res.StopWhy.Length == 0)
+                            res.StopWhy = $"细网格第二遍跑满 {opt.MaxRounds} 轮仍未全过 —— **未收敛**，不作数";
+                    }
+                    else
+                    {
+                        // ★ F7′ 审查 F1（2026-09-23）：只导航重做前把旋钮放回约束盒下角、再按 J 定截面（与 Solve 起点同一份 ToLowerCorner ＋ ApplySectionFloor）——
+                        //   否则重做从旧半径上的根出发、只上不下，交出的不是新网格上的最小可行点（有第二遍的那一支由 FinePass 里的 TightenOnJudgeMesh 回收）。
+                        ToLowerCorner();
+                        ApplySectionFloor(d, baseIn, opt, res, null, Log);
+                        Log("只导航重做：旋钮已放回约束盒下角（旧半径上的根不带进新半径）");
+                        navOpt = NavOptionsOf(opt);
+                        NavPass("第一遍（细区半径放大后重做）：导航网格上定位");
+                        lastOpt = navOpt;
+                    }
+                    if (res.StopWhy.Length == 0)
+                        res.StopWhy = $"跑满 {opt.MaxRounds} 轮仍未全过 —— 结果**未收敛**，不作数";
+                    continue;
+                }
+                else why = v;   // 不该走到：自适应计划、峰位有数、没放大也没拒答
+            }
+            res.Feasible = false; res.Undetermined = true;
+            res.UndeterminedWhy = res.StopWhy = res.Message = (why ?? v).TrimStart('★', ' ');
+            Log("  ✗ " + res.StopWhy);
+            break;
+        }
+        return res;
     }
 
     /// <summary>
@@ -1517,6 +1616,26 @@ public static class Solver
     }
 
     /// <summary>
+    /// F7′（2026-09-23）：<see cref="Solve"/> 用哪份细区半径计划 —— 从 Solve 原样搬出（审查 R-1 为加只供门用的改回开关而提出，门调同一份）。
+    /// · 图纸档 ⇒ null（BuildCase 自己拒答）；调用方给了计划 ⇒ 用它；给了半径 ⇒ 等于本设计计划初值时用计划，否则当「调用方给定初值」的自适应计划（初值超过板料外缘截到外缘，审查 L-1）；
+    /// · 什么都没给且不是粗筛 ⇒ 也用计划（审查 P6：原先落回算例缺省 50）—— 除非 <see cref="SolverOptions.NavUsesCaseDefaultRadius"/>（只供门的改回，生产不传）⇒ null，导航落回算例缺省，与 F7′ 之前同一条路；
+    /// · 粗筛（ScreenCoarseMm &gt; 0）⇒ null（照旧不动）。
+    /// </summary>
+    internal static FineRadiusPlan? RadiusPlanOf(DesignSpec d, DesignInputs baseIn, SolverOptions opt, LineCase lc)
+    {
+        if (d.IsDrawingRecord) return null;   // 图纸档没有解析板：BuildCase 自己拒答，这里不造计划（FineRadiusPlanFor 对图纸档会抛）
+        if (opt.RadiusPlan is not null) return opt.RadiusPlan;
+        if (opt.FineRadiusMm > 0)
+        {
+            var pd = MeshVerify.FineRadiusPlanFor(d, baseIn);
+            return BitConverter.DoubleToInt64Bits(pd.InitialMm) == BitConverter.DoubleToInt64Bits(opt.FineRadiusMm)
+                 ? pd : MeshAdapt.CapToPlate(MeshAdapt.GivenFineRadiusPlan(opt.FineRadiusMm), MeshAdapt.PlateOuterRadiusMm(lc).Mm, "本设计算例的材料包络（PlateOuterRadiusMm）");
+        }
+        if (opt.ScreenCoarseMm > 0 || opt.NavUsesCaseDefaultRadius) return null;
+        return MeshVerify.FineRadiusPlanFor(d, baseIn);
+    }
+
+    /// <summary>
     /// 第一遍（导航网格）的求解选项：尺寸不变（FineMm = 0），细区半径随传入选项统一（见 Solve 里 navOpt 那段的实测）。
     /// 2026-09-15 Opus 5（J 路）：从 Solve 原样搬出（纯搬移），门与探针调同一份，不在测试里手抄。
     /// </summary>
@@ -1655,6 +1774,8 @@ public static class Solver
         // ★ R48 续（2026-09-14）：导航档（FineMm = 0）也要把**细区半径**统一过来，
         //   否则三遍不同族（详见 Solve 里 navOpt 那段的实测数据）。
         //   传 lc.MeshFineMm 进去 ⇒ 缩放比恒为 1 ⇒ 尺寸与粗区逐位不变，只统一半径与内带。
+        // F7′（2026-09-23）：细区半径计划只作记录（网格只读 MeshFineRadiusMm）；两支用到半径时一起写上。
+        if (o.FineRadiusMm > 0 && o.RadiusPlan is not null) lc.MeshFineRadiusPlan = o.RadiusPlan;
         if (o.FineMm <= 0 && o.FineRadiusMm > 0)
             MeshAdapt.RefineWholeMesh(lc, lc.MeshFineMm, o.FineRadiusMm);
         else if (o.FineMm > 0)
@@ -2574,6 +2695,9 @@ public sealed class SolverResult
 
     /// <summary>第二遍用的细网格 mm（0 = 没做第二遍）。</summary>
     public double FineMmUsed;
+
+    /// <summary>F7′（2026-09-23，决 29 自适应）：细区半径计划的终态（初值、余量₀、每次放大、终值；拒答时 Refused 非空）。null = 粗筛（不经计划）。</summary>
+    public FineRadiusPlan? RadiusPlan;
     public string StopWhy = "";
 
     /// <summary>
@@ -2722,8 +2846,20 @@ public sealed class SolverOptions
     /// </summary>
     public double FineMm;
 
-    /// <summary>细网格的作用半径 mm。0 = 沿用 LineCase 的默认。</summary>
+    /// <summary>细网格的作用半径 mm。0 = 由细区半径计划给（F7′ 2026-09-23 起；粗筛 ScreenCoarseMm &gt; 0 时仍沿用 LineCase 的默认）。</summary>
     public double FineRadiusMm;
+
+    /// <summary>
+    /// F7′（2026-09-23，决 29 自适应）：细区半径计划（<see cref="MeshAdapt.FineRadiusPlanOf"/>）。null = 按设计与工艺参数算（<see cref="MeshVerify.FineRadiusPlanFor(DesignSpec, DesignInputs, double, bool)"/>）；
+    /// 门传改回计划（旧规则、不放大）或 adaptive = false 的计划做归因。<see cref="Solver.Solve"/> 会把放大后的计划写回自己克隆的那份选项。
+    /// </summary>
+    public FineRadiusPlan? RadiusPlan;
+
+    /// <summary>
+    /// F7′ 审查 R-1（2026-09-23）：**只供门用的改回开关，生产不传**。true 且调用方没给半径（FineRadiusMm = 0、RadiusPlan = null）⇒ 不造细区半径计划，
+    /// 导航求根落回算例缺省半径（<see cref="LineCase.MeshFineRadiusMm"/> = 50），不核热点、不放大 —— 与 F7′ 之前（cff38c6）同一条路（审查 P6 那一改的改回）。
+    /// </summary>
+    public bool NavUsesCaseDefaultRadius;
 
     public SolverOptions Clone() => (SolverOptions)MemberwiseClone();
 }

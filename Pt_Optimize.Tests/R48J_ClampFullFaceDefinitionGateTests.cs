@@ -24,7 +24,7 @@ public class R48J_ClampFullFaceDefinitionGateTests
         var p = new DesignInputs();
         var d = DesignSpec.W08.Clone().Fit();
         var lc = d.BuildCase(p, checkRamp: false);
-        var (_, radius) = MeshVerify.RequiredMeshFor(d);
+        var (_, radius) = MeshVerify.RequiredMeshFor(d, p);
         var g = lc.FlangePlates[0];
         const double h = 2.0, clampLen = 1.0;
 

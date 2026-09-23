@@ -80,7 +80,7 @@ internal static class R48MTwoPointKit
     /// <summary>导航网格（求解器第一遍那张）：走生产的 Solver.ApplyCaseMesh，不另写配方。</summary>
     internal static SolverOptions NavMesh(DesignSpec seed)
     {
-        var (_, reqRadius) = MeshVerify.RequiredMeshFor(seed);
+        var (_, reqRadius) = MeshVerify.RequiredMeshFor(seed, new DesignInputs());
         return new SolverOptions { MaxRounds = 40, AllowTabCuts = false, FineMm = 0, FineRadiusMm = reqRadius };
     }
 

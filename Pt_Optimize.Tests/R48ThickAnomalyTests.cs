@@ -63,7 +63,7 @@ public class R48ThickAnomalyTests
         Say("");
 
         var p = new DesignInputs();
-        var (_, radius) = MeshVerify.RequiredMeshFor(DesignSpec.W08.Clone());
+        var (_, radius) = MeshVerify.RequiredMeshFor(DesignSpec.W08.Clone(), p);
         double[] baseThick = { 0.73, 1.26, 1.26, 0.73 };
 
         foreach (double mul in new[] { 1.00, 1.30, 1.70 })

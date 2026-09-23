@@ -197,7 +197,10 @@ public class R48UInsulWindowGateTests
         Assert.Contains("var win = r.TabInsulWindow;", page);
         // 终验（加密复算收敛之后）去量一次；开关在参数表，不是命令行
         Assert.Contains("_base.MeasureInsulWindowAtFinalCheck && res.Converged", page);
-        Assert.Contains("InsulWindow.Measure(d2, _base, null, prog, _cts.Token)", page);
+        // F7′ 审查 F4（2026-09-23，变因「决 29 自适应：窗口从复核终值起扫」）：原钉 "InsulWindow.Measure(d2, _base, null, prog, _cts.Token)"；
+        //   现在终验窗口带上加密复算计划的终值（与终验三关同一族网格），门的意思不变：终验去量一次、结果进 _last。
+        Assert.Contains("var winOpt = new InsulWindow.Options { RadiusPlan = res.RadiusPlan };", page);
+        Assert.Contains("InsulWindow.Measure(d2, _base, winOpt, prog, _cts.Token)", page);
         Assert.Contains("_last.TabInsulWindow = win;", page);
 
         // 探针改调生产件 —— 不许留第二份实现
@@ -228,7 +231,7 @@ public class R48UInsulWindowGateTests
 
         var fine = InsulWindow.Measure(Design(2.3), new DesignInputs(), Oracle(2.2, 2.8));
         Assert.False(fine.NavigationMesh);
-        var (wantFine, wantRadius) = MeshVerify.RequiredMeshFor(Design(2.3));
+        var (wantFine, wantRadius) = MeshVerify.RequiredMeshFor(Design(2.3), new DesignInputs());
         Assert.Equal(wantFine, fine.MeshFineMm, 9);          // 与交付判定同一张网格，不另抄配方
         Assert.Equal(wantRadius, fine.MeshRadiusMm, 9);
     }

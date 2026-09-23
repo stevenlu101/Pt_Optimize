@@ -355,6 +355,225 @@ public static class MeshAdapt
         return far + marginMm;
     }
 
+    // ════════════════════════════════════════════════════════════════════════════
+    //  ★★★★★ F7′（2026-09-23，Opus 5.5，C4′）：**细区半径的唯一来源 —— 自适应计划**（决 29 改定为「自适应」，HANDOVER §0.-21 决 29 ①～⑦）
+    //
+    //  为什么要它（改前两条路都不对）：
+    //    · 旧规则 max(盘半径, 0.35·|舌长|, 孔半径) + 10：0.35 没有出处，半径随舌长连续漂；
+    //    · 决 29 (1) 的开发者缺省 max(盘半径, 孔半径) + 10：与热点检查「峰 + 10 ≤ 半径」相顶 ——
+    //      舌区峰 TabMaxRMm 按定义是「形心半径 &gt; 盘半径」那一区里最热的格（ShellThermal 约 1116 行 onTab），恒 &gt; 盘半径
+    //      （★ 这句只在 cff38c6 单树、C3／决 28 合入之前成立；C3 合入后跨界格也计入舌区峰，TabMaxRMm 可以 ≤ 盘半径，W08 为 29.504 —— 审查 M4），
+    //      检查要的却是 峰 ≤ max(盘半径, 孔半径)；凡带舌片的设计每档都判「不算数」（C4 实施记录 §3.2）。
+    //  现在：半径 = 计划（本节），不是一个式子：
+    //    ① 初值 r₀ = max(盘半径, 孔半径) + 余量₀，余量₀ = 该设计自己的热长度 ℓ_t（<see cref="ThermalLengthMm"/>，停机放大闭式里的同一个量、同一个函数）；
+    //    ② 解出场后读最远热点 r 峰（<see cref="PeakVerdict"/> 用的同一个量、同一个阈值），r 峰 + <see cref="PeakMarginMm"/> &gt; 半径 ⇒
+    //       半径 := min(上限, max(r 峰 + PeakMarginMm, 半径 + 一粗格))，重建网格再解（<see cref="GrowFineRadius"/>）；
+    //    ③ 半径只增不减；上限 = 板料外缘（<see cref="PlateOuterRadiusMm(LineCase)"/>：细区是 |x|,|z| ≤ R 的方带，R 到材料包络最大半边长时整块板已全是细格，再放大网格不变）；
+    //       到上限仍盖不住 ⇒ 拒答（<see cref="PeakAtCapVerdict"/>，与 PeakVerdict 同一口径「这次复核的温度类判据不算数」），不静默；
+    //    ④ 初值、余量₀ 与其输入、每次放大的原因与数、终值、放大次数全在 <see cref="FineRadiusPlan"/> 里，进算例（LineCase.MeshFineRadiusPlan）、证据头与判词；
+    //    ⑤ 阈值 PeakMarginMm 一个不动；⑥ 改回：tabLengthFactor = 0.35 ⇒ 旧规则逐位且不放大；adaptive = false ⇒ 新初值、不放大（只供归因把「初值」与「放大」两笔分开）；
+    //    ⑦ 全仓只此一处算细区半径（门：R48F7AdaptiveRadiusTests 源码门）。
+    //  初值**不影响热点检查能否放行**：盖没盖住由解后核热点 + 放大判，初值取多少都不会让一个盖不住热点的网格被当成盖住了。
+    //  但初值**不是只影响成本**（审查 L-2／R-1 更正「初值只影响成本」）：放大 0 次时终值 = 初值，即判决网格的半径就是初值，
+    //  它以离散误差的量级改动三条判据的数值（C4′ 实测：判决 4 行 ≤ 0.042 K／0.027 K／0.012 W，W06 盘10 半径 59→60.513 同格数差 0.057 K；导航 ≤ 0.19 K；无判词翻转），
+    //  另外决定成本（放大几次、每次重做多少）。初值大于上限时截到上限（R ≥ 上限的网格与 R = 上限逐节点相同，见 CapToPlate；审查 L-1）。
+    // ════════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// F7′：设计的**热长度 ℓ_t** mm 与出处（初值余量₀ 用它）。**复用停机放大闭式的同一个函数** <see cref="SegmentSolver.EndTempFixedPointAt"/>：
+    /// ℓ_t = √(kA/β′)，k 按牌号在温度 T 处取、A = 管截面、β′ = 该段散热表在 T 处的斜率（带玻璃再加 hg·π·D）。
+    /// 闭式里 T 取**该端管根温度**（已解出的场）；初值阶段还没有场 ⇒ T 取**该段控温点** <c>TSetC</c> —— 与段解自己报的 <see cref="SegmentSolver.SolveResult"/>.DecayLengthMm 同一口径
+    /// （EndTempFixedPointAt 注释：「同一个式子，取值温度不同」）。壁厚取段解同式 max(WallMinMm, 0.05) mm。各段取最大（取大的那个：初值偏大只多花格子；偏小由解后核热点放大兜住 —— 两头都不会把盖不住当盖住，但半径不同判据值会在离散误差量级内动，见上面的节注）。
+    /// ⚠ 这是**管**的轴向热长度（端温扰动沿管衰减的长度），不是法兰板上的热扩散长度；业主定的是「用停机放大闭式里已在用的那个量」，
+    ///   它是业主指定的量（停机放大闭式里的同一个量），**不是**板上热扩散长度的物理推导；W08／W06 上它盖住了报出的热点是实测，不外推。
+    ///   它决定初值：初值决定成本，放大 0 次时也就是判决网格的半径（判据值在离散误差量级内随它动）；盖没盖住由解后核热点判，不靠它。
+    /// </summary>
+    public static (double Mm, string Source) ThermalLengthMm(LineCase lc)
+    {
+        if (lc is null) throw new ArgumentNullException(nameof(lc));
+        double best = double.NaN; string why = "";
+        int n = lc.SegmentCount;
+        for (int i = 0; i < n; i++)
+        {
+            var p = LineRunner.BaseSegParams(lc, i, lc.EmptyTube ? double.NaN : lc.GlassInC);
+            double wallM = Math.Max(p.WallMinMm, 0.05) * 1e-3;   // 与 SegmentSolver.Solve 的 wall 同式
+            var fp = SegmentSolver.EndTempFixedPointAt(p, wallM, p.TSetC);
+            if (!double.IsFinite(fp.DecayLengthMm)) continue;
+            if (double.IsNaN(best) || fp.DecayLengthMm > best)
+            {
+                best = fp.DecayLengthMm;
+                why = $"段 {LineRunner.SegName(i)} 控温点 T = {p.TSetC:0.#} °C：kA = {fp.AxialKAWmPerK:0.#####} W·m/K、β′ = {fp.BetaWPerMK:0.###} W/(m·K)"
+                    + $"（管内径 {p.TubeIdMm:0.##} mm、壁 {wallM * 1e3:0.###} mm、牌号 {p.GradeName}）⇒ ℓ_t = √(kA/β′) = {fp.DecayLengthMm:0.###} mm";
+            }
+        }
+        return (best, double.IsNaN(best)
+            ? "热长度算不出来（各段 SegmentSolver.EndTempFixedPointAt 都不是有限数）"
+            : $"ℓ_t（SegmentSolver.EndTempFixedPointAt，停机放大闭式 1 + ℓ_t/Δx 的同一个量；闭式在管根温度处取，初值阶段没有场 ⇒ 取控温点，同段解 DecayLengthMm 口径；{n} 段取最大）：{why}");
+    }
+
+    /// <summary>
+    /// F7′：**板料外缘**（半径上限）mm 与出处 —— 算例里各片材料包络（<see cref="IMaterialField.MaterialEnvelope"/>）的最大半边长 max(|x|, |z|)。
+    /// 细区是 |x| ≤ R 且 |z| ≤ R 的方带（<see cref="FlangeMesher"/> 铺 xBands／zBands），R 到这个数时整块板已全是细格，再放大网格不变 ⇒ 这就是能放大到的尽头。
+    /// 解析板读 <see cref="AnalyticMaterial"/>（精确），图纸内存场读 <see cref="ThicknessField.MaterialEnvelope"/>（有精确包络用精确，否则栅格包络、差一个栅格步）；
+    /// 只有 .3dm 文件路径（厚度场还没载入）时给 NaN —— 调用方要从图纸分析结果另给（<see cref="PlateOuterRadiusMm(PlateShapeAnalyzer.Shape)"/>）。
+    /// </summary>
+    public static (double Mm, string Source) PlateOuterRadiusMm(LineCase lc)
+    {
+        if (lc is null) throw new ArgumentNullException(nameof(lc));
+        static double Half((double XMin, double XMax, double ZMin, double ZMax, bool Exact) e)
+            => new[] { Math.Abs(e.XMin), Math.Abs(e.XMax), Math.Abs(e.ZMin), Math.Abs(e.ZMax) }.Max();
+        if (lc.FlangePlates.Length > 0)
+        {
+            double m = lc.FlangePlates.Max(g => Half(new AnalyticMaterial(g).MaterialEnvelope()));
+            return (m, $"解析板材料包络（AnalyticMaterial.MaterialEnvelope，精确）各片最大半边长 max(|x|,|z|)，{lc.FlangePlates.Length} 片取最大");
+        }
+        if (lc.FlangeFields.Length > 0)
+        {
+            var envs = lc.FlangeFields.Select(f => f.MaterialEnvelope()).ToArray();
+            if (envs.Any(e => double.IsNaN(e.XMin))) return (double.NaN, "图纸厚度场里有一片没有材料，量不到板料外缘");
+            return (envs.Max(Half), $"图纸厚度场材料包络（ThicknessField.MaterialEnvelope{(envs.All(e => e.Exact) ? "，精确" : "，有一片取栅格包络、差一个栅格步")}）各片最大半边长，{envs.Length} 片取最大");
+        }
+        return (double.NaN, "算例只有 .3dm 文件路径（厚度场还没载入），量不到板料外缘");
+    }
+
+    /// <summary>F7′：图纸分析结果给的板料外缘 mm —— max(|舌端 x|, 盘半径, 舌端半宽, 舌根半宽)（PlateShapeAnalyzer.Shape 的这四项；NaN 的项不计）。只在算例量不到包络时用。</summary>
+    public static (double Mm, string Source) PlateOuterRadiusMm(PlateShapeAnalyzer.Shape sh)
+    {
+        if (sh is null) throw new ArgumentNullException(nameof(sh));
+        var v = new[] { Math.Abs(sh.TabEndXMm), sh.DiscRadiusMm, sh.TabEndHalfWidthMm, sh.TabRootHalfWidthMm }.Where(double.IsFinite).ToArray();
+        return v.Length == 0 ? (double.NaN, "图纸分析结果没有盘半径与舌端，量不到板料外缘")
+                             : (v.Max(), "图纸分析结果（PlateShapeAnalyzer.Shape）max(|舌端 x|, 盘半径, 舌端半宽, 舌根半宽)");
+    }
+
+    /// <summary>
+    /// F7′：**细区半径计划的规则（全仓唯一一处）**。<paramref name="tabLengthFactor"/> &gt; 0 = 改回旧规则 max(盘半径, factor·|舌长|, 孔半径) + <see cref="PeakMarginMm"/>
+    /// （传 0.35 时逐位等于 F7 之前，且**不放大**）；= 0 = 生产：初值 max(盘半径, 孔半径) + ℓ_t，<paramref name="adaptive"/> = true 时解后按热点放大。
+    /// <paramref name="adaptive"/> = false 只供归因门把「初值变了」与「放大了」两笔位移分开，生产不传。
+    /// 热长度或上限给的是 NaN（量不到）时照建计划、在出处里写明；初值要用 ℓ_t 而它量不到 ⇒ 抛异常（不许拿一个编出来的数顶上）。
+    /// </summary>
+    public static FineRadiusPlan FineRadiusPlanOf(double discRadiusMm, double holeRadiusMm, double tabLengthMm,
+                                                  double thermalLengthMm, string thermalLengthSource,
+                                                  double capMm, string capSource,
+                                                  double tabLengthFactor = 0.0, bool adaptive = true)
+    {
+        if (double.IsNaN(tabLengthFactor) || tabLengthFactor < 0)
+            throw new ArgumentOutOfRangeException(nameof(tabLengthFactor), "舌长系数只能是 0（生产）或正数（改回对照）。");
+        if (tabLengthFactor > 0)
+        {
+            // 改回：F7 之前两处的原式（数组与改前逐项相同 ⇒ 半径逐位相同）；不放大 ⇒ 热点不盖住时照旧由 MeshVerify.Run 判「不算数」。
+            double legacy = RequiredFineRadiusMm(new[] { discRadiusMm, Math.Abs(tabLengthMm) * tabLengthFactor }, holeRadiusMm);
+            return new FineRadiusPlan
+            {
+                DiscRadiusMm = discRadiusMm, HoleRadiusMm = holeRadiusMm, TabLengthMm = tabLengthMm, TabLengthFactor = tabLengthFactor,
+                Margin0Mm = PeakMarginMm,
+                Margin0Source = $"改回旧规则（只供门对照）：max(盘半径, {tabLengthFactor:R}·|舌长|, 孔半径) + PeakMarginMm {PeakMarginMm:R}",
+                InitialMm = legacy, CapMm = capMm, CapSource = capSource, Adaptive = false,
+            };
+        }
+        if (!(thermalLengthMm > 0))
+            throw new InvalidOperationException("细区半径初值要用设计的热长度 ℓ_t，而它量不到（" + thermalLengthSource + "）—— 不拿编出来的数顶上。");
+        var plan = new FineRadiusPlan
+        {
+            DiscRadiusMm = discRadiusMm, HoleRadiusMm = holeRadiusMm, TabLengthMm = tabLengthMm, TabLengthFactor = 0,
+            Margin0Mm = thermalLengthMm, Margin0Source = thermalLengthSource,
+            InitialMm = RequiredFineRadiusMm(new[] { discRadiusMm }, holeRadiusMm, thermalLengthMm),
+            CapMm = capMm, CapSource = capSource, Adaptive = adaptive,
+        };
+        return adaptive ? CapToPlate(plan, capMm, capSource) : plan;
+    }
+
+    /// <summary>
+    /// F7′ 审查 L-1（2026-09-23）：**初值不许超过上限**。细区是 |x|,|z| ≤ R 的方带、坐标轴范围取材料包络（ShellMesh FlangeMesher 1602–1607 行），
+    /// 上限 = 包络最大半边长 ⇒ R ≥ 上限时整根轴都在细带里，R 取上限还是更大，生成的节点逐节点相同；只差配方记录的半径与「峰 + 10 ≤ R」拿哪个 R 当尺子。
+    /// 不截的话，同一张全细网格，初值超过上限时判「盖住」、从下面放大到上限时判「拒答」—— 判词取决于初值（审查 L-1）。截到上限之后两条路判词相同。
+    /// 只对自适应计划（改回与 adaptive = false 的归因对照照旧，不截）；已经放大过的计划不动（放大本来就截在上限内）。
+    /// ⚠ 上限若取自图纸分析结果（<see cref="PlateOuterRadiusMm(PlateShapeAnalyzer.Shape)"/>，只有 .3dm 路径时），它与真实材料包络可能差一个栅格步：
+    ///   那时「截断不改网格」只是近似成立（截断写进 <see cref="FineRadiusPlan.InitialUncappedMm"/> 与 Describe）。
+    /// 上限量不到（NaN）⇒ 原样返回。
+    /// </summary>
+    public static FineRadiusPlan CapToPlate(FineRadiusPlan plan, double capMm, string capSource)
+    {
+        if (plan is null) throw new ArgumentNullException(nameof(plan));
+        if (!plan.Adaptive || plan.Steps.Length > 0 || !double.IsFinite(capMm)) return plan;
+        var p = double.IsFinite(plan.CapMm) ? plan : plan with { CapMm = capMm, CapSource = capSource };
+        double cap = p.CapMm;
+        return p.InitialMm > cap ? p with { InitialUncappedMm = p.InitialMm, InitialMm = cap } : p;
+    }
+
+    /// <summary>
+    /// F7′：调用方**直接给定初值**的计划（旧入口 <c>MeshVerify.Run(工厂, h0, 半径, …)</c> 与测试用）—— 初值不经规则，其余（解后核热点、放大、上限、拒答）与生产同一条路。
+    /// 上限在放大时从算例量（<see cref="PlateOuterRadiusMm(LineCase)"/>）。
+    /// </summary>
+    public static FineRadiusPlan GivenFineRadiusPlan(double radiusMm, bool adaptive = true)
+    {
+        if (!(radiusMm > 0)) throw new ArgumentOutOfRangeException(nameof(radiusMm), "细区半径必须为正。");
+        return new FineRadiusPlan
+        {
+            InitialMm = radiusMm, Margin0Mm = double.NaN, Adaptive = adaptive,
+            Margin0Source = "调用方直接给定初值（不经 FineRadiusPlanOf 的规则；旧入口与测试）",
+        };
+    }
+
+    /// <summary>
+    /// F7′：解出场之后核一次「细区盖没盖住热点」，盖不住就按计划放大。**判法就是 <see cref="PeakVerdict"/>**（峰 + <see cref="PeakMarginMm"/> ≤ 半径），一个数不动。
+    /// 返回：<c>Verdict</c> = null ⇒ 盖住了；否则是原样呈现给人的话。<c>Grew</c> = true ⇒ 半径已放大，调用方必须**用新半径重建网格再解**（本次的解不算数）。
+    /// <c>Refused</c> = true ⇒ 放大到上限仍盖不住（或量不到上限）⇒ 拒答（Verdict 是拒答原句），不许再解。
+    /// 峰位算不出（NaN）⇒ 不放大（放大治不了「判不了」），Verdict 照 PeakVerdict 原句。计划不放大（改回、adaptive = false）⇒ 原样返回 PeakVerdict，由调用方按旧口径处置。
+    /// 放大量 = min(上限, max(r 峰 + PeakMarginMm, 半径 + 一粗格))：「一粗格」保证每次至少长一格、有限步内到上限（不死循环）；上限由 <paramref name="capFromCaseMm"/>（本次算例量得）与计划里的上限取有限的那个。
+    /// </summary>
+    public static (FineRadiusPlan Plan, string? Verdict, bool Grew, bool Refused) GrowFineRadius(
+        FineRadiusPlan plan, double peakRMm, double innerRMm, double coarseMm, double capFromCaseMm, string stage)
+    {
+        if (plan is null) throw new ArgumentNullException(nameof(plan));
+        // 审查 L-1：自适应计划的半径若超过已知上限（调用方直接给的初值、上限要到这里才从算例量），先截到上限再判 ——
+        //   R ≥ 上限的网格与 R = 上限逐节点相同（见 CapToPlate），判词不许取决于初值有没有超过上限。改回／不放大照旧，不截。
+        if (plan.Adaptive) plan = CapToPlate(plan, capFromCaseMm, "本次算例的材料包络（PlateOuterRadiusMm）");
+        double R = plan.RadiusMm;
+        string? v = PeakVerdict(peakRMm, innerRMm, R);
+        if (v is null || double.IsNaN(peakRMm) || !plan.Adaptive) return (plan, v, false, false);
+        double cap = double.IsFinite(plan.CapMm) ? plan.CapMm : capFromCaseMm;
+        string capSrc = double.IsFinite(plan.CapMm) ? plan.CapSource : "本次算例的材料包络（PlateOuterRadiusMm）";
+        if (!double.IsFinite(cap))
+        {
+            string why = PeakAtCapVerdict(peakRMm, innerRMm, R, double.NaN, plan) + "（量不到板料外缘：" + plan.CapSource + "）";
+            return (plan with { Refused = why, CapMm = cap }, why, false, true);
+        }
+        if (R >= cap - 1e-9)
+        {
+            string why = PeakAtCapVerdict(peakRMm, innerRMm, R, cap, plan);
+            return (plan with { Refused = why, CapMm = cap, CapSource = capSrc }, why, false, true);
+        }
+        if (!(coarseMm > 0)) throw new ArgumentOutOfRangeException(nameof(coarseMm), "一粗格必须为正（它保证每次至少长一格、有限步内到上限）。");
+        double want = Math.Max(peakRMm + PeakMarginMm, R + coarseMm);
+        double to = Math.Min(cap, want);
+        var step = new FineRadiusStep(stage, peakRMm, R, to, coarseMm,
+            $"{stage}：最远热点 r = {peakRMm:0.00} mm，r + 余量 {PeakMarginMm:0} = {peakRMm + PeakMarginMm:0.00} > 半径 {R:0.00}"
+            + $" ⇒ 半径 := min(上限 {cap:0.00}, max(r + 余量 {peakRMm + PeakMarginMm:0.00}, 半径 + 一粗格 {coarseMm:0.###} = {R + coarseMm:0.00})) = {to:0.00} mm");
+        return (plan with { Steps = plan.Steps.Append(step).ToArray(), CapMm = cap, CapSource = capSrc }, v, true, false);
+    }
+
+    /// <summary>
+    /// F7′：放大到上限仍盖不住热点时的拒答原句 —— 判词口径与 <see cref="PeakVerdict"/> 相同（「这次复核的温度类判据不算数」），
+    /// 只是把「请把细化半径放大到覆盖热点再复核」换成已经放大到尽头这件事（再放大网格也不变，那句建议照做不了）。
+    /// ★ 审查 L-1／R-4／F3（2026-09-23）：**理由分两支写，照实**。
+    ///   · 上限量得到：细区已铺满板料（没有粗区、没有粗细交界）⇒ 不是「网格分辨不出梯度」；这次拒答来自热点检查规则本身
+    ///     （最远热点 r + PeakMarginMm ≤ 细化半径，决 29 ③⑤ 字面执行、阈值不挪）—— 口径拒答，不是分辨率拒答。
+    ///     热点 r 是离管轴的径向距离 √(x²+z²)，上限是 max(|x|,|z|) 方带的半边长：两个口径在上限处不一致（舌尖角上 r &gt; 上限，那里的热点恒被拒答）。
+    ///     全细网格上还要不要按「峰 + 10 ≤ 半径」拒答，【待决定】（交业主；本句不改规则）。
+    ///   · 上限量不到：细区可能没铺满板料，热点那一带可能还在粗区 ⇒ 保留「分辨不出、值可能偏低」的理由。
+    /// 开头「★★ **细化半径已放大到上限，仍盖不住热点**」与「这次复核的温度类判据不算数」两段不变（门 d、计划规则门钉它们）。
+    /// </summary>
+    public static string PeakAtCapVerdict(double peakRadiusMm, double innerRadiusMm, double fineRadiusMm, double capMm, FineRadiusPlan plan)
+        => $"★★ **细化半径已放大到上限，仍盖不住热点**（最远热点 r={peakRadiusMm:0.0} mm，要求 ≤ 细化半径 {fineRadiusMm:0.0} − 余量 {PeakMarginMm:0} mm；"
+         + (double.IsFinite(capMm) ? $"上限 = 板料外缘 {capMm:0.0} mm（{(plan.CapSource.Length > 0 ? plan.CapSource : "本次算例的材料包络")}）" : "上限量不到")
+         + $"；放大 {plan.Steps.Length} 次）⇒ **这次复核的温度类判据不算数**："
+         + (double.IsFinite(capMm)
+            ? "细区已铺满板料（没有粗区），**不是**网格分辨不出梯度；这次不放行来自热点检查规则本身（最远热点 r + 余量 ≤ 细化半径，决 29 阈值不挪）——"
+              + "口径拒答，不是分辨率拒答。热点 r 是离管轴的径向距离，上限是 max(|x|,|z|) 方带的半边长"
+              + (plan.CapSource.StartsWith("图纸分析结果", StringComparison.Ordinal) ? "；上限取自图纸分析结果，与真实材料包络可能差一个栅格步（「已铺满」是近似）。" : "。")
+            : "上限量不到，细区可能没铺满板料，热点那一带可能还在粗区，那一带的梯度可能分辨不出，报出来的值可能偏低。")
+         + $"（内带半径 {innerRadiusMm:0.0} mm）";
+
     /// <summary>
     /// 一句话结论。**没收敛就必须明说**，不许含糊 ——
     /// 「加密到上限仍在动」和「已经不动了」是完全不同的两件事，
@@ -465,4 +684,53 @@ public static class MeshAdapt
         lc.MeshInnerMm = hMm;
         lc.MeshInnerRadiusMm = innerRadiusMm;
     }
+}
+
+/// <summary>F7′（2026-09-23）：细区半径的一次放大（阶段、读到的最远热点 r、放大前后半径、当时的一粗格、原因原句）。</summary>
+public sealed record FineRadiusStep(string Stage, double PeakRMm, double FromMm, double ToMm, double CoarseMm, string Why);
+
+/// <summary>
+/// ★★★★★ F7′（2026-09-23，Opus 5.5，C4′）：**细区半径计划** —— 全仓唯一的细区半径来源（规则在 <see cref="MeshAdapt.FineRadiusPlanOf"/>，放大在 <see cref="MeshAdapt.GrowFineRadius"/>）。
+/// 不可变：放大返回新计划（with）。<see cref="RadiusMm"/> = 当前半径（初值或最后一次放大后的值）。
+/// </summary>
+public sealed record FineRadiusPlan
+{
+    public double DiscRadiusMm { get; init; } = double.NaN;
+    public double HoleRadiusMm { get; init; } = double.NaN;
+    /// <summary>只在改回旧规则时参与（生产不读舌长）。</summary>
+    public double TabLengthMm { get; init; } = double.NaN;
+    /// <summary>0 = 生产；&gt; 0 = 改回旧规则的舌长系数（门用）。</summary>
+    public double TabLengthFactor { get; init; }
+    /// <summary>余量₀ mm（生产 = 热长度 ℓ_t；改回 = PeakMarginMm）。</summary>
+    public double Margin0Mm { get; init; } = double.NaN;
+    /// <summary>余量₀ 的出处与输入（人话）。</summary>
+    public string Margin0Source { get; init; } = "";
+    public double InitialMm { get; init; } = double.NaN;
+    /// <summary>审查 L-1：初值按规则算出来超过上限、被截到上限时，截断前的原值（NaN = 没截）。截断不改网格（R ≥ 上限逐节点相同），只改配方记录的半径。</summary>
+    public double InitialUncappedMm { get; init; } = double.NaN;
+    /// <summary>半径上限 = 板料外缘 mm（NaN = 还没量到；放大时从本次算例量）。</summary>
+    public double CapMm { get; init; } = double.NaN;
+    public string CapSource { get; init; } = "";
+    /// <summary>解后按热点放大（生产 true；改回与 adaptive = false 的归因对照为 false）。</summary>
+    public bool Adaptive { get; init; }
+    public FineRadiusStep[] Steps { get; init; } = Array.Empty<FineRadiusStep>();
+    /// <summary>非 null = 放大到上限仍盖不住（或量不到上限）⇒ 拒答原句。</summary>
+    public string? Refused { get; init; }
+
+    /// <summary>当前半径 mm。</summary>
+    public double RadiusMm => Steps.Length == 0 ? InitialMm : Steps[^1].ToMm;
+
+    /// <summary>一行文字（证据头、判词、界面输出框用）：初值与其输入、上限、每次放大的原因与数、终值、放大次数。</summary>
+    public string Describe()
+        => (TabLengthFactor > 0
+                ? $"细区半径（改回旧规则、不放大）= {InitialMm:0.###} mm（{Margin0Source}）"
+                : double.IsNaN(Margin0Mm)
+                ? $"细区半径计划{(Adaptive ? "（自适应）" : "（不放大）")}：初值 {InitialMm:0.###} mm（{Margin0Source}）"
+                : $"细区半径计划{(Adaptive ? "（自适应，决 29）" : "（新初值、不放大 —— 只供归因）")}：初值 r₀ = max(盘半径 {DiscRadiusMm:0.###}, 孔半径 {HoleRadiusMm:0.###}) + 余量₀ {Margin0Mm:0.###} = {InitialMm:0.###} mm"
+                  + $"（余量₀ = 设计热长度 {Margin0Source}）")
+         + (double.IsNaN(InitialUncappedMm) ? "" : $"（规则给的初值 {InitialUncappedMm:0.###} mm 超过上限，截到上限 {InitialMm:0.###} mm：R ≥ 上限时网格逐节点相同，只改配方记录的半径）")
+         + $"；上限 = 板料外缘 {(double.IsFinite(CapMm) ? $"{CapMm:0.###} mm（{CapSource}）" : $"未量（{(CapSource.Length > 0 ? CapSource : "放大时从算例量")}）")}"
+         + $"；放大 {Steps.Length} 次" + (Steps.Length == 0 ? "" : "：" + string.Join("；", Steps.Select((s, k) => $"[{k + 1}] {s.Why}")))
+         + $"；终值 {RadiusMm:0.###} mm"
+         + (Refused is null ? "" : "；**拒答**：" + Refused);
 }

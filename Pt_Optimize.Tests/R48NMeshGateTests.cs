@@ -174,7 +174,7 @@ public class R48NMeshGateTests
     {
         var dummy = new SolverResult { Design = d };
         Solver.ApplySectionFloor(d, p, new SolverOptions(), dummy, null, null);
-        var (_, reqRadius) = MeshVerify.RequiredMeshFor(d);
+        var (_, reqRadius) = MeshVerify.RequiredMeshFor(d, p);
         var lc = d.BuildCase(p);
         Solver.ApplyCaseMesh(lc, new SolverOptions { FineMm = fineMm, FineRadiusMm = reqRadius });
         var g = lc.FlangePlates[Math.Min(plate, lc.FlangePlates.Length - 1)];
@@ -512,7 +512,7 @@ public class R48NMeshGateTests
         {
             var dummy = new SolverResult { Design = d };
             Solver.ApplySectionFloor(d, p, new SolverOptions(), dummy, null, null);
-            var (_, reqRadius) = MeshVerify.RequiredMeshFor(d);
+            var (_, reqRadius) = MeshVerify.RequiredMeshFor(d, p);
             var lc = d.BuildCase(p);
             Solver.ApplyCaseMesh(lc, new SolverOptions { FineMm = fineMm, FineRadiusMm = reqRadius });
             row.FineMm = lc.MeshFineMm; row.RadiusMm = lc.MeshFineRadiusMm;
@@ -671,7 +671,7 @@ public class R48NMeshGateTests
         W("用途：改前／改后逐位对拍（对拍门在 R48NMeshInjectTests，允许位移 ≤ 0.5 K 写死；超了查原因不挪门槛）。本测试只印不判。");
         W($"基准设计：{(which == "W08" ? R48LW08NavDesign.Source : R48LW06FineDesign.Source)}");
         W(); W(LineHead);
-        var (reqFine, _) = MeshVerify.RequiredMeshFor(d0);
+        var reqFine = MeshVerify.RequiredFineMmFor(d0);
         var jobs = new List<(string, DesignSpec, double, double, double, string)>();
         foreach (double disc in new[] { 10.0, 20.0 })
             foreach (var (grade, fine) in new[] { ("判决", reqFine), ("导航", 0.0) })

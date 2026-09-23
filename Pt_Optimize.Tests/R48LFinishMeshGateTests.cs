@@ -80,7 +80,7 @@ public class R48LFinishMeshGateTests
     {
         var d = DesignSpec.W08.Clone();
         var p = new DesignInputs();
-        double radius = MeshVerify.RequiredMeshFor(d).RadiusMm;
+        double radius = MeshVerify.RequiredMeshFor(d, p).RadiusMm;
 
         var lc0 = d.BuildCase(p);                       // 什么都不设 = 改前 Finish 的网格
         var lc1 = d.BuildCase(p);
@@ -100,7 +100,7 @@ public class R48LFinishMeshGateTests
     public void 两个在跑的设计其网格无关口径半径都不等于算例缺省(string which)
     {
         var d = (which == "W08" ? DesignSpec.W08 : DesignSpec.W06).Clone();
-        var (fine, radius) = MeshVerify.RequiredMeshFor(d);
+        var (fine, radius) = MeshVerify.RequiredMeshFor(d, new DesignInputs());
         var lc = d.BuildCase(new DesignInputs());
         Assert.True(fine > 0, $"{which}：网格无关口径算不出细区尺寸");
         Assert.True(fine < lc.MeshFineMm, $"{which}：网格无关口径要求的细区 {fine} mm 竟不比导航网格 {lc.MeshFineMm} mm 细");

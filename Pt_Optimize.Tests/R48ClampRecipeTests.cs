@@ -119,10 +119,14 @@ public class R48ClampRecipeTests
     }
 
     /// <summary>生产导航网格参数（BuildCase 给的）与 h=1 整片加密（MeshAdapt.RefineWholeMesh，误差预算「分级」组同一做法）。</summary>
-    private static IEnumerable<(string name, LineCase lc)> GradedCases(DesignSpec d, DesignInputs p)
+    /// <param name="legacyRadius">F7′ 审查 R-4（2026-09-23）：只给门 d 用 —— h=1 段的细区半径钉在旧规则 59（<see cref="MeshVerify.LegacyTabLengthFactor"/>）。
+    ///   理由：门 d 比的是压接口径，记录（4164 格、抽热 −10.0135 W、旧表逐位）取自 59 网格；钉半径是为了让记录有比对对象（与本类钉盘保温 20 同一理由），
+    ///   F7′ 对这道门零位移，F6 重录只带 F6 一个变因。门 a／b／c 仍走生产计划（53.697）。</param>
+    private static IEnumerable<(string name, LineCase lc)> GradedCases(DesignSpec d, DesignInputs p, bool legacyRadius = false)
     {
         yield return ("导航网格", d.BuildCase(p, checkRamp: false));
-        var (_, radius) = MeshVerify.RequiredMeshFor(d);
+        var (_, radius) = legacyRadius ? MeshVerify.RequiredMeshFor(d, p, tabLengthFactor: MeshVerify.LegacyTabLengthFactor)
+                                       : MeshVerify.RequiredMeshFor(d, p);
         var lcH = d.BuildCase(p, checkRamp: false);
         MeshAdapt.RefineWholeMesh(lcH, 1.0, radius);
         yield return ("h=1 分级", lcH);
@@ -296,7 +300,7 @@ public class R48ClampRecipeTests
     public void d_显式老口径与改动前一致()
     {
         var (d, p) = Design();
-        var cases = GradedCases(d, p).ToDictionary(c => c.name, c => c.lc);
+        var cases = GradedCases(d, p, legacyRadius: true).ToDictionary(c => c.name, c => c.lc);   // F7′ 审查 R-4：h=1 段钉旧半径 59（记录所在的网格）
 
         // 导航网格（hFine 2、远场 11、细区半径 50）：老口径格数 1006、外圈 36 ——
         // 记录出处 deliverable/R48_实验b_压接边界落节点_2026-09-14.txt 片0 h=2 R=50 行（改动前跑的，单元 1006、钉住格数 36）

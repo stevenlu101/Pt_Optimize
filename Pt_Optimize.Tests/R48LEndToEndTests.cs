@@ -80,7 +80,7 @@ public class R48LEndToEndTests
         // ═══════ 求解器 ═══════
         W("═══════ 求解器（从约束盒下角二分求根，不接受起点）═══════");
         var opt = ProductionOptions();
-        var (reqFine, reqRadius) = MeshVerify.RequiredMeshFor(seed);
+        var (reqFine, reqRadius) = MeshVerify.RequiredMeshFor(seed, p);
         var navCase = new LineCase();
         W($"入口：Solver.Solve（Core/Solver.cs），选项取**生产界面自动定厚**那一份："
           + $"轮数上限 {opt.MaxRounds}、解法族「{(opt.AllowTabCuts ? "挖舌孔" : "不挖舌孔")}」（界面下拉预设）、"

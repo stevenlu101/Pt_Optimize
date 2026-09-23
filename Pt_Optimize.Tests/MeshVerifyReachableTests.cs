@@ -252,7 +252,10 @@ public class MeshVerifyReachableTests
         int f0 = s.IndexOf("private async Task FineResolveAsync()", StringComparison.Ordinal);
         int f1 = s.IndexOf("\n    private ", f0 + 10, StringComparison.Ordinal);
         string fine = s[f0..f1];
-        Assert.Contains("MeshVerify.RequiredMeshFor(sh, (double)_wall.Value)", fine);
+        // F7′（2026-09-23，变因 = 决 29 自适应）：图纸路径的半径初值要按页面走图纸路径的整线算例量热长度 ⇒ 多一个算例参数；
+        //   细网格重解的半径改取加密复算计划的终值（审查 R2）。原钉 "MeshVerify.RequiredMeshFor(sh, (double)_wall.Value)"。
+        Assert.Contains("MeshVerify.RequiredMeshFor(sh, (double)_wall.Value, lcR)", fine);
+        Assert.Contains("double radius = _meshVerify.RadiusPlan?.RadiusMm ?? radius0;", fine);
         Assert.Contains("await RunAsync(autoSize: true, fine3dm: new FineMesh3dm(h0, radius, innerH, innerR));", fine);
         // Core 侧：SolveByLevel 入口套口径（搜索各轮 + 全精度复核都在那张网格上）
         string core = File.ReadAllText(Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "Core", "FlangeAutoSizer.cs"));

@@ -706,6 +706,12 @@ public sealed class MeshRecipe
     public bool HoleTagBandUsed { get; init; }
     /// <summary>2026-09-23：网格上的管孔面数（与网格尺寸有关，不进规则）。</summary>
     public int HoleFaceCount { get; init; }
+    /// <summary>
+    /// ★ F7′（2026-09-23，Opus 5.5，C4′；决 29 自适应）：**生效参数的记录**（不是从节点间距量的，同 <see cref="ClampBandMm"/> 那一类）——
+    /// 本网格铺中带细步（|x| ≤ R 且 |z| ≤ R 的方带）用的细区半径 R mm。它由细区半径计划（<see cref="MeshAdapt.FineRadiusPlanOf"/>）给，
+    /// 计划本身（初值、余量₀ 与输入、每次放大）记在算例 <see cref="LineCase.MeshFineRadiusPlan"/> 与证据头里。与网格尺寸有关、随解放大，不进规则。
+    /// </summary>
+    public double FineRadiusMm { get; init; } = double.NaN;
 
     /// <summary>与网格尺寸无关的那部分（规则）—— 生产配方常量就是这个类型，门用 == 比。</summary>
     /// <remarks>2026-09-23（F6 审查后）：F6 三项开关的真值与量出来的量都进规则（分开的六项），任何一项与生产不同都报出来。</remarks>
@@ -722,7 +728,8 @@ public sealed class MeshRecipe
          + (HoleTagBandUsed ? $"；孔边判定带半宽 {HoleTagBandMm:0.###} mm（本网格按带打孔标签）" : $"；孔边判定带 {HoleTagBandMm:0.###} mm 本网格不用（孔面只按孔圆上的弧面认）")
          + $"；管孔电位：开关{(HoleFaceDirichletSwitch ? "孔面上" : "整格钉")}，{(HoleFaceDirichlet ? $"施加在孔面上（{HoleFaceCount} 个面）" : HoleFaceDirichletSwitch ? "没有孔面、没施加" : "按带孔面的格整格钉")}"   // 2026-09-23 F6a
          + $"；弧面距离：开关{(HoleArcNormalDistSwitch ? "法向距" : "直线距")}，量得{(HoleArcNormalDist ? "每条弧面 = 法向距" : "不全是法向距（或没有弧面）")}"   // F6b
-         + $"；孔面只认弧面：开关{(HoleTagArcOnlySwitch ? "开" : "关")}，量得{(HoleTagArcOnly ? "没有非弧孔面" : "有非弧孔面（或没有弧面）")}";              // F6c
+         + $"；孔面只认弧面：开关{(HoleTagArcOnlySwitch ? "开" : "关")}，量得{(HoleTagArcOnly ? "没有非弧孔面" : "有非弧孔面（或没有弧面）")}"              // F6c
+         + $"；细区半径 {FineRadiusMm:0.###} mm（生效参数；计划见算例 MeshFineRadiusPlan）";   // F7′（2026-09-23，决 29 自适应）
 }
 
 /// <summary>R48（2026-09-15，Opus 5）：判定网格配方里与网格尺寸无关的规则部分（<see cref="MeshRecipe.Rule"/>）。</summary>
@@ -1795,6 +1802,7 @@ public static class FlangeMesher
             HoleTagArcOnlySwitch = rules.HoleTagArcOnly,
             HoleTagBandUsed = straightHoleTag,
             HoleFaceCount = holeFaces,
+            FineRadiusMm = fineRadius,   // F7′（2026-09-23）：生效参数的记录
         };
         return m;
     }
