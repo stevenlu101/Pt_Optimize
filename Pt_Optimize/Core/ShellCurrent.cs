@@ -52,7 +52,43 @@ public sealed class ShellCurrentResult
     public int SliverReconCells;
     /// <summary>2026-09-19 Fable 5.1：全场重构方向张量的最小条件数 κ′（诊断）。</summary>
     public double KappaAngleMin = double.NaN;
+    /// <summary>
+    /// 整片焦耳热 W，按**重构 J** 逐格 Σ ρ·J²·t·A（J = <see cref="JMagAPerMm2"/>）。
+    /// ★ 2026-09-23（F3）：本量不再是热场用的发热口径（热场用 <see cref="HeatJAPerMm2"/>，全片发热 = <see cref="FaceGenTotalW"/>），算式一位没动，
+    ///   只留作对照（R48NMeshGateTests 旧闭合门 [0.99, 1.01] 量的仍是它）与命令行仪器（决 26：命令行仪器不切）。
+    /// </summary>
     public double TotalGenW;
+    /// <summary>
+    /// ★★ 2026-09-23（F3 发热改按面；决 27：面发热作交付口径）：**每格面发热** W。
+    ///   q_i = ½ Σ_{i 的内部面} Q_f·ΔV_f；压接面（面上定电位：一侧压接格、一侧自由格）与孔面（F6a 面上定电位，孔面通量 Q = g·V_A 流进管孔，ΔV = V_A − 0）
+    ///   那一份**整份**记给自由格（压接格里的发热本来就不入账）。Q_f、ΔV_f 是实际安培、伏特（归一化解 × 定标 scale，ΔV_实 = ΔV·scale·ρ_ref）
+    ///   ⇒ q_f = g·ΔV²·scale²·ρ_ref[Ω·mm]，Σ_i q_i = Σ_面 Q_f·ΔV_f。
+    ///   线性解精确时 Σ_面 g·ΔV² = CurrentInA（能量恒等式：Σ_面 g·ΔV² = Σ_格 V_i·(净流出)_i，电极 V = 1、孔 V = 0）⇒ Σ q = I·U（U = 实际电极电压），
+    ///   只差线性残差 Σ_自由格 V_i·r_i 与舍入 —— 这就是「面发热按定义闭合」。
+    ///   （2026-09-23 审查后补）生产 CG（Jacobi-PCG，自由格初值 0）下 Σ V r 在精确算术下对任何迭代步都恒为 0（x_k ∈ span{p_j}、r_k ⊥ p_j），
+    ///   所以闭合只剩舍入、**不反映线性残差，也不反映电位解是否收敛**（收敛看 Converged）；GS 路径（LinearGaussSeidel，不得用于交付）才随残差变化。
+    ///   与重构 J 的 ρJ²tA 不同：重构 J 是最小二乘拟合，逐格 ρJ²tA 的和不保证等于 I·U（F6 前等温闭合 1.002～1.009，F6 后 0.9998～1.0004）。
+    ///   局部分布是「每面各一半」的约定：均匀步长、均匀 J 的条带上与 ρJ²tA 逐格相同；J 或步长沿程变化处两者不同（R48F3FaceHeatGateTests）。
+    ///   （2026-09-23 审查后补）面导度 g 本身等于两段 DistAB/2 串联；按「各段电阻所在的格」分热时，一维条带上逐格恰等于 ρJ²tA ——
+    ///   锥形条带上 ½ 与 ρJ²tA 的逐格差是 ½ 这个约定相对网络自身串联分解的误差，不是物理。怎么分（½／按厚度串联分／按形心距离分）是决 27 细则，【待决定】。
+    ///   孔面落在 V = 1 固定格上（压接盖孔的退化几何，短路）：那条面的 g·1² 记给该固定格（与 CurrentInA／CurrentOutA 各计一次同一处理）。
+    /// </summary>
+    public double[] FaceGenW = Array.Empty<double>();
+    /// <summary>F3：Σ_i <see cref="FaceGenW"/>（W）。</summary>
+    public double FaceGenTotalW;
+    /// <summary>
+    /// ★★ F3：**发热等效 J** A/mm² = √(q_i ÷ (ρ(T_解,i)·t_i·A_i))，T_解 = 本次电流解用的温度（tempC；null ⇒ tRefC），ρ 与热场同一个取值口（props.Rho，Ω·m × 1e3）。
+    ///   热场按 ρ(T)·J²·t·A 算发热（ShellThermal 九处，接口不改）⇒ 把它传进去，热场在 T = T_解 时逐格发热 = q_i（差舍入），温度变了按 ρ(T)/ρ(T_解) 随温度走
+    ///   —— 与原先「J 固定、ρ 随温度」同一语义。q = 0 的格取 0（不出 NaN）；t·A ≤ 0 或 ρ ≤ 0 的格也取 0，那份发热记进 <see cref="FaceGenUnplacedW"/>（门判它为 0）。
+    ///   **只给发热用**：<see cref="JMaxAPerMm2"/>、界面上的 J、移除优先级、局部热稳定（ShellThermal 的 jLocalAPerMm2）仍用重构 J（<see cref="JMagAPerMm2"/>）。
+    ///   逐格看它不是「这一格的电流密度」：孔边切格上可达重构 J 的 4 倍（W08 片0 判决网格，R48F3FaceHeatGateTests.门1 印的 |J等效/J重构 − 1| 最大 2.98），总量才是它精确的量。
+    ///   改回（Solve／SolveFor 传 faceHeat: false，只供门）：本字段就是 <see cref="JMagAPerMm2"/> 那个数组本身 ⇒ 下游逐位回到改前。
+    /// </summary>
+    public double[] HeatJAPerMm2 = Array.Empty<double>();
+    /// <summary>F3：<see cref="HeatJAPerMm2"/> 是面发热等效 J（true，生产）还是重构 J（false，门用改回）。</summary>
+    public bool FaceHeat;
+    /// <summary>F3（诊断）：落在 t·A ≤ 0（或 ρ ≤ 0）格上、发热等效 J 表达不了的面发热 W（生产网格上应为 0；门判）。</summary>
+    public double FaceGenUnplacedW;
     public int Iterations;
     /// <summary>**真残差** ‖Ax−b‖∞（不是步长）。见 Solve 里的说明。</summary>
     public double Residual;
@@ -88,6 +124,14 @@ public static class ShellCurrent
     public const double SliverKappaMin = 0.2;
 
     /// <summary>
+    /// ★★ 2026-09-23（F3，HANDOVER 决 27）：**发热口径开关的生产值** —— true = 热场拿面发热等效 J（<see cref="ShellCurrentResult.HeatJAPerMm2"/>，每格 ½Σ Q·ΔV，全片严格 = I·U）；
+    ///   false = 改回：<see cref="ShellCurrentResult.HeatJAPerMm2"/> 就是重构 J 数组本身（改前口径，ρJ²tA）。
+    ///   传参做法照 <see cref="SliverKappaMin"/>：Solve／SolveFor 的形参缺省取本常量，**生产一律不传**；门传 false 做「改回 ⇒ 改前逐位」与「开 − 关」归因。
+    ///   整线的改回走 LineCase.GateRevertFaceHeat（internal，只供门；由 <see cref="SolveFor"/> 这一处读）。
+    /// </summary>
+    public const bool FaceHeat = true;
+
+    /// <summary>
     /// 解电位场。边界：<see cref="ShellMesh.TagTabEnd"/> 取 V=1，
     /// <see cref="ShellMesh.TagHole"/> 取 V=0，其余自然 Neumann（零通量，无需显式处理）。
     /// ★★ 2026-09-23（F6a）：管孔 V = 0 **施加在孔面上**（<see cref="ShellMesh.HoleFaceDirichlet"/>，缺省开）——写法与压接面相同：每条孔面一条面导度
@@ -107,25 +151,31 @@ public static class ShellCurrent
                                               double rhoRefOhmMm, double tRefC = 1300,
                                               double[]? tempC = null,
                                               int maxIter = 20000, double tol = 1e-9,
-                                              double sliverKappaMin = SliverKappaMin)
+                                              double sliverKappaMin = SliverKappaMin,
+                                              bool faceHeat = FaceHeat)
         => Solve(m, totalCurrentA, rhoRefOhmMm, tRefC, tempC, maxIter, tol,
                  useGaussSeidel: c?.Base?.LinearGaussSeidel ?? false, sliverKappaMin: sliverKappaMin,
-                 props: c?.Base is null ? null : PtProps.For(c));   // R48 物性接线（2026-09-23，Opus 5.5）：电阻率按算例牌号；c 或 c.Base 为 null ⇒ 纯铂（PtProps.For(c) 在牌号为空时要读 c.Base）
+                 props: c?.Base is null ? null : PtProps.For(c),   // R48 物性接线（2026-09-23，Opus 5.5）：电阻率按算例牌号；c 或 c.Base 为 null ⇒ 纯铂（PtProps.For(c) 在牌号为空时要读 c.Base）
+                 faceHeat: faceHeat && !(c?.GateRevertFaceHeat ?? false));   // 2026-09-23（F3）：整线改回只在这一处读（LineCase.GateRevertFaceHeat，只供门）
 
     /// <param name="sliverKappaMin">J 重构的角度条件数门槛（<see cref="SliverKappaMin"/>；生产一律缺省，门传 0 = 不截断，做「改回 ⇒ 红」对照）。</param>
     /// <param name="props">电阻率按牌号的取值口；null ⇒ <see cref="PtProps.Pure"/>（纯铂，与改前逐位相同）。
     ///   生产 Core 的调用点一律显式传（门 R48PropsWiringGateTests 源码门）；缺省只留给测试与命令行。</param>
+    /// <param name="faceHeat">F3 发热口径（<see cref="FaceHeat"/>；生产一律缺省 = 面发热，门传 false = 改回重构 J）。只决定 <see cref="ShellCurrentResult.HeatJAPerMm2"/> 交哪一个数组；
+    ///   电位、重构 J、JMax、TotalGenW、面发热 FaceGenW 的算式与数两种取值下逐位相同。</param>
     public static ShellCurrentResult Solve(ShellMesh m, double totalCurrentA,
                                            double rhoRefOhmMm, double tRefC = 1300,
                                            double[]? tempC = null,
                                            int maxIter = 20000, double tol = 1e-9,
                                            bool useGaussSeidel = false,
                                            double sliverKappaMin = SliverKappaMin,
-                                           PtProps? props = null)
+                                           PtProps? props = null,
+                                           bool faceHeat = FaceHeat)
     {
         props ??= PtProps.Pure;
         int n = m.CellCount;
-        var res = new ShellCurrentResult { V = new double[n], JMagAPerMm2 = new double[n], JxAPerMm2 = new double[n], JzAPerMm2 = new double[n] };
+        var res = new ShellCurrentResult { V = new double[n], JMagAPerMm2 = new double[n], JxAPerMm2 = new double[n], JzAPerMm2 = new double[n], FaceGenW = new double[n], FaceHeat = faceHeat };
+        res.HeatJAPerMm2 = res.JMagAPerMm2;   // F3：改回口径下就是重构 J 这个数组本身；面发热口径在末尾换成发热等效 J（n = 0 时两口径都是空数组）
         if (n == 0) return res;
 
         // 单元电导率（相对参考值）。σ ∝ 1/ρe(T)
@@ -500,6 +550,43 @@ public static class ShellCurrent
             gen += rho * jSi * jSi * (m.Thickness[i] * 1e-3) * (m.Area[i] * 1e-6);
         }
         res.TotalGenW = gen;
+
+        // ★★ 2026-09-23（F3 发热改按面；决 27）：每格面发热 q_i = ½ Σ Q_f·ΔV_f（压接面、孔面整份给自由格），发热等效 J = √(q_i ÷ (ρ(T_解)·t·A))。
+        //   只读上面已算好的 g、gB、V、scale、clampSet、isFixed，不改它们 ⇒ faceHeat 两种取值下电位、重构 J、TotalGenW 逐位相同，差别只在 HeatJAPerMm2 交哪个数组。
+        //   q_f = g·ΔV²·scale²·ρ_ref[Ω·mm]：面的物理导度 = g ÷ ρ_ref[Ω·mm]（sig 是相对 ρ_ref 的电导率），实际电压 = 归一化电压 × scale·ρ_ref[Ω·mm]。
+        //   面的归属与上面组装 g 时的面判定逐字相同（压接面 = ShellMesh.IsClampFace 且另一侧 fc 是自由格；孔面 = gB > 0 的边界面）。
+        {
+            double k2 = scale * scale * (rhoRef * 1e3);
+            var q = res.FaceGenW;
+            for (int k = 0; k < m.Faces.Count; k++)
+            {
+                var f = m.Faces[k];
+                if (f.B < 0)
+                {
+                    if (gB == null || !(gB[k] > 0)) continue;   // 老口径（整格钉）没有孔面导度；TagTabEnd 边界面只是标签，不过电流
+                    double va = res.V[f.A];
+                    q[f.A] += gB[k] * va * va * k2;             // 孔面：Q = gB·V_A 流进管孔、ΔV = V_A − 0，整份给 A
+                    continue;
+                }
+                if (!(g[k] > 0)) continue;
+                double dv = res.V[f.A] - res.V[f.B];
+                double qf = g[k] * dv * dv * k2;
+                if (clampSet != null && ShellMesh.IsClampFace(f, clampSet, out int fcq) && !isFixed[fcq]) { q[fcq] += qf; continue; }   // 压接面：整份给自由格
+                q[f.A] += 0.5 * qf; q[f.B] += 0.5 * qf;
+            }
+            double qSum = 0, unplaced = 0;
+            var hj = faceHeat ? new double[n] : null;
+            for (int i = 0; i < n; i++)
+            {
+                qSum += q[i];
+                double rhoI = tempC == null ? props.Rho(tRefC) : props.Rho(tempC[i]);   // 与热场、与上面 TotalGenW 同一个取值口（Ω·m）
+                double den = rhoI * 1e3 * m.Thickness[i] * m.Area[i];
+                if (q[i] > 0 && !(den > 0)) unplaced += q[i];
+                if (hj != null) hj[i] = q[i] > 0 && den > 0 ? Math.Sqrt(q[i] / den) : 0;
+            }
+            res.FaceGenTotalW = qSum; res.FaceGenUnplacedW = unplaced;
+            if (hj != null) res.HeatJAPerMm2 = hj;
+        }
         _ = rhoRefOhmMm;
         return res;
     }

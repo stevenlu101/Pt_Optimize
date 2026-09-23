@@ -498,13 +498,17 @@ public class R48NMeshGateTests
         public bool Ok, Converged; public string Message = "";
         public double Hot = double.NaN, Cold = double.NaN, Flux = double.NaN, Mass = double.NaN, QGen0 = double.NaN, QTube0 = double.NaN;
         public int Cells, Rounds; public double Sec; public string Where = "";
+        /// <summary>2026-09-23（F3 审查后加，P3）：逐片名、抽热、发热（F3 归因档印「净流入判据取的那一片」用；不进 Text，原有各档逐字不变）。</summary>
+        public string[] PlateNames = Array.Empty<string>(); public double[] PlateQTube = Array.Empty<double>(), PlateQGen = Array.Empty<double>();
         public string Text => Ok && Converged
             ? $"{Tag}\t{R:0.00}\t{W:0.00}\t{Grade}\t{FineMm:0.000}\t{RadiusMm:0.0}\t{Cells}\t{Hot:0.000}\t{Cold:0.000}\t{Flux:0.000}\t{Mass:0.0}\t{QGen0:0.000}\t{QTube0:0.000}\t{Rounds}\t{Sec:0}"
             : $"{Tag}\t{R:0.00}\t{W:0.00}\t{Grade}\t{FineMm:0.000}\t{RadiusMm:0.0}\t{Cells}\t**判不了：{Message}**\t\t\t\t\t\t{Rounds}\t{Sec:0}";
     }
     internal const string LineHead = "标签\tR\tw\t档\t细区mm\t细区半径\t单元\t最热铂高出热偶读数K\t管根低于热偶读数K\t管孔净流入W\t铂重g\t片0发热W\t片0抽热W\t耦合轮\t耗时s";
 
-    internal static LineRow SolveLine(string tag, DesignSpec d, DesignInputs p, double fineMm, double R, double w, string grade, IProgress<string>? probe = null)
+    /// <param name="caseTweak">2026-09-23（F3）：只给门用 —— 建好算例、跑整线之前改算例的一处（F3 的「开 − 关」归因拿它设 LineCase.GateRevertFaceHeat）；null = 原路，逐位不变。</param>
+    internal static LineRow SolveLine(string tag, DesignSpec d, DesignInputs p, double fineMm, double R, double w, string grade, IProgress<string>? probe = null,
+                                      Action<LineCase>? caseTweak = null)
     {
         var row = new LineRow { Tag = tag, R = R, W = w, Grade = grade };
         var sw = Stopwatch.StartNew();
@@ -516,6 +520,7 @@ public class R48NMeshGateTests
             var lc = d.BuildCase(p);
             Solver.ApplyCaseMesh(lc, new SolverOptions { FineMm = fineMm, FineRadiusMm = reqRadius });
             row.FineMm = lc.MeshFineMm; row.RadiusMm = lc.MeshFineRadiusMm;
+            caseTweak?.Invoke(lc);
             var r = LineRunner.Run(lc, probe);
             row.Ok = r.Ok; row.Converged = r.Converged; row.Message = r.Ok ? (r.Converged ? "" : "外层耦合未收敛") : r.Message;
             row.Cells = r.MeshCells; row.Rounds = r.CoupleRounds;
@@ -524,6 +529,8 @@ public class R48NMeshGateTests
                 row.Hot = r.ValueOf(LineResult.Key.HotOverTc); row.Cold = r.ValueOf(LineResult.Key.ColdUnderTc); row.Flux = r.ValueOf(LineResult.Key.NetFlux);
                 row.Mass = r.TotalMassG;
                 if (r.Flanges.Length > 0) { row.QGen0 = r.Flanges[0].QGenW; row.QTube0 = r.Flanges[0].QFromTubeW; }
+                row.PlateNames = r.Flanges.Select(f => f.Name).ToArray();
+                row.PlateQTube = r.Flanges.Select(f => f.QFromTubeW).ToArray(); row.PlateQGen = r.Flanges.Select(f => f.QGenW).ToArray();
                 row.Where = r.Find(LineResult.Key.ColdUnderTc)?.Where ?? "";
             }
         }

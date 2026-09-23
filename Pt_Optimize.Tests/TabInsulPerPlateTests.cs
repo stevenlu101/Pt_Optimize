@@ -60,8 +60,9 @@ public class TabInsulPerPlateTests
                 p2.TSetC = tSet;
                 if (j < lc.ClampTempC.Length) p2.BusbarClampTempC = lc.ClampTempC[j];
                 if (f.BusGWPerK >= 0) p2.BusbarConductanceWPerK = f.BusGWPerK;
-                var th = ShellThermal.Solve(mesh, sc.JMagAPerMm2, p2, f.TRootC, g.InsulBoundaryXResolved, false,
-                                            tabBoundaryX: g.Tangent().X, tabInsulThickMm: tabInsul);
+                // 2026-09-23（F3 审查后改）：与整线同一发热口径 —— 发热吃发热等效 J（面发热），局部量吃重构 J
+                var th = ShellThermal.Solve(mesh, sc.HeatJAPerMm2, p2, f.TRootC, g.InsulBoundaryXResolved, false,
+                                            tabBoundaryX: g.Tangent().X, tabInsulThickMm: tabInsul, jLocalAPerMm2: sc.JMagAPerMm2);
                 return th.QFromTubeW;
             }
             double qOwn = Q(ins[j]);

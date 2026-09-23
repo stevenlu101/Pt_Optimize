@@ -45,6 +45,8 @@ public class R48PropsWiringGateTests
 
     /// <summary>
     /// 门 1 的记录（小写十六进制 SHA-256；全量转储含文字，两处耗时改写成占位）。**记录取自不含接线的代码**，这样才不是拿自己比自己。
+    /// 例外（2026-09-23 F3 审查后补）：§0.-20 孔弧诊断与 F3 这两条 Linux 记录是在**合并树**上录的（「不含接线、含它们」的树不存在）；
+    ///   它们的中性另由对拍证明 —— 孔弧诊断：剥离版探针改前／改后逐字节对拍；F3：同树设 LineCase.GateRevertFaceHeat 后 SHA 回到 F3 前记录（R48F3FaceHeatGateTests.门3）。
     /// Linux 记录史：
     ///   - 2026-09-23 Opus 5.5 首记 13aedf7ee75e1889abed6e9bf75293bd97de3c6ddf8bb9b001e178e7c93cdb45：a468063 只加门 1 剥离版，接线前跑两次逐位相同，接线后再跑仍相同。
     ///   - 2026-09-23 Fable 5.1 **重记**（变因 F6，HANDOVER §0.-19：孔边电流场改为孔面上定电位、弧面法向距、孔面只认弧面、热稳定锚点在孔圆上，
@@ -57,13 +59,24 @@ public class R48PropsWiringGateTests
     ///     **本次只在合并树上重录**：「不含接线、含本诊断」的树不存在，照上一条的做法先在不含接线的树上取数不可行。证明中性的办法换成：
     ///     改前（分支头 911c788，不含本诊断）与改后用同一剥离版探针各转储一次，改后去掉这 4 个字段的 12 行后与改前 cmp 逐字节相同（SHA 回到 e9a022cf…），diff 只有这 12 行新增。
     ///     对拍证据：deliverable/R48_图纸孔弧覆盖诊断_接线门1转储对拍_2026-09-23.txt。
+    ///   - 2026-09-23 **再重记**（变因 = F3 发热改按面，HANDOVER F3 节：热场改吃面发热等效 J，每格 ½ΣQ·ΔV，全片 = I·U；决 27）：旧 fb2c3248… → 新值（下面的常量）。
+    ///     只在合并树上重录（「不含接线、含 F3」的树不存在）。证明「只有 F3 这一处在变」的办法：同一棵树上设 LineCase.GateRevertFaceHeat（F3 改回位）跑本算例，
+    ///     剔掉那一句改回说明后转储 SHA = fb2c3248…（逐字节回到 F3 前，门 R48F3FaceHeatGateTests.门3 每跑都判）；开与改回两份转储各 1250 行、差 168 行，
+    ///     全在热场及其下游（片的发热／抽热／温度场／峰位／局部热稳定、段端温、判据值与说明），电位（VField）、重构 J（JField）、JMax、铂重一行不差。
+    ///     （F3 第一版让局部热稳定也吃发热等效 J，那一版的开 SHA 是 e10479ad…、差 179 行，只在本会话跑过，不是记录；终版局部热稳定用重构 J，见 R48F3FaceHeatGateTests.门6。）
+    ///     对拍证据：deliverable/R48_F3_接线门1_开与改回转储对拍_2026-09-23.txt。
     /// Windows：**还没有记录** —— Windows 上本门红并印出本机的 SHA。填数的做法：在 F6 合入之后、接线之前的那个状态（本分支上接线提交 265ff6a 的父提交 ＋ F6 提交的 Core/ShellMesh、
     ///   ShellCurrent、ShellThermal、QuadMesher、LineRunner 五档，或直接用 git 把接线提交 revert 掉）只加门 1 的剥离版跑出那个数；**不要在合并树上记**。
     ///   「a468063 只加本档」那句旧说明不可行：本档其余 8 条门引用 PtProps，在 a468063 上编译不过。
     ///   2026-09-23（§0.-20）补：那棵剥离树还要带上孔弧覆盖诊断（Core/ShellMesh.cs 的 4 个字段与 MeasureHoleArcCoverage／ComputeHoleArcCoverage、生成器里那一行调用），
     ///   否则转储每片少 4 行、记下的数与本树对不上；诊断不动数值场（Linux 对拍见上）。
+    ///   2026-09-23（F3）补：上面这个剥离树做法跑出的是 **F3 前**的 Windows 数，只能填进 R48F3FaceHeatGateTests.PreF3WindowsRecord，**不要**填进 WindowsRecord ——
+    ///   F3 的补丁改的正是接线改的那一处（ShellCurrent.SolveFor 的 props: 那一行），贴不到接线前的树上，「不含接线、含 F3」的树不存在。
+    ///   WindowsRecord 的取法改成两步，照 Linux：(1) 剥离树上取 F3 前的数 → PreF3WindowsRecord；(2) 在合并树（接线 + F3）上先跑 R48F3FaceHeatGateTests.门3（改回位），
+    ///   SHA 必须等于 (1) 的数（证明接线中性、F3 改回干净）；然后同一棵树上跑本门（F3 开），印出的 SHA 填进 WindowsRecord，变因写 F3。
+    ///   合并树上还有别的改接线门 1 转储的改动（SEG／C3／RING）时，(1) 的「F3 前」要取「其余各条已合、F3 未合」的树，见 PreF3LinuxRecord 注释。
     /// </summary>
-    private const string LinuxRecord = "fb2c32488eb4d3c408c6655cb544b856498a78174de21a2ff0726ca1e0083cf2";
+    private const string LinuxRecord = "d95530d5cc9b1dbe8ba036ec52826625dc54eb2f14a400710dbdba003bf04ba6";
     private const string WindowsRecord = "";
 
     /// <summary>电、热物性按牌号取的牌号（纯铂之外）。口径：MaterialDb.DataCompleteness 的电阻率与热导率／比热两类都算自有。</summary>
@@ -86,7 +99,7 @@ public class R48PropsWiringGateTests
     private static string Sha(string s) => Convert.ToHexString(SHA256.HashData(new UTF8Encoding(false).GetBytes(s))).ToLowerInvariant();
 
     /// <summary>转储里两处耗时（雅可比测量用时：结果成员 JacobianAmpSec 与说明里的「用时 x s」）每跑都变，改写成占位；其余逐字。</summary>
-    private static string DumpNoTiming(LineCase lc, LineResult r)
+    internal static string DumpNoTiming(LineCase lc, LineResult r)   // 2026-09-23（F3）：private → internal，R48F3FaceHeatGateTests 的改回逐位门用同一份去耗时转储
     {
         string full = Regex.Replace(R48LineDumpTests.Dump(lc, r, withText: true), @"(结果\.JacobianAmpSec = )[^\n]*", "$1<耗时>");
         return Regex.Replace(full, @"用时 [0-9.]+ s", "用时 <耗时> s");
@@ -111,8 +124,8 @@ public class R48PropsWiringGateTests
         _o.WriteLine($"纯铂整线小算例：{sw.Elapsed.TotalSeconds:0.0} s　{(win ? "Windows" : "Linux")}　SHA-256 {sha}　记录 {(rec.Length == 0 ? "（无）" : rec)}");
         Assert.DoesNotContain(r.Notes, n => n.Contains("按牌号", StringComparison.Ordinal));   // 纯铂不加牌号说明
         Assert.True(rec.Length > 0,
-            $"本机（{(win ? "Windows" : "Linux")}）还没有记录。请在「F6 合入、接线之前」的状态上只加本门的剥离版跑出 SHA-256（本机印出 {sha} 只供核对），填进 "
-            + (win ? "WindowsRecord" : "LinuxRecord") + " —— 不要在接线后的树上记（见头注）。");
+            $"本机（{(win ? "Windows" : "Linux")}）还没有记录（本机印出 {sha} 只供核对）。F3 之后的取法见头注（2026-09-23 F3 补）：剥离树的数只填 PreF3WindowsRecord；"
+            + (win ? "WindowsRecord" : "LinuxRecord") + " 要在合并树上、以 R48F3FaceHeatGateTests.门3 对上为前提取。");
         Assert.Equal(rec, sha);
     }
 

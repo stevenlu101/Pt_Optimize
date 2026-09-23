@@ -322,15 +322,19 @@ public class R48DiscInsulPerPlateGateTests
 
         // 丁′：逐片单独重解壳 —— 网格、电流场、管根温度取整线解的（FlangeOut.Mesh／JField／TRootC；JField 是最后一次电流场，σ(T) 开着也对得上），
         //       输入组装与热解都调生产函数，只把圆盘保温显式换成本片／别片的值。
+        //   2026-09-23（F3 审查后改）：整线逐片热解发热吃发热等效 J（面发热）、局部量吃重构 J；FlangeOut 上只有重构 J（JField），没有发热 J ⇒
+        //   用生产的 PlateCurrentField 在同一网格、同一电流上重算电流场取 HeatJAPerMm2，并先证重算的就是整线那一份（重构 J 逐位 = JField；σ(T) 缺省关时成立，开着则本断言先红）。
         for (int j = 0; j < nf; j++)
         {
             var f = rD.Flanges[j];
             Assert.NotNull(f.Mesh);
+            var scD = LineRunner.PlateCurrentField(lcD, f.Mesh!, j, f.CurrentA);
+            Assert.Equal(f.JField, scD.JMagAPerMm2);
             ShellThermalResult Th(double discInsul)
             {
                 var s = LineRunner.PlateThermalInputs(lcD, j, f.CurrentA, f.Mesh!.SourceField);
                 s.P2.FlangeInsulThickMm = discInsul;
-                return LineRunner.SolvePlateThermal(f.Mesh, f.JField, f.TRootC, s);
+                return LineRunner.SolvePlateThermal(f.Mesh, scD.HeatJAPerMm2, f.TRootC, s, jLocalAPerMm2: scD.JMagAPerMm2);
             }
             var thOwn = Th(own[j]); var thOther = Th(own[(j + 1) % nf]);
             Say($"丁′ 片{j} {f.Name}：整线抽热 {f.QFromTubeW:R} W；单独重解 本片圆盘保温 {own[j]} ⇒ {thOwn.QFromTubeW:R} W；别片 {own[(j + 1) % nf]} ⇒ {thOther.QFromTubeW:R} W");
