@@ -3309,14 +3309,20 @@ public static class LineRunner
         return PlateMeshAnalyticCore(c, j);
     }
 
-    private static ShellMesh PlateMeshAnalyticCore(LineCase c, int j)
+    private static ShellMesh PlateMeshAnalyticCore(LineCase c, int j) => PlateMeshAnalyticWith(c, j, MeshRules.Production, null);
+
+    /// <summary>
+    /// ★ 2026-09-19，Fable 5.1（网格修复第二轮复核第 9 条）：解析路径逐片网格的**唯一配方**（片的孔半径跟管走 + FlangeMesher.Build 的参数表），
+    /// 生产走上面那一行（生产规则、解析板材料）；门经 InternalsVisibleTo 传别的网格层规则／测试侧材料源做注入对照，不在测试里手抄这份参数表。
+    /// </summary>
+    internal static ShellMesh PlateMeshAnalyticWith(LineCase c, int j, MeshRules? rules, Func<FlangePlate, IMaterialField>? material)
     {
         var plate = c.FlangePlates[Math.Min(j, c.FlangePlates.Length - 1)];
         // 管孔必须跟着管外径走，否则法兰与管子对不上
         plate.HoleRadiusMm = c.TubeIdMm * 0.5 + c.WallMm;
-        return FlangeMesher.Build(plate, 0, c.MeshFineMm, c.MeshCoarseMm, c.MeshFineRadiusMm,
-                                  c.Base.BusbarClampLengthMm,
-                                  c.MeshInnerMm, c.MeshInnerRadiusMm);
+        return FlangeMesher.BuildWith(plate, rules, material?.Invoke(plate), 0, c.MeshFineMm, c.MeshCoarseMm, c.MeshFineRadiusMm,
+                                      c.Base.BusbarClampLengthMm,
+                                      c.MeshInnerMm, c.MeshInnerRadiusMm);
     }
 
     /// <summary>

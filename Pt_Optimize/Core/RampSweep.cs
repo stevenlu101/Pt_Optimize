@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -138,7 +138,7 @@ public static class FlangeExpansionCalc
         var w = new double[m.CellCount];
         for (int i = 0; i < m.CellCount; i++)
         {
-            double f = FlangeMesher.MaterialFraction(m, i, (x, z) => FlangePlate.InsideInsulCircle(x, z, discRadiusMm));
+            double f = FlangeMesher.MaterialFractionInCircle(m, i, discRadiusMm);   // 2026-09-18 Fable 5.1：解析板按精确积分、栅格按方格中心（同一入口；老的谓词版对解析路径已无栅格可查）
             if (double.IsNaN(f))
             {
                 fellBackCells++;

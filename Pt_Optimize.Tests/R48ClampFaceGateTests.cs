@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -213,21 +213,33 @@ public class R48ClampFaceGateTests
     public void c_开关关逐位等于改动前代码_开关开抽热不同()
     {
         // 记录：deliverable/R48_压接面上定温_基线树形心口径记录_2026-09-15.txt（改动前代码上跑，R 格式）
+        // ★★ 2026-09-18，Fable 5.1（网格生成根因修复）：**基线树记录作废、改为本树记录**。下面这组数不再是「改动前代码」的数 ——
+        //   网格生成层改了（解析板精确积分、面长按材料裁剪、留格门槛 25 % → 1e-9、管孔边界 = 圆弧、外角薄片并入邻格；HANDOVER「网格生成 2026-09-18」），
+        //   同一块板的格数 1306 → 1326、1966 → 1986，vHash／jHash／发热逐位全变；本门的意思保持不变：**压接面开关关 = 本树老口径逐位**，
+        //   开关开抽热不同（非空转）。记录值出处：本树 2026-09-18 19:1x 用同一套调用（B2Mesh／Current／Thermal(oldTable)）打印的 R 格式（临时探针 TMP_记录_c，印完即删）。
+        //   旧记录（deliverable/R48_压接面上定温_基线树形心口径记录_2026-09-15.txt）仍是改动前代码的真数，只是不再是本门的靶。
+        // ★ 2026-09-19，Fable 5.1（网格修复第二轮，复核第 1 条）：**重录，变因 = J 重构的截断**（ShellCurrent.SliverKappaMin：重构方向条件数 κ′ < 0.2 的格只沿强方向重构）。
+        //   电位场一个字没动：格数、压接格数、vHash、归一化电流、Jmax 逐位不变；变的只是盘缘 12（导航）／约 40（均匀 h2）个 J ≈ 1e-3 的碎格的 J ⇒
+        //   jHash −2.55／−3.93、发热 −2.3e-10／−2.3e-10 W、热场各量 1e-9～1e-7 量级（tHash、抽热、舌端均温等），都在本次运行 CUR／REC 两行照抄。
+        //   2026-09-18 那组记录（jHash 5966857.600154902／14281629.348040197 等）是第一轮改后的数，不再是靶。
         var cur = new Dictionary<string, (int cells, int clamp, double vHash, double jHash, double gen, double iIn, double jMax)>
         {
-            ["导航网格"] = (1306, 300, 231433.11217458555, 5902591.219574892, 394.55984720854826, 1.3684412053578336, 16.356319380710172),
-            ["均匀h2"] = (1966, 600, 750822.5534247255, 14177966.30786007, 394.5599059590865, 1.3684420914238502, 16.35657304821052),
+            ["导航网格"] = (1326, 300, 231177.96593454733, 5966855.046062591, 395.88859371995227, 1.3674804632595619, 14.603356588017592),
+            ["均匀h2"] = (1986, 600, 750551.0799378727, 14281625.42106636, 395.88859841161434, 1.3674810795744017, 14.603419970216896),
         };
         var rec = new Dictionary<(string, string), Rec>
         {
-            [("导航网格", "定温")] = new(870905039.4682455, 21.595145936593216, 157.55060346350817, 450, 0, 5.134325221091273, 9.519185232059272, 341.0566295548533, -0.0008339262888625854, 1141.254232952429, 1143.4947883144766),
-            [("导航网格", "自由端")] = new(975954469.0304831, -20.1724090874175, 0, 874.6647402935764, 0, 5.227080363498558, 9.519185232059272, 394.27920853780256, -0.0014330268784092937, 1203.7220552702306, 1166.9729025144757),
-            [("导航网格", "热导")] = new(848859364.2593179, 28.688518651671952, 162.72655826449116, 172.93323478590096, 7.169740101645114, 5.118829075507047, 9.519185232059272, 331.4760922390273, -0.0007609919057358638, 1135.5165205542214, 1141.2318774508149),
-            [("均匀h2", "定温")] = new(1853345927.0460007, 21.601525192054787, 157.5750458178163, 450, 0, 5.134161587249244, 9.519185232059272, 340.8848471477882, -0.0008128493594483643, 1141.2498304056105, 1143.4921328945788),
-            [("均匀h2", "自由端")] = new(2190090463.1685696, -20.17229762666544, 0, 875.3399028011994, 0, 5.2269293994422075, 9.519185232059272, 394.1792594604965, -0.0015063310697058796, 1203.7202594615624, 1166.9734157870164),
-            [("均匀h2", "热导")] = new(1768114771.702388, 28.779664241682426, 162.83640937249498, 173.03309942954115, 7.16984345610409, 5.118480909898725, 9.519185232059272, 331.17885788754995, -0.0037538743550271647, 1135.4434341951164, 1141.215945371031),
+            [("导航网格", "定温")] = new(901222668.0345403, 20.80420654168605, 157.58311500728217, 450, 0, 6.937187020761078, 7.107682782174056, 342.3999626593976, -0.0008263666993002516, 1138.907850640168, 1141.736072089707),
+            [("导航网格", "自由端")] = new(1005725478.4444997, -21.206489030974627, 0, 874.4790962988949, 0, 7.032293600117668, 7.107682782174056, 395.48635246407224, -0.0014820449002748148, 1202.226359280077, 1165.217404858932),
+            [("导航网格", "热导")] = new(879284170.3684318, 27.930782759645997, 162.7696696058644, 172.97242691442233, 7.1697806633603784, 6.921262832589267, 7.107682782174056, 332.85266448562254, -0.0007490978205169085, 1134.1116323244398, 1140.248374566774),
+            [("均匀h2", "定温")] = new(1898961064.4670322, 20.810679527121412, 157.6075730907102, 450, 0, 6.937029038616588, 7.107682782174056, 342.22812733663693, -0.000804713836174642, 1138.903269720746, 1141.734568430806),
+            [("均匀h2", "自由端")] = new(2234555707.7572303, -21.206389501299178, 0, 875.1540364700546, 0, 7.0321494262766375, 7.107682782174056, 395.3862509491708, -0.0015684073515771502, 1202.225503540798, 1165.217851230469),
+            [("均匀h2", "热导")] = new(1813969728.6528518, 28.022500875235785, 162.8797934688639, 173.07253951714884, 7.169884274443488, 6.92091483996859, 7.107682782174056, 332.55570421450483, -0.0036992562932880446, 1134.0518440477217, 1140.230013411673),
         };
         var (d, lc, g) = B2();
+        // 2026-09-19 Fable 5.1：逐位比对的不等不再当场炸 —— 先把两张网格 × 三种模式的记录全印出来（CUR／REC 两行照抄即可重录），最后一起判
+        var bad = new List<string>();
+        void Eq(string what, double exp, double act) { if (!(exp == act)) bad.Add($"{what}：记录 {exp:R} 实际 {act:R}"); }
         foreach (string grid in new[] { "导航网格", "均匀h2" })
         {
             var mOff = B2Mesh(lc, g, grid, false);
@@ -238,8 +250,9 @@ public class R48ClampFaceGateTests
             Assert.Equal(c.clamp, mOff.ClampCell.Count(b => b));
             var (scOff, vH, jH) = Current(d, lc, mOff);
             _out.WriteLine($"{grid} 关：vHash {vH:R}　jHash {jH:R}　发热 {scOff.TotalGenW:R}");
-            Assert.Equal(c.vHash, vH); Assert.Equal(c.jHash, jH); Assert.Equal(c.gen, scOff.TotalGenW);
-            Assert.Equal(c.iIn, scOff.CurrentInA); Assert.Equal(c.jMax, scOff.JMaxAPerMm2);
+            _out.WriteLine($"CUR [\"{grid}\"] = ({mOff.CellCount}, {mOff.ClampCell.Count(b => b)}, {vH:R}, {jH:R}, {scOff.TotalGenW:R}, {scOff.CurrentInA:R}, {scOff.JMaxAPerMm2:R}),");
+            Eq($"{grid} vHash", c.vHash, vH); Eq($"{grid} jHash", c.jHash, jH); Eq($"{grid} 发热", c.gen, scOff.TotalGenW);
+            Eq($"{grid} 归一化电流", c.iIn, scOff.CurrentInA); Eq($"{grid} Jmax", c.jMax, scOff.JMaxAPerMm2);
             var (scOn, vHOn, _) = Current(d, lc, mOn);
             Assert.NotEqual(c.vHash, vHOn);
             _out.WriteLine($"{grid} 开：发热 {scOn.TotalGenW:R}（关 {scOff.TotalGenW:R}）　归一化电流 {scOn.CurrentInA:R}（关 {scOff.CurrentInA:R}）");
@@ -249,18 +262,22 @@ public class R48ClampFaceGateTests
                 // 2026-09-15 Opus 5（合并）：逐位比基线树记录 ⇒ 用改动前的散热表（见 Thermal 的注释）；门槛（逐位）原样
                 var (th, tH) = Thermal(lc, mOff, scOff.JMagAPerMm2, mode, oldTable: true);
                 _out.WriteLine($"{grid} {mode} 关：tHash {tH:R}　抽热 {th.QFromTubeW:R}　铜排带走 {th.QToClampW:R}　舌端均温 {th.TTabEndMeanC:R}");
+                // 2026-09-19 Fable 5.1：整条记录按 Rec 的字段顺序印成 R 格式，重录时直接抄（不再靠临时探针）
+                _out.WriteLine($"REC [(\"{grid}\", \"{mode}\")] = new({tH:R}, {th.QFromTubeW:R}, {th.QToClampW:R}, {th.TTabEndMeanC:R}, {th.BusEquivLenMm:R}, {th.LocalStabMargin:R}, {th.LocalStabLatLenMm:R}, {th.QGenW:R}, {th.EnergyResidualW:R}, {th.TTabMaxC:R}, {th.TDiscMaxC:R}),");
                 Assert.True(th.Converged);
-                Assert.Equal(r.THash, tH); Assert.Equal(r.QTube, th.QFromTubeW); Assert.Equal(r.QClamp, th.QToClampW);
-                Assert.Equal(r.TTabEnd, th.TTabEndMeanC); Assert.Equal(r.BusLen, th.BusEquivLenMm);
-                Assert.Equal(r.Stab, th.LocalStabMargin); Assert.Equal(r.StabLat, th.LocalStabLatLenMm);
-                Assert.Equal(r.QGen, th.QGenW); Assert.Equal(r.Resid, th.EnergyResidualW);
-                Assert.Equal(r.TTabMax, th.TTabMaxC); Assert.Equal(r.TDiscMax, th.TDiscMaxC);
+                string w = $"{grid} {mode}";
+                Eq($"{w} tHash", r.THash, tH); Eq($"{w} 抽热", r.QTube, th.QFromTubeW); Eq($"{w} 铜排带走", r.QClamp, th.QToClampW);
+                Eq($"{w} 舌端均温", r.TTabEnd, th.TTabEndMeanC); Eq($"{w} 铜排等效长", r.BusLen, th.BusEquivLenMm);
+                Eq($"{w} 稳定裕度", r.Stab, th.LocalStabMargin); Eq($"{w} 稳定横向长", r.StabLat, th.LocalStabLatLenMm);
+                Eq($"{w} 发热", r.QGen, th.QGenW); Eq($"{w} 能量残差", r.Resid, th.EnergyResidualW);
+                Eq($"{w} 舌区峰", r.TTabMax, th.TTabMaxC); Eq($"{w} 盘区峰", r.TDiscMax, th.TDiscMaxC);
                 var (thOn, _) = Thermal(lc, mOn, scOn.JMagAPerMm2, mode, oldTable: true);   // 非空转那半与记录同一张表比（2026-09-15 Opus 5（合并））
                 _out.WriteLine($"{grid} {mode} 开：抽热 {thOn.QFromTubeW:R}（差 {thOn.QFromTubeW - th.QFromTubeW:+0.0000;-0.0000} W）　铜排带走 {thOn.QToClampW:R}　舌区峰 {thOn.TTabMaxC:0.000}（差 {thOn.TTabMaxC - th.TTabMaxC:+0.000;-0.000} K）　发热 {thOn.QGenW:0.000}");
                 Assert.True(thOn.Converged, $"{grid} {mode} 开：热场没收敛");
                 Assert.NotEqual(r.QTube, thOn.QFromTubeW);
             }
         }
+        Assert.True(bad.Count == 0, "开关关的记录与本树不逐位相同（" + bad.Count + " 项）：" + string.Join("；", bad));
     }
 
     [Fact]
@@ -355,4 +372,5 @@ public class R48ClampFaceGateTests
             Assert.True(Math.Abs(qFace - th.QToClampW) <= 1e-9 * Math.Abs(th.QToClampW), $"{grid}：铜排带走 {th.QToClampW:R} ≠ 穿过压接面的热流 {qFace:R}");
         }
     }
+
 }

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -313,7 +313,11 @@ public class R48ClampRecipeTests
             Assert.True(m.Recipe.ClampAnchorOnNode);
             Assert.DoesNotContain("铺细步", m.ClampAnchorNote);
             Assert.Contains("已落成节点", m.ClampAnchorNote);
-            Assert.Equal(1006, m.CellCount);
+            // ★★ 2026-09-18，Fable 5.1（网格生成根因修复）：**基线树记录作废、改为本树记录** —— 网格生成层改了（解析板精确积分、面长按材料裁剪、
+            //   留格门槛 25 % → 1e-9、管孔边界 = 圆弧、外角薄片并入邻格；HANDOVER「网格生成 2026-09-18」），格数 1006 → 1026、抽热等逐位全变。
+            //   本门的意思不变：显式老口径（只钉外圈、不铺细带）在**本树**上逐位可复现。记录值出处：本树 2026-09-18 19:1x 同一套调用打印的 R 格式（临时探针 TMP_记录_d，印完即删）。
+            //   旧记录（deliverable/R48A_基线树老口径记录_2026-09-14.txt）仍是改动前代码的真数，只是不再是本门的靶。
+            Assert.Equal(1026, m.CellCount);
             Assert.Equal(36, RingCells(m));
 
             // ★ 复审补（2026-09-14 Opus 5；审查意见 minor「老口径不是逐位相同」）：三种舌端边界模式下的**逐位**记录。
@@ -334,9 +338,11 @@ public class R48ClampRecipeTests
             var ring = RingCellIds(m);
             foreach (var (mode, tTab, q, busLen) in new[]
             {
-                ("定温",   450.0,              -9.645643968612903,   0.0),
-                ("自由端", 1041.8128051597412, -54.527245549214356,  0.0),
-                ("热导",   180.89233437852974, -5.7002974071605745,  1.8722891720599724),
+                // 2026-09-19 Fable 5.1（网格修复第二轮，复核第 1 条）：重录，变因 = J 重构的截断（ShellCurrent.SliverKappaMin），盘缘碎格的 J 变 1e-3 量级 ⇒
+                //   抽热 6e-10～6e-8 W、热导模式舌端均温 −6.9e-7 K；格数 1026／外圈 36 不变。2026-09-18 的数：-10.996401935458666／1041.560228874137,-56.13680051516125／180.87934149175788,-7.02679121624328,1.872285664590029
+                ("定温",   450.0,              -10.996401934818628,  0.0),                    // 2026-09-18 Fable 5.1：本树记录（原基线树 -9.645643968612903）
+                ("自由端", 1041.5602288743767, -56.1368005152288,    0.0),                    // （原 1041.8128051597412／-54.527245549214356）
+                ("热导",   180.87934080037212, -7.026791158220826,   1.872285664403387),      // （原 180.89233437852974／-5.7002974071605745／1.8722891720599724）
             })
             {
                 double tSet = d.SetpointC[0];
@@ -389,21 +395,25 @@ public class R48ClampRecipeTests
             Assert.DoesNotContain("铺细步", mOld.ClampAnchorNote);
             // 记录：deliverable/R48_离散误差预算_2026-09-14.txt 片0「分级 h=1.000　4122 格　抽热 -9.225 W」（打印三位小数 ⇒ 容差 0.0005）；
             //       逐位值 −9.225247067674745 出自 deliverable/R48A_基线树老口径记录_2026-09-14.txt（复审补，2026-09-14 Opus 5）
-            Assert.Equal(4122, mOld.CellCount);
-            Assert.True(Math.Abs(thOld.QFromTubeW - (-9.225)) <= 0.0005 + 1e-9, $"老口径抽热 {thOld.QFromTubeW:0.0000}，记录 -9.225");
+            // 2026-09-18 Fable 5.1：本树记录 4164 格／旧表抽热 -10.01349110560414、新表 -10.01349100306667（原 4122／-9.225247067674745／-9.225）
+            // 2026-09-19 Fable 5.1：重录 旧表抽热 -10.013491104009802（变因 = J 重构截断，差 1.6e-9 W；格数不变）
+            Assert.Equal(4164, mOld.CellCount);
+            Assert.True(Math.Abs(thOld.QFromTubeW - (-10.0135)) <= 0.0005 + 1e-9, $"老口径抽热 {thOld.QFromTubeW:0.0000}，记录 -10.0135");
             // 2026-09-15 Opus 5 正规化（同上）：旧表逐位，新表按表推出的界
-            AssertBitwise("h=1 分级老口径 旧表 抽热", thOldT.QFromTubeW, -9.225247067674745);
+            AssertBitwise("h=1 分级老口径 旧表 抽热", thOldT.QFromTubeW, -10.013491104009802);
             var bound = TableBound(p2, g.TabInsulThickMm, tSet + 200, 60, thOldT, thOld);
-            double bQ = 3 * bound.DeltaQ * thOldT.QLossW, dQ = thOld.QFromTubeW - (-9.225247067674745);
+            double bQ = 3 * bound.DeltaQ * thOldT.QLossW, dQ = thOld.QFromTubeW - (-10.013491104009802);
             _out.WriteLine($"   新表：工作区间 {bound.LoC:0.#}～{bound.HiC:0.#} °C 上 δq = {bound.DeltaQ:E3}；总散热 {thOldT.QLossW:0.###} W ⇒ 抽热界 {bQ:E3} W，实测差 {dQ:E3} W");
             Assert.True(Math.Abs(dQ) <= bQ, $"h=1 分级老口径抽热偏离基线记录 {dQ:E3} W，超过由散热表推出的界 {bQ:E3}");
+            FlushBitwise();
 
             var mBand3 = BuildRing(g, lc, clampBandMm: 3.0);
             var (_, thBand3, _) = SolvePlate0(d, lc, g, mBand3);
             _out.WriteLine($"h=1 分级 显式 3 mm 细带、外圈：单元 {mBand3.CellCount}　抽热 {thBand3.QFromTubeW:+0.0000;-0.0000} W");
             // 记录：R48_离散误差预算「细带 h=1.000　4722 格」；R48_压接细带自相似_2026-09-14.txt 片0 固定3mm 第一档 -7.3434 W（四位小数 ⇒ 容差 0.00005）
-            Assert.Equal(4722, mBand3.CellCount);
-            Assert.True(Math.Abs(thBand3.QFromTubeW - (-7.3434)) <= 0.00005 + 1e-9, $"显式 3 mm 细带抽热 {thBand3.QFromTubeW:0.00000}，记录 -7.3434");
+            // 2026-09-18 Fable 5.1：本树记录 4764 格／-8.128174821066425（原 4722／-7.3434）
+            Assert.Equal(4764, mBand3.CellCount);
+            Assert.True(Math.Abs(thBand3.QFromTubeW - (-8.12817)) <= 0.00005 + 1e-9, $"显式 3 mm 细带抽热 {thBand3.QFromTubeW:0.00000}，记录 -8.12817");
 
             // R48 F 改（2026-09-15 Opus 5）：缺省不铺细带 ⇒ 不带开关的缺省网格与显式不铺（clampBandMm 0）的老口径网格节点逐位相同，只多了整面接触
             //   （改前这里比的是显式 3 mm：那时 h=1 的自相似 3·h 恰为 3 mm）
@@ -420,13 +430,16 @@ public class R48ClampRecipeTests
         }
     }
 
-    /// <summary>逐位比（相对 1e-12；记录为 0 时要求恰为 0）。2026-09-15 Opus 5。</summary>
+    /// <summary>逐位比（相对 1e-12；记录为 0 时要求恰为 0）。2026-09-15 Opus 5。
+    /// 2026-09-19 Fable 5.1：不等不再当场炸，先记下（让三种模式的实际值都印出来，重录时一次抄全），由 <see cref="FlushBitwise"/> 在测试末尾一起判。</summary>
+    private readonly List<string> _bitwiseBad = new();
     private void AssertBitwise(string what, double actual, double record)
     {
         double diff = actual - record;
         _out.WriteLine($"   逐位：{what} {actual:R} vs 记录 {record:R}，差 {diff:E2}");
-        Assert.True(Math.Abs(diff) <= 1e-12 * Math.Abs(record), $"{what}：{actual:R} 与基线树记录 {record:R} 不逐位相同（差 {diff:E3}）");
+        if (!(Math.Abs(diff) <= 1e-12 * Math.Abs(record))) _bitwiseBad.Add($"{what}：{actual:R} 与记录 {record:R} 不逐位相同（差 {diff:E3}）");
     }
+    private void FlushBitwise() => Assert.True(_bitwiseBad.Count == 0, "逐位记录不符（" + _bitwiseBad.Count + " 项）：" + string.Join("；", _bitwiseBad));
 
     /// <summary>门 d 第 ② 步的表差：工作区间、新旧表最大相对差 δq 与最坏处，以及某温度上三张新表 q/(dq/dT) 的最大值。2026-09-15 Opus 5。</summary>
     private sealed record TableDiff(double LoC, double HiC, double DeltaQ, double WorstAtC, Func<double, double> QOverSlopeAt);
@@ -482,7 +495,10 @@ public class R48ClampRecipeTests
         Assert.True(m.Recipe!.ClampCoversHole);
         Assert.False(m.Recipe.ClampFullFace);
         Assert.Contains("盖到了管孔", m.ClampAnchorNote);
-        Assert.True(RingCells(m) > 0, "退回只钉外圈后应当还有外圈电极");
+        // ★ 2026-09-18，Fable 5.1（网格生成根因修复）：原断言「退回只钉外圈后应当还有外圈电极」作废 —— 那些「外圈电极」是落在板外的幻影边界面
+        //   （这块没有舌片的板，包围盒角上 r ≈ 39 mm 的格边被当成压接面）。面长按材料裁剪后板外的边不再成面，这块几何上不成立的板没有电极是对的；
+        //   退回口径的判定看 ClampCoversHole 位（上面已断言），下游把吃法兰场的判据判不了（下面 LineRunner 那段照旧验）。
+        _out.WriteLine($"外圈电极 {RingCells(m)} 个（可为 0，见上）");
 
         lc.FlangePlates = Array.Empty<FlangePlate>();
         lc.FlangeFields = new[] { f, f };
@@ -511,7 +527,10 @@ public class R48ClampRecipeTests
     public void f_LineRunner建网格不覆写配方开关()
     {
         string s = File.ReadAllText(Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "Core", "LineRunner.cs"));
-        Assert.Contains("FlangeMesher.Build(plate,", s);
+        // 2026-09-19 Fable 5.1（复核第 9 条）：解析路径逐片网格的本体改为 PlateMeshAnalyticWith → FlangeMesher.BuildWith(plate, rules, material, …)，
+        //   生产入口传 MeshRules.Production／null；本门要守的仍是「LineRunner 不覆写三个配方开关」（下面三条 DoesNotContain 原样）
+        Assert.Contains("FlangeMesher.BuildWith(plate, rules, material?.Invoke(plate),", s);
+        Assert.Contains("PlateMeshAnalyticWith(c, j, MeshRules.Production, null)", s);
         Assert.Contains("FlangeMesher.BuildFromField(tf, holeR,", s);
         Assert.Contains("FlangeMesher.Build(pl,", s);                  // 集总模型那一份（FlangeLumped）
         Assert.DoesNotContain("clampFullFace", s);
@@ -521,7 +540,9 @@ public class R48ClampRecipeTests
         Assert.DoesNotContain("ClampFaceDirichlet", s);
         // 生成器的缺省值就是配方（R48 F 2026-09-15 Opus 5：签名末尾加了 clampFaceDirichlet = true，式子跟着改；两处 = Build 与 BuildFromField）
         string mesh = File.ReadAllText(Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "Core", "ShellMesh.cs"));
-        Assert.Equal(2, Regex.Matches(mesh, @"double clampBandMm = double\.NaN, bool clampFullFace = true, bool clampFaceDirichlet = true\)").Count);
+        // 2026-09-18 Fable 5.1：三处 = Build、BuildFromField（图纸路径入口）、BuildFromMaterial（生成器本体，两条路都走它）
+        // 2026-09-19 Fable 5.1（复核第 9 条）：五处 = 上面三处 + BuildWith／BuildFromMaterialWith（internal，带网格层规则与可替换材料源，只给门用；缺省值同一份）
+        Assert.Equal(5, Regex.Matches(mesh, @"double clampBandMm = double\.NaN, bool clampFullFace = true, bool clampFaceDirichlet = true\)").Count);
         // 2026-09-15 Opus 5（合并，复审后改）：旧断言「源码含 public bool ClampFaceDirichlet = true;」→ 新断言「init 属性、缺省 true」—— 开关改为只许建网格时写（复审 minor：
         //   建完再改字段，网格配方指纹仍记建时的口径，求解器却按新值解）。缺省值门槛不变；另加反射门：setter 必须是 init（IsExternalInit），不许退回可写。
         Assert.Contains("public bool ClampFaceDirichlet { get; init; } = true;", mesh);
@@ -662,4 +683,6 @@ public class R48ClampRecipeTests
         Assert.Contains("待复核", ramp.Note);
         Assert.Contains("铜排", ramp.Note);
     }
+
+
 }

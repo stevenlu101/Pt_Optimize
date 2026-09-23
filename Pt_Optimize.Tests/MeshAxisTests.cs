@@ -100,14 +100,20 @@ public class MeshAxisTests
         for (int i = 0; i < mA.Nodes.Count; i++)
         { Assert.Equal(mA.Nodes[i].X, mF.Nodes[i].X); Assert.Equal(mA.Nodes[i].Z, mF.Nodes[i].Z); }
 
+        // ★ 2026-09-18，Fable 5.1（网格生成根因修复）：解析路径不再栅格化（AnalyticMaterial 精确积分），两条路**不再逐位相同**——
+        //   一个精确、一个是 0.25 mm 栅格的近似；「两条路对得上」改由容差门守（DrawingPathParityTests）。这里改钉构造上仍然成立的事：
+        //   同一套轴（节点逐位相同）；管孔边界面 = 圆弧本身，解析路径的弧面总长恰 = 周长（每一段弧都在）、图纸路径 ≥ 99 % 周长（栅格可能少判一格）；
+        //   自检字段：盘 R28／孔 25.8 的定温带（3 mm）仍会把盘外缘 2.2 mm 处的边界面钉成管孔（口径未改），两条路都量得到。
         var hA = mA.Faces.Where(x => x.B < 0 && x.Tag == ShellMesh.TagHole).ToArray();
         var hF = mF.Faces.Where(x => x.B < 0 && x.Tag == ShellMesh.TagHole).ToArray();
-        Assert.Equal(hA.Length, hF.Length);
-        Assert.Equal(hA.Sum(x => x.Length), hF.Sum(x => x.Length), 9);
-        Assert.Equal(mA.CellCount, mF.CellCount);
-        // 自检字段也填了（R47 F）：盘 R28／孔 25.8 ⇒ 定温环吃到盘外缘 2.2 mm，两条路同数
+        double arcA = hA.Where(x => Math.Abs(Math.Sqrt(x.Mid.X * x.Mid.X + x.Mid.Z * x.Mid.Z) - g.HoleRadiusMm) < 1e-9).Sum(x => x.Length);
+        double arcF = hF.Where(x => Math.Abs(Math.Sqrt(x.Mid.X * x.Mid.X + x.Mid.Z * x.Mid.Z) - g.HoleRadiusMm) < 1e-9).Sum(x => x.Length);
+        Console.WriteLine($"解析 {mA.CellCount} 格、弧面 {arcA:0.000}；图纸(0.25) {mF.CellCount} 格、弧面 {arcF:0.000}；周长 {2 * Math.PI * g.HoleRadiusMm:0.000}");
+        Assert.Equal(2 * Math.PI * g.HoleRadiusMm, arcA, 6);
+        Assert.True(arcF >= 0.99 * 2 * Math.PI * g.HoleRadiusMm, $"图纸路径弧面总长 {arcF:0.000} < 99 % 周长");
+        Assert.True(Math.Abs(mA.CellCount - mF.CellCount) <= 0.05 * mA.CellCount, $"两条路格数差太多：{mA.CellCount} vs {mF.CellCount}");
         Assert.False(double.IsNaN(mA.HoleTagMaxROverMm));
-        Assert.Equal(mA.HoleTagMaxROverMm, mF.HoleTagMaxROverMm, 9);
+        Assert.False(double.IsNaN(mF.HoleTagMaxROverMm));
         Assert.Equal(g.HoleRadiusMm, mA.HoleRadiusMm);
     }
 
@@ -259,8 +265,11 @@ public class MeshAxisTests
         Assert.Contains(za, z => Math.Abs(z + 25.0) < 1e-9);
         Assert.Contains(xa, x => Math.Abs(x - xTrue) <= 0.5 * step + 1e-9);
 
-        // 抽热：解析板 Build vs 倒角场（直边段推法） vs 倒角场（旧推法锚点 ±22，对照）
-        var mA = FlangeMesher.Build(g, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
+        // 抽热：无倒角的栅格场 vs 倒角场（直边段推法） vs 倒角场（旧推法锚点 ±22，对照）
+        // ★ 2026-09-18，Fable 5.1：参照原是解析板 Build —— 那时 Build 也走栅格，两边带同样的半步幻影；现在解析路径精确积分而栅格场
+        //   （点采样、直边恰在格点上）两侧各多 0.25 mm 幻影料，精确 vs 栅格本身就差 4.4 W（实测），比的不再是「锚点推法」。
+        //   本门要量的是锚点推法 ⇒ 参照改成同一份栅格场不倒角（f0）走同一条图纸路径，其余一字不动；精确 vs 栅格那件事归 DrawingPathParityTests 与 HANDOVER「网格生成 2026-09-18」。
+        var mA = FlangeMesher.BuildFromField(f0, g.HoleRadiusMm, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
         var mNew = FlangeMesher.BuildFromField(f, g.HoleRadiusMm, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
         var mOld = FlangeMesher.BuildFromField(f, g.HoleRadiusMm, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm,
                                                xAnchors: new[] { xOld }, zAnchors: new[] { wOld, -wOld });
@@ -268,7 +277,7 @@ public class MeshAxisTests
         var n = DrawingPathParityTests.SolveOne(mNew, lc, g, 1572.1, 1107.8, 1080, 450, 2.8);
         var o = DrawingPathParityTests.SolveOne(mOld, lc, g, 1572.1, 1107.8, 1080, 450, 2.8);
         string line = $"R47 第三轮 N1 倒角实验（盘 R28／舌半宽 25／舌尖倒角 3 mm，栅格步 {step}）：旧推法 w={wOld:0.0} xT={xOld:0.00}；直边段推法 w={w:0.0} xT={xT:0.00}（真 {xTrue:0.00}）；" +
-                      $"抽热 解析板 {a.QFromTube:0.000} W（{a.Cells} 格）／倒角场·直边段锚点 {n.QFromTube:0.000} W（{n.Cells} 格，差 {n.QFromTube - a.QFromTube:+0.000;-0.000;0.000}）／倒角场·旧锚点±{wOld:0} {o.QFromTube:0.000} W（{o.Cells} 格，差 {o.QFromTube - a.QFromTube:+0.000;-0.000;0.000}）";
+                      $"抽热 无倒角栅格场 {a.QFromTube:0.000} W（{a.Cells} 格）／倒角场·直边段锚点 {n.QFromTube:0.000} W（{n.Cells} 格，差 {n.QFromTube - a.QFromTube:+0.000;-0.000;0.000}）／倒角场·旧锚点±{wOld:0} {o.QFromTube:0.000} W（{o.Cells} 格，差 {o.QFromTube - a.QFromTube:+0.000;-0.000;0.000}）";
         Console.WriteLine(line);
         System.IO.File.AppendAllText(System.IO.Path.Combine(HandoverDoc.Root(), "deliverable", "R47_第三轮N1_倒角实验_2026-09-13.txt"),
                                      $"{DateTime.Now:yyyy-MM-dd HH:mm}　{line}{Environment.NewLine}", new System.Text.UTF8Encoding(false));
