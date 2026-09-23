@@ -32,7 +32,7 @@ public class R48NSliverGateTests
 
     // 跑前写死
     const double PeakOverRealTol = 0.05;    // 门 1／2：全体峰对实格峰／真峰
-    const double ScaleSpreadTol = 0.05;     // 门 1／4：三档极差
+    internal const double ScaleSpreadTol = 0.05;     // 门 1／4：三档极差（2026-09-23 改 internal：R48F6HoleFaceGateTests 的 J 峰门与守恒门 J 积分项直接引用，不再手抄）
     const double PhantomMin = 1.5;          // 门 1：改回后幻影峰至少这么高（否则门空守）
     const double W08PeakTol = 0.01;         // 门 3
     const double DustFrac = FlangeMesher.CellMergeFrac;
@@ -88,13 +88,30 @@ public class R48NSliverGateTests
         return m.Area[c] >= 0.5 * (x1 - x0) * (z1 - z0);
     }
 
-    /// <summary>测试侧复算的条件数 κ′（方向张量 Σ w n̂n̂ᵀ 的 λmin/λmax，w = 有料面长 ÷ 格边几何全长，n̂ = 形心连线）—— 与 ShellCurrent 的量法同一个定义，各写各的。</summary>
+    /// <summary>测试侧复算的条件数 κ′（方向张量 Σ w n̂n̂ᵀ 的 λmin/λmax，w = 有料面长 ÷ 格边几何全长，n̂ = 形心连线）—— 与 ShellCurrent 的量法同一个定义，各写各的。
+    /// ★ 2026-09-23（F6a，测试侧定义同步 —— 算规则改动，写明）：孔面上定电位（ShellMesh.HoleFaceDirichlet）时孔面通量也进 J 重构，
+    ///   孔面的方向 = 弧面取弧中点指向孔心 −Mid/|Mid|、直边取形心指向边中点，权重 w = 1（与生产 ShellCurrent 同口径）；老口径（整格钉）照旧只数内部面。
+    /// ⚠ 这处改动**改了门 2「真峰」的定义**（F6 审查后照实写，findings #27）：门 2 的真峰 = 改前（门槛 0）κ′ ≥ 0.2 的格里的最大 J，κ′ 就由这里算。
+    ///   孔面纳入之后孔边格的 κ′ 变了，被算作「条件数够」的格集合随之变：Heater1 盘槽的真峰 ×1／×0.5／×0.25 由 8.466／8.795／8.871 变为 7.763／7.927／8.467，
+    ///   ×0.25 档的真峰直接就是舌端外张斜边格 8.467（(−192.8, −40.6)）（证据：网格修复2_门2_薄片格J峰_带孔带槽形状_本次开跑于2026-09-23_030308.txt 对 _031503.txt）。
+    ///   门 3 的打印列「截断格改前最大 J／覆盖率」也用它。门 1、门 4 调 Measure(…, false)，不经这里，红绿与这处改动无关。
+    ///   与生产还差两处口径（照实写，没补）：生产 ShellCurrent 在压接格上整格跳过 J 重构（内部面、孔面都不进），并跳过 gB 不大于 0 的孔面；这里两条都没有。
+    ///   压接格的 J 生产上恒为 0，不影响峰；gB ≤ 0 的孔面生产网格上不出现（DistAB 有下限、面长 &gt; 0）。</summary>
     internal static double KappaAngle(ShellMesh m, int c)
     {
         double nxx = 0, nxz = 0, nzz = 0; bool any = false;
         foreach (var f in m.Faces)
         {
-            if (f.B < 0 || (f.A != c && f.B != c)) continue;
+            if (f.B < 0)
+            {
+                if (!m.HoleFaceDirichlet || f.A != c || f.Tag != ShellMesh.TagHole) continue;
+                double hx, hz;
+                if (!double.IsNaN(f.ArcRadiusMm)) { double rm = Math.Sqrt(f.Mid.X * f.Mid.X + f.Mid.Z * f.Mid.Z); hx = -f.Mid.X / rm; hz = -f.Mid.Z / rm; }
+                else { var dd = f.Mid - m.Centroid[c]; double ll = Math.Max(1e-12, dd.Norm); hx = dd.X / ll; hz = dd.Z / ll; }
+                nxx += hx * hx; nxz += hx * hz; nzz += hz * hz; any = true;
+                continue;
+            }
+            if (f.A != c && f.B != c) continue;
             int o = f.A == c ? f.B : f.A;
             var d = m.Centroid[o] - m.Centroid[c]; double len = Math.Max(1e-12, d.Norm);
             double nx = d.X / len, nz = d.Z / len;
@@ -200,7 +217,11 @@ public class R48NSliverGateTests
         var sb = new StringBuilder(); void W(string t = "") => sb.AppendLine(t);
         W("网格修复第二轮 门 3：W08／W06 片0 导航／判决／细（0.5）　等温 1214 A／1150 °C　截断关（门槛 0，改前）vs 开（改后）；网格同一张");
         W($"开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}　工作树 {HandoverDoc.Root()}　写码 {Sign}");
-        W($"门槛（跑前写死）：全体 J 峰 改前 vs 改后 差 ≤ {W08PeakTol:P0}。被截断重构的格数、它们改前的最大 J 与覆盖率另印（预期：只有盘缘 J ≈ 0 的碎格）。");
+        W($"门槛（跑前写死）：全体 J 峰 改前 vs 改后 差 ≤ {W08PeakTol:P0}。被截断重构的格数、它们改前的最大 J 与覆盖率另印。");
+        // 2026-09-23（F6 审查后改，findings #28／#51）：原文此处印「预期：只有盘缘 J ≈ 0 的碎格」—— F6（孔面上定电位）之后已不成立：
+        //   W08 导航档（h = 2）与 W06 细 0.5 档的**全体 J 峰格本身**就在截断格里（改前 14.442 → 改后 14.419，−0.155 %；16.782 → 16.653，−0.770 %，离 1 % 门槛余 0.23 个百分点），
+        //   即 F6 之后这两档生产报出的 JMax 取的是截断重构值（证据 网格修复2_门3_薄片格J峰_W08W06不变_本次开跑于2026-09-23_031503.txt）。门槛不动。
+        W("（预期文字 2026-09-23 改：F6 之后截断格不只是盘缘 J ≈ 0 的碎格 —— W08 导航档与 W06 细 0.5 档的全体 J 峰格本身就被截断，见「截断格改前最大J」列。）");
         W("设计\t细区mm\t单元\t最小κ′\t改前J峰\t改后J峰\tΔ%\t截断格数\t截断格改前最大J\t截断格最大覆盖率\t发热改前W\t发热改后W\t判读");
         int bad = 0; var badL = new List<string>();
         double rho = Materials.PtResistivity(R48NMeshGateTests.PlateTempC) * 1e3;

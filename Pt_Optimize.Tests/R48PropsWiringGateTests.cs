@@ -44,11 +44,19 @@ public class R48PropsWiringGateTests
     public R48PropsWiringGateTests(ITestOutputHelper o) => _o = o;
 
     /// <summary>
-    /// 门 1 的记录（小写十六进制 SHA-256；全量转储含文字，两处耗时改写成占位）。**记录取自改动前的代码**（a468063 只加本档门 1 的那一版，接线之前跑）。
-    /// Linux：2026-09-23 Opus 5.5 在 Linux 镜像（.NET 8）上接线前跑两次逐位相同，接线后再跑仍相同。
-    /// Windows：**还没有记录** —— Windows 上本门红并印出本机的 SHA；请在 a468063 上（只加本档）跑出那个数填进来，不要在接线后的树上记（那就成了拿自己比自己）。
+    /// 门 1 的记录（小写十六进制 SHA-256；全量转储含文字，两处耗时改写成占位）。**记录取自不含接线的代码**，这样才不是拿自己比自己。
+    /// Linux 记录史：
+    ///   - 2026-09-23 Opus 5.5 首记 13aedf7ee75e1889abed6e9bf75293bd97de3c6ddf8bb9b001e178e7c93cdb45：a468063 只加门 1 剥离版，接线前跑两次逐位相同，接线后再跑仍相同。
+    ///   - 2026-09-23 Fable 5.1 **重记**（变因 F6，HANDOVER §0.-19：孔边电流场改为孔面上定电位、弧面法向距、孔面只认弧面、热稳定锚点在孔圆上，
+    ///     并且转储多了 F6 的公开成员 Mesh.HoleFaceDirichlet／Faces[].ArcRadiusMm／HoleArcCentroidInside／配方新字段等）：
+    ///     旧值 13aedf7e… → 新值（下面的常量）。新值取自「F6 合入、接线之前」的树（ae8d110 ＋ F6 审查后终版，只加门 1 剥离版 ZZGate1Probe，转储写到文件后 sha256sum），
+    ///     再在合并树（接线 ＋ F6）上跑本门与同一探针，两份转储逐字节相同 ⇒ 接线在 F6 之上对纯铂仍逐位中性。
+    ///     对拍证据：deliverable/R48_F6_接线门1_F6树与合并树对拍_2026-09-23.txt。
+    /// Windows：**还没有记录** —— Windows 上本门红并印出本机的 SHA。填数的做法：在 F6 合入之后、接线之前的那个状态（本分支上接线提交 265ff6a 的父提交 ＋ F6 提交的 Core/ShellMesh、
+    ///   ShellCurrent、ShellThermal、QuadMesher、LineRunner 五档，或直接用 git 把接线提交 revert 掉）只加门 1 的剥离版跑出那个数；**不要在合并树上记**。
+    ///   「a468063 只加本档」那句旧说明不可行：本档其余 8 条门引用 PtProps，在 a468063 上编译不过。
     /// </summary>
-    private const string LinuxRecord = "13aedf7ee75e1889abed6e9bf75293bd97de3c6ddf8bb9b001e178e7c93cdb45";
+    private const string LinuxRecord = "e9a022cf724d6bb96819a36e5a6374f2cd047e96eaea6a11eda51d6a58af7425";
     private const string WindowsRecord = "";
 
     /// <summary>电、热物性按牌号取的牌号（纯铂之外）。口径：MaterialDb.DataCompleteness 的电阻率与热导率／比热两类都算自有。</summary>
@@ -96,8 +104,8 @@ public class R48PropsWiringGateTests
         _o.WriteLine($"纯铂整线小算例：{sw.Elapsed.TotalSeconds:0.0} s　{(win ? "Windows" : "Linux")}　SHA-256 {sha}　记录 {(rec.Length == 0 ? "（无）" : rec)}");
         Assert.DoesNotContain(r.Notes, n => n.Contains("按牌号", StringComparison.Ordinal));   // 纯铂不加牌号说明
         Assert.True(rec.Length > 0,
-            $"本机（{(win ? "Windows" : "Linux")}）还没有记录。请在 a468063（接线之前）上只加本档跑本门，把印出的 SHA-256 {sha} 核对后填进 "
-            + (win ? "WindowsRecord" : "LinuxRecord") + " —— 不要在接线后的树上记。");
+            $"本机（{(win ? "Windows" : "Linux")}）还没有记录。请在「F6 合入、接线之前」的状态上只加本门的剥离版跑出 SHA-256（本机印出 {sha} 只供核对），填进 "
+            + (win ? "WindowsRecord" : "LinuxRecord") + " —— 不要在接线后的树上记（见头注）。");
         Assert.Equal(rec, sha);
     }
 
@@ -234,7 +242,9 @@ public class R48PropsWiringGateTests
                     $"{nm} 第 {i} 格发热不是按本牌号 ρ(T) 算的");
         _o.WriteLine($"热解：最高 {ta.TMaxC:0.00} → {tb.TMaxC:0.00} °C；管孔抽热 {ta.QFromTubeW:0.000} → {tb.QFromTubeW:0.000} W；发热 {ta.QGenW:0.00} → {tb.QGenW:0.00} W");
         // 设计稿原想钉「最高温 90-10 > 纯铂」（推理：发热多、导走少）—— 实跑证伪：这块板最高温就在管孔边（钉在管根 1150 °C 附近），
-        //   2026-09-23 Linux 镜像实测 1146.96 → 1146.88 °C。所以不钉方向，只钉「热解真的变了」：管孔抽热与总发热都不同（实测 617.3 → 554.5 W、293.2 → 323.5 W）。
+        //   2026-09-23 Linux 镜像实测 1146.96 → 1146.88 °C（F6 之前的树）。所以不钉方向，只钉「热解真的变了」：管孔抽热与总发热都不同（F6 之前实测 617.3 → 554.5 W、293.2 → 323.5 W）。
+    //   ★ 2026-09-23 合并后（F6，HANDOVER §0.-19；这块板有孔 R26，孔边口径变了）同门印出：Jmax 7.807 → 7.837（F6 前 8.290 → 8.317），最高 1149.57 → 1149.52 °C，
+    //     管孔抽热 619.606 → 556.800 W，发热 293.56 → 323.85 W。「不钉方向」的理由（最高温在管孔边）在 F6 后仍成立；本门不断言这些值，两棵树上都过。
         Assert.NotEqual(ta.QFromTubeW, tb.QFromTubeW);
         Assert.NotEqual(ta.QGenW, tb.QGenW);
     }

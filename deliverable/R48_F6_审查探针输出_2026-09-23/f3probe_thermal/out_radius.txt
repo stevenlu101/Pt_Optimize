@@ -1,0 +1,3 @@
+W08 导航设计 RequiredMeshFor 细化半径 59 mm（hFine 1）盘半径 30 舌长 140 压接长 40 峰余量 10
+DesignSpec.W08 RequiredMeshFor 细化半径 59 mm（hFine 1）盘半径 30 舌长 140 压接长 40 峰余量 10
+DesignSpec.W06 RequiredMeshFor 细化半径 59 mm（hFine 1）盘半径 30 舌长 140 压接长 40 峰余量 10

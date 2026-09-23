@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -29,6 +29,9 @@ namespace PtOptimize.Tests;
 //    (f) 现役数（慢）：W08／W06 × 圆盘保温 10／20 mm × 判决／导航网格，三条判据 + 铂重逐位印出，供改前／改后对拍（对拍在 R48NMeshInjectTests，改后树上）。
 //    闭合：等温电流场 P_gen/P_net ∈ [0.99, 1.01]（P_net = I²·ρ/CurrentInA 是离散网络真耗散；P_gen = Σ ρJ²tA 是报出去的发热）。
 //    判不了（建不出网格／不收敛）一律不当过，照印。
+//  ★ 2026-09-23（F6）：孔边电流场改为孔面上定电位（ShellMesh.HoleFaceDirichlet）+ 弧面法向距（F6b）+ 孔面只认弧面（F6c）之后门 b 三根扫描转绿，门槛一个没动；
+//    新增「门b_改回整格钉当场红_盘径」：同一把尺在改回整格钉的网格上重跑，红点与 Δe 必须恰为 09-18 证据的那三点（门 b 不空守、旧口径可逐位复现）。
+//    门 b 的 Build 多一个只给门用的网格层规则参数（null = 生产原路，逐位不变）。F6 的其余门在 R48F6HoleFaceGateTests。
 // ════════════════════════════════════════════════════════════════════════════
 public class R48NMeshGateTests
 {
@@ -165,7 +168,9 @@ public class R48NMeshGateTests
         public string Note = "";
     }
 
-    internal static (LineCase lc, FlangePlate g, ShellMesh m, double reqRadius) Build(DesignSpec d, DesignInputs p, double fineMm, int plate = 0)
+    /// <param name="rules">2026-09-23（F6）：网格层规则（null = 生产，走 LineRunner.PlateMeshAnalytic 原路逐位不变）；给了就先照原路建一次（LineRunner 的 Normalize 是私有的，
+    /// 借它把算例规范化），再用同一份配方 LineRunner.PlateMeshAnalyticWith 按给的规则重建 —— 门做「改回 ⇒ 红」对照用，不手抄配方。</param>
+    internal static (LineCase lc, FlangePlate g, ShellMesh m, double reqRadius) Build(DesignSpec d, DesignInputs p, double fineMm, int plate = 0, MeshRules? rules = null)
     {
         var dummy = new SolverResult { Design = d };
         Solver.ApplySectionFloor(d, p, new SolverOptions(), dummy, null, null);
@@ -175,6 +180,7 @@ public class R48NMeshGateTests
         var g = lc.FlangePlates[Math.Min(plate, lc.FlangePlates.Length - 1)];
         g.HoleRadiusMm = lc.TubeIdMm * 0.5 + lc.WallMm;
         var m = LineRunner.PlateMeshAnalytic(lc, plate);
+        if (rules != null) m = LineRunner.PlateMeshAnalyticWith(lc, plate, rules, null);
         return (lc, g, m, reqRadius);
     }
 
@@ -370,9 +376,39 @@ public class R48NMeshGateTests
 
     void RunContinuity(string knob, string span, IEnumerable<double> values, Action<DesignSpec, double> set)
     {
+        var (nBad, bad, _, file) = ContinuityCore(knob, span, values, set, null, $"网格修复_门b_连续性_{knob}_W08.txt");
+        Assert.True(nBad == 0, $"连续性门（{knob}）不过 {nBad} 点：{string.Join("　", bad.Take(10))}（{file}）");
+    }
+
+    /// <summary>
+    /// ★ 2026-09-23（F6a）：门 b 不空守 —— 同一把尺（ContinuityCore，门槛 0.2 % 不动）在 <b>改回整格钉</b>（MeshRules.HoleFaceDirichlet = false，网格其余规则全照生产）上重跑盘径扫描：
+    ///   红点必须恰好是 30.24／30.56／31.00，Δe 三位小数恰为 +0.382／+0.249／+0.247 %（与 09-18 证据 网格修复_门b_连续性_盘径_W08_本次开跑于2026-09-18_220037.txt、
+    ///   Linux 复跑逐位一致的那三个数）。覆盖：门 b 的红绿由孔边电位的施加方式决定（F6 就是那三点的病因）；旧口径在本树上复现出同样的红点与三位小数的 Δe ⇒ 新旧两边比的是同一个量。
+    /// 只断言红点集合与 Δe 的三位小数（跑前写死，出处即上面的证据文件）；其余点的数只印。
+    /// 不覆盖（F6 审查后补，findings #24／#29／#61）：只核红点集合与三位小数 —— 不是与 09-18 那份档逐位（全表）一致，单元数等其它列不在断言里（审查核过：与 09-18 那份档的单元数等列不同，逐位相同的只是本次基准开跑）；
+    ///   只改回 F6a 一项（F6b、F6c 仍是生产口径），不是「改动前的整条管线」；舌半宽、孔径两根扫描没有改回对照。
+    /// </summary>
+    [Fact]
+    public void 门b_改回整格钉当场红_盘径()
+    {
+        var (nBad, bad, deAt, file) = ContinuityCore("盘径", "盘径 30.00～31.50 每 0.01（舌半宽 30）【改回整格钉：MeshRules.HoleFaceDirichlet = false】", Range(30.0, 31.5, 0.01),
+                                                    (d, v) => SetRW(d, v, 30.0), new MeshRules { HoleFaceDirichlet = false }, "网格修复_门b_改回整格钉_盘径_W08.txt");
+        var expect = new Dictionary<double, double> { [30.24] = 0.382, [30.56] = 0.249, [31.00] = 0.247 };
+        var redPts = deAt.Where(kv => Math.Abs(kv.Value) > RStepTolPct).Select(kv => kv.Key).OrderBy(v => v).ToArray();
+        _o.WriteLine($"改回整格钉：红 {nBad} 点 {string.Join("　", bad)}");
+        Assert.Equal(expect.Keys.OrderBy(v => v).ToArray(), redPts);
+        foreach (var (r, de) in expect)
+            Assert.True(Math.Round(deAt[r], 3) == de, $"改回整格钉 R{r:0.00} Δe {deAt[r]:+0.0000} %，应为 +{de:0.000} %（{file}）");
+        Assert.Equal(3, nBad);
+    }
+
+    internal (int nBad, List<string> bad, Dictionary<double, double> deAt, string file) ContinuityCore(string knob, string span, IEnumerable<double> values, Action<DesignSpec, double> set,
+                                                                                                       MeshRules? rules, string fileName)
+    {
         var p = new DesignInputs();
         var d0 = Design("W08");
-        string file = DeliverableOut.Stamped($"网格修复_门b_连续性_{knob}_W08.txt");
+        string file = DeliverableOut.Stamped(fileName);
+        var deAt = new Dictionary<double, double>();
         var sb = new StringBuilder(); void W(string t = "") => sb.AppendLine(t);
         var sw = Stopwatch.StartNew();
         W($"网格修复 门(b) 连续性　W08 片0　{span}　导航 vs 判决网格，等温电流场");
@@ -384,11 +420,11 @@ public class R48NMeshGateTests
         foreach (double R in values)
         {
             var d = d0.Clone(); set(d, R);
-            var (lc, g, m, req) = Build(d, p, 0);
+            var (lc, g, m, req) = Build(d, p, 0, 0, rules);
             var rf = Reference(g);
             var row = Measure("导航", lc, g, m, rf, req, solve: true);
             var dj = d0.Clone(); set(dj, R);
-            var (lcj, gj, mj, reqj) = Build(dj, p, 1.0);
+            var (lcj, gj, mj, reqj) = Build(dj, p, 1.0, 0, rules);
             var rowJ = Measure("判决", lcj, gj, mj, rf, reqj, solve: true);
             var notes = new List<string>();
             double dv = double.NaN, cellVol = double.NaN;
@@ -399,6 +435,7 @@ public class R48NMeshGateTests
                 cellVol = m.Area.Max() * g.ThicknessMm;
                 if (Math.Abs(dv) > cellVol) notes.Add("体积台阶");
                 de = e - prevE;
+                deAt[Math.Round(R, 6)] = de;
                 if (Math.Abs(de) > RStepTolPct) notes.Add($"网格误差台阶 Δe {de:+0.000;-0.000} %");
             }
             if (Math.Abs(e) > 1.0) notes.Add($"坏带 e {e:+0.000;-0.000} %");
@@ -409,9 +446,12 @@ public class R48NMeshGateTests
             prev = row; prevE = e;
         }
         W($"── 不过 {nBad} 点{(nBad > 0 ? "：" + string.Join("　", bad) : "")}　总耗时 {sw.Elapsed.TotalSeconds:0} s　{Sign}");
+        double maxDe = deAt.Count > 0 ? deAt.Values.Max(Math.Abs) : double.NaN;
+        W($"── 最大 |Δe| {maxDe:0.000} %（2026-09-23 加印；网格层规则 {(rules is null ? "生产" : "注入：HoleFaceDirichlet " + rules.HoleFaceDirichlet + "／HoleArcNormalDist " + rules.HoleArcNormalDist + "／HoleTagArcOnly " + rules.HoleTagArcOnly)}）");
         File.WriteAllText(file, sb.ToString(), new UTF8Encoding(true));
         _o.WriteLine(file);
-        Assert.True(nBad == 0, $"连续性门（{knob}）不过 {nBad} 点：{string.Join("　", bad.Take(10))}（{file}）");
+        _o.WriteLine($"最大 |Δe| {maxDe:0.000} %");
+        return (nBad, bad, deAt, file);
     }
 
     /// <summary>带格恒 0 + 电功率闭合：盘径五档（30.50／30.75／31.00／31.01／31.25）与舌半宽四档（29.50／29.55／29.70／29.80）× 导航／判决。</summary>

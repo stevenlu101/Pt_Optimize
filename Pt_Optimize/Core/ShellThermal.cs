@@ -47,9 +47,16 @@ public sealed class ShellThermalResult
     /// 物理上真正该报的是「通过孔边界那条线的热流」。用这两个诊断量可以把它估出来：
     ///   <c>抽热（与网格无关的口径） ≈ QFromTubeW + QHoleCellGenW − QHoleCellLossW</c>
     /// 本次只**量**不改口径：先验证这个修正量随加密收敛，再谈要不要改 QFromTubeW 的定义。
+    /// ⚠ 2026-09-23（F6 审查后补注，findings #38；只改注释，算式与数一个没动）：上面这段写于整格定温口径（holeFaceDirichlet = false），
+    ///   **在面上定温口径（holeFaceDirichlet = true，生产缺省，2026-09-13 起）下已不成立**：
+    ///   · 孔格不再被钉成管温，是普通自由格，自身的发热与散热已经入能量账（Excluded 只排除 holeCell 且 !holeFaceDirichlet 的格）；
+    ///   · QFromTubeW 直接就是穿过孔边界面的热流 Σ gHole·(管温 − T_格心)，没有「那圈单元被当成管子吸收」这回事；
+    ///   ⇒ 上面的估算式 QFromTubeW + QHoleCellGenW − QHoleCellLossW 只适用于整格定温口径，面上口径下照用就是把孔格的发热重复计一次。
+    ///   面上口径下这两个量只是「带孔面的那圈格」自身发热／散热的诊断，不进任何账。
+    ///   F6a（2026-09-23，电流场孔面上定电位）另改了孔格的 J（孔格不再是电流场的电极格），这两个诊断量随之变，变因记 F6a；它们不进任何门与判据。
     /// </summary>
     public double QHoleCellGenW, QHoleCellLossW;
-    /// <summary>被钉成管温的孔单元数与总面积 mm²（诊断：面积随网格线性减小就是上面说的那件事）。</summary>
+    /// <summary>带孔边界面的格数与总面积 mm²（诊断；整格定温口径下即被钉成管温的孔单元，面上口径下只是那圈自由格 —— 见上一条 ⚠）。</summary>
     public int HoleCellCount; public double HoleCellAreaMm2;
     /// <summary>
     /// 由舌片末端流进铜排的净热 W（>0 = 铜排在带走热）。**与管孔那一项同法直接算**，
@@ -258,6 +265,11 @@ public sealed class ThermalRecipe
     /// <summary>2026-09-15 Opus 5（合并）：压接边界施加在压接面上（F 配方 ⑤）；false = 形心整格。定温模式在求解里量，其余模式记网格口径，见类注释。</summary>
     public bool ClampFaceDirichlet { get; init; }
     /// <summary>
+    /// ★ 2026-09-23（F6d）：局部热稳定的管孔锚点取**孔圆本身**（r = ShellMesh.HoleRadiusMm）；false = 老口径「孔格形心的最小半径」（随格集合跳）或没有孔边界面。
+    /// Solve 按真走了哪一支记，RecipeFor 按输入预判，两份对不上当场炸。
+    /// </summary>
+    public bool HoleAnchorOnCircle { get; init; }
+    /// <summary>
     /// 2026-09-15 Opus 5（合并）：压接面数 —— 定温模式 = 求解里真按半距施加了面导度的压接面数；其余模式 = 网格上的压接面数（ShellMesh.ClampFaceCount）；
     /// −1 = 只是预判（<see cref="ShellThermal.RecipeFor"/>）。与网格尺寸有关，不进规则。
     /// </summary>
@@ -267,7 +279,7 @@ public sealed class ThermalRecipe
     public bool LossTableNodesByRule => LossTableNodes == ShellThermal.LossTableNodes(LossTableLoC, LossTableHiC);
 
     /// <summary>与算例无关的规则部分 —— 生产配方常量就是这个类型，门用 == 比（舌端定温方式是算例的选择，不进规则）。</summary>
-    public ThermalRecipeRule Rule => new(InsulBlend, LossTableHiC, LossTableNodesByRule, HoleFaceCount > 0, HoleFaceDirichlet, ClampFullFace, ClampFaceDirichlet);
+    public ThermalRecipeRule Rule => new(InsulBlend, LossTableHiC, LossTableNodesByRule, HoleFaceCount > 0, HoleFaceDirichlet, ClampFullFace, ClampFaceDirichlet, HoleAnchorOnCircle);
 
     public string Describe()
         => "分界格混合 " + (InsulBlend switch { InsulBlendState.On => "开", InsulBlendState.OffNoField => "关（网格没有厚度场）", _ => "不适用（保温按 x 划）" })
@@ -277,19 +289,23 @@ public sealed class ThermalRecipe
          + (ClampFullFace ? "（整个压接面）" : "（只取压接外缘一圈）")
          // 2026-09-15 Opus 5（合并）：F 配方 ⑤；非定温模式热场没有定温边界，写明是经电流场
          + "；压接边界" + (ClampFaceDirichlet ? "施加在压接面上" : "按压接格形心整格")
-         + (ClampMode == ClampBoundaryMode.Fixed ? "" : "（热场无定温边界，经电流场）");
+         + (ClampMode == ClampBoundaryMode.Fixed ? "" : "（热场无定温边界，经电流场）")
+         + "；局部热稳定的管孔锚点" + (HoleAnchorOnCircle ? "在孔圆上" : "按孔格形心（或没有孔边界面）");   // 2026-09-23 F6d
 }
 
 /// <summary>R48（2026-09-15，Opus 5）：热解配方里与算例无关的规则部分（<see cref="ThermalRecipe.Rule"/>）。</summary>
 /// <remarks>2026-09-15 Opus 5：加 <see cref="HasHoleBoundary"/>（网格上有孔边界面，管温才施加得上）；有孔边界面时描述文字与原先逐字相同。
-/// 2026-09-15 Opus 5（合并）：加 <see cref="ClampFaceDirichlet"/>（F 配方 ⑤ 压接面上定温 vs 形心整格），描述文字末尾多一段。</remarks>
-public readonly record struct ThermalRecipeRule(InsulBlendState InsulBlend, double LossTableHiC, bool LossTableNodesByRule, bool HasHoleBoundary, bool HoleFaceDirichlet, bool ClampFullFace, bool ClampFaceDirichlet)
+/// 2026-09-15 Opus 5（合并）：加 <see cref="ClampFaceDirichlet"/>（F 配方 ⑤ 压接面上定温 vs 形心整格），描述文字末尾多一段。
+/// 2026-09-23（F6d）：加 <see cref="HoleAnchorOnCircle"/>（局部热稳定的管孔锚点在孔圆上 vs 孔格形心），描述文字末尾多一段。</remarks>
+public readonly record struct ThermalRecipeRule(InsulBlendState InsulBlend, double LossTableHiC, bool LossTableNodesByRule, bool HasHoleBoundary, bool HoleFaceDirichlet, bool ClampFullFace, bool ClampFaceDirichlet,
+                                                bool HoleAnchorOnCircle)
 {
     public string Describe()
         => "分界格混合 " + (InsulBlend switch { InsulBlendState.On => "开", InsulBlendState.OffNoField => "关（网格没有厚度场）", _ => "不适用（保温按 x 划）" })
          + $"；表面散热表上限 {LossTableHiC:0.#} °C、节点{(LossTableNodesByRule ? "按约 22 K 一个" : "不按规则")}"
          + $"；管温{(!HasHoleBoundary ? "没有施加（网格上没有孔边界面）" : HoleFaceDirichlet ? "施加在孔边界面上" : "钉住孔边整格")}；压接格取{(ClampFullFace ? "整个压接面" : "压接外缘一圈")}"
-         + $"；压接边界{(ClampFaceDirichlet ? "施加在压接面上" : "按压接格形心整格")}";   // 2026-09-15 Opus 5（合并）
+         + $"；压接边界{(ClampFaceDirichlet ? "施加在压接面上" : "按压接格形心整格")}"   // 2026-09-15 Opus 5（合并）
+         + $"；局部热稳定的管孔锚点{(HoleAnchorOnCircle ? "在孔圆上" : "按孔格形心")}";         // 2026-09-23 F6d
 }
 
 /// <summary>R48（2026-09-15，Opus 5）：一次壳热解用的三张表面热流表（<see cref="ShellThermal.SurfaceLossTablesFor"/>）。没包保温的面与裸面是同一个实例。</summary>
@@ -309,7 +325,7 @@ public static class ShellThermal
     /// </summary>
     public static readonly ThermalRecipeRule ProductionThermalRule = new(
         InsulBlend: InsulBlendState.On, LossTableHiC: LossTableHiC, LossTableNodesByRule: true, HasHoleBoundary: true, HoleFaceDirichlet: true, ClampFullFace: true,
-        ClampFaceDirichlet: true);
+        ClampFaceDirichlet: true, HoleAnchorOnCircle: true);   // 2026-09-23 F6d
 
     /// <summary>
     /// ★ R48（2026-09-15，Opus 5）：三张法兰表面热流表（裸面／圆盘保温面／舌保温面）W/mm² —— 自 <see cref="Solve"/> 原样提出（算式逐字未改），
@@ -463,9 +479,12 @@ public static class ShellThermal
                                            double discRadiusMm = double.NaN,
                                            double insulDiscRadiusMm = double.NaN,
                                            double lossTableHiC = double.NaN,
-                                           int lossTableNodes = 0)
+                                           int lossTableNodes = 0,
+                                           bool holeAnchorOnCircle = true)
     {
         var props = PtProps.For(p);   // R48 物性接线（2026-09-23，Opus 5.5）：k、ρ、电阻温度系数按牌号（纯铂逐位不变）；局部函数都捕获这一份，每次热解只解析一次
+        // ★ 2026-09-23（F6d）：holeAnchorOnCircle **只供测试用**（写法照 lossTableHiC 先例）—— 局部热稳定的管孔锚点取孔圆 r = ShellMesh.HoleRadiusMm（缺省，生产），
+        //   false = 老口径「孔格形心的最小半径」（那个数随被孔圆切到的格集合跳，与 F6 同源），门拿它做「改回 ⇒ 红」对照。生产代码不许传。
         // ★ R48（2026-09-15，Opus 5；数值把关人第十四轮）：lossTableHiC／lossTableNodes **只供测试用** —— 门 d 要用改动前的表（设定 + 200 K、60 节点）
         //   复现基线树的逐位记录，才能把「散热表换了」与「别的东西动了」分开。缺省（NaN／0）= 生产：上限 LossTableHiC、节点 LossTableNodes(环境, 上限)。
         //   生产代码不许传这两个参数（生产链配方由 R48RecipeFingerprintTests 的行为门守：每片热解的 Recipe.Rule == ProductionThermalRule）。
@@ -601,6 +620,9 @@ public static class ShellThermal
                 if (clampFixed) { isFixed[f.A] = true; res.T[f.A] = p.BusbarClampTempC; }   // 2026-09-15 Opus 5（合并，复审后改）：原就地式子 !busG && 夹持温度 ≥ 0，同一规则
             }
         }
+        // 2026-09-23（F6d）：局部热稳定的管孔锚点取孔圆（判定调 HoleAnchorOnCircleFor，与 RecipeFor 同一处；是否真走了那一支由 anchorOnCircleUsed 记）
+        bool anchorOnCircle = HoleAnchorOnCircleFor(m, holeAnchorOnCircle, nHoleFaces);
+        bool anchorOnCircleUsed = false;
         // ★ R48 生产配方（2026-09-14，Opus 5）：压接段整面接触 —— 形心在压接段内的格一并当压接格（ShellMesh.ClampCell 空 = 老口径只钉外圈，逐位不变）。
         //   依据 deliverable/R48_压接整面接触AB_2026-09-14.txt；配方声明见 FlangeMesher.BuildFromField。
         //   tabCell 从此是「整个接触面」而不只是外圈。下游用到它的量在整面口径下逐条核过（2026-09-14 Opus 5）：
@@ -691,9 +713,15 @@ public static class ShellThermal
             for (int k = 0; k < nf; k++)
             {
                 var f = m.Faces[k];
-                if (f.B >= 0 || f.Tag != ShellMesh.TagHole || f.DistAB < 1e-12) continue;
-                double kA = props.K(res.T[f.A]) * 1e-3 * m.Thickness[f.A];
-                gHole[f.A] += kA * f.Length / f.DistAB;      // DistAB = 形心到边中点 = 半格
+                if (f.B >= 0 || f.Tag != ShellMesh.TagHole) continue;
+                // 2026-09-23（F6 审查后统一，findings #6／#39）：原写法 `|| f.DistAB < 1e-12) continue;` 对过小的孔面静默跳过（跳过 = 那段孔边不定温，
+                //   孔面仍计进 nHoleFaces／HoleFaceCount），电流场（ShellCurrent，F6a）对同一条面却抛异常 —— 两个场口径不一。改成与电流场同一条判据、同样抛：
+                //   弧面距离下限 ShellMesh.GeomTolMm = 1e-7 mm；直边距离 = 形心到边中点，面积为正的格上不会趋近 0；生产网格触发不到，抛出来是自证。
+                //   NaN 也挡住（原写法 NaN < 1e-12 为假，会把 NaN 写进 gHole）。
+                if (!(f.DistAB >= 1e-12))
+                    throw new InvalidOperationException($"热场：孔面 {k}（格 {f.A}）的形心—边界距离 {f.DistAB:R} mm 过小 —— 面导度无界，孔面不许静默跳过（与 ShellCurrent 同一条判据）。");
+                double kA = props.K(res.T[f.A]) * 1e-3 * m.Thickness[f.A];   // 按牌号 k（§0.-18 接线）；孔面导度与格内同一份物性
+                gHole[f.A] += kA * f.Length / f.DistAB;      // DistAB = ShellMesh.BoundaryDistMm：弧面 = 形心到孔圆的法向距（F6b 2026-09-23），直边 = 形心到边中点
             }
         }
 
@@ -1140,6 +1168,9 @@ public static class ShellThermal
                                                   : Math.Max(xClamp, Math.Abs(m.Centroid[i].X)) * Math.Sign(m.Centroid[i].X);
             }
             if (double.IsInfinity(rHole)) rHole = 0;
+            // ★ 2026-09-23（F6d）：管孔锚点取孔圆本身。老口径「孔格形心的最小半径」比孔圆大约半格、且随被孔圆切到的格集合跳（与 F6 同源）；
+            //   管子按住的是焊接圆 r = rh 这条线，不是某个格的形心。网格上有孔边界面、孔半径已知时才走新口径，否则照旧（没有孔 ⇒ 0）。
+            if (anchorOnCircle) { rHole = m.HoleRadiusMm; anchorOnCircleUsed = true; }
             // R48 F（2026-09-15 Opus 5）：面上定温时锚点在**压接面**上（真实内边 x = 舌尖 + 压接长），不在内边那排压接格形心。
             //   收集所有压接面中点的 x（去重），下面 LatLen 里**逐格取最近的那个**：平行边单舌时只有内边一个 x，与形心口径「下标最后一个锚点格」同一列、差 h/2；
             //   双舌时两侧内边各一个 x，各格取近的那侧。（锥形舌在内边外侧若有面中点恰落在内边上的边界面，那一格也带压接标签、是定温格，
@@ -1344,11 +1375,13 @@ public static class ShellThermal
             ClampFullFace = nFullFaceCells > 0,
             ClampFaceDirichlet = nClampFaces > 0,
             ClampFaceCount = nClampFaces,
+            HoleAnchorOnCircle = anchorOnCircleUsed,   // 2026-09-23 F6d：按局部热稳定那段真走的一支记
         };
         var rc = res.Recipe;
-        var pred = RecipeFor(m, p, holeFaceDirichlet, insulDiscRadiusMm, lossTableHiC, lossTableNodes);
+        var pred = RecipeFor(m, p, holeFaceDirichlet, insulDiscRadiusMm, lossTableHiC, lossTableNodes, holeAnchorOnCircle);
         if (pred.InsulBlend != rc.InsulBlend || pred.LossTableLoC != rc.LossTableLoC || pred.LossTableHiC != rc.LossTableHiC || pred.LossTableNodes != rc.LossTableNodes
             || pred.HoleFaceDirichlet != rc.HoleFaceDirichlet || pred.HoleFaceCount != rc.HoleFaceCount
+            || pred.HoleAnchorOnCircle != rc.HoleAnchorOnCircle                                    // 2026-09-23 F6d
             || pred.ClampMode != rc.ClampMode || pred.ClampFullFace != rc.ClampFullFace
             || pred.ClampFaceDirichlet != rc.ClampFaceDirichlet)                                   // 2026-09-15 Opus 5（合并）
             throw new InvalidOperationException("热解配方：按输入的预判（RecipeFor）与求解里数出来的对不上 —— 生效分支与配方记录漂开了，配方指纹不许说假话。"
@@ -1362,7 +1395,7 @@ public static class ShellThermal
     /// 参数与 <see cref="Solve"/> 同名同义（<paramref name="lossTableHiC"/>／<paramref name="lossTableNodes"/> 缺省 = 生产表）。
     /// </summary>
     public static ThermalRecipe RecipeFor(ShellMesh m, DesignInputs p, bool holeFaceDirichlet = true, double insulDiscRadiusMm = double.NaN,
-                                          double lossTableHiC = double.NaN, int lossTableNodes = 0)
+                                          double lossTableHiC = double.NaN, int lossTableNodes = 0, bool holeAnchorOnCircle = true)
     {
         bool byRadius = insulDiscRadiusMm > 1e-9;
         // 2026-09-15 Opus 5（合并）：G1 写 RecipeFor 时 G2 的唯一判定 ClampBoundaryOf 还不在，这里原有一份就地的「铜排热导 ≥ 0 ⇒ 热导；夹持温度 ≥ 0 ⇒ 定温」——
@@ -1384,6 +1417,11 @@ public static class ShellThermal
             ClampFullFace = m.ClampFullFaceActive,   // 2026-09-15 Opus 5（J 路）：唯一定义
             // 2026-09-15 Opus 5（合并）：F 配方 ⑤ 的预判 = 网格上有压接面（ShellMesh.ClampFaceCount，与两个求解器同一个判定）；面数本身不预判（−1）
             ClampFaceDirichlet = m.ClampFaceCount() > 0,
+            HoleAnchorOnCircle = HoleAnchorOnCircleFor(m, holeAnchorOnCircle, holeFaces),   // 2026-09-23 F6d
         };
     }
+
+    /// <summary>2026-09-23（F6d）：局部热稳定的管孔锚点是否取孔圆 —— 开关开、网格上有孔边界面、孔半径有限且为正。Solve 与 RecipeFor 调这一处。</summary>
+    internal static bool HoleAnchorOnCircleFor(ShellMesh m, bool holeAnchorOnCircle, int holeFaces)
+        => holeAnchorOnCircle && holeFaces > 0 && double.IsFinite(m.HoleRadiusMm) && m.HoleRadiusMm > 0;
 }

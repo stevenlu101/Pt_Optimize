@@ -49,10 +49,11 @@ public class R48ClampFaceGateTests
     private static readonly double[] StripX = { 0, 1, 2, 3, 4, 4.5, 5.25, 6.25, 7.75, 9.5, 11.75, 14.0, 16.0, 17.5, 18.75, 20.0 };
     private static readonly double[] StripZ = { 0, 1.5, 4.0 };
 
-    private static ShellMesh Strip(bool faceMode)
+    private static ShellMesh Strip(bool faceMode, bool holeFace = true)
     {
         // 2026-09-15 Opus 5（合并，复审后改）：ShellMesh.ClampFaceDirichlet 改为 init（建完不许再改，否则网格配方指纹说假话）⇒ 原末尾的 m.ClampFaceDirichlet = faceMode; 挪到这里，条带与门槛不变
-        var m = new ShellMesh { ClampFaceDirichlet = faceMode };
+        // 2026-09-23（F6a）：管孔端同理 —— HoleFaceDirichlet 缺省 true（孔面上定电位，生产）；false = 老口径孔格整格钉（门 (a) 的改回对照）
+        var m = new ShellMesh { ClampFaceDirichlet = faceMode, HoleFaceDirichlet = holeFace };
         int nx = StripX.Length, nz = StripZ.Length;
         var id = new int[nx, nz];
         for (int i = 0; i < nx; i++) for (int j = 0; j < nz; j++) { id[i, j] = m.Nodes.Count; m.Nodes.Add(new Vec3(StripX[i], 0, StripZ[j])); }
@@ -71,17 +72,25 @@ public class R48ClampFaceGateTests
         return m;
     }
 
+    /// <remarks>
+    /// ★ 2026-09-23（F6a，测试侧定义同步 —— 算规则改动，写明）：管孔端改为孔面上定电位（ShellMesh.HoleFaceDirichlet 缺省 true）⇒ 解析电极在孔面 x = StripL，
+    ///   iExact = t·W ÷ (StripL − x_压接电极)，门槛 1e-9 原样。另加一支 HoleFaceDirichlet = false（老口径孔格整格钉），解析电极仍在孔格形心 xHoleCell（原式）——
+    ///   两支孔端口径各自精确，且差恰好半个孔格（与压接端「形心差半格」同一个道理），证明开关真分得开。
+    /// </remarks>
     [Fact]
     public void a_电流一维条带_面上定电位精确_形心口径差半格()
     {
-        double xHoleCell = 0.5 * (StripX[^2] + StripX[^1]);      // 管孔格形心（ShellCurrent 管孔仍在格上钉 V=0）
+        double xHoleCellCentroid = 0.5 * (StripX[^2] + StripX[^1]);      // 管孔格形心（老口径：管孔在格上钉 V=0）
         double hC = StripX[4] - StripX[3];                         // 内边那排压接格的宽
+        foreach (bool holeFace in new[] { true, false })
         foreach (bool face in new[] { true, false })
         {
-            var m = Strip(face);
+            var m = Strip(face, holeFace);
             Assert.Equal(face, m.ClampFaceActive);
+            double xHoleCell = holeFace ? StripL : xHoleCellCentroid;   // 孔端电极：面上 = 孔面 x = StripL；老口径 = 孔格形心
             var r = ShellCurrent.Solve(m, 1.0, 1.0, 1300, null, 20000, 1e-15);
             Assert.True(r.Converged, "条带电流场没收敛");
+            Assert.Equal(holeFace, r.HoleFaceDirichlet);
             double xElec = face ? StripLc : StripLc - 0.5 * hC;   // 电极位置：面上 = 内边；形心 = 内边压接格形心
             double iExact = StripT * StripW / (xHoleCell - xElec); // 等温 σ 取 1 ⇒ 归一化电流 = t·W/长
             double relI = Math.Abs(r.CurrentInA - iExact) / iExact;
@@ -94,15 +103,25 @@ public class R48ClampFaceGateTests
             }
             double iFaceExact = StripT * StripW / (xHoleCell - StripLc);
             double relVsFace = Math.Abs(r.CurrentInA - iFaceExact) / iFaceExact;
-            _out.WriteLine($"{(face ? "面上" : "形心")}：归一化电流 {r.CurrentInA:R}　解析 {iExact:R}　相对差 {relI:E2}　电位线性最大偏差 {vErr:E2}　与面上解析值相对差 {relVsFace:E3}　守恒 {r.ConservationError:E2}");
-            Assert.True(relI <= 1e-9, $"{(face ? "面上" : "形心")}口径总电流与解析值相对差 {relI:E2} > 1e-9");
-            Assert.True(vErr <= 1e-9, $"{(face ? "面上" : "形心")}口径电位不线性：最大偏差 {vErr:E2}");
+            _out.WriteLine($"孔端{(holeFace ? "面上" : "整格钉")}／压接{(face ? "面上" : "形心")}：归一化电流 {r.CurrentInA:R}　解析 {iExact:R}　相对差 {relI:E2}　电位线性最大偏差 {vErr:E2}　与面上解析值相对差 {relVsFace:E3}　守恒 {r.ConservationError:E2}");
+            if (face)
+            {   // 孔端两种口径之差恰为半个孔格：I_整格钉 = I_面上 · L_面上 / (L_面上 − h_孔/2)（开关真分得开，不是空转）
+                double hH = StripX[^1] - StripX[^2];
+                double iOther = StripT * StripW / ((holeFace ? xHoleCellCentroid : StripL) - StripLc);
+                double relHole = Math.Abs(r.CurrentInA - iOther) / iOther;
+                // |I − I_另一口径| / I_另一口径：面上时 = (L_面 − L_格)/L_面，整格钉时 = (L_面 − L_格)/L_格，L_面 − L_格 = h_孔/2
+                double expectHole = holeFace ? (0.5 * hH) / (StripL - StripLc) : (0.5 * hH) / (xHoleCellCentroid - StripLc);
+                Assert.True(Math.Abs(relHole - expectHole) <= 1e-9 && relHole > 1e-3, $"孔端{(holeFace ? "面上" : "整格钉")}：孔端两口径之差 {relHole:E6}，应为半孔格 {expectHole:E6}");
+            }
+            // 2026-09-23（F6 审查后补，findings #31）：失败信息带上孔端口径 —— 孔端整格钉那一支红了要分得清是哪一支
+            Assert.True(relI <= 1e-9, $"孔端{(holeFace ? "面上" : "整格钉")}／压接{(face ? "面上" : "形心")}口径总电流与解析值相对差 {relI:E2} > 1e-9");
+            Assert.True(vErr <= 1e-9, $"孔端{(holeFace ? "面上" : "整格钉")}／压接{(face ? "面上" : "形心")}口径电位不线性：最大偏差 {vErr:E2}");
             if (face)
                 Assert.All(Enumerable.Range(0, m.CellCount).Where(i => m.ClampCell[i]), i => Assert.Equal(0.0, r.JMagAPerMm2[i]));
             else
             {
                 double expect = (0.5 * hC) / (xHoleCell - StripLc + 0.5 * hC);   // 半格：I_面 = I_形心·(L + h/2)/L
-                Assert.True(Math.Abs(relVsFace - expect) <= 1e-9 && relVsFace > 1e-3, $"形心口径与面上解析值相对差 {relVsFace:E6}，应为半格 {expect:E6}");
+                Assert.True(Math.Abs(relVsFace - expect) <= 1e-9 && relVsFace > 1e-3, $"孔端{(holeFace ? "面上" : "整格钉")}：压接形心口径与面上解析值相对差 {relVsFace:E6}，应为半格 {expect:E6}");
             }
         }
     }
