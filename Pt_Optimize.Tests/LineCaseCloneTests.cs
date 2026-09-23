@@ -39,6 +39,7 @@ public class LineCaseCloneTests
         if (t == typeof(FlangePlate[])) return new[] { new FlangePlate { DiscRadiusMm = 33.3 } };
         if (t == typeof(ThicknessField[])) return new[] { new ThicknessField { Step = 0.77 } };
         if (t == typeof(DesignInputs)) return new DesignInputs();
+        if (t == typeof(FineRadiusPlan)) return MeshAdapt.GivenFineRadiusPlan(7.25);   // F7′ 审查 M2（2026-09-23）：LineCase.MeshFineRadiusPlan（记录字段，CloneCase 照拷）；本档镜像排除，Windows 待办 W8 编译并跑
         if (t.IsEnum) return Enum.GetValues(t).Cast<object>().Last(v => !Equals(v, current));
         if (typeof(Delegate).IsAssignableFrom(t))
             return Delegate.CreateDelegate(t, typeof(LineCaseCloneTests).GetMethod(nameof(Trace), BindingFlags.NonPublic | BindingFlags.Static)!);

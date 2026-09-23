@@ -56,7 +56,7 @@ public class R48DiscInsulLeverTests
         d.FlangeInsulMm = discInsulMm;
         d = d.Fit();
         d.SizeTongues(p);
-        var (_, radius) = MeshVerify.RequiredMeshFor(d);
+        var (_, radius) = MeshVerify.RequiredMeshFor(d, p);
         var lc = d.BuildCase(p, checkRamp: false);
         MeshAdapt.RefineWholeMesh(lc, 0.5, radius);
 

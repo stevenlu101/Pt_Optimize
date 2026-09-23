@@ -62,7 +62,7 @@ public class R48SchemeATests
         d.FlangeInsulMm = x;
         d = d.Fit();
         d.SizeTongues(p);
-        var (_, radius) = MeshVerify.RequiredMeshFor(d);
+        var (_, radius) = MeshVerify.RequiredMeshFor(d, p);
         var lc = d.BuildCase(p, checkRamp: false);
         MeshAdapt.RefineWholeMesh(lc, 0.5, radius);
         ev = EvidenceFile.Open(file, EvidenceHeader.ForLineCase($"R48 方案 A X={x:0.0} mm", lc));

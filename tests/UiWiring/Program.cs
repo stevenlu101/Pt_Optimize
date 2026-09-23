@@ -3266,7 +3266,8 @@ class UiWiringTests {
             Check("分析过几何后工厂造得出来", fac.Item1 is not null, fac.Item2);
             if (fac.Item1 is { } factory)
             {
-                var (h0, radius, innerR, refused) = MeshVerify.RequiredMeshFor(sh36, (double)((NumericUpDown)F(page, "_wall")!).Value);
+                // F7′（2026-09-23，决 29 自适应）：半径初值的热长度按走图纸路径的整线算例量 ⇒ 传工厂造的那份算例（签名多一个参数）
+                var (h0, radius, innerR, refused) = MeshVerify.RequiredMeshFor(sh36, (double)((NumericUpDown)F(page, "_wall")!).Value, factory(1.0, 1.0));
                 Check("起始网格从图纸的特征尺寸算出（不是挑的数）", refused is null && h0 > 0, refused ?? $"h0 {h0:0.000}　半径 {radius:0.0}／内带半径 {innerR:0.0}");
                 var a = factory(h0, h0); var b = factory(h0, h0 * 0.5);
                 Check("复核用的 LineCase 走图纸路径（FlangePlates 为空、FlangeFile3dm 非空）",

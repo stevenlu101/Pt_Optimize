@@ -94,7 +94,7 @@ public abstract class R48MMergedResolveBase
         var o0 = new SolverOptions();
         double q = Solver.KnobQuantum(o0, Solver.Knob.Insul);
         var navCase = new LineCase();
-        var (reqFine, reqRadius) = MeshVerify.RequiredMeshFor(seed);
+        var (reqFine, reqRadius) = MeshVerify.RequiredMeshFor(seed, p);
         var opt = ProductionOptions(reqFine, reqRadius);
         var winDefaults = new InsulWindow.Options();
 

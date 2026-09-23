@@ -66,7 +66,7 @@ public class R48LThreeMeshTests
 
         var seed = DesignSpec.W08.Clone();
         var navCase = new LineCase();
-        var (reqFine, reqRadius) = MeshVerify.RequiredMeshFor(seed);
+        var (reqFine, reqRadius) = MeshVerify.RequiredMeshFor(seed, p);
 
         W("R48 L 路　**W08 三网格对照** + **照表复原差在哪个字段**");
         W($"开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}　工作树 {HandoverDoc.Root()}　写码 2026-09-17 Opus 5");

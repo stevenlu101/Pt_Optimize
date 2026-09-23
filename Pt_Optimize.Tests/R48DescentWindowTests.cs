@@ -84,7 +84,7 @@ public class R48DescentWindowTests
         Say($"{"λ",5}{"舌保温mm",22}{"管孔净流入W",13}{"圆盘区最高温K",15}{"法兰增量温降K",15}{"截面J",8}{"全过",6}{"用时s",7}");
 
         var p = new DesignInputs();
-        var (_, radius) = MeshVerify.RequiredMeshFor(DesignSpec.W08.Clone());
+        var (_, radius) = MeshVerify.RequiredMeshFor(DesignSpec.W08.Clone(), p);
         bool anyFeasible = false;
 
         foreach (double lam in Lambdas)

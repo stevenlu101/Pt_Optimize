@@ -79,6 +79,18 @@ public static class MeshVerify
         /// </summary>
         public string? MidBandConfirm;
         public double SecondsTotal;
+        /// <summary>
+        /// ★ F7′（2026-09-23，决 29 自适应）：细区半径计划的**终态**（初值、余量₀ 与输入、每次放大的原因与数、终值；拒答时 Refused 非空）。
+        /// 判词、证据与界面读它；null = 本次没走到计划（入口拒答）。
+        /// </summary>
+        public FineRadiusPlan? RadiusPlan;
+        /// <summary>
+        /// F7′：每一次整线解用的细区半径与解后读到的最远热点、处置（「盖住」「放大 → 重来」「到上限拒答」「峰位算不出」「计划不放大」）—— 按解的先后。
+        /// 单向门读它：半径序列必须非降。
+        /// </summary>
+        public readonly List<(double Fine, double RadiusMm, double PeakRMm, string Outcome)> RadiusTrace = new();
+        /// <summary>F7′：因放大半径而作废的档（在旧半径上解的，不参与档间比较；只供打印）。</summary>
+        public readonly List<(double Fine, int Cells, double RadiusMm, double Sec)> DiscardedTiers = new();
         /// <summary>逐档轨迹，供报告打印。</summary>
         public readonly List<(double Fine, int Cells, double N2p, double N2pp, double N3, double MassG, double Sec)>
             Trace = new();
@@ -202,18 +214,74 @@ public static class MeshVerify
     ///   假收敛概率略升 —— 那是收敛判据本身固有的风险。
     ///   `--weldfeature` 可以退回旧口径做对照。
     /// </param>
-    public static (double FineMm, double RadiusMm) RequiredMeshFor(DesignSpec d,
-                                                                   bool weldAsGeometricFeature = false)
+    /// <param name="baseIn">工艺参数 —— 细区半径初值的余量₀ 是设计的热长度 ℓ_t（<see cref="MeshAdapt.ThermalLengthMm"/>），要按本设计的算例（控温点、管、保温、牌号）算。</param>
+    /// <param name="tabLengthFactor">
+    /// ★ F7′（2026-09-23，Opus 5.5，C4′；决 29 改定为「自适应」）：只供门用的「改回」参数，生产一律不传。
+    ///   缺省 0 = 生产：细区半径**初值** = max(盘半径, 孔半径) + ℓ_t（规则与放大见 <see cref="MeshAdapt.FineRadiusPlanOf"/>／<see cref="MeshAdapt.GrowFineRadius"/>）。
+    ///   传 <see cref="LegacyTabLengthFactor"/>（0.35）= F7 之前的规则 max(盘半径, 0.35·|舌长|, 孔半径) + 10，半径逐位等于改前、且不放大（门：R48F7AdaptiveRadiusTests 门 e）。
+    ///   ⚠ 本函数只给**初值**（解之前能知道的那个数）；解出场之后按热点放大的在用计划的各处（本类 Run、Solver、保温搜索、可行窗口）。
+    ///   决 29 (1)（开发者缺省，不是业主原话）已作废：它与热点检查相顶，见 C4 实施记录 §3.2 与 §10。
+    /// </param>
+    public static (double FineMm, double RadiusMm) RequiredMeshFor(DesignSpec d, DesignInputs baseIn,
+                                                                   bool weldAsGeometricFeature = false,
+                                                                   double tabLengthFactor = 0.0)
+        => (RequiredFineMmFor(d, weldAsGeometricFeature), FineRadiusPlanFor(d, baseIn, tabLengthFactor).RadiusMm);
+
+    /// <summary>
+    /// F7′（2026-09-23）：只要**细区尺寸**（由几何特征定，与工艺参数无关）的调用方用这一个 —— 原 <c>RequiredMeshFor(d).FineMm</c> 的那一半，逐字同式。
+    /// </summary>
+    public static double RequiredFineMmFor(DesignSpec d, bool weldAsGeometricFeature = false)
     {
         if (d is null) throw new ArgumentNullException(nameof(d));
         double weldLeg = Math.Max(d.TabThickMm.Max(), d.WallMm);
         var feats = weldAsGeometricFeature
                   ? new[] { d.TabFilletMm, d.RingWidthMm, weldLeg }
                   : new[] { d.TabFilletMm, d.RingWidthMm };
-        return (FineFromFeatures(feats),
-                MeshAdapt.RequiredFineRadiusMm(
-                    new[] { d.DiscRadiusMm, Math.Abs(d.TabLengthMm) * 0.35 }, d.HoleRadiusMm));
+        return FineFromFeatures(feats);
     }
+
+    /// <summary>
+    /// ★ F7′（2026-09-23，Opus 5.5，C4′）：解析设计的**细区半径计划**（全仓唯一来源 <see cref="MeshAdapt.FineRadiusPlanOf"/> 的解析入口）。
+    /// 热长度与板料外缘都按本设计的算例（<see cref="DesignSpec.BuildCase"/>，带玻璃稳态）量：ℓ_t = <see cref="MeshAdapt.ThermalLengthMm"/>，上限 = <see cref="MeshAdapt.PlateOuterRadiusMm(LineCase)"/>。
+    /// <paramref name="adaptive"/> = false 只供归因门（新初值、不放大）。改回（tabLengthFactor &gt; 0）不量热长度（旧规则不用它）。
+    /// </summary>
+    public static FineRadiusPlan FineRadiusPlanFor(DesignSpec d, DesignInputs baseIn, double tabLengthFactor = 0.0, bool adaptive = true)
+    {
+        if (d is null) throw new ArgumentNullException(nameof(d));
+        if (baseIn is null) throw new ArgumentNullException(nameof(baseIn));
+        if (d.IsDrawingRecord) throw new InvalidOperationException(DesignSpec.DrawingRefusal + $"（档「{d.Name}」）—— 图纸档的细区半径计划走 FineRadiusPlanFor(Shape, …)。");
+        if (double.IsNaN(tabLengthFactor) || tabLengthFactor < 0)
+            throw new ArgumentOutOfRangeException(nameof(tabLengthFactor), "舌长系数只能是 0（生产）或正数（改回对照）。");
+        // 改回（旧规则、不放大）既不用热长度也不用上限 ⇒ 不造算例（门在大网格上逐点调它，造算例要几十毫秒一次）。
+        if (tabLengthFactor > 0)
+            return MeshAdapt.FineRadiusPlanOf(d.DiscRadiusMm, d.HoleRadiusMm, d.TabLengthMm, double.NaN, "", double.NaN, "改回旧规则不放大，不量上限", tabLengthFactor, adaptive);
+        var lc = d.BuildCase(baseIn, checkRamp: false);
+        var (cap, capSrc) = MeshAdapt.PlateOuterRadiusMm(lc);
+        var (ell, ellSrc) = MeshAdapt.ThermalLengthMm(lc);
+        return MeshAdapt.FineRadiusPlanOf(d.DiscRadiusMm, d.HoleRadiusMm, d.TabLengthMm, ell, ellSrc, cap, capSrc, tabLengthFactor, adaptive);
+    }
+
+    /// <summary>
+    /// ★ F7′（2026-09-23）：图纸路径的细区半径计划 —— 盘半径、孔半径、舌端取图纸分析结果；热长度按 <paramref name="thermalCase"/>（走图纸路径的整线算例）量；
+    /// 上限先从算例量（内存厚度场的材料包络），量不到（只有 .3dm 文件路径）再取图纸分析结果的外廓（<see cref="MeshAdapt.PlateOuterRadiusMm(PlateShapeAnalyzer.Shape)"/>）。
+    /// </summary>
+    public static FineRadiusPlan FineRadiusPlanFor(PlateShapeAnalyzer.Shape sh, LineCase thermalCase, double tabLengthFactor = 0.0, bool adaptive = true)
+    {
+        if (sh is null) throw new ArgumentNullException(nameof(sh));
+        if (thermalCase is null) throw new ArgumentNullException(nameof(thermalCase));
+        if (double.IsNaN(tabLengthFactor) || tabLengthFactor < 0)
+            throw new ArgumentOutOfRangeException(nameof(tabLengthFactor), "舌长系数只能是 0（生产）或正数（改回对照）。");
+        double tabLen = double.IsNaN(sh.TabEndXMm) ? 0 : Math.Abs(sh.TabEndXMm);
+        if (tabLengthFactor > 0)
+            return MeshAdapt.FineRadiusPlanOf(sh.DiscRadiusMm, sh.HoleRadiusMm, tabLen, double.NaN, "", double.NaN, "改回旧规则不放大，不量上限", tabLengthFactor, adaptive);
+        var (cap, capSrc) = MeshAdapt.PlateOuterRadiusMm(thermalCase);
+        if (!double.IsFinite(cap)) (cap, capSrc) = MeshAdapt.PlateOuterRadiusMm(sh);
+        var (ell, ellSrc) = MeshAdapt.ThermalLengthMm(thermalCase);
+        return MeshAdapt.FineRadiusPlanOf(sh.DiscRadiusMm, sh.HoleRadiusMm, tabLen, ell, ellSrc, cap, capSrc, tabLengthFactor, adaptive);
+    }
+
+    /// <summary>F7 之前的规则里舌长那一项的系数（出处未查到：代码自 6f191b2 起就是这个数，HANDOVER 只列了公式）。只供门做「改回」对照，生产不用。</summary>
+    public const double LegacyTabLengthFactor = 0.35;
 
     /// <summary>「特征尺寸 → 网格尺寸」只有这一处（解析设计与图纸路径共用）：最小特征 ÷ 每特征格数。</summary>
     private static double FineFromFeatures(IEnumerable<double> featureSizesMm) => MeshAdapt.RequiredFineMm(featureSizesMm);
@@ -224,8 +292,19 @@ public static class MeshVerify
     /// 取不到（图纸没分析出任何一级）就**拒答**：返回 Refused 非空，调用方把它原样写进结果，不抛。
     /// 病：此前 .3dm 模式的加密复算拿 PageToDesignSpec 造的解析板复核 —— 验的是另一个零件。
     /// </summary>
+    /// <remarks>F7′（2026-09-23）：半径是细区半径计划（<see cref="FineRadiusPlanFor(PlateShapeAnalyzer.Shape, LineCase, double, bool)"/>）的初值，热长度按 <paramref name="thermalCase"/>（走图纸路径的整线算例）量。</remarks>
     public static (double FineMm, double RadiusMm, double InnerRadiusMm, string? Refused)
-        RequiredMeshFor(PlateShapeAnalyzer.Shape sh, double wallMm, bool weldAsGeometricFeature = false)
+        RequiredMeshFor(PlateShapeAnalyzer.Shape sh, double wallMm, LineCase thermalCase, bool weldAsGeometricFeature = false, double tabLengthFactor = 0.0)
+    {
+        var (fine, innerR, refused) = ShapeFeatureMesh(sh, wallMm, weldAsGeometricFeature);
+        if (refused is not null) return (double.NaN, double.NaN, double.NaN, refused);
+        // F7′（2026-09-23）：半径 = 细区半径计划的初值（全仓唯一来源；热长度按 thermalCase 量）；tabLengthFactor 只供门改回，生产不传。
+        double radius = FineRadiusPlanFor(sh, thermalCase, tabLengthFactor).RadiusMm;
+        return (fine, radius, innerR, null);
+    }
+
+    /// <summary>F7′（2026-09-23）：图纸路径的细区尺寸、内带半径与拒答（原 RequiredMeshFor(Shape) 里与半径无关的那部分，逐字搬出；不需要算例）。</summary>
+    private static (double FineMm, double InnerRadiusMm, string? Refused) ShapeFeatureMesh(PlateShapeAnalyzer.Shape sh, double wallMm, bool weldAsGeometricFeature)
     {
         if (sh is null) throw new ArgumentNullException(nameof(sh));
         var feats = new List<double>();
@@ -242,13 +321,11 @@ public static class MeshVerify
         double weldLeg = Math.Max(tMax, wallMm);
         if (weldAsGeometricFeature && weldLeg > 1e-9) feats.Add(weldLeg);
         if (feats.Count == 0 || !(sh.HoleRadiusMm > 0))
-            return (double.NaN, double.NaN, double.NaN,
+            return (double.NaN, double.NaN,
                     "图纸没分析出特征尺寸（没有厚度分级或没有管孔），加密复算不能判 —— 请先做「分析几何变数」并确认图层里有这片法兰。");
         double fine = FineFromFeatures(feats);
-        double tabLen = double.IsNaN(sh.TabEndXMm) ? 0 : Math.Abs(sh.TabEndXMm);
-        double radius = MeshAdapt.RequiredFineRadiusMm(new[] { sh.DiscRadiusMm, tabLen * 0.35 }, sh.HoleRadiusMm);
         double innerR = MeshAdapt.InnerRadiusFor(sh.HoleRadiusMm, weldLeg);
-        return (fine, radius, innerR, null);
+        return (fine, innerR, null);
     }
 
     public static Result Run(DesignSpec d, DesignInputs baseIn,
@@ -265,14 +342,17 @@ public static class MeshVerify
             progress?.Report("⚠ " + refused.Verdict);
             return refused;
         }
-        var (h0, radius) = RequiredMeshFor(d, weldAsGeometricFeature);
+        // F7′（2026-09-23，决 29 自适应）：细区尺寸由几何特征定；细区半径由计划给（初值 + 解后按热点放大，全仓唯一来源）。
+        double h0 = RequiredFineMmFor(d, weldAsGeometricFeature);
+        var plan = FineRadiusPlanFor(d, baseIn);
+        double radius = plan.RadiusMm;
         double weldLegV = Math.Max(d.TabThickMm.Max(), d.WallMm);
         double innerR = MeshAdapt.InnerRadiusFor(d.HoleRadiusMm, weldLegV);
         // ★ R47 C（2026-09-13）：每档造 LineCase 的活抽成工厂，本重载只负责「解析设计怎么造」。
         //   .3dm 模式由页面把自己的 LineCase（FlangePlates 为空、FlangeFile3dm 非空）交给下面那个工厂重载，
         //   不再拿 PageToDesignSpec 造的解析板去复核另一个零件。
         return Run(AnalyticCaseFactory(d, baseIn, radius, innerR),
-                   h0, radius, innerR, maxCells, maxRounds, progress, cancel);
+                   h0, plan, innerR, maxCells, maxRounds, progress, cancel);
     }
 
     /// <summary>
@@ -319,14 +399,44 @@ public static class MeshVerify
                              IProgress<string>? progress = null,
                              CancellationToken cancel = default)
     {
-        var (h0, radius, innerR, refused) = RequiredMeshFor(shape, wallMm, weldAsGeometricFeature);
+        if (caseFactory is null) throw new ArgumentNullException(nameof(caseFactory));
+        // F7′（2026-09-23）：热长度要按走图纸路径的整线算例量 ⇒ 先让工厂造一个（只造不解；造算例不载 .3dm、不解场）。
+        //   拒答（没分析出特征尺寸）在造算例之前判，与改前同序。
+        var (h0, innerR, refused) = ShapeFeatureMesh(shape, wallMm, weldAsGeometricFeature);
         if (refused is not null)
         {
             var r0 = new Result { Verdict = "✗ " + refused + "　⇒ **不能说这个设计过了**", Converged = false };
             progress?.Report(r0.Verdict);
             return r0;
         }
-        return Run(caseFactory, h0, radius, innerR, maxCells, maxRounds, progress, cancel);
+        var plan = FineRadiusPlanFor(shape, caseFactory(h0, h0));
+        return Run(caseFactory, h0, plan, innerR, maxCells, maxRounds, progress, cancel);
+    }
+
+    /// <summary>
+    /// ★ F7（2026-09-23，Opus 5.5）：「细区盖没盖住热点」—— 由 <see cref="Run(Func{double, double, LineCase}, double, double, double, int, int, IProgress{string}?, CancellationToken)"/> 主循环原样抽出（逐字同式），
+    /// 热点门（R48F7FineRadiusDecoupleTests）调同一份。取三种热点里最远的：每片 圆盘区峰 DiscMaxRMm、舌片区峰 TabMaxRMm、局部热稳定 LocalStabRMm；
+    /// 任一片三者全算不出 ⇒ 判不了。null = 盖住了（峰 + 余量 ≤ 细区半径）；否则返回原样呈现给人的那句话（MeshAdapt.PeakVerdict）。
+    /// </summary>
+    public static string? HotspotVerdict(LineResult r, double innerR, double radius)
+    {
+        if (r is null) throw new ArgumentNullException(nameof(r));
+        var blindPeak = r.Flanges.Where(f => double.IsNaN(f.DiscMaxRMm) && double.IsNaN(f.TabMaxRMm)
+                                          && double.IsNaN(f.LocalStabRMm)).Select(f => f.Name).ToArray();
+        double peakR = HotspotRadiusMm(r);
+        string? peakBad = MeshAdapt.PeakVerdict(peakR, innerR, radius);
+        if (peakBad is not null && blindPeak.Length > 0) peakBad += $"（算不出热点位置的片：{string.Join("、", blindPeak)}）";
+        return peakBad;
+    }
+
+    /// <summary>F7（2026-09-23）：<see cref="HotspotVerdict"/> 用的「最远热点半径」mm；没有片、或任一片三种热点全算不出 ⇒ NaN。</summary>
+    public static double HotspotRadiusMm(LineResult r)
+    {
+        if (r is null) throw new ArgumentNullException(nameof(r));
+        bool blind = r.Flanges.Any(f => double.IsNaN(f.DiscMaxRMm) && double.IsNaN(f.TabMaxRMm) && double.IsNaN(f.LocalStabRMm));
+        return r.Flanges.Length == 0 || blind ? double.NaN
+             : r.Flanges.SelectMany(f => new[] { f.DiscMaxRMm, f.TabMaxRMm, f.LocalStabRMm })
+                .Where(v => !double.IsNaN(v)).DefaultIfEmpty(double.NaN).Max();
     }
 
     /// <summary>
@@ -336,6 +446,9 @@ public static class MeshVerify
     /// 复核的三条交付判据（管孔净流入、最热铂高出热偶读数、管根低于热偶读数）里有判不了或没有数的。
     /// 此前主循环只挡 Ok = false，没收敛或判不了的数照样进档间差值，照样可能打上「网格无关」并被界面当已验（LineDesignPage.VerifyMeshAsync 读 Converged）。
     /// </summary>
+    /// <summary>F7′：按判据名前缀取实际值（与主循环里的 V 同一式；到上限拒答那一支记轨迹用）。</summary>
+    private static double V0(LineResult r, string k) => r.Checks.FirstOrDefault(c => c.Name.StartsWith(k, StringComparison.Ordinal))?.Actual ?? double.NaN;
+
     public static string TierUnusableWhy(LineResult r)
     {
         if (r is null) return "没有整线解";
@@ -358,18 +471,47 @@ public static class MeshVerify
     /// 解析设计与图纸路径共用这一段，差别只在工厂怎么造。
     /// </summary>
     /// <param name="h0">起始网格 mm（由几何特征算出，不是挑的数）。</param>
-    /// <param name="radius">中带（细化）半径 mm。</param>
+    /// <param name="radius">中带（细化）半径的**初值** mm（调用方给定；F7′ 起按热点自适应放大，同生产，见下一个重载）。</param>
     /// <param name="innerR">内带半径 mm。</param>
     public static Result Run(Func<double, double, LineCase> caseFactory,
                              double h0, double radius, double innerR,
                              int maxCells = 40000, int maxRounds = 6,
                              IProgress<string>? progress = null,
                              CancellationToken cancel = default)
+        => Run(caseFactory, h0, MeshAdapt.GivenFineRadiusPlan(radius), innerR, maxCells, maxRounds, progress, cancel);
+
+    /// <summary>
+    /// ★ F7′（2026-09-23，Opus 5.5，C4′；决 29 自适应）：**逐档加密的主循环**（工厂重载的本体）。细区半径由 <paramref name="plan"/> 给：
+    /// 每档解完核「细区盖没盖住热点」（<see cref="HotspotVerdict"/>，判法 <see cref="MeshAdapt.PeakVerdict"/> 一个数不动），
+    /// 盖不住且计划自适应 ⇒ 按 <see cref="MeshAdapt.GrowFineRadius"/> 放大半径、**从第一档重来**（档间比较必须同一族网格：只差 h，半径不许在档间变 —— 同 Solver 里 navOpt 那段记的 9.8 W 病）；
+    /// 放大到上限仍盖不住 ⇒ 当场拒答返回（不再空跑完阶梯，审查 P8）。计划不放大（改回旧规则、归因用的 adaptive = false）⇒ 与改前**同一条控制流**：每档记下那句话、跑完阶梯、判「不算数」
+    /// （审查 T6：这条控制流只由门 d 的合成注入验过；逐位只在「固定半径单次场解」上由门 e 验过，本循环在改回计划下没有实场逐位门）。
+    /// 终止：每次放大至少一粗格、上限有限 ⇒ 放大次数有限；每次重来最多 <paramref name="maxRounds"/> 档。
+    /// </summary>
+    public static Result Run(Func<double, double, LineCase> caseFactory,
+                             double h0, FineRadiusPlan plan, double innerR,
+                             int maxCells = 40000, int maxRounds = 6,
+                             IProgress<string>? progress = null,
+                             CancellationToken cancel = default)
+        => RunCore(caseFactory, h0, plan, innerR, maxCells, maxRounds, progress, cancel, (lc, pr, ct) => LineRunner.Run(lc, pr, ct));
+
+    /// <summary>
+    /// F7′（2026-09-23）：主循环本体。<paramref name="solve"/> = 整线解（生产恒为 <see cref="LineRunner.Run"/>）；只给门（InternalsVisibleTo）注入合成的整线结果，
+    /// 在毫秒内验「放大 → 重来 → 半径只增不减 → 到上限拒答、不死循环」这套控制逻辑（放大、判法、拒答文字全是生产这一份）。
+    /// </summary>
+    internal static Result RunCore(Func<double, double, LineCase> caseFactory,
+                                   double h0, FineRadiusPlan plan, double innerR,
+                                   int maxCells, int maxRounds,
+                                   IProgress<string>? progress, CancellationToken cancel,
+                                   Func<LineCase, IProgress<string>?, CancellationToken, LineResult> solve)
     {
         if (caseFactory is null) throw new ArgumentNullException(nameof(caseFactory));
+        if (plan is null) throw new ArgumentNullException(nameof(plan));
+        if (solve is null) throw new ArgumentNullException(nameof(solve));
         if (!(h0 > 0)) throw new ArgumentOutOfRangeException(nameof(h0), "起始网格必须为正");
-        var res = new Result();
+        var res = new Result { RadiusPlan = plan };
         var sw = System.Diagnostics.Stopwatch.StartNew();
+        progress?.Report("加密复算：" + plan.Describe());
 
         // ★★ 按特征分区（A⑭，2026-08-29）：**只加密内带**。
         //   此前是把「按最小特征（焊脚）定的极细尺寸」铺满「按最大特征（盘径/舌长）定的大区域」，
@@ -438,6 +580,16 @@ public static class MeshVerify
             //   窗口 3.3 W 容得下，根本不必细到特征尺寸。
             var lc = caseFactory(h, h);
             if (lc is null) throw new InvalidOperationException("加密复算：工厂没造出 LineCase");
+            // ★ F7′ 审查 L-1（2026-09-23）：调用方直接给的初值（GivenFineRadiusPlan，上限未量）超过本算例的板料外缘 ⇒ 截到上限（R ≥ 上限网格逐节点相同），
+            //   免得同一张全细网格判词取决于初值有没有超过上限。改回／不放大的计划不截（CapToPlate 只动自适应计划）。
+            if (plan.Adaptive && !double.IsFinite(plan.CapMm))
+            {
+                var capped = MeshAdapt.CapToPlate(plan, MeshAdapt.PlateOuterRadiusMm(lc).Mm, "本次算例的材料包络（PlateOuterRadiusMm）");
+                if (!ReferenceEquals(capped, plan)) { plan = capped; res.RadiusPlan = plan; }
+            }
+            // ★ F7′（2026-09-23）：细区半径**只由计划给**（工厂里写的是初值；放大之后以计划为准）。改回与初值相同时逐位不变。
+            lc.MeshFineRadiusMm = plan.RadiusMm;
+            lc.MeshFineRadiusPlan = plan;
             // ★ K 路（2026-09-15，Opus 5）：主循环按「管孔净流入／最热铂高出热偶读数／管根低于热偶读数」三列写成；本工况的复核名单（按分工况表）与之不同 ⇒ 拒答、不算，不许拿位置去对名字。
             if (RefuseForState(lc) is { } stateRefused)
             {
@@ -449,7 +601,7 @@ public static class MeshVerify
             // ★ 内层**一直在报**（外层耦合 n/600、段 i/n），此前这里传 null 把它全扔了。
             //   限流转发：内层一秒可能报几十条，全转会把日志淡掉（淡掉 = 等于没报）。
             var inner = new ThrottledProgress(progress, 20, $"     · {h:0.000} mm ");
-            var r = LineRunner.Run(lc, inner, cancel);
+            var r = solve(lc, inner, cancel);
             swOne.Stop();
             if (!r.Ok)
             {
@@ -483,13 +635,46 @@ public static class MeshVerify
             //   现在取三种热点里最远的那个：圆盘区峰、舌片区峰（TabMaxRMm，两个内置档在 31–33，
             //   换个几何可以远在舌片上）、局部热稳定最不稳那一格（LocalStabRMm）。
             //   任一片三者全算不出 ⇒ 判不了（原来 Where(!NaN) 会把那一片静默丢掉 —— 与 ⑤⑥ 同病）。
-            var blindPeak = r.Flanges.Where(f => double.IsNaN(f.DiscMaxRMm) && double.IsNaN(f.TabMaxRMm)
-                                              && double.IsNaN(f.LocalStabRMm)).Select(f => f.Name).ToArray();
-            double peakR = r.Flanges.Length == 0 || blindPeak.Length > 0 ? double.NaN
-                         : r.Flanges.SelectMany(f => new[] { f.DiscMaxRMm, f.TabMaxRMm, f.LocalStabRMm })
-                            .Where(v => !double.IsNaN(v)).DefaultIfEmpty(double.NaN).Max();
-            string? peakBad = MeshAdapt.PeakVerdict(peakR, innerR, radius);
-            if (peakBad is not null && blindPeak.Length > 0) peakBad += $"（算不出热点位置的片：{string.Join("、", blindPeak)}）";
+            //   F7（2026-09-23）：这一段原样抽成 HotspotVerdict（逐字同式），让热点门拿生产这一份去判，不手抄。
+            string? peakBad = HotspotVerdict(r, innerR, plan.RadiusMm);
+            // ★★★★★ F7′（2026-09-23，决 29 自适应）：盖不住 ⇒ 按计划放大、从第一档重来；到上限仍盖不住 ⇒ 当场拒答（P8：不再空跑完阶梯）。
+            //   峰位算不出（NaN）与计划不放大 ⇒ GrowFineRadius 原样返回，走下面的旧路（记下那句话、继续、最后判「不算数」）。
+            {
+                double peakR = HotspotRadiusMm(r);
+                if (peakBad is null) res.RadiusTrace.Add((h, plan.RadiusMm, peakR, "盖住"));
+                else
+                {
+                    var (capCase, _) = MeshAdapt.PlateOuterRadiusMm(lc);
+                    var g = MeshAdapt.GrowFineRadius(plan, peakR, innerR, lc.MeshCoarseMm, capCase, $"加密复算第 {it + 1} 档（{h:0.000} mm）解后");
+                    if (g.Refused)
+                    {
+                        plan = g.Plan; res.RadiusPlan = plan;
+                        res.RadiusTrace.Add((h, lc.MeshFineRadiusMm, peakR, "到上限拒答"));
+                        res.PeakOutsideFine = g.Verdict;
+                        res.Line = r; res.FineMm = h; res.Cells = r.MeshCells; res.Converged = false;
+                        res.Trace.Add((h, r.MeshCells, V0(r, LineResult.Key.NetFlux), V0(r, LineResult.Key.HotOverTc), V0(r, LineResult.Key.ColdUnderTc),
+                                       r.Segments.Sum(x => x.MassG) + r.Flanges.Sum(f => f.MassG), swOne.Elapsed.TotalSeconds));
+                        res.SecondsTotal = sw.Elapsed.TotalSeconds;
+                        res.Verdict = "✗ **本次复核不算数** —— " + g.Verdict!.TrimStart('★', ' ')
+                                    + "　（加密阶梯在这一档停下：再放大网格也不变，后面的档同样盖不住）　" + plan.Describe();
+                        progress?.Report("   " + g.Verdict);
+                        return res;
+                    }
+                    if (g.Grew)
+                    {
+                        res.RadiusTrace.Add((h, plan.RadiusMm, peakR, $"放大 → {g.Plan.RadiusMm:0.###} mm，从第一档重来"));
+                        plan = g.Plan; res.RadiusPlan = plan;
+                        progress?.Report($"   细区没盖住热点 ⇒ 放大：{plan.Steps[^1].Why}；已解的 {res.Trace.Count + 1} 档作废（旧半径上解的，不与新半径比），从 {h0:0.000} mm 重来。");
+                        foreach (var t in res.Trace) res.DiscardedTiers.Add((t.Fine, t.Cells, lc.MeshFineRadiusMm, t.Sec));
+                        res.DiscardedTiers.Add((h, r.MeshCells, lc.MeshFineRadiusMm, swOne.Elapsed.TotalSeconds));
+                        res.Trace.Clear(); res.LastDeltas = new(); res.PeakOutsideFine = null;
+                        prev = null; prevDeltas = null; prevRemainK = double.NaN;
+                        h = h0; it = -1;
+                        continue;
+                    }
+                    res.RadiusTrace.Add((h, plan.RadiusMm, peakR, double.IsNaN(peakR) ? "峰位算不出" : "计划不放大"));
+                }
+            }
             // ★ R48 续（2026-09-14，Opus 5）：**每档以这一档为准**，不许只设不清 ——
             //   原来早档峰在粗区、后档盖住了，那句话照样一直挂在结果上。
             res.PeakOutsideFine = peakBad;

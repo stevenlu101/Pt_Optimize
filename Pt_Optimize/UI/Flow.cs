@@ -686,6 +686,17 @@ public static class Flow
         }
 
         // ★★★ 全过 ≠ 可信。判据是在**导航网格**上判的，先验一次它准不准（2026-08-30）。
+        // F7′ 审查 F2（2026-09-23）：当前这组参数上加密复算**做过了、判不了**（热点拒答）⇒ 不再指向「它会自己接着加密复算」（再点一次也是同一句话）。
+        if (!(st.MeshVerified && st.VerifiedFresh) && st.MeshVerifyRefusedWhy.Length > 0)
+            return st.MeshVerifyRefusedAtCap
+                ? new("shape.search",
+                      "加密复算对当前这组参数**做过了，但判不了**：细区半径已放大到板料外缘，仍不满足热点检查（最远热点 r + 10 mm ≤ 细区半径）"
+                    + " ⇒ 温度类判据不算数，不能出图；再点一次也是同一句话。"
+                    + "这是检查规则在全细网格上的口径拒答（不是网格分辨不出；全细网格上是否仍按此拒答【待决定】）。"
+                    + "能动的是形状（让最远热点离管轴的半径 ≤ 板料最大半边长 − 10 mm），或等业主定口径。")
+                : new("core.runLine",
+                      "加密复算对当前这组参数**做过了，但判不了**：峰位算不出（有一片三种热点位置都算不出来），判不了细区有没有盖住热点"
+                    + " ⇒ 温度类判据不算数，不能出图。不是「热点贴着板料外缘」—— 查判词括号里列的片，看它为什么算不出热点位置。");
         if (!(st.MeshVerified && st.VerifiedFresh))
             return new("core.verifyMesh",
                   "判据全过且是当前参数的解 —— 但这些数是在**导航网格**上算的，还没验过准不准。"
@@ -803,6 +814,19 @@ public sealed class FlowState
     ///   对话里跑得漂亮、工程师点按钮却碰不到，正是本项目最怕的那种落差。
     /// </summary>
     public bool MeshVerified;
+
+    /// <summary>
+    /// F7′（2026-09-23，审查 P4）：做过加密复算、但热点拒答（细区半径放大到上限仍盖不住热点，或峰位算不出）时的原句；空 = 没有这回事。
+    /// 有它时提示与报告要说「做过了、判不了」，不能说成「还没加密复算」。
+    /// </summary>
+    public string MeshVerifyRefusedWhy = "";
+
+    /// <summary>
+    /// F7′ 审查 R-7／F2（2026-09-23）：<see cref="MeshVerifyRefusedWhy"/> 的来源是「细区半径已放大到板料外缘仍不满足热点检查」（true），
+    /// 还是「峰位算不出」（false）。两种原因、两句话：后者没有热点位置，不许说成「热点贴着板料外缘」。
+    /// 发布方只在拒答那次的参数快照等于当前参数时才发布这两位（改了设计就退回「还没对当前设计做加密复算」）。
+    /// </summary>
+    public bool MeshVerifyRefusedAtCap;
 
     /// <summary>复核那一刻的参数快照 —— 与 <see cref="CurrentSnap"/> 不等就作废。</summary>
     public object? VerifiedSnap;
@@ -1040,6 +1064,11 @@ public static class Gate
             return new Status(stage, bypassed, bypassed, gate.LockedWhy,
                 st.MeshVerified
                     ? "参数在加密复算之后又动过了 —— 回「整线核算」页再点一次「◆ 加密复算（算到数不再变）」。"
+                    : st.MeshVerifyRefusedWhy.Length > 0   // F7′（2026-09-23，审查 P4）：做过了、判不了 ≠ 没做过；审查 R-7／F2／R-4：只对当前参数发布，原因分两句
+                    ? "加密复算对当前这组参数做过了，但**判不了**：" + st.MeshVerifyRefusedWhy.TrimStart('★', ' ')
+                      + (st.MeshVerifyRefusedAtCap
+                         ? "　⇒ 温度类判据不算数，不能出图；这不是「没做过」，再点一次也是同一句话。细区已铺满板料，这次是热点检查规则（最远热点 r + 10 mm ≤ 细区半径）的口径拒答，不是网格分辨不出（全细网格上是否仍按此拒答【待决定】）。"
+                         : "　⇒ 温度类判据不算数，不能出图；这不是「没做过」。原因是峰位算不出（没有热点位置），不是热点贴着板料外缘 —— 查判词括号里列的片。")
                     : "判据是在**导航网格**上判的，还没验过它准不准。"
                       + "回「整线核算」页点「◆ 加密复算（算到数不再变）」——"
                       + "它会把网格一档档加密，直到判据不再变（实测 10–40 分钟，随时可取消）。"

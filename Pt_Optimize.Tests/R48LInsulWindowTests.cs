@@ -66,7 +66,7 @@ public class R48LInsulWindowTests
         void Flush() => File.WriteAllText(file, sb.ToString(), new UTF8Encoding(true));
 
         var opt = new InsulWindow.Options { Cap = ScanCap };
-        var (reqFine, reqRadius) = MeshVerify.RequiredMeshFor(d0);
+        var (reqFine, reqRadius) = MeshVerify.RequiredMeshFor(d0, p);
         var meshOpt = new SolverOptions { FineMm = reqFine, FineRadiusMm = reqRadius };
 
         W($"R48 L 路　**舌保温的可行窗口有多宽**　{which}（{d0.Name}）");

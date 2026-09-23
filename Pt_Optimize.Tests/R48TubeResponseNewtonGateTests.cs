@@ -88,7 +88,7 @@ public class R48TubeResponseNewtonGateTests
         Solver.ApplySectionFloor(d, p, new SolverOptions(), new SolverResult(), null, null);
         d.DiscInsulMm = new[] { 10.5, 7.5, 7.5, 11.0 };
         d.TabInsulMm = new[] { 7.0, 3.0, 3.5, 9.0 };
-        double radius = MeshVerify.RequiredMeshFor(d).RadiusMm;
+        double radius = MeshVerify.RequiredMeshFor(d, p).RadiusMm;
         const double dq = 2.0, tol = 0.25;
         LineCase NewCase(int s)
         {

@@ -60,7 +60,7 @@ public class R48J_ExperimentProbeTests
     {
         var p = new DesignInputs();
         var d = DesignSpec.W08.Clone();
-        var (fine, radius) = MeshVerify.RequiredMeshFor(d);
+        var (fine, radius) = MeshVerify.RequiredMeshFor(d, p);
         var opt = new SolverOptions { FineMm = fine, FineRadiusMm = radius, MaxRounds = 0 };
         var pr = new Probe("J1_终局复核网格", d.BuildCase(p, checkRamp: true));
         pr.L($"算例：DesignSpec.W08（「{d.Name}」），MeshVerify.RequiredMeshFor ⇒ 细网格 {fine} mm、细区半径 {radius} mm；SolverOptions.MaxRounds = 0（导航遍一轮都不跑 ⇒ 第一遍必然没走通 ⇒ lastOpt = 导航选项）");
@@ -162,7 +162,7 @@ public class R48J_ExperimentProbeTests
     {
         var p = new DesignInputs();
         var d = DesignSpec.W08.Clone();
-        var (_, radius) = MeshVerify.RequiredMeshFor(d);
+        var (_, radius) = MeshVerify.RequiredMeshFor(d, p);
         var pr = new Probe("J3_一片温度场不收敛", d.BuildCase(p, checkRamp: false));
         pr.L("实验手段：临时在 ShellThermal 外层 Picard 轮数上限加实验钩子（标 EXP-J3-TEMP，实验后删），环境变量 PT_EXP_J3_PLATE=片号 时只把那一片压到 2 轮。");
         pr.L("先在导航网格上单解一次整线，确认那一片真的判成「场没解到位」、且没熔、Ok 仍为真（否则走的是熔化那一支，不是本实验要的情形）。");
@@ -205,7 +205,7 @@ public class R48J_ExperimentProbeTests
     {
         var p = new DesignInputs();
         var d = DesignSpec.W08.Clone();
-        var (h0, radius) = MeshVerify.RequiredMeshFor(d);
+        var (h0, radius) = MeshVerify.RequiredMeshFor(d, p);
         double innerR = MeshAdapt.InnerRadiusFor(d.HoleRadiusMm, Math.Max(d.TabThickMm.Max(), d.WallMm));
         var pr = new Probe("J4_加密复算耦合没收敛", d.BuildCase(p, checkRamp: true));
         var fac = MeshVerify.AnalyticCaseFactory(d, p, radius, innerR);
@@ -230,7 +230,7 @@ public class R48J_ExperimentProbeTests
         var p = new DesignInputs();
         // 2026-09-16 Opus 5：原写 Builtin[0]，而 Builtin[0] 就是 W08 ⇒ 09-15 的 _1 文件是 W08 的重复跑（两份数逐位相同）；改成 Builtin[1]（管壁 0.6 · 底档）。
         var d = (which == 0 ? DesignSpec.W08 : DesignSpec.Builtin[1]).Clone();
-        var (_, radius) = MeshVerify.RequiredMeshFor(d);
+        var (_, radius) = MeshVerify.RequiredMeshFor(d, p);
         var lc = d.BuildCase(p, checkRamp: false);
         Solver.ApplyCaseMesh(lc, new SolverOptions { FineRadiusMm = radius });
         var pr = new Probe($"J6_整片热稳定逐片评_{which}", lc);
@@ -292,7 +292,7 @@ public class R48J_ExperimentProbeTests
         var p = new DesignInputs();
         var d = DesignSpec.W08.Clone().Fit();
         var lc = d.BuildCase(p, checkRamp: false);
-        var (_, radius) = MeshVerify.RequiredMeshFor(d);
+        var (_, radius) = MeshVerify.RequiredMeshFor(d, p);
         var pr = new Probe("J9_整面接触全假可达性");
         var g = lc.FlangePlates[0];
         pr.L($"算例 W08 片0 板件；界面压接长控件下限 3 mm（LineDesignPage._clampLen）；DesignSpec.W08.ClampLengthMm = {d.ClampLengthMm}");
@@ -322,7 +322,7 @@ public class R48J_ExperimentProbeTests
             d.SetpointC = d.SetpointC.Take(segs).ToArray(); d.SegLengthMm = d.SegLengthMm.Take(segs).ToArray(); tag += $"_{segs}段";
         }
         d = d.Fit();
-        var (fine, radius) = MeshVerify.RequiredMeshFor(d);
+        var (fine, radius) = MeshVerify.RequiredMeshFor(d, p);
         var pr = new Probe("J8_导航遍抬过头找实例" + tag, d.BuildCase(p, checkRamp: false));
         pr.L($"算例 W08{(tag.Length > 0 ? "（改：" + tag.TrimStart('_') + "；盘半径 " + d.DiscRadiusMm + " mm、段数 " + d.SetpointC.Length + "）" : "")}；判决网格（第二遍）= MeshVerify.RequiredMeshFor ⇒ {fine} mm、半径 {radius} mm。先只跑导航遍（FineMm = 0），看它抬了哪些旋钮。");
         var navOpt = new SolverOptions { FineMm = 0, FineRadiusMm = radius, MaxRounds = 60 };
@@ -419,7 +419,7 @@ public class R48J_ExperimentProbeTests
         var p = new DesignInputs();
         var d0 = DesignSpec.W08.Clone().Fit();
         var pr = new Probe("J10乙_保温搜索内层网格截日志");
-        double radius = MeshVerify.RequiredMeshFor(d0).RadiusMm;
+        double radius = MeshVerify.RequiredMeshFor(d0, p).RadiusMm;
         foreach (var dt in new[] { 0.0, 0.5, 1.5 })
         {
             var d = d0.Clone();

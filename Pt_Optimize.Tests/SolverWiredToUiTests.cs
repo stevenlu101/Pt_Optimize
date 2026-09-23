@@ -71,7 +71,7 @@ public class SolverWiredToUiTests
     public void 精算开了细网格第二遍且网格来源唯一()
     {
         string s = Ui("LineDesignPage.cs");
-        Assert.Contains("MeshVerify.RequiredMeshFor(win.d)", s);
+        Assert.Contains("MeshVerify.RequiredMeshFor(win.d, _base)", s);   // F7′（2026-09-23，变因 = 决 29 自适应：签名加工艺参数；原钉 "MeshVerify.RequiredMeshFor(win.d)"）
         Assert.Contains("FineMm = finFine, FineRadiusMm = finFineR", s);
     }
 

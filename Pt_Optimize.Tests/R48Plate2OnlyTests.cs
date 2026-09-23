@@ -64,7 +64,7 @@ public class R48Plate2OnlyTests
         Say($"{"片2保温",9}{"管孔净流入W",13}{"裕/容差",10}{"增量温降K",12}{"裕/容差",10}{"圆盘区K",10}{"截面J",8}{"全过",6}{"用时s",7}");
 
         var p = new DesignInputs();
-        var (_, radius) = MeshVerify.RequiredMeshFor(DesignSpec.W08.Clone());
+        var (_, radius) = MeshVerify.RequiredMeshFor(DesignSpec.W08.Clone(), p);
         bool thick = false;
 
         foreach (double ins2 in new[] { 2.90, 2.50, 2.10, 1.70 })
