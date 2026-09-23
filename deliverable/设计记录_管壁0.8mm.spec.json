@@ -1,1 +1,0 @@
-{"name":"管壁 0.8 · 留余量","wallMm":0.8,"tubeIdMm":50,"segLenMm":300,"segCount":3,"discR":30,"holeR":25.8,"tabX":-140,"tabHW":30,"filletR":3,"clampLenMm":40,"ringR":[28.8,31.8],"plates":[{"name":"入口","t":0.89,"ring":[0.89,0.89]},{"name":"共用1","t":2.45,"ring":[2.45,2.45]},{"name":"共用2","t":2.35,"ring":[2.35,2.35]},{"name":"出口","t":0.73,"ring":[0.73,0.73]}]}
