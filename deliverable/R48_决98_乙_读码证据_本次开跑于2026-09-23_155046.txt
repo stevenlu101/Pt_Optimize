@@ -1,0 +1,117 @@
+开跑时刻 2026-09-23T15:50:46+00:00  主树 1816fc6  （只读 grep，未构建、未跑测试）
+== 1 抽取器源码位置
+Pt_Optimize.Geom/Program.cs
+Pt_Optimize.Geom/Pt_Optimize.Geom.csproj
+1760 Pt_Optimize.Geom/Program.cs
+16:         · TargetFramework = net7.0-windows   Rhino 8 引擎 = .NET 7，进程内宿主必须同代
+17:         · PlatformTarget  = x64              RhinoCommon 8 仅 64-bit
+18:         · 只引 Rhino.Inside，不显式引 RhinoCommon 包：编译期由 Rhino.Inside 的依赖带出，
+23:    <TargetFramework>net7.0-windows</TargetFramework>
+24:    <PlatformTarget>x64</PlatformTarget>
+38:    <PackageReference Include="Rhino.Inside" Version="8.0.7-beta" />
+== 2 thickness 模式入口与参数
+35:        if (args.Length > 0 && args[0] == "thickness")
+50:            try { rc = RunThickness(f3, layer, yPlane, step); }
+419:    private static int RunThickness(string path, string layerName, double yPlane, double step)
+433:                if (ly == null || ly.Name.IndexOf(layerName, StringComparison.OrdinalIgnoreCase) < 0) continue;
+477:                    if (ox && oz && oy) Union(i, j);
+536:                    //   步长 1／0.5／0.25 都会正中踩上）时，射线与实体只擦边不穿入，CurveBrep 给 0 或 1 个交点 ⇒ 这一整列／整排
+540:                    //   CurveBrep 把离面一个容差以内的点也算交点。挪 5 个容差（0.005 mm）就离开了擦边带，厚度仍是边上的厚度。
+541:                    double xr = x, zr = z, inward = 5 * tol;
+548:                        if (!Rhino.Geometry.Intersect.Intersection.CurveBrep(
+562:                ["planeY"] = 0.5 * (bb.Min.Y + bb.Max.Y),
+565:                ["groupCount"] = groups.Count,
+566:                ["partsUsed"] = parts.Count,
+570:                ["xMinMaterial"] = bb.Min.X, ["xMaxMaterial"] = bb.Max.X,
+== 3 抽取器里已用到的圆/柱 API
+396:            if (srf.TryGetCylinder(out var cyl, tol) && cyl.IsValid)
+744:                    poly.Append(new ArcCurve(new Arc(tDn, new Point3d(discR, 0, 0), tUp)));
+745:                    poly.Append(new ArcCurve(new Arc(tUp, FilletMid(tUp, fUp, cUp), fUp)));
+749:                    poly.Append(new ArcCurve(new Arc(fDn, FilletMid(fDn, tDn, cDn), tDn)));
+758:                    poly.Append(new ArcCurve(new Arc(tn, new Point3d(discR, 0, 0), tp)));
+889:                segs.Add(new ArcCurve(arc));
+1316:        pc.Append(new ArcCurve(new Arc(P(rm + hw, a0), P(rm + hw, c), P(rm + hw, a1))));
+1317:        pc.Append(new ArcCurve(new Arc(P(rm + hw, a1), Cap(a1, +1), P(rm - hw, a1))));
+1318:        pc.Append(new ArcCurve(new Arc(P(rm - hw, a1), P(rm - hw, c), P(rm - hw, a0))));
+1319:        pc.Append(new ArcCurve(new Arc(P(rm - hw, a0), Cap(a0, -1), P(rm + hw, a0))));
+1368:                    pc.Append(new ArcCurve(new Arc(a1, V[(k + 1) % n] + mid * rr, b1)));   // 顶点处的圆角
+1421:                poly.Append(new ArcCurve(arc));                 // 下切点 → +X → 上切点
+1715:                        poly.Append(new ArcCurve(new Arc(tp, new Point3d(-rout2, 0, 0), tn)));
+== 4 主程序侧：DTO、LoadThickness、Warning、ThicknessField 成员
+528:    public static ThicknessField MeasureThickness(string path3dm, string layer,
+611:    private sealed class ThicknessDto
+636:    public static ThicknessField LoadThickness(string path3dm, string layer,
+689:            GroupCount = dto.GroupCount, PlaneY = dto.PlaneY,
+695:            f.Warning = "几何量测子进程没有给出精确材料包络（旧版 Pt_Optimize.Geom）—— 网格轴将按栅格里有材料的格子铺，端点最多差一个栅格步。";
+699:            f.Warning = (f.Warning.Length > 0 ? f.Warning + "　" : "") +
+783:public sealed class ThicknessField : IMaterialField
+785:    public double X0, Z0, Step;
+790:    public int GroupCount = 1;
+792:    public double PlaneY;
+798:    public string Warning = "";
+808:    public double XMinMaterial = double.NaN, XMaxMaterial = double.NaN,
+819:    public (double XMin, double XMax, double ZMin, double ZMax, bool Exact) MaterialEnvelope()
+839:    public ThicknessField WithThickness(double[] t) => new()
+== 5 孔的识别（主程序侧，栅格）
+72:    private static (List<List<int>> voids, int holeIdx) FindVoids(ThicknessField f)
+122:    /// Analyze 里 <c>sh.HoleRadiusMm = Math.Sqrt(voids[holeIdx].Count * a / Math.PI)</c> 那一式，逐字同式）；找不到被材料包围的空腔 = NaN
+127:    public static double HoleRadiusOf(ThicknessField f)
+129:        var (voids, holeIdx) = FindVoids(f);
+171:        var (voids, holeIdx) = FindVoids(f);
+178:            sh.HoleRadiusMm = Math.Sqrt(voids[holeIdx].Count * a / Math.PI);   // 等面积圆半径
+== 6 图纸路径建网格与失配句
+2062:            double holeR = c.TubeIdMm * 0.5 + c.WallMm;
+2081:                       : Geometry3dm.LoadThickness(file, c.FlangeLayer, planeY, stepWanted);
+2130:                mesh = FlangeMesher.BuildFromField(tf, holeR, 0,
+2151:            foreach (var hl in HoleArcDrawingNotes(mesh, fieldRaw, holeR))
+3146:    public static List<string> HoleArcDrawingNotes(ShellMesh mesh, ThicknessField? field, double holeRadiusMm)
+3167:                if (Math.Abs(diff) > field.Step)
+3182:    internal static double DrawingHoleRadiusCached(ThicknessField f)
+== 7 孔圆在网格里假设圆心在原点、F6 锚点读 mesh.HoleRadiusMm
+1716:        m.ComputeHoleTagDiagnostics(holeRadiusMm);
+1851:    public static void AddHoleArcFaces(ShellMesh m, double holeRadiusMm, Func<Vec3, int> tagger, List<(double x0, double x1, double z0, double z1)>[]? rects = null,
+1861:            // 快速排除：矩形离原点最近点 > rh 或最远角 < rh ⇒ 圆不穿过
+1173:            if (anchorOnCircle) { rHole = m.HoleRadiusMm; anchorOnCircleUsed = true; }
+== 8 --geom 旧路：按图层最小圆柱半径当管孔
+779:        double? holeDia = flange?.CylinderRadiiMm.Length > 0 ? flange.CylinderRadiiMm.Min() * 2 : null;
+== 9 门与界面
+13:///   · M2：deliverable/设计记录_管壁0.8mm.3dm「入口」层 vs DesignSpec.Builtin[0] 片 0，同输入：
+19:public class RealDrawingParityTests
+23:        string f = Path.Combine(HandoverDoc.Root(), "deliverable", "设计记录_管壁0.8mm.3dm");   // 只读：图纸输入（2026-09-15 Opus 5 I 路注）
+39:        var f = Geometry3dm.LoadThickness(file, "入口", double.NaN, step);
+79:        var f0 = Geometry3dm.LoadThickness(file, "入口", double.NaN, 0.5);
+91:            var f = Geometry3dm.LoadThickness(file, "入口", double.NaN, step);
+123:        var f = Geometry3dm.LoadThickness(file, "入口", double.NaN, 0.5);
+13:public class DrawingResolutionNoteTests
+294:        sb.AppendLine($"管孔半径      R{s.HoleRadiusMm:0.00} mm   （Ø{2 * s.HoleRadiusMm:0.0}）");
+5896:            var f = Geometry3dm.LoadThickness(src, _layer3dm.Text.Trim(), double.NaN, 0.5);
+114:        double wall = sh.HoleRadiusMm - 25.0;
+== 10 RhinoCommon API（Rhino.Inside 8.0.7-beta 依赖的 RhinoCommon 8.0.23304.9001 的 XML 文档，本机 nuget 缓存）
+M:Rhino.Geometry.Intersect.Intersection.BrepPlane 条目数 1
+M:Rhino.Geometry.Curve.JoinCurves 条目数 3
+M:Rhino.Geometry.Curve.TryGetCircle 条目数 2
+M:Rhino.Geometry.Curve.TryGetArc 条目数 4
+M:Rhino.Geometry.Circle.TryFitCircleToPoints 条目数 1
+M:Rhino.Geometry.Surface.TryGetCylinder 条目数 2
+M:Rhino.Geometry.AreaMassProperties.Compute(Rhino.Geometry.Curve 条目数 2
+P:Rhino.Geometry.AreaMassProperties.AreaError 条目数 1
+M:Rhino.Geometry.Curve.GetDistancesBetweenCurves 条目数 1
+M:Rhino.Geometry.Curve.Contains 条目数 3
+F:Rhino.Geometry.BrepLoopType.Inner 条目数 1
+M:Rhino.Geometry.BrepLoop.To3dCurve 条目数 1
+        <dependency id="RhinoCommon" version="8.0.23304.9001" exclude="Runtime,Build,Analyzers" />
+== 11 真图纸探针耗时（旧记录，Windows，非本次）
+2026-09-13 07:47　真图纸 入口 层（栅格步 0.5，探针 9.0 s，343×125 点）：网格面积 7644.7 vs 解析 7709.1 mm²（差 0.836 %）；抽热 10.779 vs 12.454 W；发热 1076.6 vs 1087.5 W；格数 976 vs 976
+2026-09-13 07:52　真图纸 入口 层（栅格步 0.5，探针 11.5 s，343×125 点）：网格面积 7706.9 vs 解析 7709.1 mm²（差 0.029 %）；抽热 12.413 vs 12.454 W；发热 1087.2 vs 1087.5 W；格数 976 vs 976
+2026-09-14 09:01　真图纸 入口 层（栅格步 0.5，探针 14.6 s，343×125 点）：网格面积 7706.9 vs 解析 7709.1 mm²（差 0.029 %）；抽热 18.266 vs 18.308 W；发热 1088.1 vs 1088.3 W；格数 976 vs 976
+第 1 档：内带 1.408 mm ⇒ 栅格步 0.352 mm　探针 42.8 s　487×175 = 85225 点（有料 62506）
+第 2 档：内带 0.704 mm ⇒ 栅格步 0.176 mm　探针 40.9 s　970×345 = 334650 点（有料 249351）
+第 3 档：内带 0.352 mm ⇒ 栅格步 0.088 mm　探针 128.6 s　1935×685 = 1325475 点（有料 995542）
+== 12 Pt_Heater1 的孔：仓内只有栅格等面积 R26.00（非曲线读数）
+4028:盘Ø120（R60）／舌长 **199.5**／末端**半宽 40**（舌宽 80）／板厚 **2.0 均匀（1 级）**／管孔 R26 ⇒ **管壁 1.0**；单片 **1011.0 g**。（2026-08-25 由 `--leveltest Pt_Heater1.3dm 法兰` 实测更正：此前记的「半宽 60／舌长 200／1012 g」是估的。）
+4147:  管孔 R26.00（Ø52）⇒ 管壁 1.0
+25:     管孔半径      R26.00 mm   （Ø52.0）
+== 13 RING（wtRING，只读 grep）：带在 BuildFromMaterialWith 里按传入孔半径包
+/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/Pt_Optimize/Core/PlateMaterial.cs:494:    public HoleBandCircleField(ThicknessField raw, double holeRadiusMm, double bandMm)
+/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/Pt_Optimize/Core/ShellMesh.cs:1365:    public const double HoleBandPerStep = 1.0;
+/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/Pt_Optimize/Core/ShellMesh.cs:1624:        if (rules.HoleBandCircle && f is ThicknessField tfBand && holeRadiusMm > 0 && rules.HoleBandPerStep > 0 && tfBand.Step > 0)
