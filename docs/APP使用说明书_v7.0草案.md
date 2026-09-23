@@ -323,11 +323,12 @@ dotnet Pt_Optimize/bin/Release/net8.0-windows/Pt_Optimize.dll --cli --make3dm
 |---|---|
 | 持久强度 | 按牌号 |
 | 热膨胀 | 按牌号，用在终验第一关的伸长量上 |
-| 电阻率 | 一律按纯铂 |
-| 热导率、比热 | 一律按纯铂 |
+| 电阻率（含电阻温度系数） | 按牌号；电、热数据不全的牌号退回纯铂 |
+| 热导率、比热 | 按牌号；同上一起退回 |
+| 密度、熔点 | 按纯铂 |
 <!-- 出处: HANDOVER.md:193-197；HANDOVER.md:624（RampSweepOptions.Grade 显式覆盖成 inputs.GradeName）；Pt_Optimize/Core/Materials.cs:40,69,107 -->
 
-所以换成非纯铂牌号，强度那一路会变，电与热那一路不动。纯铂两套写法在 1150 °C 逐位相同，对纯铂没有差别。<!-- 出处: HANDOVER.md:673；Pt_Optimize/Core/DesignInputs.cs:183 -->
+换成 Pt-Rh/90-10、Tanaka-ZGS-Pt、Tanaka-ZGS-PtRh10 之一，强度、伸长、电、热四路都会变；结果说明末尾多一条，写明按哪个牌号取、各曲线的数据点区间、本算例温度越出区间之处（区间外取端点值）。换成电、热数据不全的牌号，电与热那一路退回纯铂，说明里写明缺哪几类。默认牌号 Pt 调的就是纯铂原式，接线前后结果逐位相同。<!-- 出处: Pt_Optimize/Core/PtProps.cs；HANDOVER.md §0.-18（2026-09-23 物性接线）；Pt_Optimize.Tests/R48PropsWiringGateTests.cs --><!-- 出处: HANDOVER.md:673；Pt_Optimize/Core/DesignInputs.cs:183 -->
 
 ### 6.7 判据表怎么读
 
@@ -627,7 +628,7 @@ dotnet Pt_Optimize/bin/Release/net8.0-windows/Pt_Optimize.dll --cli --make3dm
 | 三关结论写「没跑」 | 参数表里那个开关关掉了，或者是图纸模式。没跑不等于过 |
 | 「舌保温可行窗口」写「本次没量」 | 参数表里「终验时量每片舌保温的可行窗口」关掉了，或者还没做加密复算，或者是图纸模式。没量不等于缠得出来 |
 | 想选的牌号是灰的 | 这个牌号的四类数据不全。行末写着缺哪几类 |
-| 换了牌号，温度与电流一位没动 | 电阻率、热导率、比热现在一律按纯铂算，只有持久强度与伸长量按牌号 |
+| 换了牌号，温度与电流一位没动 | 该牌号的电、热数据不全，电阻率、热导率、比热一起退回纯铂；结果说明末尾写了缺哪几类。数据齐全的三个牌号会变 |
 <!-- 出处: Pt_Optimize/UI/ManualPage.cs:1355-1369；Pt_Optimize/UI/Flow.cs:654-683；Pt_Optimize/UI/LineDesignPage.cs:1614-1615,1320,2389-2391,2410-2425,4432-4435；Pt_Optimize/Core/ShapeSearchPlan.cs:189-195；Pt_Optimize/Core/FinalCheckReport.cs:92-93,109-110；Pt_Optimize/UI/LineDesignPage.cs:5513-5518；Pt_Optimize/Core/GradeChoices.cs:45-47；Pt_Optimize/Core/DesignInputs.cs:179-184 -->
 
 别被这四样骗：贴着限值的过（看裕度）；未收敛的数（一个都不能用）；裕度小于认证误差的过（程序会标成判不了）；看不见却在起作用的量（输出框逐条印出来，看一眼）。<!-- 出处: Pt_Optimize/UI/ManualPage.cs:1370；Pt_Optimize/Core/LineRunner.cs:2582-2604 -->
