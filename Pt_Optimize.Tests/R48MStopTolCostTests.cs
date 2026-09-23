@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -17,7 +17,7 @@ namespace PtOptimize.Tests;
 //
 //  (c) 成本：细网格整线一次（生产默认，W08 那份复原设计）≤ §0.-10 ④ 那一跑的 1.5 倍（146 s ⇒ 219 s；跑前写死，不事后挪）。
 //      ⚠ 这是墙钟门：同一台机器上别的工作树在跑（2026-09-18 r48_N 网格修复）会把它撞红 —— 撞红了照报，并把轮数与每轮秒数一起印出来供判读。
-//  (d) 四行细网格对拍（10/20 mm × 细/导航，参照 HANDOVER「一条细网格整线对拍」那张表 = 105752 与 224252／222457 那几跑）：
+//  (d) 四行细网格对拍（10/20 mm × 细/导航；参照 = N 路门 f 的两份文件 = 旧停机口径、新网格，2026-09-23 换的，变因见 R48MCostKit.Refs）：
 //      最热铂高出热偶读数／管根低于热偶读数 的位移 ≤ 0.05 K（本就收敛）；管孔净流入（瓦）只报不判；超了查因不挪门槛。
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -34,13 +34,26 @@ internal static class R48MCostKit
         public double Hot, Cold, Flux; public string Source = "";
     }
 
-    /// <summary>四行参照（HANDOVER「合并 2026-09-18」§「一条细网格整线对拍」那张表；每行的数指回它的文件）。</summary>
+    /// <summary>
+    /// 四行参照。**每行的数指回它的文件。**
+    ///
+    /// ★ 2026-09-23（云端会话，Fable 5.1，改门写明变因）：参照从 09-17／09-18 那几跑**换成 N 路门 f 的两份文件**。
+    ///   变因 = N 路网格生成根因修复并入合并树（HANDOVER §0.-15N／§0.-17）：解析板精确积分、面长按材料裁剪、管孔边界圆弧、碎格并入，
+    ///   同一设计同一档网格上管根移动 0.7～1.5 K（合并树实跑 2026-09-23 01:43：四行对旧参照 +0.476／−0.901、+0.362／−1.532、+0.303／−0.745、−0.115／−1.409 K），
+    ///   而本门守的是「**只换停机口径**判据值位移 ≤ 0.05 K」，参照必须是「旧停机口径、同一张（新）网格」的数 ——
+    ///   N 路门 f 正是这个口径（N 树 = §0.-10 的停机口径 + 旧段解地板 + 新网格），两条路的设计、DesignInputs 与网格调用逐项相同
+    ///   （R48LW08NavDesign.Build ＋ 圆盘保温 10／20 逐片同设；Solver.ApplyCaseMesh；LineRunner.Run）。
+    ///   细网格两行取 09-19 那跑（含 09-19 的楔形碎格 J 截断，ShellCurrent.SliverKappaMin）；导航两行 N 只有 09-18 那跑（碎格截断之前），
+    ///   细网格上截断前后差 0.007／0.000 K，导航上未量 —— 这 0.05 K 的预算里含着这一项。
+    ///   导航网格随之改成与 N 门 f 相同的口径（FineMm = 0 只统一细区半径 = MeshVerify.RequiredMeshFor，2.0／59.0），见 <see cref="Mesh"/>。
+    ///   旧参照（105752／224252 那几跑，旧网格）留在 git 历史里；它们对合并树不再是同一张网格。
+    /// </summary>
     internal static readonly Ref[] Refs =
     {
-        new() { DiscMm = 10, Fine = true,  Hot = -9.259, Cold = 19.004, Flux = 5.793, Source = "deliverable/R48_L_圆盘保温10_重判三关_W08_本次开跑于2026-09-18_105752.txt §「圆盘保温 10 mm ／ 细网格」② 带玻璃稳态（单元 4122，28 轮）" },
-        new() { DiscMm = 10, Fine = false, Hot = -9.408, Cold = 19.875, Flux = 6.234, Source = "同上 §「圆盘保温 10 mm ／ 导航」② 带玻璃稳态（单元 1006，31 轮）" },
-        new() { DiscMm = 20, Fine = true,  Hot = 4.556,  Cold = 3.785,  Flux = 0.349, Source = "deliverable/R48_L_耦合容差收紧_细网格_本次开跑于2026-09-17_224252.txt ④ 生产默认那一行（34 轮、容差 0.044 K）" },
-        new() { DiscMm = 20, Fine = false, Hot = 4.529,  Cold = 4.637,  Flux = 0.655, Source = "deliverable/R48_L_圆盘保温10_重判三关_W08_本次开跑于2026-09-18_105752.txt §「圆盘保温 20 mm ／ 导航」② 带玻璃稳态（单元 1006，36 轮、容差 0.036 K）" },
+        new() { DiscMm = 10, Fine = true,  Hot = -8.780, Cold = 18.109, Flux = 5.314, Source = "deliverable/网格修复2_门f_对拍_W08_本次开跑于2026-09-19_021749.txt 行「盘10　判决 1.000／59.0　4164 格」（N 树：§0.-10 停机口径、旧段解地板、新网格含 J 截断）" },
+        new() { DiscMm = 10, Fine = false, Hot = -9.091, Cold = 18.376, Flux = 5.449, Source = "deliverable/网格修复_门f_现役数_W08_本次开跑于2026-09-18_195938.txt 行「盘10　导航 2.000／59.0　1116 格」（N 树：同上，J 截断之前）" },
+        new() { DiscMm = 20, Fine = true,  Hot = 4.878,  Cold = 3.045,  Flux = 0.035, Source = "deliverable/网格修复2_门f_对拍_W08_本次开跑于2026-09-19_021749.txt 行「盘20　判决 1.000／59.0　4164 格」" },
+        new() { DiscMm = 20, Fine = false, Hot = 4.370,  Cold = 3.255,  Flux = 0.126, Source = "deliverable/网格修复_门f_现役数_W08_本次开跑于2026-09-18_195938.txt 行「盘20　导航 2.000／59.0　1116 格」" },
     };
 
     internal static DesignSpec Design(double discMm)
@@ -50,12 +63,15 @@ internal static class R48MCostKit
         return d;
     }
 
-    /// <summary>导航 = 整线算例缺省那张（细区 2.0／半径 50，与 105752 那跑同）；细网格 = MeshVerify.RequiredMeshFor（1.000／59.0）。</summary>
+    /// <summary>
+    /// 细网格 = MeshVerify.RequiredMeshFor（1.000／59.0）；导航 = FineMm 0（Solver.ApplyCaseMesh 只统一细区半径 = RequiredMeshFor 的半径，2.0／59.0）。
+    /// ★ 2026-09-23：导航从「整线算例缺省 2.0／50」改成与 N 路门 f 同一口径 —— 参照换成了 N 门 f 的数，网格要跟参照走（见 <see cref="Refs"/> 的变因）。
+    /// </summary>
     internal static SolverOptions Mesh(bool fine, DesignSpec d)
     {
-        if (!fine) { var nav = new LineCase(); return new SolverOptions { FineMm = nav.MeshFineMm, FineRadiusMm = nav.MeshFineRadiusMm }; }
         var (f, r) = MeshVerify.RequiredMeshFor(d);
-        return new SolverOptions { FineMm = f, FineRadiusMm = r };
+        return fine ? new SolverOptions { FineMm = f, FineRadiusMm = r }
+                    : new SolverOptions { FineMm = 0, FineRadiusMm = r };
     }
 
     internal sealed class Row
