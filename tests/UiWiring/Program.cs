@@ -579,6 +579,49 @@ class UiWiringTests {
             var btn46 = (ToolStripButton)F(page, "_btnReport")!;
             Check("「导出安装报告」键在 ③ 页工具条上", btn46.Owner is not null && btn46.Text == Flow.Cmd("report.install").Text, btn46.Text);
 
+            // ★ U 路（2026-09-18，Opus 5）：③ 页多一个「舌保温可行窗口」页签。
+            //   这一次没量（终验才量）⇒ 表是空的、说明必须写明「没量」——
+            //   一张空表配一句空话，读的人会当成「量过了、没问题」，那正是本项目最怕的形状。
+            Check("③ 页有「舌保温可行窗口」页签", tabNames46.Contains("舌保温可行窗口"), string.Join("／", tabNames46));
+            var winGrid = (DataGridView)F(page, "_winGrid")!;
+            var winNote = (Label)F(page, "_winNote")!;
+            Check("没量时窗口表是空的", winGrid.Rows.Count == 0, $"{winGrid.Rows.Count} 行");
+            Check("没量时说明写明「没量」且说了去哪儿打开",
+                  winNote.Text.Contains("本次没量") && winNote.Text.Contains("终验时量每片舌保温的可行窗口"), winNote.Text);
+            Check("没量 ≠ 缠得出来 这句话在", winNote.Text.Contains("没量 ≠ 缠得出来"), "");
+            Check("安装报告里有可行窗口那一节", rep46.Text.Contains("每片舌保温的可行窗口"), "");
+            // 造一份窗口结果挂上去 ⇒ 表要真的填出来（接线不是写好没人用的字段）
+            var winDemo = InsulWindow.Measure(
+                DesignSpec.W08.Clone(), new DesignInputs(),
+                new InsulWindow.Options { MaxDegreeOfParallelism = 1, HalfWidthMm = 0.3, StepMm = 0.1,
+                                          Evaluate = (dd, jj, mm) => new InsulWindow.Point { Feasible = true } });
+            rBad.TabInsulWindow = winDemo;
+            mShow?.Invoke(page, new object?[] { rBad, null });
+            Check("挂上窗口结果后表逐片填出来",
+                  winGrid.Rows.Count == winDemo.Plates.Length && winGrid.Rows.Count > 0,
+                  $"{winGrid.Rows.Count} 行 / {winDemo.Plates.Length} 片");
+            Check("窗口表的结论那一行来自结果自己", winNote.Text == winDemo.Verdict, winNote.Text);
+            Check("窗口表里不出现判据代号", !Criteria.HasCode(winNote.Text), winNote.Text);
+            rBad.TabInsulWindow = null;
+            mShow?.Invoke(page, new object?[] { rBad, null });
+
+            // ★ U 路：参数表里那两项温差预算 —— 看得见、改得了、说明里写了出处
+            var gridU = (PropertyGrid)F(main, "_grid")!;
+            var inU = (DesignInputs)F(main, "_in")!;
+            var propsU = TypeDescriptor.GetProperties(inU);
+            foreach (string want in new[] { "管根低于热偶读数 允许值 [K]", "最热铂高出热偶读数 允许值 [K]" })
+            {
+                var pd = propsU.Cast<PropertyDescriptor>().FirstOrDefault(x => x.DisplayName == want);
+                Check($"参数表里有「{want}」", pd is not null, pd?.Category ?? "★ 没有这一项");
+                if (pd is null) continue;
+                Check($"「{want}」改得了（不是只读）", !pd.IsReadOnly, "");
+                Check($"「{want}」归在「{ParamCat.判据限值与窗口}」下", pd.Category == ParamCat.判据限值与窗口, pd.Category);
+                Check($"「{want}」说明里写了出处", pd.Description.Contains("1100 °C") && pd.Description.Contains("默认 5"), pd.Description);
+            }
+            Check("默认仍是 5 K（本轮一位没动）",
+                  Math.Abs(inU.ColdUnderTcAllowK - 5.0) < 1e-12 && Math.Abs(inU.HotOverTcAllowK - 5.0) < 1e-12,
+                  $"{inU.ColdUnderTcAllowK} / {inU.HotOverTcAllowK}");
+            Check("参数表控件真的绑着这份输入", ReferenceEquals(gridU.SelectedObject, inU), "");
         }
 
         Head("14 搜形状：按钮在、不自己跑、.3dm 模式下要**明确拒绝**而不是空转");
@@ -752,10 +795,61 @@ class UiWiringTests {
                     //   新生成器加密到 0.125 mm 为 20.48 K、中带确认没过、未收敛（审查实测 2026-09-13）；
                     //   档里的旧复核值 10.329 K 是老轴上量的（老轴 −z 半边未加密），无效。
                     //   档里的记录值**不改**（那是历史记录，档的 VerifiedNote 里已说明），本节只验两条路同解，不验「档还过不过」。
-                    const double dipR47 = 17.480, fluxR47 = 5.324, discR47 = -0.248, massR47 = 3545.2;
-                    Near("③", V("③"), dipR47, 1.00, "K");
-                    Near("②′", V("②′"), fluxR47, 0.50, "W");
-                    Near("②″", V("②″"), discR47, 0.20, "K");
+                    // ★★★★★ 2026-09-18，Opus 5（M 路）：**三个热学靶子重记；几何与铂重那两个不动。**
+                    //
+                    //   R47（2026-09-13）记的 ③ 17.480 K／②′ 5.324 W／②″ −0.248 K 是**那一天的口径**下量的。
+                    //   之后仓库里至少动过五处，每一处都改了同一条链上的数（逐条查得到，见 HANDOVER）：
+                    //     ① 2026-09-14 §0.-13（R48 B/续）保温按**半径**划等 —— 圆盘区那一带的等效导热换了口径；
+                    //     ② 2026-09-15 §0.-13K 判据分工况（带玻璃／空管各卡哪几条）＋ 新硬判据「最热铂高出热偶读数」「管根低于热偶读数」；
+                    //     ③ 2026-09-17 §0.-10 外层耦合停机容差由写死 1 K 改成**按判据裕度当场算**；
+                    //     ④ 2026-09-17 §0.-11 圆盘保温默认与上界 **20 → 10 mm**（现场「圆盘与管子接触区都是 20 圈以下」）；
+                    //     ⑤ 2026-09-18 §0.-12 乙 ④ 管强度的「判不了」用**不外推的保守上界**判掉。
+                    //   ⇒ 拿 R47 那三个数当靶，量的不是「两条路同不同解」，而是「今天的口径和 09-13 的口径一不一样」——
+                    //     后者是**已知为真**的，它只会让这三条永远红，红到没人再看它们。
+                    //
+                    //   ⚠ **不是「对不上就改靶」**。判断依据是：同一次跑里**没有受口径影响**的那两个量**逐位还在**——
+                    //     管 J 9.501 vs 档里 9.506（差 0.005）、合计 3545.189 g vs 3545.2（差 0.011 g）。
+                    //     这两个量正是「页面路径造出来的零件与设计记录是同一个零件」的凭据（几何 + 用料）；
+                    //     它们不动，说明搬走的是**热学口径**，不是这条路解错了零件。所以两个老靶**原样不动**，
+                    //     只重记随口径搬走的那三个。
+                    //
+                    //   ⚠ 重记的这三个数**不代表它们算准了**（R47 复修 M6 的改口在本轮同样成立）：
+                    //     本档在今天的口径下是**不可行**的（见下面那条「重算得到同样的不可行结论」），
+                    //     这里钉的只是「同一份输入、同一份代码，两条路落到同一个解、且这个解不随手滑动」。
+                    //   ⚠ 逐项归因（哪一处变因贡献了多少）**本轮没做**，上面五条只是「期间动过什么」的清单，不是分解。
+                    //
+                    //   §0.-14M 那一轮实测（2026-09-18 上午，本树，导航网格，圆盘保温默认 **10 mm**）：
+                    //     ③ 法兰增量温降（旧判法，参考）  17.480 → −2.567 K
+                    //     ②′ 管孔净流入                   5.324 → −12.340 W
+                    //     ②″ 圆盘区最高温 − 管温（旧判法） −0.248 → 61.581 K
+                    //
+                    // ★★★★★ 2026-09-18 下午（§0.-15M，Opus 5）：**三个热学靶第三次重记 —— 同一个理由，第六处口径变动。**
+                    //   变因：用户当日「还是只给材质保温厚度方案就行」⇒「接合区保温缠得出来」由硬安全线降为参考行，
+                    //   `DesignSpec.FlangeInsulMm` **退回 §0.-11 之前的 20 mm**（§0.-11 把它压到 10）。
+                    //   圆盘保温是这三个量的直接上游（HANDOVER §0.-14M 里 10 mm／20 mm 两档逐位对得上那张表就是它）。
+                    //   ⇒ 拿 10 mm 档的三个数当靶，量的又是「今天的默认和上午的默认一不一样」——已知为真，只会让这三条永远红。
+                    //
+                    //   ⚠ **判断依据同上一轮：没有受口径影响的那两个量几乎没动** ——
+                    //     本次实测 管 J **9.499**（档 9.506，差 −0.007；上午那一轮是 9.501，两轮差 0.002）、
+                    //     合计 **3545.189 g**（档 3545.2，差 −0.011 g；与上午那一轮**逐位相同**）。
+                    //     ⚠ 管 J 不是严格与保温无关：保温改了 ⇒ 散热改了 ⇒ 电流改了 ⇒ 管 J 跟着动一点点。
+                    //       它的意义是「量级上没搬家」（0.002 / 9.5 ≈ 0.02 %），而三个热学量搬了 1.4～10.7 个单位。
+                    //     零件（几何 + 用料）没变，搬走的是热学口径 ⇒ 两个老靶原样不动，只重记随口径搬走的那三个。
+                    //   ⚠ 重记的数**不代表算准了**：本档在今天的口径下照旧不可行（见下面那条「重算得到同样的不可行结论」）。
+                    //
+                    //   本次实测（2026-09-18 下午，本树，导航网格，圆盘保温默认 20 mm，UiWiring 连跑两次逐位相同）：
+                    //     ③ 法兰增量温降（旧判法，参考）  −2.567 → **−13.238** K
+                    //     ②′ 管孔净流入                   −12.340 → **−18.929** W
+                    //     ②″ 圆盘区最高温 − 管温（旧判法） 61.581 → **60.186** K
+                    const double dipR47 = 17.480, fluxR47 = 5.324, discR47 = -0.248;     // R47 那一版的靶，留着当变更记录，不再用于判定
+                    const double dip10 = -2.567, flux10 = -12.340, disc10 = 61.581;      // 2026-09-18 上午（圆盘保温 10 mm 档）的靶，同上
+                    const double dipNow = -13.238, fluxNow = -18.929, discNow = 60.186;  // 2026-09-18 下午本树重记（圆盘保温 20 mm）
+                    const double massR47 = 3545.2;                                       // 铂重：不随热学口径变，**不重记**
+                    _ = (dipR47, fluxR47, discR47, dip10, flux10, disc10);
+                    // R48 B（2026-09-14 Opus 5）：②″／③ 降为参考量（旧判法），代号不换主人 ⇒ 按代号前缀读到的仍是这两条，与 R47 记录同一个量。
+                    Near("③", V("③"), dipNow, 1.00, "K");
+                    Near("②′", V("②′"), fluxNow, 0.50, "W");
+                    Near("②″", V("②″"), discNow, 0.20, "K");
                     Near("管J", V("管 J"), fd1b.TubeJ, 0.05, "A/mm²");
                     Near("合计", r1b.TotalMassG, massR47, 2.0, "g");
                     // ★★★★★ C1 之后「全过」暂时**不可能为真**（2026-09-07，用户拍板）。
@@ -776,13 +870,48 @@ class UiWiringTests {
                     //   档里的旧复核值 10.329 是老轴（−z 半边未加密）上的，无效，不能拿来「同向」佐证。这是实情、不是退化。
                     //   处置照旧不是删断言：③ 的数由上面「复现设计记录 ③」钉着（容差 1 K），退化照样抓得住；
                     //   除它与法兰截面 J 之外，其余一条都不许红。要它绿得重新解一次本档（求解器会自己抬舌保温／板厚）。
-                    var stillBad = r1b.Failed.Where(f => !f.Contains("法兰 J") && !f.Contains("法兰截面 J") && !f.Contains("法兰增量温降")).ToArray();
+                    // ★★★★★ R48 B（2026-09-14 Opus 5 复审）：「法兰增量温降」的放行**撤掉**。它已降为参考量（旧判法），参考量不进 Failed，
+                    //   这条豁免从此什么都不放 —— 留着只会让人以为它还卡交付。
+                    //   ⚠ 热偶读数基准的两条新硬判据（最热铂高出热偶读数／管根低于热偶读数）**不放行**：没有依据。
+                    //     本档从没按这两条解过；R48 B 在同一设计（合计 3545.2 g）上实测热侧 +125.3 K（入口）、冷侧 −31.9 K（过），
+                    //     见 deliverable/r48B_热偶基准_现役档单次判定_2026-09-14.txt。放行热侧等于把一条实测超限 25 倍的硬线从门上摘掉。
+                    //   ⚠ 本节在**基线树上就已经红**（与 R48 B 无关）：R48 今天的保温按半径划等改动之后，同一设计的管孔净流入 −19.866 W、
+                    //     圆盘区最高温 − 管温 60.631 K，上面三条「复现设计记录」与这条都不过（基线树跑 UiWiring 实测 4 项不过，
+                    //     deliverable/r48B_UiWiring_基线树_2026-09-14.txt）。要它绿得重解本档，不是改门。
+                    // ★★★★★ 2026-09-18，Opus 5（M 路）：**这条也改了靶子 —— 从「除某条外全过」改成「重算得到同样的不可行结论」。**
+                    //
+                    //   实情：这份设计记录在**今天的口径下不可行**，而且不是一条两条能豁免掉的：
+                    //     · 法兰截面 J —— 记录早于 J=10 那条设计因果链，板厚没按截面定（2026-09-08 起就红，是实情）；
+                    //     · 最热铂高出热偶读数 111.5/5.0 —— 2026-09-15 才立的硬判据，本档从没按它解过；
+                    //     · 管孔净流入 −12.3（须为正）—— 圆盘保温 20 → 10 mm 之后法兰更冷、抽热更多（§0.-13U ⑥ 同一形态）。
+                    //   继续写「除 X 外全过」就要把豁免名单一条条加长，而每加一条，这道门能抓住的退化就少一分 ——
+                    //   加到最后它什么都不守（本项目「门被豁免加到失效」那一族）。
+                    //
+                    //   ⇒ 重定靶子：**复现 = 重算得到同样的不可行结论**。
+                    //     钉的是「哪几条不过」这个**集合**本身：多一条、少一条、换一条，都当场红。
+                    //     这比原来那条**更强** —— 原来只要求「别的都绿」，现在连「该红的那几条是不是还红」也钉住了
+                    //     （某条硬判据悄悄消失、或被降成参考量，原来的写法是绿的，现在是红的）。
+                    //   ⚠ 不许因为「反正它不可行」就把这一节删掉：要它绿得**重解本档**（求解器会自己抬舌保温／板厚），
+                    //     那时这里记的集合会变成空集，照实改就是。
+                    //   ⚠ 「判不了」照旧不算过：下面按 Undetermined 单独记，判不了的那条要留在集合里点名。
+                    var failedNames = r1b.Checks
+                        .Where(c => c.Kind is CheckKind.HardSafety or CheckKind.Target && (!c.Ok || c.Undetermined))
+                        .Select(c => Criteria.Plain(c.Name) + (c.Undetermined ? "（判不了）" : ""))
+                        .OrderBy(x => x, StringComparer.Ordinal).ToArray();
+                    // 2026-09-18 本树实测（导航网格，连跑两次相同）。④ 管强度不在里面 —— §0.-12 乙 用保守上界把它的「判不了」判掉了。
+                    var expectedBad = new[] { "最热铂高出热偶读数", "法兰截面 J", "管孔净流入 须为正" }
+                                      .OrderBy(x => x, StringComparer.Ordinal).ToArray();
                     var sectionJ = r1b.Checks.FirstOrDefault(c => c.Name.StartsWith("法兰截面 J", StringComparison.Ordinal));
                     var dip3 = r1b.Checks.FirstOrDefault(c => c.Name.StartsWith("③", StringComparison.Ordinal));
-                    Check("页面路径：除『法兰截面 J』与『法兰增量温降』外全过", stillBad.Length == 0,
-                          stillBad.Length == 0
-                            ? $"（法兰截面 J {sectionJ?.Actual:0.0}/{sectionJ?.Limit:0.0} —— 记录早于 J=10 链，板厚没按截面定；法兰增量温降 {dip3?.Actual:0.0}/{dip3?.Limit:0.0} —— R47 修好网格后本档不过：导航网格 17.48 K、加密到 0.125 mm 20.48 K 未收敛；旧复核值 10.329 是老轴上的，无效）"
-                            : string.Join("；", stillBad));
+                    Check("页面路径：重算得到同样的不可行结论（不过的恰是记下的那几条）",
+                          failedNames.SequenceEqual(expectedBad),
+                          $"不过的是「{string.Join("、", failedNames)}」，记的是「{string.Join("、", expectedBad)}」"
+                          + $"（法兰截面 J {sectionJ?.Actual:0.0}/{sectionJ?.Limit:0.0}；法兰增量温降（旧判法，参考）{dip3?.Actual:0.0}/{dip3?.Limit:0.0}）");
+                    // 顺带钉两件容易悄悄变的事：判据一条都不许缺席，场也不许判不了（两者都是「不算过」的另一种形态）
+                    Check("判据没有整条缺席（缺席 ≠ 通过）", r1b.MissingChecks.Length == 0,
+                          string.Join("、", r1b.MissingChecks));
+                    Check("本工况的场判得了", r1b.FieldUndeterminedReasons.Length == 0,
+                          string.Join("；", r1b.FieldUndeterminedReasons));
                 }
             }
         }
@@ -1917,7 +2046,7 @@ class UiWiringTests {
                 Ok = true,
                 Converged = conv,
                 RampChecked = true,
-                Checks = LineResult.Required
+                Checks = LineResult.RequiredFor(emptyTube: false)   // K 路（2026-09-15 Opus 5）：必备名单按工况取；界面只解带玻璃稳态
                     .Where(q => cs.All(c => !c.Name.StartsWith(q.Prefix, StringComparison.Ordinal)))
                     .Select(q => C2(q.Prefix + " 底表", true, q.Kind))
                     .Concat(cs).ToArray()
@@ -2030,7 +2159,7 @@ class UiWiringTests {
             var lastBad = new LineResult
             {
                 Ok = true, Converged = true, RampChecked = true,
-                Checks = LineResult.Required
+                Checks = LineResult.RequiredFor(emptyTube: false)   // K 路（2026-09-15 Opus 5）
                     .Where(q => !bad28.Name.StartsWith(q.Prefix, StringComparison.Ordinal))
                     .Select(q => C28(q.Prefix + " 底表", true, q.Kind))
                     .Concat(new[] { bad28 }).ToArray(),
@@ -2297,19 +2426,20 @@ class UiWiringTests {
                 //    把「该有哪几条」变成一份数据 —— 本节验它在**真解**上确实成立。
                 //    纯逻辑（拿掉一条 ⇒ AllOk 变 false）在 RequiredChecksTests，这里只验真解。
                 Check("必备判据名单不是空的（自证：空名单会让下一条恒真）",
-                      LineResult.Required.Length >= 7, $"{LineResult.Required.Length} 条");
+                      LineResult.RequiredFor(r31.EmptyTube).Length >= 7, $"{LineResult.RequiredFor(r31.EmptyTube).Length} 条");   // K 路（2026-09-15 Opus 5）：按本次真解的工况取
                 Check("这次真解评了升温 ①（否则 ① 属合法缺席，本节覆盖会弱一档）", r31.RampChecked);
                 Check("真解的判据表里必备判据一条不缺", r31.MissingChecks.Length == 0,
                       r31.MissingChecks.Length == 0
-                        ? $"{LineResult.Required.Length} 条全在"
+                        ? $"{LineResult.RequiredFor(r31.EmptyTube).Length} 条全在"
                         : "★ 缺席：" + string.Join("、", r31.MissingChecks));
                 {
                     // 自证：抽掉一条就必须被抓到。没有这条，上面那句在「机制失效」时也会绿。
                     var kept31 = r31.Checks;
+                    // R48 B（2026-09-14 Opus 5）：必备名单里的「圆盘区最高温 − 管温」换成热偶读数基准的热侧 ⑦（旧那条降为参考量，抽掉它不该报缺席）
                     r31.Checks = kept31.Where(c => !c.Name.StartsWith(
-                        LineResult.Key.DiscTemp, StringComparison.Ordinal)).ToArray();
-                    Check("抽掉 ②″ 之后当场报缺席、且不再全过（自证）",
-                          r31.MissingChecks.Contains(LineResult.Key.DiscTemp) && !r31.AllOk,
+                        LineResult.Key.HotOverTc, StringComparison.Ordinal)).ToArray();
+                    Check("抽掉「最热铂高出热偶读数」之后当场报缺席、且不再全过（自证）",
+                          r31.MissingChecks.Contains(LineResult.Key.HotOverTc) && !r31.AllOk,
                           $"缺席 [{string.Join("、", r31.MissingChecks)}]　AllOk={r31.AllOk}");
                     r31.Checks = kept31;
                     Check("还原后又是齐的（别把后面几节的表毁了）",
@@ -2432,8 +2562,25 @@ class UiWiringTests {
                     Check("下拉里列的就是材料库里的牌号",
                           vals.Length > 0 && vals.All(v => MaterialDb.All.ContainsKey(v)),
                           $"{vals.Length} 个：" + string.Join("、", vals.Take(3)) + " …");
-                    Check("材料库里的牌号一个都不缺", vals.Length == MaterialDb.All.Count,
-                          $"{vals.Length} vs {MaterialDb.All.Count}");
+                    // ★★★★★ 2026-09-18，Opus 5（M 路）：**这一条改了靶子。**
+                    //   原来它要求「下拉里材料库的牌号一个都不缺」（vals.Length == All.Count）。
+                    //   用户 2026-09-16：「数据不全(电阻/热膨胀/蠕变应力)的铂金合金先以灰色不可选展示」，
+                    //   2026-09-17/18 又点名可选四个 ⇒ **能落到值上的**只剩四类数据齐全的那些。
+                    //   「一个都不缺」这件事没有消失，只是搬了家：**下拉里列的仍是全集**，
+                    //   数据不全的那些灰显不可选、行末写明缺哪几类（GradeChoices.All / UI.GradeNameEditor）。
+                    //   ⇒ 拆成三条，两头都钉：可选 == 齐全；列出来的 == 材料库全集；灰行逐条写明缺什么。
+                    Check("能选的恰是四类数据齐全的那些（不全的灰显不可选）",
+                          vals.OrderBy(x => x, StringComparer.Ordinal).SequenceEqual(
+                              GradeChoices.Selectable().OrderBy(x => x, StringComparer.Ordinal)),
+                          $"{vals.Length} 可选 / 材料库 {MaterialDb.All.Count}：" + string.Join("、", vals));
+                    var gradeRows = GradeChoices.All();
+                    Check("下拉列的仍是材料库全集（灰的也列出来，不是悄悄消失）",
+                          gradeRows.Length == MaterialDb.All.Count
+                          && gradeRows.All(r => MaterialDb.All.ContainsKey(r.Name)),
+                          $"{gradeRows.Length} 行 vs 材料库 {MaterialDb.All.Count}");
+                    Check("灰行逐条写明缺哪几类",
+                          gradeRows.Where(r => !r.Selectable).All(r => r.Missing.Length > 0 && r.RowText.Contains("不可选")),
+                          string.Join("；", gradeRows.Where(r => !r.Selectable).Select(r => r.RowText).Take(2)) + " …");
                     // 自证：打错的名字必须**不在**下拉里，且 Get 会报人话
                     Check("打错的名字不在下拉里（自证）", !vals.Contains("PtRh10"));
                     string msg = "";
@@ -2546,7 +2693,7 @@ class UiWiringTests {
                 Last = new LineResult
                 {
                     Ok = true, Converged = true, RampChecked = true,
-                    Checks = LineResult.Required.Select(q => new ConstraintOut
+                    Checks = LineResult.RequiredFor(emptyTube: false).Select(q => new ConstraintOut   // K 路（2026-09-15 Opus 5）
                     { Name = q.Prefix, Kind = q.Kind, Ok = true, Actual = 1, Limit = 2 }).ToArray(),
                 },
             };
@@ -2611,6 +2758,11 @@ class UiWiringTests {
                 ("升温期限",  $"{limM.RampHours:0} h"),
                 ("圆盘区最高温",   $"{limM.DiscOverTempMaxK:0} K"),
                 ("法兰增量温降",  $"{limM.RootDeltaMaxK:0} K"),
+                // R48 B（2026-09-14 Opus 5）：热偶读数基准的两条新硬判据，限值也要与代码一致。
+                //   2026-09-14 复审：核**整行**（名字格 + 限值格），不核「5 K」这个孤字串 —— 旧判法「圆盘区最高温 − 管温」那一行本来就含「5 K」，
+                //   说明书把新两行整行删掉，孤字串那种核法照样绿。
+                ("最热铂高出热偶读数", $@"<tr><td>{Criteria.Plain(LineResult.Key.HotOverTc)}</td><td class=""n"">{limM.HotOverTcMaxK:0} K</td>"),
+                ("管根低于热偶读数",  $@"<tr><td>{Criteria.Plain(LineResult.Key.ColdUnderTc)}</td><td class=""n"">{limM.ColdUnderTcMaxK:0} K</td>"),
                 ("舌片自由段下界", $"{GeometryScreen.FreeTabMinDefaultMm:0} mm"),
                 ("管壁下界",    $"{DesignInputs.WeldMinDefaultMm:0.0} mm"),
             };

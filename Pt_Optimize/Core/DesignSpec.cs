@@ -65,6 +65,19 @@ public sealed class DesignSpec
     /// </summary>
     public string[] InvalidChecks = System.Array.Empty<string>();
 
+    /// <summary>
+    /// ★ R48（2026-09-13，Opus 5 加）：**本档的记录值出自修网格前的网格生成器**（R47 之前）。
+    ///
+    /// R47 把网格轴修对之后，同一个设计的抽热约为原来的 4～8 倍（旧轴在管孔的一侧留了 8.46 mm 的粗格，从未被加密）。
+    /// ⇒ 旧记录里的热学四项与铂重与新实算**必然对不上**，这不是退化，是旧数不可比。
+    ///
+    /// 置 true 的后果：自检门 A 的「复现设计记录」对这一档的热学项与合计**只报不判**（照印数，不计 bad），
+    /// 并要求 <see cref="Invalid"/> 里写明「热学结论不可再引用」。
+    /// ⚠ 现役档一律 false —— 它们要按 R48 重解并把记录值写成修好网格上的数；
+    ///   拿这个开关去掩盖「现役档对不上」等于把判据关掉。只有**已作废、不再重解**的档才准置 true。
+    /// </summary>
+    public bool RecordFromOldMesh;
+
     // ── 管
     public double WallMm;
     public double TubeInsulMm = 5.0;
@@ -148,14 +161,33 @@ public sealed class DesignSpec
     public double[] RingMul2 = { double.NaN, double.NaN, double.NaN, double.NaN };
 
     /// <summary>
+    /// ★★★ R48 L（2026-09-17，Opus 5）：第 j 片两级台阶的**环宽** mm（离孔多远，自小到大）——
+    /// 「NaN = 走默认规则」（内级 = <see cref="RingWidthMm"/>、外级 = 2×<see cref="RingWidthMm"/>）
+    /// 这条规则的**唯一一处**实现。<see cref="RingRadiiOf"/> 与求解器读写这两根旋钮都走这里。
+    ///
+    /// 为什么要提出来：这条规则原本在 <c>RingRadiiOf</c> 与 <c>Solver.Get</c> 里各写了一份。
+    /// 求解器要拿「当前外级环宽」去算内级半径旋钮的上界（不然内级会被抬到越过外级、把几何弄坏），
+    /// 而**上界的配方不许手抄几何件的配方** —— 手抄的门守不住手抄的病。
+    ///
+    /// ⚠ 这里**不检查递增**：检查在 <see cref="RingRadiiOf"/>（几何真正成形的那一刻）。
+    ///   求解器正是用它来算防止不递增的上界，先检查就没法算上界。
+    /// </summary>
+    public double[] RingWidthsOf(int j) => new[]
+    {
+        double.IsNaN(RingW1Mm[j]) ? RingWidthMm : RingW1Mm[j],
+        double.IsNaN(RingW2Mm[j]) ? 2 * RingWidthMm : RingW2Mm[j],
+    };
+
+    /// <summary>
     /// 第 j 片两级台阶的**外半径** mm（自小到大）。
     /// ⚠ 必须严格递增：<see cref="PlateCurrent2D"/> 按 `r ≤ 各级半径` 依次命中，
     ///   顺序错了会**静默**取到错的那一级（几何照画，温度全错）。
     /// </summary>
     public double[] RingRadiiOf(int j)
     {
-        double r1 = HoleRadiusMm + (double.IsNaN(RingW1Mm[j]) ? RingWidthMm : RingW1Mm[j]);
-        double r2 = HoleRadiusMm + (double.IsNaN(RingW2Mm[j]) ? 2 * RingWidthMm : RingW2Mm[j]);
+        var w = RingWidthsOf(j);
+        double r1 = HoleRadiusMm + w[0];
+        double r2 = HoleRadiusMm + w[1];
         if (!(r2 > r1))
             throw new InvalidOperationException(
                 $"第 {j} 片的环台阶半径没有递增：r1={r1:0.###}、r2={r2:0.###} mm。" +
@@ -164,9 +196,56 @@ public sealed class DesignSpec
     }
 
     // ── 圆盘保温（舌片保温另见 TabInsulMm，两者是不同部位、不同量级）
-    /// <summary>圆盘外包的纤维厚度 mm。原来写死在 BuildCase 里，2026-08-17 提为字段。</summary>
+    /// <summary>
+    /// 圆盘外包的纤维厚度 mm。原来写死在 BuildCase 里，2026-08-17 提为字段。
+    ///
+    /// ★★★★★ 2026-09-17（Opus 5，用户当日现场限制）：默认 20 → 10，上界同为 10。
+    ///   出处：<see cref="WrapLimits.SourceNote"/>（「圆盘与管子接触区都是 20 圈以下」；每圈 0.5 mm ⇒ 10 mm）。
+    ///
+    /// ★★★★★ **2026-09-18（Opus 5，用户当日原话）：退回 §0.-11 之前的值 —— 默认 10 → 20。**
+    ///   用户原话（答「圆盘区能不能用预制保温块做到 20 mm」）：<c>「还是只给材质保温厚度方案就行」</c>
+    ///   ⇒ APP 只出**材质与各区厚度方案**，怎么包（缠绕还是预制块）由现场定；
+    ///     「缠得出来」由硬安全线降为**参考行**（见 <see cref="WrapLimits"/>），不再卡交付。
+    ///   ⇒ 这个默认值 **退回 §0.-11 前的 20**，界面上界退回 60（<see cref="FlangeInsulMaxMm"/>）。
+    ///   ⚠ 这个 20 仍然**在仓库里查不到出处**（R48DiscInsulLeverTests 2026-09-14 点过名）——
+    ///     它是 §0.-11 之前一直在用的历史值，本轮只是退回去，没有为它找到出处。
+    ///   ⚠ 「盘大时外区可以超 10」现在**表达不了**：圆盘保温整盘只有一个厚度（见 WrapLimits 的说明），
+    ///     要分内外环得先在 PlateCurrent2D／ShellThermal 里加逐半径厚度。没做的事不许写成已经有。
+    /// </summary>
     public double FlangeInsulMm = 20.0;
+
+    /// <summary>
+    /// ★ 2026-09-18（Opus 5）：界面「法兰保温厚 mm」控件的**上界，全仓唯一一份**（退回 §0.-11 前的值 60，用户 2026-09-18 定）。
+    /// §0.-11 曾把它压到 <see cref="WrapLimits.JointZoneMaxMm"/>（10 mm）；本轮「缠得出来」降为参考行 ⇒ 退回 60。
+    /// ⚠ 界面不许再写一个字面量 60 —— 取这一处（门 <c>R48LWrapTurnsGateTests.门_上界只有一份_源码钉死</c>）。
+    /// ⚠ 这个 60 与 20 一样**无出处**，是 §0.-11 之前一直在用的历史值。
+    /// </summary>
+    public const double FlangeInsulMaxMm = 60.0;
+
     public bool FlangeInsulated = true;
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5）：**逐片圆盘保温** mm（第一个是入口片、最后一个是出口片）。空 = 全线沿用 <see cref="FlangeInsulMm"/>（旧口径，逐位不变）。
+    /// 非空时每片取自己的值，经 <see cref="Plate"/> 写进 FlangePlate.DiscInsulThickMm，LineRunner 逐片热解时用它。
+    /// ⚠ 界面还没接 —— 目前只给探针与求解器改造用，接之前不许在界面上假装有这个量。
+    ///   （2026-09-14 Opus 5 更正：存档已接，DesignSpecStore 的 discInsulMm 键，缺键 = 空；往返与旧档由 DesignSpecStoreTests 钉。）
+    /// </summary>
+    public double[] DiscInsulMm = System.Array.Empty<double>();
+
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5）：第 j 片圆盘保温在**算例里实际用的**厚度 mm —— 与 BuildCase（FlangeInsulThickMm = FlangeInsulated ? FlangeInsulMm : 0）
+    /// 加 Plate（DiscInsulThickMm = DiscInsulMm[j]）再经 LineCase.DiscInsulEffectiveAt 取出来的逐位相同（R48DiscInsulPerPlateGateTests 钉）。
+    /// 配套清单与安装报告从这里取，不再读页面的 DesignInputs（那份在 BuildCase 之前，数可能不是算的那个）。
+    /// 2026-09-14 Opus 5 补：某片是 NaN 时板件按「沿用整线」算，这里同样回整线值（原先回 NaN，与算例不同源）。
+    /// 2026-09-14 Opus 5 再补（审查意见「规则写了三份」）：规则本体改调 FlangePlate.DiscInsulEffective，整线值取 <see cref="WholeLineDiscInsulMm"/>（BuildCase 也取它），构造上同源。
+    /// </summary>
+    public double DiscInsulMmOf(int j)
+        => FlangePlate.DiscInsulEffective(DiscInsulMm, j, WholeLineDiscInsulMm, FlangeInsulated);
+
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5）：算例里的**整线**圆盘保温 mm（不包 = 0）。BuildCase 写 DesignInputs.FlangeInsulThickMm 与 <see cref="DiscInsulMmOf"/> 退整线时都取这一处，
+    /// 不再各写一遍「FlangeInsulated ? FlangeInsulMm : 0」。
+    /// </summary>
+    public double WholeLineDiscInsulMm => FlangeInsulated ? FlangeInsulMm : 0;
 
     // ── 压接
     public double ClampLengthMm = 40.0;
@@ -325,6 +404,7 @@ public sealed class DesignSpec
         TabThickMm = FitArr(TabThickMm, n);
         if (ThicknessScale.Length > 0) ThicknessScale = FitArr(ThicknessScale, n);   // R47 第三轮 N5：图纸档的逐片 k（空 = 解析档，不补）
         TabInsulMm = FitArr(TabInsulMm, n);
+        if (DiscInsulMm.Length > 0) DiscInsulMm = FitArr(DiscInsulMm, n);   // R48：空 = 全线沿用 FlangeInsulMm，不补
         TongueThickMm = FitArr(TongueThickMm, n);
         TabHoleRotDeg = FitArr(TabHoleRotDeg, n);          // R31
         TabArmX0Mm = FitArr(TabArmX0Mm, n); TabArmX1Mm = FitArr(TabArmX1Mm, n); TabArmThickMm = FitArr(TabArmThickMm, n);   // R29
@@ -371,6 +451,7 @@ public sealed class DesignSpec
         c.TabThickMm = (double[])TabThickMm.Clone();
         c.ThicknessScale = (double[])ThicknessScale.Clone();   // R47 第三轮 N5
         c.TabInsulMm = (double[])TabInsulMm.Clone();
+        c.DiscInsulMm = (double[])DiscInsulMm.Clone();   // R48
         c.TongueThickMm = (double[])TongueThickMm.Clone();
         c.TabHoleRotDeg = (double[])TabHoleRotDeg.Clone();   // R31（TabTaper 是标量，MemberwiseClone 已带）
         c.TabArmX0Mm = (double[])TabArmX0Mm.Clone(); c.TabArmX1Mm = (double[])TabArmX1Mm.Clone(); c.TabArmThickMm = (double[])TabArmThickMm.Clone();   // R29
@@ -454,6 +535,7 @@ public sealed class DesignSpec
             DiscStepThicknessMm = new[] { td * RingMul[j], td * RingMulOuter(j) },
             TabThicknessMm = j < TongueThickMm.Length ? TongueThickMm[j] : double.NaN,   // R11：舌片自己的厚度（NaN = 与基板同）
             InsulBoundaryXMm = double.NaN, TabInsulThickMm = TabInsulMm[j],
+            DiscInsulThickMm = j < DiscInsulMm.Length ? DiscInsulMm[j] : double.NaN,   // R48：逐片圆盘保温（空 = 沿用整线）
             TabParallel = !TabTaper, TabFilletMm = TabTaper ? 0 : TabFilletMm,   // R31：锥形舌片两边与圆盘相切，不画舌根圆角
             WeldFilletLegMm = System.Math.Max(td, WallMm),
             DiscSlots = SlotsOf(j, System.Math.Max(td, WallMm)),
@@ -876,12 +958,23 @@ public sealed class DesignSpec
     /// </summary>
     /// <param name="baseInputs">基准工艺参数（材料、散热、力学等），几何会被本档覆盖</param>
     /// <param name="checkRamp">是否连 ① 升温一起判。判它更慢，但**少判一条就不是全判据**</param>
-    public LineCase BuildCase(DesignInputs baseInputs, bool checkRamp = true)
+    /// <param name="emptyTube">
+    /// ★ R48（2026-09-14，Opus 5）：造**空管到温稳态**（无玻璃）的算例（<see cref="LineCase.EmptyTube"/>）。默认 false = 带玻璃稳态，逐位不变。
+    /// 只影响整线稳态的段解与无法兰基线；设计电流（<see cref="DesignCurrent"/>，按空管升温算）不经过这个参数 —— 它自己调 BuildCase 时不传，永远是默认。
+    /// </param>
+    /// <param name="emptyTubeSetpoint">
+    /// ★ R48 审查第 1 条（2026-09-14，Opus 5）：空管算例的控温点取哪一种（<paramref name="emptyTube"/> 为 false 时不看）。
+    /// 默认 <see cref="EmptyTubeSetpoint.RampTarget"/> = 全线取升温目标 <see cref="LineCase.RampTargetC"/>（用户 2026-09-08 定「升温目标全线 1150 °C」，
+    /// 是仓库里唯一一处用户给过的「到温」定义）；<see cref="EmptyTubeSetpoint.AsGiven"/> = 沿用本设计的生产控温点 <see cref="SetpointC"/>。
+    /// 用户 2026-09-14 没说空管保温时控温点是多少 ⇒ 两种都能造，结果 Notes 写明用的是哪一种，**待用户定**。
+    /// </param>
+    public LineCase BuildCase(DesignInputs baseInputs, bool checkRamp = true, bool emptyTube = false,
+                              EmptyTubeSetpoint emptyTubeSetpoint = EmptyTubeSetpoint.RampTarget)
     {
         // ★ R47 第三轮 N5（2026-09-13）：图纸档**拒绝造解析法兰**。它的 TabThickMm 是 NaN（k 在 ThicknessScale 里），
         //   照旧往下走会造出一片 NaN 板、判据表照样出数。返回一个带 RefusedWhy 的算例：LineRunner.Run 读到它就原句返回、不算不抛。
         if (IsDrawingRecord)
-            return new LineCase { Base = SegmentSolver.Clone(baseInputs), RefusedWhy = DrawingRefusal + $"（档「{Name}」）" };
+            return new LineCase { Base = SegmentSolver.Clone(baseInputs), RefusedWhy = DrawingRefusal + $"（档「{Name}」）", EmptyTube = emptyTube };
         // ★★★★★ 管孔半径曾有**两处来源**（2026-08-28 查出：本类写死 25.0，求解器用 TubeIdMm*0.5 + WallMm），
         //   那时对不上就拒算。R30（2026-09-10）：内径进了几何（TubeIdMm 字段），整线的管内径也从本设计取 ⇒ 只剩一个来源。
         //   参数表的「内径 ID」只是新设计的默认值（页面读控件成设计时抄进来）；两边不等时以**设计**为准并说出来。
@@ -896,14 +989,14 @@ public sealed class DesignSpec
         //   写死的后果：界面把「法兰保温 / 法兰保温厚」两个控件接过来之后，
         //   它们会被这一行**静默吃掉** —— 用户在界面上把保温改成 0，模型里仍然是 20 mm。
         //   那就是第七项「表达不了」，而且比前六项更隐蔽（控件在、能动、不起作用）。
-        p.FlangeInsulThickMm = FlangeInsulated ? FlangeInsulMm : 0;
+        p.FlangeInsulThickMm = WholeLineDiscInsulMm;   // = FlangeInsulated ? FlangeInsulMm : 0（R48 2026-09-14 Opus 5：提成一处，DiscInsulMmOf 同取）
         p.FlangeInsulated = FlangeInsulated;
         p.BusbarClampLengthMm = ClampLengthMm;
         p.BusbarClampTempC = ClampTempC;
 
         double discFloor = DiscFloorMm(baseInputs);
 
-        return new LineCase
+        var lc = new LineCase
         {
             TubeIdMm = TubeIdMm,       // R30：整线的管内径从本设计取（与法兰管孔同一个来源）
             Base = p,
@@ -919,8 +1012,17 @@ public sealed class DesignSpec
             //   ⚠ 扫「循环 <4」抓不到这两行：它们是字面枚举，不是循环。
             FlangePlates = Enumerable.Range(0, FlangeCount)
                                      .Select(j => Plate(j, discFloor)).ToArray(),
+            EmptyTube = emptyTube,                           // R48（2026-09-14，Opus 5）：空管到温稳态工况
             ClampTempC = Enumerable.Repeat(ClampTempC, FlangeCount).ToArray()
         };
+        // ★ R48 审查第 1 条（2026-09-14，Opus 5）：空管按升温目标读「到温」⇒ 控温点全线换成 RampTargetC（新数组，不改设计记录的 SetpointC）。
+        //   下游（段解、法兰电阻率取值、判据里读控温点的各处）都读 lc.SetpointC，只此一处换，不会一半用生产设定一半用升温目标。
+        if (emptyTube && emptyTubeSetpoint == EmptyTubeSetpoint.RampTarget)
+        {
+            lc.SetpointC = Enumerable.Repeat(lc.RampTargetC, SetpointC.Length).ToArray();
+            lc.EmptyTubeSetpointFrom = EmptyTubeSetpoint.RampTarget;
+        }
+        return lc;
     }
 
     /// <summary>
@@ -1155,12 +1257,20 @@ public sealed class DesignSpec
     {
         Name = "（已作废）管壁 0.8 · 舌长 90",
         Provenance = "--final2 可行性阶梯 D7，2026-08-16",
-        Binding = "热学五条都有裕度；败在装配",
-        Invalid = "★ **判据 ⑤ 不过**：舌长 90 ⇒ 自由段只有 24.0 mm（下界 100）。" +
+        Binding = "热学各条在修网格前都有裕度；败在装配",
+        // ★ R48（2026-09-13，Opus 5 改）：原文写「热学五条仍全过，故本档的热学结论仍可引用」——**这句已作废**。
+        //   R47 把网格生成器修对之后，本档实算管孔净流入 −14.675 W（热往管里灌），热学结论不再可引用；
+        //   而且这句带判据代号（①②′②″③），界面上不许出现。两件事一起改。
+        Invalid = "★ **舌片自由段不过**：舌长 90 ⇒ 自由段只有 24.0 mm（下界 100）。" +
                   "24 mm 里装不下现场铜排（长 100／宽 60–80）与压接块，**设计上不成立**。" +
-                  " 热学五条（①②′②″③管J）仍全过，故本档的**热学结论仍可引用**，" +
-                  "但几何与铂重已由 2026-08-17 的重解取代（3106 → 3547 g；那次重解的**工具归属**写错过，见 W08 的 Provenance）。",
-        InvalidChecks = new[] { "⑤" },
+                  " 几何与铂重已由 2026-08-17 的重解取代（3106 → 3547 g；那次重解的**工具归属**写错过，见 W08 的 Provenance）。" +
+                  " 另：本档的热学数字出自修网格前的网格（R47 之前）。在修好的网格上实算**管孔净流入 −14.675 W**（热往管里灌，不过）" +
+                  "、圆盘区最高温 3.007 K、法兰增量温降 −14.824 K、合计 3099.7 g ——" +
+                  "**本档的热学结论不可再引用**，只留作「舌片自由段这条判据抓得住它」的样本。",
+        // R48 B（2026-09-14 Opus 5）：热学结论整档不可引用 ⇒ 热偶读数基准的热侧／冷侧两条新硬判据也在声明之内（旧判法两条已是参考量，留着不删）
+        InvalidChecks = new[] { "⑤", LineResult.Key.NetFlux, LineResult.Key.DiscTemp, LineResult.Key.FlangeDip,
+                                LineResult.Key.HotOverTc, LineResult.Key.ColdUnderTc },
+        RecordFromOldMesh = true,   // R48：记录值出自修网格前；热学结论不可引用（见 Invalid）
         WallMm = 0.8, TabLengthMm = 90.0, TabHalfWidthMm = 15.0,
         TabThickMm = new[] { 2.11, 3.33, 3.12, 1.76 },
         TabInsulMm = new[] { 18.7, 1.6, 1.4, 3.9 },
@@ -1174,9 +1284,17 @@ public sealed class DesignSpec
         Name = "（已作废）管壁 0.6 · 舌长 90",
         Provenance = "--final2 可行性阶梯 D7，2026-08-16",
         Binding = "焊接烧穿下界 0.6 mm ＋ 管 J 10.96/12 —— 两条同点咬住；败在装配",
-        Invalid = "★ **判据 ⑤ 不过**：舌长 90 ⇒ 自由段只有 24.0 mm（下界 100）。同上，" +
-                  "几何已由 2026-08-17 的重解取代（2388 → 2656 g；同上，见 W08 的 Provenance）。",
-        InvalidChecks = new[] { "⑤" },
+        // ★ R48（2026-09-13，Opus 5 改）：同 Retired08 —— 去代号、补上修好网格后实算的失败项（原来只声明了自由段那一条，
+        //   自检门因此把管孔净流入报成「声明之外的失败」）。
+        Invalid = "★ **舌片自由段不过**：舌长 90 ⇒ 自由段只有 24.0 mm（下界 100）。同上，" +
+                  "几何已由 2026-08-17 的重解取代（2388 → 2656 g；同上，见 W08 的 Provenance）。" +
+                  " 另：本档的热学数字出自修网格前的网格（R47 之前）。在修好的网格上实算**管孔净流入 −12.494 W**（热往管里灌，不过）" +
+                  "、圆盘区最高温 3.538 K、法兰增量温降 −16.591 K、合计 2377.8 g ——" +
+                  "**本档的热学结论不可再引用**。",
+        // R48 B（2026-09-14 Opus 5）：热学结论整档不可引用 ⇒ 热偶读数基准的热侧／冷侧两条新硬判据也在声明之内（旧判法两条已是参考量，留着不删）
+        InvalidChecks = new[] { "⑤", LineResult.Key.NetFlux, LineResult.Key.DiscTemp, LineResult.Key.FlangeDip,
+                                LineResult.Key.HotOverTc, LineResult.Key.ColdUnderTc },
+        RecordFromOldMesh = true,   // R48：记录值出自修网格前；热学结论不可引用（见 Invalid）
         WallMm = 0.6, TabLengthMm = 90.0, TabHalfWidthMm = 15.0,
         TabThickMm = new[] { 1.82, 2.85, 2.66, 1.49 },
         TabInsulMm = new[] { 18.7, 1.6, 1.4, 3.9 },

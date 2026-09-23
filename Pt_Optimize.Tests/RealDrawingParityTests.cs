@@ -20,7 +20,7 @@ public class RealDrawingParityTests
 {
     private static string DrawingPath()
     {
-        string f = Path.Combine(HandoverDoc.Root(), "deliverable", "设计记录_管壁0.8mm.3dm");
+        string f = Path.Combine(HandoverDoc.Root(), "deliverable", "设计记录_管壁0.8mm.3dm");   // 只读：图纸输入（2026-09-15 Opus 5 I 路注）
         if (!File.Exists(f)) throw new FileNotFoundException("交付件不见了：" + f);
         if (Geometry3dm.FindProbe() is null) throw new FileNotFoundException("找不到 Pt_Optimize.Geom.exe —— 真图纸的门跑不了，不能算通过");
         return f;
@@ -50,7 +50,8 @@ public class RealDrawingParityTests
         string line = $"真图纸 入口 层（栅格步 {step}，探针 {sw.Elapsed.TotalSeconds:0.0} s，{f.Nx}×{f.Nz} 点）：网格面积 {mF.TotalArea:0.0} vs 解析 {mA.TotalArea:0.0} mm²（差 {areaDiff * 100:0.000} %）；" +
                       $"抽热 {b.QFromTube:0.000} vs {a.QFromTube:0.000} W；发热 {b.QGen:0.0} vs {a.QGen:0.0} W；格数 {b.Cells} vs {a.Cells}";
         Console.WriteLine(line);
-        File.AppendAllText(Path.Combine(HandoverDoc.Root(), "deliverable", "R47_真图纸对拍_2026-09-13.txt"),
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        File.AppendAllText(DeliverableOut.Stamped("R47_真图纸对拍_2026-09-13.txt"),
                            $"{DateTime.Now:yyyy-MM-dd HH:mm}　{line}{Environment.NewLine}", new UTF8Encoding(false));
         Assert.True(areaDiff < 0.003, $"图纸网格面积差 {areaDiff * 100:0.000} % ≥ 0.3 %（图纸 {mF.TotalArea:0.0}，解析 {mA.TotalArea:0.0}）");
         Assert.True(Math.Abs(a.QFromTube - b.QFromTube) < 1.0, $"抽热差 {Math.Abs(a.QFromTube - b.QFromTube):0.000} W ≥ 1 W（图纸 {b.QFromTube:0.000}，解析 {a.QFromTube:0.000}）");
@@ -104,12 +105,12 @@ public class RealDrawingParityTests
         for (int i = 1; i < res.Trace.Count; i++)
             Assert.True(res.Trace[i].Cells > res.Trace[i - 1].Cells, $"第 {i + 1} 档 {res.Trace[i].Cells} 格应多于上一档 {res.Trace[i - 1].Cells}");
         foreach (var t in res.Trace)
-            sb.AppendLine($"档 {t.Fine:0.000} mm：{t.Cells} 格　管孔净流入 {t.N2p:0.000} W　圆盘区最高温 {t.N2pp:0.000} K　法兰增量温降 {t.N3:0.000} K　场解 {t.Sec:0} s");
+            sb.AppendLine($"档 {t.Fine:0.000} mm：{t.Cells} 格　管孔净流入 {t.N2p:0.000} W　最热铂高出热偶读数 {t.N2pp:0.000} K　管根低于热偶读数 {t.N3:0.000} K　场解 {t.Sec:0} s");   // R48 B（2026-09-14 Opus 5）：MeshVerify.Trace 的两列换成热偶读数基准的新判据，标签跟着换
         sb.AppendLine(res.Verdict);
         if (res.MidBandConfirm is not null) sb.AppendLine(res.MidBandConfirm);
         var floorNotes = res.Line!.Notes.Where(n => n.Contains("已到图纸分辨率", StringComparison.Ordinal)).ToArray();
         sb.AppendLine($"「已到图纸分辨率」附注 {floorNotes.Length} 条");
-        File.WriteAllText(Path.Combine(HandoverDoc.Root(), "deliverable", "R47_真图纸加密复算_2026-09-13.txt"), sb.ToString(), new UTF8Encoding(false));
+        File.WriteAllText(DeliverableOut.Stamped("R47_真图纸加密复算_2026-09-13.txt"), sb.ToString(), new UTF8Encoding(false));
     }
 
     /// <summary>仪器：真图纸厚度场 vs 同一解析板的栅格，逐点比对差在哪（只记录，不判）。</summary>
@@ -151,6 +152,6 @@ public class RealDrawingParityTests
         foreach (var kv in buckets.OrderByDescending(kv => kv.Value)) sb.AppendLine($"  {kv.Key}：{kv.Value} 点（{kv.Value * f.Step * f.Step:0.0} mm²）");
         foreach (var l in samples) sb.AppendLine("  " + l);
         Console.WriteLine(sb.ToString());
-        File.WriteAllText(Path.Combine(HandoverDoc.Root(), "deliverable", "R47_真图纸逐点差_2026-09-13.txt"), sb.ToString(), new UTF8Encoding(false));
+        File.WriteAllText(DeliverableOut.Stamped("R47_真图纸逐点差_2026-09-13.txt"), sb.ToString(), new UTF8Encoding(false));
     }
 }

@@ -75,6 +75,55 @@ public enum Orientation
 /// </summary>
 public class DesignInputs
 {
+    // ---------- 0 判据限值与可行窗口 ----------
+    //
+    // ★★★★★ U 路（2026-09-18，Opus 5）：**温差预算改成工程师可填。**
+    //
+    //   用户 2026-09-17：「简单说：按半毫米一层缠，现在的判据下没有能造的设计……
+    //   要你定一件事：冷侧那 5 度能不能放宽」；2026-09-18：「OK!了解了，请开工」。
+    //   ⇒ 冷侧、热侧两条判据的限值从写死的 5 K 改成这两项输入，默认仍是 5 K。
+    //   **我不替填的人改这个数**：默认值一位不动，放宽多少由填的人负责，界面上写明出处。
+    //
+    //   限值只有一条路：这两项 → LineCase.ColdUnderTcMaxK／HotOverTcMaxK（整线算例读 Base）
+    //   → 判据表、保温搜索、加密复算容差、说明书。别处不许再写第二个数（门：R48UTempBudgetTests）。
+
+    [Category(ParamCat.判据限值与窗口), DisplayName("管根低于热偶读数 允许值 [K]"),
+     Description("法兰所在接头处管根较冷的那一端，允许比控温热偶的读数低多少 —— 法兰抽热会把管根拉冷。"
+               + "默认 5 = 控温热偶在 1100 °C 的误差（2026-09-14 现场给的：热偶装在每段中点，误差 5 ℃，「10 ℃ 是上下各 5 ℃」）。"
+               + "只在带玻璃稳态卡交付；空管到温稳态照常算、只作参考。")]
+    public double ColdUnderTcAllowK { get; set; } = LineCase.ThermocoupleErrorK;
+
+    [Category(ParamCat.判据限值与窗口), DisplayName("最热铂高出热偶读数 允许值 [K]"),
+     Description("法兰上（圆盘和舌片）以及它贴着的管根里，最热的那一点允许比控温热偶的读数高多少。"
+               + "默认 5 = 控温热偶在 1100 °C 的误差（出处同上一项）。"
+               + "只在带玻璃稳态卡交付；空管到温稳态照常算、只作参考。")]
+    public double HotOverTcAllowK { get; set; } = LineCase.ThermocoupleErrorK;
+
+    [Category(ParamCat.判据限值与窗口), DisplayName("终验时量每片舌保温的可行窗口"),
+     TypeConverter(typeof(ChineseBoolConverter)),
+     Description("终验（加密复算到数不再变）之后，逐片把舌保温上下各挪一点、其余一位不动，量出「这一片还能在多宽的范围里改仍然全过」。"
+               + "结果进判据页的小表与安装报告：窗口里落不进任何一档缠绕层数（现场一层 0.5 mm）的片会被点名。"
+               + "很慢（每片二十几次整线解，细网格上合计约一小时），只在终验跑一次，优化过程中不跑。不想等就关掉。")]
+    public bool MeasureInsulWindowAtFinalCheck { get; set; } = true;
+
+    // ★★★★★ 2026-09-18，Opus 5：**三关按顺序跑，结论一起给。**
+    //
+    //   用户口径（2026-09-15/16）：升温全程先过 → 带玻璃稳态决定法兰设计成不成 → 空管到温只卡电流密度与场有效 → 再看铂重。
+    //   在此之前 APP 只跑了中间那一关：升温全程（RampSweep）**全仓没有生产调用方**（只有测试在调），
+    //   空管到温稳态也只有命令行与测试跑过 —— 工程师在界面上点不到其中两关，
+    //   而判定却按「三关都过」在说话。**算得出、点不到**，本项目最常栽的那一族。
+    //   ⇒ 终验（加密复算到数不再变）之后按顺序跑齐三关，结论按顺序印全名。
+
+    [Category(ParamCat.判据限值与窗口), DisplayName(FinalCheckReport.SwitchLabel),
+     TypeConverter(typeof(ChineseBoolConverter)),
+     Description("终验（加密复算到数不再变）之后，在**同一张判决网格**上按顺序跑："
+               + "先升温全程（逐设定点解一次整线：场有效、管与截面的电流密度按该点实际电流都不超限；伸长只报数不卡），"
+               + "再带玻璃稳态（就是刚复算完的那一份，不重跑），再空管到温稳态，最后给铂重。"
+               + "结论与每段管、每片法兰的伸长量进输出框与安装报告。"
+               + "慢（升温全程八个设定点各一次整线解，加上空管一次）。关掉就只剩带玻璃稳态那一关，"
+               + "界面与报告照实写「没跑」——没跑不等于过。")]
+    public bool RunThreeStatesAtFinalCheck { get; set; } = true;
+
     // ---------- 1 工艺 ----------
     [Category(ParamCat.页面接管), DisplayName("目标金属温度 [°C]"),
      Description("⚠ 本项被「③ 整线核算」页的分段控温点表接管 —— 在这张表里改它，对「③ 整线核算」没有影响。　管中段控温点的金属温度设定值")]
@@ -108,14 +157,40 @@ public class DesignInputs
     /// </summary>
     [Category(ParamCat.管几何), DisplayName("铂材牌号"),
      TypeConverter(typeof(GradeNameConverter)),
-     Description("MaterialDb 中的牌号名（**只能从下拉里选**，打不了字）。" +
-                 "电阻率与持久强度均取该牌号的实测数据")]
-    public string GradeName { get; set; } = "Pt";
+     Editor(typeof(PtOptimize.UI.GradeNameEditor), typeof(System.Drawing.Design.UITypeEditor)),
+     Description(GradeNameNote)]
+    public string GradeName { get; set; } = GradeChoices.DefaultGrade;
 
-    [Category(ParamCat.工艺条件), DisplayName("设计寿命 [h]"), Description("1 年 = 8760 h")]
+    /// <summary>
+    /// ★★★★★ 2026-09-18，Opus 5：**这段说明以前说的是假话，本轮改成现状的真话。**
+    ///
+    /// 原文写「电阻率与持久强度均取该牌号的实测数据」。持久强度确实按牌号
+    /// （<c>Mechanics</c>／<c>TubeStrength</c>／<c>LineSolver</c> 都走 <see cref="MaterialDb.Get"/>(p.GradeName)），
+    /// **电阻率不是** —— 段解焦耳热、壳体电流、板件二维电流三处读的都是 <see cref="Materials.PtResistivity"/>，
+    /// 写死纯铂的那一份；热导率与比热同理（<see cref="Materials.PtThermalK"/>／<see cref="Materials.PtCp"/>）。
+    /// 换句话说：在界面上把牌号改成 Pt-Rh/90-10，强度那一路会变，电、热那一路**一位都不动** ——
+    /// 而说明告诉工程师两者都按牌号走。这正是本项目最怕的那一族（让人以为的与事实不一样）。
+    ///
+    /// 本轮**只改说明、不改求解链**（改求解链要连同判据全体重跑，另立一轮）。差量已量：
+    /// 见 deliverable 里「物性按牌号与纯铂差量」那份带开跑时刻的文件。
+    /// 门 <c>R48MGradeNoteTruthTests</c> 钉着「说明里写的 == 源码里真读的」：
+    /// 谁把电阻率接成按牌号而没回来改这句话，当场红；谁把这句话改回原来那句假话，也当场红。
+    /// </summary>
+    public const string GradeNameNote =
+        "MaterialDb 中的牌号名（**只能从下拉里选**，打不了字）。" +
+        "四类数据（电阻率／热膨胀／持久强度／热导率与比热）不全的牌号在下拉里**灰显、不能选**，行末写明缺哪几类。" +
+        "默认纯铂。" +
+        "⚠ 现状：**持久强度按牌号**取该牌号的数据；**电阻率、热导率、比热目前一律按纯铂算**" +
+        "（按牌号接线待定，差量见 deliverable 里「物性按牌号与纯铂差量」那份带开跑时刻的文件）。";
+
+    // ★★ 2026-09-18，Opus 5：这两项的**出处**写进说明 —— 说明只有一份写法（TubeStrength 的两个常量），
+    //   参数表、报告、判据说明、HANDOVER 都引它，不许各抄一句。
+    [Category(ParamCat.工艺条件), DisplayName("设计寿命 [h]"),
+     Description("1 年 = 8760 h。" + TubeStrength.LifeNote)]
     public double DesignLifeHours { get; set; } = 8760;
 
-    [Category(ParamCat.工艺条件), DisplayName("力学安全系数")]
+    [Category(ParamCat.工艺条件), DisplayName("力学安全系数"),
+     Description(TubeStrength.SafetyFactorNote)]
     public double SafetyFactor { get; set; } = 2.0;
 
     [Category(ParamCat.保温与表面), DisplayName("环境温度 [°C]")]
@@ -523,6 +598,71 @@ public class DesignInputs
     [Browsable(false)] public double NeighbourTempLeftC { get; set; } = double.NaN;
     [Browsable(false)] public double NeighbourTempRightC { get; set; } = double.NaN;
 
+    /// <summary>
+    /// ★ R48 审查第 5 条（2026-09-14，Opus 5）：**端部额外保温渐变形状**用的管内玻璃换热 hg W/(m²·K)。&lt; 0（默认 −1）= 取 <see cref="HGlass"/>，逐位不变。
+    ///
+    /// 病：渐变形状按 ℓt = √(kA/β) 定，β 含 hg·π·D。空管工况把 hg 置 0 ⇒ ℓt 变长（B2 上 24.8 → 38.5 mm）⇒ 装上去的保温厚度分布跟着工况变
+    ///   （30 mm 端区最外子区间的额外厚度 exp(−27.5/24.8) = 0.33 倍 → exp(−27.5/38.5) = 0.49 倍）—— 等于换了工况就换了一套硬件。
+    /// 修：形状按**带玻璃**的 hg 定。LineRunner 的空管段把置 0 之前的 hg 写到这里；单段页上人自己填 hg = 0 时没有「带玻璃那一份」可取，照旧按本身参数。
+    /// 残余差异：β 的散热切线斜率取自损失表（三次样条，表的温度上界随玻璃进口变），两工况只差样条插值，量级远小于打印精度。
+    /// 用 −1 当「未设」：hg 物理上 ≥ 0，负值不会是合法输入（同 <see cref="BusbarConductanceWPerK"/> 的 −1 = 自动）；不用 NaN —— 参数表存盘的 JSON 不收 NaN。
+    /// </summary>
+    [Browsable(false)] public double EndInsulShapeHGlass { get; set; } = -1;
+
+    /// <summary>
+    /// ★ R48 G3（2026-09-15，Opus 5；物理把关人第十一轮「空管管腔轴向辐射进模型」）：**空管管腔轴向辐射**的比例系数，
+    /// 以 <see cref="SegmentSolver.CavityRadRefC"/>（1150 °C）时的等效轴向导热 kA 表示，W·m/K。默认 0.023。
+    /// 前身是 R48 审查第 3 条（2026-09-14）的敏感度钩子 TubeCavityRadKAWmPerK（默认 0、带玻璃也加、不随温度）；改名是为了让旧语义的读者编译不过，不会读错。
+    ///
+    /// ══ 物理（出处：物理把关人第十一轮；下面量级是 2026-09-14 仓库里的推理估算，未实测）
+    /// 空管时管腔是连续的高温腔体，腔内辐射沿轴向传热，相当于附加的轴向导热 kA_rad(T) ∝ T³；带玻璃时腔被玻璃充满，没有这条路（取 0）。
+    ///   黑体长管：等效 kA = 8σT³·πD·R²·∫₀^∞ H·F(H) dH = (16/3)σT³·D × 管腔截面（F = 管壁微元环对同轴圆盘的角系数，积分 = 2/3），
+    ///   1100 °C、Ø50 ⇒ 0.077 W·m/K（1150 °C ⇒ 0.086），是管壁 kPt·A（83.3 × 1.28e-4 ≈ 0.0106）的约 7～8 倍；
+    ///   灰体 ε = 0.18（<see cref="PtEmissivity"/>）在尺度 ℓ 上与表面热阻串联：kA_eff = 1/(1/0.077 + 1/(G_s·ℓ²))，G_s = πD·ε/(1−ε)·4σT³ ≈ 20 W/(m·K)
+    ///   ⇒ ℓ = 40 mm 时约 0.023（管壁的 2.1 倍）；与 ℓ 自洽迭代（ℓ = √(kA_总/hP)，空管 hP ≈ 6.7）收在约 0.056（5.2 倍，ℓ ≈ 99 mm）。
+    ///   ⚠ 这两档是按 1100 °C 算的；物理把关人第十一轮定「在 1150 °C 下标定」⇒ 本系数把它们当 1150 °C 的值用（同一式在 1150 °C 重算低档是 0.025，差在两档之间的不确定度以内）。
+    /// ══ 默认值：暂取低档 0.023，**两档之间没有先验依据取舍**，待物理把关人定（2026-09-15 Opus 5 审查后改写）
+    ///   ⚠ 本段初版（同日）写的是「两档都出自扩散近似、扩散近似偏大 ⇒ 两档都偏上限 ⇒ 取较小的那档离真值近」—— **这推不出来，已撤回**：
+    ///     两档用的是同一个扩散近似的黑体值 0.077，差别只在尺度 ℓ。低档的 ℓ = 40 mm 是随手取的，与同一估算的自洽尺度不符：
+    ///     √((0.0106 + 0.023)/6.7) = 71 mm，代回得 0.043，再迭代收到 0.055（ℓ ≈ 99 mm，awk 按上面两式重算，2026-09-15 Opus 5）⇒
+    ///     **在这个估算内只有高档自洽**；低档偏低是因为 ℓ 取得不自洽，不是修正了扩散偏差。扩散近似在 ℓ ≈ 1～2 D 时让两档一起偏大，偏多少未知，不偏向哪一档。
+    ///   ⇒ 默认值只是沿用本路初版的取值，不代表更可信；在物理把关人定之前，**空管结论一律两档并报**
+    ///     （B2 设计两档续跑的并列见 deliverable\R48_空管续跑_两档并列_2026-09-15_&lt;时刻&gt;.txt 里读同一编译产物那一对的一份；
+    ///      05:03 那份不带时刻，读的是更早的编译产物，数与之逐位相同但出处不同 —— 第二轮审查后改，2026-09-15 Opus 5）。
+    ///   没有「偏保守」的一档：R48 C 路开箱网格三档对照（deliverable\R48_空管稳态_空管_生产设定_开箱网格_腔辐射kA*，r48_C 树）里
+    ///   kA 变大时下游片超温变小、入口片超温变大，方向不一致。
+    ///   ⚠ 本属性会随界面「保存方案」写进方案文件（MainForm.Save 把全部公开属性序列化），读方案时照读，界面参数表却不显示它（Browsable(false)）⇒
+    ///     以后默认值若改（比如定成高档），旧方案读进来仍是存盘时的值，参数表上看不出来；整线结果的空管工况说明会印出系数；单段解的 SolveResult.Note 也写（SegmentSolver.EmptyTubeNoteOf），
+    ///     单段页报表空管时把它印成「工况说明」一节（MainForm.Report；第二轮审查后加，2026-09-15 Opus 5，原来单段页不显示 Note）。
+    ///     不能加 JsonIgnore：<see cref="SegmentSolver.Clone"/> 靠 JSON 往返复制，加了会丢值。改默认值的人要一并处理读方案（交接 open issue）。
+    /// ══ 口径（写死在 <see cref="SegmentSolver.CavityRadKA"/>，只此一处）
+    ///   · 温度依赖：按**段控温点温度取常数** kA_rad = 本系数 × ((T_set + 273.15)/(1150 + 273.15))³ —— 与管壁 kPt 取 T_set 同一口径，
+    ///     一维求解器的 K 只随位置不随温度；沿管实际温度偏离控温点的部分不跟。
+    ///     误差量级按当前模型（合并 A/D 之后、含管腔辐射、全线 1150 空管、B2 设计）：低档管根 1117.95～1173.32 °C ⇒ T³ 相对控温点 −6.6 %～+5.0 %，
+    ///     高档 1129.13～1164.43 °C ⇒ −4.3 %～+3.1 %（出处 deliverable\R48_空管续跑_kA0.023_2026-09-15.txt／…_kA0.056_2026-09-15.txt 续跑末轮逐段管根，awk 算三次方；
+    ///     带时刻 _064409 的两份重跑与之 DATA 行除编译产物号外逐位相同，md5 核对，2026-09-15 Opus 5）；
+    ///     两档之间差 2.4 倍，这一项小于它。（初版引的「管根最高 1254 °C、T³ 差 24 %」出自 r48_C 合并前的模型、无管腔辐射，不是当前模型，已换掉。）
+    ///     ⚠ 2026-09-15 Opus 5（合并，复审后改）：出处层次 —— 本段引的 R48_空管续跑_* 各份（kA0.023／kA0.056、两档并列）都是在 r48_G3 工作树上跑的（底板 460d3b，即 **F 合入前的配方**：
+    ///       压接形心整格 + 3·hFine 细带）；合并树（F 压接面上定温、缺省不铺细带）下没有重跑，管根 1117.95～1173.32 °C 等数只读作那份配方下的；
+    ///       文件首跑在 r48_G3 工作树；2026-09-15 Opus 5（I 路）：kA0.023／kA0.056／两档并列各份（含带时刻的重跑）已原样拷入本树 deliverable（md5 与源相同，清单 deliverable/R48_合并拷入证据清单_2026-09-15.txt），原句「合并树里没有」作废。
+    ///   · 只在空管（<see cref="SegmentSolver.IsEmptyTube"/>）时有；带玻璃为 0（带玻璃逐位不变）。
+    ///   · 段间接头：两段管腔在接头处连通（整线只封住两头）⇒ 接头导度也加这一份，按**邻段端温**的 T³ 取；
+    ///     收敛后同一接头两侧管腔那一份只差 O(3ΔT/T)，**前提是两段节距 Δx 相同** —— 接头导度按本段自己的节距（段长 ÷ (节点数 − 1)）取，
+    ///     两段不等长（节点数同为 401）时两侧导度差节距比，接头热流按同一比例失配；管壁那一份原来就有这个问题，管腔那一份跟着有（交接 open issue，
+    ///     R48CavityRadiationGateTests 接头门里有不等长对照的数）。
+    ///   · 管口：铂管两端封住 ⇒ 不计管口向外辐射（整线两头的端部边界照旧只有法兰抽热）。
+    ///   · 标定只对 Ø50 管腔、ε = 0.18：本系数**不按管径、发射率换算**；空管工况说明在两者与标定不同时写明。
+    ///   · 不进端部额外保温的形状（那是硬件，按带玻璃算，见 <see cref="EndInsulShapeHGlass"/>）。
+    ///   · **没进升温模型**（本轮范围只到 SegmentSolver）：RampSolver 是集总单节点，没有轴向导热；但 <see cref="RampTwoNode"/> 的管—法兰耦合导度
+    ///     用半无限翅片入口导度 √(kPt·A·β)，**含管壁轴向导热**，而升温期管里没有玻璃、管腔辐射在物理上同样存在（按两档 kA 管侧翅片导度约大 √3.2 ≈ 1.8／√6.3 ≈ 2.5 倍）。
+    ///     读它的地方（2026-09-15 Opus 5 逐处查过）：整线参考量「升温期法兰−管峰值」（LineRunner.FlangeLumped → RampTwoNode.Solve）、
+    ///     设计电流里「对照·两节点含法兰自热」那一栏（DesignCurrent 调 RampTwoNode.Solve，只印、不进尺寸链）；
+    ///     硬判据「升温」走管子准静态电流 RampTwoNode.QuasiStaticCurrentA，不经这个耦合导度。带玻璃算例也算这两处参考量，改了会动已记录的参考值
+    ///     ⇒ 要不要计入交物理把关人定（交接 open issue）。
+    ///     （初版此处写「RampSolver／RampTwoNode 没有轴向梯度」，对 RampTwoNode 是错的，2026-09-15 Opus 5 审查后改。）
+    /// </summary>
+    [Browsable(false)] public double TubeCavityRadKA1150WmPerK { get; set; } = SegmentSolver.CavityRadKA1150Low;
+
     [Category(ParamCat.程序算出), DisplayName("壁厚由程序反算"),
      Description("⚠ 本项被LineRunner 强制置 false —— 整线链壁厚由 LineCase.WallMm 定，自行反算会与之打架接管 —— 在这张表里改它，对「③ 整线核算」没有影响。　关闭 = 校核模式：壁厚取「最小可制造壁厚」的实测值，程序只报实际 J")]
     [TypeConverter(typeof(ChineseBoolConverter))]
@@ -532,6 +672,25 @@ public class DesignInputs
     [Category(ParamCat.数值), DisplayName("网格节点数"),
      Description("二阶格式。网格收敛测试显示 n=201 在冷点温度上约 2 K 离散误差，n=401 约 0.5 K")]
     public int Nodes { get; set; } = 401;
+
+    // ★★★★★ R48 M（2026-09-18，Fable 5.1）：**段解地板三项**（从工程师参数表里藏起来：是求解器内部的数值分辨率，不是工况）。
+    //
+    //   病（实测出处 deliverable/R48_M_停机容差阶梯_两点_本次开跑于2026-09-18_214343.txt 与同名「进度活页」）：外层耦合的停机容差改成绝对目标之后，
+    //   两个「轮数彩票」点在常数 0.05 K 上一个 91 轮、另一个 271 轮还没停 —— 40 轮以后真残差停在 0.0013～0.0029 K、步长在 0.006～0.027 K 之间打转，
+    //   乘放大 35.9 就是 0.05～0.1 K／0.2～1 K：**这是段解自己的分辨率地板**，与容差口径无关。
+    //   地板的来源：段电流按二分求到 xTol = 0.05 A 就停（Roots.Monotone 返回括号中点 ⇒ 电流落在 0.025 A 的格子上；1150 °C 附近 dT/dI ≈ 1.9 K/A ⇒ 管温跳 0.05 K 一格），
+    //   外层 Picard 停在 0.01 K、内层 Bvp1D 停在 0.005 K。§0.-10 ⑤ 早写着「要再往下收一个数量级时先量它」——本轮量了，也降了。
+    //   降 10 倍（电流 0.05 → 0.005 A、Picard 0.01 → 0.001 K、Bvp1D 0.005 → 0.0005 K）；成本与效果见 HANDOVER §0.-16M（阶梯前后）。
+    //   ⚠ 只改数值分辨率，判据的物理口径与限值一个字没动；门 R48MStopTolGateTests.门_段解地板降了十倍_注射旧地板当场红。
+    [Browsable(false)]
+    public double SegCurrentTolA { get; set; } = SegCurrentTolADefault;
+    [Browsable(false)]
+    public double SegPicardTolK { get; set; } = SegPicardTolKDefault;
+    [Browsable(false)]
+    public double SegBvpTolK { get; set; } = SegBvpTolKDefault;
+    /// <summary>R48 M（2026-09-18，Fable 5.1）：段解地板的生产默认（新）与改前的旧值（门注射用）。</summary>
+    public const double SegCurrentTolADefault = 0.005, SegPicardTolKDefault = 0.001, SegBvpTolKDefault = 0.0005;
+    public const double SegCurrentTolALegacy = 0.05, SegPicardTolKLegacy = 0.01, SegBvpTolKLegacy = 0.005;
 
     // ---------- 派生 ----------
     [Browsable(false)] public double TubeId => TubeIdMm * 1e-3;

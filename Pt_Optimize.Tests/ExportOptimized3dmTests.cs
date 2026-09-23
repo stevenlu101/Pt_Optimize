@@ -139,8 +139,8 @@ public class ExportOptimized3dmTests
         sb.AppendLine();
 
         // ── 出图：每片一张可回读的 .3dm
-        string outDir = Path.Combine(HandoverDoc.Root(), "deliverable", "优化后3dm");
-        Directory.CreateDirectory(outDir);
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）；出图目录同样带时刻（原 deliverable/优化后3dm 里是被引的交付件）
+        string outDir = DeliverableOut.StampedDir("优化后3dm");
         sb.AppendLine();
         sb.AppendLine("出图：");
         string? probe = Geometry3dm.FindProbe();
@@ -181,7 +181,8 @@ public class ExportOptimized3dmTests
             }
         }
 
-        File.WriteAllText(Path.Combine(HandoverDoc.Root(), "deliverable", "优化后出图.txt"), sb.ToString());
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        File.WriteAllText(DeliverableOut.Stamped("优化后出图.txt"), sb.ToString());
     }
 
     /// <summary>

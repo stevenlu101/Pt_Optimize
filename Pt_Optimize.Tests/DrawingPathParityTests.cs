@@ -119,7 +119,8 @@ public class DrawingPathParityTests
             return Math.Abs(b.QFromTube - e.QFromTube);
         }
         double d10 = Diff(1.0, out var b10), dH4 = Diff(FlangeMesher.RasterStepFor(hF), out _), d01 = Diff(0.1, out var b01);
-        System.IO.File.AppendAllText(System.IO.Path.Combine(HandoverDoc.Root(), "deliverable", "R47_复修M5_栅格步对拍_2026-09-13.txt"),
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        System.IO.File.AppendAllText(DeliverableOut.Stamped("R47_复修M5_栅格步对拍_2026-09-13.txt"),
                                      $"{DateTime.Now:yyyy-MM-dd HH:mm}{Environment.NewLine}{sb}", new System.Text.UTF8Encoding(false));
         Assert.True(d01 < 1.0, $"栅格步 0.1：抽热差 {d01:0.000} W ≥ 1 W（精确 {e.QFromTube:0.000}，图纸 {b01.QFromTube:0.000}）");
         Assert.True(Math.Abs(e.QGen - b01.QGen) / e.QGen < 0.01, $"栅格步 0.1：发热差 {Math.Abs(e.QGen - b01.QGen) / e.QGen * 100:0.00} % ≥ 1 %");

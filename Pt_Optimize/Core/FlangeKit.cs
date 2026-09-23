@@ -100,10 +100,16 @@ public static class FlangeKit
                           $"\t{r.ClampTempC:0}{(r.ClampTempIsInput ? "" : "（算出）")}\t{r.QClampW:0.0}" +
                           $"\t{r.TabInsulMm:0.0}（{r.InsulFromXMm:0}…{r.InsulToXMm:0}，长 {r.InsulLenMm:0}）" +
                           $"\t{(double.IsNaN(r.WeldLegMm) ? "按图纸" : r.WeldLegMm.ToString("0.00"))}\t{(r.ArmNote.Length > 0 ? r.ArmNote + (r.Note.Length > 0 ? "；" : "") : "")}{r.Note}");   // R47 第三轮 N5：图纸档没有板厚，焊脚按图纸
-        string discInsul = p.FlangeInsulated && p.FlangeInsulThickMm > 1e-6
-            ? $"圆盘双面包 {p.FlangeInsulThickMm:0.0} mm"
-            : "圆盘不包";
-        sb.AppendLine($"  保温：{discInsul}；管保温 {d.TubeInsulMm:0.0} mm；端部额外保温 {p.EndInsulExtraMm:0.0} mm × 长 {p.EndInsulLengthMm:0} mm；材料同参数表「② 中层」（{p.Layer1.Name}）。舌保温只包切点到压接段前那一段，压接段由铜排夹住不包。");
+        // ★ R48（2026-09-14，Opus 5）：圆盘保温按设计逐片取（DesignSpec.DiscInsulMmOf，与算例同一口径），不再读页面 DesignInputs。
+        var discs = Enumerable.Range(0, d.FlangeCount).Select(d.DiscInsulMmOf).ToArray();
+        string discInsul = discs.All(v => v <= 1e-6) ? "圆盘不包"
+            : discs.All(v => Math.Abs(v - discs[0]) < 1e-9) ? $"圆盘双面包 {discs[0]:0.0} mm"
+            : $"圆盘双面包，逐片 {string.Join(" / ", discs.Select(v => v.ToString("0.0")))} mm（入口 … 出口）";
+        // ⚠ 2026-09-18 Opus 5 更正（同型病灶，与 InstallReport 第 5 节那一句同一处错）：
+        //   这句原写「材料同参数表『② 中层』」，而这里引的 p.Layer1 在参数表上是**「① 内层（贴铂）」**
+        //   （DesignInputs.Layer1 的 DisplayName；「② 中层」是 Layer2 = 致密氧化铝半管套，另一种材料）。
+        //   名字与实物对不上 ⇒ 现场照这句去找材料会拿错。照实改。
+        sb.AppendLine($"  保温：{discInsul}；管保温 {d.TubeInsulMm:0.0} mm；端部额外保温 {p.EndInsulExtraMm:0.0} mm × 长 {p.EndInsulLengthMm:0} mm；材料同参数表「① 内层（贴铂）」（{p.Layer1.Name}）。舌保温只包切点到压接段前那一段，压接段由铜排夹住不包。");
         sb.AppendLine($"  铜排：到冷端 {p.BusbarLenToSinkMm:0} mm，冷端 {p.BusbarSinkTempC:0} °C，许用电流密度 {p.BusbarJAllowAPerMm2:0.0} A/mm²；" +
                       (p.BusbarClampTempC >= 0 ? $"夹持温度是设定值 {p.BusbarClampTempC:0} °C（现场要把它整定到这个数）"
                                                  : "夹持温度由铜排热导算出（上表「算出」）") + "。");

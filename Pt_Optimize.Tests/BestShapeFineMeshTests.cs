@@ -38,7 +38,8 @@ public class BestShapeFineMeshTests
         d.SetpointC = new[] { 1150.0, 1080.0 }; d.SegLengthMm = new[] { 300.0, 300.0 }; d = d.Fit();
         d.TubeInsulMm = 10;                                   // 与搜形状（页面默认 纤维保温 10）同一工况
         d.DiscRadiusMm = discR; d.TabHalfWidthMm = halfW; d.TabLengthMm = tabLen;
-        string dump = Path.Combine(HandoverDoc.Root(), "deliverable", $"细网格复算_{tag}.txt");
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        string dump = DeliverableOut.Stamped($"细网格复算_{tag}.txt");
         Directory.CreateDirectory(Path.GetDirectoryName(dump)!);
         File.WriteAllText(dump, $"═══ 盘Ø{2 * discR:0}／舌宽{2 * halfW:0}／舌长{tabLen:0}（2 段 3 片，管壁 0.8，管保温 10）：先解（导航网格）再加密复算 ═══" + Environment.NewLine);
         var sw = Stopwatch.StartNew();

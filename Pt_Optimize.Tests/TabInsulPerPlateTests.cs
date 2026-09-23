@@ -104,7 +104,8 @@ public class TabInsulPerPlateTests
         var d = R47NavGridInstrumentTests.Disc56TwoSegs();
         d.SetpointC = new[] { 1150.0 }; d.SegLengthMm = new[] { 300.0 };
         d = d.Fit();
-        var lc = d.BuildCase(p, checkRamp: false);
+        // 2026-09-15 Opus 5（审查意见 minor：集总升温用时漏在名单外）：开升温检查，让「升温到位用时（集总）」这条参考量出现在表上，下面一并断言它判不了
+        var lc = d.BuildCase(p, checkRamp: true);
         double holeR = lc.TubeIdMm * 0.5 + lc.WallMm;
         // 半个圆盘：舌端 x = 0 ⇒ 材料全在 x ≥ 0，XMinMaterial = 0，推不出舌盘分界
         var g = new FlangePlate { DiscRadiusMm = 28, HoleRadiusMm = holeR, TabEndXMm = 0, TabEndHalfWidthMm = 28, ThicknessMm = 1.0, TabParallel = true };
@@ -125,6 +126,7 @@ public class TabInsulPerPlateTests
         Assert.Contains(LineResult.Key.SelfSupply, LineRunner.DependsOnFlangeFields);
         Assert.Contains(LineResult.Key.HeatResidual, LineRunner.DependsOnFlangeFields);
         Assert.Contains(LineResult.Key.DiscTemp, LineRunner.DependsOnFlangeFields);
+        Assert.Contains(LineResult.Key.RampHours, LineRunner.DependsOnFlangeFields);   // 2026-09-15 Opus 5：读逐片焦耳热与质量，吃法兰场
         int seen = 0;
         foreach (var key in LineRunner.DependsOnFlangeFields)
             foreach (var ck in r.Checks.Where(c => c.Name.StartsWith(key, StringComparison.Ordinal)))
@@ -133,10 +135,21 @@ public class TabInsulPerPlateTests
                 Assert.True(ck.Undetermined, ck.Name + " 应无法判定");
                 Assert.False(ck.Ok, ck.Name + " 判不了不算过");
                 Assert.Contains("保温分界判不了", ck.Note);
+                // ★ R48 G1（2026-09-15，Opus 5；数值把关人第十四轮）：这块板（材料 x ∈ [0, 28]、压接长 40）的压接段同时盖到了管孔 ——
+                //   由网格布尔位 ShellMesh.ClampCoversHole 判（不再从 ClampAnchorNote 里找「⚠」），吃法兰场的判据要带上这一条说明。
+                Assert.Contains("盖到了管孔", ck.Note);
+                Assert.Contains("请加长舌片或缩短压接长", ck.Note);
             }
+        Assert.All(r.Flanges, fo => Assert.True(fo.ClampCoversHole, fo.Name + " 压接段盖到了管孔，位应为真"));
         Assert.True(seen >= 6, $"这张表上只找到 {seen} 条吃法兰场的判据／参考行，名单是不是没对上");
-        foreach (var key in new[] { LineResult.Key.NetFlux, LineResult.Key.FlangeDip, LineResult.Key.FlangeTopTemp, LineResult.Key.SelfSupply, LineResult.Key.HeatResidual })
+        foreach (var key in new[] { LineResult.Key.NetFlux, LineResult.Key.FlangeDip, LineResult.Key.FlangeTopTemp, LineResult.Key.SelfSupply, LineResult.Key.HeatResidual,
+                                    LineResult.Key.RampHours })
             Assert.Contains(r.Checks, c => c.Name.StartsWith(key, StringComparison.Ordinal) && c.Undetermined);
+        // 2026-09-15 Opus 5：开了升温检查 ⇒ 集总升温用时这条参考量在表上，且判不了、附注带保温分界与压接盖孔两条原因
+        var ckRamp = r.Checks.Single(c => c.Name.StartsWith(LineResult.Key.RampHours, StringComparison.Ordinal));
+        Assert.True(ckRamp.Undetermined); Assert.False(ckRamp.Ok);
+        Assert.Contains("保温分界判不了", ckRamp.Note);
+        Assert.Contains("盖到了管孔", ckRamp.Note);
         // 不吃法兰场的（管 J）不许被顺手标掉
         Assert.Contains(r.Checks, c => c.Name.StartsWith(LineResult.Key.TubeJ, StringComparison.Ordinal) && !c.Note.Contains("保温分界判不了"));
         Assert.False(r.AllOk);

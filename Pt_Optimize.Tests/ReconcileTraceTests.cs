@@ -40,7 +40,8 @@ public class ReconcileTraceTests
         d.SegLengthMm = new[] { 300.0, 300.0 };
         d = d.Fit();
         // ★ 边跑边落轨迹（2026-09-08）：此前只在跑完才写档，2.5 小时里一行都看不到，分不清慢和挂。
-        string dump = Path.Combine(HandoverDoc.Root(), "deliverable", "对帐超时_轨迹.txt");
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        string dump = DeliverableOut.Stamped("对帐超时_轨迹.txt");
         Directory.CreateDirectory(Path.GetDirectoryName(dump)!);
         File.WriteAllText(dump, "═══ 0.8 档求解轨迹（2 段 3 片，导航网格；边跑边写，末尾有合计）═══" + Environment.NewLine
                               + "对照：3 段的归档基准 3480.7 g（bba08c7 之前口径，不可与 2 段直接比）" + Environment.NewLine + Environment.NewLine);

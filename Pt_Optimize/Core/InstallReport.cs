@@ -16,6 +16,15 @@ public static class InstallReport
 {
     public const string Title = "系统安装报告";
 
+    /// <summary>★ R48（2026-09-14，Opus 5）：圆盘保温按设计逐片取（DesignSpec.DiscInsulMmOf，与算例同一口径）。</summary>
+    private static string DiscInsulText(DesignSpec d)
+    {
+        var discs = Enumerable.Range(0, d.FlangeCount).Select(d.DiscInsulMmOf).ToArray();
+        return discs.All(v => v <= 1e-6) ? "圆盘不包；"
+             : discs.All(v => Math.Abs(v - discs[0]) < 1e-9) ? $"圆盘双面包 {discs[0]:0.0} mm；"
+             : $"圆盘双面包，逐片 {string.Join(" / ", discs.Select(v => v.ToString("0.0")))} mm（入口 … 出口）；";
+    }
+
     public static string Build(LineResult r, DesignSpec d, DesignInputs p, string meshNote = "", DateTime? when = null)
     {
         if (r is null || d is null || p is null) return "";
@@ -28,6 +37,11 @@ public static class InstallReport
         sb.AppendLine(r.Ok && r.Converged && nBad == 0
             ? "判定：**全判据通过**" + (meshNote.Length > 0 ? "　" + meshNote : "")
             : $"判定：**{(r.Converged ? $"{nBad} 条判据没过" : "耦合未收敛")} —— 本报告不可作为安装依据**，先回「② 法兰优化」把它解到全过。");
+        // ★ 2026-09-15 Opus 5（J 路，合并把关待办 P2-9）：LineResult.RecipeDeviations 此前只有测试在读 —— 报告与界面都看不到「这次算的不是生产配方」。
+        //   接进安装报告：非空就紧跟判定单独一句并逐片列出（这几片的数不是生产口径）。生产链路上网格与热解不接受改配方（R48RecipeFingerprintTests 的行为门守着），正常情况下为空、这句不出现。
+        var recipeDevs = r.RecipeDeviations;
+        if (recipeDevs.Length > 0)
+            sb.AppendLine("⚠ **这次计算用的网格或热解配方与生产不同 —— 本报告的数不是生产口径，不可作为安装依据**：" + string.Join("；", recipeDevs));
         sb.AppendLine();
 
         // 1 整线概要
@@ -35,6 +49,12 @@ public static class InstallReport
         sb.AppendLine($"  {d.SetpointC.Length} 段铂管串联，{d.FlangeCount} 片法兰兼作电极（中间 {Math.Max(0, d.FlangeCount - 2)} 片共用）。");
         sb.AppendLine($"  管：内径 {p.TubeIdMm:0} mm／壁厚 {d.WallMm:0.00} mm／牌号 {p.GradeName}；管保温 {d.TubeInsulMm:0.0} mm。");
         sb.AppendLine($"  铂重：管 {r.TubeMassG:0} g + 法兰 {r.FlangeMassG:0} g = 合计 {r.TotalMassG:0} g。");
+        // ★★ 2026-09-18，Opus 5：强度那一条的**设计输入**要写在报告里 —— 数与出处一起，不许只给数。
+        //   出处只有一份写法（TubeStrength 的两个常量），参数表说明引的也是它。
+        sb.AppendLine($"  强度口径：设计寿命 {p.DesignLifeHours:0} h、力学安全系数 {p.SafetyFactor:0.0}；"
+                    + $"许用 = 断裂强度(取值温度, 设计寿命) ÷ 安全系数。");
+        sb.AppendLine("  　" + TubeStrength.LifeNote);
+        sb.AppendLine("  　" + TubeStrength.SafetyFactorNote);
         sb.AppendLine("段\t控温点 °C\t段长 mm\t电流 A\t功率 W\t管 J A/mm²");
         for (int i = 0; i < r.Segments.Length; i++)
         {
@@ -84,11 +104,26 @@ public static class InstallReport
 
         // 5 保温
         sb.AppendLine("**5. 保温**");
-        sb.AppendLine($"  管保温 {d.TubeInsulMm:0.0} mm（材料同参数表「② 中层」：{p.Layer1.Name}）；" +
-                      (p.FlangeInsulated && p.FlangeInsulThickMm > 1e-6 ? $"圆盘双面包 {p.FlangeInsulThickMm:0.0} mm；" : "圆盘不包；") +
+        // ⚠ 2026-09-18 Opus 5 更正：这句原写「材料同参数表『② 中层』」，而 p.Layer1 在参数表上是**「① 内层（贴铂）」**
+        //   （DesignInputs.Layer1 的 DisplayName）。名字与实物对不上，照实改。
+        sb.AppendLine($"  管保温 {d.TubeInsulMm:0.0} mm（材料同参数表「① 内层（贴铂）」：{p.Layer1.Name}）；" +
+                      DiscInsulText(d) +
                       "舌片按上表逐片包，从圆盘切点到压接段前，压接段不包；" +
                       $"端部额外保温 {p.EndInsulExtraMm:0.0} mm × 长 {p.EndInsulLengthMm:0} mm。");
         sb.AppendLine("  舌保温是热平衡的主力旋钮，不花铂：各片厚度不同是算出来的，不要做成同一规格。");
+        // ★ R48 L（2026-09-17，Opus 5）：现场是**一层一层缠**的，报告以前只给 mm ⇒ 层数要现场自己心算。
+        //   求解器的舌保温图纸格已经就是包法每层（InsulationSearch.LayerMm），这里把同一份数折成层数印出来；
+        //   层厚与折算都只有那一份写法，不在这里另抄。
+        sb.AppendLine($"  按包法每层 {InsulationSearch.LayerMm:0.0} mm 折算，逐片 = {InsulationSearch.LayersText(d.TabInsulMm)}"
+                    + $"（对应上表的 {DesignSpec.Fmt(d.TabInsulMm, "0.0")} mm）。"
+                    + "印出「不在层上」的片说明那个厚度缠不出来 —— 别自己凑，回 APP 重解。");
+        sb.AppendLine();
+
+        // ★★★★★ 5b 保温方案（2026-09-18，Opus 5；用户当日「还是只给材质保温厚度方案就行」）
+        //   交付的就是这张表：每一区用什么材质、包多厚、折合几层、要缠几圈。
+        //   数与排版都只有 InsulationPlan 一份（③ 页那张表、输出框、本节同源）。
+        sb.AppendLine($"**5b. {InsulationPlan.SectionTitle}**");
+        sb.Append(InsulationPlan.Text(r, d, p));
         sb.AppendLine();
 
         // 6 焊接与加工
@@ -112,14 +147,73 @@ public static class InstallReport
         var ramp = r.Checks.FirstOrDefault(c => c.Name.Contains("升温到位用时"));
         sb.AppendLine($"  升温速率 {lc.RampRateKPerH:0} °C/h；" + (ramp is not null ? $"升温到位用时（集总）{ramp.Actual:0.00} h（限 {ramp.Limit:0} h）；" : "") +
                       $"运行控温点：{string.Join("／", d.SetpointC.Select(v => v.ToString("0")))} °C。");
-        sb.AppendLine("  升温期间共用片最先到温，注意法兰比管热的那一段（判据表「升温期法兰−管峰值」）。");
+        // R48 G2 复审二（2026-09-15 Opus 5）：判据表那一行复核前暂不给数 ⇒ 不再叫工程师去那一行看数
+        sb.AppendLine("  升温期间共用片最先到温，注意法兰比管热的那一段（判据表「升温期法兰−管峰值」暂不给数、待复核，现场按实测盯）。");
+        sb.AppendLine();
+
+        // ★★★★★ 2026-09-18，Opus 5：**三关结论与升温全程的伸长量**（新一节）。
+        //   在此之前这份报告只说得出带玻璃稳态那一关，而判定的次序是
+        //   「升温全程 → 带玻璃稳态 → 空管到温 → 铂重」（用户 2026-09-15/16）。
+        //   升温全程算得出来（Core/RampSweep.cs）却一直没有生产调用方、空管到温也没人造过算例 ——
+        //   工程师拿到的这张纸于是只覆盖三分之一，而它**看起来是完整的**。
+        //   ⚠ 只取 FinalCheckReport 那一份写法：报告层不自己拼结论、也不重算一个伸长。
+        sb.Append(FinalCheckReport.Section(r));
         sb.AppendLine();
 
         // 8 判据结论
-        sb.AppendLine("**8. 判据表**" + (meshNote.Length > 0 ? $"（{meshNote}）" : ""));
+        sb.AppendLine("**8. 判据表**" + (meshNote.Length > 0 ? $"（{meshNote}）" : "")
+                    + "　（这张表是上面**第二关 带玻璃稳态**那一关的判据；另两关的结论见第 7b 节）");
         sb.AppendLine("判据\t实际\t限值\t单位\t判定\t位置");
+        // ★ R48 B（2026-09-14 Opus 5）：参考量印「参考（不卡交付）」，不印「过」—— 旧判法两条降级后还在表里，印「过」会被读成它们也把过关。
+        // R48 G2 复审二（2026-09-15 Opus 5）：暂不给数的参考量（ConstraintOut.Withheld）印「参考（暂不给数）」，先于「算不出」—— 两者不是一回事。
+        // R48 G2 复审二（2026-09-15 Opus 5）：没有数的「实际」印「—」，不印 NaN（本机文化下印成「非數值」，门四甲首跑看到）
         foreach (var c in r.Checks)
-            sb.AppendLine($"{Criteria.Plain(c.Name)}\t{c.Actual:0.###}\t{c.Limit:0.###}\t{c.Unit}\t{(c.Undetermined ? "无法判定" : c.Ok ? "过" : "不过")}\t{c.Where}");   // 判据名走 Criteria.Plain：界面不许出现判据代号
+            sb.AppendLine($"{Criteria.Plain(c.Name)}\t{(double.IsNaN(c.Actual) ? "—" : c.Actual.ToString("0.###"))}\t{c.Limit:0.###}\t{c.Unit}\t"
+                        + $"{Criteria.Verdict(c)}	{c.Where}");   // 判据名与判词都走 Criteria（2026-09-18 Opus 5 提成一份：参考量不印「过／不过」，谁都不许再手抄）
+        sb.AppendLine();
+
+        // ★★ R48 B（2026-09-14 Opus 5）：热侧／冷侧两条的**逐片读数** —— 基准怎么取、最热的是谁、管根哪一端最冷，
+        //   并列「模型算的无法兰交界管温」，差超过 1 ℃ 的逐片写明。读数只走 ThermocoupleBasis（与判据同一份），不在这里重算。
+        var hotC = r.Find(LineResult.Key.HotOverTc);
+        var coldC = r.Find(LineResult.Key.ColdUnderTc);
+        // ★ U 路（2026-09-18，Opus 5）：允许差多少是参数表填的（默认 = 热偶在 1100 °C 的误差），本行印**本次实际用的**两个数，不抄默认值。
+        sb.AppendLine($"  热偶读数基准（控温热偶在段中点；端片取本段读数，共用片取两侧读数的对数平均，按开尔文算）。"
+                    + $"本次温差预算：最热铂高出读数 ≤ {lc.HotOverTcMaxK:0.###} K、管根低于读数 ≤ {lc.ColdUnderTcMaxK:0.###} K"
+                    + $"（参数表「最热铂高出热偶读数 允许值」「管根低于热偶读数 允许值」；默认 = 热偶在 1100 °C 的误差）：");
+        sb.AppendLine($"片\t热偶读数基准 °C\t最热铂 °C\t最热的是\t高出 K（限 {hotC?.Limit ?? double.NaN:0.#}）\t管根较冷端 °C\t低于 K（限 {coldC?.Limit ?? double.NaN:0.#}）\t模型算的无法兰交界管温 °C\t与基准差 ℃");
+        var tcs = ThermocoupleBasis.All(r);
+        foreach (var t in tcs)
+        {
+            // ★ 2026-09-15 Opus 5（J 路，合并把关待办 P1-4）：本片（或管）带「判不了」后置标记时，逐片读数照样印数就是把坏场当好场交给现场 ——
+            //   与判据表同一个定义（LineRunner.PlateUndeterminedWhy），热侧、冷侧两列一律印「判不了」并写原因。
+            string und = LineRunner.PlateUndeterminedWhy(r, t.Plate);
+            bool hotBlind = t.HotBlind.Length > 0 || und.Length > 0, coldBlind = t.ColdBlind.Length > 0 || und.Length > 0;
+            sb.AppendLine($"{t.Name}\t{t.RefC:0.00}\t{(hotBlind ? "判不了" : t.HottestC.ToString("0.0"))}\t{(und.Length > 0 ? und : t.HotBlind.Length > 0 ? t.HotBlind : t.HottestWhat)}"
+                        + $"\t{(hotBlind || double.IsNaN(t.HotK) ? "—" : t.HotK.ToString("+0.00;−0.00"))}"
+                        + $"\t{(coldBlind ? "判不了" : $"{t.RootColdC:0.0}（{t.RootColdWhere}）")}"
+                        + $"\t{(coldBlind || double.IsNaN(t.ColdK) ? "—" : t.ColdK.ToString("+0.00;−0.00"))}"
+                        + $"\t{(double.IsNaN(t.ModelJointC) ? "没有基线" : t.ModelJointC.ToString("0.0"))}"
+                        + $"\t{(double.IsNaN(t.ModelMinusRefK) ? "—" : t.ModelMinusRefK.ToString("+0.0;−0.0"))}");
+        }
+        foreach (var t in tcs.Where(t => !double.IsNaN(t.ModelMinusRefK) && Math.Abs(t.ModelMinusRefK) > ThermocoupleBasis.ModelGapNoteK))
+            sb.AppendLine($"  · {t.Name}：{ThermocoupleBasis.ModelJointNote(t)}。");
+        sb.AppendLine();
+
+        // ★ U 路（2026-09-18，Opus 5）：**每片舌保温的可行窗口**（终验量的那一份；没量就照实说没量，不留空白让人以为量过了）。
+        //   只印结果自己的报告，不在这里重算、不另抄一份判定口径。
+        sb.AppendLine("**8b. 每片舌保温的可行窗口（现场缠得出来吗）**");
+        if (r.TabInsulWindow is { } win)
+        {
+            sb.Append(win.Report());
+            if (!win.Manufacturable)
+                sb.AppendLine("  ⇒ **本报告不可作为安装依据**：上面点名的那几片，现场缠不出落在窗口里的层数。");
+        }
+        else
+        {
+            sb.AppendLine("  本次没量（它一点要一次整线解，只在终验跑一次）。"
+                        + "要它：到「① 输入」页把「终验时量每片舌保温的可行窗口」打开，再做一次加密复算到数不再变。");
+            sb.AppendLine("  ⚠ 没量 ≠ 缠得出来：解出来的舌保温未必落在现场能缠的层数上。");
+        }
         sb.AppendLine();
 
         // 9 出图与文件

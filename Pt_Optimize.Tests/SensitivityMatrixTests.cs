@@ -126,7 +126,8 @@ public class SensitivityMatrixTests
     public void 裕度走求解器那一份()
     {
         string s = Core("SensitivityMatrix.cs");
-        Assert.Contains("Solver.PlateSlack(r, k, j, dipMax, discMax)", s);
+        // R48 B（2026-09-14 Opus 5）：有意改动 —— 限值变量随判据改名（冷侧／热侧），依据 Pt_Optimize/Core/SensitivityMatrix.cs。旧 "dipMax, discMax" → 新 "coldMax, hotMax"。
+        Assert.Contains("Solver.PlateSlack(r, k, j, coldMax, hotMax)", s);
         Assert.DoesNotContain("f.QFromTubeW", s);      // 不许自己去 FlangeOut 里捞
         Assert.DoesNotContain("TDiscMaxC", s);
     }

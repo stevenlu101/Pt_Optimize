@@ -1,4 +1,4 @@
-namespace PtOptimize.Core;
+﻿namespace PtOptimize.Core;
 
 /// <summary>
 /// ★★★★★ **「走到过」的痕迹** —— 让难以构造的分支自己留下可断言的一句话（2026-09-08）。
@@ -50,6 +50,17 @@ public static class BranchMarks
 
     /// <summary>Solver.RaiseUntil：**二分中点**判不了 ⇒ 中止二分（不许当「不过」往上推）。</summary>
     public const string UndeterminedBisect = "★ 走到了「二分中点判不了 ⇒ 中止」";
+
+    /// <summary>
+    /// ★ R48 M（2026-09-18，Fable 5.1）：Solver.WalkConservative（RaiseUntil 的格点判决）：格点上这条判据的裕度 ≥ 0 但**小于认证误差**
+    /// ⇒ 判不了那么细 ⇒ 往保守方向再走一格重判。后面跟着「片j 旋钮 值 处「判据」裕度 x 小于认证误差 y」。
+    /// </summary>
+    public const string GridWalkConservative = "★ 走到了「格点裕度小于认证误差 ⇒ 往保守方向再走一格」";
+
+    /// <summary>
+    /// ★ R48 M（2026-09-18，Fable 5.1）：Solver.WalkConservative／RaiseUntil：走到上界（或走满格数）仍判不了那么细 ⇒ 整跑判不了（不过也不不过）。
+    /// </summary>
+    public const string UndeterminedGridAtHi = "★ 走到了「走到上界仍判不了那么细」";
 
     /// <summary>
     /// Solver.Gate：场解回报 <c>Ok=false</c>（熔化／段解失败…）⇒ 判不了，**原因跟在冒号后面**。

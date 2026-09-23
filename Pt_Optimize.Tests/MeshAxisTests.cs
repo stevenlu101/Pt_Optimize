@@ -320,7 +320,7 @@ public class MeshAxisTests
                 Console.WriteLine(line); sb.AppendLine(line);
             }
         }
-        string dir = System.IO.Path.Combine(HandoverDoc.Root(), "deliverable");
-        System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "R47_复修M1_舌半宽锚点_2026-09-13.txt"), sb.ToString(), new System.Text.UTF8Encoding(false));
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        System.IO.File.WriteAllText(DeliverableOut.Stamped("R47_复修M1_舌半宽锚点_2026-09-13.txt"), sb.ToString(), new System.Text.UTF8Encoding(false));
     }
 }

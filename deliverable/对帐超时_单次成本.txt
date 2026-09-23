@@ -1,8 +1,8 @@
 ═══ 单次成本分解（0.8 档，导航网格）═══
-DesignSpec.Plate()　0.43 µs/次（20000 次共 9 ms）
-  ⇒ 耦合解最坏 600 轮 × 4 片 = 2400 次 ⇒ 1.0 ms/场解
-Solver.Eval() 第 1 次　50.6 s（收敛 True）
-Solver.Eval() 第 2 次　47.8 s
+DesignSpec.Plate()　0.38 µs/次（20000 次共 8 ms）
+  ⇒ 耦合解最坏 600 轮 × 4 片 = 2400 次 ⇒ 0.9 ms/场解
+Solver.Eval() 第 1 次　81.1 s（收敛 True）
+Solver.Eval() 第 2 次　85.6 s
 
 对照：轨迹实测 72 次场解 / 76.0 分钟 ⇒ 63 s/次
 ⇒ 若 Plate() 那一项只有几十 µs，它不是原因；

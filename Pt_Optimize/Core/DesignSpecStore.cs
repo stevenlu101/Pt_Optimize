@@ -82,6 +82,10 @@ public static class DesignSpecStore
         /// 用 JsonElement 是为了不改 JSON 形态就两种都认得；旧键 tabInsul3dmMm（标量）同样认。
         /// </summary>
         public JsonElement? tabInsulMm { get; set; }
+        /// <summary>R48（2026-09-14，Opus 5）：逐片圆盘保温 mm；缺 = 全线沿用 flangeInsulMm（旧档逐位不变）。
+        /// 2026-09-14 Opus 5 补（审查意见：「某片 NaN = 沿用整线」已是正式语义，而 JSON 写不了 NaN，带 NaN 的设计一存就抛、报错看不出哪个字段）：
+        /// 类型改 double?[]，逐片 NaN ↔ null（与下面 ringW1Mm 等同一做法，部分设定也存得准）；全是 NaN 与空同义，不写键。</summary>
+        public double?[]? discInsulMm { get; set; }
         public double? tabInsul3dmMm { get; set; }
         /// <summary>★ R47 B：几何来源（解析／图纸 .3dm）与图纸路径逐片 .3dm 文件名。旧档没有 ⇒ 空。</summary>
         public string? geomSource { get; set; }
@@ -313,6 +317,11 @@ public static class DesignSpecStore
         if (d.tabFilletMm is { } tf) fd.TabFilletMm = tf;
         if (d.ringWidthMm is { } rw) fd.RingWidthMm = rw;
         if (d.flangeInsulMm is { } fi) fd.FlangeInsulMm = fi;
+        if (d.discInsulMm is { Length: > 0 } di)
+        {
+            if (di.Length != fd.FlangeCount) throw new InvalidDataException($"discInsulMm 应有 {fd.FlangeCount} 个，实为 {di.Length} 个");
+            fd.DiscInsulMm = NaA(di);   // 2026-09-14 Opus 5：null ⇒ NaN（该片沿用整线）
+        }
         if (d.flangeInsulated is { } fe) fd.FlangeInsulated = fe;
         if (d.clampLengthMm is { } cl) fd.ClampLengthMm = cl;
         // A3：渐变环那三个（缺省即 NaN 哨兵 = 不逐片自定，与 DesignSpec 的默认一致）
@@ -422,7 +431,8 @@ public static class DesignSpecStore
             clampLengthMm = fd.ClampLengthMm,
             tabThickMm = fd.TabThickMm.Select(Nz).ToArray(),                 // R47 第三轮 N5：图纸档的 NaN 存成 null
             thicknessScale = fd.ThicknessScale.Length > 0 ? fd.ThicknessScale : null,   // 图纸档逐片 k
-            tabInsulMm = JsonSerializer.SerializeToElement(fd.TabInsulMm),   // 逐片数组（读时也认旧档的单个数，见 TabInsulFrom）
+            tabInsulMm = JsonSerializer.SerializeToElement(fd.TabInsulMm),   // 逐片数组（读时也认旧档的单个数，见 TabInsulFrom）—— 2026-09-14 Opus 5：这条注释原挂在下一行，挪回本行
+            discInsulMm = fd.DiscInsulMm.Length > 0 ? NzA(fd.DiscInsulMm) : null,   // R48：空 = 不写（旧档逐字不变）；2026-09-14 Opus 5：逐片 NaN 存成 null（全 NaN 与空同义，不写）
             geomSource = fd.GeomSource.Length > 0 ? fd.GeomSource : null,      // R47 B：几何来源／图纸文件名
             flangeFile3dm = fd.FlangeFile3dm.Length > 0 ? fd.FlangeFile3dm : null,
             ringMul = fd.RingMul,

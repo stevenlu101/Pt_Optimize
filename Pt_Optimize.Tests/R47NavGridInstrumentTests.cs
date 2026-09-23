@@ -76,9 +76,8 @@ public class R47NavGridInstrumentTests
             double V(string k) => r.Checks.FirstOrDefault(c => c.Name.StartsWith(k, StringComparison.Ordinal))?.Actual ?? double.NaN;
             sb.AppendLine($"  记录字段口径：TotalMassG {r.TotalMassG:0.0}　TubeMassG {r.TubeMassG:0.0}　FlangeMassG {r.FlangeMassG:0.0}　RampH {V(LineResult.Key.Ramp):0.000}　DiscOverK {V(LineResult.Key.DiscTemp):0.000}　HoleFluxW {V(LineResult.Key.NetFlux):0.000}　FlangeDipK {V(LineResult.Key.FlangeDip):0.000}　TubeJ {V("管 J"):0.000}");
         }
-        string dir = Path.Combine(HandoverDoc.Root(), "deliverable");
-        Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, $"R47_{tag}_导航网格_2026-09-13.txt"), sb.ToString(), new UTF8Encoding(false));
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        File.WriteAllText(DeliverableOut.Stamped($"R47_{tag}_导航网格_2026-09-13.txt"), sb.ToString(), new UTF8Encoding(false));
         Console.WriteLine(sb.ToString());
         Assert.True(true);
     }

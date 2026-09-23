@@ -127,12 +127,16 @@ public static class QuadMesher
         {
             // R47 F（2026-09-13）：管孔判定与 Build／BuildFromField 共用同一份（FlangeMesher.IsHoleFace）
             if (FlangeMesher.IsHoleFace(mid, g.HoleRadiusMm)) return ShellMesh.TagHole;
-            if (g.TwoTabs
-                ? Math.Abs(mid.X) >= Math.Abs(g.TabTipXMm) - clampLenMm
-                : mid.X <= g.TabTipXMm + clampLenMm) return ShellMesh.TagTabEnd;
+            // R48（2026-09-14，Opus 5）：压接判定同样收成一份（FlangeMesher.InClampSegment，式子逐字搬过去，结果逐位不变）。
+            if (FlangeMesher.InClampSegment(mid.X, g.TabTipXMm, clampLenMm, g.TwoTabs)) return ShellMesh.TagTabEnd;
             return ShellMesh.TagFree;
         });
         m.ComputeHoleTagDiagnostics(g.HoleRadiusMm);
+        // ⚠ R48（2026-09-14，Opus 5）：本生成器**不填** ShellMesh.ClampCell（压接段整面接触），电流／温度场按老口径只钉外圈。
+        //   不补的理由：它不在生产链上 —— 全仓库只有 Program.cs 的 --quadbench（只建网格数单元、不解场）与 QuadMesherTests（只验网格结构）调它；
+        //   LineRunner、MeshVerify 等出判据的路径一律走 FlangeMesher.Build／BuildFromField（整面接触是那里的生产默认）。
+        //   哪天要拿它解场，先照 BuildFromField 那样按形心填 ClampCell（判定用 InClampSegment），否则压接段模型与生产不一致
+        //   （deliverable/R48_压接整面接触AB_2026-09-14.txt：只钉外圈 vs 整面，片0 抽热差 16～18 W）。
         return m;
     }
 

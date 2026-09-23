@@ -90,7 +90,8 @@ public class TongueResizeReachableTests
         var d = DesignSpec.Builtin[0].Clone();
         d.SetpointC = new[] { 1150.0, 1080.0 }; d.SegLengthMm = new[] { 300.0, 300.0 }; d = d.Fit();
         d.TubeIdMm = tubeIdMm; d.TubeInsulMm = 10; d.DiscRadiusMm = discRMm; d.TabHalfWidthMm = discRMm; d.TabLengthMm = tabLenMm;
-        string dump = Path.Combine(HandoverDoc.Root(), "deliverable", $"R29_对比_{tag}.txt");
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        string dump = DeliverableOut.Stamped($"R29_对比_{tag}.txt");
         Directory.CreateDirectory(Path.GetDirectoryName(dump)!);
         File.WriteAllText(dump, "═══ " + head + " ═══" + Environment.NewLine);
         var sw = System.Diagnostics.Stopwatch.StartNew();

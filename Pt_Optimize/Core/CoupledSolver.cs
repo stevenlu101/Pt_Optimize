@@ -108,7 +108,11 @@ public static class CoupledSolver
             // ② 二维法兰：按实际电流定标 J，再解温度场
             double I = tube.CurrentA;
             var cur = ScaleCurrent(curRef, I / 1000.0);
-            var th = PlateThermal2D.Solve(g, cur, p, tRootC: tube.TFlangeAC, maxIter: 120000, tol: 1e-5);
+            // ★ R48（2026-09-14，Opus 5）：PlateThermal2D 读 p.FlangeInsulThickMm ⇒ 按本片圆盘保温取（FlangePlate.DiscInsulEffectiveMm，
+            //   与 LineRunner 同一口径）再克隆 p 给它；板件没带逐片值时取回的就是 p 的整线值，数与原来相同。
+            var pTh = SegmentSolver.Clone(p);
+            pTh.FlangeInsulThickMm = g.DiscInsulEffectiveMm(p);
+            var th = PlateThermal2D.Solve(g, cur, pTh, tRootC: tube.TFlangeAC, maxIter: 120000, tol: 1e-5);
             res.Flange = th;
 
             // 用新温度场按 σ(T) 重解电流场（铂 700–1300 °C 间 ρe 变化 48 %，
@@ -129,6 +133,8 @@ public static class CoupledSolver
             //   对慢收敛的不动点迭代，到真解的距离 ≈ δ×g/(1−g)，可以比 δ 大一两个量级。
             //   LineRunner 的主环是对的（δ×放大、且真残差×放大都要过），
             //   见 LineCase.FixedPointAmp 与 DesignInputs.BaselineTolAmplified。
+            //   ★ R48 L（2026-09-16，Opus 5）：那个放大**已经不是常数 25 了** —— 主环与基线环改成当场算 1 + ℓt/Δx
+            //     （LineRunner.EndTempFixedPointAmpOf / SegmentSolver.EndTempFixedPointAt）。要照着写的话照那一份写，别照 25 写。
             //
             // 为什么**不改**：本类**已被取代**（LineRunner 那条判据路根本不调它，
             //   见 LineRunner 里「已被取代的 CoupledSolver」那条注释）。

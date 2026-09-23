@@ -108,7 +108,8 @@ public class ShapeSearchParallelResultTests
             Assert.Equal(descS, descP);
         }
 
-        string dump = Path.Combine(HandoverDoc.Root(), "deliverable", "搜形状并行化_逐位对拍_2026-09-11.txt");
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        string dump = DeliverableOut.Stamped("搜形状并行化_逐位对拍_2026-09-11.txt");
         Directory.CreateDirectory(Path.GetDirectoryName(dump)!);
         File.WriteAllText(dump, report.ToString());
     }

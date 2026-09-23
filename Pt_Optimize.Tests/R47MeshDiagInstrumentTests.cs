@@ -107,14 +107,15 @@ public class R47MeshDiagInstrumentTests
                 double step = Math.Min(1.0, hF * k / 4.0);
                 var fld = AnalyticSurrogate.Rasterize(g, step, 2.0);
                 R($"倍率 {k}　新轴 精确几何（4×4 子采样）", BuildExactOnNewAxis(g, hF * k, hC * k, rF, cl));
-                R($"倍率 {k}　新轴 解析 Build", FlangeMesher.Build(g, 0, hF * k, hC * k, rF, cl));
-                R($"倍率 {k}　新轴 图纸 BuildFromField 步 {step}", FlangeMesher.BuildFromField(fld, g.HoleRadiusMm, 0, hF * k, hC * k, rF, cl));
-                R($"倍率 {k}　新轴 图纸 + 形心取厚", WithCentroidThickness(FlangeMesher.BuildFromField(fld, g.HoleRadiusMm, 0, hF * k, hC * k, rF, cl), g));
+                // 口径钉住（2026-09-14 Opus 5）：生产默认已改为压接整面接触 + 自相似压接细带，本探针显式钉回改动前口径（只钉外圈、不铺细带），deliverable 里同名证据文件不换口径
+                R($"倍率 {k}　新轴 解析 Build", FlangeMesher.Build(g, 0, hF * k, hC * k, rF, cl, clampBandMm: 0, clampFullFace: false));
+                R($"倍率 {k}　新轴 图纸 BuildFromField 步 {step}", FlangeMesher.BuildFromField(fld, g.HoleRadiusMm, 0, hF * k, hC * k, rF, cl, clampBandMm: 0, clampFullFace: false));
+                R($"倍率 {k}　新轴 图纸 + 形心取厚", WithCentroidThickness(FlangeMesher.BuildFromField(fld, g.HoleRadiusMm, 0, hF * k, hC * k, rF, cl, clampBandMm: 0, clampFullFace: false), g));
                 if (k == 1.0)
                 {
                     var fld2 = AnalyticSurrogate.Rasterize(g, 0.1, 2.0);
-                    R($"倍率 {k}　新轴 图纸 步 0.1", FlangeMesher.BuildFromField(fld2, g.HoleRadiusMm, 0, hF * k, hC * k, rF, cl));
-                    R($"倍率 {k}　新轴 图纸 步 0.1 + 形心取厚", WithCentroidThickness(FlangeMesher.BuildFromField(fld2, g.HoleRadiusMm, 0, hF * k, hC * k, rF, cl), g));
+                    R($"倍率 {k}　新轴 图纸 步 0.1", FlangeMesher.BuildFromField(fld2, g.HoleRadiusMm, 0, hF * k, hC * k, rF, cl, clampBandMm: 0, clampFullFace: false));
+                    R($"倍率 {k}　新轴 图纸 步 0.1 + 形心取厚", WithCentroidThickness(FlangeMesher.BuildFromField(fld2, g.HoleRadiusMm, 0, hF * k, hC * k, rF, cl, clampBandMm: 0, clampFullFace: false), g));
                 }
             }
         }
@@ -124,9 +125,8 @@ public class R47MeshDiagInstrumentTests
         var d0 = DesignSpec.Builtin[0].Clone();
         Design("DesignSpec.Builtin[0]（三段）", d0, 0, 1213.7, 1146.4, 1150, d0.ClampTempC, d0.TabInsulMm[0]);
 
-        string dir = Path.Combine(HandoverDoc.Root(), "deliverable");
-        Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "R47_网格诊断_2026-09-13.txt"), sb.ToString(), new UTF8Encoding(false));
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        File.WriteAllText(DeliverableOut.Stamped("R47_网格诊断_2026-09-13.txt"), sb.ToString(), new UTF8Encoding(false));
         Assert.True(true);
     }
 }
