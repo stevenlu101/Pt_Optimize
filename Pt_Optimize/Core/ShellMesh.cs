@@ -706,11 +706,39 @@ public sealed class MeshRecipe
     public bool HoleTagBandUsed { get; init; }
     /// <summary>2026-09-23：网格上的管孔面数（与网格尺寸有关，不进规则）。</summary>
     public int HoleFaceCount { get; init; }
+    /// <summary>
+    /// ★ 2026-09-23 决 101 A（RING）：**量出来的**（观测值）：弧面数 &gt; 0 且孔圆穿过的每个格矩形的四条边上，孔圆内侧 r ∈ [rh − b, rh) 那段的有料长度都 ≤ <see cref="ShellMesh.GeomTolMm"/>
+    /// （经网格自己的材料源 SegmentMaterial 量；b = 带宽，老栅格取一个栅格步，解析板等别的材料源取 rh 即整个孔内）。
+    /// 解析板按构造为真（精确圆）；带内按解析圆判料的栅格按构造为真；老栅格（改回）的台阶料伸进孔圆 ⇒ 一般为假。
+    /// ⚠ 与 <see cref="HoleTagArcOnly"/> 同类：它说的是「这张网格的格边上孔圆内侧有没有料」，只看格边、不看格内；开关另记在 <see cref="HoleBandCircleSwitch"/>。
+    /// ⚠ 2026-09-23（RING 审查后，M2）：在包层上它量的恰是包层定义成无料的那一段 ⇒ **按构造为真**，不是独立量到的东西 —— 生产图纸路径上它等于「弧面数 &gt; 0」。
+    ///   不查带外 r &lt; rh − b（图纸孔比 rh 小时那里的栅格料留在孔圆内，形成浮空料块），也不查孔圆没穿过的格；浮空料块看 <see cref="FloatingComponents"/>。
+    /// </summary>
+    public bool HoleBandCircle { get; init; }
+    /// <summary>2026-09-23 决 101 A：**规则开关的真值**（照抄建网格时的 MeshRules.HoleBandCircle；材料源不是栅格时规则不起作用，这里仍照抄开关），与量出来的 <see cref="HoleBandCircle"/> 分开记。</summary>
+    public bool HoleBandCircleSwitch { get; init; }
+    /// <summary>2026-09-23 决 101 A：本网格真用上的带宽 mm（0 = 没包：材料源不是栅格，或开关关）。与栅格步有关，不进规则。</summary>
+    public double HoleBandMm { get; init; }
+    /// <summary>
+    /// ★ 2026-09-23（RING 审查后，M1）：**量出来的**：网格连通分量数（单元之间经长度 &gt; 0 的内部面相连；<see cref="FlangeMesher.MeshConnectivity"/>）。
+    /// 与网格尺寸有关，不进规则。正常的一块板 = 1。
+    /// </summary>
+    public int MeshComponents { get; init; }
+    /// <summary>
+    /// ★ 2026-09-23（RING 审查后，M1）：**量出来的**：浮空分量数 = 分量里既没有管孔面（边界面、标签 <see cref="ShellMesh.TagHole"/>）也没有压接格（<see cref="ShellMesh.ClampSetCells"/>）的分量数。
+    /// 这些料块在电流场与热解里都没有边界值（合成盘探针：电位留 0、电流 0，温度只靠表面散热落到环境附近，TMinC 被拉到约 25 °C）。
+    /// 来源之一：图纸孔径与 rh 失配时孔带按解析圆判料切出的料块（见 <see cref="HoleBandCircleField"/> 类注释「代价」）。**只量不剔除**：怎么处理是决 98 一并定的尺（【待决定】）。
+    /// 经 LineRunner.HoleArcDrawingNotes 进整线说明。与网格尺寸有关，不进规则。
+    /// </summary>
+    public int FloatingComponents { get; init; }
+    /// <summary>2026-09-23（RING 审查后，M1）：浮空分量的单元面积和 mm²（<see cref="ShellMesh.Area"/> 之和）。</summary>
+    public double FloatingAreaMm2 { get; init; }
 
     /// <summary>与网格尺寸无关的那部分（规则）—— 生产配方常量就是这个类型，门用 == 比。</summary>
     /// <remarks>2026-09-23（F6 审查后）：F6 三项开关的真值与量出来的量都进规则（分开的六项），任何一项与生产不同都报出来。</remarks>
     public MeshRecipeRule Rule => new(ClampFullFace, ClampFaceDirichlet, ClampAnchorOnNode, ClampBandPerHFine, HoleTagBandMm, HoleFaceDirichlet, HoleArcNormalDist, HoleTagArcOnly,
-                                      HoleFaceDirichletSwitch, HoleArcNormalDistSwitch, HoleTagArcOnlySwitch);
+                                      HoleFaceDirichletSwitch, HoleArcNormalDistSwitch, HoleTagArcOnlySwitch,
+                                      HoleBandCircle, HoleBandCircleSwitch);   // 2026-09-23 决 101 A：孔带按解析圆判料（量得／开关两项）
 
     /// <summary>一行文字（证据文件头与探针打印用）。</summary>
     /// <remarks>2026-09-23（F6 审查后改，findings #16）：F6 三项分「开关／量得」两段印；判定带标明本网格有没有真用它（生产弧面路径不用，原先照印「孔边判定带半宽 3 mm」像是它还在起作用）。</remarks>
@@ -722,23 +750,31 @@ public sealed class MeshRecipe
          + (HoleTagBandUsed ? $"；孔边判定带半宽 {HoleTagBandMm:0.###} mm（本网格按带打孔标签）" : $"；孔边判定带 {HoleTagBandMm:0.###} mm 本网格不用（孔面只按孔圆上的弧面认）")
          + $"；管孔电位：开关{(HoleFaceDirichletSwitch ? "孔面上" : "整格钉")}，{(HoleFaceDirichlet ? $"施加在孔面上（{HoleFaceCount} 个面）" : HoleFaceDirichletSwitch ? "没有孔面、没施加" : "按带孔面的格整格钉")}"   // 2026-09-23 F6a
          + $"；弧面距离：开关{(HoleArcNormalDistSwitch ? "法向距" : "直线距")}，量得{(HoleArcNormalDist ? "每条弧面 = 法向距" : "不全是法向距（或没有弧面）")}"   // F6b
-         + $"；孔面只认弧面：开关{(HoleTagArcOnlySwitch ? "开" : "关")}，量得{(HoleTagArcOnly ? "没有非弧孔面" : "有非弧孔面（或没有弧面）")}";              // F6c
+         + $"；孔面只认弧面：开关{(HoleTagArcOnlySwitch ? "开" : "关")}，量得{(HoleTagArcOnly ? "没有非弧孔面" : "有非弧孔面（或没有弧面）")}"               // F6c
+         + $"；孔带按解析圆判料：开关{(HoleBandCircleSwitch ? "开" : "关")}{(HoleBandMm > 0 ? $"（带宽 ±{HoleBandMm:0.###} mm）" : "（本网格没包：材料源不是栅格或开关关）")}，"
+         // 2026-09-23（RING 审查后，M2）：量得只查孔圆穿过的格边上带内那一段，包层上按构造为真；原句「孔圆内侧没有料」没这两个限定
+         + $"量得{(HoleBandCircle ? $"孔圆穿过的格边上带内 r ∈ [rh − b, rh) 没有料（{(HoleBandMm > 0 ? $"b = {HoleBandMm:0.###} mm，包层按构造成立" : "老栅格 b 取一个栅格步，解析板等 b 取 rh")}；带外 r < rh − b 与格内不查）" : "孔圆穿过的格边上带内孔圆内侧有料（或没有弧面）")}"   // 2026-09-23 决 101 A
+         // 2026-09-23（RING 审查后，M1）：连通分量与浮空料块（只量不剔除）
+         + $"；连通分量 {MeshComponents}{(FloatingComponents > 0 ? $"，⚠ 其中 {FloatingComponents} 块（合计 {FloatingAreaMm2:0.###} mm²）不与管孔面、压接格相连（浮空：没有电位与温度边界）" : "，没有浮空料块")}";
 }
 
 /// <summary>R48（2026-09-15，Opus 5）：判定网格配方里与网格尺寸无关的规则部分（<see cref="MeshRecipe.Rule"/>）。</summary>
 /// <remarks>2026-09-15 Opus 5（合并）：加 <see cref="ClampFaceDirichlet"/>（F 配方 ⑤ 压接面上定温 vs 形心整格）。</remarks>
 /// <remarks>2026-09-23（F6）：加 <see cref="HoleFaceDirichlet"/>（F6a 管孔电位施加在孔面上）、<see cref="HoleArcNormalDist"/>（F6b 弧面距离 = 法向距）、<see cref="HoleTagArcOnly"/>（F6c 孔面只认弧面）——
 /// 这三项是**从网格上量出来的**；F6 审查后（findings #16）另加三项开关真值 <see cref="HoleFaceDirichletSwitch"/>／<see cref="HoleArcNormalDistSwitch"/>／<see cref="HoleTagArcOnlySwitch"/>，两者分开记。</remarks>
+/// <remarks>2026-09-23（决 101 A，RING）：加 <see cref="HoleBandCircle"/>（量得：孔圆穿过的格边上孔圆内侧没有料）与 <see cref="HoleBandCircleSwitch"/>（开关真值），两项分开记。</remarks>
 public readonly record struct MeshRecipeRule(bool ClampFullFace, bool ClampFaceDirichlet, bool ClampAnchorOnNode, double ClampBandPerHFine, double HoleTagBandMm,
                                              bool HoleFaceDirichlet, bool HoleArcNormalDist, bool HoleTagArcOnly,
-                                             bool HoleFaceDirichletSwitch, bool HoleArcNormalDistSwitch, bool HoleTagArcOnlySwitch)
+                                             bool HoleFaceDirichletSwitch, bool HoleArcNormalDistSwitch, bool HoleTagArcOnlySwitch,
+                                             bool HoleBandCircle, bool HoleBandCircleSwitch)
 {
     public string Describe()
         => $"压接整面接触 {(ClampFullFace ? "开" : "关")}；压接边界{(ClampFaceDirichlet ? "施加在压接面上" : "按压接格形心整格")}；压接边界落成节点 {(ClampAnchorOnNode ? "是" : "否")}；"
          + $"压接细带单侧 {ClampBandPerHFine:0.###} × hFine；孔边判定带半宽 {HoleTagBandMm:0.###} mm{(HoleTagArcOnlySwitch ? "（弧面路径不用它打孔标签，只剩阶梯孔边路径用）" : "")}"
          + $"；管孔电位：开关{(HoleFaceDirichletSwitch ? "孔面上" : "整格钉")}，量得{(HoleFaceDirichlet ? "施加在孔面上" : "没施加在孔面上")}"
          + $"；弧面距离：开关{(HoleArcNormalDistSwitch ? "法向距" : "直线距")}，量得{(HoleArcNormalDist ? "法向距" : "不是法向距")}"
-         + $"；孔面只认弧面：开关{(HoleTagArcOnlySwitch ? "开" : "关")}，量得{(HoleTagArcOnly ? "只有弧面" : "含非弧边")}";
+         + $"；孔面只认弧面：开关{(HoleTagArcOnlySwitch ? "开" : "关")}，量得{(HoleTagArcOnly ? "只有弧面" : "含非弧边")}"
+         + $"；孔带按解析圆判料：开关{(HoleBandCircleSwitch ? "开" : "关")}，量得{(HoleBandCircle ? "孔圆穿过的格边上带内孔圆内侧没有料（包层与解析板按构造成立；带外不查）" : "孔圆穿过的格边上带内孔圆内侧有料")}";   // 2026-09-23 决 101 A；RING 审查后（M2）补「格边上带内」与「按构造」两个限定
 }
 
 /// <summary>
@@ -768,6 +804,16 @@ internal sealed class MeshRules
     public bool HoleArcNormalDist { get; init; } = true;
     /// <summary>★ 2026-09-23 F6c：有弧面时孔标签只认弧面（false = 老口径 3 mm 带里的直边真边界也标管孔）。<see cref="HoleArcFaces"/> 关时不起作用（阶梯孔边本来就是直边）。</summary>
     public bool HoleTagArcOnly { get; init; } = true;
+    /// <summary>
+    /// ★ 2026-09-23 决 101 A（RING）：图纸（栅格）路径在孔圆 ± 带内按解析圆判料（生成器把 <see cref="ThicknessField"/> 包成 <see cref="HoleBandCircleField"/>）。
+    /// false = 老栅格（**改回，只供门**；生产不传）。解析板（<see cref="AnalyticMaterial"/>）与别的材料源不经这里，按构造不受影响。
+    /// </summary>
+    public bool HoleBandCircle { get; init; } = true;
+    /// <summary>
+    /// ★ 2026-09-23 决 101 A：带宽 = 这个倍数 × 栅格步（生产 = <see cref="FlangeMesher.HoleBandPerStep"/>；门可传 1/√2 = §0.-20 失配尺的另一把）。
+    /// 【待决定】决 98（业主定尺）。
+    /// </summary>
+    public double HoleBandPerStep { get; init; } = FlangeMesher.HoleBandPerStep;
 
     /// <summary>生产规则：全开、门槛取常量。</summary>
     public static readonly MeshRules Production = new();
@@ -1217,7 +1263,8 @@ public static class FlangeMesher
     public static readonly MeshRecipeRule ProductionMeshRule = new(
         ClampFullFace: true, ClampFaceDirichlet: true, ClampAnchorOnNode: true, ClampBandPerHFine: ClampBandPerHFine, HoleTagBandMm: HoleTagBandMm,
         HoleFaceDirichlet: true, HoleArcNormalDist: true, HoleTagArcOnly: true,   // 2026-09-23 F6a／b／c（量出来的三项；MeshRules.Production 三项全开时生产网格上都为真）
-        HoleFaceDirichletSwitch: true, HoleArcNormalDistSwitch: true, HoleTagArcOnlySwitch: true);   // 2026-09-23 F6 审查后补：三项开关真值（MeshRules.Production 全开）
+        HoleFaceDirichletSwitch: true, HoleArcNormalDistSwitch: true, HoleTagArcOnlySwitch: true,    // 2026-09-23 F6 审查后补：三项开关真值（MeshRules.Production 全开）
+        HoleBandCircle: true, HoleBandCircleSwitch: true);   // 2026-09-23 决 101 A（RING）：孔带按解析圆判料（量得／开关；解析板与带内按解析圆判料的栅格上量得都为真）
 
     /// <summary>
     /// ★★ R47（2026-09-13）：**解析板的栅格化** —— 生产路径也走它（<see cref="Build"/> = 栅格化 + <see cref="BuildFromField"/>）。
@@ -1327,6 +1374,17 @@ public static class FlangeMesher
     /// （第一轮实测：覆盖率 5e-7、面积 2e-6 mm² 的格也留成了单元）。
     /// </summary>
     public const double CellMergeFrac = 1e-3;
+
+    /// <summary>
+    /// ★ 2026-09-23 决 101 A（RING）：图纸（栅格）路径孔圆判料带的带宽 = 这个倍数 × 栅格步（<see cref="HoleBandCircleField"/>；开关 <see cref="MeshRules.HoleBandCircle"/>）。
+    /// 出处：§0.-20 孔径核对的尺 —— 失配容差 = 一个栅格步（F3 核实记录 A4 第 4 条：栅格分辨不出小于一步的差；业主决 101「带宽用 §0.-20 同一把尺」）。
+    /// 另一把是等面积半径的误差界 s/√2（§0.-20 待决定 3）；图纸孔径与 rh 相同时两把尺判出的料**按构造**逐点相同（台阶料只落在离孔圆 s/√2 以内；G3 原型 C 表 7 两行相同是这件事的结果，
+    /// 不是区分两把尺的证据），门经 <see cref="MeshRules.HoleBandPerStep"/> 传 1/√2 对照。**【待决定】决 98**：尺用一个栅格步还是 s/√2 由业主定；本常量不是第三个数。
+    /// 代价（2026-09-23 审查后改写，详见 <see cref="HoleBandCircleField"/> 类注释「代价」）：带宽 b 与外移取厚的距离（恒为一个栅格步 s）是两个量 ——
+    /// 孔弧缺口的补平由外移 s 定（实测 1.2 s 的失配缺口全补平，2 s 没补平），不等于「小于一个带宽的失配被吸收」；带内任何栅格空洞（不只同心失配）外移一步有料就被补料；
+    /// 失配时可出现与板不连通的浮空料块（记进 <see cref="MeshRecipe.FloatingComponents"/>）。实测见 deliverable/R48_孔环按解析圆判料_实施记录_2026-09-23.md §7、§13。
+    /// </summary>
+    public const double HoleBandPerStep = 1.0;
 
     // ★ 2026-09-19，Fable 5.1（第二轮复核第 1 条）：楔形格的幻影 J 峰**不在网格层治**（试过按重构条件数 κ′ < 0.2 并格：Heater1 的幻影峰没了，
     //   但管孔边的真峰跟着被合成格抹掉 5～10 %，R48NSliverGateTests 门 2 红），治在 J 的重构量法上 —— 见 ShellCurrent.SliverKappaMin
@@ -1580,6 +1638,16 @@ public static class FlangeMesher
     {
         if (f is null) throw new ArgumentNullException(nameof(f));
         rules ??= MeshRules.Production;
+        // ★ 2026-09-23 决 101 A（RING）：图纸（栅格）路径在孔圆 ± 带内按解析圆判料 —— 生成器量料之前把栅格厚度场包一层（HoleBandCircleField）；
+        //   只包 ThicknessField，解析板（AnalyticMaterial）与测试侧的材料源原样用（解析路径按构造不受影响）。锚点、SourceField 仍取原始栅格（raw）。
+        //   改回（门）：MeshRules.HoleBandCircle = false ⇒ 不包，与改动前逐位相同。
+        IMaterialField raw = f;
+        double holeBandMm = 0;
+        if (rules.HoleBandCircle && f is ThicknessField tfBand && holeRadiusMm > 0 && rules.HoleBandPerStep > 0 && tfBand.Step > 0)
+        {
+            holeBandMm = rules.HoleBandPerStep * tfBand.Step;
+            f = new HoleBandCircleField(tfBand, holeRadiusMm, holeBandMm);
+        }
         // 配方 ⑤（R48 F 2026-09-15 Opus 5）：求解器从网格上读，电流与温度两边同一个口径。
         // 2026-09-15 Opus 5（合并，复审后改）：开关改为 init，建网格时一次写定（原在函数末尾 m.ClampFaceDirichlet = clampFaceDirichlet; 赋值，其间无人读它，结果逐位不变）
         // ★ 2026-09-23 F6a：管孔电位施加在孔面上（ShellCurrent 只读网格上这一位；门经 MeshRules 传 false 做「改回 ⇒ 红」）
@@ -1607,7 +1675,7 @@ public static class FlangeMesher
         //   末格贴边 ⇒ 材料包络的直边落在节点上。
         // ★ R47 复修 M1：轴还要含几何锚点（z ±舌半宽、x 切点）—— 舌半宽 < 盘半径时直边不在端点上。
         //   解析板由 Build 传精确锚点；图纸路径没传就从厚度场推（舌尖那一列的材料半宽）。
-        if ((xAnchors is null || zAnchors is null) && f is ThicknessField tfAnch)
+        if ((xAnchors is null || zAnchors is null) && raw is ThicknessField tfAnch)   // 2026-09-23 决 101 A：锚点从原始栅格推（包层不改锚点）
         {
             var (xa, za) = AnchorsFromField(tfAnch);
             xAnchors ??= xa; zAnchors ??= za;
@@ -1716,8 +1784,8 @@ public static class FlangeMesher
         m.ComputeHoleTagDiagnostics(holeRadiusMm);
         // ★ 2026-09-23（§0.-20）：孔弧覆盖诊断（只量不判；经 LineRunner.HoleArcDrawingNotes 进整线结果说明）。阶梯孔边对照（弧面关）不量，字段留 NaN。
         if (rules.HoleArcFaces) m.ComputeHoleArcCoverage();
-        m.Material = f;
-        m.SourceField = f as ThicknessField;
+        m.Material = f;                         // 2026-09-23 决 101 A：图纸路径上这是带内按解析圆判料的包层（分界份额等下游量法与建网格同一份材料）
+        m.SourceField = raw as ThicknessField;  // 原始栅格（图纸孔径核对 HoleRadiusOf、PlateThermalInputs 读的仍是图纸本身）
         // ★ R48 生产配方 ③（2026-09-14，Opus 5）：压接段整面接触。与上面边界面标签同一个判定（同一 tabTipX、同一压接长），只是对格子形心判。
         //   边界面标签照旧打（外圈格仍带 TagTabEnd），ShellCurrent／ShellThermal 取两者的并集。侧边面中点 x = 格形心 x ⇒ 压接边界落成节点时
         //   外圈格是整面格的子集，并集就是整面；没落成节点（压接长不足一个最细格等，见 ClampAnchorNote）时舌尖那一列可能只带标签、形心在段外，并集照样把它钉住。
@@ -1776,6 +1844,7 @@ public static class FlangeMesher
             holeFaces++;
             if (!arc) nonArcHole++;
         }
+        var conn = MeshConnectivity(m);   // 2026-09-23（RING 审查后，M1）
         m.Recipe = new MeshRecipe
         {
             ClampFullFace = m.ClampFullFaceActive,   // 2026-09-15 Opus 5（J 路）：唯一定义
@@ -1795,8 +1864,89 @@ public static class FlangeMesher
             HoleTagArcOnlySwitch = rules.HoleTagArcOnly,
             HoleTagBandUsed = straightHoleTag,
             HoleFaceCount = holeFaces,
+            // ★ 2026-09-23 决 101 A（RING）：量得 = 弧面数 > 0 且孔圆穿过的格边上孔圆内侧（带内）没有料（见 MeshRecipe.HoleBandCircle）；开关照抄 rules；带宽照实记
+            HoleBandCircle = arcFaces > 0 && HoleInsideClean(m, f, holeRadiusMm),
+            HoleBandCircleSwitch = rules.HoleBandCircle,
+            HoleBandMm = holeBandMm,
+            // ★ 2026-09-23（RING 审查后，M1）：连通分量与浮空料块（只量不剔除；两条路径都量）
+            MeshComponents = conn.Components,
+            FloatingComponents = conn.Floating,
+            FloatingAreaMm2 = conn.FloatingAreaMm2,
         };
         return m;
+    }
+
+    /// <summary>
+    /// ★ 2026-09-23（RING 审查后，M1）：网格连通分量（单元之间经长度 &gt; 0 的内部面相连）与**浮空**分量 ——
+    /// 分量里既没有管孔面（边界面、标签 <see cref="ShellMesh.TagHole"/>）也没有压接格（<see cref="ShellMesh.ClampSetCells"/>，与两个求解器施加压接边界的同一个集合）。
+    /// 浮空分量在电流场与热解里都没有边界值（电位、温度都没钉）。只量，不剔除、不判；阈值只有「长度 &gt; 0」（面长为 0 的面不导电也不导热）。
+    /// </summary>
+    internal static (int Components, int Floating, int FloatingCells, double FloatingAreaMm2) MeshConnectivity(ShellMesh m)
+    {
+        int n = m.CellCount;
+        if (n == 0) return (0, 0, 0, 0.0);
+        var par = new int[n];
+        for (int i = 0; i < n; i++) par[i] = i;
+        int Find(int a) { while (par[a] != a) { par[a] = par[par[a]]; a = par[a]; } return a; }
+        foreach (var fc in m.Faces)
+            if (fc.B >= 0 && fc.Length > 0) { int ra = Find(fc.A), rb = Find(fc.B); if (ra != rb) par[ra] = rb; }
+        var anchored = new bool[n];
+        foreach (var fc in m.Faces)
+            if (fc.B < 0 && fc.Tag == ShellMesh.TagHole) anchored[Find(fc.A)] = true;
+        var clamp = m.ClampSetCells();
+        for (int i = 0; i < n; i++) if (clamp[i]) anchored[Find(i)] = true;
+        int comps = 0, floating = 0, fCells = 0; double fArea = 0;
+        var seen = new bool[n];
+        for (int i = 0; i < n; i++)
+        {
+            int r = Find(i);
+            if (!seen[r]) { seen[r] = true; comps++; if (!anchored[r]) floating++; }
+            if (!anchored[r]) { fCells++; fArea += m.Area[i]; }
+        }
+        return (comps, floating, fCells, fArea);
+    }
+
+    /// <summary>
+    /// ★ 2026-09-23 决 101 A（RING）：配方「孔带按解析圆判料」的**量得**那一项 —— 孔圆穿过的每个格矩形（并过格按全部矩形）的四条边上，
+    /// 孔圆内侧 r ∈ [rh − b, rh) 那段的有料长度（经网格自己的材料源 <see cref="IMaterialField.SegmentMaterial"/> 量）都 ≤ <see cref="ShellMesh.GeomTolMm"/>。
+    /// b：带内按解析圆判料的包层取它的带宽；原始栅格取一个栅格步（同一把尺，台阶料最多伸进孔圆 s/√2 &lt; s）；别的材料源（解析板、测试侧材料）取 rh（整个孔内）。
+    /// 阈值 GeomTolMm 沿用已有值（= 建面边长容差 EdgeTolMm，浮点余量），不是新常数。
+    /// </summary>
+    internal static bool HoleInsideClean(ShellMesh m, IMaterialField f, double rh)
+        => HoleInsideMaxMm(m, f, rh) <= ShellMesh.GeomTolMm;
+
+    /// <summary>同上，返回最大的那条边上孔圆内侧（带内）有料长度 mm（诊断与门用；没有孔圆穿过的格 ⇒ 0）。</summary>
+    internal static double HoleInsideMaxMm(ShellMesh m, IMaterialField f, double rh)
+    {
+        if (!(rh > 0) || m.CellCount == 0) return 0;
+        double b = f is HoleBandCircleField hb ? hb.BandMm : f is ThicknessField tf ? tf.Step : rh;
+        double rIn = Math.Max(0, rh - b), worst = 0;
+        for (int c = 0; c < m.CellCount; c++)
+        {
+            var rects = m.CellRects != null && c < m.CellRects.Length && m.CellRects[c] != null
+                ? m.CellRects[c] : new List<(double, double, double, double)> { CellRect(m, c) };
+            foreach (var (x0, x1, z0, z1) in rects)
+            {
+                double nx = Math.Clamp(0, x0, x1), nz = Math.Clamp(0, z0, z1);
+                double fx = Math.Max(Math.Abs(x0), Math.Abs(x1)), fz = Math.Max(Math.Abs(z0), Math.Abs(z1));
+                if (nx * nx + nz * nz >= rh * rh || fx * fx + fz * fz <= rh * rh) continue;   // 孔圆不穿过这个矩形
+                // 四条边：竖边 x = x0／x1（沿 z），横边 z = z0／z1（沿 x）；每条边上 rIn ≤ r < rh 的部分（至多两段）
+                foreach (var (vertical, line, lo, hi) in new[] { (true, x0, z0, z1), (true, x1, z0, z1), (false, z0, x0, x1), (false, z1, x0, x1) })
+                {
+                    if (!(Math.Abs(line) < rh)) continue;
+                    double wo = Math.Sqrt(rh * rh - line * line);
+                    double wi = Math.Abs(line) < rIn ? Math.Sqrt(rIn * rIn - line * line) : 0.0;
+                    double len = 0;
+                    foreach (var (a, bb) in wi > 0 ? new[] { (-wo, -wi), (wi, wo) } : new[] { (-wo, wo) })
+                    {
+                        double a2 = Math.Max(a, lo), b2 = Math.Min(bb, hi);
+                        if (b2 - a2 > 1e-12) len += f.SegmentMaterial(vertical, line, a2, b2).Length;
+                    }
+                    if (len > worst) worst = len;
+                }
+            }
+        }
+        return worst;
     }
 
     /// <summary>

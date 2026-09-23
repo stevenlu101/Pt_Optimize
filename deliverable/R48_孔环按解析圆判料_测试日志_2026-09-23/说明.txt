@@ -1,0 +1,24 @@
+R48 孔环按解析圆判料（决 101 A，RING）测试日志 —— 2026-09-23 审查后入库（审查 R4／M3：原件只在会话暂存区 scratchpad/ring/，会随容器消失；照 HANDOVER §0.-19 己「审查产物入库」先例）。
+文件照原样拷贝，没改一个字节；Linux 镜像，4 核同机多会话，耗时在争用下量得。
+
+一、实施阶段（14:29–15:23，原件 scratchpad/ring/）
+  fast_filter.txt            定向快门 27 类的过滤器原文
+  fast_run.log／fast.trx      定向快门 166 条：过 159、红 7（fast_run.log:450「Total tests: 166」）；起止 fast_start.txt
+  slow_run.log                慢门 11 条：过 10、红 1（:108）；DrawingPathParity 生产步 ×0.5：盘Ø56 −0.017 W（:17）、Builtin[0] −0.075 W（:19）；起止 slow_start.txt
+  final_run.log               最终一轮 37 条：过 35、红 2（:431）；门 a／b／c／e 的数只在这份日志里（:285–367），这几条门不自己落证据档；起止 final_times.txt
+  base_tabinsul.log           改前树（1816fc6）TabInsulPerPlateTests 同样红：整线 9.666 对单独重解 16.223 W（:12、:15–16）
+  base_probe_run.log／mod_probe_run.log   改回对拍探针在改前树／改后树的运行日志（对拍结果在 deliverable/R48_孔环按解析圆判料_证据_2026-09-23/）
+  base_gate1_dump.txt(.sha)／mod_gate1_dump.txt(.sha)／mod_gate1_dump_stripped.txt   接线门 1 剥离版转储原件（摘要与 diff 在 deliverable/R48_孔环判料_接线门1转储对拍_2026-09-23.txt）
+  审查T1变异核_审查方原始输出/   审查方在私有副本上把外移取厚 ×1／×1.02／×1.2 跑门 a（旧判法全过，并打印新判法的判定）
+
+二、审查后修改（16:21–16:46，本目录 审查后修改/）
+  mk.log                      按工单的重建序列（mk_linux.sh → fix_mirror.py → dotnet build）；排除的测试档与重建前相同（29 个）
+  times.txt                   各测试类起止时刻与 load；16:30 那一批在跑第一个类时被中断（加印连通分量后重建再跑），它写的两份带时刻档移出了 deliverable，不引用
+  run_R48HoleBandCircleGateTests.log   新档 7 条全过（含新门 f、门 d、归因）；证据档 …相位包络_…_163313.txt、…开减关归因_…_163313.txt
+  run_门a_最终.log            门 a 收敛②打印改为按比较结果印 ≤／> 后重建再跑（只改打印）：过
+  run_R48PropsWiringGateTests.log     9 条全过，门 1 以新记录 07f96390… 过
+  run_R48RecipeFingerprintTests.log／run_R48ArcGapDiagTests.log   6／6、6／6 过（ArcGap 在 15:23 改过的现字节上编译后跑）
+  run_R48ClampRecipeTests.log         7 过 1 红（d：F6 后本就红，消息「−7.787E-001 W」同前）；g 过（新门 f 的建网格调用钉了三开关）
+  run_HandoverGateCountTests.log      镜像必红：实际 1280 条（审查前 1279，+1 = 门 f）
+  pre_dump.txt／post1_dump.txt(.sha)、接线门1转储探针源码_Program.cs.txt   门 1 重录的对拍原件（摘要 deliverable/R48_孔环判料_审查后_接线门1转储对拍_2026-09-23.txt）
+  T1变异核_门a_T1MUT_*.log、T1变异核_私有副本对现源码的diff.txt   私有副本（scratchpad/rvfix_mut，不入库）只在 Shifted() 取厚处乘 T1MUT：×1 过，×1.02／×1.2 在第一组（Builtin[0] 步 1）被收敛②判红

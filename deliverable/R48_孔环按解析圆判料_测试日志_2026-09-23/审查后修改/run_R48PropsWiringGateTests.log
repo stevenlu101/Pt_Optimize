@@ -1,0 +1,65 @@
+Test run for /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll (.NETCoreApp,Version=v8.0)
+Microsoft (R) Test Execution Command Line Tool Version 17.8.0 (x64)
+Copyright (c) Microsoft Corporation.  All rights reserved.
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.31)
+[xUnit.net 00:00:00.11]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:00.62]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:00.63]   Starting:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.R48PropsWiringGateTests.门_选牌号物性真的进链_整线说明 [38 s]
+  Standard Output Messages:
+ 末条说明：★ 电阻率、电阻温度系数、热导率、比热按牌号「Pt-Rh/90-10」取；热导率数据点 100–1400 °C，区间外取端点值；比热数据点 25–1500 °C，区间外取端点值；密度、熔点按纯铂；电阻率测试值（Pt-Rh/90-10 行）在 100–600 °C 有疑点，与本算例 25–1321 °C 重叠：I29:N29 等差 2（22…32），之后跳到 38.5：疑为插补，出处未注；热导率：本算例最低 25 °C 低于数据点下限 100 °C ⇒ 那一段取端点值 42.5 W/(m·K)（区间外不外插）
+ 本算例温度区间 25.0–1320.8 °C；区间说明：电阻率测试值（Pt-Rh/90-10 行）在 100–600 °C 有疑点，与本算例 25–1321 °C 重叠：I29:N29 等差 2（22…32），之后跳到 38.5：疑为插补，出处未注；热导率：本算例最低 25 °C 低于数据点下限 100 °C ⇒ 那一段取端点值 42.5 W/(m·K)（区间外不外插）
+ 段 0 中点：Pt 1142.98 °C → Pt-Rh/90-10 1152.18 °C
+
+
+  Passed PtOptimize.Tests.R48PropsWiringGateTests.门_选牌号物性真的进链_升温两节点与准静态 [468 ms]
+  Standard Output Messages:
+ 900 °C：金属热容 162.38 → 154.65 J/K；管电阻 7.5413E-004 → 7.8798E-004 Ω；翅片导度 0.3796 → 0.3356 W/K
+
+
+  Passed PtOptimize.Tests.R48PropsWiringGateTests.源码门_求解链不再直读纯铂函数_例外逐条有因 [62 ms]
+  Standard Output Messages:
+ Core 里电流解／闭式电阻调用 4 处
+
+
+  Passed PtOptimize.Tests.R48PropsWiringGateTests.门_选牌号物性真的进链_壳体电流与热场 [1 s]
+  Standard Output Messages:
+ 非均匀温度场（519–1150 °C）：3426 格里电流密度不同的 3384 格；Jmax 7.807 → 7.837
+ 热解：最高 1149.57 → 1149.52 °C；管孔抽热 619.606 → 556.800 W；发热 293.56 → 323.85 W
+
+
+  Passed PtOptimize.Tests.R48PropsWiringGateTests.门_选牌号物性真的进链_段解 [3 s]
+  Standard Output Messages:
+ 同电流 1100 A：中点 1006.76 → 1012.36 °C；时间常数 21.1 → 21.2 s；衰减长度 22.29 → 20.29 mm；电阻温度系数 4.7334E-004 → 4.8164E-004
+ 反算电流（控温点 1300 °C）：Pt 1817.4 A → Pt-Rh/90-10 1793.6 A
+
+
+  Passed PtOptimize.Tests.R48PropsWiringGateTests.门_数据不全的牌号一起退回纯铂_写明 [3 s]
+  Standard Output Messages:
+ 按牌号取的：Pt-Rh/90-10、Tanaka-ZGS-Pt、Tanaka-ZGS-PtRh10、Umicore-PtRh10
+ FKS16/Pt：牌号「FKS16/Pt」的电、热数据不全（热导率与比热：无数据（2026-09-18 查遍公开来源，本牌号没有带出处的实测温度函数））⇒ 电阻率、电阻温度系数、热导率、比热一起按纯铂算（持久强度仍按本牌号）
+
+
+  Passed PtOptimize.Tests.R48PropsWiringGateTests.门_访问口_纯铂一支调的就是原函数_逐位 [21 ms]
+  Standard Output Messages:
+ Pt：1606 个温度 × 5 项，与原函数不逐位相同的 0 处
+ Tanaka-ZGS-Pt：1606 个温度 × 5 项，与原函数不逐位相同的 0 处
+ Pt-Rh/90-10 在 25–1150 °C 的区间说明：电阻率测试值（Pt-Rh/90-10 行）在 100–600 °C 有疑点，与本算例 25–1150 °C 重叠：I29:N29 等差 2（22…32），之后跳到 38.5：疑为插补，出处未注；热导率：本算例最低 25 °C 低于数据点下限 100 °C ⇒ 那一段取端点值 42.5 W/(m·K)（区间外不外插）
+
+
+  Passed PtOptimize.Tests.R48PropsWiringGateTests.门_整线牌号只有一个来源 [< 1 ms]
+[xUnit.net 00:01:06.13]   Finished:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.R48PropsWiringGateTests.门_纯铂默认逐位不变_整线小算例 [17 s]
+  Standard Output Messages:
+ 纯铂整线小算例：17.0 s　Linux　SHA-256 07f9639043b10da075bd4aacac621dd20760e2d6df79f06e70ba3b6051905fef　记录 07f9639043b10da075bd4aacac621dd20760e2d6df79f06e70ba3b6051905fef
+
+
+
+Test Run Successful.
+Total tests: 9
+     Passed: 9
+ Total time: 1.1154 Minutes

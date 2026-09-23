@@ -1,0 +1,6 @@
+623c623
+<             double t = Node(kx, kz);
+---
+>             double t = Node(kx, kz) * _mutF;   // 审查 T1 变异核（私有副本，不入库）
+628a629
+>     private static readonly double _mutF = double.Parse(System.Environment.GetEnvironmentVariable("T1MUT") ?? "1", System.Globalization.CultureInfo.InvariantCulture);

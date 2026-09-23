@@ -3142,6 +3142,8 @@ public static class LineRunner
     ///     与建网格用的 rh = 管内径/2 + 壁厚（<paramref name="holeRadiusMm"/>）差 &gt; 一个栅格步 <see cref="ThicknessField.Step"/> ⇒ 一句写明差多少
     ///     （容差 = 栅格步：栅格分辨不出小于一步的差；等面积半径的误差界 s/√2 &lt; s，孔径真相同时不误报，推导见 HoleRadiusOf）。
     ///     图纸上找不到被材料包围的管孔 ⇒ 一句「无法核对」。
+    ///   · ★ 2026-09-23（RING 审查后，M1）浮空料块：<see cref="MeshRecipe.FloatingComponents"/> &gt; 0（网格里有既不连管孔面、也不连压接格的料块）⇒ 一句写明块数与面积。
+    ///     阈值只有「&gt; 0」；不剔除、不判（怎么处理是决 98 一并定的尺）。
     /// </summary>
     public static List<string> HoleArcDrawingNotes(ShellMesh mesh, ThicknessField? field, double holeRadiusMm)
     {
@@ -3156,6 +3158,9 @@ public static class LineRunner
                     + "缺口处孔边等于绝缘，电流要绕到缺口两端进孔，缺口越长孔边电流密度峰（· 法兰 J_max）偏得越多（实测一例：W08 盘 R31 舌半宽 30 判决档缺 2.0 mm，J_max 比解析路径高 49 %，F3 核实记录 A1(5)）；"
                     + "缺不缺取决于栅格原点。本条只量不判，判据照常出数。");
         }
+        if (mesh.Recipe is { FloatingComponents: > 0 } rc)   // 2026-09-23（RING 审查后，M1）
+            lines.Add($"{path}网格里有 {rc.FloatingComponents} 块料（合计 {Mm(rc.FloatingAreaMm2)} mm²）与管孔面、压接格都不相连：这些料块没有电位与温度边界，电流为 0、温度只靠表面散热，"
+                    + "片内最低温度等取全片最值的量会把它们算进去（合成盘探针上最低温度因此落到约 25 °C）；图纸孔径与 rh 失配时孔带按解析圆判料会切出这种料块（决 98 待定）。本条只量不判，判据照常出数。");
         if (field is not null)
         {
             double rDraw = DrawingHoleRadiusCached(field);

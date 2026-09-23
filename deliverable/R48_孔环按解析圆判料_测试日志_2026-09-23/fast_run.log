@@ -1,0 +1,453 @@
+Test run for /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll (.NETCoreApp,Version=v8.0)
+Microsoft (R) Test Execution Command Line Tool Version 17.8.0 (x64)
+Copyright (c) Microsoft Corporation.  All rights reserved.
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+[xUnit.net 00:00:00.02] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.31)
+[xUnit.net 00:00:00.44]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:01.61]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:01.67]   Starting:    Pt_Optimize.Tests
+[xUnit.net 00:00:02.57]     PtOptimize.Tests.HandoverGateCountTests.Handover_StatedTestCount_MatchesReality [FAIL]
+[xUnit.net 00:00:02.57]       HANDOVER 说 dotnet test 应为 1485/1485，实际是 1281 条。改了测试就同步改文档 —— 别让接手的人以为是自己环境坏了
+[xUnit.net 00:00:02.57]       Stack Trace:
+[xUnit.net 00:00:02.57]         /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/Pt_Optimize.Tests/HandoverGateCountTests.cs(113,0): at PtOptimize.Tests.HandoverGateCountTests.Handover_StatedTestCount_MatchesReality()
+[xUnit.net 00:00:02.57]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+[xUnit.net 00:00:02.57]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  Passed PtOptimize.Tests.DrawingTaperArmReadbackTests.舌根加厚段的图_读回认出叉臂与带起点 [238 ms]
+  Passed PtOptimize.Tests.DrawingTaperArmReadbackTests.锥形舌的图_读回勾锥形 [27 ms]
+  Passed PtOptimize.Tests.DrawingTaperArmReadbackTests.平行舌的图_读回不勾锥形_逐位同前 [217 ms]
+  Failed PtOptimize.Tests.HandoverGateCountTests.Handover_StatedTestCount_MatchesReality [90 ms]
+  Error Message:
+   HANDOVER 说 dotnet test 应为 1485/1485，实际是 1281 条。改了测试就同步改文档 —— 别让接手的人以为是自己环境坏了
+  Stack Trace:
+     at PtOptimize.Tests.HandoverGateCountTests.Handover_StatedTestCount_MatchesReality() in /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/Pt_Optimize.Tests/HandoverGateCountTests.cs:line 113
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  Passed PtOptimize.Tests.HandoverGateCountTests.待办队列在文档里而不是只在对话里 [170 ms]
+  Passed PtOptimize.Tests.R48PropsWiringGateTests.门_选牌号物性真的进链_整线说明 [57 s]
+  Passed PtOptimize.Tests.R48PropsWiringGateTests.门_选牌号物性真的进链_升温两节点与准静态 [731 ms]
+  Passed PtOptimize.Tests.R48PropsWiringGateTests.源码门_求解链不再直读纯铂函数_例外逐条有因 [395 ms]
+  Passed PtOptimize.Tests.R48PropsWiringGateTests.门_选牌号物性真的进链_壳体电流与热场 [2 s]
+  Passed PtOptimize.Tests.R48PropsWiringGateTests.门_选牌号物性真的进链_段解 [5 s]
+  Passed PtOptimize.Tests.R48PropsWiringGateTests.门_数据不全的牌号一起退回纯铂_写明 [4 s]
+  Passed PtOptimize.Tests.R48PropsWiringGateTests.门_访问口_纯铂一支调的就是原函数_逐位 [42 ms]
+  Passed PtOptimize.Tests.R48PropsWiringGateTests.门_整线牌号只有一个来源 [1 ms]
+  Passed PtOptimize.Tests.R48PropsWiringGateTests.门_纯铂默认逐位不变_整线小算例 [23 s]
+  Passed PtOptimize.Tests.MeshVerifyLineCaseTests.工厂每档造的LineCase走图纸路径_格数随内带递增 [3 s]
+  Passed PtOptimize.Tests.MeshVerifyLineCaseTests.图纸没分析出特征尺寸时拒答不抛 [1 ms]
+  Passed PtOptimize.Tests.R48OneRefineRecipeTests.内带等于中带时_内带半径给多少都建出同一张网格 [2 s]
+  Passed PtOptimize.Tests.R48OneRefineRecipeTests.半径参数给零时不动原值 [< 1 ms]
+  Passed PtOptimize.Tests.R48OneRefineRecipeTests.导航那一遍也要统一细区半径 [45 ms]
+  Passed PtOptimize.Tests.R48OneRefineRecipeTests.加密配方缩粗区_且比例以原中带为基准 [< 1 ms]
+  Passed PtOptimize.Tests.R48OneRefineRecipeTests.求解器必须走共用配方_不许自己设网格 [252 ms]
+  Passed PtOptimize.Tests.R48OneRefineRecipeTests.导航档统一半径时不许把尺寸也改了 [< 1 ms]
+  Passed PtOptimize.Tests.R48OneRefineRecipeTests.加密配方只准有一处实现 [14 ms]
+  Passed PtOptimize.Tests.R48DiscInsulPerPlateGateTests.源码门_Core里读圆盘保温的地方只有审过的几处 [149 ms]
+  Passed PtOptimize.Tests.R48DiscInsulPerPlateGateTests.设计电流的两节点对照_逐片圆盘保温必填_ForLine按片取值 [3 s]
+  Passed PtOptimize.Tests.R48DiscInsulPerPlateGateTests.圆盘保温0mm时四个消费方都按裸铂表面 [3 s]
+  Passed PtOptimize.Tests.R48DiscInsulPerPlateGateTests.配套清单与安装报告印的逐片圆盘保温与算例同源 [141 ms]
+  Passed PtOptimize.Tests.R48DiscInsulPerPlateGateTests.唯一取值口径的约定 [5 ms]
+  Passed PtOptimize.Tests.R48DiscInsulPerPlateGateTests.一维管段不读圆盘保温_扫描flangeInsul拒绝并说明 [4 s]
+  Passed PtOptimize.Tests.R48DiscInsulPerPlateGateTests.旧耦合链的二维法兰热解按板件圆盘保温 [15 s]
+  Passed PtOptimize.Tests.AnalyticSurrogateTests.RoundTrip_SamePlate_MeasuresNearZero [922 ms]
+R47 第三轮 N3：锚点 2.02／−16.005，最小格 1.980 mm（hWant/4 = 0.5）
+  Passed PtOptimize.Tests.AnalyticSurrogateTests.SlottedPlate_IsCaught_NotSilentlyAccepted [696 ms]
+  Passed PtOptimize.Tests.AnalyticSurrogateTests.LevelCountMismatch_Throws [63 ms]
+  Passed PtOptimize.Tests.MeshAxisTests.没有精确包络时退回栅格包络并写进警告 [271 ms]
+  Passed PtOptimize.Tests.MeshAxisTests.锚点离计划节点不到四分之一步_节点挪到锚点上_不造发丝格 [4 ms]
+  Passed PtOptimize.Tests.MeshAxisTests.孔周第一圈格两侧同尺寸_起步就是细步 [< 1 ms]
+  Passed PtOptimize.Tests.MeshAxisTests.内带参数进了图纸路径_格数随内带加密递增 [572 ms]
+解析 904 格、弧面 162.106；图纸(0.25) 904 格、弧面 162.106；周长 162.106
+  Passed PtOptimize.Tests.MeshAxisTests.图纸路径的轴与图幅留白无关_留白0123节点逐位相同 [1 s]
+  Passed PtOptimize.Tests.MeshAxisTests.z轴节点关于0对称 [23 ms]
+  Passed PtOptimize.Tests.MeshAxisTests.舌半宽等于盘半径减5的板_Build的z节点含正负半宽_x节点含切点与舌尖 [114 ms]
+  Passed PtOptimize.Tests.MeshAxisTests.同一解析板_Build与BuildFromField的管孔边界面数与总长逐位相同 [243 ms]
+  Passed PtOptimize.Tests.MeshAxisTests.轴锚点_必须落成节点_单调_对称锚点给对称轴 [1 ms]
+R47 第三轮 N1 倒角实验（盘 R28／舌半宽 25／舌尖倒角 3 mm，栅格步 0.5）：旧推法 w=22.0 xT=-17.32；直边段推法 w=25.0 xT=-12.61（真 -12.61）；抽热 无倒角栅格场 -24.884 W（890 格）／倒角场·直边段锚点 -24.884 W（890 格，差 0.000）／倒角场·旧锚点±22 -24.426 W（830 格，差 +0.458）
+  Passed PtOptimize.Tests.MeshAxisTests.舌尖倒角3mm的场_锚点从直边段推得w25与切点_抽热与解析板差小于1W [1 s]
+  Passed PtOptimize.Tests.ShapeToAnalyticTests.说明永远不为空 [< 1 ms]
+  Passed PtOptimize.Tests.ShapeToAnalyticTests.四级图_解析模型装不下_抛而不并 [< 1 ms]
+  Passed PtOptimize.Tests.ShapeToAnalyticTests.没有舌片就抛_不给一个看起来正常的默认值 [< 1 ms]
+  Passed PtOptimize.Tests.ShapeToAnalyticTests.三级图_基板与两级台阶逐位来自图纸_不取平均 [< 1 ms]
+  Passed PtOptimize.Tests.ShapeToAnalyticTests.单级不算近似_并且明说不是近似 [< 1 ms]
+  Passed PtOptimize.Tests.ShapeToAnalyticTests.两级图_只有内级_外级倍率1等于没有 [< 1 ms]
+  Passed PtOptimize.Tests.ShapeToAnalyticTests.图纸的槽不带过去_但要说出口 [< 1 ms]
+  Passed PtOptimize.Tests.ShapeToAnalyticTests.真图纸_Pt_Heater3_三级逐位带过来 [< 1 ms]
+  Passed PtOptimize.Tests.ShapeToAnalyticTests.一级厚度都没有就抛 [< 1 ms]
+  Passed PtOptimize.Tests.ShapeToAnalyticTests.管壁是反推的_这件事必须写在说明里 [< 1 ms]
+  Passed PtOptimize.Tests.ShapeToAnalyticTests.舌片族是等宽_这件事也必须写在说明里 [< 1 ms]
+  Passed PtOptimize.Tests.ShapeToAnalyticTests.Pt_Heater1_翻出来的就是界面要填的那几个数 [< 1 ms]
+  Passed PtOptimize.Tests.ShapeToAnalyticTests.三级图_翻过去再翻回来_逐位相同 [28 ms]
+  Passed PtOptimize.Tests.ShapeToAnalyticTests.舌片另有一级不同厚_先按盘缘算并标为近似 [140 ms]
+  Passed PtOptimize.Tests.ShapeToAnalyticTests.三级图_翻出来的四个数写进设计后_台阶半径与厚度对得上模型 [< 1 ms]
+  Passed PtOptimize.Tests.R48ClampRecipeTests.c_整面接触格全部是电极且钉在夹持温度_定温热场闭合 [2 s]
+  Passed PtOptimize.Tests.R48ClampRecipeTests.f_LineRunner建网格不覆写配方开关 [150 ms]
+  Passed PtOptimize.Tests.R48ClampRecipeTests.h_整线网格带整面接触与面上定温_集总参考量排除了压接格 [35 s]
+[xUnit.net 00:02:55.84]     PtOptimize.Tests.R48ClampRecipeTests.d_显式老口径与改动前一致 [FAIL]
+[xUnit.net 00:02:55.84]       定温：抽热偏离基线记录 -7.787E-001 W，超过由散热表推出的界 2.145E-005
+[xUnit.net 00:02:55.84]       Stack Trace:
+[xUnit.net 00:02:55.85]         /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/Pt_Optimize.Tests/R48ClampRecipeTests.cs(378,0): at PtOptimize.Tests.R48ClampRecipeTests.d_显式老口径与改动前一致()
+[xUnit.net 00:02:55.85]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+[xUnit.net 00:02:55.85]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:02:55.85]       Output:
+[xUnit.net 00:02:55.85]         导航网格 老口径：单元 1026　外圈 36　记录：压接边界 x = -100 已落成节点
+[xUnit.net 00:02:55.85]         导航网格 老口径 定温（旧表 设定+200、60 节点）：舌端均温 450（面积加权会是 449.99999999999994）　抽热 -11.775063633912485　铜排等效长 0
+[xUnit.net 00:02:55.85]            逐位：定温 旧表 舌端均温 450 vs 记录 450，差 0.00E+000
+[xUnit.net 00:02:55.85]            逐位：定温 旧表 抽热 -11.775063633912485 vs 记录 -10.996401934818628，差 -7.79E-001
+[xUnit.net 00:02:55.85]            逐位：定温 旧表 铜排等效长 0 vs 记录 0，差 0.00E+000
+[xUnit.net 00:02:55.85]            新表（上限 1768.2 °C、81 节点）：工作区间 450～1189.4 °C 上 δq = 2.485E-008（最坏在 462 °C）；总散热 287.622 W；q/(dq/dT) @ 舌端均温 = 268.272 K
+[xUnit.net 00:02:55.85]            推导界 vs 实测差：抽热 2.145E-005 vs -7.787E-001 W　舌端均温 2.000E-005 vs 0.000E+000 K　铜排等效长 0.000E+000 vs 0.000E+000 mm
+  Failed PtOptimize.Tests.R48ClampRecipeTests.d_显式老口径与改动前一致 [1 s]
+  Error Message:
+   定温：抽热偏离基线记录 -7.787E-001 W，超过由散热表推出的界 2.145E-005
+  Stack Trace:
+     at PtOptimize.Tests.R48ClampRecipeTests.d_显式老口径与改动前一致() in /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/Pt_Optimize.Tests/R48ClampRecipeTests.cs:line 378
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  Standard Output Messages:
+ 导航网格 老口径：单元 1026　外圈 36　记录：压接边界 x = -100 已落成节点
+ 导航网格 老口径 定温（旧表 设定+200、60 节点）：舌端均温 450（面积加权会是 449.99999999999994）　抽热 -11.775063633912485　铜排等效长 0
+    逐位：定温 旧表 舌端均温 450 vs 记录 450，差 0.00E+000
+    逐位：定温 旧表 抽热 -11.775063633912485 vs 记录 -10.996401934818628，差 -7.79E-001
+    逐位：定温 旧表 铜排等效长 0 vs 记录 0，差 0.00E+000
+    新表（上限 1768.2 °C、81 节点）：工作区间 450～1189.4 °C 上 δq = 2.485E-008（最坏在 462 °C）；总散热 287.622 W；q/(dq/dT) @ 舌端均温 = 268.272 K
+    推导界 vs 实测差：抽热 2.145E-005 vs -7.787E-001 W　舌端均温 2.000E-005 vs 0.000E+000 K　铜排等效长 0.000E+000 vs 0.000E+000 mm
+
+
+  Passed PtOptimize.Tests.R48ClampRecipeTests.b_缺省入口不铺压接细带_显式3h细带仍是细步 [1 s]
+  Passed PtOptimize.Tests.R48ClampRecipeTests.a_整面接触格数等于形心在压接段内的格数_远多于外圈 [1 s]
+[xUnit.net 00:02:59.28]     PtOptimize.Tests.R48ClampRecipeTests.g_证据探针建网格必须显式写明两个开关 [FAIL]
+[xUnit.net 00:02:59.28]       这些证据探针建网格没显式写明 clampFullFace／clampBandMm／clampFaceDirichlet，或 clampBandMm 写成 double.NaN（生产默认一改就悄悄换口径）：R48HoleBandCircleGateTests.cs 第 65 行；R48HoleBandCircleGateTests.cs 第 407 行；R48HoleBandCircleGateTests.cs 第 472 行；R48HoleBandCircleGateTests.cs 第 519 行；R48HoleBandCircleGateTests.cs 第 561 行；R48HoleBandCircleGateTests.cs 第 575 行
+[xUnit.net 00:02:59.28]       Stack Trace:
+[xUnit.net 00:02:59.28]         /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/Pt_Optimize.Tests/R48ClampRecipeTests.cs(599,0): at PtOptimize.Tests.R48ClampRecipeTests.g_证据探针建网格必须显式写明两个开关()
+[xUnit.net 00:02:59.28]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+[xUnit.net 00:02:59.28]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:02:59.28]       Output:
+[xUnit.net 00:02:59.28]         生产代码引的证据文件 30 个；受管探针 41 个：DeliverableOut.cs、R47MeshDiagInstrumentTests.cs、R48ClampBandSelfSimilarTests.cs、R48ClampFaceRecipeTests.cs、R48ClampFullFaceTests.cs、R48ClampPhaseTests.cs、R48ClampRecipeImpactTests.cs、R48CoupleContinuationTests.cs、R48CoupleTolLadderTests.cs、R48DeliverableWriteGuardTests.cs、R48DescentWindowTests.cs、R48DiscInsulLeverTests.cs、R48DiscInsulPerPlateGateTests.cs、R48DiscZoneCoverageTests.cs、R48ErrorBudgetTests.cs、R48FaceDirichletTests.cs、R48G2RampClampChannelTests.cs、R48HoleBandCircleGateTests.cs、R48HoleBandTests.cs、R48InsulationSearchProbeTests.cs、R48InsulBlendTests.cs、R48InsulBoundaryScanTests.cs、R48InsulRuleABTests.cs、R48InsulWindowTests.cs、R48JointCurrentCheckTests.cs、R48MeshStructureTests.cs、R48MidBandConvergenceTests.cs、R48NavGridBiasTests.cs、R48PerPlateGridTests.cs、R48Plate2OnlyTests.cs、R48PreResolveProbesTests.cs、R48RingResolutionTests.cs、R48SchemeATests.cs、R48SecondBatchTests.cs、R48TabRootConditionTests.cs、R48ThermalJitterTests.cs、R48ThickAnomalyTests.cs、R48TrootWiringTests.cs、R48TubeInsulScanTests.cs、R48TubeResponseNewtonGateTests.cs、R48UniformQuarterTests.cs；建网格调用 49 处
+  Failed PtOptimize.Tests.R48ClampRecipeTests.g_证据探针建网格必须显式写明两个开关 [280 ms]
+  Error Message:
+   这些证据探针建网格没显式写明 clampFullFace／clampBandMm／clampFaceDirichlet，或 clampBandMm 写成 double.NaN（生产默认一改就悄悄换口径）：R48HoleBandCircleGateTests.cs 第 65 行；R48HoleBandCircleGateTests.cs 第 407 行；R48HoleBandCircleGateTests.cs 第 472 行；R48HoleBandCircleGateTests.cs 第 519 行；R48HoleBandCircleGateTests.cs 第 561 行；R48HoleBandCircleGateTests.cs 第 575 行
+  Stack Trace:
+     at PtOptimize.Tests.R48ClampRecipeTests.g_证据探针建网格必须显式写明两个开关() in /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/Pt_Optimize.Tests/R48ClampRecipeTests.cs:line 599
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  Standard Output Messages:
+ 生产代码引的证据文件 30 个；受管探针 41 个：DeliverableOut.cs、R47MeshDiagInstrumentTests.cs、R48ClampBandSelfSimilarTests.cs、R48ClampFaceRecipeTests.cs、R48ClampFullFaceTests.cs、R48ClampPhaseTests.cs、R48ClampRecipeImpactTests.cs、R48CoupleContinuationTests.cs、R48CoupleTolLadderTests.cs、R48DeliverableWriteGuardTests.cs、R48DescentWindowTests.cs、R48DiscInsulLeverTests.cs、R48DiscInsulPerPlateGateTests.cs、R48DiscZoneCoverageTests.cs、R48ErrorBudgetTests.cs、R48FaceDirichletTests.cs、R48G2RampClampChannelTests.cs、R48HoleBandCircleGateTests.cs、R48HoleBandTests.cs、R48InsulationSearchProbeTests.cs、R48InsulBlendTests.cs、R48InsulBoundaryScanTests.cs、R48InsulRuleABTests.cs、R48InsulWindowTests.cs、R48JointCurrentCheckTests.cs、R48MeshStructureTests.cs、R48MidBandConvergenceTests.cs、R48NavGridBiasTests.cs、R48PerPlateGridTests.cs、R48Plate2OnlyTests.cs、R48PreResolveProbesTests.cs、R48RingResolutionTests.cs、R48SchemeATests.cs、R48SecondBatchTests.cs、R48TabRootConditionTests.cs、R48ThermalJitterTests.cs、R48ThickAnomalyTests.cs、R48TrootWiringTests.cs、R48TubeInsulScanTests.cs、R48TubeResponseNewtonGateTests.cs、R48UniformQuarterTests.cs；建网格调用 49 处
+
+
+  Passed PtOptimize.Tests.R48ClampRecipeTests.e_压接段盖到管孔时退回只钉外圈_警告进输出且说人话 [43 s]
+  Passed PtOptimize.Tests.DrawingResolutionNoteTests.同一场跑三次Run_该句每次只出现一次_共享的Warning不变 [1 m 29 s]
+  Passed PtOptimize.Tests.DrawingResolutionNoteTests.文件路径栅格步有地板_到地板才算已到图纸分辨率 [1 ms]
+  Passed PtOptimize.Tests.FieldConvergenceGateTests.温度场也报得出真残差 [15 ms]
+  Passed PtOptimize.Tests.FieldConvergenceGateTests.电位场的收敛被读到了 [26 ms]
+  Passed PtOptimize.Tests.FieldConvergenceGateTests.名单覆盖吃法兰场的判据 [121 ms]
+  Passed PtOptimize.Tests.FieldConvergenceGateTests.判不了确实会阻断全过 [8 ms]
+  Passed PtOptimize.Tests.FieldConvergenceGateTests.没收敛落到片上 [24 ms]
+  Passed PtOptimize.Tests.FieldConvergenceGateTests.不该标的没被标进去 [1 ms]
+  Passed PtOptimize.Tests.FieldConvergenceGateTests.换解法有配对对照且有跑空的保险 [43 ms]
+  Passed PtOptimize.Tests.FieldConvergenceGateTests.线性解报得出收敛与否 [6 ms]
+  Passed PtOptimize.Tests.FieldConvergenceGateTests.残差用真散热不用线性化 [10 ms]
+  Passed PtOptimize.Tests.FieldConvergenceGateTests.收敛只判真残差不判步长 [15 ms]
+  Passed PtOptimize.Tests.FieldConvergenceGateTests.不许再把步长叫残差 [17 ms]
+  Passed PtOptimize.Tests.FieldConvergenceGateTests.残差阈值有出处 [8 ms]
+  Passed PtOptimize.Tests.FieldConvergenceGateTests.后置一遍把相关判据标成判不了 [32 ms]
+  Passed PtOptimize.Tests.R48FaceDirichletTests.探针_关着逐位复现_开着能量闭合且数合理 [918 ms]
+  Passed PtOptimize.Tests.R48ArcGapDiagTests.门d_图纸孔径失配_说明句出现_数值对(dHole: 1, recTotalGapMm: 133.74199999999999, recTotalGapOnMm: 133.74199999999999) [3 s]
+  Passed PtOptimize.Tests.R48ArcGapDiagTests.门d_图纸孔径失配_说明句出现_数值对(dHole: 0.29999999999999999, recTotalGapMm: 33.646000000000001, recTotalGapOnMm: 0) [3 s]
+  Passed PtOptimize.Tests.R48ArcGapDiagTests.门f_整线说明带出失配句与缺口句_图纸路径小算例 [46 s]
+  Passed PtOptimize.Tests.R48ArcGapDiagTests.门c_改回不接首尾_最长缺口变成0p070_门红 [1 s]
+  Passed PtOptimize.Tests.R48ArcGapDiagTests.门b_同几何解析路径_覆盖率为1_不误报 [3 s]
+  Passed PtOptimize.Tests.R48ArcGapDiagTests.门a_判决档栅格替身_诊断报出缺口与位置_说明句带出 [1 s]
+  Passed PtOptimize.Tests.R48F6HoleFaceGateTests.门_电流守恒_面上 [8 s]
+  Passed PtOptimize.Tests.R48F6HoleFaceGateTests.门_双舌板孔边对称 [1 s]
+  Passed PtOptimize.Tests.R48F6HoleFaceGateTests.门_孔边J峰随加密收敛 [17 s]
+  Passed PtOptimize.Tests.R48F6HoleFaceGateTests.门_孔面只在孔圆上 [8 s]
+  Passed PtOptimize.Tests.R48F6HoleFaceGateTests.门_弧面距离_单点通量误差界 [16 s]
+  Passed PtOptimize.Tests.R48F6HoleFaceGateTests.门_电极位置随格集合的跳幅_不超门b阈值_切点附近10相位全判 [3 m 43 s]
+  Passed PtOptimize.Tests.R48NMeshInjectTests.面长门_有料面长不超整边_舌中段满料_管孔弧面总长等于周长 [5 s]
+  Passed PtOptimize.Tests.R48NMeshInjectTests.诊断_相邻盘径导航网格差异_30p99_vs_31p00 [1 s]
+  Passed PtOptimize.Tests.R48NMeshInjectTests.门e_注入格心取样_体积守恒门当场红_导航vs判决电阻差当场超坏带线 [15 s]
+[xUnit.net 00:11:20.80]     PtOptimize.Tests.R48NMeshInjectTests.门e_注入下的单片热解_盘30p75与31p00_导航vs判决 [FAIL]
+[xUnit.net 00:11:20.80]       对照（不注入）本该在门内
+[xUnit.net 00:11:20.80]       Stack Trace:
+[xUnit.net 00:11:20.80]         /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/Pt_Optimize.Tests/R48NMeshInjectTests.cs(318,0): at PtOptimize.Tests.R48NMeshInjectTests.门e_注入下的单片热解_盘30p75与31p00_导航vs判决()
+[xUnit.net 00:11:20.80]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+[xUnit.net 00:11:20.80]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:11:20.80]       Output:
+[xUnit.net 00:11:20.80]         /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/deliverable/网格修复_门e_注入下的单片热解_W08_本次开跑于2026-09-23_145312.txt
+[xUnit.net 00:11:20.80]         网格修复 门(e)-(c)（单片版）：注入格心取样后，盘 30.75／31.00 导航 vs 判决 片0 电流场 + 热场（DrawingPathParityTests.SolveOne）
+[xUnit.net 00:11:20.80]         开跑 2026-09-23 14:58:02　工作树 /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING　写码 2026-09-19，Fable 5.1
+[xUnit.net 00:11:20.80]         预期（跑前写死）：注入下 R31.00 |Δ抽热| ≥ 0.5 W 或 |Δ发热| ≥ 1 %；对照两点 |Δ抽热| ≤ 0.5 W 且 |Δ发热| ≤ 1 %。
+[xUnit.net 00:11:20.80]         注入	R	导航单元	判决单元	导航发热W	判决发热W	导航抽热W	判决抽热W	Δ发热%	Δ抽热W	判读
+[xUnit.net 00:11:20.80]         是	30.75	1132	4258	427.626	427.675	1.440	0.724	-0.011	+0.717	**门外**
+[xUnit.net 00:11:20.80]         是	31.00	1118	4334	432.472	433.686	-0.290	-0.995	-0.280	+0.706	**门外**
+[xUnit.net 00:11:20.80]         否	30.75	1196	4366	428.864	428.329	-0.068	0.101	+0.125	-0.169	门内
+[xUnit.net 00:11:20.80]         否	31.00	1184	4450	435.818	434.704	-2.276	-1.751	+0.256	-0.525	**门外**
+[xUnit.net 00:11:20.80]         ── 注入 R31.00 门外 1/1、对照门外 1/2　2026-09-19，Fable 5.1
+[xUnit.net 00:11:20.80]         
+  Failed PtOptimize.Tests.R48NMeshInjectTests.门e_注入下的单片热解_盘30p75与31p00_导航vs判决 [10 s]
+  Error Message:
+   对照（不注入）本该在门内
+  Stack Trace:
+     at PtOptimize.Tests.R48NMeshInjectTests.门e_注入下的单片热解_盘30p75与31p00_导航vs判决() in /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/Pt_Optimize.Tests/R48NMeshInjectTests.cs:line 318
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  Standard Output Messages:
+ /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/deliverable/网格修复_门e_注入下的单片热解_W08_本次开跑于2026-09-23_145312.txt
+ 网格修复 门(e)-(c)（单片版）：注入格心取样后，盘 30.75／31.00 导航 vs 判决 片0 电流场 + 热场（DrawingPathParityTests.SolveOne）
+ 开跑 2026-09-23 14:58:02　工作树 /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING　写码 2026-09-19，Fable 5.1
+ 预期（跑前写死）：注入下 R31.00 |Δ抽热| ≥ 0.5 W 或 |Δ发热| ≥ 1 %；对照两点 |Δ抽热| ≤ 0.5 W 且 |Δ发热| ≤ 1 %。
+ 注入	R	导航单元	判决单元	导航发热W	判决发热W	导航抽热W	判决抽热W	Δ发热%	Δ抽热W	判读
+ 是	30.75	1132	4258	427.626	427.675	1.440	0.724	-0.011	+0.717	**门外**
+ 是	31.00	1118	4334	432.472	433.686	-0.290	-0.995	-0.280	+0.706	**门外**
+ 否	30.75	1196	4366	428.864	428.329	-0.068	0.101	+0.125	-0.169	门内
+ 否	31.00	1184	4450	435.818	434.704	-2.276	-1.751	+0.256	-0.525	**门外**
+ ── 注入 R31.00 门外 1/1、对照门外 1/2　2026-09-19，Fable 5.1
+ 
+
+
+  Passed PtOptimize.Tests.R48NMeshInjectTests.积分器自检_W08板_全片与逐格对Simpson参考_相对差小于1e6 [11 s]
+  Passed PtOptimize.Tests.R48NMeshInjectTests.积分器自检_带舌孔与盘槽的板_对子采样参考_相对差小于1e4 [17 s]
+  Passed PtOptimize.Tests.R48DeliverableWriteGuardTests.测试写deliverable必须带时刻_或经EvidenceFile_或在快套件名单里 [62 ms]
+  Passed PtOptimize.Tests.R48DeliverableWriteGuardTests.注入_原文件名写deliverable会被抓到 [< 1 ms]
+  Passed PtOptimize.Tests.R48MeshStructureTests.对比中带三档的网格结构 [4 s]
+  Passed PtOptimize.Tests.R48InsulBlendTests.三_正对照_圆盘保温等于舌保温时混合前后逐位相同 [1 s]
+  Passed PtOptimize.Tests.R48InsulBlendTests.二_正x半边盘缘格料全在圆内_份额恰为一 [2 s]
+  Passed PtOptimize.Tests.R48InsulBlendTests.一_混合表端点与同表逐位不变 [1 ms]
+  Passed PtOptimize.Tests.TabInsulPerPlateTests.源码门_LineRunner不再new默认板 [8 ms]
+  Passed PtOptimize.Tests.TabInsulPerPlateTests.没有等效片也没有切点时判成无法判定_不许用默认板 [2 ms]
+  Passed PtOptimize.Tests.TabInsulPerPlateTests.推不出切点的场_两条判据无法判定_不用默认板 [43 s]
+[xUnit.net 00:12:46.45]     PtOptimize.Tests.R48ClampFaceGateTests.c_开关关逐位等于改动前代码_开关开抽热不同 [FAIL]
+[xUnit.net 00:12:46.45]       开关关的记录与本树不逐位相同（68 项）：导航网格 vHash：记录 231177.96593454733 实际 234895.60448949903；导航网格 jHash：记录 5966855.046062591 实际 6010102.56879674；导航网格 发热：记录 395.88859371995227 实际 396.5561008281706；导航网格 归一化电流：记录 1.3674804632595619 实际 1.3558259949785227；导航网格 Jmax：记录 14.603356588017592 实际 14.439730066671556；导航网格 定温 tHash：记录 901222668.0345403 实际 901288988.2862428；导航网格 定温 抽热：记录 20.80420654168605 实际 20.16206035331491；导航网格 定温 铜排带走：记录 157.58311500728217 实际 157.59318180950476；导航网格 定温 稳定裕度：记录 6.937187020761078 实际 6.656078642538901；导航网格 定温 稳定横向长：记录 7.107682782174056 实际 7.336083051561783；导航网格 定温 发热：记录 342.3999626593976 实际 343.0758876459612；导航网格 定温 能量残差：记录 -0.0008263666993002516 实际 -0.0008245924852872122；导航网格 定温 舌区峰：记录 1138.907850640168 实际 1139.6209973468171；导航网格 定温 盘区峰：记录 1141.736072089707 实际 1142.181779646855；导航网格 自由端 tHash：记录 1005725478.4444997 实际 1005661314.9244807；导航网格 自由端 抽热：记录 -21.206489030974627 实际 -21.90669516461927；导航网格 自由端 舌端均温：记录 874.4790962988949 实际 874.4435546947652；导航网格 自由端 稳定裕度：记录 7.032293600117668 实际 6.748144588795072；导航网格 自由端 稳定横向长：记录 7.107682782174056 实际 7.336083051561783；导航网格 自由端 发热：记录 395.48635246407224 实际 396.13157759948575；导航网格 自由端 能量残差：记录 -0.0014820449002748148 实际 -0.0014916861579514773；导航网格 自由端 舌区峰：记录 1202.226359280077 实际 1202.3214087461479；导航网格 自由端 盘区峰：记录 1165.217404858932 实际 1165.122681563777；导航网格 热导 tHash：记录 879284170.3684318 实际 879376994.1225057；导航网格 热导 抽热：记录 27.930782759645997 实际 27.296175650974412；导航网格 热导 铜排带走：记录 162.7696696058644 实际 162.78157968470893；导航网格 热导 舌端均温：记录 172.97242691442233 实际 172.98325425882615；导航网格 热导 铜排等效长：记录 7.1697806633603784 实际 7.169791869071253；导航网格 热导 稳定裕度：记录 6.921262832589267 实际 6.6406691019016595；导航网格 热导 稳定横向长：记录 7.107682782174056 实际 7.336083051561783；导航网格 热导 发热：记录 332.85266448562254 实际 333.53670405621364；导航网格 热导 能量残差：记录 -0.0007490978205169085 实际 -0.0007477209427122489；导航网格 热导 舌区峰：记录 1134.1116323244398 实际 1134.011059744405；导航网格 热导 盘区峰：记录 1140.248374566774 实际 1140.6948047038888；均匀h2 vHash：记录 750551.0799378727 实际 758197.577549859；均匀h2 jHash：记录 14281625.42106636 实际 14350098.66736114；均匀h2 发热：记录 395.88859841161434 实际 396.5561061880137；均匀h2 归一化电流：记录 1.3674810795744017 实际 1.3558266489182986；均匀h2 Jmax：记录 14.603419970216896 实际 14.43992664301288；均匀h2 定温 tHash：记录 1898961064.4670322 实际 1899082955.7078185；均匀h2 定温 抽热：记录 20.810679527121412 实际 20.16854615590872；均匀h2 定温 铜排带走：记录 157.6075730907102 实际 157.61765294685273；均匀h2 定温 稳定裕度：记录 6.937029038616588 实际 6.655933138326637；均匀h2 定温 稳定横向长：记录 7.107682782174056 实际 7.336083051561783；均匀h2 定温 发热：记录 342.22812733663693 实际 342.90406508243586；均匀h2 定温 能量残差：记录 -0.000804713836174642 实际 -0.0008058446794052543；均匀h2 定温 舌区峰：记录 1138.903269720746 实际 1139.6164692015452；均匀h2 定温 盘区峰：记录 1141.734568430806 实际 1142.178974012875；均匀h2 自由端 tHash：记录 2234555707.7572303 实际 2234409460.1894445；均匀h2 自由端 抽热：记录 -21.206389501299178 实际 -21.90660670542956；均匀h2 自由端 舌端均温：记录 875.1540364700546 实际 875.1184662175046；均匀h2 自由端 稳定裕度：记录 7.0321494262766375 实际 6.748012479771518；均匀h2 自由端 稳定横向长：记录 7.107682782174056 实际 7.336083051561783；均匀h2 自由端 发热：记录 395.3862509491708 实际 396.0314715171798；均匀h2 自由端 能量残差：记录 -0.0015684073515771502 实际 -0.0015825196811576347；均匀h2 自由端 舌区峰：记录 1202.225503540798 实际 1202.3203840819058；均匀h2 自由端 盘区峰：记录 1165.217851230469 实际 1165.12314405619；均匀h2 热导 tHash：记录 1813969728.6528518 实际 1814150715.2187586；均匀h2 热导 抽热：记录 28.022500875235785 实际 27.388017151007872；均匀h2 热导 铜排带走：记录 162.8797934688639 实际 162.89177822523112；均匀h2 热导 舌端均温：记录 173.07253951714884 实际 173.08343475021007；均匀h2 热导 铜排等效长：记录 7.169884274443488 实际 7.169895550415421；均匀h2 热导 稳定裕度：记录 6.92091483996859 实际 6.640339682004886；均匀h2 热导 稳定横向长：记录 7.107682782174056 实际 7.336083051561783；均匀h2 热导 发热：记录 332.55570421450483 实际 333.2398327062294；均匀h2 热导 能量残差：记录 -0.0036992562932880446 实际 -0.0036957122590592917；均匀h2 热导 舌区峰：记录 1134.0518440477217 实际 1133.9517755580464；均匀h2 热导 盘区峰：记录 1140.230013411673 实际 1140.6766733931652
+[xUnit.net 00:12:46.45]       Stack Trace:
+[xUnit.net 00:12:46.45]         /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/Pt_Optimize.Tests/R48ClampFaceGateTests.cs(299,0): at PtOptimize.Tests.R48ClampFaceGateTests.c_开关关逐位等于改动前代码_开关开抽热不同()
+[xUnit.net 00:12:46.45]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+[xUnit.net 00:12:46.45]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:12:46.45]       Output:
+[xUnit.net 00:12:46.45]         导航网格 关：vHash 234895.60448949903　jHash 6010102.56879674　发热 396.5561008281706
+[xUnit.net 00:12:46.45]         CUR ["导航网格"] = (1326, 300, 234895.60448949903, 6010102.56879674, 396.5561008281706, 1.3558259949785227, 14.439730066671556),
+[xUnit.net 00:12:46.45]         导航网格 开：发热 394.0372983805818（关 396.5561008281706）　归一化电流 1.3731608862769349（关 1.3558259949785227）
+[xUnit.net 00:12:46.45]         导航网格 定温 关：tHash 901288988.2862428　抽热 20.16206035331491　铜排带走 157.59318180950476　舌端均温 450
+[xUnit.net 00:12:46.45]         REC [("导航网格", "定温")] = new(901288988.2862428, 20.16206035331491, 157.59318180950476, 450, 0, 6.656078642538901, 7.336083051561783, 343.0758876459612, -0.0008245924852872122, 1139.6209973468171, 1142.181779646855),
+[xUnit.net 00:12:46.45]         导航网格 定温 开：抽热 21.779194327091574（差 +1.6171 W）　铜排带走 159.83590472775734　舌区峰 1138.339（差 -1.282 K）　发热 339.560
+[xUnit.net 00:12:46.45]         导航网格 自由端 关：tHash 1005661314.9244807　抽热 -21.90669516461927　铜排带走 0　舌端均温 874.4435546947652
+[xUnit.net 00:12:46.45]         REC [("导航网格", "自由端")] = new(1005661314.9244807, -21.90669516461927, 0, 874.4435546947652, 0, 6.748144588795072, 7.336083051561783, 396.13157759948575, -0.0014916861579514773, 1202.3214087461479, 1165.122681563777),
+[xUnit.net 00:12:46.45]         导航网格 自由端 开：抽热 -21.38172686693412（差 +0.5250 W）　铜排带走 0　舌区峰 1200.675（差 -1.646 K）　发热 393.234
+[xUnit.net 00:12:46.45]         导航网格 热导 关：tHash 879376994.1225057　抽热 27.296175650974412　铜排带走 162.78157968470893　舌端均温 172.98325425882615
+[xUnit.net 00:12:46.45]         REC [("导航网格", "热导")] = new(879376994.1225057, 27.296175650974412, 162.78157968470893, 172.98325425882615, 7.169791869071253, 6.6406691019016595, 7.336083051561783, 333.53670405621364, -0.0007477209427122489, 1134.011059744405, 1140.6948047038888),
+[xUnit.net 00:12:46.45]         导航网格 热导 开：抽热 27.466740428155763（差 +0.1706 W）　铜排带走 161.79846576793213　舌区峰 1133.901（差 -0.110 K）　发热 332.065
+[xUnit.net 00:12:46.45]         均匀h2 关：vHash 758197.577549859　jHash 14350098.66736114　发热 396.5561061880137
+[xUnit.net 00:12:46.45]         CUR ["均匀h2"] = (1986, 600, 758197.577549859, 14350098.66736114, 396.5561061880137, 1.3558266489182986, 14.43992664301288),
+[xUnit.net 00:12:46.45]         均匀h2 开：发热 394.0373036696726（关 396.5561061880137）　归一化电流 1.3731615569526172（关 1.3558266489182986）
+[xUnit.net 00:12:46.45]         均匀h2 定温 关：tHash 1899082955.7078185　抽热 20.16854615590872　铜排带走 157.61765294685273　舌端均温 450
+[xUnit.net 00:12:46.45]         REC [("均匀h2", "定温")] = new(1899082955.7078185, 20.16854615590872, 157.61765294685273, 450, 0, 6.655933138326637, 7.336083051561783, 342.90406508243586, -0.0008058446794052543, 1139.6164692015452, 1142.178974012875),
+[xUnit.net 00:12:46.45]         均匀h2 定温 开：抽热 21.78790919221435（差 +1.6194 W）　铜排带走 159.85770820453064　舌区峰 1138.333（差 -1.284 K）　发热 339.383
+[xUnit.net 00:12:46.45]         均匀h2 自由端 关：tHash 2234409460.1894445　抽热 -21.90660670542956　铜排带走 0　舌端均温 875.1184662175046
+[xUnit.net 00:12:46.45]         REC [("均匀h2", "自由端")] = new(2234409460.1894445, -21.90660670542956, 0, 875.1184662175046, 0, 6.748012479771518, 7.336083051561783, 396.0314715171798, -0.0015825196811576347, 1202.3203840819058, 1165.12314405619),
+[xUnit.net 00:12:46.45]         均匀h2 自由端 开：抽热 -21.38196473920853（差 +0.5246 W）　铜排带走 0　舌区峰 1200.675（差 -1.645 K）　发热 393.134
+[xUnit.net 00:12:46.45]         均匀h2 热导 关：tHash 1814150715.2187586　抽热 27.388017151007872　铜排带走 162.89177822523112　舌端均温 173.08343475021007
+[xUnit.net 00:12:46.45]         REC [("均匀h2", "热导")] = new(1814150715.2187586, 27.388017151007872, 162.89177822523112, 173.08343475021007, 7.169895550415421, 6.640339682004886, 7.336083051561783, 333.2398327062294, -0.0036957122590592917, 1133.9517755580464, 1140.6766733931652),
+[xUnit.net 00:12:46.45]         均匀h2 热导 开：抽热 27.55808351557091（差 +0.1701 W）　铜排带走 161.9087965136031　舌区峰 1133.842（差 -0.110 K）　发热 331.771
+  Failed PtOptimize.Tests.R48ClampFaceGateTests.c_开关关逐位等于改动前代码_开关开抽热不同 [4 s]
+  Error Message:
+   开关关的记录与本树不逐位相同（68 项）：导航网格 vHash：记录 231177.96593454733 实际 234895.60448949903；导航网格 jHash：记录 5966855.046062591 实际 6010102.56879674；导航网格 发热：记录 395.88859371995227 实际 396.5561008281706；导航网格 归一化电流：记录 1.3674804632595619 实际 1.3558259949785227；导航网格 Jmax：记录 14.603356588017592 实际 14.439730066671556；导航网格 定温 tHash：记录 901222668.0345403 实际 901288988.2862428；导航网格 定温 抽热：记录 20.80420654168605 实际 20.16206035331491；导航网格 定温 铜排带走：记录 157.58311500728217 实际 157.59318180950476；导航网格 定温 稳定裕度：记录 6.937187020761078 实际 6.656078642538901；导航网格 定温 稳定横向长：记录 7.107682782174056 实际 7.336083051561783；导航网格 定温 发热：记录 342.3999626593976 实际 343.0758876459612；导航网格 定温 能量残差：记录 -0.0008263666993002516 实际 -0.0008245924852872122；导航网格 定温 舌区峰：记录 1138.907850640168 实际 1139.6209973468171；导航网格 定温 盘区峰：记录 1141.736072089707 实际 1142.181779646855；导航网格 自由端 tHash：记录 1005725478.4444997 实际 1005661314.9244807；导航网格 自由端 抽热：记录 -21.206489030974627 实际 -21.90669516461927；导航网格 自由端 舌端均温：记录 874.4790962988949 实际 874.4435546947652；导航网格 自由端 稳定裕度：记录 7.032293600117668 实际 6.748144588795072；导航网格 自由端 稳定横向长：记录 7.107682782174056 实际 7.336083051561783；导航网格 自由端 发热：记录 395.48635246407224 实际 396.13157759948575；导航网格 自由端 能量残差：记录 -0.0014820449002748148 实际 -0.0014916861579514773；导航网格 自由端 舌区峰：记录 1202.226359280077 实际 1202.3214087461479；导航网格 自由端 盘区峰：记录 1165.217404858932 实际 1165.122681563777；导航网格 热导 tHash：记录 879284170.3684318 实际 879376994.1225057；导航网格 热导 抽热：记录 27.930782759645997 实际 27.296175650974412；导航网格 热导 铜排带走：记录 162.7696696058644 实际 162.78157968470893；导航网格 热导 舌端均温：记录 172.97242691442233 实际 172.98325425882615；导航网格 热导 铜排等效长：记录 7.1697806633603784 实际 7.169791869071253；导航网格 热导 稳定裕度：记录 6.921262832589267 实际 6.6406691019016595；导航网格 热导 稳定横向长：记录 7.107682782174056 实际 7.336083051561783；导航网格 热导 发热：记录 332.85266448562254 实际 333.53670405621364；导航网格 热导 能量残差：记录 -0.0007490978205169085 实际 -0.0007477209427122489；导航网格 热导 舌区峰：记录 1134.1116323244398 实际 1134.011059744405；导航网格 热导 盘区峰：记录 1140.248374566774 实际 1140.6948047038888；均匀h2 vHash：记录 750551.0799378727 实际 758197.577549859；均匀h2 jHash：记录 14281625.42106636 实际 14350098.66736114；均匀h2 发热：记录 395.88859841161434 实际 396.5561061880137；均匀h2 归一化电流：记录 1.3674810795744017 实际 1.3558266489182986；均匀h2 Jmax：记录 14.603419970216896 实际 14.43992664301288；均匀h2 定温 tHash：记录 1898961064.4670322 实际 1899082955.7078185；均匀h2 定温 抽热：记录 20.810679527121412 实际 20.16854615590872；均匀h2 定温 铜排带走：记录 157.6075730907102 实际 157.61765294685273；均匀h2 定温 稳定裕度：记录 6.937029038616588 实际 6.655933138326637；均匀h2 定温 稳定横向长：记录 7.107682782174056 实际 7.336083051561783；均匀h2 定温 发热：记录 342.22812733663693 实际 342.90406508243586；均匀h2 定温 能量残差：记录 -0.000804713836174642 实际 -0.0008058446794052543；均匀h2 定温 舌区峰：记录 1138.903269720746 实际 1139.6164692015452；均匀h2 定温 盘区峰：记录 1141.734568430806 实际 1142.178974012875；均匀h2 自由端 tHash：记录 2234555707.7572303 实际 2234409460.1894445；均匀h2 自由端 抽热：记录 -21.206389501299178 实际 -21.90660670542956；均匀h2 自由端 舌端均温：记录 875.1540364700546 实际 875.1184662175046；均匀h2 自由端 稳定裕度：记录 7.0321494262766375 实际 6.748012479771518；均匀h2 自由端 稳定横向长：记录 7.107682782174056 实际 7.336083051561783；均匀h2 自由端 发热：记录 395.3862509491708 实际 396.0314715171798；均匀h2 自由端 能量残差：记录 -0.0015684073515771502 实际 -0.0015825196811576347；均匀h2 自由端 舌区峰：记录 1202.225503540798 实际 1202.3203840819058；均匀h2 自由端 盘区峰：记录 1165.217851230469 实际 1165.12314405619；均匀h2 热导 tHash：记录 1813969728.6528518 实际 1814150715.2187586；均匀h2 热导 抽热：记录 28.022500875235785 实际 27.388017151007872；均匀h2 热导 铜排带走：记录 162.8797934688639 实际 162.89177822523112；均匀h2 热导 舌端均温：记录 173.07253951714884 实际 173.08343475021007；均匀h2 热导 铜排等效长：记录 7.169884274443488 实际 7.169895550415421；均匀h2 热导 稳定裕度：记录 6.92091483996859 实际 6.640339682004886；均匀h2 热导 稳定横向长：记录 7.107682782174056 实际 7.336083051561783；均匀h2 热导 发热：记录 332.55570421450483 实际 333.2398327062294；均匀h2 热导 能量残差：记录 -0.0036992562932880446 实际 -0.0036957122590592917；均匀h2 热导 舌区峰：记录 1134.0518440477217 实际 1133.9517755580464；均匀h2 热导 盘区峰：记录 1140.230013411673 实际 1140.6766733931652
+  Stack Trace:
+     at PtOptimize.Tests.R48ClampFaceGateTests.c_开关关逐位等于改动前代码_开关开抽热不同() in /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/Pt_Optimize.Tests/R48ClampFaceGateTests.cs:line 299
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  Standard Output Messages:
+ 导航网格 关：vHash 234895.60448949903　jHash 6010102.56879674　发热 396.5561008281706
+ CUR ["导航网格"] = (1326, 300, 234895.60448949903, 6010102.56879674, 396.5561008281706, 1.3558259949785227, 14.439730066671556),
+ 导航网格 开：发热 394.0372983805818（关 396.5561008281706）　归一化电流 1.3731608862769349（关 1.3558259949785227）
+ 导航网格 定温 关：tHash 901288988.2862428　抽热 20.16206035331491　铜排带走 157.59318180950476　舌端均温 450
+ REC [("导航网格", "定温")] = new(901288988.2862428, 20.16206035331491, 157.59318180950476, 450, 0, 6.656078642538901, 7.336083051561783, 343.0758876459612, -0.0008245924852872122, 1139.6209973468171, 1142.181779646855),
+ 导航网格 定温 开：抽热 21.779194327091574（差 +1.6171 W）　铜排带走 159.83590472775734　舌区峰 1138.339（差 -1.282 K）　发热 339.560
+ 导航网格 自由端 关：tHash 1005661314.9244807　抽热 -21.90669516461927　铜排带走 0　舌端均温 874.4435546947652
+ REC [("导航网格", "自由端")] = new(1005661314.9244807, -21.90669516461927, 0, 874.4435546947652, 0, 6.748144588795072, 7.336083051561783, 396.13157759948575, -0.0014916861579514773, 1202.3214087461479, 1165.122681563777),
+ 导航网格 自由端 开：抽热 -21.38172686693412（差 +0.5250 W）　铜排带走 0　舌区峰 1200.675（差 -1.646 K）　发热 393.234
+ 导航网格 热导 关：tHash 879376994.1225057　抽热 27.296175650974412　铜排带走 162.78157968470893　舌端均温 172.98325425882615
+ REC [("导航网格", "热导")] = new(879376994.1225057, 27.296175650974412, 162.78157968470893, 172.98325425882615, 7.169791869071253, 6.6406691019016595, 7.336083051561783, 333.53670405621364, -0.0007477209427122489, 1134.011059744405, 1140.6948047038888),
+ 导航网格 热导 开：抽热 27.466740428155763（差 +0.1706 W）　铜排带走 161.79846576793213　舌区峰 1133.901（差 -0.110 K）　发热 332.065
+ 均匀h2 关：vHash 758197.577549859　jHash 14350098.66736114　发热 396.5561061880137
+ CUR ["均匀h2"] = (1986, 600, 758197.577549859, 14350098.66736114, 396.5561061880137, 1.3558266489182986, 14.43992664301288),
+ 均匀h2 开：发热 394.0373036696726（关 396.5561061880137）　归一化电流 1.3731615569526172（关 1.3558266489182986）
+ 均匀h2 定温 关：tHash 1899082955.7078185　抽热 20.16854615590872　铜排带走 157.61765294685273　舌端均温 450
+ REC [("均匀h2", "定温")] = new(1899082955.7078185, 20.16854615590872, 157.61765294685273, 450, 0, 6.655933138326637, 7.336083051561783, 342.90406508243586, -0.0008058446794052543, 1139.6164692015452, 1142.178974012875),
+ 均匀h2 定温 开：抽热 21.78790919221435（差 +1.6194 W）　铜排带走 159.85770820453064　舌区峰 1138.333（差 -1.284 K）　发热 339.383
+ 均匀h2 自由端 关：tHash 2234409460.1894445　抽热 -21.90660670542956　铜排带走 0　舌端均温 875.1184662175046
+ REC [("均匀h2", "自由端")] = new(2234409460.1894445, -21.90660670542956, 0, 875.1184662175046, 0, 6.748012479771518, 7.336083051561783, 396.0314715171798, -0.0015825196811576347, 1202.3203840819058, 1165.12314405619),
+ 均匀h2 自由端 开：抽热 -21.38196473920853（差 +0.5246 W）　铜排带走 0　舌区峰 1200.675（差 -1.645 K）　发热 393.134
+ 均匀h2 热导 关：tHash 1814150715.2187586　抽热 27.388017151007872　铜排带走 162.89177822523112　舌端均温 173.08343475021007
+ REC [("均匀h2", "热导")] = new(1814150715.2187586, 27.388017151007872, 162.89177822523112, 173.08343475021007, 7.169895550415421, 6.640339682004886, 7.336083051561783, 333.2398327062294, -0.0036957122590592917, 1133.9517755580464, 1140.6766733931652),
+ 均匀h2 热导 开：抽热 27.55808351557091（差 +0.1701 W）　铜排带走 161.9087965136031　舌区峰 1133.842（差 -0.110 K）　发热 331.771
+
+
+  Passed PtOptimize.Tests.R48ClampFaceGateTests.e_双舌板局部热稳定锚点逐格取最近压接面_左右镜像结果相同 [1 s]
+  Passed PtOptimize.Tests.R48ClampFaceGateTests.b_导热一维条带_面上定温精确_形心口径差半格 [52 ms]
+  Passed PtOptimize.Tests.R48ClampFaceGateTests.d_缺省入口是面上_压接面上的电流与热流对得上求解器 [1 s]
+  Passed PtOptimize.Tests.R48ClampFaceGateTests.a_电流一维条带_面上定电位精确_形心口径差半格 [1 ms]
+  Passed PtOptimize.Tests.R48RecipeFingerprintTests.e_五个证据探针改用证据文件写 [2 ms]
+  Passed PtOptimize.Tests.R48RecipeFingerprintTests.f_压接段伸进圆盘改读布尔位_吃法兰场的判据判不了 [34 s]
+  Passed PtOptimize.Tests.R48RecipeFingerprintTests.d_证据文件头不同就不覆盖 [176 ms]
+  Passed PtOptimize.Tests.R48RecipeFingerprintTests.b_压接段盖到管孔改读布尔位_吃法兰场的判据判不了 [59 s]
+  Passed PtOptimize.Tests.R48RecipeFingerprintTests.a_生产链每片网格与热解配方等于生产配方常量 [1 m 36 s]
+  Passed PtOptimize.Tests.R48RecipeFingerprintTests.c_证据头写明代码与配方 [103 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "管 J") [10 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "⑤ 舌片自由段") [4 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "· 升温到位用时（集总）") [3 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "②′管孔净流入") [3 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "⑦ 最热铂高出热偶读数") [3 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "⑥ 圆盘盖得住管孔") [4 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "③ 法兰增量温降（旧判法）") [6 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "① 升温") [8 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "· 整片热稳定") [10 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "· 升温期法兰−管峰值") [12 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "· 局部热稳定") [11 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "②″圆盘区最高温 − 管温（旧判法）") [5 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "⑧ 管根低于热偶读数") [4 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "① 升温") [7 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "⑥ 圆盘盖得住管孔") [10 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "· 升温到位用时（集总）") [16 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "管 J") [11 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "⑤ 舌片自由段") [18 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "③ 法兰增量温降（旧判法）") [7 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "⑧ 管根低于热偶读数") [5 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "②″圆盘区最高温 − 管温（旧判法）") [3 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "· 升温期法兰−管峰值") [4 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "⑦ 最热铂高出热偶读数") [2 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "· 局部热稳定") [2 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "· 整片热稳定") [3 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "②′管孔净流入") [3 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.NoPhantomHardCriteria_InTheDoc(emptyTube: False) [6 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.NoPhantomHardCriteria_InTheDoc(emptyTube: True) [9 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.Table_IsParseable_AndWellFormed [6 ms]
+  Passed PtOptimize.Tests.R48HoleBandCircleGateTests.门b_带内料形对解析圆_孔圆内无料_面积等于解析板_孔弧覆盖率为1 [11 s]
+  Passed PtOptimize.Tests.R48HoleBandCircleGateTests.门c_三入口同一份材料_条带面积导数等于线段有料长_可加_圆内份额对解析板 [19 s]
+  Passed PtOptimize.Tests.R48HoleBandCircleGateTests.门e_配方_改回恰差孔带两项_带宽s除根2规则同生产 [221 ms]
+  Passed PtOptimize.Tests.R48HoleBandCircleGateTests.门a_精确积分对子采样原型_碰带格的面积体积差在子采样误差界内 [8 s]
+  Passed PtOptimize.Tests.R48NSliverGateTests.门5_碎格并入_改后非管孔格覆盖率不低于1e3_改回则碎格回来 [12 s]
+[xUnit.net 00:17:02.10]     PtOptimize.Tests.R48NSliverGateTests.门1_Heater1三档_全体J峰回到实格量级_随加密收敛_改回则幻影峰当场回来 [FAIL]
+[xUnit.net 00:17:02.10]       门 1 不过 2：×0.25 全体 8.467 > 1.05×实格 7.888；三档极差 6.02 %（/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/deliverable/网格修复2_门1_薄片格J峰_Heater1三档_本次开跑于2026-09-23_145312.txt）
+[xUnit.net 00:17:02.10]       Stack Trace:
+[xUnit.net 00:17:02.10]         /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/Pt_Optimize.Tests/R48NSliverGateTests.cs(182,0): at PtOptimize.Tests.R48NSliverGateTests.门1_Heater1三档_全体J峰回到实格量级_随加密收敛_改回则幻影峰当场回来()
+[xUnit.net 00:17:02.10]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+[xUnit.net 00:17:02.10]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:17:02.10]       Output:
+[xUnit.net 00:17:02.10]         /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/deliverable/网格修复2_门1_薄片格J峰_Heater1三档_本次开跑于2026-09-23_145312.txt
+[xUnit.net 00:17:02.10]         网格修复第二轮 门 1：Heater1（锥形舌，无孔）三档 ×1／×0.5／×0.25（细 2／1／0.5 mm）　等温电流场 1000 A（FieldPlacementTests.Solve 同一套调用）
+[xUnit.net 00:17:02.10]         开跑 2026-09-23 15:03:44　工作树 /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING　写码 2026-09-19，Fable 5.1
+[xUnit.net 00:17:02.10]         门槛（跑前写死）：全体 J 峰 ≤ (1 + 0.05) × 实格峰（有料面积 ≥ 半个自家矩形的格）；三档全体峰极差 ≤ 5 %；改回（ShellCurrent 门槛传 0）⇒ 全体峰 ≥ 1.5 × 实格峰。
+[xUnit.net 00:17:02.10]         档	截断	单元	截断重构的格	全体J峰	峰格覆盖率	峰格形心	实格峰	全体/实格	判读
+[xUnit.net 00:17:02.10]         ×1	开	3426	56	8.009	0.051	(-26.0,-1.1)	7.748	1.034	过
+[xUnit.net 00:17:02.10]         ×1	关	3426	0	23.210	0.016	(-178.3,42.1)	7.748	2.996	幻影峰在（门不空守）
+[xUnit.net 00:17:02.10]         ×0.5	开	12712	94	7.987	0.083	(-26.0,0.5)	7.836	1.019	过
+[xUnit.net 00:17:02.10]         ×0.5	关	12712	0	24.667	0.004	(-150.0,-45.0)	7.836	3.148	幻影峰在（门不空守）
+[xUnit.net 00:17:02.10]         ×0.25	开	48708	156	8.467	0.333	(-192.8,-40.6)	7.888	1.073	**不过：全体峰超实格峰**
+[xUnit.net 00:17:02.10]         ×0.25	关	48708	0	25.563	0.003	(-160.0,44.0)	7.888	3.241	幻影峰在（门不空守）
+[xUnit.net 00:17:02.10]         三档全体峰：8.009 / 7.987 / 8.467　极差 6.02 %（门槛 5 %）**不过**
+[xUnit.net 00:17:02.10]         ── 不过 2：×0.25 全体 8.467 > 1.05×实格 7.888；三档极差 6.02 %　2026-09-19，Fable 5.1
+[xUnit.net 00:17:02.10]         
+  Failed PtOptimize.Tests.R48NSliverGateTests.门1_Heater1三档_全体J峰回到实格量级_随加密收敛_改回则幻影峰当场回来 [9 s]
+  Error Message:
+   门 1 不过 2：×0.25 全体 8.467 > 1.05×实格 7.888；三档极差 6.02 %（/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/deliverable/网格修复2_门1_薄片格J峰_Heater1三档_本次开跑于2026-09-23_145312.txt）
+  Stack Trace:
+     at PtOptimize.Tests.R48NSliverGateTests.门1_Heater1三档_全体J峰回到实格量级_随加密收敛_改回则幻影峰当场回来() in /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/Pt_Optimize.Tests/R48NSliverGateTests.cs:line 182
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  Standard Output Messages:
+ /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/deliverable/网格修复2_门1_薄片格J峰_Heater1三档_本次开跑于2026-09-23_145312.txt
+ 网格修复第二轮 门 1：Heater1（锥形舌，无孔）三档 ×1／×0.5／×0.25（细 2／1／0.5 mm）　等温电流场 1000 A（FieldPlacementTests.Solve 同一套调用）
+ 开跑 2026-09-23 15:03:44　工作树 /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING　写码 2026-09-19，Fable 5.1
+ 门槛（跑前写死）：全体 J 峰 ≤ (1 + 0.05) × 实格峰（有料面积 ≥ 半个自家矩形的格）；三档全体峰极差 ≤ 5 %；改回（ShellCurrent 门槛传 0）⇒ 全体峰 ≥ 1.5 × 实格峰。
+ 档	截断	单元	截断重构的格	全体J峰	峰格覆盖率	峰格形心	实格峰	全体/实格	判读
+ ×1	开	3426	56	8.009	0.051	(-26.0,-1.1)	7.748	1.034	过
+ ×1	关	3426	0	23.210	0.016	(-178.3,42.1)	7.748	2.996	幻影峰在（门不空守）
+ ×0.5	开	12712	94	7.987	0.083	(-26.0,0.5)	7.836	1.019	过
+ ×0.5	关	12712	0	24.667	0.004	(-150.0,-45.0)	7.836	3.148	幻影峰在（门不空守）
+ ×0.25	开	48708	156	8.467	0.333	(-192.8,-40.6)	7.888	1.073	**不过：全体峰超实格峰**
+ ×0.25	关	48708	0	25.563	0.003	(-160.0,44.0)	7.888	3.241	幻影峰在（门不空守）
+ 三档全体峰：8.009 / 7.987 / 8.467　极差 6.02 %（门槛 5 %）**不过**
+ ── 不过 2：×0.25 全体 8.467 > 1.05×实格 7.888；三档极差 6.02 %　2026-09-19，Fable 5.1
+ 
+
+
+  Passed PtOptimize.Tests.R48NSliverGateTests.门2_带孔带槽形状_真峰保留_改后全体峰对改前条件数够的格里最大J差不超5percent [1 m 42 s]
+  Passed PtOptimize.Tests.R48NSliverGateTests.门3_W08与W06_导航判决细_J峰改前改后差不超1percent [14 s]
+[xUnit.net 00:19:19.00]     PtOptimize.Tests.R48NSliverGateTests.门4_门槛敏感性_0p15到0p3下Heater1三档J峰极差不超5percent [FAIL]
+[xUnit.net 00:19:19.00]       门 4 不过 1：×0.25 极差 6.27 %（/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/deliverable/网格修复2_门4_薄片格J峰_门槛敏感性_本次开跑于2026-09-23_145312.txt）
+[xUnit.net 00:19:19.00]       Stack Trace:
+[xUnit.net 00:19:19.00]         /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/Pt_Optimize.Tests/R48NSliverGateTests.cs(277,0): at PtOptimize.Tests.R48NSliverGateTests.门4_门槛敏感性_0p15到0p3下Heater1三档J峰极差不超5percent()
+[xUnit.net 00:19:19.00]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+[xUnit.net 00:19:19.00]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:19:19.00]       Output:
+[xUnit.net 00:19:19.00]         /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/deliverable/网格修复2_门4_薄片格J峰_门槛敏感性_本次开跑于2026-09-23_145312.txt
+[xUnit.net 00:19:19.00]         网格修复第二轮 门 4：角度条件数门槛敏感性自证　Heater1 无孔 ×1／×0.5／×0.25　门槛 0.15／0.2（生产）／0.25／0.3
+[xUnit.net 00:19:19.00]         开跑 2026-09-23 15:05:50　工作树 /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING　写码 2026-09-19，Fable 5.1
+[xUnit.net 00:19:19.00]         门槛（跑前写死）：同一档下四个门槛的全体 J 峰极差 ≤ 5 %（结果不该随门槛走 —— 门槛只要在幻影格与真格之间，落在哪里不重要）。
+[xUnit.net 00:19:19.00]         档	κ′门槛	单元	截断格数	全体J峰	实格峰
+[xUnit.net 00:19:19.00]         ×1	0.15	3426	38	8.009	7.748
+[xUnit.net 00:19:19.00]         ×1	0.2	3426	56	8.009	7.748
+[xUnit.net 00:19:19.00]         ×1	0.25	3426	62	8.009	7.748
+[xUnit.net 00:19:19.00]         ×1	0.3	3426	72	8.009	7.748
+[xUnit.net 00:19:19.00]         ×1：四个门槛的全体峰极差 0.00 % 过
+[xUnit.net 00:19:19.00]         ×0.5	0.15	12712	76	7.987	7.836
+[xUnit.net 00:19:19.00]         ×0.5	0.2	12712	94	7.987	7.836
+[xUnit.net 00:19:19.00]         ×0.5	0.25	12712	112	7.987	7.836
+[xUnit.net 00:19:19.00]         ×0.5	0.3	12712	130	7.987	7.836
+[xUnit.net 00:19:19.00]         ×0.5：四个门槛的全体峰极差 0.00 % 过
+[xUnit.net 00:19:19.00]         ×0.25	0.15	48708	114	8.467	7.888
+[xUnit.net 00:19:19.00]         ×0.25	0.2	48708	156	8.467	7.888
+[xUnit.net 00:19:19.00]         ×0.25	0.25	48708	194	8.467	7.888
+[xUnit.net 00:19:19.00]         ×0.25	0.3	48708	228	7.968	7.888
+[xUnit.net 00:19:19.00]         ×0.25：四个门槛的全体峰极差 6.27 % **不过**
+[xUnit.net 00:19:19.00]         ── 不过 1：×0.25 极差 6.27 %　2026-09-19，Fable 5.1
+[xUnit.net 00:19:19.00]         
+  Failed PtOptimize.Tests.R48NSliverGateTests.门4_门槛敏感性_0p15到0p3下Heater1三档J峰极差不超5percent [20 s]
+  Error Message:
+   门 4 不过 1：×0.25 极差 6.27 %（/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/deliverable/网格修复2_门4_薄片格J峰_门槛敏感性_本次开跑于2026-09-23_145312.txt）
+  Stack Trace:
+     at PtOptimize.Tests.R48NSliverGateTests.门4_门槛敏感性_0p15到0p3下Heater1三档J峰极差不超5percent() in /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/Pt_Optimize.Tests/R48NSliverGateTests.cs:line 277
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  Standard Output Messages:
+ /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING/deliverable/网格修复2_门4_薄片格J峰_门槛敏感性_本次开跑于2026-09-23_145312.txt
+ 网格修复第二轮 门 4：角度条件数门槛敏感性自证　Heater1 无孔 ×1／×0.5／×0.25　门槛 0.15／0.2（生产）／0.25／0.3
+ 开跑 2026-09-23 15:05:50　工作树 /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtRING　写码 2026-09-19，Fable 5.1
+ 门槛（跑前写死）：同一档下四个门槛的全体 J 峰极差 ≤ 5 %（结果不该随门槛走 —— 门槛只要在幻影格与真格之间，落在哪里不重要）。
+ 档	κ′门槛	单元	截断格数	全体J峰	实格峰
+ ×1	0.15	3426	38	8.009	7.748
+ ×1	0.2	3426	56	8.009	7.748
+ ×1	0.25	3426	62	8.009	7.748
+ ×1	0.3	3426	72	8.009	7.748
+ ×1：四个门槛的全体峰极差 0.00 % 过
+ ×0.5	0.15	12712	76	7.987	7.836
+ ×0.5	0.2	12712	94	7.987	7.836
+ ×0.5	0.25	12712	112	7.987	7.836
+ ×0.5	0.3	12712	130	7.987	7.836
+ ×0.5：四个门槛的全体峰极差 0.00 % 过
+ ×0.25	0.15	48708	114	8.467	7.888
+ ×0.25	0.2	48708	156	8.467	7.888
+ ×0.25	0.25	48708	194	8.467	7.888
+ ×0.25	0.3	48708	228	7.968	7.888
+ ×0.25：四个门槛的全体峰极差 6.27 % **不过**
+ ── 不过 1：×0.25 极差 6.27 %　2026-09-19，Fable 5.1
+ 
+
+
+  Passed PtOptimize.Tests.R48NSliverGateTests.门6_F5轴端余数规则_盘30p05最小格距不小于四分之一细步_去掉规则则发丝格回来 [6 s]
+  Passed PtOptimize.Tests.R48NMeshGateTests.门0_参考积分对闭式自检 [800 ms]
+  Passed PtOptimize.Tests.R48NMeshGateTests.门b_连续性_舌半宽28到30每0p05_导航 [1 m 9 s]
+  Passed PtOptimize.Tests.R48NMeshGateTests.门b_改回整格钉当场红_盘径 [3 m 46 s]
+  Passed PtOptimize.Tests.R48NMeshGateTests.门b_连续性_盘径30到31p5每0p01_导航 [2 m 47 s]
+  Passed PtOptimize.Tests.R48NMeshGateTests.门b_连续性_孔径49到51每0p05_导航 [49 s]
+  Passed PtOptimize.Tests.R48NMeshGateTests.门a_体积守恒_快门_W08 [37 s]
+[xUnit.net 00:28:47.18]   Finished:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.R48NMeshGateTests.门_带格恒0_电功率闭合_导航判决 [10 s]
+Results File: /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/ring/fast.trx
+
+Test Run Failed.
+Total tests: 166
+     Passed: 159
+     Failed: 7
+ Total time: 28.8141 Minutes

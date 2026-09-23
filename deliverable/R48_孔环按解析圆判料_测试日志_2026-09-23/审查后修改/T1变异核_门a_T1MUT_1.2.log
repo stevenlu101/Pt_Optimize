@@ -1,0 +1,40 @@
+Test run for /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/rvfix_mut/lx/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll (.NETCoreApp,Version=v8.0)
+Microsoft (R) Test Execution Command Line Tool Version 17.8.0 (x64)
+Copyright (c) Microsoft Corporation.  All rights reserved.
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/rvfix_mut/lx/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll
+[xUnit.net 00:00:00.02] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.31)
+[xUnit.net 00:00:00.30]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:01.11]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:01.13]   Starting:    Pt_Optimize.Tests
+[xUnit.net 00:00:05.53]     PtOptimize.Tests.R48HoleBandCircleGateTests.门a_精确积分对子采样原型_碰带格的面积体积差在子采样误差界内 [FAIL]
+[xUnit.net 00:00:05.53]       Builtin[0] 片0 步 1：精确积分对细档子采样的差大于两档子采样之差（面积 2.004E-003 > 7.825E-003 或 体积 2.730E+000 > 8.833E-003）—— 差里有系统量
+[xUnit.net 00:00:05.54]       Stack Trace:
+[xUnit.net 00:00:05.54]         /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/rvfix_mut/src/Tests/R48HoleBandCircleGateTests.cs(280,0): at PtOptimize.Tests.R48HoleBandCircleGateTests.门a_精确积分对子采样原型_碰带格的面积体积差在子采样误差界内()
+[xUnit.net 00:00:05.54]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+[xUnit.net 00:00:05.54]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:05.54]       Output:
+[xUnit.net 00:00:05.54]         Builtin[0] 片0 栅格步 1：碰带矩形 148 个；Σ面积 精确 372.830266 子采样 372.826700（差 +3.5661E-3 mm²）；Σ体积 精确 377.217051 子采样 374.483260（差 +2.7338E+0 mm³）；逐格 max|Δ面积| 2.53E-004（÷界最大 0.001）、max|Δ体积| 7.17E-002（÷界最大 0.109）
+[xUnit.net 00:00:05.54]             收敛：Σ|Δ面积| 子采样 0.005 7.939E-003 → 0.0025 2.004E-003（比 0.252）；Σ|Δ体积| 2.735E+000 → 2.730E+000（比 0.998）
+[xUnit.net 00:00:05.54]             收敛②：Σ|I − P_0.0025| 对 Σ|P_0.005 − P_0.0025|：面积 2.004E-003 ≤ 7.825E-003（比 3.9）；体积 2.730E+000 > 8.833E-003（比 0.0）
+[xUnit.net 00:00:05.57]   Finished:    Pt_Optimize.Tests
+  Failed PtOptimize.Tests.R48HoleBandCircleGateTests.门a_精确积分对子采样原型_碰带格的面积体积差在子采样误差界内 [4 s]
+  Error Message:
+   Builtin[0] 片0 步 1：精确积分对细档子采样的差大于两档子采样之差（面积 2.004E-003 > 7.825E-003 或 体积 2.730E+000 > 8.833E-003）—— 差里有系统量
+  Stack Trace:
+     at PtOptimize.Tests.R48HoleBandCircleGateTests.门a_精确积分对子采样原型_碰带格的面积体积差在子采样误差界内() in /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/rvfix_mut/src/Tests/R48HoleBandCircleGateTests.cs:line 280
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  Standard Output Messages:
+ Builtin[0] 片0 栅格步 1：碰带矩形 148 个；Σ面积 精确 372.830266 子采样 372.826700（差 +3.5661E-3 mm²）；Σ体积 精确 377.217051 子采样 374.483260（差 +2.7338E+0 mm³）；逐格 max|Δ面积| 2.53E-004（÷界最大 0.001）、max|Δ体积| 7.17E-002（÷界最大 0.109）
+     收敛：Σ|Δ面积| 子采样 0.005 7.939E-003 → 0.0025 2.004E-003（比 0.252）；Σ|Δ体积| 2.735E+000 → 2.730E+000（比 0.998）
+     收敛②：Σ|I − P_0.0025| 对 Σ|P_0.005 − P_0.0025|：面积 2.004E-003 ≤ 7.825E-003（比 3.9）；体积 2.730E+000 > 8.833E-003（比 0.0）
+
+
+
+Test Run Failed.
+Total tests: 1
+     Failed: 1
+ Total time: 7.6045 Seconds

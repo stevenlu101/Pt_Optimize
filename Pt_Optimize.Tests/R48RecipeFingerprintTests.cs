@@ -94,6 +94,21 @@ public class R48RecipeFingerprintTests
             Assert.Empty(rF.RecipeDeviations);
             AssertEachPlateRecipeFollowsProductionInputs(lcF, rF);
 
+            // ★ 2026-09-23 决 101 A（RING）：图纸路径每片真包了「孔带按解析圆判料」（带宽 = 1 × 该片栅格步）；非空转：同一栅格改回（MeshRules.HoleBandCircle = false）的网格规则
+            //   与生产恰好只差这一项的两份（量得、开关）—— 量得那一份在这块板上真的会变假（老栅格台阶料伸进孔圆），不是只抄开关。
+            Assert.All(rF.Flanges, fo => Assert.True(fo.MeshRecipe!.HoleBandMm > 0, fo.Name + " 图纸路径没包孔带"));
+            {
+                var tf0 = lcF.FlangeFields[0];
+                double rh0 = lcF.TubeIdMm * 0.5 + lcF.WallMm;
+                var mBandOff = FlangeMesher.BuildFromMaterialWith(tf0, rh0, new MeshRules { HoleBandCircle = false }, 0, lcF.MeshFineMm, lcF.MeshCoarseMm, lcF.MeshFineRadiusMm,
+                                                                  lcF.Base.BusbarClampLengthMm, lcF.MeshInnerMm, lcF.MeshInnerRadiusMm);
+                _out.WriteLine($"图纸路径片0 生产：{rF.Flanges[0].MeshRecipe!.Describe()}");
+                _out.WriteLine($"图纸路径片0 改回（孔带关）：{mBandOff.Recipe!.Describe()}");
+                Assert.NotEqual(FlangeMesher.ProductionMeshRule, mBandOff.Recipe.Rule);
+                Assert.False(mBandOff.Recipe.HoleBandCircle);
+                Assert.Equal(FlangeMesher.ProductionMeshRule, mBandOff.Recipe.Rule with { HoleBandCircle = true, HoleBandCircleSwitch = true });
+            }
+
             // 非空转：共用片的输入若换成自由端（夹持温度 −1、不给铜排热导），同一个预判给出的舌端方式就与这次实际的不同 —— 逐片比对看得见漂移
             int js = Array.FindIndex(rF.Flanges, fo => fo.Shared);
             var lcDrift = d2.BuildCase(p, checkRamp: false);
