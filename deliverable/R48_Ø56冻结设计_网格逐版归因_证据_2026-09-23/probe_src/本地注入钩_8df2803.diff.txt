@@ -1,0 +1,32 @@
+diff --git a/Pt_Optimize/Core/LineRunner.cs b/Pt_Optimize/Core/LineRunner.cs
+index 7c0ab62..9db36c8 100644
+--- a/Pt_Optimize/Core/LineRunner.cs
++++ b/Pt_Optimize/Core/LineRunner.cs
+@@ -1,4 +1,4 @@
+-﻿using System;
++using System;
+ using System.Collections.Generic;
+ using System.Linq;
+ using System.Threading;
+@@ -3272,7 +3272,7 @@ public static class LineRunner
+         s.TabBoundaryX = analytic ? plate!.Tangent().X : tabBoundX;
+         s.TabInsulThickMm = analytic ? plate!.TabInsulThickMm : c.TabInsul3dmAt(j);
+         s.DiscRadiusMm = discRForZone;
+-        s.InsulDiscRadiusMm = insulRForZone;
++        s.InsulDiscRadiusMm = ZzoRevertInsulByRadius ? double.NaN : insulRForZone;   // ZZO56 注入钩
+         s.InsulNote = insulNote; s.InsulUndetermined = insulUndet;
+         return s;
+     }
+@@ -3316,8 +3316,11 @@ public static class LineRunner
+         plate.HoleRadiusMm = c.TubeIdMm * 0.5 + c.WallMm;
+         return FlangeMesher.Build(plate, 0, c.MeshFineMm, c.MeshCoarseMm, c.MeshFineRadiusMm,
+                                   c.Base.BusbarClampLengthMm,
+-                                  c.MeshInnerMm, c.MeshInnerRadiusMm);
++                                  c.MeshInnerMm, c.MeshInnerRadiusMm,
++                                  clampFullFace: !ZzoRevertClampFullFace, clampFaceDirichlet: !ZzoRevertClampFaceDirichlet);
+     }
++    // ZZO56 探针工作树本地注入钩（不入库；缺省 false ⇒ 生产逐位不变）：改回 09-14 压接整面接触／09-15 压接面上定温／09-14 保温按半径
++    internal static bool ZzoRevertClampFullFace, ZzoRevertClampFaceDirichlet, ZzoRevertInsulByRadius;
+ 
+     /// <summary>
+     /// ★ R48 E（2026-09-15 Opus 5）：第 j 片的电位场（ShellCurrent.SolveFor，电阻率取本片所属段的控温点）—— 原在 RunOnce 里写了两份（首解与 σ(T) 内循环），
