@@ -1,0 +1,20 @@
+770a771,772
+>     /// <summary>G3 探针原型（scratch，不入库）：规则 A 选并入目标时按孔圆精确几何量边上圆外段长（false = 现行：按材料裁剪后的面长）。</summary>
+>     public bool G3RuleATargetExactCircle { get; init; } = false;
+2029c2031,2044
+<                     if (fc.B >= 0 && fc.Length > bestLen) { bestLen = fc.Length; best = Other(fc, c); }
+---
+>                     double lenSel = fc.Length;
+>                     if (rules.G3RuleATargetExactCircle)
+>                     {
+>                         // 边 (vert, line, [a,b]) 上 r ≥ rh 的精确长度
+>                         double lo = Math.Min(a, b), hi = Math.Max(a, b);
+>                         if (Math.Abs(line) >= rh) lenSel = hi - lo;
+>                         else
+>                         {
+>                             double zc = Math.Sqrt(rh * rh - line * line);
+>                             double inside = Math.Max(0, Math.Min(hi, zc) - Math.Max(lo, -zc));
+>                             lenSel = (hi - lo) - inside;
+>                         }
+>                     }
+>                     if (fc.B >= 0 && lenSel > bestLen) { bestLen = lenSel; best = Other(fc, c); }
