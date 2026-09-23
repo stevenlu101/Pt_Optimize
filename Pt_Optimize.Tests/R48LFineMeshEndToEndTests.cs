@@ -55,8 +55,10 @@ public class R48LFineMeshEndToEndTests
     /// <summary>倍数门槛：同一设计两张网格上，某条判据的裕度之比 &gt; 2 倍（或 &lt; 0.5 倍）即点名。</summary>
     private const double RatioGate = 2.0;
 
-    /// <summary>求解时间闸（导航档）：超过就切断，报「被时间闸切断」，不许装作跑完了。</summary>
-    private static readonly TimeSpan NavCap = TimeSpan.FromHours(2.5);
+    /// <summary>求解时间闸（导航档）：超过就切断，报「被时间闸切断」，不许装作跑完了。
+    /// ★ 2026-09-23 业主决定（决 04 (b)，HANDOVER §0.-21）：2.5 h → 4.0 h。理由：W08 导航档在 4 核云端与三条长跑同机并跑时 2.5 h 内没跑完（§0.-17 庚，07:16 那跑被切断）；
+    ///   绝对时长受机器影响，4 h 是给同机并跑留的余量。这是时间闸，不是判据阈值；本机空闲时若 2.5 h 内能跑完，结果不受影响。</summary>
+    private static readonly TimeSpan NavCap = TimeSpan.FromHours(4.0);
 
     /// <summary>求解时间闸（细网格档）。</summary>
     private static readonly TimeSpan FineCap = TimeSpan.FromHours(7.0);
