@@ -1,0 +1,177 @@
+F3 接线门 1 小算例（R48PropsWiringGateTests.QuickCase：纯铂、Builtin[0] 两段、给定电流 1200／1150 A、耦合 2 轮）开（生产，面发热）与改回（LineCase.GateRevertFaceHeat）两份去耗时全量转储的对拍
+生成：2026-09-23 14:1x 临时探针 ZZTmpF3DumpProbe（跑完即删，不入库），工作树 scratchpad/wtC2（8b90b5f + F3 未提交改动，含「局部热稳定用重构 J」），Linux 镜像 .linux2
+改回那份已剔掉改回说明一句（LineRunner.FaceHeatRevertNote），去耗时口径与接线门 1 同一个函数 R48PropsWiringGateTests.DumpNoTiming
+（F3 第一版——局部热稳定也吃发热等效 J——那一跑开的 SHA 是 e10479ad…、差 179 行；改成局部热稳定用重构 J 后是下面的数，那一版不再是记录）
+
+fb2c32488eb4d3c408c6655cb544b856498a78174de21a2ff0726ca1e0083cf2  改回（= F3 前记录 fb2c3248…，逐字节）
+d95530d5cc9b1dbe8ba036ec52826625dc54eb2f14a400710dbdba003bf04ba6  开（接线门 1 新记录）
+行数：改回 1250，开 1250；diff 差行（开侧）168
+
+── 差行按成员归类（开侧行数；[n] 归并）
+     13 结果.Checks[].Actual
+      9 结果.Checks[].Note
+      9 结果.Checks[].MarginPct
+      3 结果.Flanges[].TTabMeanC
+      3 结果.Flanges[].TTabMaxC
+      3 结果.Flanges[].TRootC
+      3 结果.Flanges[].TMaxC
+      3 结果.Flanges[].TField
+      3 结果.Flanges[].TDiscMeanC
+      3 结果.Flanges[].TDiscMaxC
+      3 结果.Flanges[].QLossW
+      3 结果.Flanges[].QLossTabW
+      3 结果.Flanges[].QLossDiscW
+      3 结果.Flanges[].QGenW
+      3 结果.Flanges[].QGenTabW
+      3 结果.Flanges[].QGenDiscW
+      3 结果.Flanges[].QFromTubeW
+      3 结果.Flanges[].QClampW
+      3 结果.Flanges[].Phi
+      3 结果.Flanges[].LocalStabTempC
+      3 结果.Flanges[].LocalStabMargin
+      3 结果.Flanges[].FieldResidualRel
+      3 结果.Flanges[].EnergyResidualW
+      3 结果.Flanges[].DiscMaxZMm
+      3 结果.Flanges[].DiscMaxJAPerMm2
+      3 结果.Flanges[].CellLossW
+      3 结果.Flanges[].CellGenW
+      2 结果.Segments[].TubeTMaxC
+      2 结果.Segments[].TRootC
+      2 结果.Segments[].TRootBC
+      2 结果.Segments[].TRootAC
+      2 结果.Segments[].TMetal
+      2 结果.Segments[].TGlass
+      2 结果.Segments[].RootDeltaK
+      2 结果.Segments[].RootDeltaBK
+      2 结果.Segments[].RootDeltaAK
+      2 结果.Segments[].PowerW
+      2 结果.Segments[].GlassOutC
+      2 结果.Segments[].FlangeDipK
+      2 结果.Segments[].FlangeDipBK
+      2 结果.Segments[].FlangeDipAK
+      2 结果.Segments[].EndDecayLengthBMm
+      2 结果.Segments[].EndDecayLengthAMm
+      2 结果.Segments[].EndBetaBWPerMK
+      2 结果.Segments[].EndBetaAWPerMK
+      2 结果.Segments[].EndAmpB
+      2 结果.Segments[].EndAmpA
+      2 结果.Flanges[].TabMaxZMm
+      2 结果.Flanges[].TabMaxJAPerMm2
+      2 结果.Flanges[].LocalStabJAPerMm2
+      2 结果.Flanges[].FieldInnerIters
+      1 结果.Segments[].TubeLossTableHiC
+      1 结果.Segments[].GlassInC
+      1 结果.Segments[].DecayLengthMm
+      1 结果.Segments[].BetaWPerMK
+      1 结果.Notes
+      1 结果.GlassDropModelK
+      1 结果.Flanges[].TabMaxXMm
+      1 结果.Flanges[].TabMaxRMm
+      1 结果.Flanges[].FieldOuterIters
+      1 结果.Flanges[].DiscMaxXMm
+      1 结果.Flanges[].DiscMaxThickMm
+      1 结果.Flanges[].DiscMaxRMm
+      1 结果.Failed
+      1 结果.DrawAppliedW
+      1 结果.CoupleRemainK
+      1 结果.CoupleAmpUsed
+      1 结果.CoupleAmpClosed
+
+── 没有变的（抽查差行数）
+Flanges\[[0-9]\]\.JField 差行 0
+Flanges\[[0-9]\]\.VField 差行 0
+Flanges\[[0-9]\]\.JMaxAPerMm2 差行 0
+Flanges\[[0-9]\]\.MassG 差行 0
+Flanges\[[0-9]\]\.CellCount 差行 0
+
+── 判据值与片量（改回 < ／开 >）
+< 结果.Checks[0].Actual = 101.12391462543656
+> 结果.Checks[0].Actual = 102.17425558855643
+< 结果.Checks[1].Actual = 208.80240084078014
+> 结果.Checks[1].Actual = 208.7989711577975
+< 结果.Checks[2].Actual = 74.15485129081435
+> 结果.Checks[2].Actual = 71.81155060061178
+< 结果.Checks[3].Actual = -33.81179692720639
+> 结果.Checks[3].Actual = -33.31208480824019
+< 结果.Checks[4].Actual = -15.007023616919469
+> 结果.Checks[4].Actual = -14.99307326666053
+< 结果.Checks[5].Actual = -0.4813304574981885
+> 结果.Checks[5].Actual = -0.4673801072392507
+< 结果.Checks[6].Actual = -38.29968947673524
+> 结果.Checks[6].Actual = -37.52799271955769
+< 结果.Checks[8].Actual = 1.4344485377793768
+> 结果.Checks[8].Actual = 1.432312595409309
+< 结果.Checks[16].Actual = 0.002526206485640614
+> 结果.Checks[16].Actual = 0.0023709875076747267
+< 结果.Checks[17].Actual = 8.653610003305838
+> 结果.Checks[17].Actual = 8.71202405694477
+< 结果.Checks[19].Actual = 0.0018877611015568618
+> 结果.Checks[19].Actual = 0.00825570298763978
+< 结果.Checks[20].Actual = 3.144714268958894
+> 结果.Checks[20].Actual = 3.1423853792213596
+< 结果.Checks[21].Actual = 3.9011035633022857
+> 结果.Checks[21].Actual = 3.9210120821437613
+< 结果.Flanges[0].DiscMaxJAPerMm2 = 30.03622146887572
+> 结果.Flanges[0].DiscMaxJAPerMm2 = 30.036221468875734
+< 结果.Flanges[0].LocalStabJAPerMm2 = 26.865400194722493
+> 结果.Flanges[0].LocalStabJAPerMm2 = 26.865400194722476
+< 结果.Flanges[0].LocalStabMargin = 3.4632458555661603
+> 结果.Flanges[0].LocalStabMargin = 3.461688601124463
+< 结果.Flanges[0].QFromTubeW = -20.7154323702952
+< 结果.Flanges[0].QGenW = 943.6775964522918
+> 结果.Flanges[0].QFromTubeW = -20.354988772814824
+> 结果.Flanges[0].QGenW = 936.7309104273183
+< 结果.Flanges[0].TDiscMaxC = 1238.2797399386914
+< 结果.Flanges[0].TMaxC = 1251.7577396138759
+> 结果.Flanges[0].TDiscMaxC = 1235.7296863859667
+> 结果.Flanges[0].TMaxC = 1251.3675484809808
+< 结果.Flanges[1].DiscMaxJAPerMm2 = 17.82183933135657
+> 结果.Flanges[1].DiscMaxJAPerMm2 = 17.821839331356593
+< 结果.Flanges[1].LocalStabMargin = 4.934998447428648
+> 结果.Flanges[1].LocalStabMargin = 4.934774279032521
+< 结果.Flanges[1].QFromTubeW = -26.995229649909238
+< 结果.Flanges[1].QGenW = 920.0085972405609
+> 结果.Flanges[1].QFromTubeW = -26.790877907964227
+> 结果.Flanges[1].QGenW = 916.0097761682365
+< 结果.Flanges[1].TDiscMaxC = 1149.9902812440525
+< 结果.Flanges[1].TMaxC = 1157.9395340141969
+> 结果.Flanges[1].TDiscMaxC = 1149.4033932510372
+> 结果.Flanges[1].TMaxC = 1158.0275147938041
+< 结果.Flanges[2].DiscMaxJAPerMm2 = 35.09085369547284
+> 结果.Flanges[2].DiscMaxJAPerMm2 = 34.417002297843766
+< 结果.Flanges[2].LocalStabJAPerMm2 = 31.386252318272867
+> 结果.Flanges[2].LocalStabJAPerMm2 = 31.386252318272863
+< 结果.Flanges[2].LocalStabMargin = 3.144714268958894
+> 结果.Flanges[2].LocalStabMargin = 3.1423853792213596
+< 结果.Flanges[2].QFromTubeW = -33.81179692720639
+< 结果.Flanges[2].QGenW = 1085.5673557887394
+> 结果.Flanges[2].QFromTubeW = -33.31208480824019
+> 结果.Flanges[2].QGenW = 1076.2554555164124
+< 结果.Flanges[2].TDiscMaxC = 1261.833337506158
+< 结果.Flanges[2].TMaxC = 1288.8024008407801
+> 结果.Flanges[2].TDiscMaxC = 1258.4362661698528
+> 结果.Flanges[2].TMaxC = 1288.7989711577975
+
+── 判据名（Checks 下标对照）
+结果.Checks[0].Name = "· ② 法兰最高温 − 管温（整片，含舌片）"
+结果.Checks[1].Name = "⑦ 最热铂高出热偶读数"
+结果.Checks[2].Name = "②″圆盘区最高温 − 管温（旧判法）"
+结果.Checks[3].Name = "②′管孔净流入 须为正"
+结果.Checks[4].Name = "⑧ 管根低于热偶读数"
+结果.Checks[5].Name = "③ 法兰增量温降（旧判法）"
+结果.Checks[6].Name = "· 偏离本段控温点"
+结果.Checks[7].Name = "④ 管强度利用率"
+结果.Checks[8].Name = "· 法兰自给率 Φ_max"
+结果.Checks[9].Name = "· 法兰 J_max"
+结果.Checks[10].Name = "① 升温"
+结果.Checks[11].Name = "法兰截面 J"
+结果.Checks[12].Name = "管 J"
+结果.Checks[13].Name = "⑥ 圆盘盖得住管孔＋焊脚"
+结果.Checks[14].Name = "⑤ 舌片自由段 ≥ 下界"
+结果.Checks[15].Name = "接合区保温缠得出来"
+结果.Checks[16].Name = "· 法兰热平衡残差"
+结果.Checks[17].Name = "· 整片热稳定"
+结果.Checks[18].Name = "· 升温期法兰−管峰值"
+结果.Checks[19].Name = "· 管↔法兰热收支"
+结果.Checks[20].Name = "· 局部热稳定"
+结果.Checks[21].Name = "· 玻璃温降 vs 实测"

@@ -1,0 +1,128 @@
+﻿F3 审查探针（只印不判；不是仓里的测试，是审查员的临时探针，原样收档供复核）
+出处：探针源码 scratchpad/probe_f3math/Program.cs（全文附在本档末尾），编译引用 wtC2/.linux2 的终版二进制（Pt_Optimize.dll 2026-09-23 14:42:47 编译，晚于源码最后修改 14:14；含 jLocalAPerMm2）；输出写于 2026-09-23 16:00（scratchpad/m1_verify_probe.txt），2026-09-23 审查后修订时原样抄入本档。
+算例：W08 片0，R31.00／R30.50 × 舌半宽 30，判决（fine1）／导航（fine0），等温 1214 A／1150 °C；冻结热解管根 1150 °C，PlateThermalInputs 生产组装，jLocalAPerMm2 = 重构 J。
+四种分法（全片和都等于 FaceGenTotalW）：half = 生产「每面各一半」（与 FaceGenW 逐格相对差 0）；series = 按厚度串联分（share_A = t_B/(t_A+t_B)，即面导度等权调和平均本身对应的分法）；
+  dist = 按形心到面的距离分（share_A = (d_A/t_A)/(d_A/t_A + d_B/t_B)，d = ShellMesh.CentroidToFaceMm；注意与面导度的等权调和平均 / DistAB 不自洽）；recJ(off) = 改回（热场吃重构 J）。
+「maxIter」三行：同一网格 ShellCurrent.Solve 限定 CG 步数（未收敛）时的面发热闭合 —— 生产 PCG 零初值下闭合与收敛无关（审查 M2）。
+列义：closure = FaceGenTotalW/P_net − 1；max|J/Jrec-1| = 发热等效 J 对重构 J 的最大相对差（J重构 ≥ 5 % Jmax 的格）；L1 moved = 两种分法逐格差的 L1 ÷ 2（W）；dQTube／dTMax = 抽热 W／最高温 K 之差。
+────────────────────────────────────────── 输出（原样）
+== R31 fine1 cells 4450 conv True it 240 closure 6.55E-014
+  maxIter 5: conv False Residual 2.21E+000 ResidAbsSum/Iin 2.74E+000 closure -6.00E-015  P_net 49.608 (conv 489.701)  TotalGen/Pnet-1 -1.72E-001
+  maxIter 30: conv False Residual 1.53E-001 ResidAbsSum/Iin 4.60E+000 closure 1.47E-014  P_net 196.544 (conv 489.701)  TotalGen/Pnet-1 -3.51E-002
+  maxIter 100: conv False Residual 3.43E-002 ResidAbsSum/Iin 3.21E+000 closure 7.37E-014  P_net 482.647 (conv 489.701)  TotalGen/Pnet-1 -6.94E-004
+  reproduce half vs FaceGenW max rel 0.00E+000; sums H 489.7009 S 489.7009 D 489.7009 FaceGen 489.7009
+  thickness range 0.730..2.030; max|J/Jrec-1| half 2.976 series 2.976 dist 1.336; L1 moved W: series-half 0.0011 dist-half 7.2350
+    half(prod): conv True QGen 434.7641 QTube -15.5922 TMax 1168.4810 TDisc 1166.2941 TTab 1168.4810 LS 7.3999
+    series  : conv True QGen 434.7641 QTube -15.5922 TMax 1168.4810 TDisc 1166.2941 TTab 1168.4810 LS 7.3999
+    dist    : conv True QGen 435.0262 QTube -15.4756 TMax 1168.4303 TDisc 1166.2996 TTab 1168.4303 LS 7.3998
+    recJ(off): conv True QGen 435.0827 QTube -15.5316 TMax 1168.4393 TDisc 1166.3143 TTab 1168.4393 LS 7.3998
+    series-half: dQTube -+0.0000 dTMax -+0.0000; dist-half: dQTube +0.1166 dTMax -0.0507; half-off: dQTube -0.0606 dTMax +0.0417
+== R31 fine0 cells 1184 conv True it 120 closure -1.14E-014
+  maxIter 5: conv False Residual 9.82E-001 ResidAbsSum/Iin 2.13E+000 closure 3.77E-015  P_net 115.835 (conv 490.250)  TotalGen/Pnet-1 -1.07E-001
+  maxIter 30: conv False Residual 2.02E-001 ResidAbsSum/Iin 3.84E+000 closure -5.22E-015  P_net 361.830 (conv 490.250)  TotalGen/Pnet-1 -5.76E-003
+  maxIter 100: conv False Residual 2.27E-006 ResidAbsSum/Iin 8.21E-005 closure -1.33E-014  P_net 490.250 (conv 490.250)  TotalGen/Pnet-1 3.65E-004
+  reproduce half vs FaceGenW max rel 0.00E+000; sums H 490.2501 S 490.2501 D 490.2501 FaceGen 490.2501
+  thickness range 0.730..2.030; max|J/Jrec-1| half 2.884 series 2.884 dist 1.869; L1 moved W: series-half 0.0021 dist-half 5.7313
+    half(prod): conv True QGen 437.6859 QTube -16.9258 TMax 1169.4181 TDisc 1167.8110 TTab 1169.4181 LS 5.6398
+    series  : conv True QGen 437.6859 QTube -16.9258 TMax 1169.4181 TDisc 1167.8110 TTab 1169.4181 LS 5.6398
+    dist    : conv True QGen 436.0259 QTube -15.8609 TMax 1168.7048 TDisc 1167.3830 TTab 1168.7048 LS 5.6381
+    recJ(off): conv True QGen 436.2171 QTube -16.0299 TMax 1168.8269 TDisc 1167.5322 TTab 1168.8269 LS 5.6382
+    series-half: dQTube -+0.0000 dTMax -+0.0000; dist-half: dQTube +1.0648 dTMax -0.7133; half-off: dQTube -0.8959 dTMax +0.5913
+== R30.5 fine1 cells 4334 conv True it 245 closure -4.61E-014
+  maxIter 5: conv False Residual 1.61E+000 ResidAbsSum/Iin 2.10E+000 closure 8.66E-015  P_net 56.047 (conv 476.573)  TotalGen/Pnet-1 -1.34E-001
+  maxIter 30: conv False Residual 3.07E-001 ResidAbsSum/Iin 4.31E+000 closure -9.09E-014  P_net 202.354 (conv 476.573)  TotalGen/Pnet-1 -2.74E-002
+  maxIter 100: conv False Residual 3.63E-002 ResidAbsSum/Iin 2.30E+000 closure -5.33E-014  P_net 471.370 (conv 476.573)  TotalGen/Pnet-1 -5.33E-004
+  reproduce half vs FaceGenW max rel 0.00E+000; sums H 476.5731 S 476.5731 D 476.5731 FaceGen 476.5731
+  thickness range 0.730..2.030; max|J/Jrec-1| half 0.866 series 0.866 dist 0.426; L1 moved W: series-half 0.0002 dist-half 2.0715
+    half(prod): conv True QGen 421.4020 QTube -11.0821 TMax 1164.1601 TDisc 1162.9978 TTab 1164.1601 LS 7.6973
+    series  : conv True QGen 421.4020 QTube -11.0821 TMax 1164.1601 TDisc 1162.9978 TTab 1164.1601 LS 7.6973
+    dist    : conv True QGen 421.2357 QTube -10.8533 TMax 1164.0175 TDisc 1162.9160 TTab 1164.0175 LS 7.6970
+    recJ(off): conv True QGen 421.3291 QTube -10.9456 TMax 1164.0225 TDisc 1162.9213 TTab 1164.0225 LS 7.6970
+    series-half: dQTube -+0.0000 dTMax -+0.0000; dist-half: dQTube +0.2288 dTMax -0.1426; half-off: dQTube -0.1365 dTMax +0.1376
+== R30.5 fine0 cells 1162 conv True it 120 closure 3.31E-014
+  maxIter 5: conv False Residual 1.09E+000 ResidAbsSum/Iin 2.24E+000 closure 3.77E-015  P_net 106.722 (conv 476.702)  TotalGen/Pnet-1 -1.16E-001
+  maxIter 30: conv False Residual 2.05E-001 ResidAbsSum/Iin 4.05E+000 closure 4.44E-015  P_net 351.135 (conv 476.702)  TotalGen/Pnet-1 -6.90E-003
+  maxIter 100: conv False Residual 1.13E-006 ResidAbsSum/Iin 6.25E-005 closure 2.98E-014  P_net 476.702 (conv 476.702)  TotalGen/Pnet-1 5.52E-005
+  reproduce half vs FaceGenW max rel 0.00E+000; sums H 476.7019 S 476.7019 D 476.7019 FaceGen 476.7019
+  thickness range 0.730..2.030; max|J/Jrec-1| half 0.869 series 0.869 dist 0.465; L1 moved W: series-half 0.0006 dist-half 3.8737
+    half(prod): conv True QGen 422.7700 QTube -11.7048 TMax 1164.7827 TDisc 1160.9794 TTab 1164.7827 LS 7.1344
+    series  : conv True QGen 422.7700 QTube -11.7048 TMax 1164.7827 TDisc 1160.9794 TTab 1164.7827 LS 7.1344
+    dist    : conv True QGen 421.6912 QTube -10.9023 TMax 1164.2130 TDisc 1160.8105 TTab 1164.2130 LS 7.1332
+    recJ(off): conv True QGen 421.7195 QTube -10.9291 TMax 1164.2449 TDisc 1160.9002 TTab 1164.2449 LS 7.1332
+    series-half: dQTube -+0.0000 dTMax -+0.0000; dist-half: dQTube +0.8025 dTMax -0.5697; half-off: dQTube -0.7757 dTMax +0.5378
+
+────────────────────────────────────────── 探针源码（原样，scratchpad/probe_f3math/Program.cs）
+using System.Reflection;
+using PtOptimize.Core;
+var tA = typeof(PtOptimize.Tests.R48NMeshGateTests);
+var fl = BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public;
+var mDesign = tA.GetMethod("Design", fl); var mSet = tA.GetMethod("SetRW", fl); var mBuild = tA.GetMethod("Build", fl);
+double I = 1214.0, T = 1150.0; double rho = Materials.PtResistivity(T) * 1e3;
+var p = new DesignInputs();
+string mode = args.Length > 0 ? args[0] : "all";
+foreach (double R in new[] { 31.00, 30.50 })
+foreach (double fine in new[] { 1.0, 0.0 })
+{
+    var d = (DesignSpec)mDesign.Invoke(null, new object[] { "W08" });
+    d = d.Clone(); mSet.Invoke(null, new object[] { d, R, 30.0 });
+    var tup = mBuild.Invoke(null, new object[] { d, p, fine, 0, null });
+    var fields = tup.GetType().GetFields();
+    var lc = (LineCase)fields[0].GetValue(tup); var m = (ShellMesh)fields[2].GetValue(tup);
+    var on = ShellCurrent.Solve(m, I, rho, T);
+    double pNet = I * I * rho / on.CurrentInA;
+    Console.WriteLine($"== R{R} fine{fine} cells {m.CellCount} conv {on.Converged} it {on.Iterations} closure {on.FaceGenTotalW / pNet - 1:E2}");
+    // (1) unconverged CG
+    foreach (int it in new[] { 5, 30, 100 })
+    {
+        var u = ShellCurrent.Solve(m, I, rho, T, null, it);
+        double pn = I * I * rho / u.CurrentInA;
+        double vMax = u.V.Max(v => Math.Abs(v));
+        Console.WriteLine($"  maxIter {it}: conv {u.Converged} Residual {u.Residual:E2} ResidAbsSum/Iin {u.ResidualAbsSum / u.CurrentInA:E2} closure {u.FaceGenTotalW / pn - 1:E2}  P_net {pn:0.000} (conv {pNet:0.000})  TotalGen/Pnet-1 {u.TotalGenW/pn-1:E2}");
+    }
+    // (2) allocation variants
+    var clamp = m.ClampFaceActive ? m.ClampSetCells() : null;
+    double scale = I / on.CurrentInA; double k2 = scale * scale * rho;
+    int n = m.CellCount;
+    var qH = new double[n]; var qS = new double[n]; var qD = new double[n];
+    for (int k = 0; k < m.Faces.Count; k++)
+    {
+        var f = m.Faces[k];
+        if (f.B < 0)
+        {
+            if (f.Tag != ShellMesh.TagHole) continue;
+            if (clamp != null && clamp[f.A]) continue;
+            double gb = m.Thickness[f.A] * f.Length / f.DistAB; double va = on.V[f.A];
+            double qq = gb * va * va * k2; qH[f.A] += qq; qS[f.A] += qq; qD[f.A] += qq; continue;
+        }
+        if (f.DistAB < 1e-12) continue;
+        if (clamp != null && ShellMesh.IsClampFace(f, clamp, out int fc))
+        {
+            double dF = m.CentroidToFaceMm(fc, f); double gcl = m.Thickness[fc] * f.Length / dF;
+            double dvc = on.V[f.A] - on.V[f.B]; double qq = gcl * dvc * dvc * k2;
+            qH[fc] += qq; qS[fc] += qq; qD[fc] += qq; continue;
+        }
+        double sA = m.Thickness[f.A], sB = m.Thickness[f.B];
+        double g = 2 * sA * sB / (sA + sB) * f.Length / f.DistAB;
+        double dv = on.V[f.A] - on.V[f.B]; double qf = g * dv * dv * k2;
+        qH[f.A] += 0.5 * qf; qH[f.B] += 0.5 * qf;
+        double shA = sB / (sA + sB); qS[f.A] += shA * qf; qS[f.B] += (1 - shA) * qf;
+        double rA = m.CentroidToFaceMm(f.A, f) / sA, rB = m.CentroidToFaceMm(f.B, f) / sB; double dA = rA / (rA + rB);
+        qD[f.A] += dA * qf; qD[f.B] += (1 - dA) * qf;
+    }
+    double maxDiffH = 0; for (int i = 0; i < n; i++) maxDiffH = Math.Max(maxDiffH, Math.Abs(qH[i] - on.FaceGenW[i]) / Math.Max(1e-12, on.FaceGenW.Max()));
+    Console.WriteLine($"  reproduce half vs FaceGenW max rel {maxDiffH:E2}; sums H {qH.Sum():0.0000} S {qS.Sum():0.0000} D {qD.Sum():0.0000} FaceGen {on.FaceGenTotalW:0.0000}");
+    double[] J(double[] q) { var j = new double[n]; for (int i = 0; i < n; i++) { double den = rho * m.Thickness[i] * m.Area[i]; j[i] = q[i] > 0 && den > 0 ? Math.Sqrt(q[i] / den) : 0; } return j; }
+    var jH = J(qH); var jS = J(qS); var jD = J(qD);
+    double MaxRatio(double[] jj) { double r = 0; for (int i = 0; i < n; i++) if (on.JMagAPerMm2[i] >= 0.05 * on.JMaxAPerMm2) r = Math.Max(r, Math.Abs(jj[i] / on.JMagAPerMm2[i] - 1)); return r; }
+    double L1(double[] a, double[] b) { double s = 0; for (int i = 0; i < n; i++) s += Math.Abs(a[i] - b[i]); return s; }
+    // weld thickness range
+    double tmin = m.Thickness.Min(), tmax = m.Thickness.Max();
+    Console.WriteLine($"  thickness range {tmin:0.000}..{tmax:0.000}; max|J/Jrec-1| half {MaxRatio(jH):0.000} series {MaxRatio(jS):0.000} dist {MaxRatio(jD):0.000}; L1 moved W: series-half {L1(qS, qH)/2:0.0000} dist-half {L1(qD, qH)/2:0.0000}");
+    if (mode == "noth") continue;
+    var ts = LineRunner.PlateThermalInputs(lc, 0, I, null);
+    ShellThermalResult Th(double[] jh) => LineRunner.SolvePlateThermal(m, jh, T, ts, jLocalAPerMm2: on.JMagAPerMm2);
+    var tH = Th(jH); var tS = Th(jS); var tD = Th(jD); var tR = Th(on.JMagAPerMm2);
+    string Row(string nm, ShellThermalResult t) => $"    {nm}: conv {t.Converged} QGen {t.QGenW:0.0000} QTube {t.QFromTubeW:0.0000} TMax {t.TMaxC:0.0000} TDisc {t.TDiscMaxC:0.0000} TTab {t.TTabMaxC:0.0000} LS {t.LocalStabMargin:0.0000}";
+    Console.WriteLine(Row("half(prod)", tH)); Console.WriteLine(Row("series  ", tS)); Console.WriteLine(Row("dist    ", tD)); Console.WriteLine(Row("recJ(off)", tR));
+    Console.WriteLine($"    series-half: dQTube {tS.QFromTubeW - tH.QFromTubeW:+0.0000;-0.0000} dTMax {tS.TMaxC - tH.TMaxC:+0.0000;-0.0000}; dist-half: dQTube {tD.QFromTubeW - tH.QFromTubeW:+0.0000;-0.0000} dTMax {tD.TMaxC - tH.TMaxC:+0.0000;-0.0000}; half-off: dQTube {tH.QFromTubeW - tR.QFromTubeW:+0.0000;-0.0000} dTMax {tH.TMaxC - tR.TMaxC:+0.0000;-0.0000}");
+}

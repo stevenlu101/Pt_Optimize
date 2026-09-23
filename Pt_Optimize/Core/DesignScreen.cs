@@ -56,20 +56,23 @@ public static class DesignScreen
     /// 由壳网格 + 电流场提取形状因子。**每个形状只需跑一次**，之后厚度与电流的扫描全是解析的。
     /// 依据：深度平均下面电流 K = J·t 守恒 ⇒ J ∝ I/t；同理 R ∝ ρe/t。
     /// </summary>
+    /// <param name="faceHeat">★ 2026-09-23（F3）：电阻形状因子里的发热口径（<see cref="ShellCurrent.FaceHeat"/>；生产不传 = 面发热，Σ = I·U 精确；门传 false = 改回重构 J 的 ρJ²tA）。</param>
     public static ShapeFactors Extract(ShellMesh mesh, double refCurrentA = 1000.0,
-                                       double refTempC = 1050.0, double tangentX = double.NaN)
+                                       double refTempC = 1050.0, double tangentX = double.NaN,
+                                       bool faceHeat = ShellCurrent.FaceHeat)
     {
         // R48 物性接线（2026-09-23，Opus 5.5）：这里仍按纯铂、电流解不传牌号 —— 与牌号无关：tempC 为 null ⇒ σ ≡ 1（等温），
         //   ρ 在 ShapeR = rRef·tRef/ρ 里约掉、ShapeJ 不含 ρ ⇒ 形状因子与牌号无关。门 R48PropsWiringGateTests 源码门的例外名单逐条写了原因。
         double rhoMm = Materials.PtResistivity(refTempC) * 1e3;
-        var sc = ShellCurrent.Solve(mesh, refCurrentA, rhoMm, refTempC);
+        var sc = ShellCurrent.Solve(mesh, refCurrentA, rhoMm, refTempC, faceHeat: faceHeat);
 
         // 参考厚度取网格的体积加权均厚（等厚板即板厚本身）
         double tRef = mesh.VolumeMm3 / Math.Max(1e-9, mesh.TotalArea);
 
+        // ★ 2026-09-23（F3）：发热用发热等效 J（面发热，Σ = I·U ⇒ rRef 就是离散网络的真电阻）；改回时 HeatJAPerMm2 就是重构 J 数组，逐位同改前。ShapeJ 仍用重构 J 的 JMax。
         double gen = 0;
         for (int i = 0; i < mesh.CellCount; i++)
-            gen += rhoMm * sc.JMagAPerMm2[i] * sc.JMagAPerMm2[i] * mesh.Thickness[i] * mesh.Area[i];
+            gen += rhoMm * sc.HeatJAPerMm2[i] * sc.HeatJAPerMm2[i] * mesh.Thickness[i] * mesh.Area[i];
         double rRef = gen / (refCurrentA * refCurrentA);          // Ω @ tRef, refTempC
 
         double aDisc = 0, aTab = 0;

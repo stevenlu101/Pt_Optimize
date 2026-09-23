@@ -131,6 +131,10 @@ public sealed class ShellThermalResult
     /// ⚠ 不能拿「最热那一格」代替：实测现役档上盘温峰落在外缘，那里
     /// **电流密度接近 0** ⇒ 裕度算出 +∞，看起来无限安全，其实什么都没验。
     /// 判据要的是「最不稳定」的点，不是「最热」的点，两者不是一回事。
+    /// ★ 2026-09-23（F3）：局部热稳定（候选预筛、J_stab ÷ J_实际、报出的 <see cref="LocalStabJAPerMm2"/>）用**逐格局部 J** = 重构 J（Solve 的 jLocalAPerMm2），
+    ///   不用发热等效 J。理由：发热等效 J 是「每面各一半」约定下的格发热折算，全片总量精确，但在孔边切格上逐格可达重构 J 的 4 倍（面积 0.02 mm² 的切格分到邻格半条面的发热）；
+    ///   拿它逐格判稳定，预筛前 12 名被这些切格占满（它们离锚点 1 mm、J_stab 大、裕度高），真正最不稳的格没被评 ⇒ 报出的裕度偏乐观
+    ///   （W08 片0 R31.00 判决网格单片冻结解：报 9.886，而关口径的那一格在开口径温度下重算是 7.400；deliverable/R48_F3_面发热_实施记录_2026-09-23.md §5 丙，门 R48F3FaceHeatGateTests.门6）。
     /// </summary>
     public double LocalStabMargin = double.NaN, LocalStabRMm = double.NaN,
                   LocalStabTempC = double.NaN, LocalStabJAPerMm2 = double.NaN,
@@ -399,7 +403,11 @@ public static class ShellThermal
     /// 边界：<see cref="ShellMesh.TagHole"/> 定温 = 管根温度；
     /// <see cref="ShellMesh.TagTabEnd"/> 在 <c>BusbarClampTempC ≥ 0</c> 时定温，否则自由（自然边界）。
     /// </summary>
-    /// <param name="jMagAPerMm2">各单元电流密度，来自 <see cref="ShellCurrent"/></param>
+    /// <param name="jMagAPerMm2">各单元电流密度，来自 <see cref="ShellCurrent"/>。★ 2026-09-23（F3）：本参数只当**发热**用（逐格 ρ(T)·J²·t·A，进能量方程与分区热账；局部热稳定与盘峰／舌峰报出的 J 用 jLocalAPerMm2），
+    ///   生产传 <see cref="ShellCurrentResult.HeatJAPerMm2"/>（面发热等效 J）；形参名沿用旧名，接口不改。</param>
+    /// <param name="jLocalAPerMm2">★ 2026-09-23（F3）：**逐格局部 J**（生产传重构 J，ShellCurrentResult.JMagAPerMm2）——用于：圆盘区／舌片区最高温格处报出的 J
+    ///   （<see cref="ShellThermalResult.DiscMaxJAPerMm2"/>／<see cref="ShellThermalResult.TabMaxJAPerMm2"/>）与局部热稳定（候选预筛、J_stab ÷ J_实际、报出的 LocalStabJAPerMm2）。
+    ///   发热（进能量方程的 ρ(T)·J²·t·A）只用 jMagAPerMm2。null（缺省）⇒ 取 jMagAPerMm2，与改前逐位相同。为什么局部热稳定不用发热等效 J：见 <see cref="ShellThermalResult.LocalStabMargin"/>。</param>
     /// <param name="tRootC">管根温度 °C（管孔处定温）</param>
     /// <param name="insulBoundaryX">保温分界 x：≥ 此值包纤维，其余裸露</param>
     /// <param name="symmetricInsul">
@@ -497,8 +505,10 @@ public static class ShellThermal
                                            double lossTableHiC = double.NaN,
                                            int lossTableNodes = 0,
                                            bool holeAnchorOnCircle = true,
-                                           bool zoneByMaterialFraction = true)
+                                           bool zoneByMaterialFraction = true,
+                                           double[]? jLocalAPerMm2 = null)
     {
+        var jLocal = jLocalAPerMm2 ?? jMagAPerMm2;   // 2026-09-23（F3）：逐格局部 J（盘峰／舌峰报出的 J、局部热稳定）；发热只用 jMagAPerMm2
         var props = PtProps.For(p);   // R48 物性接线（2026-09-23，Opus 5.5）：k、ρ、电阻温度系数按牌号（纯铂逐位不变）；局部函数都捕获这一份，每次热解只解析一次
         // ★ 2026-09-23（F6d）：holeAnchorOnCircle **只供测试用**（写法照 lossTableHiC 先例）—— 局部热稳定的管孔锚点取孔圆 r = ShellMesh.HoleRadiusMm（缺省，生产），
         //   false = 老口径「孔格形心的最小半径」（那个数随被孔圆切到的格集合跳，与 F6 同源），门拿它做「改回 ⇒ 红」对照。生产代码不许传。
@@ -1172,7 +1182,7 @@ public static class ShellThermal
             bool onTab = byRadius
                        ? Math.Sqrt(m.Centroid[i].X * m.Centroid[i].X + m.Centroid[i].Z * m.Centroid[i].Z) > discRadiusMm
                        : insulOnTab;
-            double jj = jMagAPerMm2[i];
+            double jj = jLocal[i];   // 2026-09-23（F3）：局部热稳定预筛用逐格局部 J（重构 J），不用发热等效 J（见 LocalStabMargin 注释）
             if (ti > LocalStability.FitMaxC) hotOutOfRange++;
             double proxy = props.Rho(ti) * jj * jj * t * props.Tcr(ti);
             // 2026-09-23（F4）：记入圆盘区的份额 w；按格心／按 x 时 w 只取 0／1，走的是改动前那两行原式（逐位不变）
@@ -1336,7 +1346,7 @@ public static class ShellThermal
                     //     没有合格锚点就退回只看管孔（保守）。
                     //   ⚠ 这仍是一个**估计**，不是精确解：它把「到最近定温边界的直线距离」
                     //     当成横向导热长度。保守侧的做法（传 NaN）仍在 LocalStability 里可用。
-                    var pt = LocalStability.Check(p, res.T[i], jMagAPerMm2[i], m.Thickness[i],
+                    var pt = LocalStability.Check(p, res.T[i], jLocal[i], m.Thickness[i],
                                                   insMm, LatLen(i));
                     // ★★★★★ 超拟合区间的格子**不能只是跳过**（2026-08-24 修）。
                     //
@@ -1365,7 +1375,7 @@ public static class ShellThermal
                 res.LocalStabMargin = best;
                 res.LocalStabRMm = Math.Sqrt(cb.X * cb.X + cb.Z * cb.Z);
                 res.LocalStabTempC = res.T[bi];
-                res.LocalStabJAPerMm2 = jMagAPerMm2[bi];
+                res.LocalStabJAPerMm2 = jLocal[bi];
                 res.LocalStabThickMm = m.Thickness[bi];
                 res.LocalStabOnTab = bTab;
                 res.LocalStabLatLenMm = LatLen(bi);
@@ -1378,7 +1388,7 @@ public static class ShellThermal
             // 板面在 X–Z 平面（Vec3(cx, yPlane, cz)）⇒ 半径由 X、Z 定，与 Y 无关
             res.DiscMaxXMm = cD.X; res.DiscMaxZMm = cD.Z;
             res.DiscMaxRMm = Math.Sqrt(cD.X * cD.X + cD.Z * cD.Z);
-            res.DiscMaxJAPerMm2 = jMagAPerMm2[iDMax];
+            res.DiscMaxJAPerMm2 = jLocal[iDMax];
             res.DiscMaxThickMm = m.Thickness[iDMax];
         }
         if (iTMax >= 0)
@@ -1386,7 +1396,7 @@ public static class ShellThermal
             var cT = m.Centroid[iTMax];
             res.TabMaxXMm = cT.X; res.TabMaxZMm = cT.Z;
             res.TabMaxRMm = Math.Sqrt(cT.X * cT.X + cT.Z * cT.Z);
-            res.TabMaxJAPerMm2 = jMagAPerMm2[iTMax];
+            res.TabMaxJAPerMm2 = jLocal[iTMax];
             res.TabMaxThickMm = m.Thickness[iTMax];
         }
         res.QGenDiscW = gD; res.QLossDiscW = lD; res.AreaDiscMm2 = aD;

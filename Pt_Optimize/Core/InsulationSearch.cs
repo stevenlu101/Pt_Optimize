@@ -1481,7 +1481,7 @@ public static class InsulationSearch
             dd.TabInsulMm = Enumerable.Repeat(Mm(tab), ctx.N).ToArray();
             var cg = CaseFor(ctx, dd, s);
             var ts = LineRunner.PlateThermalInputs(cg, j, iJoint, mesh.SourceField);
-            var th = LineRunner.SolvePlateThermal(mesh, cur.JMagAPerMm2, tRoot, ts);
+            var th = LineRunner.SolvePlateThermal(mesh, cur.HeatJAPerMm2, tRoot, ts);   // 2026-09-23（F3）：发热用面发热等效 J，与整线逐片解（LineRunner.RunOnce）同一口径（配方自检逐位核）
             rp.Q = th.QFromTubeW; rp.TDisc = th.TDiscMaxC; rp.TTab = th.TTabMaxC;
             var why = new List<string>();
             if (!cur.Converged) why.Add("电位场未收敛");

@@ -1,0 +1,51 @@
+﻿F3 审查后修订的临时探针（只印不判；不是仓里的测试，原样收档供复核）
+目的：R48DiscInsulPerPlateGateTests「图纸路径」门在 :298 先红（求解备注里带墙钟「量雅可比用时 x s」，与 F3 无关），丁′ 段在门里跑不到；本探针只复现丁′（逐片 3.5/7.5/12），验证审查后改的丁′ 写法（PlateCurrentField 重算 HeatJ、传 jLocal）与整线逐位相同，并对照改前写法（JField 当发热 J）。
+算例构造逐字照抄该测试的 Make（Disc56TwoSegs、整线 20、图纸路径栅格步 0.5 留白 2）。编译引用 wtC2/.linux 审查后重建的二进制（16:3x）。探针源码 scratchpad/c2fix/probeD/Program.cs（全文附在末尾）。
+────────────────────────────────────────── 输出（原样；第一行是开跑时刻）
+16:49:53
+丁′ 整线 Ok True 收敛 True 耗时 158 s  σ(T) False
+片0 入口：重构 J 逐位 = JField True；整线抽热 21.596616209951858；改后丁′ 本片 21.596616209951858（抽热逐位 True，温度场逐位 True）；别片 11.820384017590504（差 9.78E+000）；改前写法（JField 当发热 J）21.723253207027263（差 +0.1266 W，温度场逐位 False）
+片1 HC1|HC2：重构 J 逐位 = JField True；整线抽热 14.854952480859504；改后丁′ 本片 14.854952480859504（抽热逐位 True，温度场逐位 True）；别片 10.5760119033693（差 4.28E+000）；改前写法（JField 当发热 J）15.035249468895545（差 +0.1803 W，温度场逐位 False）
+片2 出口：重构 J 逐位 = JField True；整线抽热 13.486537860085695；改后丁′ 本片 13.486537860085695（抽热逐位 True，温度场逐位 True）；别片 26.207901112866704（差 1.27E+001）；改前写法（JField 当发热 J）13.571187540312451（差 +0.0846 W，温度场逐位 False）
+rc=0
+16:52:33
+────────────────────────────────────────── 探针源码（原样）
+// 审查后修订（2026-09-23）临时探针：只复现 R48DiscInsulPerPlateGateTests「图纸路径」的丁′ 段（逐片 3.5/7.5/12），
+// 验证改后的丁′（PlateCurrentField 重算 HeatJ、传 jLocal）与整线逐位相同，并对照改前写法（JField 当发热 J）。算例构造逐字照抄该测试的 Make。
+using System.Reflection;
+using PtOptimize.Core;
+var fl = BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public;
+var p = new DesignInputs();
+var d0 = (DesignSpec)typeof(PtOptimize.Tests.R47NavGridInstrumentTests).GetMethod("Disc56TwoSegs", fl)!.Invoke(null, null)!;
+d0.FlangeInsulated = true;
+int nf = d0.FlangeCount;
+double[] own = { 3.5, 7.5, 12.0 };
+var d = d0.Clone(); d.FlangeInsulMm = 20.0;
+var lcD = d.BuildCase(p, checkRamp: false);
+double holeR = lcD.TubeIdMm * 0.5 + lcD.WallMm;
+var plates = Enumerable.Range(0, nf).Select(j => { var g = d0.Plate(j, d0.DiscFloorMm(p)); g.HoleRadiusMm = holeR; return g; }).ToArray();
+lcD.FlangePlates = Array.Empty<FlangePlate>();
+lcD.FlangeFields = plates.Select(g => AnalyticSurrogate.Rasterize(g, 0.5, 2.0)).ToArray();
+lcD.GeomForJudge = plates;
+lcD.TabInsul3dmPerPlateMm = (double[])d0.TabInsulMm.Clone();
+lcD.DiscInsul3dmPerPlateMm = (double[])own.Clone();
+var sw = System.Diagnostics.Stopwatch.StartNew();
+var rD = LineRunner.Run(lcD);
+Console.WriteLine($"丁′ 整线 Ok {rD.Ok} 收敛 {rD.Converged} 耗时 {sw.Elapsed.TotalSeconds:0} s  σ(T) {lcD.Base.SigmaOfTCoupling}");
+static bool SameArr(double[] a, double[] b) => a.Length == b.Length && a.Zip(b).All(t => BitConverter.DoubleToInt64Bits(t.First) == BitConverter.DoubleToInt64Bits(t.Second));
+for (int j = 0; j < nf; j++)
+{
+    var f = rD.Flanges[j];
+    var scD = LineRunner.PlateCurrentField(lcD, f.Mesh!, j, f.CurrentA);
+    bool jSame = SameArr(f.JField, scD.JMagAPerMm2);
+    ShellThermalResult Th(double discInsul, bool oldWay)
+    {
+        var s = LineRunner.PlateThermalInputs(lcD, j, f.CurrentA, f.Mesh!.SourceField);
+        s.P2.FlangeInsulThickMm = discInsul;
+        return oldWay ? LineRunner.SolvePlateThermal(f.Mesh, f.JField, f.TRootC, s)
+                      : LineRunner.SolvePlateThermal(f.Mesh, scD.HeatJAPerMm2, f.TRootC, s, jLocalAPerMm2: scD.JMagAPerMm2);
+    }
+    var own_ = Th(own[j], false); var other = Th(own[(j + 1) % nf], false); var old = Th(own[j], true);
+    Console.WriteLine($"片{j} {f.Name}：重构 J 逐位 = JField {jSame}；整线抽热 {f.QFromTubeW:R}；改后丁′ 本片 {own_.QFromTubeW:R}（抽热逐位 {BitConverter.DoubleToInt64Bits(own_.QFromTubeW) == BitConverter.DoubleToInt64Bits(f.QFromTubeW)}，温度场逐位 {SameArr(f.TField, own_.T)}）；"
+      + $"别片 {other.QFromTubeW:R}（差 {Math.Abs(f.QFromTubeW - other.QFromTubeW):E2}）；改前写法（JField 当发热 J）{old.QFromTubeW:R}（差 {old.QFromTubeW - f.QFromTubeW:+0.0000;-0.0000} W，温度场逐位 {SameArr(f.TField, old.T)}）");
+}

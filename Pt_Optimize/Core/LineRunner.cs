@@ -547,6 +547,13 @@ public sealed class LineCase
     /// </summary>
     public bool ZoneByMaterialFraction = true;
 
+    /// ★ 2026-09-23（F3，**只供门**）：true ⇒ 本算例的逐片电流解按改前口径把**重构 J** 交给热场（ShellCurrent.SolveFor 的 faceHeat 改回，那一处读）。
+    ///   internal：不进存档、不进界面、不进全量转储（转储只看公开成员）；生产与界面从不设它。设了它的整线解在 Notes 里多一句 <see cref="LineRunner.FaceHeatRevertNote"/>，
+    ///   结果不会冒充生产口径。覆盖范围：只有读**这个算例对象**的路径（LineRunner.Run → RunOnce → PlateCurrentField）；
+    ///   保温搜索等由设计另建算例的路径不带它（门不覆盖那几条路）。
+    /// </summary>
+    internal bool GateRevertFaceHeat;
+
     /// <summary>R48 M（2026-09-18，Fable 5.1）：量雅可比的前差步长 K（与保温搜索 InsulationSearch.Options.TubeJacobianDeltaK 同为 1.0）。</summary>
     public double JacobianDeltaK = 1.0;
 
@@ -2169,6 +2176,7 @@ public static class LineRunner
             }
             if (j == 0) { res.MeshCells = mesh.CellCount; res.MeshFineMm = c.MeshFineMm; }
             double iJoint = LineSolver.JointCurrentA(amps, j);
+            if (c.GateRevertFaceHeat && !res.Notes.Contains(FaceHeatRevertNote)) res.Notes.Add(FaceHeatRevertNote);   // 2026-09-23（F3）：门用改回照实写进结果
             var sc = PlateCurrentField(c, mesh, j, iJoint);   // R48 E（2026-09-15 Opus 5）：搬进公开函数，纯搬移
             // ★ 电位场的收敛此前**没有任何人读**（2026-08-29 补）。σ(T) 内循环会重解，
             //   所以取**最后一次**的收敛状态 —— 中间那次不收敛而末次收敛，场是好的。
@@ -2193,7 +2201,9 @@ public static class LineRunner
             if (!analytic && c.JudgeGeomDiscInsulIgnored(j, out double discOnGeomMm, out double discUsedMm))
                 res.Notes.Add($"⚠ {flangeName(j)}：判据几何上带了本片圆盘保温 {discOnGeomMm:0.0} mm，但图纸路径的圆盘保温只取图纸路径的逐片设定（没有设定则沿用整线）"
                               + $" —— 本次按 {discUsedMm:0.0} mm 算，判据几何上的值没有用上。");
-            ShellThermalResult Thermal(ShellCurrentResult cur) => SolvePlateThermal(mesh, cur.JMagAPerMm2, tRoot, ts);
+            // ★★ 2026-09-23（F3）：热场发热用**发热等效 J**（面发热，全片 = I·U）；逐格局部量（盘峰／舌峰处报出的 J、局部热稳定）仍用重构 J（jLocalAPerMm2）。
+            //   改回（门）时 HeatJAPerMm2 就是 JMagAPerMm2 同一个数组 ⇒ 与改前逐位相同。源码门 R48F3FaceHeatGateTests 禁止这里再把 JMagAPerMm2 当发热 J 传。
+            ShellThermalResult Thermal(ShellCurrentResult cur) => SolvePlateThermal(mesh, cur.HeatJAPerMm2, tRoot, ts, jLocalAPerMm2: cur.JMagAPerMm2);
             var th = Thermal(sc);
 
             // ★★★★★ σ(T) 耦合（2026-08-28 第一性原理通查查出，默认**关**）。
@@ -3404,16 +3414,20 @@ public static class LineRunner
     ///   RunOnce 不传，数逐位不变）。为什么：F 路的快门 R48ClampFaceGateTests.c 要在「改动前代码」的表（设定 + 200 K、60 节点）上逐位比基线树记录，
     ///   F 写于散热表上限改铂熔点之前；与 G1 门 d 的正规化同一个做法。不加这两个参数，门就只能手抄本函数的参数组装去调 ShellThermal.Solve。
     /// </summary>
-    public static ShellThermalResult SolvePlateThermal(ShellMesh mesh, double[] jMagAPerMm2, double tRootC, PlateThermalSetup s,
-                                                       double lossTableHiC = double.NaN, int lossTableNodes = 0)
-        => ShellThermal.Solve(mesh, jMagAPerMm2, s.P2, tRootC, s.InsulX,
+    /// <param name="jHeatAPerMm2">★ 2026-09-23（F3）：**发热用**的 J（生产传 ShellCurrentResult.HeatJAPerMm2；形参原名 jMagAPerMm2，改名只为说清它是发热口径）。</param>
+    /// <param name="jLocalAPerMm2">F3：逐格局部 J —— 盘峰／舌峰处报出的 J 与局部热稳定用它（ShellThermal.Solve 同名参数；生产传重构 J，null ⇒ 取 jHeatAPerMm2，与改前逐位相同）。</param>
+    public static ShellThermalResult SolvePlateThermal(ShellMesh mesh, double[] jHeatAPerMm2, double tRootC, PlateThermalSetup s,
+                                                       double lossTableHiC = double.NaN, int lossTableNodes = 0,
+                                                       double[]? jLocalAPerMm2 = null)
+        => ShellThermal.Solve(mesh, jHeatAPerMm2, s.P2, tRootC, s.InsulX,
                               symmetricInsul: s.SymmetricInsul,
                               tabBoundaryX: s.TabBoundaryX,
                               tabInsulThickMm: s.TabInsulThickMm,
                               discRadiusMm: s.DiscRadiusMm,
                               insulDiscRadiusMm: s.InsulDiscRadiusMm,
                               lossTableHiC: lossTableHiC, lossTableNodes: lossTableNodes,
-                              zoneByMaterialFraction: s.ZoneByMaterialFraction);   // 2026-09-23（F4）
+                              zoneByMaterialFraction: s.ZoneByMaterialFraction,   // 2026-09-23（F4）
+                              jLocalAPerMm2: jLocalAPerMm2);
 
     /// <summary>
     /// ★ R48 E（2026-09-15 Opus 5）：**解析路径**第 j 片的网格 —— 原在 RunOnce 逐片循环里就地写（管孔半径跟管外径 + FlangeMesher.Build），
@@ -3450,6 +3464,12 @@ public static class LineRunner
     /// ★ R48 E（2026-09-15 Opus 5）：第 j 片的电位场（ShellCurrent.SolveFor，电阻率取本片所属段的控温点）—— 原在 RunOnce 里写了两份（首解与 σ(T) 内循环），
     /// 原样搬出、数逐位不变；<paramref name="tempC"/> 非 null 即 σ(T) 重解。保温搜索求解器逐片单解调它。
     /// </summary>
+    /// <summary>
+    /// ★ 2026-09-23（F3）：门用改回的整线说明（只在 <see cref="LineCase.GateRevertFaceHeat"/> 为真时写进 Notes；生产从不出现）。
+    ///   门 R48F3FaceHeatGateTests 拿它核「开关真的生效」，并在逐位对拍改前记录时把这一句剔掉。
+    /// </summary>
+    public const string FaceHeatRevertNote = "⚠ 本次是门用改回：热场发热按重构 J 的 ρJ²tA（改前口径，F3 前），不是交付口径的面发热。";
+
     public static ShellCurrentResult PlateCurrentField(LineCase c, ShellMesh mesh, int j, double iJointA, double[]? tempC = null)
     {
         int n = c.SegmentCount;
