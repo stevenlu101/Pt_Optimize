@@ -1,7 +1,8 @@
 #!/bin/bash
-# usage: mk_linux.sh <repo_root>   -> creates <root>/.linux/{Core,Tests} mirror projects (net8.0, UI tests excluded)
+# usage: mk_linux.sh <repo_root> [dir]   -> creates <root>/<dir>/{Core,Tests}（dir 缺省 .linux；net8.0，排除引用界面的测试档）
 ROOT=$(cd "$1" && pwd)
-L=$ROOT/.linux; rm -rf $L; mkdir -p $L/Core $L/Tests
+HERE=$(cd "$(dirname "$0")" && pwd)
+L=$ROOT/${2:-.linux}; rm -rf $L; mkdir -p $L/Core $L/Tests
 cat > $L/Core/Core.csproj <<X
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
@@ -16,7 +17,7 @@ cat > $L/Core/Core.csproj <<X
   </ItemGroup>
 </Project>
 X
-UIF=$(cd $ROOT && grep -l 'System.Windows.Forms\|using PtOptimize.UI\|PtOptimize\.UI\.\|MainForm\|LineDesignPage\|ScottPlot\|System.Drawing\|\bFlow\.\|\bUI\.\|FlowState\|UiShot\|ManualPage\|WeldFloorPage\|GradeNameEditor\|SolveStageStrip' Pt_Optimize.Tests/*.cs | xargs -n1 basename)
+UIF=$(python3 "$HERE/ui_refs.py" "$ROOT")   # 只看去掉注释与字符串之后的代码
 {
 cat <<X
 <Project Sdk="Microsoft.NET.Sdk">

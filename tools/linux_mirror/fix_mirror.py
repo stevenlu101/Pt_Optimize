@@ -1,5 +1,5 @@
 import re,subprocess,sys,os
-root=os.path.abspath(sys.argv[1]); L=root+'/.linux'; proj=L+'/Tests/Tests.csproj'
+root=os.path.abspath(sys.argv[1]); L=root+'/'+(sys.argv[2] if len(sys.argv)>2 else '.linux'); proj=L+'/Tests/Tests.csproj'
 def build():
     r=subprocess.run(['dotnet','build','Tests/Tests.csproj','-c','Release','-v','q','--nologo'],cwd=L,capture_output=True,text=True)
     return [l for l in (r.stdout+r.stderr).split('\n') if ' error ' in l]
