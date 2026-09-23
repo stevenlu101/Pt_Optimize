@@ -47,7 +47,16 @@ public static class InstallReport
         // 1 整线概要
         sb.AppendLine("**1. 整线概要**");
         sb.AppendLine($"  {d.SetpointC.Length} 段铂管串联，{d.FlangeCount} 片法兰兼作电极（中间 {Math.Max(0, d.FlangeCount - 2)} 片共用）。");
-        sb.AppendLine($"  管：内径 {p.TubeIdMm:0} mm／壁厚 {d.WallMm:0.00} mm／牌号 {p.GradeName}；管保温 {d.TubeInsulMm:0.0} mm。");
+        sb.AppendLine($"  管：内径 {p.TubeIdMm:0} mm／壁厚 {d.WallMm:0.00} mm／牌号 {p.GradeName}（{(PtProps.For(p).IsFallback ? "该牌号电、热数据不全，电阻率、热导率、比热按纯铂" : "电阻率、热导率、比热、持久强度按此牌号")}；铂重按纯铂密度）；管保温 {d.TubeInsulMm:0.0} mm。");
+        // ★ R48 物性接线复审（2026-09-23，Opus 5.5）：选的不是纯铂时，把电、热物性按谁取／退回纯铂那一句在这里全文印出。
+        //   它在结果说明里排在末尾，第 10 节「求解备注」只印说明的前 12 条，说明多于 12 条时它会被截掉。结果说明里有那一条（LineRunner.AddGradeNote，含本算例温度越出数据点之处）就印那一条，
+        //   没有（例如结果不是本次整线解出来的）就印 PtProps.Note 本身。纯铂 Note 为空，这里什么都不印。
+        string gradeNote = PtProps.For(p).Note;
+        if (gradeNote.Length > 0)
+        {
+            string full = r.Notes.LastOrDefault(n => n.StartsWith("★ " + gradeNote, StringComparison.Ordinal)) is { } hit ? hit.Substring(2) : gradeNote;
+            sb.AppendLine("  　电、热物性：" + full);
+        }
         sb.AppendLine($"  铂重：管 {r.TubeMassG:0} g + 法兰 {r.FlangeMassG:0} g = 合计 {r.TotalMassG:0} g。");
         // ★★ 2026-09-18，Opus 5：强度那一条的**设计输入**要写在报告里 —— 数与出处一起，不许只给数。
         //   出处只有一份写法（TubeStrength 的两个常量），参数表说明引的也是它。

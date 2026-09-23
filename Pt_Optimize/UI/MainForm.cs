@@ -671,7 +671,7 @@ public sealed class MainForm : Form
                         + (r.Feasible ? "✓" : (r.Unknown ? "⚠ " : "✗ ") + r.Binding));
         GridFmt.Fill(_segResult, tab.ToString());
 
-        sb.AppendLine($"材料数据：实测工作簿   寿命 {_in.DesignLifeHours:0} h   安全系数 {_in.SafetyFactor:0.0}");
+        sb.AppendLine($"材料数据：电阻率、持久强度取实测工作簿；热导率、比热取文献与厂方图（出处见材料库）   寿命 {_in.DesignLifeHours:0} h   安全系数 {_in.SafetyFactor:0.0}");
         sb.AppendLine($"金属价格比：Rh/Pt = 4.91（Umicore PMM 2026-08-06，Pt $1731/oz、Rh $8500/oz）");
         sb.AppendLine();
         sb.AppendLine($"合计铂重 {mass:0} g    相对成本 {cost:0}（= Σ 质量×牌号成本倍数，纯铂同质量为基准）");
@@ -758,6 +758,10 @@ public sealed class MainForm : Form
             foreach (var f in fs)
                 sb.AppendLine($"{f.Joint}\t{(f.Shared ? "是" : "—")}\t{f.CurrentA:0}\t"
                             + $"{f.ThicknessMm:0.000}\t{f.MassG:0}\t{f.SizedBy}");
+            // ★ R48 物性接线复审（2026-09-23，Opus 5.5）：逐行牌号的电、热物性说明（退回纯铂等）。纯铂各行没有说明，本段不出现。
+            //   （镜像不编译 UI，本处改动未编译、未看过界面。）
+            foreach (string gnote in fs.SelectMany(x => x.GradeNotes).Distinct())
+                sb.AppendLine("★ 电、热物性（按该行牌号）" + gnote);
             double fg = fs.Sum(x => x.MassG);
             sb.AppendLine();
             sb.AppendLine($"法兰合计 {fg:0} g   管 {tubeG:0} g   全线 {tubeG + fg:0} g   " +
@@ -862,8 +866,11 @@ public sealed class MainForm : Form
         // ★ R48 G3 第二轮审查后（2026-09-15，Opus 5）：空管时先印段解写的工况说明（SolveResult.Note，全文出自 SegmentSolver.EmptyTubeNoteOf）。
         //   病：产量与管内玻璃换热都填 0 时，段解会默默带上默认系数的管腔轴向辐射（未经实测、两档估计之间尚无依据取舍），
         //   热衰减长度与剖面都跟着变，而本页原来不显示 Note —— 看报表的人不知道结果里含这项假设，也不知道玻璃各项为什么是 NaN。
-        //   只在括号外的「；」处断行（括号里的分号是同一句的补充），长行由 TextFmt 按框宽折。带玻璃时 Note 为空，本节不出现、报表逐字不变。
-        if (r.EmptyTube && !string.IsNullOrEmpty(r.Note))
+        //   只在括号外的「；」处断行（括号里的分号是同一句的补充），长行由 TextFmt 按框宽折。
+        // ★ R48 物性接线复审（2026-09-23，Opus 5.5）：Note 不止空管会写：管最高温超出散热表上限、选了非纯铂牌号（电、热物性按谁取／退回纯铂）也写进 Note。
+        //   原来只在空管时印，带玻璃时这两句看不到。改成 Note 非空就印。带玻璃、纯铂、没超散热表上限时 Note 为空，本节不出现、报表逐字不变。
+        //   （镜像不编译 UI，本处改动未编译、未看过界面。）
+        if (!string.IsNullOrEmpty(r.Note))
         {
             H("工况说明");
             int depth = 0, start = 0;

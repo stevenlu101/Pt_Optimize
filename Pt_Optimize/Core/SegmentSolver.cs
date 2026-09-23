@@ -148,6 +148,8 @@ public static class SegmentSolver
 
     private static void Core(DesignInputs p, SolveResult res, double? fixedCurrentA = null)
     {
+        // ★ R48 物性接线（2026-09-23，Opus 5.5）：电、热物性按牌号取（纯铂一支调的就是 Materials 原函数，逐位不变）。见 PtProps。
+        var props = PtProps.For(p);
         double ri = p.TubeId * 0.5, L = p.TubeLength, tAmb = p.TAmbC;
 
         // ── 外层：壁厚不动点迭代，使 J ≤ J_allow（J ∝ t^(−1/2)，一步精确）
@@ -217,10 +219,12 @@ public static class SegmentSolver
         // ★ R48 审查第 6 条（2026-09-14，Opus 5）：析晶是玻璃的事 —— 空管没有玻璃，析晶裕度不适用（记 NaN，风险位 false，原因在 Note）。
         //   不这样做时会拿金属最冷点对液相线出一个「裕度」，读的人当成玻璃的析晶结论。
         if (empty) { res.DevitMarginMinK = double.NaN; res.DevitRisk = false; }
+        // ★ R48 物性接线（2026-09-23，Opus 5.5）：选了别的牌号 ⇒ 说明里写取了谁、借了谁／退回纯铂（纯铂 Note 为 "" ⇒ 结果不变）
+        if (props.Note.Length > 0) res.Note = (res.Note.Length > 0 ? res.Note + "；" : "") + props.Note;
 
         // ── 电气
         double tMean = 0; for (int i = 0; i < n; i++) tMean += tm[i]; tMean /= n;
-        double rho = Materials.PtResistivity(tMean);
+        double rho = props.Rho(tMean);
         res.ResistanceOhm = rho * L / area;
         res.CurrentA = current;
         res.VoltageV = current * res.ResistanceOhm;
@@ -258,14 +262,14 @@ public static class SegmentSolver
         res.EndBetaAWPerMK = fpA.BetaWPerMK; res.EndBetaBWPerMK = fpB.BetaWPerMK;
         res.NodeSpacingMm = fpA.DxMm;
 
-        double cMetal = Materials.PtDensity * area * Materials.PtCp(p.TSetC);
+        double cMetal = Materials.PtDensity * area * props.Cp(p.TSetC);
         double cGlass = p.GlassDensity * Math.PI * ri * ri * p.GlassCp;
         res.TauMetalS = cMetal / Math.Max(1e-6, beta);
         // 空管：管里没有玻璃的热容 ⇒「含玻璃时间常数」不适用（beta 里的玻璃项在空管时本来就是 0）
         res.TauWithGlassS = empty ? double.NaN : (cMetal + cGlass) / Math.Max(1e-6, beta);
 
-        res.TcrPerK = Materials.PtTcr(p.TSetC);
-        double drhoDt = Materials.RhoRef * (Materials.AlphaFit + 2 * Materials.BetaFit * p.TSetC);
+        res.TcrPerK = props.Tcr(p.TSetC);
+        double drhoDt = props.DRhoDT(p.TSetC);
         double destab = current * current * drhoDt / area;
         res.StabilityRatio = destab > 1e-12 ? beta / destab : 999;
 
@@ -343,7 +347,7 @@ public static class SegmentSolver
     /// （管壁 kPt(tC)·A + 管腔轴向辐射 kA_rad(tC)）。<c>AxialKA(p, area) == AxialKAAt(p, area, p.TSetC)</c>，逐位相同。
     /// </summary>
     public static double AxialKAAt(DesignInputs p, double area, double tC)
-        => Materials.PtThermalK(tC) * area + CavityRadKAAt(p, tC);
+        => PtProps.For(p).K(tC) * area + CavityRadKAAt(p, tC);
 
     /// <summary>
     /// 段间端温不动点在某一端的收缩比与停机放大倍数（<see cref="EndTempFixedPointAt"/> 的返回）。
@@ -358,7 +362,7 @@ public static class SegmentSolver
     ///
     /// 口径（照数值把关人写）：
     ///   收缩比 ρ = 1/(1 + Δx/ℓt)，放大倍数 = 1/(1 − ρ) = 1 + ℓt/Δx；
-    ///   ℓt = √(kA/β′)，k 取**该端管根温度**处的 <see cref="Materials.PtThermalK"/>，A = 管截面，
+    ///   ℓt = √(kA/β′)，k 取**该端管根温度**处按牌号的热导率 <see cref="PtProps.K"/>（经 <see cref="AxialKAAt"/>；R48 物性接线 2026-09-23 前是纯铂 Materials.PtThermalK），A = 管截面，
     ///   β′ 取该段散热表在**该端管根温度**处的斜率（带玻璃再加 hg·π·D，空管 kA 含管腔辐射 —— <see cref="AxialKAAt"/> 已含）；
     ///   Δx = 段长 ÷ (节点数 − 1)，与 <see cref="NeighbourConductanceWPerK"/> 同一份节点数。
     ///
@@ -397,7 +401,7 @@ public static class SegmentSolver
         double rOut = p.TubeId * 0.5 + wall;
         var lossTab = TubeLossTable(p, rOut, p.TubeLength);
         double beta = lossTab.Slope(p.TSetC) + p.HGlass * Math.PI * p.TubeId;
-        double drhoDt = Materials.RhoRef * (Materials.AlphaFit + 2 * Materials.BetaFit * p.TSetC);
+        double drhoDt = PtProps.For(p).DRhoDT(p.TSetC);
         double iStab = Math.Sqrt(Math.Max(1e-9, beta * area / drhoDt));
         double iHi = 0.9 * iStab;
 
@@ -440,6 +444,7 @@ public static class SegmentSolver
         //   能量账 EnergyBalance 调同一份，不另抄配方。算式与提出来之前逐字相同（带玻璃逐位不变，R48EmptyTubeGateTests 的指纹守着）。
         var TabAt = TubeLossAt(p, wall, area);
         var ends = EndFluxes(p, area);
+        var props = PtProps.For(p);   // R48 物性接线（2026-09-23，Opus 5.5）
 
         tm = new double[n]; tg = new double[n];
         for (int i = 0; i < n; i++) { tm[i] = p.TSetC; tg[i] = noGlass ? double.NaN : p.TGlassInC; }
@@ -463,13 +468,12 @@ public static class SegmentSolver
             double Src(double x, double T)
             {
                 int i = Math.Clamp((int)Math.Round(x / dx), 0, n - 1);
-                return current * current * Materials.PtResistivity(T) / area
+                return current * current * props.Rho(T) / area
                        - TabAt(x).Eval(T) - (noGlass ? 0.0 : hg * pi * (T - tgLocal[i]));
             }
             double DSrc(double x, double T)
             {
-                double drho = Materials.RhoRef *
-                    (Materials.AlphaFit + 2 * Materials.BetaFit * T);
+                double drho = props.DRhoDT(T);
                 return current * current * drho / area - TabAt(x).Slope(T) - (noGlass ? 0.0 : hg * pi);
             }
 
@@ -491,7 +495,7 @@ public static class SegmentSolver
     /// 带玻璃时它是 0.0，x + 0.0 与 x 逐位相同（x &gt; 0）⇒ 带玻璃逐位不变（R48EmptyTubeGateTests 的三个指纹守着）。
     /// </summary>
     public static double AxialKA(DesignInputs p, double area)
-        => Materials.PtThermalK(p.TSetC) * area + CavityRadKA(p);
+        => PtProps.For(p).K(p.TSetC) * area + CavityRadKA(p);
 
     /// <summary>管腔轴向辐射系数的标定温度 °C（物理把关人第十一轮：两档 0.023／0.056 W·m/K「在 1150 °C 下标定」；也是用户定的空管到温目标）。</summary>
     public const double CavityRadRefC = 1150.0;
@@ -541,7 +545,7 @@ public static class SegmentSolver
     {
         int n = Math.Max(21, p.Nodes | 1);
         double dx = p.TubeLength / (n - 1);
-        return (Materials.PtThermalK(p.TSetC) * area + CavityRadKAAt(p, tNbC)) / Math.Max(1e-9, dx);
+        return (PtProps.For(p).K(p.TSetC) * area + CavityRadKAAt(p, tNbC)) / Math.Max(1e-9, dx);
     }
 
     /// <summary>
@@ -552,7 +556,7 @@ public static class SegmentSolver
     {
         double L = p.TubeLength;
         double rOut = p.TubeId * 0.5 + wall;
-        double kPt = Materials.PtThermalK(p.TSetC);
+        double kPt = PtProps.For(p).K(p.TSetC);
 
         var lossTab = TubeLossTable(p, rOut, L);
 
@@ -608,7 +612,7 @@ public static class SegmentSolver
         double wall = wallMm * 1e-3;
         double area = Math.PI * wall * (p.TubeId + wall);           // 与 Core 同式
         double rOut = p.TubeId * 0.5 + wall;
-        return EndInsulExtraProfile(p, TubeLossTable(p, rOut, p.TubeLength), Materials.PtThermalK(p.TSetC) * area);
+        return EndInsulExtraProfile(p, TubeLossTable(p, rOut, p.TubeLength), PtProps.For(p).K(p.TSetC) * area);
     }
 
     private static double[] EndInsulExtraProfile(DesignInputs p, LossTable lossTab, double kAWall)
@@ -718,11 +722,12 @@ public static class SegmentSolver
         bool noGlass = IsEmptyTube(p);
         var tabAt = TubeLossAt(p, wall, area);
         var ends = EndFluxes(p, area);
+        var props = PtProps.For(p);   // R48 物性接线（2026-09-23，Opus 5.5）：与 Profile 同一份 ρ(T)
         for (int i = 0; i < n; i++)
         {
             double w = (i == 0 || i == n - 1) ? 0.5 * dx : dx;
             double x = i * dx, T = r.TMetal[i];
-            acc.JouleW += i2 * Materials.PtResistivity(T) / area * w;
+            acc.JouleW += i2 * props.Rho(T) / area * w;
             acc.SurfaceLossW += tabAt(x).Eval(T) * w;
             if (!noGlass) acc.ToGlassW += hg * pi * (T - r.TGlass[i]) * w;
         }

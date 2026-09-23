@@ -465,6 +465,7 @@ public static class ShellThermal
                                            double lossTableHiC = double.NaN,
                                            int lossTableNodes = 0)
     {
+        var props = PtProps.For(p);   // R48 物性接线（2026-09-23，Opus 5.5）：k、ρ、电阻温度系数按牌号（纯铂逐位不变）；局部函数都捕获这一份，每次热解只解析一次
         // ★ R48（2026-09-15，Opus 5；数值把关人第十四轮）：lossTableHiC／lossTableNodes **只供测试用** —— 门 d 要用改动前的表（设定 + 200 K、60 节点）
         //   复现基线树的逐位记录，才能把「散热表换了」与「别的东西动了」分开。缺省（NaN／0）= 生产：上限 LossTableHiC、节点 LossTableNodes(环境, 上限)。
         //   生产代码不许传这两个参数（生产链配方由 R48RecipeFingerprintTests 的行为门守：每片热解的 Recipe.Rule == ProductionThermalRule）。
@@ -677,11 +678,11 @@ public static class ShellThermal
                     clampFaceUsed[k] = true;
                     // 压接面上定温（R48 F 2026-09-15 Opus 5，见 clampSetT 那段）：只取自由格一侧，距离 = 形心到面中点
                     double dFace = m.CentroidToFaceMm(fc, f);
-                    gcond[k] = dFace < 1e-12 ? 0 : Materials.PtThermalK(res.T[fc]) * 1e-3 * m.Thickness[fc] * f.Length / dFace;
+                    gcond[k] = dFace < 1e-12 ? 0 : props.K(res.T[fc]) * 1e-3 * m.Thickness[fc] * f.Length / dFace;
                     continue;
                 }
-                double kA = Materials.PtThermalK(res.T[f.A]) * 1e-3 * m.Thickness[f.A]; // W/(mm·K)·mm
-                double kB = Materials.PtThermalK(res.T[f.B]) * 1e-3 * m.Thickness[f.B];
+                double kA = props.K(res.T[f.A]) * 1e-3 * m.Thickness[f.A]; // W/(mm·K)·mm
+                double kB = props.K(res.T[f.B]) * 1e-3 * m.Thickness[f.B];
                 double kf = (kA * kB) > 0 ? 2 * kA * kB / (kA + kB) : 0;
                 gcond[k] = kf * f.Length / f.DistAB;
             }
@@ -691,7 +692,7 @@ public static class ShellThermal
             {
                 var f = m.Faces[k];
                 if (f.B >= 0 || f.Tag != ShellMesh.TagHole || f.DistAB < 1e-12) continue;
-                double kA = Materials.PtThermalK(res.T[f.A]) * 1e-3 * m.Thickness[f.A];
+                double kA = props.K(res.T[f.A]) * 1e-3 * m.Thickness[f.A];
                 gHole[f.A] += kA * f.Length / f.DistAB;      // DistAB = 形心到边中点 = 半格
             }
         }
@@ -745,7 +746,7 @@ public static class ShellThermal
                 foreach (var (c, k) in nbr[i]) { sumG += gcond[k]; sumGT += gcond[k] * res.T[c]; }
                 if (sumG <= 0) continue;
                 double ti = res.T[i], t = m.Thickness[i], A = m.Area[i];
-                double qv = Materials.PtResistivity(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t;
+                double qv = props.Rho(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t;
                 double qs = lossFor[i].Eval(ti);
                 double r = sumGT - sumG * ti + (qv - 2 * qs) * A
                          + gBus[i] * (p.BusbarSinkTempC - ti)
@@ -803,7 +804,7 @@ public static class ShellThermal
                     if (idxC[c] < 0) fixedPart += gcond[k] * res.T[c];
                 }
                 double ti = res.T[i], t = m.Thickness[i], A = m.Area[i];
-                double qv = Materials.PtResistivity(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t;
+                double qv = props.Rho(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t;
                 var tab = lossFor[i];
                 double qs = tab.Eval(ti);
                 double slope = Math.Max(0, tab.Slope(ti));
@@ -877,7 +878,7 @@ public static class ShellThermal
                     if (sumG <= 0) continue;
 
                     double ti = res.T[i], t = m.Thickness[i], A = m.Area[i];
-                    double qv = Materials.PtResistivity(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t;
+                    double qv = props.Rho(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t;
                     var tab = lossFor[i];
                     double qs = tab.Eval(ti);
                     double slope = Math.Max(0, tab.Slope(ti));
@@ -909,7 +910,7 @@ public static class ShellThermal
                 for (int a = 0; a < nFree; a++)
                 {
                     int i = freeC[a];
-                    joule += Math.Abs(Materials.PtResistivity(res.T[i]) * 1e3
+                    joule += Math.Abs(props.Rho(res.T[i]) * 1e3
                            * jMagAPerMm2[i] * jMagAPerMm2[i] * m.Thickness[i] * m.Area[i]);
                 }
                 lastInner = SolveLinear(joule);
@@ -946,7 +947,7 @@ public static class ShellThermal
         for (int i = 0; i < n; i++)
         {
             double t = m.Thickness[i], A = m.Area[i], ti = res.T[i];
-            res.CellGenW[i] = Materials.PtResistivity(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t * A;
+            res.CellGenW[i] = props.Rho(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t * A;
             res.CellLossW[i] = 2 * lossFor[i].Eval(ti) * A;
             gen += res.CellGenW[i];
             loss += res.CellLossW[i];
@@ -1003,7 +1004,7 @@ public static class ShellThermal
         {
             if (!holeCell[i]) continue;
             double t = m.Thickness[i], A = m.Area[i], ti = res.T[i];
-            res.QHoleCellGenW += Materials.PtResistivity(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t * A;
+            res.QHoleCellGenW += props.Rho(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t * A;
             res.QHoleCellLossW += 2 * lossFor[i].Eval(ti) * A;
             res.HoleCellCount++; res.HoleCellAreaMm2 += A;
         }
@@ -1012,7 +1013,7 @@ public static class ShellThermal
         {
             if (Excluded(i)) continue;
             double t = m.Thickness[i], A = m.Area[i], ti = res.T[i];
-            genFree += Materials.PtResistivity(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t * A;
+            genFree += props.Rho(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t * A;
             lossFree += 2 * lossFor[i].Eval(ti) * A;
         }
         res.EnergyResidualW = genFree - lossFree + res.QFromTubeW - res.QToClampW;
@@ -1073,7 +1074,7 @@ public static class ShellThermal
         {
             if (Excluded(i)) continue;
             double t = m.Thickness[i], A = m.Area[i], ti = res.T[i];
-            double g = Materials.PtResistivity(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t * A;
+            double g = props.Rho(ti) * 1e3 * jMagAPerMm2[i] * jMagAPerMm2[i] * t * A;
             double l = 2 * lossFor[i].Eval(ti) * A;
             // ② 局部热稳定的候选预筛用这条 —— 它问的是「冷却侧一样不一样」，所以**跟着保温走**。
             //   R48 续（2026-09-14，Opus 5）：保温按半径划时它直接取 !insulated[i]（与保温同一个判定）；
@@ -1089,7 +1090,7 @@ public static class ShellThermal
                        : insulOnTab;
             double jj = jMagAPerMm2[i];
             if (ti > LocalStability.FitMaxC) hotOutOfRange++;
-            double proxy = Materials.PtResistivity(ti) * jj * jj * t * Materials.PtTcr(ti);
+            double proxy = props.Rho(ti) * jj * jj * t * props.Tcr(ti);
             if (onTab) { gT += g; lT += l; aT += A; tT += ti * A;
                           if (ti > tTMax) { tTMax = ti; iTMax = i; } }   // R48：峰位也要记（见 TabMaxXMm）
             else        { gD += g; lD += l; aD += A; tD += ti * A;
@@ -1168,7 +1169,7 @@ public static class ShellThermal
             //   后一项就是「把铜排热阻折算成多长的舌片」。
             //
             //   A_截面 = 舌宽 × 舌厚。舌宽由压接带反推：tabAreaTot / 压接段长度。
-            //   k 取舌端实际温度下的铂导热系数（PtThermalK 随 T 变，不用常数）。
+            //   k 取舌端实际温度下按牌号的热导率（PtProps.K，随 T 变，不用常数；R48 物性接线 2026-09-23 起按牌号）。
             //   ★ R48（2026-09-14，Opus 5）：「舌宽 = 压接格总面积 ÷ 压接长」只在整面接触口径下成立（老口径只有外圈面积，舌宽被算成约 2h + h·宽/压接长）。
             //     整面接触（ShellMesh.ClampCell 非空）时舌厚与舌端温度按**面积加权**：分级网格上压接段内格子大小不一（锚点两侧的细格、段中远场粗格；
             //     2026-09-14 时还铺了压接细带 hFine，R48 F 2026-09-15 Opus 5 起缺省不铺，理由照样成立），
@@ -1199,7 +1200,7 @@ public static class ShellThermal
                     tTabC = tCnt > 0 ? tTempSum / tCnt : p.TSetC;
                 }
                 double aCrossM2 = wTabMm * tTabMm * 1e-6;                    // mm² → m²
-                busExtraMm = Materials.PtThermalK(tTabC) * aCrossM2
+                busExtraMm = props.K(tTabC) * aCrossM2
                            / p.BusbarConductanceWPerK * 1e3;                 // m → mm
             }
             res.BusEquivLenMm = busExtraMm;

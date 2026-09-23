@@ -82,25 +82,30 @@ public static class ShellCurrent
                                               int maxIter = 20000, double tol = 1e-9,
                                               double sliverKappaMin = SliverKappaMin)
         => Solve(m, totalCurrentA, rhoRefOhmMm, tRefC, tempC, maxIter, tol,
-                 useGaussSeidel: c?.Base?.LinearGaussSeidel ?? false, sliverKappaMin: sliverKappaMin);
+                 useGaussSeidel: c?.Base?.LinearGaussSeidel ?? false, sliverKappaMin: sliverKappaMin,
+                 props: c?.Base is null ? null : PtProps.For(c));   // R48 物性接线（2026-09-23，Opus 5.5）：电阻率按算例牌号；c 或 c.Base 为 null ⇒ 纯铂（PtProps.For(c) 在牌号为空时要读 c.Base）
 
     /// <param name="sliverKappaMin">J 重构的角度条件数门槛（<see cref="SliverKappaMin"/>；生产一律缺省，门传 0 = 不截断，做「改回 ⇒ 红」对照）。</param>
+    /// <param name="props">电阻率按牌号的取值口；null ⇒ <see cref="PtProps.Pure"/>（纯铂，与改前逐位相同）。
+    ///   生产 Core 的调用点一律显式传（门 R48PropsWiringGateTests 源码门）；缺省只留给测试与命令行。</param>
     public static ShellCurrentResult Solve(ShellMesh m, double totalCurrentA,
                                            double rhoRefOhmMm, double tRefC = 1300,
                                            double[]? tempC = null,
                                            int maxIter = 20000, double tol = 1e-9,
                                            bool useGaussSeidel = false,
-                                           double sliverKappaMin = SliverKappaMin)
+                                           double sliverKappaMin = SliverKappaMin,
+                                           PtProps? props = null)
     {
+        props ??= PtProps.Pure;
         int n = m.CellCount;
         var res = new ShellCurrentResult { V = new double[n], JMagAPerMm2 = new double[n] };
         if (n == 0) return res;
 
         // 单元电导率（相对参考值）。σ ∝ 1/ρe(T)
         var sig = new double[n];
-        double rhoRef = Math.Max(1e-30, Materials.PtResistivity(tRefC));
+        double rhoRef = Math.Max(1e-30, props.Rho(tRefC));
         for (int i = 0; i < n; i++)
-            sig[i] = tempC == null ? 1.0 : rhoRef / Math.Max(1e-30, Materials.PtResistivity(tempC[i]));
+            sig[i] = tempC == null ? 1.0 : rhoRef / Math.Max(1e-30, props.Rho(tempC[i]));
 
         // 固定边界：把 Dirichlet 施加在**边界面所属单元**上
         var fixedVal = new double[n];
@@ -376,8 +381,8 @@ public static class ShellCurrent
         double gen = 0;
         for (int i = 0; i < n; i++)
         {
-            double rho = tempC == null ? Materials.PtResistivity(tRefC)
-                                       : Materials.PtResistivity(tempC[i]);
+            double rho = tempC == null ? props.Rho(tRefC)
+                                       : props.Rho(tempC[i]);
             double jSi = res.JMagAPerMm2[i] * 1e6;
             gen += rho * jSi * jSi * (m.Thickness[i] * 1e-3) * (m.Area[i] * 1e-6);
         }

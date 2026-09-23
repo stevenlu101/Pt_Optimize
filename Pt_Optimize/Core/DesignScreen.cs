@@ -46,6 +46,7 @@ public static class DesignScreen
         public double ShapeJMean;
 
         public double MassG(double tMm) => AreaMm2 * tMm * Materials.PtDensity * 1e-6;
+        // R48 物性接线（2026-09-23，Opus 5.5）：本式仍按纯铂 —— 全仓没有调用点；形状因子对象不带牌号。门 R48PropsWiringGateTests 源码门的例外名单逐条写了原因。
         public double ResistanceOhm(double tMm, double tempC)
             => Materials.PtResistivity(tempC) * 1e3 * ShapeR / tMm;
         public double JMax(double currentA, double tMm) => ShapeJ * currentA / tMm;
@@ -58,6 +59,8 @@ public static class DesignScreen
     public static ShapeFactors Extract(ShellMesh mesh, double refCurrentA = 1000.0,
                                        double refTempC = 1050.0, double tangentX = double.NaN)
     {
+        // R48 物性接线（2026-09-23，Opus 5.5）：这里仍按纯铂、电流解不传牌号 —— 与牌号无关：tempC 为 null ⇒ σ ≡ 1（等温），
+        //   ρ 在 ShapeR = rRef·tRef/ρ 里约掉、ShapeJ 不含 ρ ⇒ 形状因子与牌号无关。门 R48PropsWiringGateTests 源码门的例外名单逐条写了原因。
         double rhoMm = Materials.PtResistivity(refTempC) * 1e3;
         var sc = ShellCurrent.Solve(mesh, refCurrentA, rhoMm, refTempC);
 
@@ -128,7 +131,7 @@ public static class DesignScreen
 
         if (!lossTab.Covers(tubeTempC)) return double.NaN;                         // R48（2026-09-15，Opus 5）：超出表区间 ⇒ 判不了
         double beta = lossTab.Slope(tubeTempC) + p.HGlass * Math.PI * p.TubeId;   // W/(m·K)
-        double k = Materials.PtThermalK(tubeTempC);
+        double k = PtProps.For(p).K(tubeTempC);   // R48 物性接线（2026-09-23，Opus 5.5）：按牌号
         return deltaMaxK * Math.Sqrt(k * area * beta);
     }
 
@@ -141,7 +144,7 @@ public static class DesignScreen
     {
         // R48（2026-09-14，Opus 5）：表面热流改调唯一配方 PlateFluxWPerM2（原本处手抄一份，阈值 1e-6、保温面不吹风）
         double q = PlateFluxWPerM2(p, tempC, insulThickMm);
-        return Math.Sqrt(2.0 * q / (Materials.PtResistivity(tempC) * tMm * 1e-3)) * 1e-6;
+        return Math.Sqrt(2.0 * q / (PtProps.For(p).Rho(tempC) * tMm * 1e-3)) * 1e-6;   // R48 物性接线（2026-09-23，Opus 5.5）：按牌号
     }
 
     /// <summary>

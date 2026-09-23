@@ -117,7 +117,8 @@ public static class FlangeStability
         }
 
         // ── 发热侧：P ∝ ρe(T)，故 dP/dT = P·(1/ρe)(dρe/dT)
-        double tcr = Materials.PtTcr(tPlateC);          // 1/K
+        var props = PtProps.For(p);                     // R48 物性接线（2026-09-23，Opus 5.5）：按牌号（纯铂逐位不变）
+        double tcr = props.Tcr(tPlateC);                // 1/K
         r.DGenDT = qGenW * tcr;
 
         // ── ① 表面：数值微分 q″(T)，两面
@@ -130,7 +131,7 @@ public static class FlangeStability
 
         // ── ② 沿舌片到铜排夹：夹持是定温边界 ⇒ dQ/dT = 导度本身
         //    夹持**温度**高低不影响稳定性，只影响工作点；导度才是稳定器。
-        double k = Materials.PtThermalK(tPlateC) * 1e-3;      // W/(mm·K)
+        double k = props.K(tPlateC) * 1e-3;                   // W/(mm·K)
         // ★★ 2026-08-28：热导边界（BusbarConductanceWPerK ≥ 0）下 BusbarClampTempC 恒为 −1，
         //   于是**明明有 G 这条实打实的导热通道，DClampDT 却被判成 0**（偏保守，抹掉一个稳定器）。
         //   物理上三种情形分明：

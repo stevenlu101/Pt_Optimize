@@ -625,12 +625,16 @@ public static class PlateCurrent2D
     /// <param name="h">网格步长 mm</param>
     /// <param name="tempField">可选温度场（与网格同形）。给出时按 σ(T)=1/ρe(T) 逐点取值；
     /// 为空则退回全场常数 σ。铂在 700–1300 °C 间 ρe 变化 48 %，忽略它会把电流分布算偏。</param>
+    /// <param name="props">电阻率按牌号的取值口（R48 物性接线，2026-09-23，Opus 5.5）；null ⇒ <see cref="PtProps.Pure"/>（纯铂，与改前逐位相同）。
+    ///   生产 Core 的调用点一律显式传（门 R48PropsWiringGateTests 源码门）；缺省只留给测试与命令行。</param>
     public static PlateField Solve(FlangePlate g, double totalCurrentA,
                                    double rhoOhmM, double h = 0.5,
                                    int maxIter = 20000, double tol = 1e-10,
                                    double[,]? tempField = null, double tRefC = 1300,
-                                   double[,]? thickField = null)
+                                   double[,]? thickField = null,
+                                   PtProps? props = null)
     {
+        props ??= PtProps.Pure;
         double x0 = g.TabTipXMm - h, x1 = (g.TwoTabs ? -g.TabTipXMm : g.DiscRadiusMm) + h;   // 双舌片：图幅到 +x 舌端
         double z1 = Math.Max(g.DiscRadiusMm, g.ExtHalfWidthMm) + h;
         int nx = (int)Math.Round((x1 - x0) / h) + 1;
@@ -664,10 +668,10 @@ public static class PlateCurrent2D
                : g.ThicknessAt(x0 + i * h, -z1 + j * h);
 
         // 局部电导率 σ(T) = 1/ρe(T)，归一化到参考温度使无温度场时退化为原行为
-        double sigRef = 1.0 / Materials.PtResistivity(tRefC);
+        double sigRef = 1.0 / props.Rho(tRefC);
         double SigmaAt(int i, int j)
             => tempField == null ? 1.0
-               : (1.0 / Materials.PtResistivity(tempField[i, j])) / sigRef;
+               : (1.0 / props.Rho(tempField[i, j])) / sigRef;
 
         // SOR 迭代（掩膜外邻居不参与 → 自然 Neumann）
         double omega = 2.0 / (1.0 + Math.PI / Math.Max(nx, nz));

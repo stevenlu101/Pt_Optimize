@@ -1,7 +1,94 @@
 ﻿# Pt_Optimize 交接文档
 
 > 铂金直接加热系统用量优化。换机接手请从本文档开始。
-> 最后更新：2026-09-23（`§0.-17` R48 N 网格生成并入合并树、R47／R48 快照入库，云端 Linux 会话；此前：H/I/J/L/P/U 六路合入合并树 r48_M，合入之后三轮见 `§0.-14M`／`§0.-15M`／`§0.-16M`，网格生成见 `§0.-15N`）
+> 最后更新：2026-09-23（`§0.-18` R48 物性接线：电、热物性按牌号进求解链，纯铂逐位不变；此前同日 `§0.-17` R48 N 网格生成并入合并树、R47／R48 快照入库，云端 Linux 会话；此前：H/I/J/L/P/U 六路合入合并树 r48_M，合入之后三轮见 `§0.-14M`／`§0.-15M`／`§0.-16M`，网格生成见 `§0.-15N`）
+
+---
+
+## 0.-18 ★★★★★ R48 物性接线：**电阻率（含 dρ/dT、电阻温度系数）、热导率、比热按牌号进求解链**；纯铂逐位不变 —— 2026-09-23，Opus 5.5（云端 Linux 会话）
+
+> 起因：R48 台账那一行的「没做的一半」（§0.-6H 末「待接线」、合并 2026-09-18 节「物性接线：已接／未接」、§0.-14M C 与 F1、§0.-1 M1）：
+> 选了别的牌号，只有持久强度与热膨胀跟着变，电、热那一路一位都不动。本节把这一路接上。设计稿（决定 D1–D9）由编排会话给定，本节写的是**照它做了什么、哪里偏离、跑了什么**。
+
+### 甲　改了什么
+
+- **新档 `Core/PtProps.cs`**：电、热物性按牌号的**唯一取值口**（`Rho`／`DRhoDT`／`Tcr`／`K`／`Cp`、`Note`、`RangeNote`、`IsFallback`）。
+  - 牌号 `"Pt"`（默认）⇒ `PtProps.Pure`，五个函数调的就是 `Materials.PtResistivity`／`PtTcr`／`PtThermalK`／`PtCp` 与求解链原来内联的 `RhoRef·(AlphaFit + 2·BetaFit·T)`，同一运算次序 ⇒ **纯铂逐位不变**。
+  - 按牌号那一支只给 `MaterialDb.DataCompleteness` 的**电阻率与热导率／比热两类都算自有**的牌号：Pt-Rh/90-10、Tanaka-ZGS-Pt、Tanaka-ZGS-PtRh10、Umicore-PtRh10（后者只因持久强度区间未确认而不齐全）。
+  - 其余（FKS16 两个、Pt-Rh/80-20、Umicore-PtRh20、Pd、Ni、Cu）**五项一起退回纯铂、不混用**，说明里写缺什么；参考热导率（Pt-20%Rh 的推算值）不读；材料库里没有的名字照样由 `MaterialDb.Get` 抛明确异常。
+- **求解链接线**（每处原来直读纯铂的地方都改成经 `PtProps`）：`SegmentSolver`（电阻、比热时间常数、电阻温度系数、dρ/dT、轴向导热、邻段导度、端部保温形状、能量账、Profile 源项）、`ShellCurrent`（σ(T) 与发热；`Solve` 加可选末参 `PtProps? props = null`，`SolveFor` 按算例牌号传）、`PlateCurrent2D`（同上）、`CoupledSolver`、`PlateThermal2D`、`ShellThermal`（k、ρ、代理量里的电阻温度系数）、`LocalStability`、`FlangeStability`、`RampTwoNode`（两节点与准静态）、`RampSolver`、`RampScreen`、`DesignCurrent`（闭式电阻，加可选末参）、`DesignScreen`（`DrawBudgetW` 的 k、`JLimitAPerMm2` 的 ρ）、`LineRunner`（整片电流的参考 ρ）。
+- **`LineRunner.Normalize` 加一道**：`LineCase.GradeName` 非空且 ≠ `Base.GradeName` ⇒ 当场抛（段解与强度读前者、法兰／升温／热稳定读后者，两者不一致就是一半按这个牌号一半按那个）。生产里没有任何地方显式设 `LineCase.GradeName`。
+- **整线结果说明**：选的不是纯铂时，`LineRunner.Run` 在说明**末尾**加一条「★ 电阻率、电阻温度系数、热导率、比热按牌号「…」取（借用…）；各曲线数据点区间；密度、熔点按纯铂」＋ 本算例温度越出数据点之处与电阻率测试值疑点段（温度区间 = 升温起止温度 `RampFromC`／`RampTargetC` ＋ 各段金属温度 ＋ 解出来的片的最低／最高温；升温起止温度**不论开没开升温核算都并入**，因为设计电流闭式 `DesignCurrent.Compute` 每轮都从 `RampFromC` 算到目标）；首轮失败、耦合中途失败、正常收尾三个出口都加；纯铂不加（`Notes[0]` 等原有各条不动）。段解的 `SolveResult.Note` 同样带这一句（页面 ② 走这里）。
+- **说明文字**：`DesignInputs.GradeNameNote` 改成新的真话（电、热也按所选牌号；仍按纯铂的是密度与熔点；数据不全一起退回）；`Materials`／`MaterialDb` 档头与 `SetThermal` 注释、安装报告「牌号」那一句（写明按此牌号还是退回、铂重按纯铂密度）；页面 ② 输出框「材料数据」那一句（`UI/MainForm.cs`）。
+- **仍按纯铂的（有意，逐条有因）**：密度 `Materials.PtDensity`（热容 = 纯铂密度 × 所选牌号比热；铂重与自重同样 —— 材料库里合金密度 19970／18740 没有出处）；熔点 `PtMeltC`／`RampTwoNode.PtMeltingC`／字面 1768；`PtFitMaxC` 1500（也正是 Pt-Rh/90-10 工作簿行的上界）；`LocalStability.FitMaxC`／`FlangeStability.tFitMaxC` 1400（发散场的护栏，不是物性）；焊接常数（焊缝屈曲下界 `DesignSpec.DiscFloorMm` → `WeldDistortion.ForPt` 用纯铂的线胀系数 `PtAlphaExp`、到熔点的平均比热 `PtCpMeanToMelt`、熔化潜热、泊松比；参数表说明里写明了这一条例外）；`DesignScreen.ShapeFactors.ResistanceOhm`（全仓无调用点）与 `DesignScreen.Extract`（ρ 在形状因子里约掉、电流解等温）；`RemovalPriority.ConductionW` 的 k（整片一个常数，只标定瓦数，去料排序与挖孔位置不变）；`Program.cs` 命令行约 40 处；`UI/LineDesignPage.cs` 的 PtDensity。
+- **偏离设计稿的三处**（代码证伪／更稳妥，写在这里；第 1 处同日复审撤回，见该条）：
+  1. ~~结果说明的温度区间**只在开了升温核算时才并入升温起止温度**（设计稿是无条件并入 `RampFromC`）。不核升温时 25 °C 那一端根本没被算过，说「本算例 25 °C 低于数据点」就是假话。于是门 6 的小算例（`checkRamp: false`，本算例 450–1315.6 °C）区间说明为空；~~
+     **同日复审更正：上面划掉的那句是错的。** 设计电流闭式（`DesignCurrent.Compute`，`LineRunner` 判据段「法兰截面 J」那一处）每轮都跑，与 `CheckRamp` 无关；它从 `RampFromC` 升到目标，一路按牌号读 ρ、cp、k。所以 25 °C 是真算过的。已改回设计稿：`AddGradeNote` 无条件并入升温起止温度。本条不再是偏离。门 6 改成区间含升温起止温度，并钉「热导率：本算例最低 25 °C 低于数据点下限 100 °C」。
+  2. 门 4 原想钉「Pt-Rh/90-10 法兰最高温 > 纯铂」—— 实跑证伪（1146.96 → 1146.88 °C：这块板最高温在管孔边，钉在管根附近）。改钉「管孔抽热与总发热随牌号变」（617.3 → 554.5 W、293.2 → 323.5 W），不钉方向。
+  3. 门 1 的指纹不能直接用全文 SHA：转储里 `LineResult.JacobianAmpSec` 与说明里「量雅可比用时 x s」是耗时，每跑都变（同一棵树连跑两次全文 SHA 不同，去文字 SHA 也不同 —— `JacobianAmpSec` 是 double 成员）。门 1 把这两处改写成占位再算 SHA。⚠ 这也意味着 `R48LineDumpTests` 的「去文字 SHA」在会量雅可比的算例上**不确定**（它的六个算例量不量雅可比本轮没查），登记在不覆盖里。
+     **编排会话同日核实**（Fable 5.1）：六个算例都量雅可比（六份转储都带 `结果.JacobianAmpSec`），所以 §0.-16M 之后这条门在任何平台都不可能两跑同值（合并树上它红着，09-18 12:13 之后也没有任何两跑相同的记录）。已把 `R48LineDumpTests` 转储器的去文字口径改成对挂钟成员（`JacobianAmpSec`／`RampSeconds`／`EmptyTubeSeconds`）写占位「<挂钟>」，全文 SHA 照写原值；六条记录仍是 09-18 的 Windows 数、**不用 Linux 数改**，下次 Windows 重录按新口径并要求紧跟的第二跑逐位相同（变因写在该档头注）。
+
+### 乙　门
+
+`Pt_Optimize.Tests/R48PropsWiringGateTests.cs`，9 条快门：
+
+| 门 | 覆盖 | 不覆盖 |
+|---|---|---|
+| 1 `门_纯铂默认逐位不变_整线小算例` | 纯铂默认的整线小算例（W08 两段、给定电流、耦合 2 轮），全量转储（含文字，耗时两处改占位）SHA-256 = **接线前**记录；纯铂不加牌号说明 | 整线小算例不经过的路径：升温核算那一支（本算例不核升温）、参考工具页 `LineSolver.SizeFlanges` → `CoupledSolver` → `PlateThermal2D`／`PlateCurrent2D`、`RampScreen.Evaluate`／`Judge`、`DesignScreen.DrawBudgetW`／`JLimitAPerMm2`。这几处的纯铂逐位只有门 2 在访问口层证，调用处运算次序没有逐位门、只经审阅；Windows 记录还没有（见丙） |
+| 2 `门_访问口_纯铂一支调的就是原函数_逐位` | 0–1600 °C 每 1 K 加 5 个点，纯铂与 Tanaka-ZGS-Pt 五个函数对原函数**逐位**；Pt-Rh/90-10 与纯铂在 1150 °C 等于差量文件印的数（4.839881E-07／69.300／160.000；4.708026E-07／83.790／164.525）；区间说明（含电阻率测试值疑点段：90-10 那一行 100–600 °C，区间重叠才写）；`PtProps.cs` 不含参考热导率与热膨胀 | —— |
+| 3 `门_选牌号物性真的进链_段解` | 同电流：电阻温度系数逐位 = 访问口；时间常数比 = cp 比、衰减长度比 = √(k 比)、电阻 = ρ(平均温度)（1e-12）；中点更热；说明带牌号；反算电流 90-10 更小 | —— |
+| 4 `门_选牌号物性真的进链_壳体电流与热场` | 均匀温度：电流分布与牌号无关（逐位）、发热比 = ρ 比（+2.80 %，差量文件 1150 °C 那格）；非均匀温度：电流分布变；热解逐格发热 = ρ(T)·1e3·J²·t·A（逐位）；抽热与发热随牌号变 | 变化方向（见甲 偏离 2） |
+| 5 `门_选牌号物性真的进链_升温两节点与准静态` | 准静态金属热容比 = cp 比、管电阻比 = ρ 比、散热不变；两节点管电阻比 = ρ 比、管侧翅片导度比 = √(k 比) | 升温积分的整条轨迹 |
+| 6 `门_选牌号物性真的进链_整线说明` | 选 90-10：末条说明的开头、数据点区间、只加一次、区间段 = 访问口对本算例温度区间给的（区间含升温起止温度 25／1150 °C：不核升温也并入，设计电流闭式每轮都算过）；说明里有「热导率：本算例最低 25 °C 低于数据点下限 100 °C」；段温真的变 | 失败出口的说明（只有源码，没有算例） |
+| 7 `门_数据不全的牌号一起退回纯铂_写明` | 按牌号取的集合 = 上面四个；其余全标退回，「持久强度仍按本牌号」只在有持久强度曲线时写；FKS16/Pt 说明写缺什么、五函数逐位 = 纯铂；Pt-Rh/80-20 不读参考热导率；FKS16/Pt 段解指纹 = 纯铂且说明写退回；参考工具页逐行牌号那一路 `LineSolver.JointGradeNotes` 带出两侧段的退回说明，`SizeFlanges` 源码里真的赋给 `FlangeResult.GradeNotes`；未知名抛 | `SizeFlanges` 端到端（每段一次耦合解）；界面把 `GradeNotes` 印出来（UI 未编译） |
+| 8 `源码门_求解链不再直读纯铂函数_例外逐条有因` | `Core/*.cs`（除 `Materials.cs`）里 `Materials.PtResistivity(`／`PtThermalK(`／`PtCp(`／`PtTcr(`／`RhoRef *`／`BetaFit` 的个数 = 例外名单（PtProps 各 1、DesignScreen 电阻率 2、RemovalPriority 热导率 1，其余 0）；Core 调 `ShellCurrent.Solve(`／`PlateCurrent2D.Solve(`／`ClosedFormResistanceOhm(` 的地方都传了牌号（例外 DesignScreen 那一处） | `Program.cs`、`UI/` |
+| 9 `门_整线牌号只有一个来源` | 不一致 ⇒ `Run` 与 `BaseSegParams` 当场抛；空 ⇒ 接参数表，段参数与参数表拿到同一个取值口 | —— |
+
+改的门（变因写在门里）：
+- `R48MGradeNoteTruthTests.说明里写的与源码里真读的一致`：原钉「求解链还是纯铂、说明写『目前一律按纯铂算』」，改钉新现状 —— 直读纯铂的只剩 DesignScreen 电阻率与 RemovalPriority 热导率；读 `PtProps.For(` 的档恰好是 13 档求解链 ＋ `InstallReport.cs` ＋ `LineSolver.cs`（后两档只读说明文字；`LineSolver.cs` 是同日复审加的）；两个电流解带 `PtProps? props = null`；说明含「也按所选牌号」「仍按纯铂的：**密度**」「数据不全」、不含「目前一律按纯铂算」；整线链铂重用 `Materials.PtDensity` 不读 `DensityKgM3`。慢门那份差量文件只改读法文字（断言不动）。
+- `R48ThermalSourceTests.比热只在升温与时间常数处被读到_稳态判据不读比热`：`Materials.PtCp(` 只剩 `PtProps.cs`；读比热的档改认任何接收者的 `.Cp(` 与 `CpJPerKgK(`（`PtProps.cs`、`MaterialDb.cs` 除外；复审放宽了匹配，原来只认 `props.Cp(`／`_props.Cp(`，别名会漏），仍是 RampSolver／RampTwoNode／SegmentSolver 三档，各处字面照钉，稳态八档都不许有。
+- 复审（同日）又在 `R48MGradeNoteTruthTests` 快门里补了两条：① `Core/*.cs` 全体里直接调 `.ResistivityOhmM(`／`.ThermalKWPerMK(`／`.CpJPerKgK(` 的，只许 `PtProps.cs` 各 1、`MaterialDb.cs` 电阻率 1（Pt-Rh/80-20 参考热导率的 Wiedemann–Franz 推算）、`PtResistivityData.cs` 电阻率 1，逐档逐式计数（接线前这条由「byGrade 为空」兼管，改钉新现状时丢了）；② 说明里写「焊缝屈曲下界仍按纯铂」⇔ `WeldDistortion.cs` 真的还读 `Materials.PtCpMeanToMelt`。不覆盖：`Program.cs`、`UI/`、经别名或反射的调用。
+
+### 丙　跑了什么（Linux 镜像 `tools/linux_mirror`，net8.0；只跑点名的类，没跑全套）
+
+- 接线**前**（a468063 只加门 1）：门 1 连跑两次 SHA-256 `13aedf7e…93cdb45` 逐位相同 ⇒ 记为 Linux 记录；另存 `R48ClampFaceGateTests.c_…` 输出与 `R48PropertyDumpTests` 两段 SHA 作对照。
+- 接线**后**：
+  - `R48PropsWiringGateTests` 9/9 过（门 1 SHA 与接线前相同）；`R48MGradeNoteTruthTests&速度!=慢` 1/1；`R48ThermalSourceTests` 9/9。
+  - `R48EmptyTubeGateTests`、`SigmaOfTTests`、`BusAnchorTests`、`FieldConvergenceGateTests`、`SilentKnobTests`、`ConvCharLenTests`、`R48ExpansionDownstreamTests`、`MaterialDbTests`、`R48ResistivityWorkbookTests`、`DesignCurrentTests`、`RemovalPriorityTests`、`R48G2RampClampChannelGateTests`、`RequirementRegisterTests`、`ProvenanceRefTests`、`LineSolverTests`、`R48LTubeStrengthGateTests`、`R48MGradeDropdownTests`、`R48ExpansionWorkbookTests`（`速度!=慢`）：134 条过 133，红的一条是 `R48MGradeDropdownTests` 的 `GradeNameEditor.BuildList`（镜像里界面编辑器是空占位，镜像必红）。`R48DiscInsulPerPlateGateTests&速度!=慢` 7/7。
+  - `R48ClampFaceGateTests.c_…`：输出与接线前**逐字相同**（仍是那 52 处 Linux↔Windows 数学库差，§0.-17 丙）。
+  - `R48PropertyDumpTests`：网格段 `c6dd043b…`、膨胀段 `37cd577d…` 与接线前相同（与决定记录不同是既有的 Linux 差）。
+- **同日复审后**（12 条改完，重建镜像，`build OK after 1 iterations`，0 Error(s)）：
+  - `R48PropsWiringGateTests|(R48MGradeNoteTruthTests&速度!=慢)|R48ThermalSourceTests`：第一跑 19 过 18（`R48MGradeNoteTruthTests` 红：读 `PtProps.For(` 的档多了本轮新加的 `LineSolver.cs`），名单补上后第二跑 19/19（门 1 SHA 仍与接线前相同）。
+  - `(InstallReportTests|NoCriterionCodeInUiTests|RequirementRegisterTests|ProvenanceRefTests|DesignCurrentTests|FieldConvergenceGateTests|LineSolverTests)&速度!=慢`：61/61。`SegmentSolverTests` 类不存在。计数门与 `R48MGradeDropdownTests` BuildList 镜像必红，没跑。
+  - 之后只改注释与断言消息文字，重编 0 Error(s)，再跑 `R48PropsWiringGateTests|(R48MGradeNoteTruthTests&速度!=慢)|R48ThermalSourceTests|InstallReportTests`：22/22。
+  - 门 6 印出的末条说明（区间 25.0–1315.6 °C）含「电阻率测试值（Pt-Rh/90-10 行）在 100–600 °C 有疑点」与「热导率：本算例最低 25 °C 低于数据点下限 100 °C ⇒ 那一段取端点值 42.5」。全文见实施记录。
+- **成本**：纯铂整线小算例 8.3 s（接线前同一机 15–18 s，机器负载不同，不可比）；Pt-Rh/90-10 同算例约 11.7 s（门 6 两跑共 20 s 减纯铂 8.3 s）—— 两者物理不同、收敛路径不同，**按牌号那一支的查表开销没有单独量**。纯铂一支走的是原函数，没有新增查表。
+
+- **编排会话补跑（Fable 5.1，03:40–04:15，镜像按 `tools/linux_mirror/ui_refs.py` 的代码级界面判定建，与合并树同规则）**：
+  - 全套快门 `速度!=慢`：**1071 条，过 1063，红 8**（788 s）—— 合并树同规则镜像也红的 6 条（`R48ClampFaceGateTests.c`／`R48ClampRecipeTests.d` 两条平台差：断言消息与合并树那跑**逐字相同**（SHA 比过），即纯铂在这两道逐位门上一位没动；`R48NMeshGateTests.门b` ×3：F6 之前本就红，§0.-17 己；计数门）＋ `R48MGradeDropdownTests.灰显下拉…`（镜像界面编辑器是占位，必红）＋ `R48ExpansionDownstreamTests.膨胀函数还没有接进报告层…`（**本轮真红**：`DesignInputs.cs` 新写的文档注释里 `<see cref="PtThermalExpansion"/>` 被该门的全文扫描抓住。改成不点类名的说法「它按牌号读热膨胀曲线表」，**不加白名单**，改后该门过）。
+  - 整线全量转储 `R48LineDumpTests`（慢，606 s）：六份转储对合并树 01:34 那跑（同镜像、接线前）逐行比，**只差 `结果.JacobianAmpSec` 与 Notes 里印同一秒数的那半句**（六份共 11 行），别的行一行不差 —— 这是「接线后纯铂整线逐位不变」的全线证据，比门 1 的小算例覆盖得全（六个算例含空管、实测电流、图纸路径）。对拍全文（每处不同的行原样列出）：`deliverable/R48_物性接线_全线转储对拍_合并树013404_接线树035235_2026-09-23.txt`；两跑的 `R48_整线全量转储_SHA256汇总_本次开跑于2026-09-23_013404_16503.txt`／`…_035235_20631.txt` 入库；六份转储全文（每份约 70 KB）没入库，要复现就在两个提交上各跑一次 `R48LineDumpTests`。
+  - 改完上面两处（转储器挂钟占位、`DesignInputs` 注释）重建镜像，`R48MGradeNoteTruthTests|R48PropsWiringGateTests|R48ExpansionDownstreamTests|R48ThermalSourceTests`（不加 `速度!=慢`，含差量表那条慢门）：**22/22**（35 s；差量表产出 `deliverable/R48_M_物性按牌号与纯铂差量_本次开跑于2026-09-23_041417.txt`，与 09-18 那份只差读法文字）。
+  - 计数：同一镜像规则下合并树反射 1250、本树 1259 ⇒ **+9**，Windows「应为」1462 → 1471 的差量成立（仍不是 Windows 实数）。
+  - 跑快套件会改写九份受跟踪的 deliverable 文本（`四片为什么等厚.txt`、`移除优先级.txt` 等测试副产物），提交前已按库里版本还原，一份没进本提交。
+
+### 丁′　同日复审（三位审查人核过的 12 条，全部照改；逐条见实施记录「同日复审」）
+
+- 整线说明：耦合中途失败的出口也加；温度区间无条件并入升温起止温度（甲 偏离 1 的更正）；区间说明加电阻率测试值疑点段。
+- `ShellCurrent.SolveFor` 改 `c?.Base is null ? null : PtProps.For(c)`；两处过时注释（`SegmentSolver`、`ShellThermal`）改成按牌号。
+- 门补回与放宽：直读按牌号曲线的源码门（`R48MGradeNoteTruthTests`）；比热门匹配任何接收者（`R48ThermalSourceTests`）；门 1 写全不覆盖。
+- 说明：参数表说明写明焊缝屈曲下界仍按纯铂、差量「最多」限定到差量文件所列温度（20 °C 起），−40.82 % 那格是 20 °C 的端点值；退回说明只在有持久强度曲线时写「持久强度仍按本牌号」；安装报告第 1 节非纯铂时全文印电、热物性那一句。
+- 参考工具页逐行牌号那一路（`Segment.GradeName` → `LineSolver.SizeFlanges` → `CoupledSolver`）：原来退回纯铂是静默的（`c.Tube.Note` 被丢掉）。现在 `FlangeResult.GradeNotes` 带出，界面印在法兰表下（未编译）。这一路与参数表「铂材牌号」说明是两回事：本页每行各自一个牌号。
+
+### 丁　不覆盖
+
+1. **Windows 一道没跑**：全 sln 编译（含 `UI/`、`Program.cs`）、`LineCaseCloneTests`、`R48CavityRadiationGateTests`、`DocRefTests` 等界面档（镜像排除）、界面走查、`--selfcheck`。
+2. **门 1 的 Windows 记录没有**：Windows 上门 1 必红并印出本机 SHA；要在 **a468063 只加本档** 上跑出那个数填进 `WindowsRecord`，不要在接线后的树上记。
+3. **`UI/MainForm.cs` 页面 ② 那句「材料数据：实测工作簿」已改**成「材料数据：电阻率、持久强度取实测工作簿；热导率、比热取文献与厂方图（出处见材料库）」—— 只改字符串，**镜像不编译 UI，没编译过、没看过界面**。
+   同日复审在同一档又改两处，同样**未编译**：`Report()` 的说明一节改成 `SolveResult.Note` 非空就印（原来只在空管时印；带玻璃时牌号那一句与「管最高温超出散热表上限」那一句原来都看不到）；「核算法兰」表下面印各片的 `LineSolver.FlangeResult.GradeNotes`。
+4. **判据全体按新物性重跑没做**：纯铂一位没动，所以现有记录都成立；选别的牌号的算例从没整线判过。
+5. `.fd.json` 设计记录没有牌号字段（`DesignSpecStore.cs`），要加得走全链（Fit／Clone／存档／界面／门）；页面 ② 的 `LineSolver.cs:46` 管质量按牌号密度、整线按纯铂密度（既有的不一致，§0.-1 M5）。
+6. 镜像里的快套件全体与计数门由编排会话跑；计数门在镜像里必红（§0.-17 丙）。
+7. ~~`R48LineDumpTests` 去文字 SHA 含 `JacobianAmpSec`（耗时）—— 会量雅可比的算例记录不确定（见甲 偏离 3），本轮没查它的六个算例量不量。~~ **编排会话同日查了、改了**（甲 偏离 3 的追记、丙「补跑」）：六个都量，去文字口径已把挂钟成员写成占位；仍不覆盖的是 **Windows 重录**（记录还是 09-18 的数，这条门在 Windows 上要先按新口径跑两遍再填数）。
 
 ---
 
@@ -184,15 +271,17 @@ M 在分叉之后的改动有 §0.-15M／§0.-16M 两张改动表，N 在 09-19 
 本次新生成（都带开跑时刻）：`deliverable/R48_L_圆盘保温10_重判三关_W08_本次开跑于2026-09-18_105752.txt`（总耗时 1.07 小时）、`deliverable/R48_L_耦合容差收紧_细网格_本次开跑于2026-09-18_105037.txt`、`deliverable/R48_整线全量转储_SHA256汇总_本次开跑于2026-09-18_120159_1904.txt`。
 2026-09-18 Opus 5 补一份：`deliverable/R48_L_耦合容差收紧_细网格_本次开跑于2026-09-18_135232.txt`（加了圆盘保温证据头之后的重跑，7 m；四个数与 `105037` 逐位相同，见下面「套件与门」那一格）。
 
-### 物性接线：已接／未接（本轮**只查不做**）
+### 物性接线：已接／未接（本轮**只查不做**；★ 2026-09-23 `§0.-18` 电、热三行已接）
 
-H 路交出来的是**按牌号的温度函数**；求解链现在读到的多数还是写死纯铂的那一份。下面这张表是下一步界面接线的清单。
+H 路交出来的是**按牌号的温度函数**；~~求解链现在读到的多数还是写死纯铂的那一份。下面这张表是下一步界面接线的清单。~~
+★ 2026-09-23（Opus 5.5，`§0.-18`）：电阻率、热导率、比热三行**已接**（经 `Core/PtProps.cs`）；仍按纯铂的（密度、熔点等）逐条有因，见 `§0.-18` 甲。
 
 | 物性 | H 给的按牌号入口 | 求解链现在读谁 | 状态 |
 |---|---|---|---|
-| 电阻率 ρ(T) | `PtGrade.ResistivityOhmM(T)`（原始表 `PtResistivityData`） | `Materials.PtResistivity(T)` —— 写死纯铂三系数。段解焦耳热、壳体电流、板件二维电流三处都调它 | **未接**。按牌号那一支目前只有 `Program.cs` 的命令行对照表在读 |
-| 热导率 k(T) | `PtGrade.ThermalK`（PtRh10 实测入库；PtRh20 只有推算参考值，不入判定） | `Materials.PtThermalK(T)` —— 纯铂式。段解轴向导度、壳体热解、板件二维热、升温两节点等十余处 | **未接** |
-| 比热 cp(T) | `PtGrade`（PtRh10 入库） | `Materials.PtCp(T)` —— 纯铂 Kaye & Laby 四点拟合（本轮 H 改的就是它）。只在 `RampSolver`／`RampTwoNode`／`SegmentSolver` 三档被读到 | **未接** |
+| 电阻率 ρ(T)（含 dρ/dT、电阻温度系数） | `PtGrade.ResistivityOhmM(T)`（原始表 `PtResistivityData`） | ~~`Materials.PtResistivity(T)` —— 写死纯铂三系数~~ **`PtProps.For(牌号).Rho／DRhoDT／Tcr`**（纯铂一支调的就是 `Materials` 原函数）：段解、壳体电流与热解、板件二维电流与热、升温两节点／准静态／集总、热稳定、闭式电阻 | **已接**（2026-09-23 `§0.-18`；门 `R48PropsWiringGateTests`、`R48MGradeNoteTruthTests`）。例外两处有因：`DesignScreen` 形状因子（ρ 约掉）、`ShapeFactors.ResistanceOhm`（无调用点） |
+| 热导率 k(T) | `PtGrade.ThermalKWPerMK`（PtRh10 实测入库；PtRh20 只有推算参考值，不入判定、`PtProps` 不读） | **`PtProps.For(牌号).K`**：段解轴向导度、壳体热解、板件二维热、升温两节点、热稳定 | **已接**（同上）。例外一处有因：`RemovalPriority` 的整片常数 k（排序对它不变） |
+| 比热 cp(T) | `PtGrade.CpJPerKgK`（PtRh10 入库） | **`PtProps.For(牌号).Cp`**，仍只在 `RampSolver`／`RampTwoNode`／`SegmentSolver` 三档被读到（门 `R48ThermalSourceTests`） | **已接**（同上）。热容 = 纯铂密度 × 所选牌号比热 |
+| 密度 | `PtGrade.DensityKgM3`（合金 19970／18740，**没有出处**） | `Materials.PtDensity`（21450）：热容、整线铂重、自重 | **未接（有意）**：没有出处的数不进判据；页面 ② `LineSolver` 的管质量读的是牌号密度（既有不一致，§0.-1 M5） |
 | 热膨胀 ε(T)／α(T) | `PtThermalExpansion.Strain`／`StrainDifference`／`Elongation`（按牌号） | `Core/RampSweep.cs` 已经在读它（升温全程逐点的应变差） | ~~**半接**：算得出，但 `RampSweep.Run` 全仓**没有生产调用方**（只有测试在调），UI 与安装报告一个字都不印 ⇒ 工程师点不到~~　**2026-09-18 已接**（`§0.-14M` B）：`Core/FinalCheck.cs` 是第一个生产调用方，终验跑一次、伸长表进输出框与安装报告第 7b 节；`R48ExpansionDownstreamTests` 那条门**反过来了**（现在要求必须有生产调用方） |
 | 持久强度（蠕变） | `PtGrade.AllowableMPa`／`RuptureStressMPa`／`InCreepRange`（`PtCreepWorkbook`） | `Mechanics`、`LineSolver`、`TubeStrength`（④ 管强度）都按 `p.GradeName` 取 | **已接**（唯一一条全链路按牌号的） |
 | 数据齐全度（四类） | `MaterialDb.DataCompleteness` | ~~全仓**没有调用方**；界面牌号下拉列的是材料库全部牌号~~　**2026-09-18 已接**（`§0.-14M` A）：`Core/GradeChoices.cs` → `GradeNameConverter`（能选的只剩齐全的四个）＋ `UI/GradeNameEditor.cs`（全集照列、不齐全的灰显、行末写明缺哪几类） | **已接**（门 `R48MGradeDropdownTests`；抓图 `uishot_M_0918/90_牌号下拉_数据不全的灰显不可选.png`） |
@@ -200,7 +289,8 @@ H 路交出来的是**按牌号的温度函数**；求解链现在读到的多�
 ⚠ 连带一条**界面说假话**（当时登记为 M1）：参数表「铂材牌号」的说明写着「电阻率与持久强度均取该牌号的实测数据」，而电阻率在求解链里是写死纯铂的。
 **2026-09-18 已改口**（`§0.-14M` C）：说明换成现状的真话（持久强度按牌号；电阻率、热导率、比热按纯铂），差量已量并存档
 （`deliverable/R48_M_物性按牌号与纯铂差量_本次开跑于2026-09-18_143953.txt`：Pt-Rh/90-10 的电阻率最大差 `+84.91 %`、热导率 `−40.82 %`；纯铂两式逐位相同）。
-**求解链本身仍未接线** —— 上面三行「未接」照旧成立，门 `R48MGradeNoteTruthTests` 两头钉着「说明与源码一致」。
+~~**求解链本身仍未接线** —— 上面三行「未接」照旧成立，门 `R48MGradeNoteTruthTests` 两头钉着「说明与源码一致」。~~
+★ 2026-09-23（Opus 5.5，`§0.-18`）：求解链已接线，说明随之改成新的真话；门 `R48MGradeNoteTruthTests` 改钉新现状、仍两头钉。
 
 ### 暂存里非六路文件的来路表（2026-09-18，Opus 5 按复核意见补）
 
@@ -678,7 +768,7 @@ H 路交出来的是**按牌号的温度函数**；求解链现在读到的多�
 门：`R48MGradeNoteTruthTests`（**1 条快门 ＋ 1 条慢门**；慢的那条写文件 —— ★ 2026-09-18 §0.-15M 更正：
 原写「2 条快门，其中一条写文件」，与同一节 E 表里「慢门 `R48MGradeNoteTruthTests`（差量表）」自相矛盾。
 实为 `说明里写的与源码里真读的一致`（快）＋ `量出按牌号与纯铂的差并存档`（`[Trait("速度","慢")]`，每跑一次多一份带时刻的文件））——
-**源码门两头钉**：扫 `Core/` 求解链，若出现按牌号取电／热物性（`.ResistivityOhmM(`／`.ThermalKWPerMK(`／`.CpJPerKgK(`）⇒ 红并要求同时改说明；
+**源码门两头钉**：扫 `Core/` 求解链，若出现按牌号取电／热物性（`.ResistivityOhmM(`／`.ThermalKWPerMK(`／`.CpJPerKgK(`）⇒ 红并要求同时改说明（★ 2026-09-23 `§0.-18` 接线后改钉新现状，见那一节乙）；
 说明里若回到「电阻率与持久强度均取该牌号的实测数据」那句假话 ⇒ 红；
 并核实「持久强度按牌号」那半句确实为真（`Mechanics`／`TubeStrength` 里 `MaterialDb.Get(p.GradeName)`）。
 
@@ -739,7 +829,8 @@ H 路交出来的是**按牌号的温度函数**；求解链现在读到的多�
 
 ### F　还开着
 
-1. **电阻率／热导率／比热按牌号接线**没做（本轮只量差、只改说明）。差量文件在 C 那一节；接的时候要连判据全体重跑，并回来改 `GradeNameNote` 与 `R48MGradeNoteTruthTests` 两头。
+1. ~~**电阻率／热导率／比热按牌号接线**没做（本轮只量差、只改说明）。差量文件在 C 那一节；接的时候要连判据全体重跑，并回来改 `GradeNameNote` 与 `R48MGradeNoteTruthTests` 两头。~~
+   **2026-09-23 接线已做**（`§0.-18`，Opus 5.5）：`GradeNameNote` 与 `R48MGradeNoteTruthTests` 两头已改；**判据全体按新物性重跑仍没做**（纯铂逐位不变，所以现有记录都成立；选别的牌号的整线算例还没判过）。
 2. 三关跑在**同一档细网格尺寸**上（`res.FineMm` + `MeshVerify.RequiredMeshFor` 的细区半径，走 `Solver.ApplyCaseMesh` 那份唯一配方）；
    而加密复算自己还另给一个**内带半径**，`ApplyCaseMesh` 这条路上没有它 ⇒ 内带这一项两者口径**不同**。本轮没动（动它要重跑判据），照实记在这里。
 3. W08 在圆盘保温 10 mm 下**第二关不过**（管根低于热偶读数 19.9/5.0，导航网格）。这与 §0.-13U ⑥ 是同一件事，**不是本轮引入的**；要可交付得重解。
@@ -2677,6 +2768,9 @@ X14:X16 缓存 3/3 逐位复现，Y、Z 3/3 逐位；按牌号的 `LengthRatio("
 
 ### 待接线：求解链的电／热物性**写死纯铂**（「除非工程师在 APP 特别设定」就是这件事；本轮不改）
 
+> ★ 2026-09-23（Opus 5.5，`§0.-18`）：**电阻率（`PtResistivity`／`PtTcr`／内联 dρ/dT）、热导率、比热三类已接**（经 `Core/PtProps.cs`，门 `R48PropsWiringGateTests` 源码门按个数钉死剩下的例外）。
+> 下表其余各行（密度、熔点、拟合上界、1400 护栏、焊接常数、摩尔质量）**仍按纯铂**，是否要接与理由见 `§0.-18` 甲「仍按纯铂的」。下表行号是 2026-09-15 的，已漂。
+
 工程师选了别的牌号，跟着走的只有两类：**持久强度**（`Mechanics.cs:112/172/185`、`LineSolver.cs:29`、`LineRunner.cs:2119` 读 `GradeName`）与**参考工具页的管质量和相对成本**（`LineSolver.cs:46-47` 用该牌号的 `DensityKgM3`、`CostPerKgRelative`）。
 主线的铂重、电、热、熔点、拟合上界全按纯铂。按符号 grep（2026-09-15 第二轮数，裸符号、去掉声明那一行、含注释；Core 与 Program.cs 分开）：
 
@@ -2795,7 +2889,7 @@ N4 闸改成「没给 makePlateByLevel 才抛」 ⇒ J2乙 红（`Assert.Throws 
 
 | # | 问题 | 位置与证据 | 修法方向 | 状态 |
 |---|---|---|---|---|
-| M1 | **牌号全链路没接线，界面却说接了**（「界面说假话」与「牌号全链路接线」合为一项） | 主线读牌号的只有 `LineRunner.cs:2115`→`Mechanics.cs:185`（④ 管强度利用率，`LineRunner.cs:2128` 标参考量）与 `LineRunner.cs:2119` 的说明文字；电、热、主线铂重、熔点、拟合上界全按纯铂（符号清单见 0.-6H 节「待接线」）。界面：`DesignInputs.cs:111-112` 写「电阻率与持久强度均取该牌号的实测数据」并露出代码名 MaterialDb；`UI/Flow.cs:664` 自动的招用完后叫人改「铂牌号」，而卡住的电、热判据不随牌号变；`InstallReport.cs:45` 印牌号，同一段的铂重按纯铂密度（`LineRunner.cs:1365/1621/2390`）、电流按纯铂电阻率；`DesignSpecStore.cs:43-140` 存档没有牌号字段；`MaterialDb.cs:57` `RangeConfirmed` 与 `:41` `FabricationPremium` APP 不读 —— 审查三探针实测「为各段选最省牌号」在 1150／1250／1300／1350 °C 全选 Tanaka-ZGS-Pt，区间只是推定的 FKS16/Pt 与它最小壁厚、价格完全相同，只因排在后面才没被选；`MainForm.cs:674` 印「材料数据：实测工作簿」 | 接线时按 `PtResistivityData.Read`／`PtThermalExpansion`／`PtCreepWorkbook` 的覆盖类别处理外推与无数据；接线前界面文字照实写、去掉代码名、删「改牌号」建议；存档加牌号字段并入往返门；推定区间与缺报价的牌号在「选最省」里怎么处理交用户定 | ❌ 未做 |
+| M1 | **牌号全链路没接线，界面却说接了**（「界面说假话」与「牌号全链路接线」合为一项）〔★ 2026-09-23 `§0.-18`：电、热物性已接、参数表说明与安装报告已改成真话；**密度、熔点、`.fd.json` 存档牌号字段、选最省牌号的处理仍开着**；`MainForm.cs` 那句「实测工作簿」已改（未在 Windows 编译）〕 | 主线读牌号的只有 `LineRunner.cs:2115`→`Mechanics.cs:185`（④ 管强度利用率，`LineRunner.cs:2128` 标参考量）与 `LineRunner.cs:2119` 的说明文字；电、热、主线铂重、熔点、拟合上界全按纯铂（符号清单见 0.-6H 节「待接线」）。界面：`DesignInputs.cs:111-112` 写「电阻率与持久强度均取该牌号的实测数据」并露出代码名 MaterialDb；`UI/Flow.cs:664` 自动的招用完后叫人改「铂牌号」，而卡住的电、热判据不随牌号变；`InstallReport.cs:45` 印牌号，同一段的铂重按纯铂密度（`LineRunner.cs:1365/1621/2390`）、电流按纯铂电阻率；`DesignSpecStore.cs:43-140` 存档没有牌号字段；`MaterialDb.cs:57` `RangeConfirmed` 与 `:41` `FabricationPremium` APP 不读 —— 审查三探针实测「为各段选最省牌号」在 1150／1250／1300／1350 °C 全选 Tanaka-ZGS-Pt，区间只是推定的 FKS16/Pt 与它最小壁厚、价格完全相同，只因排在后面才没被选；`MainForm.cs:674` 印「材料数据：实测工作簿」 | 接线时按 `PtResistivityData.Read`／`PtThermalExpansion`／`PtCreepWorkbook` 的覆盖类别处理外推与无数据；接线前界面文字照实写、去掉代码名、删「改牌号」建议；存档加牌号字段并入往返门；推定区间与缺报价的牌号在「选最省」里怎么处理交用户定 | ❌ 未做 |
 | M2 | 「核算法兰」某段耦合解失败或抛异常时记 0 A，界面照常打印 | `LineSolver.cs:241-247`：失败或异常 ⇒ 厚度取原型板厚、电流 0；`FlangeResult`（`LineSolver.cs:110-118`）没有失败位；共用片折算 `LineSolver.cs:196` 把 0 A 当「该侧不折算」；`MainForm.cs:758-764` 照常打印厚度、铂重和定尺依据 | 加失败位，界面标「该段未解出」，折算不许把 0 A 当不折算 | ❌ 未做 |
 | M3 | 共用片电流的说明文字与实际公式不符 | `MainForm.cs:765` 写「(I_左+I_右)/2 × 1.5（《鉑金電氣計算.xlsx》口径）」；实际 `LineSolver.cs:94` `UseWorkbookSharedFactor = false`，全仓没有地方置 true，用的是 √(Il²+Ir²+Il·Ir)（`LineSolver.cs:158`）；`LineSolver.cs:91` 注释说「算术和」；`Program.cs:9814` 同错 | 文字改成实际公式 | ❌ 未做 |
 | M4 | 局部热稳定的拟合上界 1400 °C，理由写错 | `LocalStability.cs:42` `FitMaxC = 1400`、`FlangeStability.cs:81` 局部 `const tFitMaxC = 1400`，理由「超出后二次项翻号」；实际 dρ/dT 在 3391.7 °C 才归零（审查三探针实测；`Materials.cs:24` 注释也写 3392；本轮 R48ResistivityWorkbookTests 打印同值）；与 `Materials.PtFitMaxC = 1500`（`ShellThermal.cs:178` 的 OverFitRange 用它）不一致。后果：场里任一格 > 1400 °C，局部热稳定整条判不了（`ShellThermal.cs:848`、`:979`），界面说「多半是场解已发散」（`LineRunner.cs:2494`） | 改了会动现有判定 ⇒ 单独开一轮，带门 | ❌ 未做 |
@@ -3235,7 +3329,7 @@ flowchart TD
 | R45 | **项目收尾：垃圾清理 + APP 确认**（用户 09-12「改完之后，项目收尾，APP确认，帮我整理项目里的一些垃圾文件」） | 09-12 | ✅ **2026-09-12 做完**：删了 git 忽略、可再生的：`Pt_Optimize.Tests/bin/scratch*` 7 个（各 173 MB）、`tests/UiWiring/bin/scratch*` 2 个、`TestResults/`、`.tmpcg/`（8-30 的旧 DLL）、`figs/`（8 月的旧场图，`--mesh/--shell` 可再生）、Rhino 自动备份 `*.3dmbak` 8 个与锁文件 `整机.3dm.rhl`、Word 锁 `docs/~$_理论模型_v6.0.docx`——约 1.7 GB。**没动**受追踪的文件（删不删由用户定，候选见本行右列）；`新建 文字文件.txt` 是用户的 clone 备忘（已忽略）没动。APP 确认：Release 编译、`--cli --uishot` 17 张逐页目视（① 输入／② 法兰优化／③ 结果与出图三张场图页签／参考工具五页／使用说明）、走查全过、提交钩子四道门 | 候选（受追踪、疑似过期，未删）：`deliverable/优化后3dm/`（09-07 的曲线轮廓 3DM 与 `整机_R60.3dm`，已被 `现役记录_3DM/` 的实体版取代）、`deliverable/F_*.txt`／`对帐_*.txt`／`D8_*.txt`／`follow_*.txt`（8 月底–9 月初的仪器日志，HANDOVER 历史节引用着）、`HANDOVER_摘录_2026-09-08.md`、`督导_2026-09-07.md`、`交付_1327g/`、`优化方案_3dm/`、`docs/Pt_理论模型_v1.0～v4.0.docx` |
 | R46 | **配套清单与系统安装报告**（用户 09-12 原话：「APP有保温与铜排的计算结果吗? 计算出的法兰要含有配套答案(如果没有，请补齐)」「APP添加一个呈现配套清单与系统安装报告」） | 09-12 | ✅ **2026-09-12 做完**：铜排的载流截面／导热截面／带走的热／舌端温度整线解里本来就算了（FlangeOut），只是没给人看。新增 `Core/FlangeKit.cs`（逐片配套：铜排截面取载流／导热之大、规格 宽=舌端宽 × 厚向上取 0.5 mm、铜排电流密度、压接段、夹持温度（设定值或按铜排热导算出）、铜排带走热、舌保温厚与覆盖范围（圆盘切点到压接段前，压接段不包）、焊脚 = max(板厚, 壁厚)；通用行：圆盘双面保温、管保温、端部额外保温、铜排到冷端长度与冷端温度、焊接方法与烧穿下界）与 `Core/InstallReport.cs`（十节安装报告：整线概要／供电／法兰逐片／配套清单／保温／焊接与加工／升温与运行／判据表／出图与文件／待现场确认；判据没过时首行写「不可作为安装依据」；`ToMarkdown` 把制表位表转成管道表）。③ 页新增「配套清单」表与「安装报告」页签（Show() 一起填、空态一起清），输出框末尾附同一份清单，新键「导出安装报告」（Flow `report.install`，交付页，.md）。三处同一个来源，不自己重算 | `FlangeKitTests`（3 快）、`InstallReportTests`（3 快）；`UiWiring` 借 rBad 那一节实测（两个页签在、每片一行、铜排规格有宽×厚、报告十节、无判据代号、导出真写文件且转成管道表、键在 ③ 页工具条）；Flow 双向对齐由走查 20 节自动覆盖；抓图 deliverable/界面截图_R46_2026-09-12 |
 | R47 | **图纸路径（3dm 厚度场）的「法兰增量温降」判定修对**（用户 09-13 原话：「把图纸路径 ③ 的病修掉，另开工单」；病是拓扑优化线量出来的：同一法兰设计解析路径抽热 3.41 W、图纸路径 26.4 W，且随网格加密不收敛） | 09-13 | ✅ **2026-09-13 做完**（工单 `deliverable/R47_图纸路径增量温降_工单_2026-09-13.md`，病因由隔离实验 `Pt_Topo/deliverable/网格隔离_meshcmp2_片1_2026-09-13.txt` 定）。**Core**：网格轴从管轴中心向外铺、两侧镜像（`FlangeMesher.GradedAxisCentered`，孔单元集合与舌长／图幅留白无关）；厚度场加精确材料包络（Geom 子进程输出几何包围盒；没有时退回栅格包络并写 Warning）；**两条路合成一份生成器**（`Build = BuildFromField(Rasterize(g, 最细网格/4))`，覆盖率与厚度改成对栅格方格做面积积分 —— 栅格步 = 网格/4 时子采样点全落在节点正中间、Math.Round 偶数规则把舌片直边外一排格判成有料，同一套轴后两条路仍差 1.8 W 就是它），同一解析板两条路逐位相同；图纸路径接内带（hInner/innerRadius）与随网格走的栅格步（`RasterStepFor`）；`LineCase.TabInsul3dmPerPlateMm` 逐片 + `FlangeFields` 内存厚度场入口；insulBoundaryX／tabBoundaryX 逐片取 `GeomForJudge[j]` → 没有则从材料包络推切点 → 推不出则 ②′③ 判无法判定（不再 `new FlangePlate()` 默认板）；`MeshVerify.Run` 工厂重载 + `Run(Shape, wall, factory)` 图纸入口（特征尺寸取自分析器分级，取不到拒答不抛）；TagHole 三份收一份 + 管孔定温环自检附注。**UI**：① 页 3dm 模式改用逐片舌保温表（单控件 `_tabIns3dm` 去掉，两种几何来源同一张表、同一组上下界；BuildCase 图纸分支逐片填 `TabInsul3dmPerPlateMm`，`GeomForJudge` 长度 = 片数）；`CurrentSnap` 纳入几何来源／.3dm 文件名／图层／逐片舌保温；`VerifyMeshAsync` 图纸模式由 `BuildCase()` 造 LineCase 经 `VerifyFactory3dm` 工厂复核（每档减内带、栅格步由 LineRunner 自己收），**不再用 PageToDesignSpec 造解析板**，没分析过几何就灰掉并写全名理由；`FineResolveAsync` 图纸分支口径取 `RequiredMeshFor(Shape)` + 复核收敛那一档，经 `FineMesh3dm` → `FlangeAutoSizer.Options` 新加「终局细网格」四项（与 `SearchMeshFineMm` 分开）真传给 `SolveByLevel`（入口 `ApplyFinalMesh`，搜索各轮与全精度复核同一张网格）；存档 fd.json 记几何来源（`geomSource`）与逐片 .3dm 文件名，`tabInsulMm` 读时认数组或旧档单个数（填成所有片同值并写 `DesignSpec.Notes`，载入时印出来）。**改前／改后**（导航网格，`deliverable/R47_改前／改后_导航网格_2026-09-13.txt`）：Builtin[0] ③ 4.718 → 17.480 K、抽热片0 1.583 → 7.441 W、铂重 1082.6 → 1080.4 g、网格 676 → 976 格；W06 ③ 6.124（记录值）→ 17.077 K；盘Ø56 ③ 9.303 → 11.259 K。诊断仪器（`R47_网格诊断`）同片精确几何（4×4 子采样，新轴）12.45 → 12.75 → 13.74 W、栅格积分 12.45 → 12.66 → 13.75 W。**这些数怎么读（复修 M6 改口，不写「新数是对的」）**：Builtin[0] 导航网格 17.48 K；新生成器加密到 0.125 mm 为 20.48 K、中带确认没过、**未收敛**（审查实测）⇒ 修网格后本档还没有一个算准了的数，只知道它不过；档里旧复核值 10.329 是老轴（−z 半边未加密）上的，**无效**；盘Ø56 记录的导航网格 ③（11.259 K）仍不可信（同片新轴 5.00 → −3.25 → −0.26 W，导航网格上 ±5 W），以加密复算为准；两个基线设计与盘Ø56 记录在修好的网格上都不过（档记录值不改，VerifiedNote／Binding 里按「修网格前／修好后并列、注明不过」写；要不要重新解由主线定）。**复修（同日，三路反方审查 M1–M12，记录 `deliverable/R47_Core实施记录_2026-09-13.md` §5）**：M1 轴锚点（`GradedAxisCentered(…, anchors)`：z ±舌半宽、x 切点必落成节点；解析板由 `AnchorsOf` 给，图纸路径从厚度场推 `AnchorsFromField`；舌半宽 25／22.7 的盘Ø56 片 1 导航→×0.25 抽热 −49.1→−56.5／−94.4→−105.5 W，审查改前 −29.1→−57.5／−63.7→−97.3，两档之差从 28／34 W 收到 7.5／11 W；数为负是窄舌电阻大、发热 574／643 W 的物理）；M2 Geom 探针漏料（采样点落在包围盒面上向内挪 5 个容差；真图纸 入口 层 vs 解析板面积差 0.836 % → 0.029 %、抽热 10.78 → 12.41 vs 12.45 W）；M3「已到图纸分辨率」只写本次 Notes 按片去重、不改共享 Warning；M4 文件路径栅格步地板 0.05 mm（探针耗时 ∝ 步⁻²，实测 0.322／0.161／0.081 mm 各 12／30／100 s ⇒ 0.05 mm 约 5 分钟一片）；M5 验收门加第三方参照（精确几何生成器铺在新轴上）：**解析路径生成器已换成栅格积分，与精确几何在导航网格上差 ≤0.9 W／8 格**（盘Ø56 片 1 4.101 vs 4.996、Builtin[0] 片 0 13.258 vs 12.454；×0.5 差 0.2／0.09 W），图纸侧栅格步 0.1 <1 W、旧默认 1.0 在盘Ø56 上偏 1.8 W（自证不够，网格/4 口径的依据）；M6 改口；M7 `core.fineResolve` 与 `FineResolveAsync` 都要 `Equals(_verifiedSnap, CurrentSnap())`（切模式后不适用）；M8 说明书 2.9 节（舌保温与解析共用逐片表 0.3–80 mm；加密复算／细网格重解要先分析几何）；M9 载入图纸档切到 .3dm 并回填文件名、找不到就明说不能复现、Notes 写出处；M10 真门（推不出切点的场 ⇒ 两条判据无法判定）+ 源码门（LineRunner 无 `new FlangePlate()`）；M12「此前显示的是导航网格（真实 mm）」、3dm 模式厚度组标题「法兰厚度倍数 k」。**接手须知**：图纸模式不再有裸舌（表下界 0.3，与解析一致）；Pt_Topo 的 AppJudge 反射塞缓存那条路在 R47 后会因栅格步键（0.5 vs 1.0）不命中而失败，收编时改用 `LineCase.FlangeFields` 与逐片 `TabInsul3dmPerPlateMm`。**第三轮（同日，复审「要改／建议」N1–N8，记录 `deliverable/R47_Core实施记录_2026-09-13.md` §6）**：N1 图纸路径锚点推法改成**直边段**的材料半宽（逐列取半宽到栅格、同一值连续出现最长的那段；切点反推值与「半宽开始超过 w 的列」互相印证，注释写明两种推法为什么换）—— 舌尖倒角 3 mm 实验：旧推法 w 22.0／xT −17.32、抽热差 +20.449 W；直边段推法 w 25.0／xT −12.61（真 −12.61）、差 0.000 W（`R47_第三轮N1_倒角实验_2026-09-13.txt`）；N2 推不出切点时**所有吃法兰场的判据与参考行**（名单只此一份 `dependsOnFlangeFields`，只读出口 `DependsOnFlangeFields`）都标无法判定；N3 `GradedAxisCentered` 锚点离计划节点不到 hWant/4 时把节点挪到锚点上（锚点 2.02／−16.005 最小格 1.980 mm，不再有 0.02 的发丝格）；N4 `DrawingPathParityTests` 注释写明 0.9 W 是两种生成器的方法差、随倍率收敛，门改「×1 < 1 W 且 ×0.5 < 0.3 W」；N5 图纸模式另存：`DesignSpec.ThicknessScale` 逐片 k、`TabThickMm` 写 NaN（`tabThickMm` NaN↔null、新键 `thicknessScale`；旧图纸档把 k 记在板厚栏的读回按 k 接并写 Notes），`IsDrawingRecord` 的档 BuildCase／`--judge`／`MeshVerify.Run(DesignSpec)`／说明书一律拒绝造解析板并印 `DesignSpec.DrawingRefusal`（`LineCase.RefusedWhy` → `LineRunner.Run` 原句返回，不抛不算），`Describe()` 印「厚度倍数 k」，载入图纸档灌 k、配套清单／安装报告印「按图纸 ×k」；N6 说明书首段 Binding 过 `Md()`、`Criteria.Html` 的 ** 转粗体（`BoldHtml`）、ToolTip（`Row()` 走 `TextFmt.Strip`）与四处 MessageBox 去掉 **；N7 换图纸清分析结果（`_shapeKey` + `InvalidateShapeIfDrawingChanged`：选文件／载入回填／文件框与图层框改字三个入口）；N8 W08 Binding「5.2/10」改成与 FlangeDipK 同一个数 4.720/10（5.2 是 2026-08-28 基线换收敛口径前的 5.182）。 | Core：`MeshAxisTests` 6 快、`MeshVerifyLineCaseTests` 2 快 1 慢、`TabInsulPerPlateTests` 1 快 1 慢、`DrawingPathParityTests` 2 慢、`R47NavGridInstrumentTests`／`R47MeshDiagInstrumentTests` 各 1 慢；UI：`DesignSpecStoreTests` +2 快、`MeshVerifyReachableTests` +2 快、`CliUiParityTests` +1 快；`UiWiring` 新加 36 节（单控件已去掉／3dm 模式逐片表可编辑且上限与解析一致／BuildCase 逐片进 LineCase／没分析过几何加密复算不适用且 ToolTip 点名「分析几何变数」／工厂造的 LineCase 走图纸路径、每档只换内带、GeomForJudge 逐片／终局细网格口径 2.0→1.0 格数递增／RunAsync 与 FineResolveAsync 源码门），「复现设计记录」靶改成 R47 之后的数、「除法兰截面 J 外全过」改成指名放行法兰增量温降（写明依据）；`Walk.Run3dm` ④0 与 `Map3dm` 改用逐片表；`--uishot` 加 ① 页图纸模式抓图（deliverable/界面截图_R47_2026-09-13）。**复修加的门**：`MeshAxisTests` +2 快 +1 慢仪器、`DrawingPathParityTests` 2 → 6 慢（三方对拍 4 + 栅格步 2）、`DrawingResolutionNoteTests` 2 快、`RealDrawingParityTests` 3 慢（真图纸对拍／加密复算三档／逐点差仪器）、`TabInsulPerPlateTests` +2 快；`UiWiring` 新加 37 节（M7／M8／M9／M12）。慢门本次实跑：DrawingPathParityTests 6 ✓、RealDrawingParityTests ✓、TabInsulPerPlateTests ✓、MeshVerify 真图纸三档 ✓；FieldConvergenceGateTests 13 ✓；BestShapeFineMeshTests 复修当天起跑未跑完（日志 scratchpad slow_gates2.log，结果由下次实跑补）；R47NavGridInstrumentTests 复跑：M1 锚点后三个设计的导航网格数逐位不变（17.480／17.077／11.259 K）；Pt_Topo AppJudgeTests 未跑。**第三轮加的门**：`MeshAxisTests` +2 快（倒角实验／发丝格）、`TabInsulPerPlateTests` 半盘场那条扩成按名单逐条断言、`DrawingPathParityTests` 门改口径（6 慢实跑 ✓）、`DesignSpecStoreTests` +1 快（图纸档 k 往返／拒绝造解析板／解析档不受影响）、`DocRefTests` +1 快（说明书无字面 **）；走查 3 节「说明书全文不含字面 **」、37 节加真 k 往返 + 四处拒绝 + 换图纸清分析；`--uishot` → `deliverable/界面截图_R47第三轮_2026-09-13/`（① 页图纸模式与使用说明页两张用 Read 看过） |
-| R48 | **三份铂金工作簿变成按牌号的温度函数，照工作簿自己的算法；以纯铂为设计标准，除非工程师在 APP 特别设定**（用户 09-15 原话：「鉑金材料蠕變應力壽命估算.xlsx/鉑金热膨胀计算.xlsx/鉑金電氣計算.xlsx，把它变成各种铂金的温度函数」「Excel里面都有算法」「还是以纯铂为设计标准，除非工程师在APP特别设定」；序号与三条门 R48ExpansionWorkbookTests／R48ResistivityWorkbookTests／R48CreepWorkbookTests 同用 R48 前缀） | 09-15 | ◐ **2026-09-15 物性函数与门做完（三轮），接线没做**（2026-09-15，Opus 5）：`Core/PtThermalExpansion.cs`、`Core/PtResistivityData.cs`、`Core/PtCreepWorkbook.cs`，每个返回值带覆盖类别与借用标记；门 R48ExpansionWorkbookTests 17、R48ResistivityWorkbookTests 7、R48CreepWorkbookTests 10 每次读 xlsx（实测全过）；第二轮关闭审查阻断 1–4（包络判法、纯铂 1000 °C 以上一律外推、五处门补上并逐条注入实验变红、本节三处更正）；第三轮补上复核仍认定的两处门（七个按牌号函数的值逐位走决定记录的曲线、包络判法由门按定义独立算），32 处注入逐条变红，生产代码没动；网格转储四份逐字节相同。**没做的一半**：求解链电／热物性仍写死纯铂（清单在 HANDOVER 0.-6H 节末「待接线」，不保证全），工程师选别的牌号只有持久强度与参考工具页管质量跟着走；升温期热应变差判据也还没接；界面说「取该牌号」的地方见 0.-1 节 M1 |
+| R48 | **三份铂金工作簿变成按牌号的温度函数，照工作簿自己的算法；以纯铂为设计标准，除非工程师在 APP 特别设定**（用户 09-15 原话：「鉑金材料蠕變應力壽命估算.xlsx/鉑金热膨胀计算.xlsx/鉑金電氣計算.xlsx，把它变成各种铂金的温度函数」「Excel里面都有算法」「还是以纯铂为设计标准，除非工程师在APP特别设定」；序号与三条门 R48ExpansionWorkbookTests／R48ResistivityWorkbookTests／R48CreepWorkbookTests 同用 R48 前缀） | 09-15 | ◐ **2026-09-15 物性函数与门做完（三轮）**~~，接线没做~~（2026-09-15，Opus 5；删除线 = 2026-09-23 已过时，见本行末 ★）：`Core/PtThermalExpansion.cs`、`Core/PtResistivityData.cs`、`Core/PtCreepWorkbook.cs`，每个返回值带覆盖类别与借用标记；门 R48ExpansionWorkbookTests 17、R48ResistivityWorkbookTests 7、R48CreepWorkbookTests 10 每次读 xlsx（实测全过）；第二轮关闭审查阻断 1–4（包络判法、纯铂 1000 °C 以上一律外推、五处门补上并逐条注入实验变红、本节三处更正）；第三轮补上复核仍认定的两处门（七个按牌号函数的值逐位走决定记录的曲线、包络判法由门按定义独立算），32 处注入逐条变红，生产代码没动；网格转储四份逐字节相同。~~**没做的一半**：求解链电／热物性仍写死纯铂（清单在 HANDOVER 0.-6H 节末「待接线」，不保证全），工程师选别的牌号只有持久强度与参考工具页管质量跟着走；~~升温期热应变差判据也还没接；界面说「取该牌号」的地方见 0.-1 节 M1。★ 2026-09-23（Opus 5.5，0.-18 节）**物性接线已做**（`Core/PtProps.cs`；门 R48PropsWiringGateTests、R48MGradeNoteTruthTests；纯铂逐位不变）；密度、熔点仍纯铂（无出处／无 Pt-10%Rh 数）；Windows 记录（门 1）与判据全体重跑未做 |
 
 ##### ★★★★ 2026-09-09 多视角审查（97cf201..27ee603）的修正与欠账
 
@@ -8377,7 +8471,8 @@ Pt_Optimize.Tests/ · tests/UiWiring/ · Pt_Optimize.Geom/ · .githooks/   ← �
 > 改 `.githooks/` 改的是「门跑不跑」。这两类原本都不在名单里 ⇒
 > **唯一能让所有门失效的改动，恰恰是唯一不触发门的改动**。
 
-`dotnet test` 应为 **1462/1462**（2026-09-23 `§0.-17`：M 的 1436 ＋ N 带进来的 26 条。**这一次不是在 Windows 上反射数的**：云端只有 Linux 镜像（不含界面测试），镜像反射数 M 997、合并树 1023，两树排除的界面测试档逐个相同，差 +26 加到 M 在 Windows 上的实数 1436 上。下一次在 Windows 上跑完整测试项目时，这条门会当场核这个数。）
+`dotnet test` 应为 **1471/1471**（2026-09-23 `§0.-18`：上一数 1462 ＋ `R48PropsWiringGateTests` 9 条快门；改的两条门条数不变。同样**不是在 Windows 上反射数的**。）
+上一轮（§0.-17）的数是 1462／1462（历史数，斜杠改成全角）（2026-09-23 `§0.-17`：M 的 1436 ＋ N 带进来的 26 条。**这一次不是在 Windows 上反射数的**：云端只有 Linux 镜像（不含界面测试），镜像反射数 M 997、合并树 1023，两树排除的界面测试档逐个相同，差 +26 加到 M 在 Windows 上的实数 1436 上。下一次在 Windows 上跑完整测试项目时，这条门会当场核这个数。）
 上一轮（§0.-16M）的数是 1436／1436（历史数，斜杠改成全角）（2026-09-18 §0.-16M 由 HandoverGateCountTests 反射数出：1418 + 18 = `R48MStopTolGateTests` 14 快门 ＋ `R48MStopTolTwoPointTests` 2 慢门 ＋ `R48MStopTolCostTests` 2 慢门；快套件 `速度!=慢` 1246 条）。
 上一轮（§0.-15M）的数是 1418／1418（历史数，斜杠改成全角）：
 

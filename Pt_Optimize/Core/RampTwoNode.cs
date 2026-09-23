@@ -254,6 +254,8 @@ public static class RampTwoNode
     public sealed class Model
     {
         private readonly DesignInputs _p;
+        /// <summary>R48 物性接线（2026-09-23，Opus 5.5）：ρ、k、cp 按牌号的取值口（构造时按 p.GradeName 解析一次；纯铂一支调 Materials 原函数，逐位不变）。私有、不进任何转储。</summary>
+        private readonly PtProps _props;
         private readonly Inputs _g;
         private readonly LossTable _tubeLoss, _fluxBare, _fluxIns, _fluxTab;
         private readonly double _L, _areaTube, _massTube, _massFlange, _capInsulTube, _capInsulFlange, _capInsulTab;
@@ -272,6 +274,7 @@ public static class RampTwoNode
         public Model(DesignInputs p, Inputs g)
         {
             _p = p; _g = g;
+            _props = PtProps.For(p);
             double ri = p.TubeIdMm * 0.5e-3, w = g.WallMm * 1e-3, rOut = ri + w;
             _areaTube = Math.PI * (rOut * rOut - ri * ri);          // m²
             _L = p.TubeLength;
@@ -332,7 +335,7 @@ public static class RampTwoNode
                 _capInsulTab = volTabM3 * p.Layer1.DensityKgM3 * p.Layer1.CpJKgK * 0.5;
             }
 
-            _rhoRef = Math.Max(1e-30, Materials.PtResistivity(g.FlangeRefTempC));
+            _rhoRef = Math.Max(1e-30, _props.Rho(g.FlangeRefTempC));
 
             // ★ R48 G2 复审（2026-09-15 Opus 5）：表面散热的场标定系数（见 SurfaceScale）；没给标定点 ⇒ 1.0，老口径逐位不变（x·1.0 = x）
             _surfScale = 1.0;
@@ -379,8 +382,8 @@ public static class RampTwoNode
         public double ClampW(double tf)
             => _g.ClampConductanceWPerK > 0 ? _g.ClampConductanceWPerK * (tf - ClampTempC(tf)) : 0.0;
 
-        public double CapTube(double t) => _massTube * Materials.PtCp(t) + _capInsulTube;
-        public double CapFlange(double t) => _massFlange * Materials.PtCp(t) + _capInsulFlange + _capInsulTab;
+        public double CapTube(double t) => _massTube * _props.Cp(t) + _capInsulTube;
+        public double CapFlange(double t) => _massFlange * _props.Cp(t) + _capInsulFlange + _capInsulTab;
 
         /// <summary>
         /// 耦合导度 G [W/K]：孔壁导热 与 管壁翅片导度 串联。
@@ -392,7 +395,7 @@ public static class RampTwoNode
         /// <summary>管子一侧：半无限翅片入口导度 √(k·A·β) W/K（R48 G2 复审 2026-09-15 Opus 5 从 GCouple 拆出，算术不变）</summary>
         public double GTubeFin(double tMean)
         {
-            double k = Materials.PtThermalK(tMean);                    // W/(m·K)
+            double k = _props.K(tMean);                                 // W/(m·K)
             double beta = Math.Max(1e-6, _tubeLoss.Slope(tMean));      // W/(m·K)，空管无玻璃项
             return Math.Sqrt(k * _areaTube * beta);                    // W/K（管子一侧）
         }
@@ -404,7 +407,7 @@ public static class RampTwoNode
         public double GPlateSide(double tMean)
         {
             if (!double.IsNaN(_g.HolePlateConductanceWPerK)) return _g.HolePlateConductanceWPerK;
-            double k = Materials.PtThermalK(tMean);                    // W/(m·K)
+            double k = _props.K(tMean);                                 // W/(m·K)
             double aHole = 2 * Math.PI * (_g.HoleRadiusMm * 1e-3) * (_g.FlangeThickMm * 1e-3);  // m²
             double lChar = Math.Max(1e-3, (_g.PlateEqOuterRadiusMm - _g.HoleRadiusMm) * 0.5e-3);
             return k * aHole / lChar;                                  // W/K（法兰一侧）
@@ -429,8 +432,8 @@ public static class RampTwoNode
         }
 
         // ── 电学：管与两端**端片**串联（同一电流），共用片只是发热更凶
-        public double RTube(double t) => Materials.PtResistivity(t) * _L / _areaTube;
-        public double RFlange(double t) => _g.FlangeResistanceRefOhm * Materials.PtResistivity(t) / _rhoRef;
+        public double RTube(double t) => _props.Rho(t) * _L / _areaTube;
+        public double RFlange(double t) => _g.FlangeResistanceRefOhm * _props.Rho(t) / _rhoRef;
         public double RCircuit(double tt, double tf) => RTube(tt) + 2.0 * RFlange(tf);
 
         /// <summary>
@@ -653,7 +656,8 @@ public static class RampTwoNode
         // ★ 比热进设计链的**唯一入口**就是这一项（2026-09-18，Opus 5 查明并注记）：
         //   慢升温下它只有约 1 W，而散热是千瓦级 ⇒ 比热改 10 % 只挪动设计电流 1e-5 量级。
         //   量级由门 R48ThermalSourceTests 按本函数的分项当场算出来，不写死在注释里。
-        double capMetal = Materials.PtDensity * area * L * Materials.PtCp(tubeTempC);
+        var props = PtProps.For(p);   // R48 物性接线（2026-09-23，Opus 5.5）：cp、ρ 按牌号；密度仍按纯铂（材料库合金密度无出处）
+        double capMetal = Materials.PtDensity * area * L * props.Cp(tubeTempC);
         double capInsul = 0, r = rOut;
         foreach (var lay in p.Layers)
         {
@@ -664,7 +668,7 @@ public static class RampTwoNode
         }
 
         double need = lossW + (capMetal + capInsul) * (rateKPerH / 3600.0);
-        double rTube = Materials.PtResistivity(tubeTempC) * L / area;
+        double rTube = props.Rho(tubeTempC) * L / area;
         return new QuasiStatic(lossW, capMetal, capInsul, need, rTube,
                                need <= 0 ? 0 : Math.Sqrt(need / rTube));
     }

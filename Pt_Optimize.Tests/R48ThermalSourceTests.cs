@@ -311,15 +311,27 @@ public class R48ThermalSourceTests
     [Fact]
     public void 比热只在升温与时间常数处被读到_稳态判据不读比热()
     {
+        // ★ 2026-09-23 Opus 5.5（R48 物性接线）改门，变因：比热改由 PtProps 按牌号取（纯铂一支调的仍是 Materials.PtCp），门槛（比热只进升温与时间常数）不变。
+        //   原来钉「含 Materials.PtCp( 的档 = RampSolver／RampTwoNode／SegmentSolver」；现在 Materials.PtCp( 只在访问口 PtProps.cs 里，
+        //   求解链读比热的地方改认任何接收者的 .Cp( 与 CpJPerKgK(（PtProps.cs、MaterialDb.cs 除外），档集合与各处字面照旧逐条钉。
         string core = Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "Core");
-        var hits = Directory.GetFiles(core, "*.cs")
+        var pure = Directory.GetFiles(core, "*.cs")
             .Where(f => File.ReadAllText(f).Contains("Materials.PtCp(", StringComparison.Ordinal))
+            .Select(Path.GetFileName).OrderBy(x => x, StringComparer.Ordinal).ToArray();
+        Assert.Equal(new[] { "PtProps.cs" }, pure);   // 只剩访问口（Materials.cs 里的定义不带类名前缀）
+        // 读比热的写法：任何接收者的 .Cp(（props.Cp／_props.Cp／PtProps.For(..).Cp／别名都算）与任何 CpJPerKgK(（绕过访问口直读按牌号曲线）。
+        //   PtProps.cs（访问口本身）与 MaterialDb.cs（曲线定义处）不在扫描之列；Materials.PtCp( 由上一条单独钉（只在 PtProps.cs）。
+        //   覆盖：Core/*.cs 源码字面。不覆盖：经委托或反射取比热。（2026-09-23 复审放宽匹配：原来只认 props.Cp(／_props.Cp(，别名会漏。）
+        var cpRe = new System.Text.RegularExpressions.Regex(@"\.Cp\(|CpJPerKgK\(");
+        var hits = Directory.GetFiles(core, "*.cs")
+            .Where(f => Path.GetFileName(f) is not ("PtProps.cs" or "MaterialDb.cs"))
+            .Where(f => cpRe.IsMatch(File.ReadAllText(f)))
             .Select(Path.GetFileName).OrderBy(x => x, StringComparer.Ordinal).ToArray();
         Assert.Equal(new[] { "RampSolver.cs", "RampTwoNode.cs", "SegmentSolver.cs" }, hits);
 
         // SegmentSolver 里比热只喂两个时间常数（都是显示量，不进判据）
         string seg = Src(Path.Combine("Pt_Optimize", "Core", "SegmentSolver.cs"));
-        Assert.Contains("double cMetal = Materials.PtDensity * area * Materials.PtCp(p.TSetC);", seg);
+        Assert.Contains("double cMetal = Materials.PtDensity * area * props.Cp(p.TSetC);", seg);
         Assert.Equal(3, seg.Split("cMetal").Length - 1);      // 定义 1 次 + TauMetalS、TauWithGlassS 各 1 次
         Assert.Contains("res.TauMetalS = cMetal /", seg);
         // ★ 2026-09-18 Opus 5（合并 H×合并树 改门，写明变因）：合并树上这一行已由 G3 空管那一路加了空管短路（`empty ? double.NaN :`），
@@ -332,25 +344,29 @@ public class R48ThermalSourceTests
         // 吃稳态场的那几档一个字都不许有
         foreach (string f in new[] { "ShellThermal.cs", "PlateThermal2D.cs", "Solver.cs", "LineSolver.cs",
                                      "Criteria.cs", "Sizer.cs", "Insulation.cs", "FlangeStability.cs" })
-            Assert.DoesNotContain("Materials.PtCp(", Src(Path.Combine("Pt_Optimize", "Core", f)));
+        {
+            string s = Src(Path.Combine("Pt_Optimize", "Core", f));
+            Assert.DoesNotContain("Materials.PtCp(", s);
+            Assert.False(cpRe.IsMatch(s), f + " 读了比热（.Cp( 或 CpJPerKgK(），稳态链不该读比热");
+        }
 
         // RampTwoNode 里三处：准静态电流的金属热容（**进设计链的唯一入口**）+ 两节点瞬态的管/法兰热容
         //（后两处只进 TwoNodeSegPeakA 与「法兰−管温差」参考量，DesignCurrent 档头写明它们不进尺寸链）
         string two = Src(Path.Combine("Pt_Optimize", "Core", "RampTwoNode.cs"));
-        Assert.Equal(3, two.Split("Materials.PtCp(").Length - 1);
-        Assert.Contains("double capMetal = Materials.PtDensity * area * L * Materials.PtCp(tubeTempC);", two);
+        Assert.Equal(3, cpRe.Matches(two).Count);
+        Assert.Contains("double capMetal = Materials.PtDensity * area * L * props.Cp(tubeTempC);", two);
         // ★ 2026-09-18 Opus 5（合并 H×合并树 改门，写明变因）：合并树上这两个式子是 G2「升温两节点补铜排通道与舌片保温」之后的写法 ——
         //   两个局部量改成了字段（_massTube／_capInsulTube…）、法兰那一式多了舌片保温热容 _capInsulTab。H 树上没有 G2，所以原断言钉的是旧字面。
         //   门槛不变（照样钉住「热容由 Materials.PtCp 逐点算」这一件事），只把字面对齐合并树。
-        Assert.Contains("public double CapTube(double t) => _massTube * Materials.PtCp(t) + _capInsulTube;", two);
-        Assert.Contains("public double CapFlange(double t) => _massFlange * Materials.PtCp(t) + _capInsulFlange + _capInsulTab;", two);
+        Assert.Contains("public double CapTube(double t) => _massTube * _props.Cp(t) + _capInsulTube;", two);
+        Assert.Contains("public double CapFlange(double t) => _massFlange * _props.Cp(t) + _capInsulFlange + _capInsulTab;", two);
         Assert.Contains("=> QuasiStaticBreakdown(p, wallMm, tubeTempC, rateKPerH).CurrentA;", two);
 
         // RampSolver 里只有集总升温用时那一处（判据表里是参考量，见 LineRunner 的 CheckKind.Reference）
         string ramp = Src(Path.Combine("Pt_Optimize", "Core", "RampSolver.cs"));
-        Assert.Equal(1, ramp.Split("Materials.PtCp(").Length - 1);
-        Assert.Contains("double CapMetal(double tC) => (massTube + massFlange) * Materials.PtCp(tC);", ramp);
-        _o.WriteLine("Materials.PtCp 的调用点：" + string.Join("、", hits));
+        Assert.Equal(1, cpRe.Matches(ramp).Count);
+        Assert.Contains("double CapMetal(double tC) => (massTube + massFlange) * props.Cp(tC);", ramp);
+        _o.WriteLine("比热（经 PtProps）的调用点：" + string.Join("、", hits));
     }
 
     /// <summary>Pt-20%Rh 的电阻率拟合**待核**：注记与 ±5 % 带宽必须随牌号带出，借用的牌号也要带上。</summary>

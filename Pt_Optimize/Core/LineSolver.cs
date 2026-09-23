@@ -115,6 +115,30 @@ public static class LineSolver
         public double ThicknessMm;
         public double MassG;
         public string SizedBy = "";      // 厚度由哪一段的需求决定
+        /// <summary>
+        /// ★ R48 物性接线复审（2026-09-23，Opus 5.5）：本片两侧段（按该行 <see cref="Segment.GradeName"/>）的电、热物性说明，逐段一条「段名：<see cref="PtProps.Note"/>」；纯铂段不写。
+        /// 由来：本页逐行牌号这一路（SizeFlanges → CoupledSolver.Solve(p) 里 p.GradeName = 该行牌号）按该行牌号取 ρ、k、cp，
+        /// 数据不全的牌号（FKS16 两个等）一起退回纯铂。但耦合解的 Tube.Note 原来在这里被丢掉，界面上看不出退回了。这里把那一句带出来。
+        /// 这一路与参数表「铂材牌号」的说明（<see cref="DesignInputs.GradeNameNote"/>，整线核算那一路）是两回事：本页每行各自一个牌号。
+        /// </summary>
+        public string[] GradeNotes = Array.Empty<string>();
+    }
+
+    /// <summary>
+    /// 第 <paramref name="j"/> 片（0 = 入口，n = 出口）两侧段的电、热物性说明（见 <see cref="FlangeResult.GradeNotes"/>）。
+    /// 材料库里没有的牌号名不在这里抛（SizeFlanges 对那一段的耦合解本来就在 catch 里退回原型厚度），也不写说明。
+    /// </summary>
+    public static string[] JointGradeNotes(IList<Segment> segs, int j)
+    {
+        var notes = new List<string>();
+        foreach (int k in new[] { j - 1, j })
+        {
+            if (k < 0 || k >= segs.Count) continue;
+            string gn = segs[k].GradeName ?? "";
+            string note = MaterialDb.All.ContainsKey(gn) ? PtProps.For(gn).Note : "";
+            if (note.Length > 0) notes.Add($"{segs[k].Name}：{note}");
+        }
+        return notes.ToArray();
     }
 
     /// <summary>n 段线上的法兰片数：两端各一片，段间共用 —— n 段 n+1 片，不是 2n。</summary>
@@ -309,7 +333,8 @@ public static class LineSolver
                 CurrentA = iJoint,
                 ThicknessMm = t,
                 MassG = area * t * Materials.PtDensity * 1e-6,
-                SizedBy = by
+                SizedBy = by,
+                GradeNotes = JointGradeNotes(segs, j),   // R48 物性接线复审（2026-09-23，Opus 5.5）：逐行牌号退回纯铂等说明带出来
             });
         }
         return res;
