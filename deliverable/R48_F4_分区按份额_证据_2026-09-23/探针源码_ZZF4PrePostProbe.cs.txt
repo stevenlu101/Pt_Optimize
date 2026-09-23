@@ -1,0 +1,63 @@
+using System;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using PtOptimize.Core;
+using Xunit;
+using Xunit.Abstractions;
+
+namespace PtOptimize.Tests;
+
+// 临时探针（F4 改前／改后对拍，印完即删；不入库）。同一份文件放在改前快照与改后树上跑。
+// 环境变量：PT_F4_OUT = 输出目录；PT_F4_ZONE = off／on（改后树上设 F4 开关；不设 = 不碰，改前快照上不设）。
+public class ZZF4PrePostProbe
+{
+    private readonly ITestOutputHelper _o;
+    public ZZF4PrePostProbe(ITestOutputHelper o) { _o = o; }
+    static string Out => Environment.GetEnvironmentVariable("PT_F4_OUT") ?? throw new InvalidOperationException("PT_F4_OUT 未设");
+    static string? Zone => Environment.GetEnvironmentVariable("PT_F4_ZONE");
+    static void Set(object o)
+    {
+        if (Zone is null) return;
+        var f = o.GetType().GetField("ZoneByMaterialFraction") ?? throw new InvalidOperationException("这棵树上没有 ZoneByMaterialFraction");
+        f.SetValue(o, Zone == "on");
+    }
+    static string Tag => Zone ?? "pre";
+
+    [Fact]
+    public void 热解转储_18例()
+    {
+        Directory.CreateDirectory(Out);
+        foreach (var (R, w, grade, fine) in R48F4Cases.Closure18())
+        {
+            var (lc, g, m) = R48F4Cases.ClosureMesh(R, w, fine);
+            var (_, th) = R48F4Cases.PlateThermal(lc, m, ts => Set(ts));
+            File.WriteAllText(Path.Combine(Out, $"th_{Tag}_R{R:0.00}_w{w:0.00}_{grade}.txt"), R48F4Cases.DumpThermal(th));
+        }
+    }
+
+    [Fact]
+    public void 整线转储_W08盘10盘20判决()
+    {
+        Directory.CreateDirectory(Out);
+        Parallel.ForEach(new[] { 10.0, 20.0 }, new ParallelOptions { MaxDegreeOfParallelism = 2 }, disc =>
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var (lc, _) = R48F4Cases.JudgeCase("W08", disc, c => Set(c));
+            var r = LineRunner.Run(lc);
+            File.WriteAllText(Path.Combine(Out, $"line_{Tag}_W08_盘{disc:0}.txt"), R48F4Cases.DumpLine(lc, r));
+            File.WriteAllText(Path.Combine(Out, $"line_{Tag}_W08_盘{disc:0}.sec"), $"{sw.Elapsed.TotalSeconds:0}");
+        });
+    }
+    [Fact]
+    public void 整线转储_接线门1小算例()
+    {
+        Directory.CreateDirectory(Out);
+        var lc = R48PropsWiringGateTests.QuickCase();
+        Set(lc);
+        var r = LineRunner.Run(lc);
+        string dump = R48F4Cases.DumpLine(lc, r);
+        File.WriteAllText(Path.Combine(Out, $"gate1_{Tag}.txt"), dump);
+        File.WriteAllText(Path.Combine(Out, $"gate1_{Tag}.sha"), R48F4Cases.Sha(dump));
+    }
+}

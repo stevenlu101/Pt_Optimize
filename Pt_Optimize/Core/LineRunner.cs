@@ -535,6 +535,18 @@ public sealed class LineCase
     /// <summary>R48 M（2026-09-18，Fable 5.1）：要不要量实测雅可比放大（false = 只用闭式 × 1.1；探针量成本用）。</summary>
     public bool MeasureJacobianAmp = true;
 
+    /// <summary>
+    /// ★ 2026-09-23（F4，决 28）：法兰分区热账（圆盘区／舌片区）按有料面积份额拆盘缘上被切开的格（true，生产缺省）；
+    /// false = 老口径按格心整格归一边 —— **只供门注入用**（「开 − 关」归因、「改回 ⇒ 红」），不是给工程师的开关，界面与存档不读它。
+    /// 经 <see cref="LineRunner.PlateThermalInputs"/> → <see cref="PlateThermalSetup.ZoneByMaterialFraction"/> → ShellThermal.Solve 的同名参数。
+    /// 它只动分区账、两区峰各自的值与峰位（及读它们的旧判法参考量「圆盘区最高温 − 管温」），不动温度场：**单片解本身（整线单点解，闭合修正 Δ = 0）**上
+    /// 两区峰取大（最热铂）与格心分法逐位相同（R48F4ZoneShareGateTests 门 a 18 例单片、门 c W08 两行整线）。
+    /// ⚠ 各自读两区峰的下游不在这句之内（2026-09-23 审查后补，F4-M3／C3-L3）：保温搜索的线性闭合（InsulationSearch 按两区峰各自的 κ 外推后取大：
+    ///   Δ ≠ 0 时若 |Δ|·|κ 差| 超过原两区峰差，⑦ 会换项而不再逐位）；Sizer 与命令行外环的控制律读 TDiscMaxC − TRootC。都没量、没门。
+    ///   保温搜索、Solver、Sizer 的算例都由 DesignSpec.BuildCase 新造，这一位恒为缺省 true，改回进不了这几条路径；整条搜索的「开 − 关」在现有接线下做不出来。
+    /// </summary>
+    public bool ZoneByMaterialFraction = true;
+
     /// <summary>R48 M（2026-09-18，Fable 5.1）：量雅可比的前差步长 K（与保温搜索 InsulationSearch.Options.TubeJacobianDeltaK 同为 1.0）。</summary>
     public double JacobianDeltaK = 1.0;
 
@@ -1321,6 +1333,8 @@ public sealed class PlateThermalSetup
     public double TabInsulThickMm = double.NaN;
     /// <summary>圆盘区与保温边界按半径划时的盘半径、保温半径（NaN = 退回按 x，InsulRule／DiscZoneRule 写明）。</summary>
     public double DiscRadiusMm = double.NaN, InsulDiscRadiusMm = double.NaN;
+    /// <summary>2026-09-23（F4）：分区热账按份额（true，生产）还是按格心（false，只供门）；取自 <see cref="LineCase.ZoneByMaterialFraction"/>。</summary>
+    public bool ZoneByMaterialFraction = true;
     /// <summary>按本片电流定的铜排热导 W/K 与载流需截面 mm²；-1／0 = 没有按电流定。</summary>
     public double BusGWPerK = -1, BusSectionForCurrentMm2;
     /// <summary>保温分界的出处说明与「判不了」位（进 FlangeOut）。</summary>
@@ -3378,6 +3392,7 @@ public static class LineRunner
         s.TabInsulThickMm = analytic ? plate!.TabInsulThickMm : c.TabInsul3dmAt(j);
         s.DiscRadiusMm = discRForZone;
         s.InsulDiscRadiusMm = insulRForZone;
+        s.ZoneByMaterialFraction = c.ZoneByMaterialFraction;   // 2026-09-23（F4）：只供门注入，生产恒 true
         s.InsulNote = insulNote; s.InsulUndetermined = insulUndet;
         return s;
     }
@@ -3397,7 +3412,8 @@ public static class LineRunner
                               tabInsulThickMm: s.TabInsulThickMm,
                               discRadiusMm: s.DiscRadiusMm,
                               insulDiscRadiusMm: s.InsulDiscRadiusMm,
-                              lossTableHiC: lossTableHiC, lossTableNodes: lossTableNodes);
+                              lossTableHiC: lossTableHiC, lossTableNodes: lossTableNodes,
+                              zoneByMaterialFraction: s.ZoneByMaterialFraction);   // 2026-09-23（F4）
 
     /// <summary>
     /// ★ R48 E（2026-09-15 Opus 5）：**解析路径**第 j 片的网格 —— 原在 RunOnce 逐片循环里就地写（管孔半径跟管外径 + FlangeMesher.Build），

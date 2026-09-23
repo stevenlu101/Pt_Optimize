@@ -158,7 +158,7 @@ public class R48NMeshGateTests
     {
         public string Grade = ""; public double HFine, ReqRadius; public int Cells, Nx, Nz;
         public double VRef, VMesh, VRefDisc, VMeshDisc, VRefTab, VMeshTab;
-        /// <summary>环内体积按**格心**归属（求解器分区热账现在的口径；F4 未做，只印不判）</summary>
+        /// <summary>环内体积按**格心**归属（F4 之前求解器分区热账的口径；2026-09-23 F4 起求解器按有料份额拆，门在 R48F4ZoneShareGateTests；本列只印不判）</summary>
         public double VMeshDiscCentroid;
         /// <summary>逐格：跨环格的网格格体积对该格精确积分的最大相对误差（只印）</summary>
         public double CellVolErrMax;
@@ -185,7 +185,7 @@ public class R48NMeshGateTests
     }
 
     /// <summary>该格精确体积（测试侧积分：x 向 Simpson 64 段、z 向按半径断点 Simpson），<paramref name="discOnly"/> = 只算 r ≤ R 那部分。</summary>
-    static double CellVolExact(FlangePlate g, double x0, double x1, double z0, double z1, bool discOnly)
+    internal static double CellVolExact(FlangePlate g, double x0, double x1, double z0, double z1, bool discOnly)   // 2026-09-23（F4 审查后）：改 internal，F4 门 a／b 独立判料用
     {
         double R = g.DiscRadiusMm, rh = g.HoleRadiusMm;
         var rBreaks = new List<double> { rh, R };
@@ -225,7 +225,7 @@ public class R48NMeshGateTests
             var nd = m.Cells[c];
             double cx0 = Math.Min(m.Nodes[nd[0]].X, m.Nodes[nd[2]].X), cx1 = Math.Max(m.Nodes[nd[0]].X, m.Nodes[nd[2]].X);
             double cz0 = Math.Min(m.Nodes[nd[0]].Z, m.Nodes[nd[2]].Z), cz1 = Math.Max(m.Nodes[nd[0]].Z, m.Nodes[nd[2]].Z);
-            if (ce.X * ce.X + ce.Z * ce.Z <= R * R) vdc += vol;                      // 按格心（求解器现在的分区口径）
+            if (ce.X * ce.X + ce.Z * ce.Z <= R * R) vdc += vol;                      // 按格心（F4 之前求解器的分区口径；2026-09-23 F4 起按份额）
             // 按精确份额：格矩形跨过 r = R 的圆才可能 0 < f < 1（最近点半径 < R < 最远角）
             double nx = Math.Clamp(0, cx0, cx1), nz = Math.Clamp(0, cz0, cz1), fx = Math.Max(Math.Abs(cx0), Math.Abs(cx1)), fz = Math.Max(Math.Abs(cz0), Math.Abs(cz1));
             if (fx * fx + fz * fz <= R * R) vd += vol;
@@ -329,7 +329,7 @@ public class R48NMeshGateTests
         W($"网格修复 门(a) 体积守恒　{which}（{d0.Name}）　{tag}");
         W($"开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}　工作树 {HandoverDoc.Root()}　写码 {Sign}");
         W($"门槛（跑前写死）：每片总体积、环内（r ≤ R）、舌区（x < 切点）对参考积分 |ΔV|/V ≤ {VolTolPct} %；参考积分 = 板件 Inside/HalfWidth/ThicknessAt 的 Simpson（x 0.01／z 0.05 mm）。");
-        W("环内的归属：跨 r = R 的格按该格材料落在圆内的精确份额（测试侧积分）—— 量的是网格每格的体积对不对；按**格心**归属的环内体积另印一列（求解器分区热账现在的口径，F4 未做，只印不判）。");
+        W("环内的归属：跨 r = R 的格按该格材料落在圆内的精确份额（测试侧积分）—— 量的是网格每格的体积对不对；按**格心**归属的环内体积另印一列（F4 之前求解器分区热账的口径；2026-09-23 F4 起求解器按有料份额拆，门在 R48F4ZoneShareGateTests；本列只印不判）。");
         W("舌半宽 > 盘半径的几何（板件 HalfWidthClamped：舌片比圆盘还宽，几何上不成立）不进门，单列「几何不成立」，既不算过也不算不过。");
         W("几何\tR\tw\t片\t" + Head + "\t判读");
         int nBad = 0, nAll = 0, nSkip = 0; var badList = new List<string>();

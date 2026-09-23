@@ -82,7 +82,9 @@ public sealed class ShellThermalResult
     public double TTabEndMeanC;   // 舌片末端平均温度（铜排压接点）
 
     /// <summary>
-    /// ★ 分区能量账（圆盘 / 舌片），按 <c>x &lt; 分界</c> 判为舌片（双舌用 |x| &gt; |分界|）。
+    /// ★ 分区能量账（圆盘 / 舌片）。圆盘区 = r ≤ 盘半径（拿不到盘半径才退回按 <c>x &lt; 分界</c> 判为舌片、双舌用 |x| &gt; |分界|）。
+    /// ★ 2026-09-23（F4，决 28）：盘缘上被 r = 盘半径 切开的格，发热、散热、面积按有料面积份额拆到两区（份额 = FlangeMesher.MaterialFractionInCircle，
+    ///   与保温分界混合同一个入口），不再按格心整格归一边；这些格的温度**两区的峰都算**。见 <see cref="ZoneDiscShare"/>。
     ///
     /// 为什么必须分区：整片只给一个「发热 &lt; 散热」的结论，指不出**哪一段**亏，
     /// 而两段的杠杆完全相反 —— 圆盘亏要缩盘径/包保温，舌片亏要窄舌加厚（J 不变、散热减半）。
@@ -92,6 +94,20 @@ public sealed class ShellThermalResult
     /// </summary>
     public double QGenDiscW, QLossDiscW, QGenTabW, QLossTabW;
     public double AreaDiscMm2, AreaTabMm2;
+    /// <summary>
+    /// ★ 2026-09-23（F4）：两区体积 mm³（Σ 份额 × 面积 × 厚度，只统计自由单元，与上面几本账同一个份额）。门拿圆盘区这本对板件的精确积分（R48F4ZoneShareGateTests 门 b）。
+    /// </summary>
+    public double VolDiscMm3, VolTabMm3;
+    /// <summary>
+    /// ★ 2026-09-23（F4）：逐格记入圆盘区的份额 ∈ [0, 1]（舌片区那一份 = 1 − 它）；不入本片能量账的格（<see cref="BoundaryCell"/>）为 NaN。
+    /// 按份额分区时：整格在圆内 = 1、整格在圆外 = 0、被 r = 盘半径 切开的格 = 有料面积份额（<see cref="ShellThermal.DiscZoneShare"/>，与本解同一个函数；圆外或圆内料 ≤ 1e-9 × 格有料面积时收整成 1／0，见 <see cref="ShellThermal.ZoneShareSnapTol"/>）；
+    /// 按格心分区（<c>zoneByMaterialFraction: false</c>，只供门）或拿不到盘半径时只取 0／1。求解没走到分区账时为空数组。
+    /// </summary>
+    public double[] ZoneDiscShare = Array.Empty<double>();
+    /// <summary>★ 2026-09-23（F4）：本次真按份额拆到两区的格数（0 &lt; 份额 &lt; 1）。按格心分区时恒 0。</summary>
+    public int ZoneSplitCells;
+    /// <summary>★ 2026-09-23（F4）：本次分区账是不是按份额记的（false = 按格心整格归一边：只供门的改回，或拿不到盘半径退回按 x）。</summary>
+    public bool ZoneByMaterialFraction;
     /// <summary>面积加权平均温度 °C</summary>
     public double TDiscMeanC, TTabMeanC;
     /// <summary>
@@ -480,11 +496,14 @@ public static class ShellThermal
                                            double insulDiscRadiusMm = double.NaN,
                                            double lossTableHiC = double.NaN,
                                            int lossTableNodes = 0,
-                                           bool holeAnchorOnCircle = true)
+                                           bool holeAnchorOnCircle = true,
+                                           bool zoneByMaterialFraction = true)
     {
         var props = PtProps.For(p);   // R48 物性接线（2026-09-23，Opus 5.5）：k、ρ、电阻温度系数按牌号（纯铂逐位不变）；局部函数都捕获这一份，每次热解只解析一次
         // ★ 2026-09-23（F6d）：holeAnchorOnCircle **只供测试用**（写法照 lossTableHiC 先例）—— 局部热稳定的管孔锚点取孔圆 r = ShellMesh.HoleRadiusMm（缺省，生产），
         //   false = 老口径「孔格形心的最小半径」（那个数随被孔圆切到的格集合跳，与 F6 同源），门拿它做「改回 ⇒ 红」对照。生产代码不许传。
+        // ★ 2026-09-23（F4，决 28）：zoneByMaterialFraction **只供测试用**（写法照 holeAnchorOnCircle）—— 分区热账按有料面积份额拆（缺省，生产）；
+        //   false = 老口径「按格心整格归一边」，分区账、两区峰、分区说明与改动前逐位相同，门拿它做「开 − 关」归因与「改回 ⇒ 红」对照。生产代码不许传（整线经 LineCase.ZoneByMaterialFraction 注入，同样只供门）。
         // ★ R48（2026-09-15，Opus 5；数值把关人第十四轮）：lossTableHiC／lossTableNodes **只供测试用** —— 门 d 要用改动前的表（设定 + 200 K、60 节点）
         //   复现基线树的逐位记录，才能把「散热表换了」与「别的东西动了」分开。缺省（NaN／0）= 生产：上限 LossTableHiC、节点 LossTableNodes(环境, 上限)。
         //   生产代码不许传这两个参数（生产链配方由 R48RecipeFingerprintTests 的行为门守：每片热解的 Recipe.Rule == ProductionThermalRule）。
@@ -540,6 +559,7 @@ public static class ShellThermal
         //   修法：份额 f = 格内有料面积里落在 r ≤ 保温半径的份额（FlangeMesher.MaterialFraction，分子分母同一张栅格），
         //   q(T) = f·q法兰保温(T) + (1−f)·q舌保温(T)（LossTable.Blend，混合热流不混合厚度）。
         //   只改散热：圆盘区判据的分区、分区能量账的归属、局部热稳定的格子仍按形心（insulated[]）；局部热稳定在混合格取两种保温里较厚的（偏保守）。
+        //   ★ 2026-09-23（F4）更正上一句：分区能量账（圆盘区／舌片区）现在也按有料面积份额拆（下面「分区账」那段，同一个份额入口）；局部热稳定的格子仍按形心。
         //   ⚠ 这只修离散，不改物理假设 —— 保温仍在 r = 保温半径处突变。实际包层怎么收尾是另一件事，见 deliverable/R48_压接对齐与保温台阶_2026-09-14.md §4。
         //   没有厚度场（非 BuildFromField 生成的网格）⇒ 退回按形心，并写进 InsulRule。
         var insulFrac = new double[n];
@@ -1082,13 +1102,49 @@ public static class ShellThermal
         //        该按**保温**，也就是按 x。
         //   把两件事绑在一个判断上正是这个洞的根。现在拆开：②用 insulOnTab（旧规则，逐位不变），
         //   ①用 zoneOnTab（新规则）。这样本次改动**不触碰局部热稳定的任何数**。
+        //
+        // ══ ★ 2026-09-23（F4，业主决 28「跨界格的温度峰两区都算」）：盘缘上被 r = 盘半径 切开的格按有料面积份额拆账
+        //
+        //   病：上面那条「r ≤ 盘半径」是按**格心**判的 —— 一格被盘缘切开时整格归格心那一边，圆盘区体积随网格落点差 −2.0～+4.6 %
+        //   （HANDOVER §0.-15N 门 a，按格心那一列）。保温散热（上面分界格混合）与升温那一路（RampSweep）早已按份额，只剩这里按格心。
+        //   修法：份额 f = 格内有料面积里落在 r ≤ 盘半径 的份额（FlangeMesher.MaterialFractionInCircle，与保温混合同一个入口，DiscZoneShare 包一层）；
+        //     发热、散热、面积、体积、面积加权温度按 f／1 − f 记进两区；整格在圆内 f = 1、整格在圆外 f = 0，与格心分法逐位相同。
+        //     ★ 审查后（F4-M1）：份额经 SnapZoneShare 收整（圆外料或圆内料 ≤ 1e-9 × 格有料面积 ⇒ 0／1），否则料全在圆内的格会因积分舍入得 1 − 1e-15、被当成切开格。
+        //       保温分界混合（上面 nBlend）自 09-18 起有同一舍入，**这次没改**（另立一项，要不要共用同一收整待定）。
+        //   温度峰（决 28）：被切开的格（0 < f < 1）同一个温度**两区的峰都算** —— 两区峰取大（最热铂，ThermocoupleBasis）因此与格心分法逐位相同，
+        //     单片解本身（整线单点解）上三条硬判据不动；动的是分区账、两区峰各自的值与峰位（及峰位格的 J：形状评审「实测孔周峰值」读它）、旧判法参考量「圆盘区最高温 − 管温」，
+        //     两区峰并列时「最热的是…」的标签（ThermocoupleBasis.HottestOf 并列报圆盘峰）；以及各自读两区峰的下游 —— 保温搜索的线性闭合（按两区峰各自的 κ 外推后取大，
+        //     闭合修正 Δ ≠ 0 时可能换项、⑦ 不再逐位）与 Sizer／命令行外环读 TDiscMaxC − TRootC 的控制律，这些都没量、没门（见 F4 实施记录「不覆盖」）。
+        //   ⚠ 局部热稳定的候选筛选（insulOnTab）**不动**，仍按保温那条（见上）。
+        //   拿不到盘半径（退回按 x）或只供门的 zoneByMaterialFraction = false ⇒ 按格心／按 x 整格归一边，与改动前逐位相同（分区说明也逐字相同）。
         double xb = double.IsNaN(tabBoundaryX) ? insulBoundaryX : tabBoundaryX;
         bool byRadius = discRadiusMm > 1e-9;
+        bool zoneFrac = byRadius && zoneByMaterialFraction;
+        // 份额：保温分界圆与盘半径是同一个数时直接复用上面分界格混合量过的份额（同一个函数、同一组参数、同一个预检 ⇒ 逐位相同，门 a 逐格核）
+        var zoneShare = zoneFrac ? new double[n] : null;
+        bool reuseInsulFrac = zoneFrac && insulByRadius && !noField && insulDiscRadiusMm == discRadiusMm;
+        if (zoneShare != null)
+            for (int i = 0; i < n; i++)
+                zoneShare[i] = reuseInsulFrac
+                             ? (double.IsNaN(insulFrac[i]) ? CentroidDiscShare(m, i, discRadiusMm) : SnapZoneShare(insulFrac[i]))   // 审查后（F4-M1）：复用的份额同样收整，与 DiscZoneShare 逐位相同
+                             : DiscZoneShare(m, i, discRadiusMm);
+        int nZoneSplit = 0;
+        for (int i = 0; zoneShare != null && i < n; i++)
+            if (!Excluded(i) && zoneShare[i] > 0.0 && zoneShare[i] < 1.0) nZoneSplit++;
+        res.ZoneByMaterialFraction = zoneFrac;
+        res.ZoneSplitCells = nZoneSplit;
         res.DiscZoneRule = byRadius
             // 这两句会进界面（判据说明）：不许有修订号、不许有「口径」这类内部词（2026-09-14 物理把关人查出）。
             ? $"圆盘区按 r ≤ {discRadiusMm:0.0} mm 圈"
+              // 2026-09-23（F4）：按份额时补半句（进界面，写人话）；只供门的按格心改回不补，与改动前逐字相同
+              + (!zoneFrac ? ""
+                 : !m.HasMaterialSource ? "（这张网格没有材料来源，盘缘上的格按格心整格归一边）"
+                 : $"（盘缘上 {nZoneSplit} 格按有料面积份额把发热、散热、面积拆到两区；这些格的温度两区的最高温都算）")
             : $"圆盘区按 x ≥ {xb:0.0} 圈（没拿到盘半径，**可能只圈到半个圆盘**）";
         double gD = 0, lD = 0, aD = 0, tD = 0, gT = 0, lT = 0, aT = 0, tT = 0;
+        double vD = 0, vT = 0;   // 2026-09-23（F4）：两区体积（门 b 用）
+        res.ZoneDiscShare = new double[n];
+        Array.Fill(res.ZoneDiscShare, double.NaN);   // 不入本片能量账的格留 NaN（下面循环跳过它们）
         double tDMax = double.NegativeInfinity, tTMax = double.NegativeInfinity;
         int iDMax = -1, iTMax = -1;
         // 局部热稳定的候选：按**不稳定判据自己的分子** ρe(T)·J²·t·TCR(T) 排（= LocalStability 的 HeatDeriv）。
@@ -1119,10 +1175,22 @@ public static class ShellThermal
             double jj = jMagAPerMm2[i];
             if (ti > LocalStability.FitMaxC) hotOutOfRange++;
             double proxy = props.Rho(ti) * jj * jj * t * props.Tcr(ti);
-            if (onTab) { gT += g; lT += l; aT += A; tT += ti * A;
+            // 2026-09-23（F4）：记入圆盘区的份额 w；按格心／按 x 时 w 只取 0／1，走的是改动前那两行原式（逐位不变）
+            double w = zoneShare != null ? zoneShare[i] : (onTab ? 0.0 : 1.0);
+            res.ZoneDiscShare[i] = w;
+            if (w <= 0.0) { gT += g; lT += l; aT += A; tT += ti * A; vT += t * A;
                           if (ti > tTMax) { tTMax = ti; iTMax = i; } }   // R48：峰位也要记（见 TabMaxXMm）
-            else        { gD += g; lD += l; aD += A; tD += ti * A;
+            else if (w >= 1.0) { gD += g; lD += l; aD += A; tD += ti * A; vD += t * A;
                           if (ti > tDMax) { tDMax = ti; iDMax = i; } }
+            else
+            {
+                // 被盘缘切开的格：账按份额拆，温度两区的峰都算（决 28）
+                double wt = 1.0 - w;
+                gD += g * w; lD += l * w; aD += A * w; tD += ti * A * w; vD += t * A * w;
+                gT += g * wt; lT += l * wt; aT += A * wt; tT += ti * A * wt; vT += t * A * wt;
+                if (ti > tDMax) { tDMax = ti; iDMax = i; }
+                if (ti > tTMax) { tTMax = ti; iTMax = i; }
+            }
             // 候选预筛走**保温**那条口径，与上面的热账分区互不影响（见本段开头的说明）
             if (insulOnTab) candT.Add((proxy, i)); else candD.Add((proxy, i));
         }
@@ -1323,6 +1391,7 @@ public static class ShellThermal
         }
         res.QGenDiscW = gD; res.QLossDiscW = lD; res.AreaDiscMm2 = aD;
         res.QGenTabW = gT; res.QLossTabW = lT; res.AreaTabMm2 = aT;
+        res.VolDiscMm3 = vD; res.VolTabMm3 = vT;   // 2026-09-23（F4）
         res.TDiscMeanC = aD > 1e-9 ? tD / aD : double.NaN;
         res.TTabMeanC = aT > 1e-9 ? tT / aT : double.NaN;
         res.TDiscMaxC = double.IsNegativeInfinity(tDMax) ? double.NaN : tDMax;
@@ -1388,6 +1457,53 @@ public static class ShellThermal
                 + $"预判「{pred.Describe()}」，实际「{rc.Describe()}」");
         return res;
     }
+
+    /// <summary>
+    /// ★ 2026-09-23（F4，决 28）：第 <paramref name="cell"/> 格记入圆盘区（r ≤ <paramref name="discRadiusMm"/>）的份额 —— <see cref="Solve"/> 的分区热账只调这一处（与上面保温分界混合同一个预检、同一个份额入口）。
+    /// 格子包围盒整个在圆内或整个在圆外 ⇒ 按格心 0／1（与改动前的格心分法逐位相同）；包围盒跨过圆 ⇒ <see cref="FlangeMesher.MaterialFractionInCircle"/>
+    /// （解析板精确积分、栅格按方格中心）；那一格量不出份额（没有材料来源）⇒ 退回格心 0／1。门（R48F4ZoneShareGateTests）拿它逐格核 Solve 记下的份额、量圆盘区体积。
+    /// ★ 审查后（F4-M1）：出值前按 <see cref="ZoneShareSnapTol"/> 收整（<see cref="SnapZoneShare"/>）—— 料全在圆内（外）的格积分舍入出 1 − 1e-15 这类数，不收整就被当成切开格。
+    /// </summary>
+    public static double DiscZoneShare(ShellMesh m, int cell, double discRadiusMm)
+    {
+        return SnapZoneShare(DiscZoneShareRaw(m, cell, discRadiusMm));
+    }
+
+    /// <summary>
+    /// ★ 2026-09-23（F4 审查后，F4-M1）：份额收整的相对容差 —— 圆外料（或圆内料）不超过该格有料面积的这一份就当没有，份额收成 1（或 0）。
+    /// 病：解析板的份额 = IntegrateClip ÷ Integrate，两次高斯求积的分段不同（带 clipR 那次多切一刀），料全在圆内的格算出 1 − 1e-16～1 − 3e-14，
+    ///   没有精确等于 1 ⇒ 被当成「切开格」进了舌片区峰、也数进了分区说明的格数（审查探针：W08 R30 w30 判决网格 130 格里 16 格是这种舍入产物，全在 x &gt; 0 那侧的盘缘）。
+    /// 取值出处：R48NMeshInjectTests 逐格门判「满格」用的面积精度 1e-9（该档「满格（覆盖率 &gt; 0.999）要求 1e-9」那条与 `1e-9 * a`）；
+    ///   审查探针量得的舍入最大 2.9e-14，离它五个量级。1 − f 就是「圆外料 ÷ 格有料面积」，所以这条判的正是「圆外料 ≤ 1e-9 × 格有料面积」。
+    /// </summary>
+    public const double ZoneShareSnapTol = 1e-9;
+
+    /// <summary>2026-09-23（F4 审查后，F4-M1）：按 <see cref="ZoneShareSnapTol"/> 收整份额（1 − f ≤ 容差 ⇒ 1；f ≤ 容差 ⇒ 0；其余与 NaN 原样）。<see cref="DiscZoneShare"/> 与 Solve 复用保温份额的那一支都经它出值。</summary>
+    public static double SnapZoneShare(double f) => 1.0 - f <= ZoneShareSnapTol ? 1.0 : f <= ZoneShareSnapTol ? 0.0 : f;
+
+    /// <summary>
+    /// 2026-09-23（F4 审查后，F4-M1）：<see cref="DiscZoneShare"/> 收整之前的份额（同一个预检、同一个份额入口）。**只供门**做「改回 ⇒ 红」对照（不收整时舍入产物会被当成切开格）；生产不调。
+    /// </summary>
+    public static double DiscZoneShareRaw(ShellMesh m, int cell, double discRadiusMm)
+    {
+        var nd = m.Cells[cell];
+        double x0 = double.PositiveInfinity, x1 = double.NegativeInfinity, z0 = double.PositiveInfinity, z1 = double.NegativeInfinity;
+        foreach (int k in nd)
+        {
+            var v = m.Nodes[k];
+            x0 = Math.Min(x0, v.X); x1 = Math.Max(x1, v.X); z0 = Math.Min(z0, v.Z); z1 = Math.Max(z1, v.Z);
+        }
+        double nx = Math.Clamp(0, x0, x1), nz = Math.Clamp(0, z0, z1);
+        double fx = Math.Max(Math.Abs(x0), Math.Abs(x1)), fz = Math.Max(Math.Abs(z0), Math.Abs(z1));
+        if (FlangePlate.InsideInsulCircle(fx, fz, discRadiusMm) || !FlangePlate.InsideInsulCircle(nx, nz, discRadiusMm))
+            return CentroidDiscShare(m, cell, discRadiusMm);
+        double fr = FlangeMesher.MaterialFractionInCircle(m, cell, discRadiusMm);
+        return double.IsNaN(fr) ? CentroidDiscShare(m, cell, discRadiusMm) : fr;
+    }
+
+    /// <summary>2026-09-23（F4）：格心分法（改动前的式子逐字）—— 格心半径 &gt; 盘半径 ⇒ 0（舌片区），否则 1（圆盘区）。</summary>
+    public static double CentroidDiscShare(ShellMesh m, int cell, double discRadiusMm)
+        => Math.Sqrt(m.Centroid[cell].X * m.Centroid[cell].X + m.Centroid[cell].Z * m.Centroid[cell].Z) > discRadiusMm ? 0.0 : 1.0;
 
     /// <summary>
     /// ★ R48（2026-09-15，Opus 5）：在网格 <paramref name="m"/>、物性 <paramref name="p"/> 上按 <see cref="Solve"/> 的参数解一次热场**会用哪套热解配方** ——

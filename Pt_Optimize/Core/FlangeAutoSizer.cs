@@ -1532,6 +1532,7 @@ public static class FlangeAutoSizer
         CoupleTolFloorK = c.CoupleTolFloorK, BaselineTolK = c.BaselineTolK,
         EndTempAmpFromDecayLength = c.EndTempAmpFromDecayLength,
         MeasureJacobianAmp = c.MeasureJacobianAmp, JacobianDeltaK = c.JacobianDeltaK,   // R48 M（2026-09-18，Fable 5.1）：放大口径的两个开关随算例走
+        ZoneByMaterialFraction = c.ZoneByMaterialFraction,   // 2026-09-23（F4）：分区账口径（只供门注入）随算例走，副本不许静默退回缺省
         // 故意不拷的四个（LineCaseCloneTests 按名单核「确实没拷」）：
         //   BaselineRootC、WarmStart —— 缓存与热启动状态，只对同一几何成立，本类在跨轮处显式传（见上面 R48 审查第 9 条那段）；
         //   JacobianAmpCache —— R48 M（2026-09-18，Fable 5.1）：实测雅可比放大的缓存，与 BaselineRootC 同一条规矩（副本是试探解，几何不同就要重量）；
