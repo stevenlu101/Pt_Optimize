@@ -273,13 +273,25 @@ public static class Criteria
                     + "<th>方向</th><th>它在管什么</th></tr>");
             foreach (var e in All.Where(x => x.Hard == hard))
                 sb.Append($"<tr><td><b>{Plain(e.Key)}</b></td><td class=\"n\">{e.Unit}</td>"
-                        + $"<td class=\"n\">{e.Dir}</td><td>{e.Means}</td></tr>");
+                        + $"<td class=\"n\">{e.Dir}</td><td>{BoldHtml(e.Means)}</td></tr>");   // R47 第三轮 N6：** 转粗体，不许字面印进说明书
             sb.Append("</table>");
         }
         sb.Append("<p>★ <b>「管孔净流入」与「圆盘区最高温」是同一条安全线的两个视角</b> —— ");
         sb.Append("前者从管子看热流方向（热该往法兰走，不该往管里灌），");
         sb.Append("后者从法兰看圆盘区温度。两条一起看才判得准，缺一条就会漏掉一个失效方向。</p>");
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// R47 第三轮 N6（2026-09-13）：「它在管什么」那一列的文案用 <c>**</c> 标粗（与判据 Note、页顶横幅同一套写法），
+    /// 进 HTML 要转成 &lt;b&gt;，否则说明书上就是两对字面星号（DocRefTests 钉着）。奇数个 ** 时最后一段照原样。
+    /// </summary>
+    public static string BoldHtml(string s)
+    {
+        string[] parts = System.Net.WebUtility.HtmlEncode(s).Split("**");
+        var b = new StringBuilder();
+        for (int i = 0; i < parts.Length; i++) b.Append(i % 2 == 1 ? "<b>" + parts[i] + "</b>" : parts[i]);
+        return b.ToString();
     }
 
     /// <summary>完整对照表，给 `--glossary` 与说明书用。</summary>

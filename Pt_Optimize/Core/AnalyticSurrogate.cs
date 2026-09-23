@@ -214,24 +214,7 @@ public static class AnalyticSurrogate
     /// 来分「外部空白」与「内部空腔」，板贴着边就分不开了。
     /// </summary>
     public static ThicknessField Rasterize(FlangePlate g, double step = 0.5, double marginMm = 4.0)
-    {
-        double xMin = g.TabTipXMm - marginMm, xMax = g.DiscRadiusMm + marginMm;
-        double zMax = Math.Max(g.DiscRadiusMm, g.TabEndHalfWidthMm) + marginMm;
-        int nx = (int)Math.Ceiling((xMax - xMin) / step) + 1;
-        int nz = (int)Math.Ceiling((2 * zMax) / step) + 1;
-        var f = new ThicknessField
-        { X0 = xMin, Z0 = -zMax, Step = step, Nx = nx, Nz = nz, T = new double[nx * nz] };
-        for (int i = 0; i < nx; i++)
-        {
-            double x = xMin + i * step;
-            for (int j = 0; j < nz; j++)
-            {
-                double z = -zMax + j * step;
-                f.T[i * nz + j] = g.Inside(x, z) ? g.ThicknessAt(x, z) : 0.0;
-            }
-        }
-        return f;
-    }
+        => FlangeMesher.Rasterize(g, step, marginMm);   // R47：栅格化只有一份（生产路径 Build 也走它），这里只是带留白的入口
 
     /// <summary>
     /// 造替身并在**等宽 / 梯形**两种舌片里挑量出来更接近的那一种。

@@ -225,6 +225,35 @@ public sealed class DesignSpec
     /// </summary>
     public string VerifiedNote = "";
 
+    /// <summary>
+    /// ★ R47 B（2026-09-13）：**几何来源**（<see cref="GeomSourceAnalytic"/>／<see cref="GeomSourceDrawing"/>；空 = 旧档没记）
+    /// 与图纸路径逐片 .3dm 文件名。只是**出处**：解析 BuildCase 不读它们（图纸路径的算例由页面 BuildCase 造），
+    /// 所以进 DesignSpecStoreTests 豁免名单。逐片舌保温两条路共用 <see cref="TabInsulMm"/>（① 页同一张表）。
+    /// </summary>
+    public string GeomSource = "";
+    public string[] FlangeFile3dm = System.Array.Empty<string>();
+    public const string GeomSourceAnalytic = "解析形状（程序生成）", GeomSourceDrawing = "图纸 .3dm";
+    /// <summary>R47 复修 M9：图纸路径出的档读回时写进 <see cref="Notes"/> 的那句话（载入时印出来）。</summary>
+    public const string DrawingRecordNote = "本档出自图纸路径，复现要先「分析几何变数」再「核算整线」。";
+    /// <summary>
+    /// ★ R47 第三轮 N5（2026-09-13）：图纸路径的**逐片厚度倍数 k**（图纸整体 ×k，1.0 = 原尺寸；长度 = 片数，空 = 解析档）。
+    /// 此前页面在 .3dm 模式把 k 写进 <see cref="TabThickMm"/> 当毫米存档，读回的档「板厚 1.00/1.00/…」看起来像一片 1 mm 的解析板，
+    /// 而 BuildCase 真会照它造一片解析法兰去算 —— 算的是另一个零件。现在 k 各存各的，图纸档的 <see cref="TabThickMm"/> 写 NaN。
+    /// </summary>
+    public double[] ThicknessScale = System.Array.Empty<double>();
+    /// <summary>本档出自图纸路径（几何来源 = 图纸 .3dm）。</summary>
+    public bool IsDrawingRecord => GeomSource == GeomSourceDrawing;
+    /// <summary>
+    /// 图纸档**不许造解析法兰**：<see cref="BuildCase"/>、命令行单次判定、加密复算、说明书判据表读到图纸档时一律拒绝并印这句话
+    /// （不抛、不算）。图纸档的几何在 .3dm 文件里，只有界面「载入设计记录」→「分析几何变数」→「核算整线」那条路算得了它。
+    /// </summary>
+    public const string DrawingRefusal = "本档出自图纸路径，请在界面里载入并先分析几何 —— 图纸档没有解析板，这里不造解析法兰、不算。";
+    /// <summary>
+    /// ★ R47 B：**读档说明** —— 读档时把旧档补成新形态的地方，要在这里说出来（例：旧档只记了一个舌保温 ⇒ 填成所有片同值）。
+    /// 空 = 档就是按现在的形态写的。界面「载入设计记录」会把它印出来；不进 BuildCase。
+    /// </summary>
+    public string Notes = "";
+
     // ================================================================
     // ★★★★★ 2026-08-16 第二次修正：**旧板厚是优化器停早了一轮的结果**。
     //
@@ -294,6 +323,7 @@ public sealed class DesignSpec
     {
         int n = FlangeCount;
         TabThickMm = FitArr(TabThickMm, n);
+        if (ThicknessScale.Length > 0) ThicknessScale = FitArr(ThicknessScale, n);   // R47 第三轮 N5：图纸档的逐片 k（空 = 解析档，不补）
         TabInsulMm = FitArr(TabInsulMm, n);
         TongueThickMm = FitArr(TongueThickMm, n);
         TabHoleRotDeg = FitArr(TabHoleRotDeg, n);          // R31
@@ -339,6 +369,7 @@ public sealed class DesignSpec
         c.SetpointC = (double[])SetpointC.Clone();
         c.SegLengthMm = (double[])SegLengthMm.Clone();
         c.TabThickMm = (double[])TabThickMm.Clone();
+        c.ThicknessScale = (double[])ThicknessScale.Clone();   // R47 第三轮 N5
         c.TabInsulMm = (double[])TabInsulMm.Clone();
         c.TongueThickMm = (double[])TongueThickMm.Clone();
         c.TabHoleRotDeg = (double[])TabHoleRotDeg.Clone();   // R31（TabTaper 是标量，MemberwiseClone 已带）
@@ -347,6 +378,7 @@ public sealed class DesignSpec
         c.RingW1Mm = (double[])RingW1Mm.Clone();
         c.RingW2Mm = (double[])RingW2Mm.Clone();
         c.RingMul2 = (double[])RingMul2.Clone();
+        c.FlangeFile3dm = (string[])FlangeFile3dm.Clone();   // R47：图纸文件名逐份拷（字符串本身不可变）
         // ★★★★★ **形状那三根也必须逐份拷**（2026-09-06 被出图对账门抓到）。
         //   漏了它们 ⇒ MemberwiseClone 按引用共享 ⇒ 改一个副本的孔径，
         //   会**就地改掉 DesignSpec.Builtin[0] 那个 static 实例**，
@@ -846,6 +878,10 @@ public sealed class DesignSpec
     /// <param name="checkRamp">是否连 ① 升温一起判。判它更慢，但**少判一条就不是全判据**</param>
     public LineCase BuildCase(DesignInputs baseInputs, bool checkRamp = true)
     {
+        // ★ R47 第三轮 N5（2026-09-13）：图纸档**拒绝造解析法兰**。它的 TabThickMm 是 NaN（k 在 ThicknessScale 里），
+        //   照旧往下走会造出一片 NaN 板、判据表照样出数。返回一个带 RefusedWhy 的算例：LineRunner.Run 读到它就原句返回、不算不抛。
+        if (IsDrawingRecord)
+            return new LineCase { Base = SegmentSolver.Clone(baseInputs), RefusedWhy = DrawingRefusal + $"（档「{Name}」）" };
         // ★★★★★ 管孔半径曾有**两处来源**（2026-08-28 查出：本类写死 25.0，求解器用 TubeIdMm*0.5 + WallMm），
         //   那时对不上就拒算。R30（2026-09-10）：内径进了几何（TubeIdMm 字段），整线的管内径也从本设计取 ⇒ 只剩一个来源。
         //   参数表的「内径 ID」只是新设计的默认值（页面读控件成设计时抄进来）；两边不等时以**设计**为准并说出来。
@@ -982,7 +1018,7 @@ public sealed class DesignSpec
         // ⚠ 必须逐个格式化。`string.Join("/", double[])` 打出来的是
         //   「1.3600000000000003/2.55656893078647」这种二进制残渣，而它会**直接进报告**——
         //   读的人无从分辨那是「算出来的精度」还是「忘了格式化」。（2026-08-17 实际发生。）
-        $"舌 {TabLengthMm:0}×{2 * TabHalfWidthMm:0}{(TabTaper ? "锥形" : "")}／板厚 {Fmt(TabThickMm, "0.00")}／舌片厚 {FmtT(TongueThickMm)}{DescribeTabArms()}／" +
+        $"舌 {TabLengthMm:0}×{2 * TabHalfWidthMm:0}{(TabTaper ? "锥形" : "")}／{(IsDrawingRecord ? $"厚度倍数 k {Fmt(ThicknessScale, "0.00")}（图纸整体 ×k）" : $"板厚 {Fmt(TabThickMm, "0.00")}")}／舌片厚 {FmtT(TongueThickMm)}{DescribeTabArms()}／" +   // R47 第三轮 N5：图纸档印 k 不印板厚
         $"舌保温 {Fmt(TabInsulMm, "0.0")}／" +
         $"环 r≤孔+{RingWidthMm:0}→×{Fmt(RingMul, "0.00")}／舌根圆角 R{TabFilletMm:0}／" +
         $"压接 {ClampLengthMm:0} 夹 {ClampTempC:0} °C" +
@@ -1032,7 +1068,11 @@ public sealed class DesignSpec
                      "从**板厚压平**的种子（--seedflat 2.0，其余旋钮仍是本档的）重跑，落在 **3664 g**，比本档重 117 g（HANDOVER §0.0.3 ⑦）。★ 这是**单变量**对照：只有板厚起点变了 ⇒ 那 117 g 只归因于板厚起点；**真正独立的复现**还须把舌保温与环倍率也脱开本档，尚未做。" +
                      "今天的 --shape 种子默认就是本档（见 Core/ShapeSeed.cs），用它重推等于从答案出发",
 
-        Binding = "抽热窗口：②′ 最小 1.1 W（须 >0）、③ 5.2/10 —— 两者是同一个量的两侧。" +
+        // R47 复修 M6：写全名不写代号；修网格前／修好后两组数并列，注明本档不过
+        // R47 第三轮 N8：这里原写「5.2/10」—— 那是 2026-08-28 基线换收敛口径（--basetol，HANDOVER「③ 的基线用错收敛判据」：5.182 → 4.720）
+        //   之前的数，与本档记录值 FlangeDipK = 4.720 不是同一次运行；改成与 FlangeDipK 同一个数，免得档自己说两个数。
+        Binding = "抽热窗口：管孔净流入最小 1.1 W（须 >0）、法兰增量温降 4.720/10 —— 两者是同一个量的两侧（修网格前的导航网格，即本档的记录值）。" +
+                  "修好的网格上（R47，2026-09-13）：导航网格 法兰增量温降 17.480/10、管孔净流入 5.324 W；加密到 0.125 mm 20.48/10 且未收敛 ⇒ **本档不过**。" +
                   "舌保温已接近下界（0.3–0.5 mm，≈裸舌）⇒ 再削板厚就要转为往管里灌热",
         WallMm = 0.8,
         DiscRadiusMm = 30.0, TabLengthMm = 140.0, TabHalfWidthMm = 30.0,
@@ -1056,7 +1096,15 @@ public sealed class DesignSpec
                      + "　⚠ 2026-09-02 之前这里填的是 7.950/2.628 —— 那组数**不是本档的**，"
                      + "是「求解器解出来的那个设计」（≈3480 g）的复核值，被误抄到本档记录上"
                      + "（`--solve --verifymesh` 复核的是解出来的那一点，`--judge --verifymesh` 才复核本档；"
-                     + "单元数也对不上：14982 vs 本档 15055）。现已按本档实测重填。",
+                     + "单元数也对不上：14982 vs 本档 15055）。现已按本档实测重填。"
+                     // R47（2026-09-13）：网格生成器修好（轴从管轴中心向外铺、两条路合成一份、栅格面积积分）之后，
+                     //   导航网格上的数变了。记录值那一列**不改**（它是当天那次运行的历史），只在这里说清楚。
+                     //   R47 复修 M6：不写「新数是对的」「与复核值同向」，写实情。
+                     + "　⚠ 2026-09-13（R47）之后：「记录值」那一列是修网格**之前**的导航网格上的数，已不可复现。"
+                     + "修好的生成器上本档：导航网格（2 mm）法兰增量温降 **17.480 K**／管孔净流入 5.324 W／圆盘区最高温 −0.248 K／3545 g"
+                     + "（deliverable/R47_改后_导航网格_2026-09-13.txt）；加密到 0.125 mm 为 **20.48 K**，中带确认没过、**未收敛**（审查实测 2026-09-13）"
+                     + "—— 修网格后本档还没有一个算准了的数，只知道它**不过**（上限 10）。"
+                     + "上面那组复核值（10.329 K／0.250 mm）是老网格轴上量的：老轴从端点起铺、管孔 −z 半边比 +z 半边粗 4 倍，那次复核**无效**，留着只作历史。",
     };
 
     /// <summary>底档：管壁压到焊接烧穿下界。</summary>
@@ -1069,7 +1117,9 @@ public sealed class DesignSpec
                      "0.64/1.86/1.73/0.62 各 114 次，与本档逐位相同），错的是工具归属。同 W08 那条，不再重复。" +
                      "⚠ 同样**不能拿来复现**：今天的 --shape 种子默认就是本档，用它重推等于从答案出发",
 
-        Binding = "管壁 0.6 = 焊接烧穿下界（余量 0）；端片板厚 0.62–0.64 也逼近同一条下界 0.60",
+        // R47 复修 M6：修网格前／修好后两组数并列，注明本档不过
+        Binding = "管壁 0.6 = 焊接烧穿下界（余量 0）；端片板厚 0.62–0.64 也逼近同一条下界 0.60。" +
+                  "法兰增量温降：修网格前导航网格 6.124/10；修好的网格上（R47，2026-09-13）导航网格 17.077/10、管孔净流入 5.814 W，修网格后还没做加密复算 ⇒ **本档不过**",
         WallMm = 0.6,
         DiscRadiusMm = 30.0, TabLengthMm = 140.0, TabHalfWidthMm = 30.0,
         TabThickMm = new[] { 0.64, 1.86, 1.73, 0.62 },
@@ -1090,7 +1140,12 @@ public sealed class DesignSpec
                      + "**导航网格 2 mm** 上的数。"
                      + "　⚠ 2026-09-02 之前这里填的是 9.453/1.595 —— 那组数**不是本档的**，"
                      + "是「求解器解出来的那个设计」（2616 g，本档是 2656 g）的复核值，"
-                     + "被误抄到本档记录上；单元数也对不上（47567 vs 本档 47884）。现已按本档实测重填。",
+                     + "被误抄到本档记录上；单元数也对不上（47567 vs 本档 47884）。现已按本档实测重填。"
+                     // R47（2026-09-13）：同 W08 —— 记录值那一列不改，只说清楚它是修网格之前的数。R47 复修 M6：写实情。
+                     + "　⚠ 2026-09-13（R47）之后：「记录值」那一列是修网格**之前**的导航网格上的数，已不可复现。"
+                     + "修好的生成器上本档：导航网格（2 mm）法兰增量温降 **17.077 K**／管孔净流入 5.814 W／圆盘区最高温 −0.376 K／2656 g"
+                     + "（deliverable/R47_改后_导航网格_2026-09-13.txt）；修网格后本档**还没做加密复算**，只知道导航网格上不过（上限 10）。"
+                     + "上面那组复核值（10.859 K／0.125 mm）是老网格轴上量的（老轴 −z 半边未加密），那次复核**无效**，留着只作历史。",
     };
 
     // ── 已作废的两档：**留着**，不删。

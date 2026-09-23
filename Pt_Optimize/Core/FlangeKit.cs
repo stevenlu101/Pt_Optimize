@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -99,7 +99,7 @@ public static class FlangeKit
                           $"\t{r.BusWidthMm:0} × {r.BusThickMm:0.0}\t{r.JCuAPerMm2:0.00}\t{r.ClampLenMm:0}" +
                           $"\t{r.ClampTempC:0}{(r.ClampTempIsInput ? "" : "（算出）")}\t{r.QClampW:0.0}" +
                           $"\t{r.TabInsulMm:0.0}（{r.InsulFromXMm:0}…{r.InsulToXMm:0}，长 {r.InsulLenMm:0}）" +
-                          $"\t{r.WeldLegMm:0.00}\t{(r.ArmNote.Length > 0 ? r.ArmNote + (r.Note.Length > 0 ? "；" : "") : "")}{r.Note}");
+                          $"\t{(double.IsNaN(r.WeldLegMm) ? "按图纸" : r.WeldLegMm.ToString("0.00"))}\t{(r.ArmNote.Length > 0 ? r.ArmNote + (r.Note.Length > 0 ? "；" : "") : "")}{r.Note}");   // R47 第三轮 N5：图纸档没有板厚，焊脚按图纸
         string discInsul = p.FlangeInsulated && p.FlangeInsulThickMm > 1e-6
             ? $"圆盘双面包 {p.FlangeInsulThickMm:0.0} mm"
             : "圆盘不包";

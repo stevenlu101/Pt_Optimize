@@ -99,6 +99,16 @@ public static class FlangeAutoSizer
         /// 除非你已用 --fidelity 验证过该形状上放粗无害，否则不要设。
         /// </summary>
         public double SearchMeshFineMm = 0;
+
+        /// <summary>
+        /// ★ R47 C（2026-09-13）：**终局细网格**口径 —— 与 <see cref="SearchMeshFineMm"/>（搜索期放粗）**分开**。
+        /// 0 = 不动（用 baseCase 自己的导航网格）。&gt; 0 时整个 <see cref="SolveByLevel"/>（搜索各轮 + 全精度复核）
+        /// 都在这张网格上跑：中带 FinalMeshFineMm／FinalMeshFineRadiusMm、内带 FinalMeshInnerMm／FinalMeshInnerRadiusMm，
+        /// 与加密复算（MeshVerify）收敛那一档同口径 —— 求根的网格与判决的网格才是同一张（A⑬）。
+        /// 病：「细网格重解」的 .3dm 分支此前 fineMm 没传进 SolveByLevel，实际在 2 mm 导航网格上再跑一次。
+        /// 解析路径的 Solver 早有 FineMm/FineRadiusMm 两遍求根，这里是图纸路径的对应物。
+        /// </summary>
+        public double FinalMeshFineMm = 0, FinalMeshFineRadiusMm = 0, FinalMeshInnerMm = 0, FinalMeshInnerRadiusMm = 0;
         /// <summary>
         /// 搜索期的**远场**网格步长 mm。★ 2026-08-17 起默认 **0 = 不放粗**。
         ///
@@ -837,6 +847,9 @@ public static class FlangeAutoSizer
         bool Locked(int j, int m) => levelLocked is not null && j < levelLocked.Length
                                      && m < levelLocked[j].Length && levelLocked[j][m];
         opt ??= new Options();
+        // ★ R47 C（2026-09-13）：终局细网格 —— 设了就整个求解（各轮搜索 + 全精度复核）都在那张网格上，
+        //   下面所有 CloneCase(baseCase) 都从这份带网格口径的副本出发（求根与判决同一张网格）。
+        baseCase = ApplyFinalMesh(baseCase, opt);
         int nf = levelThicknessMm.Length;
         var scale = new double[nf][];
         for (int j = 0; j < nf; j++)
@@ -1319,6 +1332,22 @@ public static class FlangeAutoSizer
     /// ⚠ 它是**逐字段手写**的：LineCase 新增字段时必须同步加到这里，
     ///   `LineCaseCloneTests` 盯着这件事。
     /// </summary>
+    /// <summary>
+    /// ★ R47 C（2026-09-13）：把 <see cref="Options.FinalMeshFineMm"/> 那组「终局细网格」口径套到算例上。
+    /// 没设（≤ 0）就原样返回；设了就返回一份副本，中带／内带都换成终局口径（内带没给就跟中带走）。
+    /// 单独成方法是为了让门（CliUiParityTests「细网格重解格数随 fineMm 变」）不必跑整线解就能钉住它。
+    /// </summary>
+    public static LineCase ApplyFinalMesh(LineCase c, Options opt)
+    {
+        if (opt is null || !(opt.FinalMeshFineMm > 0)) return c;
+        var lc = CloneCase(c);
+        lc.MeshFineMm = opt.FinalMeshFineMm;
+        if (opt.FinalMeshFineRadiusMm > 0) lc.MeshFineRadiusMm = opt.FinalMeshFineRadiusMm;
+        lc.MeshInnerMm = opt.FinalMeshInnerMm > 0 ? opt.FinalMeshInnerMm : opt.FinalMeshFineMm;
+        if (opt.FinalMeshInnerRadiusMm > 0) lc.MeshInnerRadiusMm = opt.FinalMeshInnerRadiusMm;
+        return lc;
+    }
+
     public static LineCase CloneCase(LineCase c) => new()
     {
         // ⚠ SegLengthMm 现在是**逐段数组**（用户 2026-09-03）。这里必须 Clone ——
@@ -1332,6 +1361,9 @@ public static class FlangeAutoSizer
         FlangeFile3dm = c.FlangeFile3dm, ThicknessScale = c.ThicknessScale,
         LevelScale = c.LevelScale, LevelThicknessMm = c.LevelThicknessMm,
         ThicknessStepMm = c.ThicknessStepMm,
+        // R47 B（2026-09-13）：图纸路径的逐片输入也要带过去，否则定尺寸里的副本退回裸舌／默认板
+        FlangeFields = c.FlangeFields, GeomForJudge = c.GeomForJudge,
+        TabInsul3dmPerPlateMm = c.TabInsul3dmPerPlateMm, TabInsul3dmMm = c.TabInsul3dmMm,
         MeshFineMm = c.MeshFineMm, MeshCoarseMm = c.MeshCoarseMm,
         MeshFineRadiusMm = c.MeshFineRadiusMm,
         MeshInnerMm = c.MeshInnerMm, MeshInnerRadiusMm = c.MeshInnerRadiusMm,

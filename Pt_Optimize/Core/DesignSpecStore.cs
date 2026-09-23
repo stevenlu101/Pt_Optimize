@@ -72,8 +72,20 @@ public static class DesignSpecStore
         public double[]? setpointC { get; set; }
         /// <summary>每段直接加热铂金管的长度 mm（逐段，用户 2026-09-03）。缺省 ⇒ 按段数铺默认值。</summary>
         public double[]? segLengthMm { get; set; }
-        public double[]? tabThickMm { get; set; }
-        public double[]? tabInsulMm { get; set; }
+        /// <summary>板厚 mm 逐片。★ R47 第三轮 N5：图纸档写 null（NaN），k 在 <see cref="thicknessScale"/> 里；解析档照旧是数。</summary>
+        public double?[]? tabThickMm { get; set; }
+        /// <summary>★ R47 第三轮 N5：图纸路径逐片厚度倍数 k（图纸整体 ×k）。解析档不写。</summary>
+        public double[]? thicknessScale { get; set; }
+        /// <summary>
+        /// ★ R47 B（2026-09-13）：逐片舌保温。**读**时接受两种形态：数组（逐片，现行）或**单个数**（旧档／图纸路径
+        /// 早期只有一个标量 `_tabIns3dm`）—— 单个数读回填成所有片同值，并写进 DesignSpec.Notes 说明。写时一律写数组。
+        /// 用 JsonElement 是为了不改 JSON 形态就两种都认得；旧键 tabInsul3dmMm（标量）同样认。
+        /// </summary>
+        public JsonElement? tabInsulMm { get; set; }
+        public double? tabInsul3dmMm { get; set; }
+        /// <summary>★ R47 B：几何来源（解析／图纸 .3dm）与图纸路径逐片 .3dm 文件名。旧档没有 ⇒ 空。</summary>
+        public string? geomSource { get; set; }
+        public string[]? flangeFile3dm { get; set; }
         public double[]? ringMul { get; set; }
         // ★★★★★ A3（2026-09-02）：**这三个 2026-08-30 就成了设计的一部分，而档一直没存**。
         //   ringMul2（t₂）尤其要命 —— 它是求解器治「管孔净流入」的**首选**旋钮
@@ -248,6 +260,10 @@ public static class DesignSpecStore
             v is null ? throw new InvalidDataException($"缺 {k}")
             : v.Length != n ? throw new InvalidDataException($"{k} 应有 {n} 个，实为 {v.Length} 个")
             : v;
+        double?[] NeedN(double?[]? v, string k, int n) =>
+            v is null ? throw new InvalidDataException($"缺 {k}")
+            : v.Length != n ? throw new InvalidDataException($"{k} 应有 {n} 个，实为 {v.Length} 个")
+            : v;
 
         var c = d.checks ?? throw new InvalidDataException("缺 checks（五个判据记录值）—— 没有它就无法回归对账");
 
@@ -271,9 +287,15 @@ public static class DesignSpecStore
             TabHalfWidthMm = NeedD(d.tabHalfWidthMm, "tabHalfWidthMm"),
             // ★★★ 2026-09-02：片数**由段数决定**（n 段 → n+1 片），不再写死 4。
             //   段数可调是硬要求；写死 4 会让「4 段的档」当场被拒或悄悄少一片。
-            TabThickMm = NeedA(d.tabThickMm, "tabThickMm", nPlate),
-            TabInsulMm = NeedA(d.tabInsulMm, "tabInsulMm", nPlate),
+            TabThickMm = NaA(NeedN(d.tabThickMm, "tabThickMm", nPlate)),   // R47 第三轮 N5：图纸档逐片 null ⇒ NaN
+            ThicknessScale = d.thicknessScale is { Length: > 0 } ks ? (ks.Length == nPlate ? (double[])ks.Clone() : throw new InvalidDataException($"thicknessScale 应有 {nPlate} 个，实为 {ks.Length} 个")) : Array.Empty<double>(),
+            TabInsulMm = TabInsulFrom(d, nPlate, out string tabInsulNote),
             RingMul = NeedA(d.ringMul, "ringMul", nPlate),
+            // R47 B：几何来源／图纸文件名／读档说明
+            GeomSource = d.geomSource ?? "",
+            FlangeFile3dm = d.flangeFile3dm ?? Array.Empty<string>(),
+            // R47 复修 M9：图纸路径出的档，读回就说清楚怎么复现（几何来源决定，不看别的）
+            Notes = tabInsulNote + ((d.geomSource ?? "") == DesignSpec.GeomSourceDrawing ? (tabInsulNote.Length > 0 ? "　" : "") + DesignSpec.DrawingRecordNote : ""),
             TotalMassG = NeedD(d.totalMassG, "totalMassG"),
             TubeMassG = d.tubeMassG ?? 0,
             FlangeMassG = d.flangeMassG ?? 0,
@@ -314,6 +336,14 @@ public static class DesignSpecStore
         if (d.tabHoleRotDeg is { Length: > 0 } hr) fd.TabHoleRotDeg = NaA(hr);      // R31
         if (d.tabArmX1Mm is { Length: > 0 } ax1) fd.TabArmX1Mm = NaA(ax1);
         if (d.tabArmThickMm is { Length: > 0 } axt) fd.TabArmThickMm = NaA(axt);
+        // ★ R47 第三轮 N5：R47 第二轮之前写出的图纸档把厚度倍数 k 记在 tabThickMm 栏里（当毫米）。
+        //   读回时按 k 接过来、板厚栏改 NaN，并在 Notes 里说出来 —— 不许把 k 当一片 1 mm 的解析板。
+        if (fd.IsDrawingRecord && fd.ThicknessScale.Length == 0 && fd.TabThickMm.Any(v => !double.IsNaN(v)))
+        {
+            fd.ThicknessScale = fd.TabThickMm.Select(v => double.IsNaN(v) ? 1.0 : v).ToArray();
+            fd.TabThickMm = Enumerable.Repeat(double.NaN, fd.TabThickMm.Length).ToArray();
+            fd.Notes += (fd.Notes.Length > 0 ? "　" : "") + "旧图纸档把厚度倍数 k 记在板厚栏里，已按 k 读回（板厚栏不适用于图纸档）。";
+        }
         // ★ 最后统一按段数对齐 —— 档里存的片数与 setpointC 对不上时（旧档、手改过的档），
         //   这里补齐/裁掉，而不是让它带着一个错长度进计算。
         fd.Fit();
@@ -327,6 +357,31 @@ public static class DesignSpecStore
             fd.VerifiedNote = v.note ?? "";
         }
         return fd;
+    }
+
+    /// <summary>
+    /// ★ R47 B（2026-09-13）：逐片舌保温**向后兼容**读法。
+    /// 数组 ⇒ 按片数校验（与从前一样，缺／长度不对都拒）；**单个数**（旧档，或旧键 tabInsul3dmMm）⇒ 填成所有片同值，
+    /// 并把这件事写进 <paramref name="note"/>（DesignSpec.Notes，界面载入时印出来）—— 不许静默补。
+    /// </summary>
+    private static double[] TabInsulFrom(Dto d, int nPlate, out string note)
+    {
+        note = "";
+        var el = d.tabInsulMm;
+        if (el is { } e && e.ValueKind == JsonValueKind.Array)
+        {
+            var arr = e.EnumerateArray().Select(x => x.ValueKind == JsonValueKind.Number ? x.GetDouble()
+                                                     : throw new InvalidDataException("tabInsulMm 里有不是数的项")).ToArray();
+            if (arr.Length != nPlate) throw new InvalidDataException($"tabInsulMm 应有 {nPlate} 个，实为 {arr.Length} 个");
+            return arr;
+        }
+        double? one = el is { } e1 && e1.ValueKind == JsonValueKind.Number ? e1.GetDouble() : d.tabInsul3dmMm;
+        if (one is { } v)
+        {
+            note = $"旧档只记了一个舌保温 {v:0.###} mm（不分片），读档时已填成所有 {nPlate} 片同值；另存一次就会按逐片写出。";
+            return Enumerable.Repeat(v, nPlate).ToArray();
+        }
+        throw new InvalidDataException("缺 tabInsulMm");
     }
 
     /// <summary>把一个设计记录写成档。返回写出的路径。**不覆盖已存在的同名文件。**</summary>
@@ -365,8 +420,11 @@ public static class DesignSpecStore
             flangeInsulMm = fd.FlangeInsulMm,
             flangeInsulated = fd.FlangeInsulated,
             clampLengthMm = fd.ClampLengthMm,
-            tabThickMm = fd.TabThickMm,
-            tabInsulMm = fd.TabInsulMm,
+            tabThickMm = fd.TabThickMm.Select(Nz).ToArray(),                 // R47 第三轮 N5：图纸档的 NaN 存成 null
+            thicknessScale = fd.ThicknessScale.Length > 0 ? fd.ThicknessScale : null,   // 图纸档逐片 k
+            tabInsulMm = JsonSerializer.SerializeToElement(fd.TabInsulMm),   // 逐片数组（读时也认旧档的单个数，见 TabInsulFrom）
+            geomSource = fd.GeomSource.Length > 0 ? fd.GeomSource : null,      // R47 B：几何来源／图纸文件名
+            flangeFile3dm = fd.FlangeFile3dm.Length > 0 ? fd.FlangeFile3dm : null,
             ringMul = fd.RingMul,
             ringW1Mm = NzA(fd.RingW1Mm),
             ringW2Mm = NzA(fd.RingW2Mm),

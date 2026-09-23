@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -62,7 +62,10 @@ public static class InstallReport
             string hole = j < d.TabHoleRMm.Length && d.TabHoleRMm[j] > 1e-9
                 ? $"{Solver.HoleShapeName(d.TabHoleSidesOf(j))} r{d.TabHoleRMm[j]:0.0}×{(j < d.TabHoleAspect.Length ? d.TabHoleAspect[j] : 1):0.00}"
                 : "无";
-            sb.AppendLine($"{f.Name}\t{where}\t{(j < d.TabThickMm.Length ? d.TabThickMm[j] : double.NaN):0.00}" +
+            // R47 第三轮 N5：图纸档的板厚栏是 NaN（k 在 ThicknessScale），印「图纸×k」不印 NaN
+            string plateT = j < d.TabThickMm.Length && !double.IsNaN(d.TabThickMm[j]) ? d.TabThickMm[j].ToString("0.00")
+                          : d.IsDrawingRecord && j < d.ThicknessScale.Length ? $"图纸×{d.ThicknessScale[j]:0.00}" : "—";
+            sb.AppendLine($"{f.Name}\t{where}\t{plateT}" +
                           $"\t{(j < d.TongueThickMm.Length ? d.TongueThickMm[j] : double.NaN):0.00}" +
                           $"\t{(d.HasTabArm(j) ? $"{d.TabArmThickMm[j]:0.00} mm × [{d.TabArmX0Mm[j]:0}, {d.TabArmX1Mm[j]:0}]" : "无")}" +
                           $"\t{(j < d.TabInsulMm.Length ? d.TabInsulMm[j] : double.NaN):0.0}" +
@@ -93,7 +96,7 @@ public static class InstallReport
         var thick = new List<string>();
         for (int j = 0; j < d.FlangeCount && j < d.TabThickMm.Length; j++)
         {
-            var parts = new List<string> { $"板 {d.TabThickMm[j]:0.00}" };
+            var parts = new List<string> { double.IsNaN(d.TabThickMm[j]) ? (d.IsDrawingRecord && j < d.ThicknessScale.Length ? $"板 按图纸 ×{d.ThicknessScale[j]:0.00}" : "板 —") : $"板 {d.TabThickMm[j]:0.00}" };   // R47 第三轮 N5
             if (j < d.TongueThickMm.Length && !double.IsNaN(d.TongueThickMm[j]) && Math.Abs(d.TongueThickMm[j] - d.TabThickMm[j]) > 0.005) parts.Add($"舌 {d.TongueThickMm[j]:0.00}");
             if (d.HasTabArm(j)) parts.Add($"叉臂 {d.TabArmThickMm[j]:0.00}");
             if (j < d.RingMul.Length && d.RingMul[j] > 1.001) parts.Add($"环 ×{d.RingMul[j]:0.00}");
