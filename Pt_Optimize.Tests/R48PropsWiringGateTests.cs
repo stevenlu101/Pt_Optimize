@@ -57,13 +57,23 @@ public class R48PropsWiringGateTests
     ///     **本次只在合并树上重录**：「不含接线、含本诊断」的树不存在，照上一条的做法先在不含接线的树上取数不可行。证明中性的办法换成：
     ///     改前（分支头 911c788，不含本诊断）与改后用同一剥离版探针各转储一次，改后去掉这 4 个字段的 12 行后与改前 cmp 逐字节相同（SHA 回到 e9a022cf…），diff 只有这 12 行新增。
     ///     对拍证据：deliverable/R48_图纸孔弧覆盖诊断_接线门1转储对拍_2026-09-23.txt。
+    ///   - 2026-09-23 **再重录**（变因 = F4 分区按份额（决 28 两区都算），C3：法兰分区热账把盘缘上被 r = 盘半径 切开的格按有料面积份额拆到两区，
+    ///     这些格的温度两区的峰都算；LineCase 多一个只供门的公开字段 ZoneByMaterialFraction 进了转储）：旧 fb2c3248… → 新值（下面的常量）。
+    ///     **本次只在本树上重录**，做法同上一条：改前（分支头 cff38c6 的源码快照）与本树「改回」（ZoneByMaterialFraction = false）用同一探针各转储一次，
+    ///     去掉「算例.ZoneByMaterialFraction」一行后逐字节相同（SHA 回到 fb2c3248…）；本树生产（开）对改回的差只在三片的分区账（盘／舌发热、散热、均温）、
+    ///     分区说明，与两条判据说明里转印的那句分区说明（本算例两区峰逐位不变），判据的值一位没动。对拍证据：deliverable/R48_F4_分区按份额_接线门1与整线转储对拍_2026-09-23.txt。
+    ///     Windows 记录仍空（见下），填数时照上面的剥离树做法再加 F4 的这几处改动。
+    ///   - 2026-09-23 **三录**（变因 = F4 份额收整，审查 F4-M1：解析板上料全在盘内的格积分舍入出份额 1 − 1e-15，原被当成切开格；
+    ///     现按 ShellThermal.ZoneShareSnapTol = 1e-9 收整成 1）：ffc61757… → 新值（下面的常量）。本算例上的差只在三片分区说明里的格数（62／62／64 → 54／54／54）
+    ///     与两条判据说明里转印的那句，数值一个没动；改回（关）的转储与收整前逐字节相同，去掉「算例.ZoneByMaterialFraction」一行后 SHA 仍是 fb2c3248…。
+    ///     对拍证据：deliverable/R48_F4_分区按份额_证据_2026-09-23/（接线门 1 审查前／审查后的开、关转储与 SHA）。
     /// Windows：**还没有记录** —— Windows 上本门红并印出本机的 SHA。填数的做法：在 F6 合入之后、接线之前的那个状态（本分支上接线提交 265ff6a 的父提交 ＋ F6 提交的 Core/ShellMesh、
     ///   ShellCurrent、ShellThermal、QuadMesher、LineRunner 五档，或直接用 git 把接线提交 revert 掉）只加门 1 的剥离版跑出那个数；**不要在合并树上记**。
     ///   「a468063 只加本档」那句旧说明不可行：本档其余 8 条门引用 PtProps，在 a468063 上编译不过。
     ///   2026-09-23（§0.-20）补：那棵剥离树还要带上孔弧覆盖诊断（Core/ShellMesh.cs 的 4 个字段与 MeasureHoleArcCoverage／ComputeHoleArcCoverage、生成器里那一行调用），
     ///   否则转储每片少 4 行、记下的数与本树对不上；诊断不动数值场（Linux 对拍见上）。
     /// </summary>
-    private const string LinuxRecord = "fb2c32488eb4d3c408c6655cb544b856498a78174de21a2ff0726ca1e0083cf2";
+    private const string LinuxRecord = "8d28e3186bb678d05b5a153461627df5474fbd08dfbfc4c521c6ab465da847df";
     private const string WindowsRecord = "";
 
     /// <summary>电、热物性按牌号取的牌号（纯铂之外）。口径：MaterialDb.DataCompleteness 的电阻率与热导率／比热两类都算自有。</summary>
