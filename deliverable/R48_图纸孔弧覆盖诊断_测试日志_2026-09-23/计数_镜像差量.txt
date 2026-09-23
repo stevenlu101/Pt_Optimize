@@ -1,0 +1,3 @@
+改前镜像（911c788 git archive ＋ tools/linux_mirror，另加 ZZG1DumpProbe 一条）HandoverGateCountTests：
+  HANDOVER 说 dotnet test 应为 1479/1479，实际是 1268 条（1268 = 1267 ＋ 探针 1 条）
+改后干净镜像（不含探针）：实际是 1273 条（= 1267 ＋ R48ArcGapDiagTests 6）

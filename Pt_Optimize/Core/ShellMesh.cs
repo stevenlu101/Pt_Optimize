@@ -553,6 +553,82 @@ public sealed class ShellMesh
         HoleTagMaxROverMm = double.IsNaN(rMax) ? double.NaN : rMax - holeRadiusMm;
     }
 
+    // ── 2026-09-23（HANDOVER §0.-20，F6 审查 #11 的诊断）：**管孔弧覆盖**。只量不判：不改任何判词、不把任何判据标成判不了（那是业主决定）。
+    //   病：图纸（栅格）路径上，孔圆穿过的格若因栅格节点对齐量不到料被丢掉，那段孔弧上一条面都没有 ⇒ 等于绝缘段
+    //   （W08 R31 w30 判决档栅格替身缺 2.141 mm，约 2.00 mm 落在 θ = 180°，舌轴线、电流进孔处；缺不缺取决于栅格原点，F3 核实记录 A1）。
+    //   原有的两个计数（HoleArcCentroidInside／HoleArcDistAtFloor）量不到这件事（F3 A1(7)），所以另量覆盖。
+    //   阈值：缺口弧长 &gt; GeomTolMm（= 建面边长容差 EdgeTolMm，沿用已有值）才算缺口；没有新常数。
+
+    /// <summary>
+    /// 2026-09-23（§0.-20，诊断）：管孔弧覆盖率 = Σ 弧面长 ÷ 2π·<see cref="HoleRadiusMm"/>（弧面 = <see cref="MeshFace.ArcRadiusMm"/> 有限的边界面）。
+    /// NaN = 没量（网格不是 FlangeMesher 按弧面建的：阶梯孔边对照、QuadMesher、手造网格，或没有孔半径）。解析路径上按构造 = 1（只差浮点）。
+    /// </summary>
+    public double HoleArcCoverage = double.NaN;
+    /// <summary>2026-09-23（§0.-20，诊断）：孔圆上没有任何弧面盖住的**最长一段**弧长 mm（角区间并集的补集，处理 ±180° 首尾相接）；只计 &gt; <see cref="GeomTolMm"/> 的段，没有缺口 = 0；NaN = 没量。</summary>
+    public double HoleArcMaxGapMm = double.NaN;
+    /// <summary>2026-09-23（§0.-20，诊断）：最长缺口中点的角 θ = atan2(z, x)，单位 °，取 (−180, 180]（180° = 舌片一侧的 −x 轴）；没有缺口或没量 = NaN。</summary>
+    public double HoleArcMaxGapMidDeg = double.NaN;
+    /// <summary>2026-09-23（§0.-20，诊断）：弧长 &gt; <see cref="GeomTolMm"/> 的缺口段数（0 = 盖满；NaN 语义用 −1 = 没量）。</summary>
+    public int HoleArcGapCount = -1;
+
+    /// <summary>
+    /// 2026-09-23（§0.-20）：孔弧覆盖诊断的量法（纯函数，只读网格）。
+    /// 每条弧面按 θ = atan2(Mid.z, Mid.x)、半角 = 长 ÷ (2·弧半径) 还原成角区间（弧面由 <see cref="FlangeMesher.AddHoleArcFaces"/> 按 [a, b] 建，中点角 = (a+b)/2、长 = rh·(b−a)，还原是精确的，只差浮点）；
+    /// 区间在 ±π 处切开、落进 [−π, π]，排序求并；缺口 = 相邻并段之间的空当，**外加跨 ±180° 的那一段**（最后一段的末端到第一段的起点 + 2π）。
+    /// <paramref name="joinAt180"/> **只供测试用**（写法照 ShellThermal.Solve 的 holeAnchorOnCircle 先例）：false = 不接首尾（审查者探针的漏法：跨 ±180° 的缺口看不见），
+    /// 门拿它做「改回 ⇒ 红」对照。生产代码不许传。
+    /// </summary>
+    internal static (double Coverage, double MaxGapMm, double MaxGapMidDeg, int GapCount) MeasureHoleArcCoverage(ShellMesh m, bool joinAt180 = true)
+    {
+        double rh = m.HoleRadiusMm;
+        if (!(rh > 0) || !double.IsFinite(rh)) return (double.NaN, double.NaN, double.NaN, -1);
+        double sumLen = 0;
+        var iv = new List<(double a, double b)>();
+        foreach (var f in m.Faces)
+        {
+            if (f.B >= 0 || double.IsNaN(f.ArcRadiusMm)) continue;
+            sumLen += f.Length;
+            double t = Math.Atan2(f.Mid.Z, f.Mid.X), half = f.Length / (2 * f.ArcRadiusMm);
+            double a = t - half, b = t + half;
+            // 切到 [−π, π]：越过 −π 的那头搬到 +π 一侧，越过 +π 的搬到 −π 一侧
+            if (a < -Math.PI) { iv.Add((a + 2 * Math.PI, Math.PI)); a = -Math.PI; }
+            if (b > Math.PI) { iv.Add((-Math.PI, b - 2 * Math.PI)); b = Math.PI; }
+            iv.Add((a, b));
+        }
+        double coverage = sumLen / (2 * Math.PI * rh);
+        if (iv.Count == 0) return (coverage, 2 * Math.PI * rh, double.NaN, 1);   // 一条弧面都没有：整圈都是缺口，中点无定义
+        iv.Sort((p, q) => p.a.CompareTo(q.a));
+        var merged = new List<(double a, double b)> { iv[0] };
+        for (int i = 1; i < iv.Count; i++)
+        {
+            var last = merged[^1];
+            if (iv[i].a <= last.b) merged[^1] = (last.a, Math.Max(last.b, iv[i].b));
+            else merged.Add(iv[i]);
+        }
+        double maxGap = 0, maxMid = double.NaN; int count = 0;
+        void Gap(double from, double to)
+        {
+            double len = (to - from) * rh;
+            if (!(len > GeomTolMm)) return;
+            count++;
+            if (len > maxGap) { maxGap = len; maxMid = 0.5 * (from + to); }
+        }
+        for (int i = 0; i + 1 < merged.Count; i++) Gap(merged[i].b, merged[i + 1].a);
+        if (joinAt180) Gap(merged[^1].b, merged[0].a + 2 * Math.PI);   // 跨 ±180° 的那一段（首尾相接）
+        double deg = double.NaN;
+        if (!double.IsNaN(maxMid))
+        {
+            deg = maxMid * 180 / Math.PI;
+            while (deg > 180) deg -= 360;
+            while (deg <= -180) deg += 360;
+        }
+        return (coverage, maxGap, deg, count);
+    }
+
+    /// <summary>2026-09-23（§0.-20）：量孔弧覆盖并写进 <see cref="HoleArcCoverage"/>／<see cref="HoleArcMaxGapMm"/>／<see cref="HoleArcMaxGapMidDeg"/>／<see cref="HoleArcGapCount"/>（FlangeMesher 在建完弧面之后调）。</summary>
+    public void ComputeHoleArcCoverage()
+        => (HoleArcCoverage, HoleArcMaxGapMm, HoleArcMaxGapMidDeg, HoleArcGapCount) = MeasureHoleArcCoverage(this);
+
     /// <summary>被钉成管孔、但半径 &gt; 孔半径 + <paramref name="weldLegMm"/> 的边界总长 mm（焊脚以外的那段本不该是定温边）。</summary>
     public double HoleTagLengthBeyondMm(double weldLegMm)
     {
@@ -1638,6 +1714,8 @@ public static class FlangeMesher
         if (rules.HoleArcFaces) AddHoleArcFaces(m, holeRadiusMm, ArcTagger, rects, normalDist: rules.HoleArcNormalDist);   // 管孔边界 = 圆弧本身（并入格的那段弧也在）；注入对照：阶梯孔边
         m.CellRects = rects;
         m.ComputeHoleTagDiagnostics(holeRadiusMm);
+        // ★ 2026-09-23（§0.-20）：孔弧覆盖诊断（只量不判；经 LineRunner.HoleArcDrawingNotes 进整线结果说明）。阶梯孔边对照（弧面关）不量，字段留 NaN。
+        if (rules.HoleArcFaces) m.ComputeHoleArcCoverage();
         m.Material = f;
         m.SourceField = f as ThicknessField;
         // ★ R48 生产配方 ③（2026-09-14，Opus 5）：压接段整面接触。与上面边界面标签同一个判定（同一 tabTipX、同一压接长），只是对格子形心判。

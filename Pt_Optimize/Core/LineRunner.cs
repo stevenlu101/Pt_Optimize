@@ -2049,6 +2049,7 @@ public static class LineRunner
         {
             cancel.ThrowIfCancellationRequested();
             ThicknessField? fieldUsed = null;          // 图纸路径本片用的厚度场（推切点用）
+            ThicknessField? fieldRaw = null;           // 2026-09-23（§0.-20）：缩放之前的那一份（LoadThickness 缓存／LineCase.FlangeFields 里的同一实例，各轮不变）——孔径核对读它，按实例缓存
             bool analytic = c.FlangePlates.Length > 0;
             var plate = analytic ? c.FlangePlates[Math.Min(j, c.FlangePlates.Length - 1)] : null;
             bool inMemField = !analytic && c.FlangeFields.Length > 0;      // R47 B：内存厚度场优先于文件
@@ -2096,6 +2097,7 @@ public static class LineRunner
                 // t=0（无材料：轮廓外、管孔、开槽）乘任何数仍是 0，故槽与轮廓不受影响。
                 double[]? lvS = j < c.LevelScale.Length ? c.LevelScale[j] : null;
                 double[]? lvT = j < c.LevelThicknessMm.Length ? c.LevelThicknessMm[j] : null;
+                fieldRaw = tf;
                 bool perLevel = lvS is { Length: > 0 } && lvT is { Length: > 0 };
                 double k = j < c.ThicknessScale.Length ? c.ThicknessScale[j] : 1.0;
 
@@ -2143,6 +2145,14 @@ public static class LineRunner
                          mesh.ClampCoversHole ? "⚠ " + flangeName(j) + "：" + ClampCoversHoleText(mesh.ClampLenMm) : null,
                      })
                 if (line is not null && !res.Notes.Contains(line)) res.Notes.Add(line);
+            // ★ 2026-09-23（HANDOVER §0.-20）：孔弧覆盖与图纸孔径核对进本次输出，写法同上（每片一句、按片去重）。**只量不判**：判词、判不了一个都不动（业主决定，见 §0.-20 待决定）。
+            //   孔径核对只在图纸路径做（fieldRaw 非空）；解析路径孔弧按构造盖满，缺口那句不会出现。
+            //   传缩放之前的场：缩放只乘有料处（t = 0 乘任何数仍是 0），空腔不变；缩放后的场每轮是新实例，传它缓存就失效（外层耦合每轮都走这里）。
+            foreach (var hl in HoleArcDrawingNotes(mesh, fieldRaw, holeR))
+            {
+                string line = "⚠ " + flangeName(j) + "：" + hl;
+                if (!res.Notes.Contains(line)) res.Notes.Add(line);
+            }
             if (j == 0) { res.MeshCells = mesh.CellCount; res.MeshFineMm = c.MeshFineMm; }
             double iJoint = LineSolver.JointCurrentA(amps, j);
             var sc = PlateCurrentField(c, mesh, j, iJoint);   // R48 E（2026-09-15 Opus 5）：搬进公开函数，纯搬移
@@ -3123,6 +3133,69 @@ public static class LineRunner
     /// <summary>R48（2026-09-15，Opus 5）：「压接段盖到了管孔」的说明文字（进界面输出框与判据附注，说人话、不带网格内部说法）。文字与 2026-09-14 生成器里那句相同。</summary>
     public static string ClampCoversHoleText(double clampLenMm)
         => $"压接长 {clampLenMm:0.###} mm 盖到了管孔：这块板没有足够长的舌片可供压接，本片电流与温度结果不可信";
+
+    /// <summary>
+    /// ★ 2026-09-23（HANDOVER §0.-20，F6 审查 #11／#12）：本片网格的**孔弧覆盖**与**图纸孔径核对**的说明句（不带片名；调用处照压接退化那两句的写法加「⚠ 片名：」、按片去重）。
+    /// **只量不判**：不改任何判词、不把任何判据标成判不了（缺口或失配到多大该判不了，是业主的决定，见 §0.-20 待决定）。
+    ///   · 孔弧缺口：<see cref="ShellMesh.HoleArcGapCount"/> &gt; 0（缺口弧长 &gt; ShellMesh.GeomTolMm，沿用已有值）⇒ 一句「管孔弧缺 x.xxx mm @ θ°，覆盖率 y」。
+    ///   · 孔径核对（只在图纸路径，<paramref name="field"/> 非空）：图纸孔半径 = <see cref="PlateShapeAnalyzer.HoleRadiusOf"/>（与读图分析器同一个定义；按场实例缓存，见 DrawingHoleRadiusCached），
+    ///     与建网格用的 rh = 管内径/2 + 壁厚（<paramref name="holeRadiusMm"/>）差 &gt; 一个栅格步 <see cref="ThicknessField.Step"/> ⇒ 一句写明差多少
+    ///     （容差 = 栅格步：栅格分辨不出小于一步的差；等面积半径的误差界 s/√2 &lt; s，孔径真相同时不误报，推导见 HoleRadiusOf）。
+    ///     图纸上找不到被材料包围的管孔 ⇒ 一句「无法核对」。
+    /// </summary>
+    public static List<string> HoleArcDrawingNotes(ShellMesh mesh, ThicknessField? field, double holeRadiusMm)
+    {
+        var lines = new List<string>();
+        string path = mesh.SourceField is not null ? "图纸路径" : "网格";
+        static string Mm(double v) => Math.Abs(v) >= 0.0005 ? v.ToString("0.000") : v.ToString("0.###E+0");
+        if (mesh.HoleArcGapCount > 0)
+        {
+            double totalGap = (1 - mesh.HoleArcCoverage) * 2 * Math.PI * mesh.HoleRadiusMm;
+            lines.Add($"{path}管孔弧缺 {Mm(mesh.HoleArcMaxGapMm)} mm @ θ {HoleArcAngleText(mesh.HoleArcMaxGapMidDeg)}°，覆盖率 {mesh.HoleArcCoverage:0.0000}"
+                    + $"（孔圆 r = {mesh.HoleRadiusMm:0.###} mm 上共 {mesh.HoleArcGapCount} 段没有孔边界面、合计 {Mm(totalGap)} mm；θ 从 +x 轴量，180° 是舌片一侧、电流进孔处）："
+                    + "缺口处孔边等于绝缘，电流要绕到缺口两端进孔，缺口越长孔边电流密度峰（· 法兰 J_max）偏得越多（实测一例：W08 盘 R31 舌半宽 30 判决档缺 2.0 mm，J_max 比解析路径高 49 %，F3 核实记录 A1(5)）；"
+                    + "缺不缺取决于栅格原点。本条只量不判，判据照常出数。");
+        }
+        if (field is not null)
+        {
+            double rDraw = DrawingHoleRadiusCached(field);
+            if (double.IsNaN(rDraw))
+                lines.Add($"图纸上没找到被材料包围的管孔，孔径无法与 rh = 管内径/2 + 壁厚 = {holeRadiusMm:0.000} mm 核对。本条只量不判。");
+            else
+            {
+                double diff = rDraw - holeRadiusMm;
+                if (Math.Abs(diff) > field.Step)
+                    lines.Add($"图纸孔半径 {rDraw:0.000} mm（被材料包围的最大空腔的等面积圆）与 rh = 管内径/2 + 壁厚 = {holeRadiusMm:0.000} mm 差 {diff:+0.000;-0.000} mm，"
+                            + $"超过一个栅格步 {field.Step:0.###} mm：网格按 rh 建孔边，图纸上的孔与它错位，孔边电流与热流按错位的孔算。本条只量不判，判据照常出数。");
+            }
+        }
+        return lines;
+    }
+
+    /// <summary>
+    /// 2026-09-23（§0.-20）：<see cref="PlateShapeAnalyzer.HoleRadiusOf"/> 按厚度场**实例**缓存。为什么要缓存：逐片循环在 RunOnce 里，外层耦合每轮都走一遍（F6 后生产细网格一次整线 119 轮），
+    /// 空腔填充在栅格步 0.1 上约 0.1 s／片（探针实测，§0.-20 成本），不缓存就是每轮每片再付一次。键是实例：厚度场在全仓只在构造时写 T（Rasterize、LoadThickness 读文件），
+    /// 之后当不可变用（LoadThickness 缓存、LineCase.FlangeFields 共享同一实例，缩放走 WithThickness 另造新实例）—— 与「tf 是共享的，不许就地追加」同一个约定。
+    /// 守一道：命中时 T 数组引用、步长、图幅不同就重算。
+    /// </summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ThicknessField, Tuple<double[], double, double, double, int, int, double>> _drawHoleR = new();
+    internal static double DrawingHoleRadiusCached(ThicknessField f)
+    {
+        if (_drawHoleR.TryGetValue(f, out var hit) && ReferenceEquals(hit.Item1, f.T) && hit.Item2 == f.Step && hit.Item3 == f.X0 && hit.Item4 == f.Z0 && hit.Item5 == f.Nx && hit.Item6 == f.Nz)
+            return hit.Item7;
+        double r = PlateShapeAnalyzer.HoleRadiusOf(f);
+        _drawHoleR.AddOrUpdate(f, Tuple.Create(f.T, f.Step, f.X0, f.Z0, f.Nx, f.Nz, r));
+        return r;
+    }
+
+    /// <summary>2026-09-23（§0.-20）：缺口中点角的文字（一位小数；舍入后的 −0 印成 0、−180 印成 180，同一个点不印两种写法）。</summary>
+    public static string HoleArcAngleText(double deg)
+    {
+        double t = Math.Round(deg, 1);
+        if (t == 0) t = 0.0;          // −0.0 == 0 为真，赋成 +0
+        if (t == -180) t = 180;
+        return t.ToString("0.#");
+    }
 
     /// <summary>R48（2026-09-15，Opus 5）：「压接段伸进了圆盘」的说明文字（按 <see cref="ShellMesh.ClampIntoDisc"/> 与两个 x 生成；文字与 2026-09-14 生成器里那句相同）。</summary>
     public static string ClampIntoDiscText(ShellMesh m)
