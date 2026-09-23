@@ -1,0 +1,32 @@
+开跑 2026-09-23 17:33:56　loadavg 22.60 23.59 23.09 24/471 16545
+Microsoft (R) Test Execution Command Line Tool Version 17.8.0 (x64)
+Copyright (c) Microsoft Corporation.  All rights reserved.
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll
+[xUnit.net 00:00:00.01] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.31)
+[xUnit.net 00:00:00.18]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:00.88]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:00.90]   Starting:    Pt_Optimize.Tests
+[xUnit.net 00:18:59.38]     PtOptimize.Tests.R48MStopTolTwoPointTests.门_两点在导航网格上各不超120轮且认证误差不超0点05_注射按裕度13074超300轮 [FAIL]
+[xUnit.net 00:18:59.42]       注射（按裕度收紧 + 旧段解地板 + 中点收尾）之后 13.074 竟然 39 轮就收敛了 —— 这道门守的是空气（那条病本树复现不出来），见 /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/deliverable/R48_M_停机容差绝对目标_两点门_本次开跑于2026-09-23_173359.txt
+[xUnit.net 00:18:59.42]       Stack Trace:
+[xUnit.net 00:18:59.42]         /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/Pt_Optimize.Tests/R48MStopTolTwoPointTests.cs(290,0): at PtOptimize.Tests.R48MStopTolTwoPointTests.门_两点在导航网格上各不超120轮且认证误差不超0点05_注射按裕度13074超300轮()
+[xUnit.net 00:18:59.42]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+[xUnit.net 00:18:59.42]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:18:59.42]       Output:
+[xUnit.net 00:18:59.42]         报告：/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/deliverable/R48_M_停机容差绝对目标_两点门_本次开跑于2026-09-23_173359.txt
+  Failed PtOptimize.Tests.R48MStopTolTwoPointTests.门_两点在导航网格上各不超120轮且认证误差不超0点05_注射按裕度13074超300轮 [18 m 58 s]
+  Error Message:
+   注射（按裕度收紧 + 旧段解地板 + 中点收尾）之后 13.074 竟然 39 轮就收敛了 —— 这道门守的是空气（那条病本树复现不出来），见 /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/deliverable/R48_M_停机容差绝对目标_两点门_本次开跑于2026-09-23_173359.txt
+  Stack Trace:
+     at PtOptimize.Tests.R48MStopTolTwoPointTests.门_两点在导航网格上各不超120轮且认证误差不超0点05_注射按裕度13074超300轮() in /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/Pt_Optimize.Tests/R48MStopTolTwoPointTests.cs:line 290
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  Standard Output Messages:
+ 报告：/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/deliverable/R48_M_停机容差绝对目标_两点门_本次开跑于2026-09-23_173359.txt
+
+
+EXIT 143　结束 2026-09-23 17:59:11
+（附注，2026-09-23 17:59 修订员手写：EXIT 143 是修订员停掉进程所致。本类第一条「门_两点…」18 m 58 s 跑完、红（上面的失败信息）；第二条「阶梯_两点按常数容差各跑一遍_只量不判」走 Tol.Const，不经本次改的注射配方，开跑约 6 分钟后被停掉，没跑完，写了一行的半截阶梯证据档已删。）

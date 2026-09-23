@@ -1,0 +1,42 @@
+开跑 2026-09-23 15:31:09
+Test run for /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll (.NETCoreApp,Version=v8.0)
+Microsoft (R) Test Execution Command Line Tool Version 17.8.0 (x64)
+Copyright (c) Microsoft Corporation.  All rights reserved.
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll
+[xUnit.net 00:00:00.01] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.31)
+[xUnit.net 00:00:00.21]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:00.69]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:00.71]   Starting:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.R48SegContinuousRootTests.门a_玩具函数_连续根离解析根不超插值误差界_改回逐位等于Monotone_求值点相同 [51 ms]
+  Standard Output Messages:
+ exp(x/500) − 5：根 804.7189562170502　连续根差 3.634E-009　界 E = 6.250E-009 + 4.635E-012 = 6.255E-009　中点差 7.303E-007（中点的界 h/2 ≤ 2.500E-003）　求值 21 次
+ x² − 2·10⁶：根 1414.213562373095　连续根差 8.777E-010　界 E = 2.210E-009 + 7.536E-012 = 2.217E-009　中点差 1.073E-003（中点的界 h/2 ≤ 2.500E-003）　求值 21 次
+ (x/1000)³ − 1.7：根 1193.483191927337　连续根差 2.590E-009　界 E = 5.237E-009 + 5.653E-012 = 5.242E-009　中点差 7.367E-004（中点的界 h/2 ≤ 2.500E-003）　求值 21 次
+ tan(x/1200) − 1.5：根 1179.352467896795　连续根差 2.206E-009　界 E = 7.813E-009 + 6.158E-012 = 7.819E-009　中点差 1.086E-003（中点的界 h/2 ≤ 2.500E-003）　求值 21 次
+
+
+  Passed PtOptimize.Tests.R48SegContinuousRootTests.门a2_段解改回逐位等于改前_连续根在末括号内 [8 s]
+  Standard Output Messages:
+ 默认：改回 I = 1817.3785245058946（记录 1817.3785245058946）　管温 SHA d580d00ce9178712d980495e58b586592025a57221a579f960e692b0a11b7725（记录 d580d00ce9178712d980495e58b586592025a57221a579f960e692b0a11b7725）　连续根 I = 1817.3768434910771　差 -1.681E-003 A　xTol 0.005
+ TSet1150：改回 I = 1501.0157515548196（记录 1501.0157515548196）　管温 SHA 5674e6d3b593e8302fa3f7bb8fd06d121fc2c6856d6179607541a7b587ba6f17（记录 5674e6d3b593e8302fa3f7bb8fd06d121fc2c6856d6179607541a7b587ba6f17）　连续根 I = 1501.0148059955918　差 -9.456E-004 A　xTol 0.005
+ 旧地板：改回 I = 1817.3693389729033（记录 1817.3693389729033）　管温 SHA 33c4838d7ae02bc6c20a3e5bae978add5388d8434538e7c74a56d69bd7ae3e4b（记录 33c4838d7ae02bc6c20a3e5bae978add5388d8434538e7c74a56d69bd7ae3e4b）　连续根 I = 1817.3785904159863　差 9.251E-003 A　xTol 0.05
+
+
+[xUnit.net 00:00:37.47]   Finished:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.R48SegContinuousRootTests.门c_电流对目标温度连续_扫一小步没有二分格台阶_改回台阶看得见 [28 s]
+  Standard Output Messages:
+ 根附近：I0 = 1817.3768434910771 A　m₁ = 5.2604E-001 K/A　M₂ = 2.859E-004 K/A²　求值噪声 ε̂ = 1.375E-004 K（17 点，±xTol）　E_c = 2.613E-004 A
+ dI/dT = 1.9003E+000 A/K　|r″| = 2.240E-003 A/K²　扫描 N = 12、ΔT = 3.9468E-004 K　界 = 2E_c(1+1/N) + |r″|NΔT² = 5.661E-004 A
+ 连续根：最大台阶偏差 1.392E-004 A　平均增量 7.473E-004 A
+ 改回（中点）：最大台阶偏差 3.368E-003 A　平均增量 6.778E-004 A　增量序列 3.72E-004 3.72E-004 3.72E-004 3.72E-004 3.72E-004 3.72E-004 3.72E-004 3.72E-004 3.72E-004 4.05E-003 3.72E-004 3.72E-004
+ 连续根增量序列 6.239E-004 8.541E-004 7.608E-004 8.548E-004 7.497E-004 8.767E-004 8.865E-004 6.324E-004 6.112E-004 6.093E-004 6.302E-004 8.781E-004
+
+
+
+Test Run Successful.
+Total tests: 3
+     Passed: 3
+ Total time: 38.9178 Seconds

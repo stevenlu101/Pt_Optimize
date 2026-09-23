@@ -26,8 +26,9 @@ namespace PtOptimize.Tests;
 //
 //  ══ 判读（**跑前写死，跑完不挪**）
 //    (a) 生产口径：13.0357421875 与 13.07421875 两点在导航网格上各 收敛 且 轮数 ≤ 120 且 认证误差 ≤ 0.05 K；
-//    注射：容差改回按裕度收紧（§0.-10 口径）＋ 旧段解地板 ⇒ 13.07421875 那一点 300 轮内停不下来（!Converged 或 轮数 > 300）—— 否则门守的是空气。
+//    注射：容差改回按裕度收紧（§0.-10 口径）＋ 旧段解地板 ＋ 段电流中点收尾（2026-09-23 SEG 补）⇒ 13.07421875 那一点 300 轮内停不下来（!Converged 或 轮数 > 300）—— 否则门守的是空气。
 //    ⚠ 注射配方 23:12 改过一次（写明变因，见 Tol 枚举的注记）：只改回口径、地板留新的 ⇒ 24 轮就收敛 —— 病根是地板，两味要一起注射；门槛 >300 没挪。
+//    ⚠ 2026-09-23 再改一次（SEG，决 97 A「段电流连续根」）：生产收尾改成连续根，注射同时改回中点收尾（SegCurrentContinuousRoot = false）才是那一跑的病；门槛没挪。
 //    另量（只量不判，写进文件给 HANDOVER 定容差用）：段解地板 = 40 轮以后真残差与步长的最小值／中位数；放大的两个来源；量雅可比的秒数。
 //
 //  ══ 复现所用的设计：照 r48_U 那份探针（R48UInsulNonConvergeProbeTests.StopDesign）逐项复原 ——
@@ -85,10 +86,14 @@ internal static class R48MTwoPointKit
     }
 
     /// <summary>
-    /// FromMarginInject = 只把容差改回按裕度（新地板）；LegacyFloorFromMargin = 按裕度 **＋ 旧段解地板**（= r48_U 那一跑的完整病）。
+    /// FromMarginInject = 只把容差改回按裕度（新地板、生产收尾）；LegacyFloorFromMargin = 按裕度 **＋ 旧段解地板 ＋ 中点收尾**（= r48_U 那一跑的完整病；中点收尾 2026-09-23 SEG 补，见下）。
     /// ★ 2026-09-18 23:12 实跑（deliverable/R48_M_停机容差绝对目标_两点门_本次开跑于2026-09-18_230343.txt）：只改回按裕度、地板留新的，13.074 **24 轮就收敛**（容差撞下限 0.02、认证误差 0.015）——
     ///   彩票的根子是段解地板 × 放大，不是容差口径；地板降了之后「按裕度」也停得下来。⇒ 复现那条病得两味一起注射（LegacyFloorFromMargin）；
     ///   「只按裕度」那一行照跑照印，作为「病根在地板」的证据（只报不判）。门槛 >300 轮没挪，挪的是注射的配方（写明变因）。
+    /// ★ 2026-09-23（SEG，决 97 A「段电流连续根」）注射配方再改一次（写明变因）：r48_U 那一跑的段电流收尾是二分末括号中点（电流落在格子上），
+    ///   生产缺省改成连续根之后，只注射三项旧地板已不是那一跑的完整病 ⇒ LegacyFloorFromMargin 同时注射改回收尾（SegCurrentContinuousRoot = false）。
+    ///   门槛 >300 轮、≤120 轮都没挪。FromMarginInject（新地板 ＋ 连续根，生产收尾）照跑照印，只报不判。
+    ///   贴根点 13.036／13.074 本身要在 C 组之后重找（决 92／D7），重找时用本配方。
     /// </summary>
     internal enum Tol { Production, FromMarginInject, LegacyFloorFromMargin, Const }
 
@@ -115,6 +120,7 @@ internal static class R48MTwoPointKit
         if (tol == Tol.LegacyFloorFromMargin)
         {   // 旧段解地板（r48_U 那一跑的地板）注射回去：电流二分 0.05 A／Picard 0.01 K／Bvp1D 0.005 K
             p.SegCurrentTolA = DesignInputs.SegCurrentTolALegacy; p.SegPicardTolK = DesignInputs.SegPicardTolKLegacy; p.SegBvpTolK = DesignInputs.SegBvpTolKLegacy;
+            p.SegCurrentContinuousRoot = false;   // 2026-09-23 SEG（决 97 A）：那一跑是中点收尾，注射同时改回收尾（见 Tol 注记）
         }
         var lc = d.BuildCase(p, checkRamp: false);
         Solver.ApplyCaseMesh(lc, opt);
@@ -127,7 +133,7 @@ internal static class R48MTwoPointKit
                 break;
             case Tol.LegacyFloorFromMargin:
                 lc.CoupleTolFromMargin = true; lc.CoupleTolK = 0.1;
-                tolName = $"注射（口径 + 旧地板 = r48_U 那一跑的病）：按判据裕度收紧 + 段解地板 {DesignInputs.SegCurrentTolALegacy} A／{DesignInputs.SegPicardTolKLegacy} K／{DesignInputs.SegBvpTolKLegacy} K";
+                tolName = $"注射（口径 + 旧地板 + 中点收尾 = r48_U 那一跑的病）：按判据裕度收紧 + 段解地板 {DesignInputs.SegCurrentTolALegacy} A／{DesignInputs.SegPicardTolKLegacy} K／{DesignInputs.SegBvpTolKLegacy} K + 段电流收尾改回末括号中点";
                 break;
             case Tol.Const:
                 lc.CoupleTolFromMargin = false; lc.CoupleTolK = constTol;
@@ -242,7 +248,7 @@ public class R48MStopTolTwoPointTests
         R48MTwoPointKit.Head(W, "R48 M 路　**停机容差改成绝对目标：两个「轮数彩票」点各自 ≤120 轮、认证误差 ≤0.05 K；注射按裕度 ⇒ 13.074 超 300 轮**", stamp, live);
         W("═══════ 判读（跑前写死，跑完不挪）═══════");
         W($"生产口径：两点各 收敛 且 轮数 ≤ {R48MTwoPointKit.RoundsCap} 且 认证误差 ≤ {R48MTwoPointKit.CertErrCapK:0.###} K。");
-        W($"注射（把 r48_U 那一跑的病整个放回去：容差改回按判据裕度收紧 + 旧段解地板，轮数上限 {R48MTwoPointKit.InjectRoundsMin}）：13.074 那一点 未收敛 或 轮数 > {R48MTwoPointKit.InjectRoundsMin} —— 否则门守的是空气。");
+        W($"注射（把 r48_U 那一跑的病整个放回去：容差改回按判据裕度收紧 + 旧段解地板 + 段电流中点收尾（2026-09-23 SEG 补），轮数上限 {R48MTwoPointKit.InjectRoundsMin}）：13.074 那一点 未收敛 或 轮数 > {R48MTwoPointKit.InjectRoundsMin} —— 否则门守的是空气。");
         W("另跑一行「只改回按裕度、地板留新的」只报不判：2026-09-18 23:12 那一跑它 24 轮就收敛（容差撞下限 0.02）—— 彩票的根子是段解地板 × 放大，不是容差口径。");
         W("段解地板只量不判（40 轮以后真残差与步长的最小值／中位数）。");
         W("");
@@ -282,7 +288,7 @@ public class R48MStopTolTwoPointTests
         }
         Assert.False(inj.Threw, "注射那一跑：" + inj.ThrewWhat);
         Assert.True(!inj.Converged || inj.Rounds > R48MTwoPointKit.InjectRoundsMin,
-            $"注射（按裕度收紧 + 旧段解地板）之后 13.074 竟然 {inj.Rounds} 轮就收敛了 —— 这道门守的是空气（那条病本树复现不出来），见 {file}");
+            $"注射（按裕度收紧 + 旧段解地板 + 中点收尾）之后 13.074 竟然 {inj.Rounds} 轮就收敛了 —— 这道门守的是空气（那条病本树复现不出来），见 {file}");
     }
 
     /// <summary>阶梯（只量不判）：两点各按常数容差跑一遍，给「容差取多少」当依据（HANDOVER §0.-16M 引它）。</summary>

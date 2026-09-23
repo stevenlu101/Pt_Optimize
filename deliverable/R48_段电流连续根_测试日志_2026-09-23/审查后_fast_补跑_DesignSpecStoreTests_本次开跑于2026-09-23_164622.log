@@ -1,0 +1,41 @@
+开跑 2026-09-23 16:46:22　loadavg 38.76 41.60 29.35 37/491 8475　类 DesignSpecStoreTests（过滤 速度!=慢）
+Microsoft (R) Test Execution Command Line Tool Version 17.8.0 (x64)
+Copyright (c) Microsoft Corporation.  All rights reserved.
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.31)
+[xUnit.net 00:00:00.21]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:00.56]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:00.58]   Starting:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.DesignSpecStoreTests.Parse_RejectsMissingRequired(drop: "checks") [102 ms]
+  Passed PtOptimize.Tests.DesignSpecStoreTests.Parse_RejectsMissingRequired(drop: "tabThickMm") [9 ms]
+  Passed PtOptimize.Tests.DesignSpecStoreTests.Parse_RejectsMissingRequired(drop: "name") [1 ms]
+  Passed PtOptimize.Tests.DesignSpecStoreTests.Parse_RejectsMissingRequired(drop: "discRadiusMm") [< 1 ms]
+  Passed PtOptimize.Tests.DesignSpecStoreTests.Parse_RejectsMissingRequired(drop: "wallMm") [< 1 ms]
+  Passed PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_RebuildsIdenticalCase(idx: 0) [70 ms]
+  Passed PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_RebuildsIdenticalCase(idx: 2) [2 ms]
+  Passed PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_RebuildsIdenticalCase(idx: 1) [< 1 ms]
+  Passed PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_RebuildsIdenticalCase(idx: 3) [< 1 ms]
+  Passed PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_图纸档厚度倍数k存读逐字_板厚为NaN_拒绝造解析板_解析档不受影响 [134 ms]
+  Passed PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_保住加密复算的口径 [15 ms]
+  Passed PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_LosesNoField [75 ms]
+  Passed PtOptimize.Tests.DesignSpecStoreTests.Save_RefusesOverwrite [1 ms]
+  Passed PtOptimize.Tests.DesignSpecStoreTests.样本必须覆盖每一个会进设计的字段 [4 ms]
+  Passed PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_逐片圆盘保温部分设定_NaN存成null读回仍沿用整线 [5 ms]
+  Passed PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_渐变环旋钮的部分设定也要保住 [1 ms]
+  Passed PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_图纸来源与文件名 [12 ms]
+  Passed PtOptimize.Tests.DesignSpecStoreTests.Parse_旧档单个舌保温读回填成所有片并有说明 [5 ms]
+[xUnit.net 00:00:01.15]   Finished:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_逐片圆盘保温_存读逐片_算例取值相同 [4 ms]
+  Passed PtOptimize.Tests.DesignSpecStoreTests.Parse_RejectsWrongArrayLength [1 ms]
+  Passed PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_KeepsRecordedChecks [< 1 ms]
+  Passed PtOptimize.Tests.DesignSpecStoreTests.Parse_旧档没有逐片圆盘保温键_读回为空_算例逐位不变 [6 ms]
+  Passed PtOptimize.Tests.DesignSpecStoreTests.RoundTrip_没验过就该还是没验过 [1 ms]
+
+Test Run Successful.
+Total tests: 23
+     Passed: 23
+ Total time: 2.4215 Seconds
+EXIT 0　结束 2026-09-23 16:46:25

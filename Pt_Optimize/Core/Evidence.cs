@@ -179,7 +179,8 @@ public static class EvidenceHeader
                  // ★ R48 L（2026-09-17，Opus 5）：证据头里那一行「耦合容差」印的是**上限**；真正停在哪个容差上逐轮由判据裕度定
                  //   （LineRunner.CoupleTolKFor，结果里的 LineResult.CoupleTolKUsed）。不补这一行，读的人会把上限当成实际用的那个数。
                  // R48 M（2026-09-18，Fable 5.1）：认证误差口径也进头（门 R48MStopTolGateTests.门_证据头写认证误差口径）
-                 (extra ?? Array.Empty<string>()).Concat(new[] { "耦合容差口径：" + CoupleTolNote(lc), "认证误差口径：" + CertErrNote(lc) }),
+                 // ★ 2026-09-23（SEG，决 97 A）：段电流收尾口径也进头 —— 改回（中点）跑出来的证据与生产（连续根）不是一个口径，头上要看得出来。
+                 (extra ?? Array.Empty<string>()).Concat(new[] { "耦合容差口径：" + CoupleTolNote(lc), "认证误差口径：" + CertErrNote(lc), "段电流收尾：" + SegRootNote(lc) }),
                  root, callerFile);   // 调用方路径原样往下传（不传就成了本文件）
 
     /// <summary>R48 L（2026-09-17，Opus 5）：停机容差口径的一句话 —— 上限、是否按判据裕度收紧、比例与下限。只有这一份写法。</summary>
@@ -189,6 +190,13 @@ public static class EvidenceHeader
          : lc.CoupleTolFromMargin
          ? $"上限 {lc.CoupleTolK:R} K，按判据裕度收紧 = min(上限, max(下限 {lc.CoupleTolFloorK:R} K, {lc.CoupleTolMarginFrac:R} × 最小硬安全线温度裕度))（**注射口径**，不是生产默认）；实际用的那一个见结果 CoupleTolKUsed"
          : $"绝对目标 {lc.CoupleTolK:R} K（不随判据裕度走；生产口径）；实际用的那一个见结果 CoupleTolKUsed";
+
+    /// <summary>2026-09-23（SEG，决 97 A）：段电流二分收尾口径的一句话 —— 只有这一份写法。</summary>
+    public static string SegRootNote(LineCase lc)
+        => lc is null ? "不适用"
+         : lc.Base.SegCurrentContinuousRoot
+         ? $"连续根（二分到 xTol {lc.Base.SegCurrentTolA:R} A 后，末括号内线性插值；生产口径）"
+         : $"括号中点（二分到 xTol {lc.Base.SegCurrentTolA:R} A；**改回口径**，不是生产默认）";
 
     /// <summary>R48 M（2026-09-18，Fable 5.1）：认证误差口径的一句话 —— 只有这一份写法。</summary>
     public static string CertErrNote(LineCase lc)

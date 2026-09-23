@@ -1,0 +1,98 @@
+开跑 2026-09-23 16:40:50　loadavg 45.99 37.20 23.13 22/636 6177　类 StateCriteriaGateTests（过滤 速度!=慢）
+Microsoft (R) Test Execution Command Line Tool Version 17.8.0 (x64)
+Copyright (c) Microsoft Corporation.  All rights reserved.
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll
+[xUnit.net 00:00:00.01] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.31)
+[xUnit.net 00:00:00.35]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:00.95]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:00.98]   Starting:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.StateCriteriaGateTests.门2_源码门_分工况只有一处实现 [384 ms]
+  Passed PtOptimize.Tests.StateCriteriaGateTests.门2c_整线一态的场判不了_LineStateWhy必须非空且点名(emptyTube: False) [40 ms]
+  Standard Output Messages:
+ 带玻璃稳态·只有压接盖孔：「带玻璃稳态场判不了：入口：压接段盖到了管孔」
+ 带玻璃稳态·温度场没收敛：「带玻璃稳态场判不了：入口：温度场未收敛（步长 1.00E-002 K，40 轮）」
+ 带玻璃稳态·电位场没收敛：「带玻璃稳态场判不了：出口：电位场未收敛（残差 3.00E-003，5000 轮）」
+ 带玻璃稳态·法兰散热表超界：「带玻璃稳态场判不了：入口：最高温 1800 °C 超过表面散热表上限 1768 °C（铂熔点），超出部分散热被钳住」
+ 带玻璃稳态·越过铂熔点：「带玻璃稳态整线解不出：入口：峰值 1900 °C 已越过铂熔点 1768 °C —— **该解不存在**」
+ 带玻璃稳态·管表超界：「带玻璃稳态场判不了：HC1：管温 1700 °C 超出管表面散热表上限 1550 °C」
+ 带玻璃稳态·压接段盖到管孔：「带玻璃稳态场判不了：入口：压接段盖到了管孔」
+ 带玻璃稳态·压接段伸进圆盘：「带玻璃稳态场判不了：出口：压接段伸进了圆盘」
+ 带玻璃稳态·保温分界判不了：「带玻璃稳态场判不了：入口：图纸没有切点，保温分界判不了」
+
+
+  Passed PtOptimize.Tests.StateCriteriaGateTests.门2c_整线一态的场判不了_LineStateWhy必须非空且点名(emptyTube: True) [< 1 ms]
+  Standard Output Messages:
+ 空管到温稳态·只有压接盖孔：「空管到温稳态场判不了：入口：压接段盖到了管孔」
+ 空管到温稳态·温度场没收敛：「空管到温稳态场判不了：入口：温度场未收敛（步长 1.00E-002 K，40 轮）」
+ 空管到温稳态·电位场没收敛：「空管到温稳态场判不了：出口：电位场未收敛（残差 3.00E-003，5000 轮）」
+ 空管到温稳态·法兰散热表超界：「空管到温稳态场判不了：入口：最高温 1800 °C 超过表面散热表上限 1768 °C（铂熔点），超出部分散热被钳住」
+ 空管到温稳态·越过铂熔点：「空管到温稳态整线解不出：入口：峰值 1900 °C 已越过铂熔点 1768 °C —— **该解不存在**」
+ 空管到温稳态·管表超界：「空管到温稳态场判不了：HC1：管温 1700 °C 超出管表面散热表上限 1550 °C」
+ 空管到温稳态·压接段盖到管孔：「空管到温稳态场判不了：入口：压接段盖到了管孔」
+ 空管到温稳态·压接段伸进圆盘：「空管到温稳态场判不了：出口：压接段伸进了圆盘」
+ 空管到温稳态·保温分界判不了：「空管到温稳态场判不了：入口：图纸没有切点，保温分界判不了」
+
+
+  Passed PtOptimize.Tests.StateCriteriaGateTests.门3_场判不了_AllOk为假且判词点名(emptyTube: True) [21 ms]
+  Standard Output Messages:
+ 空管·温度场没收敛：AllOk False　Failed［**本工况的场判不了**（空管到温稳态，判不了不算过）：入口：温度场未收敛（步长 1.00E-002 K，40 轮）］
+ 空管·电位场没收敛：AllOk False　Failed［**本工况的场判不了**（空管到温稳态，判不了不算过）：出口：电位场未收敛（残差 3.00E-003，5000 轮）］
+ 空管·法兰散热表超界：AllOk False　Failed［**本工况的场判不了**（空管到温稳态，判不了不算过）：入口：最高温 1800 °C 超过表面散热表上限 1768 °C（铂熔点），超出部分散热被钳住］
+ 空管·越过铂熔点：AllOk False　Failed［**本工况的场判不了**（空管到温稳态，判不了不算过）：整线解不出：入口：峰值 1900 °C 已越过铂熔点 1768 °C —— **该解不存在**］
+ 空管·管表超界：AllOk False　Failed［**本工况的场判不了**（空管到温稳态，判不了不算过）：HC1：管温 1700 °C 超出管表面散热表上限 1550 °C］
+ 空管·压接段盖到管孔：AllOk False　Failed［**本工况的场判不了**（空管到温稳态，判不了不算过）：入口：压接段盖到了管孔］
+ 空管·压接段伸进圆盘：AllOk False　Failed［**本工况的场判不了**（空管到温稳态，判不了不算过）：出口：压接段伸进了圆盘］
+ 空管·保温分界判不了：AllOk False　Failed［**本工况的场判不了**（空管到温稳态，判不了不算过）：入口：图纸没有切点，保温分界判不了］
+
+
+  Passed PtOptimize.Tests.StateCriteriaGateTests.门3_场判不了_AllOk为假且判词点名(emptyTube: False) [2 ms]
+  Standard Output Messages:
+ 带玻璃·温度场没收敛：AllOk False　Failed［管孔净流入 某某后缀 **无法判定**；最热铂高出热偶读数 某某后缀 **无法判定**；管根低于热偶读数 某某后缀 **无法判定**；**本工况的场判不了**（带玻璃稳态，判不了不算过）：入口：温度场未收敛（步长 1.00E-002 K，40 轮）］
+ 带玻璃·电位场没收敛：AllOk False　Failed［管孔净流入 某某后缀 **无法判定**；最热铂高出热偶读数 某某后缀 **无法判定**；管根低于热偶读数 某某后缀 **无法判定**；**本工况的场判不了**（带玻璃稳态，判不了不算过）：出口：电位场未收敛（残差 3.00E-003，5000 轮）］
+ 带玻璃·法兰散热表超界：AllOk False　Failed［管孔净流入 某某后缀 **无法判定**；最热铂高出热偶读数 某某后缀 **无法判定**；管根低于热偶读数 某某后缀 **无法判定**；**本工况的场判不了**（带玻璃稳态，判不了不算过）：入口：最高温 1800 °C 超过表面散热表上限 1768 °C（铂熔点），超出部分散热被钳住］
+ 带玻璃·越过铂熔点：AllOk False　Failed［管孔净流入 某某后缀 **无法判定**；最热铂高出热偶读数 某某后缀 **无法判定**；管根低于热偶读数 某某后缀 **无法判定**；**本工况的场判不了**（带玻璃稳态，判不了不算过）：整线解不出：入口：峰值 1900 °C 已越过铂熔点 1768 °C —— **该解不存在**］
+ 带玻璃·管表超界：AllOk False　Failed［管孔净流入 某某后缀 **无法判定**；最热铂高出热偶读数 某某后缀 **无法判定**；管根低于热偶读数 某某后缀 **无法判定**；**本工况的场判不了**（带玻璃稳态，判不了不算过）：HC1：管温 1700 °C 超出管表面散热表上限 1550 °C］
+ 带玻璃·压接段盖到管孔：AllOk False　Failed［管孔净流入 某某后缀 **无法判定**；最热铂高出热偶读数 某某后缀 **无法判定**；管根低于热偶读数 某某后缀 **无法判定**；**本工况的场判不了**（带玻璃稳态，判不了不算过）：入口：压接段盖到了管孔］
+ 带玻璃·压接段伸进圆盘：AllOk False　Failed［管孔净流入 某某后缀 **无法判定**；最热铂高出热偶读数 某某后缀 **无法判定**；管根低于热偶读数 某某后缀 **无法判定**；**本工况的场判不了**（带玻璃稳态，判不了不算过）：出口：压接段伸进了圆盘］
+ 带玻璃·保温分界判不了：AllOk False　Failed［管孔净流入 某某后缀 **无法判定**；最热铂高出热偶读数 某某后缀 **无法判定**；管根低于热偶读数 某某后缀 **无法判定**；**本工况的场判不了**（带玻璃稳态，判不了不算过）：入口：图纸没有切点，保温分界判不了］
+
+
+  Passed PtOptimize.Tests.StateCriteriaGateTests.门1b_真解_空管态三条标参考_改热侧超限只动带玻璃的AllOk [4 m 4 s]
+  Standard Output Messages:
+ 真解：带玻璃 收敛 True AllOk False［最热铂高出热偶读数 132.8/5.0；管孔净流入 须为正 -23.6/0.0；法兰截面 J 27.7/11.0］　空管 收敛 True AllOk False［法兰截面 J 27.7/11.0］
+   空管态三条（参考）：管孔净流入 -41.881/0 超　最热铂高出热偶读数 191.108/5 超　管根低于热偶读数 -30.699/5
+   带玻璃三条（硬）：管孔净流入 -23.646/0 超　最热铂高出热偶读数 132.837/5 超　管根低于热偶读数 -20.936/5
+
+
+[xUnit.net 00:04:06.31]   Finished:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.StateCriteriaGateTests.门2b_消费者跟着同一张表走_行为一致 [40 ms]
+  Passed PtOptimize.Tests.StateCriteriaGateTests.门1_热侧超5K_空管态不影响AllOk_带玻璃态影响(emptyTube: False) [6 ms]
+  Standard Output Messages:
+ 带玻璃稳态：热侧 7.00/5.00 K　Kind HardSafety　AllOk False　HardOk False　Failed [最热铂高出热偶读数 7.0/5.0]
+
+
+  Passed PtOptimize.Tests.StateCriteriaGateTests.门1_热侧超5K_空管态不影响AllOk_带玻璃态影响(emptyTube: True) [1 ms]
+  Standard Output Messages:
+ 空管到温稳态：热侧 7.00/5.00 K　Kind Reference　AllOk True　HardOk True　Failed []
+
+
+  Passed PtOptimize.Tests.StateCriteriaGateTests.门2d_加密复算_工厂造空管算例_拒答且不解 [18 ms]
+  Standard Output Messages:
+ 工厂被叫 1 次，0.0 s；判词「✗ 加密复算不适用于空管到温稳态：本工况没有进加密复算比对列的卡交付判据（空管到温稳态只卡电流密度（管 J 与法兰截面 J）与场的有效性；两条电流密度判据两态都不在逐档比对列里）　⇒ 不在这个工况上做加密复算，**不能据此说这个设计过了**；该工况的场有没有解到位看整线结果自己的判定。」
+
+
+  Passed PtOptimize.Tests.StateCriteriaGateTests.门5_保温搜索逐格点_空管态参考项不进可行集与排序_工况位由EvaluateView盖 [61 ms]
+  Passed PtOptimize.Tests.StateCriteriaGateTests.门4_保温搜索_管J超限而三条都过_终点整线判不可行 [9 ms]
+  Standard Output Messages:
+ 管 J 超限（带玻璃）：False　带玻璃稳态：管 J 某某后缀 13.0/12.0
+
+
+
+Test Run Successful.
+Total tests: 12
+     Passed: 12
+ Total time: 4.1387 Minutes
+EXIT 0　结束 2026-09-23 16:45:00
