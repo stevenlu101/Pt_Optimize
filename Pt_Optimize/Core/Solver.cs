@@ -844,6 +844,18 @@ public static class Solver
             {
                 var lcF = FinishCase(d, baseIn, lastOpt);
                 var g = MeshAdapt.GrowFineRadius(plan, pk, InnerROf(), lcF.MeshCoarseMm, MeshAdapt.PlateOuterRadiusMm(lcF).Mm, "终局复核解后");
+                // ★ 2026-09-24（搜形状算力工程 B，只供粗筛；缺省 false = 改前逐位）：终局复核后细区没盖住热点、本该放大重做时，
+                //   选项 SkipRadiusGrowthAfterFinalCheck = true ⇒ 不放大、不重做，把「本该放大到多少」记进结果（调用方印进证据）。
+                //   只截这一支（Grew）：拒答（到上限仍盖不住）与峰位算不出两支照旧判不了；复核判定、阈值、旋钮一个不动。
+                //   实测病因：夜跑 021617 第 3 形状粗筛 2 轮跑完后整个形状从第 1 轮重解一遍（成本翻倍）。赢家精算不传它（照旧放大重做）。
+                if (g.Grew && opt.SkipRadiusGrowthAfterFinalCheck)
+                {
+                    res.SkippedRadiusGrowthToMm = g.Plan.RadiusMm;
+                    res.SkippedRadiusGrowthWhy = g.Plan.Steps[^1].Why;
+                    Log($"细区没盖住热点 ⇒ 本该放大：{res.SkippedRadiusGrowthWhy}；本次选项 SkipRadiusGrowthAfterFinalCheck = true（粗筛）⇒ **不放大、不重做**，"
+                      + $"结果留在细区半径 {plan.RadiusMm:0.00} mm 上（热点处的温度类判据按细区半径计划的规则不算数，只作粗筛排序，不可交付）");
+                    break;
+                }
                 plan = g.Plan; res.RadiusPlan = plan; opt.RadiusPlan = plan; opt.FineRadiusMm = plan.RadiusMm;
                 if (g.Refused) why = g.Verdict;
                 else if (g.Grew)
@@ -1805,10 +1817,22 @@ public static class Solver
             // ★ R48 E 审查修改（2026-09-15 Opus 5）：三支网格配方原样搬进公开的 ApplyCaseMesh（纯搬移，数逐位不变）——
             //   保温搜索的整线工作点与内层单片网格要调同一份，此前它手写了一份、导航档漏了细区半径（审查意见第 1 条）。
             ApplyCaseMesh(lc, o);
+            // ★ 2026-09-24（搜形状算力工程 A，同状态复用；缺省关 = 改前逐位）：同一次 Solve 里算例全字段指纹相同 ⇒ 交回上次的结果、不再解场。
+            //   不改判定、不改阈值、不改旋钮分派：交回的是同一个算例上 LineRunner.Run 的结果（它对同一算例是确定的），调用方照旧过 Gate／熔化判定。
+            //   指纹与缓存见 SameStateReuse；改回 = SolverOptions.ReuseSameStateSolves = false（缺省）。
+            string? reuseKey = o.ReuseSameStateSolves ? SameStateReuse.KeyOf(lc) : null;
+            if (reuseKey is not null && res.SameState is { } reuse && reuse.TryGet(reuseKey, out var again))
+            {
+                res.SameStateReuses++;
+                o.SolveProbe?.Invoke(lc, true);
+                return again;
+            }
+            o.SolveProbe?.Invoke(lc, false);
             // ★ 细网格那一遍单次可能跑 ~900 s；不转内层进度就是几十分钟静默，
             //   看不出「慢」和「挂了」的区别（用户 2026-08-29）。
             var r = LineRunner.Run(lc, inner, cancel);
             res.Solves++;
+            if (reuseKey is not null) (res.SameState ??= new SameStateReuse()).Put(reuseKey, r);
             return r;
         }
         catch (OperationCanceledException) { throw; }
@@ -2714,6 +2738,19 @@ public sealed class SolverResult
     /// <summary>最近一次算的设计电流（20 °C/h 升温峰值，逐片）—— 下角与孔/槽上界都从它来。</summary>
     public Core.DesignCurrent.Result? DesignCurrent;
 
+    /// <summary>
+    /// 2026-09-24（搜形状算力工程 B）：<see cref="SolverOptions.SkipRadiusGrowthAfterFinalCheck"/> = true 且终局复核后细区没盖住热点时，
+    /// **本该**放大到的细区半径 mm（没放大、没重做）；NaN = 没发生（选项关，或盖住了，或走的是拒答／判不了那一支）。
+    /// </summary>
+    public double SkippedRadiusGrowthToMm = double.NaN;
+    /// <summary>上一项的放大理由原句（<see cref="FineRadiusStep.Why"/>）；空 = 没发生。</summary>
+    public string SkippedRadiusGrowthWhy = "";
+
+    /// <summary>2026-09-24（搜形状算力工程 A）：同状态复用次数 = 省下的场解次数（<see cref="SolverOptions.ReuseSameStateSolves"/> 关时恒 0）。</summary>
+    public int SameStateReuses;
+    /// <summary>同状态复用的缓存（一次 Solve 一份，第一次存结果时才建）。</summary>
+    internal SameStateReuse? SameState;
+
 }
 
 public sealed class SolverOptions
@@ -2860,6 +2897,25 @@ public sealed class SolverOptions
     /// 导航求根落回算例缺省半径（<see cref="LineCase.MeshFineRadiusMm"/> = 50），不核热点、不放大 —— 与 F7′ 之前（cff38c6）同一条路（审查 P6 那一改的改回）。
     /// </summary>
     public bool NavUsesCaseDefaultRadius;
+
+    /// <summary>
+    /// 2026-09-24（搜形状算力工程 B，全局解决方案第 2 版 §4 L1、§5）：**只供粗筛**。true ⇒ 终局复核后细区没盖住热点时不放大、不重做，
+    /// 把本该放大到的半径记进 <see cref="SolverResult.SkippedRadiusGrowthToMm"/>。缺省 false = 生产逐位不变（改回参数就是它）；赢家精算不传。
+    /// 不覆盖：导航遍之后、第二遍之前那一处放大（只在 FineMm &gt; 0 时发生，粗筛没有第二遍）。
+    /// </summary>
+    public bool SkipRadiusGrowthAfterFinalCheck;
+
+    /// <summary>
+    /// 2026-09-24（搜形状算力工程 A）：true ⇒ 同一次 Solve 里算例全字段指纹相同的整线解直接复用（<see cref="SameStateReuse"/>），不再解场。
+    /// 缺省 false = 改前逐位（改回参数就是它）。逐位门：开与关在同一设计上的旋钮终值、判据表、轨迹逐位相同，只有场解次数不同（R48SolverScreenCostTests.A慢_…；快门 A_源码…钉「关时与改前逐字相同」）。
+    /// </summary>
+    public bool ReuseSameStateSolves;
+
+    /// <summary>
+    /// **只供门／探针用，生产不传**：每次整线解（第二个参数 false）或同状态复用（true）之前回调一次，传入算例。
+    /// 归因探针在回调里取调用栈，数「每轮每一步各解几次」。不改任何结果。
+    /// </summary>
+    internal Action<LineCase, bool>? SolveProbe;
 
     public SolverOptions Clone() => (SolverOptions)MemberwiseClone();
 }

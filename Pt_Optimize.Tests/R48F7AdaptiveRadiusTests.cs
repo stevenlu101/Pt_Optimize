@@ -424,6 +424,8 @@ public class R48F7AdaptiveRadiusTests
         ("Pt_Optimize/Program.cs", "soOpt.FineRadiusMm = fr", "命令行 --solve --fine：fr = MeshVerify.RequiredMeshFor（计划初值），Solver 解后放大"),
         ("Pt_Optimize/Program.cs", "lcA.MeshFineRadiusMm = radiusA", "命令行 --meshadapt：radiusA = MeshVerify.FineRadiusPlanFor（计划初值；本仪器不放大，只印热点句）"),
         ("Pt_Optimize/UI/LineDesignPage.cs", "FineRadiusMm = finFineR", "搜形状精算：MeshVerify.RequiredMeshFor（计划初值），Solver 解后放大"),
+        // 2026-09-24 补登记（cc49836 起本门即红在这一行：搜形状 Core 驱动 07644dc 之后新建，照搬界面精算那一行，当时没来登记）
+        ("Pt_Optimize/Core/ShapeSearchDriver.cs", "FineRadiusMm = finFineR", "搜形状 Core 驱动赢家精算：MeshVerify.RequiredMeshFor（计划初值），Solver 解后放大（与界面搜形状精算同一条）"),
         ("Pt_Optimize/UI/LineDesignPage.cs", "optLv.FinalMeshFineRadiusMm = fine3dm.RadiusMm", "图纸细网格重解：加密复算计划的终值（FineResolveAsync）"),
         ("Pt_Optimize/UI/LineDesignPage.cs", "FineRadiusMm = fineRadiusD8", "自动定厚／细网格重解：MeshVerify.RequiredMeshFor（计划初值），Solver 解后放大"),
         ("Pt_Optimize/UI/LineDesignPage.cs", "FineMm = res.FineMm, FineRadiusMm = fineRadius", "终验三关：加密复算计划的终值"),

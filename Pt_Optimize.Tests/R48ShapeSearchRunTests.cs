@@ -24,7 +24,12 @@ namespace PtOptimize.Tests;
 ///   SHAPE_MAXDISC 盘半径上端 mm，缺省 50（探针给的表，无出处）；写成 lb+x 表示「起点表第一点 + x」（冒烟用；
 ///                 第一点 = 判据「圆盘盖得住管孔＋焊脚」的闭式下界按 ShapeSearchPlan.LiveDiscs 的 0.5 mm 向上取整）。
 ///   SHAPE_LANES   批内并发路数，缺省 2（4 核机器，给同机别的长跑留两核；选定）。
-///   SHAPE_SCREEN  粗筛轮数，缺省 16（照抄界面）。
+///   SHAPE_SCREEN  粗筛轮数，缺省 = ShapeSearchOptions.ScreenRounds（2026-09-24 起 8，选定；依据夜跑 001304／021617，界面 16 轮在 4 核 Linux 上一形状 30 h 以上）。
+///   SHAPE_PARALLEL 1／0：① 并行首遍（起点表全部点并行解一遍），缺省 1（ShapeSearchOptions.ParallelFirstPass；0 = 界面原算法）。
+///   SHAPE_SKIPGROW 1／0：粗筛终局复核后不放大重做，缺省 1（ShapeSearchOptions.ScreenSkipRadiusGrowth；0 = 照旧放大重做）。
+///   SHAPE_REUSE   1／0：粗筛同状态整线解复用，缺省 1（ShapeSearchOptions.ScreenReuseSameState；0 = 改前逐位）。
+///   SHAPE_SHOULDER 1／0：闭式肩部预筛，缺省 1（ShapeSearchOptions.ShoulderJPrescreen；0 = 不预筛）。
+///   SHAPE_WFRAC   舌宽比表，逗号分隔，缺省 = ShapeSearchOptions.WFrac（2026-09-24 起 1,0.875,0.75；改回 0.75,1）。
 ///   SHAPE_FINAL   精算轮数，缺省 40（照抄界面）。
 ///   SHAPE_COARSE  粗筛平坦区网格 mm，缺省 0（照抄界面，关）。
 ///   SHAPE_SEEDFIRST 1／0：是否先算种子自己的形状作基准，缺省 1（照抄界面）。
@@ -111,15 +116,23 @@ public class R48ShapeSearchRunTests
         var baseIn = new DesignInputs();
         double lb = GridStart(seed, baseIn);
         var (maxDisc, src) = MaxDisc(lb);
+        var dflt = new ShapeSearchOptions();
+        string? wf = Environment.GetEnvironmentVariable("SHAPE_WFRAC");
         var opt = new ShapeSearchOptions
         {
             MaxDiscMm = maxDisc, MaxDiscSource = src,
             Lanes = EnvI("SHAPE_LANES", 2),
-            ScreenRounds = EnvI("SHAPE_SCREEN", 16),
+            ScreenRounds = EnvI("SHAPE_SCREEN", dflt.ScreenRounds),
             FinalRounds = EnvI("SHAPE_FINAL", 40),
             ScreenCoarseMm = EnvD("SHAPE_COARSE", 0),
             EvalSeedFirst = EnvI("SHAPE_SEEDFIRST", 1) != 0,
             MaxExtend = EnvI("SHAPE_MAXEXTEND", 6),
+            ParallelFirstPass = EnvI("SHAPE_PARALLEL", dflt.ParallelFirstPass ? 1 : 0) != 0,
+            ScreenSkipRadiusGrowth = EnvI("SHAPE_SKIPGROW", dflt.ScreenSkipRadiusGrowth ? 1 : 0) != 0,
+            ScreenReuseSameState = EnvI("SHAPE_REUSE", dflt.ScreenReuseSameState ? 1 : 0) != 0,
+            ShoulderJPrescreen = EnvI("SHAPE_SHOULDER", dflt.ShoulderJPrescreen ? 1 : 0) != 0,
+            WFrac = string.IsNullOrWhiteSpace(wf) ? dflt.WFrac
+                  : wf.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(x => double.Parse(x, CultureInfo.InvariantCulture)).ToArray(),
             AllowTabCuts = false,
         };
         string path = DeliverableOut.Stamped($"R48_搜形状_Core驱动_{which}.txt");
@@ -134,6 +147,12 @@ public class R48ShapeSearchRunTests
         sink.W($"族　不挖舌孔（AllowTabCuts = false，现役设计的解法设定 = 界面下拉预设，与 R48LEndToEndTests.ProductionOptions 同一份）；挖舌孔族本跑不做");
         sink.W($"上端　盘半径 {maxDisc:0.000} mm；出处：{src}");
         sink.W($"参数　粗筛 {opt.ScreenRounds} 轮、精算 {opt.FinalRounds} 轮、并发 {opt.Lanes} 路、粗筛平坦区网格 {opt.ScreenCoarseMm:0.###} mm、先算基准 {(opt.EvalSeedFirst ? "是" : "否")}、邻域最多 {opt.MaxExtend} 轮；其余照抄界面 SearchOneFamilyAsync");
+        sink.W($"粗筛轮数　{opt.ScreenRounds}（缺省 {dflt.ScreenRounds}，选定：依据夜跑 deliverable/R48_搜形状_Core驱动_W08_本次开跑于2026-09-24_001304.txt 与 …_021617.txt；界面 16 轮在 4 核 Linux 不可用；跑过再校）");
+        sink.W($"算力选项（2026-09-24，判定与阈值不动；每项有改回）　① {(opt.ParallelFirstPass ? "并行首遍（起点表全部点并行解一遍）" : "界面原算法（SHAPE_PARALLEL=0）")}；"
+             + $"粗筛终局复核后{(opt.ScreenSkipRadiusGrowth ? "不放大、不重做（SolverOptions.SkipRadiusGrowthAfterFinalCheck = true；本该放大到的半径印在逐形状行末列）" : "照旧放大重做（SHAPE_SKIPGROW=0）")}；"
+             + $"粗筛同状态复用 {(opt.ScreenReuseSameState ? "开（SolverOptions.ReuseSameStateSolves = true）" : "关（SHAPE_REUSE=0）")}；"
+             + $"赢家精算不跳过放大、同状态复用 {(opt.FinalReuseSameState ? "开" : "关")}；"
+             + $"舌宽比 {{{string.Join(", ", opt.WFrac.Select(x => x.ToString("0.###", CultureInfo.InvariantCulture)))}}}；闭式肩部预筛 {(opt.ShoulderJPrescreen ? "开（估计、只作预筛）" : "关（SHAPE_SHOULDER=0）")}");
         sink.W("");
         ShapeSearchResult? res = null;
         try
@@ -156,7 +175,11 @@ public class R48ShapeSearchRunTests
         foreach (var r in res.Rows) sink.W(r.Line());
         var solvedRows = res.Rows.Where(r => !r.Skipped).ToList();
         if (solvedRows.Count > 0)
+        {
             sink.W($"每形状耗时　平均 {solvedRows.Average(r => r.Seconds):0} s、最长 {solvedRows.Max(r => r.Seconds):0} s、最短 {solvedRows.Min(r => r.Seconds):0} s；每形状进度轮平均 {solvedRows.Average(r => r.Rounds):0.0}");
+            sink.W($"粗筛场解　合计 {solvedRows.Sum(r => r.Solves)} 次、同状态复用省下 {solvedRows.Sum(r => r.Reuses)} 次；"
+                 + $"跳过放大重做的形状 {solvedRows.Count(r => !double.IsNaN(r.SkippedGrowthToMm))} 个；肩部预筛跳过 {res.Rows.Count(r => r.Prescreened)} 个；① 首遍分支：{(res.FirstPassBranch.Length > 0 ? res.FirstPassBranch : "界面原算法")}");
+        }
         sink.W("");
         sink.W(res.NoFeasible ? res.NoFeasibleReport : res.SchemeCard);
 

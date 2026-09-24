@@ -11,10 +11,11 @@ namespace PtOptimize.Core;
 /// <summary>
 /// 搜形状驱动（Core，无界面依赖）的选项。
 ///
-/// 缺省值出处：除 <see cref="MaxDiscMm"/>、<see cref="DiscGridMm"/> 两项外，全部**照抄界面
-/// <c>UI/LineDesignPage.cs</c> 的 <c>SearchOneFamilyAsync</c>（07644dc）里的值**，判定与阈值一个不挪：
+/// 缺省值出处：除 <see cref="MaxDiscMm"/>、<see cref="DiscGridMm"/> 两项与 2026-09-24 按夜跑数据改的几项（<see cref="WFrac"/>、<see cref="ScreenRounds"/>、
+/// <see cref="ParallelFirstPass"/>、<see cref="ScreenSkipRadiusGrowth"/>、<see cref="ScreenReuseSameState"/>、<see cref="ShoulderJPrescreen"/>，各自注释写变因与改回）外，
+/// 全部**照抄界面 <c>UI/LineDesignPage.cs</c> 的 <c>SearchOneFamilyAsync</c>（07644dc）里的值**，判定与阈值一个不挪：
 /// 二分 ≤ 3 次、区间 ≤ 1 mm 停；黄金分割 ≤ 4 点、区间 ≤ 1 mm 停、往可行侧留 +6 mm 余地、已算过 ±0.5 mm 去重；
-/// 不动点 ≤ 3 次、贴下界 0.05 mm 算到了；舌宽比 0.75／1.00；粗筛 16 轮、精算 40 轮；邻域最多 6 轮；
+/// 不动点 ≤ 3 次、贴下界 0.05 mm 算到了；精算 40 轮；邻域最多 6 轮；
 /// 改善门槛 0.5 g 与步长下界 0.625 mm 由 <see cref="ShapeSearchPlan"/> 给（同一份实现，本类不另写）。
 /// </summary>
 public sealed class ShapeSearchOptions
@@ -35,11 +36,24 @@ public sealed class ShapeSearchOptions
     /// </summary>
     public double[]? DiscGridMm;
 
-    /// <summary>舌宽比例（半宽 / 盘半径）。照抄界面 SearchWFrac。</summary>
-    public double[] WFrac = { 0.75, 1.00 };
+    /// <summary>
+    /// 舌宽比例（半宽 / 盘半径）。①～④ 用最宽的那个（切线族 w = R），⑤ 再按表里的顺序试其余的。
+    /// **选定（2026-09-24）**：{1.00, 0.875, 0.75}，先切线族。0.875 = 1 − <see cref="ShapeSearchPlan.FracStep"/>（与邻域的舌宽步长同一格）。
+    /// 依据：决 102 探针（deliverable/R48_决102_形状杠杆探针_W08_盘径_本次开跑于2026-09-23_203224.txt）「盘+5」例（R 35、w 30）
+    ///   舌盘交界截面 J 11.670 &gt; 限 11；夜跑 021617 ⑤ 舌宽 55.5（盘 Ø74、比例 0.75）三条硬判据比同盘径切线族全劣化
+    ///   （最热铂高出热偶读数 36.4 对 16.1 K、管根低于热偶读数 9.0 对 4.7 K、管孔净流入 −10.1 对 −1.9 W）。
+    /// 变因：旧值 {0.75, 1.00}（照抄界面 SearchWFrac）→ 新值 {1.00, 0.875, 0.75}；两份证据如上。改回 = 传 {0.75, 1.00}。
+    /// </summary>
+    public double[] WFrac = { 1.00, 0.875, 0.75 };
 
-    /// <summary>粗筛每点的轮数上限。照抄界面 SearchScreenRounds。</summary>
-    public int ScreenRounds = 16;
+    /// <summary>
+    /// 粗筛每点的轮数上限。**选定：8**（2026-09-24）。依据：夜跑 deliverable/R48_搜形状_Core驱动_W08_本次开跑于2026-09-24_001304.txt
+    /// （粗筛 16 轮：① 盘 Ø94 每轮实测 2 h 10 min～2 h 55，12 h 闸切在第 6 轮，没走出 ①）与 …_021617.txt（粗筛 2 轮：每形状 49～54 次场解 = 2.1～2.4 h）；
+    /// 界面的 16 轮在 4 核 Linux 上一形状 30 h 以上，不可用。跑过再校。
+    /// 变因：旧值 16（照抄界面 SearchScreenRounds）→ 新值 8；两份证据如上。改回 = 传 16。
+    /// 全过即停：求解器本身在第 k 轮三条逐片判据与其余硬判据全过时就停（Solver.Solve 的 Rounds 里「第 k 轮全过」那一支 break），驱动不另加。
+    /// </summary>
+    public int ScreenRounds = 8;
     /// <summary>赢家精算的轮数上限。照抄界面 SearchFinalRounds。</summary>
     public int FinalRounds = 40;
     /// <summary>邻域爬山最多几轮。照抄界面 SearchMaxExtend。</summary>
@@ -73,6 +87,35 @@ public sealed class ShapeSearchOptions
 
     /// <summary>先把种子自己的形状算一遍作基准（照抄界面「先算你现在这个形状，作基准」）。</summary>
     public bool EvalSeedFirst = true;
+
+    /// <summary>
+    /// ① 并行首遍（2026-09-24，算力工程 D）：起点表全部点（舌宽取最宽比例）用 <see cref="ShapeBatchEval"/> 并行解一遍（<see cref="Lanes"/> 路）；
+    /// 有可行点 ⇒ 最小可行点与左邻不可行点间二分、黄金分割照旧；全不可行 ⇒ 向上外推（并行一批到上端）；全可行（或最小可行点就是表首点）⇒ 从下界做 ②。
+    /// 这是对界面算法的变更（界面：只在表最大值上串行解一次）。变因：4 核并行、串行首遍是瓶颈（夜跑 001304 在 ① 一个形状上用满 12 h）。
+    /// 判定与阈值不动。改回 = false（界面原算法：表最大值解一次、不可行时逐步外推）。
+    /// </summary>
+    public bool ParallelFirstPass = true;
+
+    /// <summary>
+    /// 粗筛评估传 <see cref="SolverOptions.SkipRadiusGrowthAfterFinalCheck"/> = true（2026-09-24，算力工程 B）：终局复核后细区没盖住热点时不放大、不重做，
+    /// 本该放大到的半径印进逐形状行。变因：夜跑 021617 第 3 形状（盘 Ø74／舌 55.5）粗筛 2 轮跑完后整个形状从第 1 轮重解一遍，21853 s（前两形状 7595、8613 s）。
+    /// 赢家精算不传（照旧放大重做）。改回 = false。
+    /// </summary>
+    public bool ScreenSkipRadiusGrowth = true;
+
+    /// <summary>粗筛评估传 <see cref="SolverOptions.ReuseSameStateSolves"/> = true（2026-09-24，算力工程 A：同状态整线解复用，结果逐位不变、只少解场）。改回 = false。</summary>
+    public bool ScreenReuseSameState = true;
+
+    /// <summary>赢家精算是否传 <see cref="SolverOptions.ReuseSameStateSolves"/>。缺省 false：精算照改前逐位（复用的逐位门只在粗筛网格上跑过）。</summary>
+    public bool FinalReuseSameState;
+
+    /// <summary>
+    /// 闭式肩部预筛（2026-09-24，全局解决方案第 2 版 §4 L0）：舌宽 w &lt; 盘半径 R 的候选，先按 I/(t·2w) 估盘舌交界截面 J，
+    /// 超过计算极限（<see cref="DesignSpec.JCheckAPerMm2"/> = 设定 J + 1）⇒ 不进场解，印「闭式跳过：肩部 J」。
+    /// I 取参照形状（同盘径的切线族那一行，邻域取当前最优行）求解后的设计电流（<see cref="SolverResult.DesignCurrent"/>），t 取参照形状求解后的板厚；
+    /// **是估计、只作预筛，不是判据**：求解器每轮按 J 抬板厚（ApplySectionFloor），被跳过的形状加厚后可能过 J，本预筛不覆盖那种形状。改回 = false。
+    /// </summary>
+    public bool ShoulderJPrescreen = true;
 
     /// <summary>把求解器每轮「第 N 轮…」那一行带上形状标签转给 progress（整夜挂机看得出还活着）。</summary>
     public bool ForwardSolverRounds = true;
@@ -135,6 +178,12 @@ public sealed class ShapeRow
     public string[] Blocked = Array.Empty<string>();
     /// <summary>场解次数（<see cref="SolverResult.Solves"/>）。</summary>
     public int Solves;
+    /// <summary>同状态复用次数（<see cref="SolverResult.SameStateReuses"/>，省下的场解）。</summary>
+    public int Reuses;
+    /// <summary>粗筛跳过的细区半径放大：本该放大到的半径 mm（<see cref="SolverResult.SkippedRadiusGrowthToMm"/>）；NaN = 没发生。</summary>
+    public double SkippedGrowthToMm = double.NaN;
+    /// <summary>这一行是闭式肩部预筛跳过的（<see cref="ShapeSearchOptions.ShoulderJPrescreen"/>）。</summary>
+    public bool Prescreened;
     /// <summary>进度里以「第」开头的行数（与界面推进度条同一数法）。</summary>
     public int Rounds;
     public double Seconds;
@@ -144,19 +193,20 @@ public sealed class ShapeRow
     public string Tag => $"盘Ø{2 * R:0.0}／舌宽{2 * HalfW:0.0}{(Taper ? "／锥形" : "")}";
 
     public const string Header =
-        "序\t阶段\t盘径Ø\t舌宽\t舌边\t舌长\t结果\t铂重g\t最热铂高出热偶读数 K（实际/限/裕度/判）\t管根低于热偶读数 K\t管孔净流入 W\t卡住的硬安全线\t场解\t轮\t秒\t停因／消息";
+        "序\t阶段\t盘径Ø\t舌宽\t舌边\t舌长\t结果\t铂重g\t最热铂高出热偶读数 K（实际/限/裕度/判）\t管根低于热偶读数 K\t管孔净流入 W\t卡住的硬安全线\t场解\t轮\t秒\t停因／消息\t同状态复用\t粗筛本该放大到 mm";
 
     public string Line()
     {
         var ci = CultureInfo.InvariantCulture;
         if (Skipped)
-            return string.Create(ci, $"{Index}\t{Phase}\t{2 * R:0.00}\t{2 * HalfW:0.00}\t{(Taper ? "锥形" : "平行")}\t—\t跳过\t—\t—\t—\t—\t—\t0\t0\t0\t{SkipWhy}");
+            return string.Create(ci, $"{Index}\t{Phase}\t{2 * R:0.00}\t{2 * HalfW:0.00}\t{(Taper ? "锥形" : "平行")}\t—\t跳过\t—\t—\t—\t—\t—\t0\t0\t0\t{SkipWhy}\t0\t—");
         string verdict = Ok ? "✓可行" : Undetermined ? "判不了" : HitBound ? "到顶" : "不可行";
         string why = (Ok ? Message : (string.IsNullOrWhiteSpace(StopWhy) ? Message : StopWhy)).Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
+        string grown = double.IsNaN(SkippedGrowthToMm) ? "—" : SkippedGrowthToMm.ToString("0.00", ci) + "（没放大、没重做；热点处温度类判据不算数，只作排序）";
         return string.Create(ci,
             $"{Index}\t{Phase}\t{2 * R:0.00}\t{2 * HalfW:0.00}\t{(Taper ? "锥形" : "平行")}\t{TabLengthMm:0.0}\t{verdict}\t"
           + $"{(double.IsNaN(MassG) ? "—" : MassG.ToString("0.0", ci))}\t{Hot.Text()}\t{Cold.Text()}\t{Flux.Text()}\t"
-          + $"{(Blocked.Length == 0 ? "—" : string.Join("；", Blocked))}\t{Solves}\t{Rounds}\t{Seconds:0}\t{why}");
+          + $"{(Blocked.Length == 0 ? "—" : string.Join("；", Blocked))}\t{Solves}\t{Rounds}\t{Seconds:0}\t{why}\t{Reuses}\t{grown}");
     }
 }
 
@@ -188,6 +238,10 @@ public sealed class ShapeSearchResult
     /// </summary>
     public string ClimbStop = "";
     public bool ClimbConverged;
+    /// <summary>① 并行首遍走了哪一支（有可行点二分／全可行从下界做 ②／全不可行…）；界面原算法（改回）时为空。</summary>
+    public string FirstPassBranch = "";
+    /// <summary>③ 二分的起始区间 [不可行, 可行]（盘半径 mm），取自并行首遍；没走二分那一支时为 NaN。</summary>
+    public double BisectLoMm = double.NaN, BisectHiMm = double.NaN;
     public readonly List<string> Log = new();
 }
 
@@ -198,6 +252,7 @@ public sealed class ShapeSearchResult
 /// 照搬的步骤（与界面同序）：
 ///   基准：先把种子自己的形状算一遍（不可行只是表上多一行，不作出发点）。
 ///   ① 在起点表最大盘径（舌宽取最宽比例，即切线族 hw = R）上解一次，拿到板厚。
+///      ★ 2026-09-24 改（<see cref="ShapeSearchOptions.ParallelFirstPass"/>，缺省开）：起点表**全部点**并行解一遍，见下「并行首遍」。
 ///   ② 不动点：由判据「圆盘盖得住管孔＋焊脚」的闭式反解 <see cref="GeometryScreen.MinDiscRadiusMm(IReadOnlyList{FlangePlate})"/> 定最紧下界，在下界上再解。
 ///   ③ 下界不可行 ⇒ 在 [不可行, 可行] 上二分（≤ 3 次，区间 ≤ 1 mm 停）。
 ///   ④ 黄金分割在可行区间里按质量找最轻（≤ 4 点）。
@@ -217,6 +272,17 @@ public sealed class ShapeSearchResult
 ///
 /// 另一处与界面不同（写明，不静默）：早筛的管孔半径取 <see cref="DesignSpec.HoleRadiusMm"/>（= 壁厚 + 内径/2），
 ///   界面写的是「壁厚 + 25」。变因：业主「通用型解法」原则（换内径也要出结果）；内径 50 时两者逐位相同（现役 W08、W06 都是 50）。
+///
+/// 2026-09-24 按夜跑数据改的几处（实施记录「09-24 按夜跑数据改的六件事」；每处都有改回参数，判定与阈值不动）：
+///   并行首遍（D，对界面算法的变更，变因：4 核并行、串行首遍是瓶颈）：起点表全部点（舌宽取最宽比例）用 <see cref="ShapeBatchEval"/> 并行解一遍，
+///     按盘径从大到小提交（大盘解得慢，先占道，整批墙钟最短）。然后：
+///     · 有可行点、且最小可行点 Rhi 左边还有表点 ⇒ 取左邻表点 Rlo（不可行，因为 Rhi 是最小可行点）⇒ 在 [Rlo, Rhi] 上 ③ 二分、④ 黄金分割照旧（不再做 ②：区间已由首遍给出）；
+///     · 全可行，或最小可行点就是表首点（没有左邻）⇒ 从下界做 ②，板厚取最小可行点那一行的；
+///     · 全不可行 ⇒ 向上外推：表最大值之上每 DiscStepMm 一点到上端，并行一批；外推里有可行点 ⇒ 同第一支（左邻是外推批或表最大值）；
+///       仍全不可行 ⇒ 不二分、不黄金分割，② 取表最大值那一行的板厚（与界面「② 只用板厚」同一理由）。
+///     黄金分割上沿 min(bHi + 余地, Rsafe) 里的 Rsafe = 首遍（含外推）里已核实可行的最大盘径（界面里它是表最大值，那里默认可行）。
+///   粗筛不放大重做（B）、同状态复用（A）：只改粗筛传给求解器的选项；赢家精算照旧。
+///   舌宽比表 {1.00, 0.875, 0.75} 与闭式肩部预筛（E）、粗筛 8 轮（C）：见 <see cref="ShapeSearchOptions"/> 各项注释。
 /// </summary>
 public static class ShapeSearchDriver
 {
@@ -264,6 +330,11 @@ public static class ShapeSearchDriver
           + (opt.DiscGridMm is null ? "（缺省：下界起每 " + step0.ToString("0.###", ci) + " mm 一点到上端）" : "（调用方给的表）"));
         Say($"解法族：{fam}（本驱动一次只跑一族）；舌宽比例 {{{string.Join(", ", wFrac.Select(x => x.ToString("0.###", ci)))}}}；粗筛 {opt.ScreenRounds} 轮、精算 {opt.FinalRounds} 轮；"
           + $"邻域最多 {opt.MaxExtend} 轮、步长 {step0.ToString("0.###", ci)} 减半到 {ShapeSearchPlan.MinDiscStepMm.ToString("0.###", ci)} mm；改善门槛 0.5 g（ShapeSearchPlan.Improved）；并发 {opt.Lanes} 路；粗筛平坦区网格 {opt.ScreenCoarseMm.ToString("0.###", ci)} mm（0 = 关）");
+        Say("算力选项（2026-09-24，判定与阈值不动）：① " + (opt.ParallelFirstPass ? "并行首遍（起点表全部点并行解一遍）" : "界面原算法（只在表最大值上解一次，不可行再逐步外推）")
+          + "；粗筛终局复核后" + (opt.ScreenSkipRadiusGrowth ? "不放大重做（SkipRadiusGrowthAfterFinalCheck）" : "照旧放大重做")
+          + "；粗筛同状态复用 " + (opt.ScreenReuseSameState ? "开" : "关")
+          + "；赢家精算照旧放大重做、同状态复用 " + (opt.FinalReuseSameState ? "开" : "关")
+          + "；闭式肩部预筛 " + (opt.ShoulderJPrescreen ? string.Create(ci, $"开（w < R 的候选按 I/(t·2w) 估盘舌交界截面 J，> {seed.JCheckAPerMm2:0.#} 不进场解；估计、只作预筛）") : "关"));
         Say(ShapeRow.Header);
 
         var solved = new List<ShapeRow>();       // 界面的 rows：只收真解出来的行（跳过的不收）
@@ -283,6 +354,7 @@ public static class ShapeSearchDriver
         SolverOptions ScreenOpt() => new SolverOptions
         {
             AllowTabCuts = opt.AllowTabCuts, MaxRounds = opt.ScreenRounds, ScreenCoarseMm = opt.ScreenCoarseMm,
+            SkipRadiusGrowthAfterFinalCheck = opt.ScreenSkipRadiusGrowth, ReuseSameStateSolves = opt.ScreenReuseSameState,
         };
 
         ShapeRow SkipRow(double R, double hw, bool taper, string phase)
@@ -291,6 +363,26 @@ public static class ShapeSearchDriver
                 Phase = phase, R = R, HalfW = hw, Taper = taper, Skipped = true,
                 SkipWhy = string.Create(ci, $"跳过：管壁 {wall:0.0} 时盘半径至少要 {minDiscAll:0.0}（判据「圆盘盖得住管孔＋焊脚」早筛）"),
             };
+
+        // E：闭式肩部预筛（w < R）。参照行没有设计电流或板厚 ⇒ 估不出 ⇒ 照常求解（说出来）。
+        ShapeRow? ShoulderSkip(double R, double hw, bool taper, string phase, ShapeRow? reference)
+        {
+            if (!opt.ShoulderJPrescreen || !(hw < R - 1e-9) || reference is null) return null;
+            var (jEst, detail) = ShoulderJEstimate(hw, reference.Result, reference.Design);
+            if (double.IsNaN(jEst))
+            {
+                Say(string.Create(ci, $"　（盘Ø{2 * R:0.0}／舌宽{2 * hw:0.0}：肩部 J 估不出（{detail}）⇒ 照常求解）"));
+                return null;
+            }
+            double lim = seed.JCheckAPerMm2;
+            if (!(jEst > lim)) return null;
+            return new ShapeRow
+            {
+                Phase = phase, R = R, HalfW = hw, Taper = taper, Skipped = true, Prescreened = true,
+                SkipWhy = string.Create(ci, $"闭式跳过：肩部 J 估计 {jEst:0.00} > 计算极限 {lim:0.#} A/mm²（盘舌交界截面按 I/(t·2w) 估，{detail}；参照形状 {reference.Tag}）；")
+                        + "估计、只作预筛，不是判据：求解器按 J 抬板厚后这个形状可能过 J，本预筛不覆盖",
+            };
+        }
 
         (SolverResult sr, int rounds, double sec) SolveOne(DesignSpec spec, string tag, CancellationToken tok)
         {
@@ -323,6 +415,8 @@ public static class ShapeSearchDriver
             row.Flux = HardCritValue.Of(sr.Best, LineResult.Key.NetFlux);
             row.Blocked = sr.Best?.HardBlocked.Select(c => Criteria.Plain(c.Name)).ToArray() ?? Array.Empty<string>();
             row.Solves = sr.Solves;
+            row.Reuses = sr.SameStateReuses;
+            row.SkippedGrowthToMm = sr.SkippedRadiusGrowthToMm;
             row.Rounds = rounds;
             row.Seconds = sec;
             return row;
@@ -335,10 +429,11 @@ public static class ShapeSearchDriver
         }
 
         // 单点（界面 EvalShape）
-        ShapeRow Eval(double R, double hw, bool taper, string phase)
+        ShapeRow Eval(double R, double hw, bool taper, string phase, ShapeRow? reference = null)
         {
             ct.ThrowIfCancellationRequested();
             if (R < minDiscAll - 1e-9) { var sk = SkipRow(R, hw, taper, phase); Emit(sk); return sk; }
+            if (ShoulderSkip(R, hw, taper, phase, reference) is { } sh) { Emit(sh); return sh; }
             var spec = Spec(R, hw, taper);
             var row = new ShapeRow { Phase = phase, R = R, HalfW = hw, Taper = taper };
             var (sr, rounds, sec) = SolveOne(spec, row.Tag, ct);
@@ -346,17 +441,19 @@ public static class ShapeSearchDriver
             return row;
         }
 
-        // 批（界面 EvalShapesBatch）：批内互相独立，并发；结果按候选原顺序贴回
-        void EvalBatch(IReadOnlyList<(double R, double hw, bool Taper)> pts, string phase)
+        // 批（界面 EvalShapesBatch）：批内互相独立，并发；结果按候选原顺序贴回。返回按候选原顺序的行（被取消打断的为 null）。
+        ShapeRow?[] EvalBatch(IReadOnlyList<(double R, double hw, bool Taper)> pts, string phase, ShapeRow? reference = null)
         {
             ct.ThrowIfCancellationRequested();
-            if (pts.Count == 0) return;
+            var outRows = new ShapeRow?[pts.Count];
+            if (pts.Count == 0) return outRows;
             var rowsB = new ShapeRow[pts.Count];
             var specs = new List<(int i, DesignSpec s)>();
             for (int i = 0; i < pts.Count; i++)
             {
                 var (R, hw, taper) = pts[i];
                 if (R < minDiscAll - 1e-9) { rowsB[i] = SkipRow(R, hw, taper, phase); continue; }
+                if (ShoulderSkip(R, hw, taper, phase, reference) is { } sh) { rowsB[i] = sh; continue; }
                 rowsB[i] = new ShapeRow { Phase = phase, R = R, HalfW = hw, Taper = taper };
                 specs.Add((i, Spec(R, hw, taper)));
             }
@@ -373,12 +470,14 @@ public static class ShapeSearchDriver
             int si = 0;
             for (int i = 0; i < pts.Count; i++)
             {
-                if (rowsB[i].Skipped) { Emit(rowsB[i]); continue; }
+                if (rowsB[i].Skipped) { Emit(rowsB[i]); outRows[i] = rowsB[i]; continue; }
                 int k = si++;
                 if (outcome is null || !outcome.Done[k]) continue;    // 被取消打断的不留痕（与界面一致）
                 Emit(rowsB[i]);
+                outRows[i] = rowsB[i];
             }
             if (outcome is { Cancelled: true }) ct.ThrowIfCancellationRequested();
+            return outRows;
         }
 
         // ── 基准：先算种子自己的形状
@@ -392,34 +491,127 @@ public static class ShapeSearchDriver
             }
         }
 
-        // ── ① 起点表最大盘径，舌宽取最宽比例
         double fWide = wFrac.Max();
         double Rsafe = discs[^1];
-        Say($"① 先在盘Ø{(2 * Rsafe).ToString("0.0", ci)}（起点表最大值）、舌宽比 {fWide.ToString("0.###", ci)} 解一次，拿到板厚；判据「圆盘盖得住管孔＋焊脚」据此给出最紧的盘径下界（闭式）");
-        ShapeRow last = Eval(Rsafe, Rsafe * fWide, taperPage, "①");
-        bool topOk = !last.Skipped && last.Ok;
+        double Rbest = Rsafe;
+        bool rbestOk = false;
+        bool topOk = false;
+        bool doFixpoint = true;
+        ShapeRow last;
 
-        // ── (b) 起点不可行 ⇒ 向上外推（界面没有这一步：它默认表最大值可行）
-        if (!topOk)
+        // ③ 二分 ＋ ④ 黄金分割（照搬界面 for (fix…) 段里的那两步；并行首遍「有可行点」一支直接调它，区间取自首遍）
+        void BisectGolden(double bLo, double bHi)     // bLo 不可行、bHi 可行（已核实）
         {
-            double R = Rsafe;
-            while (R + step0 <= opt.MaxDiscMm + 1e-9)
+            for (int bi = 0; bi < opt.BisectMax && bHi - bLo > opt.BisectStopMm; bi++)
             {
-                R += step0;
-                Say($"①外推：盘Ø{(2 * (R - step0)).ToString("0.0", ci)} 不可行 ⇒ 向上一步 {step0.ToString("0.###", ci)} mm，试盘Ø{(2 * R).ToString("0.0", ci)}（盘半径上端 {opt.MaxDiscMm.ToString("0.0", ci)} mm，即盘Ø{(2 * opt.MaxDiscMm).ToString("0.0", ci)}；出处：{opt.MaxDiscSource}）");
-                res.ExtrapolatedMm.Add(R);
-                last = Eval(R, R * fWide, taperPage, "①外推");
-                if (!last.Skipped && last.Ok) { topOk = true; Rsafe = R; break; }
+                double mid = 0.5 * (bLo + bHi);
+                Say($"③ 二分：{(2 * bLo).ToString("0.0", ci)} 不可行 / {(2 * bHi).ToString("0.0", ci)} 可行 ⇒ 试盘Ø{(2 * mid).ToString("0.0", ci)}");
+                var rm = Eval(mid, mid * fWide, taperPage, "③");
+                if (!rm.Skipped && rm.Ok) { bHi = mid; Rbest = mid; }
+                else bLo = mid;
             }
-            if (!topOk)
-                Say($"①外推到盘半径上端 {opt.MaxDiscMm.ToString("0.0", ci)} mm 仍无可行点 ⇒ 没有可行上端：不二分、不做黄金分割；② 不动点仍照做（只用板厚，不依赖上端可行）");
+            double gLo = bLo, gHi = Math.Min(bHi + opt.GoldenSlackMm, Rsafe);
+            const double Phi = 0.6180339887;
+            for (int gi = 0; gi < opt.GoldenMax && gHi - gLo > opt.GoldenStopMm; gi++)
+            {
+                double x1 = gHi - Phi * (gHi - gLo), x2 = gLo + Phi * (gHi - gLo);
+                double probe = (gi % 2 == 0) ? x1 : x2;
+                if (solved.Any(r2 => r2.Design is not null && Math.Abs(r2.Design.DiscRadiusMm - probe) < opt.GoldenDedupMm)) { gLo += opt.GoldenDedupMm; continue; }
+                Say($"④ 找最轻：区间 盘Ø{(2 * gLo).ToString("0.0", ci)}–{(2 * gHi).ToString("0.0", ci)} ⇒ 试盘Ø{(2 * probe).ToString("0.0", ci)}");
+                Eval(probe, probe * fWide, taperPage, "④");
+                var okRows = solved.Where(r2 => r2.Ok && r2.Design is not null && !double.IsNaN(r2.MassG)).ToList();
+                if (okRows.Count == 0) break;
+                double Rmin = okRows.OrderBy(r2 => r2.MassG).First().Design!.DiscRadiusMm;
+                if (probe < Rmin) gLo = probe; else gHi = probe;
+                Rbest = Rmin;
+            }
         }
-        res.StartDiscMm = Rsafe;
+
+        if (opt.ParallelFirstPass)
+        {
+            // ── ① 并行首遍（D）：起点表全部点，舌宽取最宽比例；按盘径从大到小提交（大盘解得慢，先占道）
+            Say($"① 并行首遍：起点表全部 {discs.Length} 点 盘Ø{{{string.Join(", ", discs.Select(x => (2 * x).ToString("0.0", ci)))}}}、舌宽比 {fWide.ToString("0.###", ci)}，"
+              + $"用 ShapeBatchEval 并行解一遍（并发 {opt.Lanes} 路，按盘径从大到小提交）；拿到每点可不可行与板厚（界面原算法只解表最大值一点：本步是对界面算法的变更，变因：4 核并行、串行首遍是瓶颈）");
+            var pass = EvalBatch(discs.OrderByDescending(x => x).Select(R => (R, R * fWide, taperPage)).ToList(), "①")
+                       .Where(r => r is not null).Select(r => r!).ToList();
+            if (!pass.Any(r => !r.Skipped && r.Ok))
+            {
+                var ext = new List<double>();
+                for (int k = 1; discs[^1] + k * step0 <= opt.MaxDiscMm + 1e-9; k++) ext.Add(discs[^1] + k * step0);
+                if (ext.Count > 0)
+                {
+                    Say($"①外推：起点表全部不可行 ⇒ 向上一批并行解到上端：盘Ø{{{string.Join(", ", ext.Select(x => (2 * x).ToString("0.0", ci)))}}}"
+                      + $"（每步 {step0.ToString("0.###", ci)} mm；盘半径上端 {opt.MaxDiscMm.ToString("0.0", ci)} mm，出处：{opt.MaxDiscSource}）");
+                    res.ExtrapolatedMm.AddRange(ext);
+                    pass.AddRange(EvalBatch(ext.OrderByDescending(x => x).Select(R => (R, R * fWide, taperPage)).ToList(), "①外推")
+                                  .Where(r => r is not null).Select(r => r!));
+                }
+            }
+            var okPass = pass.Where(r => !r.Skipped && r.Ok).OrderBy(r => r.R).ToList();
+            if (okPass.Count > 0)
+            {
+                var hiRow = okPass[0];
+                Rsafe = okPass[^1].R;
+                Rbest = hiRow.R; rbestOk = true; topOk = true; last = hiRow;
+                res.StartDiscMm = hiRow.R;
+                var loRow = pass.Where(r => r.R < hiRow.R - 1e-9).OrderByDescending(r => r.R).FirstOrDefault();
+                if (loRow is not null)
+                {
+                    res.FirstPassBranch = "有可行点：最小可行点与左邻不可行点之间二分、黄金分割（不再做 ②）";
+                    res.BisectLoMm = loRow.R; res.BisectHiMm = hiRow.R;
+                    Say($"① 首遍有可行点：最小可行点 盘Ø{(2 * hiRow.R).ToString("0.0", ci)}，左邻不可行点 盘Ø{(2 * loRow.R).ToString("0.0", ci)} ⇒ 在这两点之间 ③ 二分、④ 黄金分割（照旧：≤ {opt.BisectMax} 次到 {opt.BisectStopMm.ToString("0.###", ci)} mm、≤ {opt.GoldenMax} 点）；"
+                      + $"黄金分割上沿取首遍已核实可行的最大盘径 盘Ø{(2 * Rsafe).ToString("0.0", ci)}");
+                    BisectGolden(loRow.R, hiRow.R);
+                    doFixpoint = false;
+                }
+                else
+                {
+                    bool all = okPass.Count == pass.Count(r => !r.Skipped);
+                    res.FirstPassBranch = all ? "全可行：从下界做 ②（板厚取最小可行点）" : "最小可行点就是表首点（没有左邻不可行点）：同「全可行」一支，从下界做 ②（板厚取最小可行点）";
+                    Say("① 首遍" + (all ? "全可行" : $"最小可行点就是表首点 盘Ø{(2 * hiRow.R).ToString("0.0", ci)}（没有左邻不可行点）")
+                      + $" ⇒ 直接从下界做 ②：板厚取最小可行点 盘Ø{(2 * hiRow.R).ToString("0.0", ci)} 那一行的");
+                }
+            }
+            else
+            {
+                var topRow = pass.Where(r => !r.Skipped && Math.Abs(r.R - discs[^1]) < 1e-9).FirstOrDefault()
+                          ?? pass.Where(r => !r.Skipped).OrderByDescending(r => r.R).FirstOrDefault();
+                last = topRow ?? SkipRow(discs[^1], discs[^1] * fWide, taperPage, "①");
+                Rbest = discs[^1]; Rsafe = discs[^1];
+                res.StartDiscMm = discs[^1];
+                res.FirstPassBranch = "全不可行（外推到上端也无可行）：不二分、不黄金分割；② 取表最大值那一行的板厚";
+                Say($"① 首遍（含外推）到盘半径上端 {opt.MaxDiscMm.ToString("0.0", ci)} mm 全不可行 ⇒ 没有可行上端：不二分、不做黄金分割；② 不动点仍照做，板厚取表最大值 盘Ø{(2 * discs[^1]).ToString("0.0", ci)} 那一行的（只用板厚，不依赖上端可行）");
+            }
+        }
+        else
+        {
+            // ── ① 起点表最大盘径，舌宽取最宽比例（界面原算法；改回 ParallelFirstPass = false）
+            Say($"① 先在盘Ø{(2 * Rsafe).ToString("0.0", ci)}（起点表最大值）、舌宽比 {fWide.ToString("0.###", ci)} 解一次，拿到板厚；判据「圆盘盖得住管孔＋焊脚」据此给出最紧的盘径下界（闭式）");
+            last = Eval(Rsafe, Rsafe * fWide, taperPage, "①");
+            topOk = !last.Skipped && last.Ok;
+
+            // ── (b) 起点不可行 ⇒ 向上外推（界面没有这一步：它默认表最大值可行）
+            if (!topOk)
+            {
+                double R = Rsafe;
+                while (R + step0 <= opt.MaxDiscMm + 1e-9)
+                {
+                    R += step0;
+                    Say($"①外推：盘Ø{(2 * (R - step0)).ToString("0.0", ci)} 不可行 ⇒ 向上一步 {step0.ToString("0.###", ci)} mm，试盘Ø{(2 * R).ToString("0.0", ci)}（盘半径上端 {opt.MaxDiscMm.ToString("0.0", ci)} mm，即盘Ø{(2 * opt.MaxDiscMm).ToString("0.0", ci)}；出处：{opt.MaxDiscSource}）");
+                    res.ExtrapolatedMm.Add(R);
+                    last = Eval(R, R * fWide, taperPage, "①外推");
+                    if (!last.Skipped && last.Ok) { topOk = true; Rsafe = R; break; }
+                }
+                if (!topOk)
+                    Say($"①外推到盘半径上端 {opt.MaxDiscMm.ToString("0.0", ci)} mm 仍无可行点 ⇒ 没有可行上端：不二分、不做黄金分割；② 不动点仍照做（只用板厚，不依赖上端可行）");
+            }
+            res.StartDiscMm = Rsafe;
+            Rbest = Rsafe;
+            rbestOk = topOk;
+        }
 
         // ── ② 不动点 ＋ ③ 二分 ＋ ④ 黄金分割（照搬界面 for (fix…) 段）
-        double Rbest = Rsafe;
-        bool rbestOk = topOk;
-        for (int fix = 0; fix < opt.FixpointMax; fix++)
+        for (int fix = 0; doFixpoint && fix < opt.FixpointMax; fix++)
         {
             var lastD = last.Skipped ? null : last.Design;
             if (lastD is null) break;
@@ -439,30 +631,7 @@ public static class ShapeSearchDriver
                     Say("② 下界处也不可行，且没有已核实的可行上端 ⇒ 不二分、不做黄金分割（改动 (b)：界面此处默认上端可行）");
                     break;
                 }
-                double bLo = Rnext, bHi = Rbest;      // bLo 不可行、bHi 可行（已核实）
-                for (int bi = 0; bi < opt.BisectMax && bHi - bLo > opt.BisectStopMm; bi++)
-                {
-                    double mid = 0.5 * (bLo + bHi);
-                    Say($"③ 二分：{(2 * bLo).ToString("0.0", ci)} 不可行 / {(2 * bHi).ToString("0.0", ci)} 可行 ⇒ 试盘Ø{(2 * mid).ToString("0.0", ci)}");
-                    var rm = Eval(mid, mid * fWide, taperPage, "③");
-                    if (!rm.Skipped && rm.Ok) { bHi = mid; Rbest = mid; }
-                    else bLo = mid;
-                }
-                double gLo = bLo, gHi = Math.Min(bHi + opt.GoldenSlackMm, Rsafe);
-                const double Phi = 0.6180339887;
-                for (int gi = 0; gi < opt.GoldenMax && gHi - gLo > opt.GoldenStopMm; gi++)
-                {
-                    double x1 = gHi - Phi * (gHi - gLo), x2 = gLo + Phi * (gHi - gLo);
-                    double probe = (gi % 2 == 0) ? x1 : x2;
-                    if (solved.Any(r2 => r2.Design is not null && Math.Abs(r2.Design.DiscRadiusMm - probe) < opt.GoldenDedupMm)) { gLo += opt.GoldenDedupMm; continue; }
-                    Say($"④ 找最轻：区间 盘Ø{(2 * gLo).ToString("0.0", ci)}–{(2 * gHi).ToString("0.0", ci)} ⇒ 试盘Ø{(2 * probe).ToString("0.0", ci)}");
-                    Eval(probe, probe * fWide, taperPage, "④");
-                    var okRows = solved.Where(r2 => r2.Ok && r2.Design is not null && !double.IsNaN(r2.MassG)).ToList();
-                    if (okRows.Count == 0) break;
-                    double Rmin = okRows.OrderBy(r2 => r2.MassG).First().Design!.DiscRadiusMm;
-                    if (probe < Rmin) gLo = probe; else gHi = probe;
-                    Rbest = Rmin;
-                }
+                BisectGolden(Rnext, Rbest);      // Rnext 不可行、Rbest 可行（已核实）
                 break;
             }
             Rbest = Rnext;
@@ -473,13 +642,15 @@ public static class ShapeSearchDriver
         //   照界面：不看 Rbest 可不可行，无条件试（2026-09-23 对照核实改回：原稿在「没有可行点」时跳过这一步，
         //   那是界面没有、业主也没要的改动；无可行点时更窄的舌宽正是该试的方向，跳过会把搜索盒缩小而不说）。
         //   Rbest 在全程无可行点时 = ① 的起点表最大值（外推没找到可行点时不挪 Rbest，与界面的数据流相同）。
+        //   2026-09-24：w < R 的候选先过闭式肩部预筛（参照行 = 盘径 Rbest 上切线族那一行）。
         {
             var batch6 = wFrac.Where(f => Math.Abs(f - fWide) > 1e-9).Select(f => (Rbest, Rbest * f, taperPage)).ToList();
             if (batch6.Count > 0)
             {
+                var ref5 = solved.LastOrDefault(r => Math.Abs(r.R - Rbest) < 1e-9 && Math.Abs(r.HalfW - Rbest * fWide) < 1e-9 && r.Taper == taperPage);
                 Say($"⑤ 在盘Ø{(2 * Rbest).ToString("0.0", ci)} 上试其余舌宽比例 {{{string.Join(", ", batch6.Select(b => (b.Item2 / Rbest).ToString("0.###", ci)))}}}"
                   + (rbestOk ? "" : "（盘Ø" + (2 * Rbest).ToString("0.0", ci) + " 未核实可行，照界面仍试）"));
-                EvalBatch(batch6, "⑤舌宽");
+                EvalBatch(batch6, "⑤舌宽", ref5);
             }
         }
 
@@ -513,7 +684,7 @@ public static class ShapeSearchDriver
                 continue;
             }
             Say($"⑥ 第 {ext + 1} 轮：从盘Ø{(2 * R0).ToString("0.0", ci)}／舌宽{(2 * hw0).ToString("0.0", ci)}{(curTaper ? "／锥形" : "")}（{before.ToString("0.0", ci)} g）出发，试 {todo.Count} 个邻点（含翻转锥形），步长 {step.ToString("0.###", ci)} mm");
-            EvalBatch(todo, $"⑥邻域{ext + 1}");
+            EvalBatch(todo, $"⑥邻域{ext + 1}", cur);
             double after = BestMass();
             bool better = ShapeSearchPlan.Improved(before, after);
             Say($"⑥ 第 {ext + 1} 轮：{before.ToString("0.0", ci)} → {after.ToString("0.0", ci)} g　" + (better ? "变好，继续" : "没有更好的方向"));
@@ -549,7 +720,8 @@ public static class ShapeSearchDriver
         }
         res.Winner = win;
         var (finFine, finFineR) = MeshVerify.RequiredMeshFor(win.Design, baseIn);
-        Say($"精算胜出形状 {win.Tag}（粗筛 {win.MassG.ToString("0.0", ci)} g）：细网格 {finFine.ToString("0.000", ci)} mm、细区半径初值 {finFineR.ToString("0.0", ci)} mm（MeshVerify.RequiredMeshFor），最多 {opt.FinalRounds} 轮");
+        Say($"精算胜出形状 {win.Tag}（粗筛 {win.MassG.ToString("0.0", ci)} g）：细网格 {finFine.ToString("0.000", ci)} mm、细区半径初值 {finFineR.ToString("0.0", ci)} mm（MeshVerify.RequiredMeshFor），最多 {opt.FinalRounds} 轮"
+          + "；终局复核后照旧放大重做（不传 SkipRadiusGrowthAfterFinalCheck）" + (opt.FinalReuseSameState ? "；同状态复用开" : ""));
         int finRounds = 0;
         IProgress<string> pf = new SyncProgress(s =>
         {
@@ -559,18 +731,43 @@ public static class ShapeSearchDriver
         });
         var swF = Stopwatch.StartNew();
         var fin = solve(win.Design, baseIn,
-            new SolverOptions { AllowTabCuts = opt.AllowTabCuts, MaxRounds = opt.FinalRounds, FineMm = finFine, FineRadiusMm = finFineR },
+            new SolverOptions { AllowTabCuts = opt.AllowTabCuts, MaxRounds = opt.FinalRounds, FineMm = finFine, FineRadiusMm = finFineR, ReuseSameStateSolves = opt.FinalReuseSameState },
             pf, ct);
         swF.Stop();
         res.Final = fin;
         var refine = ShapeSearchPlan.RefineVerdict(fin.Feasible, fin.StopWhy ?? "", "");
         res.FinalWriteBack = refine.WriteBack;
         res.FinalHeadline = refine.Headline;
-        Say(string.Create(ci, $"精算结束：{swF.Elapsed.TotalMinutes:0.0} 分钟、场解 {fin.Solves} 次、进度轮 {finRounds}；") + refine.Headline
+        Say(string.Create(ci, $"精算结束：{swF.Elapsed.TotalMinutes:0.0} 分钟、场解 {fin.Solves} 次、同状态复用 {fin.SameStateReuses} 次、进度轮 {finRounds}；") + refine.Headline
           + (fin.FineRefined ? string.Create(ci, $"　已做第二遍细网格求根（{fin.FineMmUsed:0.000} mm）") : "　⚠ 没做第二遍细网格求根 ⇒ 这个解只在导航网格上成立，不可交付"));
         res.SchemeCard = SchemeCard(fin, win, seed, baseIn, opt, fam, res);
         Say(res.SchemeCard);
         return res;
+    }
+
+    /// <summary>
+    /// 闭式肩部预筛的估计（2026-09-24，E）：盘舌交界截面 J ≈ I /(t · 2w)，逐片取最大。I = 参照形状求解后的设计电流
+    /// （<see cref="SolverResult.DesignCurrent"/>.PlateA，20 °C/h 空管升温峰值、共用片已矢量合成），t = 参照形状求解后的板厚（<see cref="DesignSpec.TabThickMm"/>），
+    /// w = 候选的舌半宽。**是估计**：真判据（法兰截面 J，<see cref="SectionSizing.Cuts"/>）的交界截面是「边条（弦扣管孔）× 圆盘侧厚 + 焊弧 × 孔边厚」，
+    /// 不是 2w × t；本估计只作预筛。估不出（参照没有设计电流或板厚、或全非正）⇒ (NaN, 原因)。
+    /// </summary>
+    public static (double J, string Detail) ShoulderJEstimate(double halfWidthMm, SolverResult? refResult, DesignSpec? refDesign)
+    {
+        var ci = CultureInfo.InvariantCulture;
+        var I = refResult?.DesignCurrent?.PlateA;
+        var t = refDesign?.TabThickMm;
+        if (I is null || I.Length == 0) return (double.NaN, "参照形状没有设计电流（SolverResult.DesignCurrent 空）");
+        if (t is null || t.Length == 0) return (double.NaN, "参照形状没有板厚");
+        if (!(halfWidthMm > 0)) return (double.NaN, "舌半宽非正");
+        double worst = double.NegativeInfinity; int at = -1;
+        for (int j = 0; j < Math.Min(I.Length, t.Length); j++)
+        {
+            if (!(I[j] > 0) || !(t[j] > 0)) continue;
+            double jj = I[j] / (t[j] * 2 * halfWidthMm);
+            if (jj > worst) { worst = jj; at = j; }
+        }
+        if (at < 0) return (double.NaN, "设计电流或板厚全非正");
+        return (worst, string.Create(ci, $"最紧在片{at}：I {I[at]:0} A ÷（t {t[at]:0.00} mm × 2w {2 * halfWidthMm:0.0} mm）；I、t 取参照形状求解后的值"));
     }
 
     /// <summary>方案卡：几何 ＋ 旋钮终值 ＋ 边界保温条件 ＋ 铂重 ＋ 三条硬判据裕度 ＋ 判决网格精算是否全过 ＋ 可否交付。</summary>
@@ -622,6 +819,7 @@ public static class ShapeSearchDriver
         sb.AppendLine(string.Create(ci, $"盒子：盘半径 [{res.MinDiscMm:0.000}, {res.MaxDiscMm:0.0}] mm，上端出处：{res.MaxDiscSource}；粗筛 {opt.ScreenRounds} 轮")
                     + "；邻域停因：" + res.ClimbStop
                     + (res.ClimbConverged ? "" : "（未收敛到分辨率下界，不是局部最优）"));
+        sb.AppendLine(ScreenSettingsLine(res, opt));
         sb.AppendLine("精算消息：" + (fin.Message ?? "").Replace("\n", " "));
         return sb.ToString();
     }
@@ -637,7 +835,8 @@ public static class ShapeSearchDriver
           + $"外推到 {{{string.Join(", ", res.ExtrapolatedMm.Select(x => x.ToString("0.0##", ci)))}}}；舌宽比 {{{string.Join(", ", opt.WFrac.Select(x => x.ToString("0.###", ci)))}}}；族 {fam}；粗筛 {opt.ScreenRounds} 轮"));
         int nSolved = res.Rows.Count(r => !r.Skipped), nSkip = res.Rows.Count(r => r.Skipped);
         int nUnd = res.Rows.Count(r => !r.Skipped && r.Undetermined), nHit = res.Rows.Count(r => !r.Skipped && r.HitBound);
-        sb.AppendLine($"计数：评估 {res.Rows.Count} 个（求解 {nSolved}、闭式跳过 {nSkip}）；其中到顶 {nHit}、判不了 {nUnd}、可行 0");
+        sb.AppendLine($"计数：评估 {res.Rows.Count} 个（求解 {nSolved}、闭式跳过 {nSkip}，其中肩部预筛 {res.Rows.Count(r => r.Prescreened)}）；其中到顶 {nHit}、判不了 {nUnd}、可行 0");
+        sb.AppendLine(ScreenSettingsLine(res, opt));
         sb.AppendLine("逐形状（停因原样取 SolverResult.StopWhy，空则取 Message）：");
         foreach (var r in res.Rows)
         {
@@ -662,8 +861,24 @@ public static class ShapeSearchDriver
         foreach (var l in BoundaryLines(seed, baseIn)) sb.AppendLine("　" + l);
         sb.AppendLine("　圆盘保温（逐片）" + DesignSpec.Fmt(Enumerable.Range(0, seed.TabThickMm.Length).Select(j => seed.DiscInsulMmOf(j)).ToArray(), "0.0") + " mm");
         sb.AppendLine("盒外下一根杠杆（未在本次搜索里动）：圆盘保温、管保温、铜排夹持温度、控温点、盘径上端（本次上端无出处）、另一解法族");
-        sb.AppendLine("不覆盖：粗筛轮数截断的形状（停因写「跑满」的）不等于不可行；本报告只覆盖上面列出的形状点");
+        sb.AppendLine("不覆盖：粗筛轮数截断的形状（停因写「跑满」的）不等于不可行；肩部预筛跳过的形状（估计，不是判据）求解器加厚后可能过；"
+                    + "粗筛跳过放大重做的形状（「粗筛本该放大到」一列有数的）热点处温度类判据不算数；本报告只覆盖上面列出的形状点");
         return sb.ToString();
+    }
+
+    /// <summary>粗筛设置与算力选项的一行（方案卡与无解报告共用）：轮数、放大重做、同状态复用、舌宽比、肩部预筛、首遍分支，与跳过放大的形状。</summary>
+    internal static string ScreenSettingsLine(ShapeSearchResult res, ShapeSearchOptions opt)
+    {
+        var ci = CultureInfo.InvariantCulture;
+        var grown = res.Rows.Where(r => !r.Skipped && !double.IsNaN(r.SkippedGrowthToMm)).ToList();
+        return string.Create(ci, $"粗筛设置：{opt.ScreenRounds} 轮（2026-09-24 选定，界面 16；依据夜跑 001304／021617，跑过再校）；")
+             + "终局复核后" + (opt.ScreenSkipRadiusGrowth ? "不放大重做" : "照旧放大重做")
+             + "；同状态复用 " + (opt.ScreenReuseSameState ? "开" : "关") + string.Create(ci, $"（粗筛共省 {res.Rows.Sum(r => r.Reuses)} 次场解、解了 {res.Rows.Sum(r => r.Solves)} 次）")
+             + "；舌宽比 {" + string.Join(", ", opt.WFrac.Select(x => x.ToString("0.###", ci))) + "}"
+             + "；肩部预筛 " + (opt.ShoulderJPrescreen ? "开" : "关") + string.Create(ci, $"（跳过 {res.Rows.Count(r => r.Prescreened)} 个）")
+             + "；① " + (res.FirstPassBranch.Length > 0 ? "并行首遍：" + res.FirstPassBranch : "界面原算法")
+             + (grown.Count == 0 ? "；粗筛跳过放大重做的形状：无"
+                : "；粗筛跳过放大重做的形状 " + grown.Count + " 个（" + string.Join("、", grown.Select(r => string.Create(ci, $"#{r.Index} {r.Tag} 本该放大到 {r.SkippedGrowthToMm:0.00} mm"))) + "；这些行热点处的温度类判据不算数，只作排序）");
     }
 
     /// <summary>
