@@ -55,6 +55,14 @@ public class R48LFineMeshEndToEndTests
     /// <summary>倍数门槛：同一设计两张网格上，某条判据的裕度之比 &gt; 2 倍（或 &lt; 0.5 倍）即点名。</summary>
     private const double RatioGate = 2.0;
 
+    /// <summary>C 段与 D 段逐条对比的判据：前四条 = 决 103（业主 2026-09-24，HANDOVER §0.-27）的稳态硬判据；后三条 = 决 103 前的硬判据（现为参考项），照旧陈列以便与 09-17～09-23 的证据档对读。
+    /// 2026-09-24 加前四条（变因 = 决 103 判据换向；此前只列后三条）。交付结论不由这张表定，由三关 AllOk 定。</summary>
+    private static readonly string[] CompareKeys =
+    {
+        LineResult.Key.HotOverContact, LineResult.Key.TubeToFlangeHeat, LineResult.Key.LocalStab, LineResult.Key.FlangeStab,
+        LineResult.Key.HotOverTc, LineResult.Key.ColdUnderTc, LineResult.Key.NetFlux,
+    };
+
     /// <summary>求解时间闸（导航档）：超过就切断，报「被时间闸切断」，不许装作跑完了。
     /// ★ 2026-09-23 业主决定（决 04 (b)，HANDOVER §0.-21）：2.5 h → 4.0 h。理由：W08 导航档在 4 核云端与三条长跑同机并跑时 2.5 h 内没跑完（§0.-17 庚，07:16 那跑被切断）；
     ///   绝对时长受机器影响，4 h 是给同机并跑留的余量。这是时间闸，不是判据阈值；本机空闲时若 2.5 h 内能跑完，结果不受影响。</summary>
@@ -113,7 +121,8 @@ public class R48LFineMeshEndToEndTests
         W("　　（A 与 B 之间设计与网格**同时在动**，那个差不能用来回答「导航网格能不能判这条判据」；能回答的是 C 段与 D 段。）");
         W("");
         W("── 判读（**跑前写死在代码里，跑完不挪**）");
-        W($"对 C 段三条：{Criteria.Plain(LineResult.Key.HotOverTc)}／{Criteria.Plain(LineResult.Key.ColdUnderTc)}／{Criteria.Plain(LineResult.Key.NetFlux)}，");
+        W($"对 C 段与 D 段列出的判据（决 103 四条硬判据 {Criteria.Plain(LineResult.Key.HotOverContact)}／{Criteria.Plain(LineResult.Key.TubeToFlangeHeat)}／{Criteria.Plain(LineResult.Key.LocalStab)}／{Criteria.Plain(LineResult.Key.FlangeStab)}，"
+          + $"另陈列决 103 前的三条参考项 {Criteria.Plain(LineResult.Key.HotOverTc)}／{Criteria.Plain(LineResult.Key.ColdUnderTc)}／{Criteria.Plain(LineResult.Key.NetFlux)}，参考项的判读不进交付结论），");
         W($"　① 裕度**符号翻转**（过↔不过）⇒ 印「导航网格不可用于该判据」；");
         W($"　② 或 |裕度(细网格)| 与 |裕度(导航)| 之比 > {RatioGate:0.0} 倍（或 < {1 / RatioGate:0.00} 倍）⇒ 同上；");
         W($"　③ 判据**值**按同一把尺子并列印出，但结论以裕度那条为准；门槛写死 {RatioGate:0.0} 倍，不许改。");
@@ -204,7 +213,7 @@ public class R48LFineMeshEndToEndTests
             W();
             W("── 三条判据：同一设计，细网格 vs 导航网格（**判读按跑前写死的门槛**）");
             W("判据\t细网格 值\t细网格 裕度\t导航 值\t导航 裕度\t裕度之比\t判读");
-            foreach (string key in new[] { LineResult.Key.HotOverTc, LineResult.Key.ColdUnderTc, LineResult.Key.NetFlux })
+            foreach (string key in CompareKeys)
                 W(CompareRow(key, fineGates?.Glass, fineGlassOnNav));
             W("（「裕度」= 该条判据离限值还有多远，方向按判据自己的 LessIsBetter 取，正 = 还有余量、负 = 越限；"
               + "「裕度之比」= |细网格裕度| ÷ |导航裕度|。）");
@@ -225,7 +234,7 @@ public class R48LFineMeshEndToEndTests
             W("");
             W("── 三条判据：**同一份（导航档解出来的）设计**，细网格 vs 导航网格（判读按跑前写死的门槛）");
             W("判据\t细网格 值\t细网格 裕度\t导航 值\t导航 裕度\t裕度之比\t判读");
-            foreach (string key in new[] { LineResult.Key.HotOverTc, LineResult.Key.ColdUnderTc, LineResult.Key.NetFlux })
+            foreach (string key in CompareKeys)
                 W(CompareRow(key, navOnFine.Glass, navGates?.Glass));
             W("");
         }
