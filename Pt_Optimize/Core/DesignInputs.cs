@@ -99,6 +99,14 @@ public class DesignInputs
                + "只在带玻璃稳态卡交付；空管到温稳态照常算、只作参考。")]
     public double HotOverTcAllowK { get; set; } = LineCase.ThermocoupleErrorK;
 
+    // ★★★★★ 决 103（业主 2026-09-24）：稳态期（带玻璃）第 j 片的热侧判据换成「法兰最热处高出管接触处温度」，限值 10 K（出处 CriteriaRules.HotOverContactMaxKDefault）。
+    //   照 U 路两项的写法：参数表一项 → LineCase.HotOverContactMaxK（哨兵 NaN = 跟着参数表走）→ 判据表、求解器。别处不许再写第二个 10。
+    [Category(ParamCat.判据限值与窗口), DisplayName("法兰最热处高出管接触处温度 允许值 [K]"),
+     Description("带玻璃稳态：每片法兰温度场的最高温允许比该片管接触处温度（模型算的管根接触温度）高多少。"
+               + "默认 10（2026-09-24 定：法兰比管接触处略热的方向是对的，可容许到 10 °C 以内；拉低管温的方向不许 —— 那一侧由「管接触处流入法兰的净热流 ≤ 0」卡，不给预算）。"
+               + "只在带玻璃稳态卡交付；空管到温稳态照常算、只作参考。")]
+    public double HotOverContactAllowK { get; set; } = CriteriaRules.HotOverContactMaxKDefault;
+
     [Category(ParamCat.判据限值与窗口), DisplayName("终验时量每片舌保温的可行窗口"),
      TypeConverter(typeof(ChineseBoolConverter)),
      Description("终验（加密复算到数不再变）之后，逐片把舌保温上下各挪一点、其余一位不动，量出「这一片还能在多宽的范围里改仍然全过」。"
@@ -334,6 +342,19 @@ public class DesignInputs
     [Category(ParamCat.电气), DisplayName("管许用电流密度 [A/mm²]"),
      Description("用户 2026-08-15 现场：一般上限 15；管壁 0.6 时 12 是极限。全档取 12")]
     public double TubeJAllowAPerMm2 { get; set; } = 12.0;
+
+    /// <summary>
+    /// ★ 决 103（业主 2026-09-24「以管的最大使用电流密度 J &lt; 11 与 20 °C/h（可控硅）为限」）：**管 J 的使用上限**。
+    /// 决 103 起卡交付（稳态「管 J」、升温「① 升温」、升温全程逐点管 J、升温电流上限）用的限值 = min(上一项「管许用电流密度」, 本项)，
+    /// 唯一读法 <see cref="TubeJLimitAPerMm2"/>；上一项（08-15 现场，全档 12）照印成对照行「· 管电流密度对原许用值（对照）」。
+    /// 改回（<see cref="CriteriaRuleSet"/> = 决103前）时不读本项，限值 = 上一项（与改前逐位相同）。
+    /// </summary>
+    [Category(ParamCat.电气), DisplayName("管 J 使用上限 [A/mm²]"),
+     Description("2026-09-24 定：管的最大使用电流密度 J < 11（升温期与稳态期都卡）。卡交付的管 J 限值取本项与「管许用电流密度」两者的较小值；原许用 12 照印作对照。")]
+    public double TubeJUseCapAPerMm2 { get; set; } = CriteriaRules.TubeJUseCapDefault;
+
+    /// <summary>决 103：卡交付的管 J 限值（唯一读法，见 <see cref="CriteriaRules.TubeJLimitOf"/>）。</summary>
+    [Browsable(false)] public double TubeJLimitAPerMm2 => CriteriaRules.TubeJLimitOf(this);
 
     [Category(ParamCat.电气), DisplayName("二次电源型式")]
     public SupplyMode Supply { get; set; } = SupplyMode.AcPhase;
@@ -712,12 +733,21 @@ public class DesignInputs
     [TypeConverter(typeof(ChineseBoolConverter))]
     public bool SegCurrentContinuousRoot { get; set; } = true;
 
+    /// <summary>
+    /// ★★★★★ 决 103（业主 2026-09-24）：**判据口径总开关**（见 <see cref="PtOptimize.Core.CriteriaRuleSet"/>）。
+    /// **改回参数**：生产不设（= 决103）；决103前 = 2026-09-14 口径，整线判据、求解器分派、升温全程判定与改前逐位相同（门 R48CriteriaSwapGateTests）。只给门与「开 − 关」归因用。
+    /// 放在参数表对象上的理由与 <see cref="SegCurrentContinuousRoot"/> 相同（整线判据、求解器、升温全程都只看得到它，Clone 走 JSON 带着它）。
+    /// </summary>
+    [Browsable(false)]
+    public CriteriaRuleSet CriteriaRuleSet { get; set; } = CriteriaRuleSet.决103;
+
     // ---------- 派生 ----------
     [Browsable(false)] public double TubeId => TubeIdMm * 1e-3;
     [Browsable(false)] public double TubeLength => TubeLengthMm * 1e-3;
     [Browsable(false)] public double Wall => WallMm * 1e-3;
     [Browsable(false)] public double JAllow => JAllowAPerMm2 * 1e6;   // A/m²
-    [Browsable(false)] public double TubeJAllow => TubeJAllowAPerMm2 * 1e6;   // A/m²
+    /// <summary>升温集总模型（RampSolver）的管电流上限 A/m²。决 103：读卡交付的管 J 限值（<see cref="TubeJLimitAPerMm2"/>）；改回时 = 管许用电流密度（逐位同改前）。</summary>
+    [Browsable(false)] public double TubeJAllow => TubeJLimitAPerMm2 * 1e6;   // A/m²
     [Browsable(false)] public double GlassRho => GlassResistivityOhmCm * 1e-2;  // Ω·m
     [Browsable(false)] public double MassFlow => ThroughputTPerDay * 1000.0 / 86400.0; // kg/s
 

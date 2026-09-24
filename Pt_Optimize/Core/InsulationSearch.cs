@@ -179,7 +179,9 @@ public static class InsulationSearch
         /// ★★★★★ K 路（2026-09-15，Opus 5）：本项在本工况下卡不卡交付 —— **只调整线判据的分工况表** <see cref="LineResult.StateKindOf"/>（与 LineRunner.Judge 同一份），本类不自带清单。
         /// 参考项照常算、照常印，不进可行集、不进排序键（<see cref="PointOutcome.Feasible"/>／<see cref="PointOutcome.MinNormMargin"/>）。
         /// </summary>
-        public CheckKind Kind => LineKey.Length == 0 ? CheckKind.HardSafety : (LineResult.StateKindOf(LineKey, EmptyTube) ?? CheckKind.HardSafety);
+        // 决 103（2026-09-24）：本类的逐格点三项是改前口径的三条（热偶读数基准热侧、冷侧、管孔净流入）；决 103 口径下 Run 拒答（见 Run 开头），
+        //   所以这里按改前那张分工况表取（RuleSetOfSearch），与改前逐位相同。
+        public CheckKind Kind => LineKey.Length == 0 ? CheckKind.HardSafety : (LineResult.StateKindOf(LineKey, EmptyTube, RuleSetOfSearch) ?? CheckKind.HardSafety);
         public bool IsReference => Kind == CheckKind.Reference;
         public string Show() => $"{State}·{Name} {Value:+0.000;-0.000} {Unit}（限 {(LessIsBetter ? "≤" : Strict ? ">" : "≥")} {Limit:0.###}，归一裕度 {NormMargin:+0.000;-0.000}{(IsReference ? "，本态只作参考" : "")}）";
     }
@@ -512,7 +514,19 @@ public static class InsulationSearch
     /// </summary>
     public static bool StateHasHardPlateTerms(bool emptyTube, Options o)
         => o.Criteria != DefaultCriteria
-           || PlateTerms.Any(p => LineResult.StateKindOf(p.LineKey, emptyTube) is not CheckKind.Reference);
+           || PlateTerms.Any(p => LineResult.StateKindOf(p.LineKey, emptyTube, RuleSetOfSearch) is not CheckKind.Reference);
+
+    /// <summary>
+    /// ★ 决 103（2026-09-24）：本类逐格点评估的判据口径 —— 只有改前口径（三项 = 热偶读数基准热侧、冷侧、管孔净流入）。
+    /// 决 103 的新判据（法兰最热处高出管接触处温度、管接触处流入法兰的净热流、两条热稳定）还没接进逐格点的线性化闭合 ⇒ 参数表是决 103 口径时 Run 拒答。
+    /// </summary>
+    public const CriteriaRuleSet RuleSetOfSearch = CriteriaRuleSet.决103前;
+
+    /// <summary>决 103：拒答原句（Run 在参数表是决 103 口径且用默认评估函数时抛出；进界面，不带代号）。</summary>
+    public const string Rule103Refusal =
+        "保温搜索不适用于 2026-09-24 定的判据：逐格点评估的三项还是之前卡交付的「最热铂高出热偶读数」「管根低于热偶读数」「管孔净流入须为正」，"
+        + "现行带玻璃稳态卡交付的「法兰最热处高出管接触处温度」「管接触处流入法兰的净热流」与两条热稳定没有接进逐格点的闭合 ⇒ 不搜、不给建议（拒答）。"
+        + "现行判据下的保温由求解器（逐片舌保温旋钮）与整线核算给出。";
 
     public sealed class Options
     {
@@ -934,6 +948,8 @@ public static class InsulationSearch
         if (o.DiscLayerMax < 0 || o.TabLayerMax < 0 || o.TubeLayerMax < 0) throw new ArgumentOutOfRangeException(nameof(o), "层号上界不能为负");
         if (!(o.InnerMeshMm > 0)) throw new ArgumentOutOfRangeException(nameof(o), "内层网格 h 必须为正");
         if (!(o.GammaProbeW > 0) || !(o.TubeProbeTolK > 0) || !(o.TubeJacobianDeltaK > 0)) throw new ArgumentOutOfRangeException(nameof(o), "管侧响应的扰动量与容差必须为正");
+        // ★ 决 103（2026-09-24）：逐格点三项只有改前口径 ⇒ 参数表是决 103 口径（生产缺省）且用默认评估函数时拒答，不拿参考量搜出一个「建议」。
+        if (baseIn.CriteriaRuleSet != RuleSetOfSearch && o.Criteria == DefaultCriteria) throw new InvalidOperationException(Rule103Refusal);
 
         var logLock = new object();
         var rep = new Report();
@@ -956,9 +972,9 @@ public static class InsulationSearch
         string StateLine(int s)
         {
             bool et = stateCases[s].EmptyTube;
-            var hard = PlateTerms.Where(p => LineResult.StateKindOf(p.LineKey, et) is not CheckKind.Reference).Select(p => p.Name).ToArray();
-            var refs = PlateTerms.Where(p => LineResult.StateKindOf(p.LineKey, et) is CheckKind.Reference).Select(p => p.Name).ToArray();
-            var lineHard = LineResult.RequiredFor(et).Select(q => Criteria.Plain(q.Prefix)).ToArray();
+            var hard = PlateTerms.Where(p => LineResult.StateKindOf(p.LineKey, et, RuleSetOfSearch) is not CheckKind.Reference).Select(p => p.Name).ToArray();
+            var refs = PlateTerms.Where(p => LineResult.StateKindOf(p.LineKey, et, RuleSetOfSearch) is CheckKind.Reference).Select(p => p.Name).ToArray();
+            var lineHard = LineResult.RequiredFor(et, RuleSetOfSearch).Select(q => Criteria.Plain(q.Prefix)).ToArray();
             return $"{StateNames[s]}：逐格点卡 {(hard.Length == 0 ? "（无，本态逐格点只过滤场判不了的格点）" : string.Join("、", hard))}"
                  + (refs.Length == 0 ? "" : $"；只作参考 {string.Join("、", refs)}")
                  + $"；整线终点卡 {string.Join("、", lineHard)}";

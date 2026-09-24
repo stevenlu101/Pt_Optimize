@@ -57,7 +57,13 @@ public class CriteriaTableTests
 
         return new (string, string, double?)[]
         {
-            (LineResult.Key.Ramp,       KindOf(LineResult.Key.Ramp),       di.TubeJAllowAPerMm2),   // R20：① = 升温所需电流折成管 J ≤ 许用
+            // 决 103（2026-09-24）：有意改动 —— 限值换成卡交付的管 J 限值（= min(许用 12, 使用上限 11) = 11）；新热侧、新冷侧两行与原许用值对照行进表；
+            //   两条热稳定升为带玻璃稳态硬判据、热偶两条与管孔净流入降为参考（KindOf 读生产分工况表自然给出）。
+            //   ⚠ 本档对着 HANDOVER §1.83 核；本路不改 HANDOVER ⇒ §1.83 那张表合并时要照 HANDOVER_决103_节草稿.md 里的「应改成的行」改，否则这几条会红（已列入交付说明）。
+            (LineResult.Key.Ramp,       KindOf(LineResult.Key.Ramp),       di.TubeJLimitAPerMm2),   // R20：① = 升温所需电流折成管 J ≤ 许用（决 103：卡交付的管 J 限值）
+            (LineResult.Key.HotOverContact,   KindOf(LineResult.Key.HotOverContact),   lc.HotOverContactMaxK),
+            (LineResult.Key.TubeToFlangeHeat, KindOf(LineResult.Key.TubeToFlangeHeat), CriteriaRules.TubeToFlangeHeatMaxW),
+            (LineResult.Key.TubeJPre103,      KindOf(LineResult.Key.TubeJPre103),      di.TubeJAllowAPerMm2),
             (LineResult.Key.RampHours,  KindOf(LineResult.Key.RampHours),  lc.RampHours),
             (LineResult.Key.NetFlux,    KindOf(LineResult.Key.NetFlux),    0.0),
             // R48 B（2026-09-14 Opus 5）：有意改动 —— 热侧／冷侧换成热偶读数基准的两条新硬判据（限值 = 热偶误差，LineCase），旧判法两条降为参考量（KindOf 自然给「参考」）。
@@ -68,7 +74,7 @@ public class CriteriaTableTests
             (LineResult.Key.FlangeDip,  KindOf(LineResult.Key.FlangeDip),  lc.RootDeltaMaxK),
             (LineResult.Key.FreeTab,    KindOf(LineResult.Key.FreeTab),    GeometryScreen.FreeTabMinDefaultMm),
             (LineResult.Key.DiscCover,  KindOf(LineResult.Key.DiscCover),  0.0),
-            (LineResult.Key.TubeJ,      KindOf(LineResult.Key.TubeJ),      di.TubeJAllowAPerMm2),
+            (LineResult.Key.TubeJ,      KindOf(LineResult.Key.TubeJ),      di.TubeJLimitAPerMm2),   // 决 103：11（与原许用 12 取小）
             (LineResult.Key.FlangeStab, KindOf(LineResult.Key.FlangeStab), 1.0),
             (LineResult.Key.LocalStab,  KindOf(LineResult.Key.LocalStab),  1.0),
             // 现场升温那条（2026-08-25 新增）。215 是**现役基准**不是通过线，

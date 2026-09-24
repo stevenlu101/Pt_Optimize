@@ -1,0 +1,60 @@
+// 决 103 接线门 1 中性证法源码副本（临时档，不入库为门；改前树实测 SHA 由 wtCRITbase（cc49836 + 只加一个转储测试）跑 R48PropsWiringGateTests.DumpNoTiming 得到）
+using System;
+using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.RegularExpressions;
+using PtOptimize.Core;
+using Xunit;
+using Xunit.Abstractions;
+
+namespace PtOptimize.Tests;
+
+// 决 103 接线门 1（R48PropsWiringGateTests.门_纯铂默认逐位不变_整线小算例）的中性证法（临时档，源码副本随证据入 deliverable）：
+// 改回口径（决103前）下整线小算例的全文转储，去掉决 103 新加的成员行，SHA 应回到接线门 1 的记录；生产口径（决103）的新 SHA 另印，供按变因重录。
+public class ZZCriteriaSwapWiringNeutralTests
+{
+    private readonly ITestOutputHelper _o;
+    public ZZCriteriaSwapWiringNeutralTests(ITestOutputHelper o) { _o = o; }
+
+    internal static readonly Regex NewMemberLine = new(
+        @"^[^\n]*\.(RuleSet|LocalStabFullGridSec|LocalStabFullGridCells|LocalStabTop12Margin|LocalStabTop12RMm|LocalStabFullCells|LocalStabFullSec|FlangeStabMargin|HotOverContactMaxK|TubeJUseCapAPerMm2|TubeJLimitAPerMm2|CriteriaRuleSet|HotOverContactAllowK) = [^\n]*\n",
+        RegexOptions.Multiline | RegexOptions.CultureInvariant);
+
+    static string Sha(string s) => Convert.ToHexString(SHA256.HashData(new UTF8Encoding(false).GetBytes(s))).ToLowerInvariant();
+
+    [Fact]
+    public void 接线门1_改回去新成员行回到记录_生产新SHA()
+    {
+        const string Rec = "07f9639043b10da075bd4aacac621dd20760e2d6df79f06e70ba3b6051905fef";   // 接线门 1 的 LinuxRecord（入库值）
+        const string BaseTree = "fd00d6d7564a0005bf5c3eea4ef60f19ebe4d746048dd6550f8152fba8dc0d0b";   // 改前树 cc49836 同一份转储的实测 SHA（wtCRITbase，2026-09-24）
+        var sb = new StringBuilder();
+        var lcOld = R48PropsWiringGateTests.QuickCase();
+        lcOld.Base.CriteriaRuleSet = CriteriaRuleSet.决103前;
+        var rOld = LineRunner.Run(lcOld);
+        string dOld = R48PropsWiringGateTests.DumpNoTiming(lcOld, rOld);
+        int nNew = NewMemberLine.Matches(dOld).Count;
+        string stripped = NewMemberLine.Replace(dOld, "");
+        string shaOldFull = Sha(dOld), shaOldStripped = Sha(stripped);
+        var lcNew = R48PropsWiringGateTests.QuickCase();
+        var rNew = LineRunner.Run(lcNew);
+        string dNew = R48PropsWiringGateTests.DumpNoTiming(lcNew, rNew);
+        string shaNew = Sha(dNew);
+        var lcNew2 = R48PropsWiringGateTests.QuickCase();
+        string shaNew2 = Sha(R48PropsWiringGateTests.DumpNoTiming(lcNew2, LineRunner.Run(lcNew2)));
+        sb.AppendLine("决 103 接线门 1 中性证法（Linux）：R48PropsWiringGateTests.QuickCase 整线小算例，DumpNoTiming 全文转储");
+        sb.AppendLine($"开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}　工作树 {HandoverDoc.Root()}");
+        sb.AppendLine($"改回（决103前）全文 SHA {shaOldFull}；其中决 103 新成员行 {nNew} 行（{string.Join("、", NewMemberLine.Matches(dOld).Select(m => Regex.Match(m.Value, @"\.([A-Za-z0-9]+) = ").Groups[1].Value).Distinct())}）");
+        sb.AppendLine($"改回去新成员行 SHA {shaOldStripped}　改前树 cc49836 实测 {BaseTree}　⇒ {(shaOldStripped == BaseTree ? "逐位相同（改回中性）" : "**不同**")}");
+        sb.AppendLine($"接线门 1 入库记录 {Rec}：改前树 cc49836 上实测就是 {BaseTree}，门在改前树上已红（记录过时，非本改动引起；按 R48PropsWiringGateTests 头注在合并树上重录）");
+        sb.AppendLine($"生产（决103）全文 SHA {shaNew}；同树再跑一次 {shaNew2}　⇒ {(shaNew == shaNew2 ? "两跑逐位相同" : "**两跑不同**")}");
+        sb.AppendLine("变因（生产 SHA 相对记录）：决 103 判据换向 —— 判据表多三行（法兰最热处高出管接触处温度、管接触处流入法兰的净热流、· 管电流密度对原许用值（对照））、"
+                    + "三条旧判据 Kind 与说明换成参考、两条热稳定升硬、管 J 与升温限值 11、局部热稳定换全格值与说明、新成员行。");
+        string file = DeliverableOut.Stamped("R48_决103_接线门1中性证法.txt");
+        File.WriteAllText(file, sb.ToString(), new UTF8Encoding(true));
+        _o.WriteLine(sb.ToString());
+        Assert.Equal(BaseTree, shaOldStripped);
+        Assert.Equal(shaNew, shaNew2);
+    }
+}

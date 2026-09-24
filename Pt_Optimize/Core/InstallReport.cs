@@ -183,6 +183,25 @@ public static class InstallReport
 
         // ★★ R48 B（2026-09-14 Opus 5）：热侧／冷侧两条的**逐片读数** —— 基准怎么取、最热的是谁、管根哪一端最冷，
         //   并列「模型算的无法兰交界管温」，差超过 1 ℃ 的逐片写明。读数只走 ThermocoupleBasis（与判据同一份），不在这里重算。
+        // ★★ 决 103（业主 2026-09-24）：现行卡交付的热侧／冷侧与两条热稳定的**逐片**值（判据表只给最差那片）。改回口径不印这一段（逐位同改前）。
+        //   值原样取自片上字段（与判据同一份：ContactChecks、LocalStabCheck、FlangeLumped 的逐片裕度），不在这里另判。
+        if (r.RuleSet == CriteriaRuleSet.决103)
+        {
+            var hc = r.Find(LineResult.Key.HotOverContact);
+            sb.AppendLine($"  带玻璃稳态卡交付的热侧与冷侧（2026-09-24 起；接触处温度 = 模型算的该片管根接触温度，共用片取两侧段端温度的较高者）："
+                        + $"法兰最热处高出管接触处 ≤ {hc?.Limit ?? double.NaN:0.###} K；管接触处流入法兰的净热流 ≤ 0 W；局部与整片热稳定 ≥ 1。");
+            sb.AppendLine("片	法兰最高温 °C	管接触处 °C	高出 K	管→法兰净热流 W	局部热稳定（全格）	整片热稳定");
+            for (int j = 0; j < r.Flanges.Length; j++)
+            {
+                var f = r.Flanges[j];
+                string und = LineRunner.PlateUndeterminedWhy(r, j);
+                if (und.Length > 0) { sb.AppendLine($"{f.Name}	判不了（{und}）"); continue; }
+                sb.AppendLine($"{f.Name}	{f.TMaxC:0.0}	{f.TRootC:0.0}	{f.TMaxC - f.TRootC:+0.00;−0.00}	{f.QFromTubeW:+0.00;−0.00}"
+                            + $"	{(double.IsNaN(f.LocalStabMargin) ? "判不了" : f.LocalStabMargin.ToString("0.00"))}"
+                            + $"	{(double.IsNaN(f.FlangeStabMargin) ? "判不了" : f.FlangeStabMargin.ToString("0.00"))}");
+            }
+            sb.AppendLine("  下面热偶读数基准那张表只作对照（2026-09-24 起不卡交付）。");
+        }
         var hotC = r.Find(LineResult.Key.HotOverTc);
         var coldC = r.Find(LineResult.Key.ColdUnderTc);
         // ★ U 路（2026-09-18，Opus 5）：允许差多少是参数表填的（默认 = 热偶在 1100 °C 的误差），本行印**本次实际用的**两个数，不抄默认值。

@@ -50,7 +50,7 @@ public class R48J_InsulationSearchWiringGateTests
     [Fact]
     public void P2_8_保温搜索内层网格真的带着细区半径()
     {
-        var p = new DesignInputs();
+        var p = new DesignInputs { CriteriaRuleSet = InsulationSearch.RuleSetOfSearch };   // 决 103（2026-09-24）：保温搜索只在改回口径下跑（生产口径拒答）
         var d0 = DesignSpec.W08.Clone().Fit();
         double radius = MeshVerify.RequiredMeshFor(d0, p).RadiusMm;
         const double h = 1.0;

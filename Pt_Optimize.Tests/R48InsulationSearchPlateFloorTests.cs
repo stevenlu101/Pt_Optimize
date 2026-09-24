@@ -173,7 +173,8 @@ public class R48InsulationSearchPlateFloorTests
     [Fact]
     public void 门c_保温搜索链路_RunLayer报告的板厚与舌片厚等于LayerDesign()
     {
-        var p = new DesignInputs { SplitSharedFlangeDraw = true };
+        // 决 103（2026-09-24）：有意改动 —— 保温搜索逐格点三项只有改前口径（InsulationSearch.RuleSetOfSearch），生产口径下 Run 拒答 ⇒ 本门在改回口径下验这条链路。
+        var p = new DesignInputs { SplitSharedFlangeDraw = true, CriteriaRuleSet = InsulationSearch.RuleSetOfSearch };
         var d0 = Design(new[] { 0.73, 1.26, 1.26, 0.73 });
         const int layer = 15;
         var expect = InsulationSearch.LayerDesign(d0.Clone().Fit(), p, layer, new SolverResult(), null, out double loExpect);

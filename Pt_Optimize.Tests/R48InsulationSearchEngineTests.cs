@@ -286,7 +286,7 @@ public class R48InsulationSearchEngineTests
         Assert.Equal(LineResult.Key.HotOverTc, hot.LineKey);
         Assert.Equal(LineResult.Key.ColdUnderTc, cold.LineKey);
         Assert.Equal(LineResult.Key.NetFlux, inflow.LineKey);
-        Assert.All(t, x => Assert.Equal(LineResult.StateKindOf(x.LineKey, emptyTube: false), x.Kind));
+        Assert.All(t, x => Assert.Equal(LineResult.StateKindOf(x.LineKey, emptyTube: false, InsulationSearch.RuleSetOfSearch), x.Kind));   // 决 103（2026-09-24）：保温搜索逐格点钉在改前口径
         Assert.All(t, x => Assert.False(x.IsReference));
         // 峰比管根热 ⇒ 热侧取峰
         v.TabPeakC = 1130;

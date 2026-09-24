@@ -289,10 +289,40 @@ public static class Solver
         (LineResult.Key.HotOverTc,   new[] { Knob.RingT2, Knob.RingR2, Knob.Ring, Knob.RingR1, Knob.Thick }),    // ⑦ 实测抬舌保温只会更差 ⇒ 不进候选；t₂/t₁/板厚 四片同号有用
     };
 
-    /// <summary>R32：这条判据在这一族里可用的旋钮（不挖舌孔族剔掉舌孔两根）。ChooseKnob 与测试同一个口径。</summary>
+    /// <summary>
+    /// ★★★★★ 决 103（业主 2026-09-24，判据换向）：**生产口径的「判据 → 候选旋钮」表**。上面那张 <see cref="Allocation"/> 是 09-14 口径（⑦／⑧／②′ 三行），只在改回（决103前）时用。
+    ///
+    /// 分派的机制**没变**：表只给候选与试的顺序；抬哪根由 <see cref="ChooseKnob"/> 当场实测（补不补得上 → 每克铂买到多少裕度），
+    /// <see cref="RaiseUntil"/> 每次先测「抬到上界这一片这一条变没变好」，没变好就报分派前提不成立 —— 不是写死「哪条红就动哪根」。
+    /// 换的只是**键**（新判据）与各行的候选；方向按全局方案第 2 版第 3 节杠杆表：
+    ///   · 冷侧「管接触处流入法兰的净热流 ≤ 0」红 = 法兰在抽管子的热（法兰偏冷、散热多）⇒ 舌保温↑、圆盘背侧槽、舌孔（少散热、少导走）。
+    ///     与旧 ⑧「管根低于热偶读数」同一个病（法兰抽热把管根拉冷），候选原样继承（旧 ⑧ 那一排的实测：舌保温 +190.8／+107.1 每 mm，免费）。
+    ///     杠杆表的「板厚↓」「夹持温度↑」这里没有：求解器每根旋钮**只抬不降**（起点是约束盒下角 = 最薄、裸舌），夹持温度还不是旋钮（第二阶段）。
+    ///   · 热侧「法兰最热处高出管接触处温度 ≤ 10 K」红 = 法兰偏热 ⇒ 板厚↑、内外级倍率与半径（往孔边加金属、降 J、多导走）。
+    ///     与旧 ⑦「最热铂高出热偶读数」同一个方向（让法兰变冷），候选原样继承（旧 ⑦ 那一排的实测：抬舌保温只会更差；t₂／t₁／板厚四片同号有用）。
+    ///     杠杆表的「舌保温↓」这里没有（只抬不降）；细网格第二遍前的 <see cref="TightenOnJudgeMesh"/> 会在判决网格上把抬过头的舌保温／倍率退回去。
+    ///   · 局部热稳定、整片热稳定 &lt; 1 ⇒ 板厚↑（J ∝ 1/t，裕度随板厚升；杠杆表「板厚↑或舌保温↓」只取能抬的那一半）。RaiseUntil 的前提自检照样当场验方向。
+    ///   · 管 J 没有法兰侧旋钮（管壁与段电流定），不进表 ⇒ 红了由「没有旋钮能治」那一支如实停；法兰截面 J 由 ApplySectionFloor 闭式下角管。
+    /// ⚠ 热侧与冷侧的候选**逐根反向**（热侧要法兰变冷、冷侧要法兰变热），而旋钮只抬不降 ⇒ 两条来回拉扯时由「续轮缺口必须变小」与轮数上限收场，照实报停因。
+    /// </summary>
+    public static readonly (string Key, Knob[] Knobs)[] Allocation103 =
+    {
+        (LineResult.Key.TubeToFlangeHeat, new[] { Knob.Insul, Knob.SlotSpan, Knob.TabHoleR, Knob.TabHoleAspect }),
+        (LineResult.Key.HotOverContact,   new[] { Knob.RingT2, Knob.RingR2, Knob.Ring, Knob.RingR1, Knob.Thick }),
+        (LineResult.Key.LocalStab,        new[] { Knob.Thick }),
+        (LineResult.Key.FlangeStab,       new[] { Knob.Thick }),
+    };
+
+    /// <summary>决 103：按口径取分派表（全仓唯一读口；改回口径 = <see cref="Allocation"/>，与改前逐位相同）。</summary>
+    public static (string Key, Knob[] Knobs)[] AllocationFor(CriteriaRuleSet rs)
+        => rs == CriteriaRuleSet.决103前 ? Allocation : Allocation103;
+
+    /// <summary>R32：这条判据在这一族里可用的旋钮（不挖舌孔族剔掉舌孔两根）。ChooseKnob 与测试同一个口径。决 103：两张表的键不重叠，按键在哪张表里取。</summary>
     public static Knob[] KnobsFor(string key, SolverOptions o)
     {
-        var all = Allocation.FirstOrDefault(a => a.Key == key).Knobs ?? Array.Empty<Knob>();
+        var all = Allocation.FirstOrDefault(a => a.Key == key).Knobs
+               ?? Allocation103.FirstOrDefault(a => a.Key == key).Knobs
+               ?? Array.Empty<Knob>();
         return o.AllowTabCuts ? all : all.Where(k => k is not (Knob.TabHoleR or Knob.TabHoleAspect)).ToArray();
     }
 
@@ -349,6 +379,9 @@ public static class Solver
         // R48 B（2026-09-14 Opus 5）：热侧、冷侧换成热偶读数基准 ⇒ 限值换成 LineCase.ColdUnderTcMaxK／HotOverTcMaxK（仍只从 LineCase 读）。
         //   旧判法两条（RootDeltaMaxK／DiscOverTempMaxK）降为参考量，求解器不再追它们。
         double coldMax = lc.ColdUnderTcMaxK, hotMax = lc.HotOverTcMaxK;
+        // ★ 决 103（2026-09-24）：分派表按口径取（生产 = 决 103 新判据；改回 = 09-14 那张，逐位同改前）。新判据的限值读判据表那一行（= LineCase，见 PlateSlack）。
+        var rs = baseIn.CriteriaRuleSet;
+        var alloc = AllocationFor(rs);
 
         // ★★★★★ 下角的又一来源：**按 J=10 定的截面**（用户 2026-09-08 设计因果链第 ①② 步）。
         //   设计电流 = 20 °C/h 空管升温全程峰值；舌片各截面／舌盘交界弦／孔缘环与各级环的 I/A 都要 ≤ 10 ⇒ 板厚闭式下界。
@@ -364,8 +397,13 @@ public static class Solver
             "熔化在每遍开头只验一次：熔了就停（该解不存在，不抬厚度；用户 2026-09-09）");
         Log($"传进来的旋钮值**一个都没用**（板厚 {string.Join("/", geometry.TabThickMm.Select(x => x.ToString("0.00")))} 被丢弃）—— " +
             "这就是「与初值无关」的实现方式。");
-        Log($"限值只从 LineCase 读：{Criteria.Plain(LineResult.Key.ColdUnderTc)} ≤ {coldMax:0.0} K　"
-          + $"{Criteria.Plain(LineResult.Key.HotOverTc)} ≤ {hotMax:0.0} K（基准都是控温热偶读数；共用法兰取两侧读数的对数平均）");
+        if (rs == CriteriaRuleSet.决103前)
+            Log($"限值只从 LineCase 读：{Criteria.Plain(LineResult.Key.ColdUnderTc)} ≤ {coldMax:0.0} K　"
+              + $"{Criteria.Plain(LineResult.Key.HotOverTc)} ≤ {hotMax:0.0} K（基准都是控温热偶读数；共用法兰取两侧读数的对数平均）");
+        else
+            Log($"限值只从 LineCase 读（2026-09-24 定的判据）：{LineResult.Key.HotOverContact} ≤ {lc.HotOverContactMaxK:0.0} K　"
+              + $"{LineResult.Key.TubeToFlangeHeat} ≤ {CriteriaRules.TubeToFlangeHeatMaxW:0} W　局部热稳定、整片热稳定 ≥ 1　管 J ≤ {baseIn.TubeJLimitAPerMm2:0.#}"
+              + "（接触处温度 = 模型算的该片管根接触温度；热偶读数基准的两条与管孔净流入只作参考）");
         // ★ R12：第一次场解之前还没有场 ⇒ 位置走默认规则，但要说出来（不许静默）
         FieldPlacement(d, baseIn, null, Log);
 
@@ -541,6 +579,7 @@ public static class Solver
                              + (who.Length > 0 ? $"，取自 {who}" : "") + "）";
                     }
                     // R48 B（2026-09-14 Opus 5）：主判据换成热偶读数基准的热侧／冷侧；旧判法两条只作对照印在括号里（参考量，不追）。
+                    if (rs == CriteriaRuleSet.决103前)
                     Log($"　　　这一轮的判据：管孔净流入 {Gap(LineResult.Key.NetFlux, false)}"
                       + $"　最热铂高出热偶读数 {Gap(LineResult.Key.HotOverTc, true)}"
                       + $"　管根低于热偶读数 {Gap(LineResult.Key.ColdUnderTc, true)}"
@@ -548,18 +587,31 @@ public static class Solver
                       + $"　{(last.AllOk ? "**全过**" : "还没全过")}"
                       + $"　（旧判法对照，不追：圆盘区最高温 {CV(LineResult.Key.DiscTemp):0.00}，取自 {CW(LineResult.Key.DiscTemp)}"
                       + $"／法兰增量温降 {CV(LineResult.Key.FlangeDip):0.00}，取自 {CW(LineResult.Key.FlangeDip)}）");
+                    else
+                    Log($"　　　这一轮的判据：{LineResult.Key.HotOverContact} {Gap(LineResult.Key.HotOverContact, true)}"
+                      + $"　{LineResult.Key.TubeToFlangeHeat} {Gap(LineResult.Key.TubeToFlangeHeat, true)}"
+                      + $"　局部热稳定 {Gap(LineResult.Key.LocalStab, false)}"
+                      + $"　整片热稳定 {Gap(LineResult.Key.FlangeStab, false)}"
+                      + $"　管 J {Gap(LineResult.Key.TubeJ, true)}"
+                      + $"　法兰截面 J {Gap(LineResult.Key.SectionJ, true)}"
+                      + $"　{(last.AllOk ? "**全过**" : "还没全过")}"
+                      + $"　（只作参考，不追：最热铂高出热偶读数 {CV(LineResult.Key.HotOverTc):0.00}、管根低于热偶读数 {CV(LineResult.Key.ColdUnderTc):0.00}、管孔净流入 {CV(LineResult.Key.NetFlux):0.00}）");
                     // 逐片抽热也要印：判据只给最小的那一个，看不出是「整体都低」还是「某一片掉队」。
                     Log("　　　逐片抽热：" + string.Join("　", last.Flanges.Select((f, jj) =>
                         $"片{jj} {f.QFromTubeW:+0.00;-0.00} W")));
                     // R48 B：热侧／冷侧也逐片印（取自 ThermocoupleBasis，与判据同一份）—— 最差片会随旋钮换人，同上理由。
                     Log("　　　逐片热偶基准：" + string.Join("　", ThermocoupleBasis.All(last).Select(t =>
                         $"片{t.Plate} 基准 {t.RefC:0.0} 热侧 {t.HotK:+0.00;-0.00} 冷侧 {t.ColdK:+0.00;-0.00} K")));
+                    // 决 103（2026-09-24）：生产口径的逐片判据也逐片印（最差片会随旋钮换人，同上理由）
+                    if (rs != CriteriaRuleSet.决103前)
+                        Log("　　　逐片（2026-09-24 判据）：" + string.Join("　", last.Flanges.Select((f, jj) =>
+                            $"片{jj} 最热处−接触处 {f.TMaxC - f.TRootC:+0.00;-0.00} K 管→法兰 {f.QFromTubeW:+0.00;-0.00} W 局稳 {f.LocalStabMargin:0.00} 整稳 {f.FlangeStabMargin:0.00}")));
                 }
 
                 // ── 逐片逐条列违反
                 var todo = new List<(int J, Knob[] Knobs, string Key)>();
                 for (int j = 0; j < np; j++)
-                    foreach (var (key, knobs) in Allocation)
+                    foreach (var (key, knobs) in alloc)   // 决 103：按口径取的分派表（改回 = Allocation，逐位同改前）
                     {
                         double sl = PlateSlack(last, key, j, coldMax, hotMax);
                         if (double.IsNaN(sl))
@@ -621,7 +673,7 @@ public static class Solver
                         break;
                     }
                     var rest = Violations(last)
-                        .Where(c => !Allocation.Any(a => c.Name.StartsWith(a.Key, StringComparison.Ordinal)))
+                        .Where(c => !alloc.Any(a => c.Name.StartsWith(a.Key, StringComparison.Ordinal)))
                         .ToList();
                     if (rest.Count == 0)
                     {
@@ -631,7 +683,7 @@ public static class Solver
                     else
                     {
                         res.HitBound = true;
-                        res.StopWhy = "三条逐片判据都过了，但这些判据**没有旋钮能治**（要改形状）："
+                        res.StopWhy = (rs == CriteriaRuleSet.决103前 ? "三条逐片判据都过了" : "有旋钮的逐片判据都过了") + "，但这些判据**没有旋钮能治**（要改形状）："
                                     + string.Join("、", rest.Select(c => c.Name));
                         // ★ 只报名字等于把活推回给人。⑥ 是闭式的 —— 处方当场就能算出来。
                         if (rest.Any(c => c.Name.StartsWith(LineResult.Key.DiscCover,
@@ -1229,7 +1281,9 @@ public static class Solver
         var tunable = ReclaimableKnobs(opt);
         int np = d.TabThickMm.Length;
         // R48 B（2026-09-14 Opus 5）：回收时要保护的是交付判据 —— 热侧／冷侧换成热偶读数基准那两条（旧判法已是参考量）
-        var keys = new[] { LineResult.Key.NetFlux, LineResult.Key.HotOverTc, LineResult.Key.ColdUnderTc };
+        var keys = baseIn.CriteriaRuleSet == CriteriaRuleSet.决103前
+                 ? new[] { LineResult.Key.NetFlux, LineResult.Key.HotOverTc, LineResult.Key.ColdUnderTc }
+                 : AllocationFor(baseIn.CriteriaRuleSet).Select(a => a.Key).ToArray();   // 决 103：回收时保护的是生产口径的逐片硬判据
 
         var r0 = Eval(d, baseIn, opt, res, cancel, inner);
         if (r0 is null)
@@ -2030,7 +2084,8 @@ public static class Solver
     public static double CertNeed(LineResult? r, string key)
     {
         if (r is null) return 0.0;
-        if (key != LineResult.Key.HotOverTc && key != LineResult.Key.ColdUnderTc) return 0.0;
+        // 决 103：新热侧（K）同样要认证误差；冷侧是瓦、两条热稳定是倍数 ⇒ 0（与管孔净流入同一条理由）
+        if (key != LineResult.Key.HotOverTc && key != LineResult.Key.ColdUnderTc && key != LineResult.Key.HotOverContact) return 0.0;
         double e = r.CertErrK;
         return e > 0 ? e : 0.0;
     }
@@ -2110,9 +2165,28 @@ public static class Solver
         if (r is null) return double.NegativeInfinity;
         // ★ 2026-09-15 Opus 5（J 路，合并把关待办 P1-4）：本片（或管）带「判不了」后置标记 ⇒ 三条逐片判据都判不了（NaN），不许读原始量报一个数。
         //   与判据表同一个定义（LineRunner.PlateUndeterminedWhy）；没有这条之前，片的温度场没收敛时这里照样给出抽热与热侧、冷侧裕度。
-        if ((key == LineResult.Key.NetFlux || key == LineResult.Key.HotOverTc || key == LineResult.Key.ColdUnderTc)
+        if ((key == LineResult.Key.NetFlux || key == LineResult.Key.HotOverTc || key == LineResult.Key.ColdUnderTc
+             || key == LineResult.Key.HotOverContact || key == LineResult.Key.TubeToFlangeHeat
+             || key == LineResult.Key.LocalStab || key == LineResult.Key.FlangeStab)
             && j >= 0 && j < r.Flanges.Length && LineRunner.PlateUndeterminedWhy(r, j).Length > 0)
             return double.NaN;
+
+        // ★★★★★ 决 103（2026-09-24）：新判据的逐片裕度。限值读判据表那一行（= LineCase 的限值，判据自己带着 —— 不在这里另抄一个 10／0／1）；
+        //   那一行不在（改回口径的结果被拿来问新判据）⇒ NaN = 判不了，不许编一个限值出来。方向：正 = 过。
+        if (key == LineResult.Key.HotOverContact || key == LineResult.Key.TubeToFlangeHeat
+            || key == LineResult.Key.LocalStab || key == LineResult.Key.FlangeStab)
+        {
+            if (j >= r.Flanges.Length) return double.NegativeInfinity;
+            double lim = r.Find(key)?.Limit ?? double.NaN;
+            if (double.IsNaN(lim)) return double.NaN;
+            var f = r.Flanges[j];
+            double v = key == LineResult.Key.HotOverContact ? f.TMaxC - f.TRootC          // 法兰最高温 − 管接触处（越小越好）
+                     : key == LineResult.Key.TubeToFlangeHeat ? f.QFromTubeW              // 管 → 法兰净热流（越小越好）
+                     : key == LineResult.Key.LocalStab ? f.LocalStabMargin                // 局部热稳定（越大越好；整线收尾后是全格值）
+                     : f.FlangeStabMargin;                                                // 整片热稳定（越大越好；逐片评）
+            if (double.IsNaN(v)) return double.NaN;
+            return key == LineResult.Key.HotOverContact || key == LineResult.Key.TubeToFlangeHeat ? lim - v : v - lim;
+        }
 
         if (key == LineResult.Key.NetFlux)
         {

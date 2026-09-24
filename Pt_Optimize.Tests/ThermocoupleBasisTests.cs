@@ -233,12 +233,14 @@ public class ThermocoupleBasisTests
     {
         // K 路（2026-09-15，Opus 5）：有意改动 —— 名单加工况维。带玻璃稳态：新两条是硬线；空管到温稳态：两条都只作参考（用户 2026-09-15「空管时铂过热那条也不该按 5 ℃ 卡，只要J<11即可」；
         //   冷侧归属是主会话按原话的解读）。旧两条两态都不在名单里。依据 LineResult.RequiredByState。
-        var req = LineResult.RequiredFor(emptyTube: false).ToDictionary(q => q.Prefix, q => q.Kind);
+        // 决 103（2026-09-24）：有意改动 —— 热偶读数基准两条只在改回口径（CriteriaRuleSet = 决103前）下是带玻璃稳态硬线；生产口径两态都只作参考（R48CriteriaSwapGateTests 门_分工况表）。
+        //   本条照旧验 09-14 那一套，改成显式取改回口径的名单。
+        var req = LineResult.RequiredFor(emptyTube: false, CriteriaRuleSet.决103前).ToDictionary(q => q.Prefix, q => q.Kind);
         Assert.Equal(CheckKind.HardSafety, req[LineResult.Key.HotOverTc]);
         Assert.Equal(CheckKind.HardSafety, req[LineResult.Key.ColdUnderTc]);   // 冷侧升为硬线（旧判法是「目标」）
         Assert.False(req.ContainsKey(LineResult.Key.DiscTemp));
         Assert.False(req.ContainsKey(LineResult.Key.FlangeDip));
-        var reqE = LineResult.RequiredFor(emptyTube: true).ToDictionary(q => q.Prefix, q => q.Kind);
+        var reqE = LineResult.RequiredFor(emptyTube: true, CriteriaRuleSet.决103前).ToDictionary(q => q.Prefix, q => q.Kind);
         Assert.False(reqE.ContainsKey(LineResult.Key.HotOverTc));
         Assert.False(reqE.ContainsKey(LineResult.Key.ColdUnderTc));
         Assert.False(reqE.ContainsKey(LineResult.Key.DiscTemp));
@@ -253,7 +255,7 @@ public class ThermocoupleBasisTests
         Assert.Equal(LineResult.Key.FlangeDip, Criteria.Of("③")!.Key);
         Assert.Null(Criteria.Of("·②″"));
         Assert.Null(Criteria.Of("·③"));
-        Assert.True(Criteria.Of("⑦")!.Hard && Criteria.Of("⑧")!.Hard);
+        Assert.False(Criteria.Of("⑦")!.Hard || Criteria.Of("⑧")!.Hard);   // 决 103（2026-09-24）：有意改动 —— 界面图例描述生产口径，⑦／⑧ 降为参考
         Assert.False(Criteria.Of("②″")!.Hard || Criteria.Of("③")!.Hard);
         // 名字里不许有「口径」这类内部词（会上界面；ShellThermal 那条规矩）
         foreach (var k in new[] { LineResult.Key.HotOverTc, LineResult.Key.ColdUnderTc, LineResult.Key.DiscTemp, LineResult.Key.FlangeDip })

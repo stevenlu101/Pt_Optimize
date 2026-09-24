@@ -1517,6 +1517,7 @@ public static class FlangeAutoSizer
         EmptyTube = c.EmptyTube, EmptyTubeSetpointFrom = c.EmptyTubeSetpointFrom,
         // R48 B（2026-09-14 Opus 5）：判据限值也要带过去 —— 此前一条都没拷，副本一律退回默认值（改过限值的算例在定尺寸／加密复算里会静默换回默认）。
         HotOverTcMaxK = c.HotOverTcMaxK, ColdUnderTcMaxK = c.ColdUnderTcMaxK,
+        HotOverContactMaxK = c.HotOverContactMaxK,   // 决 103（2026-09-24）：新热侧限值同样跟着副本走
         DiscOverTempMaxK = c.DiscOverTempMaxK, RootDeltaMaxK = c.RootDeltaMaxK,
         // ★★ 2026-09-15 Opus 5（J 路，合并把关待办 P1-1）：下面这批此前都没拷，副本静默退回 LineCase 缺省值。
         //   最要命的是 JDesignAPerMm2：判据「法兰截面 J」的限值 = J+1 只从它来，漏拷 ⇒ 图纸路径的细网格重解（ApplyFinalMesh）与加密复算工厂（LineDesignPage.VerifyFactory3dm）

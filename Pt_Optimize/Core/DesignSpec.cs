@@ -1268,8 +1268,10 @@ public sealed class DesignSpec
                   "、圆盘区最高温 3.007 K、法兰增量温降 −14.824 K、合计 3099.7 g ——" +
                   "**本档的热学结论不可再引用**，只留作「舌片自由段这条判据抓得住它」的样本。",
         // R48 B（2026-09-14 Opus 5）：热学结论整档不可引用 ⇒ 热偶读数基准的热侧／冷侧两条新硬判据也在声明之内（旧判法两条已是参考量，留着不删）
+        // 决 103（2026-09-24）：热学结论整档不可引用 ⇒ 现行口径的两条新温差类硬判据与两条热稳定也在声明之内
         InvalidChecks = new[] { "⑤", LineResult.Key.NetFlux, LineResult.Key.DiscTemp, LineResult.Key.FlangeDip,
-                                LineResult.Key.HotOverTc, LineResult.Key.ColdUnderTc },
+                                LineResult.Key.HotOverTc, LineResult.Key.ColdUnderTc,
+                                LineResult.Key.HotOverContact, LineResult.Key.TubeToFlangeHeat, LineResult.Key.FlangeStab, LineResult.Key.LocalStab },
         RecordFromOldMesh = true,   // R48：记录值出自修网格前；热学结论不可引用（见 Invalid）
         WallMm = 0.8, TabLengthMm = 90.0, TabHalfWidthMm = 15.0,
         TabThickMm = new[] { 2.11, 3.33, 3.12, 1.76 },
@@ -1292,8 +1294,10 @@ public sealed class DesignSpec
                   "、圆盘区最高温 3.538 K、法兰增量温降 −16.591 K、合计 2377.8 g ——" +
                   "**本档的热学结论不可再引用**。",
         // R48 B（2026-09-14 Opus 5）：热学结论整档不可引用 ⇒ 热偶读数基准的热侧／冷侧两条新硬判据也在声明之内（旧判法两条已是参考量，留着不删）
+        // 决 103（2026-09-24）：热学结论整档不可引用 ⇒ 现行口径的两条新温差类硬判据与两条热稳定也在声明之内
         InvalidChecks = new[] { "⑤", LineResult.Key.NetFlux, LineResult.Key.DiscTemp, LineResult.Key.FlangeDip,
-                                LineResult.Key.HotOverTc, LineResult.Key.ColdUnderTc },
+                                LineResult.Key.HotOverTc, LineResult.Key.ColdUnderTc,
+                                LineResult.Key.HotOverContact, LineResult.Key.TubeToFlangeHeat, LineResult.Key.FlangeStab, LineResult.Key.LocalStab },
         RecordFromOldMesh = true,   // R48：记录值出自修网格前；热学结论不可引用（见 Invalid）
         WallMm = 0.6, TabLengthMm = 90.0, TabHalfWidthMm = 15.0,
         TabThickMm = new[] { 1.82, 2.85, 2.66, 1.49 },
