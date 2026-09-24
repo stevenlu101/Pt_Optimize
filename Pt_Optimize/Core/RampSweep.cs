@@ -12,6 +12,8 @@ namespace PtOptimize.Core;
 //  提成，探针改调这里，不许第二份实现。
 //  用户 2026-09-16/17：升温期不卡 ±5 K；没有膨胀判据，只报告膨胀量；δ=0.1 mm 退役。
 //  门（硬）：场无效 ⇒ 判不了；管 J 或截面 J 超限 ⇒ 不过；否则过。
+//  ★ 决 103（业主 2026-09-24）：管 J 限值读 DesignInputs.TubeJLimitAPerMm2（= min(许用 12, 使用上限 11)）；并加热稳定（局部全格、整片）≥ 1，
+//    判不了不算过（全局方案第 2 版 1.2 节）；改回口径（决103前）不判热稳定、限值 = 许用，逐位同改前。仍不卡温差、没有膨胀判据，伸长量照印。
 // ════════════════════════════════════════════════════════════════════════════
 
 // ══════════ 积分工具：管段伸长 ══════════
@@ -240,6 +242,17 @@ public sealed class RampSweepPointResult
     /// <summary>设计电流那条算不出来（判不了，不许当过）。</summary>
     public bool TubeJDesignUndetermined = true;
 
+    // ── 决 103（业主 2026-09-24；全局方案第 2 版 1.2 节「升温期硬：J、不熔断、热稳定 ≥ 1、场有效」）：本点的两条热稳定 ──
+    /// <summary>这一点判了热稳定没有（改回口径 = false：与改前逐位相同，判定只看 J 与场有效）。</summary>
+    public bool StabChecked;
+    /// <summary>整片热稳定、局部热稳定（全格精算）裕度 ×（原样取自本点整线判据表那两行，不另算一份）。</summary>
+    public double FlangeStabMargin = double.NaN, LocalStabMargin = double.NaN;
+    public string FlangeStabWhere = "", LocalStabWhere = "";
+    /// <summary>两条都过（且都判得了）。</summary>
+    public bool StabOk;
+    /// <summary>任一条判不了 ⇒ 不许当过。</summary>
+    public bool StabUndetermined;
+
     // ── 逐段 ──
     public RampSegInfo[] Segs = Array.Empty<RampSegInfo>();
 
@@ -431,6 +444,15 @@ public static class RampSweep
                     jFailReasons.Add($"{at} 段「{s.Name}」管 J（该点实际电流 {s.CurrentA:0} A）= {s.TubeJAPerMm2:0.00} > {s.TubeJLimit:0.#}");
             }
 
+            // 决 103：本点的两条热稳定（改回口径 StabChecked = false，一句不加 ⇒ 逐位同改前）
+            if (pt.StabChecked)
+            {
+                if (pt.StabUndetermined)
+                    undetReasons.Add($"{at}：热稳定判不了（整片 {pt.FlangeStabMargin:0.###}、局部 {pt.LocalStabMargin:0.###}）");
+                else if (!pt.StabOk)
+                    jFailReasons.Add($"{at} 热稳定 < 1：整片 {pt.FlangeStabMargin:0.###}（{pt.FlangeStabWhere}）、局部 {pt.LocalStabMargin:0.###}（{pt.LocalStabWhere}）");
+            }
+
             foreach (var f in pt.Flanges)
             {
                 var v = f.SectionJ;
@@ -454,9 +476,11 @@ public static class RampSweep
             return ("判不了", "判不了的点：\n" + string.Join("\n", undetReasons)
                    + (jFailReasons.Count > 0 ? "\n另有已经看得出超限的点：\n" + string.Join("\n", jFailReasons) : ""),
                    disagree.ToArray());
+        bool stab = points.Any(pt => pt.StabChecked);   // 决 103：判了热稳定才改措辞（改回口径原句逐字不变）
         if (jFailReasons.Count > 0)
-            return ("不过", "J 超限的点：\n" + string.Join("\n", jFailReasons), disagree.ToArray());
-        return ("过", $"{points.Count} 个设定点全部场有效；管 J 与截面 J 在**设计电流**与**该点实际电流**两条上都不超限。",
+            return ("不过", (stab ? "J 超限或热稳定 < 1 的点：\n" : "J 超限的点：\n") + string.Join("\n", jFailReasons), disagree.ToArray());
+        return ("过", $"{points.Count} 个设定点全部场有效；管 J 与截面 J 在**设计电流**与**该点实际电流**两条上都不超限。"
+                    + (stab ? "局部热稳定（全格精算）与整片热稳定都 ≥ 1。" : ""),
                 disagree.ToArray());
     }
 
@@ -532,7 +556,7 @@ public static class RampSweep
                         : res.OverMelt ? "越过铂熔点" : "";
         bool fieldValid = fieldBad.Length == 0;
 
-        double tubeJLimit = lc.Base.TubeJAllowAPerMm2;
+        double tubeJLimit = lc.Base.TubeJLimitAPerMm2;   // 决 103（2026-09-24「J < 11」）：卡交付的管 J 限值（改回口径 = 许用 12，逐位同改前）
         double sectionJLimit = SectionSizing.JCheckOf(lc.JDesignAPerMm2);
 
         // ── 设计电流那条管 J（整线判据「① 升温」算的，原样带出）──
@@ -618,6 +642,12 @@ public static class RampSweep
             flanges.Add(fi);
         }
 
+        // ── 决 103：升温期也卡热稳定（≥ 1；读本点整线判据表那两行的 Ok／判不了 —— 判法不在这里另写一份）。改回口径不判（逐位同改前）。
+        bool stabChecked = lc.RuleSet != CriteriaRuleSet.决103前;
+        var fsC = res.Checks.FirstOrDefault(ck => ck.Name.StartsWith(LineResult.Key.FlangeStab, StringComparison.Ordinal));
+        var lsC = res.Checks.FirstOrDefault(ck => ck.Name.StartsWith(LineResult.Key.LocalStab, StringComparison.Ordinal));
+        bool stabUndet = !fieldValid || fsC is null || lsC is null || fsC.Undetermined || lsC.Undetermined
+                      || double.IsNaN(fsC.Actual) || double.IsNaN(lsC.Actual);
         return new RampSweepPointResult
         {
             SetpointC = tSetC,
@@ -631,6 +661,11 @@ public static class RampSweep
             TubeJDesignUndetermined = !fieldValid || rampUndet,
             Segs = segs.ToArray(),
             Flanges = flanges.ToArray(),
+            StabChecked = stabChecked,
+            FlangeStabMargin = fsC?.Actual ?? double.NaN, LocalStabMargin = lsC?.Actual ?? double.NaN,
+            FlangeStabWhere = fsC?.Where ?? "", LocalStabWhere = lsC?.Where ?? "",
+            StabUndetermined = stabChecked && stabUndet,
+            StabOk = stabChecked && !stabUndet && fsC!.Ok && lsC!.Ok,
         };
     }
 

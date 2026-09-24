@@ -421,13 +421,15 @@ public class R48G2RampClampChannelGateTests
         Assert.DoesNotContain("割线", stab.Note);
         Assert.Contains("可能偏大", stab.Note);
         Assert.Contains($"{o.Stab.MarginGeomClamp:0.00}", stab.Note);
-        Assert.Equal(LineRunner.FlangeStabNote(o), stab.Note);   // 判据表那一行的附注就是公开函数那一份
+        // 决 103（2026-09-24）：有意改动 —— 整片热稳定在带玻璃稳态升为硬判据，附注最前面加升级句（ApplyStateCriteria 盖的），其后仍是公开函数那一份
+        Assert.Equal(CriteriaRules.UpgradeNote + "　" + LineRunner.FlangeStabNote(o), stab.Note);   // 判据表那一行的附注就是公开函数那一份
         // 安装报告：升温那一行印「参考（暂不给数）」；热稳定那一行照常「参考（不卡交付）」
         string report = InstallReport.Build(r, d, p);
         string rampRow = ReportRow(report, LineResult.Key.RampField), stabRow = ReportRow(report, LineResult.Key.FlangeStab);
         _out.WriteLine("安装报告：" + rampRow + "　｜　" + stabRow);
         Assert.Contains("参考（暂不给数）", rampRow);
-        Assert.Contains("参考（不卡交付）", stabRow);
+        Assert.Equal(CheckKind.HardSafety, stab.Kind);                                  // 决 103：带玻璃稳态硬判据
+        Assert.Contains(stab.Ok ? "\t过\t" : "\t不过\t", stabRow);                    // 决 103：有意改动 —— 原「参考（不卡交付）」，升硬后安装报告印过／不过
         Assert.DoesNotContain("暂不给数", stabRow);
         Assert.Contains("暂不给数", report.Split('\n').First(l => l.Contains("升温期间共用片最先到温")));
     }

@@ -64,7 +64,7 @@ public class CriteriaGlossaryTests
         var emptyRef = LineResult.RequiredByState.Where(q => q.GlassKind != CheckKind.Reference && q.EmptyTubeKind == CheckKind.Reference)
                                                  .Select(q => q.Prefix).OrderBy(k => k, StringComparer.Ordinal).ToArray();
         Assert.Equal(emptyRef, Criteria.All.Where(e => e.ReferenceWhenEmptyTube).Select(e => e.Key).OrderBy(k => k, StringComparer.Ordinal).ToArray());
-        Assert.Equal(3, emptyRef.Length);   // 自证：现表空管态降参考的是热侧、冷侧、净流入三条（改表时这里一起改）
+        Assert.Equal(4, emptyRef.Length);   // 自证：现表空管态降参考的是决 103 的热侧、冷侧与两条热稳定四条（改表时这里一起改；决 103 前是热侧、冷侧、净流入三条）
         string html = Criteria.Html();
         Assert.Contains("空管到温稳态</th>", html);
         foreach (var k in emptyRef) Assert.Contains($"「{Criteria.Plain(k)}」", html);

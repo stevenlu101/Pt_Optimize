@@ -364,6 +364,23 @@ public sealed class LineCase
         set => _coldUnderTcMaxK = value;
     }
 
+    private double _hotOverContactMaxK = double.NaN;
+
+    /// <summary>
+    /// ★★★★★ 决 103（业主 2026-09-24）：带玻璃稳态热侧判据「法兰最热处高出管接触处温度」的上限 K（硬判据；决103前 口径下不出这一行）。
+    /// 照 <see cref="HotOverTcMaxK"/> 的写法：没显式设过 ⇒ 读 <see cref="Base"/> 的「法兰最热处高出管接触处温度 允许值」
+    /// （<see cref="DesignInputs.HotOverContactAllowK"/>，默认 <see cref="CriteriaRules.HotOverContactMaxKDefault"/> = 10，出处在那里）。
+    /// </summary>
+    public double HotOverContactMaxK
+    {
+        get => !double.IsNaN(_hotOverContactMaxK) ? _hotOverContactMaxK
+             : Base is not null ? Base.HotOverContactAllowK : CriteriaRules.HotOverContactMaxKDefault;
+        set => _hotOverContactMaxK = value;
+    }
+
+    /// <summary>决 103：本算例的判据口径（= <see cref="Base"/> 的 <see cref="DesignInputs.CriteriaRuleSet"/>；没有参数表 ⇒ 生产缺省 决103）。</summary>
+    public CriteriaRuleSet RuleSet => Base?.CriteriaRuleSet ?? CriteriaRuleSet.决103;
+
     /// <summary>
     /// 判据 ②″（圆盘区最高温 − 管温）的上限 K。
     /// ★ R48 B（2026-09-14 Opus 5）：这条已降为**参考量**「②″圆盘区最高温 − 管温（旧判法）」（代号 ②″ 不变），本限值只给那一行显示用；
@@ -787,6 +804,19 @@ public sealed class FlangeOut
     public double LocalStabMargin = double.NaN, LocalStabRMm = double.NaN,
                   LocalStabTempC = double.NaN, LocalStabJAPerMm2 = double.NaN, LocalStabLatLenMm = double.NaN;
     public bool LocalStabOnTab;
+    /// <summary>
+    /// ★★★★★ 决 103（2026-09-24；决 99 选项 A）：本片热解的**局部热稳定全格精算**（惰性：只在整线收尾对终局那一份场调用，见 <see cref="LineRunner.ApplyLocalStabFullGrid"/>）。
+    /// null = 没带（手造的片、改回口径不调它）。原样取自 <see cref="ShellThermalResult.LocalStabFullGrid"/>。
+    /// </summary>
+    /// ⚠ internal（不是 public）：它是一段闭包，不是结果里的数 —— 反射转储（R48LineDumpTests.Dump 一类）只读公开成员，不把它当成结果的一部分。
+    internal Func<LocalStabScan>? LocalStabFullGrid;
+    /// <summary>决 103：全格精算之前（前 12 名口径）报出的最小裕度与落点 r；NaN = 本片没做全格精算。对照「报出值乐观几倍」用。</summary>
+    public double LocalStabTop12Margin = double.NaN, LocalStabTop12RMm = double.NaN;
+    /// <summary>决 103：本片全格精算实际评过的格数（NaN 场、定温格不在内）与所花秒数（机时量，不进判读）；0 = 没做。</summary>
+    public int LocalStabFullCells;
+    public double LocalStabFullSec;
+    /// <summary>决 103：本片整片热稳定裕度（逐片评，<see cref="LineRunner.FlangeLumped"/> 的 PerPlate 原样带出；判不了 = NaN）。求解器逐片裕度读它。</summary>
+    public double FlangeStabMargin = double.NaN;
 
     /// <summary>
     /// ★★ 这一片的**场解（电位 + 温度）收敛了没有**（2026-08-29 补）。
@@ -1143,6 +1173,17 @@ public sealed class LineResult
         public const string HeatResidual = "· 法兰热平衡残差";
         /// <summary>· 玻璃温降 vs 实测 —— 参考量</summary>
         public const string GlassDrop = "· 玻璃温降";
+
+        // ★★★★★ 决 103（业主 2026-09-24，判据换向）：带玻璃稳态卡交付的热侧、冷侧换成下面两条（**全名，不带代号**，界面不许出现代号）。
+        //   ⑦／⑧／②′ 三条照算照印、降为参考（常量不动 —— 按代号前缀取值的地方与历史输出不换主人）。
+        //   ⚠ 名字不许与现有任何一条互为前缀（Find 按前缀取）：「法兰最热处…」与「法兰截面 J」在第 3 字分开；「管接触处…」与「管 J」在第 2 字分开。
+        /// <summary>热侧（决 103，带玻璃稳态硬判据）：第 j 片 max(该片法兰温度场) − 该片管接触处温度（模型算的管根接触温度）≤ <see cref="LineCase.HotOverContactMaxK"/>（10 K）。</summary>
+        public const string HotOverContact = "法兰最热处高出管接触处温度";
+        /// <summary>冷侧（决 103，带玻璃稳态硬判据）：第 j 片管孔处由管流入法兰的净热流（= FlangeOut.QFromTubeW，正 = 管 → 法兰）≤ 0 W；法兰不得拉低管在接触处的温度，不给预算。</summary>
+        public const string TubeToFlangeHeat = "管接触处流入法兰的净热流";
+        /// <summary>决 103：管 J 原许用值（08-15 现场 12）那一行留作对照（参考量；卡交付的「管 J」限值改成与使用上限 11 取小）。</summary>
+        /// ⚠ 名字里不许出现「管 J」三个字：判据表（HANDOVER §1.83）按「名字包含 Key」认行，含「管 J」就与上面那一行认成两行。
+        public const string TubeJPre103 = "· 管电流密度对原许用值（对照）";
     }
 
     public ConstraintOut? Find(string keyPrefix)
@@ -1182,7 +1223,7 @@ public sealed class LineResult
     ///   工况的地位（用户 2026-09-15 又定）：升温全程先过（升温期判据不在这张表里展开、另行落地）；带玻璃稳态决定法兰设计成不成；空管到温稳态只卡电流密度与场的有效性。
     ///   ⚠ **场的有效性不是判据、两态都保留**：见 <see cref="FieldUndeterminedReasons"/>（场没解到位、越过铂熔点、散热表超界 ⇒ 该工况判不了，判不了不算过）。
     /// </summary>
-    public static readonly (string Prefix, CheckKind GlassKind, CheckKind EmptyTubeKind, bool NeedsRamp)[] RequiredByState =
+    public static readonly (string Prefix, CheckKind GlassKind, CheckKind EmptyTubeKind, bool NeedsRamp)[] RequiredByStatePre103 =
     {
         //  判据                         带玻璃稳态             空管到温稳态
         (LineResult.Key.Ramp,        CheckKind.HardSafety, CheckKind.HardSafety, false),  // R20：闭式、每轮都在（此前走集总模型，CheckRamp=false 时合法缺席）
@@ -1203,10 +1244,42 @@ public sealed class LineResult
     };
 
     /// <summary>
+    /// ★★★★★ 决 103（业主 2026-09-24）：**生产口径的分工况表**（<see cref="CriteriaRuleSet.决103"/>）。上面那张 <see cref="RequiredByStatePre103"/> 是 09-14 口径，只供改回。
+    /// 带玻璃稳态：热侧「法兰最热处高出管接触处温度」、冷侧「管接触处流入法兰的净热流」为硬判据；局部与整片热稳定由参考升为硬判据；
+    ///   最热铂高出热偶读数、管根低于热偶读数、管孔净流入须为正三条降为参考（照算照印）。
+    /// 空管到温稳态（全局方案第 2 版 1.3 节、业主 09-15）：只卡电流密度与几何闭式 ⇒ 两条新温差类判据与两条热稳定只作参考（升温期的热稳定另由升温全程卡）。
+    /// 其余各条两态照旧（升温、舌片自由段、圆盘盖得住管孔、管 J、法兰截面 J；接合区缠绕参考）。
+    /// </summary>
+    public static readonly (string Prefix, CheckKind GlassKind, CheckKind EmptyTubeKind, bool NeedsRamp)[] RequiredByState =
+    {
+        //  判据                              带玻璃稳态             空管到温稳态
+        (LineResult.Key.Ramp,             CheckKind.HardSafety, CheckKind.HardSafety, false),  // 限值 = 卡交付的管 J 限值（决 103：与使用上限 11 取小）
+        (LineResult.Key.HotOverContact,   CheckKind.HardSafety, CheckKind.Reference,  false),  // 决 103 热侧（新）
+        (LineResult.Key.TubeToFlangeHeat, CheckKind.HardSafety, CheckKind.Reference,  false),  // 决 103 冷侧（新）
+        (LineResult.Key.NetFlux,          CheckKind.Reference,  CheckKind.Reference,  false),  // 决 103：降为参考
+        (LineResult.Key.HotOverTc,        CheckKind.Reference,  CheckKind.Reference,  false),  // 决 103：降为参考
+        (LineResult.Key.ColdUnderTc,      CheckKind.Reference,  CheckKind.Reference,  false),  // 决 103：降为参考
+        (Key.FreeTab,                     CheckKind.HardSafety, CheckKind.HardSafety, false),
+        (Key.DiscCover,                   CheckKind.HardSafety, CheckKind.HardSafety, false),
+        (Key.WrapTurns,                   CheckKind.Reference,  CheckKind.Reference,  false),
+        (Key.TubeJ,                       CheckKind.HardSafety, CheckKind.HardSafety, false),  // 决 103：限值 11（与原许用 12 取小）
+        (Key.SectionJ,                    CheckKind.HardSafety, CheckKind.HardSafety, false),
+        (Key.FlangeStab,                  CheckKind.HardSafety, CheckKind.Reference,  false),  // 决 103：带玻璃稳态升为硬判据
+        (Key.LocalStab,                   CheckKind.HardSafety, CheckKind.Reference,  false),  // 决 103：带玻璃稳态升为硬判据（全格精算）
+    };
+
+    /// <summary>决 103：按口径取分工况表（全仓唯一读口）。</summary>
+    public static (string Prefix, CheckKind GlassKind, CheckKind EmptyTubeKind, bool NeedsRamp)[] RequiredByStateFor(CriteriaRuleSet rs)
+        => rs == CriteriaRuleSet.决103前 ? RequiredByStatePre103 : RequiredByState;
+
+    /// <summary>
     /// K 路（2026-09-15，Opus 5）：本工况**判定用**的必备名单（= <see cref="RequiredByState"/> 里本工况 Kind 不是参考量的那几条）。
     /// 原静态名单 Required 已删 —— 调用方必须说清是哪个工况（一份不带工况的名单会被拿去判空管态，那正是这一路要堵的）。
     /// </summary>
-    public static (string Prefix, CheckKind Kind, bool NeedsRamp)[] RequiredFor(bool emptyTube) => RequiredByState
+    public static (string Prefix, CheckKind Kind, bool NeedsRamp)[] RequiredFor(bool emptyTube) => RequiredFor(emptyTube, CriteriaRuleSet.决103);
+
+    /// <summary>决 103：按口径取本工况判定用的必备名单（不带口径的重载 = 生产口径 决103）。</summary>
+    public static (string Prefix, CheckKind Kind, bool NeedsRamp)[] RequiredFor(bool emptyTube, CriteriaRuleSet rs) => RequiredByStateFor(rs)
         .Select(q => (q.Prefix, Kind: emptyTube ? q.EmptyTubeKind : q.GlassKind, q.NeedsRamp))
         .Where(q => q.Kind != CheckKind.Reference)
         .ToArray();
@@ -1214,10 +1287,13 @@ public sealed class LineResult
     /// <summary>
     /// K 路（2026-09-15，Opus 5）：判据名（ConstraintOut.Name 或 Key，按前缀）在本工况下的 Kind；不在分工况表里 ⇒ null（Kind 由构造处定，两态相同）。
     /// </summary>
-    public static CheckKind? StateKindOf(string nameOrKey, bool emptyTube)
+    public static CheckKind? StateKindOf(string nameOrKey, bool emptyTube) => StateKindOf(nameOrKey, emptyTube, CriteriaRuleSet.决103);
+
+    /// <summary>决 103：按口径取（不带口径的重载 = 生产口径 决103）。</summary>
+    public static CheckKind? StateKindOf(string nameOrKey, bool emptyTube, CriteriaRuleSet rs)
     {
         if (string.IsNullOrEmpty(nameOrKey)) return null;
-        foreach (var q in RequiredByState)
+        foreach (var q in RequiredByStateFor(rs))
             if (nameOrKey.StartsWith(q.Prefix, StringComparison.Ordinal))
                 return emptyTube ? q.EmptyTubeKind : q.GlassKind;
         return null;
@@ -1235,6 +1311,17 @@ public sealed class LineResult
     /// <see cref="MissingChecks"/>／<see cref="HardOk"/> 按它取必备名单。默认 false = 带玻璃稳态（手造的结果不写就是带玻璃，逐位不变）。
     /// </summary>
     public bool EmptyTube;
+
+    /// <summary>决 103：局部热稳定全格精算的代价（秒、格数；机时量，不进判读；0 = 没做）。</summary>
+    public double LocalStabFullGridSec;
+    public int LocalStabFullGridCells;
+
+    /// <summary>
+    /// ★ 决 103（2026-09-24）：本结果按哪个判据口径判的（= 解它的 <see cref="LineCase.RuleSet"/>，RunOnce 与管侧单解造结果时写入）。
+    /// <see cref="MissingChecks"/>／<see cref="HardOk"/> 按它取必备名单。手造的结果（门的合成数据）不写 ⇒ 决103前 —— 与 <see cref="EmptyTube"/> 同一个约定：
+    /// 手造结果的判据表是按改前口径造的，默认读改前名单，逐位不变；生产结果一律由 RunOnce 写明。
+    /// </summary>
+    public CriteriaRuleSet RuleSet = CriteriaRuleSet.决103前;
 
     /// <summary>
     /// ★★★★★ K 路（2026-09-15，Opus 5）：**场的有效性** —— 本工况为什么判不了（空 = 场判得了）。**不是判据、两态都保留**：
@@ -1271,7 +1358,7 @@ public sealed class LineResult
     }
 
     /// <summary>该出现却没出现的判据（按本工况的必备名单）。**缺席 ≠ 通过。**</summary>
-    public string[] MissingChecks => RequiredFor(EmptyTube)
+    public string[] MissingChecks => RequiredFor(EmptyTube, RuleSet)
         .Where(q => (!q.NeedsRamp || RampChecked) && Find(q.Prefix) is null)
         .Select(q => q.Prefix).ToArray();
 
@@ -1286,7 +1373,7 @@ public sealed class LineResult
     ///   于是一张空判据表会报「硬安全线全过」。加 MissingHard 之后这条路堵死了。
     /// </summary>
     /// K 路（2026-09-15，Opus 5）：名单按本工况取；场判不了（<see cref="FieldUndeterminedReasons"/> 非空）一律不算过。
-    public bool HardOk => !RequiredFor(EmptyTube).Any(q => q.Kind == CheckKind.HardSafety
+    public bool HardOk => !RequiredFor(EmptyTube, RuleSet).Any(q => q.Kind == CheckKind.HardSafety
                                           && (!q.NeedsRamp || RampChecked) && Find(q.Prefix) is null)
                        && HardBlocked.Length == 0
                        && FieldUndeterminedReasons.Length == 0;
@@ -1957,6 +2044,8 @@ public static class LineRunner
         // ★ R48 续（2026-09-14，Opus 5；常驻数值讨论人列为「重解前必做」）：**剩余误差估计必须是个数，不能只活在说明文字里。**
         //   加密复核要拿它区分「判据在摆是网格造成的」还是「是外层耦合停机噪声造成的」——
         //   实测 ③ 最后一步变化 +0.820 K，**小于**耦合停机容差 1.0 K，两者分不开，而此前每档的这个数一次都没记下来。
+        // ★★★★★ 决 103（2026-09-24；决 99 选项 A）：局部热稳定换成**全格精算**（只对终局那一份场，四片各一次；改回口径不做）。代价进结果与说明。
+        ApplyLocalStabFullGrid(c, res);
         res.CoupleRemainK = lastRemainK;
         res.CoupleRounds = lastRounds; res.CoupleTolKUsed = lastTolK;   // R48 L（2026-09-17，Opus 5）：成本（轮数）与本次容差进结果，报告直接读
         // R48 M（2026-09-18，Fable 5.1）：放大的两个来源与量雅可比的成本进结果（新状态位默认没接上 —— 报告与门从这里读）
@@ -2053,7 +2142,7 @@ public static class LineRunner
                                       (double L, double R)[]? nbT = null,
                                       (double A, double B)[]? baseline = null)
     {
-        var res = new LineResult { BaselineMassG = c.BaselineMassG, RampChecked = c.CheckRamp, EmptyTube = c.EmptyTube };   // K 路（2026-09-15 Opus 5）：工况位写进结果，必备名单按它取
+        var res = new LineResult { BaselineMassG = c.BaselineMassG, RampChecked = c.CheckRamp, EmptyTube = c.EmptyTube, RuleSet = c.RuleSet };   // K 路（2026-09-15 Opus 5）：工况；决 103：判据口径位写进结果，必备名单按它取
         int n = c.SegmentCount, nf = c.FlangeCount;
         // ★ R48 E 审查修改（2026-09-15 Opus 5）：算例前置检查搬进 CaseGuardMessage（管侧单解 SolveTubeSegments 共用；纯搬移，文字逐字不变）。
         string guard = CaseGuardMessage(c);
@@ -2308,6 +2397,7 @@ public static class LineRunner
                 LocalStabTempC = th.LocalStabTempC, LocalStabJAPerMm2 = th.LocalStabJAPerMm2,
                 LocalStabLatLenMm = th.LocalStabLatLenMm,
                 LocalStabOnTab = th.LocalStabOnTab,
+                LocalStabFullGrid = th.LocalStabFullGrid,   // 决 103：全格精算（惰性，整线收尾才调，见 ApplyLocalStabFullGrid）
                 DiscMaxThickMm = th.DiscMaxThickMm,
                 TMaxC = th.TMaxC, TMinC = th.TMinC, TTabEndC = th.TTabEndMeanC,
                 AreaMm2 = mesh.TotalArea, VolumeMm3 = mesh.VolumeMm3,
@@ -2460,7 +2550,7 @@ public static class LineRunner
         if (c is null) throw new ArgumentNullException(nameof(c));
         if (drawLR is null) throw new ArgumentNullException(nameof(drawLR));
         Normalize(c);
-        var res = new LineResult { BaselineMassG = c.BaselineMassG, RampChecked = c.CheckRamp, EmptyTube = c.EmptyTube };   // K 路（2026-09-15 Opus 5）：同 RunOnce
+        var res = new LineResult { BaselineMassG = c.BaselineMassG, RampChecked = c.CheckRamp, EmptyTube = c.EmptyTube, RuleSet = c.RuleSet };   // 决 103：判据口径同 RunOnce；K 路（2026-09-15 Opus 5）：同 RunOnce
         string guard = CaseGuardMessage(c);
         if (guard.Length > 0) { res.Ok = false; res.Message = guard; return res; }
         if (drawLR.Length < c.SegmentCount || (nbT is not null && nbT.Length < c.SegmentCount))
@@ -3071,6 +3161,8 @@ public static class LineRunner
         //   吃法兰场，却不以名单里任何一项开头（Ramp 是「① 升温」、RampField 是「· 升温期法兰−管峰值」）⇒ 场没解到位、保温分界判不了、
         //   压接盖到管孔这三遍都漏掉了它，坏场上照样报用时。补进名单。
         LineResult.Key.RampHours,
+        // 决 103（2026-09-24）：两条新硬判据都吃法兰场（法兰最高温、管孔净热流）
+        LineResult.Key.HotOverContact, LineResult.Key.TubeToFlangeHeat,
     };
     /// <summary>同一份名单的只读出口（测试拿它核对）；名单本体是上面那个字段（FieldConvergenceGateTests 的源码门按它的名字找）。</summary>
     public static IReadOnlyList<string> DependsOnFlangeFields => dependsOnFlangeFields;
@@ -3298,7 +3390,7 @@ public static class LineRunner
     /// （段解 SolveAtCurrent 原样带回给定电流），不吃管温场，一并豁免；控温反算模式下电流由管温场二分出来，管 J 吃管温场，不豁免。
     /// </summary>
     public static IReadOnlyList<string> IndependentOfTubeFieldFor(bool useMeasuredCurrent)
-        => useMeasuredCurrent ? independentOfTubeField.Append(LineResult.Key.TubeJ).ToArray() : independentOfTubeField;
+        => useMeasuredCurrent ? independentOfTubeField.Append(LineResult.Key.TubeJ).Append(LineResult.Key.TubeJPre103).ToArray() : independentOfTubeField;   // 决 103：原许用值对照行与「管 J」同一个值、同一个依赖
 
     /// <summary>
     /// ★★ R48（2026-09-15，Opus 5；数值把关人第十四轮「其余散热表超界检测」）：**有段的管解最高温超出管散热表上限 ⇒ 吃管温场的判据一律判不了**。
@@ -3837,7 +3929,7 @@ public static class LineRunner
                 PlateEqOuterRadiusMm = Math.Sqrt(aNode / Math.PI + holeR * holeR),
                 FlangeThickMm = vNode / Math.Max(1e-9, aNode),
                 DesignCurrentA = iSeg,
-                MaxCurrentA = c.Base.TubeJAllowAPerMm2 * tubeAreaMm2,
+                MaxCurrentA = c.Base.TubeJLimitAPerMm2 * tubeAreaMm2,   // 决 103：升温电流上限读卡交付的管 J 限值（改回 = 许用，逐位同改前）
                 FromC = c.RampFromC, TargetC = c.RampTargetC,
                 RampRateKPerH = c.RampRateKPerH,
                 MaxHours = (c.RampTargetC - c.RampFromC)
@@ -3975,6 +4067,7 @@ public static class LineRunner
     {
         var checks = new List<ConstraintOut>();
         int n = segs.Length;
+        var rs = c.RuleSet;   // 决 103（2026-09-24）：判据口径（生产 = 决103；决103前 = 改回，下面每一处按它分支的地方都与改前逐位相同）
 
         // ── ① 升温：空管能否在限时内到目标温度
         //    法兰随管一起被加热，且**自身也发热**，故用本算例真实的法兰质量与自身焦耳热
@@ -4130,6 +4223,14 @@ public static class LineRunner
         //   · 舌片区峰也算进来：舌片是同一块铂，比读数高出误差带同样说不清（旧判法把舌片交给熔点与局部失稳，现在那两项是参考）。
         //   · 管根较热端也算进来：共用接头处管子本身可能被一侧控温点顶得比对数平均高。
         //   ⚠ 判不了的片照旧：**任何一片判不了 ⇒ 整条判不了**，点名是哪几片、缺的是哪个量。
+        // ★★★★★ 决 103（业主 2026-09-24）：带玻璃稳态卡交付的热侧、冷侧换成「法兰最热处高出管接触处温度 ≤ 10 K」「管接触处流入法兰的净热流 ≤ 0」。
+        //   构造在公开函数 ContactChecks（快门拿合成的片直接验）；改回口径不出这两行（判据表与改前逐位相同）。
+        if (rs == CriteriaRuleSet.决103)
+        {
+            var cc = ContactChecks(c, segs, flanges);
+            checks.Add(cc.Hot);
+            checks.Add(cc.Cold);
+        }
         var tcChecks = ThermocoupleChecks(c, segs, flanges);   // R48 B（2026-09-14 Opus 5）：热侧、冷侧两条的构造提成公开函数，快门用合成数据直接验
         checks.Add(tcChecks.Hot);
 
@@ -4399,15 +4500,29 @@ public static class LineRunner
             // ★ 2026-08-15：**从「参考」升为硬判据** —— 限值有来源了
             //   （用户现场：一般上限 15；管壁 0.6 时 12 是极限 ⇒ 全档取 12）。
             //   原来它是参考量，只因为限值 10 是个「物理依据待定」的占位值。
+            // ★ 决 103（业主 2026-09-24「J < 11」）：限值 = 卡交付的管 J 限值（唯一读法 DesignInputs.TubeJLimitAPerMm2 = min(原许用 12, 使用上限 11)）；
+            //   改回口径下它就是原许用值（与改前逐位相同，说明文字也照旧）。原 12 那一行在下面照印作对照。
             Name = "管 J", Unit = "A/mm²", Kind = CheckKind.HardSafety,
-            Actual = worstJt.TubeJAPerMm2, Limit = c.Base.TubeJAllowAPerMm2, Where = worstJt.Name,
-            Ok = worstJt.TubeJAPerMm2 <= c.Base.TubeJAllowAPerMm2,
-            Note = "限值来源：用户 2026-08-15 现场（一般 15；管壁 0.6 时 12 是极限）。" +
+            Actual = worstJt.TubeJAPerMm2, Limit = c.Base.TubeJLimitAPerMm2, Where = worstJt.Name,
+            Ok = worstJt.TubeJAPerMm2 <= c.Base.TubeJLimitAPerMm2,
+            Note = (rs == CriteriaRuleSet.决103前
+                    ? "限值来源：用户 2026-08-15 现场（一般 15；管壁 0.6 时 12 是极限）。"
+                    : $"限值来源：2026-09-24 定「管的最大使用电流密度 J < 11」（参数表「管 J 使用上限」{c.Base.TubeJUseCapAPerMm2:0.###}）与原许用值（08-15 现场，{c.Base.TubeJAllowAPerMm2:0.###}）取小 = {c.Base.TubeJLimitAPerMm2:0.###}；原许用值那一行下面照印作对照。") +
                    (c.Base.LossScale == 1.0
                 ? "⚠ 散热未标定，本值系统性偏高（§4.2l）⇒ 判定偏保守"
                 : $"散热已按 LossScale={c.Base.LossScale:0.000} 标定") +
-                   (worstJt.TubeJAPerMm2 > c.Base.TubeJAllowAPerMm2 ? NextAction.TubeJHigh : "")
+                   (worstJt.TubeJAPerMm2 > c.Base.TubeJLimitAPerMm2 ? NextAction.TubeJHigh : "")
         });
+        if (rs == CriteriaRuleSet.决103)
+            checks.Add(new ConstraintOut
+            {
+                // 决 103：原许用值（12）那一行留作对照（参考量）。变因：2026-09-24 定 J < 11，卡交付的换成上一行。
+                Name = LineResult.Key.TubeJPre103, Unit = "A/mm²", Kind = CheckKind.Reference,
+                Actual = worstJt.TubeJAPerMm2, Limit = c.Base.TubeJAllowAPerMm2, Where = worstJt.Name,
+                Ok = worstJt.TubeJAPerMm2 <= c.Base.TubeJAllowAPerMm2,
+                Note = "对照（不卡交付）：2026-09-24 之前卡交付的管 J 限值 = 参数表「管许用电流密度」（08-15 现场：一般 15；管壁 0.6 时 12 是极限）。"
+                     + "变因：2026-09-24 定「管的最大使用电流密度 J < 11」，卡交付的换成上一行（两者取小）。"
+            });
 
         // ── ⑤⑥ 几何闭式判据 —— 实现已搬到 Core/GeometryScreen.cs
         //
@@ -4482,6 +4597,10 @@ public static class LineRunner
                 var lumped = FlangeLumped(c, flanges, excludeClampCells: true)!;   // 与本 if 同一个前提（有片、有板件）⇒ 非空
                 var fw = flanges[lumped.Index];
                 var st = lumped.Stab;
+                // 决 103（2026-09-24）：逐片整片热稳定裕度带到片上（求解器逐片裕度读它；只多写片上字段，判据表不变）
+                if (lumped.PerPlate is { } perPlate)
+                    for (int jj = 0; jj < flanges.Length && jj < perPlate.Length; jj++)
+                        flanges[jj].FlangeStabMargin = perPlate[jj] is { } pp && !pp.Stab.Undetermined && !double.IsNaN(flanges[jj].QGenW) ? pp.Stab.Margin : double.NaN;
                 checks.Add(new ConstraintOut
                 {
                     Name = LineResult.Key.FlangeStab, Unit = "×", Kind = CheckKind.Reference,
@@ -4595,26 +4714,7 @@ public static class LineRunner
                 //   实测 selfcheck B 段「板厚 ×0.5」四片最高 4361 °C，
                 //   而这一条报 **1.9×**，看着比设计记录还安全。
                 //   这是同一个偏乐观偏差在**片这一层**的重演（格那一层已修）。
-                bool anyUnknownPlate = flanges.Any(f => double.IsNaN(f.LocalStabMargin));
-                var wl = anyUnknownPlate ? null
-                       : flanges.OrderBy(f => f.LocalStabMargin).FirstOrDefault();
-                checks.Add(new ConstraintOut
-                {
-                    Name = LineResult.Key.LocalStab, Unit = "×", Kind = CheckKind.Reference,
-                    Actual = wl?.LocalStabMargin ?? double.NaN, Limit = 1.0,
-                    LessIsBetter = false, Ok = wl is not null && wl.LocalStabMargin > 1.0,
-                    Undetermined = wl is null,
-                    Where = wl is null ? "—"
-                          : $"{wl.Name} {(wl.LocalStabOnTab ? "舌" : "盘")} r={wl.LocalStabRMm:0.0}",
-                    Note = "J_stab ÷ J_实际，**须 > 1**；< 1 即该点会自行升温直到烧断。"
-                         + (wl is null
-                            ? "　有片的温度超出电阻率拟合区间 ⇒ **整条判不了**（多半是场解已发散）。"
-                              + "　不拿健康片的数充数 —— 那会报出一个比设计记录还安全的假象"
-                            : $"　该点 {wl.LocalStabTempC:0} °C、J={wl.LocalStabJAPerMm2:0.00} A/mm²。"
-                              + $"　横向导热长 L={wl.LocalStabLatLenMm:0.0} mm（到最近**定温锚点**：管孔 / 压接段）。"
-                              + "　L 若按「不计横向导热」取 ∞，两个现役设计记录会被判成 0.6×（失稳）——保守到失真不叫保守，叫判据坏了。")
-                         + "　⚠ 现为参考量，同上。"
-                });
+                checks.Add(LocalStabCheck(c, flanges));   // 决 103（2026-09-24）：构造提成 LocalStabCheck —— 整线收尾换成全格值后同一个函数重建这一行（改回口径逐位同改前）
             }
         }
 
@@ -4637,8 +4737,198 @@ public static class LineRunner
 
         // ★★★★★ K 路（2026-09-15，Opus 5）：分工况判据 —— 每条判据在本工况下是硬判据还是参考量，只从 LineResult.RequiredByState 取（唯一一处）。
         //   上面各条照常按带玻璃稳态的写法构造（计算、说明、判不了的处理两态一样），这里按工况把 Kind 盖上去；带玻璃稳态没有一条会变（逐位不变）。
-        ApplyStateCriteria(c.EmptyTube, checks);
+        ApplyStateCriteria(c.EmptyTube, checks, rs);   // 决 103：按口径取分工况表（改回口径 = 改前那张表，逐位同改前）
         return checks.ToArray();
+    }
+
+    /// <summary>
+    /// 局部热稳定那一行的构造（Judge 与 <see cref="ApplyLocalStabFullGrid"/> 共用；决 103 2026-09-24 从 Judge 原样提出）。
+    /// 取全线最不稳定的那一片（任何一片判不了 ⇒ 整条判不了）。改回口径下与改前逐字相同（含末句「现为参考量」）；
+    /// 决 103 口径下末句换成全格精算的说明与代价（全格精算做了的话），Kind 由分工况表盖（带玻璃稳态硬判据）。
+    /// </summary>
+    public static ConstraintOut LocalStabCheck(LineCase c, FlangeOut[] flanges)
+    {
+        if (c is null) throw new ArgumentNullException(nameof(c));
+        if (flanges is null) throw new ArgumentNullException(nameof(flanges));
+        // 局部热稳定：取**全线最不稳定的那一格**（由场解逐格筛出，见
+        // ShellThermalResult.LocalStabMargin）。
+        //
+        // ★ 第一版拿「圆盘最热那一格」当代表，**是错的**：实测两个现役档上
+        //   盘温峰落在外缘，那里电流密度≈0 ⇒ 裕度算出 +∞ ⇒ 判据表上会写着
+        //   「无限安全」而其实一格都没验。最热 ≠ 最不稳定。
+        // ★★ **任何一片判不了 ⇒ 整条判不了**（2026-08-24 修）。
+        //
+        //   原来是 `Where(!NaN).OrderBy(margin).First()` —— 取「剩下几片里最差的」。
+        //   可判不了的恰恰是**发散的那一片**（温度出了电阻率拟合区间），
+        //   于是发散算例上会报出一个由**健康片**算来的漂亮数：
+        //   实测 selfcheck B 段「板厚 ×0.5」四片最高 4361 °C，
+        //   而这一条报 **1.9×**，看着比设计记录还安全。
+        //   这是同一个偏乐观偏差在**片这一层**的重演（格那一层已修）。
+        bool anyUnknownPlate = flanges.Any(f => double.IsNaN(f.LocalStabMargin));
+        var wl = anyUnknownPlate ? null
+               : flanges.OrderBy(f => f.LocalStabMargin).FirstOrDefault();
+        return new ConstraintOut
+        {
+            Name = LineResult.Key.LocalStab, Unit = "×", Kind = CheckKind.Reference,
+            Actual = wl?.LocalStabMargin ?? double.NaN, Limit = 1.0,
+            LessIsBetter = false, Ok = wl is not null && wl.LocalStabMargin > 1.0,
+            Undetermined = wl is null,
+            Where = wl is null ? "—"
+                  : $"{wl.Name} {(wl.LocalStabOnTab ? "舌" : "盘")} r={wl.LocalStabRMm:0.0}",
+            Note = "J_stab ÷ J_实际，**须 > 1**；< 1 即该点会自行升温直到烧断。"
+                 + (wl is null
+                    ? "　有片的温度超出电阻率拟合区间 ⇒ **整条判不了**（多半是场解已发散）。"
+                      + "　不拿健康片的数充数 —— 那会报出一个比设计记录还安全的假象"
+                    : $"　该点 {wl.LocalStabTempC:0} °C、J={wl.LocalStabJAPerMm2:0.00} A/mm²。"
+                      + $"　横向导热长 L={wl.LocalStabLatLenMm:0.0} mm（到最近**定温锚点**：管孔 / 压接段）。"
+                      + "　L 若按「不计横向导热」取 ∞，两个现役设计记录会被判成 0.6×（失稳）——保守到失真不叫保守，叫判据坏了。")
+                 + (c.RuleSet == CriteriaRuleSet.决103前 ? "　⚠ 现为参考量，同上。" : LocalStabFullGridNote(flanges))
+        };
+    }
+
+    /// <summary>决 103：局部热稳定一行末尾的全格精算说明（做了 ⇒ 逐片「前 12 名口径 → 全格真值」与代价；没做 ⇒ 说明本值还是前 12 名口径、偏乐观）。</summary>
+    public static string LocalStabFullGridNote(FlangeOut[] flanges)
+    {
+        var done = flanges.Where(f => f is not null && f.LocalStabFullCells > 0).ToArray();
+        if (done.Length == 0)
+            return "　⚠ 本值还是「两区各取前 12 名」口径（决 99 实测偏乐观 3.5～4.9 倍、落点偏近）；整线收尾时换成全格精算值。";
+        string Per(FlangeOut f) => double.IsNaN(f.LocalStabMargin)
+            ? $"{f.Name} 判不了（前 12 名口径 {f.LocalStabTop12Margin:0.###}）"
+            : $"{f.Name} {f.LocalStabMargin:0.###}（r {f.LocalStabRMm:0.0}）← 前 12 名口径 {f.LocalStabTop12Margin:0.###}（r {f.LocalStabTop12RMm:0.0}）"
+              + (f.LocalStabMargin > 0 && !double.IsNaN(f.LocalStabTop12Margin) ? $"，前 12 名偏乐观 {f.LocalStabTop12Margin / f.LocalStabMargin:0.00} 倍" : "");
+        // 秒数写成「用时 x s」：挂钟量不是模型的数，转储对拍一律按这个写法去挂钟（R48PropsWiringGateTests.DumpNoTiming、R48CriteriaSwapDump.Comparable）
+        return $"　全格精算（决 99 选项 A；全片自由格逐格同一个判法）：{string.Join("；", done.Select(Per))}。"
+             + $"代价：{done.Sum(f => f.LocalStabFullCells)} 格、用时 {done.Sum(f => f.LocalStabFullSec):0.0} s（只对终局那一份场各片算一次）。";
+    }
+
+    /// <summary>
+    /// ★★★★★ 决 103（业主 2026-09-24「局部热稳定落点按决 99 修全格」；决 99 选项 A）：整线收尾对终局那一份场逐片做**局部热稳定全格精算**，
+    /// 片上 LocalStab* 换成全格值（原前 12 名口径的值留在 LocalStabTop12*），判据表那一行用 <see cref="LocalStabCheck"/> 重建并按分工况表盖 Kind；
+    /// 那一行已被后置标记判成「判不了」的（场没解到位、保温分界、压接、管散热表超界）不动 —— 判不了照旧。
+    /// 片上 LocalStabRMm 换成全格落点 ⇒ 细区半径的热点核对（MeshVerify.HotspotRadiusMm，C4′）读到的是真位置。
+    /// 改回口径（决103前）什么都不做（逐位同改前）。代价写进 <see cref="LineResult.LocalStabFullGridSec"/> 与 Notes。
+    /// </summary>
+    public static void ApplyLocalStabFullGrid(LineCase c, LineResult res)
+    {
+        if (c is null) throw new ArgumentNullException(nameof(c));
+        if (res is null) throw new ArgumentNullException(nameof(res));
+        if (c.RuleSet == CriteriaRuleSet.决103前 || res.Flanges.Length == 0) return;
+        double sec = 0; int cells = 0, done = 0;
+        foreach (var f in res.Flanges)
+        {
+            if (f?.LocalStabFullGrid is not { } eval) continue;
+            var sc = eval();
+            f.LocalStabTop12Margin = f.LocalStabMargin; f.LocalStabTop12RMm = f.LocalStabRMm;
+            f.LocalStabMargin = sc.Margin; f.LocalStabRMm = sc.RMm; f.LocalStabTempC = sc.TempC;
+            f.LocalStabJAPerMm2 = sc.JAPerMm2; f.LocalStabLatLenMm = sc.LatLenMm; f.LocalStabOnTab = sc.OnTab;
+            f.LocalStabFullCells = sc.CellsEvaluated; f.LocalStabFullSec = sc.Seconds;
+            f.LocalStabFullGrid = null;   // 用过即弃：同一份场不重复算，也放掉闭包
+            sec += sc.Seconds; cells += sc.CellsEvaluated; done++;
+        }
+        if (done == 0) return;
+        res.LocalStabFullGridSec += sec; res.LocalStabFullGridCells += cells;
+        int idx = Array.FindIndex(res.Checks, x => x is not null && x.Name == LineResult.Key.LocalStab);
+        if (idx >= 0 && !res.Checks[idx].Undetermined)
+        {
+            var nw = LocalStabCheck(c, res.Flanges);
+            ApplyStateCriteria(c.EmptyTube, new[] { nw }, c.RuleSet);
+            res.Checks[idx] = nw;
+        }
+        res.Notes.Add($"局部热稳定全格精算（决 99 选项 A）：{done} 片、{cells} 格、用时 {sec:0.0} s（只对终局那一份场）。");
+    }
+
+    /// <summary>
+    /// ★★★★★ 决 103（业主 2026-09-24）：**带玻璃稳态卡交付的热侧、冷侧两条的构造** —— Judge 只调这一处；公开是为了让快门拿合成的片直接验（取哪一片、判不了怎么报）。
+    /// 热侧：第 j 片 H_j = max(该片法兰温度场) − 该片管接触处温度 = <see cref="FlangeOut.TMaxC"/> − <see cref="FlangeOut.TRootC"/> ≤ <see cref="LineCase.HotOverContactMaxK"/>（10 K）。
+    ///   接触处温度的取法见 <see cref="CriteriaRules.ContactBasisNote"/>（旧判法「圆盘区最高温 − 管温」同一基准）；热偶设定值只印对照。
+    /// 冷侧：第 j 片 C_j = 管孔处由管流入法兰的净热流 = <see cref="FlangeOut.QFromTubeW"/>（正 = 管 → 法兰，即法兰在抽管子的热、把管在接触处拉低）≤ 0 W，不给预算。
+    ///   与「管孔净流入须为正」是同一个量，合格方向相反（原判据要它 &gt; 0；决 103 要它 ≤ 0）。
+    /// 任何一片判不了（NaN）⇒ 整条判不了，点名是哪几片。片数必须 = 段数 + 1（同 <see cref="ThermocoupleChecks"/> 的那道闸）。
+    /// </summary>
+    public static (ConstraintOut Hot, ConstraintOut Cold) ContactChecks(LineCase c, SegmentOut[] segs, FlangeOut[] flanges)
+    {
+        if (c is null) throw new ArgumentNullException(nameof(c));
+        int nSeg = segs?.Length ?? 0, nFl = flanges?.Length ?? 0;
+        double hotLim = c.HotOverContactMaxK, coldLim = CriteriaRules.TubeToFlangeHeatMaxW;
+        if (nSeg < 1 || nFl != LineSolver.FlangeCount(nSeg))
+        {
+            string why = nSeg < 1 ? "没有管段，管接触处温度无从取"
+                                  : $"法兰片数 {nFl} 与段数 {nSeg} 对不上（应为 {LineSolver.FlangeCount(nSeg)} 片）";
+            ConstraintOut Blind(string name, string unit, double lim) => new()
+            {
+                Name = name, Unit = unit, Kind = CheckKind.HardSafety, LessIsBetter = true,
+                Actual = double.NaN, Limit = lim, Ok = false, Undetermined = true, Where = "—",
+                Note = $"★ **无法判定**：{why} —— 缺的那几片一次都没判过。不要把它读成通过。",
+            };
+            return (Blind(LineResult.Key.HotOverContact, "K", hotLim), Blind(LineResult.Key.TubeToFlangeHeat, "W", coldLim));
+        }
+        var fl = flanges!; var sg = segs!;
+        int n = sg.Length;
+        // 第 j 片两侧的段端温度（端片只有一侧）：段 i 的 A 端贴第 i 片、B 端贴第 i+1 片
+        string Ends(int j) => j == 0 ? $"{sg[0].Name} 首端 {sg[0].TRootAC:0.0}"
+                            : j >= n ? $"{sg[n - 1].Name} 末端 {sg[n - 1].TRootBC:0.0}"
+                            : $"{sg[j - 1].Name} 末端 {sg[j - 1].TRootBC:0.0}／{sg[j].Name} 首端 {sg[j].TRootAC:0.0}";
+        string Zone(FlangeOut f) => f.TMaxC == f.TDiscMaxC ? "圆盘区" : f.TMaxC == f.TTabMaxC ? "舌片区" : "孔边或压接段的格";
+
+        ConstraintOut hot;
+        var hs = fl.Select(f => f.TMaxC - f.TRootC).ToArray();
+        var blindH = Enumerable.Range(0, nFl).Where(j => double.IsNaN(hs[j])).ToArray();
+        string PerH() => "逐片：" + string.Join("／", Enumerable.Range(0, nFl).Select(j => $"{fl[j].Name} {hs[j]:+0.00;−0.00}")) + " K";
+        if (blindH.Length == 0)
+        {
+            int w = 0;
+            for (int j = 1; j < nFl; j++) if (hs[j] > hs[w]) w = j;
+            var f = fl[w];
+            bool ok = hs[w] <= hotLim;
+            double refC = ThermocoupleBasis.At(sg, fl, w).RefC;
+            hot = new ConstraintOut
+            {
+                Name = LineResult.Key.HotOverContact, Unit = "K", Kind = CheckKind.HardSafety, LessIsBetter = true,
+                Actual = hs[w], Limit = hotLim, Ok = ok, Where = f.Name,
+                Note = $"该片法兰温度场最高 {f.TMaxC:0.0} °C（落在{Zone(f)}；圆盘区峰 {f.TDiscMaxC:0.0}、舌片区峰 {f.TTabMaxC:0.0}）"
+                     + $" − 管接触处 {f.TRootC:0.0} °C（段端：{Ends(w)} °C）。{CriteriaRules.ContactBasisNote}"
+                     + $"　热偶设定值基准 {refC:0.0} °C 只印对照（最热处比它高 {f.TMaxC - refC:+0.0;−0.0} K，不判）。{PerH()}。"
+                     + $"允许高出 {hotLim:0.###} K（参数表「法兰最热处高出管接触处温度 允许值」，2026-09-24 定：法兰比管接触处略热的方向是对的，可容许到 10 °C 以内）。"
+                     + (ok ? "" : "　【下一步】法兰偏热：板厚↑（或舌保温↓）；求解器只抬不降，这一条由板厚与内外级倍率治。")
+            };
+        }
+        else
+            hot = new ConstraintOut
+            {
+                Name = LineResult.Key.HotOverContact, Unit = "K", Kind = CheckKind.HardSafety, LessIsBetter = true,
+                Actual = double.NaN, Limit = hotLim, Ok = false, Undetermined = true,
+                Where = string.Join("、", blindH.Select(j => fl[j].Name)),
+                Note = $"★ **无法判定**：{blindH.Length} 片的法兰最高温或管接触处温度算不出（NaN）—— **任何一片判不了，整条就判不了**，不拿剩下几片充数。不要把它读成通过。"
+            };
+
+        ConstraintOut cold;
+        var qs = fl.Select(f => f.QFromTubeW).ToArray();
+        var blindC = Enumerable.Range(0, nFl).Where(j => double.IsNaN(qs[j])).ToArray();
+        string PerC() => "逐片：" + string.Join("／", Enumerable.Range(0, nFl).Select(j => $"{fl[j].Name} {qs[j]:+0.00;−0.00}")) + " W";
+        if (blindC.Length == 0)
+        {
+            int w = 0;
+            for (int j = 1; j < nFl; j++) if (qs[j] > qs[w]) w = j;
+            bool ok = qs[w] <= coldLim;
+            cold = new ConstraintOut
+            {
+                Name = LineResult.Key.TubeToFlangeHeat, Unit = "W", Kind = CheckKind.HardSafety, LessIsBetter = true,
+                Actual = qs[w], Limit = coldLim, Ok = ok, Where = fl[w].Name,
+                Note = "管孔处由管流入法兰的净热流（正 = 法兰在抽管子的热、把管在接触处的温度拉低；负 = 法兰给管子送热）；须 ≤ 0，不给预算"
+                     + "（2026-09-24 定：拉低管温的方向是错的）。与「管孔净流入须为正」是同一个量，合格方向相反。"
+                     + $"{PerC()}。"
+                     + (ok ? "" : "　【下一步】法兰在抽管子的热：舌保温↑、板厚↓；铜排夹持温度↑（少冷却，第二阶段旋钮）。求解器只抬不降，这一条由舌保温、圆盘槽、舌孔治。")
+            };
+        }
+        else
+            cold = new ConstraintOut
+            {
+                Name = LineResult.Key.TubeToFlangeHeat, Unit = "W", Kind = CheckKind.HardSafety, LessIsBetter = true,
+                Actual = double.NaN, Limit = coldLim, Ok = false, Undetermined = true,
+                Where = string.Join("、", blindC.Select(j => fl[j].Name)),
+                Note = $"★ **无法判定**：{blindC.Length} 片的管孔净热流算不出（NaN）—— **任何一片判不了，整条就判不了**。不要把它读成通过。"
+            };
+        return (hot, cold);
     }
 
     /// <summary>
@@ -4647,16 +4937,33 @@ public static class LineRunner
     /// 不在分工况表里的判据不动。Judge 末尾调它；公开是为了让门拿合成的判据条目直接验「同一条在两个工况下判不判」，不必跑整线解。
     /// </summary>
     public static void ApplyStateCriteria(bool emptyTube, IEnumerable<ConstraintOut> checks)
+        => ApplyStateCriteria(emptyTube, checks, CriteriaRuleSet.决103);
+
+    /// <summary>
+    /// 决 103（2026-09-24）：按口径盖 Kind。改回口径（决103前）与改前逐位相同（只有空管态降参考、说明加 <see cref="LineResult.StateDowngradeNote"/>）。
+    /// 决 103 口径：带玻璃稳态下本身就只作参考的（三条热偶／净流入）降级时说明加 <see cref="CriteriaRules.DowngradeNote"/>；
+    ///   由参考升为硬判据的（两条热稳定）说明加 <see cref="CriteriaRules.UpgradeNote"/>；只在空管态降参考的照旧加 StateDowngradeNote。
+    /// </summary>
+    public static void ApplyStateCriteria(bool emptyTube, IEnumerable<ConstraintOut> checks, CriteriaRuleSet rs)
     {
         if (checks is null) throw new ArgumentNullException(nameof(checks));
         foreach (var ck in checks)
         {
             if (ck is null) continue;
-            var k = LineResult.StateKindOf(ck.Name, emptyTube);
+            var k = LineResult.StateKindOf(ck.Name, emptyTube, rs);
             if (k is null || k.Value == ck.Kind) continue;
             bool downgraded = k.Value == CheckKind.Reference && ck.Kind != CheckKind.Reference;
+            bool upgraded = k.Value != CheckKind.Reference && ck.Kind == CheckKind.Reference;
             ck.Kind = k.Value;
-            if (downgraded) ck.Note = LineResult.StateDowngradeNote(emptyTube) + (string.IsNullOrEmpty(ck.Note) ? "" : "　" + ck.Note);
+            if (downgraded)
+            {
+                // 带玻璃稳态下本条也只作参考 ⇒ 是口径换向降的级，不是工况降的级
+                bool glassRef = rs != CriteriaRuleSet.决103前 && LineResult.StateKindOf(ck.Name, false, rs) is CheckKind.Reference;
+                ck.Note = (glassRef ? CriteriaRules.DowngradeNote : LineResult.StateDowngradeNote(emptyTube))
+                        + (string.IsNullOrEmpty(ck.Note) ? "" : "　" + ck.Note);
+            }
+            else if (upgraded)
+                ck.Note = CriteriaRules.UpgradeNote + (string.IsNullOrEmpty(ck.Note) ? "" : "　" + ck.Note);
         }
     }
 }

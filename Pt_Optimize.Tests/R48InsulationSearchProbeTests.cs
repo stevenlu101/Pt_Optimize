@@ -136,7 +136,7 @@ public class R48InsulationSearchProbeTests
         ThreadPool.GetMinThreads(out int wMin, out int ioMin);
         ThreadPool.SetMinThreads(Math.Max(wMin, 64), ioMin);
 
-        var p = new DesignInputs { SplitSharedFlangeDraw = true };
+        var p = new DesignInputs { SplitSharedFlangeDraw = true, CriteriaRuleSet = InsulationSearch.RuleSetOfSearch };   // 决 103（2026-09-24）：保温搜索只在改回口径下跑（生产口径拒答）
         var d = DesignSpec.W08.Clone();
         d.TabThickMm = new[] { 0.73, 1.26, 1.26, 0.73 };
         d.RingMul = new[] { 1.0, 1.0, 1.0, 1.0 };

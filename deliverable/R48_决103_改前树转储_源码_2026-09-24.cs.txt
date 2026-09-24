@@ -1,0 +1,57 @@
+// 改前树转储的源码副本（2026-09-24）：本档 + Pt_Optimize.Tests/R48CriteriaSwapDump.cs（入库、改后树同一份）在 cc49836 上编译跑，出 deliverable/R48_决103_改前树转储_W08现役与RW45_导航_本次开跑于2026-09-24_174150.txt
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using PtOptimize.Core;
+using Xunit;
+using Xunit.Abstractions;
+
+namespace PtOptimize.Tests;
+
+// 决 103 改回逐位门的「改前树」转储（临时档，只在改前树 cc49836 上跑一次；源码副本随证据入 deliverable，不入库为门）。
+public class ZZCriteriaSwapBaselineTests
+{
+    private readonly ITestOutputHelper _o;
+    public ZZCriteriaSwapBaselineTests(ITestOutputHelper o) { _o = o; }
+
+    static string Sh(string cmd, string args)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(cmd, args) { RedirectStandardOutput = true, UseShellExecute = false };
+            using var p = Process.Start(psi)!; string s = p.StandardOutput.ReadToEnd().Trim(); p.WaitForExit(); return s;
+        }
+        catch (Exception ex) { return "未查到（" + ex.GetType().Name + "）"; }
+    }
+    static string Load() { try { return File.ReadAllText("/proc/loadavg").Trim(); } catch { return "未查到"; } }
+
+    [Trait("速度", "慢")]
+    [Fact]
+    public void 改前树转储_W08现役与RW45_导航()
+    {
+        string file = DeliverableOut.Stamped("R48_决103_改前树转储_W08现役与RW45_导航.txt");
+        string root = HandoverDoc.Root();
+        var head = new StringBuilder();
+        head.AppendLine("决 103 改回逐位门的改前树转储　W08 现役设计（盘 30、舌半宽 30）与 R = w = 45（舌长按搜形状规则）　导航网格整线一次解（只印）");
+        head.AppendLine($"开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}　平台 Linux 镜像（{Environment.OSVersion}，.NET {Environment.Version}，{Environment.ProcessorCount} 核）　Linux、待 Windows 重录");
+        head.AppendLine($"工作树 {root}　提交 {Sh("git", $"-C {root} rev-parse --short HEAD")}（分离头；未提交的只有转储档 R48CriteriaSwapDump.cs 与本测试档，Core 未改）");
+        head.AppendLine($"同机并跑：两例并发 2；开跑时 /proc/loadavg = {Load()}");
+        head.AppendLine("写法：R48CriteriaSwapDump.SolveAndDump（= R48NMeshGateTests.SolveLine 同一路），数一律按 R 格式；以「耗时」开头的行是挂钟，对拍时跳过。");
+        head.AppendLine();
+        var cases = R48CriteriaSwapDump.Cases();
+        var outs = new R48CriteriaSwapDump.Out[cases.Count];
+        Parallel.For(0, cases.Count, new ParallelOptions { MaxDegreeOfParallelism = 2 }, i =>
+        {
+            outs[i] = R48CriteriaSwapDump.SolveAndDump(cases[i].Tag, cases[i].D.Clone(), new DesignInputs(), 0.0);
+        });
+        var sb = new StringBuilder(head.ToString());
+        foreach (var o in outs) sb.Append(o.Text).AppendLine();
+        sb.AppendLine($"收尾 {DateTime.Now:yyyy-MM-dd HH:mm:ss}　loadavg {Load()}");
+        File.WriteAllText(file, sb.ToString(), new UTF8Encoding(true));
+        _o.WriteLine(file);
+        Assert.True(outs.All(o => o.R is not null), "有一例抛异常：" + string.Join("；", outs.Select(o => o.Error)));
+    }
+}

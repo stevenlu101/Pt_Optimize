@@ -257,7 +257,8 @@ public class R48LineDumpTests
         // 2026-09-23 Fable 5.1：**挂钟量不是模型的数**。§0.-16M 把量雅可比的用时 JacobianAmpSec（秒）加进 LineResult 之后，同一棵树任意两跑的「去文字」SHA 必不同
         //   （本会话实测：物性接线树 03:52 那跑对合并树 01:34 那跑，六份转储逐行只差 结果.JacobianAmpSec 与 Notes 里印它的那半句；Notes 是文字，去文字口径本就不看）。
         //   去文字口径下按成员名写占位「<挂钟>」，全文 SHA 照写原值。六条记录仍是 09-18 12:01 的 Windows 数（那时还没有 JacobianAmpSec），下次 Windows 重录按本口径。
-        private static readonly HashSet<string> WallClock = new(StringComparer.Ordinal) { "JacobianAmpSec", "RampSeconds", "EmptyTubeSeconds" };
+        // 决 103（2026-09-24）：局部热稳定全格精算的用时（LineResult.LocalStabFullGridSec、FlangeOut.LocalStabFullSec）同属挂钟量，一并写占位。
+        private static readonly HashSet<string> WallClock = new(StringComparer.Ordinal) { "JacobianAmpSec", "RampSeconds", "EmptyTubeSeconds", "LocalStabFullGridSec", "LocalStabFullSec" };
 
         // 2026-09-16 Opus 5（I 路审查意见 5）：去文字原写「<文字 N 字>」，改措辞变字数也会动去文字 SHA ⇒ 改成只写占位「<文字>」（六条记录同日重记）
         private string Text(string s) => _text ? "\"" + s.Replace("\\", "\\\\").Replace("\r", "\\r").Replace("\n", "\\n") + "\"" : "<文字>";

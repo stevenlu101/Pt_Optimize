@@ -135,6 +135,8 @@ public class R48PropsWiringGateTests
     internal static string DumpNoTiming(LineCase lc, LineResult r)   // 2026-09-23（F3）：private → internal，R48F3FaceHeatGateTests 的改回逐位门用同一份去耗时转储
     {
         string full = Regex.Replace(R48LineDumpTests.Dump(lc, r, withText: true), @"(结果\.JacobianAmpSec = )[^\n]*", "$1<耗时>");
+        // 决 103（2026-09-24）：局部热稳定全格精算的用时两个成员同属挂钟量（去文字转储的占位见 R48LineDumpTests.Dumper.WallClock）
+        full = Regex.Replace(full, @"(\.LocalStabFullGridSec = |\.LocalStabFullSec = )[^\n]*", "$1<耗时>");
         return Regex.Replace(full, @"用时 [0-9.]+ s", "用时 <耗时> s");
     }
 

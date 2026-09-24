@@ -28,7 +28,8 @@ public class RequiredChecksTests
     /// <summary>造一张「该有的都有、而且条条都过」的表。</summary>
     private static LineResult Table(bool ramp = true, string? drop = null, bool emptyTube = false)
     {
-        var r = new LineResult { Converged = true, Ok = true, RampChecked = ramp, EmptyTube = emptyTube };
+        // 决 103（2026-09-24）：表按生产口径的名单造（RequiredFor 不带口径 = 决103），结果也写明是生产口径（手造结果缺省是改回口径，见 LineResult.RuleSet）
+        var r = new LineResult { Converged = true, Ok = true, RampChecked = ramp, EmptyTube = emptyTube, RuleSet = CriteriaRuleSet.决103 };
         r.Checks = LineResult.RequiredFor(emptyTube)
             .Where(q => (!q.NeedsRamp || ramp) && q.Prefix != drop)
             // 名字带后缀：判据在实作里都是「前缀 + 说明」（如「③ 法兰增量温降 ≤ 上限」），
@@ -137,7 +138,7 @@ public class RequiredChecksTests
     [InlineData(true)]
     public void EmptyTable_IsNotSilentlyOk(bool emptyTube)
     {
-        var r = new LineResult { Converged = true, Ok = true, RampChecked = true, EmptyTube = emptyTube };
+        var r = new LineResult { Converged = true, Ok = true, RampChecked = true, EmptyTube = emptyTube, RuleSet = CriteriaRuleSet.决103 };   // 决 103：同 Table()
         Assert.False(r.HardOk, "空判据表报出「硬安全线全过」—— 空集恒真的老毛病");
         Assert.False(r.AllOk);
         Assert.Equal(LineResult.RequiredFor(emptyTube).Length, r.MissingChecks.Length);
@@ -149,9 +150,10 @@ public class RequiredChecksTests
     {
         var und = Table();
         // R48 B（2026-09-14 Opus 5）：有意改动 —— 自证用的硬安全线从「圆盘区最高温 − 管温」（DiscTemp，已降为参考量、不在必备名单）换成热偶读数基准的热侧 HotOverTc；依据 LineResult.Required。
+        // 决 103（2026-09-24）：有意改动 —— 「最热铂高出热偶读数」降为参考、不在生产必备名单 ⇒ 自证用的硬安全线换成新热侧「法兰最热处高出管接触处温度」（HotOverContact）；依据 LineResult.RequiredByState。
         var i = System.Array.FindIndex(und.Checks,
-            c => c.Name.StartsWith(LineResult.Key.HotOverTc, System.StringComparison.Ordinal));
-        Assert.True(i >= 0, "自证：表里本来就该有「最热铂高出热偶读数」，否则下面验的是空气");
+            c => c.Name.StartsWith(LineResult.Key.HotOverContact, System.StringComparison.Ordinal));
+        Assert.True(i >= 0, "自证：表里本来就该有「法兰最热处高出管接触处温度」，否则下面验的是空气");
         und.Checks[i].Ok = false;
         und.Checks[i].Undetermined = true;
         und.Checks[i].Actual = double.NaN;

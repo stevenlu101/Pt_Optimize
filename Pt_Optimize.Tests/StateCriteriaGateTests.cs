@@ -32,15 +32,20 @@ namespace PtOptimize.Tests;
 ///   源码门补三处（2026-09-16，复审修 S3/S5/S6）：LineRunner.cs 每一处 new LineResult 都写工况位且恰两处（原来核一处字串，删一处不红）；层可行接线
 ///   `lr.FinalLineAllOk = ok` 与空管态闭合退路 `if (judged)` 两行原文 —— 这两处**只有源码门、无行为门**（RunLayer／EvaluatePoint 私有、要真解整线才走到），HANDOVER 记。
 /// </summary>
+// ★ 决 103（2026-09-24）：本档守的是 K 路（2026-09-15）那一套分工况口径（⑦／⑧／②′ 带玻璃稳态卡、空管态参考）—— 决 103 起它只在改回口径（CriteriaRuleSet = 决103前）下成立。
+//   有意改动：合成底表与真解一律显式走改回口径（RequiredByStatePre103、ApplyStateCriteria(…, 决103前)、参数表 CriteriaRuleSet = 决103前），机制照旧逐条验；
+//   生产口径（决 103）的分工况表、降级／升级说明由 R48CriteriaSwapGateTests 验。源码门的钉子按新签名改（带口径的重载）。
 public class StateCriteriaGateTests
 {
+    private const CriteriaRuleSet Pre = CriteriaRuleSet.决103前;
+
     private readonly ITestOutputHelper _o;
     public StateCriteriaGateTests(ITestOutputHelper o) => _o = o;
 
     private static readonly string[] ThreeKeys = { LineResult.Key.NetFlux, LineResult.Key.HotOverTc, LineResult.Key.ColdUnderTc };
 
     /// <summary>Judge 那样构造的底表：分工况表里每条按带玻璃稳态的 Kind 造、条条通过，外加一条参考量。名字带后缀（Judge 里的名字都是「前缀 + 说明」）。</summary>
-    private static List<ConstraintOut> JudgeLikeTable(params string[] except) => LineResult.RequiredByState
+    private static List<ConstraintOut> JudgeLikeTable(params string[] except) => LineResult.RequiredByStatePre103
         .Where(q => !except.Contains(q.Prefix))
         .Select(q => new ConstraintOut { Name = q.Prefix + " 某某后缀", Kind = q.GlassKind, Ok = true, Actual = 1, Limit = 2, Note = "原注" })
         .Append(new ConstraintOut { Name = "· 某参考量", Kind = CheckKind.Reference, Ok = true, Actual = 1, Limit = 2 })
@@ -48,8 +53,8 @@ public class StateCriteriaGateTests
 
     private static LineResult Result(bool emptyTube, List<ConstraintOut> table)
     {
-        LineRunner.ApplyStateCriteria(emptyTube, table);
-        return new LineResult { Converged = true, Ok = true, RampChecked = false, EmptyTube = emptyTube, Checks = table.ToArray() };
+        LineRunner.ApplyStateCriteria(emptyTube, table, Pre);
+        return new LineResult { Converged = true, Ok = true, RampChecked = false, EmptyTube = emptyTube, RuleSet = Pre, Checks = table.ToArray() };
     }
 
     /// <summary>一段两片的合成接头：片0 圆盘峰 1157 °C（热侧 +7 K，超 5 K），片1 各项都在带里；冷侧两片 2／3 K（过）。</summary>
@@ -113,7 +118,7 @@ public class StateCriteriaGateTests
     [Fact]
     public void 门1b_真解_空管态三条标参考_改热侧超限只动带玻璃的AllOk()
     {
-        var p = new DesignInputs();
+        var p = new DesignInputs { CriteriaRuleSet = Pre };   // 决 103：改回口径下验 K 路那一套
         var d = DesignSpec.Builtin[0].Clone();
         d.SetpointC = new[] { 1150.0, 1080.0 };
         d.SegLengthMm = new[] { 300.0, 300.0 };
@@ -138,7 +143,7 @@ public class StateCriteriaGateTests
             Assert.StartsWith(LineResult.StateDowngradeNote(true), e.Note);
             Assert.True(double.IsFinite(e.Actual), $"空管态 {key} 照常计算：实际值 {e.Actual}");   // 降参考不是不算
         }
-        foreach (var q in LineResult.RequiredByState.Where(q => q.EmptyTubeKind != CheckKind.Reference))
+        foreach (var q in LineResult.RequiredByStatePre103.Where(q => q.EmptyTubeKind != CheckKind.Reference))
             Assert.Equal(q.EmptyTubeKind, re.Find(q.Prefix)!.Kind);
         _o.WriteLine($"真解：带玻璃 收敛 {rg.Converged} AllOk {rg.AllOk}［{string.Join("；", rg.Failed)}］　空管 收敛 {re.Converged} AllOk {re.AllOk}［{string.Join("；", re.Failed)}］");
         _o.WriteLine("  空管态三条（参考）：" + string.Join("　", ThreeKeys.Select(k => $"{Criteria.Plain(k)} {re.Find(k)!.Actual:0.000}/{re.Find(k)!.Limit:0.###}{(re.Find(k)!.Ok ? "" : " 超")}")));
@@ -184,14 +189,14 @@ public class StateCriteriaGateTests
         string lr = Code(Path.Combine("Pt_Optimize", "Core", "LineRunner.cs"));
         Assert.Contains("public static readonly (string Prefix, CheckKind GlassKind, CheckKind EmptyTubeKind, bool NeedsRamp)[] RequiredByState", lr);
         Assert.DoesNotMatch(new Regex(@"\)\[\]\s+Required\s*="), lr);                 // 旧的静态名单不许回来
-        Assert.Contains("ApplyStateCriteria(c.EmptyTube, checks);", lr);                 // Judge 末尾按工况盖 Kind
+        Assert.Contains("ApplyStateCriteria(c.EmptyTube, checks, rs);", lr);             // Judge 末尾按工况盖 Kind（决 103：带口径）
         // 2026-09-16 Opus 5（审查 S6）：原来核 "EmptyTube = c.EmptyTube }" 一处即过 —— 它在 RunOnce 与管侧单解各一处，删一处门不红。
         //   改成：LineRunner.cs 里每一处 new LineResult 都写工况位，且恰是两处（多一处构造点也要来这里登记）。
         var ctors = Regex.Matches(lr, @"new LineResult\s*\{[^}]*\}").Cast<Match>().ToArray();
         Assert.Equal(2, Regex.Matches(lr, @"new LineResult\b").Count);
         Assert.Equal(2, ctors.Length);
         Assert.All(ctors, m => Assert.Contains("EmptyTube = c.EmptyTube", m.Value));
-        Assert.Contains("public string[] MissingChecks => RequiredFor(EmptyTube)", lr);
+        Assert.Contains("public string[] MissingChecks => RequiredFor(EmptyTube, RuleSet)", lr);   // 决 103：名单按结果自己的口径取
         Assert.Matches(new Regex(@"public bool AllOk => Converged && MissingChecks\.Length == 0 && FieldUndeterminedReasons\.Length == 0"), lr);
         Assert.Contains("&& FieldUndeterminedReasons.Length == 0;", lr);                 // HardOk
 
@@ -234,11 +239,11 @@ public class StateCriteriaGateTests
             foreach (var (name, key) in PlateTerms)
             {
                 var t = new Criterion { Name = name, LineKey = key, EmptyTube = et };
-                Assert.Equal(LineResult.StateKindOf(key, et), t.Kind);
+                Assert.Equal(LineResult.StateKindOf(key, et, Pre), t.Kind);   // 决 103：保温搜索逐格点钉在改前口径（InsulationSearch.RuleSetOfSearch）
             }
-            Assert.Equal(PlateTerms.Any(pt => LineResult.StateKindOf(pt.LineKey, et) != CheckKind.Reference), StateHasHardPlateTerms(et, opt));
-            var want = MeshVerify.MeshTolerances.Where(m => LineResult.StateKindOf(m.Key, et) != CheckKind.Reference).Select(m => Criteria.Plain(m.Key)).ToArray();
-            Assert.Equal(want, MeshVerify.TolTemplate(new LineCase { EmptyTube = et }).Select(x => x.Name).ToArray());
+            Assert.Equal(PlateTerms.Any(pt => LineResult.StateKindOf(pt.LineKey, et, Pre) != CheckKind.Reference), StateHasHardPlateTerms(et, opt));
+            var want = MeshVerify.MeshTolerances.Where(m => LineResult.StateKindOf(m.Key, et, Pre) != CheckKind.Reference).Select(m => Criteria.Plain(m.Key)).ToArray();
+            Assert.Equal(want, MeshVerify.TolTemplate(new LineCase { EmptyTube = et, Base = new DesignInputs { CriteriaRuleSet = Pre } }).Select(x => x.Name).ToArray());
             foreach (var q in LineResult.RequiredByState)
             {
                 var k = et ? q.EmptyTubeKind : q.GlassKind;
@@ -249,12 +254,14 @@ public class StateCriteriaGateTests
         // 现表：带玻璃三条卡、空管三条只作参考（改表时这里一起改 —— 这是「跑前写死」的口径，不是跟着表自动变的）
         Assert.True(StateHasHardPlateTerms(false, opt));
         Assert.False(StateHasHardPlateTerms(true, opt));
-        Assert.Null(MeshVerify.RefuseForState(new LineCase { EmptyTube = false }));
+        Assert.Null(MeshVerify.RefuseForState(new LineCase { EmptyTube = false, Base = new DesignInputs { CriteriaRuleSet = Pre } }));   // 决 103：改回口径不拒答；生产口径带玻璃拒答（R48CriteriaSwapGateTests 门_拒答）
         string? refused = MeshVerify.RefuseForState(new LineCase { EmptyTube = true });
         Assert.NotNull(refused);
         Assert.False(Criteria.HasCode(refused), refused);
         Assert.Contains("不能据此说这个设计过了", refused);
-        Assert.Equal(ThreeKeys.OrderBy(x => x, StringComparer.Ordinal), Criteria.All.Where(e => e.ReferenceWhenEmptyTube).Select(e => e.Key).OrderBy(x => x, StringComparer.Ordinal));
+        // 决 103：界面图例描述生产口径 ⇒ 空管态只作参考的是新两条与两条热稳定（三条旧判据两态都只作参考，不带这个标记）
+        Assert.Equal(new[] { LineResult.Key.HotOverContact, LineResult.Key.TubeToFlangeHeat, LineResult.Key.FlangeStab, LineResult.Key.LocalStab }.OrderBy(x => x, StringComparer.Ordinal),
+                     Criteria.All.Where(e => e.ReferenceWhenEmptyTube).Select(e => e.Key).OrderBy(x => x, StringComparer.Ordinal));
         // 注入的评估函数：两态一律按「有卡交付的项」处理管侧响应（保守）
         Assert.True(StateHasHardPlateTerms(true, new Options { Criteria = (v, o) => new List<Criterion>() }));
     }
@@ -351,8 +358,8 @@ public class StateCriteriaGateTests
         Assert.False(Criteria.HasCode(res.Verdict), res.Verdict);
         Assert.DoesNotContain("--", res.Verdict);
         Assert.True(sw.Elapsed.TotalSeconds < 30, $"拒答不该去解场（{sw.Elapsed.TotalSeconds:0} s）");
-        // 对照：带玻璃稳态不拒答（真解走主循环，见 MeshVerifyLineCaseTests 的慢门）
-        Assert.Null(MeshVerify.RefuseForState(new LineCase { EmptyTube = false }));
+        // 对照：带玻璃稳态不拒答（真解走主循环，见 MeshVerifyLineCaseTests 的慢门）—— 决 103：只在改回口径下成立（生产口径带玻璃另有拒答，见 R48CriteriaSwapGateTests）
+        Assert.Null(MeshVerify.RefuseForState(new LineCase { EmptyTube = false, Base = new DesignInputs { CriteriaRuleSet = Pre } }));
     }
 
     [Theory]

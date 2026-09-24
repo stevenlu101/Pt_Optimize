@@ -23,7 +23,9 @@ public class MeshVerifyTests
     public void 复核容差与自检对账同口径_不另立一套()
     {
         // U 路（2026-09-18 Opus 5）：签名换成整线算例（容差跟着温差预算走）；这里造一个缺省算例 ⇒ 限值仍是默认 5 K，下面三个 0.5 逐位不变。
-        var t = MeshVerify.TolTemplate(new LineCase());   // K 路（2026-09-15 Opus 5）：复核名单按工况取；带玻璃稳态仍是这三条
+        // 决 103（2026-09-24）：有意改动 —— 加密复算的逐档比对列仍是这三条，只在改回口径（CriteriaRuleSet = 决103前）下用；生产口径的带玻璃稳态拒答（R48CriteriaSwapGateTests 门_拒答）。
+        var pre = new DesignInputs { CriteriaRuleSet = CriteriaRuleSet.决103前 };
+        var t = MeshVerify.TolTemplate(new LineCase { Base = pre });   // K 路（2026-09-15 Opus 5）：复核名单按工况取；带玻璃稳态仍是这三条
         Assert.Equal(3, t.Count);
         // 2026-09-14 Opus 5（R48 B 复审）：有意改动 —— 复核的两条温度判据换成热偶读数基准的热侧／冷侧，名字改全名（判词进界面，不许带代号），容差重定。
         //   旧：Name "②′" 0.5 ／ "②″" 0.2 ／ "③" 1.0
@@ -37,7 +39,7 @@ public class MeshVerifyTests
         Assert.Equal(0.1 * LineCase.ThermocoupleErrorK, MeshVerify.TcMeshTolFrac * new LineCase().HotOverTcMaxK, 12);
         Assert.Equal(0.1 * LineCase.ThermocoupleErrorK, MeshVerify.TcMeshTolFrac * new LineCase().ColdUnderTcMaxK, 12);
         // 填成别的数时容差跟着走（不是又一个写死的 0.5）
-        var wide = new LineCase { Base = new DesignInputs { HotOverTcAllowK = 8.0, ColdUnderTcAllowK = 12.0 } };
+        var wide = new LineCase { Base = new DesignInputs { HotOverTcAllowK = 8.0, ColdUnderTcAllowK = 12.0, CriteriaRuleSet = CriteriaRuleSet.决103前 } };
         Assert.Equal(0.8, MeshVerify.TolTemplate(wide).First(x => x.Name == Criteria.Plain(LineResult.Key.HotOverTc)).Tol, 9);
         Assert.Equal(1.2, MeshVerify.TolTemplate(wide).First(x => x.Name == Criteria.Plain(LineResult.Key.ColdUnderTc)).Tol, 9);
         Assert.Equal(0.5, MeshVerify.TolTemplate(wide).First(x => x.Name == Criteria.Plain(LineResult.Key.NetFlux)).Tol, 9);   // 净流入与温差预算无关

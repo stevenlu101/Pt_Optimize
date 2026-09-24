@@ -141,6 +141,17 @@ public sealed class ShellThermalResult
                   LocalStabThickMm = double.NaN, LocalStabLatLenMm = double.NaN;
     public bool LocalStabOnTab;
 
+    /// <summary>
+    /// ★★★★★ 决 103（业主 2026-09-24「局部与整片热稳定升为硬、落点按决 99 修全格」；决 99 选项 A）：**局部热稳定全格精算**（惰性）。
+    /// 上面几项是「两区各取 proxy 前 12 名精算」的报出值 —— 决 99 实测它在 W08／W06 上乐观 3.5～4.9 倍、落点偏近（报 r 31.5，真 r 66）：
+    /// proxy 只排了加热导数，冷却导数里横向项 k·t/L² 在孔边与舌根大得多，把前 12 名全挤在 L 很短的地方。
+    /// 本项对同一份场、同一组候选格（两区全部自由格）逐格调同一个 <see cref="LocalStability.Check"/>（同一份保温厚度式子、同一个 LatLen），取最小。
+    /// 惰性的理由（代价，决 99 报告 3.3 节）：每次热解都做约 +3～4 s／片（判决网格），一次整线解 132 次热解 ⇒ 3～4 倍机时；
+    /// 而判据只读整线终局那一份场 ⇒ 由 <see cref="LineRunner.ApplyLocalStabFullGrid"/> 在整线收尾对终局四片各调一次。
+    /// null = 本次热解没留（场判不了之前就退出的路径）。
+    /// </summary>
+    public Func<LocalStabScan>? LocalStabFullGrid;
+
     public double DiscMaxXMm = double.NaN, DiscMaxZMm = double.NaN,
                   DiscMaxRMm = double.NaN, DiscMaxJAPerMm2 = double.NaN,
                   DiscMaxThickMm = double.NaN;
@@ -1327,10 +1338,9 @@ public static class ShellThermal
                                : Math.Abs(x - xClamp) + busExtraMm;
                 return Math.Max(1.0, Math.Min(toHole, toClamp));
             }
-            void Scan(List<(double Proxy, int I)> cand, bool onTab)
+            // 决 103（2026-09-24）：逐格精算那一步提成本地函数 CheckCell —— 前 12 名的 Scan 与全格精算（LocalStabFullGrid）调同一份，算式与改前逐字相同。
+            LocalStability.Point CheckCell(int i)
             {
-                foreach (var (_, i) in cand.OrderByDescending(x => x.Proxy).Take(NCand))
-                {
                     // 保温厚度跟 lossFor 用**同一个** insulated[] 判定，不另立一份
                     double insMm = insulated[i] ? p.FlangeInsulThickMm
                                  : (tabInsul ? tabInsulThickMm : 0.0);
@@ -1346,8 +1356,14 @@ public static class ShellThermal
                     //     没有合格锚点就退回只看管孔（保守）。
                     //   ⚠ 这仍是一个**估计**，不是精确解：它把「到最近定温边界的直线距离」
                     //     当成横向导热长度。保守侧的做法（传 NaN）仍在 LocalStability 里可用。
-                    var pt = LocalStability.Check(p, res.T[i], jLocal[i], m.Thickness[i],
-                                                  insMm, LatLen(i));
+                    return LocalStability.Check(p, res.T[i], jLocal[i], m.Thickness[i],
+                                                insMm, LatLen(i));
+            }
+            void Scan(List<(double Proxy, int I)> cand, bool onTab)
+            {
+                foreach (var (_, i) in cand.OrderByDescending(x => x.Proxy).Take(NCand))
+                {
+                    var pt = CheckCell(i);
                     // ★★★★★ 超拟合区间的格子**不能只是跳过**（2026-08-24 修）。
                     //
                     //   跳过之后，报出来的是「剩下那些**凉**格子里最差的」——
@@ -1379,6 +1395,48 @@ public static class ShellThermal
                 res.LocalStabThickMm = m.Thickness[bi];
                 res.LocalStabOnTab = bTab;
                 res.LocalStabLatLenMm = LatLen(bi);
+            }
+
+            // ★★★★★ 决 103（2026-09-24；决 99 选项 A）：**全格精算**（惰性，整线收尾才调）。候选 = 两区全部自由格（与前 12 名同一份名单，不排序、不截断）；
+            //   逐格同一个 CheckCell；「任一格判不了（超拟合区间）⇒ 整片判不了」的规矩照旧（场里有格超区间 ⇒ 判不了）。
+            //   闭包只读本次热解定型后的量（场、网格、保温判定、锚点），不回写 res。
+            {
+                var allD = candD.ToArray(); var allT = candT.ToArray();
+                int hotOut = hotOutOfRange;
+                var mm = m; var resT = res.T; var jl = jLocal;
+                res.LocalStabFullGrid = () =>
+                {
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    var sc = new LocalStabScan { CellMargin = new double[mm.CellCount] };
+                    Array.Fill(sc.CellMargin, double.NaN);
+                    double fb = double.PositiveInfinity; int fi = -1; bool ftab = false; int fskip = 0, cnt = 0;
+                    foreach (var (onTab, list) in new[] { (false, allD), (true, allT) })
+                        foreach (var (_, i) in list)
+                        {
+                            var pt = CheckCell(i);
+                            cnt++;
+                            if (double.IsNaN(pt.JStab)) { fskip++; continue; }
+                            sc.CellMargin[i] = pt.Margin;
+                            if (pt.Margin < fb) { fb = pt.Margin; fi = i; ftab = onTab; }
+                        }
+                    sc.CellsEvaluated = cnt; sc.CellsSkipped = fskip; sc.HotOutOfRange = hotOut;
+                    if (fskip > 0 || hotOut > 0) fi = -1;
+                    if (fi >= 0)
+                    {
+                        var cb = mm.Centroid[fi];
+                        sc.Cell = fi;
+                        sc.Margin = fb;
+                        sc.RMm = Math.Sqrt(cb.X * cb.X + cb.Z * cb.Z);
+                        sc.XMm = cb.X; sc.ZMm = cb.Z;
+                        sc.TempC = resT[fi];
+                        sc.JAPerMm2 = jl[fi];
+                        sc.ThickMm = mm.Thickness[fi];
+                        sc.OnTab = ftab;
+                        sc.LatLenMm = LatLen(fi);
+                    }
+                    sc.Seconds = sw.Elapsed.TotalSeconds;
+                    return sc;
+                };
             }
         }
 
@@ -1550,4 +1608,23 @@ public static class ShellThermal
     /// <summary>2026-09-23（F6d）：局部热稳定的管孔锚点是否取孔圆 —— 开关开、网格上有孔边界面、孔半径有限且为正。Solve 与 RecipeFor 调这一处。</summary>
     internal static bool HoleAnchorOnCircleFor(ShellMesh m, bool holeAnchorOnCircle, int holeFaces)
         => holeAnchorOnCircle && holeFaces > 0 && double.IsFinite(m.HoleRadiusMm) && m.HoleRadiusMm > 0;
+}
+
+/// <summary>
+/// 决 103（2026-09-24；决 99 选项 A）：局部热稳定全格精算的结果（<see cref="ShellThermalResult.LocalStabFullGrid"/>）。
+/// <see cref="Margin"/> NaN = 判不了（有格超出电阻率拟合区间，与前 12 名口径同一条规矩）。
+/// </summary>
+public sealed class LocalStabScan
+{
+    public double Margin = double.NaN, RMm = double.NaN, XMm = double.NaN, ZMm = double.NaN,
+                  TempC = double.NaN, JAPerMm2 = double.NaN, ThickMm = double.NaN, LatLenMm = double.NaN;
+    public bool OnTab;
+    /// <summary>最小裕度那一格的下标（-1 = 判不了）。</summary>
+    public int Cell = -1;
+    /// <summary>评过的格数、其中判不了（跳过）的格数、场里超出拟合区间的格数。</summary>
+    public int CellsEvaluated, CellsSkipped, HotOutOfRange;
+    /// <summary>逐格裕度（没评或判不了的格为 NaN）—— 门拿它核「报出值 = 全格最小值」。</summary>
+    public double[] CellMargin = Array.Empty<double>();
+    /// <summary>这次全格精算花的秒数（机时量，不进判读）。</summary>
+    public double Seconds;
 }

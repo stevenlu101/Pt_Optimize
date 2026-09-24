@@ -25,7 +25,9 @@ public class R48F7FineRadiusDecoupleTests
     internal const string Sign = "2026-09-23，Opus 5.5（C4′，决 29 自适应）";
 
     /// <summary>门里一律用缺省工艺参数（与门 f、归因同一份输入：R48NMeshGateTests 用的也是 new DesignInputs()）。</summary>
-    internal static DesignInputs P0() => new DesignInputs();
+    // 决 103（2026-09-24）：有意改动 —— 加密复算（MeshVerify）的逐档比对列只在改回口径（CriteriaRuleSet = 决103前）下成立，生产口径的带玻璃稳态拒答；
+    //   F7 各门守的是细区半径计划与加密复算主循环的控制流（记录值都是改前口径下量的），参数表一律走改回口径。细区半径计划本身不读判据口径（逐位不变）。
+    internal static DesignInputs P0() => new DesignInputs { CriteriaRuleSet = CriteriaRuleSet.决103前 };
 
     /// <summary>改回旧规则的半径（= F7 之前的生产）。</summary>
     internal static double OldRadius(DesignSpec d) => MeshVerify.FineRadiusPlanFor(d, P0(), MeshVerify.LegacyTabLengthFactor).RadiusMm;

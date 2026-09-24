@@ -1,0 +1,7 @@
+﻿决 103 接线门 1 中性证法（Linux）：R48PropsWiringGateTests.QuickCase 整线小算例，DumpNoTiming 全文转储
+开跑 2026-09-24 18:30:02　工作树 /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtCRIT
+改回（决103前）全文 SHA 53d7947b6b09099e9498d3dd6296d629d5e0ade963814fbb4c995b8bde7029c9；其中决 103 新成员行 24 行（CriteriaRuleSet、HotOverContactAllowK、TubeJLimitAPerMm2、TubeJUseCapAPerMm2、HotOverContactMaxK、RuleSet、FlangeStabMargin、LocalStabFullCells、LocalStabFullSec、LocalStabTop12Margin、LocalStabTop12RMm、LocalStabFullGridCells、LocalStabFullGridSec）
+改回去新成员行 SHA fd00d6d7564a0005bf5c3eea4ef60f19ebe4d746048dd6550f8152fba8dc0d0b　改前树 cc49836 实测 fd00d6d7564a0005bf5c3eea4ef60f19ebe4d746048dd6550f8152fba8dc0d0b　⇒ 逐位相同（改回中性）
+接线门 1 入库记录 07f9639043b10da075bd4aacac621dd20760e2d6df79f06e70ba3b6051905fef：改前树 cc49836 上实测就是 fd00d6d7564a0005bf5c3eea4ef60f19ebe4d746048dd6550f8152fba8dc0d0b，门在改前树上已红（记录过时，非本改动引起；按 R48PropsWiringGateTests 头注在合并树上重录）
+生产（决103）全文 SHA f60c1b121dca3e7fab32a8b427e87f3f205e6e1498557fad366a403a7c56b5a4；同树再跑一次 f60c1b121dca3e7fab32a8b427e87f3f205e6e1498557fad366a403a7c56b5a4　⇒ 两跑逐位相同
+变因（生产 SHA 相对记录）：决 103 判据换向 —— 判据表多三行（法兰最热处高出管接触处温度、管接触处流入法兰的净热流、· 管 J（原许用值对照））、三条旧判据 Kind 与说明换成参考、两条热稳定升硬、管 J 与升温限值 11、局部热稳定换全格值与说明、新成员行。

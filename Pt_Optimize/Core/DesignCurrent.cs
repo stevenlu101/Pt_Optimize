@@ -104,7 +104,7 @@ public static class DesignCurrent
         };
         double holeR = plates[0].HoleRadiusMm;
         double tubeAreaMm2 = Math.PI * (holeR * holeR - (holeR - wallMm) * (holeR - wallMm));
-        double iCap = p.TubeJAllowAPerMm2 * tubeAreaMm2;          // 二次侧上限：管 J 许用 × 管截面
+        double iCap = p.TubeJLimitAPerMm2 * tubeAreaMm2;          // 二次侧上限：管 J 许用 × 管截面（决 103：卡交付的管 J 限值 = min(许用 12, 使用上限 11)；改回口径 = 许用，逐位同改前）
         FlangePlate P(int j) => plates[Math.Min(j, plates.Length - 1)];
 
         // ── 尺寸依据：管子准静态电流沿全程取最大（每段同一根管 ⇒ 各段相同；仍逐段存，段参数将来可能不同）
@@ -119,7 +119,7 @@ public static class DesignCurrent
             iQsPeak = Math.Max(iQsPeak, iq);
         }
         res.RampTubeJPeakAPerMm2 = tubeAreaMm2 > 1e-12 ? iRawPeak / tubeAreaMm2 : double.NaN;
-        res.TubeJAllowAPerMm2 = p.TubeJAllowAPerMm2;
+        res.TubeJAllowAPerMm2 = p.TubeJLimitAPerMm2;   // 决 103：判据「① 升温」的限值就是它（与「管 J」同一个数，不另立）
 
         for (int i = 0; i < n; i++)
         {
@@ -152,8 +152,8 @@ public static class DesignCurrent
                     HoleRadiusMm = holeR,
                     PlateEqOuterRadiusMm = Math.Sqrt(area / Math.PI + holeR * holeR),
                     FlangeThickMm = vol / Math.Max(1e-9, area),
-                    DesignCurrentA = 0.5 * p.TubeJAllowAPerMm2 * tubeAreaMm2,   // 只作其它模式的参考，温控模式不用它
-                    MaxCurrentA = p.TubeJAllowAPerMm2 * tubeAreaMm2,
+                    DesignCurrentA = 0.5 * p.TubeJLimitAPerMm2 * tubeAreaMm2,   // 只作其它模式的参考，温控模式不用它（决 103：读卡交付的管 J 限值）
+                    MaxCurrentA = p.TubeJLimitAPerMm2 * tubeAreaMm2,
                     FromC = fromC, TargetC = targetC,
                     RampRateKPerH = rateKPerH,
                     MaxHours = (targetC - fromC) / Math.Max(0.1, rateKPerH) * 1.4,

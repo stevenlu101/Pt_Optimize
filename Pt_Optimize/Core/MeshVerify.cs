@@ -133,7 +133,7 @@ public static class MeshVerify
     ///   「各自限值的 10 %」，而限值现在跟着工程师填的温差预算走（<see cref="LineCase.HotOverTcMaxK"/>／<see cref="LineCase.ColdUnderTcMaxK"/>）。
     ///   传 bool 就只能再抄一个 5 —— 那正是本项目最常见的失效。工况仍从算例的 <see cref="LineCase.EmptyTube"/> 读。
     public static IReadOnlyList<MeshAdapt.Delta> TolTemplate(LineCase c) => MeshTolerances
-        .Where(m => LineResult.StateKindOf(m.Key, c.EmptyTube) is not CheckKind.Reference)
+        .Where(m => LineResult.StateKindOf(m.Key, c.EmptyTube, c.RuleSet) is not CheckKind.Reference)   // 决 103：按算例的判据口径取（改回口径 = 改前三条）
         .Select(m => new MeshAdapt.Delta { Name = Criteria.Plain(m.Key), Tol = m.Tol(c) })
         .ToArray();
 
@@ -167,6 +167,14 @@ public static class MeshVerify
         var want = TolTemplate(c).Select(d => d.Name).ToArray();
         var loop = MeshTolerances.Select(m => Criteria.Plain(m.Key)).ToArray();
         if (want.SequenceEqual(loop)) return null;
+        // ★ 决 103（2026-09-24）：生产口径的带玻璃稳态卡交付的是「法兰最热处高出管接触处温度」「管接触处流入法兰的净热流」与两条热稳定，
+        //   而本循环逐档比的仍是改前那三条 ⇒ 拒答，不拿参考量的收敛冒充硬判据的收敛。比对列换成新判据要先定新判据各自的网格容差（热侧可沿用「限值的 10 %」、
+        //   冷侧沿用 0.5 W；两条热稳定没有出处）—— 列为待办，不在这里编。
+        if (!emptyTube && c.RuleSet != CriteriaRuleSet.决103前)
+            return "✗ 加密复算的逐档比对列还是 2026-09-24 之前卡交付的三条（" + string.Join("、", loop) + "），"
+                 + "现行带玻璃稳态卡交付的「" + string.Join("、", LineResult.RequiredFor(false, c.RuleSet).Select(q => Criteria.Plain(q.Prefix))
+                        .Where(nm => MeshTolerances.All(m => Criteria.Plain(m.Key) != nm))) + "」没有进比对列"
+                 + "　⇒ 不在这个口径上做加密复算，**不能据此说这个设计过了**（比对列换新判据待定网格容差）。";
         return $"✗ 加密复算不适用于{(emptyTube ? "空管到温稳态" : "带玻璃稳态")}："
              + (want.Length == 0 ? "本工况没有进加密复算比对列的卡交付判据（空管到温稳态只卡电流密度（管 J 与法兰截面 J）与场的有效性；两条电流密度判据两态都不在逐档比对列里）"
                                  : $"本工况要复核的是「{string.Join("、", want)}」，加密复算逐档比的是「{string.Join("、", loop)}」")
