@@ -140,6 +140,11 @@ public sealed class ShellThermalResult
                   LocalStabTempC = double.NaN, LocalStabJAPerMm2 = double.NaN,
                   LocalStabThickMm = double.NaN, LocalStabLatLenMm = double.NaN;
     public bool LocalStabOnTab;
+    // ── P2 决 99 探针钩子（只在工作树 wtP2，不合入）：ShellThermal.ProbeAllCellsLocalStab 为真时，候选两区的**全部**格按生产同一 insMm／LatLen／LocalStability.Check 精算并记下。
+    //   不改报出值（LocalStab* 仍由前 12 名给出）。NaN = 该格不入候选（Excluded）或 Check 返回 NaN。
+    internal double[]? ProbeLsMargin, ProbeLsLatLen, ProbeLsInsMm, ProbeLsProxy;
+    internal sbyte[]? ProbeLsZone;   // 0 = 盘侧候选（candD），1 = 舌侧候选（candT，insulOnTab），-1 = 不入候选
+    internal bool[]? ProbeLsInTop;   // 该格在本区前 12 名里
 
     public double DiscMaxXMm = double.NaN, DiscMaxZMm = double.NaN,
                   DiscMaxRMm = double.NaN, DiscMaxJAPerMm2 = double.NaN,
@@ -493,6 +498,11 @@ public static class ShellThermal
     ///   但新口径的**误差常数小 6～10 倍**：0.5 mm 网格上误差 0.4 W，旧口径要 0.1 mm 才有同等精度（单元数差 20 倍）。
     ///   判据窗口只有 3 W（管孔净流入 &gt; 0 且法兰增量温降 ≤ 10 K），0.4 W 判得动、2.3 W 判不动 —— 这是改口径的理由。
     /// </param>
+    /// <summary>P2 决 99 探针钩子（只在工作树 wtP2，不合入）：线程局部；为真时 Solve 额外对候选两区全部格精算局部热稳定并记进 ShellThermalResult.ProbeLs*。缺省假 ⇒ 生产逐位不变。</summary>
+    [ThreadStatic] internal static bool ProbeAllCellsLocalStab;
+    /// <summary>P2 决 99 探针钩子（只在 wtP2）：Solve 被调用的次数（进程内全局计数，只读来数）。</summary>
+    internal static int ProbeSolveCount;
+
     public static ShellThermalResult Solve(ShellMesh m, double[] jMagAPerMm2, DesignInputs p,
                                            double tRootC, double insulBoundaryX,
                                            bool symmetricInsul = false,
@@ -518,6 +528,7 @@ public static class ShellThermal
         //   复现基线树的逐位记录，才能把「散热表换了」与「别的东西动了」分开。缺省（NaN／0）= 生产：上限 LossTableHiC、节点 LossTableNodes(环境, 上限)。
         //   生产代码不许传这两个参数（生产链配方由 R48RecipeFingerprintTests 的行为门守：每片热解的 Recipe.Rule == ProductionThermalRule）。
         int n = m.CellCount;
+        System.Threading.Interlocked.Increment(ref ProbeSolveCount);   // P2 探针钩子：数调用次数（只计数，不改数）
         var res = new ShellThermalResult { T = new double[n] };
         if (n == 0) return res;
 
@@ -1361,6 +1372,28 @@ public static class ShellThermal
                 }
             }
             Scan(candD, false); Scan(candT, true);
+            if (ProbeAllCellsLocalStab)
+            {
+                res.ProbeLsMargin = new double[n]; res.ProbeLsLatLen = new double[n]; res.ProbeLsInsMm = new double[n]; res.ProbeLsProxy = new double[n];
+                res.ProbeLsZone = new sbyte[n]; res.ProbeLsInTop = new bool[n];
+                Array.Fill(res.ProbeLsMargin, double.NaN); Array.Fill(res.ProbeLsLatLen, double.NaN); Array.Fill(res.ProbeLsInsMm, double.NaN); Array.Fill(res.ProbeLsProxy, double.NaN);
+                Array.Fill(res.ProbeLsZone, (sbyte)-1);
+                foreach (var (cand, zone) in new[] { (candD, (sbyte)0), (candT, (sbyte)1) })
+                {
+                    var top = new HashSet<int>(cand.OrderByDescending(x => x.Proxy).Take(NCand).Select(x => x.I));
+                    foreach (var (proxy, i) in cand)
+                    {
+                        double insMm = insulated[i] ? p.FlangeInsulThickMm : (tabInsul ? tabInsulThickMm : 0.0);
+                        if (insulFrac[i] > 0 && insulFrac[i] < 1)
+                            insMm = Math.Max(p.FlangeInsulThickMm, tabInsul ? tabInsulThickMm : 0.0);
+                        double L = LatLen(i);
+                        var pt = LocalStability.Check(p, res.T[i], jLocal[i], m.Thickness[i], insMm, L);
+                        res.ProbeLsMargin[i] = double.IsNaN(pt.JStab) ? double.NaN : pt.Margin;
+                        res.ProbeLsLatLen[i] = L; res.ProbeLsInsMm[i] = insMm; res.ProbeLsProxy[i] = proxy;
+                        res.ProbeLsZone[i] = zone; res.ProbeLsInTop[i] = top.Contains(i);
+                    }
+                }
+            }
             // ★★ 只要**场里有一格**超出电阻率拟合区间，整条就判不了。
             //
             //   光数「候选里被跳过几个」不够：候选是按 ρe·J²·t·**TCR(T)** 排的，
