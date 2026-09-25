@@ -98,16 +98,18 @@ public class ShapeSearchCostTests
     [Fact]
     public void 盘径下界用闭式反解而不是网格枚举()
     {
-        string s = Src("Pt_Optimize", "UI", "LineDesignPage.cs");
+        // 2026-09-25：搜索主体在 Core/ShapeSearchDriver（界面只调它），门改读驱动；界面那份写死的表 {25, 30, 35} 不许再在
+        string s = Src("Pt_Optimize", "Core", "ShapeSearchDriver.cs");
+        Assert.DoesNotContain("SearchDiscs = { 25, 30, 35 }", Src("Pt_Optimize", "UI", "LineDesignPage.cs"));
 
         // 用的是判据 ⑥ 自己那份实现，不另写一份
         Assert.Contains("GeometryScreen.MinDiscRadiusMm(plates)", s);
         // 不动点迭代（板厚随盘径变），有上限
-        Assert.Contains("for (int fix = 0; fix < 3; fix++)", s);
+        Assert.Contains("for (int fix = 0; doFixpoint && fix < opt.FixpointMax; fix++)", s);
         // ★ 红线：算出下界之后**仍然照常求解**那一点
         int at = s.IndexOf("GeometryScreen.MinDiscRadiusMm(plates)", StringComparison.Ordinal);
         Assert.True(at > 0);
-        Assert.Contains("await EvalShape(Rnext, Rnext * fWide, taperPage);", s[at..]);   // R38：多带一个锥形参数，其余不变
+        Assert.Contains("Eval(Rnext, Rnext * fWide, taperPage, \"②\")", s[at..]);
 
         // 反面：原来的 3×2 盘径网格枚举不许再在（那是被替掉的东西）
         var code = s.Split(((char)10).ToString())
@@ -135,15 +137,15 @@ public class ShapeSearchCostTests
     [Fact]
     public void 二分之后还要在区间内找最轻()
     {
-        string s = Src("Pt_Optimize", "UI", "LineDesignPage.cs");
+        string s = Src("Pt_Optimize", "Core", "ShapeSearchDriver.cs");   // 2026-09-25：搜索主体在驱动
         Assert.Contains("④ 找最轻", s);
         Assert.Contains("Phi = 0.6180339887", s);          // 黄金分割
         // 取的是**已算过的可行点里最轻的**，不是相信单峰
-        Assert.Contains("okRows.OrderBy(r2 => r2.mass).First()", s);
-        // 而且每个候选点都是真解（走 EvalShape），不是估的
+        Assert.Contains("okRows.OrderBy(r2 => r2.MassG).First()", s);
+        // 而且每个候选点都是真解（走 Eval），不是估的
         int at = s.IndexOf("④ 找最轻", StringComparison.Ordinal);
         Assert.True(at > 0);
-        Assert.Contains("await EvalShape(probe, probe * fWide, taperPage);", s[at..]);   // R38：多带一个锥形参数，其余不变
+        Assert.Contains("Eval(probe, probe * fWide, taperPage, \"④\")", s[at..]);
     }
 
     /// <summary>

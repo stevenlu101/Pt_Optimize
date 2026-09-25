@@ -678,9 +678,12 @@ public sealed class LineDesignPage : TabPage
     /// ⚠ 每一「轮」都是一次完整整线解（分钟级）—— 所以压轮数还不够快，
     ///   要把**网格点数**也压下来，接线验证才回得到分钟级。
     /// </summary>
-    internal double[] SearchDiscs = { 25, 30, 35 };
+    /// <summary>2026-09-25：缺省**空** = 盘径表由程序判定（决 106：从闭式下界起一批，按批外推，散热收敛即停）；走查器给小表只为分钟级验接线。原写死 {25, 30, 35}。</summary>
+    internal double[] SearchDiscs = System.Array.Empty<double>();
     internal double[] SearchWFrac = { 0.75, 1.00 };
     internal int SearchMaxExtend = 6;
+    /// <summary>批内并发路数（驱动 Lanes）。界面此前写死 4，原样。</summary>
+    internal int SearchLanes = 4;
 
     /// <summary>2026-09-15 Opus 5（J 路，P3-11）：逐片控件值拼成「|」串（快照与「这次改了什么」同一份）。</summary>
     private static string PerPlateText(IEnumerable<NumericUpDown> ctl)
@@ -3074,70 +3077,28 @@ public sealed class LineDesignPage : TabPage
         _btnRun.Enabled = _btnAuto.Enabled = false;
         Shared?.SetRunning(ChainId.C形状搜索, "搜形状");
 
-        // 网格：盘半径 × 半宽比例。半宽 > 盘半径没有切点（等宽舌片与圆盘接不上），故按比例取。
-                // ★ 网格的最低点必须**造得出来**：写死的 25 对两个现役档（壁 0.6/0.8）
-                //   都会被判据「圆盘盖得住管孔」 跳过 ⇒ 第 1 轮实际只探了 R30/R35（2026-08-25 查出）。
-                //   抬到下界上，网格才是三个点。
-                //   ⚠ 2026-08-29：这里原本手写 `25.0 + 2 * 壁厚`，与 ⑥ 的实现各写各的。
-                //     数值上今天恰好相同（管孔 = 壁+25，焊脚下界 = max(烧穿 0.6, 壁)），
-                //     但**没有任何东西保证明天还相同** —— 改走 ⑥ 自己的闭式反解。
-                //   ⚠ 这只是**真下界**，不是最紧的下界：焊脚 = max(板厚, 壁厚)，
-                //     而板厚要解完才知道，解出来通常是 1.6～2.5 mm（远大于壁厚）。
-                //     最紧的那个由求解器在解完当场给（Solver.CoverCheck）。
-                double wall6 = (double)_wall.Value;
-                double minDiscAll = GeometryScreen.MinDiscRadiusMm(
-                    holeRadiusMm: wall6 + 25.0,
-                    thickMm: _base.WeldMinThicknessMm,
-                    wallMm: wall6);
-                double[] discs = ShapeSearchPlan.LiveDiscs(SearchDiscs, minDiscAll);
+        // ★★★★★ 2026-09-25：搜索主体 = Core/ShapeSearchDriver（与命令行预跑、方案卡同一份算法）。
+        //   界面此前自带一份搜索（09-23 抽到 Core 之后没有接回来：界面仍跑写死的盘径表 {25,30,35} 与旧算法）——
+        //   业主「9/19 以后都是鬼打墙」的病灶之一：改进都进了 Linux 预跑，交付的 APP 一直没变。
+        //   界面现在只做四件事：组输入（PageToDesignSpec = 界面参数，不是设计记录，HANDOVER ⑬）、把驱动的每一行贴进输出框与状态面板、
+        //   把算过的形状交给「搜形状结果 ▾」下拉、把赢家写回控件（下面 fin1）。
+        //   盘径上端由程序判定（决 106：物理封顶 = 板料包络，散热机制收敛即停），不再有写死的表；
+        //   SearchDiscs 缺省空 = 程序判定，走查器给小表只为分钟级验接线。
         double[] wFrac = SearchWFrac;
-        // ★ 不是 const：走查器要能把它压到极小，好在**分钟级**验「接线对不对」
-        //   （2026-08-25）。搜形状真跑是几十分钟 —— 那验的是「答案好不好」，
-        //   与「把决策串进循环有没有串错」是两件事，不该只能靠跑满几十分钟才验得到。
         int screenRounds = SearchScreenRounds, finalRounds = SearchFinalRounds;
-
-        // ★★★★★ R38（2026-09-11，用户点名的未完成项 + 09-11 确认目标）：
-        //
-        //   「搜形状不搜锥形与孔族，只搜盘径／舌宽」——用户 09-10 工单第 2 条；
-        //   「结果就是一次搜完，工程师看到每一族最轻的可行形状，以及锥形有没有帮助，
-        //    不用手动改勾选反复跑」——用户 09-11 确认的目标原话。
-        //
-        //   ⇒ 两件事都要接进这同一条搜索：
-        //   ① 锥形舌片进搜索空间（见 EvalShape/EvalShapesBatch 里的 taper 参数与
-        //      ⑦ 邻域探索新增的第 5 个方向 = 翻转锥形，理论依据见下面 SearchOneFamilyAsync
-        //      开头的注释——锥形是省是费只能算出来比，不能拍）；
-        //   ② ① 页「解法」= 两个都算 时，不挖舌孔／挖舌孔两族**各跑一遍完整搜索**，
-        //      各自独立选最轻可行，不比重量（R32 原则），不再要工程师手动切换解法
-        //      下拉、重新点一次「搜形状」——那正是用户点名要去掉的手工反复。
-        //
-        //   ⇒ 把整段搜索主体抽成局部函数 SearchOneFamilyAsync（下面），两族共用同一份
-        //     实现，不复制两份；不是「两个都算」时只调一次，行为与此前逐位相同（只是
-        //     多了锥形这一维、多了一列「舌边」）。
         bool both = FamilyBoth;
-        int total = (discs.Length * wFrac.Length * screenRounds + finalRounds) * (both ? 2 : 1);
-        int done = 0;   // 两族共用同一根进度条：家族 2 接着家族 1 的 done 往下走，不清零
 
-        _prog.Visible = true; _prog.Style = ProgressBarStyle.Continuous;
-        _prog.Maximum = total; _prog.Value = 0;
-
-        // ★★★★★ 进度要往**状态面板**报，不能只报给本页的 _prog/_status（2026-08-24）。
-        //
-        // 2026-08-21 定过：不给每一页各配一套进度条（那是「同一件事多处表达」），
-        // 改成右上角状态面板 —— 它切到哪一页都看得见。SetRunningNote 就是那个通道。
-        // 可这条链**从来没往它写过一个字**：开跑时 SetRunning(…, "搜形状") 之后再无更新。
-        // 后果：搜形状要几十分钟，而它是从 ④ 页点的，④ 上没有 _prog 也没有 _status
-        // ⇒ 面板上那句「正在算：C″ 形状搜索 搜形状」几十分钟纹丝不动，
-        //   既看不出还活着、也看不出到哪了。**又一个「接了一半」，而且漏的偏是最长的那条。**
+        // 总轮数事先不知道（外推与爬山按收敛停）⇒ 进度条走马灯；进度文字照旧往状态面板报（2026-08-24 那条通道）
+        _prog.Visible = true; _prog.Style = ProgressBarStyle.Marquee;
         var clock = System.Diagnostics.Stopwatch.StartNew();
         void Note(string s2)
         {
             _status.Text = s2;
             _stages.Track(s2);                    // R25：搜形状里每个形状也走 ①②③，赢家走 ⑤
-            int pct = _prog.Maximum > 0 ? 100 * _prog.Value / _prog.Maximum : 0;
-            Shared?.SetRunningNote($"已用 {clock.Elapsed.TotalMinutes:0.0} 分　{s2}", pct);
+            Shared?.SetRunningNote($"已用 {clock.Elapsed.TotalMinutes:0.0} 分　{s2}");
         }
         _stages.Reset("搜形状：每个形状走 ①②③，赢家再走 ⑤ 精算");
-        Note("准备网格…");
+        Note("准备…");
 
         var sb = new StringBuilder();
         // R28（2026-09-10）：输出框第一行先说清楚「搜形状搜的是什么、搜完还要做什么」——
@@ -3149,6 +3110,8 @@ public sealed class LineDesignPage : TabPage
         sb.AppendLine($"盘径由判据「圆盘盖得住管孔＋焊脚」**闭式定下界**（不用搜）；下界不可行就二分。每点先筛 {screenRounds} 轮，胜出者跑 {finalRounds} 轮。");
         sb.AppendLine($"自由段下界 {FreeTabMin:0} mm（判据「舌片自由段」）　压接段 {DesignSpec.Current.ClampLengthMm:0} mm");
         sb.AppendLine("★ 舌长不是搜出来的，是**算出来的**：切点 + 压接段 + 自由段。");
+        sb.AppendLine("搜索主体 = Core 搜形状驱动（与命令行预跑、方案卡同一份）；盘径上端由程序判定：物理封顶 = 板料包络，散热机制收敛即停（决 106）；"
+                    + "圆盘保温上限 10 mm 是硬判据（决 104）；舌孔的分叉点钉在舌长中点（2026-09-25）。");
         // R38：锥形也进搜索，在这里先说清楚口径（用户看得到的是全名，不是判据代号）
         sb.AppendLine("★ 锥形舌边（舌根按切线自动变宽）也进搜索：第 1 轮先按你现在勾的边型找盘径/舌宽，"
                      + "邻域探索里再把「翻转锥形」当第 5 个方向一并试 —— 哪种边型更省铂，算出来比，不能拍。");
@@ -3180,471 +3143,61 @@ public sealed class LineDesignPage : TabPage
             {
                 if (both)
                     _out.AppendText(Environment.NewLine + $"=== {famPrefix}（{famTag}）===" + Environment.NewLine);
-                var seen = new HashSet<string>();
-                bool taperPage = _tabTaper.Checked;   // 第 1 轮～⑥ 都按页面当前勾选跑；⑦ 邻域探索才把「翻转锥形」当一个方向去试
-
-                async Task EvalShape(double R, double hw, bool taper)
+                // ★★★★★ 2026-09-25：本族的搜索交给 Core/ShapeSearchDriver（同一份算法：并行首遍、闭式下界不动点、二分、黄金分割、
+                //   舌宽比例、邻域爬山与步长收缩、赢家判决网格精算、方案卡）。界面组输入、贴行、写回。
+                var input = PageToDesignSpec();   // 界面参数 = 起点；不是设计记录（HANDOVER ⑬）
+                var opt = new ShapeSearchOptions
                 {
-                    ct.ThrowIfCancellationRequested();
-                    // ★ 早筛「造不出来」的盘径（判据「圆盘盖得住管孔」 会兜底，但那要先白跑十几轮）。
-                    //   2026-08-17 实测：盘 R25 + 管壁 0.8 时孔半径 25.8 > 盘半径，孔比盘还大，
-                    //   而这种几何**料最少**，不拦住它就会排在最前面。
-                    //   ⚠ 2026-08-29：原本手写 `25.0 + 2 × 壁厚`，与 ⑥ 的实现各写各的
-                    //     （而且同一个式子在本文件里有**两份**，只差变量名）⇒ 改走 ⑥ 的闭式反解。
-                    //   ⚠ 这是**真下界，不是可行下界**：焊脚 = max(板厚, 壁厚)，板厚要解完才知道。
-                    //     实测 0.8 档解出来最厚 2.45 ⇒ 真正需要 28.25，比这个下界高 1.65 mm。
-                    //     最紧的那个由 Solver.CoverCheck 在解完当场给（连处方一起）。
-                    double wall6b = (double)_wall.Value;
-                    double minDisc = GeometryScreen.MinDiscRadiusMm(
-                        holeRadiusMm: wall6b + 25.0, thickMm: _base.WeldMinThicknessMm, wallMm: wall6b);
-                    if (R < minDisc - 1e-9)
-                    {
-                        done += screenRounds; _prog.Value = Math.Min(_prog.Maximum, done);
-                        Note($"{famPrefix}跳过 盘Ø{2 * R:0}（判据 {Criteria.Explain("⑥")} 早筛）");
-                        _out.AppendText($"{2 * R:0}\t—\t—\t—\t—\t" +
-                            $"跳过：管壁 {(double)_wall.Value:0.0} 时盘半径至少要 {minDisc:0.0}（判据 {Criteria.Explain("⑥")}）\r\n");
-                        return;
-                    }
-                    var seed = PageToDesignSpec();
-                    seed.DiscRadiusMm = R;
-                    seed.TabHalfWidthMm = hw;
-                    seed.TabTaper = taper;                                    // R38：候选自己的锥形，不是页面当前的
-                    seed.TabLengthMm = Math.Sqrt(Math.Max(0, R * R - hw * hw))
-                                       + seed.ClampLengthMm + FreeTabMin;
-                    string tag = $"{famPrefix}盘Ø{2 * R:0}／舌宽{2 * hw:0}{(taper ? "／锥形" : "")}";
-                    int baseDone = done;
-                    int seenRound = 0;
-                    var prog2 = new Progress<string>(s => OnUi(() =>
-                    {
-                        // Solver 每轮吐「第 N 轮…」；数它推进度条
-                        if (s.StartsWith("第", StringComparison.Ordinal)) seenRound++;
-                        _prog.Value = Math.Min(_prog.Maximum, baseDone + seenRound);
-                        Note($"{tag}　" + s.Split('\n')[0]);
-                    }));
-                    // ★ 粗筛走 **Solver**（求根）而不是 Sizer（搜索）。
-                    //   ⚠ 粗筛不开第二遍（FineMm = 0）：它只负责**给方向**，
-                    //     胜出的那一个才做细网格求根（见下面「精算」）。
-                    // ★ 计时（2026-09-04）：搜形状实测 90 分钟跑不完，而**时间花在哪没人量过** ——
-                    //   网格 6 点之后还有一段邻域爬山，两者都可能是大头。
-                    //   先量再改：不量就动，等于又一次「没算成本就下手」。
-                    var swPt = System.Diagnostics.Stopwatch.StartNew();
-                    var sr = await Task.Run(() => Solver.Solve(seed, _base,
-                                 new SolverOptions { AllowTabCuts = allowCuts, MaxRounds = screenRounds,
-                                                     ScreenCoarseMm = SearchScreenCoarseMm },
-                                 prog2, ct), ct);
-                    swPt.Stop();
-                    done = baseDone + screenRounds;
-                    _prog.Value = Math.Min(_prog.Maximum, done);
-                    // ★ NaN 不等于「无解」：可能是判不了、交棒（厚度到顶 ⇒ 增宽，本表正是在增宽）、⑥ 盖不住 —— 停因才说得清
-                    Note($"{tag} 已完成　{(double.IsNaN(sr.MassG) ? "未解出（看停因）" : sr.MassG.ToString("0") + " g")}");
-                    // R38：两族并列时，把「解法：不挖舌孔／挖舌孔」也记进 Provenance —— 与 R32
-                    // 「核算整线」两族并列用的是同一个写法，ShapeRowText 已经认这个标记。
-                    if (famProvTag is not null && sr.Design is not null)
-                        sr.Design.Provenance = ((sr.Design.Provenance ?? "").Trim() + "；解法：" + famProvTag).TrimStart('；');
-                    rows.Add((sr.Design, sr.MassG, sr.Feasible, sr.Message));
-                    // ★ 算完一个贴一个：中途取消也留得住已有结果
-                    _out.AppendText(
-                        $"{2 * R:0}\t{2 * hw:0}\t{(taper ? "锥形" : "平行")}\t{sr.Design.TabLengthMm:0}\t" +
-                        $"{swPt.Elapsed.TotalMinutes:0.0}\t" +
-                        (double.IsNaN(sr.MassG) ? "—" : sr.MassG.ToString("0")) +
-                        $"\t{(sr.Feasible ? "✓ " : "")}{sr.Message}" +
-                        // ★ 粗筛只跑 SearchScreenRounds（16）轮，比 CLI 的 40 更容易被截断；
-                        //   截断了却不说，就会被读成「这个形状不行」（2026-08-25）。
-                        (sr.HitBound || sr.Undetermined ? $"（⚠ {sr.StopWhy}）" : "") + "\r\n");
+                    AllowTabCuts = allowCuts,
+                    ScreenRounds = screenRounds, FinalRounds = finalRounds,
+                    ScreenCoarseMm = SearchScreenCoarseMm,
+                    MaxExtend = SearchMaxExtend, WFrac = wFrac,
+                    DiscGridMm = SearchDiscs is { Length: > 0 } ? SearchDiscs : null,   // 空 = 程序判定（决 106）；走查器给小表验接线
+                    MaxDiscMm = double.NaN, MaxDiscSource = "",                            // 决 106：上端由程序判定（物理封顶 = 板料包络）
+                    EvalSeedFirst = true,   // 先算页面当前形状作基准：它是界面输入（2026-08-25 用户要看「从我这里到最好的差多少」），不是设计记录
+                    Lanes = SearchLanes,
+                };
+                var prog2 = new Progress<string>(s3 => OnUi(() =>
+                {
+                    string first = s3.Split('\n')[0];
+                    if (s3.StartsWith("　　[", StringComparison.Ordinal)) { Note($"{famPrefix}{first.Trim()}"); return; }   // 求解器逐轮（驱动 ForwardSolverRounds）
+                    _out.AppendText(s3.Replace("\r\n", "\n").Replace("\n", "\r\n") + "\r\n");
+                    Note($"{famPrefix}{first}");
+                }));
+                var res = await Task.Run(() => ShapeSearchDriver.Run(input, _base, opt, prog2, ct), ct);
+                foreach (var r in res.Rows)
+                {
+                    if (r.Skipped || r.Design is null) continue;
+                    // R38：两族并列时，把「解法：不挖舌孔／挖舌孔」记进 Provenance —— ShapeRowText 认这个标记
+                    if (famProvTag is not null)
+                        r.Design.Provenance = ((r.Design.Provenance ?? "").Trim() + "；解法：" + famProvTag).TrimStart('；');
+                    rows.Add((r.Design, r.MassG, r.Ok, r.Message));
                 }
-
-                // ★★★★★ R36（2026-09-11，同进程 4 路并行）：⑥「剩余舌宽比例」与 ⑦「邻域探索」
-                //   本轮内候选互相独立（deliverable/搜形状并行化_审查_2026-09-09.md 第 0 节结论）
-                //   ⇒ 改成批量并发；③④⑤（不动点迭代／二分／黄金分割）与 ⑧（精算）逐次依赖，
-                //   仍然走上面 EvalShape 的单点 await 路径，一行未动。R38：候选多带一个 Taper。
-                //
-                //   门 = 串行（lanes=1）与并行（lanes=4）逐位相同：PageToDesignSpec() 这类
-                //   UI 线程同步前缀在这里**先做完**（审查第 3 节：不能挪到别的线程），
-                //   真正并发的只有 Solver.Solve 本身——它是纯函数（审查第 1、2 节：Solve
-                //   入口先 Clone，Core 侧没有会被搜形状碰到的共享可变状态），谁先算完
-                //   不影响各自的结果，也不影响下面收尾时按候选原顺序贴回 rows/_out。
-                async Task EvalShapesBatch(IReadOnlyList<(double R, double hw, bool Taper)> pts)
+                if (res.NoFeasible || res.Final is null || res.Final.Design is null)
                 {
-                    ct.ThrowIfCancellationRequested();
-                    if (pts.Count == 0) return;
-
-                    // ── 准备（UI 线程，同步）：早筛「造不出来」的盘径 + 组好每个候选的
-                    //   DesignSpec，与 EvalShape 同一套判据（GeometryScreen.MinDiscRadiusMm）；
-                    //   挪到批前面一次做完，好让下面的求解真正并发。
-                    double wall6c = (double)_wall.Value;
-                    double minDisc2 = GeometryScreen.MinDiscRadiusMm(
-                        holeRadiusMm: wall6c + 25.0, thickMm: _base.WeldMinThicknessMm, wallMm: wall6c);
-                    var tag = new string[pts.Count];
-                    var skip = new bool[pts.Count];
-                    var skipMsg = new string[pts.Count];
-                    var specs = new List<DesignSpec>(pts.Count);
-                    for (int i = 0; i < pts.Count; i++)
-                    {
-                        var (R, hw, taper) = pts[i];
-                        tag[i] = $"{famPrefix}盘Ø{2 * R:0}／舌宽{2 * hw:0}{(taper ? "／锥形" : "")}";
-                        if (R < minDisc2 - 1e-9)
-                        {
-                            skip[i] = true;
-                            skipMsg[i] = $"跳过：管壁 {(double)_wall.Value:0.0} 时盘半径至少要 {minDisc2:0.0}（判据 {Criteria.Explain("⑥")}）";
-                            continue;
-                        }
-                        var seed = PageToDesignSpec();
-                        seed.DiscRadiusMm = R;
-                        seed.TabHalfWidthMm = hw;
-                        seed.TabTaper = taper;                                // R38
-                        seed.TabLengthMm = Math.Sqrt(Math.Max(0, R * R - hw * hw))
-                                           + seed.ClampLengthMm + FreeTabMin;
-                        specs.Add(seed);
-                    }
-
-                    // ── 求解（并发，最多 4 路）：批内互不依赖，solveOne 是纯函数
-                    //   （见 Core/ShapeBatchEval.cs 类头注释）。
-                    int batchBase = done;
-                    int roundsDone = 0;
-                    // ★ 界面控件属性只能在 UI 线程读：下面的 lambda 跑在线程池，所以「解法」族在这里先取成局部值再带进去
-                    //   （合入时审出：原来在 lambda 里直接读 FamilyAllowsCuts ⇒ 跨线程读 ComboBox）。
-                    //   R38：allowCuts 现在是 SearchOneFamilyAsync 的普通 bool 形参（不是活的控件读数），
-                    //   已经是按值捕获的快照，这里再取一次局部名只为保留同一处注释与写法，不是必须。
-                    bool allowCutsBatch = allowCuts;
-                    ShapeBatchEval.Outcome<(SolverResult sr, TimeSpan elapsed)>? outcome = null;
-                    if (specs.Count > 0)
-                    {
-                        outcome = await ShapeBatchEval.RunAsync(specs, (spec, tok) =>
-                        {
-                            // ★ 这段跑在线程池线程上（ShapeBatchEval 内部 Task.Run），Progress<T>
-                            //   构造时捕获不到 UI 同步上下文 ⇒ 自己的回调必须显式 OnUi 封送，
-                            //   不能指望 Progress<T> 自动回主线程（审查第 3 节点名的那个坑）。
-                            // 回调整段回 UI 线程（SegGridLayoutTests 钉着：每一处 Progress 都得是 s => OnUi(...)）；
-                            //   计数在 UI 线程上做，天然串行，不必 Interlocked。
-                            var prog2 = new Progress<string>(s => OnUi(() =>
-                            {
-                                if (!s.StartsWith("第", StringComparison.Ordinal)) return;
-                                roundsDone++;
-                                _prog.Value = Math.Min(_prog.Maximum, batchBase + roundsDone);
-                            }));
-                            var swPt = System.Diagnostics.Stopwatch.StartNew();
-                            var r = Solver.Solve(spec, _base,
-                                new SolverOptions { AllowTabCuts = allowCutsBatch, MaxRounds = screenRounds,
-                                                     ScreenCoarseMm = SearchScreenCoarseMm },
-                                prog2, tok);
-                            swPt.Stop();
-                            return (r, swPt.Elapsed);
-                        }, lanes: 4, ct);
-                    }
-
-                    // ── 收尾（UI 线程，按候选原顺序）：与 EvalShape 单点路径同一套追加逻辑——
-                    //   只是从「算完一个贴一个」变成「批完了按原顺序一起贴」，贴出来的内容
-                    //   逐位相同，只是送达 _out 的时机从批内穿插变成批完一起送达。
-                    int si = 0;
-                    for (int i = 0; i < pts.Count; i++)
-                    {
-                        var (R, hw, taper) = pts[i];
-                        if (skip[i])
-                        {
-                            done += screenRounds; _prog.Value = Math.Min(_prog.Maximum, done);
-                            Note($"{famPrefix}跳过 盘Ø{2 * R:0}（判据 {Criteria.Explain("⑥")} 早筛）");
-                            _out.AppendText($"{2 * R:0}\t—\t—\t—\t—\t{skipMsg[i]}\r\n");
-                            continue;
-                        }
-                        int idx = si++;
-                        done += screenRounds; _prog.Value = Math.Min(_prog.Maximum, done);
-                        // 批内被取消打断：这个候选没跑完，不留痕（与串行「没轮到就没有输出」一致）。
-                        if (outcome is null || !outcome.Done[idx]) continue;
-                        var (sr, elapsed) = outcome.Results[idx];
-                        Note($"{tag[i]} 已完成　{(double.IsNaN(sr.MassG) ? "未解出（看停因）" : sr.MassG.ToString("0") + " g")}");
-                        if (famProvTag is not null && sr.Design is not null)
-                            sr.Design.Provenance = ((sr.Design.Provenance ?? "").Trim() + "；解法：" + famProvTag).TrimStart('；');
-                        rows.Add((sr.Design, sr.MassG, sr.Feasible, sr.Message));
-                        _out.AppendText(
-                            $"{2 * R:0}\t{2 * hw:0}\t{(taper ? "锥形" : "平行")}\t{sr.Design.TabLengthMm:0}\t" +
-                            $"{elapsed.TotalMinutes:0.0}\t" +
-                            (double.IsNaN(sr.MassG) ? "—" : sr.MassG.ToString("0")) +
-                            $"\t{(sr.Feasible ? "✓ " : "")}{sr.Message}" +
-                            (sr.HitBound || sr.Undetermined ? $"（⚠ {sr.StopWhy}）" : "") + "\r\n");
-                    }
-                    // ★ 已经算完的都已经贴进 rows/_out 了才轮到这里——「已经算完的形状结果不会丢」
-                    //   在并行批次下依然成立（ShapeBatchEval 类头注释）。
-                    if (outcome is { Cancelled: true }) ct.ThrowIfCancellationRequested();
-                }
-
-                // ── 第 1 轮：网格粗筛。它的作用是**给出发点与方向**，不是最终答案。
-                // ★ **先把工程师现在这个形状算一遍**（2026-08-25）。
-                //   网格是写死的 {25,30,35}，不从页面当前盘径出发 ⇒ 手上是 R60 的图时，
-                //   搜索连「你现在这个形状值多少」都不告诉他，直接跳到答案区。
-                //   把当前形状当**基准点**加进第 1 轮：
-                //     · 工程师看得到「从我这里到最好的，差多少」；
-                //     · 外推也有了一个真实的出发点，而不是凭网格猜的。
-                //   ⚠ 它可能不可行（那正是他来搜形状的原因）—— 不可行就只是表上多一行，
-                //     不会成为外推的出发点（外推只从**可行**的最好点走）。
-                {
-                    double R0now = (double)_discD.Value * 0.5, hw0now = (double)_tabW.Value;
-                    if (R0now > 5 && hw0now > 1)
-                    {
-                        _out.AppendText("（先算你现在这个形状，作基准）" + Environment.NewLine);
-                        await EvalShape(R0now, Math.Min(hw0now, R0now), taperPage);
-                    }
-                }
-                // ══════════════════════════════════════════════════════════════════
-                // ★★★★★ **盘径不用搜，⑥ 有闭式反解**（2026-09-04，用户要求「改求根」）
-                //
-                //   ══ 为什么原来那个 3×2 网格贵
-                //
-                //   实测每点计时（deliverable/F_测搜形状耗时.txt）：
-                //     不可行的点 1 分钟就退出，**可行的点 20–33 分钟** —— 单点差 30 倍。
-                //   网格 6 点里 3 个可行 ⇒ 光网格就 ~80 分钟，预算全耗在这里。
-                //   ⚠ 二分也救不了：二分同样要落在若干**可行点**上，每个仍是 20–30 分钟。
-                //
-                //   ══ 真正的杠杆：卡住小盘径的那条判据，本身是闭式的
-                //
-                //   实测卡住的是「⑥ 圆盘盖得住管孔＋焊脚」：
-                //     盘半径 27.500 mm ＜ 需要 29.023 mm
-                //   而 Solver.CoverCheck 自己写着：「这是 ⑥ 的**闭式反解**，不是搜出来的
-                //   —— 不用试，就是这个数」。need = 管孔 + 焊脚，焊脚 = max(板厚, 壁厚)。
-                //
-                //   ⇒ 解一次拿到板厚 → ⑥ 当场给出**最紧的**盘径下界 → 在那里再解一次。
-                //     板厚随盘径变，所以是个不动点迭代，实测一两步就收敛。
-                //
-                //   ⚠ 这不是「猜下界」：need 由 GeometryScreen.MinDiscRadiusMm(plates) 算，
-                //     与判据 ⑥ **同一份实现**（2026-08-29 已经把手写的那份合并掉了）。
-                //   ⚠ 收敛之后仍**照常评估**该点（走 EvalShape），判据与质量都是真解出来的，
-                //     闭式只用来**选在哪里解**，不用来代替解。
-                double fWide = wFrac.Max();          // 舌宽先取最宽（贴着盘径），窄的稍后在最优盘径上试
-                double Rsafe = discs[^1];            // 网格最大的那个盘径：先在这里解一次拿板厚
-                _out.AppendText("① 先在盘Ø" + (2 * Rsafe).ToString("0")
-                              + " 解一次，拿到板厚 —— 判据「圆盘盖得住管孔＋焊脚」"
-                              + "据此给出**最紧的盘径下界**（闭式，不用搜）" + Environment.NewLine);
-                await EvalShape(Rsafe, Rsafe * fWide, taperPage);
-
-                double Rbest = Rsafe;
-                for (int fix = 0; fix < 3; fix++)
-                {
-                    var lastD = rows.Count > 0 ? rows[^1].d : null;
-                    if (lastD is null) break;
-                    double floorMm = lastD.DiscFloorMm(_base);
-                    var plates = new FlangePlate[lastD.TabThickMm.Length];
-                    for (int j2 = 0; j2 < plates.Length; j2++) plates[j2] = lastD.Plate(j2, floorMm);
-                    double need = GeometryScreen.MinDiscRadiusMm(plates);
-                    if (double.IsNaN(need) || need <= 0) break;
-                    double Rnext = Math.Max(need, minDiscAll);
-                    // 已经贴着下界（或反而更大）⇒ 不动点到了
-                    if (Rnext >= Rbest - 0.05) break;
-                    _out.AppendText($"② 判据下界给出 盘半径 ≥ {need:0.000} mm ⇒ 在盘Ø{2 * Rnext:0.0} 再解一次"
-                                  + Environment.NewLine);
-                    _prog.Maximum += screenRounds;
-                    await EvalShape(Rnext, Rnext * fWide, taperPage);
-                    if (rows.Count == 0 || !rows[^1].ok)
-                    {
-                        // ★★★★★ 闭式下界处**不可行** ⇒ 真正卡住的不是 ⑥，是别的判据。
-                        //   实测（deliverable/F_求根后.txt）：⑥ 给出 R ≥ 27.253，
-                        //   而盘Ø55 上「圆盘区最高温」**判不了（NaN）** —— 盘太小，
-                        //   圆盘区与孔/焊缝分不开了。
-                        //
-                        //   ⇒ 现在两端都是**实测**出来的：下界不可行、Rbest 可行。
-                        //     这才是二分该出场的时候（此前二分是没有依据的猜）。
-                        //   ⚠ 不用爬山：爬山每步只挪 ±5 mm 且不认方向，实测它从 70 走到 60
-                        //     中间还绕去 70/53（3034 g，更重）。二分 3 步就到。
-                        double bLo = Rnext, bHi = Rbest;      // bLo 不可行、bHi 可行
-                        for (int bi = 0; bi < 3 && bHi - bLo > 1.0; bi++)
-                        {
-                            double mid = 0.5 * (bLo + bHi);
-                            _out.AppendText($"③ 二分：{2 * bLo:0.0} 不可行 / {2 * bHi:0.0} 可行 ⇒ 试盘Ø{2 * mid:0.0}"
-                                          + Environment.NewLine);
-                            _prog.Maximum += screenRounds;
-                            await EvalShape(mid, mid * fWide, taperPage);
-                            if (rows.Count > 0 && rows[^1].ok) { bHi = mid; Rbest = mid; }
-                            else bLo = mid;
-                        }
-
-                        // ★★★★★ **可行边界不是最轻点**（2026-09-05 实测推翻了我的前提）
-                        //
-                        //   我原以为「可行区里盘径越小越轻」，于是二分到边界就收工。
-                        //   实测（deliverable/F_成对后.txt）四个可行点：
-                        //       盘Ø70 → 2848 g   盘Ø62 → 2619 g
-                        //       盘Ø58 → 2590 g   盘Ø56 → 2611 g   ← 更小反而**更重**
-                        //   ⇒ 最轻点在**区间内部**（≈58），不在边界（56）上。
-                        //   先前那个「随盘径递增」是从**三个网格点**归纳出来的 —— 样本太少。
-                        //
-                        //   ⇒ 二分的职责改成**定可行区间**；区间内再按**质量**找极小。
-                        //   用黄金分割：单峰假设下 4 个点把区间缩到 ~15 %，
-                        //   而每个点仍是真解（质量与判据都不是估的）。
-                        //   ⚠ 不假设严格单峰：取的是**已算过的所有可行点里最轻的那个**，
-                        //     黄金分割只决定「下一个点试哪里」。多峰时最多是没找到全局最优，
-                        //     不会给出一个没验过的答案。
-                        double gLo = bLo, gHi = Math.Min(bHi + 6.0, Rsafe);   // 往可行侧留一点余地
-                        const double Phi = 0.6180339887;
-                        for (int gi = 0; gi < 4 && gHi - gLo > 1.0; gi++)
-                        {
-                            double x1 = gHi - Phi * (gHi - gLo), x2 = gLo + Phi * (gHi - gLo);
-                            double probe = (gi % 2 == 0) ? x1 : x2;
-                            if (rows.Any(r2 => r2.d is not null
-                                            && Math.Abs(r2.d.DiscRadiusMm - probe) < 0.5)) { gLo += 0.5; continue; }
-                            _out.AppendText($"④ 找最轻：区间 盘Ø{2 * gLo:0.0}–{2 * gHi:0.0} ⇒ 试盘Ø{2 * probe:0.0}"
-                                          + Environment.NewLine);
-                            _prog.Maximum += screenRounds;
-                            await EvalShape(probe, probe * fWide, taperPage);
-                            // 缩区间：往**当前最轻**的那一侧收
-                            var okRows = rows.Where(r2 => r2.ok && r2.d is not null && !double.IsNaN(r2.mass)).ToList();
-                            if (okRows.Count == 0) break;
-                            double Rmin = okRows.OrderBy(r2 => r2.mass).First().d!.DiscRadiusMm;
-                            if (probe < Rmin) gLo = probe; else gHi = probe;
-                            Rbest = Rmin;
-                        }
-                        break;
-                    }
-                    Rbest = Rnext;
-                }
-
-                // ③ 在最优盘径上把其余舌宽比例各试一次（舌宽是另一维，不由 ⑥ 决定）
-                // ★ R36：这一批候选（盘径都是 Rbest）本轮内互相独立 ⇒ 走 EvalShapesBatch，
-                //   4 路并发；_prog.Maximum 按整批一次性加（审查 P2：不在批内逐次累加）。
-                //   R38：锥形在这一步仍固定为 taperPage —— 这几步找的是盘径与舌宽，
-                //   不该同时又变出第三维；锥形要等邻域探索把方向摸出来了才跟着搜。
-                var batch6 = wFrac.Where(f => Math.Abs(f - fWide) > 1e-9)
-                                   .Select(f => (Rbest, Rbest * f, taperPage)).ToList();
-                if (batch6.Count > 0)
-                {
-                    _prog.Maximum += batch6.Count * screenRounds;
-                    await EvalShapesBatch(batch6);
-                }
-
-                // ── 之后每一轮：从当前最好点出发，试**五个**邻点（盘径 ±5、舌宽比例 ±0.125、
-                //    第 5 个 = 翻转锥形）。有更好的就搬过去继续；**一个都没更好就停** ——
-                //    这正是用户 2026-08-25 要的「有好的方向则继续，如果都是变坏即刻停止」，
-                //    R38 只是把「翻转锥形」也算进「方向」里，不改这条规则本身。
-                //    ⚠ 上限 6 轮：这条链本来就是几十分钟量级，不设上限会没完。
-                //      停下时**已算过的形状全都留着**（rows），不会因为中止丢结果。
-                int maxExtend = SearchMaxExtend;
-                string NL2 = Environment.NewLine;
-                foreach (var r0 in rows)
-                    if (r0.d is not null)
-                        seen.Add(ShapeSearchPlan.Key(r0.d.DiscRadiusMm, r0.d.TabHalfWidthMm, r0.d.TabTaper));   // R38：去重键带上锥形
-
-                double BestMass() => rows.Where(x => x.ok && !double.IsNaN(x.mass))
-                                         .Select(x => x.mass).DefaultIfEmpty(double.NaN).Min();
-
-                // ★ 步长会**收缩**（算法普查 A⑥）：没有更好 ⇒ 步长减半再试，
-                //   直到 MinDiscStepMm。于是「停」这句话变成「在该分辨率上没有更好」，
-                //   而不是「在碰巧的 5 mm 上没有更好」。
-                double step = ShapeSearchPlan.DiscStepMm;
-                for (int ext = 1; ext <= maxExtend; ext++)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    var cur = rows.Where(x => x.ok && !double.IsNaN(x.mass))
-                                  .OrderBy(x => x.mass).FirstOrDefault();
-                    if (cur.d is null)
-                    {
-                        _out.AppendText("　（网格里没有可行解 ⇒ 没有出发点，不外推）" + NL2);
-                        break;
-                    }
-                    double before = cur.mass, R0 = cur.d.DiscRadiusMm, hw0 = cur.d.TabHalfWidthMm;
-                    bool curTaper = cur.d.TabTaper;   // R38：从**当前最好点**出发，锥形也带着它的值走
-                    // ★ 「试哪几个 / 算不算变好」的规则**只有一份**：Core/ShapeSearchPlan
-                    //   （2026-08-25 抽出并配了 10 条微秒级门；R38 加了带锥形的 5 邻点重载）。
-                    //   这里只负责跑，不再自己判。
-                    var todo = ShapeSearchPlan.Worth(ShapeSearchPlan.Neighbours(R0, hw0, curTaper, step), seen);
-                    if (todo.Count == 0)
-                    {
-                        // 邻点都算过 ⇒ 不是没方向，是**这个步长上**没新点可试 ⇒ 收缩再来
-                        double nx0 = ShapeSearchPlan.Refine(step);
-                        if (ShapeSearchPlan.StepExhausted(nx0))
-                        {
-                            _out.AppendText($"　第 {ext + 1} 轮：±{step:0.###} mm 的邻点都试过了，且步长已收到"
-                                          + $"分辨率下界 {ShapeSearchPlan.MinDiscStepMm:0.###} mm ⇒ 停。" + NL2);
-                            break;
-                        }
-                        step = nx0;
-                        _out.AppendText($"　第 {ext + 1} 轮：邻点都试过了 ⇒ **步长减半到 {step:0.###} mm**，继续。" + NL2);
-                        continue;
-                    }
-
-                    _prog.Maximum += todo.Count * screenRounds;
-                    _out.AppendText(NL2 + $"第 {ext + 1} 轮 · 从 {famPrefix}盘Ø{2 * R0:0}／舌宽{2 * hw0:0}"
-                                  + $"{(curTaper ? "／锥形" : "")}（{before:0} g）出发，试 {todo.Count} 个邻点"
-                                  + "（含「翻转锥形」这个方向）" + NL2);
-                    // ★ R36：邻点本轮内互相独立（ShapeSearchPlan.Neighbours 的结构性保证，
-                    //   见 deliverable/搜形状并行化_审查_2026-09-09.md 第 0 节）⇒ 并发跑，
-                    //   不再逐个 await EvalShape(。
-                    await EvalShapesBatch(todo);
-
-                    double after = BestMass();
-                    bool better = ShapeSearchPlan.Improved(before, after);   // 唯一一份口径
-                    _out.AppendText($"　⇒ 第 {ext + 1} 轮：{before:0} → {after:0} g　"
-                                  + (better ? "**↓ 变好，继续**" : "**↑ 没有更好的方向 ⇒ 停**")
-                                  + NL2);
-                    Note($"{famPrefix}第 {ext + 1} 轮 {(better ? "变好" : "无改善")}　{before:0} → {after:0} g"
-                         + $"　步长 {step:0.###} mm");
-                    if (!better)
-                    {
-                        // ★ 「没有更好」只说明**在这个步长上**没有更好 —— 减半再问一次。
-                        //   收到分辨率下界才谈得上「局部最优」，而那个下界是声明出来的。
-                        double nx = ShapeSearchPlan.Refine(step);
-                        if (ShapeSearchPlan.StepExhausted(nx))
-                        {
-                            _out.AppendText($"　⇒ 步长已收到 {step:0.###} mm（下界 {ShapeSearchPlan.MinDiscStepMm:0.###} mm）仍无改善"
-                                          + $" ⇒ **在 ±{step:0.###} mm 分辨率上是局部最优**，停。" + NL2);
-                            break;
-                        }
-                        step = nx;
-                        _out.AppendText($"　⇒ 这个步长上没有更好 ⇒ **步长减半到 {step:0.###} mm** 再问一次" + NL2);
-                    }
-                }
-
-                var win = rows.Where(x => x.ok && !double.IsNaN(x.mass))
-                              .OrderBy(x => x.mass).FirstOrDefault();
-                if (win.d is null)
-                {
-                    _out.AppendText($"\r\n★ {famPrefix}{famTag}**没有全过的形状**。上面每行的失败原因已逐条列出，"
-                                    + "据此扩网格（改盘径范围）或松工艺（管壁、控温点）。\r\n");
+                    _out.AppendText("\r\n" + (res.NoFeasibleReport.Length > 0
+                        ? res.NoFeasibleReport.Replace("\r\n", "\n").Replace("\n", "\r\n")
+                        : $"★ {famPrefix}{famTag}**没有全过的形状**。上面每行的失败原因已逐条列出。") + "\r\n");
                     return null;
                 }
-
-                Note($"{famPrefix}精算胜出形状…");
-                // ★★ 精算走 **Solver 两遍**：第一遍导航网格定位，
-                //   第二遍在**判据所在的那张网格**上重新求根（A⑬）。
-                //   否则给出的是「粗网格上的刚好」——实测 ③ 在两张网格上差 **2.03 倍**。
-                //   网格该多细与复核同一个来源（MeshVerify.RequiredMeshFor）。
-                var (finFine, finFineR) = MeshVerify.RequiredMeshFor(win.d, _base);   // F7′（2026-09-23）：半径 = 细区半径计划初值，Solver 解后按热点自适应放大
-                int finRound = 0;
-                var fin = await Task.Run(() => Solver.Solve(win.d, _base,
-                              new SolverOptions { AllowTabCuts = allowCuts, MaxRounds = finalRounds,
-                                                  FineMm = finFine, FineRadiusMm = finFineR },
-                              new Progress<string>(s => OnUi(() =>
-                              {
-                                  if (s.StartsWith("第", StringComparison.Ordinal)) finRound++;
-                                  _prog.Value = Math.Min(_prog.Maximum, done + finRound);
-                                  Note($"{famPrefix}精算　" + s.Split('\n')[0]);
-                              })), ct), ct);
-                _prog.Value = _prog.Maximum;
-
-                // ★ 第二遍做没做，**必须当场说** —— 本项目的错误形态是
-                //   「看着正常的错数」：只在导航网格上成立的解，
-                //   数字长得和可交付的解一模一样。
-                _out.AppendText(Environment.NewLine + (fin.FineRefined
-                    ? $"   ✓ 已做**第二遍细网格求根**（{fin.FineMmUsed:0.000} mm）"
-                      + "—— 根是在**判据所在的那张网格**上求的。"
-                    : "   ⚠ **没做第二遍** ⇒ 这个解只在导航网格上成立，**不可交付**。")
-                    + Environment.NewLine);
-
+                var fin = res.Final;
                 // 形状体检：搜出来的赢家也要说清楚它好在哪、代价在哪
-                _out.AppendText("\r\n" + ShapeReview.Build(fin.Design, fin.Best,
-                                                           DesignSpec.Current, fin.Message, _base));
-                // ★★ 2026-09-15 Opus 5（J 路，合并把关待办 P1-6）：精算没全过就不许叫「全过形状」、不许写回控件（口径与理由见 ShapeSearchPlan.RefineVerdict）。
-                //   返回 null ＝ 这一族没有全过的形状：下面「两族并列」与收尾都按无解走。
-                var refine = ShapeSearchPlan.RefineVerdict(fin.Feasible, fin.StopWhy, famPrefix);
-                if (!refine.WriteBack)
+                _out.AppendText("\r\n" + ShapeReview.Build(fin.Design, fin.Best, DesignSpec.Current, fin.Message, _base));
+                // ★★ 精算没全过就不许叫「全过形状」、不许写回控件（ShapeSearchPlan.RefineVerdict，驱动已判）；返回 null = 这一族没有全过的形状
+                if (!res.FinalWriteBack)
                 {
-                    _out.AppendText("\r\n" + refine.Headline + "\r\n");
+                    _out.AppendText("\r\n" + res.FinalHeadline + "\r\n");
                     return null;
                 }
-                _out.AppendText($"\r\n{refine.Headline}\r\n" +
+                _out.AppendText($"\r\n{res.FinalHeadline}\r\n" +
                     $"   盘Ø{2 * fin.Design.DiscRadiusMm:0}／舌 {fin.Design.TabLengthMm:0}×{2 * fin.Design.TabHalfWidthMm:0}" +
                     $"／{(fin.Design.TabTaper ? "锥形舌边" : "平行舌边")}／自由段 {fin.Design.FreeTabMm:0.0} mm\r\n" +
                     $"   板厚 {DesignSpec.Fmt(fin.Design.TabThickMm, "0.00")}" +
                     $"　舌保温 {DesignSpec.Fmt(fin.Design.TabInsulMm, "0.0")}" +
                     $"　环倍率 {DesignSpec.Fmt(fin.Design.RingMul, "0.00")}\r\n" +
                     $"   合计 {fin.MassG:0} g　{fin.Message}\r\n\r\n" +
-                    "     ★ 舌保温与环倍率本页没有控件，但**已由本页承载**（2026-08-25 起）：" + Environment.NewLine + "" +
-                    "       它们跟着后续求解与出图走，不必再手抄进 Core/DesignSpec。" + Environment.NewLine + "" +
+                    "     ★ 舌保温与环倍率本页没有控件，但**已由本页承载**（2026-08-25 起）：" + Environment.NewLine +
+                    "       它们跟着后续求解与出图走，不必再手抄进 Core/DesignSpec。" + Environment.NewLine +
                     "   ⚠ 筛选只跑了 " + screenRounds + " 轮，**是粗筛**：名次靠前几名接近时，" +
                     "把它们各自再跑一次足轮数才算数。\r\n");
                 return fin;

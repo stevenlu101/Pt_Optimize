@@ -234,12 +234,15 @@ public class R48J_SolverMeshAndMarkerGateTests
         Assert.True(yes.WriteBack);
         Assert.Contains("最轻的全过形状", yes.Headline);
         // 源码门：页面在印「最轻的全过形状」与写回之前先问 RefineVerdict，不写回就 return null
-        string page = Src("Pt_Optimize", "UI", "LineDesignPage.cs");
-        int ask = page.IndexOf("var refine = ShapeSearchPlan.RefineVerdict(fin.Feasible, fin.StopWhy, famPrefix);", StringComparison.Ordinal);
+        // 2026-09-25：精算与判词在 Core/ShapeSearchDriver（界面只调它）：驱动问 RefineVerdict 并写进 FinalWriteBack；页面不写回就 return null
+        string drv = Src("Pt_Optimize", "Core", "ShapeSearchDriver.cs");
+        int ask = drv.IndexOf("var refine = ShapeSearchPlan.RefineVerdict(fin.Feasible, fin.StopWhy ?? \"\", \"\");", StringComparison.Ordinal);
         Assert.True(ask > 0);
-        string after = page[ask..(ask + 400)];
-        Assert.Contains("if (!refine.WriteBack)", after);
-        Assert.Contains("return null;", after);
+        Assert.Contains("res.FinalWriteBack = refine.WriteBack;", drv[ask..(ask + 400)]);
+        string page = Src("Pt_Optimize", "UI", "LineDesignPage.cs");
+        int gate = page.IndexOf("if (!res.FinalWriteBack)", StringComparison.Ordinal);
+        Assert.True(gate > 0);
+        Assert.Contains("return null;", page[gate..(gate + 300)]);
         Assert.DoesNotContain("$\"\\r\\n★ {famPrefix}最轻的全过形状\\r\\n\"", page);
     }
 

@@ -248,7 +248,10 @@ public class DiscCoverPrescriptionTests
         string ui = File.ReadAllText(Path.Combine(
             HandoverDoc.Root(), "Pt_Optimize", "UI", "LineDesignPage.cs"));
         Assert.DoesNotContain("25.0 + 2 * (double)_wall.Value", ui);
-        Assert.Contains("GeometryScreen.MinDiscRadiusMm(", ui);
+        // 2026-09-25：形状网格的下界在 Core/ShapeSearchDriver 里算（界面只调驱动），仍是 ⑥ 自己的闭式反解那一份
+        Assert.Contains("ShapeSearchDriver.Run(", ui);
+        string drv = File.ReadAllText(Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "Core", "ShapeSearchDriver.cs"));
+        Assert.Contains("double minDiscAll = GeometryScreen.MinDiscRadiusMm(", drv);
 
         // 数值不变：烧穿下界 0.6，两个现役档
         foreach (double wall in new[] { 0.6, 0.8 })

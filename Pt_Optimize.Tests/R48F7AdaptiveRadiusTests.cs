@@ -429,7 +429,7 @@ public class R48F7AdaptiveRadiusTests
         ("Pt_Optimize/Program.cs", "MeshFineRadiusMm = fr,", "命令行仪器「细网格半径的等价性验证」：逐个试 45／35／30（扫的就是这个变量，不是规则）"),
         ("Pt_Optimize/Program.cs", "soOpt.FineRadiusMm = fr", "命令行 --solve --fine：fr = MeshVerify.RequiredMeshFor（计划初值），Solver 解后放大"),
         ("Pt_Optimize/Program.cs", "lcA.MeshFineRadiusMm = radiusA", "命令行 --meshadapt：radiusA = MeshVerify.FineRadiusPlanFor（计划初值；本仪器不放大，只印热点句）"),
-        ("Pt_Optimize/UI/LineDesignPage.cs", "FineRadiusMm = finFineR", "搜形状精算：MeshVerify.RequiredMeshFor（计划初值），Solver 解后放大"),
+        // 2026-09-25：搜形状精算搬进 Core/ShapeSearchDriver（界面只调驱动），页面里那一行不在了；驱动那一行见下
         // 2026-09-24 补登记（cc49836 起本门即红在这一行：搜形状 Core 驱动 07644dc 之后新建，照搬界面精算那一行，当时没来登记）
         ("Pt_Optimize/Core/ShapeSearchDriver.cs", "FineRadiusMm = finFineR", "搜形状 Core 驱动赢家精算：MeshVerify.RequiredMeshFor（计划初值），Solver 解后放大（与界面搜形状精算同一条）"),
         ("Pt_Optimize/UI/LineDesignPage.cs", "optLv.FinalMeshFineRadiusMm = fine3dm.RadiusMm", "图纸细网格重解：加密复算计划的终值（FineResolveAsync）"),
