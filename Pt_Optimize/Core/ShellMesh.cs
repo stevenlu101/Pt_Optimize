@@ -26,9 +26,14 @@ public sealed class MeshFace
     /// 不裁剪时（老口径、手造网格）= Length；弧面 = 弧长。
     /// </summary>
     public double FullLength = double.NaN;
-    public double DistAB;           // 两单元形心间距 mm（边界面取形心到边中点距离）
+    public double DistAB;           // 两单元形心间距 mm（边界面：直边 = 形心到边中点距离；管孔弧面 = ShellMesh.BoundaryDistMm，形心到孔圆的法向距）
     public Vec3 Mid;
     public int Tag;                 // 边界类型，见 ShellMesh.Tag*
+    /// <summary>
+    /// ★ 2026-09-23（F6b）：弧面所在圆的半径 mm（圆心 = 管轴 (0, 0)）；NaN = 直边。只有 <see cref="FlangeMesher.AddHoleArcFaces"/> 写它。
+    /// 用处：弧面的形心—边界距离按「到圆的法向距」量（<see cref="ShellMesh.BoundaryDistMm"/>），孔面判定「只认弧面」（F6c）也按它判。
+    /// </summary>
+    public double ArcRadiusMm = double.NaN;
 }
 
 /// <summary>
@@ -133,6 +138,20 @@ public sealed class ShellMesh
     public bool ClampFaceDirichlet { get; init; } = true;
 
     /// <summary>
+    /// ★★ 2026-09-23（F6a，网格老毛病 F6：「电流场孔边按带管孔面的格整格钉 V = 0」）：**管孔边界电位施加在孔面上**（默认 true）；false = 老口径整格钉（只供门做「改回 ⇒ 红」）。
+    /// 写法与 <see cref="ClampFaceDirichlet"/> 相同：只许建网格时写（init），<b>ShellCurrent 只读这一处</b>。
+    /// 病（整格钉）：带管孔面的格整格 V = 0 ⇒ 电极落在这些格的**形心**上，几何走一小步、被孔圆切到的格集合换一个，电极位置跳半格
+    ///   （门 b 盘径 30.24／30.56／31.00：Δe +0.382／+0.249／+0.247 %）；孔格自己 J 取不到真值（J 峰越加密越大 14.57 → 16.15）。
+    /// 面上口径：孔格回到普通自由格；每条孔面（弧面或阶梯直边）是一条到 V = 0 的面导度 g = σ·t·L ÷ <see cref="MeshFace.DistAB"/>，电极 = 孔圆本身。
+    /// 热场的孔边早已在面上施加（ShellThermal 的 holeFaceDirichlet 缺省 true，gHole 读同一个 DistAB），两个场从此同一口径。
+    /// ⚠ 缺省 true 对**所有**网格生效，不只 FlangeMesher（2026-09-23 F6 审查后补注，findings #4／#19；只写明，行为不改）：
+    ///   只有 FlangeMesher.BuildFromField 按 MeshRules 显式写这一位；<see cref="QuadMesher"/>、测试里手造的网格（条带、R47 诊断仪器的 BuildExactOnNewAxis 等
+    ///   直接 new ShellMesh() 的）都拿缺省值 ⇒ 同样按面施加。这些网格的孔面若是阶梯直边（QuadMesher 按 3 mm 判定带打的标签），
+    ///   就是每条阶梯直边一条面导度、DistAB = 形心到边中点（<see cref="BoundaryDistMm"/> 的直边分支）。要老口径得在建网格时显式写 false。
+    /// </summary>
+    public bool HoleFaceDirichlet { get; init; } = true;
+
+    /// <summary>
     /// ★★ 2026-09-15 Opus 5（J 路，合并把关待办 P2-5）：**「整面接触生效」的唯一定义** = <see cref="ClampCell"/> 长度 = 单元数 **且至少一格为真**。
     /// 此前两种定义并存：面上定温（<see cref="ClampFaceActive"/>）、两个求解器、集总模型排除压接格只看「长度 = 单元数」，网格与热解配方指纹要求「至少一格为真」；
     /// 生成器在压接段里一格形心都没有时也会写一个全假的数组（界面压接长下限 3 mm、网格 4 mm 时可达，deliverable/J路_J9_整面接触全假可达性_本次开跑于2026-09-15_190530.txt），
@@ -148,6 +167,25 @@ public sealed class ShellMesh
     /// 面上施加边界值（压接面）时自由格一侧的半距也用它 —— 距离取法只有这一份。
     /// </summary>
     public double CentroidToFaceMm(int cell, MeshFace f) => (f.Mid - Centroid[cell]).Norm;
+
+    /// <summary>2026-09-23（F6b）：网格自己的几何分辨率 mm（= 建面时的边长容差）。弧面距离的下限取它 —— 不是可调参数。</summary>
+    internal const double GeomTolMm = EdgeTolMm;
+
+    /// <summary>
+    /// ★★ 2026-09-23（F6b）：**边界面的形心—边界距离，从此只有这一份**（弧面、直边都走这里；<see cref="MeshFace.DistAB"/> 由生成器按它填）。
+    ///   · 弧面（<see cref="MeshFace.ArcRadiusMm"/> 有限）：形心到孔圆的**法向距** d = max(<see cref="GeomTolMm"/>, | |C| − r_arc |)。
+    ///     只由形心与孔圆决定，与孔圆被格线切成几段、弧中点落在哪里无关 —— 原先取「形心到弧中点的直线距离」，一格两段弧、或弧中点偏到格角时，
+    ///     直线距离比法向距长得多（门 b 30.24 那条薄片面：法向距 0.005 mm、直线距离 ≈ 0.1 mm，单点通量只剩 4 %）。
+    ///     绝对值：图纸（栅格）路径会把孔里判成有料，形心可落在孔圆内侧（实测盘径 31 判决档 2 条面 −0.0005／−0.019 mm）；下限：形心贴在孔圆上时面导度有界。
+    ///   · 直边：形心到边中点，= <see cref="CentroidToFaceMm"/>（逐位不变）。
+    /// </summary>
+    public double BoundaryDistMm(int cell, MeshFace f)
+    {
+        if (double.IsNaN(f.ArcRadiusMm)) return CentroidToFaceMm(cell, f);
+        var c = Centroid[cell];
+        double rc = Math.Sqrt(c.X * c.X + c.Z * c.Z);
+        return Math.Max(GeomTolMm, Math.Abs(rc - f.ArcRadiusMm));
+    }
 
     /// <summary>
     /// R48 F（2026-09-15 Opus 5）：压接格集合 = 带压接标签边界面的格 ∪ <see cref="ClampCell"/>（整面接触时）。
@@ -488,17 +526,29 @@ public sealed class ShellMesh
     public List<(double x0, double x1, double z0, double z1)>[]? CellRects;
     /// <summary>TagHole 面里最大的半径 − 孔半径 mm（NaN = 没有 TagHole 面）。&gt;0 说明定温环越过了孔边。</summary>
     public double HoleTagMaxROverMm = double.NaN;
+    /// <summary>2026-09-23（F6b，诊断）：形心落在孔圆内侧（|C| &lt; 弧半径）的弧面数 —— 图纸（栅格）路径把孔里判成有料时出现；距离取了绝对值，这里计数不静默。</summary>
+    public int HoleArcCentroidInside;
+    /// <summary>2026-09-23（F6b，诊断）：距离触到下限 <see cref="GeomTolMm"/> 的弧面数。</summary>
+    public int HoleArcDistAtFloor;
 
-    /// <summary>BuildFaces 之后调一次：填 <see cref="HoleRadiusMm"/> 与 <see cref="HoleTagMaxROverMm"/>。</summary>
+    /// <summary>BuildFaces 之后调一次：填 <see cref="HoleRadiusMm"/>、<see cref="HoleTagMaxROverMm"/> 与弧面距离诊断。</summary>
     public void ComputeHoleTagDiagnostics(double holeRadiusMm)
     {
         HoleRadiusMm = holeRadiusMm;
         double rMax = double.NaN;
+        HoleArcCentroidInside = 0; HoleArcDistAtFloor = 0;
         foreach (var f in Faces)
         {
             if (f.B >= 0 || f.Tag != TagHole) continue;
             double r = Math.Sqrt(f.Mid.X * f.Mid.X + f.Mid.Z * f.Mid.Z);
             if (double.IsNaN(rMax) || r > rMax) rMax = r;
+            if (!double.IsNaN(f.ArcRadiusMm))
+            {
+                var c = Centroid[f.A];
+                double rc = Math.Sqrt(c.X * c.X + c.Z * c.Z);
+                if (rc < f.ArcRadiusMm) HoleArcCentroidInside++;
+                if (Math.Abs(rc - f.ArcRadiusMm) <= GeomTolMm) HoleArcDistAtFloor++;
+            }
         }
         HoleTagMaxROverMm = double.IsNaN(rMax) ? double.NaN : rMax - holeRadiusMm;
     }
@@ -552,26 +602,67 @@ public sealed class MeshRecipe
     public double HFineMm { get; init; } = double.NaN;
     public double ClampBandPerHFine { get; init; } = double.NaN;
     public double HoleTagBandMm { get; init; } = double.NaN;
+    /// <summary>
+    /// ★ 2026-09-23（F6a）：管孔电位**生效**施加在孔面上 = 网格开关 <see cref="ShellMesh.HoleFaceDirichlet"/> 为真 且 孔面数 &gt; 0
+    /// （没有孔面时电位根本没施加，谈不上施加在哪；同 ThermalRecipe.HoleFaceDirichlet 的写法）。开关本身另记在 <see cref="HoleFaceDirichletSwitch"/>。
+    /// </summary>
+    public bool HoleFaceDirichlet { get; init; }
+    /// <summary>
+    /// ★ 2026-09-23（F6b）：**量出来的**（观测值，不是开关）：弧面数 &gt; 0 且每条弧面的 DistAB 都等于法向距的定义式 max(GeomTolMm, | |C| − 弧半径 |)。
+    /// F6 审查后改（findings #16，2026-09-23）：原先拿 DistAB 与 <see cref="ShellMesh.BoundaryDistMm"/> 比，而 DistAB 本就是它填的 ⇒ BoundaryDistMm 的算式被改（例如退回直线距离）
+    ///   时这一项照样为真（循环自证）。现在在配方里把定义式另写一遍逐面比，不调 BoundaryDistMm；BoundaryDistMm 的算式变了这一项就变假。
+    ///   仍只量「DistAB 是不是这个式子」，不量这个式子在物理上对不对（那是 F6b 门的事）。开关另记在 <see cref="HoleArcNormalDistSwitch"/>。
+    /// </summary>
+    public bool HoleArcNormalDist { get; init; }
+    /// <summary>
+    /// ★ 2026-09-23（F6c）：**量出来的**（观测值，不是开关）：弧面数 &gt; 0 且这张网格上没有非弧的管孔面。
+    /// ⚠ findings #16：几何上 3 mm 判定带里本来就没有直边时（W08 默认、R31、R30.24、W06 默认等），关掉 F6c 建的网格这一项也为真 ——
+    ///   它说的是「这张网格上有没有违例」，判不出规则开没开。规则开关另记在 <see cref="HoleTagArcOnlySwitch"/>。
+    /// </summary>
+    public bool HoleTagArcOnly { get; init; }
+    /// <summary>2026-09-23（F6 审查后补，findings #16）：**规则开关的真值**（照抄建网格时的 MeshRules.HoleFaceDirichlet，= 写进网格的 ShellMesh.HoleFaceDirichlet），与量出来的 <see cref="HoleFaceDirichlet"/> 分开记。</summary>
+    public bool HoleFaceDirichletSwitch { get; init; }
+    /// <summary>2026-09-23（F6 审查后补）：**规则开关的真值**（照抄 MeshRules.HoleArcNormalDist），与量出来的 <see cref="HoleArcNormalDist"/> 分开记。</summary>
+    public bool HoleArcNormalDistSwitch { get; init; }
+    /// <summary>2026-09-23（F6 审查后补）：**规则开关的真值**（照抄 MeshRules.HoleTagArcOnly；MeshRules.HoleArcFaces 关时这条规则不起作用，这里仍照抄开关），与量出来的 <see cref="HoleTagArcOnly"/> 分开记。</summary>
+    public bool HoleTagArcOnlySwitch { get; init; }
+    /// <summary>2026-09-23（F6 审查后补）：本网格的孔标签**真用了** <see cref="HoleTagBandMm"/> 那条判定带（阶梯孔边路径，或 F6c 关）；false = 孔面只按孔圆上的弧面认（生产弧面路径），判定带不起作用。</summary>
+    public bool HoleTagBandUsed { get; init; }
+    /// <summary>2026-09-23：网格上的管孔面数（与网格尺寸有关，不进规则）。</summary>
+    public int HoleFaceCount { get; init; }
 
     /// <summary>与网格尺寸无关的那部分（规则）—— 生产配方常量就是这个类型，门用 == 比。</summary>
-    public MeshRecipeRule Rule => new(ClampFullFace, ClampFaceDirichlet, ClampAnchorOnNode, ClampBandPerHFine, HoleTagBandMm);
+    /// <remarks>2026-09-23（F6 审查后）：F6 三项开关的真值与量出来的量都进规则（分开的六项），任何一项与生产不同都报出来。</remarks>
+    public MeshRecipeRule Rule => new(ClampFullFace, ClampFaceDirichlet, ClampAnchorOnNode, ClampBandPerHFine, HoleTagBandMm, HoleFaceDirichlet, HoleArcNormalDist, HoleTagArcOnly,
+                                      HoleFaceDirichletSwitch, HoleArcNormalDistSwitch, HoleTagArcOnlySwitch);
 
     /// <summary>一行文字（证据文件头与探针打印用）。</summary>
+    /// <remarks>2026-09-23（F6 审查后改，findings #16）：F6 三项分「开关／量得」两段印；判定带标明本网格有没有真用它（生产弧面路径不用，原先照印「孔边判定带半宽 3 mm」像是它还在起作用）。</remarks>
     public string Describe()
         => $"压接整面接触 {(ClampFullFace ? "生效" : "未生效")}{(ClampCoversHole ? "（压接段盖到管孔，退回只钉外圈）" : "")}"
          + $"；压接边界{(ClampFaceDirichlet ? $"施加在压接面上（{ClampFaceCount} 个面）" : "按压接格形心整格")}"   // 2026-09-15 Opus 5（合并）：F 配方 ⑤
          + $"；压接边界落成节点 {(ClampAnchorOnNode ? "是" : "否")}"
          + $"；压接细带单侧 {ClampBandMm:0.###} mm（= {ClampBandPerHFine:0.###} × hFine {HFineMm:0.###} mm）"
-         + $"；孔边判定带半宽 {HoleTagBandMm:0.###} mm";
+         + (HoleTagBandUsed ? $"；孔边判定带半宽 {HoleTagBandMm:0.###} mm（本网格按带打孔标签）" : $"；孔边判定带 {HoleTagBandMm:0.###} mm 本网格不用（孔面只按孔圆上的弧面认）")
+         + $"；管孔电位：开关{(HoleFaceDirichletSwitch ? "孔面上" : "整格钉")}，{(HoleFaceDirichlet ? $"施加在孔面上（{HoleFaceCount} 个面）" : HoleFaceDirichletSwitch ? "没有孔面、没施加" : "按带孔面的格整格钉")}"   // 2026-09-23 F6a
+         + $"；弧面距离：开关{(HoleArcNormalDistSwitch ? "法向距" : "直线距")}，量得{(HoleArcNormalDist ? "每条弧面 = 法向距" : "不全是法向距（或没有弧面）")}"   // F6b
+         + $"；孔面只认弧面：开关{(HoleTagArcOnlySwitch ? "开" : "关")}，量得{(HoleTagArcOnly ? "没有非弧孔面" : "有非弧孔面（或没有弧面）")}";              // F6c
 }
 
 /// <summary>R48（2026-09-15，Opus 5）：判定网格配方里与网格尺寸无关的规则部分（<see cref="MeshRecipe.Rule"/>）。</summary>
 /// <remarks>2026-09-15 Opus 5（合并）：加 <see cref="ClampFaceDirichlet"/>（F 配方 ⑤ 压接面上定温 vs 形心整格）。</remarks>
-public readonly record struct MeshRecipeRule(bool ClampFullFace, bool ClampFaceDirichlet, bool ClampAnchorOnNode, double ClampBandPerHFine, double HoleTagBandMm)
+/// <remarks>2026-09-23（F6）：加 <see cref="HoleFaceDirichlet"/>（F6a 管孔电位施加在孔面上）、<see cref="HoleArcNormalDist"/>（F6b 弧面距离 = 法向距）、<see cref="HoleTagArcOnly"/>（F6c 孔面只认弧面）——
+/// 这三项是**从网格上量出来的**；F6 审查后（findings #16）另加三项开关真值 <see cref="HoleFaceDirichletSwitch"/>／<see cref="HoleArcNormalDistSwitch"/>／<see cref="HoleTagArcOnlySwitch"/>，两者分开记。</remarks>
+public readonly record struct MeshRecipeRule(bool ClampFullFace, bool ClampFaceDirichlet, bool ClampAnchorOnNode, double ClampBandPerHFine, double HoleTagBandMm,
+                                             bool HoleFaceDirichlet, bool HoleArcNormalDist, bool HoleTagArcOnly,
+                                             bool HoleFaceDirichletSwitch, bool HoleArcNormalDistSwitch, bool HoleTagArcOnlySwitch)
 {
     public string Describe()
         => $"压接整面接触 {(ClampFullFace ? "开" : "关")}；压接边界{(ClampFaceDirichlet ? "施加在压接面上" : "按压接格形心整格")}；压接边界落成节点 {(ClampAnchorOnNode ? "是" : "否")}；"
-         + $"压接细带单侧 {ClampBandPerHFine:0.###} × hFine；孔边判定带半宽 {HoleTagBandMm:0.###} mm";
+         + $"压接细带单侧 {ClampBandPerHFine:0.###} × hFine；孔边判定带半宽 {HoleTagBandMm:0.###} mm{(HoleTagArcOnlySwitch ? "（弧面路径不用它打孔标签，只剩阶梯孔边路径用）" : "")}"
+         + $"；管孔电位：开关{(HoleFaceDirichletSwitch ? "孔面上" : "整格钉")}，量得{(HoleFaceDirichlet ? "施加在孔面上" : "没施加在孔面上")}"
+         + $"；弧面距离：开关{(HoleArcNormalDistSwitch ? "法向距" : "直线距")}，量得{(HoleArcNormalDist ? "法向距" : "不是法向距")}"
+         + $"；孔面只认弧面：开关{(HoleTagArcOnlySwitch ? "开" : "关")}，量得{(HoleTagArcOnly ? "只有弧面" : "含非弧边")}";
 }
 
 /// <summary>
@@ -595,6 +686,12 @@ internal sealed class MeshRules
     public double CellMergeFrac { get; init; } = FlangeMesher.CellMergeFrac;
     /// <summary>F5：轴端余数规则（计划节点之后到轴端不足 hWant/4 就拉到轴端）。</summary>
     public bool AxisEndRule { get; init; } = true;
+    /// <summary>★ 2026-09-23 F6a：管孔电位施加在孔面上（写进 <see cref="ShellMesh.HoleFaceDirichlet"/>；false = 老口径带孔面的格整格钉 V = 0）。</summary>
+    public bool HoleFaceDirichlet { get; init; } = true;
+    /// <summary>★ 2026-09-23 F6b：弧面 DistAB = 形心到孔圆的法向距（<see cref="ShellMesh.BoundaryDistMm"/>；false = 老口径形心到弧中点的直线距离）。</summary>
+    public bool HoleArcNormalDist { get; init; } = true;
+    /// <summary>★ 2026-09-23 F6c：有弧面时孔标签只认弧面（false = 老口径 3 mm 带里的直边真边界也标管孔）。<see cref="HoleArcFaces"/> 关时不起作用（阶梯孔边本来就是直边）。</summary>
+    public bool HoleTagArcOnly { get; init; } = true;
 
     /// <summary>生产规则：全开、门槛取常量。</summary>
     public static readonly MeshRules Production = new();
@@ -964,6 +1061,8 @@ public static class FlangeMesher
     /// <summary>
     /// 管孔边界面的判定口径：|r − 孔半径| &lt; 3 mm。**三份收成一份**（R47 F，2026-09-13：
     /// 原 Build／BuildFromField／QuadMesher 各写一遍，同一个数三处来源）。口径本身不改。
+    /// ★ 2026-09-23（F6c）：生产的弧面路径（<see cref="MeshRules.HoleArcFaces"/> 开、<see cref="MeshRules.HoleTagArcOnly"/> 开）**不再用这条带打标签** ——
+    ///   孔面只认孔圆上的弧面。这条带只剩阶梯孔边的路径在用（HoleArcFaces 关的注入对照、<see cref="QuadMesher"/>），那里孔面本来就是直边。
     /// </summary>
     public const double HoleTagBandMm = 3.0;
 
@@ -1037,9 +1136,12 @@ public static class FlangeMesher
     /// ★ 2026-09-15 Opus 5（合并）：G1 写于 F 之前，这里原为四项、细带那项当时是 3 × hFine。合并后按**合并后的真实生产配方**记五项：
     ///   加 ⑤ 压接边界施加在压接面上（F：<see cref="ShellMesh.ClampFaceDirichlet"/> 缺省 true，生成器参数 clampFaceDirichlet 缺省 true）；
     ///   ④ 细带引用常量 <see cref="ClampBandPerHFine"/>，F 已把它改为 0（依据见该常量注释 deliverable/R48_压接面上定温_细带去留_2026-09-15.txt），这里跟着就是 0 × hFine。
+    /// ★ 2026-09-23（F6）：加三项管孔规则 —— F6a 管孔电位施加在孔面上、F6b 弧面距离取形心到孔圆的法向距、F6c 孔面只认弧面（<see cref="MeshRules"/> 同名三项，生产全开）。
     /// </summary>
     public static readonly MeshRecipeRule ProductionMeshRule = new(
-        ClampFullFace: true, ClampFaceDirichlet: true, ClampAnchorOnNode: true, ClampBandPerHFine: ClampBandPerHFine, HoleTagBandMm: HoleTagBandMm);
+        ClampFullFace: true, ClampFaceDirichlet: true, ClampAnchorOnNode: true, ClampBandPerHFine: ClampBandPerHFine, HoleTagBandMm: HoleTagBandMm,
+        HoleFaceDirichlet: true, HoleArcNormalDist: true, HoleTagArcOnly: true,   // 2026-09-23 F6a／b／c（量出来的三项；MeshRules.Production 三项全开时生产网格上都为真）
+        HoleFaceDirichletSwitch: true, HoleArcNormalDistSwitch: true, HoleTagArcOnlySwitch: true);   // 2026-09-23 F6 审查后补：三项开关真值（MeshRules.Production 全开）
 
     /// <summary>
     /// ★★ R47（2026-09-13）：**解析板的栅格化** —— 生产路径也走它（<see cref="Build"/> = 栅格化 + <see cref="BuildFromField"/>）。
@@ -1404,7 +1506,8 @@ public static class FlangeMesher
         rules ??= MeshRules.Production;
         // 配方 ⑤（R48 F 2026-09-15 Opus 5）：求解器从网格上读，电流与温度两边同一个口径。
         // 2026-09-15 Opus 5（合并，复审后改）：开关改为 init，建网格时一次写定（原在函数末尾 m.ClampFaceDirichlet = clampFaceDirichlet; 赋值，其间无人读它，结果逐位不变）
-        var m = new ShellMesh { ClampFaceDirichlet = clampFaceDirichlet };
+        // ★ 2026-09-23 F6a：管孔电位施加在孔面上（ShellCurrent 只读网格上这一位；门经 MeshRules 传 false 做「改回 ⇒ 红」）
+        var m = new ShellMesh { ClampFaceDirichlet = clampFaceDirichlet, HoleFaceDirichlet = rules.HoleFaceDirichlet };
         string clampNote = "";
         // R48 配方指纹（2026-09-15 Opus 5）：压接边界候选 x 与实际铺下的细带单侧宽度（多个边界取最小；没有候选 = 没铺）
         double[] clampCand = Array.Empty<double>();
@@ -1514,19 +1617,25 @@ public static class FlangeMesher
             }
         }
 
+        // ★ 2026-09-23 F6c：标签拆成直边与弧面两份。有弧面（HoleArcFaces）时孔标签**只认弧面** —— 3 mm 判定带只是个打标签的带，
+        //   不该把孔附近的直边真边界（例如 R = 28／w = 26 判决档切点旁那 2 条共 2.0 mm 的舌直边）也定成管孔（V = 0、T = 管根）：
+        //   管根温度施加在焊接圆 r = rh 这条线上，焊脚是有料的实体、有自己的导热，不是一条带。阶梯孔边（HoleArcFaces 关、注入对照）或关掉 F6c 时照老口径按带判。
+        bool straightHoleTag = !rules.HoleArcFaces || !rules.HoleTagArcOnly;
         int Tagger(Vec3 mid)
         {
             // 管孔：紧贴孔半径的那一圈边界面（槽的边界半径不同，不会误判）
-            if (IsHoleFace(mid, holeRadiusMm, holeTagBandMm)) return ShellMesh.TagHole;
+            if (straightHoleTag && IsHoleFace(mid, holeRadiusMm, holeTagBandMm)) return ShellMesh.TagHole;
             // 压接边：单舌在舌尖那一段；双舌两端都是（R48 2026-09-14 Opus 5：式子收进 InClampSegment，逐字未改）
             if (InClampSegment(mid.X, tabTipX, clampLenMm, twoTabs)) return ShellMesh.TagTabEnd;
             return ShellMesh.TagFree;
         }
+        // 弧面：落在孔圆上，就是管孔面（F6c 之前经 Tagger 按带判，弧面 r 恰 = 孔半径必命中 ⇒ 结果相同）
+        int ArcTagger(Vec3 mid) => ShellMesh.TagHole;
         if (rules.ClipFaces) m.BuildFaces(Tagger, (p0, p1) => ClipSegment(f, p0, p1));   // F2：面长 = 边上有料的长度
         else m.BuildFaces(Tagger);                                                        // 注入对照：整边面长（老口径）
         // ★ 2026-09-18／19，Fable 5.1：薄片格并入邻格 —— 在面图上收缩（A 管孔外角薄片；B 重构条件数不足的楔形格与碎格），见 MergeSlivers
         var rects = MergeSlivers(m, holeRadiusMm, rules, clampCand);
-        if (rules.HoleArcFaces) AddHoleArcFaces(m, holeRadiusMm, Tagger, rects);        // 管孔边界 = 圆弧本身（并入格的那段弧也在）；注入对照：阶梯孔边
+        if (rules.HoleArcFaces) AddHoleArcFaces(m, holeRadiusMm, ArcTagger, rects, normalDist: rules.HoleArcNormalDist);   // 管孔边界 = 圆弧本身（并入格的那段弧也在）；注入对照：阶梯孔边
         m.CellRects = rects;
         m.ComputeHoleTagDiagnostics(holeRadiusMm);
         m.Material = f;
@@ -1569,6 +1678,26 @@ public static class FlangeMesher
         // 2026-09-15 Opus 5（合并）：G1 的指纹写于 F 之前，没有配方 ⑤ —— 补「压接边界施加在面上 vs 形心整格」，同样从建好的网格上量：
         //   开关写进网格（上一行之前）之后数压接面（ShellMesh.ClampFaceCount：ClampFaceActive 时按 ClampSetCells 数 IsClampFace 的内部面，与两个求解器同一个判定）。
         int clampFaces = m.ClampFaceCount();
+        // ★ 2026-09-23（F6a／b／c）：三项管孔规则同样从建好的网格上逐面量，不抄开关：
+        //   a = 网格开关为真 且 有孔面；b = 每条弧面的 DistAB 恰等于 BoundaryDistMm 且有弧面；c = 没有非弧的孔面 且有弧面。
+        //   F6 审查后改（findings #16）：b 不再拿 DistAB 跟 BoundaryDistMm 比（DistAB 本就是它填的，循环自证），改为在这里把法向距的定义式另写一遍逐面比；
+        //   另把三项开关的真值（rules 里的）分开记进配方，量出来的与开关各是各的。
+        int holeFaces = 0, arcFaces = 0, nonArcHole = 0; bool arcDistAll = true;
+        foreach (var fc in m.Faces)
+        {
+            if (fc.B >= 0) continue;
+            bool arc = !double.IsNaN(fc.ArcRadiusMm);
+            if (arc)
+            {
+                arcFaces++;
+                var cc = m.Centroid[fc.A];
+                double dNormal = Math.Max(ShellMesh.GeomTolMm, Math.Abs(Math.Sqrt(cc.X * cc.X + cc.Z * cc.Z) - fc.ArcRadiusMm));   // 法向距的定义式（不调 BoundaryDistMm）
+                if (fc.DistAB != dNormal) arcDistAll = false;
+            }
+            if (fc.Tag != ShellMesh.TagHole) continue;
+            holeFaces++;
+            if (!arc) nonArcHole++;
+        }
         m.Recipe = new MeshRecipe
         {
             ClampFullFace = m.ClampFullFaceActive,   // 2026-09-15 Opus 5（J 路）：唯一定义
@@ -1580,6 +1709,14 @@ public static class FlangeMesher
             HFineMm = hFine,
             ClampBandPerHFine = hFine > 0 ? Math.Round(bandMm / hFine, 9) : double.NaN,
             HoleTagBandMm = holeTagBandMm > 0 ? holeTagBandMm : HoleTagBandMm,
+            HoleFaceDirichlet = m.HoleFaceDirichlet && holeFaces > 0,
+            HoleArcNormalDist = arcFaces > 0 && arcDistAll,
+            HoleTagArcOnly = arcFaces > 0 && nonArcHole == 0,
+            HoleFaceDirichletSwitch = rules.HoleFaceDirichlet,       // 开关真值（F6 审查后补）
+            HoleArcNormalDistSwitch = rules.HoleArcNormalDist,
+            HoleTagArcOnlySwitch = rules.HoleTagArcOnly,
+            HoleTagBandUsed = straightHoleTag,
+            HoleFaceCount = holeFaces,
         };
         return m;
     }
@@ -1622,14 +1759,19 @@ public static class FlangeMesher
 
     /// <summary>
     /// ★★ 2026-09-18，Fable 5.1：**管孔边界面 = 圆弧本身**。每个被孔圆 r = <paramref name="holeRadiusMm"/> 穿过的（留下的）格，
-    /// 建一条边界面：长度 = 落在该格矩形里的弧长、中点在弧上（r 恰 = 孔半径 ⇒ 管孔判定带必命中）、DistAB = 材料形心到弧中点。
+    /// 建一条边界面：长度 = 落在该格矩形里的弧长、中点在弧上（r 恰 = 孔半径 ⇒ 管孔判定带必命中）、<see cref="MeshFace.ArcRadiusMm"/> = 孔半径、
+    /// DistAB = 形心到孔圆的法向距（<see cref="ShellMesh.BoundaryDistMm"/>，F6b 2026-09-23；<paramref name="normalDist"/> = false 退回老口径「材料形心到弧中点」的直线距离，只供门对照）。
     /// 为什么：老口径的管孔边界面是「与被丢格相邻的格边」—— 一段落在孔里的阶梯折线，总长比周长多约 4/π 倍、位置随格线翻面
     /// （管内径扫描上电阻台阶 0.3～0.5 %/档，网格审计_2 孔径扫描）；面长按材料裁剪之后这些阶梯边有料长度为 0，本来就建不出面，
     /// 定温边界只能落在真实的孔弧上。一个格里被切出两段弧（角上）就建两条面。
-    /// 电流场仍按「带管孔标签面的格」钉 V = 0（ShellCurrent 的规则不动）；热场的面上定温 gHole = k·t·弧长 ÷ DistAB（ShellThermal 的规则不动）。
+    /// ★ 2026-09-23（F6a）：电流场改为在这些弧面上施加 V = 0（面导度 σ·t·弧长 ÷ DistAB，ShellMesh.HoleFaceDirichlet），孔格回到普通自由格 ——
+    ///   原先「电流场仍按带管孔标签面的格钉 V = 0」（2026-09-18 这里的原话）就是 F6：电极落在孔格形心上、随格集合跳半格。
+    ///   热场的面上定温 gHole = k·t·弧长 ÷ DistAB 早就是面上施加，读的是同一个 DistAB ⇒ 两个场同一口径。
     /// </summary>
     /// <param name="rects">每格的矩形列表（并入了别的格的格有多个矩形；null = 取节点矩形）。</param>
-    public static void AddHoleArcFaces(ShellMesh m, double holeRadiusMm, Func<Vec3, int> tagger, List<(double x0, double x1, double z0, double z1)>[]? rects = null)
+    /// <param name="normalDist">F6b：DistAB 取形心到孔圆的法向距（缺省，生产）；false = 老口径形心到弧中点的直线距离（只供门做「改回 ⇒ 红」）。</param>
+    public static void AddHoleArcFaces(ShellMesh m, double holeRadiusMm, Func<Vec3, int> tagger, List<(double x0, double x1, double z0, double z1)>[]? rects = null,
+                                       bool normalDist = true)
     {
         if (!(holeRadiusMm > 0)) return;
         double rh = holeRadiusMm;
@@ -1674,8 +1816,8 @@ public static class FlangeMesher
                 if (len <= 1e-9) continue;
                 double tm = 0.5 * (a + b);
                 var mid = new Vec3(rh * Math.Cos(tm), m.Centroid[c].Y, rh * Math.Sin(tm));
-                var face = new MeshFace { A = c, B = -1, Mid = mid, Length = len, FullLength = len, Tag = tagger(mid) };
-                face.DistAB = m.CentroidToFaceMm(c, face);
+                var face = new MeshFace { A = c, B = -1, Mid = mid, Length = len, FullLength = len, Tag = tagger(mid), ArcRadiusMm = rh };
+                face.DistAB = normalDist ? m.BoundaryDistMm(c, face) : m.CentroidToFaceMm(c, face);   // F6b（2026-09-23）
                 m.Faces.Add(face);
             }
             }
@@ -1697,11 +1839,18 @@ public static class FlangeMesher
     /// （<see cref="ShellMesh.CellRects"/>；管孔弧面按矩形建，分界份额按矩形量），并把单元表就地压实。
     ///
     /// 规则 A（2026-09-18，管孔外角薄片）：孔圆从一个格的两条相邻格边穿过、把格切成「里面的大块 + 外角的小块」时，材料只剩外角那一小块，它有料的边都被圆穿过 ⇒
-    ///   两个邻格也都是被孔圆穿过的格。电流场按「带管孔面的格钉 V = 0」（ShellCurrent 的规则不动）⇒ 这一小块与它所有邻格都钉在 V = 0，
-    ///   面上一点电流都没有、重构出的 J = 0 —— 下游按 q/J 排的移除优先级（RemovalPriority）把它排到最前，槽心跟着跑偏。
-    ///   ⇒ 「所有有料边都被孔圆穿过」的格并入共有最长有料边的邻格（电极集合不变）。只并这种格，别的管孔格一律不动。
+    ///   两个邻格也都是被孔圆穿过的格。规则本身：「所有有料边都被孔圆穿过」的格并入共有最长有料边的邻格。只并这种格，别的管孔格一律不动。
+    ///   ⚠ **立规则时（2026-09-18）的依据已随 F6a（2026-09-23）失效，规则本身保留、待重审**（F6 审查后改写成过去时，findings #17；规则一个字没动）：
+    ///     当时的依据是「电流场按带管孔面的格整格钉 V = 0 ⇒ 这一小块与它所有邻格都钉在 V = 0，面上一点电流都没有、重构出的 J = 0 ——
+    ///     下游按 q/J 排的移除优先级（RemovalPriority）把它排到最前，槽心跟着跑偏；并入邻格时电极集合不变」。
+    ///     F6a 之后孔格是自由格、电极在孔圆上，薄片不并也有自己的电位与 J，「整格钉 ⇒ J = 0」这条前提不在了；规则 A 现在没有成立的依据，只是还没拿掉。
+    ///     规则 A 本次**保留不动**（网格规则改动要单独过门）。F6 之后的实测（树外探针，W08 盘径 30.00～31.50 每 0.01，面上口径 + 法向距；「关掉」那组数没有落证据档）：
+    ///     开着：门 b 最大 |Δe| 0.073 %（剩下的这点台阶就是规则 A 的并格数随几何翻面）、e 偏差约 0.03 %、闭合 0.9997～1.0005；
+    ///     关掉：最大 |Δe| 0.018 %，但 e 偏差 0.075～0.105 %、闭合 1.0008～1.0009、J 峰 ≤ 14.64（没有幻影峰）。去留见 HANDOVER F6 一节「仍开放」。
     /// 规则 B（2026-09-19，第二轮复核第 10 条）：不被管孔圆穿过的格里，覆盖率 &lt; <see cref="MeshRules.CellMergeFrac"/>（碎格）的，并入共有最长有料边、
     ///   同样不被孔圆穿过、且与它在压接边界同一侧的邻格；合成格覆盖率仍不足再并（最多 8 遍）。
+    ///   ⚠「孔格不并、也不并进孔格」这条限制是在整格钉口径下写的（那时孔格是电极格）；原注释没写它的依据，按当时口径推断是为了不改电极集合（推断，未核实）——
+    ///     若依据是这个，它同样随 F6a 失效（F6 审查后补注，findings #17）。限制本身保留不动、待与规则 A 一起重审。（被孔圆穿过、覆盖率又 &lt; CellMergeFrac 的格现在留成自由小格；覆盖率 ≥ CellMergeFrac 的孔边薄片本来就不归规则 B 管。）
     ///   楔形格的幻影 J 峰（复核第 1 条）曾试过也在这里按重构条件数并（κ′ &lt; 0.2）：Heater1 的幻影峰是没了，但管孔边的真峰跟着被合成格抹掉 5～10 %（2026-09-19 实测，
     ///   R48NSliverGateTests 门 2 红）—— 病在重构量法不在网格，改治在 ShellCurrent（SliverKappaMin），网格层不并楔形格。
     /// 2026-09-19 改写说明：2026-09-18 版规则 A 在建面之前按单元索引并、再由 RewireSliverEdges 把第三格的边界面改接 —— 两个相邻的并入格之间那条边它接不上
@@ -1858,7 +2007,7 @@ public static class FlangeMesher
             if (a2 < 0 || (fc.B >= 0 && b2 < 0)) throw new InvalidOperationException("并格自检：面挂到了已并入的格上");
             fc.A = a2; fc.B = b2;
             if (tch[fc.A] || (fc.B >= 0 && tch[fc.B]))
-                fc.DistAB = fc.B >= 0 ? (m.Centroid[fc.B] - m.Centroid[fc.A]).Norm : m.CentroidToFaceMm(fc.A, fc);
+                fc.DistAB = fc.B >= 0 ? (m.Centroid[fc.B] - m.Centroid[fc.A]).Norm : m.BoundaryDistMm(fc.A, fc);   // 2026-09-23：边界面距离只有一份定义（此时还没有弧面 ⇒ = CentroidToFaceMm，逐位不变）
             faces.Add(fc);
         }
         m.Faces.Clear(); m.Faces.AddRange(faces);

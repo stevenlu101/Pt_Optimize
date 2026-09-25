@@ -126,6 +126,10 @@ public static class QuadMesher
         m.BuildFaces(mid =>
         {
             // R47 F（2026-09-13）：管孔判定与 Build／BuildFromField 共用同一份（FlangeMesher.IsHoleFace）
+            // 2026-09-23（F6）：本生成器的孔面是阶梯直边（没有弧面），缺省 ShellMesh.HoleFaceDirichlet = true 下电流场按面施加 V = 0，
+            //   DistAB 为形心到边中点的直线距离（ShellMesh.BoundaryDistMm 的直边分支）。本生成器不在生产解场路径上。
+            //   ⚠（F6 审查后补注）这一口径不是本生成器选的：new ShellMesh() 没写 HoleFaceDirichlet，拿的是 ShellMesh 上的缺省 true（对所有不经
+            //   FlangeMesher.BuildFromField 的网格都一样）。要老口径（带孔面的格整格钉 V = 0）得在上面 new ShellMesh { HoleFaceDirichlet = false } 显式写。
             if (FlangeMesher.IsHoleFace(mid, g.HoleRadiusMm)) return ShellMesh.TagHole;
             // R48（2026-09-14，Opus 5）：压接判定同样收成一份（FlangeMesher.InClampSegment，式子逐字搬过去，结果逐位不变）。
             if (FlangeMesher.InClampSegment(mid.X, g.TabTipXMm, clampLenMm, g.TwoTabs)) return ShellMesh.TagTabEnd;
