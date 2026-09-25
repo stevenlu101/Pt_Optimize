@@ -73,6 +73,15 @@ public class R48ShapeSearchRunTests
         => ShapeSearchPlan.LiveDiscs(new[] { double.NegativeInfinity },
                GeometryScreen.MinDiscRadiusMm(holeRadiusMm: input.HoleRadiusMm, thickMm: baseIn.WeldMinThicknessMm, wallMm: input.WallMm))[0];
 
+    /// <summary>代码戳：提交号；有未提交改动（Pt_Optimize／Pt_Optimize.Tests）时加改动内容的短哈希 —— 检查点的钥匙用，别的代码解出的数进不来。</summary>
+    internal static string CodeStamp()
+    {
+        string head = Git("rev-parse --short HEAD");
+        string st = Git("status --porcelain -- Pt_Optimize Pt_Optimize.Tests");
+        if (st == "未查到" || st.Length == 0) return head;
+        return head + "+dirty:" + ShapeSearchCheckpoint.Sha12(Git("diff HEAD -- Pt_Optimize Pt_Optimize.Tests") + "\n" + st);
+    }
+
     internal static string Git(string args)
     {
         try
@@ -142,7 +151,10 @@ public class R48ShapeSearchRunTests
             ShoulderJPrescreen = EnvI("SHAPE_SHOULDER", dflt.ShoulderJPrescreen ? 1 : 0) != 0,
             WFrac = string.IsNullOrWhiteSpace(wf) ? dflt.WFrac
                   : wf.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(x => double.Parse(x, CultureInfo.InvariantCulture)).ToArray(),
-            AllowTabCuts = EnvI("SHAPE_CUTS", 0) != 0,   // 2026-09-25：SHAPE_CUTS=1 ⇒ 挖舌孔族（业主方向 1：侧 Y 形 = 锥形舌片 + 舌根三角孔 + 叉臂，R29／R31，求解器既有旋钮）；缺省 0 = 不挖舌孔（现役设计的预设）
+            AllowTabCuts = EnvI("SHAPE_CUTS", 0) != 0,
+            // ★ 检查点续跑（2026-09-25）：SHAPE_CKPT 缺省 1 ⇒ logs/shape_ckpt_<档>_cuts<0|1>.jsonl（仓库根 logs/ 不入库）；0 = 关（改回）。代码戳见下 Stamp()。
+            CheckpointPath = EnvI("SHAPE_CKPT", 1) != 0 ? Path.Combine(HandoverDoc.Root(), "logs", $"shape_ckpt_{which}_cuts{(EnvI("SHAPE_CUTS", 0) != 0 ? 1 : 0)}.jsonl") : null,
+            CheckpointStamp = CodeStamp(),   // 2026-09-25：SHAPE_CUTS=1 ⇒ 挖舌孔族（业主方向 1：侧 Y 形 = 锥形舌片 + 舌根三角孔 + 叉臂，R29／R31，求解器既有旋钮）；缺省 0 = 不挖舌孔（现役设计的预设）
         };
         string path = DeliverableOut.Stamped($"R48_搜形状_Core驱动_{which}.txt");
         using var sink = new Sink(path);
@@ -156,6 +168,7 @@ public class R48ShapeSearchRunTests
              + (opt.EvalSeedFirst ? "先算输入形状作基准 开（SHAPE_SEEDFIRST=1，只供校正）" : "不先算输入形状作基准（SHAPE_SEEDFIRST 缺省 0）") + "；业主 2026-08-25／08-28 原话，HANDOVER ⑪⑬㉓");
         sink.W($"工艺参数　new DesignInputs()（缺省）");
         sink.W($"圆盘保温　整线 {input.FlangeInsulMm:0.#} mm（上限 {baseIn.DiscInsulCapMm:0.#} mm，决 104；SHAPE_DISC 可改，不许超上限）");
+        sink.W(opt.CheckpointPath is null ? "检查点　关（SHAPE_CKPT=0）" : $"检查点　{opt.CheckpointPath}（代码戳 {opt.CheckpointStamp}；续跑时命中的形状直接复用并逐行点名；SHAPE_CKPT=0 可关）");
         sink.W(opt.AllowTabCuts
             ? "族　挖舌孔（AllowTabCuts = true，SHAPE_CUTS=1；业主 2026-09-25 方向 1：侧 Y 形 = 锥形舌片 + 舌根三角孔 + 叉臂加厚，求解器既有旋钮 TabHoleR／拉长比／TabHoleSides／TabArmThick）"
             : "族　不挖舌孔（AllowTabCuts = false，现役设计的解法设定 = 界面下拉预设，与 R48LEndToEndTests.ProductionOptions 同一份）；挖舌孔族本跑不做（SHAPE_CUTS=1 可开）");

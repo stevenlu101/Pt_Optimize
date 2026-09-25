@@ -93,6 +93,13 @@ public sealed class ShapeSearchOptions
 
     /// <summary>批内（其余舌宽比、邻域）并发路数。界面写死 4；调用方按机器给。</summary>
     public int Lanes = 4;
+    /// <summary>
+    /// ★ 检查点续跑（2026-09-25，<see cref="ShapeSearchCheckpoint"/>）：JSONL 路径；null／空 = 不读不写（改回，逐位同改前）。
+    /// 只缓存导航网格那一遍（FineMm = 0），赢家精算照常重解。
+    /// </summary>
+    public string? CheckpointPath;
+    /// <summary>代码戳（提交号，有未提交改动时加改动哈希）：进钥匙，别的代码解出的数进不来。调用方给。</summary>
+    public string CheckpointStamp = "";
 
     /// <summary>
     /// 先把输入自己的形状算一遍作基准（照抄界面「先算你现在这个形状，作基准」）。
@@ -258,6 +265,8 @@ public sealed class ShapeSearchResult
     /// <summary>③ 二分的起始区间 [不可行, 可行]（盘半径 mm），取自并行首遍；没走二分那一支时为 NaN。</summary>
     public double BisectLoMm = double.NaN, BisectHiMm = double.NaN;
     public readonly List<string> Log = new();
+    /// <summary>检查点：开跑时已有条数、本跑复用条数、实解条数（没开检查点都是 0）。</summary>
+    public int CheckpointLoaded, CheckpointHits, CheckpointMisses;
 }
 
 /// <summary>
@@ -351,6 +360,15 @@ public static class ShapeSearchDriver
         var res = new ShapeSearchResult { MaxDiscMm = maxDisc, MaxDiscSource = maxDiscSrc };
         var ci = CultureInfo.InvariantCulture;
         void Say(string s) { lock (res.Log) res.Log.Add(s); progress?.Report(s); }
+        // ★ 检查点续跑（2026-09-25）：包住求解函数；命中复用、未命中解完落盘；精算不经过。
+        ShapeSearchCheckpoint.Store? ckpt = null;
+        if (!string.IsNullOrEmpty(opt.CheckpointPath))
+        {
+            ckpt = new ShapeSearchCheckpoint.Store(opt.CheckpointPath, opt.CheckpointStamp);
+            solve = ckpt.Wrap(solve, Say);
+            res.CheckpointLoaded = ckpt.Loaded;
+            Say($"检查点：{opt.CheckpointPath}　已有 {ckpt.Loaded} 条（坏行 {ckpt.BadLines}）；钥匙 = 设计 + 求解选项 + 工艺参数 + 代码戳「{opt.CheckpointStamp}」；命中的形状不再解、逐行点名「续跑复用」；只缓存导航网格那一遍，赢家精算照常重解（ShapeSearchCheckpoint）");
+        }
 
         double step0 = ShapeSearchPlan.DiscStepMm;
         double wall = seed.WallMm;
@@ -805,6 +823,7 @@ public static class ShapeSearchDriver
             res.NoFeasible = true;
             res.NoFeasibleReport = NoFeasibleReport(res, seed, baseIn, opt, fam);
             Say(res.NoFeasibleReport);
+            CkptSummary();
             return res;
         }
         res.Winner = win;
@@ -831,7 +850,15 @@ public static class ShapeSearchDriver
           + (fin.FineRefined ? string.Create(ci, $"　已做第二遍细网格求根（{fin.FineMmUsed:0.000} mm）") : "　⚠ 没做第二遍细网格求根 ⇒ 这个解只在导航网格上成立，不可交付"));
         res.SchemeCard = SchemeCard(fin, win, seed, baseIn, opt, fam, res);
         Say(res.SchemeCard);
+        CkptSummary();
         return res;
+
+        void CkptSummary()
+        {
+            if (ckpt is null) return;
+            res.CheckpointHits = ckpt.Hits; res.CheckpointMisses = ckpt.Misses;
+            Say($"检查点小结：续跑复用 {ckpt.Hits} 条、实解 {ckpt.Misses} 条（精算不经缓存 {ckpt.NotCached} 次）；档 {ckpt.Path}");
+        }
     }
 
     /// <summary>
