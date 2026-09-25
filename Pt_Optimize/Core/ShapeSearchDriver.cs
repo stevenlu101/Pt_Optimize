@@ -337,7 +337,8 @@ public static class ShapeSearchDriver
         if (opt is null) throw new ArgumentNullException(nameof(opt));
         // ★ 决 106（2026-09-25）：上端不再要求调用方给数。NaN ⇒ 物理封顶 = 本算例板料包络（材料能到的最大半边长），实际停在散热收敛处（见 ExtrapolationConvergeFrac）。
         double maxDisc = opt.MaxDiscMm; string maxDiscSrc = opt.MaxDiscSource;
-        if (double.IsNaN(maxDisc) || maxDisc <= 0)
+        bool programDecided = double.IsNaN(maxDisc) || maxDisc <= 0;
+        if (programDecided)
         {
             var (envMm, envSrc) = MeshAdapt.PlateOuterRadiusMm(seed.BuildCase(baseIn));
             maxDisc = envMm;
@@ -357,14 +358,18 @@ public static class ShapeSearchDriver
             holeRadiusMm: seed.HoleRadiusMm, thickMm: baseIn.WeldMinThicknessMm, wallMm: wall);
         res.MinDiscMm = minDiscAll;
 
-        // (a) 起点表：不写死。缺省从闭式下界（按 LiveDiscs 的 0.5 mm 取整规则）起每 DiscStepMm 一点铺到上端。
+        // (a) 起点表：不写死。调用方给了上端 ⇒ 从闭式下界（按 LiveDiscs 的 0.5 mm 取整规则）起每 DiscStepMm 一点铺到上端。
+        //   ★ 决 106（2026-09-25 16:1x 修）：上端由程序判定时，起点表**只铺一批**（并发数个点，从下界起）；其余由 ①外推 按批向上，
+        //   每批看卡住的硬判据缺口收不收敛（散热机制收敛 ⇒ 停），物理封顶 = 板料包络。16:03 那两跑把 23 点铺到 Ø274 的包络全解一遍 ⇒ 停掉重开；
+        //   一批 = 并发数（算法量，不是物理常数：一批解完才有缺口序列可看）。
         double[] grid;
         if (opt.DiscGridMm is { Length: > 0 } g) grid = g;
         else
         {
             double lo = ShapeSearchPlan.LiveDiscs(new[] { double.NegativeInfinity }, minDiscAll)[0];
             var pts = new List<double>();
-            for (int k = 0; lo + k * step0 <= maxDisc + 1e-9; k++) pts.Add(lo + k * step0);
+            int nMax = programDecided ? Math.Max(1, opt.Lanes) : int.MaxValue;
+            for (int k = 0; k < nMax && lo + k * step0 <= maxDisc + 1e-9; k++) pts.Add(lo + k * step0);
             if (pts.Count == 0) pts.Add(lo);
             grid = pts.ToArray();
         }

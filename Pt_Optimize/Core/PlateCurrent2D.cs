@@ -128,6 +128,39 @@ public sealed class FlangePlate
             => sides < 3 || cornerFrac >= 0.999 ? rCircle
              : rCircle * Math.Sqrt(Math.PI / Math.Max(1e-12, UnitArea(sides, cornerFrac)));
 
+        /// <summary>
+        /// ★ 2026-09-25（分叉点钉舌长中点）：这个孔沿**世界 x**（舌轴）从孔心量起的两个半长（mm，都取正）：
+        /// <c>ToNegX</c> = 朝 −x（舌端／铜排侧）、<c>ToPosX</c> = 朝 +x（圆盘侧）。
+        /// 与 <see cref="Contains"/> 同一份参数（Sides、CornerFrac、RotDeg、AspectXZ）按支撑函数闭式算，不另抄轮廓：
+        /// 本地点 (lx, lz) 到世界的映射是 (dx, dz) = R(RotDeg)·(AspectXZ·lx, lz)（Contains 的逆），
+        /// 世界 x 方向 ±1 拉回本地是方向 w = ±(AspectXZ·cos Rot, −sin Rot)；
+        /// 孔 = 核心正 N 边形 ⊕ 半径 r 的圆（Minkowski 和）⇒ 支撑函数 h(w) = max_顶点 (v·w) + r·|w|；
+        /// 圆／椭圆（Sides &lt; 3 或 CornerFrac ≥ 0.999）核心退化为一点 ⇒ h(w) = RMm·|w|。
+        /// 校核：圆角三角（CornerFrac 0.35）转 90° ⇒ ToNegX = RMm（圆头顶点朝铜排）、ToPosX = RMm·(0.5 + 0.5·0.35) = 0.675·RMm（底边朝盘），拉长比只作用在 z；
+        /// 09-12 样机（外接 34.12、拉长比 0.36）算得孔长 57.15 mm，与 deliverable/拍脑袋Y形_核算.txt 记的槽实际范围长 57 一致。
+        /// </summary>
+        public (double ToNegX, double ToPosX) ExtentXMm()
+        {
+            double a = Math.Max(1e-9, AspectXZ);
+            double rot = RotDeg * Math.PI / 180.0;
+            double wx = a * Math.Cos(rot), wz = -Math.Sin(rot);     // 世界 +x 方向拉回本地坐标
+            double wn = Math.Sqrt(wx * wx + wz * wz);
+            if (Sides < 3 || CornerFrac >= 0.999) return (RMm * wn, RMm * wn);
+            double r = RMm * Math.Clamp(CornerFrac, 0.0, 1.0);
+            double rc = RMm - r;
+            if (rc <= 1e-9) return (RMm * wn, RMm * wn);
+            double hPos = double.NegativeInfinity, hNeg = double.NegativeInfinity;
+            for (int k = 0; k < Sides; k++)
+            {
+                double ak = 2 * Math.PI * k / Sides + Math.PI / 2;       // 与 DistToRegularPolygon 同一组顶点（一个顶点朝 +z）
+                double vx = rc * Math.Cos(ak), vz = rc * Math.Sin(ak);
+                double dot = vx * wx + vz * wz;
+                hPos = Math.Max(hPos, dot);
+                hNeg = Math.Max(hNeg, -dot);
+            }
+            return (hNeg + r * wn, hPos + r * wn);
+        }
+
         /// <summary>点 (x,z) 在不在这个孔里。</summary>
         public bool Contains(double x, double z)
         {

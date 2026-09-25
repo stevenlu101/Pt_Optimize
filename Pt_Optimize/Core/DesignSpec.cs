@@ -690,7 +690,14 @@ public sealed class DesignSpec
     /// R31：这一片舌孔的朝向 —— 记录里给了就用记录的；没给：圆角三角**够到舌根**（孔的盘侧端到切点 5 mm 以内，长槽的孔心离切点很远也算）
     /// ⇒ 90°（底边朝盘、圆头朝铜排，用户图上那种；0° 时顶点朝 +z），否则形状族默认。
     /// </summary>
-    public double TabHoleRotDegFor(int j)
+    public double TabHoleRotDegFor(int j) => TabHoleRotDegAt(j, TabHoleCenterXMm(j));
+
+    /// <summary>
+    /// R31 朝向规则在**给定孔心** <paramref name="xCenter"/> 处的值（2026-09-25 从 <see cref="TabHoleRotDegFor"/> 抽出，规则一字没动：
+    /// 记录里给了就用记录的；sides = 3 且 孔心 + 外接半径 × max(1, 拉长比) ≥ 切点 − 5 ⇒ 90°；否则形状族默认）。
+    /// 抽出来是因为「分叉点钉舌长中点」要在写孔心之前先问这条规则（孔心与朝向互相依赖，见 <see cref="TabHoleXForBusbarEndAt"/>）。
+    /// </summary>
+    public double TabHoleRotDegAt(int j, double xCenter)
     {
         double v = j < TabHoleRotDeg.Length ? TabHoleRotDeg[j] : double.NaN;
         if (!double.IsNaN(v)) return v;
@@ -702,10 +709,61 @@ public sealed class DesignSpec
             {
                 double asp = j < TabHoleAspect.Length && TabHoleAspect[j] > 0 ? TabHoleAspect[j] : 1.0;
                 double rr = FlangePlate.TabHole.EqualAreaRadius(rEff, sides, TabHoleCornerFracOf(sides));
-                if (TabHoleCenterXMm(j) + rr * System.Math.Max(1.0, asp) >= TangentXMm() - 5.0) return 90.0;
+                if (xCenter + rr * System.Math.Max(1.0, asp) >= TangentXMm() - 5.0) return 90.0;
             }
         }
         return TabHoleRotDegOf(sides);
+    }
+
+    /// <summary>
+    /// ★ 2026-09-25（业主 12:5x「分叉点先给定舌长中点」）：**舌长中点** x = 0.5·(切点 x ＋ 舌尖 x)，舌尖 x = −舌长；
+    /// 切点走 <see cref="TangentXMm"/>（等宽舌与锥形舌同一入口）。
+    /// </summary>
+    public double TabMidXMm() => 0.5 * (TangentXMm() + (-TabLengthMm));
+
+    /// <summary>
+    /// 第 j 片舌孔沿舌轴从孔心量起的两个半长（mm，取正）：<c>ToBusbar</c> 朝舌端／铜排（−x）、<c>ToDisc</c> 朝圆盘（+x）。
+    /// 孔径、拉长比、形状族、圆角比例与 <see cref="HolesOf"/> 同一份取法（外接半径按等面积换算），朝向由调用方给（<paramref name="rotDeg"/>），
+    /// 半长由几何件 <see cref="FlangePlate.TabHole.ExtentXMm"/> 按支撑函数算，这里不抄轮廓公式。无孔（生效孔径 0）⇒ (0, 0)。
+    /// </summary>
+    public (double ToBusbar, double ToDisc) TabHoleHalfLenMm(int j, double rotDeg)
+    {
+        double r = TabHoleREffective(j);
+        if (!(r > 0)) return (0, 0);
+        double asp = j < TabHoleAspect.Length && TabHoleAspect[j] > 0 ? TabHoleAspect[j] : 1.0;
+        int sides = TabHoleSidesOf(j);
+        double corner = TabHoleCornerFracOf(sides);
+        double rr = FlangePlate.TabHole.EqualAreaRadius(r, sides, corner);
+        var h = new FlangePlate.TabHole(0, 0, rr, Sides: sides, CornerFrac: corner, RotDeg: rotDeg, AspectXZ: asp);
+        return h.ExtentXMm();
+    }
+
+    /// <summary>
+    /// ★ 2026-09-25（业主 2026-09-25 12:5x「两条腿并到同一根铜排，分叉点先给定舌长中点」）：
+    /// 把第 j 片舌孔的**铜排侧端点**（分叉点 = 两臂汇成一根杆的位置）钉在 <paramref name="xEnd"/>（生产 = <see cref="TabMidXMm"/>），反算孔心：
+    /// 孔心 x = xEnd ＋ 孔朝铜排的半长（<see cref="TabHoleHalfLenMm"/>）。盘侧端点 = 孔心 ＋ 朝盘半长，仍由孔径与拉长比决定；够不够到焊环照 R31 的 90° 规则。
+    /// 朝向与孔心互相依赖（R31 规则读孔心；三角孔的半长又随朝向变）：只对 sides = 3 且记录未给朝向的片有两个候选（90° 与形状族默认 0°），
+    /// 各自反算孔心后再拿规则核一遍，取**自洽**的那个；两个都自洽取 90°（够到舌根的那个，业主图上的样子）；都不自洽也取 90° 并在 Note 里说出来（不静默）。
+    /// 其余形状族朝向固定，无此问题。无孔 ⇒ 返回 NaN。孔心不落图纸格，落格由调用方（求解器同 FieldPlacement 的 0.5 mm 格）。
+    /// </summary>
+    public (double XCenter, double RotDeg, string Note) TabHoleXForBusbarEndAt(int j, double xEnd)
+    {
+        double r = TabHoleREffective(j);
+        if (!(r > 0)) return (double.NaN, double.NaN, "无孔");
+        double rec = j < TabHoleRotDeg.Length ? TabHoleRotDeg[j] : double.NaN;
+        if (!double.IsNaN(rec) || TabHoleSidesOf(j) != 3)
+        {
+            double rot = TabHoleRotDegAt(j, xEnd);           // 记录给的或形状族固定值，与孔心无关
+            return (xEnd + TabHoleHalfLenMm(j, rot).ToBusbar, rot, "朝向固定");
+        }
+        double x90 = xEnd + TabHoleHalfLenMm(j, 90.0).ToBusbar;
+        double rot0 = TabHoleRotDegOf(3);
+        double x0 = xEnd + TabHoleHalfLenMm(j, rot0).ToBusbar;
+        bool ok90 = TabHoleRotDegAt(j, x90) == 90.0;
+        bool ok0 = TabHoleRotDegAt(j, x0) == rot0;
+        if (ok90) return (x90, 90.0, ok0 ? "朝向 90° 与 0° 都自洽，取 90°（够到舌根）" : "朝向 90° 自洽");
+        if (ok0) return (x0, rot0, "朝向 0° 自洽（90° 规则在该孔心处不成立）");
+        return (x90, 90.0, "朝向规则与钉点不自洽（两候选都不自洽），取 90°");
     }
 
     /// <summary>切点横坐标：平行边 = −√(R² − 舌半宽²)；锥形（R31）= 从舌端角到圆盘的切线切点（与 FlangePlate.Tangent 同一公式）。</summary>

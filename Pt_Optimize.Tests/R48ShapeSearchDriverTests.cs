@@ -48,10 +48,9 @@ public class R48ShapeSearchDriverTests
         Assert.DoesNotMatch(new Regex(@"\{\s*25(\.0+)?\s*,\s*30(\.0+)?\s*,\s*35"), code);
         // 任何「两个以上 ≥ 10 的数」组成的数组字面量都算写死的盘径表
         Assert.DoesNotMatch(new Regex(@"\{\s*\d{2,}(\.\d+)?\s*,\s*\d{2,}(\.\d+)?"), code);
-        // 缺省上端是 NaN（调用方必须给），没给就抛
+        // 缺省上端是 NaN。决 106（2026-09-25）起 NaN = 程序判定（物理封顶 = 板料包络、按批外推、散热收敛停；门 g／g2），不再抛。
+        //   2026-09-25 16:3x 变因：原「没给就抛」的 Assert.Throws 在决 106 后会用真求解器跑整场搜索（快门挂 30 分钟以上），删去。
         Assert.True(double.IsNaN(new ShapeSearchOptions().MaxDiscMm));
-        Assert.Throws<ArgumentException>(() =>
-            ShapeSearchDriver.Run(R48NMeshGateTests.Design("W08"), new DesignInputs(), new ShapeSearchOptions(), null, CancellationToken.None));
         // 跑器从环境变量取上端，并把出处印进证据头
         string run = File.ReadAllText(Path.Combine(HandoverDoc.Root(), "Pt_Optimize.Tests", "R48ShapeSearchRunTests.cs"));
         Assert.Contains("SHAPE_MAXDISC", run);
@@ -129,6 +128,32 @@ public class R48ShapeSearchDriverTests
         Assert.Equal(envMm, res.MaxDiscMm, 9);
         Assert.Contains("决 106", res.MaxDiscSource);
         Assert.Contains("板料包络", res.MaxDiscSource);
+    }
+
+    /// <summary>
+    /// 决 106（2026-09-25 16:1x 修）：上端由程序判定时起点表只铺一批（= 并发数个点，从闭式下界起），其余按批向上外推、缺口收敛即停；
+    /// 不许把到包络的整张表一次铺开解（16:03 那两跑铺了 23 点到 Ø274，停掉的变因）。调用方给了上端 ⇒ 照旧铺到上端（门 c_缺省起点表 不变）。
+    /// </summary>
+    [Fact]
+    public void g2_决106_上端NaN_起点表只铺一批_其余按批外推_缺口收敛即停()
+    {
+        var seed = R48NMeshGateTests.Design("W08");
+        var calls = new List<(double R, double hw, bool taper, SolverOptions o)>();
+        var opt = new ShapeSearchOptions
+        {
+            MaxDiscMm = double.NaN, MaxDiscSource = "",
+            EvalSeedFirst = false, Lanes = 2, SolveOverride = FakeDeficit(_ => 30.0, calls),   // 缺口恒 30 K：永不改善 ⇒ 外推两批后停
+        };
+        var res = ShapeSearchDriver.Run(seed, new DesignInputs(), opt, null, CancellationToken.None);
+        double lo = ShapeSearchPlan.LiveDiscs(new[] { double.NegativeInfinity }, res.MinDiscMm)[0];
+        Assert.Equal(new[] { lo, lo + ShapeSearchPlan.DiscStepMm }, res.DiscGrid);          // 只铺一批 = Lanes 个点
+        Assert.True(res.NoFeasible);
+        Assert.True(res.ExtrapolatedMm.Count >= 2, "上端 NaN 时其余点该按批外推");
+        Assert.False(string.IsNullOrEmpty(res.ExtrapolationStop), "缺口恒不改善 ⇒ 该判散热收敛停");
+        Assert.Contains("收敛", res.ExtrapolationStop);
+        var (envMm, _) = MeshAdapt.PlateOuterRadiusMm(seed.BuildCase(new DesignInputs(), checkRamp: false));
+        Assert.True(calls.Max(c => c.R) < envMm - ShapeSearchPlan.DiscStepMm, "不该一路解到板料包络");
+        Assert.True(calls.Count < 8, $"起点表一批 + 外推两批就该停，实际解了 {calls.Count} 次");
     }
 
     // ───────────────────────────── (c) 假求解：外推两步后可行
