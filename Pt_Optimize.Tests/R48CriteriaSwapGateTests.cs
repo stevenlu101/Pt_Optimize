@@ -393,7 +393,6 @@ public class R48CriteriaSwapGateTests
         ("MeshVerify.cs",         "加密复算比对列仍是改前三条；决 103 口径的带玻璃稳态拒答（RefuseForState）"),
         ("SensitivityMatrix.cs",  "离线敏感度矩阵（--sensmatrix 诊断，只量不判）"),
         ("ShapeReview.cs",        "形状评审报告印值（不判）"),
-        ("ShapeSearchDriver.cs",  "搜形状报告印三条的值（可行与否读 Solver 的 Feasible，Solver 按口径分派）；报告措辞「三条硬判据」待改（本路不碰该档，列待办）"),
         ("Sizer.cs",              "旧定尺寸器印旧判法与净流入的值"),
         ("Solver.cs",             "改回分派表 Allocation、改回口径的日志与回收名单、PlateSlack／CertNeed 的旧键支（改回口径与诊断用）"),
     };

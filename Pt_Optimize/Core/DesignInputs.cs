@@ -741,6 +741,16 @@ public class DesignInputs
     [Browsable(false)]
     public CriteriaRuleSet CriteriaRuleSet { get; set; } = CriteriaRuleSet.决103;
 
+    /// <summary>
+    /// ★ 2026-09-25（决 103 口径下的补充；改回 = false）：整片热稳定的夹持导度在稳态场标定不出来、且原因是法兰均温不比夹持参考温度高出
+    /// <see cref="RampTwoNode.CalibMinDeltaK"/>（铜排在给法兰加热，「热 ÷ 温差」没有物理意义）时，改按舌片导热截面的几何导度算这一项
+    /// （<see cref="FlangeStability.Result.DClampGeomDT"/>，FlangeStability 一直算着的那份；比场标定值偏小 ⇒ 裕度偏保守）。
+    /// 起因：端到端 W08（deliverable/R48_L_端到端_细网格_W08_本次开跑于2026-09-24_224007.txt）升温期 300 °C 点（夹头 450 °C）整片热稳定判不了，把 ① 整段判成判不了。
+    /// 只在 <see cref="CriteriaRuleSet"/> = 决103 下生效；决103前不判升温期热稳定、稳态也照旧判不了（逐位同改前）。
+    /// 标定失败的其他原因（本片没有场、带走的热为负而温差够）仍判不了。判定在 <see cref="LineRunner.GeomClampFallback"/>。
+    /// </summary>
+    public bool FlangeStabGeomClampFallback { get; set; } = true;
+
     // ---------- 派生 ----------
     [Browsable(false)] public double TubeId => TubeIdMm * 1e-3;
     [Browsable(false)] public double TubeLength => TubeLengthMm * 1e-3;

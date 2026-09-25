@@ -63,6 +63,8 @@ public static class FlangeStability
         /// <summary>失控前还能承受多少温升 K（线性外推，仅供量级参考）</summary>
         public double HeadroomK;
         public string Note = "";
+        /// <summary>★ 2026-09-25：夹持项从「稳态场标定」回退到「舌片几何」的原因句（<see cref="PtOptimize.Core.LineRunner.GeomClampFallback"/> 写入；空 = 没回退）。判据附注照印。</summary>
+        public string ClampGeomFallbackWhy = "";
     }
 
     /// <summary>

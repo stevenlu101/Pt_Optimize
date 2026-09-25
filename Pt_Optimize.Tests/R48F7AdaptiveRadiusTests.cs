@@ -89,12 +89,17 @@ public class R48F7AdaptiveRadiusTests
         }
         // 放大量的定义式
         var p0 = MeshAdapt.GivenFineRadiusPlan(50.0) with { CapMm = 170.0, CapSource = "门" };
-        var g1 = MeshAdapt.GrowFineRadius(p0, 45.0, 31.0, 5.5, double.NaN, "门");          // 45 + 10 = 55 > 50 ⇒ max(55, 55.5) = 55.5
-        Assert.True(g1.Grew && Bits(g1.Plan.RadiusMm, Math.Max(45.0 + 10.0, 50.0 + 5.5)));
+        // 2026-09-25 F7″：放大量多一粗格滞回（MeshAdapt.GrowOvershootCoarseCells = 1；改回 0 ⇒ 55.5 逐位同 F7′）：45 + 10 + 5.5 = 60.5 > 50 ⇒ max(60.5, 55.5) = 60.5
+        var g1 = MeshAdapt.GrowFineRadius(p0, 45.0, 31.0, 5.5, double.NaN, "门");
+        Assert.True(g1.Grew && Bits(g1.Plan.RadiusMm, Math.Max(45.0 + 10.0 + MeshAdapt.GrowOvershootCoarseCells * 5.5, 50.0 + 5.5)));
+        Assert.Equal(1.0, MeshAdapt.GrowOvershootCoarseCells);
+        double keep = MeshAdapt.GrowOvershootCoarseCells;
+        try { MeshAdapt.GrowOvershootCoarseCells = 0; Assert.True(Bits(MeshAdapt.GrowFineRadius(p0, 45.0, 31.0, 5.5, double.NaN, "门").Plan.RadiusMm, 55.5)); }   // 改回 = F7′ 原式
+        finally { MeshAdapt.GrowOvershootCoarseCells = keep; }
         var g2 = MeshAdapt.GrowFineRadius(p0, 30.0, 31.0, 5.5, double.NaN, "门");          // 盖住了 ⇒ 不动
         Assert.False(g2.Grew); Assert.Null(g2.Verdict); Assert.Same(p0, g2.Plan);
-        var g3 = MeshAdapt.GrowFineRadius(p0, 100.0, 31.0, 5.5, double.NaN, "门");         // 大步：到 r + 10 = 110
-        Assert.True(Bits(g3.Plan.RadiusMm, 110.0));
+        var g3 = MeshAdapt.GrowFineRadius(p0, 100.0, 31.0, 5.5, double.NaN, "门");         // 大步：到 r + 10 + 滞回一粗格 = 115.5（F7″）
+        Assert.True(Bits(g3.Plan.RadiusMm, 100.0 + 10.0 + MeshAdapt.GrowOvershootCoarseCells * 5.5));
         var g4 = MeshAdapt.GrowFineRadius(p0, 200.0, 31.0, 5.5, double.NaN, "门");         // 超出上限 ⇒ 截到上限
         Assert.True(g4.Grew && Bits(g4.Plan.RadiusMm, 170.0));
         var g5 = MeshAdapt.GrowFineRadius(g4.Plan, 200.0, 31.0, 5.5, double.NaN, "门");    // 已在上限 ⇒ 拒答
@@ -142,8 +147,9 @@ public class R48F7AdaptiveRadiusTests
         _o.WriteLine(res.RadiusPlan!.Describe()); _o.WriteLine(res.Verdict);
         Assert.True(NonDecreasing(radii), "半径序列不是非降：" + string.Join(" → ", radii));
         Assert.Equal(2, res.RadiusPlan!.Steps.Length);
-        Assert.True(Bits(res.RadiusPlan.Steps[0].ToMm, Math.Min(cap, Math.Max(r0 + 5.0 + 10.0, r0 + res.RadiusPlan.Steps[0].CoarseMm))));
-        Assert.True(Bits(res.RadiusPlan.Steps[1].ToMm, Math.Min(cap, Math.Max(r1!.Value + 3.0 + 10.0, r1.Value + res.RadiusPlan.Steps[1].CoarseMm))));
+        // 2026-09-25 F7″：放大量 = max(峰 + 余量 + 滞回一粗格, 半径 + 一粗格)（MeshAdapt.GrowOvershootCoarseCells；改回 0 = F7′ 原式）
+        Assert.True(Bits(res.RadiusPlan.Steps[0].ToMm, Math.Min(cap, Math.Max(r0 + 5.0 + 10.0 + MeshAdapt.GrowOvershootCoarseCells * res.RadiusPlan.Steps[0].CoarseMm, r0 + res.RadiusPlan.Steps[0].CoarseMm))));
+        Assert.True(Bits(res.RadiusPlan.Steps[1].ToMm, Math.Min(cap, Math.Max(r1!.Value + 3.0 + 10.0 + MeshAdapt.GrowOvershootCoarseCells * res.RadiusPlan.Steps[1].CoarseMm, r1.Value + res.RadiusPlan.Steps[1].CoarseMm))));
         Assert.Null(res.PeakOutsideFine);
         Assert.True(res.Converged, res.Verdict);
         // 收敛那三档都在最终半径上（旧半径上的档作废，不进比较）

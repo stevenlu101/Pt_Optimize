@@ -346,6 +346,12 @@ public static class MeshAdapt
     /// 此前定半径时留 10、判峰位时留 0，峰在 R−0.5 mm 处也算盖住了，而它周围的梯度已经跨在粗细交界上。</summary>
     public const double PeakMarginMm = 10.0;
 
+    /// <summary>
+    /// ★ 2026-09-25（F7″）：放大时在「峰 + 余量」之上再多长的粗格数（滞回）。1 = 一粗格（选定：端到端 W08 活页里热点随半径外移 0.63 mm，不到一粗格就再触发整轮重做；
+    /// 一粗格是热点位置在导航网格上的分辨单位）。判法 <see cref="PeakVerdict"/> 不变；0 = 改回（放大量逐位同 F7′）。
+    /// </summary>
+    public static double GrowOvershootCoarseCells { get; set; } = 1.0;
+
     public static double RequiredFineRadiusMm(IEnumerable<double> peakRadiiMm,
                                               double holeRadiusMm, double marginMm = PeakMarginMm)
     {
@@ -367,7 +373,7 @@ public static class MeshAdapt
     //  现在：半径 = 计划（本节），不是一个式子：
     //    ① 初值 r₀ = max(盘半径, 孔半径) + 余量₀，余量₀ = 该设计自己的热长度 ℓ_t（<see cref="ThermalLengthMm"/>，停机放大闭式里的同一个量、同一个函数）；
     //    ② 解出场后读最远热点 r 峰（<see cref="PeakVerdict"/> 用的同一个量、同一个阈值），r 峰 + <see cref="PeakMarginMm"/> &gt; 半径 ⇒
-    //       半径 := min(上限, max(r 峰 + PeakMarginMm, 半径 + 一粗格))，重建网格再解（<see cref="GrowFineRadius"/>）；
+    //       半径 := min(上限, max(r 峰 + PeakMarginMm + 滞回一粗格（F7″ 2026-09-25，GrowOvershootCoarseCells），半径 + 一粗格))，重建网格再解（<see cref="GrowFineRadius"/>）；
     //    ③ 半径只增不减；上限 = 板料外缘（<see cref="PlateOuterRadiusMm(LineCase)"/>：细区是 |x|,|z| ≤ R 的方带，R 到材料包络最大半边长时整块板已全是细格，再放大网格不变）；
     //       到上限仍盖不住 ⇒ 拒答（<see cref="PeakAtCapVerdict"/>，与 PeakVerdict 同一口径「这次复核的温度类判据不算数」），不静默；
     //    ④ 初值、余量₀ 与其输入、每次放大的原因与数、终值、放大次数全在 <see cref="FineRadiusPlan"/> 里，进算例（LineCase.MeshFineRadiusPlan）、证据头与判词；
@@ -519,7 +525,7 @@ public static class MeshAdapt
     /// 返回：<c>Verdict</c> = null ⇒ 盖住了；否则是原样呈现给人的话。<c>Grew</c> = true ⇒ 半径已放大，调用方必须**用新半径重建网格再解**（本次的解不算数）。
     /// <c>Refused</c> = true ⇒ 放大到上限仍盖不住（或量不到上限）⇒ 拒答（Verdict 是拒答原句），不许再解。
     /// 峰位算不出（NaN）⇒ 不放大（放大治不了「判不了」），Verdict 照 PeakVerdict 原句。计划不放大（改回、adaptive = false）⇒ 原样返回 PeakVerdict，由调用方按旧口径处置。
-    /// 放大量 = min(上限, max(r 峰 + PeakMarginMm, 半径 + 一粗格))：「一粗格」保证每次至少长一格、有限步内到上限（不死循环）；上限由 <paramref name="capFromCaseMm"/>（本次算例量得）与计划里的上限取有限的那个。
+    /// 放大量 = min(上限, max(r 峰 + PeakMarginMm + 滞回·一粗格, 半径 + 一粗格))（滞回 = <see cref="GrowOvershootCoarseCells"/>，F7″ 2026-09-25；0 = 改回）：「一粗格」保证每次至少长一格、有限步内到上限（不死循环）；上限由 <paramref name="capFromCaseMm"/>（本次算例量得）与计划里的上限取有限的那个。
     /// </summary>
     public static (FineRadiusPlan Plan, string? Verdict, bool Grew, bool Refused) GrowFineRadius(
         FineRadiusPlan plan, double peakRMm, double innerRMm, double coarseMm, double capFromCaseMm, string stage)
@@ -544,11 +550,14 @@ public static class MeshAdapt
             return (plan with { Refused = why, CapMm = cap, CapSource = capSrc }, why, false, true);
         }
         if (!(coarseMm > 0)) throw new ArgumentOutOfRangeException(nameof(coarseMm), "一粗格必须为正（它保证每次至少长一格、有限步内到上限）。");
-        double want = Math.Max(peakRMm + PeakMarginMm, R + coarseMm);
+        // ★ 2026-09-25（F7″，滞回；改回 = GrowOvershootCoarseCells = 0 逐位同改前）：目标多长一粗格。端到端 W08（deliverable/R48_L_端到端_细网格_W08_活页_本次开跑于2026-09-24_224007.txt）：
+        //   半径 53.70 → 75.11（热点 65.11 + 10）后重做，热点随半径外移到 65.74 ⇒ 75.74 > 75.11 只差 0.63 mm（不到一粗格）又整轮重做，导航档 4 h 内三轮没做完。
+        //   判法（峰 + 余量 ≤ 半径）一个数不动；只改放大量：min(上限, max(峰 + 余量 + 滞回·一粗格, 半径 + 一粗格))。
+        double want = Math.Max(peakRMm + PeakMarginMm + GrowOvershootCoarseCells * coarseMm, R + coarseMm);
         double to = Math.Min(cap, want);
         var step = new FineRadiusStep(stage, peakRMm, R, to, coarseMm,
             $"{stage}：最远热点 r = {peakRMm:0.00} mm，r + 余量 {PeakMarginMm:0} = {peakRMm + PeakMarginMm:0.00} > 半径 {R:0.00}"
-            + $" ⇒ 半径 := min(上限 {cap:0.00}, max(r + 余量 {peakRMm + PeakMarginMm:0.00}, 半径 + 一粗格 {coarseMm:0.###} = {R + coarseMm:0.00})) = {to:0.00} mm");
+            + $" ⇒ 半径 := min(上限 {cap:0.00}, max(r + 余量 + 滞回 {GrowOvershootCoarseCells:0.#} 粗格 = {peakRMm + PeakMarginMm + GrowOvershootCoarseCells * coarseMm:0.00}, 半径 + 一粗格 {coarseMm:0.###} = {R + coarseMm:0.00})) = {to:0.00} mm");
         return (plan with { Steps = plan.Steps.Append(step).ToArray(), CapMm = cap, CapSource = capSrc }, v, true, false);
     }
 

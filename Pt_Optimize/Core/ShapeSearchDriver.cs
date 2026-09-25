@@ -193,7 +193,7 @@ public sealed class ShapeRow
     public string Tag => $"盘Ø{2 * R:0.0}／舌宽{2 * HalfW:0.0}{(Taper ? "／锥形" : "")}";
 
     public const string Header =
-        "序\t阶段\t盘径Ø\t舌宽\t舌边\t舌长\t结果\t铂重g\t最热铂高出热偶读数 K（实际/限/裕度/判）\t管根低于热偶读数 K\t管孔净流入 W\t卡住的硬安全线\t场解\t轮\t秒\t停因／消息\t同状态复用\t粗筛本该放大到 mm";
+        "序\t阶段\t盘径Ø\t舌宽\t舌边\t舌长\t结果\t铂重g\t法兰最热处高出管接触处温度 K（实际/限/裕度/判）\t管接触处流入法兰的净热流 W\t局部热稳定 ×\t卡住的硬安全线\t场解\t轮\t秒\t停因／消息\t同状态复用\t粗筛本该放大到 mm";
 
     public string Line()
     {
@@ -410,9 +410,9 @@ public static class ShapeSearchDriver
             row.HitBound = sr.HitBound;
             row.Undetermined = sr.Undetermined;
             row.TabLengthMm = sr.Design?.TabLengthMm ?? double.NaN;
-            row.Hot = HardCritValue.Of(sr.Best, LineResult.Key.HotOverTc);
-            row.Cold = HardCritValue.Of(sr.Best, LineResult.Key.ColdUnderTc);
-            row.Flux = HardCritValue.Of(sr.Best, LineResult.Key.NetFlux);
+            row.Hot = HardCritValue.Of(sr.Best, LineResult.Key.HotOverContact);
+            row.Cold = HardCritValue.Of(sr.Best, LineResult.Key.TubeToFlangeHeat);
+            row.Flux = HardCritValue.Of(sr.Best, LineResult.Key.LocalStab);
             row.Blocked = sr.Best?.HardBlocked.Select(c => Criteria.Plain(c.Name)).ToArray() ?? Array.Empty<string>();
             row.Solves = sr.Solves;
             row.Reuses = sr.SameStateReuses;
@@ -807,10 +807,10 @@ public static class ShapeSearchDriver
         sb.AppendLine("　圆盘保温（逐片，算例实际用的）" + DesignSpec.Fmt(disc, "0.0") + string.Create(ci, $" mm（整线 FlangeInsulMm {d.FlangeInsulMm:0.0}、包不包 {(d.FlangeInsulated ? "包" : "不包")}；逐片 DiscInsulMm {(d.DiscInsulMm.Length == 0 ? "空 = 沿用整线" : DesignSpec.Fmt(d.DiscInsulMm, "0.0"))}）"));
         sb.AppendLine("　保温边界半径规则：" + insulRule);
         sb.AppendLine(string.Create(ci, $"铂重：{fin.MassG:0.0} g（粗筛时 {win.MassG:0.0} g）"));
-        var hot = HardCritValue.Of(fin.Best, LineResult.Key.HotOverTc);
-        var cold = HardCritValue.Of(fin.Best, LineResult.Key.ColdUnderTc);
-        var flux = HardCritValue.Of(fin.Best, LineResult.Key.NetFlux);
-        sb.AppendLine("三条硬判据（实际/限值/裕度/判）：");
+        var hot = HardCritValue.Of(fin.Best, LineResult.Key.HotOverContact);
+        var cold = HardCritValue.Of(fin.Best, LineResult.Key.TubeToFlangeHeat);
+        var flux = HardCritValue.Of(fin.Best, LineResult.Key.LocalStab);
+        sb.AppendLine("决 103 稳态硬判据三条（实际/限值/裕度/判；整片热稳定、管 J、法兰截面 J 与几何两条见「没过或判不了的硬安全线」那行，全过即无）：");
         sb.AppendLine($"　{hot.Name}　{hot.Text()}　{hot.Where}");
         sb.AppendLine($"　{cold.Name}　{cold.Text()}　{cold.Where}");
         sb.AppendLine($"　{flux.Name}　{flux.Text()}　{flux.Where}");
@@ -854,9 +854,9 @@ public static class ShapeSearchDriver
                                     : string.Create(ci, $"　{name}：最好裕度 {pick(c).Margin:0.000}，在 #{c.Index} {c.Tag}"));
         }
         sb.AppendLine("每条硬判据在盒内最好的裕度：");
-        BestOf(Criteria.Plain(LineResult.Key.HotOverTc), r => r.Hot);
-        BestOf(Criteria.Plain(LineResult.Key.ColdUnderTc), r => r.Cold);
-        BestOf(Criteria.Plain(LineResult.Key.NetFlux), r => r.Flux);
+        BestOf(Criteria.Plain(LineResult.Key.HotOverContact), r => r.Hot);
+        BestOf(Criteria.Plain(LineResult.Key.TubeToFlangeHeat), r => r.Cold);
+        BestOf(Criteria.Plain(LineResult.Key.LocalStab), r => r.Flux);
         sb.AppendLine("边界保温条件（全程固定，不是搜索维度）：");
         foreach (var l in BoundaryLines(seed, baseIn)) sb.AppendLine("　" + l);
         sb.AppendLine("　圆盘保温（逐片）" + DesignSpec.Fmt(Enumerable.Range(0, seed.TabThickMm.Length).Select(j => seed.DiscInsulMmOf(j)).ToArray(), "0.0") + " mm");

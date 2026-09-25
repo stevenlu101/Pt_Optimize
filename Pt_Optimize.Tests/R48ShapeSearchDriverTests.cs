@@ -185,9 +185,9 @@ public class R48ShapeSearchDriverTests
         foreach (var r in res.Rows.Where(r => !r.Skipped))
             Assert.Contains($"假停因 R={r.R:0.000}", res.NoFeasibleReport);
         Assert.Contains("门用上端出处", res.NoFeasibleReport);
-        Assert.Contains("最热铂高出热偶读数", res.NoFeasibleReport);
-        Assert.Contains("管根低于热偶读数", res.NoFeasibleReport);
-        Assert.Contains("管孔净流入", res.NoFeasibleReport);
+        Assert.Contains("法兰最热处高出管接触处温度", res.NoFeasibleReport);   // 2026-09-25：三列换成决 103 硬判据
+        Assert.Contains("管接触处流入法兰的净热流", res.NoFeasibleReport);
+        Assert.Contains("局部热稳定", res.NoFeasibleReport);
         Assert.Contains("卡住", res.NoFeasibleReport);
         Assert.Contains(res.Rows, r => r.Phase == "基准");
     }

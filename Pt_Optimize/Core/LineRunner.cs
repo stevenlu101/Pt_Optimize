@@ -3665,6 +3665,7 @@ public static class LineRunner
                 : $"　散热侧 表面 {st.DSurfDT:0.000} + 夹持 {st.DClampDT:0.000}（{st.ClampSource}）"
                   + $" + 管孔 {st.DTubeDT:0.000} = {st.DLossDT:0.000} W/K，"
                   + $"发热侧 {st.DGenDT:0.000} W/K")
+             + (st.ClampGeomFallbackWhy.Length > 0 ? "　" + st.ClampGeomFallbackWhy : "")   // 2026-09-25：场标定不出 ⇒ 几何回退的原因句（DesignInputs.FlangeStabGeomClampFallback）
              + (st.Undetermined || !st.ClampFromField ? ""
                 // R48 G2 复审二（2026-09-15 Opus 5）：按边界模式分句 —— 自由端没有铜排，原句「流进铜排的热 ÷（法兰均温 − 夹持温度）× (1 − 0.00)」对它是空话（合成门首跑看到）
                 : lumped.Calib?.Mode == ShellThermal.ClampBoundary.Free
@@ -3794,6 +3795,23 @@ public static class LineRunner
     /// 其余参数（盘／舌面积、本片圆盘保温、舌片导热截面与导热长、管孔截面与盘宽、本片舌保温）逐个取自 <paramref name="o"/> 与本片场 <paramref name="fw"/>，与搬移前逐位相同。
     /// <paramref name="o"/> 必须是 FlangeLumped 算好面积与热解输入之后的那一份。
     /// </summary>
+    /// <summary>
+    /// ★ 2026-09-25：整片热稳定的夹持导度要不要从「稳态场标定」回退到「舌片几何」（<see cref="DesignInputs.FlangeStabGeomClampFallback"/>）。
+    /// 回退条件（同时成立）：口径 = 决103；开关开；本片有稳态场（节点格数 &gt; 0）且不是自由端；场标定的铜排项没成、而且 法兰均温 − 夹持参考温度 &lt; <see cref="RampTwoNode.CalibMinDeltaK"/>。
+    /// 标定失败的其他原因不回退（没有场、带走的热为负而温差够）。返回给判据附注的原因句。
+    /// </summary>
+    internal static (bool Fallback, string Why) GeomClampFallback(RampTwoNode.NodeCalibration? k, CriteriaRuleSet rs, bool enabled)
+    {
+        if (rs != CriteriaRuleSet.决103 || !enabled || k is null) return (false, "");
+        if (k.ClampOk || k.Mode == ShellThermal.ClampBoundary.Free || k.NodeCells <= 0) return (false, "");
+        double dT = k.TNodeC - k.TClampC;
+        if (!double.IsFinite(dT) || dT >= RampTwoNode.CalibMinDeltaK) return (false, "");
+        string refName = k.Mode == ShellThermal.ClampBoundary.FixedTemp ? "夹持温度" : "铜排冷端温度";
+        return (true, $"★ 经舌片流进铜排的导度从稳态场标定不出来：法兰均温 {k.TNodeC:0.0} °C 不比{refName} {k.TClampC:0.0} °C 高出 {RampTwoNode.CalibMinDeltaK:0.#} K"
+                    + "（这一点铜排在给法兰加热，热 ÷ 温差没有物理意义）⇒ 决 103 口径改按舌片导热截面的几何导度算这一项（FlangeStability 一直算着的那份，比场标定值偏小、裕度偏保守；"
+                    + "改回 DesignInputs.FlangeStabGeomClampFallback = false 或口径改回决103前 ⇒ 仍判不了）。");
+    }
+
     public static FlangeStability.Result StabilityCheck(LineCase c, FlangeOut fw, FlangeLumpedOut o, double? clampConductanceWPerK)
     {
         var pl = o.Plate;
@@ -3895,7 +3913,10 @@ public static class LineRunner
 
         // R48 G2 复审：夹持导度与升温两节点同一份标定、同一个夹持假设 G·(1 − r)（原传 G）；标定不出来 = NaN ⇒ 判不了。
         // R48 G2 复审二（2026-09-15 Opus 5）：调用搬进 StabilityCheck（参数逐个不变），探针复现第一版口径时换夹持导度调同一份。
-        o.Stab = StabilityCheck(c, fw, o, o.Calib.StabClampWPerK);
+        // ★ 2026-09-25：标定不出来且原因是温差不够（铜排比法兰热、或只差不到 CalibMinDeltaK）⇒ 决 103 下改按几何导度（DesignInputs.FlangeStabGeomClampFallback；改回 = false 或口径决103前 ⇒ 照旧判不了）
+        var (geomFallback, geomWhy) = GeomClampFallback(o.Calib, c.RuleSet, c.Base?.FlangeStabGeomClampFallback ?? true);
+        o.Stab = StabilityCheck(c, fw, o, geomFallback ? null : o.Calib.StabClampWPerK);
+        if (geomFallback) o.Stab.ClampGeomFallbackWhy = geomWhy;
 
         try
         {
