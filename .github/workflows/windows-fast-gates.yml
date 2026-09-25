@@ -12,8 +12,8 @@ on:
     branches:
       - 'claude/**'
       - 'feat/**'
-  pull_request:
   workflow_dispatch:
+# 不加 pull_request：分支推送已触发，同一提交再按 PR 触发一次是双倍跑机分钟（第一跑实测两条并排）。
 
 concurrency:
   group: windows-fast-gates-${{ github.ref }}
