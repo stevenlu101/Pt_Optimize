@@ -1388,7 +1388,7 @@ public static class FlangeMesher
     /// 不是区分两把尺的证据），门经 <see cref="MeshRules.HoleBandPerStep"/> 传 1/√2 对照。**【待决定】决 98**：尺用一个栅格步还是 s/√2 由业主定；本常量不是第三个数。
     /// 代价（2026-09-23 审查后改写，详见 <see cref="HoleBandCircleField"/> 类注释「代价」）：带宽 b 与外移取厚的距离（恒为一个栅格步 s）是两个量 ——
     /// 孔弧缺口的补平由外移 s 定（实测 1.2 s 的失配缺口全补平，2 s 没补平），不等于「小于一个带宽的失配被吸收」；带内任何栅格空洞（不只同心失配）外移一步有料就被补料；
-    /// 失配时可出现与板不连通的浮空料块（记进 <see cref="MeshRecipe.FloatingComponents"/>）。实测见 deliverable/R48_孔环按解析圆判料_实施记录_2026-09-23.md §7、§13。
+    /// 失配时可出现与板不连通的浮空料块（记进 <see cref="MeshRecipe.FloatingComponents"/>）。实测见 deliverable/R48_孔环按解析圆判料_实施记录_2026-09-23.md 第 7 节与第 13 节。
     /// </summary>
     public const double HoleBandPerStep = 1.0;
 

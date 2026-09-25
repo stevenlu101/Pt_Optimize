@@ -44,6 +44,25 @@ jobs:
       - name: 快门（速度!=慢）
         run: dotnet test Pt_Optimize.Tests/Pt_Optimize.Tests.csproj -c Release --no-build --filter "速度!=慢" --logger "trx;LogFileName=fast.trx" --results-directory TestResults
 
+      - name: 失败清单（从 trx 摘出，印进日志：名字、时长、第一行讯息；跑机产物下载常被代理挡，日志末尾能直接读）
+        if: always()
+        run: |
+          $f = Get-ChildItem -Path TestResults -Filter *.trx -Recurse | Select-Object -First 1
+          if (-not $f) { Write-Host "没有 trx"; exit 0 }
+          [xml]$x = Get-Content -LiteralPath $f.FullName -Encoding UTF8
+          $ns = New-Object System.Xml.XmlNamespaceManager($x.NameTable)
+          $ns.AddNamespace('t', $x.DocumentElement.NamespaceURI)
+          $c = $x.SelectSingleNode('//t:Counters', $ns)
+          Write-Host ("==== 计数：total {0} passed {1} failed {2} notExecuted {3}" -f $c.total, $c.passed, $c.failed, $c.notExecuted)
+          $rs = $x.SelectNodes('//t:UnitTestResult', $ns) | Where-Object { $_.outcome -ne 'Passed' } | Sort-Object testName
+          Write-Host ("==== 未过 {0} 条" -f $rs.Count)
+          foreach ($r in $rs) {
+            $m = $r.SelectSingleNode('.//t:Message', $ns)
+            $first = if ($m -and $m.InnerText) { ($m.InnerText.Trim() -split "`n")[0] } else { '' }
+            if ($first.Length -gt 220) { $first = $first.Substring(0, 220) }
+            Write-Host ("{0} | {1} | {2} | {3}" -f $r.outcome, $r.testName, $r.duration, $first)
+          }
+
       - name: 上传测试结果（trx）
         if: always()
         uses: actions/upload-artifact@v4
