@@ -387,7 +387,7 @@ public static class ShapeSearchDriver
         (SolverResult sr, int rounds, double sec) SolveOne(DesignSpec spec, string tag, CancellationToken tok)
         {
             int rounds = 0;
-            IProgress<string> p = new SyncProgress(s =>
+            IProgress<string> p = new SyncProgress<string>(s =>
             {
                 if (!s.StartsWith("第", StringComparison.Ordinal)) return;
                 Interlocked.Increment(ref rounds);
@@ -723,7 +723,7 @@ public static class ShapeSearchDriver
         Say($"精算胜出形状 {win.Tag}（粗筛 {win.MassG.ToString("0.0", ci)} g）：细网格 {finFine.ToString("0.000", ci)} mm、细区半径初值 {finFineR.ToString("0.0", ci)} mm（MeshVerify.RequiredMeshFor），最多 {opt.FinalRounds} 轮"
           + "；终局复核后照旧放大重做（不传 SkipRadiusGrowthAfterFinalCheck）" + (opt.FinalReuseSameState ? "；同状态复用开" : ""));
         int finRounds = 0;
-        IProgress<string> pf = new SyncProgress(s =>
+        IProgress<string> pf = new SyncProgress<string>(s =>
         {
             if (!s.StartsWith("第", StringComparison.Ordinal)) return;
             Interlocked.Increment(ref finRounds);
@@ -906,11 +906,5 @@ public static class ShapeSearchDriver
         yield return string.Create(ci, $"环境温度 {baseIn.TAmbC:0.0} °C（DesignInputs.TAmbC）");
     }
 
-    /// <summary>同步进度接收器（不经同步上下文，调用线程上当场执行）。</summary>
-    private sealed class SyncProgress : IProgress<string>
-    {
-        private readonly Action<string> _a;
-        public SyncProgress(Action<string> a) => _a = a;
-        public void Report(string value) => _a(value);
-    }
+    // 2026-09-25：同步进度接收器改用 Core/SyncProgress.cs 那一份（全仓只许一份）。
 }

@@ -52,7 +52,7 @@ public class R48TightenOnJudgeMeshTests
     {
         string s = Src();
         int tighten = s.IndexOf("TightenOnJudgeMesh(d, baseIn, opt, res", StringComparison.Ordinal);
-        int pass2 = s.IndexOf("Rounds(opt, \"第二遍", StringComparison.Ordinal);
+        int pass2 = s.IndexOf("FinePass(\"第二遍：细网格上重新求根", StringComparison.Ordinal);   // 2026-09-25：F7′（§0.-26）把第二遍求根抽成 FinePass(...)，钉子随之改（变因 = F7′；原钉 Rounds(opt, "第二遍）
         Assert.True(tighten > 0, "找不到回收那一步的调用 —— 方法写了不等于接上了（本仓库栽过两次的形态）");
         Assert.True(pass2 > 0, "找不到第二遍求根的调用 —— 门失去了守护对象，先修门");
         Assert.True(tighten < pass2,

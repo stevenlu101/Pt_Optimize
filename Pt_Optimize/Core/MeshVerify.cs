@@ -511,7 +511,7 @@ public static class MeshVerify
                              int maxCells = 40000, int maxRounds = 6,
                              IProgress<string>? progress = null,
                              CancellationToken cancel = default)
-        => RunCore(caseFactory, h0, plan, innerR, maxCells, maxRounds, progress, cancel, (lc, pr, ct) => LineRunner.Run(lc, pr, ct));
+        => RunCore(caseFactory, h0, plan, innerR, maxCells, maxRounds, progress, cancel, (lc, innerProgress, ct) => LineRunner.Run(lc, innerProgress, ct));
 
     /// <summary>
     /// F7′（2026-09-23）：主循环本体。<paramref name="solve"/> = 整线解（生产恒为 <see cref="LineRunner.Run"/>）；只给门（InternalsVisibleTo）注入合成的整线结果，

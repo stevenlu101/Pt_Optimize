@@ -749,6 +749,8 @@ public class DesignInputs
     /// 只在 <see cref="CriteriaRuleSet"/> = 决103 下生效；决103前不判升温期热稳定、稳态也照旧判不了（逐位同改前）。
     /// 标定失败的其他原因（本片没有场、带走的热为负而温差够）仍判不了。判定在 <see cref="LineRunner.GeomClampFallback"/>。
     /// </summary>
+    [Browsable(false)]
+    [TypeConverter(typeof(ChineseBoolConverter))]
     public bool FlangeStabGeomClampFallback { get; set; } = true;
 
     // ---------- 派生 ----------

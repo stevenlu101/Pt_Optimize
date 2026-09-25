@@ -68,10 +68,14 @@ public class R48UTempBudgetTests
         Assert.Equal(5.0, new LineCase().ColdUnderTcMaxK, 12);
 
         // 加密复算容差：默认下仍是 0.5／0.5／0.5（K 路那三列，逐位不变）
-        var tol = MeshVerify.TolTemplate(new LineCase());
+        // 2026-09-25：决 103 起生产口径的比对列是两条新判据（MeshVerify.MeshTolerances103）；改前三列钉在改回口径（决103前）上逐位不变
+        var tol = MeshVerify.TolTemplate(new LineCase { Base = new DesignInputs { CriteriaRuleSet = CriteriaRuleSet.决103前 } });
         Assert.Equal(0.5, tol.First(t => t.Name == Criteria.Plain(LineResult.Key.NetFlux)).Tol, 12);
         Assert.Equal(0.5, tol.First(t => t.Name == Criteria.Plain(LineResult.Key.HotOverTc)).Tol, 12);
         Assert.Equal(0.5, tol.First(t => t.Name == Criteria.Plain(LineResult.Key.ColdUnderTc)).Tol, 12);
+        var tol103 = MeshVerify.TolTemplate(new LineCase());
+        Assert.Equal(0.5, tol103.First(t => t.Name == Criteria.Plain(LineResult.Key.TubeToFlangeHeat)).Tol, 12);
+        Assert.Equal(1.0, tol103.First(t => t.Name == Criteria.Plain(LineResult.Key.HotOverContact)).Tol, 12);   // 缺省限值 10 K 的 10 %
 
         // 判词里的限值栏与判定：这份合成整线在 5 K 下热侧 6.56、冷侧 9.00，两条都不过（与 R48 B 那道门同一组数）
         var (segs, fl) = Line();
@@ -114,7 +118,8 @@ public class R48UTempBudgetTests
         Assert.False(coldT.Ok);
 
         // 复核容差 = 各自限值的 10 %，跟着预算走
-        var tol = MeshVerify.TolTemplate(new LineCase { Base = wide });
+        var tol = MeshVerify.TolTemplate(new LineCase { Base = new DesignInputs { HotOverTcAllowK = 7.0, ColdUnderTcAllowK = 12.0, CriteriaRuleSet = CriteriaRuleSet.决103前 } });   // 2026-09-25：改前三列钉在改回口径
+        Assert.Equal(2.0, MeshVerify.TolTemplate(new LineCase { Base = new DesignInputs { HotOverContactAllowK = 20.0 } }).First(t => t.Name == Criteria.Plain(LineResult.Key.HotOverContact)).Tol, 12);   // 决 103：预算 20 K ⇒ 容差 2 K
         Assert.Equal(0.7, tol.First(t => t.Name == Criteria.Plain(LineResult.Key.HotOverTc)).Tol, 12);
         Assert.Equal(1.2, tol.First(t => t.Name == Criteria.Plain(LineResult.Key.ColdUnderTc)).Tol, 12);
         Assert.Equal(0.5, tol.First(t => t.Name == Criteria.Plain(LineResult.Key.NetFlux)).Tol, 12);   // 净流入与预算无关

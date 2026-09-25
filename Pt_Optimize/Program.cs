@@ -89,12 +89,7 @@ internal static class Program
     ///   一份会乱序的日志会让人读出错的因果，**且它看起来完全正常**。
     ///   ⇒ `SyncProgressOnlyTests` 盯着「CLI 里不许再出现 new Progress&lt;」。
     /// </summary>
-    private sealed class SyncProgress<T> : IProgress<T>
-    {
-        private readonly Action<T> _h;
-        public SyncProgress(Action<T> h) => _h = h;
-        public void Report(T value) => _h(value);
-    }
+    // 2026-09-25：SyncProgress<T> 移到 Core/SyncProgress.cs（全仓一份），本处私有副本删除；用法不变。
 
     /// <summary>从当前目录与 bin 目录逐级上溯找数据文件（bin\Debug\net8.0-windows 距仓库根三层）</summary>
     private static string Find3dm(string name)

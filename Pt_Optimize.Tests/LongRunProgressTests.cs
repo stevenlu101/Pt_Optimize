@@ -133,9 +133,10 @@ public class LongRunProgressTests
         string s = Core("MeshVerify.cs");
         // R48 B（2026-09-14 Opus 5）：有意改动 —— 进度行会上界面，代号换成全名，且 ②″／③ 两列换成热偶读数基准的热侧／冷侧；依据 Pt_Optimize/Core/MeshVerify.cs。
         //   旧 "②′ {a2p:0.000} W" → 新 "管孔净流入 {a2p:0.000} W"；旧 "②″ {a2pp:0.000} K" → 新 "最热铂高出热偶读数 {a2pp:0.000} K"；旧 "③ {a3:0.000} K" → 新 "管根低于热偶读数 {a3:0.000} K"。
-        Assert.Contains("管孔净流入 {a2p:0.000} W", s);
-        Assert.Contains("最热铂高出热偶读数 {a2pp:0.000} K", s);
-        Assert.Contains("管根低于热偶读数 {a3:0.000} K", s);
+        // 2026-09-25：比对列按判据口径取（决103 两条／决103前 三条，MeshVerify.MeshTolerancesFor），进度行改成按列名循环印，另印两条热稳定（只印）；钉子随之改
+        Assert.Contains("{Criteria.Plain(m.Key)} {(ci == 0 ? a2p : ci == 1 ? a2pp : a3):0.000}", s);
+        Assert.Contains("局部热稳定 {V(LineResult.Key.LocalStab):0.000}", s);
+        Assert.Contains("整片热稳定 {V(LineResult.Key.FlangeStab):0.000}", s);
         Assert.Contains("较上一档：", s);
     }
 

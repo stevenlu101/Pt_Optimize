@@ -189,7 +189,8 @@ public class R48J_SolverMeshAndMarkerGateTests
         Assert.Contains("判不了", MeshVerify.TierUnusableWhy(e));
 
         string s = Src("Pt_Optimize", "Core", "MeshVerify.cs");
-        int run = s.IndexOf("var r = LineRunner.Run(lc, inner, cancel);", StringComparison.Ordinal);
+        int run = s.IndexOf("var r = solve(lc, inner, cancel);", StringComparison.Ordinal);   // 2026-09-25：F7′ 把主循环抽成 RunCore、整线解经注入的 solve（生产 = LineRunner.Run），钉子随之改（变因 = F7′）
+        Assert.True(run > 0, "找不到主循环的整线解调用 —— 门失去了守护对象，先修门");
         int ask = s.IndexOf("string unusable = TierUnusableWhy(r);", run, StringComparison.Ordinal);
         int line = s.IndexOf("res.Line = r;", run, StringComparison.Ordinal);
         int trace = s.IndexOf("res.Trace.Add((h,", run, StringComparison.Ordinal);
