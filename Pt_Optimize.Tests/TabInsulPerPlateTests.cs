@@ -61,8 +61,13 @@ public class TabInsulPerPlateTests
                 if (j < lc.ClampTempC.Length) p2.BusbarClampTempC = lc.ClampTempC[j];
                 if (f.BusGWPerK >= 0) p2.BusbarConductanceWPerK = f.BusGWPerK;
                 // 2026-09-23（F3 审查后改）：与整线同一发热口径 —— 发热吃发热等效 J（面发热），局部量吃重构 J
+                // 2026-09-23（P4）：补传圆盘区半径与保温边界半径 —— 整线自 R48（2026-09-14）起经 LineRunner.PlateThermalInputs 从 GeomForJudge[j] 取这两个半径
+                //   （保温边界按半径圈，FlangePlate.InsulDiscRadiusMm），本门的手写配方没跟上，缺省 NaN ⇒ ShellThermal 退回按 x 分保温，抽热差 +2.9～+10.3 W
+                //   （探针 deliverable/R48_P4_舌保温逐片门_逐项对齐探针_本次开跑于2026-09-23_194525.txt：只补 insulDiscRadiusMm 即逐位对上）。两个值取自本片等效几何 g，与整线同源；断言不动。
                 var th = ShellThermal.Solve(mesh, sc.HeatJAPerMm2, p2, f.TRootC, g.InsulBoundaryXResolved, false,
-                                            tabBoundaryX: g.Tangent().X, tabInsulThickMm: tabInsul, jLocalAPerMm2: sc.JMagAPerMm2);
+                                            tabBoundaryX: g.Tangent().X, tabInsulThickMm: tabInsul,
+                                            discRadiusMm: g.DiscRadiusMm, insulDiscRadiusMm: g.InsulDiscRadiusMm,
+                                            jLocalAPerMm2: sc.JMagAPerMm2);
                 return th.QFromTubeW;
             }
             double qOwn = Q(ins[j]);
