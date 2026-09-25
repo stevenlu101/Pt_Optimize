@@ -78,7 +78,7 @@ public class R48ErrorBudgetTests
             return d0;
         }
         var d = Design();
-        var (_, radius) = MeshVerify.RequiredMeshFor(d);
+        var (_, radius) = MeshVerify.RequiredMeshFor(d, p);
         double[] iJ = { 1213, 1984, 1817, 1022 };
         double[] tRoot = { 1172.63, 1151.19, 1093.09, 1056.80 };
         Say($"电流 {string.Join("/", iJ)} A；管根 {string.Join("/", tRoot.Select(v => v.ToString("0.00")))} °C；生产细区半径 {radius:0}");

@@ -1,0 +1,12 @@
+﻿F6c 门：孔面只在孔圆上　写码 2026-09-23，F6　开跑 2026-09-23 20:28:39
+门槛（跑前写死）：生产网格上每条管孔面 ArcRadiusMm 有限、|r_mid − rh| ≤ 1e-9；配方 HoleTagArcOnly 为真。改回（HoleTagArcOnly = false）在 R28／w26 上非弧孔面 > 0。
+算例	档	口径	孔面	非弧孔面	非弧孔面总长mm	离圆最大mm	配方开关位HoleTagArcOnlySwitch	配方量得HoleTagArcOnly
+W08 R28 w26	导航	只认弧面	100	0	0.000	3.55E-015	True	True
+W08 R28 w26	导航	改回按带	100	0	0.000	3.55E-015	False	True
+W08 R28 w26	判决	只认弧面	206	0	0.000	3.55E-015	True	True
+W08 R28 w26	判决	改回按带	208	2	2.000	3.55E-015	False	False
+W08 默认	导航	只认弧面	100	0	0.000	3.55E-015	True	True
+W08 默认	判决	只认弧面	204	0	0.000	3.55E-015	True	True
+W06 默认	导航	只认弧面	100	0	0.000	3.55E-015	True	True
+W06 默认	判决	只认弧面	204	0	0.000	3.55E-015	True	True
+── 只认弧面：不过 0　改回按带：非弧孔面共 2 条

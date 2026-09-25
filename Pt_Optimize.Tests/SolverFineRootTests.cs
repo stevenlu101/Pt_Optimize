@@ -120,13 +120,16 @@ public class SolverFineRootTests
         Assert.Contains("RequiredMeshFor(DesignSpec d", mv);
 
         // MeshVerify 自己也得走这个方法，不许留一份旧的内联算法
-        Assert.Contains("var (h0, radius) = RequiredMeshFor(d, weldAsGeometricFeature);", mv);
+        // F7′（2026-09-23，变因 = 决 29 自适应）：细区尺寸与细区半径分开取 —— 尺寸仍由几何特征定（RequiredFineMmFor，原式逐字），
+        //   半径由细区半径计划给（FineRadiusPlanFor，热长度要按工艺参数的算例量）。原钉 "var (h0, radius) = RequiredMeshFor(d, weldAsGeometricFeature);"。
+        Assert.Contains("double h0 = RequiredFineMmFor(d, weldAsGeometricFeature);", mv);
+        Assert.Contains("var plan = FineRadiusPlanFor(d, baseIn);", mv);
         Assert.Single(Regex.Matches(mv, @"MeshAdapt\.RequiredFineMm\("));
 
         // 命令行取网格也走同一份
         string prog = File.ReadAllText(Path.Combine(
             HandoverDoc.Root(), "Pt_Optimize", "Program.cs"));
-        Assert.Contains("MeshVerify.RequiredMeshFor(geoS)", prog);
+        Assert.Contains("MeshVerify.RequiredMeshFor(geoS, p)", prog);   // F7′（2026-09-23，决 29 自适应）：签名加了工艺参数（原钉 "MeshVerify.RequiredMeshFor(geoS)"）
     }
 
     /// <summary>

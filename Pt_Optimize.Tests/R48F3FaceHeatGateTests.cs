@@ -45,7 +45,7 @@ namespace PtOptimize.Tests;
 //       设 LineCase.GateRevertFaceHeat 跑整线：结果里恰有一句改回说明（开关真的进了整线）；剔掉这一句后的去耗时全量转储 SHA-256 = F3 前的记录（接线门 1 在 8b90b5f 上的 Linux 记录）。
 //       覆盖：LineRunner.Run 整条链（电流 → 热场 → 耦合 → 判据 → 文字）；不覆盖：保温搜索内层（InsulationSearch 另建算例，不带改回位）、Windows（没有记录）。
 //       （2026-09-23 审查后补）靶 PreF3LinuxRecord = 「合并树去掉 F3 那一份 diff」上接线门 1 的 Linux SHA；现值只对 8b90b5f 成立。
-//       凡是改接线门 1 转储的改动（本波已知：SEG → 8e0ffad1…、C3 → ffc61757…、RING → 01f51c89…；C4 实跑不动接线门 1）先合入，本门在合并树上就红（预期），
+//       凡是改接线门 1 转储的改动（本波已知：SEG → 8e0ffad1…、C3 → ffc61757…、RING → 01f51c89…；C4 实跑不动接线门 1〔合并 C4′ 后改：C4′（决 29 自适应）→ bc732f5d…，转储多 4 行记录（算例.MeshFineRadiusPlan 1 行、各片 Recipe.FineRadiusMm 3 行）、数值场不动〕）先合入，本门在合并树上就红（预期），
 //       要按 PreF3LinuxRecord 注释重录靶；**严禁**用改回位在合并树上自取这个靶（那是自己比自己）。
 //   门4 源码门（快）：Core 里调 ShellThermal.Solve／SolvePlateThermal 的地方（调用名与括号之间允许空白、换行），发热 J（命名实参 jHeatAPerMm2:／jMagAPerMm2: 优先，
 //       否则第 2 个位置实参）不许是 .JMagAPerMm2 或 .JField（FlangeOut.JField 就是重构 J）；Core 里（ShellCurrent.cs 之外）不许再按
@@ -75,7 +75,7 @@ public class R48F3FaceHeatGateTests
     /// <summary>
     /// 门3 的靶：接线门 1 在 F3 前（分支头 8b90b5f）的 Linux 记录（R48PropsWiringGateTests.LinuxRecord 在 F3 改动之前的值，§0.-20 重录的那个）。
     /// ★ 2026-09-23 审查后补：这个靶的定义是「合并树去掉 F3 那一份 diff」上接线门 1 的 Linux SHA，**现值只对 8b90b5f 成立**。
-    ///   本波 SEG（→ 8e0ffad1…）、C3（→ ffc61757…）、RING（→ 01f51c89…）都改接线门 1 的转储（C4 实跑不动），它们中任一条与 F3 同在合并树上时，
+    ///   本波 SEG（→ 8e0ffad1…）、C3（→ ffc61757…）、RING（→ 01f51c89…）都改接线门 1 的转储（C4 实跑不动〔合并 C4′ 后改：C4′（决 29 自适应）→ bc732f5d…，转储多 4 行记录、数值场不动〕），它们中任一条与 F3 同在合并树上时，
     ///   改回位只撤 F3，SHA 回不到 fb2c3248… ⇒ 门3 红，属预期。重录：取「其余各条已合、F3 未合」的树（或合并树撤掉 F3 diff 的检出）跑接线门 1，
     ///   印出的 SHA 写进本常量，注释逐条写明变因（实际已合的 SEG／C3／RING）。**严禁**用改回位在合并树上自取（自己比自己，门3 就空了）。合并顺序归合并计划定。
     /// Windows：没有记录。取法：在 Windows 上用 F3 之前的树（8b90b5f，或合并树撤掉 F3 diff 的检出；接线门 1 注释里的剥离树做法跑出的也是这个数）跑接线门 1
@@ -540,7 +540,7 @@ public class R48F3FaceHeatGateTests
         W($"开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}　工作树 {HandoverDoc.Root()}　写码 {Sign}　并发 {par}（与别的长跑同机，耗时只作参考）");
         W(CoreSrcTag());
         W($"基准设计：{(which == "W08" ? R48LW08NavDesign.Source : R48LW06FineDesign.Source)}");
-        var (reqFine, _) = MeshVerify.RequiredMeshFor(d0);
+        var reqFine = MeshVerify.RequiredFineMmFor(d0);   // （合并 C4′ 时改，变因 = 决 29 自适应：RequiredMeshFor 签名加工艺参数 DesignInputs，细区半径改为计划初值 max(盘半径, 孔半径) + 热长度，W08 53.697 mm；细步单独取 RequiredFineMmFor）
         var jobs = new List<(string tag, DesignSpec d, double fine, string grade, bool off)>();
         foreach (double disc in new[] { 10.0, 20.0 })
             foreach (var (grade, fine) in new[] { ("判决", reqFine), ("导航", 0.0) })

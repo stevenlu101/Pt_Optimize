@@ -66,7 +66,7 @@ public class R48InsulWindowTests
 
         var p = new DesignInputs();
         double[] sweep = { 0.30, 1.00, 1.50, 2.00, 3.00, 4.60 };
-        var (_, radius) = MeshVerify.RequiredMeshFor(DesignSpec.W08.Clone());
+        var (_, radius) = MeshVerify.RequiredMeshFor(DesignSpec.W08.Clone(), p);
 
         foreach (double ins in sweep)
         {

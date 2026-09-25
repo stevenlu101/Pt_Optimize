@@ -40,7 +40,9 @@ namespace PtOptimize.Core;
 /// 判决仍以判决网格为准（导航网格上这两条温度判据实测偏大，见 MeshVerify 的注释表）。
 ///
 /// ⚠ 本类**不自己判判据**：过不过一律问 <see cref="LineRunner.Run"/> 出来的 <see cref="LineResult.AllOk"/>。
-///   网格配方也不自己抄，走 <see cref="Solver.ApplyCaseMesh"/> 与 <see cref="MeshVerify.RequiredMeshFor(DesignSpec,bool)"/>。
+///   网格配方也不自己抄，走 <see cref="Solver.ApplyCaseMesh"/>；细区尺寸走 <see cref="MeshVerify.RequiredFineMmFor"/>，
+///   细区半径走细区半径计划 <see cref="MeshVerify.FineRadiusPlanFor(DesignSpec, DesignInputs, double, bool)"/>（F7′ 2026-09-23，决 29 自适应：全仓唯一来源；
+///   扫完核每点整线解的最远热点，盖不住就放大半径、整趟重扫，到上限仍盖不住就判不了 —— 不在细区外照常出数）。
 /// </summary>
 public static class InsulWindow
 {
@@ -54,6 +56,8 @@ public static class InsulWindow
         /// <summary>不过／判不了的原因（判据全名，不带代号）。</summary>
         public string Why = "";
         public double HotK = double.NaN, ColdK = double.NaN, NetFluxW = double.NaN;
+        /// <summary>F7′（2026-09-23）：这一点整线解的最远热点半径 mm（<see cref="MeshVerify.HotspotRadiusMm"/>；注入的评估函数不解场 ⇒ NaN、不核）。</summary>
+        public double PeakRMm = double.NaN;
         /// <summary>这一点是不是现场做得出来的档（裸舌或整数层）。</summary>
         public bool OnLayerGrid;
         /// <summary>这一点是不是求解器交出来的那个值。</summary>
@@ -116,6 +120,17 @@ public static class InsulWindow
         /// 只给门用：窗口的切段、落档、判定这套逻辑要能在毫秒内验，不必等一小时的整线解。
         /// </summary>
         public Func<DesignSpec, int, double, Point>? Evaluate;
+        /// <summary>
+        /// F7′（2026-09-23，决 29 自适应）：细区半径计划。null（默认）= 按设计与工艺参数算（<see cref="MeshVerify.FineRadiusPlanFor(DesignSpec, DesignInputs, double, bool)"/>）；
+        /// 放大后整趟重扫时由本类自己传入放大后的计划；门可传改回计划。
+        /// </summary>
+        public FineRadiusPlan? RadiusPlan;
+        /// <summary>
+        /// F7′ 审查 R-1（2026-09-23）：**只供门用的改回开关，生产不传**。true 且 <see cref="UseNavigationMesh"/> ⇒ 导航支不给半径（落回算例缺省 50）、
+        /// 不挂计划、扫完不核热点不放大 —— 与 F7′ 之前（cff38c6）导航支同一条路（审查 P6 那一改的改回）。判决支不受影响。
+        /// ⚠ 峰位算不出（NaN）⇒ 该点判不了（下面 RunOne 里那一判）改前没有，这里不随开关关掉：它只会多判「判不了」、不会把判不了当过，登记为「改回不逐位」的一处【待决定】（审查 R-2）。
+        /// </summary>
+        public bool NavUsesCaseDefaultRadius;
     }
 
     /// <summary>整条线的窗口结果。</summary>
@@ -129,13 +144,17 @@ public static class InsulWindow
         public double HalfWidthMm, StepMm;
         public bool NavigationMesh;
         public double MeshFineMm = double.NaN, MeshRadiusMm = double.NaN;
+        /// <summary>F7′（2026-09-23）：细区半径计划的终态（初值、余量₀、每次放大、终值）。</summary>
+        public FineRadiusPlan? RadiusPlan;
+        /// <summary>F7′（2026-09-23）：放大到上限仍盖不住热点 ⇒ 拒答原句（非 null 时整份窗口判不了）。</summary>
+        public string? RadiusRefused;
         public double Seconds;
         /// <summary>撞上时间闸被切断 ⇒ 有片不完整。</summary>
         public bool Cut;
         public string DesignName = "";
 
         /// <summary>每一片的窗口里都至少落得进一档 ⇒ 这份设计现场做得出来。</summary>
-        public bool Manufacturable => Plates.Length > 0 && !Cut && Plates.All(p => p.HasLayer);
+        public bool Manufacturable => Plates.Length > 0 && !Cut && RadiusRefused is null && Plates.All(p => p.HasLayer);
         /// <summary>一个档都落不进的片。</summary>
         public PlateWindow[] NoLayerPlates => Plates.Where(p => !p.HasLayer).ToArray();
         /// <summary>窗口窄于一层的片（两头都探到）。</summary>
@@ -150,6 +169,7 @@ public static class InsulWindow
             get
             {
                 if (Plates.Length == 0) return "没有量到任何一片 —— 判不了，不许当成过。";
+                if (RadiusRefused is not null) return "⚠ **判不了**：" + RadiusRefused.TrimStart('★', ' ') + " —— 不要据此说这份设计造得出来或造不出来。";
                 if (Cut) return "⚠ 扫描撞上时间闸被切断，有片不完整 —— **判不了**，不要据此说这份设计造得出来或造不出来。";
                 var none = NoLayerPlates;
                 if (none.Length > 0)
@@ -188,6 +208,7 @@ public static class InsulWindow
             sb.AppendLine($"  量法：逐片把舌保温在解值 ±{HalfWidthMm:0.###} mm 内按 {StepMm:0.###} mm 挪，其余片与其余旋钮一位不动，"
                         + $"每点跑一次整线、按交付判定过不过；网格 = {(NavigationMesh ? "导航网格（**只作快筛，不作判决**）" : "判决用的那张")}"
                         + (double.IsNaN(MeshFineMm) ? "" : $"（细区 {MeshFineMm:0.###} mm／半径 {MeshRadiusMm:0.#} mm）")
+                        + (RadiusPlan is null ? "" : $"；{RadiusPlan.Describe()}")
                         + $"；用时 {Seconds / 60:0.0} 分钟。");
             sb.AppendLine($"  现场包法：一层 {LayerThickMm:0.###} mm，不缠时是裸舌 {BareTabMm:0.###} mm（0 层也是一种做法）。");
             sb.Append(Table());
@@ -242,23 +263,32 @@ public static class InsulWindow
         };
 
         // 网格配方：判决那张（默认）或导航档。两支都走 Solver.ApplyCaseMesh，本类不抄配方。
-        var meshOpt = new SolverOptions();
+        // ★ F7′（2026-09-23，决 29 自适应）：细区半径两支都取计划（导航档原先不给半径 ⇒ 落回算例缺省 50，与判决网格不同族 —— 审查 P6）。
+        var plan = o.RadiusPlan ?? MeshVerify.FineRadiusPlanFor(d0, baseIn);
+        bool navDefault = o.UseNavigationMesh && o.NavUsesCaseDefaultRadius;   // 审查 R-1：只供门的改回（导航支落回算例缺省）
+        res.RadiusPlan = navDefault ? null : plan;
+        var meshOpt = navDefault ? new SolverOptions() : new SolverOptions { FineRadiusMm = plan.RadiusMm };
+        res.MeshRadiusMm = navDefault ? new LineCase().MeshFineRadiusMm : plan.RadiusMm;
         if (!o.UseNavigationMesh)
         {
-            var (fine, radius) = MeshVerify.RequiredMeshFor(d0);
-            meshOpt.FineMm = fine; meshOpt.FineRadiusMm = radius;
-            res.MeshFineMm = fine; res.MeshRadiusMm = radius;
+            double fine = MeshVerify.RequiredFineMmFor(d0);
+            meshOpt.FineMm = fine;
+            res.MeshFineMm = fine;
         }
+        progress?.Report("可行窗口：" + (navDefault ? "导航支落回算例缺省细区半径（只供门的改回 NavUsesCaseDefaultRadius）" : plan.Describe()));
+        double innerR = MeshAdapt.InnerRadiusFor(d0.HoleRadiusMm, Math.Max(d0.TabThickMm.Max(), d0.WallMm));
 
         Point RunOne(DesignSpec d, int j, double mm)
         {
             var pt = new Point { Mm = mm };
             var lc = d.BuildCase(baseIn);
             PtOptimize.Core.Solver.ApplyCaseMesh(lc, meshOpt);
+            if (!navDefault) lc.MeshFineRadiusPlan = plan;
             LineResult r;
             try { r = LineRunner.Run(lc, null, cancel); }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) { pt.Feasible = null; pt.Why = $"{ex.GetType().Name}：{ex.Message}"; return pt; }
+            if (r.Ok) pt.PeakRMm = MeshVerify.HotspotRadiusMm(r);
             double V(string k) => r.Checks.FirstOrDefault(c => c.Name.StartsWith(k, StringComparison.Ordinal))?.Actual ?? double.NaN;
             pt.HotK = V(LineResult.Key.HotOverTc);
             pt.ColdK = V(LineResult.Key.ColdUnderTc);
@@ -267,6 +297,9 @@ public static class InsulWindow
             if (!r.Converged) { pt.Feasible = null; pt.Why = $"外层耦合未收敛（剩余 {r.CoupleRemainK:0.000} K）"; return pt; }
             pt.Feasible = r.AllOk;
             if (!r.AllOk) pt.Why = WhyText(r);
+            // F7′（2026-09-23）：峰位算不出 ⇒ 这一点判不了细区盖没盖住热点（PeakVerdict 原句），放大治不了，这一点判不了、不当过。
+            if (double.IsNaN(pt.PeakRMm) && MeshAdapt.PeakVerdict(pt.PeakRMm, innerR, plan.RadiusMm) is { } blind)
+            { pt.Feasible = null; pt.Why = blind.TrimStart('★', ' '); }
             return pt;
         }
 
@@ -359,6 +392,35 @@ public static class InsulWindow
 
         res.Plates = windows.ToArray();
         res.Seconds = sw.Elapsed.TotalSeconds;
+        // ★ F7′（2026-09-23，决 29 自适应）：扫完核每点整线解的最远热点（与 MeshVerify.HotspotVerdict 同一个量、PeakVerdict 同一个阈值）。
+        //   盖不住 ⇒ 放大半径、整趟重扫（一份窗口只许在一张网格族上量）；到上限仍盖不住 ⇒ 判不了（RadiusRefused），不静默出窗口。
+        //   注入的评估函数不解场（PeakRMm = NaN）⇒ 不核；被切断的扫描已判不了，不再放大。
+        if (o.Evaluate is null && !res.Cut && !navDefault)
+        {
+            var peaks = windows.SelectMany(w => w.Points).Select(p => p.PeakRMm).Where(double.IsFinite).ToArray();
+            if (peaks.Length > 0)
+            {
+                var lcProbe = d0.BuildCase(baseIn);
+                PtOptimize.Core.Solver.ApplyCaseMesh(lcProbe, meshOpt);
+                var (capCase, _) = MeshAdapt.PlateOuterRadiusMm(lcProbe);
+                var g = MeshAdapt.GrowFineRadius(plan, peaks.Max(), innerR, lcProbe.MeshCoarseMm, capCase, "可行窗口扫完后");
+                if (g.Refused) { res.RadiusPlan = g.Plan; res.RadiusRefused = g.Verdict; progress?.Report("⚠ 可行窗口：" + g.Verdict); }
+                else if (g.Grew)
+                {
+                    progress?.Report($"可行窗口：细区没盖住热点 ⇒ 放大（{g.Plan.Steps[^1].Why}），整趟重扫。");
+                    var left = o.Cap - sw.Elapsed;
+                    var o2 = new Options
+                    {
+                        HalfWidthMm = o.HalfWidthMm, StepMm = o.StepMm, UseNavigationMesh = o.UseNavigationMesh,
+                        MaxDegreeOfParallelism = o.MaxDegreeOfParallelism, Cap = left > TimeSpan.Zero ? left : TimeSpan.FromTicks(1),
+                        Solver = o.Solver, Evaluate = o.Evaluate, RadiusPlan = g.Plan, NavUsesCaseDefaultRadius = o.NavUsesCaseDefaultRadius,
+                    };
+                    var again = Measure(design, baseIn, o2, progress, cancel);
+                    again.Seconds += res.Seconds;
+                    return again;
+                }
+            }
+        }
         return res;
     }
 

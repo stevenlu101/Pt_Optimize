@@ -294,7 +294,7 @@ public class R48LCoupleTolFineTests
     [Fact]
     public void 外层耦合容差_收紧前后_细网格_成本与判据值()
     {
-        var (fine, radius) = MeshVerify.RequiredMeshFor(DesignSpec.W08);
+        var (fine, radius) = MeshVerify.RequiredMeshFor(DesignSpec.W08, new DesignInputs());
         // 细网格上只跑「改前 / 新口径常数 / 生产默认」三行：
         // 「基线那一层收紧要多花多少」这个问题已经在导航网格上量过（同一个问题不必在最贵的网格上再答一遍）。
         R48LCoupleTolKit.CostRun(_o, $"细网格（网格无关口径 {fine:0.000} mm／细区半径 {radius:0.0}）",

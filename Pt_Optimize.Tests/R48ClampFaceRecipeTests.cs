@@ -322,7 +322,7 @@ public static class R48ClampFaceRecipeTests
         var (J, iA, tRoot) = Cases[caseIdx];
         var say = Report.Writer(BandFile, J, o);
         var (d, p) = B2();
-        var (_, radius) = MeshVerify.RequiredMeshFor(d);
+        var (_, radius) = MeshVerify.RequiredMeshFor(d, p);
         var Q = new Dictionary<(string, double), Row>();
         say("");
         say($"── 片{J}　{iA:0} A　管根 {tRoot:0.00} °C　分级网格细区半径 {radius:0.0} mm（MeshVerify.RequiredMeshFor）");
@@ -417,7 +417,7 @@ public static class R48ClampFaceRecipeTests
     {
         var (d, p) = B2(taper: true, tabHalfWidthMm: halfWidthMm);
         Assert.True(d.TabTaper);
-        var (fineMm, radius) = MeshVerify.RequiredMeshFor(d);
+        var (fineMm, radius) = MeshVerify.RequiredMeshFor(d, p);
         var lc0 = d.BuildCase(p, checkRamp: false);
         var g0 = lc0.FlangePlates[J];
         Assert.False(g0.TabParallel, $"片{J}：锥形设计出来的板不是锥形舌");

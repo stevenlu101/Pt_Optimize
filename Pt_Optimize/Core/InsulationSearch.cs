@@ -516,6 +516,11 @@ public static class InsulationSearch
 
     public sealed class Options
     {
+        /// <summary>
+        /// F7′（2026-09-23，决 29 自适应）：细区半径计划。null（默认）= 按设计与工艺参数算（<see cref="MeshVerify.FineRadiusPlanFor(DesignSpec, DesignInputs, double, bool)"/>，全仓唯一来源）；
+        /// 门可传改回计划（旧规则、不放大）做对照。
+        /// </summary>
+        public FineRadiusPlan? RadiusPlan;
         /// <summary>要算的管保温层号（显式给）；null ⇒ 从闭式下界逐层到 <see cref="TubeLayerMax"/>。低于闭式下界的层照样列出但标「升温电流被截住」、不算。</summary>
         public int[]? TubeLayers;
         /// <summary>管保温层号上界（40 层 = 20 mm）。⚠ **无出处、需定**。</summary>
@@ -827,6 +832,10 @@ public static class InsulationSearch
         public Dictionary<string, List<(int Round, List<ClosureCheckRow> Rows)>> Closure = new();
         public double Seconds;
         public int LineSolves;
+        /// <summary>F7′（2026-09-23，决 29 自适应）：本层全部整线解（两态）的最远热点半径 mm（<see cref="MeshVerify.HotspotRadiusMm"/>）；有一条算不出 ⇒ NaN（<see cref="PeakBlind"/>）。</summary>
+        public double MaxPeakRMm = double.NaN;
+        /// <summary>F7′：本层有整线解的峰位算不出（某片三种热点全 NaN）。</summary>
+        public bool PeakBlind;
         public List<string> Lines = new();
     }
 
@@ -835,6 +844,10 @@ public static class InsulationSearch
         public int LowerBoundLayer = -1;
         public List<LayerResult> Layers = new();
         public LayerResult? Recommended;
+        /// <summary>F7′（2026-09-23，决 29 自适应）：细区半径计划的终态（初值、余量₀、每次放大、终值）。</summary>
+        public FineRadiusPlan? RadiusPlan;
+        /// <summary>F7′：放大到上限仍盖不住热点（或峰位算不出）⇒ 拒答原句；非 null 时不给建议（<see cref="Recommended"/> = null）。</summary>
+        public string? RadiusRefused;
         public List<string> Lines = new();
         public string Text => string.Join(Environment.NewLine, Lines);
     }
@@ -932,7 +945,9 @@ public static class InsulationSearch
             ? o.TubeLayers.Distinct().OrderBy(v => v).ToArray()
             : rep.LowerBoundLayer < 0 ? Array.Empty<int>() : Enumerable.Range(rep.LowerBoundLayer, o.TubeLayerMax - rep.LowerBoundLayer + 1).ToArray();
 
-        double radius = MeshVerify.RequiredMeshFor(d0).RadiusMm;
+        // ★ F7′（2026-09-23，决 29 自适应）：细区半径 = 计划（全仓唯一来源）；整趟跑完核全部整线解的最远热点，盖不住 ⇒ 放大、整趟重跑（下面 attempt 循环）。
+        var plan = o.RadiusPlan ?? MeshVerify.FineRadiusPlanFor(d0, baseIn);
+        double radius = plan.RadiusMm;
         // 2026-09-15 Opus 5（合并）：量化步长的分母读两态整线算例的限值（与每轮整线解同一个入口 CaseOf；Round 里对本轮算例再折一次、必须逐位相同）
         var (hotLim, coldLim) = LimitsOf(new[] { CaseOf(d0, baseIn, o, 0), CaseOf(d0, baseIn, o, 1) });
         double quantum = o.EffectiveMarginQuantum(hotLim, coldLim);
@@ -975,19 +990,45 @@ public static class InsulationSearch
         foreach (var s in head) { rep.Lines.Add(s); Log(s); }
 
         var results = new LayerResult[layers.Length];
-        void DoLayer(int idx)
+        double innerR = MeshAdapt.InnerRadiusFor(d0.HoleRadiusMm, Math.Max(d0.TabThickMm.Max(), d0.WallMm));
+        for (int attempt = 1; ; attempt++)
         {
-            var lr = RunLayer(d0, baseIn, o, layers[idx], rep.LowerBoundLayer, radius, quantum, Log);
-            results[idx] = lr;
+            radius = plan.RadiusMm;
+            string planLine = $"细区半径（第 {attempt} 趟）：{plan.Describe()}";
+            rep.Lines.Add(planLine); Log(planLine);
+            void DoLayer(int idx)
+            {
+                var lr = RunLayer(d0, baseIn, o, layers[idx], rep.LowerBoundLayer, radius, quantum, Log, plan);
+                results[idx] = lr;
+            }
+            if (o.LayersInParallel && layers.Length > 1)
+            {
+                var tasks = Enumerable.Range(0, layers.Length)
+                    .Select(i => Task.Factory.StartNew(() => DoLayer(i), o.Cancel, TaskCreationOptions.LongRunning, TaskScheduler.Default)).ToArray();
+                Task.WaitAll(tasks);
+            }
+            else
+                for (int i = 0; i < layers.Length; i++) DoLayer(i);
+            // ★ F7′：核全部整线解（两态）的最远热点；峰位算不出 ⇒ 判不了（PeakVerdict 原句），放大治不了。
+            var ran = results.Where(l => l is not null && !l.BelowLowerBound && l.LineSolves > 0).ToArray();
+            if (ran.Any(l => l.PeakBlind))
+            {
+                rep.RadiusRefused = MeshAdapt.PeakVerdict(double.NaN, innerR, plan.RadiusMm);
+                break;
+            }
+            var peaks = ran.Select(l => l.MaxPeakRMm).Where(double.IsFinite).ToArray();
+            if (peaks.Length == 0) break;
+            var lcProbe = CaseOf(d0, baseIn, o, 0);
+            Solver.ApplyCaseMesh(lcProbe, MeshOpt(o.WholeLineMeshMm, radius));
+            var (capCase, _) = MeshAdapt.PlateOuterRadiusMm(lcProbe);
+            var g = MeshAdapt.GrowFineRadius(plan, peaks.Max(), innerR, lcProbe.MeshCoarseMm, capCase, $"保温搜索第 {attempt} 趟跑完后");
+            plan = g.Plan;
+            if (g.Refused) { rep.RadiusRefused = g.Verdict; break; }
+            if (!g.Grew) break;
+            string again = $"细区没盖住热点 ⇒ 放大（{plan.Steps[^1].Why}），第 {attempt} 趟作废（旧半径上的数不与新半径混用），整趟重跑。";
+            rep.Lines.Add(again); Log(again);
         }
-        if (o.LayersInParallel && layers.Length > 1)
-        {
-            var tasks = Enumerable.Range(0, layers.Length)
-                .Select(i => Task.Factory.StartNew(() => DoLayer(i), o.Cancel, TaskCreationOptions.LongRunning, TaskScheduler.Default)).ToArray();
-            Task.WaitAll(tasks);
-        }
-        else
-            for (int i = 0; i < layers.Length; i++) DoLayer(i);
+        rep.RadiusPlan = plan;
 
         rep.Layers = results.ToList();
         rep.Lines.Add("");
@@ -1005,8 +1046,13 @@ public static class InsulationSearch
             rep.Lines.Add($"  {Mm(lr.TubeLayer),8:0.0}   {lr.MassG,10:0}   {st}   {lineV}   {(lr.Feasible ? "是" : "否")}");   // K 路（2026-09-15 Opus 5）：审查 P1-3，读整线结果的全部判定
         }
         var feas = rep.Layers.Where(l => l.Feasible && !double.IsNaN(l.MassG)).OrderBy(l => l.MassG).ThenBy(l => l.TubeLayer).ToList();
-        rep.Recommended = feas.FirstOrDefault();
-        if (rep.Recommended is null)
+        rep.Recommended = rep.RadiusRefused is null ? feas.FirstOrDefault() : null;
+        rep.Lines.Add("细区半径终态：" + plan.Describe());
+        if (rep.RadiusRefused is not null)
+        {
+            rep.Lines.Add("★ **拒答**：" + rep.RadiusRefused.TrimStart('★', ' ') + " —— 本次保温搜索的整线数不算数，不给建议。");
+        }
+        else if (rep.Recommended is null)
         {
             rep.Lines.Add("★ 没有可行的层（在给定的层号上界内）。各层终点或末轮的缺口见上面逐层报告。⚠ 上界无出处，到顶不等于无解。");
         }
@@ -1037,6 +1083,8 @@ public static class InsulationSearch
         public Options O = null!;
         public int N;
         public double RadiusMm;
+        /// <summary>F7′（2026-09-23）：细区半径计划（只作记录：整线算例上写 LineCase.MeshFineRadiusPlan）。</summary>
+        public FineRadiusPlan? RadiusPlan;
         /// <summary>跑前按两态算例限值折出的裕度量化步长（2026-09-15 Opus 5（合并）；Round 对本轮整线算例再折一次核对）。</summary>
         public double MarginQuantum;
         public ShellMesh[] InnerMesh = Array.Empty<ShellMesh>();
@@ -1070,7 +1118,7 @@ public static class InsulationSearch
         return d;
     }
 
-    private static LayerResult RunLayer(DesignSpec d0, DesignInputs p, Options o, int T, int lowerBound, double radiusMm, double marginQuantum, Action<string> log)
+    private static LayerResult RunLayer(DesignSpec d0, DesignInputs p, Options o, int T, int lowerBound, double radiusMm, double marginQuantum, Action<string> log, FineRadiusPlan? plan = null)
     {
         var sw = Stopwatch.StartNew();
         var lr = new LayerResult { TubeLayer = T };
@@ -1099,7 +1147,7 @@ public static class InsulationSearch
 
         var ctx = new LayerCtx
         {
-            T = T, D = d, P = p, O = o, N = n, RadiusMm = radiusMm, MarginQuantum = marginQuantum,
+            T = T, D = d, P = p, O = o, N = n, RadiusMm = radiusMm, MarginQuantum = marginQuantum, RadiusPlan = plan,
             Low = Selection.Uniform(n, 0, 0), High = Selection.Uniform(n, o.DiscLayerMax, o.TabLayerMax),
             Points = GridPoints(o.DiscLayerMax, o.TabLayerMax),
             Log = s => log($"[管保温 {Mm(T):0.0} mm] " + s),
@@ -1118,6 +1166,10 @@ public static class InsulationSearch
         lr.RecipeChecks = solved.Where(v => v.Ok).Select(v => $"{v.Sel.DescribeMm()}：{v.RecipeCheck}").ToList();
         lr.TubeBaseChecks = solved.Where(v => v.Ok && v.Tube.IsValueCreated).Select(v => $"{v.Sel.DescribeMm()}：{v.TubeBaseCheck}").ToList();
         lr.MassG = solved.FirstOrDefault(v => v.Ok)?.ByState[0]?.TotalMassG ?? double.NaN;
+        // F7′（2026-09-23）：本层全部整线解（两态）的最远热点 —— Run 跑完各层后据此核细区盖没盖住热点。
+        var lineRes = solved.SelectMany(v => v.ByState).Where(r => r is { Ok: true }).Select(r => MeshVerify.HotspotRadiusMm(r!)).ToArray();
+        lr.PeakBlind = lineRes.Any(double.IsNaN);
+        lr.MaxPeakRMm = lineRes.Where(double.IsFinite).DefaultIfEmpty(double.NaN).Max();
 
         // ── 报告
         Say($"配方自检（每条整线解，{lr.RecipeChecks.Count} 条）：");
@@ -1319,6 +1371,7 @@ public static class InsulationSearch
             var sw = Stopwatch.StartNew();
             var lc = CaseFor(ctx, dd, s);
             Solver.ApplyCaseMesh(lc, MeshOpt(ctx.O.WholeLineMeshMm, ctx.RadiusMm));
+            lc.MeshFineRadiusPlan = ctx.RadiusPlan;   // F7′（2026-09-23）：只作记录
             lc.CoupleTolK = ctx.O.CoupleTolK;
             // ★ R48 L（2026-09-17，Opus 5）：保温搜索**留常数口径**（查过之后没改）：本类的量化步长
             //   EffectiveMarginQuantum = 耦合容差 ÷ 限值，整条推理的前提就是「容差是个常数」；

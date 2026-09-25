@@ -301,7 +301,7 @@ public class R48InsulationSearchClosureTests
     public void 网格配方_导航支统一半径_加密支自相似()
     {
         var d = DesignSpec.W08.Clone().Fit();
-        double radius = MeshVerify.RequiredMeshFor(d).RadiusMm;
+        double radius = MeshVerify.RequiredMeshFor(d, new DesignInputs()).RadiusMm;
         var nav = d.BuildCase(new DesignInputs(), checkRamp: false);
         double fine0 = nav.MeshFineMm, coarse0 = nav.MeshCoarseMm;
         Solver.ApplyCaseMesh(nav, new SolverOptions { FineMm = 0, FineRadiusMm = radius });

@@ -52,7 +52,7 @@ public class R48J_InsulationSearchWiringGateTests
     {
         var p = new DesignInputs();
         var d0 = DesignSpec.W08.Clone().Fit();
-        double radius = MeshVerify.RequiredMeshFor(d0).RadiusMm;
+        double radius = MeshVerify.RequiredMeshFor(d0, p).RadiusMm;
         const double h = 1.0;
         string? got = null;
         var stop = new InvalidOperationException("门：截到内层网格那一行，停");

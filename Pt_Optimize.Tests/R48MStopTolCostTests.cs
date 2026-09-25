@@ -81,7 +81,7 @@ internal static class R48MCostKit
     /// </summary>
     internal static SolverOptions Mesh(bool fine, DesignSpec d)
     {
-        var (f, r) = MeshVerify.RequiredMeshFor(d);
+        var (f, r) = MeshVerify.RequiredMeshFor(d, new DesignInputs());
         return fine ? new SolverOptions { FineMm = f, FineRadiusMm = r }
                     : new SolverOptions { FineMm = 0, FineRadiusMm = r };
     }

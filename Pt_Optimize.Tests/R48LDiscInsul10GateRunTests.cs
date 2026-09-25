@@ -80,7 +80,7 @@ public class R48LDiscInsul10GateRunTests
         void Flush() => File.WriteAllText(file, sb.ToString(), new UTF8Encoding(true));
 
         var navCase = new LineCase();
-        var (reqFine, reqRadius) = MeshVerify.RequiredMeshFor(d0);
+        var (reqFine, reqRadius) = MeshVerify.RequiredMeshFor(d0, p);
         var meshNav = new SolverOptions { FineMm = navCase.MeshFineMm, FineRadiusMm = navCase.MeshFineRadiusMm };
         var meshFine = new SolverOptions { FineMm = reqFine, FineRadiusMm = reqRadius };
 

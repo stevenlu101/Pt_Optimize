@@ -92,6 +92,10 @@ public class R48PropsWiringGateTests
     ///     （F3 第一版让局部热稳定也吃发热等效 J，那一版的开 SHA 是 e10479ad…、差 179 行，只在本会话跑过，不是记录；终版局部热稳定用重构 J，见 R48F3FaceHeatGateTests.门6。）
     ///     对拍证据：deliverable/R48_F3_接线门1_开与改回转储对拍_2026-09-23.txt。
     ///   - 2026-09-23 合并 C2 进分支时（编排会话）：C2 的记录同样是单树的；合并树上本门为红、属已知、非回归，本波合并完统一重录。
+    ///   - 2026-09-23 **再重记**（C4′，变因 = **决 29 自适应**：细区半径计划进了转储 —— 算例新字段 LineCase.MeshFineRadiusPlan（本算例不经计划 ⇒ 一行「= null」）、
+    ///     各片网格配方新属性 MeshRecipe.FineRadiusMm（生效参数的记录，本算例 = 算例缺省 50），共 4 行；**数值场一位没动**）：旧 fb2c3248… → 新值（下面的常量）。
+    ///     证明中性：同一份转储去掉这 4 行后 SHA-256 回到 fb2c3248…（逐字节相同）。对拍证据：deliverable/R48_F7自适应_接线门1转储去行对拍_2026-09-23.txt（临时探针 ZZF7Gate1DeLineProbe，跑完已删）。
+    ///   - 2026-09-23 合并 C4′ 进分支时（编排会话）：C4′ 的记录同样是单树的（bc732f5d…）；合并树上本门为红、属已知、非回归，本波五条（RING／SEG／C3／C2／C4′）合并完按变因「五条合并」统一重录。
     /// Windows：**还没有记录** —— Windows 上本门红并印出本机的 SHA。填数的做法：在 F6 合入之后、接线之前的那个状态（本分支上接线提交 265ff6a 的父提交 ＋ F6 提交的 Core/ShellMesh、
     ///   ShellCurrent、ShellThermal、QuadMesher、LineRunner 五档，或直接用 git 把接线提交 revert 掉）只加门 1 的剥离版跑出那个数；**不要在合并树上记**。
     ///   「a468063 只加本档」那句旧说明不可行：本档其余 8 条门引用 PtProps，在 a468063 上编译不过。
@@ -99,11 +103,13 @@ public class R48PropsWiringGateTests
     ///   否则转储每片少 4 行、记下的数与本树对不上；诊断不动数值场（Linux 对拍见上）。
     ///   2026-09-23（SEG）补：那棵剥离树还要带上 DesignInputs.SegCurrentContinuousRoot（公开属性，缺省 true，转储 1 行「算例.Base.SegCurrentContinuousRoot = true」），
     ///   否则记下的数与本树对不上；本算例按实测电流求解、不经 FindCurrent，数值场不变（Linux 对拍见上）。也可以在剥离树上取数、与本树比对前先去掉这一行。
+    ///   2026-09-23（C4′）补：还要带上 F7′ 的两个记录字段（LineCase.MeshFineRadiusPlan、MeshRecipe.FineRadiusMm），否则转储少 4 行；它们不动数值场（Linux 去行对拍见上）。
     /// </summary>
     private const string LinuxRecord = "07f9639043b10da075bd4aacac621dd20760e2d6df79f06e70ba3b6051905fef";
     // 合并 SEG 后：SEG 单树记录为 8e0ffad1e2f972256b28e34a64f9ae00efd139f6d7ffd8ca0c1fe46adc5e69b6；合并树实数待本波合并完统一重录（见头注）。
     // 合并 C3 后：C3 单树记录为 8d28e3186bb678d05b5a153461627df5474fbd08dfbfc4c521c6ab465da847df；合并树实数待本波合并完统一重录（见头注）。
     // 合并 C2 后：C2 单树记录为 d95530d5cc9b1dbe8ba036ec52826625dc54eb2f14a400710dbdba003bf04ba6；合并树实数待本波合并完统一重录（见头注）。
+    // 合并 C4′ 后：C4′ 单树记录为 bc732f5d2a58850d0db597ab16981558ae1767369817f680f318915c2e23da24；合并树实数待本波合并完统一重录（见头注）。
     private const string WindowsRecord = "";
 
     /// <summary>电、热物性按牌号取的牌号（纯铂之外）。口径：MaterialDb.DataCompleteness 的电阻率与热导率／比热两类都算自有。</summary>
