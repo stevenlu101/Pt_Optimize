@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -138,7 +138,7 @@ public class R48InsulBlendTests
                 double fx = Math.Max(Math.Abs(x0), Math.Abs(x1)), fz = Math.Max(Math.Abs(z0), Math.Abs(z1));
                 double nx = Math.Clamp(0, x0, x1), nz = Math.Clamp(0, z0, z1);
                 if (FlangePlate.InsideInsulCircle(fx, fz, R) || !FlangePlate.InsideInsulCircle(nx, nz, R)) continue;
-                double f = FlangeMesher.MaterialFraction(m, i, (x, z) => FlangePlate.InsideInsulCircle(x, z, R));
+                double f = FlangeMesher.MaterialFractionInCircle(m, i, R);   // 2026-09-18 Fable 5.1：同 ShellThermal 的入口（解析板精确积分）
                 if (double.IsNaN(f)) continue;
                 n++;
                 if (f != 1.0) { bad++; worst = Math.Min(worst, f); }
@@ -155,8 +155,8 @@ public class R48InsulBlendTests
         var (d, p, lc) = Landing();
         var (m, jm, g) = Plate(d, p, lc, 0, 2.0, 1214);
         var withField = Th(d, lc, 0, m, jm, g, 1141.8, g.InsulDiscRadiusMm, d.TabInsulMm[0]);
-        var field = m.SourceField;
-        m.SourceField = null;
+        var field = m.Material;   // 2026-09-18 Fable 5.1：「没有材料来源」现在读 ShellMesh.Material（解析路径没有栅格 SourceField 了）
+        m.Material = null;
         try
         {
             var centroid = Th(d, lc, 0, m, jm, g, 1141.8, g.InsulDiscRadiusMm, d.TabInsulMm[0]);
@@ -168,7 +168,7 @@ public class R48InsulBlendTests
             Assert.Equal(centroid.T.Length, withField.T.Length);
             for (int i = 0; i < centroid.T.Length; i++) Assert.Equal(centroid.T[i], withField.T[i]);
         }
-        finally { m.SourceField = field; }
+        finally { m.Material = field; }
     }
 
     [Fact, Trait("速度", "慢")]
@@ -252,11 +252,11 @@ public class R48InsulBlendTests
                 double q30 = Th(d, lc, j, m, jm, g, tRoot[j], R).QFromTubeW;
                 var qo = xo.Select(x => Th(d, lc, j, m, jm, g, tRoot[j], R + x).QFromTubeW).ToArray();
                 var qi = xi.Select(x => Th(d, lc, j, m, jm, g, tRoot[j], R + x).QFromTubeW).ToArray();
-                var field = m.SourceField;
+                var field = m.Material;   // 2026-09-18 Fable 5.1：「没有材料来源」现在读 ShellMesh.Material（解析路径没有栅格 SourceField 了）
                 double[] qoC;
-                m.SourceField = null;
+                m.Material = null;
                 try { qoC = xo.Select(x => Th(d, lc, j, m, jm, g, tRoot[j], R + x).QFromTubeW).ToArray(); }
-                finally { m.SourceField = field; }
+                finally { m.Material = field; }
                 var fo = Fit(xo, qo); var fi = Fit(xi, qi); var foC = Fit(xo, qoC);
                 // 拐点模型在 ④ 的九个点上
                 var x9 = Enumerable.Range(-4, 9).Select(k => k * h / 8).ToArray();
@@ -318,11 +318,11 @@ public class R48InsulBlendTests
                 {
                     var xs = Enumerable.Range(1, 8).Select(k => side * k * h / 8).ToArray();
                     var qb = xs.Select(x => Th(d, lc, j, m, jm, g, tRoot[j], R + x).QFromTubeW).ToArray();
-                    var field = m.SourceField;
+                    var field = m.Material;   // 2026-09-18 Fable 5.1：「没有材料来源」现在读 ShellMesh.Material（解析路径没有栅格 SourceField 了）
                     double[] qc;
-                    m.SourceField = null;
+                    m.Material = null;
                     try { qc = xs.Select(x => Th(d, lc, j, m, jm, g, tRoot[j], R + x).QFromTubeW).ToArray(); }
-                    finally { m.SourceField = field; }
+                    finally { m.Material = field; }
                     var fb = Fit(xs, qb); var fc = Fit(xs, qc);
                     double ratio = fc.maxRes > 0 ? fb.maxRes / fc.maxRes : double.NaN;
                     double ea = EAlt(qb);

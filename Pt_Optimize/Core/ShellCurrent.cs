@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -24,6 +24,10 @@ public sealed class ShellCurrentResult
     public double CurrentInA, CurrentOutA, ConservationError;
     public double JMaxAPerMm2, JMeanAPerMm2;
     public int JMaxCell = -1;
+    /// <summary>2026-09-19 Fable 5.1：角度条件数不足、只沿强方向重构了 J 的格数（<see cref="ShellCurrent.SliverKappaMin"/>；诊断）。</summary>
+    public int SliverReconCells;
+    /// <summary>2026-09-19 Fable 5.1：全场重构方向张量的最小条件数 κ′（诊断）。</summary>
+    public double KappaAngleMin = double.NaN;
     public double TotalGenW;
     public int Iterations;
     /// <summary>**真残差** ‖Ax−b‖∞（不是步长）。见 Solve 里的说明。</summary>
@@ -37,6 +41,28 @@ public sealed class ShellCurrentResult
 
 public static class ShellCurrent
 {
+    /// <summary>
+    /// ★★ 2026-09-19，Fable 5.1（网格修复第二轮复核第 1 条）：**J 重构的角度条件数门槛** —— 这是 J 的**量法**（由电位场 V 重构单元 J 的那一步），不是求解器规则：
+    /// 电位方程、边界条件、面导度一个字没动，V 逐位不变。
+    ///
+    /// 病：锥形舌（Heater1）第一轮改后 J 峰 23.210 A/mm² 落在覆盖率 0.016、面积 0.26 mm² 的斜边楔形格（真峰 8.457 在管孔边），三档加密 23.2／28.0／28.2 越细越大；
+    ///   生产 LineRunner 直接取 JMaxAPerMm2 判「全体 J &lt; 11」⇒ 斜边／曲边舌片会被幻影峰判死。
+    /// 机理（不是「格小」）：下面的最小二乘由各面法向通量重构 J，法向取两格**材料形心的连线**。斜边切出的楔形格只有两条有料边，它和两个邻格的材料形心都贴着那条斜边
+    ///   ⇒ 两条方向几乎共线（实测夹角 ≈ 20°），2×2 正规矩阵近奇异（λmin/λmax 0.006～0.03），垂直于斜边的分量被放大 ≈ 1/sin(夹角) 倍 —— 那个分量本来就没被任何面量到，
+    ///   解出来的是噪声。真正在那里的物理是：材料边界上电流与边界相切，垂直分量为 0。
+    /// 量法：N = Σ_面 w_f n̂ n̂ᵀ，w_f = 有料面长 ÷ 该面所在格边的几何全长（<see cref="MeshFace.FullLength"/>，∈ (0,1]）；κ′ = λmin/λmax。
+    ///   κ′ &lt; 门槛 ⇒ 只沿 N 的强特征方向 v₁ 重构：min Σ_面 L_f (s·n̂_f·v₁ − Jn_f)² ⇒ s = v₁ᵀb / v₁ᵀMv₁，J = s·v₁（截断最小二乘：没被量到的方向不猜，按边界条件取 0）。
+    ///   κ′ ≥ 门槛的格算式逐位不变。
+    ///   权重为什么是「有料份额」而不是等权也不是面长本身：等权把一条 0.02 mm 的料边和 0.5 mm 的整边当成一样的「方向」——管孔 45° 处的电极格有两条整边（近正交）加两条只剩 0.02 mm 的边
+    ///   （共线），等权 κ = 0.19 被误截，径向的真 J 9.0 被截成 0.2（2026-09-19 实测，改前一版）；按面长本身则远场分级格的长宽比 5 会给 κ = 0.2（四面两两正交，本来重构得好）也被误判。
+    ///   按份额：满格四面 w = 1、κ′ = 1，不管长宽比；只有两条料边的楔形格 κ′ = tan²(θ/2)（θ = 两条形心连线的夹角，等权时）；45° 电极格 κ′ ≈ 0.44。
+    /// 门槛 0.2 的出处：两条方向夹角 θ 时 κ′ = tan²(θ/2)，0.2 ⇔ θ = 48°，这以上两个法向分量的联立放大 1/sin θ ≤ 1.35 倍；这以下截断。
+    ///   实测（R48NSliverGateTests 门 1～4 的证据文件）：Heater1 无孔／舌孔 R30／盘槽三档，J 超真峰 5 % 以上的格 κ′ 最大 0.106；W08／W06 三张网格非管孔格 κ′ 最小 0.12（盘缘 J ≈ 0 的碎格）。
+    ///   试过的另一条路（网格层按 κ′ &lt; 0.2 并格）：幻影峰没了，但管孔边的真峰被合成格抹掉 5～10 %（门 2 红）—— 病在量法，不动网格。
+    /// 门：R48NSliverGateTests（Heater1 三档峰回到真峰、随加密收敛；带孔带槽真峰保留；W08／W06 不变；门槛敏感性；传 0 = 改回 ⇒ 幻影峰当场回来）。
+    /// </summary>
+    public const double SliverKappaMin = 0.2;
+
     /// <summary>
     /// 解电位场。边界：<see cref="ShellMesh.TagTabEnd"/> 取 V=1，
     /// <see cref="ShellMesh.TagHole"/> 取 V=0，其余自然 Neumann（零通量，无需显式处理）。
@@ -53,15 +79,18 @@ public static class ShellCurrent
     public static ShellCurrentResult SolveFor(LineCase c, ShellMesh m, double totalCurrentA,
                                               double rhoRefOhmMm, double tRefC = 1300,
                                               double[]? tempC = null,
-                                              int maxIter = 20000, double tol = 1e-9)
+                                              int maxIter = 20000, double tol = 1e-9,
+                                              double sliverKappaMin = SliverKappaMin)
         => Solve(m, totalCurrentA, rhoRefOhmMm, tRefC, tempC, maxIter, tol,
-                 useGaussSeidel: c?.Base?.LinearGaussSeidel ?? false);
+                 useGaussSeidel: c?.Base?.LinearGaussSeidel ?? false, sliverKappaMin: sliverKappaMin);
 
+    /// <param name="sliverKappaMin">J 重构的角度条件数门槛（<see cref="SliverKappaMin"/>；生产一律缺省，门传 0 = 不截断，做「改回 ⇒ 红」对照）。</param>
     public static ShellCurrentResult Solve(ShellMesh m, double totalCurrentA,
                                            double rhoRefOhmMm, double tRefC = 1300,
                                            double[]? tempC = null,
                                            int maxIter = 20000, double tol = 1e-9,
-                                           bool useGaussSeidel = false)
+                                           bool useGaussSeidel = false,
+                                           double sliverKappaMin = SliverKappaMin)
     {
         int n = m.CellCount;
         var res = new ShellCurrentResult { V = new double[n], JMagAPerMm2 = new double[n] };
@@ -274,6 +303,8 @@ public static class ShellCurrent
         //    （早先用「Σ通量·方向 / Σ(厚度·面长) ×2」的拍脑袋加权，J_mean 差 51%）
         var mxx = new double[n]; var mxz = new double[n]; var mzz = new double[n];
         var bx = new double[n]; var bz = new double[n];
+        // 2026-09-19 Fable 5.1：方向张量 N = Σ w n̂n̂ᵀ（w = 有料面长 ÷ 格边几何全长），量每个格的重构方向够不够张开（条件数 κ′，见 SliverKappaMin）
+        var nxx = new double[n]; var nxz = new double[n]; var nzz = new double[n];
         for (int k = 0; k < m.Faces.Count; k++)
         {
             var f = m.Faces[k];
@@ -283,6 +314,7 @@ public static class ShellCurrent
             double len = Math.Max(1e-12, dir.Norm);
             double nx = dir.X / len, nz = dir.Z / len;             // A 的外法向
             double L = f.Length;
+            double wDir = f.FullLength > 0 ? Math.Min(1.0, L / f.FullLength) : 1.0;   // 这条边上有料的份额（没填 = 老口径整边 = 1）
 
             // 单元 A：外法向 n̂，法向分量 = +q/(L·t_A)
             // R48 F（2026-09-15 Opus 5）：面上定电位时压接格不重构 J（电流在铜排里走，压接格 J = 0）；自由格一侧照常 ——
@@ -292,6 +324,7 @@ public static class ShellCurrent
                 double jnA = q / Math.Max(1e-12, L * m.Thickness[f.A]);
                 mxx[f.A] += L * nx * nx; mxz[f.A] += L * nx * nz; mzz[f.A] += L * nz * nz;
                 bx[f.A] += L * jnA * nx; bz[f.A] += L * jnA * nz;
+                nxx[f.A] += wDir * nx * nx; nxz[f.A] += wDir * nx * nz; nzz[f.A] += wDir * nz * nz;
             }
 
             // 单元 B：外法向 −n̂，流出 B 的电流 = −q ⇒ 法向分量 = (−q)/(L·t_B)，法向取 −n̂
@@ -300,15 +333,33 @@ public static class ShellCurrent
                 double jnB = -q / Math.Max(1e-12, L * m.Thickness[f.B]);
                 mxx[f.B] += L * nx * nx; mxz[f.B] += L * nx * nz; mzz[f.B] += L * nz * nz;
                 bx[f.B] += L * jnB * (-nx); bz[f.B] += L * jnB * (-nz);
+                nxx[f.B] += wDir * nx * nx; nxz[f.B] += wDir * nx * nz; nzz[f.B] += wDir * nz * nz;
             }
         }
 
-        double jmax = 0, jmean = 0, aSum = 0;
+        double jmax = 0, jmean = 0, aSum = 0, kappaMin = double.NaN; int nSliver = 0;
         for (int i = 0; i < n; i++)
         {
             double det = mxx[i] * mzz[i] - mxz[i] * mxz[i];
             double vx = 0, vz = 0;
-            if (Math.Abs(det) > 1e-20)
+            // 2026-09-19 Fable 5.1：条件数 κ′ = λmin/λmax(N)；不足门槛 ⇒ 只沿强方向 v₁ 重构（截断最小二乘），见 SliverKappaMin
+            double trN = nxx[i] + nzz[i], detN = nxx[i] * nzz[i] - nxz[i] * nxz[i];
+            double discN = Math.Sqrt(Math.Max(0, trN * trN / 4 - detN));
+            double l1 = trN / 2 + discN, l2 = trN / 2 - discN;
+            double kappaA = l1 > 0 ? Math.Max(0, l2 / l1) : double.NaN;
+            if (!double.IsNaN(kappaA) && (double.IsNaN(kappaMin) || kappaA < kappaMin)) kappaMin = kappaA;
+            if (trN > 0 && kappaA < sliverKappaMin)
+            {
+                double ex, ez;                                          // v₁：N 的最大特征向量
+                if (Math.Abs(nxz[i]) > 1e-15) { ex = nxz[i]; ez = l1 - nxx[i]; }
+                else if (nxx[i] >= nzz[i]) { ex = 1; ez = 0; } else { ex = 0; ez = 1; }
+                double en = Math.Sqrt(ex * ex + ez * ez); ex /= en; ez /= en;
+                double num = ex * bx[i] + ez * bz[i], den = ex * ex * mxx[i] + 2 * ex * ez * mxz[i] + ez * ez * mzz[i];
+                double sJ = den > 1e-300 ? num / den : 0;
+                vx = sJ * ex; vz = sJ * ez;
+                nSliver++;
+            }
+            else if (Math.Abs(det) > 1e-20)
             {
                 vx = (mzz[i] * bx[i] - mxz[i] * bz[i]) / det;
                 vz = (mxx[i] * bz[i] - mxz[i] * bx[i]) / det;
@@ -319,6 +370,7 @@ public static class ShellCurrent
         }
         res.JMaxAPerMm2 = jmax;
         res.JMeanAPerMm2 = aSum > 0 ? jmean / aSum : 0;
+        res.SliverReconCells = nSliver; res.KappaAngleMin = kappaMin;
 
         // 焦耳热 W：q = ρe·J²·t·A，J 单位 A/mm² → A/m² 乘 1e6；ρe 单位 Ω·m
         double gen = 0;

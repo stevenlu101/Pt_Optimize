@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Linq;
 using PtOptimize.Core;
 using Xunit;
@@ -6,26 +6,29 @@ using Xunit;
 namespace PtOptimize.Tests;
 
 /// <summary>
-/// R47 的**验收门**（工单 §3「两条路对得上」）。
+/// R47 的**验收门**（工单 §3「两条路对得上」）—— ★ 2026-09-19，Fable 5.1（网格修复第二轮复核第 3 条）**重定靶**。
 ///
-/// ★ R47 复修 M5（2026-09-13）：验收门不许同义反复 —— Build 现在就是 BuildFromField(Rasterize)，两者「逐位相同」是构造保证，
-/// 不是验证。所以加**第三方参照**：R47 之前的精确几何生成器（4×4 子采样点上判 Inside、形心取厚，
-/// <see cref="R47MeshDiagInstrumentTests.BuildExactOnNewAxis"/>）铺在同一套新轴（GradedAxisCentered + 锚点）上。钉：
-///   · Build（栅格积分）vs 精确几何：导航网格上抽热差 &lt; 1 W、发热差 &lt; 1 %；网格倍率 0.5 上仍 &lt; 1 W；
-///   · 图纸路径 BuildFromField(Rasterize 留白 2) vs 精确几何：栅格步 = 网格/4（生产口径）、生产旧默认 1.0 mm、0.1 mm 各一档。
-/// 两个案例：盘Ø56 片 1（Pt_Topo meshcmp 口径：1572.1 A、管根 1107.8 °C、夹持 450、控温 1080、舌保温 2.8）
-/// 与 DesignSpec.Builtin[0] 片 0（1213.7 A、管根 1146.4、控温 1150、档的夹持温度与舌保温）。
-/// 审查量出的（M1 轴锚点之前）：盘Ø56 片 1 精确 4.101/−3.443/−0.231 vs Build 4.996/−3.250/−0.263 W（×1／×0.5／×0.25）；
-/// Builtin[0] 片 0 精确 13.258/12.746/13.744 vs Build 12.454/12.660/13.754 W。改前（隔离实验 V0 vs V2）：3.41 W vs 26.4 W。
-///
-/// ★ R47 第三轮 N4（2026-09-13）：**导航网格上那 0.9 W 是什么** —— 两种生成器的**方法差**，不是几何差：
-///   精确几何生成器在每个单元 4×4 子采样点上判 Inside、**形心一点取厚**（焊脚这种比格子细的堆料在 2 mm 格上几乎量不到）；
-///   栅格积分生成器对栅格方格做**面积积分**、厚度 = 体积积分 ÷ 覆盖面积（焊脚按料算）。两者随网格加密收敛到同一个数：
-///   盘Ø56 片 1 差 ×1 0.90 W → ×0.5 0.19 W → ×0.25 0.03 W；Builtin[0] 片 0 ×1 0.80 → ×0.5 0.09 → ×0.25 0.01 W。
-///   所以门不是「一个数」而是「随倍率收敛」：倍率 1 差 &lt; 1 W **且**倍率 0.5 差 &lt; 0.3 W —— 只钉 ×1 抓不到「差不收敛」这种病。
+/// 原靶（R47 复修 M5／第三轮 N4，2026-09-13）：以测试侧「精确几何」生成器（<see cref="R47MeshDiagInstrumentTests.BuildExactOnNewAxis"/>：4×4 子采样判 Inside、形心一点取厚）
+/// 为第三方参照，钉 Build（当时 = 栅格积分）与图纸路径对它的抽热差 &lt; 1 W／0.3 W、发热差 &lt; 1 %，并钉三方节点数相同。
+/// 为什么改靶（2026-09-18 网格修复之后 6/6 红，改前快照上也红）：
+///   ① 那份「精确几何」不再是参照：它是 R47 之前的老生成器，只钉外圈电极（不带 R48 的压接整面接触与压接面上定电位），发热比生产 Build 高 60～130 W（12～28 %）、
+///      抽热差 2.1～21 W —— 差的是**压接模型**，不是几何；2026-09-18 起生产 Build 走解析板精确积分（F1），它本身就是精确几何，再拿一个粗的老生成器当参照是倒过来的；
+///   ② 三方节点数：解析路径的锚点由板件精确给（AnchorsOf）、图纸路径从栅格推（AnchorsFromField），两条路的轴不由构造保证逐位相同（1508 ≠ 1537 就是压接锚点那一列），
+///      节点数不是这道门要守的东西 —— 要守的是两条路算出来的**数**对不对得上。
+/// 新靶（复核者三方对拍已量到：栅格步 0.1 mm 时 图纸 − Build 发热 0.00 %、抽热 +0.019／+0.086 W）：
+///   · 图纸路径（栅格）对生产 Build（解析板精确积分）：栅格步 0.1 mm 时 发热差 ≤ 0.1 %、抽热差 ≤ 0.1 W；
+///   · 生产口径的栅格步（最细网格/4）：发热差 ≤ 0.1 %、抽热差 ≤ 1 W（图纸路径的格点采样在直边两侧各有半个栅格步的幻影，见 HANDOVER §0.-15N ⑥；这里记录它有多大），
+///     并且抽热差随栅格步 1.0 → 网格/4 → 0.1 单调收窄（差不收敛才是病）；
+///   · 老生成器的数只印（沿革），不再断言。
+/// 两个案例照旧：盘Ø56 片 1（Pt_Topo meshcmp 口径：1572.1 A、管根 1107.8 °C、夹持 450、控温 1080、舌保温 2.8）与 DesignSpec.Builtin[0] 片 0（1213.7 A、管根 1146.4、控温 1150）。
 /// </summary>
 public class DrawingPathParityTests
 {
+    // 跑前写死（2026-09-19）
+    const double GenTolPct = 0.1;       // 发热差
+    const double TubeTolFineW = 0.1;    // 栅格步 0.1 mm 的抽热差
+    const double TubeTolProdW = 1.0;    // 生产口径栅格步（网格/4）的抽热差
+
     internal static (double QGen, double QFromTube, int Cells) SolveOne(ShellMesh m, LineCase lc, FlangePlate g,
                                                                      double iA, double tRoot, double tSet, double clampC, double tabInsul)
     {
@@ -60,7 +63,7 @@ public class DrawingPathParityTests
     [InlineData(0, 0.5)]
     [InlineData(1, 1.0)]
     [InlineData(1, 0.5)]
-    public void 精确几何_栅格积分_图纸路径三方在同一轴上抽热差倍率1小于1W倍率0p5小于0p3W发热差小于1percent(int which, double meshScale)
+    public void 图纸路径对生产Build_生产栅格步_发热差小于0p1percent_抽热差小于1W(int which, double meshScale)
     {
         var (g, lc, iA, tRoot, tSet, clampC, tabInsul, name) = Case(which);
         double hF = lc.MeshFineMm * meshScale, hC = lc.MeshCoarseMm * meshScale, rF = lc.MeshFineRadiusMm, cl = lc.Base.BusbarClampLengthMm;
@@ -75,57 +78,47 @@ public class DrawingPathParityTests
         var e = SolveOne(mE, lc, g, iA, tRoot, tSet, clampC, tabInsul);
         var a = SolveOne(mA, lc, g, iA, tRoot, tSet, clampC, tabInsul);
         var b = SolveOne(mF, lc, g, iA, tRoot, tSet, clampC, tabInsul);
-        Console.WriteLine($"{name} 倍率 {meshScale}：精确几何 {e.Cells} 格 发热 {e.QGen:0.0} W 抽热 {e.QFromTube:0.000} W；" +
-                          $"Build 栅格积分 {a.Cells} 格 发热 {a.QGen:0.0} W 抽热 {a.QFromTube:0.000} W；图纸(步 {step}) {b.Cells} 格 发热 {b.QGen:0.0} W 抽热 {b.QFromTube:0.000} W");
-        // 三方同一套轴 ⇒ 节点数相同
-        Assert.Equal(mE.Nodes.Count, mA.Nodes.Count);
-        Assert.Equal(mA.Nodes.Count, mF.Nodes.Count);
-        // ① 第三方参照：Build vs 精确几何 —— R47 第三轮 N4：倍率 1 差 < 1 W，倍率 0.5 差 < 0.3 W（方法差随网格收敛）
-        double tolQ = meshScale <= 0.5 + 1e-9 ? 0.3 : 1.0;
-        Assert.True(Math.Abs(e.QFromTube - a.QFromTube) < tolQ,
-            $"Build vs 精确几何 抽热差 {Math.Abs(e.QFromTube - a.QFromTube):0.000} W ≥ {tolQ} W（倍率 {meshScale}；精确 {e.QFromTube:0.000}，Build {a.QFromTube:0.000}）");
-        Assert.True(Math.Abs(e.QGen - a.QGen) / e.QGen < 0.01,
-            $"Build vs 精确几何 发热差 {Math.Abs(e.QGen - a.QGen) / e.QGen * 100:0.00} % ≥ 1 %（精确 {e.QGen:0.0}，Build {a.QGen:0.0}）");
-        // ② 图纸路径 vs 精确几何（不是 vs Build —— 那是同义反复）；同一把尺：×1 < 1 W、×0.5 < 0.3 W
-        Assert.True(Math.Abs(e.QFromTube - b.QFromTube) < tolQ,
-            $"图纸 vs 精确几何 抽热差 {Math.Abs(e.QFromTube - b.QFromTube):0.000} W ≥ {tolQ} W（倍率 {meshScale}；精确 {e.QFromTube:0.000}，图纸 {b.QFromTube:0.000}）");
-        Assert.True(Math.Abs(e.QGen - b.QGen) / e.QGen < 0.01,
-            $"图纸 vs 精确几何 发热差 {Math.Abs(e.QGen - b.QGen) / e.QGen * 100:0.00} % ≥ 1 %（精确 {e.QGen:0.0}，图纸 {b.QGen:0.0}）");
+        double dGen = Math.Abs(b.QGen - a.QGen) / a.QGen * 100, dTube = b.QFromTube - a.QFromTube;
+        Console.WriteLine($"{name} 倍率 {meshScale}：生产 Build（解析板精确积分）{a.Cells} 格／{mA.Nodes.Count} 节点 发热 {a.QGen:0.0} W 抽热 {a.QFromTube:0.000} W；" +
+                          $"图纸(步 {step}) {b.Cells} 格／{mF.Nodes.Count} 节点 发热 {b.QGen:0.0} W 抽热 {b.QFromTube:0.000} W（图纸 − Build：发热 {dGen:0.000} %、抽热 {dTube:+0.000;-0.000} W）；" +
+                          $"老生成器（4×4 子采样、形心取厚、只钉外圈，只印）{e.Cells} 格／{mE.Nodes.Count} 节点 发热 {e.QGen:0.0} W 抽热 {e.QFromTube:0.000} W");
+        Assert.True(dGen <= GenTolPct, $"图纸 vs Build 发热差 {dGen:0.000} % > {GenTolPct} %（Build {a.QGen:0.0}，图纸 {b.QGen:0.0}）");
+        Assert.True(Math.Abs(dTube) <= TubeTolProdW, $"图纸 vs Build 抽热差 {dTube:+0.000;-0.000} W 超 {TubeTolProdW} W（倍率 {meshScale}、栅格步 {step}；Build {a.QFromTube:0.000}，图纸 {b.QFromTube:0.000}）");
     }
 
     /// <summary>
-    /// 图纸侧再加两档栅格步（都不是 Build 用的 h/4）：0.1 mm 对精确几何要 &lt; 1 W／&lt; 1 %；
-    /// 生产旧默认 1.0 mm **只记录、并自证它不够**：盘Ø56 片 1（焊脚 1.02 mm、环宽 2.2 mm）实测 2.298 vs 精确 4.101 W（偏 1.8 W）——
-    /// 1 mm 栅格只在焊脚斜坡上采到一个点，积不准；这正是生产口径改成「最细网格/4」的依据。若哪天 1.0 也对得上，这条会红，提醒改这段话。
+    /// 图纸侧三档栅格步（1.0 = 生产旧默认、网格/4 = 生产口径、0.1）对生产 Build：0.1 mm 时发热差 ≤ 0.1 %、抽热差 ≤ 0.1 W；抽热差随步长单调收窄。
+    /// 2026-09-19：原句「盘Ø56 片 1 旧默认栅格步 1.0 偏 1.803 W」量的是对老生成器（压接模型不同），作废；对 Build 的三档差本轮实测记进输出。
     /// </summary>
     [Trait("速度", "慢")]
     [Theory]
     [InlineData(0)]
     [InlineData(1)]
-    public void 图纸路径栅格步0p1对精确几何抽热差小于1W_旧默认1p0记录并自证不够(int which)
+    public void 图纸路径栅格步0p1对生产Build_发热差小于0p1percent_抽热差小于0p1W_随步长收窄(int which)
     {
         var (g, lc, iA, tRoot, tSet, clampC, tabInsul, name) = Case(which);
         double hF = lc.MeshFineMm, hC = lc.MeshCoarseMm, rF = lc.MeshFineRadiusMm, cl = lc.Base.BusbarClampLengthMm;
-        var mE = R47MeshDiagInstrumentTests.BuildExactOnNewAxis(g, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
-        var e = SolveOne(mE, lc, g, iA, tRoot, tSet, clampC, tabInsul);
+        var mA = FlangeMesher.Build(g, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
+        var a = SolveOne(mA, lc, g, iA, tRoot, tSet, clampC, tabInsul);
         var sb = new System.Text.StringBuilder();
-        double Diff(double rasterStep, out (double QGen, double QFromTube, int Cells) b)
+        sb.AppendLine($"{name}：生产 Build（解析板精确积分）{a.Cells} 格 发热 {a.QGen:0.000} W 抽热 {a.QFromTube:0.000} W（2026-09-19 重定靶：参照 = 生产 Build，不再是老生成器）");
+        (double dGenPct, double dTubeW) Diff(double rasterStep)
         {
             var f = AnalyticSurrogate.Rasterize(g, rasterStep, 2.0);
             var mF = FlangeMesher.BuildFromField(f, g.HoleRadiusMm, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
-            b = SolveOne(mF, lc, g, iA, tRoot, tSet, clampC, tabInsul);
-            string line = $"{name} 栅格步 {rasterStep}：精确几何 {e.Cells} 格 发热 {e.QGen:0.0} W 抽热 {e.QFromTube:0.000} W；图纸 {b.Cells} 格 发热 {b.QGen:0.0} W 抽热 {b.QFromTube:0.000} W（差 {b.QFromTube - e.QFromTube:+0.000;-0.000} W）";
+            var b = SolveOne(mF, lc, g, iA, tRoot, tSet, clampC, tabInsul);
+            string line = $"{name} 栅格步 {rasterStep}：图纸 {b.Cells} 格 发热 {b.QGen:0.000} W 抽热 {b.QFromTube:0.000} W（图纸 − Build：发热 {(b.QGen - a.QGen) / a.QGen * 100:+0.000;-0.000} %、抽热 {b.QFromTube - a.QFromTube:+0.000;-0.000} W）";
             Console.WriteLine(line); sb.AppendLine(line);
-            return Math.Abs(b.QFromTube - e.QFromTube);
+            return (Math.Abs(b.QGen - a.QGen) / a.QGen * 100, b.QFromTube - a.QFromTube);
         }
-        double d10 = Diff(1.0, out var b10), dH4 = Diff(FlangeMesher.RasterStepFor(hF), out _), d01 = Diff(0.1, out var b01);
-        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        double stepProd = FlangeMesher.RasterStepFor(hF);
+        var d10 = Diff(1.0); var dH4 = Diff(stepProd); var d01 = Diff(0.1);
         System.IO.File.AppendAllText(DeliverableOut.Stamped("R47_复修M5_栅格步对拍_2026-09-13.txt"),
                                      $"{DateTime.Now:yyyy-MM-dd HH:mm}{Environment.NewLine}{sb}", new System.Text.UTF8Encoding(false));
-        Assert.True(d01 < 1.0, $"栅格步 0.1：抽热差 {d01:0.000} W ≥ 1 W（精确 {e.QFromTube:0.000}，图纸 {b01.QFromTube:0.000}）");
-        Assert.True(Math.Abs(e.QGen - b01.QGen) / e.QGen < 0.01, $"栅格步 0.1：发热差 {Math.Abs(e.QGen - b01.QGen) / e.QGen * 100:0.00} % ≥ 1 %");
-        Assert.True(dH4 < 1.0, $"栅格步 网格/4：抽热差 {dH4:0.000} W ≥ 1 W");
-        if (which == 0)
-            Assert.True(d10 > 1.0 && d10 > dH4, $"盘Ø56 片 1 旧默认栅格步 1.0 本该偏 > 1 W（实测 2026-09-13 偏 1.803 W），现在只偏 {d10:0.000} W（网格/4 偏 {dH4:0.000}）—— 把这段话改掉");
+        Assert.True(d01.dGenPct <= GenTolPct, $"栅格步 0.1：发热差 {d01.dGenPct:0.000} % > {GenTolPct} %");
+        Assert.True(Math.Abs(d01.dTubeW) <= TubeTolFineW, $"栅格步 0.1：抽热差 {d01.dTubeW:+0.000;-0.000} W 超 {TubeTolFineW} W");
+        Assert.True(dH4.dGenPct <= GenTolPct && Math.Abs(dH4.dTubeW) <= TubeTolProdW, $"栅格步 网格/4（{stepProd}）：发热差 {dH4.dGenPct:0.000} %、抽热差 {dH4.dTubeW:+0.000;-0.000} W");
+        Assert.True(Math.Abs(d10.dTubeW) >= Math.Abs(dH4.dTubeW) - 1e-9 && Math.Abs(dH4.dTubeW) >= Math.Abs(d01.dTubeW) - 1e-9,
+            $"抽热差没随栅格步收窄：1.0 {d10.dTubeW:+0.000;-0.000} → 网格/4 {dH4.dTubeW:+0.000;-0.000} → 0.1 {d01.dTubeW:+0.000;-0.000} W");
     }
 }

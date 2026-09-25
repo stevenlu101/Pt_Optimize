@@ -19,7 +19,13 @@ public readonly struct Vec3
 public sealed class MeshFace
 {
     public int A = -1, B = -1;      // 相邻单元；B = −1 表示边界面
-    public double Length;           // 边长 mm
+    public double Length;           // 边长 mm（2026-09-18 起：边上**有料**的长度）
+    /// <summary>
+    /// 2026-09-19 Fable 5.1：这条面所在格边（内部面 = 两格公共段）的**几何全长** mm，材料裁剪之前的。Length ÷ FullLength = 这条边上有料的份额，
+    /// ShellCurrent 用它给 J 重构的方向张量加权（<see cref="ShellCurrent.SliverKappaMin"/>）：一条 0.02 mm 的料边不该和 0.5 mm 的整边一样算一个「方向」。
+    /// 不裁剪时（老口径、手造网格）= Length；弧面 = 弧长。
+    /// </summary>
+    public double FullLength = double.NaN;
     public double DistAB;           // 两单元形心间距 mm（边界面取形心到边中点距离）
     public Vec3 Mid;
     public int Tag;                 // 边界类型，见 ShellMesh.Tag*
@@ -80,6 +86,14 @@ public sealed class ShellMesh
     /// 份额的分子分母必须量同一块东西（同一张栅格），见 <see cref="FlangeMesher.MaterialFraction"/>。
     /// </summary>
     public ThicknessField? SourceField;
+    /// <summary>
+    /// ★ 2026-09-18，Fable 5.1：这张网格是从哪份**材料场**量出来的（<see cref="IMaterialField"/>：解析板精确积分 <see cref="AnalyticMaterial"/>，或栅格厚度场）。
+    /// <see cref="FlangeMesher.BuildFromMaterial"/> 填；保温分界圆上的有料份额（<see cref="FlangeMesher.MaterialFractionInCircle"/>）与「有没有材料来源」（热解配方的混合状态）都读它，
+    /// 不再读 <see cref="SourceField"/> 是不是 null（解析路径现在没有栅格，SourceField 为 null，但材料来源在）。
+    /// </summary>
+    public IMaterialField? Material;
+    /// <summary>有材料来源（分界格能按有料份额混合）—— 老的「SourceField 非空」判定的替代，两条路径都读这一处。</summary>
+    public bool HasMaterialSource => Material is not null;
     /// <summary>
     /// ★★ R48 生产配方（2026-09-14，Opus 5；物理把关人第十轮定的模型，同日由实验开关转为生产默认）：**压接段整面接触**的格子
     /// （形心落在压接段内；判定 = <see cref="FlangeMesher.InClampSegment"/>，与压接边界面的标签同一个式子）。
@@ -207,7 +221,14 @@ public sealed class ShellMesh
     /// <summary>
     /// 由单元-节点关系建立面拓扑：同一条边被两个单元共享 ⇒ 内部面；只被一个单元用到 ⇒ 边界面。
     /// </summary>
-    public void BuildFaces(Func<Vec3, int>? boundaryTagger = null)
+    /// <param name="clip">
+    /// ★ 2026-09-18，Fable 5.1（网格生成根因修复 F2）：**面长按材料裁剪**。给出边的两端点，返回这条边上**有料的长度与有料中点**
+    /// （<see cref="IMaterialField.SegmentMaterial"/>）。null = 老口径：面长 = 整条格边（手造网格、QuadMesher、注入对照用）。
+    /// 有料长度为 0 的边不建面（不导电、不导热；管孔那一圈由 <see cref="FlangeMesher.AddHoleArcFaces"/> 另建弧面）。
+    /// 病：面积早就按覆盖率折了，面长一直取整条格边 ⇒ 部分格与邻格之间的导电／导热截面按整格算（幻影并联导体、热短路），
+    ///   带格上占电阻 1～3.6 %、圆弧格上 0.1～0.3 %（网格审计_1／2，2026-09-18）。
+    /// </param>
+    public void BuildFaces(Func<Vec3, int>? boundaryTagger = null, Func<Vec3, Vec3, (double Length, Vec3 Mid)>? clip = null)
     {
         Faces.Clear();
         var edge = new Dictionary<(int, int), int>();   // 边(小,大) → 首次出现的单元
@@ -223,19 +244,24 @@ public sealed class ShellMesh
                 if (edge.TryGetValue(key, out int other))
                 {
                     var (a, b) = (other, c);
-                    var mid = (Nodes[n0] + Nodes[n1]) * 0.5;
-                    Faces.Add(new MeshFace
-                    {
-                        A = a, B = b, Mid = mid,
-                        Length = (Nodes[n1] - Nodes[n0]).Norm,
-                        DistAB = (Centroid[b] - Centroid[a]).Norm,
-                        Tag = TagInterior
-                    });
+                    double full = (Nodes[n1] - Nodes[n0]).Norm;
+                    var (len, mid) = clip is null
+                        ? (full, (Nodes[n0] + Nodes[n1]) * 0.5)
+                        : clip(Nodes[n0], Nodes[n1]);
+                    if (len > EdgeTolMm)
+                        Faces.Add(new MeshFace
+                        {
+                            A = a, B = b, Mid = mid,
+                            Length = len, FullLength = full,
+                            DistAB = (Centroid[b] - Centroid[a]).Norm,
+                            Tag = TagInterior
+                        });
                     edge.Remove(key);
                 }
                 else { edge[key] = c; edgeNodes[key] = (n0, n1); }
             }
         }
+        _clip = clip;
         // ★★ 剩下的边**先做几何配对**，再论边界（2026-08-29，为局部加密铺路）。
         //
         //   上面那轮是**按节点索引对**配的，它只认协调网格。局部加密（四叉树）会产生
@@ -297,6 +323,9 @@ public sealed class ShellMesh
     /// <summary>临时归因开关：关掉几何配对。</summary>
     public static bool DisableGeomPairing;
 
+    /// <summary>BuildFaces 这一次用的面长裁剪（给 PairLeftoverEdges／AddBoundary 用；建完面就没用了）。</summary>
+    private Func<Vec3, Vec3, (double Length, Vec3 Mid)>? _clip;
+
     private const double EdgeTolMm = 1e-7;
 
     /// <summary>几何配对配出了几个面 —— **协调网格上应当是 0**。诊断用。</summary>
@@ -345,6 +374,8 @@ public sealed class ShellMesh
         }
 
         var covered = new double[segs.Count];
+        var coveredIv = new List<(double lo, double hi)>[segs.Count];   // 2026-09-18 Fable 5.1：配上的区间本身（裁剪时残段要按真实端点建面）
+        for (int i = 0; i < segs.Count; i++) coveredIv[i] = new List<(double, double)>();
         foreach (var lst in byLine.Values)
         {
             lst.Sort((a, b) => segs[a].Lo.CompareTo(segs[b].Lo));
@@ -361,13 +392,22 @@ public sealed class ShellMesh
 
                 double mc = 0.5 * (lo + hi);
                 var mid = s.Vert ? new Vec3(s.Line, s.P0.Y, mc) : new Vec3(mc, s.P0.Y, s.Line);
-                Faces.Add(new MeshFace
-                {
-                    A = s.Cell, B = t.Cell, Mid = mid, Length = ov,
-                    DistAB = (Centroid[t.Cell] - Centroid[s.Cell]).Norm,
-                    Tag = TagInterior
-                });
+                double len = ov;
+                if (_clip != null)
+                {   // 2026-09-18 Fable 5.1：重叠段也按材料裁剪（重叠段的两端点已知）
+                    var q0 = s.Vert ? new Vec3(s.Line, s.P0.Y, lo) : new Vec3(lo, s.P0.Y, s.Line);
+                    var q1 = s.Vert ? new Vec3(s.Line, s.P0.Y, hi) : new Vec3(hi, s.P0.Y, s.Line);
+                    (len, mid) = _clip(q0, q1);
+                }
+                if (len > EdgeTolMm)
+                    Faces.Add(new MeshFace
+                    {
+                        A = s.Cell, B = t.Cell, Mid = mid, Length = len, FullLength = ov,
+                        DistAB = (Centroid[t.Cell] - Centroid[s.Cell]).Norm,
+                        Tag = TagInterior
+                    });
                 covered[i] += ov; covered[j] += ov;
+                coveredIv[i].Add((lo, hi)); coveredIv[j].Add((lo, hi));
                 GeomPaired++;   // 诊断：协调网格上这个数应当是 0
             }
         }
@@ -382,7 +422,23 @@ public sealed class ShellMesh
                     $"面拓扑自检失败：单元 {s.Cell} 的一条边被配了 {covered[i]:0.######} mm，"
                     + $"而边长只有 {full:0.######} mm —— 配重了。"
                     + "重配会**静默**地放大通量，不许放行。");
-            if (rest > EdgeTolMm) AddBoundary(s.Cell, s.P0, s.P1, boundaryTagger, rest);
+            if (rest <= EdgeTolMm) continue;
+            if (_clip is null || covered[i] <= EdgeTolMm && coveredIv[i].Count == 0)
+            {   // 老口径（不裁剪）：一条面、长度 = 残段长、中点 = 整边中点（逐位不变）；裁剪但整条边都没配上：整边按材料裁
+                if (_clip is null) AddBoundary(s.Cell, s.P0, s.P1, boundaryTagger, rest);
+                else AddBoundary(s.Cell, s.P0, s.P1, boundaryTagger);
+                continue;
+            }
+            // 2026-09-18 Fable 5.1：裁剪 + 部分配上（悬挂节点）⇒ 残段按真实端点逐段建面，每段再按材料裁
+            var civ = coveredIv[i].OrderBy(v => v.lo).ToList();
+            double pos = s.Lo;
+            Vec3 At(double v) => s.Vert ? new Vec3(s.Line, s.P0.Y, v) : new Vec3(v, s.P0.Y, s.Line);
+            foreach (var (lo, hi) in civ)
+            {
+                if (lo - pos > EdgeTolMm) AddBoundary(s.Cell, At(pos), At(lo), boundaryTagger);
+                pos = Math.Max(pos, hi);
+            }
+            if (s.Hi - pos > EdgeTolMm) AddBoundary(s.Cell, At(pos), At(s.Hi), boundaryTagger);
         }
     }
 
@@ -390,10 +446,21 @@ public sealed class ShellMesh
                              Func<Vec3, int>? boundaryTagger, double? lengthOverride = null)
     {
         var mid = (p0 + p1) * 0.5;
+        double length = lengthOverride ?? (p1 - p0).Norm;
+        double full = length;
+        if (_clip != null)
+        {   // 2026-09-18 Fable 5.1：边界边同样按材料裁剪；没有料的边（落在孔里、板外的阶梯边）不建面。
+            //   残段（lengthOverride，悬挂节点的几何配对剩下的那一截）的端点这里拿不到，与裁剪同时出现就当场炸，不许静默给一个错长度
+            //   （张量积网格没有悬挂节点，两者不会同时出现；手造的非协调网格不传裁剪）。
+            if (lengthOverride.HasValue)
+                throw new InvalidOperationException("面拓扑：几何配对的残段与材料裁剪同时出现 —— 残段端点未知，裁不了。");
+            (length, mid) = _clip(p0, p1);
+            if (length <= EdgeTolMm) return;
+        }
         var face = new MeshFace
         {
             A = cell, B = -1, Mid = mid,
-            Length = lengthOverride ?? (p1 - p0).Norm,
+            Length = length, FullLength = full,
             Tag = boundaryTagger?.Invoke(mid) ?? TagFree
         };
         face.DistAB = CentroidToFaceMm(cell, face);      // R48 F（2026-09-15 Opus 5）：距离取法收成一份（原式 (mid − 形心).Norm，逐位同）
@@ -409,6 +476,16 @@ public sealed class ShellMesh
 
     /// <summary>生成器填：管孔半径 mm（NaN = 生成器没填）。</summary>
     public double HoleRadiusMm = double.NaN;
+    /// <summary>2026-09-18 Fable 5.1：并入邻格的管孔外角薄片格数（<see cref="FlangeMesher.MergeSlivers"/> 规则 A；诊断）。</summary>
+    public int HoleSliversMerged;
+    /// <summary>2026-09-19 Fable 5.1：按重构条件数／碎格规则并入邻格的格数（<see cref="FlangeMesher.MergeSlivers"/> 规则 B；诊断）。</summary>
+    public int SliversMerged;
+    /// <summary>
+    /// 2026-09-19 Fable 5.1：每个单元的**矩形列表**（并入过别的格的单元有多个矩形；没并过的一个）。<see cref="Cells"/> 里的节点四边形仍只是目标格自己那一个
+    ///（非凸多边形建不了面、画图也画不了），要按料量东西（管孔弧面、保温分界份额 <see cref="FlangeMesher.MaterialFractionInCircle"/>）都读这里。
+    /// null = 不是 FlangeMesher.BuildFromMaterial 生成的网格（手造、QuadMesher）⇒ 读节点矩形。
+    /// </summary>
+    public List<(double x0, double x1, double z0, double z1)>[]? CellRects;
     /// <summary>TagHole 面里最大的半径 − 孔半径 mm（NaN = 没有 TagHole 面）。&gt;0 说明定温环越过了孔边。</summary>
     public double HoleTagMaxROverMm = double.NaN;
 
@@ -498,13 +575,39 @@ public readonly record struct MeshRecipeRule(bool ClampFullFace, bool ClampFaceD
 }
 
 /// <summary>
+/// ★★ 2026-09-19，Fable 5.1（网格修复第二轮复核第 9 条）：**网格生成层的规则组合** —— 生产入口（<see cref="FlangeMesher.Build"/>／
+/// <see cref="FlangeMesher.BuildFromField"/>／<see cref="FlangeMesher.BuildFromMaterial"/>）一律走 <see cref="Production"/>，别的组合只有门经 InternalsVisibleTo
+/// 传给 <see cref="FlangeMesher.BuildFromMaterialWith"/> 做「改回 ⇒ 红」的对照。类是 internal、没有全局状态：此前的 [ThreadStatic] 开关
+/// InjectCenterSampling 放在生产码里（生产码读得到、xUnit 并行时还串过味），已删。「格心取样」那半边注入不在这里 —— 那是材料来源的事，
+/// 测试侧自己给一个 IMaterialField 实现，生成器不认识它。
+/// </summary>
+internal sealed class MeshRules
+{
+    /// <summary>F2：面长按材料裁剪（false = 整边面长，老口径）。</summary>
+    public bool ClipFaces { get; init; } = true;
+    /// <summary>管孔边界 = 圆弧本身（false = 阶梯孔边，老口径）。</summary>
+    public bool HoleArcFaces { get; init; } = true;
+    /// <summary>规则 A：管孔外角薄片格并入邻格（2026-09-18）。</summary>
+    public bool MergeHoleCorners { get; init; } = true;
+    /// <summary>规则 B：碎格（覆盖率 &lt; <see cref="CellMergeFrac"/>）并入邻格（2026-09-19）。楔形格的幻影 J 不在网格层治，见 ShellCurrent.SliverKappaMin。</summary>
+    public bool MergeSlivers { get; init; } = true;
+    /// <summary>规则 B 的碎格门槛（生产 = <see cref="FlangeMesher.CellMergeFrac"/>）。</summary>
+    public double CellMergeFrac { get; init; } = FlangeMesher.CellMergeFrac;
+    /// <summary>F5：轴端余数规则（计划节点之后到轴端不足 hWant/4 就拉到轴端）。</summary>
+    public bool AxisEndRule { get; init; } = true;
+
+    /// <summary>生产规则：全开、门槛取常量。</summary>
+    public static readonly MeshRules Production = new();
+}
+
+/// <summary>
 /// 厚度场 t(x, z) —— 由 <c>Pt_Optimize.Geom thickness</c> 从 .3dm 逐点射线量出。
 ///
 /// **t = 0 表示该点无材料**，于是轮廓外、管孔、开槽三者统一用同一个判据表达；
 /// t > 0 直接给出阶梯厚度。求解器要的本来就是 t(x,z)，故不必提取轮廓环 ——
 /// 用户在 Rhino 里画什么形状，这里就照单全收，无需参数化、无需改代码。
 /// </summary>
-public sealed class ThicknessField
+public sealed class ThicknessField : IMaterialField
 {
     public double X0, Z0, Step;
     public int Nx, Nz;
@@ -580,6 +683,76 @@ public sealed class ThicknessField
 
     public double AreaMm2 => T.Count(v => v > 1e-9) * Step * Step;
     public double VolumeMm3 => T.Sum() * Step * Step;
+
+    // ── 2026-09-18，Fable 5.1：栅格厚度场作为 IMaterialField（图纸路径）。量法同 R47：每个栅格节点代表以它为心、边长 = 步的方格，
+    //    节点值就是那一小块的厚度；单元积分 = Σ 方格与单元的重叠面积（× 厚度）。这条路仍是点采样，边的位置只准到 ±步/2（图纸路径未量，见 HANDOVER「网格生成 2026-09-18」）。
+
+    public MaterialIntegral Integrate(double x0, double x1, double z0, double z1)
+    {
+        var ovX = FlangeMesher.RasterOverlap(x0, x1, X0, Nx, Step);
+        var ovZ = FlangeMesher.RasterOverlap(z0, z1, Z0, Nz, Step);
+        double half = 0.5 * Step, A = 0, V = 0, Mx = 0, Mz = 0;
+        foreach (var (ix, ox) in ovX)
+        {
+            double cx = X0 + ix * Step;
+            double xm = 0.5 * (Math.Max(x0, cx - half) + Math.Min(x1, cx + half));   // 重叠矩形的 x 中心
+            foreach (var (iz, oz) in ovZ)
+            {
+                double t = T[ix * Nz + iz];
+                if (t <= 1e-9) continue;
+                double cz = Z0 + iz * Step;
+                double zm = 0.5 * (Math.Max(z0, cz - half) + Math.Min(z1, cz + half));
+                double a = ox * oz;
+                A += a; V += a * t; Mx += a * xm; Mz += a * zm;
+            }
+        }
+        return new MaterialIntegral(A, V, Mx, Mz);
+    }
+
+    /// <summary>栅格上一条轴对齐线段的有料长度：线落在哪一列（行）方格里就数那一列（行）；恰在两列方格的公共边上取两侧平均。</summary>
+    public (double Length, double Mid) SegmentMaterial(bool vertical, double line, double a, double b)
+    {
+        if (b < a) (a, b) = (b, a);
+        double origin = vertical ? X0 : Z0, originT = vertical ? Z0 : X0;
+        int count = vertical ? Nx : Nz, countT = vertical ? Nz : Nx;
+        double u = (line - origin) / Step;                 // 以方格中心为整数
+        double frac = u - Math.Floor(u);
+        var cols = new List<(int k, double wgt)>();
+        if (Math.Abs(frac - 0.5) < 1e-9) { cols.Add(((int)Math.Floor(u), 0.5)); cols.Add(((int)Math.Floor(u) + 1, 0.5)); }
+        else cols.Add(((int)Math.Round(u), 1.0));
+        double len = 0, mom = 0;
+        foreach (var (k, wgt) in cols)
+        {
+            if (k < 0 || k >= count) continue;
+            foreach (var (j, ov) in FlangeMesher.RasterOverlap(a, b, originT, countT, Step))
+            {
+                double t = vertical ? T[k * Nz + j] : T[j * Nz + k];
+                if (t <= 1e-9) continue;
+                double cj = originT + j * Step;
+                double lo = Math.Max(a, cj - 0.5 * Step), hi = Math.Min(b, cj + 0.5 * Step);
+                len += wgt * ov; mom += wgt * ov * 0.5 * (lo + hi);
+            }
+        }
+        return (len, len > 0 ? mom / len : 0.5 * (a + b));
+    }
+
+    public double FractionInsideCircle(double x0, double x1, double z0, double z1, double radiusMm)
+    {
+        var ovX = FlangeMesher.RasterOverlap(x0, x1, X0, Nx, Step);
+        var ovZ = FlangeMesher.RasterOverlap(z0, z1, Z0, Nz, Step);
+        double all = 0, inA = 0;
+        foreach (var (ix, ox) in ovX)
+            foreach (var (iz, oz) in ovZ)
+            {
+                if (T[ix * Nz + iz] <= 1e-9) continue;
+                double a = ox * oz;
+                all += a;
+                if (FlangePlate.InsideInsulCircle(X0 + ix * Step, Z0 + iz * Step, radiusMm)) inA += a;
+            }
+        return all > 0 ? inA / all : double.NaN;
+    }
+
+    public string Describe() => $"栅格厚度场（步 {Step:0.###} mm，{Nx}×{Nz}，方格面积积分；边的位置只准到 ±步/2）";
 }
 
 /// <summary>
@@ -698,6 +871,15 @@ public static class FlangeMesher
                                               IReadOnlyList<Band> bands, double hCoarse,
                                               double growth = 1.3, double center = 0.0,
                                               IReadOnlyList<double>? anchors = null)
+        => GradedAxisCenteredWith(min, max, bands, hCoarse, growth, center, anchors, endRule: true);
+
+    /// <summary>
+    /// 2026-09-19，Fable 5.1（第二轮复核第 6 条）：本体带 F5 轴端余数规则的开关 —— 生产恒 true（上面的公开入口写死），门传 false 证明「去掉规则 ⇒ 末格长度门红」。
+    /// </summary>
+    internal static double[] GradedAxisCenteredWith(double min, double max,
+                                                    IReadOnlyList<Band> bands, double hCoarse,
+                                                    double growth, double center,
+                                                    IReadOnlyList<double>? anchors, bool endRule)
     {
         if (!(max > min)) throw new ArgumentException($"轴范围无效：[{min}, {max}]");
         var bs = (bands ?? Array.Empty<Band>()).Where(b => b.H > 1e-9 && b.To > b.From).ToArray();
@@ -723,7 +905,12 @@ public static class FlangeMesher
             double len = Math.Abs(end - c0);
             double s = 0;                                   // 已走的距离
             // 本侧的锚点（按前进方向排序，用「已走距离」表示）
-            var sAnc = anc.Where(a => dir > 0 ? a > c0 : a < c0).Select(a => Math.Abs(a - c0)).OrderBy(v => v).ToList();
+            // ★ 2026-09-18，Fable 5.1（F5 的另一半）：离轴端不足当地步长 1/4 的锚点**不落**（轴端赢）——
+            //   盘半径 30.01／舌半宽 30 时锚点 ±30 与轴端 ±30.01 只差 0.01 mm，两者都落成节点就是一排 0.01 mm 的发丝格（长宽比 200）。
+            //   锚点不落不会把料算错：单元积分与面长都按材料精确裁剪（F1／F2），锚点只管把直边放到节点上省掉部分格。
+            var sAnc = anc.Where(a => dir > 0 ? a > c0 : a < c0).Select(a => Math.Abs(a - c0))
+                          .Where(v => len - v >= 0.25 * HAt(c0 + dir * v) - 1e-9)
+                          .OrderBy(v => v).ToList();
             int ia = 0;
             while (s < len - 1e-9)
             {
@@ -738,6 +925,14 @@ public static class FlangeMesher
                 h = Math.Min(h, len - s);                   // 末格贴边：直边落在节点上
                 while (ia < sAnc.Count && sAnc[ia] <= s + 1e-9) ia++;   // 已经过的锚点
                 bool hitAnchor = false;
+                // ★ 2026-09-18，Fable 5.1（网格生成根因修复 F5）：**轴端也按锚点的规则处理** —— 计划节点 s+h 之后到轴端只剩不到 hWant/4
+                //   （且中间没有别的锚点）时，把这一格直接拉到轴端（最长 1.25·hWant），不再留一格发丝格。
+                //   病：N3 只护锚点不护轴端，盘半径 30.05 时 z 轴末格 0.05 mm、长宽比 220（网格审计_2 盘径扫描，2026-09-18）。
+                {
+                    double rem = len - (s + h);
+                    bool anchorAhead = ia < sAnc.Count && sAnc[ia] < len - 1e-9;
+                    if (endRule && rem > 1e-9 && rem < 0.25 * hWant - 1e-9 && !anchorAhead) h = len - s;
+                }
                 // 锚点贴节点：锚点落在这一格里 ⇒ 把这一格收到锚点上。
                 // ★ R47 第三轮 N3（2026-09-13）：**不造发丝格** —— 锚点落在计划节点 s+h 之后、但离它不到 hWant/4 时，
                 //   原来是先放 s+h 这个节点、下一格再收到锚点 ⇒ 一格 0.02 mm 的发丝格（实测锚点 2.02／−16.005）。
@@ -914,13 +1109,50 @@ public static class FlangeMesher
                                   double hInner = 0, double innerRadius = 0,
                                   double clampBandMm = double.NaN, bool clampFullFace = true, bool clampFaceDirichlet = true)
     {
-        double hFinest = hInner > 1e-9 && innerRadius > 1e-9 ? Math.Min(hFine, hInner) : hFine;
-        var f = Rasterize(g, RasterStepFor(hFinest), 0.0);
-        var (xa, za) = AnchorsOf(g);
-        return BuildFromField(f, g.HoleRadiusMm, yPlane, hFine, hCoarse, fineRadius, clampLenMm,
-                              hInner, innerRadius, twoTabs: g.TwoTabs, xAnchors: xa, zAnchors: za,
-                              clampBandMm: clampBandMm, clampFullFace: clampFullFace, clampFaceDirichlet: clampFaceDirichlet);
+        // ★★★ 2026-09-18，Fable 5.1（网格生成根因修复 F1）：解析板**不再栅格化**。R47 的「解析路径 = 栅格化 + 图纸路径」把格点点采样带进了生产路径：
+        //   舌片直边 z = ±w 落在格点上时闭区间 Inside 把边上那排格点判成有料 ⇒ 两侧各半个栅格步的幻影料（三档栅格步都对齐 w = 30，三档一致地错）；
+        //   M1 把 ±w 锚成节点后幻影集中成一排「带格」，覆盖率恰卡在 25 % 丢弃线上 ⇒ 盘径／舌半宽扫描上带格随几何翻面、三条判据跳 19～26 K。
+        //   现在解析板经 AnalyticMaterial 逐列精确积分（没有采样点、没有平局、没有幻影），图纸路径（栅格）与它走同一份 BuildFromMaterial。
+        //   同一解析板 Build 与 BuildFromField(Rasterize) **不再逐位相同**（一个精确、一个是栅格近似），两条路对得上改由容差门守（DrawingPathParityTests）。
+        return BuildWith(g, MeshRules.Production, null, yPlane, hFine, hCoarse, fineRadius, clampLenMm, hInner, innerRadius, clampBandMm, clampFullFace, clampFaceDirichlet);
     }
+
+    /// <summary>
+    /// ★ 2026-09-19，Fable 5.1（第二轮复核第 9 条）：<see cref="Build"/> 的本体，多两个只给门用的口：网格层规则 <paramref name="rules"/>（null = 生产）与
+    /// 可替换的材料源 <paramref name="material"/>（null = 解析板精确积分 <see cref="AnalyticMaterial"/>；门传测试侧的格心取样材料做注入对照）。
+    /// 锚点、孔半径、双舌等一律照 Build 的推法给，这里不另抄一份配方。
+    /// </summary>
+    internal static ShellMesh BuildWith(FlangePlate g, MeshRules? rules, IMaterialField? material, double yPlane = 0,
+                                        double hFine = 2.0, double hCoarse = 11.0,
+                                        double fineRadius = 45.0, double clampLenMm = 3.0,
+                                        double hInner = 0, double innerRadius = 0,
+                                        double clampBandMm = double.NaN, bool clampFullFace = true, bool clampFaceDirichlet = true)
+    {
+        var (xa, za) = AnchorsOf(g);
+        return BuildFromMaterialWith(material ?? new AnalyticMaterial(g), g.HoleRadiusMm, rules, yPlane, hFine, hCoarse, fineRadius, clampLenMm,
+                                     hInner, innerRadius, twoTabs: g.TwoTabs, xAnchors: xa, zAnchors: za,
+                                     clampBandMm: clampBandMm, clampFullFace: clampFullFace, clampFaceDirichlet: clampFaceDirichlet);
+    }
+
+    /// <summary>
+    /// ★ 2026-09-18，Fable 5.1（F2）：留格的门槛 —— 有料面积 &gt; 这个比例 × 整格面积就留（老口径是 25 %：丢掉的是真料，导航 −0.10～−0.30 %，
+    /// 而且它把带格变成随几何翻面的开关）。1e-9 只挡浮点尘埃；薄片格的导电／导热截面由裁剪过的面长给，不靠丢格。
+    /// 2026-09-19 Fable 5.1（第二轮复核第 10 条）：留下来的格里覆盖率 &lt; <see cref="CellMergeFrac"/> 的**并入邻格**（料不丢、不再单独当一个未知量），见 <see cref="MergeSlivers"/>。
+    /// （2026-09-18 的 [ThreadStatic] 注入开关 InjectCenterSampling 原在这里，2026-09-19 按第二轮复核第 9 条删掉：注入改走 <see cref="MeshRules"/> + 测试侧材料源。）
+    /// </summary>
+    public const double CellKeepFrac = 1e-9;
+
+    /// <summary>
+    /// ★★ 2026-09-19，Fable 5.1（第二轮复核第 1／10 条）：**并入邻格的门槛之一 —— 碎格**：覆盖率（有料面积 ÷ 整格面积）低于它的格并入共有最长有料边的邻格。
+    /// 出处：本套件最细的判读门槛是体积守恒 0.1 %／连续性 0.2 %（R48NMeshGateTests）；一个格里不到 0.1 % 格面积的料，无论算成独立未知量还是并进邻格，
+    /// 任何门都看不见（并前并后差 ≤ 一格的 1e-3，比门槛小三个量级）；而它作独立未知量时导度只有 1e-3 格量级，只给方程组添一个几乎悬空的未知数
+    /// （第一轮实测：覆盖率 5e-7、面积 2e-6 mm² 的格也留成了单元）。
+    /// </summary>
+    public const double CellMergeFrac = 1e-3;
+
+    // ★ 2026-09-19，Fable 5.1（第二轮复核第 1 条）：楔形格的幻影 J 峰**不在网格层治**（试过按重构条件数 κ′ < 0.2 并格：Heater1 的幻影峰没了，
+    //   但管孔边的真峰跟着被合成格抹掉 5～10 %，R48NSliverGateTests 门 2 红），治在 J 的重构量法上 —— 见 ShellCurrent.SliverKappaMin
+    //   （角度条件数不足的格只沿强方向重构）。网格层只并碎格（CellMergeFrac）。
 
     /// <summary>
     /// ★ R47 复修 M1：解析板的**几何锚点**（必须落成网格节点的坐标）——
@@ -1118,6 +1350,58 @@ public static class FlangeMesher
                                            IReadOnlyList<double>? xAnchors = null, IReadOnlyList<double>? zAnchors = null,
                                            double holeTagBandMm = 0, double clampBandMm = double.NaN, bool clampFullFace = true, bool clampFaceDirichlet = true)
     {
+        if (f is null) throw new ArgumentNullException(nameof(f));
+        // 图纸路径没传锚点就从厚度场推（R47 复修 M1；解析板由 Build 传精确锚点）
+        if (xAnchors is null || zAnchors is null)
+        {
+            var (xa, za) = AnchorsFromField(f);
+            xAnchors ??= xa; zAnchors ??= za;
+        }
+        var m = BuildFromMaterial(f, holeRadiusMm, yPlane, hFine, hCoarse, fineRadius, clampLenMm, hInner, innerRadius, twoTabs,
+                                  xAnchors, zAnchors, holeTagBandMm, clampBandMm, clampFullFace, clampFaceDirichlet);
+        m.SourceField = f;
+        return m;
+    }
+
+    /// <summary>
+    /// ★★★ 2026-09-18，Fable 5.1（网格生成根因修复）：**唯一的生成器本体** —— 解析板（<see cref="AnalyticMaterial"/>，经 <see cref="Build"/>）与
+    /// 栅格厚度场（<see cref="ThicknessField"/>，经 <see cref="BuildFromField"/>）都走这里，只通过 <see cref="IMaterialField"/> 量材料。
+    ///
+    /// 与 R47/R48 的 BuildFromField 相比改了四件事（判据、求解器规则、默认网格格距一个都没动）：
+    ///   F1 单元的有料面积／体积／形心 = 材料场的精确积分（解析板没有栅格、没有点采样）；
+    ///   F2 留格门槛 25 % → <see cref="CellKeepFrac"/>（真料不丢；带格因为没有料而自然消失）；面长 = 边上有料的长度（<see cref="ShellMesh.BuildFaces"/> 的 clip）；
+    ///      单元形心 = **材料形心**（部分格的形心落在料里，分区判定、面导度距离都按料算）；
+    ///   管孔边界 = 圆弧本身（<see cref="AddHoleArcFaces"/>：每个被孔圆穿过的格建一条弧面，长度 = 弧长、中点在弧上），不再是落在孔里的阶梯格边
+    ///      （阶梯边有料长度为 0，按 F2 本来就建不出面；孔边定温带 3 mm 的口径不变，弧面 r = 孔半径 必在带内）；
+    ///   F5 轴端按锚点规则处理（<see cref="GradedAxisCentered"/>）。
+    /// 配方声明 ①～⑤ 原文见 <see cref="BuildFromField"/> 上方注释（逐字未改，仍然生效）。
+    /// </summary>
+    public static ShellMesh BuildFromMaterial(IMaterialField f, double holeRadiusMm,
+                                              double yPlane = 0,
+                                              double hFine = 2.0, double hCoarse = 11.0,
+                                              double fineRadius = 50.0, double clampLenMm = 4.0,
+                                              double hInner = 0, double innerRadius = 0,
+                                              bool twoTabs = false,
+                                              IReadOnlyList<double>? xAnchors = null, IReadOnlyList<double>? zAnchors = null,
+                                              double holeTagBandMm = 0, double clampBandMm = double.NaN, bool clampFullFace = true, bool clampFaceDirichlet = true)
+        => BuildFromMaterialWith(f, holeRadiusMm, MeshRules.Production, yPlane, hFine, hCoarse, fineRadius, clampLenMm, hInner, innerRadius, twoTabs,
+                                 xAnchors, zAnchors, holeTagBandMm, clampBandMm, clampFullFace, clampFaceDirichlet);
+
+    /// <summary>
+    /// ★ 2026-09-19，Fable 5.1（第二轮复核第 9 条）：生成器本体带**网格层规则**（<see cref="MeshRules"/>）—— 生产入口一律传 <see cref="MeshRules.Production"/>，
+    /// 门经 InternalsVisibleTo 传别的组合（关掉面长裁剪／弧面／并格／轴端规则）做「改回 ⇒ 红」对照；rules 为 null 按生产规则。别的参数与 <see cref="BuildFromMaterial"/> 逐字相同。
+    /// </summary>
+    internal static ShellMesh BuildFromMaterialWith(IMaterialField f, double holeRadiusMm, MeshRules? rules,
+                                                    double yPlane = 0,
+                                                    double hFine = 2.0, double hCoarse = 11.0,
+                                                    double fineRadius = 50.0, double clampLenMm = 4.0,
+                                                    double hInner = 0, double innerRadius = 0,
+                                                    bool twoTabs = false,
+                                                    IReadOnlyList<double>? xAnchors = null, IReadOnlyList<double>? zAnchors = null,
+                                                    double holeTagBandMm = 0, double clampBandMm = double.NaN, bool clampFullFace = true, bool clampFaceDirichlet = true)
+    {
+        if (f is null) throw new ArgumentNullException(nameof(f));
+        rules ??= MeshRules.Production;
         // 配方 ⑤（R48 F 2026-09-15 Opus 5）：求解器从网格上读，电流与温度两边同一个口径。
         // 2026-09-15 Opus 5（合并，复审后改）：开关改为 init，建网格时一次写定（原在函数末尾 m.ClampFaceDirichlet = clampFaceDirichlet; 赋值，其间无人读它，结果逐位不变）
         var m = new ShellMesh { ClampFaceDirichlet = clampFaceDirichlet };
@@ -1144,9 +1428,9 @@ public static class FlangeMesher
         //   末格贴边 ⇒ 材料包络的直边落在节点上。
         // ★ R47 复修 M1：轴还要含几何锚点（z ±舌半宽、x 切点）—— 舌半宽 < 盘半径时直边不在端点上。
         //   解析板由 Build 传精确锚点；图纸路径没传就从厚度场推（舌尖那一列的材料半宽）。
-        if (xAnchors is null || zAnchors is null)
+        if ((xAnchors is null || zAnchors is null) && f is ThicknessField tfAnch)
         {
-            var (xa, za) = AnchorsFromField(f);
+            var (xa, za) = AnchorsFromField(tfAnch);
             xAnchors ??= xa; zAnchors ??= za;
         }
         // ★★ R48 实验 b（2026-09-14，Opus 5；常驻数值把关人第五轮定的位置）：**压接边界也落成节点**。
@@ -1202,8 +1486,8 @@ public static class FlangeMesher
             xAnchors = have;
             clampNote = string.Join("；", notes);
         }
-        double[] xs = GradedAxisCentered(xMin, xMax, xBands, hCoarse, anchors: xAnchors);
-        double[] zs = GradedAxisCentered(zMin, zMax, zBands, hCoarse, anchors: zAnchors);
+        double[] xs = GradedAxisCenteredWith(xMin, xMax, xBands, hCoarse, 1.3, 0.0, xAnchors, endRule: rules.AxisEndRule);   // growth／center = 公开入口的缺省值，逐字
+        double[] zs = GradedAxisCenteredWith(zMin, zMax, zBands, hCoarse, 1.3, 0.0, zAnchors, endRule: rules.AxisEndRule);
 
         int nx = xs.Length, nz = zs.Length;
         var nodeId = new int[nx, nz];
@@ -1211,51 +1495,42 @@ public static class FlangeMesher
             for (int j = 0; j < nz; j++)
             { nodeId[i, j] = m.Nodes.Count; m.Nodes.Add(new Vec3(xs[i], yPlane, zs[j])); }
 
-        double s = f.Step;
-        // 一维重叠（R48 2026-09-14 Opus 5：抽成 RasterOverlap，保温分界份额要用同一份，算式逐字未改）
-        List<(int k, double ov)> Overlap(double a, double b, double origin, int count) => RasterOverlap(a, b, origin, count, s);
-
         double tabTipX = xMin;      // 舌尖 = 材料的 XMinMaterial（不再是图幅左缘）
-        var ovZ = new List<(int k, double ov)>[nz - 1];
-        for (int j = 0; j < nz - 1; j++) ovZ[j] = Overlap(zs[j], zs[j + 1], f.Z0, f.Nz);
         for (int i = 0; i < nx - 1; i++)
         {
-            var ovX = Overlap(xs[i], xs[i + 1], f.X0, f.Nx);
             for (int j = 0; j < nz - 1; j++)
             {
                 double x0 = xs[i], x1 = xs[i + 1], z0 = zs[j], z1 = zs[j + 1];
-                double covered = 0, volume = 0;
-                foreach (var (ix, ox) in ovX)
-                    foreach (var (iz, oz) in ovZ[j])
-                    {
-                        double t = f.T[ix * f.Nz + iz];
-                        if (t <= 1e-9) continue;
-                        double a = ox * oz;
-                        covered += a; volume += a * t;
-                    }
                 double cellArea = (x1 - x0) * (z1 - z0);
-                if (covered < 0.25 * cellArea) continue;        // 覆盖不足四分之一的格子丢弃（旧口径）
+                MaterialIntegral I = f.Integrate(x0, x1, z0, z1);   // F1：材料场的精确积分（解析板）／方格面积积分（栅格）；注入对照由测试侧的材料源给
+                if (!(I.Area > CellKeepFrac * cellArea)) continue;   // F2：只挡浮点尘埃，真料不丢；碎格在 MergeSlivers 里并入邻格
 
-                double cxm = 0.5 * (x0 + x1), czm = 0.5 * (z0 + z1);
                 m.Cells.Add(new[] { nodeId[i, j], nodeId[i + 1, j], nodeId[i + 1, j + 1], nodeId[i, j + 1] });
-                m.Area.Add(covered);
-                m.Centroid.Add(new Vec3(cxm, yPlane, czm));
-                m.Thickness.Add(volume / covered);               // 体积积分 ÷ 覆盖面积：焊脚这类比格子细的堆料按料算
+                m.Area.Add(I.Area);
+                m.Centroid.Add(new Vec3(I.MomentX / I.Area, yPlane, I.MomentZ / I.Area));   // 材料形心（满格 = 格心）
+                m.Thickness.Add(I.Volume / I.Area);              // 体积积分 ÷ 覆盖面积：焊脚这类比格子细的堆料按料算
                 m.Part.Add(0);
-                m.Frac.Add(covered / cellArea);                  // R48：边界格的覆盖率，给面长折算用
+                m.Frac.Add(I.Area / cellArea);                   // R48：边界格的覆盖率（诊断；并过格的按全部矩形算）
             }
         }
 
-        m.BuildFaces(mid =>
+        int Tagger(Vec3 mid)
         {
             // 管孔：紧贴孔半径的那一圈边界面（槽的边界半径不同，不会误判）
             if (IsHoleFace(mid, holeRadiusMm, holeTagBandMm)) return ShellMesh.TagHole;
             // 压接边：单舌在舌尖那一段；双舌两端都是（R48 2026-09-14 Opus 5：式子收进 InClampSegment，逐字未改）
             if (InClampSegment(mid.X, tabTipX, clampLenMm, twoTabs)) return ShellMesh.TagTabEnd;
             return ShellMesh.TagFree;
-        });
+        }
+        if (rules.ClipFaces) m.BuildFaces(Tagger, (p0, p1) => ClipSegment(f, p0, p1));   // F2：面长 = 边上有料的长度
+        else m.BuildFaces(Tagger);                                                        // 注入对照：整边面长（老口径）
+        // ★ 2026-09-18／19，Fable 5.1：薄片格并入邻格 —— 在面图上收缩（A 管孔外角薄片；B 重构条件数不足的楔形格与碎格），见 MergeSlivers
+        var rects = MergeSlivers(m, holeRadiusMm, rules, clampCand);
+        if (rules.HoleArcFaces) AddHoleArcFaces(m, holeRadiusMm, Tagger, rects);        // 管孔边界 = 圆弧本身（并入格的那段弧也在）；注入对照：阶梯孔边
+        m.CellRects = rects;
         m.ComputeHoleTagDiagnostics(holeRadiusMm);
-        m.SourceField = f;
+        m.Material = f;
+        m.SourceField = f as ThicknessField;
         // ★ R48 生产配方 ③（2026-09-14，Opus 5）：压接段整面接触。与上面边界面标签同一个判定（同一 tabTipX、同一压接长），只是对格子形心判。
         //   边界面标签照旧打（外圈格仍带 TagTabEnd），ShellCurrent／ShellThermal 取两者的并集。侧边面中点 x = 格形心 x ⇒ 压接边界落成节点时
         //   外圈格是整面格的子集，并集就是整面；没落成节点（压接长不足一个最细格等，见 ClampAnchorNote）时舌尖那一列可能只带标签、形心在段外，并集照样把它钉住。
@@ -1326,6 +1601,301 @@ public static class FlangeMesher
             if (ov > 1e-12) lst.Add((k, ov));
         }
         return lst;
+    }
+
+    /// <summary>2026-09-18，Fable 5.1：一条轴对齐格边上的有料长度与有料中点（BuildFaces 的 clip）。非轴对齐的边（本生成器不产生）按整边算。</summary>
+    public static (double Length, Vec3 Mid) ClipSegment(IMaterialField f, Vec3 p0, Vec3 p1)
+    {
+        bool vert = Math.Abs(p0.X - p1.X) <= 1e-9, horz = Math.Abs(p0.Z - p1.Z) <= 1e-9;
+        if (vert == horz) return ((p1 - p0).Norm, (p0 + p1) * 0.5);
+        if (vert)
+        {
+            var (len, mid) = f.SegmentMaterial(true, p0.X, p0.Z, p1.Z);
+            return (len, new Vec3(p0.X, p0.Y, mid));
+        }
+        else
+        {
+            var (len, mid) = f.SegmentMaterial(false, p0.Z, p0.X, p1.X);
+            return (len, new Vec3(mid, p0.Y, p0.Z));
+        }
+    }
+
+    /// <summary>
+    /// ★★ 2026-09-18，Fable 5.1：**管孔边界面 = 圆弧本身**。每个被孔圆 r = <paramref name="holeRadiusMm"/> 穿过的（留下的）格，
+    /// 建一条边界面：长度 = 落在该格矩形里的弧长、中点在弧上（r 恰 = 孔半径 ⇒ 管孔判定带必命中）、DistAB = 材料形心到弧中点。
+    /// 为什么：老口径的管孔边界面是「与被丢格相邻的格边」—— 一段落在孔里的阶梯折线，总长比周长多约 4/π 倍、位置随格线翻面
+    /// （管内径扫描上电阻台阶 0.3～0.5 %/档，网格审计_2 孔径扫描）；面长按材料裁剪之后这些阶梯边有料长度为 0，本来就建不出面，
+    /// 定温边界只能落在真实的孔弧上。一个格里被切出两段弧（角上）就建两条面。
+    /// 电流场仍按「带管孔标签面的格」钉 V = 0（ShellCurrent 的规则不动）；热场的面上定温 gHole = k·t·弧长 ÷ DistAB（ShellThermal 的规则不动）。
+    /// </summary>
+    /// <param name="rects">每格的矩形列表（并入了别的格的格有多个矩形；null = 取节点矩形）。</param>
+    public static void AddHoleArcFaces(ShellMesh m, double holeRadiusMm, Func<Vec3, int> tagger, List<(double x0, double x1, double z0, double z1)>[]? rects = null)
+    {
+        if (!(holeRadiusMm > 0)) return;
+        double rh = holeRadiusMm;
+        for (int c = 0; c < m.CellCount; c++)
+        {
+            var rectList = rects != null && c < rects.Length && rects[c] != null ? rects[c] : new List<(double, double, double, double)> { CellRect(m, c) };
+            foreach (var (x0, x1, z0, z1) in rectList)
+            {
+            // 快速排除：矩形离原点最近点 > rh 或最远角 < rh ⇒ 圆不穿过
+            double nx = Math.Clamp(0, x0, x1), nz = Math.Clamp(0, z0, z1);
+            double fx = Math.Max(Math.Abs(x0), Math.Abs(x1)), fz = Math.Max(Math.Abs(z0), Math.Abs(z1));
+            if (nx * nx + nz * nz >= rh * rh || fx * fx + fz * fz <= rh * rh) continue;
+            // 圆与四条格线的交角
+            var ang = new List<double> { 0, 2 * Math.PI };
+            foreach (double xv in new[] { x0, x1 })
+                if (Math.Abs(xv) < rh) { double a = Math.Acos(xv / rh); ang.Add(a); ang.Add(2 * Math.PI - a); }
+            foreach (double zv in new[] { z0, z1 })
+                if (Math.Abs(zv) < rh) { double a = Math.Asin(zv / rh); ang.Add(Norm(a)); ang.Add(Norm(Math.PI - a)); }
+            ang.Sort();
+            // 逐段判中点在不在矩形里，相邻的段合并
+            var pieces = new List<(double a, double b)>();
+            for (int k = 0; k + 1 < ang.Count; k++)
+            {
+                double a = ang[k], b = ang[k + 1];
+                if (b - a <= 1e-12) continue;
+                double tm = 0.5 * (a + b), px = rh * Math.Cos(tm), pz = rh * Math.Sin(tm);
+                bool inside = px >= x0 - 1e-9 && px <= x1 + 1e-9 && pz >= z0 - 1e-9 && pz <= z1 + 1e-9;
+                if (!inside) continue;
+                if (pieces.Count > 0 && Math.Abs(pieces[^1].b - a) <= 1e-12) pieces[^1] = (pieces[^1].a, b);
+                else pieces.Add((a, b));
+            }
+            // 跨 0／2π 的两段接起来
+            if (pieces.Count >= 2 && pieces[0].a <= 1e-12 && Math.Abs(pieces[^1].b - 2 * Math.PI) <= 1e-12)
+            {
+                var first = pieces[0]; var last = pieces[^1];
+                pieces.RemoveAt(pieces.Count - 1); pieces.RemoveAt(0);
+                pieces.Add((last.a, first.b + 2 * Math.PI));
+            }
+            foreach (var (a, b) in pieces)
+            {
+                double len = rh * (b - a);
+                if (len <= 1e-9) continue;
+                double tm = 0.5 * (a + b);
+                var mid = new Vec3(rh * Math.Cos(tm), m.Centroid[c].Y, rh * Math.Sin(tm));
+                var face = new MeshFace { A = c, B = -1, Mid = mid, Length = len, FullLength = len, Tag = tagger(mid) };
+                face.DistAB = m.CentroidToFaceMm(c, face);
+                m.Faces.Add(face);
+            }
+            }
+        }
+        static double Norm(double a) { while (a < 0) a += 2 * Math.PI; while (a >= 2 * Math.PI) a -= 2 * Math.PI; return a; }
+    }
+
+    /// <summary>单元 <paramref name="c"/> 的节点矩形（并过格的单元只是目标格自己那一个；全部矩形见 <see cref="ShellMesh.CellRects"/>）。</summary>
+    public static (double x0, double x1, double z0, double z1) CellRect(ShellMesh m, int c)
+    {
+        double x0 = double.PositiveInfinity, x1 = double.NegativeInfinity, z0 = double.PositiveInfinity, z1 = double.NegativeInfinity;
+        foreach (int n in m.Cells[c]) { var v = m.Nodes[n]; x0 = Math.Min(x0, v.X); x1 = Math.Max(x1, v.X); z0 = Math.Min(z0, v.Z); z1 = Math.Max(z1, v.Z); }
+        return (x0, x1, z0, z1);
+    }
+
+    /// <summary>
+    /// ★★ 2026-09-18／19，Fable 5.1：**薄片格并入邻格** —— 面拓扑建好之后在面图上做**收缩**（并入 = 两格合成一个未知量：面积、体积、一次矩相加，
+    /// 形心、厚度随之重算；两格之间的面消失，各自与第三格的面改挂到合成格名下，长度、中点不变，形心距按新形心重算）。返回每格的矩形列表
+    /// （<see cref="ShellMesh.CellRects"/>；管孔弧面按矩形建，分界份额按矩形量），并把单元表就地压实。
+    ///
+    /// 规则 A（2026-09-18，管孔外角薄片）：孔圆从一个格的两条相邻格边穿过、把格切成「里面的大块 + 外角的小块」时，材料只剩外角那一小块，它有料的边都被圆穿过 ⇒
+    ///   两个邻格也都是被孔圆穿过的格。电流场按「带管孔面的格钉 V = 0」（ShellCurrent 的规则不动）⇒ 这一小块与它所有邻格都钉在 V = 0，
+    ///   面上一点电流都没有、重构出的 J = 0 —— 下游按 q/J 排的移除优先级（RemovalPriority）把它排到最前，槽心跟着跑偏。
+    ///   ⇒ 「所有有料边都被孔圆穿过」的格并入共有最长有料边的邻格（电极集合不变）。只并这种格，别的管孔格一律不动。
+    /// 规则 B（2026-09-19，第二轮复核第 10 条）：不被管孔圆穿过的格里，覆盖率 &lt; <see cref="MeshRules.CellMergeFrac"/>（碎格）的，并入共有最长有料边、
+    ///   同样不被孔圆穿过、且与它在压接边界同一侧的邻格；合成格覆盖率仍不足再并（最多 8 遍）。
+    ///   楔形格的幻影 J 峰（复核第 1 条）曾试过也在这里按重构条件数并（κ′ &lt; 0.2）：Heater1 的幻影峰是没了，但管孔边的真峰跟着被合成格抹掉 5～10 %（2026-09-19 实测，
+    ///   R48NSliverGateTests 门 2 红）—— 病在重构量法不在网格，改治在 ShellCurrent（SliverKappaMin），网格层不并楔形格。
+    /// 2026-09-19 改写说明：2026-09-18 版规则 A 在建面之前按单元索引并、再由 RewireSliverEdges 把第三格的边界面改接 —— 两个相邻的并入格之间那条边它接不上
+    ///   （碎格也可能相邻）；改成面图收缩后并入前后的面一条不少。规则 A 的判定逐字不变（有料边 = 建出来的面，长度就是裁剪过的有料长度）。
+    /// </summary>
+    internal static List<(double x0, double x1, double z0, double z1)>[] MergeSlivers(ShellMesh m, double holeRadiusMm, MeshRules rules, IReadOnlyList<double>? noCrossX)
+    {
+        int n = m.CellCount;
+        var rects = new List<(double x0, double x1, double z0, double z1)>[n];
+        for (int c = 0; c < n; c++) rects[c] = new List<(double, double, double, double)> { CellRect(m, c) };
+        m.HoleSliversMerged = 0; m.SliversMerged = 0;
+        if (n == 0 || !rules.ClipFaces || !(rules.MergeHoleCorners || rules.MergeSlivers)) return rects;   // 不裁面长（注入对照）就没有「有料边」可言，不并
+        double rh = holeRadiusMm;
+        const double tol = 1e-7;
+        var alive = new bool[n]; Array.Fill(alive, true);
+        var cellFaces = new List<int>[n];
+        for (int c = 0; c < n; c++) cellFaces[c] = new List<int>();
+        for (int k = 0; k < m.Faces.Count; k++) { var fc = m.Faces[k]; cellFaces[fc.A].Add(k); if (fc.B >= 0) cellFaces[fc.B].Add(k); }
+        var dead = new bool[m.Faces.Count];
+        var touched = new bool[n];
+        var lines = (noCrossX ?? Array.Empty<double>()).Where(v => !double.IsNaN(v)).ToArray();
+
+        static bool Crosses((double x0, double x1, double z0, double z1) r, double rh)
+        {
+            if (!(rh > 0)) return false;
+            double nx = Math.Clamp(0, r.x0, r.x1), nz = Math.Clamp(0, r.z0, r.z1);
+            double fx = Math.Max(Math.Abs(r.x0), Math.Abs(r.x1)), fz = Math.Max(Math.Abs(r.z0), Math.Abs(r.z1));
+            return nx * nx + nz * nz < rh * rh && fx * fx + fz * fz > rh * rh;
+        }
+        bool HoleCell(int c) { foreach (var r in rects[c]) if (Crosses(r, rh)) return true; return false; }
+        // 面中点落在格 c 的哪个矩形的哪条边上 ⇒ 那条整边（竖直?、线坐标、两端）
+        bool EdgeOf(int c, MeshFace fc, out bool vert, out double line, out double a, out double b)
+        {
+            foreach (var r in rects[c])
+            {
+                bool onX0 = Math.Abs(fc.Mid.X - r.x0) <= tol, onX1 = Math.Abs(fc.Mid.X - r.x1) <= tol;
+                bool onZ0 = Math.Abs(fc.Mid.Z - r.z0) <= tol, onZ1 = Math.Abs(fc.Mid.Z - r.z1) <= tol;
+                if ((onX0 || onX1) && fc.Mid.Z >= r.z0 - tol && fc.Mid.Z <= r.z1 + tol) { vert = true; line = onX0 ? r.x0 : r.x1; a = r.z0; b = r.z1; return true; }
+                if ((onZ0 || onZ1) && fc.Mid.X >= r.x0 - tol && fc.Mid.X <= r.x1 + tol) { vert = false; line = onZ0 ? r.z0 : r.z1; a = r.x0; b = r.x1; return true; }
+            }
+            vert = false; line = a = b = double.NaN; return false;
+        }
+        static bool EdgeCrossed(bool vert, double line, double a, double b, double rh)
+        {
+            double t = Math.Clamp(0, Math.Min(a, b), Math.Max(a, b));
+            double near = Math.Sqrt(line * line + t * t), far = Math.Sqrt(line * line + Math.Max(a * a, b * b));
+            return near < rh - 1e-12 && far > rh + 1e-12;
+        }
+        static int Other(MeshFace fc, int c) => fc.A == c ? fc.B : fc.A;
+        int SideOf(int c, double xLine)
+        {
+            int s0 = 0; bool first = true;
+            foreach (var r in rects[c])
+            {
+                int rs = r.x1 <= xLine + tol ? -1 : r.x0 >= xLine - tol ? 1 : 0;
+                if (first) { s0 = rs; first = false; } else if (rs != s0) return 0;
+            }
+            return s0;
+        }
+        bool SameSide(int c, int o) { foreach (double xl in lines) if (SideOf(c, xl) != SideOf(o, xl)) return false; return true; }
+        void Merge(int c, int t)
+        {
+            double aC = m.Area[c], aT = m.Area[t];
+            double vol = aC * m.Thickness[c] + aT * m.Thickness[t];
+            double mx = aC * m.Centroid[c].X + aT * m.Centroid[t].X, mz = aC * m.Centroid[c].Z + aT * m.Centroid[t].Z;
+            m.Area[t] = aC + aT;
+            m.Thickness[t] = vol / m.Area[t];
+            m.Centroid[t] = new Vec3(mx / m.Area[t], m.Centroid[t].Y, mz / m.Area[t]);
+            rects[t].AddRange(rects[c]);
+            double full = 0; foreach (var r in rects[t]) full += (r.x1 - r.x0) * (r.z1 - r.z0);
+            m.Frac[t] = m.Area[t] / full;
+            foreach (int k in cellFaces[c])
+            {
+                if (dead[k]) continue;
+                var fc = m.Faces[k];
+                if (fc.A == c) fc.A = t;
+                if (fc.B == c) fc.B = t;
+                if (fc.B >= 0 && fc.A == fc.B) { dead[k] = true; continue; }   // 并入后成了同一格的内部，不成面
+                cellFaces[t].Add(k);
+            }
+            cellFaces[c].Clear();
+            alive[c] = false; touched[t] = true;
+        }
+
+        // ── 规则 A：管孔外角薄片
+        if (rules.MergeHoleCorners && rh > 0)
+            for (int c = 0; c < n; c++)
+            {
+                if (!alive[c] || !Crosses(rects[c][0], rh)) continue;
+                bool anyMat = false, anyNotCrossed = false; int best = -1; double bestLen = 0;
+                foreach (int k in cellFaces[c])
+                {
+                    if (dead[k]) continue;
+                    var fc = m.Faces[k];
+                    if (fc.Length <= 1e-9) continue;
+                    anyMat = true;
+                    if (!EdgeOf(c, fc, out bool vert, out double line, out double a, out double b) || !EdgeCrossed(vert, line, a, b, rh)) { anyNotCrossed = true; break; }
+                    if (fc.B >= 0 && fc.Length > bestLen) { bestLen = fc.Length; best = Other(fc, c); }
+                }
+                if (!anyMat || anyNotCrossed || best < 0 || best == c) continue;   // 有一条通向未被孔圆穿过的边 ⇒ 不是外角薄片
+                Merge(c, best); m.HoleSliversMerged++;
+            }
+
+        // ── 规则 B：碎格
+        if (rules.MergeSlivers)
+            for (int pass = 0; pass < 8; pass++)
+            {
+                int did = 0;
+                for (int c = 0; c < n; c++)
+                {
+                    if (!alive[c] || HoleCell(c)) continue;
+                    if (!(m.Frac[c] < rules.CellMergeFrac)) continue;
+                    int best = -1; double bestLen = 0;
+                    foreach (int k in cellFaces[c])
+                    {
+                        if (dead[k]) continue;
+                        var fc = m.Faces[k];
+                        if (fc.B < 0) continue;
+                        int o = Other(fc, c);
+                        if (o == c || !alive[o] || HoleCell(o) || !SameSide(c, o)) continue;
+                        if (fc.Length > bestLen) { bestLen = fc.Length; best = o; }
+                    }
+                    if (best < 0) continue;
+                    Merge(c, best); m.SliversMerged++; did++;
+                }
+                if (did == 0) break;
+            }
+
+        if (m.HoleSliversMerged + m.SliversMerged == 0) return rects;
+        // 压实单元表、面重编号、并过格的面按新形心重算形心距
+        var keep = Enumerable.Range(0, n).Where(c => alive[c]).ToArray();
+        var newIndex = new int[n]; Array.Fill(newIndex, -1);
+        for (int k = 0; k < keep.Length; k++) newIndex[keep[k]] = k;
+        var cells = keep.Select(c => m.Cells[c]).ToList();
+        var area = keep.Select(c => m.Area[c]).ToList();
+        var cen = keep.Select(c => m.Centroid[c]).ToList();
+        var th = keep.Select(c => m.Thickness[c]).ToList();
+        var part = keep.Select(c => m.Part[c]).ToList();
+        var frac = keep.Select(c => m.Frac[c]).ToList();
+        var rr = keep.Select(c => rects[c]).ToArray();
+        var tch = keep.Select(c => touched[c]).ToArray();
+        m.Cells.Clear(); m.Cells.AddRange(cells);
+        m.Area.Clear(); m.Area.AddRange(area);
+        m.Centroid.Clear(); m.Centroid.AddRange(cen);
+        m.Thickness.Clear(); m.Thickness.AddRange(th);
+        m.Part.Clear(); m.Part.AddRange(part);
+        m.Frac.Clear(); m.Frac.AddRange(frac);
+        var faces = new List<MeshFace>(m.Faces.Count);
+        for (int k = 0; k < m.Faces.Count; k++)
+        {
+            if (dead[k]) continue;
+            var fc = m.Faces[k];
+            int a2 = newIndex[fc.A], b2 = fc.B >= 0 ? newIndex[fc.B] : -1;
+            if (a2 < 0 || (fc.B >= 0 && b2 < 0)) throw new InvalidOperationException("并格自检：面挂到了已并入的格上");
+            fc.A = a2; fc.B = b2;
+            if (tch[fc.A] || (fc.B >= 0 && tch[fc.B]))
+                fc.DistAB = fc.B >= 0 ? (m.Centroid[fc.B] - m.Centroid[fc.A]).Norm : m.CentroidToFaceMm(fc.A, fc);
+            faces.Add(fc);
+        }
+        m.Faces.Clear(); m.Faces.AddRange(faces);
+        return rr;
+    }
+
+    /// <summary>
+    /// ★ 2026-09-18，Fable 5.1：单元有料面积里落在 r ≤ <paramref name="radiusMm"/> 的份额 —— 保温分界圆穿过的格子怎么混（ShellThermal 调这一处）。
+    /// 解析板按精确积分（<see cref="AnalyticMaterial.FractionInsideCircle"/>），栅格场按方格中心（与 R48 的 <see cref="MaterialFraction"/> 逐位相同）。
+    /// 没有材料来源或格里没有料 ⇒ NaN（调用方退回形心）。
+    /// </summary>
+    public static double MaterialFractionInCircle(ShellMesh m, int cell, double radiusMm)
+    {
+        if (m.Material is null || cell < 0 || cell >= m.CellCount) return double.NaN;
+        var rl = m.CellRects != null && cell < m.CellRects.Length ? m.CellRects[cell] : null;
+        if (rl is null || rl.Count <= 1)
+        {
+            var nd = m.Cells[cell];
+            double x0 = double.PositiveInfinity, x1 = double.NegativeInfinity, z0 = double.PositiveInfinity, z1 = double.NegativeInfinity;
+            foreach (int n in nd)
+            {
+                var v = m.Nodes[n];
+                x0 = Math.Min(x0, v.X); x1 = Math.Max(x1, v.X); z0 = Math.Min(z0, v.Z); z1 = Math.Max(z1, v.Z);
+            }
+            return m.Material.FractionInsideCircle(x0, x1, z0, z1, radiusMm);
+        }
+        // 2026-09-19 Fable 5.1：并过格的单元按全部矩形量（分子分母都是料：Σ 各矩形有料面积 × 该矩形圆内份额 ÷ Σ 各矩形有料面积）
+        double all = 0, inA = 0;
+        foreach (var (x0, x1, z0, z1) in rl)
+        {
+            double a = m.Material.Integrate(x0, x1, z0, z1).Area;
+            if (!(a > 0)) continue;
+            double fr = m.Material.FractionInsideCircle(x0, x1, z0, z1, radiusMm);
+            if (double.IsNaN(fr)) continue;
+            all += a; inA += a * fr;
+        }
+        return all > 0 ? Math.Clamp(inA / all, 0, 1) : double.NaN;
     }
 
     /// <summary>

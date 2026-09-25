@@ -524,7 +524,7 @@ public static class ShellThermal
         //   没有厚度场（非 BuildFromField 生成的网格）⇒ 退回按形心，并写进 InsulRule。
         var insulFrac = new double[n];
         int nBlend = 0;
-        bool noField = insulByRadius && m.SourceField is null;
+        bool noField = insulByRadius && !m.HasMaterialSource;   // 2026-09-18 Fable 5.1：材料来源改读 ShellMesh.Material（解析路径不再有栅格 SourceField）
         // R48 配方指纹（2026-09-15 Opus 5）：在循环里数「真按半径划的格」「因为没有厚度场真跳过混合的格」—— 配方的混合状态按这两个数记，不按输入重判
         int nByRadiusCells = 0, nNoFieldCells = 0;
         for (int i = 0; i < n; i++)
@@ -551,7 +551,7 @@ public static class ShellThermal
             double nx = Math.Clamp(0, x0, x1), nz = Math.Clamp(0, z0, z1);
             double fx = Math.Max(Math.Abs(x0), Math.Abs(x1)), fz = Math.Max(Math.Abs(z0), Math.Abs(z1));
             if (FlangePlate.InsideInsulCircle(fx, fz, insulDiscRadiusMm) || !FlangePlate.InsideInsulCircle(nx, nz, insulDiscRadiusMm)) continue;
-            double fr = FlangeMesher.MaterialFraction(m, i, (x, z) => FlangePlate.InsideInsulCircle(x, z, insulDiscRadiusMm));
+            double fr = FlangeMesher.MaterialFractionInCircle(m, i, insulDiscRadiusMm);   // 2026-09-18 Fable 5.1：解析板按精确积分、栅格按方格中心（同一入口）
             if (double.IsNaN(fr)) continue;
             insulFrac[i] = fr;
             if (fr >= 1.0) lossFor[i] = insTab;
@@ -1373,7 +1373,7 @@ public static class ShellThermal
         int holeFaces = m.Faces.Count(f => f.B < 0 && f.Tag == ShellMesh.TagHole);
         return new ThermalRecipe
         {
-            InsulBlend = m.CellCount == 0 || !byRadius ? InsulBlendState.NotByRadius : m.SourceField is null ? InsulBlendState.OffNoField : InsulBlendState.On,
+            InsulBlend = m.CellCount == 0 || !byRadius ? InsulBlendState.NotByRadius : !m.HasMaterialSource ? InsulBlendState.OffNoField : InsulBlendState.On,   // 2026-09-18 Fable 5.1：同上
             LossTableLoC = p.TAmbC, LossTableHiC = hi, LossTableNodes = Math.Max(8, nodes),        // LossTable 构造时节点数至少 8
             // ★ 2026-09-15 Opus 5（审查意见 minor）：没有孔边界面 ⇒ 管温没施加 ⇒ 记 false（原先记 true，指纹说假话），孔边界面数另记
             HoleFaceDirichlet = holeFaceDirichlet && holeFaces > 0,

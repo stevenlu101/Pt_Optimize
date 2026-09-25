@@ -202,7 +202,7 @@ public class R48FlangeExpansionGateTests
         int partial = 0, inside = 0, outside = 0;
         for (int i = 0; i < m.CellCount; i++)
         {
-            double f = FlangeMesher.MaterialFraction(m, i, (x, z) => FlangePlate.InsideInsulCircle(x, z, plate.DiscRadiusMm));
+            double f = FlangeMesher.MaterialFractionInCircle(m, i, plate.DiscRadiusMm);   // 2026-09-18 Fable 5.1：解析路径没有栅格了，份额走圆的精确积分入口（生产 RampSweep 同一入口）
             Assert.False(double.IsNaN(f), $"单元 {i} 拿不到份额（没有厚度场？）");
             if (f > 1e-9 && f < 1 - 1e-9) partial++; else if (f >= 1 - 1e-9) inside++; else outside++;
         }
