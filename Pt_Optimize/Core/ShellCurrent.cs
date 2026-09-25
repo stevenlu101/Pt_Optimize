@@ -21,7 +21,31 @@ public sealed class ShellCurrentResult
 {
     public double[] V = Array.Empty<double>();        // 单元电位（归一化 0…1）
     public double[] JMagAPerMm2 = Array.Empty<double>();
+    /// <summary>
+    /// 2026-09-23（F6 审查后补，诊断）：重构出的单元 J 向量的 x、z 分量 A/mm²（与 <see cref="JMagAPerMm2"/> 同一次重构，JMag = √(Jx² + Jz²)）。
+    /// 只多交出已算好的两个分量，没有改任何算式、任何数。用处：门拿它在孔面上积分 Σ (J·n̂)·弦长·t，与 CurrentOutA（面导度 Σ g·V）这条不同的算法对照
+    /// （R48F6HoleFaceGateTests.门_电流守恒_面上）。
+    /// </summary>
+    public double[] JxAPerMm2 = Array.Empty<double>(), JzAPerMm2 = Array.Empty<double>();
+    /// <summary>
+    /// 归一化电位下（量纲 σ·t·L/d）的流入／流出电流与守恒误差 |in − out|/in。
+    /// ★ 2026-09-23（F6a）：孔面上定电位时 <b>CurrentOutA = Σ_孔面 g·V_A</b>（穿过每条孔面流进管孔的电流之和）；老口径（整格钉）= 流进 V = 0 孔格的净电流。
+    ///   两种口径下 CurrentInA 都是「从 V = 1 固定格流进自由格的净电流」，孔面恰落在 V = 1 固定格上时（压接盖孔的退化几何）那条面的 g·1 同时计入 in 与 out（短路，见 <see cref="HoleFacesOnElectrode"/>）。
+    /// </summary>
     public double CurrentInA, CurrentOutA, ConservationError;
+    /// <summary>★ 2026-09-23（F6a）：本次管孔电位真施加在孔面上（网格开关 ShellMesh.HoleFaceDirichlet 开 且 有孔面）。false = 老口径整格钉、或没有孔面。</summary>
+    public bool HoleFaceDirichlet;
+    /// <summary>2026-09-23：网格上的管孔面数（边界面且带管孔标签）。</summary>
+    public int HoleFaceCount;
+    /// <summary>2026-09-23（F6a，诊断）：落在 V = 1 固定格上的孔面数（短路；生产上压接盖孔已由 ShellMesh.ClampCoversHole 标「判不了」）。</summary>
+    public int HoleFacesOnElectrode;
+    /// <summary>
+    /// 2026-09-23（F6a）：Σ_自由格 |r_i|，r_i = b_i − (A V)_i = 自由格 i 的净流入（归一化单位，与 CurrentInA 同量纲）。
+    /// 恒等式 Σ_自由格 r_i = CurrentInA − CurrentOutA（内部面成对抵消）⇒ ConservationError ≤ ResidualAbsSum / CurrentInA —— 守恒误差就是线性解没解到底的那一点。
+    /// </summary>
+    public double ResidualAbsSum;
+    /// <summary>2026-09-23（F6a，只给门用）：Σ_自由格 r_i（有号），门拿它核恒等式 Σ r_i = CurrentInA − CurrentOutA。</summary>
+    public double ResidualSum;
     public double JMaxAPerMm2, JMeanAPerMm2;
     public int JMaxCell = -1;
     /// <summary>2026-09-19 Fable 5.1：角度条件数不足、只沿强方向重构了 J 的格数（<see cref="ShellCurrent.SliverKappaMin"/>；诊断）。</summary>
@@ -66,6 +90,9 @@ public static class ShellCurrent
     /// <summary>
     /// 解电位场。边界：<see cref="ShellMesh.TagTabEnd"/> 取 V=1，
     /// <see cref="ShellMesh.TagHole"/> 取 V=0，其余自然 Neumann（零通量，无需显式处理）。
+    /// ★★ 2026-09-23（F6a）：管孔 V = 0 **施加在孔面上**（<see cref="ShellMesh.HoleFaceDirichlet"/>，缺省开）——写法与压接面相同：每条孔面一条面导度
+    ///   g = σ_A·t_A·L ÷ DistAB 进自由格 A 的对角项（右端项 g·0），孔格回到普通自由格；电极 = 孔圆本身，与哪些格被孔圆切到无关。
+    ///   老口径（开关关，只供门）：带孔面的格整格钉 V = 0 —— 电极落在孔格形心，几何走一小步格集合就换一个、电极跳半格（F6）。
     /// ★ R48（2026-09-14，Opus 5）：生产网格还带 <see cref="ShellMesh.ClampCell"/>（压接段整面接触，FlangeMesher 的配方 ③）——
     ///   那些格一并取 V=1，电极 = 整个压接面，电流主要从压接段内边（x = 舌尖 + 压接长）进铂。
     /// ★ R48 F（2026-09-15，Opus 5）：<see cref="ShellMesh.ClampFaceDirichlet"/>（配方 ⑤，默认开）时 V=1 施加在压接面上而不是压接格形心，见 Solve 里那段。
@@ -93,7 +120,7 @@ public static class ShellCurrent
                                            double sliverKappaMin = SliverKappaMin)
     {
         int n = m.CellCount;
-        var res = new ShellCurrentResult { V = new double[n], JMagAPerMm2 = new double[n] };
+        var res = new ShellCurrentResult { V = new double[n], JMagAPerMm2 = new double[n], JxAPerMm2 = new double[n], JzAPerMm2 = new double[n] };
         if (n == 0) return res;
 
         // 单元电导率（相对参考值）。σ ∝ 1/ρe(T)
@@ -102,14 +129,19 @@ public static class ShellCurrent
         for (int i = 0; i < n; i++)
             sig[i] = tempC == null ? 1.0 : rhoRef / Math.Max(1e-30, Materials.PtResistivity(tempC[i]));
 
+        // ★★ 2026-09-23（F6a）：管孔 V = 0 施加在孔面上（开关只在网格上这一处读；关 ⇒ 下面每一步与改动前逐位相同）
+        bool holeFace = m.HoleFaceDirichlet;
+
         // 固定边界：把 Dirichlet 施加在**边界面所属单元**上
+        //   F6a：面上口径下管孔面不钉格（只在下面记成孔面导度 gB）；老口径照旧整格钉 V = 0
         var fixedVal = new double[n];
         var isFixed = new bool[n];
+        int nHoleFaces = 0;
         foreach (var f in m.Faces)
         {
             if (f.B >= 0) continue;
             if (f.Tag == ShellMesh.TagTabEnd) { isFixed[f.A] = true; fixedVal[f.A] = 1.0; }
-            else if (f.Tag == ShellMesh.TagHole) { isFixed[f.A] = true; fixedVal[f.A] = 0.0; }
+            else if (f.Tag == ShellMesh.TagHole) { nHoleFaces++; if (!holeFace) { isFixed[f.A] = true; fixedVal[f.A] = 0.0; } }
         }
         // ★ R48 生产配方（2026-09-14，Opus 5）：压接段整面接触 —— 形心在压接段内的格一并作电极（ShellMesh.ClampCell 空 = 老口径只钉外圈，逐位不变）。
         //   整面口径下各量的语义逐条核过（2026-09-14 Opus 5）：
@@ -137,6 +169,7 @@ public static class ShellCurrent
                 if (!isFixed[i])
                     throw new InvalidOperationException($"电流场：压接格集合（ShellMesh.ClampSetCells）里的格 {i} 没被钉成电极 —— 两份压接格定义漂开了。");
                 // 退化：同一格既带压接标签又带管孔标签、按面序被钉成 V=0（压接段贴到了管孔）⇒ 它不是电极，面上口径不认它，与它相邻的面照旧
+                //   （2026-09-23 F6a：孔面上定电位时孔格不再被钉，这一支不会命中；留给老口径）
                 if (fixedVal[i] != 1.0) clampSet[i] = false;
             }
 
@@ -183,6 +216,31 @@ public static class ShellCurrent
             if (f.B < 0) continue;
             nbr[f.A].Add((f.B, k)); nbr[f.B].Add((f.A, k));
             diag[f.A] += g[k]; diag[f.B] += g[k];
+        }
+
+        // ★★ 2026-09-23（F6a）：孔面导度 gB = σ_A·t_A·L ÷ DistAB（DistAB = ShellMesh.BoundaryDistMm：弧面取形心到孔圆的法向距 F6b，直边取形心到边中点），
+        //   进自由格 A 的对角项；右端项 gB·0 = 0 不用加。GS 旧路径的 diag 里同样含 gB，自动适用。
+        //   孔面落在 V = 1 固定格上（压接盖孔的退化几何）：不进方程，记为短路（in、out 各计一次 gB·1，见下面总电流），HoleFacesOnElectrode 计数。
+        //   DistAB 过小（&lt; 1e-12）或 NaN 当场炸 —— 生成器给弧面设了下限 GeomTolMm（1e-7 mm），生产网格上触发不到；走到这里说明面是手造坏的，不许静默跳过（跳过 = 那段孔边不导电）。
+        //   2026-09-23（F6 审查后统一）：热场 ShellThermal 的 gHole 对同一种面原是静默跳过（基准就有的写法），现改为同样抛异常、同一条判据 !(DistAB >= 1e-12) ——
+        //   两个场对同一条坏面的处理一致；抛出来本身就是「生产上触发不到」的自证。
+        double[]? gB = null;
+        double[]? gBCell = null;
+        int nOnElectrode = 0;
+        if (holeFace)
+        {
+            gB = new double[m.Faces.Count];
+            gBCell = new double[n];
+            for (int k = 0; k < m.Faces.Count; k++)
+            {
+                var f = m.Faces[k];
+                if (f.B >= 0 || f.Tag != ShellMesh.TagHole) continue;
+                if (!(f.DistAB >= 1e-12))
+                    throw new InvalidOperationException($"电流场：孔面 {k}（格 {f.A}）的形心—边界距离 {f.DistAB:R} mm 过小 —— 面导度无界，孔面不许静默跳过。");
+                gB[k] = sig[f.A] * m.Thickness[f.A] * f.Length / f.DistAB;
+                if (isFixed[f.A]) { nOnElectrode++; continue; }
+                diag[f.A] += gB[k]; gBCell[f.A] += gB[k];
+            }
         }
 
         if (useGaussSeidel)
@@ -290,7 +348,33 @@ public static class ShellCurrent
             foreach (var (c, k) in nbr[i]) net += g[k] * (res.V[i] - res.V[c]);
             if (fixedVal[i] > 0.5) inSum += net; else outSum -= net;
         }
+        // ★ 2026-09-23（F6a）：流出 = Σ_孔面 gB·V_A；落在 V = 1 固定格上的孔面是短路，gB·1 同时计入流入与流出
+        if (gB != null)
+            for (int k = 0; k < m.Faces.Count; k++)
+            {
+                if (!(gB[k] > 0)) continue;
+                int a = m.Faces[k].A;
+                double qh = gB[k] * res.V[a];
+                outSum += qh;
+                if (isFixed[a]) inSum += qh;
+            }
         res.CurrentInA = inSum; res.CurrentOutA = outSum;
+        res.HoleFaceDirichlet = holeFace && nHoleFaces > 0;
+        res.HoleFaceCount = nHoleFaces;
+        res.HoleFacesOnElectrode = nOnElectrode;
+        // 2026-09-23（F6a）：自由格净流入 r_i = Σ_邻 g·(V_邻 − V_i) − gB_i·V_i（= b_i − (A V)_i）；Σ r_i = in − out 是恒等式（内部面成对抵消）
+        {
+            double rs = 0, ra = 0;
+            for (int i = 0; i < n; i++)
+            {
+                if (isFixed[i] || !(diag[i] > 0)) continue;
+                double ri = 0;
+                foreach (var (c, k) in nbr[i]) ri += g[k] * (res.V[c] - res.V[i]);
+                if (gBCell != null) ri -= gBCell[i] * res.V[i];
+                rs += ri; ra += Math.Abs(ri);
+            }
+            res.ResidualSum = rs; res.ResidualAbsSum = ra;
+        }
         res.ConservationError = inSum > 0 ? Math.Abs(inSum - outSum) / inSum : double.NaN;
 
         // 定标：归一化解的总电流 inSum（量纲是 σ·t·L/d），实际电流 totalCurrentA
@@ -308,7 +392,35 @@ public static class ShellCurrent
         for (int k = 0; k < m.Faces.Count; k++)
         {
             var f = m.Faces[k];
-            if (f.B < 0) continue;
+            if (f.B < 0)
+            {
+                // ★ 2026-09-23（F6a）：孔面通量进 J 重构（老口径 gB 为 null ⇒ 边界面照旧不进，逐位不变）。压接格照旧跳过（J = 0）。
+                //   q = gB·V_A（流出 A、进孔）。弧面法向取弧中点指向孔心 n̂ = −Mid/|Mid|（= 弧段积分法向 ∫n ds 的方向），
+                //   法向分量 jn = q ÷ (t_A · 弦长)，弦长 = 2·r·sin(L/(2r)) = |∫n ds| ⇒ 均匀 J 下 jn = J·n̂ 精确；直边孔面（阶梯、手造条带）法向取形心指向边中点、弦长 = 面长。
+                //   M、b 的权重用面长 L（与内部面同）；方向张量 N 的权重取 1（孔面是一条完整的边界，不是被裁掉的料边）。
+                if (gB == null || !(gB[k] > 0) || (clampSet != null && clampSet[f.A])) continue;
+                double qh = gB[k] * res.V[f.A] * scale;
+                double hx, hz, chord;
+                if (!double.IsNaN(f.ArcRadiusMm))
+                {
+                    double rm = Math.Sqrt(f.Mid.X * f.Mid.X + f.Mid.Z * f.Mid.Z);
+                    hx = -f.Mid.X / rm; hz = -f.Mid.Z / rm;
+                    chord = 2 * f.ArcRadiusMm * Math.Sin(f.Length / (2 * f.ArcRadiusMm));
+                }
+                else
+                {
+                    var dOut = f.Mid - m.Centroid[f.A];
+                    double lo = Math.Max(1e-12, dOut.Norm);
+                    hx = dOut.X / lo; hz = dOut.Z / lo;
+                    chord = f.Length;
+                }
+                double Lh = f.Length;
+                double jnH = qh / Math.Max(1e-12, chord * m.Thickness[f.A]);
+                mxx[f.A] += Lh * hx * hx; mxz[f.A] += Lh * hx * hz; mzz[f.A] += Lh * hz * hz;
+                bx[f.A] += Lh * jnH * hx; bz[f.A] += Lh * jnH * hz;
+                nxx[f.A] += hx * hx; nxz[f.A] += hx * hz; nzz[f.A] += hz * hz;
+                continue;
+            }
             double q = g[k] * (res.V[f.A] - res.V[f.B]) * scale;   // A→B 的实际电流 [A]
             var dir = m.Centroid[f.B] - m.Centroid[f.A];
             double len = Math.Max(1e-12, dir.Norm);
@@ -365,6 +477,7 @@ public static class ShellCurrent
                 vz = (mxx[i] * bz[i] - mxz[i] * bx[i]) / det;
             }
             res.JMagAPerMm2[i] = Math.Sqrt(vx * vx + vz * vz);
+            res.JxAPerMm2[i] = vx; res.JzAPerMm2[i] = vz;   // 2026-09-23（F6 审查后补）：只交出分量，JMag 算式不动
             if (res.JMagAPerMm2[i] > jmax) { jmax = res.JMagAPerMm2[i]; res.JMaxCell = i; }
             jmean += res.JMagAPerMm2[i] * m.Area[i]; aSum += m.Area[i];
         }

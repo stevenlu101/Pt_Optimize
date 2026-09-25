@@ -3877,6 +3877,9 @@ public static class LineRunner
         var worstFlux = flanges.OrderBy(f => f.QFromTubeW).First();
         // R47 F（2026-09-13）：管孔定温环的自检写进附注，**不改判定**。
         //   TagHole 的口径是 |r − 孔半径| < 3 mm：环宽小于 3 mm 的盘（如盘 R28／孔 25.8）整段盘外缘会被钉成管孔温度。
+        // ★ 2026-09-23（F6c）：生产网格（FlangeMesher 弧面路径，解析与图纸两条路都是）孔面只认孔圆上的弧面（MeshRules.HoleTagArcOnly），
+        //   弧面中点半径恰 = 孔半径 ⇒ HoleTagMaxROverMm ≈ 0（浮点尾巴 ≤ 1e-12），这条附注在生产路径上恒不触发。
+        //   留着：它量的是「孔面有没有越出孔圆」这件事本身，阶梯孔边的老网格（QuadMesher、HoleArcFaces 关的对照）上照样会说话。
         string holeTagNote = "";
         {
             var over = flanges.Where(f => !double.IsNaN(f.HoleTagOverMm)).OrderByDescending(f => f.HoleTagOverMm).FirstOrDefault();
