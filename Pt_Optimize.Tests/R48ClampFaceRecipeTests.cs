@@ -33,7 +33,7 @@ namespace PtOptimize.Tests;
 ///
 /// ══ (a) 收敛阶 → deliverable/R48_压接面上定温_收敛阶_2026-09-15.txt
 ///   面上口径均匀网格 h = 1／0.5／0.25／0.125（不铺细带，均匀网格上细带无意义；与 AB 同一建网格调用）；同一趟再跑形心口径 h = 1／0.5／0.25 作对照。
-///   开跑即核（断言）：片0 形心口径三档抽热对得上 AB 文件 +21.967／+22.034／+22.134（打印三位 ⇒ 容差 0.0005）—— 对不上说明设置与 AB 不同，后面的比较不作数。
+///   开跑即核（断言）：片0 形心口径三档抽热对得上记录 +21.250／+21.728／+22.008（2026-09-23 按变因 F6 重录；F6 前是 AB 文件的 +21.967／+22.034／+22.134；打印三位 ⇒ 容差 0.0005）—— 对不上说明设置与 AB 不同，后面的比较不作数。
 ///   跑前写死的判读（数值把关人）：
 ///     · 舌区发热 r(0.5, 0.25, 0.125) ≤ 0.6 ⇒ 只是没进渐近区；≥ 0.65 ⇒ 有次线性来源，报出来；落在 0.6～0.65 之间 ⇒ 两条都不下结论，照实报。
 ///     · 夹持带走的比值应较形心口径（0.47）明显变小。操作化（跑前定）：同一三档 h = 1／0.5／0.25 上，面上比值 ≤ 形心比值 − 0.10，
@@ -221,7 +221,13 @@ public static class R48ClampFaceRecipeTests
         var face = new Dictionary<double, Row>();
         var cent = new Dictionary<double, Row>();
         // 片0 形心口径对得上 AB 文件整面行（工单转述，三位小数）—— 设置核对，对不上就停
-        var abRec = new Dictionary<double, double> { [1.0] = 21.967, [0.5] = 22.034, [0.25] = 22.134 };
+        // ★ 2026-09-23（Fable 5.1，F6 之后）：原来第一档对不上就当场抛，后两档根本不算，重录时拿不到数。改成三档都印出来再判（判法、容差 0.0005 没动）。
+        //   记录值本身：F6（HANDOVER §0.-19，孔边电流场面上定电位 + 弧面法向距）改了孔边场，h=1 抽热由 21.967 变 21.2501（分支镜像 2026-09-23 09:01 实跑），
+        //   三档记录按变因 F6 重录：旧 21.967／22.034／22.134（AB 文件工单转述，F6 前的场）→ 新 21.250／21.728／22.008
+        //   （分支镜像 2026-09-23 09:1x 实跑 21.2501／21.7278／22.0078，按门自己的「打印三位 ⇒ 容差 0.0005」取三位；Linux 数，与 Windows 差 1e-9 量级远在容差内；
+        //   证据 deliverable/R48_压接面上定温_收敛阶_2026-09-15_本次开跑于2026-09-23_09xx.txt）。三档都往下走 0.72／0.31／0.13 W：F6 把孔面上的电流出口从格形心挪回孔圆，孔边抽热随之变。
+        var abRec = new Dictionary<double, double> { [1.0] = 21.250, [0.5] = 21.728, [0.25] = 22.008 };
+        var abBad = new List<string>();
         foreach (double h in new[] { 1.0, 0.5, 0.25, 0.125 })
         {
             if (h >= 0.25)
@@ -229,14 +235,16 @@ public static class R48ClampFaceRecipeTests
                 var mC = FlangeMesher.Build(g, 0, h, h, 1e6, clampLen, clampBandMm: 0, clampFullFace: true, clampFaceDirichlet: false);
                 cent[h] = Solve(lc, J, iA, tRoot, mC, $"片{J} 形心 h={h}");
                 say(Fmt($"形心 h={h}", cent[h]));
-                if (J == 0)
-                    Assert.True(Math.Abs(cent[h].QTube - abRec[h]) <= 0.0005 + 1e-9,
-                        $"片0 形心口径 h={h} 抽热 {cent[h].QTube:0.0000} 对不上 AB 文件 {abRec[h]:0.000} —— 设置与 AB 不同，后面的比较不作数");
+                if (J == 0 && !(Math.Abs(cent[h].QTube - abRec[h]) <= 0.0005 + 1e-9))
+                    abBad.Add($"h={h} 抽热 {cent[h].QTube:0.0000} 对记录 {abRec[h]:0.000}");
             }
             var mF = FlangeMesher.Build(g, 0, h, h, 1e6, clampLen, clampBandMm: 0, clampFullFace: true, clampFaceDirichlet: true);
             face[h] = Solve(lc, J, iA, tRoot, mF, $"片{J} 面上 h={h}");
             say(Fmt($"面上 h={h}", face[h]) + (cent.TryGetValue(h, out var c) ? $"　面上−形心 抽热 {face[h].QTube - c.QTube:+0.0000;-0.0000;+0.0000}" : ""));
         }
+        if (J == 0)
+            Assert.True(abBad.Count == 0,
+                "片0 形心口径三档抽热对不上记录：" + string.Join("；", abBad) + " —— 设置与记录不同，或场改了要带变因重录；三档都已印在文件里，后面的比较不作数");
 
         say("");
         say("   比值 r(h₁,h₂,h₃) = (Q(h₃) − Q(h₂)) ÷ (Q(h₂) − Q(h₁))；步长 = Q(h₂) − Q(h₁)");
