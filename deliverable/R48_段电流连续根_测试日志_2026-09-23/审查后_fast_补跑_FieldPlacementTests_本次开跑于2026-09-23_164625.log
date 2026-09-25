@@ -1,0 +1,33 @@
+开跑 2026-09-23 16:46:25　loadavg 39.34 41.67 29.44 45/488 8562　类 FieldPlacementTests（过滤 速度!=慢）
+Microsoft (R) Test Execution Command Line Tool Version 17.8.0 (x64)
+Copyright (c) Microsoft Corporation.  All rights reserved.
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.31)
+[xUnit.net 00:00:00.21]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:00.97]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:00.99]   Starting:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.FieldPlacementTests.单舌片_槽心落在背对舌片的零度一带 [1 s]
+  Passed PtOptimize.Tests.FieldPlacementTests.舌孔孔心落在自由段内 [1 s]
+  Passed PtOptimize.Tests.FieldPlacementTests.孔心场给的位置_已开孔就冻结不写回 [4 m 12 s]
+  Passed PtOptimize.Tests.FieldPlacementTests.没有场定值时行为与从前逐位相同 [26 ms]
+  Passed PtOptimize.Tests.FieldPlacementTests.孔心场给的位置_开孔前采用写回数组 [4 m 6 s]
+跳过：本机没有 Pt_Optimize.Geom.exe（需 Rhino 8）
+双舌片：槽心 73°（分数 4.24）
+带内单元 36 个，角向 -178°…178°（含 ±180 跨越）
+槽心 123°（分数 0.11）
+[xUnit.net 00:08:23.08]   Finished:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.FieldPlacementTests.旧档的标量孔心铺到每一片 [75 ms]
+  Passed PtOptimize.Tests.FieldPlacementTests.场定的位置存得进档也读得回来 [6 ms]
+  Passed PtOptimize.Tests.FieldPlacementTests.槽心角真的写进了图也读得回来 [3 ms]
+  Passed PtOptimize.Tests.FieldPlacementTests.出图规格带槽心角与逐片孔心 [21 ms]
+  Passed PtOptimize.Tests.FieldPlacementTests.双舌片对称进电_槽心离开零度 [557 ms]
+  Passed PtOptimize.Tests.FieldPlacementTests.槽心角必须落在带内有单元的角向上 [105 ms]
+
+Test Run Successful.
+Total tests: 11
+     Passed: 11
+ Total time: 8.4048 Minutes
+EXIT 0　结束 2026-09-23 16:54:50

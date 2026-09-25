@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 
 namespace PtOptimize.Core;
 
@@ -35,6 +36,43 @@ public sealed class RampResult
     public bool StabilityLimited;
     public double CapMetalJPerK, CapInsulJPerK;   // 热容分解，便于判断谁主导
     public string Note = "";
+
+    /// <summary>
+    /// ★ R48（2026-09-15，Opus 5；常驻数值把关人第十四轮「其余散热表超界检测」）：本次管散热表覆盖的温度区间 °C
+    /// （下限 = 环境温度；上限 = 目标、参考温度、起点三者之最 + 200 K，见 <see cref="RampSolver.Solve"/> 里建表处的注释）。
+    /// </summary>
+    public double LossTableLoC = double.NaN, LossTableHiC = double.NaN;
+    /// <summary>
+    /// 本次积分**实际查表用到的温度**里有超出表区间、而且钳住的方向会让结果偏乐观或说不清的 ⇒ <see cref="Reached"/>／<see cref="HoursToTarget"/> 不可引用。
+    /// 查表用到的温度 = 起始温度、积分达到的最高温 <see cref="TPeakC"/>、参考温度（法兰散热按它缩放）、目标温度（热稳定极限的斜率）。
+    /// ★ 2026-09-15 Opus 5（审查意见 major：环境温度 35 °C 时起点 25 °C 被误判超界）：积分走过的温度（起始温度、积分最高温）**只查上限**，
+    ///   低于表下限（= 环境温度）不算超界 —— 推导见 <see cref="RampSolver.Solve"/> 里那段注释，不依赖任何实测数据；
+    ///   参考温度与目标温度两头都查（它们进的是比值与斜率，钳住的方向说不清）。
+    /// ★ 2026-09-15 Opus 5（审查意见 minor）：表上限改为三者之最 + 200 K 之后，上限那头按构造只剩「积分最高温冲过 最高已知温度 + 200 K」才会超
+    ///   （积分一步 2 s，要升温速率超过 100 K/s 才冲得过去，检测照留）；能触发的主要是下限那头：参考温度（整线里 = 本段控温点）或目标温度低于环境温度，以及 NaN。
+    /// 用它的判据（LineRunner 的集总升温用时参考量）超界即判不了。
+    /// </summary>
+    public bool LossTableExceeded;
+    /// <summary>
+    /// ★ 2026-09-15 Opus 5（审查意见 minor：原先只有一句带内部参数名「参考温度」的文字，整线附注照抄进界面）：超界的查表温度，结构化 —— 哪一个、多少 °C。
+    /// 调用方按自己的叫法生成说明文字（整线里参考温度就是本段控温点），不从 <see cref="LossTableNote"/> 里抠字。空 = 没超界。
+    /// </summary>
+    public (RampTableProbe Probe, double TempC)[] LossTableOut = Array.Empty<(RampTableProbe, double)>();
+    /// <summary>超界时的一句通用说明（空 = 没超界）；给没有自己叫法的调用方用。</summary>
+    public string LossTableNote = "";
+}
+
+/// <summary>R48（2026-09-15，Opus 5）：集总升温积分里查管散热表用到的四个温度（<see cref="RampResult.LossTableOut"/> 标明是哪一个超界）。</summary>
+public enum RampTableProbe
+{
+    /// <summary>升温起点（<c>fromC</c>）。</summary>
+    Start,
+    /// <summary>积分达到的最高温（<see cref="RampResult.TPeakC"/>）。</summary>
+    Peak,
+    /// <summary>参考工况温度（<c>tRefC</c>，法兰散热按它缩放；整线里 = 本段控温点）。</summary>
+    Reference,
+    /// <summary>升温目标（<c>targetC</c>，热稳定极限取这里的斜率）。</summary>
+    Target,
 }
 
 public static class RampSolver
@@ -55,6 +93,7 @@ public static class RampSolver
                                    double flangeCurrentRefA, double tRefC,
                                    double fromC, double targetC, double maxHours)
     {
+        var props = PtProps.For(p);   // R48 物性接线（2026-09-23，Opus 5.5）：ρ、cp 按牌号（纯铂逐位不变）；质量仍按纯铂密度
         var res = new RampResult();
 
         double ri = p.TubeIdMm * 0.5e-3, w = wallMm * 1e-3, rOut = ri + w;
@@ -70,7 +109,16 @@ public static class RampSolver
 
         // CylinderLoss 内部要迭代求外表面温度，积分里逐步调用太慢（下面二分会调数十万次），
         // 与 SegmentSolver 一样先打成样条表，顺带拿到解析斜率供 I_stab 用。
-        var lossTab = new LossTable(p.TAmbC, targetC + 200, 60,
+        // ★ R48（2026-09-15，Opus 5；审查意见 minor「升温目标比控温点低 200 K 以上是界面可填的合法输入，原上限 目标 + 200 K 让参考温度出表，这条参考量白丢」）：
+        //   上限由「目标 + 200 K」改为「查表会用到的已知温度（目标、参考温度、起点）里最高的 + 200 K」。
+        //   200 K 是原式给目标留的余量，原样沿用到三者之最（规则由查表用到哪些温度推出，不看任何实测数据）。
+        //   数值变化范围（如实写）：参考温度与起点都不高于目标 ⇒ 三者之最 = 目标 ⇒ 表逐位不变（生产整线：控温点 ≤ 升温目标 1150 °C、起点 25 °C 就是这种）；
+        //   参考温度或起点高于目标 ⇒ 表变宽、60 个样条节点的间距变大 ⇒ 数会变：原先超出 目标 + 200 K 的部分是被钳住算错的，现在按真值查；
+        //   在 目标～目标 + 200 K 之间的，只有插值级的差。NaN 不参与取最大（比较为假），照旧由下面的超界检测报出来。
+        double tHiKnown = targetC;
+        if (tRefC > tHiKnown) tHiKnown = tRefC;
+        if (fromC > tHiKnown) tHiKnown = fromC;
+        var lossTab = new LossTable(p.TAmbC, tHiKnown + 200, 60,
             tC => Insulation.CylinderLoss(tC, p.TAmbC, rOut, p.Layers, eps,
                                           p.Posture == Orientation.Vertical, L,
                                           p.LossScale).QPerLength);
@@ -85,14 +133,14 @@ public static class RampSolver
         //    法兰电阻由参考工况反推：R_f = QGen_ref / I_ref²，随温度按 ρe(T) 缩放。
         double rFlangeRef = flangeGenRefW > 0 && flangeCurrentRefA > 1e-9
             ? flangeGenRefW / (flangeCurrentRefA * flangeCurrentRefA) : 0;   // Ω @ tRefC
-        double rhoRefT = Math.Max(1e-30, Materials.PtResistivity(tRefC));
+        double rhoRefT = Math.Max(1e-30, props.Rho(tRefC));
         // Φ≈1 ⇒ 参考工况下单片法兰的散热 ≈ 其自身发热
         double flangeLossRefW = flangeGenRefW;
 
         double NetFlangePairW(double tC, double iA)
         {
             if (rFlangeRef <= 0) return 0;
-            double gen = iA * iA * rFlangeRef * (Materials.PtResistivity(tC) / rhoRefT);
+            double gen = iA * iA * rFlangeRef * (props.Rho(tC) / rhoRefT);
             double loss = flangeLossRefW * (LossPerM(tC) / lossRef);
             return 2 * (loss - gen);          // 两片；>0 表示净耗，<0 表示净帮忙
         }
@@ -100,7 +148,7 @@ public static class RampSolver
         // ── 热容
         double massTube = Materials.PtDensity * area * L;      // kg
         double massFlange = massFlangePairG * 1e-3;            // kg
-        double CapMetal(double tC) => (massTube + massFlange) * Materials.PtCp(tC);
+        double CapMetal(double tC) => (massTube + massFlange) * props.Cp(tC);
 
         // 保温层热容：各层体积×密度×比热。乘 0.5 是梯度因子 ——
         // 保温层内表面跟着金属走、外表面接近环境，平均温升约为内表面的一半。
@@ -120,7 +168,7 @@ public static class RampSolver
         // ── 空管热稳定极限：β 不含玻璃项（这正是与稳态解的分野）
         //    稳态解里 β = lossTab.Slope + hg·π·D，空管时后一项为零，极限随之收紧。
         double betaEmpty = lossTab.Slope(targetC);            // W/(m·K)
-        double drhoDt = Materials.RhoRef * (Materials.AlphaFit + 2 * Materials.BetaFit * targetC);
+        double drhoDt = props.DRhoDT(targetC);
         res.IStabA = Math.Sqrt(Math.Max(1e-9, betaEmpty * area / Math.Max(1e-30, drhoDt)));
 
         // ── 电流：J_allow 是**上限而非必须值**。厚壁时 I=J_allow·A 会越过热稳定极限
@@ -142,7 +190,7 @@ public static class RampSolver
 
         while (time < maxSec)
         {
-            double R = Materials.PtResistivity(t) * L / area;   // Ω
+            double R = props.Rho(t) * L / area;   // Ω
             double pElec = current * current * R;
             double net = pElec - LossPerM(t) * L - NetFlangePairW(t, current);
             double cap = CapMetal(t) + capInsul;
@@ -168,7 +216,38 @@ public static class RampSolver
         res.TPeakC = tPeak;
         if (!res.Reached) res.HoursToTarget = double.NaN;
 
-        double rT = Materials.PtResistivity(targetC) * L / area;
+        // ★ R48（2026-09-15，Opus 5）：解完核一下查表用到的温度在不在表里（LossTable.Eval／Slope 超界静默钳住）。
+        //   四个温度就是上面真正喂给 LossPerM／lossTab.Slope 的那几个：起点、积分最高温、参考温度、目标温度。
+        // ★ 2026-09-15 Opus 5（审查意见 major）：**积分走过的温度只查上限**。原先四个温度两头都查 ⇒ 界面「环境温度」填 35 °C 时，
+        //   写死的起点 25 °C 低于表下限（= 环境温度）⇒ 每一段都判超界 ⇒ 每个设计的集总升温用时都「无法判定」，是误报。
+        //   推导（不依赖任何实测数据，只用模型本身的性质）：
+        //     ① 表下限 = 环境温度 T_amb（上面 new LossTable(p.TAmbC, …)）；
+        //     ② 表面散热 q(T) 对温度单调不减（温差越大散热越多，CylinderLoss 的对流、辐射、导热各项都是），故 T < T_amb 时 q(T) ≤ q(T_amb)；
+        //     ③ 积分里散热只以两种形式进净功率：管 −LossPerM(t)·L、法兰 −flangeLossRefW·LossPerM(t)/lossRef（lossRef 与 t 无关、为正）——
+        //        钳住 ⇒ 用 q(T_amb) 代替 q(t) ⇒ 两项都只会**多扣**，净功率只会偏小；发热项 I²R(t) 与热容不查表，不受影响；
+        //     ④ 净功率偏小 ⇒ 升温更慢 ⇒ 算出的用时只会偏长、「限时内到得了」只会被误判成到不了，不会反过来。
+        //   ⇒ 低于表下限的钳住是**偏保守**的，不会把不能用的说成能用，不需要判不了；超上限则相反（少扣散热、偏乐观），照判。
+        //   参考温度（进比值 LossPerM(t)/lossRef 的分母）与目标温度（进热稳定极限的斜率）钳住后方向说不清，仍两头都查。
+        res.LossTableLoC = lossTab.LoC; res.LossTableHiC = lossTab.HiC;
+        // 2026-09-15 Opus 5：超界的温度记成结构化列表（哪一个、多少度），说明文字由调用方按自己的叫法生成；这里只留一句通用的
+        var outOfTable = new System.Collections.Generic.List<(RampTableProbe Probe, double TempC)>();
+        foreach (var (what, tq) in new[] { (RampTableProbe.Start, fromC), (RampTableProbe.Peak, tPeak) })
+            if (!(tq <= lossTab.HiC)) outOfTable.Add((what, tq));      // NaN 也算超界
+        foreach (var (what, tq) in new[] { (RampTableProbe.Reference, tRefC), (RampTableProbe.Target, targetC) })
+            if (!lossTab.Covers(tq)) outOfTable.Add((what, tq));
+        if (outOfTable.Count > 0)
+        {
+            res.LossTableExceeded = true;
+            res.LossTableOut = outOfTable.ToArray();
+            string Name(RampTableProbe w) => w switch
+            {
+                RampTableProbe.Start => "起始温度", RampTableProbe.Peak => "积分最高温", RampTableProbe.Reference => "参考工况温度", _ => "目标温度",
+            };
+            res.LossTableNote = $"{string.Join("、", outOfTable.Select(o => $"{Name(o.Probe)} {o.TempC:0.#} °C"))} 不在管表面散热表 {lossTab.LoC:0.#}～{lossTab.HiC:0.#} °C 内，"
+                              + "表外那部分散热只能按表端点的值算";
+        }
+
+        double rT = props.Rho(targetC) * L / area;
         res.PowerAtTargetW = current * current * rT;
         res.LossAtTargetW = LossPerM(targetC) * L + NetFlangePairW(targetC, current);
         if (res.Note.Length == 0 && !res.Reached)

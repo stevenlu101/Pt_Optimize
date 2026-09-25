@@ -1,0 +1,38 @@
+ZZO56 探针　树 19aea02　开跑 2026-09-23 22:11:41　平台 Linux 镜像（Release）　同机并跑：是（另有 Core 驱动实施在编译与冒烟；耗时为争用下量得）
+Core 程序集 /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtC_19aea02/.linux/Tests/bin/Release/net8.0/Pt_Optimize.dll
+设计字段全表（DesignSpec，逐字段）：Binding=(长文本); ClampLengthMm=40; ClampTempC=450; DiscCutRotDeg=[NaN,NaN,NaN]; DiscCutShape=[0,0,0]; DiscInsulMm=[]; DiscOverK=-0.208; DiscRadiusMm=28; FlangeDipK=4.72; FlangeFile3dm=(集合 0); FlangeInsulMm=20; FlangeInsulated=True; FlangeMassG=1082; FromFile=; GeomSource=; HoleFluxW=1.123; Invalid=; InvalidChecks=(集合 0); JDesignAPerMm2=10; Name=盘Ø56 记录（两段）; Notes=; Provenance=(长文本); RampH=0.058; RecordFromOldMesh=False; ResidualK=0.5; RingMul=[1,1,1]; RingMul2=[NaN,NaN,NaN]; RingW1Mm=[NaN,NaN,NaN]; RingW2Mm=[NaN,NaN,NaN]; RingWidthMm=3; SegLengthMm=[300,300]; SetpointC=[1150,1080]; SlotCenterDeg=[NaN,NaN,NaN]; SlotRInMm=NaN; SlotROutMm=NaN; SlotSpanDeg=[0,0,0]; TabArmThickMm=[NaN,NaN,NaN]; TabArmX0Mm=[NaN,NaN,NaN]; TabArmX1Mm=[NaN,NaN,NaN]; TabFilletMm=3; TabHalfWidthMm=28; TabHoleAspect=[1,1,1]; TabHoleRMm=[0,0,0]; TabHoleRotDeg=[NaN,NaN,NaN]; TabHoleSides=[0,0,0]; TabHoleXMm=[NaN,NaN,NaN]; TabInsulMm=[5.1,2.8,8.6]; TabLengthMm=140; TabTaper=False; TabThickMm=[0.6,1.02,0.6]; ThicknessScale=[]; TongueThickMm=[1.75,3.03,1.75]; TotalMassG=3547; TubeIdMm=50; TubeInsulMm=10; TubeJ=9.506; TubeMassG=2465; VerifiedDiscOverK=-0.004; VerifiedFlangeDipK=10.329; VerifiedHoleFluxW=3.386; VerifiedMeshMm=0.25; VerifiedNote=(长文本); WallMm=0.8
+工艺参数全表（DesignInputs，逐属性）：BaselineTolAmplified=True; BusbarClampLengthMm=3; BusbarClampTempC=-1; BusbarConductanceWPerK=-1; BusbarJAllowAPerMm2=2; BusbarLenToSinkMm=300; BusbarSinkTempC=25; ColdUnderTcAllowK=5; ConvCharLenM=0.05; DcOffsetPercent=0; DesignLifeHours=8760; DevitMarginK=40; EndInsulExtraMm=0; EndInsulLengthMm=30; EndInsulShapeHGlass=-1; FlangeAirVelocityMPerS=0; FlangeDrawLeftW=NaN; FlangeDrawOverrideSet=False; FlangeDrawOverrideW=0; FlangeDrawRightW=NaN; FlangeInsulThickMm=2.5; FlangeInsulated=True; GlassCp=1300; GlassDensity=2500; GlassHeadM=0.5; GlassResistivityOhmCm=5; GlassViscosity=30; GradeName=Pt; HGlass=65; HotOverTcAllowK=5; JAllowAPerMm2=10; Layer1=(InsulationLayer); Layer2=(InsulationLayer); Layer3=(InsulationLayer); LinearGaussSeidel=False; LossScale=1; MeasureInsulWindowAtFinalCheck=True; NeighbourTempLeftC=NaN; NeighbourTempRightC=NaN; Nodes=401; OuterEmissivity=0.45; Posture=Horizontal; PtEmissivity=0.18; PtValence=2; RunThreeStatesAtFinalCheck=True; SafetyFactor=2; SegBvpTolK=0.0005; SegCurrentContinuousRoot=True; SegCurrentTolA=0.005; SegPicardTolK=0.001; SigmaOfTCoupling=False; SizeWall=False; SplitSharedFlangeDraw=False; Supply=AcPhase; SupportSpanMm=300; TAmbC=25; TGlassInC=1300; TLiquidusC=1050; TSetC=1300; ThroughputTPerDay=1.5; TubeCavityRadKA1150WmPerK=0.023; TubeIdMm=50; TubeJAllowAPerMm2=12; TubeLengthMm=300; WallMinMm=1; WallMm=0.8; WeldMinThicknessMm=0.6; WeldSafetyFactor=2
+── 变体 F3　改回：热场发热用重构 J（GateRevertFaceHeat=true）
+  设计：段 2　控温 {1150, 1080}　段长 {300, 300}　管保温 10　盘半径 28　舌半宽 28　舌长 140　板厚 {0.6, 1.02, 0.6}　舌片厚 {1.75, 3.03, 1.75}　舌保温 {5.1, 2.8, 8.6}　环倍率 {1, 1, 1}　管壁 0.8　圆盘保温 System.Double[]
+  网格：hFine 2 hCoarse 11 fineR 50 hInner 0 innerR 0
+  收敛 True　全判据 False　MeshCells(片0) 904　合计铂重 2605.5 g（法兰 962.3）　用时 313 s　
+  段1：③ 增量温降 27.814 K（A 24.555 / B 27.814）　管根 1125.6/1088.9 °C　基线 1150.1/1116.7　I 979.8 A
+  段2：③ 增量温降 29.279 K（A 27.813 / B 29.279）　管根 1088.0/1048.0 °C　基线 1115.8/1077.3　I 835.5 A
+  片0 入口：格数 904　抽热 9.666 W　铂重 257.92 g　J峰 14.187 A/mm²　最高温 1127.3 °C　管根 1125.5848728338872　JField 最大 14.187 @ 格 713（x -25.89, z -1.06, r 25.91 mm，面积 0.452 mm²）
+  片1 HC1|HC2：格数 904　抽热 10.765 W　铂重 446.44 g　J峰 13.161 A/mm²　最高温 1090.2 °C　管根 1088.909896533645　JField 最大 13.161 @ 格 714（x -25.89, z 1.06, r 25.91 mm，面积 0.452 mm²）
+  片2 出口：格数 904　抽热 11.422 W　铂重 257.92 g　J峰 12.097 A/mm²　最高温 1048.1 °C　管根 1048.0071867849424　JField 最大 12.097 @ 格 713（x -25.89, z -1.06, r 25.91 mm，面积 0.452 mm²）
+  判据 · 升温到位用时（集总）：0.058 / 72 h　✓　HC1
+  判据 · ② 法兰最高温 − 管温（整片，含舌片）：1.714 / 0 K　✓　入口
+  判据 ⑦ 最热铂高出热偶读数：-22.701 / 5 K　✓　入口
+  判据 ②″圆盘区最高温 − 管温（旧判法）：1.714 / 5 K　✓　入口
+  判据 ②′管孔净流入 须为正：9.666 / 0 W　✓　入口
+  判据 ⑧ 管根低于热偶读数：31.993 / 5 K　✗　出口
+  判据 ③ 法兰增量温降（旧判法）：29.279 / 10 K　✓　HC2
+  判据 · 偏离本段控温点：61.090 / 10 K　✓　HC1
+  判据 ④ 管强度利用率：0.689 / 1 —　✓　HC1
+  判据 · 法兰自给率 Φ_max：1.744 / 1 —　✓　HC1|HC2
+  判据 · 法兰 J_max：14.187 / 10 A/mm²　✓　入口
+  判据 ① 升温：7.670 / 12 A/mm²　✓　全线
+  判据 法兰截面 J：9.997 / 11 A/mm²　✓　HC1|HC2 舌片 x=-100
+  判据 管 J：7.674 / 12 A/mm²　✓　HC1
+  判据 ⑥ 圆盘盖得住管孔＋焊脚：1.180 / 0 mm　✓　共用1
+  判据 ⑤ 舌片自由段 ≥ 下界：100.000 / 100 mm　✓　入口
+  判据 接合区保温缠得出来：20.000 / 10 mm　✗　入口 圆盘保温
+  判据 · 法兰热平衡残差：0.001 / 0 W　✓　HC1|HC2
+  判据 · 整片热稳定：24.996 / 1 ×　✓　入口
+  判据 · 升温期法兰−管峰值：NaN / 215 K　无法判定　入口
+  判据 · 管↔法兰热收支：10.765 / 0 W　✓　整线
+  判据 · 局部热稳定：8.821 / 1 ×　✓　入口 舌 r=31.1
+  判据 · 玻璃温降 vs 实测：10.052 / 20 K　✓　整线
+  注：⚠ 本次是门用改回：热场发热按重构 J 的 ρJ²tA（改前口径，F3 前），不是交付口径的面发热。
+ROW|19aea02|F3|cells0=904|cellsAll=2712|dT=29.279/10✓|inflow=9.666/0✓|hottest=-22.701/5✓|root=31.993/5✗|disc=1.714/5✓|jpeak=14.187@片0|s=313|mass=2605.5|conv=True

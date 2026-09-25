@@ -1,0 +1,41 @@
+﻿F4（分区热账按材料份额，决 28 两区都算）改前／改回／开 的全量转储对拍 —— 2026-09-23，C3
+改前 = 分支头 cff38c6 的源码快照（git archive 到 scratchpad/c3_pre，Linux 镜像另建），只加同一份临时探针 ZZF4PrePostProbe.cs 与门共用算例档 R48F4Cases.cs（只用 F4 之前就有的接口）；
+改回 = 本树 LineCase／PlateThermalSetup.ZoneByMaterialFraction = false（只供门）；开 = 本树生产缺省。平台 Linux 镜像 net8.0，同一台机器（4 核，与别的子代理同机，load 10～49）。
+时刻（审查后更正 M5；「写出于」= 转储文件的修改时刻，「开跑」只写确有开跑时刻的）：改前探针 2026-09-23 14:10:31 开跑（热解 18 例、W08 盘10／盘20 判决整线；整线转储写出于 14:27:42／14:36:19）；接线门 1 小算例的改前转储另跑，写出于 14:41:01（原写「15:0x」有误）；改回／开的热解探针 14:1x 写出；W08 盘10／盘20 判决整线的改回／开转储出自 R48F4ZoneShareGateTests.门c（开跑 15:10:44，环境变量 PT_F4_OUT 设了才写转储；写出于 15:23:32～15:37:49）；
+W08／W06 现役设计判决整线的改回／开转储出自 门d（开跑 14:18:01；写出于 14:34:48～15:10:44）；接线门 1 小算例的改回／开写出于 15:39:28／15:39:47（原写「15:4x」有误）。转储写法：整线 = R48LineDumpTests.Dump（含文字，两处挂钟改占位，与接线门 1 同一写法）；热解 = R48F4Cases.DumpThermal（ShellThermalResult 全部公开成员）。
+★ 探针源码、接线门 1 全文转储与 diff、整线开／关 diff、全部转储的 SHA-256 清单已入库：deliverable/R48_F4_分区按份额_证据_2026-09-23/（审查 M5 后补；scratchpad 一清也能复核 SHA）。
+
+══ 一、改回 = 改前（逐字节，只差 F4 新加的成员）
+  单片热解 18 例（R48NMeshGateTests 带格与闭合门的 18 例，W08 片 0）：改前 vs 改回（去掉 F4 新成员 VolDiscMm3, VolTabMm3, ZoneByMaterialFraction, ZoneDiscShare, ZoneSplitCells 这 5 行）逐字节相同 18/18；每份改前转储 78 行。
+  接线门 1 小算例：改前 1250 行，改回 1251 行；差异行 ['+算例.ZoneByMaterialFraction = false']；去掉那一行后 SHA-256 改前 fb2c32488eb4d3c408c6655cb544b856498a78174de21a2ff0726ca1e0083cf2 ／ 改回 fb2c32488eb4d3c408c6655cb544b856498a78174de21a2ff0726ca1e0083cf2 ⇒ 逐字节相同
+  W08 盘10 判决整线：改前 1527 行，改回 1528 行；差异行 ['+算例.ZoneByMaterialFraction = false']；去掉那一行后 SHA-256 改前 3fc28e8a351d6c39bb469e9c9842f5bae1dfa0fe3d0fe0abd0e3d07fb03ea222 ／ 改回 3fc28e8a351d6c39bb469e9c9842f5bae1dfa0fe3d0fe0abd0e3d07fb03ea222 ⇒ 逐字节相同
+  W08 盘20 判决整线：改前 1528 行，改回 1529 行；差异行 ['+算例.ZoneByMaterialFraction = false']；去掉那一行后 SHA-256 改前 b3779dcc082a29a3e2539495eac43fe21e44855c22ece665a2a25b0ebb42085d ／ 改回 b3779dcc082a29a3e2539495eac43fe21e44855c22ece665a2a25b0ebb42085d ⇒ 逐字节相同
+
+══ 二、开 − 改回：哪些成员变了（成员路径把片号写成 [j]，右列是出现次数）
+  接线门 1 小算例（生产 SHA-256 = 接线门 1 新记录）：开 SHA-256 ffc61757e29c51fae885964428c18bc1fb0ae761e79bba69308416f060e67236
+    算例.ZoneByMaterialFraction ×1；结果.Checks[j].Note ×2；结果.Flanges[j].DiscZoneRule ×3；结果.Flanges[j].QGenDiscW ×3；结果.Flanges[j].QGenTabW ×3；结果.Flanges[j].QLossDiscW ×3；结果.Flanges[j].QLossTabW ×3；结果.Flanges[j].TDiscMeanC ×3；结果.Flanges[j].TTabMeanC ×3
+    判据的值／判定位变了的：无
+  W08 盘10 判决：开 SHA-256 014853394b5bf8edfd0744cf8cffd52d0c902b0336b5d16f39eeba254d4882ff
+    算例.ZoneByMaterialFraction ×1；结果.Checks[j].Note ×2；结果.Flanges[j].DiscZoneRule ×4；结果.Flanges[j].QGenDiscW ×4；结果.Flanges[j].QGenTabW ×4；结果.Flanges[j].QLossDiscW ×4；结果.Flanges[j].QLossTabW ×4；结果.Flanges[j].TDiscMeanC ×4；结果.Flanges[j].TTabMaxC ×2；结果.Flanges[j].TTabMeanC ×4；结果.Flanges[j].TabMaxJAPerMm2 ×2；结果.Flanges[j].TabMaxRMm ×2；结果.Flanges[j].TabMaxThickMm ×2；结果.Flanges[j].TabMaxXMm ×2；结果.Flanges[j].TabMaxZMm ×2
+    判据的值／判定位变了的：无
+  W08 盘20 判决：开 SHA-256 4449805e290a688c4e8ce6859afc1b9635041997c47b1fcbc96bfead2faf67d3
+    算例.ZoneByMaterialFraction ×1；结果.Checks[j].Note ×2；结果.Flanges[j].DiscZoneRule ×4；结果.Flanges[j].QGenDiscW ×4；结果.Flanges[j].QGenTabW ×4；结果.Flanges[j].QLossDiscW ×4；结果.Flanges[j].QLossTabW ×4；结果.Flanges[j].TDiscMeanC ×4；结果.Flanges[j].TTabMaxC ×4；结果.Flanges[j].TTabMeanC ×4；结果.Flanges[j].TabMaxJAPerMm2 ×4；结果.Flanges[j].TabMaxRMm ×4；结果.Flanges[j].TabMaxThickMm ×3；结果.Flanges[j].TabMaxXMm ×3；结果.Flanges[j].TabMaxZMm ×4
+    判据的值／判定位变了的：无
+  W08 现役设计判决：开 SHA-256 4449805e290a688c4e8ce6859afc1b9635041997c47b1fcbc96bfead2faf67d3
+    算例.ZoneByMaterialFraction ×1；结果.Checks[j].Note ×2；结果.Flanges[j].DiscZoneRule ×4；结果.Flanges[j].QGenDiscW ×4；结果.Flanges[j].QGenTabW ×4；结果.Flanges[j].QLossDiscW ×4；结果.Flanges[j].QLossTabW ×4；结果.Flanges[j].TDiscMeanC ×4；结果.Flanges[j].TTabMaxC ×4；结果.Flanges[j].TTabMeanC ×4；结果.Flanges[j].TabMaxJAPerMm2 ×4；结果.Flanges[j].TabMaxRMm ×4；结果.Flanges[j].TabMaxThickMm ×3；结果.Flanges[j].TabMaxXMm ×3；结果.Flanges[j].TabMaxZMm ×4
+    判据的值／判定位变了的：无
+  W06 现役设计判决：开 SHA-256 41ccf41f09791de6b219a4a335d799a9005b33e60a93ee405d9d0a63e0f51cad
+    算例.ZoneByMaterialFraction ×1；结果.Checks[j].Note ×2；结果.Flanges[j].DiscZoneRule ×4；结果.Flanges[j].QGenDiscW ×4；结果.Flanges[j].QGenTabW ×4；结果.Flanges[j].QLossDiscW ×4；结果.Flanges[j].QLossTabW ×4；结果.Flanges[j].TDiscMeanC ×4；结果.Flanges[j].TTabMaxC ×4；结果.Flanges[j].TTabMeanC ×4；结果.Flanges[j].TabMaxJAPerMm2 ×4；结果.Flanges[j].TabMaxRMm ×4；结果.Flanges[j].TabMaxThickMm ×3；结果.Flanges[j].TabMaxXMm ×3；结果.Flanges[j].TabMaxZMm ×4
+    判据的值／判定位变了的：无
+
+读法：判据只有说明文字（Note）变 —— ⑦ 与 ②″ 的说明里转印分区说明与舌片区峰；判据值、判定位一位没动（门 c 另逐位核三条硬判据）。
+整线上变的是舌片区峰：W08 盘10 两片 +0.50／+0.58 K，W08 盘20 四片 +0.18～+0.89 K，W06 现役四片 +0.06～+0.82 K；峰位由 r = 30.50（或 30.01）移到 29.50 —— 盘缘上被 r = 30 切开、格心在盘内的那一圈格按决 28 也进了舌片区的峰。另有两区发热（每片 ±0.001 W 量级）、散热（每片 0.01～0.27 W）在两区之间挪。圆盘区峰、②″ 的值在这些算例上没变。W08 现役设计与 W08 盘20 的「开」转储 SHA 相同 ⇒ 是同一个算例（W08 现役转储里 算例.Base.FlangeInsulThickMm = 20、FlangeInsulated = true），门 d 的 W08 与门 c 的盘20 是同一行。
+
+══ 三、审查后（2026-09-23，F4-M1 份额收整之后的终版代码）复核
+  探针（同一份 ZZF4PrePostProbe.cs，临时放回树里跑完即删）在终版代码上重转储：单片热解 18 例写出于 16:48 前后，接线门 1 小算例改回写出于 16:48:33、开写出于 16:49:18。
+  改回：18 例热解与接线门 1 的转储与审查前逐字节相同（接线门 1 改回去掉「算例.ZoneByMaterialFraction」一行后 SHA 仍是 fb2c3248…）⇒ 改回 = 改前 仍成立。
+  开：接线门 1 SHA 8d28e3186bb678d05b5a153461627df5474fbd08dfbfc4c521c6ab465da847df（= 接线门 1 三录的新记录），对审查前的开只差三片分区说明里的格数（62／62／64 → 54／54／54）与 ⑦、②″ 说明里转印的那句；数值一个没动。
+  18 例热解的开：对审查前只差 DiscZoneRule（格数）、ZoneDiscShare、ZoneSplitCells，另 5 例的 TDiscMeanC／AreaDiscMm2／VolDiscMm3 差 1～2 ulp（舍入产物格不再按 f·x + (1−f)·x 拆两份）；两区峰与峰位 18 例全不变。
+  整线（门 c／d 在终版代码上重跑时 PT_F4_OUT 写出的转储）：门 d 16:53:44、门 c 17:26:29 开跑，转储写出于 17:02:53～18:06:36。改回四份（W08 盘10、盘20、W08 现役、W06 现役）与审查前逐字节相同；W08 盘10／盘20 去掉「算例.ZoneByMaterialFraction」一行后 SHA 仍是 3fc28e8a…／b3779dcc…（= 改前快照）。开四份对审查前只差分区说明格数 130 → 114（每片）与 ⑦、②″ 说明里转印的那句，另 W08 盘10 一片 TDiscMeanC、W06 现役一片 QLossDiscW 差 1 ulp；判据值、两区峰、峰位全不变。W08 现役与 W08 盘20 的开转储仍逐字节相同（同一个算例）。diff 全文见证据目录「diff_整线_*_审查后.txt」「diff_整线_*_开_审查前对审查后.txt」。
+  逐项 SHA 见 deliverable/R48_F4_分区按份额_证据_2026-09-23/SHA清单.txt。
+

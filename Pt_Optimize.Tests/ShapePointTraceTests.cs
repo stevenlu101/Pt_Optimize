@@ -30,7 +30,8 @@ public class ShapePointTraceTests
         d.SetpointC = new[] { 1150.0, 1080.0 }; d.SegLengthMm = new[] { 300.0, 300.0 }; d = d.Fit();
         d.DiscRadiusMm = 35; d.TabHalfWidthMm = 35;
         d.TabLengthMm = 0 + d.ClampLengthMm + 100;
-        string dump = Path.Combine(HandoverDoc.Root(), "deliverable", "形状_盘70舌70_轨迹.txt");
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        string dump = DeliverableOut.Stamped("形状_盘70舌70_轨迹.txt");
         Directory.CreateDirectory(Path.GetDirectoryName(dump)!);
         File.WriteAllText(dump, "═══ 盘Ø70／舌宽70／舌长 140（2 段 3 片，0.8 档）求解轨迹（与搜形状同一构型，16 轮筛）═══" + Environment.NewLine);
         var sw = Stopwatch.StartNew();

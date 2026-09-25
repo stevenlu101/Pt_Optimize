@@ -391,7 +391,7 @@ public static class Flow
             new[] { ChainId.无 },
             GateToUnlockNext: null,
             new[] { "geom.analyze", "geom.toanalytic" },
-            new[] { ParamCat.电气, ParamCat.保温与表面, ParamCat.玻璃物性,
+            new[] { ParamCat.判据限值与窗口, ParamCat.电气, ParamCat.保温与表面, ParamCat.玻璃物性,
                     ParamCat.管几何, ParamCat.法兰与铜排, ParamCat.数值 }),
 
         new(StageId.整线核算, 2, "② 法兰优化",
@@ -425,7 +425,7 @@ public static class Flow
             //   2026-08-20 建这个字段时就写错了，而它**一直没有消费者**，所以错了两周没人知道。
             // ⚠ 2026-09-03 参数表类别改成人话（原来带链代号 A·B·C / C 整线，工程师看不懂）
             //   ⇒ 这份名单必须同步。ParamFoldTests 盯着「每条前缀都要匹配到真类别」。
-            new[] { ParamCat.电气, ParamCat.保温与表面, ParamCat.玻璃物性,
+            new[] { ParamCat.判据限值与窗口, ParamCat.电气, ParamCat.保温与表面, ParamCat.玻璃物性,
                     ParamCat.管几何, ParamCat.法兰与铜排, ParamCat.数值 }),
 
         new(StageId.交付, 3, "③ 结果与出图",
@@ -472,6 +472,8 @@ public static class Flow
     //   宁可看得见但明写着「无效」。
     public static readonly ParamScope[] Params =
     {
+        // ★ U 路（2026-09-18，Opus 5）：温差预算两项与「终验时量可行窗口」的开关 —— 只对整线链有效（判据只在整线链上判）。
+        new(ParamCat.判据限值与窗口, new[] { ChainId.C整线耦合 }, ""),
         new(ParamCat.工艺条件, new[] { ChainId.A单段解析, ChainId.B分段解析 }, ""),
         new(ParamCat.电气,
             new[] { ChainId.A单段解析, ChainId.B分段解析, ChainId.C整线耦合 }, ""),
@@ -601,7 +603,8 @@ public static class Flow
                           "几何判据在本模式下**判不了**（形状由 .3dm 给定，「舌片自由段」与「圆盘盖得住管孔」无从判起）—— "
                         + "⇒ 点「◈ 图纸几何 → 参数」：把图纸反推出来的几何（盘径／舌长／舌半宽／"
                         + "管壁／板厚）交给**解析路**。那条路能改**形状**，那两条也就判得了。"
-                        + "　实测：盘Ø120 即便板厚顶到工艺下界，圆盘区最高温与法兰增量温降仍差一个数量级 —— "
+                        // 2026-09-14 Opus 5（复审）：这条实测是换热偶读数基准之前、按旧判法的两条量的 ⇒ 写明，别让人以为是现在卡交付的判据
+                        + "　实测（旧判法）：盘Ø120 即便板厚顶到工艺下界，圆盘区最高温与法兰增量温降仍差一个数量级 —— "
                         + "**卡住的往往是形状，不是厚度**。"
                         + "　想留在图纸上也行：那就只能调厚度，改完回「整线核算」重解，或回 Rhino 改图。");
                 return new("geom.analyze",
@@ -638,9 +641,22 @@ public static class Flow
             //     （拒绝写在 RunAsync，指路读这一位）。
             if (st.SizerNoLevels)
                 return new("geom.analyze",
-                      "卡的是热-电量（法兰增量温降／管孔净流入／圆盘区最高温／管电流密度），"
+                      // 2026-09-14 Opus 5（复审）：原列「法兰增量温降／圆盘区最高温」—— 那两条已降为参考量、不卡交付，真正卡交付的热侧／冷侧两条反而没提。
+                      //   判据名走 Criteria.Plain(Key)：改名时这里跟着变，不再手抄。
+                      $"卡的是热-电量（{Criteria.Plain(LineResult.Key.NetFlux)}／{Criteria.Plain(LineResult.Key.HotOverTc)}／"
+                    + $"{Criteria.Plain(LineResult.Key.ColdUnderTc)}／管电流密度），"
                     + "而厚度正是它们的旋钮 —— 但图纸**还没反推**成厚度场，无从算起。"
                     + "⇒ 先点「分析几何变数」。");
+            // ★★★★★ R48 M（2026-09-18，Fable 5.1）：**判不了 ≠ 不可行**。上一次求解器在某一点没解到收敛（判不了）时，
+            //   不许把人推去「搜形状」—— 判不了不是形状的事（实测同一点重跑会收敛：r48_U 2026-09-18 不收敛点诊断）。
+            //   下一步是把这一点解到收敛：重解（没收敛时它会问要不要加轮数上限）或细化网格重算。
+            //   ⚠ 必须排在 SizerProvedInfeasible 之前：判不了与旋钮到顶在求解器里互斥（Solver.Rounds），这里也不许让「到顶」那句抢先。
+            if (st.SolverUndetermined)
+                return new("core.runLine",
+                      "**上一次求解在某一点没解到收敛 —— 判不了，不是不可行**"
+                    + (st.SolverUndeterminedWhy.Length > 0 ? "：" + st.SolverUndeterminedWhy.Replace("**", "") : "")
+                    + "　⇒ 这一点没解到收敛：可加轮数上限／细化网格重算 —— 点「核算整线」重解（没收敛时它会问你要不要加轮数上限），"
+                    + "或点「◆ 加密复算」在细网格上重算。不要因此去改形状：判不了不是形状的事。");
             // ★★★★★ 指「自动定厚」之前，先问它**上一次是不是已经宣告不可行**（2026-09-03）。
             //   见 FlowState.SizerProvedInfeasible 的说明：走查实测连指 3 次 = 死循环。
             //   厚度这条路已经走到头 ⇒ 换下一根杠杆，而不是把人推回同一个按钮。
@@ -670,11 +686,23 @@ public static class Flow
         }
 
         // ★★★ 全过 ≠ 可信。判据是在**导航网格**上判的，先验一次它准不准（2026-08-30）。
+        // F7′ 审查 F2（2026-09-23）：当前这组参数上加密复算**做过了、判不了**（热点拒答）⇒ 不再指向「它会自己接着加密复算」（再点一次也是同一句话）。
+        if (!(st.MeshVerified && st.VerifiedFresh) && st.MeshVerifyRefusedWhy.Length > 0)
+            return st.MeshVerifyRefusedAtCap
+                ? new("shape.search",
+                      "加密复算对当前这组参数**做过了，但判不了**：细区半径已放大到板料外缘，仍不满足热点检查（最远热点 r + 10 mm ≤ 细区半径）"
+                    + " ⇒ 温度类判据不算数，不能出图；再点一次也是同一句话。"
+                    + "这是检查规则在全细网格上的口径拒答（不是网格分辨不出；全细网格上是否仍按此拒答【待决定】）。"
+                    + "能动的是形状（让最远热点离管轴的半径 ≤ 板料最大半边长 − 10 mm），或等业主定口径。")
+                : new("core.runLine",
+                      "加密复算对当前这组参数**做过了，但判不了**：峰位算不出（有一片三种热点位置都算不出来），判不了细区有没有盖住热点"
+                    + " ⇒ 温度类判据不算数，不能出图。不是「热点贴着板料外缘」—— 查判词括号里列的片，看它为什么算不出热点位置。");
         if (!(st.MeshVerified && st.VerifiedFresh))
             return new("core.verifyMesh",
                   "判据全过且是当前参数的解 —— 但这些数是在**导航网格**上算的，还没验过准不准。"
                 + "点「核算整线」，它会自己接着加密复算（把网格一档档加密，直到这个数不再变）。"
-                + "　⚠ 值得等：0.6 档那个设计，粗网格算出「法兰增量温降 7.7 K」（限值 10，看着很宽），"
+                // 2026-09-14 Opus 5（复审）：历史实测是旧判法的数 ⇒ 标明（同 LineDesignPage 那一句）
+                + "　⚠ 值得等：0.6 档那个设计，粗网格算出「法兰增量温降（旧判法）7.7 K」（旧判法限值 10，看着很宽），"
                 + "加密到位是 **9.5 K** —— 差 1.8 K，而这个差足以把「过」变成「不过」。");
 
         return new("export.page3dm", "判据全过、是当前参数的解、而且已经加密复算到数不再变 —— 可以出图了");
@@ -787,6 +815,19 @@ public sealed class FlowState
     /// </summary>
     public bool MeshVerified;
 
+    /// <summary>
+    /// F7′（2026-09-23，审查 P4）：做过加密复算、但热点拒答（细区半径放大到上限仍盖不住热点，或峰位算不出）时的原句；空 = 没有这回事。
+    /// 有它时提示与报告要说「做过了、判不了」，不能说成「还没加密复算」。
+    /// </summary>
+    public string MeshVerifyRefusedWhy = "";
+
+    /// <summary>
+    /// F7′ 审查 R-7／F2（2026-09-23）：<see cref="MeshVerifyRefusedWhy"/> 的来源是「细区半径已放大到板料外缘仍不满足热点检查」（true），
+    /// 还是「峰位算不出」（false）。两种原因、两句话：后者没有热点位置，不许说成「热点贴着板料外缘」。
+    /// 发布方只在拒答那次的参数快照等于当前参数时才发布这两位（改了设计就退回「还没对当前设计做加密复算」）。
+    /// </summary>
+    public bool MeshVerifyRefusedAtCap;
+
     /// <summary>复核那一刻的参数快照 —— 与 <see cref="CurrentSnap"/> 不等就作废。</summary>
     public object? VerifiedSnap;
 
@@ -854,6 +895,16 @@ public sealed class FlowState
     /// ⚠ 同样写成「例外才为真」（见上一条的教训）：默认 false = 正常。
     /// </summary>
     public bool SizerProvedInfeasible;
+
+    /// <summary>
+    /// ★★★★★ R48 M（2026-09-18，Fable 5.1）：**求解器上一次判不了**（<see cref="PtOptimize.Core.SolverResult.Undetermined"/>）——
+    /// 某一点场解解不出来／外层耦合未收敛／格点裕度小于认证误差走到上界仍判不了。与 <see cref="SizerProvedInfeasible"/> 互斥：
+    /// 判不了的下一步是把这一点解到收敛（加轮数上限／细化网格重算），**不是**搜形状。默认 false = 正常（例外才为真）。
+    /// </summary>
+    public bool SolverUndetermined;
+
+    /// <summary>判不了的那一句（哪片哪根旋钮哪个值处，裕度 x 小于认证误差 y）。</summary>
+    public string SolverUndeterminedWhy = "";
 
     /// <summary>进度文字，取自各页已有的 Progress&lt;string&gt;。</summary>
     public string RunningNote = "";
@@ -1013,11 +1064,16 @@ public static class Gate
             return new Status(stage, bypassed, bypassed, gate.LockedWhy,
                 st.MeshVerified
                     ? "参数在加密复算之后又动过了 —— 回「整线核算」页再点一次「◆ 加密复算（算到数不再变）」。"
+                    : st.MeshVerifyRefusedWhy.Length > 0   // F7′（2026-09-23，审查 P4）：做过了、判不了 ≠ 没做过；审查 R-7／F2／R-4：只对当前参数发布，原因分两句
+                    ? "加密复算对当前这组参数做过了，但**判不了**：" + st.MeshVerifyRefusedWhy.TrimStart('★', ' ')
+                      + (st.MeshVerifyRefusedAtCap
+                         ? "　⇒ 温度类判据不算数，不能出图；这不是「没做过」，再点一次也是同一句话。细区已铺满板料，这次是热点检查规则（最远热点 r + 10 mm ≤ 细区半径）的口径拒答，不是网格分辨不出（全细网格上是否仍按此拒答【待决定】）。"
+                         : "　⇒ 温度类判据不算数，不能出图；这不是「没做过」。原因是峰位算不出（没有热点位置），不是热点贴着板料外缘 —— 查判词括号里列的片。")
                     : "判据是在**导航网格**上判的，还没验过它准不准。"
                       + "回「整线核算」页点「◆ 加密复算（算到数不再变）」——"
                       + "它会把网格一档档加密，直到判据不再变（实测 10–40 分钟，随时可取消）。"
                       + "　⚠ 不验就出图的风险是实打实的：0.6 档那个设计，"
-                      + "粗网格算出「法兰增量温降 7.7 K」（限值 10，看着很宽），"
+                      + "粗网格算出「法兰增量温降（旧判法）7.7 K」（旧判法限值 10，看着很宽），"
                       + "加密到位是 **9.5 K** —— 差 1.8 K，而这个差足以把「过」变成「不过」。", null);
 
         return new Status(stage, true, bypassed, "", "", null);

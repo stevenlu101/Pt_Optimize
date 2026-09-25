@@ -40,11 +40,31 @@ public static class FlangeStability
         /// <summary>稳定裕度 = dQ_散热/dT ÷ dP_发热/dT。**必须 &gt; 1**；&lt; 1 即热失控</summary>
         public double Margin => DGenDT > 1e-12 ? DLossDT / DGenDT : double.PositiveInfinity;
         public bool Stable => !double.IsNaN(Margin) && Margin > 1.0;
-        /// <summary>评估温度超出物性拟合区间 ⇒ 判不了（而不是「稳定」）</summary>
-        public bool Undetermined => double.IsNaN(DGenDT);
+        /// <summary>
+        /// 评估温度超出物性拟合区间 ⇒ 判不了（而不是「稳定」）。
+        /// ★ R48 G2（2026-09-15 Opus 5）：调用方给了场标定的夹持导度、而它标定不出来（NaN）⇒ 同样判不了 —— 不退回几何算法各算各的。
+        /// </summary>
+        public bool Undetermined => double.IsNaN(DGenDT) || double.IsNaN(DClampDT);
+        /// <summary>
+        /// ★ R48 G2 复审二（2026-09-15 Opus 5；审查意见 minor「字符串协议」）：夹持那一项导度是不是调用方给的**稳态场标定值**（true）——
+        /// 否则按舌片几何算（false）。判断一律读本位；原先 LineRunner 拿界面文字 <see cref="ClampSource"/> 与「稳态场标定」比，文字一改就静默失效。
+        /// </summary>
+        public bool ClampFromField;
+        /// <summary>★ R48 G2（2026-09-15 Opus 5）：夹持那一项导度的出处，**只供界面文字**，由 <see cref="ClampFromField"/> 映射（R48 G2 复审二 2026-09-15 Opus 5 改为派生，不再单独赋值）。</summary>
+        public string ClampSource => ClampFromField ? "稳态场标定" : "舌片几何";
+        /// <summary>
+        /// ★ R48 G2 复审（2026-09-15 Opus 5；审查意见 minor「割线当切线用」）：夹持那一项**按舌片几何算**的导度 W/K（改动前的算法，调用方给不给场标定值都算一份），
+        /// 与只把夹持项换成它的裕度 —— 灵敏度对照：场标定值是割线（带走热 ÷ 温差，含舌片自身焦耳热流进铜排的那一份），当温升导数用可能偏大；
+        /// 几何导度是纯导热的切线值，但按舌端半宽 × 厚、从切点量到压接段内边，读的是整线设定的边界模式。两者之间就是这一项的不确定范围。
+        /// 求和顺序与 <see cref="DLossDT"/> 相同 ⇒ 调用方不给场标定值时 <see cref="MarginGeomClamp"/> 与 <see cref="Margin"/> 逐位相同。
+        /// </summary>
+        public double DClampGeomDT = double.NaN;
+        public double MarginGeomClamp => DGenDT > 1e-12 ? (DSurfDT + DClampGeomDT + DTubeDT) / DGenDT : double.PositiveInfinity;
         /// <summary>失控前还能承受多少温升 K（线性外推，仅供量级参考）</summary>
         public double HeadroomK;
         public string Note = "";
+        /// <summary>★ 2026-09-25：夹持项从「稳态场标定」回退到「舌片几何」的原因句（<see cref="PtOptimize.Core.LineRunner.GeomClampFallback"/> 写入；空 = 没回退）。判据附注照印。</summary>
+        public string ClampGeomFallbackWhy = "";
     }
 
     /// <summary>
@@ -66,13 +86,24 @@ public static class FlangeStability
     ///   本参数让 <paramref name="areaBareMm2"/> 那一片按自己的保温算。
     ///   传 NaN 即退回原行为（裸），故老调用点不受影响。
     /// </param>
+    /// <param name="clampConductanceWPerK">
+    /// ★ R48 G2（2026-09-15 Opus 5；物理把关人第十一轮「两处用同一个来源」）：夹持那一项的导度 W/K 由调用方给。
+    /// 整线（LineRunner.FlangeLumped）传升温两节点同一份**稳态场标定**的导度，并按同一个夹持假设取 G·(1 − r)（RampTwoNode.NodeCalibration.StabClampWPerK；
+    /// R48 G2 复审 2026-09-15 Opus 5：原传 G，与升温那一行「夹持随法兰按比例升」的假设不一致）；
+    /// 标定不出来传 NaN ⇒ 本条判不了（<see cref="Result.Undetermined"/>）。
+    /// null = 老算法（舌片几何导度 k·截面/舌长，热导边界再与铜排串联）：整线与命令行两处整片热稳定仪器都不再走它（R48 G2 复审：原注释说命令行「拿不到稳态场」不属实，
+    /// 那两处都先跑了整线解，现改传 LineRunner.FlangeLumped 的同一份标定）；老算法的值仍总算一份放进 <see cref="Result.DClampGeomDT"/> 当灵敏度对照。
+    /// 为什么整线不再用几何导度：它按舌端半宽 × 厚、从切点量到压接段的长度算，不含舌片自身发热沿舌长流进铜排的份额，
+    /// 与场里实际带走的热（整面接触 159～274 W）对不上；而且读的是整线 DesignInputs 的夹持温度／铜排热导，不是本片的。
+    /// </param>
     public static Result Check(DesignInputs p, double qGenW, double tPlateC,
                                double areaInsulMm2, double areaBareMm2, double insulThickMm,
                                double tabSectionMm2, double tabLenMm,
                                double holeSectionMm2, double discSpanMm,
-                               double tabInsulThickMm = double.NaN)
+                               double tabInsulThickMm = double.NaN,
+                               double? clampConductanceWPerK = null)
     {
-        var r = new Result { QGenW = qGenW };
+        var r = new Result { QGenW = qGenW, ClampFromField = clampConductanceWPerK is not null };   // R48 G2 复审二（2026-09-15 Opus 5）：出处位在护栏之前定，判不了时也读得到
 
         // ★ 护栏：电阻率拟合只在约 0–1400 °C 有效，外面二次项会翻号，
         //   dρe/dT 变负 ⇒ 算出「升温反而少发热」的荒谬结论。
@@ -88,7 +119,8 @@ public static class FlangeStability
         }
 
         // ── 发热侧：P ∝ ρe(T)，故 dP/dT = P·(1/ρe)(dρe/dT)
-        double tcr = Materials.PtTcr(tPlateC);          // 1/K
+        var props = PtProps.For(p);                     // R48 物性接线（2026-09-23，Opus 5.5）：按牌号（纯铂逐位不变）
+        double tcr = props.Tcr(tPlateC);                // 1/K
         r.DGenDT = qGenW * tcr;
 
         // ── ① 表面：数值微分 q″(T)，两面
@@ -101,7 +133,7 @@ public static class FlangeStability
 
         // ── ② 沿舌片到铜排夹：夹持是定温边界 ⇒ dQ/dT = 导度本身
         //    夹持**温度**高低不影响稳定性，只影响工作点；导度才是稳定器。
-        double k = Materials.PtThermalK(tPlateC) * 1e-3;      // W/(mm·K)
+        double k = props.K(tPlateC) * 1e-3;                   // W/(mm·K)
         // ★★ 2026-08-28：热导边界（BusbarConductanceWPerK ≥ 0）下 BusbarClampTempC 恒为 −1，
         //   于是**明明有 G 这条实打实的导热通道，DClampDT 却被判成 0**（偏保守，抹掉一个稳定器）。
         //   物理上三种情形分明：
@@ -109,11 +141,21 @@ public static class FlangeStability
         //    · 热导：舌片导度与铜排导度**串联** ⇒ 1/(1/g_舌 + 1/G)；
         //    · 自由端：这条通道不存在 ⇒ 0。
         double gTab = tabLenMm > 1e-6 ? k * tabSectionMm2 / tabLenMm : 0;
-        r.DClampDT = p.BusbarClampTempC >= 0
-                   ? gTab
-                   : (p.BusbarConductanceWPerK >= 0 && gTab > 1e-12
-                      ? 1.0 / (1.0 / gTab + 1.0 / Math.Max(1e-12, p.BusbarConductanceWPerK))
-                      : 0);
+        // R48 G2 复审（2026-09-15 Opus 5）：老算法的值总算一份（灵敏度对照，见 Result.DClampGeomDT）；下面 else 支取的就是它，算术不变
+        r.DClampGeomDT = p.BusbarClampTempC >= 0
+                       ? gTab
+                       : (p.BusbarConductanceWPerK >= 0 && gTab > 1e-12
+                          ? 1.0 / (1.0 / gTab + 1.0 / Math.Max(1e-12, p.BusbarConductanceWPerK))
+                          : 0);
+        if (clampConductanceWPerK is double gField)
+        {
+            // R48 G2（2026-09-15 Opus 5）：稳态场标定的导度（定温边界 = 法兰 → 夹持 × (1 − r)；热导边界 = 法兰 → 压接 → 冷端串联；自由端 = 0），见参数注释
+            r.DClampDT = gField;
+        }
+        else
+        {
+            r.DClampDT = r.DClampGeomDT;
+        }
 
         // ── ③ 经管孔到管子：管子也是近似定温（由控温维持）
         r.DTubeDT = discSpanMm > 1e-6 ? k * holeSectionMm2 / discSpanMm : 0;
@@ -125,6 +167,13 @@ public static class FlangeStability
                     ? (r.DLossDT - r.DGenDT) / Math.Max(1e-12, r.DGenDT * tcr)
                     : 0;
 
+        // R48 G2（2026-09-15 Opus 5）：夹持导度标定不出来 ⇒ 判不了，不许落到下面「热失控」那句（NaN 比较恒为假）
+        if (double.IsNaN(r.DClampDT))
+        {
+            r.HeadroomK = 0;
+            r.Note = "★ 经舌片流进铜排的导度从稳态场标定不出来 —— 无法判定（不按舌片几何另算一份）";
+            return r;
+        }
         r.Note = r.Stable
             ? $"稳定：散热随温升增加 {r.DLossDT:0.00} W/K，快于发热的 {r.DGenDT:0.00} W/K"
             : $"★ 热失控：发热随温升增加 {r.DGenDT:0.00} W/K，快于散热的 {r.DLossDT:0.00} W/K —— " +

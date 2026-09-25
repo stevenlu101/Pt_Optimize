@@ -1,4 +1,4 @@
-namespace PtOptimize.Core;
+﻿namespace PtOptimize.Core;
 
 /// <summary>
 /// ★★★★★ **「走到过」的痕迹** —— 让难以构造的分支自己留下可断言的一句话（2026-09-08）。
@@ -52,6 +52,17 @@ public static class BranchMarks
     public const string UndeterminedBisect = "★ 走到了「二分中点判不了 ⇒ 中止」";
 
     /// <summary>
+    /// ★ R48 M（2026-09-18，Fable 5.1）：Solver.WalkConservative（RaiseUntil 的格点判决）：格点上这条判据的裕度 ≥ 0 但**小于认证误差**
+    /// ⇒ 判不了那么细 ⇒ 往保守方向再走一格重判。后面跟着「片j 旋钮 值 处「判据」裕度 x 小于认证误差 y」。
+    /// </summary>
+    public const string GridWalkConservative = "★ 走到了「格点裕度小于认证误差 ⇒ 往保守方向再走一格」";
+
+    /// <summary>
+    /// ★ R48 M（2026-09-18，Fable 5.1）：Solver.WalkConservative／RaiseUntil：走到上界（或走满格数）仍判不了那么细 ⇒ 整跑判不了（不过也不不过）。
+    /// </summary>
+    public const string UndeterminedGridAtHi = "★ 走到了「走到上界仍判不了那么细」";
+
+    /// <summary>
     /// Solver.Gate：场解回报 <c>Ok=false</c>（熔化／段解失败…）⇒ 判不了，**原因跟在冒号后面**。
     /// 2026-09-08 督导第 15 封：这一支原来是哑的，0.8 档的「起点熔化」被印成「场解不收敛」。
     /// </summary>
@@ -75,4 +86,10 @@ public static class BranchMarks
     /// 后面跟着「片j 槽心 θ°／舌孔 x=…」。第一轮之前还没有场时也发，但注明「用默认规则」。
     /// </summary>
     public const string FieldPlacement = "★ 场定孔位";
+
+    /// <summary>
+    /// 2026-09-25（业主 12:5x「分叉点先给定舌长中点」）：Solver.PinTabHoleForkAtMid 真把孔心按「铜排侧端点 = 舌长中点」写进了 TabHoleXMm。
+    /// 后面跟着「片j 孔心 x = …（铜排侧端 …，舌长中点 …，盘侧端 …，朝向 …°）」。改回（DesignInputs.TabHoleBusbarEndAtTabMid = false）不印。
+    /// </summary>
+    public const string TabHoleForkAtMid = "★ 分叉点钉舌长中点";
 }

@@ -1,0 +1,27 @@
+开跑 2026-09-23 16:46:18　loadavg 38.66 41.63 29.29 30/509 8410　类 R48UngatedFixesTests（过滤 速度!=慢）
+Microsoft (R) Test Execution Command Line Tool Version 17.8.0 (x64)
+Copyright (c) Microsoft Corporation.  All rights reserved.
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.31)
+[xUnit.net 00:00:00.32]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:01.11]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:01.14]   Starting:    Pt_Optimize.Tests
+[xUnit.net 00:00:01.79]   Finished:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.R48UngatedFixesTests.命令行复核判不了时不许印成设计不过 [138 ms]
+  Passed PtOptimize.Tests.R48UngatedFixesTests.只有一片舌长算不出来时自由段判据也报无法判定 [93 ms]
+  Passed PtOptimize.Tests.R48UngatedFixesTests.配方只有一处的门要覆盖图纸路径与逐级求解器 [9 ms]
+  Passed PtOptimize.Tests.R48UngatedFixesTests.进度条认不出百分比时保留上一个 [14 ms]
+  Passed PtOptimize.Tests.R48UngatedFixesTests.增量温降判据不许静默丢掉判不了的段 [13 ms]
+  Passed PtOptimize.Tests.R48UngatedFixesTests.图纸路径终局细网格必须整张一起缩 [210 ms]
+  Passed PtOptimize.Tests.R48UngatedFixesTests.正常几何上五六两条照常判定_补门不许把能判的也判成判不了 [< 1 ms]
+  Passed PtOptimize.Tests.R48UngatedFixesTests.舌长算不出来时自由段判据报无法判定而不是过 [< 1 ms]
+  Passed PtOptimize.Tests.R48UngatedFixesTests.盘半径算不出来时圆盘覆盖判据报无法判定而不是过 [< 1 ms]
+
+Test Run Successful.
+Total tests: 9
+     Passed: 9
+ Total time: 3.2264 Seconds
+EXIT 0　结束 2026-09-23 16:46:22

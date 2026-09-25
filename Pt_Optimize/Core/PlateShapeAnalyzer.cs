@@ -56,6 +56,8 @@ public static class PlateShapeAnalyzer
         public double NetAreaMm2, VolumeMm3;
         /// <summary>板中心（管孔形心）在图纸坐标里的位置 mm —— 不假设它在原点</summary>
         public double CenterXMm, CenterZMm;
+        /// <summary>R47 C：量这张图用的栅格步长 mm —— 加密复算取特征尺寸时要知道分析器的分辨率。</summary>
+        public double StepMm = double.NaN;
         public double MassG => VolumeMm3 * Materials.PtDensity * 1e-6;
         public readonly List<string> Notes = new();
     }
@@ -116,6 +118,19 @@ public static class PlateShapeAnalyzer
     }
 
     /// <summary>
+    /// 2026-09-23（HANDOVER §0.-20，F6 审查 #12）：只读图纸的**管孔半径**，与 <see cref="Analyze"/> 同一个定义（被材料包围的最大空腔的等面积圆半径，
+    /// Analyze 里 <c>sh.HoleRadiusMm = Math.Sqrt(voids[holeIdx].Count * a / Math.PI)</c> 那一式，逐字同式）；找不到被材料包围的空腔 = NaN
+    /// （Analyze 在那种情况退回「有料的最小半径」，那是猜的，核对孔径不用它）。
+    /// 精度（数学推出）：空腔节点 = 孔圆内的栅格点时，以节点为心、边长 = 步长 s 的方格互不重叠，盖住半径 r − s/√2 的圆、又落在半径 r + s/√2 的圆里
+    ///   ⇒ |等面积半径 − r| ≤ s/√2 &lt; s。所以拿「差 &gt; 一个栅格步」判失配，孔径与 rh 真相同时不会误报。
+    /// </summary>
+    public static double HoleRadiusOf(ThicknessField f)
+    {
+        var (voids, holeIdx) = FindVoids(f);
+        return holeIdx < 0 ? double.NaN : Math.Sqrt(voids[holeIdx].Count * (f.Step * f.Step) / Math.PI);
+    }
+
+    /// <summary>
     /// 解析厚度场。<paramref name="levelTolMm"/> 是厚度分级的容差 ——
     /// 量出来的厚度总带射线离散噪声，差别小于它的并作一级。
     ///
@@ -128,7 +143,7 @@ public static class PlateShapeAnalyzer
     /// </remarks>
     public static Shape Analyze(ThicknessField f, double levelTolMm = 0.011)
     {
-        var sh = new Shape();
+        var sh = new Shape { StepMm = f.Step };
         double step = f.Step, a = step * step;
 
         // ── ① 厚度分级：对非零厚度做直方图聚类

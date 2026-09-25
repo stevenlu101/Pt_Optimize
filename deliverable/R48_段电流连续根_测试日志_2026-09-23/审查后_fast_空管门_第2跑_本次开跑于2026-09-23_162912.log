@@ -1,0 +1,52 @@
+开跑 2026-09-23 16:29:12　loadavg 19.52 13.33 8.77 30/442 32348　类 R48EmptyTubeGateTests（过滤 速度!=慢）
+Microsoft (R) Test Execution Command Line Tool Version 17.8.0 (x64)
+Copyright (c) Microsoft Corporation.  All rights reserved.
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.31)
+[xUnit.net 00:00:00.20]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:00.47]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:00.49]   Starting:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.R48EmptyTubeGateTests.整线空管_端部保温形状经LineRunner写成带玻璃形状 [56 s]
+  Standard Output Messages:
+ HC1 端部额外保温 mm：带玻璃 4.4910/3.6231/2.9229/2.3580/1.9023/1.5347　空管 4.4910/3.6231/2.9229/2.3580/1.9023/1.5347
+ HC2 端部额外保温 mm：带玻璃 4.4968/3.6373/2.9420/2.3797/1.9248/1.5569　空管 4.4968/3.6373/2.9420/2.3797/1.9248/1.5569
+
+
+  Passed PtOptimize.Tests.R48EmptyTubeGateTests.空管不读玻璃进口_NaN与1150逐位相同 [731 ms]
+  Passed PtOptimize.Tests.R48EmptyTubeGateTests.整线双工况_工况说明_尺寸链逐位相同_基线按空管算 [7 m 18 s]
+  Standard Output Messages:
+ 升温期法兰−管峰值（参考量，随工况变）：带玻璃 NaN K　空管 NaN K
+ 无法兰基线两工况最大差 3.665 K；各段 A/B：带玻璃 1150.09/1116.60  1115.62/1077.67　空管 1153.75/1115.60  1115.18/1076.30
+ 整线空管：收敛 True　电流 1209/1146 A　抽热 -22.67/-20.28/-40.94 W
+
+
+  Passed PtOptimize.Tests.R48EmptyTubeGateTests.钩子_端部保温形状两工况相同_管腔辐射带玻璃逐位不变_热偶基准 [1 s]
+  Standard Output Messages:
+ 端部额外保温分布 mm（自端部起 6 格）：带玻璃 8.9909/7.2679/5.8751/4.7492/3.8391/3.1033　空管·按带玻璃 hg 8.9909/7.2679/5.8751/4.7492/3.8391/3.1033　空管·按自身 hg=0 9.2243/7.8488/6.6783/5.6825/4.8351/4.1141
+ 管腔辐射（空管、带抽热、左邻段 1100 °C、定电流 1500 A）：A 端 1097.93 → 1098.72 °C　热衰减长度 29.9 → 49.3 mm　段内 kA 0.0230
+
+
+  Passed PtOptimize.Tests.R48EmptyTubeGateTests.带玻璃_逐位不变_三个算例指纹 [7 s]
+  Standard Output Messages:
+ 旧地板：A fp=0xC7FC3FCBD3F4E3E9　B fp=0x51513712C997642E　C fp=0x81B62A725D0769CD
+ 新地板：A fp=0x0F808130FB7E6297　B fp=0x59133E0A112F3092　C fp=0x478D61917F1886FD　I=1817.3768434910771（旧 1817.3693389729033）
+ 新地板＋改回（中点）：A fp=0x7A3DF51B3B6CE931　I=1817.3785245058946
+
+
+[xUnit.net 00:08:29.73]   Finished:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.R48EmptyTubeGateTests.空管单段_无NaN_中点到设定_焦耳热等于散热 [5 s]
+  Standard Output Messages:
+ 空管单段：I=1817.4 A　中点 1300.000 °C　焦耳热 3142.73 W　散热 3142.73 W　给玻璃 0.00 W　两端流出 0.00 W　残差 0.000 %
+ 空管带抽热：I=1659.8 A　焦耳热 2420.53 W　散热 2389.83 W　两端流出 30.70 W　残差 -0.000 %　落差 55.91 K
+ 正对照（带玻璃）：焦耳热 1938.58 W　散热 1998.50 W　给玻璃 -114.30 W　两端流出 54.39 W　残差 -0.000 %
+
+
+
+Test Run Successful.
+Total tests: 6
+     Passed: 6
+ Total time: 8.5127 Minutes
+EXIT 0　结束 2026-09-23 16:37:43

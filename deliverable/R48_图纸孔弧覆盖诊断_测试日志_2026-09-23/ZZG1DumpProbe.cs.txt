@@ -1,0 +1,27 @@
+using System;
+using System.IO;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Security.Cryptography;
+using PtOptimize.Core;
+using Xunit;
+using Xunit.Abstractions;
+namespace PtOptimize.Tests;
+public class ZZG1DumpProbe
+{
+    private readonly ITestOutputHelper _o;
+    public ZZG1DumpProbe(ITestOutputHelper o) => _o = o;
+    [Fact]
+    public void 转储门1算例()
+    {
+        var lc = R48PropsWiringGateTests.QuickCase();
+        var r = LineRunner.Run(lc);
+        Assert.True(r.Ok, r.Message);
+        string full = Regex.Replace(R48LineDumpTests.Dump(lc, r, withText: true), @"(结果\.JacobianAmpSec = )[^\n]*", "$1<耗时>");
+        full = Regex.Replace(full, @"用时 [0-9.]+ s", "用时 <耗时> s");
+        string path = Environment.GetEnvironmentVariable("G1DUMP") ?? "/tmp/g1dump.txt";
+        File.WriteAllText(path, full, new UTF8Encoding(false));
+        string sha = Convert.ToHexString(SHA256.HashData(new UTF8Encoding(false).GetBytes(full))).ToLowerInvariant();
+        _o.WriteLine(path + " " + sha);
+    }
+}

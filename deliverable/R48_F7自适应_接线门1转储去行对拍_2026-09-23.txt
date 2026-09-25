@@ -1,0 +1,12 @@
+﻿F7′（决 29 自适应）接线门 1（R48PropsWiringGateTests.门_纯铂默认逐位不变_整线小算例）去行对拍 —— 临时探针 ZZF7Gate1DeLineProbe（跑完删）
+开跑 2026-09-23 17:27:39　工作树 /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtC4　Linux 镜像
+算例 = R48PropsWiringGateTests.QuickCase()（BuildCase，不经细区半径计划 ⇒ 算例.MeshFineRadiusPlan = null、各片 MeshRecipe.FineRadiusMm = 算例缺省 50）；转储 = R48LineDumpTests.Dump（含文字），两处耗时改占位（与门 1 同一写法）。
+原样 SHA-256（本树，新记录）：bc732f5d2a58850d0db597ab16981558ae1767369817f680f318915c2e23da24
+去行 SHA-256（去掉 4 行）：fb2c32488eb4d3c408c6655cb544b856498a78174de21a2ff0726ca1e0083cf2
+F7′ 之前的记录（§0.-20 重记）：fb2c32488eb4d3c408c6655cb544b856498a78174de21a2ff0726ca1e0083cf2
+去行后与旧记录 **逐字节相同** ⇒ 新加的两类记录行之外转储一位没动（数值场中性）
+── 去掉的行（原样）
+算例.MeshFineRadiusPlan = null
+结果.Flanges[0].Mesh.Recipe.FineRadiusMm = 50
+结果.Flanges[1].Mesh.Recipe.FineRadiusMm = 50
+结果.Flanges[2].Mesh.Recipe.FineRadiusMm = 50

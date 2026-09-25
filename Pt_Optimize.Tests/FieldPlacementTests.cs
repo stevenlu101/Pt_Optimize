@@ -135,7 +135,9 @@ public class FieldPlacementTests
     {
         var d = DesignSpec.Builtin[0].Clone();
         for (int j = 0; j < d.TabHoleRMm.Length; j++) d.TabHoleRMm[j] = 0;    // 还没开孔
-        var baseIn = new DesignInputs();
+        // 2026-09-25（分叉点钉舌长中点）：场定孔心成了改回分支（DesignInputs.TabHoleBusbarEndAtTabMid = false）；本门守的是 R23 那条规则，按改回口径跑。
+        //   开着时的行为由 R48TabHoleForkAtMidTests 守（同一个场：无孔不写、有孔钉舌长中点）。
+        var baseIn = new DesignInputs { TabHoleBusbarEndAtTabMid = false };
         var lc = d.BuildCase(baseIn, checkRamp: false);
         var last = LineRunner.Run(lc, null, default);
         Assert.True(last.Ok, "本门要一个收敛的场做基准");
@@ -159,7 +161,8 @@ public class FieldPlacementTests
     {
         var d = DesignSpec.Builtin[0].Clone();
         d.TabHoleRMm = new[] { 5.0, 5.0, 5.0, 5.0 };   // 每片都有孔 ⇒ FieldPlacement 真的会走到 RemovalPriority.TabHoleXMm 那条计算
-        var baseIn = new DesignInputs();
+        // 2026-09-25（分叉点钉舌长中点）：按改回口径跑（理由同上一门）；开着时有孔的片孔心钉舌长中点，由 R48TabHoleForkAtMidTests 守。
+        var baseIn = new DesignInputs { TabHoleBusbarEndAtTabMid = false };
         var lc = d.BuildCase(baseIn, checkRamp: false);
         var last = LineRunner.Run(lc, null, default);
         Assert.True(last.Ok, "本门要一个收敛的场做基准，没收敛就没法验证「只打印不写回」");

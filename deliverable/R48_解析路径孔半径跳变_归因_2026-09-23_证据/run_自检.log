@@ -1,0 +1,31 @@
+Test run for /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtP1/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll (.NETCoreApp,Version=v8.0)
+Microsoft (R) Test Execution Command Line Tool Version 17.8.0 (x64)
+Copyright (c) Microsoft Corporation.  All rights reserved.
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtP1/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.31)
+[xUnit.net 00:00:00.13]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:00.41]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:00.43]   Starting:    Pt_Optimize.Tests
+[xUnit.net 00:00:04.89]   Finished:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.ZZP1HoleJumpTests.自检_With支与生产Build逐位同_Solve与SolveOne逐位同 [4 s]
+  Standard Output Messages:
+ P1 自检　开跑 2026-09-23 19:00:15（Linux 镜像，争用下）
+ 盘Ø56 片1 r 25.8：V0 抽热 27.316992226737344 格 904｜V7 抽热 27.316992226737344 格 904｜SolveOne 抽热 27.316992226737344｜逐位同 是
+ 盘Ø56 片1 r 26：V0 抽热 26.779474894589203 格 904｜V7 抽热 26.779474894589203 格 904｜SolveOne 抽热 26.779474894589203｜逐位同 是
+ 盘Ø56 片1 r 26.005：V0 抽热 27.442369980711664 格 888｜V7 抽热 27.442369980711664 格 888｜SolveOne 抽热 27.442369980711664｜逐位同 是
+ 盘Ø56 片1 r 26.08：V0 抽热 27.908420549437107 格 868｜V7 抽热 27.908420549437107 格 868｜SolveOne 抽热 27.908420549437107｜逐位同 是
+ Builtin[0] 片0 r 25.8：V0 抽热 16.983109785367027 格 1026｜V7 抽热 16.983109785367027 格 1026｜SolveOne 抽热 16.983109785367027｜逐位同 是
+ Builtin[0] 片0 r 26：V0 抽热 15.621091318964673 格 1026｜V7 抽热 15.621091318964673 格 1026｜SolveOne 抽热 15.621091318964673｜逐位同 是
+ Builtin[0] 片0 r 26.005：V0 抽热 16.830094678881622 格 1010｜V7 抽热 16.830094678881622 格 1010｜SolveOne 抽热 16.830094678881622｜逐位同 是
+ Builtin[0] 片0 r 26.08：V0 抽热 17.588153541113687 格 994｜V7 抽热 17.588153541113687 格 994｜SolveOne 抽热 17.588153541113687｜逐位同 是
+ 合计：全部逐位同；证据 自检_本次开跑于2026-09-23_190015.txt
+
+
+
+Test Run Successful.
+Total tests: 1
+     Passed: 1
+ Total time: 5.6931 Seconds

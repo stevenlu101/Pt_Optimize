@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><Nullable>disable</Nullable><ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>VerifyJia</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Pt_Optimize"><HintPath>../Tests/bin/Release/net8.0/Pt_Optimize.dll</HintPath></Reference>
+    <Reference Include="Pt_Optimize.Tests"><HintPath>../Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll</HintPath></Reference>
+    <Reference Include="xunit.abstractions"><HintPath>../Tests/bin/Release/net8.0/xunit.abstractions.dll</HintPath></Reference><Reference Include="xunit.core"><HintPath>../Tests/bin/Release/net8.0/xunit.core.dll</HintPath></Reference><Reference Include="xunit.assert"><HintPath>../Tests/bin/Release/net8.0/xunit.assert.dll</HintPath></Reference><Reference Include="MathNet.Numerics"><HintPath>../Tests/bin/Release/net8.0/MathNet.Numerics.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>

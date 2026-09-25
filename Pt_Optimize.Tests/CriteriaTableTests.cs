@@ -36,42 +36,54 @@ public class CriteriaTableTests
     };
 
     /// <summary>
-    /// 代码这一侧的真相：判定由 <see cref="LineResult.Required"/> 决定
+    /// 代码这一侧的真相：判定由 <see cref="LineResult.RequiredByState"/> 决定（K 路 2026-09-15 Opus 5：带工况维，两态各一列）
     /// （名单里没有的判据一律是参考量），限值取自各处的**默认常数**。
     ///
     /// ⚠ 判定**不在本档里另抄一份** —— 那就成了第三处来源。只抄限值，
     ///   而限值本来就只能从代码常数读（这正是抓住「管 J 10 vs 12」的那一环）。
     /// </summary>
-    private static (string Key, string Kind, double? Limit)[] FromCode()
+    private static (string Key, string Kind, string EmptyKind, double? Limit)[] FromCode()
     {
         var lc = new LineCase();
         var di = new DesignInputs();
 
-        string KindOf(string key) => LineResult.Required
+        // K 路（2026-09-15，Opus 5）：两态各取一次（名单里没有的一律参考量）
+        string KindIn(string key, bool emptyTube) => LineResult.RequiredFor(emptyTube)
             .Where(q => q.Prefix == key)
             .Select(q => KindWord(q.Kind))
             .DefaultIfEmpty("参考")
             .First();
+        string KindOf(string key) => KindIn(key, false) + "|" + KindIn(key, true);
 
         return new (string, string, double?)[]
         {
-            (LineResult.Key.Ramp,       KindOf(LineResult.Key.Ramp),       di.TubeJAllowAPerMm2),   // R20：① = 升温所需电流折成管 J ≤ 许用
+            // 决 103（2026-09-24）：有意改动 —— 限值换成卡交付的管 J 限值（= min(许用 12, 使用上限 11) = 11）；新热侧、新冷侧两行与原许用值对照行进表；
+            //   两条热稳定升为带玻璃稳态硬判据、热偶两条与管孔净流入降为参考（KindOf 读生产分工况表自然给出）。
+            //   ⚠ 本档对着 HANDOVER §1.83 核；本路不改 HANDOVER ⇒ §1.83 那张表合并时要照 HANDOVER_决103_节草稿.md 里的「应改成的行」改，否则这几条会红（已列入交付说明）。
+            (LineResult.Key.Ramp,       KindOf(LineResult.Key.Ramp),       di.TubeJLimitAPerMm2),   // R20：① = 升温所需电流折成管 J ≤ 许用（决 103：卡交付的管 J 限值）
+            (LineResult.Key.HotOverContact,   KindOf(LineResult.Key.HotOverContact),   lc.HotOverContactMaxK),
+            (LineResult.Key.TubeToFlangeHeat, KindOf(LineResult.Key.TubeToFlangeHeat), CriteriaRules.TubeToFlangeHeatMaxW),
+            (LineResult.Key.TubeJPre103,      KindOf(LineResult.Key.TubeJPre103),      di.TubeJAllowAPerMm2),
             (LineResult.Key.RampHours,  KindOf(LineResult.Key.RampHours),  lc.RampHours),
             (LineResult.Key.NetFlux,    KindOf(LineResult.Key.NetFlux),    0.0),
+            // R48 B（2026-09-14 Opus 5）：有意改动 —— 热侧／冷侧换成热偶读数基准的两条新硬判据（限值 = 热偶误差，LineCase），旧判法两条降为参考量（KindOf 自然给「参考」）。
+            //   ⚠ 本档对着 HANDOVER §1.83 核；本路不许改 HANDOVER ⇒ §1.83 那张表合并时要照交接说明补两行、改两行，否则这几条会红（已在交付说明里列出）。
+            (LineResult.Key.HotOverTc,   KindOf(LineResult.Key.HotOverTc),   lc.HotOverTcMaxK),
+            (LineResult.Key.ColdUnderTc, KindOf(LineResult.Key.ColdUnderTc), lc.ColdUnderTcMaxK),
             (LineResult.Key.DiscTemp,   KindOf(LineResult.Key.DiscTemp),   lc.DiscOverTempMaxK),
             (LineResult.Key.FlangeDip,  KindOf(LineResult.Key.FlangeDip),  lc.RootDeltaMaxK),
             (LineResult.Key.FreeTab,    KindOf(LineResult.Key.FreeTab),    GeometryScreen.FreeTabMinDefaultMm),
             (LineResult.Key.DiscCover,  KindOf(LineResult.Key.DiscCover),  0.0),
-            (LineResult.Key.TubeJ,      KindOf(LineResult.Key.TubeJ),      di.TubeJAllowAPerMm2),
+            (LineResult.Key.TubeJ,      KindOf(LineResult.Key.TubeJ),      di.TubeJLimitAPerMm2),   // 决 103：11（与原许用 12 取小）
             (LineResult.Key.FlangeStab, KindOf(LineResult.Key.FlangeStab), 1.0),
             (LineResult.Key.LocalStab,  KindOf(LineResult.Key.LocalStab),  1.0),
             // 现场升温那条（2026-08-25 新增）。215 是**现役基准**不是通过线，
             // 但它一样要与代码对得上 —— 基准漂了而文档没跟上，同样会误导。
             (LineResult.Key.RampField,  KindOf(LineResult.Key.RampField),  215.0),
-        };
+        }.Select(x => (x.Item1, x.Item2.Split('|')[0], x.Item2.Split('|')[1], x.Item3)).ToArray();
     }
 
-    private sealed record Row(string Name, string Limit, string Kind, string Source);
+    private sealed record Row(string Name, string Limit, string Kind, string Source, string EmptyKind);
 
     /// <summary>把 §1.83 那张表读成行。</summary>
     private static Row[] ReadTable()
@@ -95,7 +107,7 @@ public class CriteriaTableTests
             var cells = SplitCells(line);
             if (cells.Length < 4) continue;
             if (cells[0] == "判据") continue;
-            rows.Add(new Row(cells[0], cells[1], cells[2], cells[3]));
+            rows.Add(new Row(cells[0], cells[1], cells[2], cells[3], cells.Length > 4 ? cells[4] : ""));   // K 路（2026-09-15 Opus 5）：第五列 = 空管到温稳态
         }
         return rows.ToArray();
     }
@@ -144,6 +156,10 @@ public class CriteriaTableTests
         Assert.All(rows, r => Assert.True(
             legal.Any(w => r.Kind.Contains(w, StringComparison.Ordinal)),
             $"「{r.Name}」的判定一列写着「{r.Kind}」—— 只准填 {string.Join(" / ", legal)}"));
+        // K 路（2026-09-15，Opus 5）：空管到温稳态一列同样只准填这四个词（每行都要有，不许空着）
+        Assert.All(rows, r => Assert.True(
+            legal.Any(w => r.EmptyKind.Contains(w, StringComparison.Ordinal)),
+            $"「{r.Name}」的「空管到温稳态」一列写着「{r.EmptyKind}」—— 只准填 {string.Join(" / ", legal)}"));
 
         // 当年那次审计的主题就是「每条判据的限值必须有来源」
         Assert.All(rows, r => Assert.False(string.IsNullOrWhiteSpace(r.Source),
@@ -169,6 +185,10 @@ public class CriteriaTableTests
             + (want.Kind == "参考"
                ? "　参考量不进 AllOk。"
                : "　这一条**卡交付**，表上说成参考会让人以为不过也能出图。"));
+        // K 路（2026-09-15，Opus 5）：空管到温稳态一列按分工况表核；「参考」与「硬判据」互斥（写了硬判据的格子不许同时出现参考字样，反之亦然）
+        string other = want.EmptyKind == "参考" ? "硬判据" : "参考";
+        Assert.True(hit[0].EmptyKind.Contains(want.EmptyKind, StringComparison.Ordinal) && !hit[0].EmptyKind.Contains(other, StringComparison.Ordinal),
+            $"「{key}」空管到温稳态：代码里是 **{want.EmptyKind}**，表上写的是「{hit[0].EmptyKind}」。");
     }
 
     /// <summary>限值一列的数字也必须与代码常数一致 —— 「管 J 写 10 而实际 12」就是这么漏的。</summary>
@@ -192,15 +212,17 @@ public class CriteriaTableTests
     /// 反方向：表上标成「硬判据」的，代码里必须真的是硬安全线。
     /// 否则文档可以凭空发明一条卡交付的判据，而没有任何东西会拦它。
     /// </summary>
-    [Fact]
-    public void NoPhantomHardCriteria_InTheDoc()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NoPhantomHardCriteria_InTheDoc(bool emptyTube)
     {
-        string[] hardKeys = LineResult.Required
+        string[] hardKeys = LineResult.RequiredFor(emptyTube)
             .Where(q => q.Kind == CheckKind.HardSafety).Select(q => q.Prefix).ToArray();
         Assert.NotEmpty(hardKeys);                          // 自证
 
         var claimed = ReadTable()
-            .Where(r => r.Kind.Contains("硬判据", StringComparison.Ordinal)).ToArray();
+            .Where(r => (emptyTube ? r.EmptyKind : r.Kind).Contains("硬判据", StringComparison.Ordinal)).ToArray();
         Assert.True(claimed.Length == hardKeys.Length,
             $"表上标「硬判据」的有 {claimed.Length} 行，代码里的硬安全线有 {hardKeys.Length} 条");
 

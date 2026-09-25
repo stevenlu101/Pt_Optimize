@@ -43,20 +43,19 @@ public static class PlateThermal2D
         double h = cur.H, t = g.ThicknessMm;
         var mask = cur.Mask;
         var res = new PlateThermalResult();
+        var props = PtProps.For(p);   // R48 物性接线（2026-09-23，Opus 5.5）：k、ρ 按牌号（纯铂逐位不变）
 
         // 分段表面热流 q″(T) [W/mm²]（原始单位 W/m² → ×1e-6）
-        double charLen = 0.05;   // 特征长度 m，用于自然对流关联式
-        var bareTab = new LossTable(p.TAmbC, p.TSetC + 200, 60,
-            x => Insulation.FlatOuterFlux(x, p.TAmbC, p.PtEmissivity, charLen,
-                                          p.LossScale, p.FlangeAirVelocityMPerS) * 1e-6);
-        var insLayers = new List<InsulationLayer>
-        {
-            new() { Name="法兰保温", ThicknessMm = p.FlangeInsulThickMm,
-                    K0 = p.Layer1.K0, K1 = p.Layer1.K1, Enabled = p.FlangeInsulThickMm > 1e-6 }
-        };
-        var insTab = new LossTable(p.TAmbC, p.TSetC + 200, 60,
-            x => Insulation.PlateFlux(x, p.TAmbC, insLayers, p.OuterEmissivity, charLen,
-                                      p.LossScale) * 1e-6);
+        // ★ R48（2026-09-14，Opus 5；审查意见「圆盘保温 0 mm 时四个消费方物理含义不一致」）：两张表改调**唯一配方** DesignScreen.PlateFluxWPerM2。
+        //   修的病：保温面原先无条件走 PlateFlux，厚度 0 时退到外覆材料 ε=0.45（裸铂 0.18）；另外本处原写死特征长度 0.05、保温面不传风速。
+        //   默认 ConvCharLenM = 0.05、风速 0 ⇒ 包着时逐位不变。
+        // R48（2026-09-15，Opus 5）：表上限与节点数同 ShellThermal（原「设定 + 200」超界静默钳住）
+        var bareTab = new LossTable(p.TAmbC, ShellThermal.LossTableHiC, ShellThermal.LossTableNodes(p.TAmbC, ShellThermal.LossTableHiC),
+            x => DesignScreen.PlateFluxWPerM2(p, x, 0.0) * 1e-6);
+        var insTab = DesignScreen.FlangeFaceInsulated(p.FlangeInsulThickMm)
+            ? new LossTable(p.TAmbC, ShellThermal.LossTableHiC, ShellThermal.LossTableNodes(p.TAmbC, ShellThermal.LossTableHiC),
+                x => DesignScreen.PlateFluxWPerM2(p, x, p.FlangeInsulThickMm) * 1e-6)
+            : bareTab;
 
         // 默认（NaN）解析为切点 = 仅圆盘保温、舌片裸露，见 FlangePlate.InsulBoundaryXMm
         double insulX = g.InsulBoundaryXResolved;
@@ -77,7 +76,7 @@ public static class PlateThermal2D
                 { fix[i, j] = true; T[i, j] = p.BusbarClampTempC; }
             }
 
-        double kPt = Materials.PtThermalK(p.TSetC);      // W/(mm·K) 换算见下
+        double kPt = props.K(p.TSetC);      // W/(mm·K) 换算见下
         double kmm = kPt * 1e-3;                          // W/(m·K) → W/(mm·K)
         double cond = kmm * t;                            // W/K，面导度系数
 
@@ -103,7 +102,7 @@ public static class PlateThermal2D
                     // 单元能量平衡（除以 h²）：
                     //   cond·Σ(T_nb − T)/h² + q_v·t − 2·q″(T) = 0
                     double jm = cur.Jmag[i, j];                       // A/mm²
-                    double rhoMm = Materials.PtResistivity(ts) * 1e3; // Ω·mm
+                    double rhoMm = props.Rho(ts) * 1e3; // Ω·mm
                     double qvT = rhoMm * jm * jm * t;                 // W/mm²（已乘厚度）
 
                     double a = cond / (h * h) * cnt + 2 * qp;
@@ -133,7 +132,7 @@ public static class PlateThermal2D
                     else res.TMinBareC = Math.Min(res.TMinBareC, ts);
 
                     double jm = cur.Jmag[i, j];
-                    gen += Materials.PtResistivity(ts) * 1e3 * jm * jm * t * h * h;
+                    gen += props.Rho(ts) * 1e3 * jm * jm * t * h * h;
                     loss += 2 * (Insulated(i) ? insTab : bareTab).Eval(ts) * h * h;
                 }
                 else
@@ -181,7 +180,7 @@ public static class PlateThermal2D
                 if (mask[i, j + 1]) { s += T[i, j + 1] - ts; c++; }
                 if (c == 0) { skipped++; continue; }          // 孤立格点：无方程
                 double jm = cur.Jmag[i, j];
-                double qv = Materials.PtResistivity(ts) * 1e3 * jm * jm * t;
+                double qv = props.Rho(ts) * 1e3 * jm * jm * t;
                 double ql = 2 * (Insulated(i) ? insTab : bareTab).Eval(ts);
                 double R = cond * s + (qv - ql) * h * h;
                 rAbs += Math.Abs(R); rSigned += R;

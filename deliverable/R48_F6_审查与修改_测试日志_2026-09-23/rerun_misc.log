@@ -1,0 +1,70 @@
+Build started 09/23/2026 04:58:29.
+Test run for /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtW3/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll (.NETCoreApp,Version=v8.0)
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.31)
+[xUnit.net 00:00:00.11]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:00.44]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:00.47]   Starting:    Pt_Optimize.Tests
+[xUnit.net 00:00:00.62]     PtOptimize.Tests.HandoverGateCountTests.Handover_StatedTestCount_MatchesReality [FAIL]
+[xUnit.net 00:00:00.66]       HANDOVER 说 dotnet test 应为 1470/1470，实际是 1258 条。改了测试就同步改文档 —— 别让接手的人以为是自己环境坏了
+[xUnit.net 00:00:00.66]       Stack Trace:
+[xUnit.net 00:00:00.66]         /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtW3/Pt_Optimize.Tests/HandoverGateCountTests.cs(113,0): at PtOptimize.Tests.HandoverGateCountTests.Handover_StatedTestCount_MatchesReality()
+[xUnit.net 00:00:00.66]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+[xUnit.net 00:00:00.66]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "管 J") [50 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "⑤ 舌片自由段") [13 ms]
+  Failed PtOptimize.Tests.HandoverGateCountTests.Handover_StatedTestCount_MatchesReality [46 ms]
+  Error Message:
+   HANDOVER 说 dotnet test 应为 1470/1470，实际是 1258 条。改了测试就同步改文档 —— 别让接手的人以为是自己环境坏了
+  Stack Trace:
+     at PtOptimize.Tests.HandoverGateCountTests.Handover_StatedTestCount_MatchesReality() in /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtW3/Pt_Optimize.Tests/HandoverGateCountTests.cs:line 113
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "· 升温到位用时（集总）") [56 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "②′管孔净流入") [4 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "⑦ 最热铂高出热偶读数") [3 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "⑥ 圆盘盖得住管孔") [20 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "③ 法兰增量温降（旧判法）") [3 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "① 升温") [3 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "· 整片热稳定") [3 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "· 升温期法兰−管峰值") [26 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "· 局部热稳定") [4 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "②″圆盘区最高温 − 管温（旧判法）") [2 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingLimit(key: "⑧ 管根低于热偶读数") [3 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "① 升温") [4 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "⑥ 圆盘盖得住管孔") [3 ms]
+  Passed PtOptimize.Tests.R48DeliverableWriteGuardTests.测试写deliverable必须带时刻_或经EvidenceFile_或在快套件名单里 [221 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "· 升温到位用时（集总）") [4 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "管 J") [6 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "⑤ 舌片自由段") [5 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "③ 法兰增量温降（旧判法）") [2 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "⑧ 管根低于热偶读数") [2 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "②″圆盘区最高温 − 管温（旧判法）") [2 ms]
+  Passed PtOptimize.Tests.R48DeliverableWriteGuardTests.注入_原文件名写deliverable会被抓到 [23 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "· 升温期法兰−管峰值") [2 ms]
+[xUnit.net 00:00:00.86]   Finished:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "⑦ 最热铂高出热偶读数") [5 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "· 局部热稳定") [6 ms]
+  Passed PtOptimize.Tests.HandoverGateCountTests.待办队列在文档里而不是只在对话里 [177 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "· 整片热稳定") [4 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.EveryCriterion_IsListed_WithMatchingKind(key: "②′管孔净流入") [2 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.NoPhantomHardCriteria_InTheDoc(emptyTube: False) [5 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.NoPhantomHardCriteria_InTheDoc(emptyTube: True) [2 ms]
+  Passed PtOptimize.Tests.CriteriaTableTests.Table_IsParseable_AndWellFormed [3 ms]
+
+Test Run Failed.
+Total tests: 33
+     Passed: 32
+     Failed: 1
+ Total time: 1.6099 Seconds
+     1>Project "/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtW3/.linux/Tests/Tests.csproj" on node 1 (VSTest target(s)).
+     1>VSTest:
+         MSB4181: The "Microsoft.TestPlatform.Build.Tasks.VSTestTask" task returned false but did not log an error.
+     1>Done Building Project "/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtW3/.linux/Tests/Tests.csproj" (VSTest target(s)) -- FAILED.
+
+Build FAILED.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:02.27

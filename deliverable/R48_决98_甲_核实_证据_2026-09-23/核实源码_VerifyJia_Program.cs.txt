@@ -1,0 +1,189 @@
+using System.Globalization;
+using System.Reflection;
+using System.Text;
+using PtOptimize.Core;
+
+// 决 98 甲 核实员独立重算（不调用探针档 ZZD98ProbeTests 的任何函数；只借测试程序集里的 Case(which) 取两例板几何）
+static class V
+{
+    static readonly CultureInfo IC = CultureInfo.InvariantCulture;
+    static StringBuilder sb = new();
+    static string outFile = "";
+    static void W(string t) { sb.AppendLine(t); Console.WriteLine(t); File.WriteAllText(outFile, sb.ToString(), new UTF8Encoding(false)); }
+
+    static (FlangePlate g, string name) Case(int which)
+    {
+        var asm = Assembly.LoadFrom(Path.Combine(AppContext.BaseDirectory, "Pt_Optimize.Tests.dll"));
+        var t = asm.GetType("PtOptimize.Tests.DrawingPathParityTests")!;
+        var m = t.GetMethod("Case", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!;
+        object tup = m.Invoke(null, new object[] { which })!;
+        var fields = tup.GetType().GetFields();
+        var g = (FlangePlate)fields[0].GetValue(tup)!;
+        var rest = fields[7].GetValue(tup)!; string name = (string)rest.GetType().GetField("Item1")!.GetValue(rest)!;
+        return (g, name);
+    }
+
+    // 自写平移栅格：x 向原点 = 原栅格 X0 − s + ox、格数 +1；z 向原点与格数照抄原栅格（oz = 0）或同法平移（oz ≠ 0）
+    static ThicknessField Shift(FlangePlate g, double s, double ox, double oz)
+    {
+        var f0 = FlangeMesher.Rasterize(g, s, 2.0);
+        if (ox == 0 && oz == 0) return f0;
+        int nx = ox == 0 ? f0.Nx : f0.Nx + 1, nz = oz == 0 ? f0.Nz : f0.Nz + 1;
+        double x0 = ox == 0 ? f0.X0 : f0.X0 - s + ox, z0 = oz == 0 ? f0.Z0 : f0.Z0 - s + oz;
+        var f = new ThicknessField { X0 = x0, Z0 = z0, Step = s, Nx = nx, Nz = nz, T = new double[nx * nz] };
+        for (int i = 0; i < nx; i++) for (int j = 0; j < nz; j++)
+        { double x = x0 + i * s, z = z0 + j * s; f.T[i * nz + j] = g.Inside(x, z) ? g.ThicknessAt(x, z) : 0.0; }
+        return f;
+    }
+
+    // 自写孔空腔：从离原点最近的无料节点出发的四连通无料域
+    static bool[] HoleSet(ThicknessField f, out int n)
+    {
+        int nx = f.Nx, nz = f.Nz; var hole = new bool[nx * nz];
+        int best = -1; double bd = double.MaxValue;
+        for (int i = 0; i < nx; i++) for (int j = 0; j < nz; j++)
+        { double x = f.X0 + i * f.Step, z = f.Z0 + j * f.Step; double d = x * x + z * z; if (d < bd && f.T[i * nz + j] <= 1e-6) { bd = d; best = i * nz + j; } }
+        var q = new Queue<int>(); q.Enqueue(best); hole[best] = true; n = 0;
+        while (q.Count > 0)
+        {
+            int id = q.Dequeue(); n++; int i = id / nz, j = id % nz;
+            foreach (var (di, dj) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) })
+            {
+                int a = i + di, b = j + dj; if (a < 0 || b < 0 || a >= nx || b >= nz) continue;
+                int k = a * nz + b; if (hole[k] || f.T[k] > 1e-6) continue; hole[k] = true; q.Enqueue(k);
+            }
+        }
+        return hole;
+    }
+
+    // 方格 [x0,x1]×[z0,z1] 与圆盘 R 的面积：x 向 4000 段中点求积，z 向解析（独立于 RectDiskArea 闭式）
+    static double SqDisk(double x0, double x1, double z0, double z1, double R)
+    {
+        int n = 4000; double dx = (x1 - x0) / n, A = 0;
+        for (int k = 0; k < n; k++)
+        {
+            double x = x0 + (k + 0.5) * dx; if (Math.Abs(x) >= R) continue;
+            double h = Math.Sqrt(R * R - x * x); double lo = Math.Max(z0, -h), hi = Math.Min(z1, h);
+            if (hi > lo) A += (hi - lo) * dx;
+        }
+        return A;
+    }
+
+    record M(double A_prod, double A_mine, int Nprod, int Nmine, double B, double Lo, double Hi, double D, int holeCellsOutsideRout, int nonHoleVoidInAnn);
+
+    static M Measure(ThicknessField f, double rhDesign)
+    {
+        double s = f.Step, hs = s / 2; int nz = f.Nz;
+        double aProd = PlateShapeAnalyzer.HoleRadiusOf(f);
+        int nProd = (int)Math.Round(aProd * aProd * Math.PI / (s * s));
+        var hole = HoleSet(f, out int n);
+        double aMine = Math.Sqrt(n * s * s / Math.PI);
+        double rin = rhDesign - 2 * s, rout = rhDesign + 2 * s, A = 0; int v1 = 0, v2 = 0;
+        double lo = double.NegativeInfinity, hi = double.PositiveInfinity;
+        for (int i = 0; i < f.Nx; i++) for (int j = 0; j < nz; j++)
+        {
+            double x = f.X0 + i * s, z = f.Z0 + j * s; int id = i * nz + j; double r = Math.Sqrt(x * x + z * z);
+            bool mat = f.T[id] > 1e-6;
+            if (hole[id]) lo = Math.Max(lo, r);
+            if (mat) hi = Math.Min(hi, r);
+            if (r > rout + s || r < rin - s) { if (hole[id] && r + s > rout) v1++; continue; }
+            double x0 = x - hs, x1 = x + hs, z0 = z - hs, z1 = z + hs;
+            double far = Math.Sqrt(Math.Pow(Math.Max(Math.Abs(x0), Math.Abs(x1)), 2) + Math.Pow(Math.Max(Math.Abs(z0), Math.Abs(z1)), 2));
+            double nx_ = Math.Clamp(0, x0, x1), nz_ = Math.Clamp(0, z0, z1); double near = Math.Sqrt(nx_ * nx_ + nz_ * nz_);
+            if (mat) A += SqDisk(x0, x1, z0, z1, rout) - SqDisk(x0, x1, z0, z1, rin);
+            if (hole[id] && far > rout) v1++;
+            if (!mat && !hole[id] && near < rout && far > rin) v2++;
+        }
+        double b = Math.Sqrt(rout * rout - A / Math.PI);
+        return new M(aProd, aMine, nProd, n, b, lo, hi, 0.5 * (lo + hi), v1, v2);
+    }
+
+    static string S(double v, int d = 5) => v.ToString((v >= 0 ? "+" : "") + "0." + new string('0', d), IC);
+
+    static void Main()
+    {
+        string dir = "/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtP98/deliverable/R48_决98_甲_核实_证据_2026-09-23";
+        Directory.CreateDirectory(dir);
+        var now = DateTime.Now;
+        outFile = Path.Combine(dir, $"核实_独立重算_本次开跑于{now:yyyy-MM-dd_HHmmss}.txt");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        W($"决 98 甲 核实员独立重算　开跑 {now:yyyy-MM-dd HH:mm:ss}（自写平移栅格、自写孔空腔（离原点最近的无料节点的四连通域）、自写环带面积（x 向 4000 段中点求积、z 向解析）、自写分离区间；a 另调生产 PlateShapeAnalyzer.HoleRadiusOf 对照）");
+
+        // ── 几何核实
+        foreach (int which in new[] { 0, 1 })
+        {
+            var (g, name) = Case(which);
+            double rh = g.HoleRadiusMm;
+            W($"══ {name}：rh {rh:R}；DiscRadius {g.DiscRadiusMm}；TabEndHalfWidth {g.TabEndHalfWidthMm}；TabEndX {g.TabEndXMm}；TabTipX {g.TabTipXMm}；TwoTabs {g.TwoTabs}；TabParallel {g.TabParallel}；TabFillet {g.TabFilletMm}；Tangent {g.Tangent()}；TabHoles {g.TabHoles.Length}；DiscSlots {g.DiscSlots.Length}；DiscCutHoles {g.DiscCutHoles.Length}；WeldFilletLeg {g.WeldFilletLegMm}；DiscStepRadii [{string.Join(",", g.DiscStepRadiiMm)}]；DiscStepThick [{string.Join(",", g.DiscStepThicknessMm)}]；ThickenRadius {g.ThickenRadiusMm}；ThicknessMm {g.ThicknessMm}；Extension {g.ExtensionMm}；TabThickness {g.TabThicknessMm}；TabArm [{g.TabArmX0Mm},{g.TabArmX1Mm}] {g.TabArmThicknessMm}；厚度 (−100,0) {g.ThicknessAt(-100,0):0.###} (−40,0) {g.ThicknessAt(-40,0):0.###} (−27.5,0) {g.ThicknessAt(-27.5,0):0.###} (27.5,0) {g.ThicknessAt(27.5,0):0.###} (0,27.9) {g.ThicknessAt(0,27.9):0.###}");
+            foreach (double dl in new[] { 0.0, 0.5 })
+            {
+                g.HoleRadiusMm = rh + dl;
+                // 孔外第一处无料（外轮廓）的最小半径：7200 角 × 径向 0.002 mm
+                double minOuter = double.MaxValue, thAt = 0;
+                for (int k = 0; k < 7200; k++)
+                {
+                    double th = 2 * Math.PI * (k + 0.5) / 7200, c = Math.Cos(th), sn = Math.Sin(th);
+                    for (double r = rh + dl + 1e-4; r < 40; r += 0.002)
+                        if (!g.Inside(r * c, r * sn)) { if (r < minOuter) { minOuter = r; thAt = th * 180 / Math.PI; } break; }
+                }
+                var thk = new[] { 0.01, 0.2, 0.5, 0.9, 1.1, 1.5, 2.0, 3.0 }.Select(d => $"R+{d}:{g.ThicknessAt(0, rh + dl + d):0.####}");
+                W($"  δ {dl}：孔外最近的外轮廓半径 {minOuter:0.000}（在 {thAt:0.0}°）；厚度沿 +z 轴 {string.Join(" ", thk)}");
+                g.HoleRadiusMm = rh;
+            }
+        }
+
+        // ── 六个点
+        var pts = new (int which, double s, double dl, int k)[]
+        {
+            (0, 0.5, 0.0, 0), (0, 0.5, 0.3, 1), (1, 0.5, 0.5, 1), (0, 1.0, 0.1, 0), (1, 1.0, 0.1, 0), (1, 0.25, 0.5, 2)
+        };
+        W("");
+        W("── 六点重算（e = r − (rh + δ)；x 相位 ox = k·s/8，z 向照抄原栅格）");
+        foreach (var p in pts)
+        {
+            var (g, name) = Case(p.which); double rh = g.HoleRadiusMm, tr = rh + p.dl;
+            g.HoleRadiusMm = tr; var f = Shift(g, p.s, p.k * p.s / 8, 0); g.HoleRadiusMm = rh;
+            var m = Measure(f, rh);
+            W($"  {name} 步 {p.s} δ {p.dl} ox {p.k * p.s / 8:0.####}：HoleRadiusOf {m.A_prod:R}（e {S(m.A_prod - tr)}）｜自写 a {m.A_mine:R}（孔空腔节点 生产折回 {m.Nprod}／自写 {m.Nmine}）｜自写环带面积折算 b {m.B:0.000000}（e {S(m.B - tr)}，b − a {m.B - m.A_prod:E2}；H3 孔空腔方格伸出 R_out {m.holeCellsOutsideRout}，H1 非孔无料方格碰环带 {m.nonHoleVoidInAnn}）｜自写 d {m.D:0.000000}（e {S(m.D - tr)}，r_lo {m.Lo:0.00000} r_hi {m.Hi:0.00000}，半宽 {(m.Hi - m.Lo) / 2:0.00000}，真值在区间 {(tr > m.Lo && tr <= m.Hi)}）");
+        }
+
+        // ── b 在 8 个 x 相位上的范围（与报告 b 列对）
+        W("");
+        W("── b 的 8 个 x 相位范围（报告：盘Ø56 步1 δ0.1 [−0.0563, +0.0414]；Builtin 步1 δ0.1 = a [−0.0887, +0.0036]；两例 步0.25 δ0.5 [−0.0327, −0.0281]；步0.5 δ0 = a [−0.0242, +0.0113]）");
+        foreach (var (which, s, dl) in new[] { (0, 1.0, 0.1), (1, 1.0, 0.1), (1, 0.25, 0.5), (0, 0.5, 0.0) })
+        {
+            var (g, name) = Case(which); double rh = g.HoleRadiusMm, tr = rh + dl;
+            var eb = new List<double>(); var ea = new List<double>(); var ed = new List<double>(); int viol = 0;
+            for (int k = 0; k < 8; k++) { g.HoleRadiusMm = tr; var f = Shift(g, s, k * s / 8, 0); g.HoleRadiusMm = rh; var m = Measure(f, rh); eb.Add(m.B - tr); ea.Add(m.A_prod - tr); ed.Add(m.D - tr); viol += m.holeCellsOutsideRout + m.nonHoleVoidInAnn; }
+            W($"  {name} 步 {s} δ {dl}：b [{S(eb.Min(), 4)}, {S(eb.Max(), 4)}]｜a [{S(ea.Min(), 4)}, {S(ea.Max(), 4)}]｜d [{S(ed.Min(), 4)}, {S(ed.Max(), 4)}]｜max|b − a| {eb.Zip(ea).Max(t => Math.Abs(t.First - t.Second)):E2}｜H1+H3 违例 {viol}");
+        }
+
+        // ── 导航档可分性：自写整张二维平移栅格（不是探针的孔周窗口），8 x 相位 + 64 二维相位
+        W("");
+        W("── 导航档 s = 0.5 可分性（自写整张栅格平移；x 相位 8 + 二维 64；两例孔周同形只跑 Builtin[0]）");
+        {
+            var (g, name) = Case(1); double rh = g.HoleRadiusMm, s = 0.5;
+            var rng = new Dictionary<double, (double aLo, double aHi, double dLo, double dHi, double ea, double ed, int inI, int n)>();
+            foreach (double dl in new[] { 0.0, 0.1, 0.2, 0.3, 0.5 })
+            {
+                double tr = rh + dl; var la = new List<double>(); var ld = new List<double>(); int inI = 0;
+                var phases = new List<(double, double)>();
+                for (int k = 0; k < 8; k++) phases.Add((k * s / 8, 0));
+                for (int k = 0; k < 8; k++) for (int l = 0; l < 8; l++) phases.Add((k * s / 8, l * s / 8));
+                foreach (var (ox, oz) in phases)
+                {
+                    g.HoleRadiusMm = tr; var f = Shift(g, s, ox, oz); g.HoleRadiusMm = rh;
+                    var m = Measure(f, rh); la.Add(m.A_prod); ld.Add(m.D); if (tr > m.Lo && tr <= m.Hi) inI++;
+                }
+                rng[dl] = (la.Min(), la.Max(), ld.Min(), ld.Max(), la.Max(v => Math.Abs(v - tr)), ld.Max(v => Math.Abs(v - tr)), inI, la.Count);
+                W($"  δ {dl}：a [{la.Min():0.0000}, {la.Max():0.0000}] max|e| {rng[dl].ea:0.00000}｜d [{ld.Min():0.0000}, {ld.Max():0.0000}] max|e| {rng[dl].ed:0.00000}｜真值在 d 区间 {inI}/{la.Count}");
+            }
+            double rulA = rng.Values.Max(v => v.ea), rulD = rng.Values.Max(v => v.ed);
+            W($"  尺（跨相位、跨 δ 的 max|e|）：a {rulA:0.00000}｜d {rulD:0.00000}");
+            W($"  δ0 与 δ0.3：a 间隙 {rng[0.3].aLo - rng[0.0].aHi:+0.0000;-0.0000}｜d 间隙 {rng[0.3].dLo - rng[0.0].dHi:+0.0000;-0.0000}；δ0 与 δ0.1：a 间隙 {rng[0.1].aLo - rng[0.0].aHi:+0.0000;-0.0000}｜d 间隙 {rng[0.1].dLo - rng[0.0].dHi:+0.0000;-0.0000}");
+            W($"  现役失配句（|a − rh| > s = 0.5）δ 0.3 最大 |a − rh| = {Math.Max(Math.Abs(rng[0.3].aLo - rh), Math.Abs(rng[0.3].aHi - rh)):0.0000}；δ 0.5 [{rng[0.5].aLo - rh:0.0000}, {rng[0.5].aHi - rh:0.0000}]");
+        }
+        W($"耗时 {sw.Elapsed.TotalSeconds:0.0} s（4 核机器、多名子代理同机，在争用下量得）");
+        W($"证据：{outFile}");
+    }
+}

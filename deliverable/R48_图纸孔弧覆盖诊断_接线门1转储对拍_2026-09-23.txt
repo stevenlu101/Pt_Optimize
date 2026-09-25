@@ -1,0 +1,27 @@
+R48PropsWiringGateTests 门 1（纯铂整线小算例，全量转储含文字、两处耗时改写成占位）—— §0.-20 孔弧覆盖诊断前后对拍（Linux 镜像，2026-09-23）
+取数：同一剥离版探针（只做门 1 的 QuickCase → LineRunner.Run → R48LineDumpTests.Dump(withText) → 两处耗时占位，写文件后算 SHA-256），
+  改前 = 分支头 911c788 的 git archive（不含本诊断）另建镜像；改后 = 911c788 ＋ 本诊断（工作树 wtG1）。探针源码在会话暂存区，没入库（与 §0.-19 己 的剥离版同一做法）。
+改前 SHA-256：e9a022cf724d6bb96819a36e5a6374f2cd047e96eaea6a11eda51d6a58af7425（= 门 1 原 LinuxRecord e9a022cf…，探针复现了门 1）
+改后 SHA-256：fb2c32488eb4d3c408c6655cb544b856498a78174de21a2ff0726ca1e0083cf2
+改后去掉 4 个新字段行（.Mesh.HoleArcCoverage／HoleArcGapCount／HoleArcMaxGapMidDeg／HoleArcMaxGapMm）后：e9a022cf724d6bb96819a36e5a6374f2cd047e96eaea6a11eda51d6a58af7425，与改前 cmp 逐字节相同
+行数：改前 1238，改后 1250（3 片 × 4 行 = 12 行新增，0 行删除、0 行改动）
+结论：变因 = 诊断新增的 ShellMesh 公开字段进了转储；数值场一位没动。
+── diff 改前 改后（全文）
+653a654
+> 结果.Flanges[0].Mesh.HoleArcCoverage = 1.0000000000000002
+654a656,658
+> 结果.Flanges[0].Mesh.HoleArcGapCount = 0
+> 结果.Flanges[0].Mesh.HoleArcMaxGapMidDeg = NaN
+> 结果.Flanges[0].Mesh.HoleArcMaxGapMm = 0
+844a849
+> 结果.Flanges[1].Mesh.HoleArcCoverage = 1.0000000000000002
+845a851,853
+> 结果.Flanges[1].Mesh.HoleArcGapCount = 0
+> 结果.Flanges[1].Mesh.HoleArcMaxGapMidDeg = NaN
+> 结果.Flanges[1].Mesh.HoleArcMaxGapMm = 0
+1035a1044
+> 结果.Flanges[2].Mesh.HoleArcCoverage = 1.0000000000000002
+1036a1046,1048
+> 结果.Flanges[2].Mesh.HoleArcGapCount = 0
+> 结果.Flanges[2].Mesh.HoleArcMaxGapMidDeg = NaN
+> 结果.Flanges[2].Mesh.HoleArcMaxGapMm = 0

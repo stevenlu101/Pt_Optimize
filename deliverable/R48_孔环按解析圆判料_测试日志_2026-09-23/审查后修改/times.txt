@@ -1,0 +1,15 @@
+=== R48HoleBandCircleGateTests start 2026-09-23 16:33:09 load 32.28 20.15 12.36
+=== R48HoleBandCircleGateTests end 2026-09-23 16:34:58 rc 0 load 27.54 22.54 14.11
+=== R48PropsWiringGateTests start 2026-09-23 16:34:58 load 27.54 22.54 14.11
+=== R48PropsWiringGateTests end 2026-09-23 16:36:06 rc 0 load 35.27 25.37 15.67
+=== R48RecipeFingerprintTests start 2026-09-23 16:36:06 load 35.27 25.37 15.67
+=== R48RecipeFingerprintTests end 2026-09-23 16:39:19 rc 0 load 51.17 35.22 21.15
+=== R48ArcGapDiagTests start 2026-09-23 16:39:19 load 51.17 35.22 21.15
+=== R48ArcGapDiagTests end 2026-09-23 16:40:24 rc 0 load 46.30 36.40 22.49
+=== R48ClampRecipeTests start 2026-09-23 16:40:24 load 46.30 36.40 22.49
+=== R48ClampRecipeTests end 2026-09-23 16:41:52 rc 0 load 36.59 35.60 23.43
+=== HandoverGateCountTests start 2026-09-23 16:41:52 load 36.59 35.60 23.43
+=== HandoverGateCountTests end 2026-09-23 16:41:58 rc 0 load 38.54 36.02 23.63
+ALLDONE
+=== 门a rerun start 2026-09-23 16:45:37 load 45.58 43.26 29.25
+=== 门a rerun end 2026-09-23 16:46:03 rc 0

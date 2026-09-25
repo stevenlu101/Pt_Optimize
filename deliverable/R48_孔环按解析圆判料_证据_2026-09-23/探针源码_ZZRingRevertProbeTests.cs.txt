@@ -1,0 +1,106 @@
+using System;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using PtOptimize.Core;
+using Xunit;
+
+namespace PtOptimize.Tests;
+
+// RING 树外探针（不入库；源码副本存证据目录）：决 101 A「改回 ⇒ 逐位等于改前」对拍。
+// 同一份源码在改前树（1816fc6 原样）与改后树上各跑一次：改前 MeshRules 没有 HoleBandCircle ⇒ Off() = 生产规则（= 改前的生产路径）；
+// 改后 Off() 经反射把 HoleBandCircle 设 false（改回）。两边都走 FlangeMesher.BuildFromMaterialWith(栅格, rh, Off(), …)，这就是 BuildFromField 的本体（锚点从栅格推、SourceField = 栅格）。
+public class ZZRingRevertProbeTests
+{
+    static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
+    static string OutFile => Environment.GetEnvironmentVariable("RING_PROBE_OUT") ?? "/tmp/ring_probe_out.txt";
+
+    internal static MeshRules Off()
+    {
+        var r = new MeshRules();
+        var p = typeof(MeshRules).GetProperty("HoleBandCircle");
+        if (p != null) p.SetValue(r, false);
+        return r;
+    }
+
+    static string R(double v) => v.ToString("R", Inv);
+
+    internal static string Digest(ShellMesh m)
+    {
+        var sb = new StringBuilder();
+        foreach (var n in m.Nodes) sb.Append(R(n.X)).Append(',').Append(R(n.Z)).Append(';');
+        sb.Append('|');
+        for (int c = 0; c < m.CellCount; c++)
+            sb.Append(string.Join(",", m.Cells[c])).Append(':').Append(R(m.Area[c])).Append(',').Append(R(m.Centroid[c].X)).Append(',').Append(R(m.Centroid[c].Z)).Append(',')
+              .Append(R(m.Thickness[c])).Append(',').Append(R(m.Frac[c])).Append(';');
+        sb.Append('|');
+        foreach (var f in m.Faces)
+            sb.Append(f.A).Append(',').Append(f.B).Append(',').Append(f.Tag).Append(',').Append(R(f.Length)).Append(',').Append(R(f.FullLength)).Append(',').Append(R(f.DistAB)).Append(',')
+              .Append(R(f.Mid.X)).Append(',').Append(R(f.Mid.Z)).Append(',').Append(R(f.ArcRadiusMm)).Append(';');
+        sb.Append('|').Append(R(m.HoleArcCoverage)).Append(',').Append(R(m.HoleArcMaxGapMm)).Append(',').Append(R(m.HoleArcMaxGapMidDeg)).Append(',').Append(m.HoleArcGapCount);
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()))).ToLowerInvariant();
+    }
+
+    [Trait("速度", "慢")]
+    [Fact]
+    public void RING_改回对拍_图纸对拍量与孔弧诊断量()
+    {
+        var sb = new StringBuilder();
+        void W(string t) { sb.AppendLine(t); File.WriteAllText(OutFile, sb.ToString()); }
+        W($"# RING 改回对拍探针　开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}　MeshRules 有 HoleBandCircle：{typeof(MeshRules).GetProperty("HoleBandCircle") != null}");
+        // ── A：DrawingPathParityTests 的量（两例；方法 1 倍率 1／0.5 生产栅格步；方法 2 栅格步 1.0／网格/4／0.1）
+        foreach (int which in new[] { 0, 1 })
+        {
+            var (g, lc, iA, tRoot, tSet, clampC, tabInsul, name) = DrawingPathParityTests.Case(which);
+            double rF = lc.MeshFineRadiusMm, cl = lc.Base.BusbarClampLengthMm;
+            foreach (var (sc, st) in new[] { (1.0, double.NaN), (0.5, double.NaN), (1.0, 1.0), (1.0, 0.1) })
+            {
+                double hF = lc.MeshFineMm * sc, hC = lc.MeshCoarseMm * sc;
+                double step = double.IsNaN(st) ? FlangeMesher.RasterStepFor(hF) : st;
+                var f = AnalyticSurrogate.Rasterize(g, step, 2.0);
+                var m = FlangeMesher.BuildFromMaterialWith(f, g.HoleRadiusMm, Off(), 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
+                var s = DrawingPathParityTests.SolveOne(m, lc, g, iA, tRoot, tSet, clampC, tabInsul);
+                W($"A\t{name}\t倍率 {R(sc)}\t栅格步 {R(step)}\t格 {s.Cells}\t发热 {R(s.QGen)}\t抽热 {R(s.QFromTube)}\t网格摘要 {Digest(m)}");
+            }
+        }
+        // ── B：R48ArcGapDiagTests 的量（门 a／c：W08 R31 w30 判决档；门 d：W08 默认 rh+0.3／+1.0 判决、导航）
+        foreach (var (r31, fine, dHole) in new[] { (true, 1.0, 0.0), (false, 1.0, 0.3), (false, 1.0, 1.0), (false, 0.0, 0.3), (false, 0.0, 1.0) })
+        {
+            var p = new DesignInputs();
+            var d = R48NMeshGateTests.Design("W08");
+            if (r31) R48NMeshGateTests.SetRW(d, 31.0, 30.0);
+            var (lc, g, mA, _) = R48NMeshGateTests.Build(d, p, fine);
+            double rh = g.HoleRadiusMm;
+            double hFinest = lc.MeshInnerMm > 1e-9 ? Math.Min(lc.MeshFineMm, lc.MeshInnerMm) : lc.MeshFineMm;
+            double step = Math.Min(lc.ThicknessStepMm, FlangeMesher.RasterStepForFile(hFinest));
+            g.HoleRadiusMm = rh + dHole;
+            var tf = FlangeMesher.Rasterize(g, step);
+            g.HoleRadiusMm = rh;
+            var m = FlangeMesher.BuildFromMaterialWith(tf, rh, Off(), 0, lc.MeshFineMm, lc.MeshCoarseMm, lc.MeshFineRadiusMm,
+                                                        lc.Base.BusbarClampLengthMm, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
+            var off = ShellMesh.MeasureHoleArcCoverage(m, joinAt180: false);
+            var notes = LineRunner.HoleArcDrawingNotes(m, tf, rh);
+            W($"B\t{(r31 ? "W08 R31 w30" : "W08 默认")}\t{(fine == 0 ? "导航" : "判决")}\tdHole {R(dHole)}\t步 {R(step)}\t覆盖率 {R(m.HoleArcCoverage)}\t最长缺口 {R(m.HoleArcMaxGapMm)}\t中点 {R(m.HoleArcMaxGapMidDeg)}\t段数 {m.HoleArcGapCount}"
+              + $"\t不接首尾 {R(off.Coverage)}/{R(off.MaxGapMm)}/{R(off.MaxGapMidDeg)}/{off.GapCount}\tHoleRadiusOf {R(PlateShapeAnalyzer.HoleRadiusOf(tf))}\t网格摘要 {Digest(m)}\t说明 {string.Join(" ‖ ", notes)}");
+        }
+        W("# 完");
+    }
+
+    /// <summary>接线门 1 的剥离版：QuickCase → LineRunner.Run → 全量转储（含文字、两处耗时占位），写文件并印 SHA-256（与 R48PropsWiringGateTests 门 1 同一做法）。</summary>
+    [Trait("速度", "慢")]
+    [Fact]
+    public void RING_接线门1转储()
+    {
+        var lc = R48PropsWiringGateTests.QuickCase();
+        var r = LineRunner.Run(lc);
+        Assert.True(r.Ok, r.Message);
+        string full = System.Text.RegularExpressions.Regex.Replace(R48LineDumpTests.Dump(lc, r, withText: true), @"(结果\.JacobianAmpSec = )[^\n]*", "$1<耗时>");
+        full = System.Text.RegularExpressions.Regex.Replace(full, @"用时 [0-9.]+ s", "用时 <耗时> s");
+        string sha = Convert.ToHexString(SHA256.HashData(new UTF8Encoding(false).GetBytes(full))).ToLowerInvariant();
+        string outp = Environment.GetEnvironmentVariable("RING_DUMP_OUT") ?? "/tmp/ring_gate1_dump.txt";
+        File.WriteAllText(outp, full, new UTF8Encoding(false));
+        File.WriteAllText(outp + ".sha", sha + "\n");
+    }
+}

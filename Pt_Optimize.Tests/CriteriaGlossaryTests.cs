@@ -44,13 +44,31 @@ public class CriteriaGlossaryTests
         }
     }
 
-    /// <summary>七条硬判据（<c>LineResult.Required</c> 名单）一条都不能漏。</summary>
+    /// <summary>硬判据（<c>LineResult.RequiredByState</c> 分工况表，两个工况的名单合起来）一条都不能漏。</summary>
     [Fact]
     public void 必须出现的判据全在表里()
     {
-        foreach (var (prefix, _, _) in LineResult.Required)
-            Assert.True(Criteria.All.Any(e => e.Key == prefix),
-                $"对照表缺了「{prefix}」—— 它在 Required 名单里，读的人一定会遇到");
+        foreach (var q in LineResult.RequiredByState)   // K 路（2026-09-15 Opus 5）：名单加工况维，两态任一态卡交付的都要在
+            Assert.True(Criteria.All.Any(e => e.Key == q.Prefix),
+                $"对照表缺了「{q.Prefix}」—— 它在必备名单里，读的人一定会遇到");
+    }
+
+    /// <summary>
+    /// K 路（2026-09-15，Opus 5）：对照表「硬安全线」一组 = 带玻璃稳态的必备名单；「空管到温稳态只作参考」的标记 = 分工况表里两态 Kind 不同的那几条（不另写一份）。
+    /// </summary>
+    [Fact]
+    public void 对照表的硬线与空管态参考标记跟分工况表一致()
+    {
+        var glassHard = LineResult.RequiredFor(emptyTube: false).Where(q => q.Kind == CheckKind.HardSafety).Select(q => q.Prefix).OrderBy(k => k, StringComparer.Ordinal).ToArray();
+        Assert.Equal(glassHard, Criteria.All.Where(e => e.Hard).Select(e => e.Key).OrderBy(k => k, StringComparer.Ordinal).ToArray());
+        var emptyRef = LineResult.RequiredByState.Where(q => q.GlassKind != CheckKind.Reference && q.EmptyTubeKind == CheckKind.Reference)
+                                                 .Select(q => q.Prefix).OrderBy(k => k, StringComparer.Ordinal).ToArray();
+        Assert.Equal(emptyRef, Criteria.All.Where(e => e.ReferenceWhenEmptyTube).Select(e => e.Key).OrderBy(k => k, StringComparer.Ordinal).ToArray());
+        Assert.Equal(4, emptyRef.Length);   // 自证：现表空管态降参考的是决 103 的热侧、冷侧与两条热稳定四条（改表时这里一起改；决 103 前是热侧、冷侧、净流入三条）
+        string html = Criteria.Html();
+        Assert.Contains("空管到温稳态</th>", html);
+        foreach (var k in emptyRef) Assert.Contains($"「{Criteria.Plain(k)}」", html);
+        Assert.DoesNotContain("用户", html);   // 说明书不带人称（设计输入的写法）
     }
 
     /// <summary>代号不许重复 —— 重复就说不清 ③ 到底指哪一条。</summary>
@@ -73,7 +91,12 @@ public class CriteriaGlossaryTests
         Assert.NotNull(Criteria.Of("②′"));
         Assert.NotNull(Criteria.Of("②″"));
         Assert.Equal("管孔净流入", Criteria.Of("②′")!.Name);
-        Assert.Equal("圆盘区最高温", Criteria.Of("②″")!.Name);
+        // R48 B（2026-09-14 Opus 5）：有意改动 —— ②″ 这条降为参考量，Key 改成参考量的名字（代号 ②″ 不换主人）；依据 Pt_Optimize/Core/LineRunner.cs 的 LineResult.Key.DiscTemp。
+        //   旧期望 "圆盘区最高温" → 新期望 "圆盘区最高温 − 管温（旧判法）"。热偶读数基准的两条用新代号 ⑦／⑧，一并验拆得对。
+        Assert.Equal("圆盘区最高温 − 管温（旧判法）", Criteria.Of("②″")!.Name);
+        Assert.Equal("最热铂高出热偶读数", Criteria.Of("⑦")!.Name);
+        Assert.Equal("管根低于热偶读数", Criteria.Of("⑧")!.Name);
+        Assert.Equal(LineResult.Key.DiscTemp, Criteria.Of("②″")!.Key);   // 代号 ②″ 指的仍是那一条，不许悄悄换量
     }
 
     /// <summary>
@@ -105,8 +128,13 @@ public class CriteriaGlossaryTests
     {
         string g = Criteria.Legend("②′", "②″", "③");
         Assert.Contains("②′ = 管孔净流入（W，>）", g);
-        Assert.Contains("②″ = 圆盘区最高温（K，≤）", g);
-        Assert.Contains("③ = 法兰增量温降（K，≤）", g);
+        // R48 B（2026-09-14 Opus 5）：有意改动 —— ②″／③ 两条降为参考量，名字带「（旧判法）」（代号不变）；依据 Pt_Optimize/Core/LineRunner.cs 的 LineResult.Key。
+        //   旧 "②″ = 圆盘区最高温（K，≤）" → 新 "②″ = 圆盘区最高温 − 管温（旧判法）（K，≤）"；旧 "③ = 法兰增量温降（K，≤）" → 新 "③ = 法兰增量温降（旧判法）（K，≤）"。
+        Assert.Contains("②″ = 圆盘区最高温 − 管温（旧判法）（K，≤）", g);
+        Assert.Contains("③ = 法兰增量温降（旧判法）（K，≤）", g);
+        string g2 = Criteria.Legend("⑦", "⑧");
+        Assert.Contains("⑦ = 最热铂高出热偶读数（K，≤）", g2);
+        Assert.Contains("⑧ = 管根低于热偶读数（K，≤）", g2);
     }
 
     /// <summary>

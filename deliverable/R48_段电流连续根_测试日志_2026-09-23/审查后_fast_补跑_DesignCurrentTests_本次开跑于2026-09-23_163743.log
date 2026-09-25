@@ -1,0 +1,27 @@
+开跑 2026-09-23 16:37:43　loadavg 29.68 26.55 17.12 41/691 4766　类 DesignCurrentTests（过滤 速度!=慢）
+Microsoft (R) Test Execution Command Line Tool Version 17.8.0 (x64)
+Copyright (c) Microsoft Corporation.  All rights reserved.
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll
+[xUnit.net 00:00:00.01] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.31)
+[xUnit.net 00:00:00.35]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:00.87]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:00.88]   Starting:    Pt_Optimize.Tests
+管保温 5 mm：1214 A　40 mm：642 A
+  Passed PtOptimize.Tests.DesignCurrentTests.管保温加厚_设计电流下降 [3 s]
+设计电流（温控 20 °C/h 空管升温 25→1150 °C，管子准静态 I²R=散热+C·Ṫ 全程峰值）：段 1214/1214 A ⇒ 片 1214/2102/1214 A（共用片矢量合成）　对照·两节点旧模型（含法兰自热；没有经舌片流进铜排的通道、舌片按裸铂；不可引用）1173/1164 A（不进尺寸链）
+  Passed PtOptimize.Tests.DesignCurrentTests.两段三片_端片等于段峰值_共用片矢量合成 [1 s]
+  Passed PtOptimize.Tests.DesignCurrentTests.管J许用压小_升温电流被截住_判据一不过 [2 m 52 s]
+  Passed PtOptimize.Tests.DesignCurrentTests.法兰更重_设计电流不降 [1 s]
+段 1 峰值 1214 A　准静态(1150 °C) 1214 A　比 1.000
+R_管(1150) = 1.106 mΩ　I²R = 1630 W
+[xUnit.net 00:02:59.67]   Finished:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.DesignCurrentTests.独立核数_升温末端电流约等于准静态电流 [501 ms]
+
+Test Run Successful.
+Total tests: 5
+     Passed: 5
+ Total time: 3.0227 Minutes
+EXIT 0　结束 2026-09-23 16:40:46

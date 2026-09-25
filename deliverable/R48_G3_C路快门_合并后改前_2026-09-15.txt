@@ -1,0 +1,48 @@
+D:\WinForm\r48_G3\Pt_Optimize.Tests\bin\Debug\net8.0-windows\Pt_Optimize.Tests.dll (.NETCoreApp,Version=v8.0)的测试运行
+VSTest 版本 18.0.1 (x64)
+
+正在启动测试执行，请稍候...
+总共 1 个测试文件与指定模式相匹配。
+D:\WinForm\r48_G3\Pt_Optimize.Tests\bin\Debug\net8.0-windows\Pt_Optimize.Tests.dll
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.28)
+[xUnit.net 00:00:00.42]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:00.54]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:00.54]   Starting:    Pt_Optimize.Tests
+  已通过 PtOptimize.Tests.R48EmptyTubeGateTests.整线空管_端部保温形状经LineRunner写成带玻璃形状 [21 s]
+  标准输出消息:
+ HC1 端部额外保温 mm：带玻璃 4.4910/3.6231/2.9229/2.3580/1.9023/1.5347　空管 4.4910/3.6231/2.9229/2.3580/1.9023/1.5347
+ HC2 端部额外保温 mm：带玻璃 4.4968/3.6373/2.9420/2.3797/1.9248/1.5569　空管 4.4968/3.6373/2.9420/2.3797/1.9248/1.5569
+
+
+  已通过 PtOptimize.Tests.R48EmptyTubeGateTests.空管不读玻璃进口_NaN与1150逐位相同 [398 ms]
+  已通过 PtOptimize.Tests.R48EmptyTubeGateTests.整线双工况_工况说明_尺寸链逐位相同_基线按空管算 [6 m 46 s]
+  标准输出消息:
+ 升温期法兰−管峰值（参考量，随工况变）：带玻璃 298.028 K　空管 411.682 K
+ 无法兰基线两工况最大差 1.403 K；各段 A/B：带玻璃 1150.10/1116.61  1115.63/1077.67　空管 1150.83/1115.33  1114.69/1079.07
+ 整线空管：收敛 True　电流 1212/1158 A　抽热 -15.57/-14.37/-30.57 W
+
+
+  已通过 PtOptimize.Tests.R48EmptyTubeGateTests.带玻璃_逐位不变_三个算例指纹 [2 s]
+  标准输出消息:
+ A fp=0x33B7908F6563A1E0　B fp=0x20CA37AA8C454479　C fp=0x02DA1FDB755FFD7A
+
+
+  已通过 PtOptimize.Tests.R48EmptyTubeGateTests.空管单段_无NaN_中点到设定_焦耳热等于散热 [4 s]
+  标准输出消息:
+ 空管单段：I=1817.4 A　中点 1300.001 °C　焦耳热 3142.73 W　散热 3142.73 W　给玻璃 0.00 W　两端流出 0.00 W　残差 0.000%
+ 空管带抽热：I=1656.2 A　焦耳热 2411.84 W　散热 2395.29 W　两端流出 16.56 W　残差 -0.000%　落差 55.20 K
+ 正对照（带玻璃）：焦耳热 1938.58 W　散热 1998.50 W　给玻璃 -114.30 W　两端流出 54.39 W　残差 -0.000%
+
+
+[xUnit.net 00:07:17.09]   Finished:    Pt_Optimize.Tests
+  已通过 PtOptimize.Tests.R48EmptyTubeGateTests.钩子_端部保温形状两工况相同_管腔辐射默认逐位不变_热偶基准 [1 s]
+  标准输出消息:
+ 端部额外保温分布 mm（自端部起 6 格）：带玻璃 8.9909/7.2679/5.8751/4.7492/3.8391/3.1033　空管·按带玻璃 hg 8.9909/7.2679/5.8751/4.7492/3.8391/3.1033　空管·按自身 hg=0 9.2243/7.8488/6.6783/5.6825/4.8351/4.1141
+ 管腔辐射钩子（空管、带抽热、定电流 1500 A）：A 端 1097.93 → 1098.80 °C　热衰减长度 29.9 → 49.3 mm
+
+
+
+测试运行成功。
+测试总数: 6
+     通过数: 6
+总时间: 7.3014 分钟

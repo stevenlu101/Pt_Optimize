@@ -69,14 +69,30 @@ public class OverheatDrivesSizingTests
         Assert.True(a > 0);
     }
 
-    /// <summary>★★★ 加厚有用时要取**最小够用**的那一档 —— 「能用且铂最省」。</summary>
+    /// <summary>
+    /// ★★★ 加厚有用时要取**最小够用**的那一档 —— 「能用且铂最省」。
+    /// ⚠ 2026-09-17 Opus 5（J 路，独立复核后改）：这一条原来钉的是生产那一行的**源码文本**
+    /// （<c>if (HotAt(mid) &lt;= opt.OverheatRaiseFromC) hi = mid; else lo = mid;</c>）—— 又一道「手抄生产配方」的门：
+    /// 复核查出二分那三步没有 NaN 闸（判不了当成「还过热」，出口照印「压住了」），要把二分提成公开函数
+    /// <see cref="FlangeAutoSizer.MinRaiseFactor"/> 才好在里面加闸、也才验得了 —— 一提，这条当场红（本轮快套件首跑那 1 红就是它）。
+    /// 改成**行为门 + 接线源码门**，门槛只高不低：取的仍必须是「最小够用的那一档」（够用、且不比最小够用的厚出一格），
+    /// 另加一条原来没有的 —— **中间档算不出时不许给档**。
+    /// </summary>
     [Fact]
     public void 加厚有用时取最小够用的那一档()
     {
         string s = Sizer();
         Assert.Contains("二分找**最小**够用的倍数（最省铂）", s);
         Assert.Contains("哪一级热就加哪一级", s);
-        Assert.Contains("if (HotAt(mid) <= opt.OverheatRaiseFromC) hi = mid; else lo = mid;", s);
+        Assert.Contains("var rb = MinRaiseFactor(HotAt, hiK, opt.OverheatRaiseFromC);", s);   // 生产的二分就是这一份
+        // 行为（调生产那一份）：阈值 1300 °C、工艺上界 ×2，凡 ≥ ×1.2 就凉 ⇒ 取到的那一档必须够用，且不比最小够用的厚出一格
+        var r = FlangeAutoSizer.MinRaiseFactor(k => k >= 1.2 ? 1200.0 : 1400.0, 2.0, 1300.0);
+        Assert.False(r.Undetermined);
+        Assert.Equal(1.25, r.K, 12);
+        Assert.True(r.K >= 1.2, $"取的那一档 ×{r.K:0.000} 根本不够用");
+        Assert.True(r.K - 1.2 < 0.08, $"取到 ×{r.K:0.000}，比最小够用的 ×1.2 厚出一格以上 —— 白花铂");
+        // 判不了不许给档（2026-09-17 复核查出的那条病）
+        Assert.True(FlangeAutoSizer.MinRaiseFactor(_ => double.NaN, 2.0, 1300.0).Undetermined);
     }
 
     /// <summary>

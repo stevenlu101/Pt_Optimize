@@ -12,6 +12,7 @@ public sealed class LossTable
 {
     private readonly IInterpolation _spline;
     private readonly double _lo, _hi;
+    private readonly double[] _x, _y;
 
     public LossTable(double tMin, double tMax, int n, Func<double, double> f)
     {
@@ -25,7 +26,45 @@ public sealed class LossTable
         }
         _spline = CubicSpline.InterpolateNatural(x, y);
         _lo = tMin; _hi = tMax;
+        _x = x; _y = y;
     }
+
+    private LossTable(double[] x, double[] y, double lo, double hi)
+    {
+        _spline = CubicSpline.InterpolateNatural(x, y);
+        _lo = lo; _hi = hi; _x = x; _y = y;
+    }
+
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5）：两张表按份额混合 —— 节点值 y = y_b + f·(y_a − y_b)，再建自然样条。
+    /// 两张表节点 x 相同、端点条件相同（都是自然样条）时，样条对 y 线性 ⇒ 结果就是 f·a + (1−f)·b 这条样条本身，精确，不另算热流。
+    /// 用途：保温分界圆穿过的格子，一部分面积包法兰保温、一部分包舌保温，金属同温、两块面积并联 ⇒ **混合热流，不混合厚度**
+    /// （一维热阻对厚度非线性，按份额平均厚度再查表是另一个物理 —— 物理把关人第四轮条件 1）。
+    /// 写成 y_b + f·(y_a − y_b)：两张表逐位相同时结果逐位不变（正对照门靠这一点）。
+    /// 节点不同 ⇒ 抛异常，不许悄悄在不同温度网格上混。
+    /// </summary>
+    public static LossTable Blend(LossTable a, LossTable b, double f)
+    {
+        if (a._x.Length != b._x.Length || a._lo != b._lo || a._hi != b._hi)
+            throw new ArgumentException("两张损失表的温度节点不同，不能按份额混合");
+        for (int i = 0; i < a._x.Length; i++)
+            if (a._x[i] != b._x[i]) throw new ArgumentException("两张损失表的温度节点不同，不能按份额混合");
+        var y = new double[a._y.Length];
+        for (int i = 0; i < y.Length; i++) y[i] = b._y[i] + f * (a._y[i] - b._y[i]);
+        return new LossTable((double[])a._x.Clone(), y, a._lo, a._hi);
+    }
+
+    /// <summary>
+    /// ★ R48（2026-09-15，Opus 5；常驻数值把关人第十四轮）：表覆盖的温度区间与节点数 —— <see cref="Eval"/>／<see cref="Slope"/> 超出区间**静默钳住**，
+    /// 用这张表的求解器解完要自己拿解出的温度对一下（<see cref="Covers"/>），超界就把用它的判据判不了或写进结果。
+    /// </summary>
+    public double LoC => _lo;
+    /// <summary>表的温度上限 °C（见 <see cref="LoC"/>）。</summary>
+    public double HiC => _hi;
+    /// <summary>表的节点数。</summary>
+    public int Nodes => _x.Length;
+    /// <summary>温度 <paramref name="t"/> 在不在表覆盖的闭区间里（NaN 不算在）。</summary>
+    public bool Covers(double t) => t >= _lo && t <= _hi;
 
     public double Eval(double t) => _spline.Interpolate(Math.Clamp(t, _lo, _hi));
 
@@ -72,6 +111,49 @@ public static class Roots
             if (double.IsNaN(fm)) break;
             if (fm * fa > 0) { lo = m; fa = fm; } else { hi = m; }
         }
+        return 0.5 * (lo + hi);
+    }
+
+    /// <summary>
+    /// ★ 2026-09-23（SEG，决 97 A「段电流连续根」；归因 deliverable/R48_耦合轮数归因_段电流二分格彩票_2026-09-23.md）：
+    /// 与 <see cref="Monotone"/> **同一个括号化、同一个二分**（求值次序、次数逐个相同，段解分辨率不降），只改收尾：
+    /// 末括号 [lo, hi] 内按两端函数值线性插值（一步割线／试位）返回 x̂ = lo + (hi − lo)·f(lo)/(f(lo) − f(hi))，不再返回中点。
+    ///
+    /// 为什么：返回中点 ⇒ 根只能落在二分格上（格距 = 末括号宽，段电流约 2.6e−3 A 一格），x̂ 对输入是**分段常数**；
+    ///   外层耦合的 G(x) 因此跟着分段常数，停机轮数成了首达时间彩票（29 → 60 → 119）。插值收尾让 x̂ 随输入连续变化。
+    ///
+    /// 误差（数学推出，门 R48SegContinuousRootTests.a 用它）：f 在末括号上二阶连续、|f′| ≥ m₁、|f″| ≤ M₂、括号宽 h，真根 r ∈ [lo, hi]。
+    ///   线性插值余项 f(x) − L(x) = ½f″(ξ)(x − lo)(x − hi)；在 r 处 L(r) = −½f″(ξ)(r − lo)(r − hi)，L 的斜率 = 割线斜率 s = f′(η)（中值定理），|s| ≥ m₁；
+    ///   x̂ 是 L 的零点 ⇒ |x̂ − r| = |L(r)|/|s| ≤ M₂·(r − lo)(hi − r)/(2m₁) ≤ **M₂·h²/(8·m₁)**。（中点收尾的界是 h/2。）
+    ///   f 带求值噪声 |ε| ≤ ε̄ 时另加 ε̄/m₁（两端值各偏 ε̄，插值点至多移 ε̄/|s|）。
+    /// 括号不变式 f(lo)·f(hi) ≤ 0 在二分中一直成立 ⇒ f(lo)/(f(lo) − f(hi)) ∈ [0, 1] ⇒ x̂ 永远在末括号里；两端值相等（只可能同为 0）或非有限 ⇒ 退回中点。
+    ///
+    /// <paramref name="continuous"/> = false 是**改回**参数（只给门与「开 − 关」归因用，生产不传）：返回与 <see cref="Monotone"/> 逐位相同的中点
+    ///   （lo、hi、fa 的更新与 Monotone 逐字相同；多记的 fb 不参与二分）。
+    /// </summary>
+    public static double MonotoneContinuous(Func<double, double> f, double lo, double hi,
+                                            double xTol, int maxIter = 200, bool continuous = true)
+    {
+        double fa = f(lo), fb = f(hi);
+        int expand = 0;
+        while (fa * fb > 0 && expand++ < 12)
+        {
+            double span = hi - lo;
+            if (Math.Abs(fa) < Math.Abs(fb)) { lo = Math.Max(1e-9, lo - span); fa = f(lo); }
+            else { hi += span; fb = f(hi); }
+        }
+        if (double.IsNaN(fa) || double.IsNaN(fb) || fa * fb > 0)
+            throw new RootNotBracketedException(
+                $"无法括号化：f({lo:G6})={fa:G6}, f({hi:G6})={fb:G6}");
+
+        for (int i = 0; i < maxIter && (hi - lo) > xTol; i++)
+        {
+            double m = 0.5 * (lo + hi), fm = f(m);
+            if (double.IsNaN(fm)) break;
+            if (fm * fa > 0) { lo = m; fa = fm; } else { hi = m; fb = fm; }
+        }
+        if (continuous && fa != fb && double.IsFinite(fa) && double.IsFinite(fb))
+            return lo + (hi - lo) * (fa / (fa - fb));
         return 0.5 * (lo + hi);
     }
 }

@@ -65,8 +65,9 @@ public static class LocalStability
         var pt = new Point { TempC = tempC, JActual = jAPerMm2 };
         if (tempC > FitMaxC || tempC < 0) { pt.JStab = double.NaN; return pt; }
 
-        double rho = Materials.PtResistivity(tempC);              // Ω·m
-        double tcr = Materials.PtTcr(tempC);                      // 1/K
+        var props = PtProps.For(p);                               // R48 物性接线（2026-09-23，Opus 5.5）：按牌号（纯铂逐位不变）
+        double rho = props.Rho(tempC);                            // Ω·m
+        double tcr = props.Tcr(tempC);                            // 1/K
         double t = thickMm * 1e-3;                                // m
 
         // 加热的温度导数，单位面积 W/(m²·K)
@@ -79,7 +80,7 @@ public static class LocalStability
         pt.CoolSurf = (Q(tempC + d) - Q(tempC - d)) / (2 * d);
 
         // 散热②：横向导到定温边界。单位面积的等效导度 = k·t/L²
-        double k = Materials.PtThermalK(tempC);                   // W/(m·K)
+        double k = props.K(tempC);                                // W/(m·K)
         pt.CoolLateral = double.IsNaN(lateralLenMm) || lateralLenMm <= 1e-6
                        ? 0 : k * t / Math.Pow(lateralLenMm * 1e-3, 2);
 

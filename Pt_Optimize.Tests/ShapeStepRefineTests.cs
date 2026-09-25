@@ -97,8 +97,9 @@ public class ShapeStepRefineTests
     [Fact]
     public void 搜形状循环真的用了收缩后的步长()
     {
+        // 2026-09-25：搜形状循环在 Core/ShapeSearchDriver（界面只调它），门改读驱动
         string ui = File.ReadAllText(
-            Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "UI", "LineDesignPage.cs"));
+            Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "Core", "ShapeSearchDriver.cs"));
 
         Assert.Contains("double step = ShapeSearchPlan.DiscStepMm;", ui);
         Assert.Contains("ShapeSearchPlan.Neighbours(R0, hw0, curTaper, step)", ui);   // R38：邻域探索多带一维锥形

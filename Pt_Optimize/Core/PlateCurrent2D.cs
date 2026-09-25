@@ -128,6 +128,39 @@ public sealed class FlangePlate
             => sides < 3 || cornerFrac >= 0.999 ? rCircle
              : rCircle * Math.Sqrt(Math.PI / Math.Max(1e-12, UnitArea(sides, cornerFrac)));
 
+        /// <summary>
+        /// ★ 2026-09-25（分叉点钉舌长中点）：这个孔沿**世界 x**（舌轴）从孔心量起的两个半长（mm，都取正）：
+        /// <c>ToNegX</c> = 朝 −x（舌端／铜排侧）、<c>ToPosX</c> = 朝 +x（圆盘侧）。
+        /// 与 <see cref="Contains"/> 同一份参数（Sides、CornerFrac、RotDeg、AspectXZ）按支撑函数闭式算，不另抄轮廓：
+        /// 本地点 (lx, lz) 到世界的映射是 (dx, dz) = R(RotDeg)·(AspectXZ·lx, lz)（Contains 的逆），
+        /// 世界 x 方向 ±1 拉回本地是方向 w = ±(AspectXZ·cos Rot, −sin Rot)；
+        /// 孔 = 核心正 N 边形 ⊕ 半径 r 的圆（Minkowski 和）⇒ 支撑函数 h(w) = max_顶点 (v·w) + r·|w|；
+        /// 圆／椭圆（Sides &lt; 3 或 CornerFrac ≥ 0.999）核心退化为一点 ⇒ h(w) = RMm·|w|。
+        /// 校核：圆角三角（CornerFrac 0.35）转 90° ⇒ ToNegX = RMm（圆头顶点朝铜排）、ToPosX = RMm·(0.5 + 0.5·0.35) = 0.675·RMm（底边朝盘），拉长比只作用在 z；
+        /// 09-12 样机（外接 34.12、拉长比 0.36）算得孔长 57.15 mm，与 deliverable/拍脑袋Y形_核算.txt 记的槽实际范围长 57 一致。
+        /// </summary>
+        public (double ToNegX, double ToPosX) ExtentXMm()
+        {
+            double a = Math.Max(1e-9, AspectXZ);
+            double rot = RotDeg * Math.PI / 180.0;
+            double wx = a * Math.Cos(rot), wz = -Math.Sin(rot);     // 世界 +x 方向拉回本地坐标
+            double wn = Math.Sqrt(wx * wx + wz * wz);
+            if (Sides < 3 || CornerFrac >= 0.999) return (RMm * wn, RMm * wn);
+            double r = RMm * Math.Clamp(CornerFrac, 0.0, 1.0);
+            double rc = RMm - r;
+            if (rc <= 1e-9) return (RMm * wn, RMm * wn);
+            double hPos = double.NegativeInfinity, hNeg = double.NegativeInfinity;
+            for (int k = 0; k < Sides; k++)
+            {
+                double ak = 2 * Math.PI * k / Sides + Math.PI / 2;       // 与 DistToRegularPolygon 同一组顶点（一个顶点朝 +z）
+                double vx = rc * Math.Cos(ak), vz = rc * Math.Sin(ak);
+                double dot = vx * wx + vz * wz;
+                hPos = Math.Max(hPos, dot);
+                hNeg = Math.Max(hNeg, -dot);
+            }
+            return (hNeg + r * wn, hPos + r * wn);
+        }
+
         /// <summary>点 (x,z) 在不在这个孔里。</summary>
         public bool Contains(double x, double z)
         {
@@ -320,9 +353,89 @@ public sealed class FlangePlate
     /// </summary>
     public double TabInsulThickMm = double.NaN;
 
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5）：**本片圆盘保温厚度** mm（按半径圈、r ≤ 盘半径那块）。NaN = 沿用整线的 DesignInputs.FlangeInsulThickMm（旧口径，逐位不变）。
+    /// 为什么要逐片：用户 2026-09-14「圆盘包多厚是开放边界条件让你算的，每层 0.5 mm」「保温是用绕的，可以不等厚」；
+    /// 实测端片与共用片、入口与出口要的圆盘保温差好几毫米（R48_第一轮保温扫描_*），全线一个值做不出可行设计。
+    /// 由 LineRunner 在逐片热解时写进本片的 p2.FlangeInsulThickMm；FlangeInsulated = false 时仍为 0。
+    /// </summary>
+    public double DiscInsulThickMm = double.NaN;
+
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5；常驻数值把关人第十二轮查出三处还读整线值）：本片圆盘保温的**唯一**取值口径 ——
+    /// 板件带了逐片值就用它（整线「不包」时为 0），否则沿用整线 <paramref name="p"/>.FlangeInsulThickMm。
+    /// 热场、整片热稳定、升温两节点参考项都经它取，不许各写一份。
+    /// 2026-09-14 Opus 5 补（审查意见「同一条规则写了三份」）：规则本体提到 <see cref="DiscInsulEffective(double, double, bool)"/>，本处只是板件的调用口。
+    /// </summary>
+    public double DiscInsulEffectiveMm(DesignInputs p)
+        => DiscInsulEffective(DiscInsulThickMm, p.FlangeInsulThickMm, p.FlangeInsulated);
+
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5；审查意见：同一条规则原先在板件、LineCase 图纸分支、DesignSpec.DiscInsulMmOf 各写一份，
+    /// 三份「同源」只靠测试比出来相等）：逐片圆盘保温的**规则本体**，全仓只此一份 ——
+    /// 逐片值是 NaN ⇒ 沿用整线值 <paramref name="wholeLineMm"/>（调用方给「算例里的整线值」，不包时就是 0）；
+    /// 逐片值有数 ⇒ 包着取它、整线「不包」取 0。
+    /// </summary>
+    public static double DiscInsulEffective(double perPlateMm, double wholeLineMm, bool flangeInsulated)
+        => double.IsNaN(perPlateMm) ? wholeLineMm : (flangeInsulated ? perPlateMm : 0.0);
+
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5）：数组形态的同一规则。**短数组约定（全仓统一）：下标越界 = 该片没有逐片值 = 与 NaN 同义，沿用整线**。
+    /// 用它的是 DesignSpec.DiscInsulMmOf（设计记录的逐片数组）与 LineCase.DiscInsulEffectiveAt 的图纸分支（DiscInsul3dmPerPlateMm）；
+    /// 板件本身（DesignSpec.Plate）越界也填 NaN，三处一致。
+    /// ⚠ 与舌保温 LineCase.TabInsul3dmAt 的「短了用最后一片」**不同**：舌保温没有整线值可退，圆盘保温有，缺值就退整线，不猜。
+    /// </summary>
+    public static double DiscInsulEffective(double[]? perPlateMm, int j, double wholeLineMm, bool flangeInsulated)
+        => DiscInsulEffective(perPlateMm is not null && j >= 0 && j < perPlateMm.Length ? perPlateMm[j] : double.NaN,
+                              wholeLineMm, flangeInsulated);
+
     /// <summary>解析后的保温分界：NaN ⇒ 切点（仅圆盘保温）</summary>
     public double InsulBoundaryXResolved
         => double.IsNaN(InsulBoundaryXMm) ? Tangent().X : InsulBoundaryXMm;
+
+    /// <summary>
+    /// ★ R48（2026-09-14，Opus 5）：「按半径包法兰保温」这条规则的**唯一**算式：r ≤ 保温半径（含边界）。
+    /// <see cref="UnderDiscInsulation"/>、ShellThermal 的形心判定、分界格有料份额（FlangeMesher.MaterialFraction 的判定）都调它，不另写。
+    /// </summary>
+    public static bool InsideInsulCircle(double x, double z, double radiusMm) => x * x + z * z <= radiusMm * radiusMm;
+
+    /// <summary>
+    /// ★★★★★ R48（2026-09-14，Opus 5；物理把关人确认「必须在重解之前做」）：
+    /// **某一点包的是法兰保温（圆盘整块）还是舌保温 —— 全项目唯一的判定。**
+    ///
+    /// ══ 旧口径错在哪
+    ///
+    /// <see cref="InsulBoundaryXMm"/> = NaN 的文档原意是「**仅圆盘保温**」，实现却是 <c>x ≥ 切点x</c>。
+    /// 两个内置档**舌半宽 = 盘半径**（都是 30）⇒ 切点落在 x = 0 ⇒ **−x 那半个圆盘被算成舌片**，
+    /// 包的是**舌保温旋钮**的厚度（片0 落点 4.6 mm，片3 7.5 mm），而不是圆盘保温。
+    /// （2026-09-14 更正，Opus 5：此处原写「法兰保温 2.5 mm」，那是 DesignInputs 的默认值；整线算例由 DesignSpec.BuildCase 造，
+    ///   圆盘保温实际取 DesignSpec.FlangeInsulMm = **20 mm**，而这个 20 在仓库里查不到出处，见 R48DiscInsulLeverTests。）
+    /// 实测「圆盘区最高温」的峰在 r ≈ 29、x = −29 —— **正好在那半个盘面上、舌保温旋钮底下**。
+    /// 于是求解器「抬舌保温 −6.965 → −49.012」混着两件事：舌片热回灌，与**旋钮直接给峰加保温**。
+    /// 而现场安装清单（<see cref="FlangeKit"/>）写的是「舌保温覆盖 = 圆盘切点到压接段前那一段」，
+    /// 工人从盘边开始缠，**不会去缠那半个盘面** ⇒ 模型包的保温和现场包的保温不是同一块。
+    ///
+    /// ══ 新口径
+    ///
+    /// 默认（NaN）按**半径**：r ≤ 盘半径 ⇒ 法兰保温；其余（伸出去的舌片）⇒ 舌保温。按零件本身的分块来分。
+    /// 显式指定了分界（±1e9 全包/全裸、命令行实验的 −200 等）⇒ **原样按 x**，那是调用方的意图，不许悄悄改。
+    ///
+    /// ⚠ 接缝 r = 盘半径 恰好穿过全片最热的地方（盘区峰 r≈29、舌区峰 r≈31～33）。
+    ///   现场接缝会有缝或搭接，模型对接缝位置敏感 ⇒ 安装清单须写明搭接不留缝；接缝挪 ±3 mm 的敏感度待量。
+    /// </summary>
+    public bool UnderDiscInsulation(double x, double z)
+        => double.IsNaN(InsulBoundaryXMm) && DiscRadiusMm > 0
+            ? InsideInsulCircle(x, z, DiscRadiusMm)
+            // 显式分界 ⇒ 按 x；**盘半径无效**（NaN / ≤ 0）⇒ 同样退回按 x（分界取切点）。
+            //   ★ 2026-09-14 物理把关人查出：原来盘半径 NaN 时 x²+z² ≤ NaN 恒假 ⇒ 整片悄悄包舌保温，
+            //     而求解器那边退回按 x —— 两边结果碰巧一样，但「同一条规则的两种表达」并不成立。现在两边走同一条退回路径。
+            : (TwoTabs ? Math.Abs(x) <= Math.Abs(InsulBoundaryXResolved) : x >= InsulBoundaryXResolved);
+
+    /// <summary>
+    /// 交给不持有板件的求解器（<see cref="ShellThermal"/>）用：按半径划保温时给盘半径，按 x 划时给 NaN。
+    /// 与 <see cref="UnderDiscInsulation"/> 同一条规则的两种表达 —— 求解器拿到它必须照同一条规则判。
+    /// </summary>
+    public double InsulDiscRadiusMm => double.IsNaN(InsulBoundaryXMm) && DiscRadiusMm > 0 ? DiscRadiusMm : double.NaN;
 
     /// <summary>孔周局部加厚：半径 ≤ ThickenRadiusMm 的区域厚度取 ThickenedMm</summary>
     /// <summary>末端延长段：自 TabEndXMm 再伸 ExtensionMm，半宽由 40 线性张开到 ExtHalfWidthMm</summary>
@@ -545,12 +658,16 @@ public static class PlateCurrent2D
     /// <param name="h">网格步长 mm</param>
     /// <param name="tempField">可选温度场（与网格同形）。给出时按 σ(T)=1/ρe(T) 逐点取值；
     /// 为空则退回全场常数 σ。铂在 700–1300 °C 间 ρe 变化 48 %，忽略它会把电流分布算偏。</param>
+    /// <param name="props">电阻率按牌号的取值口（R48 物性接线，2026-09-23，Opus 5.5）；null ⇒ <see cref="PtProps.Pure"/>（纯铂，与改前逐位相同）。
+    ///   生产 Core 的调用点一律显式传（门 R48PropsWiringGateTests 源码门）；缺省只留给测试与命令行。</param>
     public static PlateField Solve(FlangePlate g, double totalCurrentA,
                                    double rhoOhmM, double h = 0.5,
                                    int maxIter = 20000, double tol = 1e-10,
                                    double[,]? tempField = null, double tRefC = 1300,
-                                   double[,]? thickField = null)
+                                   double[,]? thickField = null,
+                                   PtProps? props = null)
     {
+        props ??= PtProps.Pure;
         double x0 = g.TabTipXMm - h, x1 = (g.TwoTabs ? -g.TabTipXMm : g.DiscRadiusMm) + h;   // 双舌片：图幅到 +x 舌端
         double z1 = Math.Max(g.DiscRadiusMm, g.ExtHalfWidthMm) + h;
         int nx = (int)Math.Round((x1 - x0) / h) + 1;
@@ -584,10 +701,10 @@ public static class PlateCurrent2D
                : g.ThicknessAt(x0 + i * h, -z1 + j * h);
 
         // 局部电导率 σ(T) = 1/ρe(T)，归一化到参考温度使无温度场时退化为原行为
-        double sigRef = 1.0 / Materials.PtResistivity(tRefC);
+        double sigRef = 1.0 / props.Rho(tRefC);
         double SigmaAt(int i, int j)
             => tempField == null ? 1.0
-               : (1.0 / Materials.PtResistivity(tempField[i, j])) / sigRef;
+               : (1.0 / props.Rho(tempField[i, j])) / sigRef;
 
         // SOR 迭代（掩膜外邻居不参与 → 自然 Neumann）
         double omega = 2.0 / (1.0 + Math.PI / Math.Max(nx, nz));

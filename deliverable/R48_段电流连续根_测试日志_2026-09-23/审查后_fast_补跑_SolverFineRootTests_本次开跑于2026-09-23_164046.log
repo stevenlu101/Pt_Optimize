@@ -1,0 +1,24 @@
+开跑 2026-09-23 16:40:46　loadavg 48.00 37.44 23.13 27/641 6111　类 SolverFineRootTests（过滤 速度!=慢）
+Microsoft (R) Test Execution Command Line Tool Version 17.8.0 (x64)
+Copyright (c) Microsoft Corporation.  All rights reserved.
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtSEG/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll
+[xUnit.net 00:00:00.01] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.31)
+[xUnit.net 00:00:00.34]   Discovering: Pt_Optimize.Tests
+[xUnit.net 00:00:01.15]   Discovered:  Pt_Optimize.Tests
+[xUnit.net 00:00:01.19]   Starting:    Pt_Optimize.Tests
+[xUnit.net 00:00:01.92]   Finished:    Pt_Optimize.Tests
+  Passed PtOptimize.Tests.SolverFineRootTests.第二遍不重置旋钮 [85 ms]
+  Passed PtOptimize.Tests.SolverFineRootTests.求根的网格由选项决定 [49 ms]
+  Passed PtOptimize.Tests.SolverFineRootTests.网格该多细只有一处来源 [102 ms]
+  Passed PtOptimize.Tests.SolverFineRootTests.两遍跑的是同一个循环 [42 ms]
+  Passed PtOptimize.Tests.SolverFineRootTests.终局复核跑在最后一遍求根的网格上 [32 ms]
+  Passed PtOptimize.Tests.SolverFineRootTests.没做第二遍必须标成不可交付 [209 ms]
+
+Test Run Successful.
+Total tests: 6
+     Passed: 6
+ Total time: 3.3746 Seconds
+EXIT 0　结束 2026-09-23 16:40:50

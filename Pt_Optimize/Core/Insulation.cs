@@ -23,6 +23,19 @@ public class InsulationLayer
     [DisplayName("k1 [W/m·K²]"), Description("导热系数温度斜率，k = k0 + k1·T̄(°C)")]
     public double K1 { get; set; } = 3.0e-4;
 
+    /// <summary>
+    /// ★ 2026-09-18（Opus 5）：这一层 <see cref="K0"/>／<see cref="K1"/> 的**出处**（供应商数据表、文献、实测……）。
+    ///
+    /// 现状：**三层都是空的** —— 本仓里这几个系数查不到来源。空着就是空着：
+    /// 「保温方案」表（<see cref="InsulationPlan"/>）在出处那一栏印 <see cref="InsulationPlan.NoSourceText"/>，
+    /// **不许编一个**。拿到供应商数据后填这里，那张表跟着变（表不手抄这一栏）。
+    ///
+    /// ⚠ 不给它默认文字：一个默认的「典型值」会让读的人以为有依据 ——
+    ///   凭空的出处比没有出处更坏（HANDOVER §7 那条，2026-08-24）。
+    /// </summary>
+    [DisplayName("k 的出处"), Description("这一层导热系数 k0/k1 的来源。空 = 仓库里查不到来源，保温方案表会印「出处待补」")]
+    public string KSourceNote { get; set; } = "";
+
     // ── 以下两项只在**升温**核算里用到（稳态解只需要导热系数）。
     //    默认值是典型值，不是实测：高纯氧化铝纤维毡 ~200 kg/m³、致密氧化铝套管 ~3000 kg/m³，
     //    两者比热在 1000 °C 附近都约 1000～1100 J/(kg·K)。

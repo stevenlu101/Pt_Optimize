@@ -11,6 +11,12 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
   </PropertyGroup>
 
+  <!-- 2026-09-19，Fable 5.1（网格修复第二轮复核第 9 条）：网格生成层的规则组合 MeshRules 与带规则的生成器本体是 internal，
+       门（Pt_Optimize.Tests）经这里传别的组合做「改回 ⇒ 红」对照；生产码里不再有 [ThreadStatic] 注入开关。 -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Pt_Optimize.Tests" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="MathNet.Numerics" Version="5.0.0" />
     <PackageReference Include="ScottPlot.WinForms" Version="5.1.59" />

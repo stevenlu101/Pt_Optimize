@@ -108,7 +108,8 @@ public class ShapeSearchParallelResultTests
             Assert.Equal(descS, descP);
         }
 
-        string dump = Path.Combine(HandoverDoc.Root(), "deliverable", "搜形状并行化_逐位对拍_2026-09-11.txt");
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        string dump = DeliverableOut.Stamped("搜形状并行化_逐位对拍_2026-09-11.txt");
         Directory.CreateDirectory(Path.GetDirectoryName(dump)!);
         File.WriteAllText(dump, report.ToString());
     }
@@ -125,23 +126,27 @@ public class ShapeSearchParallelWiringTests
     private static string Ui() =>
         File.ReadAllText(Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "UI", "LineDesignPage.cs"));
 
+    private static string Drv() =>
+        File.ReadAllText(Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "Core", "ShapeSearchDriver.cs"));
+
+    /// <summary>2026-09-25：搜索主体搬到 Core/ShapeSearchDriver，界面只调它（同一份算法）；批量并行在驱动里（ShapeBatchEval.RunAsync）。</summary>
     [Fact]
     public void 搜形状的批处理函数交给ShapeBatchEval()
     {
-        string s = Ui();
-        Assert.Contains("async Task EvalShapesBatch(IReadOnlyList<(double R, double hw, bool Taper)> pts)", s);   // R38：候选多带一维锥形
-        Assert.Contains("outcome = await ShapeBatchEval.RunAsync(specs, (spec, tok) =>", s);
+        string ui = Ui();
+        Assert.Contains("ShapeSearchDriver.Run(input, _base, opt, prog2, ct)", ui);
+        Assert.DoesNotContain("async Task EvalShapesBatch(", ui);
+        Assert.DoesNotContain("await EvalShape(", ui);
+        Assert.Contains("outcome = ShapeBatchEval.RunAsync(specs, (c, tok) =>", Drv());
     }
 
+    /// <summary>驱动里 ⑤ 其余舌宽比例与 ⑥ 邻域探索都走批量并行（EvalBatch），首遍与外推也是。</summary>
     [Fact]
     public void 剩余舌宽比例与邻域探索都改调批量并行()
     {
-        string s = Ui();
-        // ⑥ 剩余舌宽比例
-        Assert.Contains("await EvalShapesBatch(batch6);", s);
-        // ⑦ 邻域探索
-        Assert.Contains("await EvalShapesBatch(todo);", s);
-        // 旧的「逐邻点 await EvalShape(」循环必须不在了
-        Assert.DoesNotContain("foreach (var (R2, hw2) in todo) await EvalShape(R2, hw2);", s);
+        string drv = Drv();
+        Assert.Contains("EvalBatch(batch6, \"⑤舌宽\", ref5);", drv);
+        Assert.Contains("EvalBatch(todo, $\"⑥邻域{ext + 1}\", cur);", drv);
+        Assert.DoesNotContain("foreach (var (R2, hw2) in todo) await EvalShape(R2, hw2);", drv);
     }
 }

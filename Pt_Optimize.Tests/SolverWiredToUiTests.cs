@@ -56,9 +56,11 @@ public class SolverWiredToUiTests
     {
         string s = Ui("LineDesignPage.cs");
         // 数**真调用**（注释里也会提到它，不能算进去）
-        Assert.Equal(4, Regex.Matches(s, @"Task\.Run\(\(\) => Solver\.Solve\(").Count);   // R32（2026-09-10）：第四处 = 「两个都算」的挖舌孔族
-        Assert.Contains("Solver.Solve(seed, _base,", s);      // 搜形状粗筛
-        Assert.Contains("Solver.Solve(win.d, _base,", s);     // 搜形状精算
+        // 2026-09-25：搜形状的粗筛与精算搬进 Core/ShapeSearchDriver（界面只调它）⇒ 页面里剩两处真调用（自动定厚、两个都算的挖舌孔族）
+        Assert.Equal(2, Regex.Matches(s, @"Task\.Run\(\(\) => Solver\.Solve\(").Count);
+        Assert.Contains("Task.Run(() => ShapeSearchDriver.Run(input, _base, opt, prog2, ct), ct)", s);   // 搜形状 ⇒ 驱动
+        string drv = File.ReadAllText(Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "Core", "ShapeSearchDriver.cs"));
+        Assert.Contains("Solver.Solve(d, b, o, p, t)", drv);   // 驱动里粗筛与精算都走 Solver.Solve
         Assert.Contains("Solver.Solve(seedD8, _base,", s);    // 自动定厚按钮
         Assert.Contains("Solver.Solve(seedAlt, _base,", s);   // R32：两个都算 ⇒ 挖舌孔族
     }
@@ -70,8 +72,9 @@ public class SolverWiredToUiTests
     [Fact]
     public void 精算开了细网格第二遍且网格来源唯一()
     {
-        string s = Ui("LineDesignPage.cs");
-        Assert.Contains("MeshVerify.RequiredMeshFor(win.d)", s);
+        // 2026-09-25：精算在 Core/ShapeSearchDriver（界面只调它）
+        string s = File.ReadAllText(Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "Core", "ShapeSearchDriver.cs"));
+        Assert.Contains("MeshVerify.RequiredMeshFor(win.Design, baseIn)", s);   // F7′（2026-09-23，变因 = 决 29 自适应：签名加工艺参数；原钉 "MeshVerify.RequiredMeshFor(win.d)"）
         Assert.Contains("FineMm = finFine, FineRadiusMm = finFineR", s);
     }
 

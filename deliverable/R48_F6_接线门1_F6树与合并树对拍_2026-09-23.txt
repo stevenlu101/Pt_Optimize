@@ -1,0 +1,24 @@
+R48 接线门 1（R48PropsWiringGateTests.门_纯铂默认逐位不变_整线小算例）记录重录对拍 —— 2026-09-23 06:3x，云端 Linux 会话（Fable 5.1 编排）
+
+为什么重录：F6（HANDOVER §0.-19）有意改了孔边电流场与热场，并给转储加了公开成员，门 1 在合并树上必红（审查发现 #72）。
+门 1 的意义是「接线对纯铂逐位中性」，所以记录必须取自**不含接线**的树；在合并树上重录就是拿自己比自己。
+
+做法：
+  1. F6 树 = ae8d110 ＋ F6 审查后终版（工作树 wtW3 的全部改动，tar 复制到 scratchpad/f6only，无接线代码）。
+     只加一个剥离版探针 ZZGate1Probe（门 1 的算例 QuickCase、转储 R48LineDumpTests.Dump(withText:true)、两处耗时改占位，与门 1 逐字相同；不引用 PtProps）。
+     Linux 镜像（tools/linux_mirror，net8.0）编译，跑探针，把转储写到文件，sha256sum。
+  2. 合并树 = 分支 47678ae（含接线 265ff6a）＋ 同一份 F6 改动（wtF6），同一探针 ＋ 门 1 本身，同样写转储到文件。
+  3. cmp 两份转储文件。
+
+结果：
+  F6 树      SHA-256 e9a022cf724d6bb96819a36e5a6374f2cd047e96eaea6a11eda51d6a58af7425   转储 1238 行（wc -l；探针自报 1239 = 末尾空行计入）
+  合并树     SHA-256 e9a022cf724d6bb96819a36e5a6374f2cd047e96eaea6a11eda51d6a58af7425   转储 1238 行
+  cmp：两份文件逐字节相同。
+  合并树上门 1 本身印出 SHA-256 e9a022cf…（与探针相同），编译时记录常量仍是旧值 13aedf7e… 所以那一跑判红；改记录后重编再跑见 HANDOVER §0.-19 己。
+
+记录：旧值 13aedf7ee75e1889abed6e9bf75293bd97de3c6ddf8bb9b001e178e7c93cdb45（a468063 只加门 1，接线前）→ 新值 e9a022cf724d6bb96819a36e5a6374f2cd047e96eaea6a11eda51d6a58af7425。
+变因：F6a（孔面上定电位）、F6b（弧面法向距）、F6c（孔面只认弧面）、F6d（热稳定锚点在孔圆上）＋ 转储新增成员
+  （Mesh.HoleFaceDirichlet、Faces[].ArcRadiusMm、Mesh.HoleArcCentroidInside／HoleArcDistAtFloor、MeshRecipe／ThermalRecipe 新字段、ShellCurrentResult.HoleFaceCount／HoleFacesOnElectrode／ResidualSum／ResidualAbsSum／JxAPerMm2／JzAPerMm2）。
+  接线在 F6 之上对纯铂仍逐位中性（本文件的对拍就是证据）。
+
+不覆盖：Windows 记录仍为空（Windows 上要在「F6 合入、接线之前」的状态上跑剥离版探针取数）。

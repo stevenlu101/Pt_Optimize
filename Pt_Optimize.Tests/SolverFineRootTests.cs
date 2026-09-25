@@ -32,13 +32,21 @@ public class SolverFineRootTests
     private static string Core(string f) =>
         File.ReadAllText(Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "Core", f));
 
-    /// <summary>网格必须从选项取 —— 求根跑在哪张网格上不许由别处悄悄决定。</summary>
+    /// <summary>
+    /// 网格必须从选项取 —— 求根跑在哪张网格上不许由别处悄悄决定。
+    ///
+    /// ★ R48 改钉法（2026-09-13，Opus 5）：本门原来钉 <c>lc.MeshFineMm = o.FineMm;</c> 这一行，
+    ///   而那行**只设了尺寸这一维** —— 粗区留在 11 mm、内带不分。于是求根用的网格与加密复核用的网格
+    ///   标称同为 0.500 mm，结构却不是同一张（细粗比 22 倍 vs 5.5 倍），
+    ///   09-13 两个内置设计都因此得出相反结论（求根「全过」、复核 管孔净流入 −1.79 W）。
+    ///   现在钉的是「走共用配方 <see cref="MeshAdapt.RefineWholeMesh"/>」，三维一起接过去。
+    /// </summary>
     [Fact]
     public void 求根的网格由选项决定()
     {
         string s = Core("Solver.cs");
         Assert.Contains("public double FineMm;", s);
-        Assert.Contains("lc.MeshFineMm = o.FineMm;", s);
+        Assert.Contains("MeshAdapt.RefineWholeMesh(lc, o.FineMm, o.FineRadiusMm)", s);
         Assert.Contains("if (o.FineMm > 0)", s);
     }
 
@@ -112,13 +120,16 @@ public class SolverFineRootTests
         Assert.Contains("RequiredMeshFor(DesignSpec d", mv);
 
         // MeshVerify 自己也得走这个方法，不许留一份旧的内联算法
-        Assert.Contains("var (h0, radius) = RequiredMeshFor(d, weldAsGeometricFeature);", mv);
+        // F7′（2026-09-23，变因 = 决 29 自适应）：细区尺寸与细区半径分开取 —— 尺寸仍由几何特征定（RequiredFineMmFor，原式逐字），
+        //   半径由细区半径计划给（FineRadiusPlanFor，热长度要按工艺参数的算例量）。原钉 "var (h0, radius) = RequiredMeshFor(d, weldAsGeometricFeature);"。
+        Assert.Contains("double h0 = RequiredFineMmFor(d, weldAsGeometricFeature);", mv);
+        Assert.Contains("var plan = FineRadiusPlanFor(d, baseIn);", mv);
         Assert.Single(Regex.Matches(mv, @"MeshAdapt\.RequiredFineMm\("));
 
         // 命令行取网格也走同一份
         string prog = File.ReadAllText(Path.Combine(
             HandoverDoc.Root(), "Pt_Optimize", "Program.cs"));
-        Assert.Contains("MeshVerify.RequiredMeshFor(geoS)", prog);
+        Assert.Contains("MeshVerify.RequiredMeshFor(geoS, p)", prog);   // F7′（2026-09-23，决 29 自适应）：签名加了工艺参数（原钉 "MeshVerify.RequiredMeshFor(geoS)"）
     }
 
     /// <summary>
@@ -146,9 +157,27 @@ public class SolverFineRootTests
         Assert.Contains("DesignInputs baseIn, SolverOptions lastOpt,", s);
         Assert.Contains("Finish(res, d, last, baseIn, lastOpt, cancel, progress);", s);
 
-        // 而且真的把网格设上去了
-        Assert.Contains("lcF.MeshFineMm = lastOpt.FineMm;", s);
-        Assert.Contains("if (lastOpt.FineRadiusMm > 0) lcF.MeshFineRadiusMm = lastOpt.FineRadiusMm;", s);
+        // 而且真的把网格设上去了 —— R48 起走共用配方（尺寸／粗区／内带三维一起），
+        // 不再只设尺寸那一维（只设尺寸正是 09-13「求根与复核结论相反」的来源）
+        // ★ 2026-09-16 Opus 5（J 路，合并把关待办 P1-2）：原断言钉的是 `MeshAdapt.RefineWholeMesh(lcF, lastOpt.FineMm, lastOpt.FineRadiusMm)` ——
+        //   那正是 Finish 手抄的 ApplyCaseMesh 三支里的一支（lastOpt = 导航选项时不触发 ⇒ 终局复核退回缺省半径 50，求根用 59）。
+        //   现在 Finish 经 Solver.FinishCase 调同一份 Solver.ApplyCaseMesh，这里改钉新接线；逐项相同的行为门在 R48J_SolverMeshAndMarkerGateTests.J1。
+        Assert.Contains("var lcF = FinishCase(d, baseIn, lastOpt);", s);
+        int fc = s.IndexOf("public static LineCase FinishCase(", StringComparison.Ordinal);
+        Assert.True(fc > 0, "Solver.FinishCase 不见了");
+        Assert.Contains("ApplyCaseMesh(lcF, lastOpt);", s[fc..s.IndexOf("return lcF;", fc, StringComparison.Ordinal)]);
+        // ★ 2026-09-18 Opus 5（合并 J×L）：L 路那一版的两条断言一并留下 —— J 路的 FinishCase 形式下它们照样成立（ApplyCaseMesh 在 FinishCase 体内，手抄那一行已不在），两条一起钉更严。
+        //
+        // ★★★★★ 2026-09-17，Opus 5 改：**本条此前钉的是手抄过来的那一行**
+        //   `MeshAdapt.RefineWholeMesh(lcF, lastOpt.FineMm, lastOpt.FineRadiusMm)`，
+        //   而那一行只覆盖 `ApplyCaseMesh` 三支里的第一支（FineMm > 0）；
+        //   第二支「FineMm ≤ 0 且 FineRadiusMm > 0」（导航档统一细区半径）被漏掉 ⇒
+        //   「第二遍没跑而 FineRadiusMm > 0」的每一趟，终局复核退回算例缺省半径 50、
+        //   而求根用的是 59（同一设计、同一 2.0 mm，只差这一维 ⇒ 管孔净流入 +3.267 对 −6.533，符号相反）。
+        //   **门钉住手抄的那一行，正好把这个病锁在里面** —— 这就是「门不许手抄生产配方」那条规矩的实例：
+        //   钉配方的**调用**，不钉配方的**字面**。
+        Assert.Contains("ApplyCaseMesh(lcF, lastOpt);", s);
+        Assert.DoesNotContain("MeshAdapt.RefineWholeMesh(lcF", s);
 
         // ★ lastOpt 要随第二遍**改过去**；不改就永远是导航网格，等于没修
         Assert.Contains("lastOpt = opt;", s);

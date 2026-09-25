@@ -1,0 +1,842 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using PtOptimize.Core;
+using Xunit;
+
+namespace PtOptimize.Tests;
+
+// G3 树外探针（只在 scratchpad/g3/tree 拷贝里，不入库）：DrawingPathParityTests 栅格步 0.5 离群归因。
+public class ZZG3DrawParityProbeTests
+{
+    internal const string OutDir = "/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/g3/out";
+
+    internal static readonly (string name, MeshRules rules, bool anchor)[] Variants =
+    {
+        ("改前", new MeshRules { HoleFaceDirichlet = false, HoleArcNormalDist = false, HoleTagArcOnly = false }, false),
+        ("F6a", new MeshRules { HoleFaceDirichlet = true, HoleArcNormalDist = false, HoleTagArcOnly = false }, false),
+        ("F6a+b", new MeshRules { HoleFaceDirichlet = true, HoleArcNormalDist = true, HoleTagArcOnly = false }, false),
+        ("全开", MeshRules.Production, true),
+    };
+
+    internal sealed class Sol
+    {
+        public ShellMesh M = null!;
+        public ShellCurrentResult C = null!;
+        public ShellThermalResult T = null!;
+        public double TRoot;
+        public PtProps Props = null!;
+        public double[] FaceQ = Array.Empty<double>();   // 热：每条孔面 q = g·(T管 − T格)，非孔面 NaN
+        public double[] FaceG = Array.Empty<double>();   // 热：每条孔面 g
+        public double[] FaceGe = Array.Empty<double>();  // 电：每条孔面 t·L/DistAB（几何导度，mm）
+    }
+
+    internal static ShellMesh BuildMesh(FlangePlate g, LineCase lc, MeshRules rules, double rasterStep, IMaterialField? fieldOverride = null)
+    {
+        double hF = lc.MeshFineMm, hC = lc.MeshCoarseMm, rF = lc.MeshFineRadiusMm, cl = lc.Base.BusbarClampLengthMm;
+        if (fieldOverride != null)
+            return FlangeMesher.BuildFromMaterialWith(fieldOverride, g.HoleRadiusMm, rules, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
+        if (rasterStep <= 0)
+            return FlangeMesher.BuildWith(g, rules, null, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
+        var f = AnalyticSurrogate.Rasterize(g, rasterStep, 2.0);
+        return FlangeMesher.BuildFromMaterialWith(f, g.HoleRadiusMm, rules, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
+    }
+
+    internal static Sol SolveOn(ShellMesh m, LineCase lc, FlangePlate g, double iA, double tRoot, double tSet, double clampC, double tabInsul, bool anchor)
+    {
+        var p2 = SegmentSolver.Clone(lc.Base); p2.TSetC = tSet; p2.BusbarClampTempC = clampC;
+        var sc = ShellCurrent.SolveFor(lc, m, iA, Materials.PtResistivity(tSet) * 1e3, tSet);
+        Assert.True(sc.Converged);
+        var th = ShellThermal.Solve(m, sc.JMagAPerMm2, p2, tRoot, g.InsulBoundaryXResolved, false,
+                                    tabBoundaryX: g.Tangent().X, tabInsulThickMm: tabInsul, holeAnchorOnCircle: anchor);
+        Assert.True(th.Converged);
+        var s = new Sol { M = m, C = sc, T = th, TRoot = tRoot, Props = PtProps.For(p2) };
+        int nf = m.Faces.Count;
+        s.FaceQ = new double[nf]; s.FaceG = new double[nf]; s.FaceGe = new double[nf];
+        for (int k = 0; k < nf; k++)
+        {
+            var f = m.Faces[k];
+            if (f.B >= 0 || f.Tag != ShellMesh.TagHole) { s.FaceQ[k] = double.NaN; s.FaceG[k] = double.NaN; s.FaceGe[k] = double.NaN; continue; }
+            double kA = s.Props.K(th.T[f.A]) * 1e-3 * m.Thickness[f.A];
+            s.FaceG[k] = kA * f.Length / f.DistAB;
+            s.FaceQ[k] = s.FaceG[k] * (tRoot - th.T[f.A]);
+            s.FaceGe[k] = m.Thickness[f.A] * f.Length / f.DistAB;
+        }
+        return s;
+    }
+
+    static double Rc(ShellMesh m, int c) { var p = m.Centroid[c]; return Math.Sqrt(p.X * p.X + p.Z * p.Z); }
+    static double Deg(Vec3 v) => Math.Atan2(v.Z, v.X) * 180 / Math.PI;
+
+    internal static string Summary(Sol s, double rh)
+    {
+        var m = s.M;
+        var hole = Enumerable.Range(0, m.Faces.Count).Where(k => m.Faces[k].B < 0 && m.Faces[k].Tag == ShellMesh.TagHole).ToList();
+        var arc = hole.Where(k => !double.IsNaN(m.Faces[k].ArcRadiusMm)).ToList();
+        var dn = arc.Select(k => Rc(m, m.Faces[k].A) - rh).ToArray();   // 有符号法向距（负 = 形心在孔内）
+        var lens = arc.Select(k => m.Faces[k].Length).OrderBy(v => v).ToArray();
+        var dist = hole.Select(k => m.Faces[k].DistAB).OrderBy(v => v).ToArray();
+        int nb(Func<double, bool> p) => arc.Count(k => p(m.Faces[k].DistAB));
+        var holeCells = hole.Select(k => m.Faces[k].A).Distinct().ToList();
+        double jHole = holeCells.Count == 0 ? double.NaN : holeCells.Max(c => s.C.JMagAPerMm2[c]);
+        int jHoleCell = holeCells.Count == 0 ? -1 : holeCells.OrderByDescending(c => s.C.JMagAPerMm2[c]).First();
+        double sumG = hole.Sum(k => s.FaceG[k]), sumGe = hole.Sum(k => s.FaceGe[k]);
+        double qSum = hole.Sum(k => s.FaceQ[k]);
+        string med(double[] a) => a.Length == 0 ? "NaN" : a[a.Length / 2].ToString("0.0000");
+        return $"格 {m.CellCount} 节点 {m.Nodes.Count} | 发热 {s.T.QGenW:0.000} W 抽热 {s.T.QFromTubeW:0.000} W（面和 {qSum:0.000}） 电发热 {s.C.TotalGenW:0.000} | "
+             + $"孔面 {hole.Count}（弧 {arc.Count}，直边 {hole.Count - arc.Count}） 孔格 {holeCells.Count} | 弧长 min/med/max {lens.DefaultIfEmpty(double.NaN).Min():0.0000}/{med(lens)}/{lens.DefaultIfEmpty(double.NaN).Max():0.0000} Σ {lens.Sum():0.0000}（2πrh {2 * Math.PI * rh:0.0000}）| "
+             + $"DistAB min/med/max {dist.DefaultIfEmpty(double.NaN).Min():0.00000}/{med(dist)}/{dist.DefaultIfEmpty(double.NaN).Max():0.0000} | 法向距分档 <0.01:{nb(d => d < 0.01)} <0.05:{nb(d => d < 0.05)} <0.1:{nb(d => d < 0.1)} <0.25:{nb(d => d < 0.25)} | "
+             + $"有符号法向距 min {dn.DefaultIfEmpty(double.NaN).Min():+0.0000;-0.0000} | 形心在孔内 {m.HoleArcCentroidInside} 触下限 {m.HoleArcDistAtFloor} | 规则A并格 {m.HoleSliversMerged} 规则B并格 {m.SliversMerged} | 覆盖率 {m.HoleArcCoverage:0.000000} | "
+             + $"Σg热 {sumG:0.0000} W/K Σ t·L/d {sumGe:0.000} mm | JMax {s.C.JMaxAPerMm2:0.000}（格 {s.C.JMaxCell} @ ({m.Centroid[Math.Max(0, s.C.JMaxCell)].X:0.00},{m.Centroid[Math.Max(0, s.C.JMaxCell)].Z:0.00})） 孔边 J 峰 {jHole:0.000}（@ ({(jHoleCell >= 0 ? m.Centroid[jHoleCell].X : double.NaN):0.00},{(jHoleCell >= 0 ? m.Centroid[jHoleCell].Z : double.NaN):0.00})） | 最热 {s.T.TMaxC:0.00} °C";
+    }
+
+    internal static (FlangePlate g, LineCase lc, double iA, double tRoot, double tSet, double clampC, double tabInsul, string name) Case(int which)
+        => DrawingPathParityTests.Case(which);
+
+    [Trait("速度", "慢")]
+    [Theory]
+    [InlineData(1)]
+    [InlineData(0)]
+    public void G3_表1_四口径四网格(int which)
+    {
+        var (g, lc, iA, tRoot, tSet, clampC, tabInsul, name) = Case(which);
+        double rh = g.HoleRadiusMm;
+        var sb = new StringBuilder();
+        void W(string t) { sb.AppendLine(t); File.WriteAllText(Path.Combine(OutDir, $"表1_{which}.txt"), sb.ToString()); }
+        W($"{name}：rh {rh:R} hF {lc.MeshFineMm} hC {lc.MeshCoarseMm} rF {lc.MeshFineRadiusMm} hInner {lc.MeshInnerMm} rInner {lc.MeshInnerRadiusMm} 压接 {lc.Base.BusbarClampLengthMm} I {iA} 管根 {tRoot} 控温 {tSet} 夹持 {clampC} 舌保温 {tabInsul}；RasterStepFor(hF) = {FlangeMesher.RasterStepFor(lc.MeshFineMm)}");
+        W($"开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}　树 g3/tree（= wtG1 2bfc64a 拷贝）");
+        var steps = new[] { 0.0, 1.0, 0.5, 0.1 };
+        foreach (var v in Variants)
+        {
+            double qA = double.NaN, gA = double.NaN;
+            foreach (double st in steps)
+            {
+                var m = BuildMesh(g, lc, v.rules, st);
+                var s = SolveOn(m, lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+                if (st == 0) { qA = s.T.QFromTubeW; gA = s.T.QGenW; }
+                string tag = st == 0 ? "解析 Build" : $"栅格 {st}";
+                string d = st == 0 ? "" : $"  图纸−Build：抽热 {s.T.QFromTubeW - qA:+0.000;-0.000} W 发热 {(s.T.QGenW - gA) / gA * 100:+0.000;-0.000} %";
+                W($"{v.name}\t{tag}\t{Summary(s, rh)}{d}");
+            }
+        }
+    }
+}
+
+/// <summary>混合材料源：矩形／线段离管轴最近点 &lt; rIn 的用 inner，否则用 outer。</summary>
+internal sealed class G3HybridMaterial : IMaterialField
+{
+    readonly IMaterialField _in, _out; readonly double _r;
+    public G3HybridMaterial(IMaterialField inner, IMaterialField outer, double rIn) { _in = inner; _out = outer; _r = rIn; }
+    static double Near(double x0, double x1, double z0, double z1) { double nx = Math.Clamp(0, x0, x1), nz = Math.Clamp(0, z0, z1); return Math.Sqrt(nx * nx + nz * nz); }
+    public (double XMin, double XMax, double ZMin, double ZMax, bool Exact) MaterialEnvelope() => _out.MaterialEnvelope();
+    public MaterialIntegral Integrate(double x0, double x1, double z0, double z1) => (Near(x0, x1, z0, z1) < _r ? _in : _out).Integrate(x0, x1, z0, z1);
+    public (double Length, double Mid) SegmentMaterial(bool vertical, double line, double a, double b)
+    {
+        double lo = Math.Min(a, b), hi = Math.Max(a, b);
+        double nr = vertical ? Near(line, line, lo, hi) : Near(lo, hi, line, line);
+        return (nr < _r ? _in : _out).SegmentMaterial(vertical, line, a, b);
+    }
+    public double FractionInsideCircle(double x0, double x1, double z0, double z1, double radiusMm) => (Near(x0, x1, z0, z1) < _r ? _in : _out).FractionInsideCircle(x0, x1, z0, z1, radiusMm);
+    public string Describe() => $"混合（r<{_r} 用 {_in.Describe()}，其余 {_out.Describe()}）";
+}
+
+public class ZZG3DrawParityProbe2Tests
+{
+    const string OutDir = ZZG3DrawParityProbeTests.OutDir;
+
+    static ThicknessField RasterShift(FlangePlate g, double step, double ox, double oz, double margin = 2.0)
+    {
+        var f0 = FlangeMesher.Rasterize(g, step, margin);
+        // 平移为 0 的那一向照抄原栅格的原点与格数（坐标逐位同 Rasterize，免得浮点尾巴让直边 ±w 上的节点判内判外翻面）
+        int nx = ox == 0 ? f0.Nx : f0.Nx + 1, nz = oz == 0 ? f0.Nz : f0.Nz + 1;
+        double x0 = ox == 0 ? f0.X0 : f0.X0 - step + ox, z0 = oz == 0 ? f0.Z0 : f0.Z0 - step + oz;
+        var f = new ThicknessField { X0 = x0, Z0 = z0, Step = step, Nx = nx, Nz = nz, T = new double[nx * nz],
+            XMinMaterial = f0.XMinMaterial, XMaxMaterial = f0.XMaxMaterial, ZMinMaterial = f0.ZMinMaterial, ZMaxMaterial = f0.ZMaxMaterial };
+        for (int i = 0; i < nx; i++)
+            for (int j = 0; j < nz; j++)
+            {
+                double x = x0 + i * step, z = z0 + j * step;
+                f.T[i * nz + j] = g.Inside(x, z) ? g.ThicknessAt(x, z) : 0.0;
+            }
+        return f;
+    }
+
+    static string Key(ShellMesh m, int c)
+    {
+        var (x0, x1, z0, z1) = FlangeMesher.CellRect(m, c);
+        return $"{x0:0.000000},{x1:0.000000},{z0:0.000000},{z1:0.000000}";
+    }
+
+    [Trait("速度", "慢")]
+    [Theory]
+    [InlineData(1)]
+    [InlineData(0)]
+    public void G3_表2_能量分解与逐面(int which)
+    {
+        var (g, lc, iA, tRoot, tSet, clampC, tabInsul, name) = DrawingPathParityTests.Case(which);
+        double rh = g.HoleRadiusMm, xT = g.Tangent().X;
+        var sb = new StringBuilder();
+        string file = Path.Combine(OutDir, $"表2_{which}.txt");
+        void W(string t) { sb.AppendLine(t); File.WriteAllText(file, sb.ToString()); }
+        W($"{name}　rh {rh}　切点 x {xT:0.000}　开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        foreach (int vi in new[] { 0, 3 })
+        {
+            var v = ZZG3DrawParityProbeTests.Variants[vi];
+            var sA = ZZG3DrawParityProbeTests.SolveOn(ZZG3DrawParityProbeTests.BuildMesh(g, lc, v.rules, 0), lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+            W($"══ 口径 {v.name}");
+            string Region(ShellMesh m, int i, ShellThermalResult th)
+            {
+                if (th.BoundaryCell[i]) return "压接(钉)";
+                var c = m.Centroid[i]; double r = Math.Sqrt(c.X * c.X + c.Z * c.Z);
+                if (r < rh + 3) return "孔环r<rh+3";
+                if (c.X > xT) return "盘余";
+                return "舌自由";
+            }
+            string[] regs = { "孔环r<rh+3", "盘余", "舌自由", "压接(钉)" };
+            string Energy(ZZG3DrawParityProbeTests.Sol s)
+            {
+                var m = s.M; var th = s.T;
+                var t = new StringBuilder();
+                double genF = 0, lossF = 0;
+                for (int i = 0; i < m.CellCount; i++) if (!th.BoundaryCell[i]) { genF += th.CellGenW[i]; lossF += th.CellLossW[i]; }
+                t.Append($"自由格 发热 {genF:0.000} 散热 {lossF:0.000} 铜排带走 {th.QToClampW:0.000} 抽热 {th.QFromTubeW:0.000} 残差 {th.EnergyResidualW:E2} 总面积 {m.TotalArea:0.000} 体积 {m.VolumeMm3:0.000}");
+                foreach (var rg in regs)
+                {
+                    var ids = Enumerable.Range(0, m.CellCount).Where(i => Region(m, i, th) == rg).ToList();
+                    t.Append($" |{rg}: 格 {ids.Count} 面积 {ids.Sum(i => m.Area[i]):0.000} 发热 {ids.Sum(i => th.CellGenW[i]):0.000} 散热 {ids.Sum(i => th.CellLossW[i]):0.000}");
+                }
+                return t.ToString();
+            }
+            W($"解析 Build：{Energy(sA)}");
+            foreach (double st in new[] { 1.0, 0.5, 0.1 })
+            {
+                var sR = ZZG3DrawParityProbeTests.SolveOn(ZZG3DrawParityProbeTests.BuildMesh(g, lc, v.rules, st), lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+                W($"栅格 {st}：{Energy(sR)}");
+                // 轴是否相同
+                bool sameAxis = sA.M.Nodes.Count == sR.M.Nodes.Count && Enumerable.Range(0, sA.M.Nodes.Count).All(k => (sA.M.Nodes[k] - sR.M.Nodes[k]).Norm < 1e-9);
+                W($"  节点逐个相同：{sameAxis}");
+                // 分区差
+                {
+                    double genA = 0, lossA = 0, genR = 0, lossR = 0;
+                    for (int i = 0; i < sA.M.CellCount; i++) if (!sA.T.BoundaryCell[i]) { genA += sA.T.CellGenW[i]; lossA += sA.T.CellLossW[i]; }
+                    for (int i = 0; i < sR.M.CellCount; i++) if (!sR.T.BoundaryCell[i]) { genR += sR.T.CellGenW[i]; lossR += sR.T.CellLossW[i]; }
+                    W($"  Δ抽热 {sR.T.QFromTubeW - sA.T.QFromTubeW:+0.0000;-0.0000} = Δ散热 {lossR - lossA:+0.0000;-0.0000} + Δ铜排 {sR.T.QToClampW - sA.T.QToClampW:+0.0000;-0.0000} − Δ发热 {genR - genA:+0.0000;-0.0000} − Δ残差 {sR.T.EnergyResidualW - sA.T.EnergyResidualW:+0.0000;-0.0000}");
+                    foreach (var rg in regs)
+                    {
+                        double gA = 0, lA = 0, aA = 0, gR = 0, lR = 0, aR = 0;
+                        for (int i = 0; i < sA.M.CellCount; i++) if (Region(sA.M, i, sA.T) == rg) { gA += sA.T.CellGenW[i]; lA += sA.T.CellLossW[i]; aA += sA.M.Area[i]; }
+                        for (int i = 0; i < sR.M.CellCount; i++) if (Region(sR.M, i, sR.T) == rg) { gR += sR.T.CellGenW[i]; lR += sR.T.CellLossW[i]; aR += sR.M.Area[i]; }
+                        W($"    {rg}: Δ面积 {aR - aA:+0.0000;-0.0000} mm² Δ发热 {gR - gA:+0.0000;-0.0000} W Δ散热 {lR - lA:+0.0000;-0.0000} W");
+                    }
+                }
+                // 多出/少了的格
+                var kA = new Dictionary<string, int>(); for (int c = 0; c < sA.M.CellCount; c++) kA[Key(sA.M, c)] = c;
+                var kR = new Dictionary<string, int>(); for (int c = 0; c < sR.M.CellCount; c++) kR[Key(sR.M, c)] = c;
+                foreach (var kv in kR.Where(kv => !kA.ContainsKey(kv.Key)))
+                { int c = kv.Value; W($"  只在栅格：格 {c} 矩形 [{kv.Key}] 形心 ({sR.M.Centroid[c].X:0.000},{sR.M.Centroid[c].Z:0.000}) 面积 {sR.M.Area[c]:0.00000} 覆盖率 {sR.M.FracOf(c):0.00000}"); }
+                foreach (var kv in kA.Where(kv => !kR.ContainsKey(kv.Key)))
+                { int c = kv.Value; W($"  只在解析：格 {c} 矩形 [{kv.Key}] 形心 ({sA.M.Centroid[c].X:0.000},{sA.M.Centroid[c].Z:0.000}) 面积 {sA.M.Area[c]:0.00000} 覆盖率 {sA.M.FracOf(c):0.00000}"); }
+                // 逐孔面分解
+                var fA = new Dictionary<string, int>();
+                for (int k = 0; k < sA.M.Faces.Count; k++) { var f = sA.M.Faces[k]; if (f.B < 0 && f.Tag == ShellMesh.TagHole) fA[Key(sA.M, f.A) + $"|{f.Mid.X:0.0000},{f.Mid.Z:0.0000}"] = k; }
+                var rows = new List<(double dq, string line)>();
+                double sumMatched = 0, sumOnlyR = 0, sumOnlyA = 0; var used = new HashSet<int>();
+                for (int k = 0; k < sR.M.Faces.Count; k++)
+                {
+                    var f = sR.M.Faces[k]; if (!(f.B < 0 && f.Tag == ShellMesh.TagHole)) continue;
+                    string key = Key(sR.M, f.A) + $"|{f.Mid.X:0.0000},{f.Mid.Z:0.0000}";
+                    int cR = f.A; var CR = sR.M.Centroid[cR]; double dnR = Math.Sqrt(CR.X * CR.X + CR.Z * CR.Z) - rh;
+                    if (fA.TryGetValue(key, out int ka))
+                    {
+                        used.Add(ka);
+                        var fa = sA.M.Faces[ka]; int cA = fa.A; var CA = sA.M.Centroid[cA]; double dnA = Math.Sqrt(CA.X * CA.X + CA.Z * CA.Z) - rh;
+                        double dq = sR.FaceQ[k] - sA.FaceQ[ka]; sumMatched += dq;
+                        rows.Add((dq, $"面中点 ({f.Mid.X:0.000},{f.Mid.Z:0.000}) θ {Math.Atan2(f.Mid.Z, f.Mid.X) * 180 / Math.PI:0.0}° 弧长 {f.Length:0.0000}｜解析：形心 ({CA.X:0.0000},{CA.Z:0.0000}) 法向距 {dnA:+0.00000;-0.00000} DistAB {fa.DistAB:0.00000} 覆盖率 {sA.M.FracOf(cA):0.0000} 厚 {sA.M.Thickness[cA]:0.0000} g {sA.FaceG[ka]:0.00000} T格 {sA.T.T[cA]:0.000} q {sA.FaceQ[ka]:+0.0000;-0.0000}"
+                                   + $"｜栅格：形心 ({CR.X:0.0000},{CR.Z:0.0000}) 法向距 {dnR:+0.00000;-0.00000} DistAB {f.DistAB:0.00000} 覆盖率 {sR.M.FracOf(cR):0.0000} 厚 {sR.M.Thickness[cR]:0.0000} g {sR.FaceG[k]:0.00000} T格 {sR.T.T[cR]:0.000} q {sR.FaceQ[k]:+0.0000;-0.0000}｜Δq {dq:+0.0000;-0.0000}（Δg·ΔT解析 {(sR.FaceG[k] - sA.FaceG[ka]) * (tRoot - sA.T.T[cA]):+0.0000;-0.0000}，g栅格·ΔT差 {sR.FaceG[k] * (sA.T.T[cA] - sR.T.T[cR]):+0.0000;-0.0000}）"));
+                    }
+                    else { sumOnlyR += sR.FaceQ[k]; rows.Add((sR.FaceQ[k], $"只在栅格的孔面 中点 ({f.Mid.X:0.000},{f.Mid.Z:0.000}) q {sR.FaceQ[k]:+0.0000;-0.0000} DistAB {f.DistAB:0.00000} 法向距 {dnR:+0.00000;-0.00000}")); }
+                }
+                foreach (var kv in fA) if (!used.Contains(kv.Value)) { sumOnlyA -= sA.FaceQ[kv.Value]; rows.Add((-sA.FaceQ[kv.Value], $"只在解析的孔面 {kv.Key} q {sA.FaceQ[kv.Value]:+0.0000;-0.0000}")); }
+                W($"  逐孔面：配上 {used.Count} 条 ΣΔq {sumMatched:+0.0000;-0.0000}；只在栅格 Σq {sumOnlyR:+0.0000;-0.0000}；只在解析 −Σq {sumOnlyA:+0.0000;-0.0000}；合计 {sumMatched + sumOnlyR + sumOnlyA:+0.0000;-0.0000}");
+                // 角向分组：按 θ 分 8 扇区
+                var sect = new double[8];
+                foreach (var r in rows) { }
+                W("  |Δq| 前 12 条：");
+                foreach (var r in rows.OrderByDescending(r => Math.Abs(r.dq)).Take(12)) W("    " + r.line);
+                // 全部孔面按 Δq 列（便于后查）
+                File.WriteAllLines(Path.Combine(OutDir, $"逐面_{which}_{v.name}_栅格{st}.txt"), rows.OrderBy(r => r.line).Select(r => r.line));
+            }
+        }
+    }
+
+    [Trait("速度", "慢")]
+    [Theory]
+    [InlineData(1)]
+    [InlineData(0)]
+    public void G3_表3_混合材料与步长扫描与相位(int which)
+    {
+        var (g, lc, iA, tRoot, tSet, clampC, tabInsul, name) = DrawingPathParityTests.Case(which);
+        double rh = g.HoleRadiusMm;
+        var sb = new StringBuilder();
+        string file = Path.Combine(OutDir, $"表3_{which}.txt");
+        void W(string t) { sb.AppendLine(t); File.WriteAllText(file, sb.ToString()); }
+        W($"{name}　rh {rh}　开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        var (xa, za) = FlangeMesher.AnchorsOf(g);
+        foreach (int vi in new[] { 0, 1, 3 })
+        {
+            var v = ZZG3DrawParityProbeTests.Variants[vi];
+            var sA = ZZG3DrawParityProbeTests.SolveOn(ZZG3DrawParityProbeTests.BuildMesh(g, lc, v.rules, 0), lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+            double qA = sA.T.QFromTubeW;
+            W($"══ 口径 {v.name}：解析 Build 抽热 {qA:0.0000}");
+            double hF = lc.MeshFineMm, hC = lc.MeshCoarseMm, rF = lc.MeshFineRadiusMm, cl = lc.Base.BusbarClampLengthMm;
+            ShellMesh Mk(IMaterialField f, bool anchorsFromField)
+                => anchorsFromField && f is ThicknessField tf
+                   ? FlangeMesher.BuildFromMaterialWith(f, rh, v.rules, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm)
+                   : FlangeMesher.BuildFromMaterialWith(f, rh, v.rules, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm, xAnchors: xa, zAnchors: za);
+            foreach (double st in new[] { 1.0, 0.5, 0.1 })
+            {
+                var fR = AnalyticSurrogate.Rasterize(g, st, 2.0);
+                var an = new AnalyticMaterial(g);
+                foreach (double rIn in new[] { rh + 3.0, rh + 6.0 })
+                {
+                    var h1 = ZZG3DrawParityProbeTests.SolveOn(Mk(new G3HybridMaterial(fR, an, rIn), false), lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+                    var h2 = ZZG3DrawParityProbeTests.SolveOn(Mk(new G3HybridMaterial(an, fR, rIn), false), lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+                    W($"栅格 {st}　r<{rIn:0.0} 用栅格、其余解析：Δ抽热 {h1.T.QFromTubeW - qA:+0.0000;-0.0000} W（格 {h1.M.CellCount}）　r<{rIn:0.0} 用解析、其余栅格：Δ抽热 {h2.T.QFromTubeW - qA:+0.0000;-0.0000} W（格 {h2.M.CellCount}）");
+                }
+                var full = ZZG3DrawParityProbeTests.SolveOn(Mk(fR, false), lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+                var full2 = ZZG3DrawParityProbeTests.SolveOn(Mk(fR, true), lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+                W($"栅格 {st}　全栅格（锚点=解析 AnchorsOf）Δ抽热 {full.T.QFromTubeW - qA:+0.0000;-0.0000}　全栅格（锚点从场推，= 门）Δ抽热 {full2.T.QFromTubeW - qA:+0.0000;-0.0000}");
+            }
+            W("步长扫描（锚点从场推，= 门的建法）：");
+            foreach (double st in new[] { 1.0, 0.8, 0.75, 0.7, 0.6, 0.55, 0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.125, 0.1, 0.075, 0.05 })
+            {
+                var s = ZZG3DrawParityProbeTests.SolveOn(Mk(AnalyticSurrogate.Rasterize(g, st, 2.0), true), lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+                W($"  步 {st}\t格 {s.M.CellCount}\tΔ抽热 {s.T.QFromTubeW - qA:+0.0000;-0.0000}\tΔ发热 {(s.T.QGenW - sA.T.QGenW) / sA.T.QGenW * 100:+0.0000;-0.0000} %\t形心在孔内 {s.M.HoleArcCentroidInside}\t最小 DistAB {s.M.Faces.Where(f => f.B < 0 && f.Tag == ShellMesh.TagHole).Min(f => f.DistAB):0.00000}\t面积差 {s.M.TotalArea - sA.M.TotalArea:+0.000;-0.000} mm²");
+            }
+            W("栅格相位（步 0.5、1.0；栅格原点整体平移 (ox, oz)，锚点从场推）：");
+            foreach (double st in new[] { 0.5, 1.0 })
+                foreach (var (ox, oz) in new[] { (0.0, 0.0), (0.125, 0.0), (0.25, 0.0), (0.375, 0.0), (0.0, 0.125), (0.0, 0.25), (0.25, 0.25), (0.5, 0.0), (0.0, 0.5) })
+                {
+                    if (st == 0.5 && (ox >= 0.5 || oz >= 0.5)) continue;
+                    var f = RasterShift(g, st, ox, oz);
+                    var s = ZZG3DrawParityProbeTests.SolveOn(Mk(f, true), lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+                    W($"  步 {st} 平移 ({ox},{oz})\t格 {s.M.CellCount}\tΔ抽热 {s.T.QFromTubeW - qA:+0.0000;-0.0000}\tΔ发热 {(s.T.QGenW - sA.T.QGenW) / sA.T.QGenW * 100:+0.0000;-0.0000} %\t形心在孔内 {s.M.HoleArcCentroidInside}\t面积差 {s.M.TotalArea - sA.M.TotalArea:+0.000;-0.000}");
+                }
+        }
+    }
+}
+
+public class ZZG3DrawParityProbe3Tests
+{
+    const string OutDir = ZZG3DrawParityProbeTests.OutDir;
+
+    static string R((double x0, double x1, double z0, double z1) r) => $"[{r.x0:0.###},{r.x1:0.###}]×[{r.z0:0.###},{r.z1:0.###}]";
+
+    static SortedSet<string> Merges(ShellMesh m)
+    {
+        var s = new SortedSet<string>();
+        if (m.CellRects == null) return s;
+        foreach (var rl in m.CellRects)
+            if (rl != null && rl.Count > 1) s.Add(R(rl[0]) + " ← " + string.Join(" + ", rl.Skip(1).Select(R)));
+        return s;
+    }
+
+    static ThicknessField Shift(FlangePlate g, double step, double ox, double oz)
+    {
+        var f0 = FlangeMesher.Rasterize(g, step, 2.0);
+        // 平移为 0 的那一向照抄原栅格的原点与格数（坐标逐位同 Rasterize，免得浮点尾巴让直边 ±w 上的节点判内判外翻面）
+        int nx = ox == 0 ? f0.Nx : f0.Nx + 1, nz = oz == 0 ? f0.Nz : f0.Nz + 1;
+        double x0 = ox == 0 ? f0.X0 : f0.X0 - step + ox, z0 = oz == 0 ? f0.Z0 : f0.Z0 - step + oz;
+        var f = new ThicknessField { X0 = x0, Z0 = z0, Step = step, Nx = nx, Nz = nz, T = new double[nx * nz],
+            XMinMaterial = f0.XMinMaterial, XMaxMaterial = f0.XMaxMaterial, ZMinMaterial = f0.ZMinMaterial, ZMaxMaterial = f0.ZMaxMaterial };
+        for (int i = 0; i < nx; i++)
+            for (int j = 0; j < nz; j++)
+            {
+                double x = x0 + i * step, z = z0 + j * step;
+                f.T[i * nz + j] = g.Inside(x, z) ? g.ThicknessAt(x, z) : 0.0;
+            }
+        return f;
+    }
+
+    [Trait("速度", "慢")]
+    [Theory]
+    [InlineData(1)]
+    [InlineData(0)]
+    public void G3_表4_规则A三口径与相位包络(int which)
+    {
+        var (g, lc, iA, tRoot, tSet, clampC, tabInsul, name) = DrawingPathParityTests.Case(which);
+        double rh = g.HoleRadiusMm;
+        var sb = new StringBuilder();
+        string file = Path.Combine(OutDir, $"表4_{which}.txt");
+        void W(string t) { sb.AppendLine(t); File.WriteAllText(file, sb.ToString()); }
+        W($"{name}　rh {rh}　开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        var pre = new MeshRules { HoleFaceDirichlet = false, HoleArcNormalDist = false, HoleTagArcOnly = false };
+        var variants = new (string name, MeshRules rules, bool anchor)[]
+        {
+            ("改前", pre, false),
+            ("改前·规则A关", new MeshRules { HoleFaceDirichlet = false, HoleArcNormalDist = false, HoleTagArcOnly = false, MergeHoleCorners = false }, false),
+            ("改前·规则A目标按孔圆", new MeshRules { HoleFaceDirichlet = false, HoleArcNormalDist = false, HoleTagArcOnly = false, G3RuleATargetExactCircle = true }, false),
+            ("全开", MeshRules.Production, true),
+            ("全开·规则A关", new MeshRules { MergeHoleCorners = false }, true),
+            ("全开·规则A目标按孔圆", new MeshRules { G3RuleATargetExactCircle = true }, true),
+        };
+        double hF = lc.MeshFineMm, hC = lc.MeshCoarseMm, rF = lc.MeshFineRadiusMm, cl = lc.Base.BusbarClampLengthMm;
+        var (xa, za) = FlangeMesher.AnchorsOf(g);
+        var an = new AnalyticMaterial(g);
+        foreach (var v in variants)
+        {
+            var mA = FlangeMesher.BuildWith(g, v.rules, null, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
+            var sA = ZZG3DrawParityProbeTests.SolveOn(mA, lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+            double qA = sA.T.QFromTubeW;
+            var mergA = Merges(mA);
+            W($"══ {v.name}：解析 Build 格 {mA.CellCount} 抽热 {qA:0.0000} 发热 {sA.T.QGenW:0.000} 规则A并格 {mA.HoleSliversMerged}");
+            var d = new List<double>();
+            foreach (double st in new[] { 1.0, 0.5, 0.1 })
+            {
+                var f = AnalyticSurrogate.Rasterize(g, st, 2.0);
+                var m = FlangeMesher.BuildFromMaterialWith(f, rh, v.rules, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
+                var s = ZZG3DrawParityProbeTests.SolveOn(m, lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+                var mg = Merges(m);
+                int same = mg.Count(x => mergA.Contains(x));
+                d.Add(s.T.QFromTubeW - qA);
+                W($"  栅格 {st}：格 {m.CellCount} 抽热 {s.T.QFromTubeW:0.0000} Δ抽热 {s.T.QFromTubeW - qA:+0.0000;-0.0000} Δ发热 {(s.T.QGenW - sA.T.QGenW) / sA.T.QGenW * 100:+0.0000;-0.0000} % 规则A并格 {m.HoleSliversMerged} 并格与解析相同 {same}/{mg.Count}");
+                foreach (var x in mg.Where(x => !mergA.Contains(x))) W($"      栅格独有并格：{x}");
+                foreach (var x in mergA.Where(x => !mg.Contains(x))) W($"      解析独有并格：{x}");
+            }
+            bool mono = Math.Abs(d[0]) >= Math.Abs(d[1]) - 1e-9 && Math.Abs(d[1]) >= Math.Abs(d[2]) - 1e-9;
+            W($"  门判法：|Δ| 1.0 {Math.Abs(d[0]):0.0000} ≥ 0.5 {Math.Abs(d[1]):0.0000} ≥ 0.1 {Math.Abs(d[2]):0.0000} ⇒ {(mono ? "单调（门过）" : "不单调（门红）")}；0.1 档 |Δ| ≤ 0.1：{Math.Abs(d[2]) <= 0.1}；0.5 档 |Δ| ≤ 1：{Math.Abs(d[1]) <= 1.0}");
+            // 相位包络：孔环（r < rh+3）用平移栅格、其余解析（排除外缘与舌直边的对齐效应），4×4 相位
+            foreach (double st in new[] { 1.0, 0.5, 0.25, 0.1 })
+            {
+                var vals = new List<(double ox, double oz, double dq, double dA, int flip)>();
+                for (int a = 0; a < 4; a++)
+                    for (int b = 0; b < 4; b++)
+                    {
+                        double ox = a * st / 4, oz = b * st / 4;
+                        var fr = Shift(g, st, ox, oz);
+                        var m = FlangeMesher.BuildFromMaterialWith(new G3HybridMaterial(fr, an, rh + 3.0), rh, v.rules, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm, xAnchors: xa, zAnchors: za);
+                        var s = ZZG3DrawParityProbeTests.SolveOn(m, lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+                        var mg = Merges(m);
+                        int flip = mg.Count(x => !mergA.Contains(x));
+                        vals.Add((ox, oz, s.T.QFromTubeW - qA, m.TotalArea - mA.TotalArea, flip));
+                    }
+                var dq = vals.Select(x => x.dq).ToArray();
+                double rms = Math.Sqrt(dq.Average(x => x * x));
+                W($"  相位包络 步 {st}（孔环栅格、其余解析，16 相位）：Δ抽热 min {dq.Min():+0.0000;-0.0000} max {dq.Max():+0.0000;-0.0000} 均 {dq.Average():+0.0000;-0.0000} 均方根 {rms:0.0000}；|Δ|>0.1 的相位 {dq.Count(x => Math.Abs(x) > 0.1)}/16，|Δ|>1 的 {dq.Count(x => Math.Abs(x) > 1)}/16；规则A目标与解析不同的相位 {vals.Count(x => x.flip > 0)}/16");
+                W("     逐相位 (ox,oz):Δ抽热/Δ面积/换靶并格数 " + string.Join("  ", vals.Select(x => $"({x.ox:0.###},{x.oz:0.###}):{x.dq:+0.000;-0.000}/{x.dA:+0.00;-0.00}/{x.flip}")));
+            }
+        }
+    }
+}
+
+public class ZZG3DrawParityProbe4Tests
+{
+    const string OutDir = ZZG3DrawParityProbeTests.OutDir;
+
+    static ThicknessField Shift(FlangePlate g, double step, double ox, double oz)
+    {
+        var f0 = FlangeMesher.Rasterize(g, step, 2.0);
+        // 平移为 0 的那一向照抄原栅格的原点与格数（坐标逐位同 Rasterize，免得浮点尾巴让直边 ±w 上的节点判内判外翻面）
+        int nx = ox == 0 ? f0.Nx : f0.Nx + 1, nz = oz == 0 ? f0.Nz : f0.Nz + 1;
+        double x0 = ox == 0 ? f0.X0 : f0.X0 - step + ox, z0 = oz == 0 ? f0.Z0 : f0.Z0 - step + oz;
+        var f = new ThicknessField { X0 = x0, Z0 = z0, Step = step, Nx = nx, Nz = nz, T = new double[nx * nz],
+            XMinMaterial = f0.XMinMaterial, XMaxMaterial = f0.XMaxMaterial, ZMinMaterial = f0.ZMinMaterial, ZMaxMaterial = f0.ZMaxMaterial };
+        for (int i = 0; i < nx; i++)
+            for (int j = 0; j < nz; j++)
+            {
+                double x = x0 + i * step, z = z0 + j * step;
+                f.T[i * nz + j] = g.Inside(x, z) ? g.ThicknessAt(x, z) : 0.0;
+            }
+        return f;
+    }
+
+    [Trait("速度", "慢")]
+    [Fact]
+    public void G3_表5_离群相位逐格()
+    {
+        var (g, lc, iA, tRoot, tSet, clampC, tabInsul, name) = DrawingPathParityTests.Case(1);
+        double rh = g.HoleRadiusMm;
+        var sb = new StringBuilder();
+        string file = Path.Combine(OutDir, "表5_1.txt");
+        void W(string t) { sb.AppendLine(t); File.WriteAllText(file, sb.ToString()); }
+        W($"{name}　rh {rh}　开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}　孔环（r<rh+3）用平移栅格、其余解析");
+        double hF = lc.MeshFineMm, hC = lc.MeshCoarseMm, rF = lc.MeshFineRadiusMm, cl = lc.Base.BusbarClampLengthMm;
+        var (xa, za) = FlangeMesher.AnchorsOf(g);
+        var an = new AnalyticMaterial(g);
+        foreach (var (st, ox, oz) in new[] { (1.0, 0.5, 0.5), (1.0, 0.0, 0.0), (0.5, 0.25, 0.0), (0.5, 0.0, 0.0) })
+        {
+            W($"════ 步 {st} 平移 ({ox},{oz})");
+            foreach (var v in ZZG3DrawParityProbeTests.Variants)
+            {
+                var mA = FlangeMesher.BuildWith(g, v.rules, null, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
+                var sA = ZZG3DrawParityProbeTests.SolveOn(mA, lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+                var fr = Shift(g, st, ox, oz);
+                var m = FlangeMesher.BuildFromMaterialWith(new G3HybridMaterial(fr, an, rh + 3.0), rh, v.rules, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm, xAnchors: xa, zAnchors: za);
+                var s = ZZG3DrawParityProbeTests.SolveOn(m, lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+                W($"{v.name}　Δ抽热 {s.T.QFromTubeW - sA.T.QFromTubeW:+0.000;-0.000} Δ发热 {s.T.QGenW - sA.T.QGenW:+0.000;-0.000} W｜栅格：{ZZG3DrawParityProbeTests.Summary(s, rh)}");
+                if (v.name != "全开" && v.name != "改前") continue;
+                // 孔边逐格：按 |发热| 前 8、按孔面 DistAB 最小前 8
+                var holeFaces = Enumerable.Range(0, m.Faces.Count).Where(k => m.Faces[k].B < 0 && m.Faces[k].Tag == ShellMesh.TagHole).ToList();
+                W("   孔面 DistAB 最小 8 条：");
+                foreach (int k in holeFaces.OrderBy(k => m.Faces[k].DistAB).Take(8))
+                {
+                    var f = m.Faces[k]; int c = f.A; var C = m.Centroid[c]; double rc = Math.Sqrt(C.X * C.X + C.Z * C.Z);
+                    W($"     面中点 ({f.Mid.X:0.000},{f.Mid.Z:0.000}) 弧长 {f.Length:0.0000} DistAB {f.DistAB:0.00000} 格形心 ({C.X:0.0000},{C.Z:0.0000}) |C|−rh {rc - rh:+0.00000;-0.00000} 覆盖率 {m.FracOf(c):0.0000} 面积 {m.Area[c]:0.0000} 厚 {m.Thickness[c]:0.000} J {s.C.JMagAPerMm2[c]:0.000} 格发热 {s.T.CellGenW[c]:0.0000} W T {s.T.T[c]:0.00} 热 q {s.FaceQ[k]:+0.0000;-0.0000} g {s.FaceG[k]:0.0000}");
+                }
+                W("   J 最大 8 格（全场）：");
+                foreach (int c in Enumerable.Range(0, m.CellCount).OrderByDescending(c => s.C.JMagAPerMm2[c]).Take(8))
+                {
+                    var C = m.Centroid[c]; double rc = Math.Sqrt(C.X * C.X + C.Z * C.Z);
+                    W($"     格 ({C.X:0.0000},{C.Z:0.0000}) |C|−rh {rc - rh:+0.0000;-0.0000} 覆盖率 {m.FracOf(c):0.0000} 面积 {m.Area[c]:0.0000} J {s.C.JMagAPerMm2[c]:0.000} 格发热 {s.T.CellGenW[c]:0.0000} T {s.T.T[c]:0.00}");
+                }
+            }
+        }
+    }
+}
+
+public class ZZG3DrawParityProbe5Tests
+{
+    const string OutDir = ZZG3DrawParityProbeTests.OutDir;
+    static string Key(ShellMesh m, int c)
+    {
+        var (x0, x1, z0, z1) = FlangeMesher.CellRect(m, c);
+        return $"{x0:0.000000},{x1:0.000000},{z0:0.000000},{z1:0.000000}";
+    }
+
+    [Trait("速度", "慢")]
+    [Theory]
+    [InlineData(1)]
+    [InlineData(0)]
+    public void G3_表6_逐格发热与距离反事实(int which)
+    {
+        var (g, lc, iA, tRoot, tSet, clampC, tabInsul, name) = DrawingPathParityTests.Case(which);
+        double rh = g.HoleRadiusMm;
+        var sb = new StringBuilder();
+        string file = Path.Combine(OutDir, $"表6_{which}.txt");
+        void W(string t) { sb.AppendLine(t); File.WriteAllText(file, sb.ToString()); }
+        W($"{name}　rh {rh}　开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}（门的相位：栅格节点在步长整数倍上）");
+        foreach (int vi in new[] { 0, 3 })
+        {
+            var v = ZZG3DrawParityProbeTests.Variants[vi];
+            var sA = ZZG3DrawParityProbeTests.SolveOn(ZZG3DrawParityProbeTests.BuildMesh(g, lc, v.rules, 0), lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+            W($"══ {v.name}：解析 抽热 {sA.T.QFromTubeW:0.0000} 电发热 {sA.C.TotalGenW:0.0000}");
+            var kA = new Dictionary<string, int>(); for (int c = 0; c < sA.M.CellCount; c++) kA[Key(sA.M, c)] = c;
+            var faceA = new Dictionary<string, double>();
+            for (int k = 0; k < sA.M.Faces.Count; k++) { var f = sA.M.Faces[k]; if (f.B < 0 && f.Tag == ShellMesh.TagHole) faceA[$"{f.Mid.X:0.0000},{f.Mid.Z:0.0000}"] = f.DistAB; }
+            foreach (double st in new[] { 1.0, 0.5, 0.1 })
+            {
+                var mR = ZZG3DrawParityProbeTests.BuildMesh(g, lc, v.rules, st);
+                var sR = ZZG3DrawParityProbeTests.SolveOn(mR, lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+                W($"── 栅格 {st}：Δ抽热 {sR.T.QFromTubeW - sA.T.QFromTubeW:+0.0000;-0.0000} Δ电发热（等温）{sR.C.TotalGenW - sA.C.TotalGenW:+0.0000;-0.0000} Δ热场发热 {sR.T.QGenW - sA.T.QGenW:+0.0000;-0.0000}");
+                // 逐格 Δ发热（热场，按矩形配对）
+                var inside = new HashSet<int>();
+                foreach (var f in mR.Faces) if (f.B < 0 && f.Tag == ShellMesh.TagHole && !double.IsNaN(f.ArcRadiusMm)) { var C = mR.Centroid[f.A]; if (Math.Sqrt(C.X * C.X + C.Z * C.Z) < rh) inside.Add(f.A); }
+                var merged = new HashSet<int>(); if (mR.CellRects != null) for (int c = 0; c < mR.CellCount; c++) if (mR.CellRects[c].Count > 1) merged.Add(c);
+                var holeCells = new HashSet<int>(mR.Faces.Where(f => f.B < 0 && f.Tag == ShellMesh.TagHole).Select(f => f.A));
+                double gIn = 0, gMerged = 0, gHole = 0, gRing = 0, gOut = 0, gUnm = 0;
+                var rows = new List<(double d, string s)>();
+                for (int c = 0; c < mR.CellCount; c++)
+                {
+                    var C = mR.Centroid[c]; double r = Math.Sqrt(C.X * C.X + C.Z * C.Z);
+                    if (!kA.TryGetValue(Key(mR, c), out int ca)) { gUnm += sR.T.CellGenW[c]; continue; }
+                    double d = sR.T.CellGenW[c] - sA.T.CellGenW[ca];
+                    if (inside.Contains(c)) gIn += d; else if (merged.Contains(c)) gMerged += d; else if (holeCells.Contains(c)) gHole += d; else if (r < rh + 3) gRing += d; else gOut += d;
+                    rows.Add((d, $"格 ({C.X:0.000},{C.Z:0.000}) r−rh {r - rh:+0.000;-0.000} 覆盖率 栅 {mR.FracOf(c):0.000}/析 {sA.M.FracOf(ca):0.000} J 栅 {sR.C.JMagAPerMm2[c]:0.000}/析 {sA.C.JMagAPerMm2[ca]:0.000} 发热 栅 {sR.T.CellGenW[c]:0.0000}/析 {sA.T.CellGenW[ca]:0.0000} Δ {d:+0.0000;-0.0000}{(inside.Contains(c) ? " [形心在孔内]" : "")}{(merged.Contains(c) ? " [并过格]" : "")}"));
+                }
+                // 未配上的解析格
+                var kR = new HashSet<string>(); for (int c = 0; c < mR.CellCount; c++) kR.Add(Key(mR, c));
+                double gUnmA = 0; for (int c = 0; c < sA.M.CellCount; c++) if (!kR.Contains(Key(sA.M, c))) gUnmA += sA.T.CellGenW[c];
+                W($"   Δ发热分组：形心在孔内的孔格（{inside.Count}）{gIn:+0.0000;-0.0000}｜并过格 {gMerged:+0.0000;-0.0000}｜其余孔格 {gHole:+0.0000;-0.0000}｜孔环其余 {gRing:+0.0000;-0.0000}｜环外 {gOut:+0.0000;-0.0000}｜只在栅格 +{gUnm:0.0000}｜只在解析 −{gUnmA:0.0000}");
+                foreach (var r in rows.OrderByDescending(r => Math.Abs(r.d)).Take(10)) W("     " + r.s);
+                // 反事实：弧面 DistAB 换成解析网格同一弧段（按面中点配对）的值
+                foreach (string mode in new[] { "只换形心在孔内的那几条", "全部配上的弧面" })
+                {
+                    var m2 = ZZG3DrawParityProbeTests.BuildMesh(g, lc, v.rules, st);
+                    int nSw = 0;
+                    foreach (var f in m2.Faces)
+                    {
+                        if (!(f.B < 0 && f.Tag == ShellMesh.TagHole) || double.IsNaN(f.ArcRadiusMm)) continue;
+                        var C = m2.Centroid[f.A]; bool ins = Math.Sqrt(C.X * C.X + C.Z * C.Z) < rh;
+                        if (mode.StartsWith("只换") && !ins) continue;
+                        if (faceA.TryGetValue($"{f.Mid.X:0.0000},{f.Mid.Z:0.0000}", out double dA)) { f.DistAB = dA; nSw++; }
+                    }
+                    var s2 = ZZG3DrawParityProbeTests.SolveOn(m2, lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+                    W($"   反事实〔{mode}，换了 {nSw} 条〕：Δ抽热 {s2.T.QFromTubeW - sA.T.QFromTubeW:+0.0000;-0.0000} Δ电发热 {s2.C.TotalGenW - sA.C.TotalGenW:+0.0000;-0.0000}");
+                }
+            }
+        }
+    }
+}
+
+/// <summary>
+/// G3 原型（只在探针里）：栅格场在孔圆 ±band 带内按解析圆判料（r ≥ rh 有料、r &lt; rh 无料），厚度取同一射线上 r = max(r, rh + s/2) 处的栅格值；带外照栅格。
+/// 带内用 0.005 mm 子采样积分（近似，不是精确积分）。band = 一个栅格步（与 §0.-20 孔径失配的尺同一个）。
+/// </summary>
+internal sealed class G3CircleSnapField : IMaterialField
+{
+    readonly ThicknessField _f; readonly double _rh, _b, _sub; readonly bool _keepRasterT;
+    public G3CircleSnapField(ThicknessField f, double rh, double band, double sub = 0.005, bool keepRasterT = false) { _f = f; _rh = rh; _b = band; _sub = sub; _keepRasterT = keepRasterT; }
+    bool Touch(double x0, double x1, double z0, double z1)
+    {
+        double nx = Math.Clamp(0, x0, x1), nz = Math.Clamp(0, z0, z1);
+        double near = Math.Sqrt(nx * nx + nz * nz);
+        double fx = Math.Max(Math.Abs(x0), Math.Abs(x1)), fz = Math.Max(Math.Abs(z0), Math.Abs(z1));
+        double far = Math.Sqrt(fx * fx + fz * fz);
+        return near < _rh + _b && far > _rh - _b;
+    }
+    double T(double x, double z)
+    {
+        double r = Math.Sqrt(x * x + z * z);
+        if (Math.Abs(r - _rh) >= _b) return _f.At(x, z);
+        if (r < _rh) return 0;
+        if (_keepRasterT)
+        {
+            double t0 = _f.At(x, z);
+            if (t0 > 1e-9) return t0;
+            double r1 = r + _f.Step;   // 栅格这点没料：沿射线往外一个栅格步取
+            return r > 1e-12 ? _f.At(x * r1 / r, z * r1 / r) : 0;
+        }
+        double rs = Math.Max(r, _rh + 0.5 * _f.Step);
+        return r > 1e-12 ? _f.At(x * rs / r, z * rs / r) : 0;
+    }
+    public (double XMin, double XMax, double ZMin, double ZMax, bool Exact) MaterialEnvelope() => _f.MaterialEnvelope();
+    public MaterialIntegral Integrate(double x0, double x1, double z0, double z1)
+    {
+        if (!Touch(x0, x1, z0, z1)) return _f.Integrate(x0, x1, z0, z1);
+        int nx = Math.Max(1, (int)Math.Ceiling((x1 - x0) / _sub)), nz = Math.Max(1, (int)Math.Ceiling((z1 - z0) / _sub));
+        double dx = (x1 - x0) / nx, dz = (z1 - z0) / nz, a = dx * dz, A = 0, V = 0, Mx = 0, Mz = 0;
+        for (int i = 0; i < nx; i++)
+        {
+            double x = x0 + (i + 0.5) * dx;
+            for (int j = 0; j < nz; j++)
+            {
+                double z = z0 + (j + 0.5) * dz;
+                double t = T(x, z);
+                if (t <= 1e-9) continue;
+                A += a; V += a * t; Mx += a * x; Mz += a * z;
+            }
+        }
+        return new MaterialIntegral(A, V, Mx, Mz);
+    }
+    public (double Length, double Mid) SegmentMaterial(bool vertical, double line, double a, double b)
+    {
+        double lo = Math.Min(a, b), hi = Math.Max(a, b);
+        bool touch = vertical ? Touch(line, line, lo, hi) : Touch(lo, hi, line, line);
+        if (!touch) return _f.SegmentMaterial(vertical, line, a, b);
+        int n = Math.Max(1, (int)Math.Ceiling((hi - lo) / _sub));
+        double d = (hi - lo) / n, len = 0, mom = 0;
+        for (int i = 0; i < n; i++)
+        {
+            double u = lo + (i + 0.5) * d;
+            double t = vertical ? T(line, u) : T(u, line);
+            if (t <= 1e-9) continue;
+            len += d; mom += d * u;
+        }
+        return (len, len > 0 ? mom / len : 0.5 * (lo + hi));
+    }
+    public double FractionInsideCircle(double x0, double x1, double z0, double z1, double radiusMm) => _f.FractionInsideCircle(x0, x1, z0, z1, radiusMm);
+    public string Describe() => $"孔圆带内按解析圆判料（原型，带 ±{_b}）+ {_f.Describe()}";
+}
+
+public class ZZG3DrawParityProbe6Tests
+{
+    const string OutDir = ZZG3DrawParityProbeTests.OutDir;
+
+    static ThicknessField Shift(FlangePlate g, double step, double ox, double oz)
+    {
+        var f0 = FlangeMesher.Rasterize(g, step, 2.0);
+        if (ox == 0 && oz == 0) return f0;
+        // 平移为 0 的那一向照抄原栅格的原点与格数（坐标逐位同 Rasterize，免得浮点尾巴让直边 ±w 上的节点判内判外翻面）
+        int nx = ox == 0 ? f0.Nx : f0.Nx + 1, nz = oz == 0 ? f0.Nz : f0.Nz + 1;
+        double x0 = ox == 0 ? f0.X0 : f0.X0 - step + ox, z0 = oz == 0 ? f0.Z0 : f0.Z0 - step + oz;
+        var f = new ThicknessField { X0 = x0, Z0 = z0, Step = step, Nx = nx, Nz = nz, T = new double[nx * nz],
+            XMinMaterial = f0.XMinMaterial, XMaxMaterial = f0.XMaxMaterial, ZMinMaterial = f0.ZMinMaterial, ZMaxMaterial = f0.ZMaxMaterial };
+        for (int i = 0; i < nx; i++)
+            for (int j = 0; j < nz; j++)
+            {
+                double x = x0 + i * step, z = z0 + j * step;
+                f.T[i * nz + j] = g.Inside(x, z) ? g.ThicknessAt(x, z) : 0.0;
+            }
+        return f;
+    }
+
+    [Trait("速度", "慢")]
+    [Theory]
+    [InlineData(1)]
+    [InlineData(0)]
+    public void G3_表7_全栅格相位包络与贴圆原型(int which)
+    {
+        var (g, lc, iA, tRoot, tSet, clampC, tabInsul, name) = DrawingPathParityTests.Case(which);
+        double rh = g.HoleRadiusMm;
+        var sb = new StringBuilder();
+        string file = Path.Combine(OutDir, $"表7_{which}.txt");
+        void W(string t) { sb.AppendLine(t); File.WriteAllText(file, sb.ToString()); }
+        W($"{name}　rh {rh}　开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}　全栅格（门的建法：锚点从场推）；相位只沿 x 平移（z 平移会让舌直边 ±w 离开栅格节点，混进直边幻影，另一件事）");
+        double hF = lc.MeshFineMm, hC = lc.MeshCoarseMm, rF = lc.MeshFineRadiusMm, cl = lc.Base.BusbarClampLengthMm;
+        foreach (int vi in new[] { 0, 3 })
+        {
+            var v = ZZG3DrawParityProbeTests.Variants[vi];
+            var sA = ZZG3DrawParityProbeTests.SolveOn(ZZG3DrawParityProbeTests.BuildMesh(g, lc, v.rules, 0), lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+            double qA = sA.T.QFromTubeW;
+            W($"══ {v.name}：解析 抽热 {qA:0.0000}");
+            foreach (int snapMode in new[] { 0, 1, 2, 3 })
+            {
+                bool snap = snapMode > 0;
+                W($"  -- {(snapMode == 3 ? "贴圆原型 C（同 B，带宽改 s/√2 = HoleRadiusOf 的误差界）" : snapMode == 1 ? "贴圆原型 A（孔圆 ±1 栅格步带内按解析圆判料；厚度取 r = max(r, rh+s/2) 处栅格值）" : snapMode == 2 ? "贴圆原型 B（同 A，厚度：栅格有料取本点，没料沿射线外移一个栅格步取）" : "现行栅格")}");
+                foreach (double st in new[] { 1.0, 0.5, 0.25, 0.1 })
+                {
+                    var rows = new List<string>(); var dq = new List<double>(); var dqCov = new List<double>();
+                    for (int a = 0; a < 8; a++)
+                    {
+                        double ox = a * st / 8;
+                        var f = Shift(g, st, ox, 0);
+                        IMaterialField mf = snap ? new G3CircleSnapField(f, rh, snapMode == 3 ? st / Math.Sqrt(2) : st, keepRasterT: snapMode >= 2) : f;
+                        var m = snap
+                            ? FlangeMesher.BuildFromMaterialWith(mf, rh, v.rules, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm,
+                                                                 xAnchors: FlangeMesher.AnchorsFromField(f).X, zAnchors: FlangeMesher.AnchorsFromField(f).Z)
+                            : FlangeMesher.BuildFromMaterialWith(f, rh, v.rules, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
+                        var s = ZZG3DrawParityProbeTests.SolveOn(m, lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+                        double d = s.T.QFromTubeW - qA; dq.Add(d); if (m.HoleArcCoverage > 1 - 1e-9) dqCov.Add(d);
+                        rows.Add($"ox {ox:0.####}:{d:+0.000;-0.000}(覆盖 {m.HoleArcCoverage:0.000},内 {m.HoleArcCentroidInside},A {m.HoleSliversMerged})");
+                    }
+                    string St(List<double> x) => x.Count == 0 ? "（无）" : $"n {x.Count} min {x.Min():+0.000;-0.000} max {x.Max():+0.000;-0.000} max|Δ| {x.Max(Math.Abs):0.000} 均方根 {Math.Sqrt(x.Average(y => y * y)):0.000}";
+                    W($"    步 {st}：全部 8 相位 {St(dq)}｜其中覆盖率 = 1 的 {St(dqCov)}");
+                    W("      " + string.Join("  ", rows));
+                }
+            }
+        }
+    }
+}
+
+public class ZZG3DrawParityProbe7Tests
+{
+    const string OutDir = ZZG3DrawParityProbeTests.OutDir;
+    static ThicknessField Shift(FlangePlate g, double step, double ox, double oz)
+    {
+        var f0 = FlangeMesher.Rasterize(g, step, 2.0);
+        if (ox == 0 && oz == 0) return f0;
+        // 平移为 0 的那一向照抄原栅格的原点与格数（坐标逐位同 Rasterize，免得浮点尾巴让直边 ±w 上的节点判内判外翻面）
+        int nx = ox == 0 ? f0.Nx : f0.Nx + 1, nz = oz == 0 ? f0.Nz : f0.Nz + 1;
+        double x0 = ox == 0 ? f0.X0 : f0.X0 - step + ox, z0 = oz == 0 ? f0.Z0 : f0.Z0 - step + oz;
+        var f = new ThicknessField { X0 = x0, Z0 = z0, Step = step, Nx = nx, Nz = nz, T = new double[nx * nz],
+            XMinMaterial = f0.XMinMaterial, XMaxMaterial = f0.XMaxMaterial, ZMinMaterial = f0.ZMinMaterial, ZMaxMaterial = f0.ZMaxMaterial };
+        for (int i = 0; i < nx; i++)
+            for (int j = 0; j < nz; j++)
+            {
+                double x = x0 + i * step, z = z0 + j * step;
+                f.T[i * nz + j] = g.Inside(x, z) ? g.ThicknessAt(x, z) : 0.0;
+            }
+        return f;
+    }
+
+    [Trait("速度", "慢")]
+    [Fact]
+    public void G3_表8_步0p1平移的负偏定位()
+    {
+        var (g, lc, iA, tRoot, tSet, clampC, tabInsul, name) = DrawingPathParityTests.Case(1);
+        double rh = g.HoleRadiusMm;
+        var sb = new StringBuilder();
+        string file = Path.Combine(OutDir, "表8_1.txt");
+        void W(string t) { sb.AppendLine(t); File.WriteAllText(file, sb.ToString()); }
+        double hF = lc.MeshFineMm, hC = lc.MeshCoarseMm, rF = lc.MeshFineRadiusMm, cl = lc.Base.BusbarClampLengthMm;
+        var v = ZZG3DrawParityProbeTests.Variants[3];
+        var mA = FlangeMesher.BuildWith(g, v.rules, null, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
+        var sA = ZZG3DrawParityProbeTests.SolveOn(mA, lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+        var an = new AnalyticMaterial(g);
+        var (xaA, zaA) = FlangeMesher.AnchorsOf(g);
+        W($"{name} 全开　解析 抽热 {sA.T.QFromTubeW:0.0000} 铜排 {sA.T.QToClampW:0.0000} 格 {mA.CellCount} 节点 {mA.Nodes.Count}；解析锚点 x [{string.Join(",", xaA.Select(x => x.ToString("0.####")))}] z [{string.Join(",", zaA.Select(x => x.ToString("0.####")))}]");
+        foreach (double ox in new[] { 0.0, 0.0625 })
+        {
+            var f = Shift(g, 0.1, ox, 0);
+            var (xa, za) = FlangeMesher.AnchorsFromField(f);
+            FlangeMesher.TangentFromField(f, out double xT, out double w, out double R, out string how);
+            var m = FlangeMesher.BuildFromMaterialWith(f, rh, v.rules, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
+            var s = ZZG3DrawParityProbeTests.SolveOn(m, lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+            bool sameAxis = m.Nodes.Count == mA.Nodes.Count && Enumerable.Range(0, m.Nodes.Count).All(k => (m.Nodes[k] - mA.Nodes[k]).Norm < 1e-9);
+            W($"ox {ox}：Δ抽热 {s.T.QFromTubeW - sA.T.QFromTubeW:+0.0000;-0.0000} Δ铜排 {s.T.QToClampW - sA.T.QToClampW:+0.0000;-0.0000} 格 {m.CellCount} 节点 {m.Nodes.Count} 节点同解析 {sameAxis}；场推锚点 x [{string.Join(",", xa.Select(x => x.ToString("0.####")))}] z [{string.Join(",", za.Select(x => x.ToString("0.####")))}]；{how}；ClampAnchorNote {m.ClampAnchorNote}");
+            var m2 = FlangeMesher.BuildFromMaterialWith(f, rh, v.rules, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm, xAnchors: xaA, zAnchors: zaA);
+            var s2 = ZZG3DrawParityProbeTests.SolveOn(m2, lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+            W($"   同一栅格、锚点改用解析 AnchorsOf：Δ抽热 {s2.T.QFromTubeW - sA.T.QFromTubeW:+0.0000;-0.0000}");
+            var m3 = FlangeMesher.BuildFromMaterialWith(new G3HybridMaterial(an, f, rh + 3), rh, v.rules, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm, xAnchors: xaA, zAnchors: zaA);
+            var s3 = ZZG3DrawParityProbeTests.SolveOn(m3, lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+            W($"   孔环解析、其余栅格（锚点解析）：Δ抽热 {s3.T.QFromTubeW - sA.T.QFromTubeW:+0.0000;-0.0000}");
+            var m4 = FlangeMesher.BuildFromMaterialWith(new G3HybridMaterial(f, an, rh + 3), rh, v.rules, 0, hF, hC, rF, cl, lc.MeshInnerMm, lc.MeshInnerRadiusMm, xAnchors: xaA, zAnchors: zaA);
+            var s4 = ZZG3DrawParityProbeTests.SolveOn(m4, lc, g, iA, tRoot, tSet, clampC, tabInsul, v.anchor);
+            W($"   孔环栅格、其余解析（锚点解析）：Δ抽热 {s4.T.QFromTubeW - sA.T.QFromTubeW:+0.0000;-0.0000}");
+            // 分 x 段的 Δ面积／Δ发热／Δ散热（节点同解析 ⇒ 逐格按下标配对；并格相同时下标一致）
+            if (m.CellCount == mA.CellCount)
+            {
+                var bins = new[] { (-1e9, -140.0 + 0.5), (-139.5, -100.5), (-100.5, -99.5), (-99.5, -30.0), (-30.0, 1e9) };
+                foreach (var (lo, hi) in bins)
+                {
+                    double dA = 0, dG = 0, dL = 0; int nC = 0;
+                    for (int c = 0; c < m.CellCount; c++)
+                    {
+                        double x = mA.Centroid[c].X; if (x < lo || x >= hi) continue; nC++;
+                        dA += m.Area[c] - mA.Area[c]; dG += s.T.CellGenW[c] - sA.T.CellGenW[c]; dL += s.T.CellLossW[c] - sA.T.CellLossW[c];
+                    }
+                    W($"   x∈[{lo:0.#},{hi:0.#})：格 {nC} Δ面积 {dA:+0.0000;-0.0000} Δ发热 {dG:+0.0000;-0.0000} Δ散热 {dL:+0.0000;-0.0000}");
+                }
+                double xmin = mA.Nodes.Min(n => n.X);
+                W($"   舌尖 x {xmin:0.####}；舌尖一列格 栅格面积 {Enumerable.Range(0, m.CellCount).Where(c => mA.Centroid[c].X < xmin + 1.5).Sum(c => m.Area[c]):0.0000} 解析 {Enumerable.Range(0, m.CellCount).Where(c => mA.Centroid[c].X < xmin + 1.5).Sum(c => mA.Area[c]):0.0000}");
+            }
+        }
+    }
+}
+
+public class ZZG3DrawParityProbe8Tests
+{
+    const string OutDir = ZZG3DrawParityProbeTests.OutDir;
+
+    [Trait("速度", "慢")]
+    [Fact]
+    public void G3_表9_门的复刻_现行与贴圆原型B()
+    {
+        var sb = new StringBuilder();
+        string file = Path.Combine(OutDir, "表9.txt");
+        void W(string t) { sb.AppendLine(t); File.WriteAllText(file, sb.ToString()); }
+        W($"DrawingPathParityTests 两个方法的判法逐条复刻（阈值照抄：发热 0.1 %、步 0.1 抽热 0.1 W、生产步抽热 1 W、单调收窄）；现行 = BuildFromField(Rasterize)，原型 B = 同一栅格外包 G3CircleSnapField(band = 栅格步, keepRasterT)　开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        foreach (bool snap in new[] { false, true })
+        {
+            W($"══ {(snap ? "贴圆原型 B" : "现行")}");
+            ShellMesh MkF(FlangePlate g, LineCase lc, double step, double hF, double hC)
+            {
+                var f = AnalyticSurrogate.Rasterize(g, step, 2.0);
+                if (!snap) return FlangeMesher.BuildFromField(f, g.HoleRadiusMm, 0, hF, hC, lc.MeshFineRadiusMm, lc.Base.BusbarClampLengthMm, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
+                var (xa, za) = FlangeMesher.AnchorsFromField(f);
+                return FlangeMesher.BuildFromMaterial(new G3CircleSnapField(f, g.HoleRadiusMm, step, keepRasterT: true), g.HoleRadiusMm, 0, hF, hC, lc.MeshFineRadiusMm, lc.Base.BusbarClampLengthMm, lc.MeshInnerMm, lc.MeshInnerRadiusMm, xAnchors: xa, zAnchors: za);
+            }
+            foreach (int which in new[] { 0, 1 })
+            {
+                var (g, lc, iA, tRoot, tSet, clampC, tabInsul, name) = DrawingPathParityTests.Case(which);
+                // 方法 1：生产栅格步，倍率 1.0／0.5
+                foreach (double sc in new[] { 1.0, 0.5 })
+                {
+                    double hF = lc.MeshFineMm * sc, hC = lc.MeshCoarseMm * sc;
+                    var mA = FlangeMesher.Build(g, 0, hF, hC, lc.MeshFineRadiusMm, lc.Base.BusbarClampLengthMm, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
+                    var a = DrawingPathParityTests.SolveOne(mA, lc, g, iA, tRoot, tSet, clampC, tabInsul);
+                    double step = FlangeMesher.RasterStepFor(hF);
+                    var b = DrawingPathParityTests.SolveOne(MkF(g, lc, step, hF, hC), lc, g, iA, tRoot, tSet, clampC, tabInsul);
+                    double dG = Math.Abs(b.QGen - a.QGen) / a.QGen * 100, dT = b.QFromTube - a.QFromTube;
+                    W($"  方法1 {name} 倍率 {sc} 步 {step}：发热差 {dG:0.000} % 抽热差 {dT:+0.000;-0.000} W ⇒ {(dG <= 0.1 && Math.Abs(dT) <= 1.0 ? "过" : "红")}");
+                }
+                {
+                    double hF = lc.MeshFineMm, hC = lc.MeshCoarseMm;
+                    var mA = FlangeMesher.Build(g, 0, hF, hC, lc.MeshFineRadiusMm, lc.Base.BusbarClampLengthMm, lc.MeshInnerMm, lc.MeshInnerRadiusMm);
+                    var a = DrawingPathParityTests.SolveOne(mA, lc, g, iA, tRoot, tSet, clampC, tabInsul);
+                    var d = new List<(double g, double t)>();
+                    foreach (double st in new[] { 1.0, FlangeMesher.RasterStepFor(hF), 0.1 })
+                    {
+                        var b = DrawingPathParityTests.SolveOne(MkF(g, lc, st, hF, hC), lc, g, iA, tRoot, tSet, clampC, tabInsul);
+                        d.Add((Math.Abs(b.QGen - a.QGen) / a.QGen * 100, b.QFromTube - a.QFromTube));
+                    }
+                    bool a1 = d[2].g <= 0.1, a2 = Math.Abs(d[2].t) <= 0.1, a3 = d[1].g <= 0.1 && Math.Abs(d[1].t) <= 1.0,
+                         a4 = Math.Abs(d[0].t) >= Math.Abs(d[1].t) - 1e-9 && Math.Abs(d[1].t) >= Math.Abs(d[2].t) - 1e-9;
+                    W($"  方法2 {name}：抽热差 1.0 {d[0].t:+0.000;-0.000} → 0.5 {d[1].t:+0.000;-0.000} → 0.1 {d[2].t:+0.000;-0.000} W；发热差 {d[0].g:0.000}/{d[1].g:0.000}/{d[2].g:0.000} %；断言 步0.1发热 {a1} 步0.1抽热 {a2} 生产步 {a3} 单调 {a4} ⇒ {(a1 && a2 && a3 && a4 ? "过" : "红")}");
+                }
+            }
+        }
+    }
+}

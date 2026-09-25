@@ -1,0 +1,17 @@
+#证据头 v1
+# 标题：J 路实验：J7_定尺寸器判定式遇NaN
+# git HEAD：0a15af83b9bff1f530f8e2b80ff8b9819d00d5b9
+# Core 改动指纹（Pt_Optimize/Core 相对 HEAD 的改动与未跟踪文件，SHA1）：701df6467dafc354b2e4ea8ae82893527ab3ecef
+# 探针源码指纹（调用方源文件，SHA1）：Pt_Optimize.Tests/R48J_ExperimentProbeTests.cs ba0ecc20124a12fa86be07699f3f854a7fd37148
+# 耦合容差：不适用（单片、管侧固定）
+# 共用片抽热：不适用
+# 工况：不适用
+#证据头结束
+[    0.1 s] 开跑 2026-09-15 19:05:32　出处：Pt_Optimize.Tests/R48J_ExperimentProbeTests.cs
+[    0.1 s] Enumerable.Max(new[] { NaN, 1.0 }) = 1；Max(new[] { 1.0, NaN }) = 1；Max(全 NaN) = 非數值；Math.Max(0.0, NaN) = 非數值
+[    0.1 s] (371 行) 全精度复核：片抽热 10.0 与 NaN、靶 10、容差 DrawTolW 缺省 0.6 ⇒ DrawOffTargetWorstW = 0 ⇒ `worst < DrawTolW` = True（真 = 当达标）
+[    0.1 s] (1262 行) 逐级定厚复核：段增量温降 1.0 与 NaN、靶 10、容差 TolK 缺省 2 ⇒ DipOffTargetWorstK = 0 ⇒ `worst < TolK` = True
+[    0.1 s] (1066／1094 行) 加厚试探：各级峰值全 NaN ⇒ LevelHottestC = -∞ ⇒ `HotAt <= OverheatRaiseFromC(1768.2)` = True（真 = 二分当「压住了」）
+[    0.1 s] 　一级 1300、一级 NaN ⇒ LevelHottestC = 1300（NaN 那一级被跳过）
+[    0.1 s] (951／1145 行) 内层与熔点闸：代码读 `double e = double.IsNaN(tm) ? 0 : tm - baseT` 与 `if (!double.IsNaN(tm) && tm > hottestC)` ⇒ NaN 级当「不比管根热」、不进最热级，熔点闸 `hottestC > PtMeltC` 看不见它（读码，见 FlangeAutoSizer.cs 该段）。
+[    0.1 s] 完

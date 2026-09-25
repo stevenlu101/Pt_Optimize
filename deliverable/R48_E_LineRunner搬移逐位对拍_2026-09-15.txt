@@ -1,0 +1,26 @@
+R48 E 审查修改：LineRunner 搬移逐位对拍（2026-09-15 Opus 5）
+
+搬了什么（全部纯搬移，原处改为调用）：
+  · RunOnce 的逐段循环 → SolveSegmentsInto；前置检查 → CaseGuardMessage
+  · Run 外层耦合的「共用片两侧各半」分配 → SegmentEndDraws；0.5×(L+R) → MeanDraw
+  · 无法兰基线的段间端温欠松弛循环 → IterateNeighbourTemps（另记 LastInput，只记不改数）
+  · 段间端温定义（Run 里 nb2、nbNew 两处）→ NeighbourTempsOf
+  · Solver.EvalRaw 的三支网格配方 → Solver.ApplyCaseMesh（本对拍不经过 Solver，由快门 R48InsulationSearchClosureTests.网格配方_导航支统一半径_加密支自相似 验与 MeshAdapt.RefineWholeMesh 逐位一致）
+
+怎么对拍：
+  临时慢测（已删，不在补丁里）在同一算例上跑 LineRunner.Run 两态，把 LineResult、每段 SegmentOut、每片 FlangeOut、每条 ConstraintOut 的全部公开字段
+  （double 按 "R" 格式，数组超过 400 字符取 SHA256）、Notes、算例的 WarmStart 与 BaselineRootC 全部写成文本（1104 行），比整个文件。
+  算例：DesignSpec.W08，板厚 0.73/1.26/1.26/0.73，环倍率 1，管保温 7.5 mm（ApplySectionFloor 重算舌片厚与下角），
+        圆盘保温 10.5/7.5/7.5/11.0 mm、舌保温 7.0/3.0/3.5/9.0 mm，共用片抽热两侧各半，BuildCase 原样网格（未统一半径），耦合容差 0.25 K，
+        带玻璃稳态与空管到温稳态（控温点全线升温目标）两态。
+
+结果（文件 SHA256）：
+  改前第一次   16ddf5e8f507d56e069f44ba90b4ad2b1fe1ba8d0bc0bb91b5190f2066ec4ddc
+  改前第二次   16ddf5e8f507d56e069f44ba90b4ad2b1fe1ba8d0bc0bb91b5190f2066ec4ddc（确定性）
+  搬 SolveSegmentsInto / CaseGuardMessage / SegmentEndDraws / MeanDraw / IterateNeighbourTemps 后   16ddf5e8…4ddc
+  再搬 NeighbourTempsOf 后   16ddf5e8…4ddc
+  再加 LastInput、牛顿解与 SolveDense（新增，不经原路径）后   16ddf5e8…4ddc
+  ⇒ 全部字段逐位相同。
+
+文件里的几个数（供核对）：带玻璃 片0 抽热 2.2061892744056935 W；带玻璃 段1 无法兰基线 A 端 1115.7372598349566 °C；
+  空管 出口片抽热 −6.82040890278389 W；空管 剩余误差估计 0.1295249315944602 K；合计铂重 4040.2960677032006 g。

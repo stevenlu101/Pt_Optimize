@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -260,14 +260,69 @@ public static class Solver
         //   方向完全相反 ⇒ 前提自检当场淘汰它，于是这根旋钮**在任何地方都轮不到**。
         //   正确的归属：孔面积 = π·R²·拉长比 ⇒ 拉长就是**顺着电流方向把孔加大**，
         //   挖掉的料变多 ⇒ 治的是 ③（抽热），与孔径同排；而且同样面积下它比加大 R 更省 J。
-        (LineResult.Key.FlangeDip, new[] { Knob.Insul, Knob.SlotSpan, Knob.TabHoleR, Knob.TabHoleAspect }),               // ③  对舌保温递增（实测 +570…+104 K/mm，且免费）
-        (LineResult.Key.DiscTemp,  new[] { Knob.Insul, Knob.Ring, Knob.RingR1 }),    // ②″ 实测只有舌保温治得住；环倍率留作换形状时的候选
+        // ★★★★★ R48 B（2026-09-14 Opus 5）：判据换成热偶读数基准（⑦ 热侧／⑧ 冷侧），**两排都按新判据实测重排**：
+        //   · 冷侧 ⑧「管根低于热偶读数」← 旧 ③ 那一排原样继承：两者的病是同一个（法兰抽热太多把管根拉冷），治法方向相同；
+        //   · 热侧 ⑦「最热铂高出热偶读数」**不继承**旧 ②″ 那一排，改成与管孔净流入同一个方向（让法兰变冷）：
+        //       { t₂, r₂, t₁, r₁, 板厚 }，**不含舌保温**。
+        //
+        //   ══ 为什么热侧不许有舌保温（2026-09-14 复审，先推理、再实测坐实）
+        //   旧 ②″ =「盘峰 − 贴着的管根」，两头一起动，抬保温时管根涨得比盘峰快 ⇒ 旧裕度变好（上面 2026-08-30 那张表）。
+        //   新 ⑦ 的基准是**设定值算的常数** ⇒ ⑦ 只跟最热那一点走；抬保温 = 少散热 = 法兰与管根一起变热 ⇒ ⑦ 只会变差。
+        //   第一版把旧 ②″ 那一排（舌保温打头）原样继承过来，而求解器只增不减 ⇒ 热侧每次不过都先把保温抬到上界白算一次整线解，
+        //   上界还可能解不出来、报「上界存疑」。
+        //   实测（deliverable/r48B_敏感度矩阵_热偶基准_2026-09-14.txt，管壁 0.8 · 留余量，导航网格，逐片向上单侧导数；
+        //   那次二进制里热侧印作「②″」、冷侧印作「③」）：
+        //   <code>
+        //     ∂⑦裕度/∂旋钮（正 = 抬它有用）   片0        片1        片2        片3
+        //     舌保温 +1 mm                 解不出来   −273.50    −153.76    解不出来     ← 抬它只会更差，片0/片3 上侧直接发散
+        //     板厚   +0.1 mm               +566.64    +212.01    +212.15    +606.68
+        //     环倍率 t₁ +0.05              +42.41     +24.73     +20.87     +38.27
+        //     外级倍率 t₂ +0.05            +47.81     +35.79     +32.29     +42.82
+        //   </code>
+        //   四片方向一致；每克铂买到的裕度 t₂ 四片都最高（+6.90/+1.88/+1.76/+7.53），t₁（+4.37/+0.93/+0.81/+4.81）与板厚（+3.37/+1.23/+1.23/+3.65）互有高低
+        //   ⇒ 顺序同管孔净流入那一排：t₂ 打头、板厚垫底（顺序只影响比价平手时先挑谁，挑哪根由 Better 按「补不补得上 → 每克铂」定）。
+        //   r₁／r₂ 与各自的倍率成对入表（2026-09-05 的规矩）；倍率还是 1 时 ChooseKnob 按「没有台阶可挪」闭式跳过，不花场解。
+        //   ⚠ 这组数是在**远离可行域**的设计点上量的（管孔净流入 −19.9 W、⑦ +125.3 K），只作**方向**依据；抬哪根仍由 ChooseKnob 当场实测比价。
+        //   ⚠ 冷侧 ⑧ 同一张表上：舌保温 +190.83／+107.07（有用），板厚、t₁、t₂ 全为负 —— 与热侧**逐根反号**，两条要一起看（热偶误差带只有 ±5 K）。
+        //   ⚠ 上面几行里的斜率（+570…+104 K/mm、「只有舌保温治得住」）都是**旧判法**上量的，只对旧 ②″／③ 成立。
+        (LineResult.Key.ColdUnderTc, new[] { Knob.Insul, Knob.SlotSpan, Knob.TabHoleR, Knob.TabHoleAspect }),             // ⑧ 实测对舌保温递增（新判法 +190.8／+107.1 每 mm；旧判法 +570…+104，且免费）
+        (LineResult.Key.HotOverTc,   new[] { Knob.RingT2, Knob.RingR2, Knob.Ring, Knob.RingR1, Knob.Thick }),    // ⑦ 实测抬舌保温只会更差 ⇒ 不进候选；t₂/t₁/板厚 四片同号有用
     };
 
-    /// <summary>R32：这条判据在这一族里可用的旋钮（不挖舌孔族剔掉舌孔两根）。ChooseKnob 与测试同一个口径。</summary>
+    /// <summary>
+    /// ★★★★★ 决 103（业主 2026-09-24，判据换向）：**生产口径的「判据 → 候选旋钮」表**。上面那张 <see cref="Allocation"/> 是 09-14 口径（⑦／⑧／②′ 三行），只在改回（决103前）时用。
+    ///
+    /// 分派的机制**没变**：表只给候选与试的顺序；抬哪根由 <see cref="ChooseKnob"/> 当场实测（补不补得上 → 每克铂买到多少裕度），
+    /// <see cref="RaiseUntil"/> 每次先测「抬到上界这一片这一条变没变好」，没变好就报分派前提不成立 —— 不是写死「哪条红就动哪根」。
+    /// 换的只是**键**（新判据）与各行的候选；方向按全局方案第 2 版第 3 节杠杆表：
+    ///   · 冷侧「管接触处流入法兰的净热流 ≤ 0」红 = 法兰在抽管子的热（法兰偏冷、散热多）⇒ 舌保温↑、圆盘背侧槽、舌孔（少散热、少导走）。
+    ///     与旧 ⑧「管根低于热偶读数」同一个病（法兰抽热把管根拉冷），候选原样继承（旧 ⑧ 那一排的实测：舌保温 +190.8／+107.1 每 mm，免费）。
+    ///     杠杆表的「板厚↓」「夹持温度↑」这里没有：求解器每根旋钮**只抬不降**（起点是约束盒下角 = 最薄、裸舌），夹持温度还不是旋钮（第二阶段）。
+    ///   · 热侧「法兰最热处高出管接触处温度 ≤ 10 K」红 = 法兰偏热 ⇒ 板厚↑、内外级倍率与半径（往孔边加金属、降 J、多导走）。
+    ///     与旧 ⑦「最热铂高出热偶读数」同一个方向（让法兰变冷），候选原样继承（旧 ⑦ 那一排的实测：抬舌保温只会更差；t₂／t₁／板厚四片同号有用）。
+    ///     杠杆表的「舌保温↓」这里没有（只抬不降）；细网格第二遍前的 <see cref="TightenOnJudgeMesh"/> 会在判决网格上把抬过头的舌保温／倍率退回去。
+    ///   · 局部热稳定、整片热稳定 &lt; 1 ⇒ 板厚↑（J ∝ 1/t，裕度随板厚升；杠杆表「板厚↑或舌保温↓」只取能抬的那一半）。RaiseUntil 的前提自检照样当场验方向。
+    ///   · 管 J 没有法兰侧旋钮（管壁与段电流定），不进表 ⇒ 红了由「没有旋钮能治」那一支如实停；法兰截面 J 由 ApplySectionFloor 闭式下角管。
+    /// ⚠ 热侧与冷侧的候选**逐根反向**（热侧要法兰变冷、冷侧要法兰变热），而旋钮只抬不降 ⇒ 两条来回拉扯时由「续轮缺口必须变小」与轮数上限收场，照实报停因。
+    /// </summary>
+    public static readonly (string Key, Knob[] Knobs)[] Allocation103 =
+    {
+        (LineResult.Key.TubeToFlangeHeat, new[] { Knob.Insul, Knob.SlotSpan, Knob.TabHoleR, Knob.TabHoleAspect }),
+        (LineResult.Key.HotOverContact,   new[] { Knob.RingT2, Knob.RingR2, Knob.Ring, Knob.RingR1, Knob.Thick }),
+        (LineResult.Key.LocalStab,        new[] { Knob.Thick }),
+        (LineResult.Key.FlangeStab,       new[] { Knob.Thick }),
+    };
+
+    /// <summary>决 103：按口径取分派表（全仓唯一读口；改回口径 = <see cref="Allocation"/>，与改前逐位相同）。</summary>
+    public static (string Key, Knob[] Knobs)[] AllocationFor(CriteriaRuleSet rs)
+        => rs == CriteriaRuleSet.决103前 ? Allocation : Allocation103;
+
+    /// <summary>R32：这条判据在这一族里可用的旋钮（不挖舌孔族剔掉舌孔两根）。ChooseKnob 与测试同一个口径。决 103：两张表的键不重叠，按键在哪张表里取。</summary>
     public static Knob[] KnobsFor(string key, SolverOptions o)
     {
-        var all = Allocation.FirstOrDefault(a => a.Key == key).Knobs ?? Array.Empty<Knob>();
+        var all = Allocation.FirstOrDefault(a => a.Key == key).Knobs
+               ?? Allocation103.FirstOrDefault(a => a.Key == key).Knobs
+               ?? Array.Empty<Knob>();
         return o.AllowTabCuts ? all : all.Where(k => k is not (Knob.TabHoleR or Knob.TabHoleAspect)).ToArray();
     }
 
@@ -288,7 +343,11 @@ public static class Solver
         int np = d.TabThickMm.Length;
 
         // 下界也得落在图纸格子上（向**上**对齐：向下会掉到屈曲/烧穿下界以下）
-        double tLo = Math.Ceiling(d.DiscFloorMm(baseIn) / opt.QuantThickMm - 1e-9) * opt.QuantThickMm;
+        double tLo = ThickLowerCornerMm(d, baseIn, opt);   // 2026-09-15 Opus 5（I 路）：式子原样提成公开函数，保温搜索每层调同一份（数逐位不变）
+        // F7′ 审查 F1（2026-09-23）：「把旋钮放回约束盒下角」收成本地函数（纯搬移，语句逐字不变）—— 细区半径放大后只导航重做那一遍也调这同一份，
+        //   让重做仍从下角出发（与初值无关），而不是从旧半径上的根只上不下地往上走。
+        void ToLowerCorner()
+        {
         for (int j = 0; j < np; j++)
         {
             d.TabThickMm[j] = tLo;
@@ -301,6 +360,8 @@ public static class Solver
             if (j < d.TongueThickMm.Length) d.TongueThickMm[j] = double.NaN;
         }
         if (d.TongueThickMm.Length != np) d.TongueThickMm = Enumerable.Repeat(double.NaN, np).ToArray();
+        }
+        ToLowerCorner();
         // ★ R12（2026-09-09）：槽心角／舌孔孔心／长椭圆轴向是**从场算出来的**，不是输入 ——
         //   传进来的一律丢掉（NaN = 默认规则），第一次场解之后由 FieldPlacement 按场重定。
         //   与「板厚被丢弃」同一条铁律：解与初值无关。槽张角／孔径／形状族照旧带进来（工程师图上本来就有的孔）。
@@ -312,10 +373,18 @@ public static class Solver
         }
         // ★ R15：孔径 < 1 mm 的孔不考虑 —— 带进来的小孔按无孔，并说出来
         NormalizeHoleRadii(d, Log);
+        // ★ 2026-09-25（业主 12:5x「分叉点先给定舌长中点」）：带进来的孔在第一次 SizeTongue（ApplySectionFloor）之前就钉好孔心，
+        //   否则起点的舌片厚与叉臂带按默认孔心算、与钉后的几何对不上。改回（开关关）不写，逐位同改前。
+        for (int j = 0; j < np; j++) PinTabHoleForkAtMid(d, baseIn, j, Log);
 
         // ★ 限值**只从 LineCase 读**（判据的唯一来源）。求解器不许自带第二份。
         var lc = d.BuildCase(baseIn, checkRamp: false);
-        double dipMax = lc.RootDeltaMaxK, discMax = lc.DiscOverTempMaxK;
+        // R48 B（2026-09-14 Opus 5）：热侧、冷侧换成热偶读数基准 ⇒ 限值换成 LineCase.ColdUnderTcMaxK／HotOverTcMaxK（仍只从 LineCase 读）。
+        //   旧判法两条（RootDeltaMaxK／DiscOverTempMaxK）降为参考量，求解器不再追它们。
+        double coldMax = lc.ColdUnderTcMaxK, hotMax = lc.HotOverTcMaxK;
+        // ★ 决 103（2026-09-24）：分派表按口径取（生产 = 决 103 新判据；改回 = 09-14 那张，逐位同改前）。新判据的限值读判据表那一行（= LineCase，见 PlateSlack）。
+        var rs = baseIn.CriteriaRuleSet;
+        var alloc = AllocationFor(rs);
 
         // ★★★★★ 下角的又一来源：**按 J=10 定的截面**（用户 2026-09-08 设计因果链第 ①② 步）。
         //   设计电流 = 20 °C/h 空管升温全程峰值；舌片各截面／舌盘交界弦／孔缘环与各级环的 I/A 都要 ≤ 10 ⇒ 板厚闭式下界。
@@ -331,7 +400,13 @@ public static class Solver
             "熔化在每遍开头只验一次：熔了就停（该解不存在，不抬厚度；用户 2026-09-09）");
         Log($"传进来的旋钮值**一个都没用**（板厚 {string.Join("/", geometry.TabThickMm.Select(x => x.ToString("0.00")))} 被丢弃）—— " +
             "这就是「与初值无关」的实现方式。");
-        Log($"限值只从 LineCase 读：③ ≤ {dipMax:0.0} K　②″ ≤ {discMax:0.0} K");
+        if (rs == CriteriaRuleSet.决103前)
+            Log($"限值只从 LineCase 读：{Criteria.Plain(LineResult.Key.ColdUnderTc)} ≤ {coldMax:0.0} K　"
+              + $"{Criteria.Plain(LineResult.Key.HotOverTc)} ≤ {hotMax:0.0} K（基准都是控温热偶读数；共用法兰取两侧读数的对数平均）");
+        else
+            Log($"限值只从 LineCase 读（2026-09-24 定的判据）：{LineResult.Key.HotOverContact} ≤ {lc.HotOverContactMaxK:0.0} K　"
+              + $"{LineResult.Key.TubeToFlangeHeat} ≤ {CriteriaRules.TubeToFlangeHeatMaxW:0} W　局部热稳定、整片热稳定 ≥ 1　管 J ≤ {baseIn.TubeJLimitAPerMm2:0.#}"
+              + "（接触处温度 = 模型算的该片管根接触温度；热偶读数基准的两条与管孔净流入只作参考）");
         // ★ R12：第一次场解之前还没有场 ⇒ 位置走默认规则，但要说出来（不许静默）
         FieldPlacement(d, baseIn, null, Log);
 
@@ -355,6 +430,22 @@ public static class Solver
             Log("  ✗ " + res.StopWhy);
             return res;
         }
+
+        // ★★★★★ F7′（2026-09-23，Opus 5.5，C4′；决 29 改定为「自适应」）：**细区半径由计划给**（全仓唯一来源 MeshAdapt.FineRadiusPlanOf）。
+        //   · 调用方给了计划（门的改回／归因）⇒ 用它；给了半径 ⇒ 等于本设计计划初值时用计划（带出处），否则当「调用方给定初值」的自适应计划；
+        //   · 什么都没给且不是粗筛 ⇒ 也用计划（原先落回算例缺省 50，导航与判决不同族 —— 审查 P6）；粗筛（ScreenCoarseMm）不交付，照旧不动。
+        //   · 解后核热点：导航遍之后（有第二遍时）放大给第二遍用；终局复核之后再核，盖不住 ⇒ 放大、在新半径上重做最后一遍与终局复核；到上限仍盖不住 ⇒ 判不了（Undetermined），不静默出数。
+        //   计划不放大（改回、adaptive = false）⇒ 一处都不核热点、不放大。⚠ 审查 R-1／T6：这**不等于**与改前逐位同一个行为 ——
+        //   调用方没给半径的导航求根，改前落回算例缺省 50，改回计划给的是旧规则 59；要复现改前的导航半径须另开只供门用的
+        //   SolverOptions.NavUsesCaseDefaultRadius（生产不传）。改回计划下本方法没有实场逐位门（门 e 只验固定半径单次场解）。
+        opt = opt.Clone();   // 半径会放大：不改调用方的选项对象
+        FineRadiusPlan? plan = RadiusPlanOf(d, baseIn, opt, lc);
+        if (plan is not null)
+        {
+            opt.FineRadiusMm = plan.RadiusMm; opt.RadiusPlan = plan; res.RadiusPlan = plan;
+            Log("细区半径：" + plan.Describe());
+        }
+        double InnerROf() => MeshAdapt.InnerRadiusFor(d.HoleRadiusMm, Math.Max(d.TabThickMm.Max(), d.WallMm));
 
         LineResult? last = null;
 
@@ -421,6 +512,7 @@ public static class Solver
                     // ★ 原来这里一律印「场解不收敛」——而 0.8 档的真相是起点熔化（督导第 15 封）。
                     //   原因由 Gate 记在 NullWhy 里，这里只转述，不猜。
                     res.StopWhy = $"场解解不出来 ⇒ 判不了（{res.NullWhy}）";
+                    res.Undetermined = true; res.UndeterminedWhy = res.StopWhy;   // R48 M（2026-09-18，Fable 5.1）：判不了置它自己的位
                     break;
                 }
 
@@ -433,6 +525,7 @@ public static class Solver
                     if (last is null)
                     {
                         res.StopWhy = $"场定孔位之后重解解不出来 ⇒ 判不了（{res.NullWhy}）";
+                        res.Undetermined = true; res.UndeterminedWhy = res.StopWhy;   // R48 M（2026-09-18，Fable 5.1）
                         break;
                     }
                 }
@@ -460,25 +553,87 @@ public static class Solver
                     $"　盘形 {string.Join("/", Enumerable.Range(0, np).Select(q => DiscShapeName(d.DiscCutShapeOf(q))))}" +
                     $"　孔形 {string.Join("/", Enumerable.Range(0, np).Select(q => HoleShapeName(d.TabHoleSidesOf(q))))}");
 
+                // ★★ R48（2026-09-13，Opus 5；用户 09-13：「跑长测试要放探针，或者每轮计算就要有结果出来，以利分析是否有问题」）：
+                //   **每一轮把主判据的值与它离限值多远也印出来**。
+                //   在此之前这一行只有旋钮与铂重 —— 一趟一两个小时的求根跑到一半，看不出「离目标还有多远」「方向对不对」，
+                //   只能等收尾才知道白跑没白跑。旋钮是**输入**，判据是**输出**；只印输入就等于长跑没有仪表盘。
+                //   （九根旋钮那一条的教训是「看不见的几何」；这一条是同一族：看不见的**进展**。）
+                if (last is not null)
+                {
+                    double CV(string k) => last.Checks.FirstOrDefault(c => c.Name.StartsWith(k, StringComparison.Ordinal))?.Actual ?? double.NaN;
+                    double CL(string k) => last.Checks.FirstOrDefault(c => c.Name.StartsWith(k, StringComparison.Ordinal))?.Limit ?? double.NaN;
+                    // ★★ R48（2026-09-14，Opus 5）：**判据值后面必须跟「取自哪一片／哪一段」。**
+                    //
+                    //   09-14 实测教训：管孔净流入取的是**最小**的那片、法兰增量温降取的是**最差**的那段，
+                    //   而「最差是谁」**会随旋钮换人**。实例（管壁 0.8，同一张网格）：
+                    //     4.4/2.0/2.8/7.2 → 4.4/2.0/2.7/7.2（只动片2）：增量温降 5.377 → 5.377，一点没动；
+                    //     4.6/2.1/2.9/7.5 → 4.6/2.1/2.5/7.5（也只动片2）：增量温降 0.586 → **13.806**，直接顶穿。
+                    //   同一个动作、两个基线，一个没反应一个顶穿 —— 因为前者片2 不是最差片，后者是。
+                    //   ⇒ 只印判据值会让读的人（包括我）拿两点之差去推「哪根旋钮管哪条判据」，而那是错的。
+                    //     印出「取自谁」，换人时一眼就看得见。
+                    string CW(string k) => last.Checks.FirstOrDefault(c => c.Name.StartsWith(k, StringComparison.Ordinal))?.Where ?? "";
+                    string Gap(string k, bool lessIsBetter)
+                    {
+                        double v = CV(k), lim = CL(k);
+                        if (double.IsNaN(v) || double.IsNaN(lim)) return "—";
+                        double slack = lessIsBetter ? lim - v : v - lim;      // >0 = 还有裕量
+                        string who = CW(k);
+                        return $"{v:0.00}{(lessIsBetter ? "≤" : ">")}{lim:0.##}（{(slack >= 0 ? "裕" : "超")}{Math.Abs(slack):0.00}"
+                             + (who.Length > 0 ? $"，取自 {who}" : "") + "）";
+                    }
+                    // R48 B（2026-09-14 Opus 5）：主判据换成热偶读数基准的热侧／冷侧；旧判法两条只作对照印在括号里（参考量，不追）。
+                    if (rs == CriteriaRuleSet.决103前)
+                    Log($"　　　这一轮的判据：管孔净流入 {Gap(LineResult.Key.NetFlux, false)}"
+                      + $"　最热铂高出热偶读数 {Gap(LineResult.Key.HotOverTc, true)}"
+                      + $"　管根低于热偶读数 {Gap(LineResult.Key.ColdUnderTc, true)}"
+                      + $"　法兰截面 J {Gap(LineResult.Key.SectionJ, true)}"
+                      + $"　{(last.AllOk ? "**全过**" : "还没全过")}"
+                      + $"　（旧判法对照，不追：圆盘区最高温 {CV(LineResult.Key.DiscTemp):0.00}，取自 {CW(LineResult.Key.DiscTemp)}"
+                      + $"／法兰增量温降 {CV(LineResult.Key.FlangeDip):0.00}，取自 {CW(LineResult.Key.FlangeDip)}）");
+                    else
+                    Log($"　　　这一轮的判据：{LineResult.Key.HotOverContact} {Gap(LineResult.Key.HotOverContact, true)}"
+                      + $"　{LineResult.Key.TubeToFlangeHeat} {Gap(LineResult.Key.TubeToFlangeHeat, true)}"
+                      + $"　局部热稳定 {Gap(LineResult.Key.LocalStab, false)}"
+                      + $"　整片热稳定 {Gap(LineResult.Key.FlangeStab, false)}"
+                      + $"　管 J {Gap(LineResult.Key.TubeJ, true)}"
+                      + $"　法兰截面 J {Gap(LineResult.Key.SectionJ, true)}"
+                      + $"　{(last.AllOk ? "**全过**" : "还没全过")}"
+                      + $"　（只作参考，不追：最热铂高出热偶读数 {CV(LineResult.Key.HotOverTc):0.00}、管根低于热偶读数 {CV(LineResult.Key.ColdUnderTc):0.00}、管孔净流入 {CV(LineResult.Key.NetFlux):0.00}）");
+                    // 逐片抽热也要印：判据只给最小的那一个，看不出是「整体都低」还是「某一片掉队」。
+                    Log("　　　逐片抽热：" + string.Join("　", last.Flanges.Select((f, jj) =>
+                        $"片{jj} {f.QFromTubeW:+0.00;-0.00} W")));
+                    // R48 B：热侧／冷侧也逐片印（取自 ThermocoupleBasis，与判据同一份）—— 最差片会随旋钮换人，同上理由。
+                    Log("　　　逐片热偶基准：" + string.Join("　", ThermocoupleBasis.All(last).Select(t =>
+                        $"片{t.Plate} 基准 {t.RefC:0.0} 热侧 {t.HotK:+0.00;-0.00} 冷侧 {t.ColdK:+0.00;-0.00} K")));
+                    // 决 103（2026-09-24）：生产口径的逐片判据也逐片印（最差片会随旋钮换人，同上理由）
+                    if (rs != CriteriaRuleSet.决103前)
+                        Log("　　　逐片（2026-09-24 判据）：" + string.Join("　", last.Flanges.Select((f, jj) =>
+                            $"片{jj} 最热处−接触处 {f.TMaxC - f.TRootC:+0.00;-0.00} K 管→法兰 {f.QFromTubeW:+0.00;-0.00} W 局稳 {f.LocalStabMargin:0.00} 整稳 {f.FlangeStabMargin:0.00}")));
+                }
+
                 // ── 逐片逐条列违反
                 var todo = new List<(int J, Knob[] Knobs, string Key)>();
                 for (int j = 0; j < np; j++)
-                    foreach (var (key, knobs) in Allocation)
+                    foreach (var (key, knobs) in alloc)   // 决 103：按口径取的分派表（改回 = Allocation，逐位同改前）
                     {
-                        double sl = PlateSlack(last, key, j, dipMax, discMax);
+                        double sl = PlateSlack(last, key, j, coldMax, hotMax);
                         if (double.IsNaN(sl))
                         {
                             res.StopWhy = $"第 {j} 片的「{Criteria.Plain(key)}」**判不了**（值是 NaN）—— 判不了不算过";
-                            res.HitBound = true;
+                            res.Undetermined = true; res.UndeterminedWhy = res.StopWhy;   // R48 M（2026-09-18，Fable 5.1）：判不了不是「旋钮到顶」，不置 HitBound
                             Log("  ✗ " + res.StopWhy);
                             return false;   // 判不了 ⇒ 本遍失败；收尾统一交给 Solve 末尾
                         }
-                        if (sl < 0)
+                        // ★★★★★ R48 M（2026-09-18，Fable 5.1）：**裕度小于认证误差的也要抬** —— 那一点「判不了那么细」（既不过也不不过），
+                        //   往保守方向再走一格重判（RaiseUntil 的走格）。认证误差只对温度判据有（CertNeed；瓦的那条是 0 ⇒ 行为不变）。
+                        double need = CertNeed(last, key);
+                        if (sl < need)
                         {
                             todo.Add((j, knobs, key));
                             // ★ 界面上不出现判据代号 —— key 是内部身份，显示要剥壳
-                            Log($"     片{j}「{Criteria.Plain(key)}」裕度 {sl:+0.000;-0.000} ⇒ 候选 "
-                                + string.Join(" / ", knobs.Select(KnobName))
+                            Log($"     片{j}「{Criteria.Plain(key)}」裕度 {sl:+0.000;-0.000}"
+                                + (sl >= 0 ? $"（≥ 0 但小于认证误差 {need:0.000} K ⇒ 判不了那么细）" : "")
+                                + " ⇒ 候选 " + string.Join(" / ", knobs.Select(KnobName))
                                 + (knobs.Length > 1 ? "（抬哪个由前提自检当场实测决定）" : ""));
                         }
                     }
@@ -486,7 +641,7 @@ public static class Solver
                 // ★ 续轮的闸：上一轮是「补不上但留着」收的场 ⇒ 这一轮必须看到缺口变小
                 if (partialLast)
                 {
-                    double gapNow = todo.Sum(t => -PlateSlack(last, t.Key, t.J, dipMax, discMax));
+                    double gapNow = todo.Sum(t => -PlateSlack(last, t.Key, t.J, coldMax, hotMax));
                     if (!(gapNow < prevGap - 1e-6))
                     {
                         res.HitBound = true;
@@ -501,14 +656,27 @@ public static class Solver
                 }
                 else if (todo.Count > 0)
                 {
-                    prevGap = todo.Sum(t => -PlateSlack(last, t.Key, t.J, dipMax, discMax));
+                    prevGap = todo.Sum(t => -PlateSlack(last, t.Key, t.J, coldMax, hotMax));
                 }
 
                 if (todo.Count == 0)
                 {
                     // 三条逐片判据全过。还有**没有旋钮**的判据（⑥、⑤、①、管 J…）要看。
+                    // ★ 2026-09-15 Opus 5（J 路，合并把关待办 P1-4）：先把**判不了**的挑出来单说 —— 下面 rest 按名字滤掉三条逐片判据，
+                    //   判据表里它们若是判不了（逐片裕度却给了数），滤掉之后停机说「三条逐片判据都过了、别的判据没有旋钮能治」，病因不实。
+                    //   判不了的判据（不论有没有旋钮）不许当过，也不许归到「没有旋钮」。
+                    var undetNow = Violations(last).Where(c => c.Undetermined).ToList();
+                    if (undetNow.Count > 0)
+                    {
+                        res.Undetermined = true;   // R48 M（2026-09-18，Fable 5.1）：判不了置它自己的位，不冒充「旋钮到顶」
+                        res.StopWhy = "判不了（判不了不算过，也不是「没有旋钮能治」）：" + string.Join("；", undetNow.Select(c => Criteria.Plain(c.Name)
+                                    + (string.IsNullOrEmpty(c.Note) ? "" : "（" + c.Note.Replace("**", "") + "）")));
+                        res.UndeterminedWhy = res.StopWhy;
+                        Log("  ✗ " + res.StopWhy);
+                        break;
+                    }
                     var rest = Violations(last)
-                        .Where(c => !Allocation.Any(a => c.Name.StartsWith(a.Key, StringComparison.Ordinal)))
+                        .Where(c => !alloc.Any(a => c.Name.StartsWith(a.Key, StringComparison.Ordinal)))
                         .ToList();
                     if (rest.Count == 0)
                     {
@@ -518,7 +686,7 @@ public static class Solver
                     else
                     {
                         res.HitBound = true;
-                        res.StopWhy = "三条逐片判据都过了，但这些判据**没有旋钮能治**（要改形状）："
+                        res.StopWhy = (rs == CriteriaRuleSet.决103前 ? "三条逐片判据都过了" : "有旋钮的逐片判据都过了") + "，但这些判据**没有旋钮能治**（要改形状）："
                                     + string.Join("、", rest.Select(c => c.Name));
                         // ★ 只报名字等于把活推回给人。⑥ 是闭式的 —— 处方当场就能算出来。
                         if (rest.Any(c => c.Name.StartsWith(LineResult.Key.DiscCover,
@@ -541,6 +709,7 @@ public static class Solver
                 //   ⇒ 记下失败、接着做完其余片，**收场留到这一轮结束**。
                 bool bad = false, partial = false, anyOk = false;
                 string? firstBadWhy = null;
+                string? firstUndetWhy = null;   // R48 M（2026-09-18，Fable 5.1）：判不了的出口单独记 —— 收场时置 Undetermined 不置 HitBound
                 foreach (var (j, knobs, key) in todo)
                 {
                     // ★★★ **候选之间的取舍，当场实测决定**（2026-08-30）。
@@ -556,19 +725,20 @@ public static class Solver
                     //     按它挑。工程师不必知道有过一张矩阵，只看见一句人话。
                     //
                     //   代价：候选多一个就多一次场解。②′ 两个候选 ⇒ 每次抬多 1 次场解。
-                    var pick = ChooseKnob(d, baseIn, o, j, knobs, key, dipMax, discMax, res, Log, cancel, inner);
+                    var pick = ChooseKnob(d, baseIn, o, j, knobs, key, coldMax, hotMax, res, Log, cancel, inner);
                     if (pick.Knob is null)
                     {
                         firstBadWhy ??= pick.Why;
                         bad = true; Log("  ✗ " + pick.Why + "　⇒ 这一条治不了，**先把其余片做完**再收场");
                         continue;
                     }
-                    var (ok, why, kept) = RaiseUntil(d, baseIn, o, j, pick.Knob.Value, key,
-                                                     dipMax, discMax, res, Log, cancel, inner,
-                                                     pick.Before, pick.After);
+                    var (ok, why, kept, undet) = RaiseUntil(d, baseIn, o, j, pick.Knob.Value, key,
+                                                            coldMax, hotMax, res, Log, cancel, inner,
+                                                            pick.Before, pick.After, pick.Need);
                     if (!ok)
                     {
                         Log("  ✗ " + why);
+                        if (undet) firstUndetWhy ??= why;
                         // ★ 审查欠账（低，2026-09-09）：ChooseKnob 挑中的这根旋钮探过形状族
                         //   （pick.Shape0 ≥ 0），但 RaiseUntil 这里判定它**没能真的抬起来**
                         //   （没留下 kept）⇒ 形状族选的形状也要退回探前那个，不许留在已提交态里。
@@ -590,8 +760,21 @@ public static class Solver
                 // ★ 收场统一放到**整轮做完之后** —— 每一片都拿到过自己的机会。
                 if (bad)
                 {
-                    res.HitBound = true;
-                    res.StopWhy = firstBadWhy ?? res.StopWhy;
+                    // ★★★★★ R48 M（2026-09-18，Fable 5.1）：**判不了与旋钮到顶分开置位。**
+                    //   有任何一片是「判不了」出口（抬前／上界／二分中点解不出来、格点裕度小于认证误差走到上界仍判不了）⇒ 整跑判不了：
+                    //   那一片的可行性没被判过，「法兰侧旋钮到顶的证明」对整个法兰侧就不成立，不许再说「再算一次会得到同一句话」。
+                    //   两种出口都有时判不了优先（一个出口只能对它自己判过的东西下结论），停因两句都写。
+                    if (firstUndetWhy is not null)
+                    {
+                        res.Undetermined = true; res.HitBound = false;
+                        res.UndeterminedWhy = firstUndetWhy;
+                        res.StopWhy = firstUndetWhy + (firstBadWhy is not null && firstBadWhy != firstUndetWhy ? "　（同一轮另有旋钮到顶：" + firstBadWhy + "）" : "");
+                    }
+                    else
+                    {
+                        res.HitBound = true;
+                        res.StopWhy = firstBadWhy ?? res.StopWhy;
+                    }
                     Log("  ✗ " + res.StopWhy);
                     break;
                 }
@@ -634,16 +817,60 @@ public static class Solver
         }
 
         // 第一遍：导航网格
-        var navOpt = opt.Clone(); navOpt.FineMm = 0; navOpt.FineRadiusMm = 0;
-        bool okNav = Rounds(navOpt, "第一遍：导航网格上定位");
+        // ★★★★★ R48 续（2026-09-14，Opus 5）：**细区半径也要统一 —— 它是第四维，此前漏了。**
+        //
+        //   加密配方只收了三维（中带／粗区／内带），而 MeshFineRadiusMm 是各调用方各给各的：
+        //     第一遍（导航）FineRadiusMm = 0 ⇒ EvalRaw 的 `if (o.FineMm > 0)` 不触发 ⇒ 留在 LineCase 默认 **50**
+        //     第二遍与加密复核                                                    ⇒ **59**（RequiredMeshFor 算的）
+        //   实测同一设计、同一 2.0 mm，只差这一维：管孔净流入 **+3.267（R=50）对 −6.533（R=59）**，
+        //   差 9.8 W，**符号相反**（容差 0.5、限值 0）。
+        //   ⇒ 我此前说「同一个设计点，两张网格，只有网格不同」是**错的**：有两个变量在动，
+        //     而我把半径的效果记到了分辨率头上。
+        //   修法：导航那一遍的**尺寸不变**（它就是要粗、要快），但**半径跟着统一** ——
+        //   这样三遍（导航／细网格求根／复核）才真的同属一族，差别只剩 h 一个。
+        var navOpt = NavOptionsOf(opt);
+        // F7′（2026-09-23）：两遍各收成一个本地函数 —— 细区半径放大之后「重做最后一遍」调的仍是同一遍（门 SolverFineRootTests：Rounds 恰好两处调用）。
+        bool NavPass(string tag) => Rounds(navOpt, tag);
+        bool okNav = NavPass("第一遍：导航网格上定位");
         // ★ 终局复核必须跑在**最后一遍求根所用的那张网格**上（见 Finish）。
         var lastOpt = navOpt;
 
+        // ★ F7′（2026-09-23）：导航遍解完、有第二遍时先核一次热点 —— 盖不住就放大，第二遍（与终局复核）直接用放大后的半径。
+        //   导航遍本身不重做：它只负责把根定位到附近，第二遍从它出发、在判决网格上重新求根（TightenOnJudgeMesh 先收回抬过头的旋钮）。
+        if (plan is { Adaptive: true } && okNav && opt.FineMm > 0 && last is { Ok: true })
+        {
+            string? v = MeshVerify.HotspotVerdict(last, InnerROf(), plan.RadiusMm);
+            double pk = MeshVerify.HotspotRadiusMm(last);
+            if (v is not null && !double.IsNaN(pk))
+            {
+                var lcN = d.BuildCase(baseIn, checkRamp: false);
+                ApplyCaseMesh(lcN, navOpt);
+                var g = MeshAdapt.GrowFineRadius(plan, pk, InnerROf(), lcN.MeshCoarseMm, MeshAdapt.PlateOuterRadiusMm(lcN).Mm, "求根第一遍（导航网格）解后");
+                if (g.Grew)
+                {
+                    plan = g.Plan; res.RadiusPlan = plan; opt.RadiusPlan = plan; opt.FineRadiusMm = plan.RadiusMm;
+                    Log("细区没盖住热点 ⇒ 放大：" + plan.Steps[^1].Why + "（第二遍与终局复核用放大后的半径）");
+                }
+                else Log("⚠ " + (g.Verdict ?? "") + "（导航遍；半径已在上限，第二遍照常求根，终局复核后再核一次 —— 判不判拒答以那一次为准）");
+            }
+        }
+
         // 第二遍：细网格。第一遍没走通就不做 —— StopWhy 已经说明了原因。
+        bool FinePass(string tag)
+        {
+            var tightProg = new ThrottledProgress(progress, 20, $"     · 回收 {opt.FineMm:0.000} mm ");
+            TightenOnJudgeMesh(d, baseIn, opt, res, coldMax, hotMax, Log, cancel, tightProg);
+            return Rounds(opt, tag);
+        }
         if (okNav && opt.FineMm > 0)
         {
             res.Feasible = false; res.StopWhy = ""; res.HitBound = false;
-            bool okFine = Rounds(opt, "第二遍：细网格上重新求根（**判据以此为准**）");
+            res.Undetermined = false; res.UndeterminedWhy = "";   // R48 M（2026-09-18，Fable 5.1）：第二遍从头判
+            // ★★★★★ R48（2026-09-14，Opus 5）：**先在判决网格上把抬过头的旋钮收回来，再进第二遍。**
+            //   不做这一步，第二遍会带着第一遍在粗网格上求出的（偏高的）根往下走，而它只上不下 ——
+            //   实测那正是「法兰侧九根旋钮全部无效、结构性停机」的原因，而把保温退回去当场全过。
+            //   理由与实测数据见 TightenOnJudgeMesh 的注释。
+            bool okFine = FinePass("第二遍：细网格上重新求根（**判据以此为准**）");
             res.FineRefined = true; res.FineMmUsed = opt.FineMm; lastOpt = opt;
             if (!okFine && res.StopWhy.Length == 0)
                 res.StopWhy = $"细网格第二遍跑满 {opt.MaxRounds} 轮仍未全过 —— **未收敛**，不作数";
@@ -651,13 +878,76 @@ public static class Solver
         else if (opt.FineMm <= 0)
         {
             Log("⚠ **没做第二遍**（FineMm = 0）—— 这个解只在导航网格上成立、**不可交付**："
-                + "实测 ③ 在两张网格上差 2.03 倍（A⑬）。");
+                + "实测法兰增量温降（旧判法）在两张网格上差 2.03 倍（A⑬）。");   // R48 B（2026-09-14 Opus 5）：这句经进度回报进界面输出框 ⇒ 写全名不写代号，并标明是旧判法的历史实测
         }
 
         if (res.StopWhy.Length == 0)
             res.StopWhy = $"跑满 {opt.MaxRounds} 轮仍未全过 —— 结果**未收敛**，不作数";
 
-        return Finish(res, d, last, baseIn, lastOpt, cancel, progress);
+        // ★ F7′（2026-09-23）：终局复核之后核热点；盖不住 ⇒ 放大、在新半径上重做最后一遍求根与终局复核（半径只增不减、每次至少一粗格、上限板料外缘 ⇒ 有限次）；
+        //   到上限仍盖不住，或峰位算不出 ⇒ 判不了（Undetermined，原句进 StopWhy／Message），不静默出数。
+        while (true)
+        {
+            Finish(res, d, last, baseIn, lastOpt, cancel, progress);
+            if (plan is not { Adaptive: true } || res.Best is not { Ok: true }) break;
+            string? v = MeshVerify.HotspotVerdict(res.Best, InnerROf(), plan.RadiusMm);
+            if (v is null) break;
+            double pk = MeshVerify.HotspotRadiusMm(res.Best);
+            string? why = null;
+            if (double.IsNaN(pk)) why = v;
+            else
+            {
+                var lcF = FinishCase(d, baseIn, lastOpt);
+                var g = MeshAdapt.GrowFineRadius(plan, pk, InnerROf(), lcF.MeshCoarseMm, MeshAdapt.PlateOuterRadiusMm(lcF).Mm, "终局复核解后");
+                // ★ 2026-09-24（搜形状算力工程 B，只供粗筛；缺省 false = 改前逐位）：终局复核后细区没盖住热点、本该放大重做时，
+                //   选项 SkipRadiusGrowthAfterFinalCheck = true ⇒ 不放大、不重做，把「本该放大到多少」记进结果（调用方印进证据）。
+                //   只截这一支（Grew）：拒答（到上限仍盖不住）与峰位算不出两支照旧判不了；复核判定、阈值、旋钮一个不动。
+                //   实测病因：夜跑 021617 第 3 形状粗筛 2 轮跑完后整个形状从第 1 轮重解一遍（成本翻倍）。赢家精算不传它（照旧放大重做）。
+                if (g.Grew && opt.SkipRadiusGrowthAfterFinalCheck)
+                {
+                    res.SkippedRadiusGrowthToMm = g.Plan.RadiusMm;
+                    res.SkippedRadiusGrowthWhy = g.Plan.Steps[^1].Why;
+                    Log($"细区没盖住热点 ⇒ 本该放大：{res.SkippedRadiusGrowthWhy}；本次选项 SkipRadiusGrowthAfterFinalCheck = true（粗筛）⇒ **不放大、不重做**，"
+                      + $"结果留在细区半径 {plan.RadiusMm:0.00} mm 上（热点处的温度类判据按细区半径计划的规则不算数，只作粗筛排序，不可交付）");
+                    break;
+                }
+                plan = g.Plan; res.RadiusPlan = plan; opt.RadiusPlan = plan; opt.FineRadiusMm = plan.RadiusMm;
+                if (g.Refused) why = g.Verdict;
+                else if (g.Grew)
+                {
+                    Log("细区没盖住热点 ⇒ 放大：" + plan.Steps[^1].Why + "；在新半径上重做最后一遍求根与终局复核（旧半径上的解不算数）");
+                    res.Feasible = false; res.StopWhy = ""; res.HitBound = false; res.Message = "";
+                    res.Undetermined = false; res.UndeterminedWhy = "";
+                    if (lastOpt.FineMm > 0)
+                    {
+                        bool okFine2 = FinePass("第二遍（细区半径放大后重做）：细网格上重新求根（**判据以此为准**）");
+                        lastOpt = opt;
+                        if (!okFine2 && res.StopWhy.Length == 0)
+                            res.StopWhy = $"细网格第二遍跑满 {opt.MaxRounds} 轮仍未全过 —— **未收敛**，不作数";
+                    }
+                    else
+                    {
+                        // ★ F7′ 审查 F1（2026-09-23）：只导航重做前把旋钮放回约束盒下角、再按 J 定截面（与 Solve 起点同一份 ToLowerCorner ＋ ApplySectionFloor）——
+                        //   否则重做从旧半径上的根出发、只上不下，交出的不是新网格上的最小可行点（有第二遍的那一支由 FinePass 里的 TightenOnJudgeMesh 回收）。
+                        ToLowerCorner();
+                        ApplySectionFloor(d, baseIn, opt, res, null, Log);
+                        Log("只导航重做：旋钮已放回约束盒下角（旧半径上的根不带进新半径）");
+                        navOpt = NavOptionsOf(opt);
+                        NavPass("第一遍（细区半径放大后重做）：导航网格上定位");
+                        lastOpt = navOpt;
+                    }
+                    if (res.StopWhy.Length == 0)
+                        res.StopWhy = $"跑满 {opt.MaxRounds} 轮仍未全过 —— 结果**未收敛**，不作数";
+                    continue;
+                }
+                else why = v;   // 不该走到：自适应计划、峰位有数、没放大也没拒答
+            }
+            res.Feasible = false; res.Undetermined = true;
+            res.UndeterminedWhy = res.StopWhy = res.Message = (why ?? v).TrimStart('★', ' ');
+            Log("  ✗ " + res.StopWhy);
+            break;
+        }
+        return res;
     }
 
     /// <summary>
@@ -696,18 +986,20 @@ public static class Solver
     ///   （第一版没带，实测每次抬白花 3 次场解 —— 候选比价本来就该顺手把它们交出去。）
     // ★ 返回多带一个 Shape0（审查欠账·低，2026-09-09）：胜出旋钮若探过形状族，这里是它探前的形状；
     //   RaiseUntil 之后若发现旋钮其实没抬起来，调用方要拿它把形状退回去（见 Solve 里的用法）。
-    private static (Knob? Knob, string Why, double Before, double After, int Shape0) ChooseKnob(
+    // ★ R48 M（2026-09-18，Fable 5.1）：多带一个 Need = 这一点的认证误差（CertNeed(r0, key)），RaiseUntil 判「够不够细」要它，免得再量一次。
+    private static (Knob? Knob, string Why, double Before, double After, int Shape0, double Need) ChooseKnob(
         DesignSpec d, DesignInputs baseIn, SolverOptions opt, int j, Knob[] knobs, string key,
-        double dipMax, double discMax, SolverResult res, Action<string> Log,
+        double coldMax, double hotMax, SolverResult res, Action<string> Log,
         CancellationToken cancel, IProgress<string>? inner)
     {
-        if (knobs.Length == 1) return (knobs[0], "", double.NaN, double.NaN, -1);
+        if (knobs.Length == 1) return (knobs[0], "", double.NaN, double.NaN, -1, double.NaN);
 
         var r0 = Eval(d, baseIn, opt, res, cancel, inner);
-        double before = PlateSlack(r0, key, j, dipMax, discMax);
+        double before = PlateSlack(r0, key, j, coldMax, hotMax);
+        double need0 = CertNeed(r0, key);
         double mass0 = r0 is null ? double.NaN : MassOf(r0);
-        // 已经不违反 ⇒ 不必比价（RaiseUntil 会自己判「不抬」）。before 照样带出去。
-        if (before >= 0) return (knobs[0], "", before, double.NaN, -1);
+        // 已经不违反 ⇒ 不必比价（RaiseUntil 会自己判「不抬」或「判不了那么细 ⇒ 走格」）。before 与 need 照样带出去。
+        if (before >= 0) return (knobs[0], "", before, double.NaN, -1, need0);
 
         // ★★ **效率只能在「补得上的」候选之间比**（2026-08-30 实测打回来的）。
         //
@@ -792,6 +1084,12 @@ public static class Solver
                          ? $"**孔径上界只有 {raw:0.00} mm < 最小孔径 {DesignSpec.TabHoleRMinMm:0.0} mm**（孔径 < 1 mm 的孔不考虑）⇒ 淘汰"
                          : "**上界就是 0**（桥宽留不出孔：舌半宽 − 最小桥宽 ≤ 0）";
                 }
+                // ★ R48 L（2026-09-17，Opus 5）：内级半径的上界现在是**被外级耦合出来**的，
+                //   被它截住时「已在上界」是误导的 —— 工程师读到的是「这根旋钮用满了」，
+                //   实情是「它被外级挡住了」。两句话指向完全不同的处置（后者要先把外级挪出去）。
+                else if (k == Knob.RingR1 && hi < HiOf(opt, k) - 1e-12)
+                    why0 = $"**内级顶到外级**：内级最多到 r₁ {d.HoleRadiusMm + hi:0.###} mm"
+                         + $"（外级 r₂ {d.HoleRadiusMm + Get(d, Knob.RingR2, j):0.###} mm，两级至少差一格图纸格）—— 要先把外级挪出去";
                 else if (hi <= 1e-9)
                     why0 = "**上界就是 0**（这根旋钮在当前几何下开不出来）";
                 fails.Add($"{KnobName(k)} {why0}");
@@ -807,7 +1105,7 @@ public static class Solver
                 int shape0 = GetShape(d, k, j);       // 探前的形状，本轮没赢就退回这个
                 shapeProbed.Add((k, shape0));
                 (rk, hiProbe) = ProbeShapeFamily(d, baseIn, opt, j, k, key, family, lo, before, mass0,
-                                                 dipMax, discMax, res, Log, cancel, inner);
+                                                 coldMax, hotMax, res, Log, cancel, inner);
                 if (double.IsNaN(hiProbe)) { fails.Add($"{KnobName(k)} 形状族里没有一个装得下／解得出来"); continue; }
             }
             else
@@ -818,7 +1116,7 @@ public static class Solver
             }
             // 探针若不是在这根旋钮（选定形状后）自己的上界上量的，after 就不能当 knownAfter 交给 RaiseUntil
             bool afterAtHi = Math.Abs(hiProbe - HiOfFor(d, baseIn, opt, k, j, res)) < 1e-9;
-            double after = PlateSlack(rk, key, j, dipMax, discMax);
+            double after = PlateSlack(rk, key, j, coldMax, hotMax);
             double dSlack = after - before;
             double dMass = rk is null || double.IsNaN(mass0) ? double.NaN : MassOf(rk) - mass0;
 
@@ -906,7 +1204,7 @@ public static class Solver
             return (null, $"片{j}「{Criteria.Plain(key)}」**法兰侧候选都不成立**：" + string.Join("；", fails)
                         + "。⇒ 这是**法兰侧九根旋钮**的穷尽，不是整个设计的判决；"
                         + "下一根杠杆是**盘径与舌半宽**（「◇ 搜形状」）",
-                    before, double.NaN, -1);
+                    before, double.NaN, -1, need0);
 
         if (lines.Count > 1)
             Log($"     · 片{j} 实测比价：" + string.Join("　", lines)
@@ -916,35 +1214,211 @@ public static class Solver
                             : "（都补不上，先用买得最多的顶上去，下一轮缺口变小再挑便宜的）"));
         else if (fails.Count > 0)
             Log($"     · 片{j} 候选淘汰：{string.Join("；", fails)} ⇒ 抬**{KnobName(best.Value)}**");
-        return (best, "", before, bestAfter, bestShape0);
+        return (best, "", before, bestAfter, bestShape0, need0);
     }
 
-    private static (bool Ok, string Why, bool Kept) RaiseUntil(
+    /// <summary>
+    /// ★★★★★ R48（2026-09-14，Opus 5）：**在判决网格上回收「第一遍在粗网格上抬过头」的旋钮。**
+    ///
+    /// ══ 为什么非有它不可（实测，不是推论）
+    ///
+    /// 求根跑两遍：第一遍导航网格（2.0 mm）定位，第二遍细网格（判决网格）重新求根。
+    /// 但第二遍**从第一遍的解出发**，而 <see cref="RaiseUntil"/> 的二分下界是
+    /// <c>lo = Get(d, knob, j)</c>（旋钮当前值）⇒ **只上不下**。
+    /// 更要命的是它开头那句 <c>if (before &gt;= 0) ⇒ 不抬</c>：第一遍抬过头之后，
+    /// 那条判据在细网格上**已经过了**，于是第二遍根本不碰这根旋钮，过头的值原样留着。
+    ///
+    /// 实测（管壁 0.8，09-14 重解，同一个设计点只换网格）：
+    /// <code>
+    ///                 管孔净流入      法兰增量温降        逐片抽热
+    ///   导航 2.0 mm   +3.26（过）    9.02（裕 0.98）   +3.54/+3.47/+3.26/+3.78 W
+    ///   细网格 0.5    −1.79（不过）  0.57（裕 9.43）   −0.37/−1.29/−1.79/+0.24 W
+    /// </code>
+    /// 第一遍把舌保温二分到「增量温降 ≈ 限值 10」（停在 9.02），
+    /// 而同一点在算得准的网格上只有 **0.57** —— 保温加过头了一大截，把热压进了管子。
+    /// 第二遍随后在细网格上对「管孔净流入」试遍了**全部**候选旋钮，**一个都不成立**：
+    /// 外级倍率 t₂ 抬到底 −1.693→−1.698（更差）、外级半径 r₂ 没有台阶可挪、
+    /// 板厚抬到底 −1.693→**−1.742**（更差）⇒ 结构性停机，报「法兰侧九根旋钮穷尽」。
+    /// 而**把保温降回去**（4.6/2.1/2.9/7.5 → 4.4/2.0/2.7/7.2）当场全过，**一克铂不花**
+    /// （deliverable/R48_求解器错过了可行点_2026-09-14.md）。
+    /// ⇒ 卡住解的正是「只增不减」，而不是设计本身。
+    ///
+    /// ══ 这一步做什么
+    ///
+    /// 对每一片、每一根**有下角可退的自由旋钮**（舌保温／环倍率 t₁／外级倍率 t₂），
+    /// 若它当前高于下角，就在 <c>[下角, 当前值]</c> 上二分，找**最小的值，使得
+    /// 「现在已经过了的那些判据」仍然全过**。
+    ///
+    /// 三条性质：
+    ///   ① **不会把已经过的判据弄不过** —— 目标函数就是「那些判据仍然全过」；
+    ///   ② **只会让没过的判据变好或不变** —— 退保温提高抽热，方向单调（每片抬之前都实测过）；
+    ///   ③ 结果**与第一遍的值无关**：二分区间的下端是约束盒下角，落点是这根旋钮
+    ///      在**判决网格**上的根。第一遍的值只是二分的上端（一个上界提示），
+    ///      提示偏高只多花几次场解，不改变落点 ⇒ 「解与初值无关」这条规矩**得以恢复**
+    ///      （此前第二遍从第一遍的解出发，本来就是带了起点的）。
+    ///
+    /// ══ ⚠ 板厚不在名单里
+    ///
+    /// 板厚的下角是**闭式**的（焊接屈曲／烧穿／按 J 的截面），每轮由 ApplySectionFloor 重定，
+    /// 往下退会撞穿那三条下界。它不是「可以回收的抬升」，是被下界顶上去的。
+    ///
+    /// ══ 代价
+    ///
+    /// 每根旋钮约 5 次场解（区间 0.3–20 mm、舌保温图纸格 **0.5** ⇒ log₂(19.7/0.5)≈5.3，实际带早停；
+    /// 格子 0.1 时是 7.6 —— 2026-09-17 Opus 5 按用户「求解器默认格子改成 0.5」同步这个估算）。
+    /// 四片各一根 ⇒ 约 28 次判决网格上的场解。贵，但这是交付计算，一次的事。
+    /// </summary>
+    /// <summary>
+    /// **回收名单** —— 在判决网格上可以往回退的旋钮，以及各自的下角。
+    /// 2026-09-17，Opus 5（J 路，J8）：从 <see cref="TightenOnJudgeMesh"/> 原样搬出（纯搬移，逐位不变），门 R48J_KnobReachAndReclaimTests 读这一份。
+    ///
+    /// ⚠ 名单**只有三根**；<see cref="Knob"/> 九根里另外六根抬上去就退不回：
+    ///   · <see cref="Knob.Thick"/> 板厚 —— 有理由（下角是闭式的，每轮由 ApplySectionFloor 重定，往下退撞穿焊接屈曲／烧穿／按 J 的截面，见上面的类注释）；
+    ///   · <see cref="Knob.RingR1"/>／<see cref="Knob.RingR2"/>／<see cref="Knob.SlotSpan"/>／<see cref="Knob.TabHoleR"/>／<see cref="Knob.TabHoleAspect"/>
+    ///     —— **没有记过理由**，是合并把关待办 P0-5（B-1）指的那一类。J 路 2026-09-17 的结论：机制成立（读码）、
+    ///     「抬过头」本身在手上的算例里**没有确证**（实例与判不了的地方见 deliverable/J路_J8_结论_旋钮不可达与回收名单_2026-09-17.md）⇒ 本轮不改判定口径，只记录 + 设门。
+    /// 改这份名单（加一根或去一根）⇒ 那道门红 ⇒ 请同时更新上面那份结论文件，别让它悄悄过时。
+    /// </summary>
+    public static (Knob K, double Lo)[] ReclaimableKnobs(SolverOptions opt) => new[]
+    {
+        (Knob.Insul,  opt.InsLoMm),
+        (Knob.Ring,   opt.RingLo),
+        (Knob.RingT2, opt.RingLo),
+    };
+
+    private static void TightenOnJudgeMesh(
+        DesignSpec d, DesignInputs baseIn, SolverOptions opt, SolverResult res,
+        double coldMax, double hotMax, Action<string> Log,
+        CancellationToken cancel, IProgress<string>? inner)
+    {
+        // 有下角可退的自由旋钮（板厚不在内，理由见上）。
+        // 2026-09-17，Opus 5（J 路，J8）：名单提成公开函数 ReclaimableKnobs —— 门要核它，而门不许手抄生产配方。
+        var tunable = ReclaimableKnobs(opt);
+        int np = d.TabThickMm.Length;
+        // R48 B（2026-09-14 Opus 5）：回收时要保护的是交付判据 —— 热侧／冷侧换成热偶读数基准那两条（旧判法已是参考量）
+        var keys = baseIn.CriteriaRuleSet == CriteriaRuleSet.决103前
+                 ? new[] { LineResult.Key.NetFlux, LineResult.Key.HotOverTc, LineResult.Key.ColdUnderTc }
+                 : AllocationFor(baseIn.CriteriaRuleSet).Select(a => a.Key).ToArray();   // 决 103：回收时保护的是生产口径的逐片硬判据
+
+        var r0 = Eval(d, baseIn, opt, res, cancel, inner);
+        if (r0 is null)
+        {
+            Log("  ⚠ **回收抬过头的旋钮：跳过** —— 起点场解解不出来，判不了（不是「不必回收」）。");
+            return;
+        }
+
+        // R48 M（2026-09-18，Fable 5.1）：Holds 里「仍然过」= 裕度 ≥ 这一点的认证误差（温度判据，CertNeed）；裕度落进认证误差以内的不算过（判不了那么细）
+        bool Holds(LineResult? r, int j, string[] mustPass)
+        {
+            if (r is null) return false;                       // 判不了一律当不成立，不许当成「还过着」
+            foreach (string k in mustPass)
+            {
+                double sl = PlateSlack(r, k, j, coldMax, hotMax);
+                if (double.IsNaN(sl) || sl < CertNeed(r, k)) return false;
+            }
+            return true;
+        }
+
+        Log("── **在判决网格上回收抬过头的旋钮**（第一遍跑的是粗网格，它的根可能偏高；"
+          + "下端是约束盒下角 ⇒ 落点与第一遍的值无关）");
+        bool anyMoved = false;
+
+        for (int j = 0; j < np; j++)
+        {
+            foreach (var (knob, lo) in tunable)
+            {
+                double cur = Get(d, knob, j);
+                double q = QuantOf(opt, knob);
+                // ★ R48 L（2026-09-17，Opus 5）：判「本来就在下角」只能拿**下角自己**比，不许放半格。
+                //   原来写的是 `cur <= lo + q * 0.5`。舌保温的格子从 0.1 改到 0.5 之后这一句会咬人：
+                //   下角（裸舌）0.30 不在 0.5 的格子上，格子上最低的那个值 0.50 与下角只差 0.20 < 半格 0.25
+                //   ⇒ **解在 0.50 的片永远不会被回收到裸舌**，哪怕裸舌也全过。那不是最小可行点。
+                //   ⚠ 改前 0.1 格子下逐位无差别：舌保温的可达值是 {0.30} ∪ {0.1 的倍数}，
+                //     0.40 > 0.30 + 0.05 本来就不跳；环倍率 {1.00} ∪ {0.01 的倍数}，1.01 > 1.005 同理。
+                if (cur <= lo + 1e-9) continue;               // 本来就在下角，没有可回收的
+
+                // 现在这一片有哪些判据是过的 —— 回收不许把它们弄不过
+                string[] mustPass = keys.Where(k =>
+                {
+                    double sl = PlateSlack(r0, k, j, coldMax, hotMax);
+                    return !double.IsNaN(sl) && sl >= CertNeed(r0, k);   // R48 M（2026-09-18，Fable 5.1）：要保护的是**判得了的过**（裕度 ≥ 认证误差）
+                }).ToArray();
+                if (mustPass.Length == 0) continue;            // 一条都没过 ⇒ 没有要保护的，交给抬升那条路
+
+                // 先看下角处是不是也全过 —— 是的话直接退到底，不必二分
+                double keep = cur;
+                SetKnob(d, knob, j, lo, baseIn, res);
+                var rLo = Eval(d, baseIn, opt, res, cancel, inner);
+                if (Holds(rLo, j, mustPass))
+                {
+                    Log($"  ↓ 片{j} {KnobName(knob)} {cur:0.00} → {lo:0.00}（**退到下角**："
+                      + $"{string.Join("／", mustPass.Select(Criteria.Plain))} 在下角处仍然全过）");
+                    anyMoved = true;
+                    r0 = rLo;
+                    continue;
+                }
+
+                // 二分：找最小的 v 使 mustPass 仍全过。不变式 lo 不成立、hi 成立。
+                double a = lo, b = keep;
+                for (int it = 0; it < 12 && b - a > q + 1e-9; it++)
+                {
+                    cancel.ThrowIfCancellationRequested();
+                    double mid = SnapUpToGridMm((a + b) * 0.5, q);   // 落图纸格，向上取（安全侧）
+                    if (mid >= b - 1e-9 || mid <= a + 1e-9) break;
+                    SetKnob(d, knob, j, mid, baseIn, res);
+                    var rm = Eval(d, baseIn, opt, res, cancel, inner);
+                    if (Holds(rm, j, mustPass)) { b = mid; r0 = rm; } else a = mid;
+                }
+                SetKnob(d, knob, j, b, baseIn, res);
+                if (b < keep - 1e-9)
+                {
+                    Log($"  ↓ 片{j} {KnobName(knob)} {keep:0.00} → {b:0.00}"
+                      + $"（判决网格上的根；保住 {string.Join("／", mustPass.Select(Criteria.Plain))}）");
+                    anyMoved = true;
+                }
+                else r0 = Eval(d, baseIn, opt, res, cancel, inner);   // 没动，但 r0 可能已被中途的试探带偏，重取
+            }
+        }
+
+        if (!anyMoved)
+            Log("  · 没有一根旋钮可以回收 —— 第一遍的根在判决网格上站得住。");
+    }
+
+    // ★★★★★ R48 M（2026-09-18，Fable 5.1）：返回多带一位 Undetermined —— 判不了的出口（抬前／上界／中点解不出来、格点裕度小于认证误差走到头）
+    //   与「旋钮到顶」的出口分开，调用方据此置 SolverResult.Undetermined 而不是 HitBound。
+    //   knownNeed = ChooseKnob 已量到的这一点认证误差（NaN = 没量，这里自己量）。
+    private static (bool Ok, string Why, bool Kept, bool Undetermined) RaiseUntil(
         DesignSpec d, DesignInputs baseIn, SolverOptions opt, int j, Knob knob, string key,
-        double dipMax, double discMax, SolverResult res, Action<string> Log, CancellationToken cancel,
+        double coldMax, double hotMax, SolverResult res, Action<string> Log, CancellationToken cancel,
         IProgress<string>? inner = null,
-        double knownBefore = double.NaN, double knownAfter = double.NaN)
+        double knownBefore = double.NaN, double knownAfter = double.NaN, double knownNeed = double.NaN)
     {
         double lo = Get(d, knob, j);
+        // ★ 2026-09-18 Opus 5：**进这一步时的原值**。二分循环会把 lo 抬到中点上去，
+        //   而中点**不在图纸格上**；中止二分时必须退回这一个，不是退回被抬过的 lo（见循环里那一支）。
+        double lo0 = lo;
         double hi = HiOfFor(d, baseIn, opt, knob, j, res);
         string nm = $"片{j} {KnobName(knob)}";
+        double q = QuantOf(opt, knob);
 
         // ★ 候选比价时已经量过就不再量 —— 同一个数花两次场解是纯浪费（实测每次抬多花 3 次）。
         // ★★★★★ **判不了 ≠ 不过**（2026-09-07 B，督导第 4 封）。
         //   `PlateSlack` 用一个 double 同时表达「裕度多少」和「算不出来」，
         //   把 −∞ 塞进「非常不过」那一格 ⇒ 每个读它的人都自动把**判不了**读成**很不过**。
         //   S1 之前 null 只来自硬失败、这条路踩不到；S1 把 null 变成常见路径之后它就活了。
-        double before;
+        double before, need;
         bool beforeUnknown = false;
+        LineResult? r0 = null;
         if (double.IsNaN(knownBefore))
         {
-            var r0 = Eval(d, baseIn, opt, res, cancel, inner);
+            r0 = Eval(d, baseIn, opt, res, cancel, inner);
             beforeUnknown = r0 is null;
-            before = PlateSlack(r0, key, j, dipMax, discMax);
+            before = PlateSlack(r0, key, j, coldMax, hotMax);
+            need = CertNeed(r0, key);
         }
-        else before = knownBefore;
+        else { before = knownBefore; need = double.IsNaN(knownNeed) ? 0.0 : knownNeed; }
 
-        // ⚠ 判不了就**不许往下走**：下面第 11 行那条会输出
+        // ⚠ 判不了就**不许往下走**：下面那条会输出
         //   「这组输入不可行（**是证明**，不是搜索失败）」——
         //   全仓少数几个对工程师说「别再试了」的地方，依据却是一份
         //   代码自己写着「表内所有数值一律不可引用」的场。
@@ -953,14 +1427,16 @@ public static class Solver
         {
             Log("     " + BranchMarks.UndeterminedBefore);
             return (false, $"**{nm} 处场解解不出来 ⇒ 判不了**（{res.NullWhy}；不是「不可行的证明」）—— "
-                         + "这一步的每个数都不可引用，先修上界或几何再谈可行性", false);
+                         + "这一步的每个数都不可引用，先修上界或几何再谈可行性", false, true);
         }
 
         // ★ 上一片抬完可能已经把这一片捎带治好了 —— 那就**不抬**（最小性）
-        if (before >= 0)
+        // ★★★★★ R48 M（2026-09-18，Fable 5.1）：「治好了」= 裕度 ≥ 认证误差（温度判据）；0 ≤ 裕度 < 认证误差 是「判不了那么细」，往下走格（不二分）。
+        if (before >= need)
         {
-            Log($"  · {nm}：上一步之后「{Criteria.Plain(key)}」已经不违反（裕度 {before:+0.000;-0.000}）⇒ **不抬**");
-            return (true, "", false);
+            Log($"  · {nm}：上一步之后「{Criteria.Plain(key)}」已经不违反（裕度 {before:+0.000;-0.000}"
+              + (need > 0 ? $" ≥ 认证误差 {need:0.000}" : "") + "）⇒ **不抬**");
+            return (true, "", false, false);
         }
 
         // ★★★★★ **一个出口只能对它自己有的旋钮下结论**（2026-09-08，督导第 11 封）。
@@ -971,96 +1447,163 @@ public static class Solver
         //   与 2026-09-07 在 FlangeAutoSizer.Solve 写「厚度到顶 ⇒ 无解」是同一个错。
         //   照 809 行那句「判不了 —— **不是**『不可行的证明』」的口径改。
         if (lo >= hi - 1e-12)
+        {
+            // R48 M（2026-09-18，Fable 5.1）：在上界、裕度 ≥ 0 但小于认证误差 ⇒ 是「判不了那么细」，不是「到顶仍不过」
+            if (before >= 0)
+            {
+                Log("     " + BranchMarks.UndeterminedGridAtHi);
+                return (false, $"**判不了**（{nm} 已在上界 {hi:0.000}，「{Criteria.Plain(key)}」裕度 {before:0.000} K 小于认证误差 {need:0.000} K；判不了那么细）"
+                             + " —— 既不当过也不当不过；这一点没解到收敛：可加轮数上限／细化网格重算", false, true);
+            }
             return (false, $"**{nm} 已在上界 {hi:0.000}**，「{Criteria.Plain(key)}」仍不过 ⇒ **这根旋钮到顶了** "
-                         + "—— 求解器手上只有**法兰侧**九根旋钮；**盘径与舌半宽**（R3 里「增宽」那条路）不在它手里，归「◇ 搜形状」。**一个出口只能对它自己有的旋钮下结论。**", false);
+                         + "—— 求解器手上只有**法兰侧**九根旋钮；**盘径与舌半宽**（R3 里「增宽」那条路）不在它手里，归「◇ 搜形状」。**一个出口只能对它自己有的旋钮下结论。**", false, false);
+        }
 
-        SetKnob(d, knob, j, hi, baseIn, res);
-        double after;
-        if (double.IsNaN(knownAfter))
+        // ★ 二分终点（最小的过的格点）与它那一份场：走格从这里起步
+        double hiPt; LineResult? rHiPt; double slackHi;
+
+        if (before >= 0)
         {
-            var rHi = EvalProbe(d, baseIn, opt, res, cancel, inner);   // 临时态
-            if (rHi is null)
+            // R48 M（2026-09-18，Fable 5.1）：0 ≤ 裕度 < 认证误差 —— 这一点判不了那么细，不必二分（根就在脚下），直接往保守方向走格
+            hiPt = lo; rHiPt = r0; slackHi = before;
+        }
+        else
+        {
+            SetKnob(d, knob, j, hi, baseIn, res);
+            double after;
+            LineResult? rHi = null;
+            if (double.IsNaN(knownAfter))
             {
-                // 判不了 ⇒ 不许印成「分派前提不成立…没变好」（那是「这旋钮没用」的意思）
-                SetKnob(d, knob, j, lo, baseIn, res);
-                Log("     " + BranchMarks.UndeterminedAtHi);
-                return (false, $"**{nm} 抬到上界 {hi:0.000} 时解不出来 ⇒ 判不了**（{res.NullWhy}）—— "
-                             + "不是「这根旋钮没用」，是**上界存疑**（多半把几何抬坏了）", false);
+                rHi = EvalProbe(d, baseIn, opt, res, cancel, inner);   // 临时态
+                if (rHi is null)
+                {
+                    // 判不了 ⇒ 不许印成「分派前提不成立…没变好」（那是「这旋钮没用」的意思）
+                    SetKnob(d, knob, j, lo, baseIn, res);
+                    Log("     " + BranchMarks.UndeterminedAtHi);
+                    return (false, $"**{nm} 抬到上界 {hi:0.000} 时解不出来 ⇒ 判不了**（{res.NullWhy}）—— "
+                                 + "不是「这根旋钮没用」，是**上界存疑**（多半把几何抬坏了）", false, true);
+                }
+                after = PlateSlack(rHi, key, j, coldMax, hotMax);
             }
-            after = PlateSlack(rHi, key, j, dipMax, discMax);
-        }
-        else after = knownAfter;
+            else after = knownAfter;
 
-        // ★ 前提自检：抬到底也没让这一片的判据变好 ⇒ 这条分派对这一片是错的，**不许假装解出来**
-        if (!(after > before + 1e-9))
-        {
-            SetKnob(d, knob, j, lo, baseIn, res);
-            return (false,
-                $"**分派前提不成立**：{nm} 从 {lo:0.000} 抬到上界 {hi:0.000}，" +
-                $"「{Criteria.Plain(key)}」的裕度 {before:+0.000;-0.000} → {after:+0.000;-0.000}（**没变好**）" +
-                " ⇒ 这个旋钮压不住这一片的这条判据，二分不适用", false);
-        }
-
-        if (after < 0)
-        {
-            // ★★★★★ **抬到上界仍不过 ⇒ 留着，不退回**（2026-09-05 修）。
-            //
-            //   原来这里 `SetKnob(d, knob, j, lo, baseIn, res)` 把它退回原值，而 ChooseKnob 明写着
-            //   「都补不上时…**先用买得最多的顶上去**，下一轮缺口变小再挑便宜的」——
-            //   **两者互相矛盾**：每轮挑出来、抬上去、又退回去，什么都不累积。
-            //
-            //   实测代价（deliverable/优化后出图.txt）：Pt_Heater1 构型 ③ = 427 K / 限 10，
-            //   任何单根旋钮都补不上（槽最狠也只砍 42 % 抽热）⇒ 全部退回 ⇒
-            //   **交出来的就是原始几何**，圆盘槽 0°、孔径 0.0，白算 14 分钟。
-            //
-            //   用户 2026-09-05：「最有效的那根旋钮（举例：可能是圆盘槽 + 舌板椭圆孔），
-            //   要各种在不同位置的孔形状**组合**所得出」——
-            //   留着不退回，组合就在**跨轮累积**里自然形成。
-            //
-            //   ⚠ 只在「补不上」这一支留着。二分成功那一支仍取**刚好够**的最小值（最省铂）。
-            //   ⚠ 判据仍然不过 ⇒ 返回 false 不变，调用方照样知道没解决。
-            bool kept = after > before + 1e-9;
-            if (kept)
-                Log($"     · {nm} 抬到上界仍不过，但**把缺口从 {before:0.00} 拉到 {after:0.00}** ⇒ 留着，"
-                  + "下一轮缺口变小再挑别的（不退回 —— 退回就永远凑不出组合）");
-            else
-                SetKnob(d, knob, j, lo, baseIn, res);        // 一点没变好 ⇒ 白花铂，退回
-            // ★ 同上：抬到顶的是**这一根**旋钮，不是「这组输入」。
-            return (false, $"**{nm} 抬到上界 {hi:0.000} 仍不过**「{Criteria.Plain(key)}」⇒ **这根旋钮到顶了** "
-                         + "—— 求解器手上只有**法兰侧**九根旋钮；**盘径与舌半宽**（R3 里「增宽」那条路）不在它手里，归「◇ 搜形状」。**一个出口只能对它自己有的旋钮下结论。**", kept);
-        }
-
-        // 二分：找「刚好不违反」的最小值。不变式：lo 违反、hi 不违反。
-        for (int i = 0; i < opt.BisectMaxIter && hi - lo > TolOf(opt, knob); i++)
-        {
-            cancel.ThrowIfCancellationRequested();
-            double mid = NextBisectPoint(knob, lo, hi);      // R15：孔径的二分点不许落在 (0, 1 mm)
-            // ★ 括号缩不下去了（孔径：lo 无孔、hi 已是最小孔 1 mm，(0,1) 不许探）⇒ hi 就是答案，别再探同一个点
-            if (mid >= hi - 1e-12) break;
-            SetKnob(d, knob, j, mid, baseIn, res);
-            var rMid = EvalProbe(d, baseIn, opt, res, cancel, inner);   // 临时态：中点熔了 ⇒ 判不了（只判不抬）
-            if (rMid is null)
+            // ★ 前提自检：抬到底也没让这一片的判据变好 ⇒ 这条分派对这一片是错的，**不许假装解出来**
+            if (!(after > before + 1e-9))
             {
-                // ★★★★★ 判不了 ⇒ **中止二分**，不许 lo = mid（2026-09-07 B）。
-                //   理由不是保守：二分的不变式是「lo 违反、hi 不违反」，
-                //   mid 判不了时这个不变式**已经破了** —— 往任何一侧推都是拿假设当数据。
-                //   而原来 −∞ 会走 else 分支 ⇒ lo = mid **往上推**，
-                //   推得越高越不收敛 ⇒ 正反馈，一路顶到上界。
                 SetKnob(d, knob, j, lo, baseIn, res);
+                return (false,
+                    $"**分派前提不成立**：{nm} 从 {lo:0.000} 抬到上界 {hi:0.000}，" +
+                    $"「{Criteria.Plain(key)}」的裕度 {before:+0.000;-0.000} → {after:+0.000;-0.000}（**没变好**）" +
+                    " ⇒ 这个旋钮压不住这一片的这条判据，二分不适用", false, false);
+            }
+
+            if (after < 0)
+            {
+                // ★★★★★ **抬到上界仍不过 ⇒ 留着，不退回**（2026-09-05 修）。
+                //
+                //   原来这里 `SetKnob(d, knob, j, lo, baseIn, res)` 把它退回原值，而 ChooseKnob 明写着
+                //   「都补不上时…**先用买得最多的顶上去**，下一轮缺口变小再挑便宜的」——
+                //   **两者互相矛盾**：每轮挑出来、抬上去、又退回去，什么都不累积。
+                //
+                //   实测代价（deliverable/优化后出图.txt）：Pt_Heater1 构型 ③ = 427 K / 限 10，
+                //   任何单根旋钮都补不上（槽最狠也只砍 42 % 抽热）⇒ 全部退回 ⇒
+                //   **交出来的就是原始几何**，圆盘槽 0°、孔径 0.0，白算 14 分钟。
+                //
+                //   用户 2026-09-05：「最有效的那根旋钮（举例：可能是圆盘槽 + 舌板椭圆孔），
+                //   要各种在不同位置的孔形状**组合**所得出」——
+                //   留着不退回，组合就在**跨轮累积**里自然形成。
+                //
+                //   ⚠ 只在「补不上」这一支留着。二分成功那一支仍取**刚好够**的最小值（最省铂）。
+                //   ⚠ 判据仍然不过 ⇒ 返回 false 不变，调用方照样知道没解决。
+                bool kept = after > before + 1e-9;
+                if (kept)
+                    Log($"     · {nm} 抬到上界仍不过，但**把缺口从 {before:0.00} 拉到 {after:0.00}** ⇒ 留着，"
+                      + "下一轮缺口变小再挑别的（不退回 —— 退回就永远凑不出组合）");
+                else
+                    SetKnob(d, knob, j, lo, baseIn, res);        // 一点没变好 ⇒ 白花铂，退回
+                // ★ 同上：抬到顶的是**这一根**旋钮，不是「这组输入」。
+                return (false, $"**{nm} 抬到上界 {hi:0.000} 仍不过**「{Criteria.Plain(key)}」⇒ **这根旋钮到顶了** "
+                             + "—— 求解器手上只有**法兰侧**九根旋钮；**盘径与舌半宽**（R3 里「增宽」那条路）不在它手里，归「◇ 搜形状」。**一个出口只能对它自己有的旋钮下结论。**", kept, false);
+            }
+
+            // 二分：找「刚好不违反」的最小值。不变式：lo 违反、hi 不违反。
+            // ★★★★★ R48 M（2026-09-18，Fable 5.1）：**二分直接在图纸格点上走，停在括号宽 ≤ 一格**。
+            //   原来先把根收到 0.005 mm 再向上对齐到格 ⇒ 二分中点都是不在格上的值（12.997265625…），而判的却是「对齐后的格点」——
+            //   判的点与求的点不是同一个。现在中点先向上对齐到格（TightenOnJudgeMesh 早就这么做），不变式照旧：lo 不过、hi 过；
+            //   括号收到一格以内时 hi 就是**最小的过的格点**（lo 是它下面那一格，不过），不会多给一层（QuantInsulMm 注释担心的那种早停是「没在格上判」造成的）。
+            //   ⚠ 中点判不了 ⇒ 中止二分、退回 lo0（2026-09-07 B／2026-09-18 Opus 5 那两条理由不变）。
+            LineResult? rBest = rHi; double slackBest = after;   // hi 那一点的场（knownAfter 那条路没有场 ⇒ null，走格时补量）
+            for (int i = 0; i < opt.BisectMaxIter && hi - lo > q + 1e-9; i++)
+            {
+                cancel.ThrowIfCancellationRequested();
+                double mid = SnapUpToGridMm(NextBisectPoint(knob, lo, hi), q);      // R15：孔径的二分点不许落在 (0, 1 mm)；再落图纸格（向上，安全侧）
+                // ★ 括号缩不下去了（孔径：lo 无孔、hi 已是最小孔 1 mm，(0,1) 不许探）⇒ hi 就是答案，别再探同一个点
+                if (mid >= hi - 1e-12 || mid <= lo + 1e-12) break;
+                SetKnob(d, knob, j, mid, baseIn, res);
+                var rMid = EvalProbe(d, baseIn, opt, res, cancel, inner);   // 临时态：中点熔了 ⇒ 判不了（只判不抬）
+                if (rMid is null)
+                {
+                    // ★★★★★ 判不了 ⇒ **中止二分**，不许 lo = mid（2026-09-07 B）。
+                    //   理由不是保守：二分的不变式是「lo 违反、hi 不违反」，
+                    //   mid 判不了时这个不变式**已经破了** —— 往任何一侧推都是拿假设当数据。
+                    //   而原来 −∞ 会走 else 分支 ⇒ lo = mid **往上推**，
+                    //   推得越高越不收敛 ⇒ 正反馈，一路顶到上界。
+                    // ★★★★★ 2026-09-18 Opus 5：退回 **lo0（进这一步时的原值）**，不是被循环抬过的 lo。
+                    //   病（实测出处 deliverable/R48_L_圆盘保温10_重解_W08_本次开跑于2026-09-18_021706.txt）：
+                    //   圆盘保温 10 mm 下重解 W08，片3 舌保温在 13.036 处场解不出来 ⇒ 二分中止，
+                    //   而那时 lo 已经被抬到二分走过的中点 **12.997265625 mm = 25.99 层** ——
+                    //   **不在图纸格 0.5 上**，现场包不出来；它照样被当成「停机时各旋钮的值」印出去。
+                    //   （R48LDiscInsul10Resolve* 那两道慢门的「解出来的舌保温必须落在层上」当场抓到。）
+                    //   退回 lo 还有第二层错：不变式说 lo 是**违反**侧的点，留着它既不解决判据也多花铂。
+                    //   二分中止 = 这一次尝试什么都没得到 ⇒ 把旋钮放回原处才是实话。
+                    //   ⚠ 与上面「抬到上界仍不过 ⇒ 留着不退回」不冲突：那一支留的是**评估过**的合法上界点，
+                    //     这一支要丢的是**没评估成**的中间点。
+                    SetKnob(d, knob, j, lo0, baseIn, res);
+                    Log("     " + BranchMarks.UndeterminedBisect);
+                    return (false, $"**{nm} 在 {mid:0.000} 处解不出来 ⇒ 二分中止**（{res.NullWhy}；上界存疑）—— "
+                                 + "不许拿判不了的点当「不过」往上推", false, true);
+                }
+                double sMid = PlateSlack(rMid, key, j, coldMax, hotMax);
+                if (sMid >= 0) { hi = mid; rBest = rMid; slackBest = sMid; } else lo = mid;
+            }
+            hiPt = Math.Min(SnapUpToGridMm(hi, q), HiOfFor(d, baseIn, opt, knob, j, res));
+            if (Math.Abs(hiPt - hi) > 1e-9) { rBest = null; }     // 对齐把点挪了（只在上界不在格上时发生）⇒ 场要重量
+            rHiPt = rBest; slackHi = slackBest;
+        }
+
+        // ★★★★★ R48 M（2026-09-18，Fable 5.1）：**格点判决**：判的是 SnapUpToGridMm 之后的格点；该格点上「这条判据的裕度 < 认证误差」⇒ 判不了那么细
+        //   ⇒ 往保守方向再走一格重判；走到上界／走满格数仍判不了 ⇒ 整跑判不了（不过也不不过）。走格是纯函数 WalkConservative（门当场验）。
+        //   认证误差只对温度判据（CertNeed）；管孔净流入那条是 0 ⇒ 走格退化成「裕度 ≥ 0 即停」，行为与改前相同。
+        double hiBound = HiOfFor(d, baseIn, opt, knob, j, res);
+        (double Slack, double Need)? EvalAt(double v)
+        {
+            SetKnob(d, knob, j, v, baseIn, res);
+            var r = EvalProbe(d, baseIn, opt, res, cancel, inner);
+            if (r is null) return null;
+            return (PlateSlack(r, key, j, coldMax, hotMax), CertNeed(r, key));
+        }
+        (double Slack, double Need) at0;
+        if (rHiPt is null)
+        {
+            var e0 = EvalAt(hiPt);
+            if (e0 is null)
+            {
+                SetKnob(d, knob, j, lo0, baseIn, res);
                 Log("     " + BranchMarks.UndeterminedBisect);
-                return (false, $"**{nm} 在 {mid:0.000} 处解不出来 ⇒ 二分中止**（{res.NullWhy}；上界存疑）—— "
-                             + "不许拿判不了的点当「不过」往上推", false);
+                return (false, $"**{nm} 在格点 {hiPt:0.000} 处解不出来 ⇒ 判不了**（{res.NullWhy}）—— 不许拿判不了的点当「过」", false, true);
             }
-            if (PlateSlack(rMid, key, j, dipMax, discMax) >= 0) hi = mid; else lo = mid;
+            at0 = e0.Value;
         }
+        else at0 = (slackHi, CertNeed(rHiPt, key));
+        var walk = WalkConservative(EvalAt, hiPt, at0, q, hiBound, opt.CertWalkMaxSteps, nm, Criteria.Plain(key), Log);
+        if (!walk.Ok)
+        {
+            // 走不到判得了的格点 ⇒ 这一次尝试什么都没得到（与二分中止同一条处置：退回进来时的原值）
+            SetKnob(d, knob, j, lo0, baseIn, res);
+            return (false, walk.Why, false, true);
+        }
+        double snapped = walk.Value;
 
-        // ★ 量化在**解之内**，不在解之后（算法普查 A⑤）。
-        //   往**上**取整是可证明安全的：本判据对本旋钮递增（前提已在上面验过），
-        //   抬到格点只会让它更过，不会翻回去。
-        //   抬高可能让**别的**判据变差 —— 那由外层下一轮再抬它自己的旋钮补上，
-        //   「只增不减」的不变式不受影响。
-        double q = QuantOf(opt, knob);
-        double snapped = Math.Min(Math.Ceiling(hi / q - 1e-9) * q, HiOfFor(d, baseIn, opt, knob, j, res));
         double tongueBefore = j < d.TongueThickMm.Length ? d.TongueThickMm[j] : double.NaN;
         double armBefore = j < d.TabArmThickMm.Length ? d.TabArmThickMm[j] : double.NaN;
         SetKnob(d, knob, j, snapped, baseIn, res);
@@ -1073,7 +1616,10 @@ public static class Solver
         //   单调性扫描（--monotone）的作用就在这句话里：抬到上界确实变好 = 这一点上单调，
         //   而单调是二分求根成立的前提。求解器**每次抬之前都实测一遍**，不是查表。
         Log($"  ↑ {nm} → {snapped:0.000}　"
-          + $"（已实测：抬到上界这条判据确实变好 ⇒ 可以二分求根；解出 {hi:0.0000}，向上对齐到图纸格 {q:0.###}）");
+          + (before < 0
+             ? $"（已实测：抬到上界这条判据确实变好 ⇒ 可以二分求根；二分直接在图纸格 {q:0.###} 上走，这是最小的过的格点"
+             : $"（裕度本已 ≥ 0 但小于认证误差 ⇒ 往保守方向走格")
+          + (snapped > hiPt + 1e-12 ? $"；格点 {hiPt:0.000} 处裕度小于认证误差，走格到 {snapped:0.000} 才判得了）" : "）"));
 
         // ★★ 上面那句「抬高可能让别的判据变差 —— 由外层下一轮再抬它自己的旋钮补上」
         //   对 **⑥ 不成立**：⑥ 没有旋钮可补。而抬板厚会一对一地吃掉它的裕度
@@ -1083,9 +1629,9 @@ public static class Solver
         if (knob == Knob.Thick)
         {
             var (coverOk, coverWhy) = CoverCheck(d, baseIn);
-            if (!coverOk) { Log("  ✗ " + coverWhy); return (false, coverWhy, false); }
+            if (!coverOk) { Log("  ✗ " + coverWhy); return (false, coverWhy, false, false); }
         }
-        return (true, "", false);
+        return (true, "", false, false);
     }
 
     /// <summary>
@@ -1139,6 +1685,52 @@ public static class Solver
     }
 
     /// <summary>
+    /// F7′（2026-09-23）：<see cref="Solve"/> 用哪份细区半径计划 —— 从 Solve 原样搬出（审查 R-1 为加只供门用的改回开关而提出，门调同一份）。
+    /// · 图纸档 ⇒ null（BuildCase 自己拒答）；调用方给了计划 ⇒ 用它；给了半径 ⇒ 等于本设计计划初值时用计划，否则当「调用方给定初值」的自适应计划（初值超过板料外缘截到外缘，审查 L-1）；
+    /// · 什么都没给且不是粗筛 ⇒ 也用计划（审查 P6：原先落回算例缺省 50）—— 除非 <see cref="SolverOptions.NavUsesCaseDefaultRadius"/>（只供门的改回，生产不传）⇒ null，导航落回算例缺省，与 F7′ 之前同一条路；
+    /// · 粗筛（ScreenCoarseMm &gt; 0）⇒ null（照旧不动）。
+    /// </summary>
+    internal static FineRadiusPlan? RadiusPlanOf(DesignSpec d, DesignInputs baseIn, SolverOptions opt, LineCase lc)
+    {
+        if (d.IsDrawingRecord) return null;   // 图纸档没有解析板：BuildCase 自己拒答，这里不造计划（FineRadiusPlanFor 对图纸档会抛）
+        if (opt.RadiusPlan is not null) return opt.RadiusPlan;
+        if (opt.FineRadiusMm > 0)
+        {
+            var pd = MeshVerify.FineRadiusPlanFor(d, baseIn);
+            return BitConverter.DoubleToInt64Bits(pd.InitialMm) == BitConverter.DoubleToInt64Bits(opt.FineRadiusMm)
+                 ? pd : MeshAdapt.CapToPlate(MeshAdapt.GivenFineRadiusPlan(opt.FineRadiusMm), MeshAdapt.PlateOuterRadiusMm(lc).Mm, "本设计算例的材料包络（PlateOuterRadiusMm）");
+        }
+        if (opt.ScreenCoarseMm > 0 || opt.NavUsesCaseDefaultRadius) return null;
+        return MeshVerify.FineRadiusPlanFor(d, baseIn);
+    }
+
+    /// <summary>
+    /// 第一遍（导航网格）的求解选项：尺寸不变（FineMm = 0），细区半径随传入选项统一（见 Solve 里 navOpt 那段的实测）。
+    /// 2026-09-15 Opus 5（J 路）：从 Solve 原样搬出（纯搬移），门与探针调同一份，不在测试里手抄。
+    /// </summary>
+    public static SolverOptions NavOptionsOf(SolverOptions opt)
+    {
+        var navOpt = opt.Clone(); navOpt.FineMm = 0; navOpt.FineRadiusMm = opt.FineRadiusMm;
+        return navOpt;
+    }
+
+    /// <summary>
+    /// 终局复核（Finish）用的算例：带升温（checkRamp: true），网格按 <paramref name="lastOpt"/>（最后一遍求根的选项）造。
+    /// 2026-09-15 Opus 5（J 路）：从 Finish 原样搬出（纯搬移），门与探针调同一份。
+    /// </summary>
+    public static LineCase FinishCase(DesignSpec d, DesignInputs baseIn, SolverOptions lastOpt)
+    {
+        var lcF = d.BuildCase(baseIn, checkRamp: true);
+        // ★ R48（2026-09-13，Opus 5）：与 EvalRaw 同一个配方 —— 终局复核和求根不能再用两张网格。
+        // ★★ 2026-09-15 Opus 5（J 路，合并把关待办 P1-2）：原为 `if (lastOpt.FineMm > 0) MeshAdapt.RefineWholeMesh(…)` —— 手抄了 ApplyCaseMesh 三支里的一支。
+        //   lastOpt = 导航选项（FineMm = 0、FineRadiusMm > 0；第一遍没走通或没开第二遍时）时这一支不触发 ⇒ 终局复核退回 LineCase 默认细区半径 50，
+        //   而求根用的是导航选项统一过的半径（W08 为 59）⇒ Feasible 判在一张没求过根的网格上（Solve 里 navOpt 那段记着：同设计半径 50 对 59 管孔净流入 +3.267 对 −6.533 W）。
+        //   实测：deliverable/J路_J1_终局复核网格_本次开跑于*.txt。改成调同一份 ApplyCaseMesh（三支一起），门 R48J_SolverMeshAndMarkerGateTests。
+        ApplyCaseMesh(lcF, lastOpt);
+        return lcF;
+    }
+
+    /// <summary>
     /// 终局复核：把升温 ① 带上再算一次（导航时为省时关掉的那条）。
     ///
     /// ★★ <b>必须跑在最后一遍求根所用的那张网格上</b>（<paramref name="lastOpt"/>）。
@@ -1155,18 +1747,23 @@ public static class Solver
     ///
     /// ⚠ 只在 <c>--fine</c>（opt.FineMm &gt; 0）时发作；FineMm = 0 的跑法两边同为默认网格,
     ///   所以历史上那些 <c>--solve --verifymesh</c> 的结论**不受影响**。
+    ///
+    /// ══ R48 补（2026-09-13，Opus 5）：同一个病还有**两维**没修
+    ///
+    /// 上面这条规矩当年只把「网格**尺寸**」这一维接了过来，**粗区**与**内带**仍留在
+    /// <see cref="LineCase"/> 的默认值上（11 mm／不分内带）。于是 <c>--fine 0.5</c> 的细粗比是 22 倍，
+    /// 而加密复核整张一起缩、细粗比 5.5 倍 —— 标称同为 0.500 mm，**结构上不是同一张网格**。
+    /// 09-13 正式重解两个设计都咬上了：求根报「第 1 轮全过」，复核在同样的 0.500 mm 上报
+    /// 管孔净流入 −1.792 与 −1.789 W（不过）。
+    /// 现在三维一起交给 <see cref="MeshAdapt.RefineWholeMesh"/>，配方只有那一处。
+    /// ★ 2026-09-15 Opus 5（J 路）：造算例改调 <see cref="FinishCase"/> → <see cref="ApplyCaseMesh"/>（与 EvalRaw 同一份，含导航档统一细区半径那一支）。
     /// </summary>
     private static SolverResult Finish(SolverResult res, DesignSpec d, LineResult? last,
                                        DesignInputs baseIn, SolverOptions lastOpt,
                                        CancellationToken cancel, IProgress<string>? progress = null)
     {
         res.Design = d;
-        var lcF = d.BuildCase(baseIn, checkRamp: true);
-        if (lastOpt.FineMm > 0)
-        {
-            lcF.MeshFineMm = lastOpt.FineMm;
-            if (lastOpt.FineRadiusMm > 0) lcF.MeshFineRadiusMm = lastOpt.FineRadiusMm;
-        }
+        var lcF = FinishCase(d, baseIn, lastOpt);
         // 细网格上带 ① 的这一次可能跑很久 —— 不转进度就是几十分钟静默。
         var innerF = new ThrottledProgress(progress, 20, "     · 终局复核 ");
         try { res.Best = LineRunner.Run(lcF, innerF, cancel); res.Solves++; }
@@ -1176,7 +1773,8 @@ public static class Solver
         if (res.Best is not null && res.Best.Ok)
         {
             res.MassG = MassOf(res.Best);
-            res.Feasible = res.Best.AllOk;
+            // R48 M（2026-09-18，Fable 5.1）：判不了的整跑不许因终局复核恰好全过而报可行 —— 那份设计是某一步退回来的，不是求出来的
+            res.Feasible = res.Best.AllOk && !res.Undetermined;
             // ★ 2026-09-09：返回的设计是从记录克隆的，记录里存的合计/管/法兰重是**那份记录**的数
             //   （0.8 档 3547 g）——解完不改写，Describe() 就在「合计 2614 g」下一行印「合计 3547 g」。
             //   解出来的设计带解出来的重量；存档路（LineDesignPage 另存为）本来就这么做。
@@ -1228,6 +1826,41 @@ public static class Solver
     }
 
     /// <summary>
+    /// **造算例的网格配方（唯一一份）**：<paramref name="lc"/> 必须是刚由 BuildCase 造出来的。
+    /// 读 <paramref name="o"/> 的三个网格量：FineMm ≤ 0 且 FineRadiusMm &gt; 0 = 导航档（尺寸与粗区逐位不变，只统一细区半径与内带）；FineMm &gt; 0 = 整张自相似加密；
+    /// 两者都不给时 ScreenCoarseMm &gt; 0 = 粗筛只放粗平坦区。三支都不触发 = BuildCase 原样。
+    /// ★ R48 E 审查修改（2026-09-15 Opus 5）：从 EvalRaw 原样搬出；EvalRaw 与保温搜索（InsulationSearch）都调它。
+    /// ★ 2026-09-15 Opus 5（J 路，合并把关待办 P1-2）：「唯一一份」此前不实 —— 终局复核 Finish 手抄了其中 FineMm &gt; 0 那一支。现在 Finish 经 <see cref="FinishCase"/> 也调它，
+    ///   「唯一」的范围照实写：**Solver 造算例（求根 EvalRaw、终局复核 FinishCase）与保温搜索**只有这一份。不走这里的另有三处，各自整张加密、不涉导航档：
+    ///   加密复算工厂 MeshVerify.AnalyticCaseFactory 与图纸路径 FlangeAutoSizer.ApplyFinalMesh 直接调 MeshAdapt.RefineWholeMesh（与 FineMm &gt; 0 那一支同式）；
+    ///   LevelSolver 里还有一份旧写法（它自己的类注释记着，生产零调用）。
+    ///   粗筛那一支（ScreenCoarseMm）现在终局复核也跟着用 —— 求根在粗筛网格上、终局也在粗筛网格上；粗筛点本来就不交付，精算另起一次 FineMm &gt; 0 的求解（LineDesignPage 搜形状「精算胜出形状」）。
+    /// </summary>
+    public static void ApplyCaseMesh(LineCase lc, SolverOptions o)
+    {
+        if (lc is null) throw new ArgumentNullException(nameof(lc));
+        if (o is null) throw new ArgumentNullException(nameof(o));
+        // ★ R48 续（2026-09-14）：导航档（FineMm = 0）也要把**细区半径**统一过来，
+        //   否则三遍不同族（详见 Solve 里 navOpt 那段的实测数据）。
+        //   传 lc.MeshFineMm 进去 ⇒ 缩放比恒为 1 ⇒ 尺寸与粗区逐位不变，只统一半径与内带。
+        // F7′（2026-09-23）：细区半径计划只作记录（网格只读 MeshFineRadiusMm）；两支用到半径时一起写上。
+        if (o.FineRadiusMm > 0 && o.RadiusPlan is not null) lc.MeshFineRadiusPlan = o.RadiusPlan;
+        if (o.FineMm <= 0 && o.FineRadiusMm > 0)
+            MeshAdapt.RefineWholeMesh(lc, lc.MeshFineMm, o.FineRadiusMm);
+        else if (o.FineMm > 0)
+            // ★★★★★ R48（2026-09-13，Opus 5）：**求根的网格必须和判决的网格是同一个配方。**
+            //   此前这里只设 MeshFineMm，粗区留在 11 mm、内带不分 ⇒ 细粗比 22 倍，
+            //   而加密复核（MeshVerify）整张一起缩、细粗比 5.5 倍。标称同为 0.500 mm，
+            //   实测结论相反：求根说「第 1 轮全过」，复核说 管孔净流入 −1.792 W（不过）。
+            //   配方现在只有 MeshAdapt.RefineWholeMesh 一处，两边不可能再各写各的。
+            MeshAdapt.RefineWholeMesh(lc, o.FineMm, o.FineRadiusMm);
+        // ★ 粗筛：只放粗**平坦区**（MeshCoarseMm），孔边与台阶那圈一格不动。
+        //   同 FlangeAutoSizer 的过热试探 —— 陡梯度处粗化会判错，省不得。
+        else if (o.ScreenCoarseMm > 0)
+            lc.MeshCoarseMm = Math.Max(lc.MeshCoarseMm, o.ScreenCoarseMm);
+    }
+
+    /// <summary>
     /// **原始场解，不套 S1 的闸** —— 只给 <see cref="MeltFloor"/> 用：它只读布尔「熔/不熔」
     /// （方向可信），一个数值都不读。其余一律走 <see cref="Eval"/>。
     /// </summary>
@@ -1238,19 +1871,25 @@ public static class Solver
         try
         {
             var lc = d.BuildCase(baseIn, checkRamp: false);
-            if (o.FineMm > 0)
+            // ★ R48 E 审查修改（2026-09-15 Opus 5）：三支网格配方原样搬进公开的 ApplyCaseMesh（纯搬移，数逐位不变）——
+            //   保温搜索的整线工作点与内层单片网格要调同一份，此前它手写了一份、导航档漏了细区半径（审查意见第 1 条）。
+            ApplyCaseMesh(lc, o);
+            // ★ 2026-09-24（搜形状算力工程 A，同状态复用；缺省关 = 改前逐位）：同一次 Solve 里算例全字段指纹相同 ⇒ 交回上次的结果、不再解场。
+            //   不改判定、不改阈值、不改旋钮分派：交回的是同一个算例上 LineRunner.Run 的结果（它对同一算例是确定的），调用方照旧过 Gate／熔化判定。
+            //   指纹与缓存见 SameStateReuse；改回 = SolverOptions.ReuseSameStateSolves = false（缺省）。
+            string? reuseKey = o.ReuseSameStateSolves ? SameStateReuse.KeyOf(lc) : null;
+            if (reuseKey is not null && res.SameState is { } reuse && reuse.TryGet(reuseKey, out var again))
             {
-                lc.MeshFineMm = o.FineMm;
-                if (o.FineRadiusMm > 0) lc.MeshFineRadiusMm = o.FineRadiusMm;
+                res.SameStateReuses++;
+                o.SolveProbe?.Invoke(lc, true);
+                return again;
             }
-            // ★ 粗筛：只放粗**平坦区**（MeshCoarseMm），孔边与台阶那圈一格不动。
-            //   同 FlangeAutoSizer 的过热试探 —— 陡梯度处粗化会判错，省不得。
-            else if (o.ScreenCoarseMm > 0)
-                lc.MeshCoarseMm = Math.Max(lc.MeshCoarseMm, o.ScreenCoarseMm);
+            o.SolveProbe?.Invoke(lc, false);
             // ★ 细网格那一遍单次可能跑 ~900 s；不转内层进度就是几十分钟静默，
             //   看不出「慢」和「挂了」的区别（用户 2026-08-29）。
             var r = LineRunner.Run(lc, inner, cancel);
             res.Solves++;
+            if (reuseKey is not null) (res.SameState ??= new SameStateReuse()).Put(reuseKey, r);
             return r;
         }
         catch (OperationCanceledException) { throw; }
@@ -1262,6 +1901,17 @@ public static class Solver
             return null;
         }
     }
+
+    /// <summary>
+    /// ★ 2026-09-15 Opus 5（I 路，合并把关待办 P0-4）：板厚**约束盒下角的闭式底**（按 J 抬之前）= DiscFloorMm（焊接屈曲／烧穿）向上落图纸格 QuantThickMm。
+    /// 自 <see cref="Solve"/> 起点那一行原样提出（Solve 调它，数逐位不变）；保温搜索每层先把板厚置到它、再 <see cref="ApplySectionFloor"/> 按 J 抬 ——
+    /// 此前保温搜索沿用传入设计的板厚再「只增不减」地抬，传入 0.73/1.26 时三层管保温都停在 0.73/1.26（实测下角是 0.65/1.12 等，deliverable\R48_I_证据与数值核验_2026-09-15_本次开跑于2026-09-15_1752.txt 的 I4 节）。
+    /// </summary>
+    /// ★ 2026-09-18 Opus 5（合并 I×L）：函数体由手抄的 Math.Ceiling 式子改调 <see cref="SnapUpToGridMm"/> ——
+    ///   L 路 2026-09-17 把「向上对齐图纸格」提成了全仓唯一一份写法，这里再抄一遍就是第二份。
+    ///   opt.QuantThickMm &gt; 0（生产缺省 0.01）时两式逐位相同；≤ 0 时新式返回原值、旧式会出 ∞（生产链不会走到）。
+    public static double ThickLowerCornerMm(DesignSpec d, DesignInputs baseIn, SolverOptions opt)
+        => SnapUpToGridMm(d.DiscFloorMm(baseIn), opt.QuantThickMm);
 
     /// <summary>
     /// ★★★★★ **约束盒下角的来源之一：按 J = 10 定的截面**（用户 2026-09-08 设计因果链第 ①② 步）。
@@ -1309,7 +1959,7 @@ public static class Solver
             var g = d.Plate(j, floorD);
             double tNow = Math.Max(d.TabThickMm[j], floorD);        // Plate() 就是这么夹的
             double tF = SectionSizing.PlateThickFloorMm(g, tNow, iA, d.ClampLengthMm, jDesign);
-            tF = Math.Ceiling(tF / q - 1e-9) * q;                     // 图纸格，向上
+            tF = SnapUpToGridMm(tF, q);                                // 图纸格，向上
             floors[j] = tF;
             if (tF > d.TabThickMm[j] + 1e-12)
             {
@@ -1431,8 +2081,91 @@ public static class Solver
             res.Trace.Add("     ⚠ 外层耦合**未收敛** ⇒ 本次场解的每个数都不可引用，当作没解出来");
             return null;
         }
+        // ★★★ 2026-09-15 Opus 5（J 路，合并把关待办 P1-4）：**「判不了」后置标记也要挡**。
+        //   此前只看 Ok／Converged：一片温度场没收敛（或保温分界判不了、压接盖孔／伸进圆盘、管散热表超界）时 Ok、Converged 都还是真，
+        //   LineRunner 只把判据表里吃法兰场的几条标成判不了 —— 而求解器的 PlateSlack 读逐片原始量、回收的 Holds 读 PlateSlack、
+        //   「没有旋钮能治」那一支又把三条逐片判据的名字滤掉 ⇒ 坏场照样被拿去抬旋钮，停机时病因说成别的判据「没有旋钮能治」。
+        //   标记只读 LineRunner.PlateUndeterminedWhy 这一份（与写判据表的五道后置标记同一个定义）。实测见 deliverable/J路_J3_一片温度场不收敛_本次开跑于*.txt。
+        string und = GateWhy(r);
+        if (und.Length > 0)
+        {
+            res.NullWhy = "判不了 —— " + und;
+            res.Trace.Add("     ⚠ 场解带「判不了」标记（" + und + "）⇒ 吃这些场的数一个都不许拿去做决定，当作没解出来");
+            return null;
+        }
         res.NullWhy = "";
         return r;
+    }
+
+    /// <summary>
+    /// 2026-09-15 Opus 5（J 路）：<see cref="Gate"/> 在 Ok、Converged 之后的那一道 —— 全线任一片带「判不了」后置标记的原因（"" = 可用）。
+    /// 只转 <see cref="LineRunner.PlateUndeterminedWhy"/>，不另立判定（门直接调它核对）。
+    /// </summary>
+    public static string GateWhy(LineResult r) => LineRunner.PlateUndeterminedWhy(r, -1);
+
+    /// <summary>
+    /// ★★★★★ R48 M（2026-09-18，Fable 5.1）：**这条逐片判据在这一点上要有多少裕度才算判得了** = 该结果的认证误差（<see cref="LineResult.CertErrK"/>）。
+    /// 只对温度判据（热侧／冷侧，单位 K）；管孔净流入是瓦，与温度容差之间没有实测灵敏度 ⇒ 0（行为与改前逐位相同）。
+    /// 结果为 null／认证误差 NaN（未收敛、没走外层耦合）⇒ 0。全仓唯一读口：Rounds 的 todo、RaiseUntil 的走格、TightenOnJudgeMesh 的 Holds 都读它。
+    /// </summary>
+    public static double CertNeed(LineResult? r, string key)
+    {
+        if (r is null) return 0.0;
+        // 决 103：新热侧（K）同样要认证误差；冷侧是瓦、两条热稳定是倍数 ⇒ 0（与管孔净流入同一条理由）
+        if (key != LineResult.Key.HotOverTc && key != LineResult.Key.ColdUnderTc && key != LineResult.Key.HotOverContact) return 0.0;
+        double e = r.CertErrK;
+        return e > 0 ? e : 0.0;
+    }
+
+    /// <summary>
+    /// ★★★★★ R48 M（2026-09-18，Fable 5.1）：**整跑判词 —— 全仓唯一一份写法**（报告、命令行、界面、慢门的输出文件都读它，不许各抄一句）。
+    /// 四态互斥：可行／判不了（…）／不可行：法兰侧旋钮到顶（再算一次会得到同一句话）／没搜到（跑满轮数仍未全过）。
+    /// 「再算一次会得到同一句话」**只许挂在 HitBound**：判不了的点实测重跑会收敛（r48_U 2026-09-18），说它「同一句话」就是说假话。
+    /// </summary>
+    public static string VerdictOf(SolverResult sr)
+    {
+        if (sr is null) throw new ArgumentNullException(nameof(sr));
+        if (sr.Feasible) return "**全判据通过**（可行）";
+        if (sr.Undetermined) return "**判不了**（" + (sr.UndeterminedWhy.Length > 0 ? sr.UndeterminedWhy : sr.StopWhy).Replace("**", "") + "）—— 既不是可行也不是不可行；这一点没解到收敛：可加轮数上限／细化网格重算";
+        if (sr.HitBound) return "**不可行**（法兰侧旋钮到顶／分派前提不成立／没有旋钮能治 —— 再算一次会得到同一句话，不是「没搜到」；是不是整个设计不可行看停因）";
+        return "**没搜到**（跑满轮数仍未全过 —— 不是不可行的证明，再算一次是有意义的）";
+    }
+
+    /// <summary>R48 M（2026-09-18，Fable 5.1）：下一格 —— <paramref name="cur"/> 之上最近的图纸格点（cur 在格上 ⇒ cur + q；不在格上 ⇒ 向上对齐）。q ≤ 0 ⇒ 不量化时 cur 本身。</summary>
+    public static double NextGridUp(double cur, double q) => q > 0 ? SnapUpToGridMm(cur + 1e-9, q) : cur;
+
+    /// <summary>
+    /// ★★★★★ R48 M（2026-09-18，Fable 5.1）：**格点判决的走格 —— 纯函数**（求解器与门共用；门用一个人造的裕度函数当场验它）。
+    /// 从 <paramref name="start"/>（已评估：裕度 ≥ 0，但可能小于认证误差）起，每次往保守方向走一格（<see cref="NextGridUp"/>），
+    /// 直到该格点「裕度 ≥ 认证误差」= 判得了；超过上界 <paramref name="hi"/> 或走满 <paramref name="maxSteps"/> 格仍判不了 ⇒ 判不了（既不过也不不过）。
+    /// <paramref name="eval"/>(值) 返回 (裕度, 认证误差)；返回 null = 该点解不出来 ⇒ 判不了。
+    /// 返回：Ok=true 时 Value 是判得了的格点；Ok=false 时 Why 是判词、Undetermined=true。
+    /// 痕迹：每走一格发 <see cref="BranchMarks.GridWalkConservative"/>；走到头发 <see cref="BranchMarks.UndeterminedGridAtHi"/>。
+    /// </summary>
+    public static (bool Ok, double Value, string Why, bool Undetermined) WalkConservative(
+        Func<double, (double Slack, double Need)?> eval, double start, (double Slack, double Need) at0,
+        double q, double hi, int maxSteps, string knobName, string critName, Action<string> Log)
+    {
+        if (eval is null) throw new ArgumentNullException(nameof(eval));
+        if (Log is null) throw new ArgumentNullException(nameof(Log));
+        double cur = start; var at = at0;
+        for (int step = 0; ; step++)
+        {
+            if (!(at.Slack < at.Need)) return (true, cur, "", false);   // 裕度 ≥ 认证误差 ⇒ 判得了（认证误差 0 ⇒ 与「裕度 ≥ 0」同义）
+            double next = NextGridUp(cur, q);
+            if (step >= maxSteps || next > hi + 1e-9)
+            {
+                string where = next > hi + 1e-9 ? $"已到上界 {hi:0.000}" : $"已走满 {maxSteps} 格";
+                Log($"     {BranchMarks.UndeterminedGridAtHi}：{knobName} {cur:0.000} 处「{critName}」裕度 {at.Slack:+0.000;-0.000} 小于认证误差 {at.Need:0.000} K，{where}");
+                return (false, cur, $"**判不了**（{knobName} {cur:0.000} 处，「{critName}」裕度 {at.Slack:0.000} K 小于认证误差 {at.Need:0.000} K；{where}仍判不了那么细）"
+                                  + " —— 既不当过也不当不过；这一点没解到收敛：可加轮数上限／细化网格重算", true);
+            }
+            Log($"     {BranchMarks.GridWalkConservative}：{knobName} {cur:0.000} 处「{critName}」裕度 {at.Slack:+0.000;-0.000} 小于认证误差 {at.Need:0.000} K ⇒ 判不了那么细，走到 {next:0.000}");
+            var r = eval(next);
+            if (r is null)
+                return (false, cur, $"**判不了**（{knobName} 往保守方向走到 {next:0.000} 处解不出来）—— 不许拿判不了的点当「过」或「不过」", true);
+            cur = next; at = r.Value;
+        }
     }
 
     /// <summary>违反的硬判据（整体口径，用来兜住**没有旋钮**的那些）。判不了 = 不算过。</summary>
@@ -1446,7 +2179,7 @@ public static class Solver
     ///   「最差那片」——汇总量说得出「有一片超了」，说不出是哪一片，
     ///   而逐片求解必须知道该抬哪一片的旋钮。
     ///
-    /// ⚠ 方向与整体判据同一口径：②′ 须 ≥ 0（越大越好），③ 与 ②″ 越小越好。
+    /// ⚠ 方向与整体判据同一口径：②′ 须 ≥ 0（越大越好），⑧ 冷侧与 ⑦ 热侧越小越好（R48 B 2026-09-14 起逐片裕度只给这三条；②″／③ 降为参考量，没有逐片裕度）。
     ///   写反会把「越限」读成「有余量」，二分就朝错的方向收 —— 本仓库出过这个错。
     /// </summary>
     /// <summary>
@@ -1454,9 +2187,33 @@ public static class Solver
     /// ★ 逐片判据读取**全程序只有这一份** —— <see cref="SensitivityMatrix"/> 也走它，
     ///   不许另立一份「差不多的」读法（那正是本仓库栽过多次的形状）。
     /// </summary>
-    public static double PlateSlack(LineResult? r, string key, int j, double dipMax, double discMax)
+    public static double PlateSlack(LineResult? r, string key, int j, double coldMax, double hotMax)
     {
         if (r is null) return double.NegativeInfinity;
+        // ★ 2026-09-15 Opus 5（J 路，合并把关待办 P1-4）：本片（或管）带「判不了」后置标记 ⇒ 三条逐片判据都判不了（NaN），不许读原始量报一个数。
+        //   与判据表同一个定义（LineRunner.PlateUndeterminedWhy）；没有这条之前，片的温度场没收敛时这里照样给出抽热与热侧、冷侧裕度。
+        if ((key == LineResult.Key.NetFlux || key == LineResult.Key.HotOverTc || key == LineResult.Key.ColdUnderTc
+             || key == LineResult.Key.HotOverContact || key == LineResult.Key.TubeToFlangeHeat
+             || key == LineResult.Key.LocalStab || key == LineResult.Key.FlangeStab)
+            && j >= 0 && j < r.Flanges.Length && LineRunner.PlateUndeterminedWhy(r, j).Length > 0)
+            return double.NaN;
+
+        // ★★★★★ 决 103（2026-09-24）：新判据的逐片裕度。限值读判据表那一行（= LineCase 的限值，判据自己带着 —— 不在这里另抄一个 10／0／1）；
+        //   那一行不在（改回口径的结果被拿来问新判据）⇒ NaN = 判不了，不许编一个限值出来。方向：正 = 过。
+        if (key == LineResult.Key.HotOverContact || key == LineResult.Key.TubeToFlangeHeat
+            || key == LineResult.Key.LocalStab || key == LineResult.Key.FlangeStab)
+        {
+            if (j >= r.Flanges.Length) return double.NegativeInfinity;
+            double lim = r.Find(key)?.Limit ?? double.NaN;
+            if (double.IsNaN(lim)) return double.NaN;
+            var f = r.Flanges[j];
+            double v = key == LineResult.Key.HotOverContact ? f.TMaxC - f.TRootC          // 法兰最高温 − 管接触处（越小越好）
+                     : key == LineResult.Key.TubeToFlangeHeat ? f.QFromTubeW              // 管 → 法兰净热流（越小越好）
+                     : key == LineResult.Key.LocalStab ? f.LocalStabMargin                // 局部热稳定（越大越好；整线收尾后是全格值）
+                     : f.FlangeStabMargin;                                                // 整片热稳定（越大越好；逐片评）
+            if (double.IsNaN(v)) return double.NaN;
+            return key == LineResult.Key.HotOverContact || key == LineResult.Key.TubeToFlangeHeat ? lim - v : v - lim;
+        }
 
         if (key == LineResult.Key.NetFlux)
         {
@@ -1464,17 +2221,20 @@ public static class Solver
             double q = r.Flanges[j].QFromTubeW;
             return double.IsNaN(q) ? double.NaN : q;              // 须 > 0，限值就是 0
         }
-        if (key == LineResult.Key.DiscTemp)
+        // ★★★★★ R48 B（2026-09-14 Opus 5）：热侧、冷侧换成**热偶读数基准**，逐片读数只走 ThermocoupleBasis（判据、报告同一份）。
+        //   旧判法两条（DiscTemp 的「盘峰 − 贴着的管根」、FlangeDip 的「无法兰基线 − 实际」）降为参考量，
+        //   **不再有逐片裕度** —— 求解器不追参考量；传进来就落到下面的 throw，当场响，不许静默给个旧判法的数。
+        if (key == LineResult.Key.HotOverTc)
         {
             if (j >= r.Flanges.Length) return double.NegativeInfinity;
-            var f = r.Flanges[j];
-            double over = f.TDiscMaxC - f.TRootC;
-            return double.IsNaN(over) ? double.NaN : discMax - over;   // 越小越好
+            double h = ThermocoupleBasis.At(r, j).HotK;          // max(盘峰, 舌区峰, 管根较热端) − 基准；判不了 = NaN
+            return double.IsNaN(h) ? double.NaN : hotMax - h;       // 越小越好
         }
-        if (key == LineResult.Key.FlangeDip)
+        if (key == LineResult.Key.ColdUnderTc)
         {
-            double dip = PlateDip(r, j);
-            return double.IsNaN(dip) ? double.NaN : dipMax - dip;      // 越小越好
+            if (j > r.Segments.Length) return double.NegativeInfinity;
+            double cK = ThermocoupleBasis.At(r, j).ColdK;        // 基准 − 管根较冷端；判不了 = NaN
+            return double.IsNaN(cK) ? double.NaN : coldMax - cK;    // 越小越好
         }
         throw new ArgumentOutOfRangeException(nameof(key), key, "没有这条判据的逐片口径");
     }
@@ -1501,23 +2261,8 @@ public static class Solver
         return outp.ToArray();
     }
 
-    /// <summary>
-    /// 第 j 片的③ 值：它负责的那些段端里**最差的那个**
-    /// —— 与整体判据同一口径（两端取较差）。任一端判不了则整体判不了。
-    /// </summary>
-    private static double PlateDip(LineResult r, int j)
-    {
-        var ends = EndsOf(j, r.Segments.Length);
-        if (ends.Length == 0) return double.NaN;
-        double worst = double.NegativeInfinity;
-        foreach (var (seg, aEnd) in ends)
-        {
-            double v = aEnd ? r.Segments[seg].FlangeDipAK : r.Segments[seg].FlangeDipBK;
-            if (double.IsNaN(v)) return double.NaN;
-            worst = Math.Max(worst, v);
-        }
-        return worst;
-    }
+    // R48 B（2026-09-14 Opus 5）：原 PlateDip（第 j 片的旧判法增量温降，读 FlangeDipAK/BK）随旧判法降为参考量一起删掉 ——
+    //   接头两端的映射仍只有 EndsOf 一份，热偶基准读数由 ThermocoupleBasis.At 调它。
 
     private static double MassOf(LineResult r) =>
         r.Segments.Sum(s => s.MassG) + r.Flanges.Sum(f => f.MassG);
@@ -1547,8 +2292,10 @@ public static class Solver
         // ★ 半径读的是**环宽**（离孔多远），不是绝对半径 —— 绝对半径随管壁变，
         //   而旋钮要的是一个与管壁无关的自由量。RingRadiiOf 会把它加回孔半径。
         //   NaN = 用默认规则 ⇒ 与 t₂ 同理，读它时把规则**坐实成数值**。
-        Knob.RingR1 => double.IsNaN(d.RingW1Mm[j]) ? d.RingWidthMm : d.RingW1Mm[j],
-        Knob.RingR2 => double.IsNaN(d.RingW2Mm[j]) ? 2 * d.RingWidthMm : d.RingW2Mm[j],
+        //   ★ R48 L（2026-09-17，Opus 5）：那条默认规则改由几何件 DesignSpec.RingWidthsOf 给 ——
+        //     原来这里与 DesignSpec.RingRadiiOf 各写了一份，而上界要用它，手抄的上界守不住手抄的病。
+        Knob.RingR1 => d.RingWidthsOf(j)[0],
+        Knob.RingR2 => d.RingWidthsOf(j)[1],
         Knob.SlotSpan => j < d.SlotSpanDeg.Length ? d.SlotSpanDeg[j] : 0,
         Knob.TabHoleR => j < d.TabHoleRMm.Length ? d.TabHoleRMm[j] : 0,
         Knob.TabHoleAspect => j < d.TabHoleAspect.Length ? d.TabHoleAspect[j] : 1.0,
@@ -1561,9 +2308,19 @@ public static class Solver
     /// 探针、二分中点、落地、退回都走这一个口 ⇒ 舌片厚永远是几何的函数，不会带着上一个候选的厚度。
     /// baseIn／res 缺一就只写旋钮（旧行为，只给不带电流的调用）。
     /// </summary>
+    /// <summary>
+    /// ★ R48 L（2026-09-17，Opus 5）：**旋钮当前值的唯一读口**（门与诊断用）。
+    /// 与 <see cref="KnobUpperBound"/> 同理：门要读旋钮值就从这里读，不许在门里再抄一份
+    /// 「NaN = 走默认规则」的坐实法。
+    /// </summary>
+    public static double KnobValue(DesignSpec d, Knob k, int j) => Get(d, k, j);
+
     public static void SetKnob(DesignSpec d, Knob k, int j, double v, DesignInputs? baseIn, SolverResult? res)
     {
         Set(d, k, j, v);
+        // ★ 2026-09-25（分叉点钉舌长中点）：孔径／拉长比一动，孔心先按「铜排侧端点 = 舌长中点」重算，再定舌片厚（SizeTongue 读 Plate ⇒ HolesOf ⇒ 孔心）。
+        //   改回（baseIn 缺或开关关）不写孔心，与改前逐位相同。探针与二分不留痕（log = null），每轮开头 FieldPlacement 那一次印。
+        if (baseIn is not null && k is (Knob.TabHoleR or Knob.TabHoleAspect)) PinTabHoleForkAtMid(d, baseIn, j, null);
         if (baseIn is null || res?.DesignCurrent is not { } dc) return;
         if (k is not (Knob.TabHoleR or Knob.TabHoleAspect or Knob.SlotSpan)) return;
         double iA = j < dc.PlateA.Length ? dc.PlateA[j] : 0;
@@ -1594,6 +2351,15 @@ public static class Solver
     }
 
     /// <summary>
+    /// ★ R48 L（2026-09-17，Opus 5）：**旋钮上界的唯一读口**（门与诊断用）。
+    /// 生产路径自己调 <c>HiOfFor</c>；门要验上界就从这里读，
+    /// **不许在门里再抄一份上界配方** —— 手抄的门守不住手抄的病。
+    /// </summary>
+    public static double KnobUpperBound(DesignSpec d, DesignInputs baseIn, SolverOptions o, Knob k, int j,
+                                        SolverResult? res = null)
+        => HiOfFor(d, baseIn, o, k, j, res);
+
+    /// <summary>
     /// ★★★★★ **有几何依赖的上界走这里**（2026-09-05）。
     ///
     /// 大多数旋钮的上界是常数（工艺上界）。但**槽张角不是** ——
@@ -1612,6 +2378,36 @@ public static class Solver
         double floorD = d.DiscFloorMm(baseIn);
         double iA = res?.DesignCurrent is { } dc && j < dc.PlateA.Length ? dc.PlateA[j] : 0;
         if (k == Knob.TabHoleR) return HoleRadiusUpperMm(d, baseIn, o, j, res);
+        // ★★★★★ R48 L（2026-09-17，Opus 5）：**两级台阶的半径是一对耦合量，上界必须互相约束。**
+        //
+        //   病（W08 细网格档第一遍实测，deliverable/R48_L_端到端_细网格_W08_本次开跑于2026-09-17_093013.txt）：
+        //   内级环宽 r₁ 的上界原来是常数 o.RingR1HiMm = 10 mm，**与外级 r₂ 无关**。求解器把它抬到 10 ⇒
+        //   r₁ = 孔 25.8 + 10 = **35.8**，而外级还停在默认 r₂ = 孔 + 2×3 = **31.8** ⇒ r₁ > r₂，
+        //   DesignSpec.RingRadiiOf 抛「第 1 片的环台阶半径没有递增」，那一次场解整个失败。
+        //   求解器把它渲染成「抬到上界时解不出来」，并自评「多半是这一级被抬到把网格/回路搞坏了，
+        //   **该修的是这根旋钮的上界**」—— 自评是对的，就是这里。
+        //   ⚠ 后果不止「白花一次场解」：那根旋钮被当成**不成立的候选**淘汰，于是片1 的
+        //     「最热铂高出热偶读数」报成「法兰侧候选都不成立」⇒ 结构性停机 ⇒ 第二遍按设计不做。
+        //     一个上界写错，读出来的是「这个设计不可行」。
+        //
+        //   修：r₁ 的上界 = **当前 r₂ − 一格图纸格**（比一格还窄就不是两级台阶，是一级）。
+        //   「当前 r₂」从几何件读（<see cref="DesignSpec.RingWidthsOf"/>），
+        //   **不在这里手抄那条「NaN = 2×RingWidthMm」的默认规则**。
+        //   门：R48LRingRadiusCouplingGateTests。
+        //
+        //   ⚠ **外级 r₂ 这一侧没有对称地加「不许长出盘缘」的上界**，而且这是查过之后才决定的：
+        //     PlateCurrent2D.ThicknessAt 先判舌片、判不出舌片才按半径查阶梯 ——
+        //     舌片有自己的厚度（TongueThickMm 非 NaN，求解器每遍开头都会闭式定）时，
+        //     盘缘之外的 r₂ 确实一点厚度都不改（实测逐点差 0）；
+        //     但舌片厚是 NaN（与基板同厚）时，阶梯**会管到舌片上**，盘缘之外的 r₂ 照样改几何（实测逐点差非 0）。
+        //     ⇒ 「r₂ 超过盘径就没有效果」只在一个条件下成立，写成无条件上界会**静默改掉**另一类设计的几何。
+        //     两种情形的实测都在 R48LRingRadiusCouplingGateTests 里逐点量着；要不要加这条，留给下一轮按实测定。
+        if (k == Knob.RingR1)
+        {
+            double band = QuantOf(o, k);                     // 图纸格 —— 两级至少差一格才画得出两级
+            var w = d.RingWidthsOf(j);                       // 环宽的默认规则只有几何件那一份
+            return Math.Max(0, Math.Min(HiOf(o, k), w[1] - band));
+        }
         if (k != Knob.SlotSpan) return HiOf(o, k);
         double td = Math.Max(j < d.TabThickMm.Length ? d.TabThickMm[j] : 0, floorD);
         double weld = Math.Max(td, d.WallMm);
@@ -1742,7 +2538,7 @@ public static class Solver
     /// </summary>
     private static (LineResult? R, double HiProbe) ProbeShapeFamily(
         DesignSpec d, DesignInputs baseIn, SolverOptions opt, int j, Knob k, string key, int[] family,
-        double lo, double before, double mass0, double dipMax, double discMax,
+        double lo, double before, double mass0, double coldMax, double hotMax,
         SolverResult res, Action<string> Log, CancellationToken cancel, IProgress<string>? inner)
     {
         int shape0 = GetShape(d, k, j);
@@ -1782,7 +2578,7 @@ public static class Solver
             if (r is null) { lines.Add($"{Name(s)} 抬到上界 {hs:0.###} 时解不出来（{res.NullWhy}）"); continue; }
             if (anyR is null) { anyR = r; anyHi = hs; }
             if (s == shape0) { baseR = r; baseHi = hs; }
-            double after = PlateSlack(r, key, j, dipMax, discMax);
+            double after = PlateSlack(r, key, j, coldMax, hotMax);
             double dSlack = after - before;
             double dMass = double.IsNaN(mass0) ? double.NaN : MassOf(r) - mass0;
             bool closes = after >= 0;
@@ -1807,6 +2603,38 @@ public static class Solver
     // ══ R12：场定孔位 ══════════════════════════════════════════════════════════════
 
     /// <summary>
+    /// ★ 2026-09-25（业主 2026-09-25 12:5x「两条腿并到同一根铜排，分叉点先给定舌长中点」；全局解决方案 §9.4 第一步、§9.6 第一条）：
+    /// 第 j 片有舌孔时把孔心写成「铜排侧端点 = 舌长中点」（<see cref="DesignSpec.TabHoleXForBusbarEndAt"/>，舌长中点 <see cref="DesignSpec.TabMidXMm"/>），
+    /// 落 0.5 mm 图纸格（与 FieldPlacement 场定孔心同一格）。谁调：SetKnob 每动孔径／拉长比、FieldPlacement 每轮开头 ⇒ 同一个函数、同一份公式。
+    /// 开关 <see cref="DesignInputs.TabHoleBusbarEndAtTabMid"/> 关（改回）或本片无孔 ⇒ 不写、返回 false。
+    /// 返回：孔心真的变了（含从 NaN 坐实）。写了就留痕 <see cref="BranchMarks.TabHoleForkAtMid"/>；钉点落进压接段或盘侧端越过切点时另印一句（不静默、不改钉点）。
+    /// </summary>
+    public static bool PinTabHoleForkAtMid(DesignSpec d, DesignInputs baseIn, int j, Action<string>? log)
+    {
+        if (!baseIn.TabHoleBusbarEndAtTabMid) return false;
+        if (j < 0 || j >= d.TabHoleXMm.Length || !(d.TabHoleREffective(j) > 0)) return false;
+        double xMid = d.TabMidXMm();
+        var (xc, rot, note) = d.TabHoleXForBusbarEndAt(j, xMid);
+        if (double.IsNaN(xc)) return false;
+        double xNew = Math.Round(xc * 2) / 2;
+        double xOld = d.TabHoleXMm[j];
+        bool changed = double.IsNaN(xOld) || Math.Abs(xNew - xOld) > 1e-12;
+        if (changed) d.TabHoleXMm[j] = xNew;
+        if (log is not null)
+        {
+            var (toBus, toDisc) = d.TabHoleHalfLenMm(j, rot);
+            double xBus = xNew - toBus, xDisc = xNew + toDisc;
+            double xClamp = -d.TabLengthMm + d.ClampLengthMm, xTan = d.TangentXMm();
+            string warn = (xBus < xClamp ? $"；⚠ 铜排侧端 {xBus:0.00} 落进压接段（压接段边界 x = {xClamp:0.00}）" : "")
+                        + (xDisc > xTan ? $"；盘侧端 {xDisc:0.00} 越过切点 {xTan:0.00}（宽端开到盘）" : "");
+            log.Invoke(BranchMarks.TabHoleForkAtMid + $"：片{j} 孔心 x = {xNew:0.0}（铜排侧端 {xBus:0.00}，舌长中点 {xMid:0.00}，盘侧端 {xDisc:0.00}，朝向 {rot:0}°，"
+                     + $"孔径 {d.TabHoleREffective(j):0.00}、拉长比 {(j < d.TabHoleAspect.Length ? d.TabHoleAspect[j] : 1.0):0.00}、形状族 {d.TabHoleSidesOf(j)}；{note}；"
+                     + (changed ? (double.IsNaN(xOld) ? "由默认规则坐实" : $"原 {xOld:0.0}") : "未变") + warn + "）");
+        }
+        return changed;
+    }
+
+    /// <summary>
     /// ★★★★★ **每轮开头从最新收敛的场定位置**（R12，用户 2026-09-08 设计因果链第 ③ 步）。
     /// 逐片：移除优先级 P = 导热贡献 ÷ 电流密度（<see cref="RemovalPriority"/>，与 2026-09-05 的量法同一份）；
     ///   · 圆盘槽槽心角 = 槽带内 P 的面积加权平均最高的角向（窗口 ±max(15°, 张角/2)），落 1° 格；
@@ -1818,9 +2646,14 @@ public static class Solver
     public static bool FieldPlacement(DesignSpec d, DesignInputs baseIn, LineResult? last, Action<string>? log)
     {
         int np = d.TabThickMm.Length;
+        bool pin = baseIn.TabHoleBusbarEndAtTabMid;
         if (last is null || !last.Ok)
         {
-            log?.Invoke(BranchMarks.FieldPlacement + "：还没有收敛的场 ⇒ 槽心 0°（背对舌片）／舌孔取自由段中点（默认规则）；第一次场解之后按场重定");
+            log?.Invoke(BranchMarks.FieldPlacement + "：还没有收敛的场 ⇒ 槽心 0°（背对舌片）／舌孔"
+                      + (pin ? "铜排侧端点钉舌长中点（有孔的片现在就钉；无孔的片开孔时钉）" : "取自由段中点（默认规则）")
+                      + "；第一次场解之后按场重定" + (pin ? "槽心，孔心不按场定" : ""));
+            // 有孔的片现在就钉（Solve 起点已钉过一遍，这里通常「未变」）；没有收敛的场就没有基准可重解，照旧返回 false。
+            if (pin) for (int j = 0; j < np; j++) PinTabHoleForkAtMid(d, baseIn, j, log);
             return false;
         }
         double floorD = d.DiscFloorMm(baseIn);
@@ -1869,7 +2702,11 @@ public static class Solver
             // ★ R23（2026-09-10）：场给的孔心**采用**（开孔前每轮按最新场定；开孔后冻结，与槽心同规则）。
             //   09-05 那次把舌根孔位实测成最坏，是舌片厚不变时测的 —— J 超正是用户说的那一步，
             //   现在开孔就重定舌片厚（SetKnob → SizeTongue），规则可以启用。
-            if (!hasHole && j < d.TabHoleXMm.Length && !double.IsNaN(xNew)) d.TabHoleXMm[j] = xNew;
+            // ★ 2026-09-25（业主 12:5x「分叉点先给定舌长中点」）：开关开时孔心不由场定 —— 场给的位置只印对照，
+            //   孔心由 PinTabHoleForkAtMid 按「铜排侧端点 = 舌长中点」写（有孔的片每轮开头重算一遍；改回 = 场定，逐位同改前）。
+            bool pinnedNow = false;
+            if (pin) { pinnedNow = hasHole && PinTabHoleForkAtMid(d, baseIn, j, log); if (pinnedNow) changed = true; }
+            else if (!hasHole && j < d.TabHoleXMm.Length && !double.IsNaN(xNew)) d.TabHoleXMm[j] = xNew;
             else if (hasHole) xNew = xOld;
 
             // 当地电流方向：每轮都算（形状族里「长椭圆·顺当地电流」要拿它当长轴），梯度退化 ⇒ NaN（那一员就不参赛）
@@ -1888,7 +2725,9 @@ public static class Solver
             if (hasSlot && d.DiscCutShapeOf(j) == 2 && !(double.IsNaN(rotOld) && double.IsNaN(rotNew)) && !(Math.Abs(rotOld - rotNew) < 0.5)) changed = true;
 
             parts.Add($"片{j} 槽心 {thNew:0}°" + (double.IsNaN(rotNew) ? "" : $"（当地电流 {rotNew:0}°）")
-                    + (hasHole ? $"／舌孔已开，孔心冻结在 x={xOld:0.0}" : $"／舌孔孔心按场定 x={xNew:0.0}（开孔前每轮更新）"));
+                    + (pin ? (hasHole ? $"／舌孔已开，孔心钉舌长中点 x={d.TabHoleCenterXMm(j):0.0}{(pinnedNow ? "（本轮重钉）" : "")}（场给 x={xNew:0.0}，只印不用）"
+                                      : $"／舌孔未开，开孔时孔心钉舌长中点（场给 x={xNew:0.0}，只印不用）")
+                           : (hasHole ? $"／舌孔已开，孔心冻结在 x={xOld:0.0}" : $"／舌孔孔心按场定 x={xNew:0.0}（开孔前每轮更新）")));
         }
         log?.Invoke(BranchMarks.FieldPlacement + "：" + string.Join("　", parts)
                   + "（移除优先级 = 导热贡献 ÷ 电流密度，取最新收敛的场；"
@@ -1914,6 +2753,26 @@ public static class Solver
         Knob.TabHoleAspect => 3.0,
         _ => throw new ArgumentOutOfRangeException(nameof(k)),
     };
+
+    /// <summary>
+    /// ★ R48 L（2026-09-17，Opus 5）：**向上对齐到图纸格的唯一一份写法**。
+    ///
+    /// 原来这一行 <c>Math.Ceiling(v / q - 1e-9) * q</c> 在四处各抄一份（下角对齐、回收的二分点、
+    /// 抬升解出来之后对齐、按 J 定的板厚下界）。格子从 0.1 改到 0.5 时，
+    /// 「四处是不是都改对了」没有任何一道门守得住 —— 手抄的门守不住手抄的病。
+    /// 现在四处都调这一个函数，门也从这里读。
+    ///
+    /// 向**上**取：三处用它的地方都是安全侧（下界只能更高、判据对该旋钮递增）。
+    /// <paramref name="q"/> ≤ 0 = 不量化，原样返回。
+    /// </summary>
+    public static double SnapUpToGridMm(double v, double q)
+        => q > 0 ? Math.Ceiling(v / q - 1e-9) * q : v;
+
+    /// <summary>
+    /// ★ R48 L（2026-09-17，Opus 5）：**图纸格的唯一读口**（门与诊断用）。
+    /// 生产路径自己调 <c>QuantOf</c>；门要验格子就从这里读，不许在门里再抄一份「哪根旋钮走哪张格子」。
+    /// </summary>
+    public static double KnobQuantum(SolverOptions o, Knob k) => QuantOf(o, k);
 
     /// <summary>图纸格。求解**直接落在这张格子上**，不是解完再四舍五入。</summary>
     private static double QuantOf(SolverOptions o, Knob k) => k switch
@@ -1955,8 +2814,25 @@ public sealed class SolverResult
     public readonly List<string> Trace = new();
     /// <summary>场解次数 —— 求根的**真实成本**，比「轮数」诚实。</summary>
     public int Solves;
-    /// <summary>true = 某旋钮顶到上界／分派前提不成立 ⇒ **不可行的证明**，不是搜索没找到。</summary>
+    /// <summary>
+    /// true = 某旋钮顶到上界／分派前提不成立／没有旋钮能治 ⇒ **法兰侧旋钮到顶的证明**（再算一次会得到同一句话），不是搜索没找到。
+    /// ★★★★★ R48 M（2026-09-18，Fable 5.1）：**与 <see cref="Undetermined"/> 互斥** —— 场解解不出来／外层耦合未收敛／格点上裕度小于认证误差走到上界仍判不了，
+    ///   这些一律置 <see cref="Undetermined"/>，**不置这一位**。此前 Rounds 里「这一轮有一片 bad」一律 HitBound=true，
+    ///   于是 W08 片3 舌保温 13.036 处「外层耦合未收敛 ⇒ 二分中止」被报成「不可行」「再算一次会得到同一句话」——
+    ///   而实测同一点重跑两次都 98 轮收敛（r48_U/deliverable/R48_U_不收敛点诊断_总表_本次开跑于2026-09-18_163414.txt）。说的和事实不一样，出在位上。
+    /// </summary>
     public bool HitBound;
+
+    /// <summary>
+    /// ★★★★★ R48 M（2026-09-18，Fable 5.1）：**判不了** —— 既不是可行也不是不可行，再算一次**不一定**得到同一句话。
+    /// 置位的出口：抬前判不了（BranchMarks.UndeterminedBefore）、上界判不了（UndeterminedAtHi）、二分中点判不了（UndeterminedBisect）、
+    /// 格点裕度小于认证误差走到上界／走满格数仍判不了（UndeterminedGridAtHi）、每轮开头场解解不出来、逐片裕度是 NaN、判据表里有判不了的判据。
+    /// 下游三处（门在下游）：报告判词 <see cref="Solver.VerdictOf"/>「判不了（…）」、界面指路（FlowState.SolverUndetermined ⇒ 不推去搜形状）、可行性（Feasible 恒 false）。
+    /// </summary>
+    public bool Undetermined;
+
+    /// <summary>判不了的那一句：哪片哪根旋钮哪个值处、裕度 x 小于认证误差 y／场解解不出来的原因。</summary>
+    public string UndeterminedWhy = "";
 
     /// <summary>
     /// **第二遍（细网格）求根做了没有**。false ⇒ 这个解只在导航网格上成立、
@@ -1966,6 +2842,9 @@ public sealed class SolverResult
 
     /// <summary>第二遍用的细网格 mm（0 = 没做第二遍）。</summary>
     public double FineMmUsed;
+
+    /// <summary>F7′（2026-09-23，决 29 自适应）：细区半径计划的终态（初值、余量₀、每次放大、终值；拒答时 Refused 非空）。null = 粗筛（不经计划）。</summary>
+    public FineRadiusPlan? RadiusPlan;
     public string StopWhy = "";
 
     /// <summary>
@@ -1981,6 +2860,19 @@ public sealed class SolverResult
 
     /// <summary>最近一次算的设计电流（20 °C/h 升温峰值，逐片）—— 下角与孔/槽上界都从它来。</summary>
     public Core.DesignCurrent.Result? DesignCurrent;
+
+    /// <summary>
+    /// 2026-09-24（搜形状算力工程 B）：<see cref="SolverOptions.SkipRadiusGrowthAfterFinalCheck"/> = true 且终局复核后细区没盖住热点时，
+    /// **本该**放大到的细区半径 mm（没放大、没重做）；NaN = 没发生（选项关，或盖住了，或走的是拒答／判不了那一支）。
+    /// </summary>
+    public double SkippedRadiusGrowthToMm = double.NaN;
+    /// <summary>上一项的放大理由原句（<see cref="FineRadiusStep.Why"/>）；空 = 没发生。</summary>
+    public string SkippedRadiusGrowthWhy = "";
+
+    /// <summary>2026-09-24（搜形状算力工程 A）：同状态复用次数 = 省下的场解次数（<see cref="SolverOptions.ReuseSameStateSolves"/> 关时恒 0）。</summary>
+    public int SameStateReuses;
+    /// <summary>同状态复用的缓存（一次 Solve 一份，第一次存结果时才建）。</summary>
+    internal SameStateReuse? SameState;
 
 }
 
@@ -2033,15 +2925,44 @@ public sealed class SolverOptions
     // ── **图纸格**（制造分辨率）。求解落在它上面，所以交付值就是被判过的值。
     /// <summary>板厚按 0.01 mm 出图。</summary>
     public double QuantThickMm = 0.01;
-    /// <summary>舌保温按 0.1 mm 出图。</summary>
-    public double QuantInsulMm = 0.1;
+    /// <summary>
+    /// ★★★★★ **舌保温按 0.5 mm 出图 = 包法每层 0.5 mm**（用户 2026-09-14／2026-09-17，Opus 5 落）。
+    ///
+    /// 用户 2026-09-14 定的是**包法**：保温一层一层缠，每层 0.5 mm
+    /// （<see cref="InsulationSearch.LayerMm"/> 已按此，全仓唯一一份层厚）。
+    /// 而这里原来写 0.1 ⇒ 求解器**解出来的舌保温落在现场包不出来的值上**
+    /// （实测 W08 0.1 格的解：5.10／2.40／3.60／10.40 mm —— 四片没有一片是 0.5 的倍数）。
+    /// 用户 2026-09-17 原话：「求解器默认格子改成 0.5」。
+    ///
+    /// ══ 取值集合（**不是**「0.5 的倍数」这一句话就完了）
+    ///   下角 <see cref="InsLoMm"/> = 0.30 mm 是**裸舌**（= 0 层，什么都不缠时的等效厚度），
+    ///   它**不在** 0.5 的格子上，也不该被挪到格子上（挪上去就等于「不缠也算缠了一层」）。
+    ///   ⇒ 合法值 = {裸舌 0.30} ∪ {0.5 的正整数倍}。按包法说就是「0 层」或「n 层」。
+    ///   求根路径上只有两个出口会写这根旋钮的值：
+    ///     · <c>RaiseUntil</c> 抬上去 → <see cref="Solver.SnapUpToGridMm"/> ⇒ 一定是 0.5 的倍数；
+    ///     · <c>TightenOnJudgeMesh</c> 回收 → 退到下角（裸舌 0.30）或退到某个 0.5 的倍数。
+    ///   门：R48LQuantInsul05Tests（默认值、合法集合、回收路径、注入改回 0.1 ⇒ 红）。
+    ///
+    /// ══ 二分容差要**比格子细**，不许跟着改成 0.5
+    ///   <see cref="BisectTolMm"/> = 0.005 mm。二分先把根收到 0.005 mm，再**向上**对齐到 0.5 的格子
+    ///   ⇒ 拿到的是「包得出来的最少层数」。若把二分也早停在格子上（hi−lo ≤ 0.5 就收工），
+    ///   hi 可能停在根的上方一格内，对齐后**多给一层**（例：真根 2.05，早停 hi=2.55 ⇒ 3.0 而不是 2.5）。
+    ///   多缠一层不花铂，但它不是最小可行点，也不是「解与初值无关」的那个解。⇒ 容差不动。
+    /// </summary>
+    public double QuantInsulMm = 0.5;
     /// <summary>环倍率按 0.01 出图。</summary>
     public double QuantRing = 0.01;
 
-    /// <summary>二分停在旋钮分辨率上。0.005 mm 严于制造量化的 0.01 mm。</summary>
+    /// <summary>二分停在旋钮分辨率上。0.005 mm 严于制造量化的 0.01 mm（舌保温 0.5 mm 的格子同理，见上）。</summary>
     public double BisectTolMm   = 0.005;
     public double BisectTolRing = 0.005;
     public int    BisectMaxIter = 14;
+    /// <summary>
+    /// ★ R48 M（2026-09-18，Fable 5.1）：格点判决往保守方向**最多走几格**（Solver.WalkConservative）。
+    /// 走格只在「格点上裕度 ≥ 0 但小于认证误差」时发生；一格通常就够（舌保温 0.5 mm 一格改管根裕度约 2 K ≫ 认证误差 0.05 K）。
+    /// 上限是成本闸：某条判据对这根旋钮几乎不灵敏时，不许一格一格解到上界（板厚 0.01 mm 格到 6 mm 是几百次场解）；走满仍判不了 ⇒ 整跑判不了（不过也不不过）。
+    /// </summary>
+    public int    CertWalkMaxSteps = 10;
     /// <summary>逐片之后一轮要处理的抬升更多，轮数要给够。</summary>
     public int    MaxRounds     = 60;
 
@@ -2085,8 +3006,39 @@ public sealed class SolverOptions
     /// </summary>
     public double FineMm;
 
-    /// <summary>细网格的作用半径 mm。0 = 沿用 LineCase 的默认。</summary>
+    /// <summary>细网格的作用半径 mm。0 = 由细区半径计划给（F7′ 2026-09-23 起；粗筛 ScreenCoarseMm &gt; 0 时仍沿用 LineCase 的默认）。</summary>
     public double FineRadiusMm;
+
+    /// <summary>
+    /// F7′（2026-09-23，决 29 自适应）：细区半径计划（<see cref="MeshAdapt.FineRadiusPlanOf"/>）。null = 按设计与工艺参数算（<see cref="MeshVerify.FineRadiusPlanFor(DesignSpec, DesignInputs, double, bool)"/>）；
+    /// 门传改回计划（旧规则、不放大）或 adaptive = false 的计划做归因。<see cref="Solver.Solve"/> 会把放大后的计划写回自己克隆的那份选项。
+    /// </summary>
+    public FineRadiusPlan? RadiusPlan;
+
+    /// <summary>
+    /// F7′ 审查 R-1（2026-09-23）：**只供门用的改回开关，生产不传**。true 且调用方没给半径（FineRadiusMm = 0、RadiusPlan = null）⇒ 不造细区半径计划，
+    /// 导航求根落回算例缺省半径（<see cref="LineCase.MeshFineRadiusMm"/> = 50），不核热点、不放大 —— 与 F7′ 之前（cff38c6）同一条路（审查 P6 那一改的改回）。
+    /// </summary>
+    public bool NavUsesCaseDefaultRadius;
+
+    /// <summary>
+    /// 2026-09-24（搜形状算力工程 B，全局解决方案第 2 版 §4 L1、§5）：**只供粗筛**。true ⇒ 终局复核后细区没盖住热点时不放大、不重做，
+    /// 把本该放大到的半径记进 <see cref="SolverResult.SkippedRadiusGrowthToMm"/>。缺省 false = 生产逐位不变（改回参数就是它）；赢家精算不传。
+    /// 不覆盖：导航遍之后、第二遍之前那一处放大（只在 FineMm &gt; 0 时发生，粗筛没有第二遍）。
+    /// </summary>
+    public bool SkipRadiusGrowthAfterFinalCheck;
+
+    /// <summary>
+    /// 2026-09-24（搜形状算力工程 A）：true ⇒ 同一次 Solve 里算例全字段指纹相同的整线解直接复用（<see cref="SameStateReuse"/>），不再解场。
+    /// 缺省 false = 改前逐位（改回参数就是它）。逐位门：开与关在同一设计上的旋钮终值、判据表、轨迹逐位相同，只有场解次数不同（R48SolverScreenCostTests.A慢_…；快门 A_源码…钉「关时与改前逐字相同」）。
+    /// </summary>
+    public bool ReuseSameStateSolves;
+
+    /// <summary>
+    /// **只供门／探针用，生产不传**：每次整线解（第二个参数 false）或同状态复用（true）之前回调一次，传入算例。
+    /// 归因探针在回调里取调用栈，数「每轮每一步各解几次」。不改任何结果。
+    /// </summary>
+    internal Action<LineCase, bool>? SolveProbe;
 
     public SolverOptions Clone() => (SolverOptions)MemberwiseClone();
 }

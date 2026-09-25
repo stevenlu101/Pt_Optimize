@@ -1,0 +1,53 @@
+// 决 103 求解器分派走通探针源码副本（临时档，不入库为门；在 wtCRIT 上跑出 deliverable/R48_决103_求解器分派走通探针_W08导航遍_本次开跑于2026-09-24_183135.txt）
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading;
+using PtOptimize.Core;
+using Xunit;
+using Xunit.Abstractions;
+
+namespace PtOptimize.Tests;
+
+// 决 103 求解器分派走通探针（临时档，只量不判；源码副本随证据入 deliverable，不入库为门）。
+// W08 现役几何，Solver.Solve 只跑导航遍（FineMm = 0），从约束盒下角起；进度逐行落盘；挂钟闸 PT_D103_CAP_MIN（缺省 75 分钟）到点取消。
+// 看的是：新判据下每轮「哪条判据红 ⇒ 候选哪几根 ⇒ 实测挑了哪根 ⇒ 抬没抬起来」，以及停因。
+public class ZZCriteriaSwapSolverProbeTests
+{
+    private readonly ITestOutputHelper _o;
+    public ZZCriteriaSwapSolverProbeTests(ITestOutputHelper o) { _o = o; }
+
+    [Trait("速度", "慢")]
+    [Fact]
+    public void 决103_求解器分派走通_W08导航遍()
+    {
+        double capMin = double.TryParse(Environment.GetEnvironmentVariable("PT_D103_CAP_MIN"), out var cm) ? cm : 75;
+        string file = DeliverableOut.Stamped("R48_决103_求解器分派走通探针_W08导航遍.txt");
+        void W(string s) { lock (file) File.AppendAllText(file, s + Environment.NewLine, new UTF8Encoding(false)); }
+        File.WriteAllText(file, "", new UTF8Encoding(true));
+        W("决 103 求解器分派走通探针（只量不判）　W08 现役几何　Solver.Solve 导航遍（FineMm = 0），约束盒下角起；生产口径（决103）");
+        W($"开跑 {DateTime.Now:yyyy-MM-dd HH:mm:ss}　Linux 镜像、待 Windows 重录　工作树 {HandoverDoc.Root()}　loadavg {File.ReadAllText("/proc/loadavg").Trim()}　挂钟闸 {capMin} 分钟（到点取消，轨迹照留）");
+        var d = R48NMeshGateTests.Design("W08").Clone();
+        var p = new DesignInputs();
+        var opt = new SolverOptions { FineMm = 0 };
+        var sw = Stopwatch.StartNew();
+        var prog = new Progress<string>(s => W($"[{sw.Elapsed.TotalMinutes,6:0.0} min] {s}"));
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(capMin));
+        SolverResult? sr = null; string err = "";
+        try { sr = Solver.Solve(d, p, opt, new SyncProgress(s => W($"[{sw.Elapsed.TotalMinutes,6:0.0} min] {s}")), cts.Token); }
+        catch (OperationCanceledException) { err = $"到挂钟闸 {capMin} 分钟取消（轨迹到此为止）"; }
+        catch (Exception ex) { err = $"{ex.GetType().Name}：{ex.Message}"; }
+        W("");
+        W($"收尾 {DateTime.Now:yyyy-MM-dd HH:mm:ss}　用时 {sw.Elapsed.TotalMinutes:0.0} 分钟　" + (sr is null ? "没有结果：" + err
+            : $"判词 {Solver.VerdictOf(sr)}　停因 {sr.StopWhy}　场解次数 {sr.Solves}"));
+        _o.WriteLine(file);
+    }
+
+    sealed class SyncProgress : IProgress<string>
+    {
+        readonly Action<string> _a; public SyncProgress(Action<string> a) { _a = a; }
+        public void Report(string value) => _a(value);
+    }
+}

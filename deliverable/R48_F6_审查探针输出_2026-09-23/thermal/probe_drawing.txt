@@ -1,0 +1,16 @@
+design 0 scale 1 rh 25.8 2πrh 162.106
+  解析Build: cells 1026 孔面总长 162.106 弧 162.106 非弧孔面 0(0mm) 孔圆3mm内Free直边 0 inside 0 floor 0 | 发热 964.701 抽热 16.9831 裕度 5.966(L 3.35) 旧锚点裕度 6.151(L 3.25) conv True
+  图纸F6c开: cells 1030 孔面总长 162.106 弧 162.106 非弧孔面 0(0mm) 孔圆3mm内Free直边 0 inside 0 floor 0 | 发热 964.521 抽热 17.6609 裕度 6(L 3.35) 旧锚点裕度 6.163(L 3.26) conv True
+  图纸F6c关: cells 1030 孔面总长 162.106 弧 162.106 非弧孔面 0(0mm) 孔圆3mm内Free直边 0 inside 0 floor 0 | 发热 964.521 抽热 17.6609 裕度 6(L 3.35) 旧锚点裕度 6.163(L 3.26) conv True
+design 0 scale 0.5 rh 25.8 2πrh 162.106
+  解析Build: cells 3684 孔面总长 162.106 弧 162.106 非弧孔面 0(0mm) 孔圆3mm内Free直边 0 inside 0 floor 0 | 发热 961.635 抽热 17.671 裕度 10.285(L 1.81) 旧锚点裕度 10.884(L 1.71) conv True
+  图纸F6c开: cells 3688 孔面总长 162.106 弧 162.106 非弧孔面 0(0mm) 孔圆3mm内Free直边 0 inside 0 floor 0 | 发热 961.605 抽热 17.7652 裕度 10.263(L 1.81) 旧锚点裕度 10.905(L 1.7) conv True
+  图纸F6c关: cells 3688 孔面总长 162.106 弧 162.106 非弧孔面 0(0mm) 孔圆3mm内Free直边 0 inside 0 floor 0 | 发热 961.605 抽热 17.7652 裕度 10.263(L 1.81) 旧锚点裕度 10.905(L 1.7) conv True
+design 1 scale 1 rh 25.6 2πrh 160.85
+  解析Build: cells 1034 孔面总长 160.85 弧 160.85 非弧孔面 0(0mm) 孔圆3mm内Free直边 0 inside 0 floor 0 | 发热 1497.343 抽热 -45.2076 裕度 NaN(L NaN) 旧锚点裕度 NaN(L NaN) conv True
+  图纸F6c开: cells 1038 孔面总长 160.85 弧 160.85 非弧孔面 0(0mm) 孔圆3mm内Free直边 0 inside 0 floor 0 | 发热 1497.807 抽热 -45.4915 裕度 NaN(L NaN) 旧锚点裕度 NaN(L NaN) conv True
+  图纸F6c关: cells 1038 孔面总长 160.85 弧 160.85 非弧孔面 0(0mm) 孔圆3mm内Free直边 0 inside 0 floor 0 | 发热 1497.807 抽热 -45.4915 裕度 NaN(L NaN) 旧锚点裕度 NaN(L NaN) conv True
+design 1 scale 0.5 rh 25.6 2πrh 160.85
+  解析Build: cells 3708 孔面总长 160.85 弧 160.85 非弧孔面 0(0mm) 孔圆3mm内Free直边 0 inside 0 floor 0 | 发热 1490.459 抽热 -44.0934 裕度 NaN(L NaN) 旧锚点裕度 NaN(L NaN) conv True
+  图纸F6c开: cells 3712 孔面总长 160.85 弧 160.85 非弧孔面 0(0mm) 孔圆3mm内Free直边 0 inside 0 floor 0 | 发热 1490.438 抽热 -44.0075 裕度 NaN(L NaN) 旧锚点裕度 NaN(L NaN) conv True
+  图纸F6c关: cells 3712 孔面总长 160.85 弧 160.85 非弧孔面 0(0mm) 孔圆3mm内Free直边 0 inside 0 floor 0 | 发热 1490.438 抽热 -44.0075 裕度 NaN(L NaN) 旧锚点裕度 NaN(L NaN) conv True

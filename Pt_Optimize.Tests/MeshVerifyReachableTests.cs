@@ -204,6 +204,64 @@ public class MeshVerifyReachableTests
     /// ⚠ 本条不只盯复核这一个：凡是本页 `Btn(...)` 造出来的 ToolStripButton，
     ///   都必须能在源码里找到对应的挂载（`tool.Items.Add` 或 `internal ... => _btnX` 供 MainForm 挂）。
     /// </summary>
+    /// <summary>
+    /// ★ R47 C（2026-09-13）：**.3dm 模式下复核用的 LineCase 走图纸路径** —— VerifyMeshAsync 不许再拿 PageToDesignSpec
+    /// 造的解析板去复核（那是用禁用控件的残值、把厚度标度当板厚造的另一个零件）。
+    /// 源码门：.3dm 分支经 VerifyFactory3dm 走 MeshVerify.Run(Shape, wall, factory)；工厂里 FlangePlates 为空／FlangeFile3dm 非空是拒答条件。
+    /// </summary>
+    [Fact]
+    public void 图纸模式复核用的LineCase走图纸路径()
+    {
+        string s = Ui("LineDesignPage.cs");
+        int v0 = s.IndexOf("private async Task VerifyMeshAsync()", StringComparison.Ordinal);
+        int v1 = s.IndexOf("\n    private ", v0 + 10, StringComparison.Ordinal);
+        string body = s[v0..v1];
+        Assert.Contains("bool drawing = !_srcAnalytic.Checked;", body);
+        Assert.Contains("DesignSpec d = drawing ? null! : PageToDesignSpec();", body);      // 图纸模式不造解析板
+        Assert.Contains("VerifyFactory3dm()", body);
+        Assert.Contains("MeshVerify.Run(shape3!, wall3, factory3dm!, progress: prog, cancel: _cts.Token)", body);
+        // 工厂本身：从 BuildCase() 复制、只换网格四项；造出来的不是图纸路径就拒绝
+        int f0 = s.IndexOf("internal (Func<double, double, LineCase>? Factory, string Why) VerifyFactory3dm()", StringComparison.Ordinal);
+        Assert.True(f0 >= 0, "找不到 VerifyFactory3dm 的声明");
+        int f1 = s.IndexOf("\n    private ", f0, StringComparison.Ordinal);
+        string fac = s[f0..f1];
+        Assert.Contains("lc0 = BuildCase();", fac);
+        Assert.Contains("lc0.FlangePlates.Length > 0 || lc0.FlangeFile3dm.Length == 0", fac);
+        Assert.Contains("FlangeAutoSizer.CloneCase(lc0)", fac);
+        Assert.DoesNotContain("PageToDesignSpec", fac);
+        // 适用性：图纸模式要分析过几何（与 Core 的 RequiredMeshFor(Shape) 拒答同一前提）
+        Assert.Contains("\"core.verifyMesh\" => Shared is { Fresh: true, Last: { Ok: true } } && (_srcAnalytic.Checked || _shape is not null)", s);
+    }
+
+    /// <summary>
+    /// ★ R47 C：细网格重解的 .3dm 分支把 fineMm **真传**给 SolveByLevel —— 经 FineMesh3dm → Options 终局细网格四项；
+    /// 此前 RunAsync 的 .3dm 分支 `new FlangeAutoSizer.Options()` 空着，fineMm 根本没用上（在 2 mm 导航网格上再跑一次）。
+    /// </summary>
+    [Fact]
+    public void 细网格重解的图纸分支把口径真传给SolveByLevel()
+    {
+        string s = Ui("LineDesignPage.cs");
+        int r0 = s.IndexOf("private async Task RunAsync(", StringComparison.Ordinal);
+        int r1 = s.IndexOf("\n    private ", r0 + 10, StringComparison.Ordinal);
+        string run = s[r0..r1];
+        Assert.Contains("FineMesh3dm? fine3dm = null", run);
+        Assert.Contains("optLv.FinalMeshFineMm = fine3dm.MidMm; optLv.FinalMeshFineRadiusMm = fine3dm.RadiusMm;", run);
+        Assert.Contains("optLv.FinalMeshInnerMm = fine3dm.InnerMm; optLv.FinalMeshInnerRadiusMm = fine3dm.InnerRadiusMm;", run);
+        Assert.Contains("lc, lvl, optLv, prog, ct, 6, lockMask, mkLevel", run);
+        Assert.DoesNotContain("lc, lvl, new FlangeAutoSizer.Options(), prog", run);
+        int f0 = s.IndexOf("private async Task FineResolveAsync()", StringComparison.Ordinal);
+        int f1 = s.IndexOf("\n    private ", f0 + 10, StringComparison.Ordinal);
+        string fine = s[f0..f1];
+        // F7′（2026-09-23，变因 = 决 29 自适应）：图纸路径的半径初值要按页面走图纸路径的整线算例量热长度 ⇒ 多一个算例参数；
+        //   细网格重解的半径改取加密复算计划的终值（审查 R2）。原钉 "MeshVerify.RequiredMeshFor(sh, (double)_wall.Value)"。
+        Assert.Contains("MeshVerify.RequiredMeshFor(sh, (double)_wall.Value, lcR)", fine);
+        Assert.Contains("double radius = _meshVerify.RadiusPlan?.RadiusMm ?? radius0;", fine);
+        Assert.Contains("await RunAsync(autoSize: true, fine3dm: new FineMesh3dm(h0, radius, innerH, innerR));", fine);
+        // Core 侧：SolveByLevel 入口套口径（搜索各轮 + 全精度复核都在那张网格上）
+        string core = File.ReadAllText(Path.Combine(HandoverDoc.Root(), "Pt_Optimize", "Core", "FlangeAutoSizer.cs"));
+        Assert.Contains("baseCase = ApplyFinalMesh(baseCase, opt);", core);
+    }
+
     [Fact]
     public void 本页造的按钮都挂上了()
     {

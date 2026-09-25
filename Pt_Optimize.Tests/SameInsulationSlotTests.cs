@@ -81,7 +81,8 @@ public class SameInsulationSlotTests
         for (int j = 0; j < lrB.Flanges.Length && j < lrC.Flanges.Length; j++)
             log.AppendLine($"  {lrB.Flanges[j].Name,-8} Δ抽热 {lrB.Flanges[j].QFromTubeW - lrC.Flanges[j].QFromTubeW:+0.000;-0.000} W　Δ最高温 {lrB.Flanges[j].TMaxC - lrC.Flanges[j].TMaxC:+0.0;-0.0} K　Δ铂 {lrB.Flanges[j].MassG - lrC.Flanges[j].MassG:+0.0;-0.0} g");
 
-        string txt = Path.Combine(HandoverDoc.Root(), "deliverable", "同保温对照_开槽前后_2026-09-12.txt");
+        // 2026-09-15 Opus 5（I 路）：原按原文件名写 deliverable（会覆盖被引证据）→ 只写带开跑时刻的新文件（DeliverableOut，门 R48DeliverableWriteGuardTests）
+        string txt = DeliverableOut.Stamped("同保温对照_开槽前后_2026-09-12.txt");
         File.WriteAllText(txt, log.ToString(), new UTF8Encoding(false));
         Assert.True(lrC.Converged && lrB.Converged, "有一边没收敛");
     }
