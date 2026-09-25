@@ -1,0 +1,48 @@
+﻿R48 段电流连续根　门 b 判别跑（P3，只量不判）
+开跑 2026-09-23 19:16:20　工作树 /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtP3s　git HEAD cde3abab80ba302863607b796d7e93216292e651　Core 改动指纹 da39a3ee5e6b4b0d3255bfef95601890afd80709　Linux　无 Anderson 跑轮数上限 40　并发 8（机器 4 核，同机另有其他子代理在跑、负载不受控，开跑时 /proc/loadavg = 19.01 19.99 15.13 6/395 6612：耗时只作量级，争用下量得）　截止 85 分钟
+生产缺省（DesignInputs 常数，本探针不改）：SegPicardTolKDefault = 0.001 K，SegBvpTolKDefault = 0.0005 K，SegCurrentTolADefault = 0.005 A（电流容差本探针不动）
+#证据头 v1
+# 标题：门 b 判别跑（现役容差 门c算例 那一跑的头）
+# git HEAD：cde3abab80ba302863607b796d7e93216292e651
+# Core 改动指纹（Pt_Optimize/Core 相对 HEAD 的改动与未跟踪文件，SHA1）：da39a3ee5e6b4b0d3255bfef95601890afd80709
+# 探针源码指纹（调用方源文件，SHA1）：Pt_Optimize.Tests/ZZP3SegGateBDiscrimProbeTests.cs f6d49cd4b5c575ebc45b10228084af1fa10b9dc7
+# 网格配方：生产配方常量 —— 压接整面接触 开；压接边界施加在压接面上；压接边界落成节点 是；压接细带单侧 0 × hFine；孔边判定带半宽 3 mm（弧面路径不用它打孔标签，只剩阶梯孔边路径用）；管孔电位：开关孔面上，量得施加在孔面上；弧面距离：开关法向距，量得法向距；孔面只认弧面：开关开，量得只有弧面
+# 热解配方：生产配方常量 —— 分界格混合 开；表面散热表上限 1768.2 °C、节点按约 22 K 一个；管温施加在孔边界面上；压接格取整个压接面；压接边界施加在压接面上；局部热稳定的管孔锚点在孔圆上
+# 耦合容差：0.025 K
+# 共用片抽热：双扣（两段各扣一次）
+# 工况：带玻璃稳态
+# 耦合容差口径：绝对目标 0.025 K（不随判据裕度走；生产口径）；实际用的那一个见结果 CoupleTolKUsed
+# 认证误差口径：认证误差 = 放大 × 停机残差（结果 LineResult.CertErrK，只在收敛时有数）；放大 = max(闭式 1+ℓt/Δx × 1.1, 实测雅可比 ‖(I−J)⁻¹‖∞)；格点上裕度小于它的硬安全线判不了那么细
+# 段电流收尾：连续根（二分到 xTol 0.005 A 后，末括号内线性插值；生产口径）
+#证据头结束
+算例：A = 门c算例（R48SegContinuousRootSlowTests.CostKitCase 照抄），B = 门f盘20判决（GateFCase(20) 照抄，= A + 多调一次 ApplySectionFloor 的 1e−6 级扰动）；段电流收尾 = 连续根（开）。
+逐轮列：q = max(δ,真残差)·放大/0.025（与门 b 逐轮轨迹同一写法）；另列 qStop = max(δ,真残差)·放大/当轮容差（CoupleTolKFor，停机判定 qStop < 1 的口径）。
+逐轮轨迹目录：/tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtP3s/deliverable/R48_段电流连续根_门b判别跑_逐轮轨迹_本次开跑于2026-09-23_191620
+
+· 开始 a_现役容差__A_门c算例（开跑后 0.0 分钟）：lc.Base.SegPicardTolK=0.001 SegBvpTolK=0.0005 SegCurrentContinuousRoot=True UseAnderson=True MeasureJacobianAmp=True
+· 开始 b_收紧10倍__A_门c算例（开跑后 0.0 分钟）：lc.Base.SegPicardTolK=0.0001 SegBvpTolK=5E-05 SegCurrentContinuousRoot=True UseAnderson=True MeasureJacobianAmp=True
+· 开始 c_收紧100倍__A_门c算例（开跑后 0.0 分钟）：lc.Base.SegPicardTolK=1E-05 SegBvpTolK=5E-06 SegCurrentContinuousRoot=True UseAnderson=True MeasureJacobianAmp=True
+· 开始 a_现役容差__B_门f盘20判决（开跑后 0.0 分钟）：lc.Base.SegPicardTolK=0.001 SegBvpTolK=0.0005 SegCurrentContinuousRoot=True UseAnderson=True MeasureJacobianAmp=True
+· 开始 b_收紧10倍__B_门f盘20判决（开跑后 0.0 分钟）：lc.Base.SegPicardTolK=0.0001 SegBvpTolK=5E-05 SegCurrentContinuousRoot=True UseAnderson=True MeasureJacobianAmp=True
+· 开始 a'_现役容差_无Anderson__A_门c算例（开跑后 0.0 分钟）：lc.Base.SegPicardTolK=0.001 SegBvpTolK=0.0005 SegCurrentContinuousRoot=True UseAnderson=False MeasureJacobianAmp=True
+· 开始 c_收紧100倍__B_门f盘20判决（开跑后 0.1 分钟）：lc.Base.SegPicardTolK=1E-05 SegBvpTolK=5E-06 SegCurrentContinuousRoot=True UseAnderson=True MeasureJacobianAmp=True
+· 开始 a'_现役容差_无Anderson__B_门f盘20判决（开跑后 0.1 分钟）：lc.Base.SegPicardTolK=0.001 SegBvpTolK=0.0005 SegCurrentContinuousRoot=True UseAnderson=False MeasureJacobianAmp=True
+· 完成 b_收紧10倍__A_门c算例	True	26	26	1076	0.014770358797241619	5.418076957281073	2.715583763109862	-0.10222286387430309	4164	（开跑后 17.9 分钟）
+· 完成 a_现役容差__B_门f盘20判决	True	29	29	1130	0.007766635062553653	5.417971909994776	2.715570627154875	-0.10226823180854587	4164	（开跑后 18.8 分钟）
+· 完成 a_现役容差__A_门c算例	True	33	33	1174	0.0029324227791238332	5.418042557976605	2.7156729638570596	-0.10222934179927362	4164	（开跑后 19.6 分钟）
+· 完成 c_收紧100倍__B_门f盘20判决	True	31	31	1173	0.014428119903887981	5.418016422649316	2.715746315867591	-0.10216553041745616	4164	（开跑后 19.6 分钟）
+· 完成 b_收紧10倍__B_门f盘20判决	True	33	33	1181	0.02189924982171451	5.418302319358645	2.7156066876491423	-0.1022136446570136	4164	（开跑后 19.7 分钟）
+· 完成 c_收紧100倍__A_门c算例	True	36	36	1206	0.0061755540803164815	5.418006726139311	2.71555264705421	-0.10223193543759546	4164	（开跑后 20.1 分钟）
+· 完成 a'_现役容差_无Anderson__B_门f盘20判决	False	0	40	1217	NaN	NaN	NaN	NaN	0	AbortProbe：无 Anderson 跑到轮数上限 40，第 40 轮后中止（开跑后 20.3 分钟）
+· 完成 a'_现役容差_无Anderson__A_门c算例	False	0	40	1220	NaN	NaN	NaN	NaN	0	AbortProbe：无 Anderson 跑到轮数上限 40，第 40 轮后中止（开跑后 20.4 分钟）
+
+跑	收敛	停机轮（CoupleRounds）	末记录轮	耗时 s	认证误差 K（R）	最热铂高出热偶读数 K（R）	管根低于热偶读数 K（R）	管孔净流入 W（R）	单元	异常
+a_现役容差__A_门c算例	True	33	33	1174	0.0029324227791238332	5.418042557976605	2.7156729638570596	-0.10222934179927362	4164	
+a_现役容差__B_门f盘20判决	True	29	29	1130	0.007766635062553653	5.417971909994776	2.715570627154875	-0.10226823180854587	4164	
+b_收紧10倍__A_门c算例	True	26	26	1076	0.014770358797241619	5.418076957281073	2.715583763109862	-0.10222286387430309	4164	
+b_收紧10倍__B_门f盘20判决	True	33	33	1181	0.02189924982171451	5.418302319358645	2.7156066876491423	-0.1022136446570136	4164	
+c_收紧100倍__A_门c算例	True	36	36	1206	0.0061755540803164815	5.418006726139311	2.71555264705421	-0.10223193543759546	4164	
+c_收紧100倍__B_门f盘20判决	True	31	31	1173	0.014428119903887981	5.418016422649316	2.715746315867591	-0.10216553041745616	4164	
+a'_现役容差_无Anderson__A_门c算例	False	0	40	1220	NaN	NaN	NaN	NaN	0	AbortProbe：无 Anderson 跑到轮数上限 40，第 40 轮后中止
+a'_现役容差_无Anderson__B_门f盘20判决	False	0	40	1217	NaN	NaN	NaN	NaN	0	AbortProbe：无 Anderson 跑到轮数上限 40，第 40 轮后中止
+── 结束 2026-09-23 19:36:42（20.4 分钟）
