@@ -1,0 +1,53 @@
+# Windows 快门（Core + Tests）—— 2026-09-25 业主「做吧，先建 Core 与 Tests 试一跑」
+# 目的：Windows 是记录平台（决 03 (a)），让每次推送在 GitHub 托管的 windows-latest 跑机上自动出 Windows 数：
+#   restore → 只建 Pt_Optimize（Core + UI）与 Pt_Optimize.Tests → dotnet test --filter "速度!=慢"。
+# 不建 Pt_Optimize.Geom：它是 net7.0-windows + Rhino.Inside 子进程，跑机上没有 Rhino 8（CLAUDE.md §1）；
+#   要它的门在跑机上会红或跳过，第一跑先看清哪些，再决定排除名单（不为过门挪阈值）。
+# 不跑慢门：单条几十分钟到数小时（HANDOVER §0.-19 庚），另开手动工作流再说。
+# 结果：trx 上传为工作流产物；HandoverGateCountTests 在这里数的是全部用例，「应为」数以它为准。
+name: Windows 快门（Core + Tests）
+
+on:
+  push:
+    branches:
+      - 'claude/**'
+      - 'feat/**'
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: windows-fast-gates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast-gates:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: 取码
+        uses: actions/checkout@v4
+
+      - name: .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: 还原（--disable-parallel，照 CLAUDE.md §4）
+        run: dotnet restore Pt_Optimize.Tests/Pt_Optimize.Tests.csproj --disable-parallel
+
+      - name: 编译（只建 Pt_Optimize 与 Pt_Optimize.Tests，不建 Pt_Optimize.Geom）
+        run: dotnet build Pt_Optimize.Tests/Pt_Optimize.Tests.csproj -c Release --no-restore
+
+      - name: 快门（速度!=慢）
+        run: dotnet test Pt_Optimize.Tests/Pt_Optimize.Tests.csproj -c Release --no-build --filter "速度!=慢" --logger "trx;LogFileName=fast.trx" --results-directory TestResults
+
+      - name: 上传测试结果（trx）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-fast-gates-trx
+          path: TestResults/**/*.trx
+          if-no-files-found: warn
