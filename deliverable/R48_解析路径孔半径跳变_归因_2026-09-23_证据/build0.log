@@ -1,0 +1,14 @@
+mirror at /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtP1/.linux; excluded 28 UI test files
+build OK after 1 iterations
+excluded now: 29
+MSBuild version 17.8.49+7806cbf7b for .NET
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  Core -> /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtP1/.linux/Core/bin/Release/net8.0/Pt_Optimize.dll
+  Tests -> /tmp/claude-0/-home-user-Pt-Optimize/edf845d6-9a14-5b5e-9737-df190eaf0db5/scratchpad/wtP1/.linux/Tests/bin/Release/net8.0/Pt_Optimize.Tests.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:01.64
