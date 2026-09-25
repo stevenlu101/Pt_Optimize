@@ -3444,7 +3444,8 @@ public static class LineRunner
         return PlateMeshAnalyticCore(c, j);
     }
 
-    private static ShellMesh PlateMeshAnalyticCore(LineCase c, int j) => PlateMeshAnalyticWith(c, j, MeshRules.Production, null);
+    private static ShellMesh PlateMeshAnalyticCore(LineCase c, int j) => PlateMeshAnalyticWith(c, j, ZzoRulesOverride ?? MeshRules.Production, null);
+    internal static MeshRules? ZzoRulesOverride;   // ZZO56 探针工作树本地注入钩（不入库；缺省 null ⇒ 生产规则）
 
     /// <summary>
     /// ★ 2026-09-19，Fable 5.1（网格修复第二轮复核第 9 条）：解析路径逐片网格的**唯一配方**（片的孔半径跟管走 + FlangeMesher.Build 的参数表），
