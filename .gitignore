@@ -61,3 +61,4 @@ __pycache__/
 #   2026-09-18，Opus 5：`git add -A` 会把它连同一个 .tar 一起吸进 stream.patch —— 09-18 12:58
 #   那一份 stream.patch 里没有它，本次重建时当场撞到。造门在下游，省得下次又悄悄进来。
 deliverable/_bak_merge/
+logs/
