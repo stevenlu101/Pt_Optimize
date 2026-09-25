@@ -753,6 +753,16 @@ public class DesignInputs
     [TypeConverter(typeof(ChineseBoolConverter))]
     public bool FlangeStabGeomClampFallback { get; set; } = true;
 
+    /// <summary>
+    /// ★★★★★ 决 104（业主 2026-09-25 原话「圆盘保温块最大厚度(圆盘之前说过了10mm)」；出处 = 业主 2026-09-17 原话「现场法兰与管保温带一般缠绕20圈以下，再往上很难缠绕」，每圈 0.5 mm ⇒ 10 mm，HANDOVER §0.-11）：
+    /// 圆盘保温厚度**上限** mm = 判据「接合区保温缠得出来」在 决103 口径下的限值（<see cref="WrapLimits.Judge(LineCase, CriteriaRuleSet)"/>，硬安全线）。
+    /// **不封顶、不外推、不按上限硬算**：读值口径 <see cref="LineCase.DiscInsulEffectiveAt"/> 仍回设定值（配套清单、热解、判据同源），超上限 = 不可行并写明杠杆。
+    /// 2026-09-18 曾把本条降为参考行（默认 20、界面上界 60，§0.-12／§0.-15M）；2026-09-25 业主重申 10 mm 是最大厚度 ⇒ 升回硬判据。设计记录默认 <see cref="DesignSpec.FlangeInsulMm"/> 20 未动（改则全套钉数重录，决 46）。
+    /// 改回 = <see cref="double.PositiveInfinity"/>（回到参考行，逐位同 2026-09-18 口径）；决103前 口径不读本项。
+    /// </summary>
+    [Browsable(false)]
+    public double DiscInsulCapMm { get; set; } = 10.0;
+
     // ---------- 派生 ----------
     [Browsable(false)] public double TubeId => TubeIdMm * 1e-3;
     [Browsable(false)] public double TubeLength => TubeLengthMm * 1e-3;

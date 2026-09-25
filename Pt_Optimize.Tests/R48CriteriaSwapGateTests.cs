@@ -182,8 +182,10 @@ public class R48CriteriaSwapGateTests
         string[] Hard(bool et, CriteriaRuleSet rs) => LineResult.RequiredFor(et, rs).Where(q => q.Kind == CheckKind.HardSafety)
             .Select(q => q.Prefix).OrderBy(x => x, StringComparer.Ordinal).ToArray();
         var glass = Hard(false, CriteriaRuleSet.决103);
+        // 决 104（业主 2026-09-25「圆盘保温块最大厚度…10mm」）：「接合区保温缠得出来」两态升回硬判据 ⇒ 两张名单各加一条（决103前 那张不动）
         var want = new[] { LineResult.Key.Ramp, LineResult.Key.HotOverContact, LineResult.Key.TubeToFlangeHeat, LineResult.Key.FreeTab,
-                           LineResult.Key.DiscCover, LineResult.Key.TubeJ, LineResult.Key.SectionJ, LineResult.Key.FlangeStab, LineResult.Key.LocalStab }
+                           LineResult.Key.DiscCover, LineResult.Key.TubeJ, LineResult.Key.SectionJ, LineResult.Key.FlangeStab, LineResult.Key.LocalStab,
+                           LineResult.Key.WrapTurns }
                    .OrderBy(x => x, StringComparer.Ordinal).ToArray();
         Assert.Equal(want, glass);
         // 三条旧判据两态都只作参考
@@ -195,8 +197,8 @@ public class R48CriteriaSwapGateTests
         }
         // 空管到温稳态只卡电流密度与几何闭式（全局方案 1.3 节）
         var empty = Hard(true, CriteriaRuleSet.决103);
-        Assert.Equal(new[] { LineResult.Key.Ramp, LineResult.Key.FreeTab, LineResult.Key.DiscCover, LineResult.Key.TubeJ, LineResult.Key.SectionJ }
-                         .OrderBy(x => x, StringComparer.Ordinal).ToArray(), empty);
+        Assert.Equal(new[] { LineResult.Key.Ramp, LineResult.Key.FreeTab, LineResult.Key.DiscCover, LineResult.Key.TubeJ, LineResult.Key.SectionJ, LineResult.Key.WrapTurns }
+                         .OrderBy(x => x, StringComparer.Ordinal).ToArray(), empty);   // 决 104：接合区缠绕是纯输入的制造闭式，空管态同卡
 
         // ApplyStateCriteria：同一组构造出来的判据条目，两种口径
         ConstraintOut[] Rows() => new[]

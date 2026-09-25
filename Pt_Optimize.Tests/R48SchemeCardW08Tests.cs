@@ -38,7 +38,10 @@ public class R48SchemeCardW08Tests
         // 2026-09-25 12:5x 第一跑（…_122412）漏了这一项 ⇒ 舌片厚退回板厚 0.60，铂重 4024 g、截面 J 11.07 ⇒ 那一跑不是赢家（证据档留着作教训）。
         // 舌片厚是求解器按 I/(J·舌宽) 闭式算出后写进 DesignSpec.TongueThickMm 的（Solver.SizeTongue），复原设计必须照方案卡填回。
         d.TongueThickMm = new[] { 2.25, 3.89, 3.89, 2.25 };
-        d.Name = "W08 搜形状赢家 盘Ø54.12 舌宽54.12 锥形（2026-09-24_224012 方案卡复原）";
+        // ★ 决 104（业主 2026-09-25）：圆盘保温块最大厚度 10 mm。2026-09-24_224012 那张方案卡是在设计记录默认 20 mm 下解的 ⇒ 作废；
+        //   本门改在 10 mm 下重判同一几何，过不过照实记（不预设）。
+        d.FlangeInsulated = true; d.FlangeInsulMm = Math.Min(d.FlangeInsulMm, new DesignInputs().DiscInsulCapMm); d.DiscInsulMm = Array.Empty<double>();
+        d.Name = "W08 搜形状赢家 盘Ø54.12 舌宽54.12 锥形（2026-09-24_224012 方案卡复原；圆盘保温改 10 mm，决 104）";
         return d;
     }
 

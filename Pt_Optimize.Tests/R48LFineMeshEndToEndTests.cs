@@ -91,6 +91,8 @@ public class R48LFineMeshEndToEndTests
                  : which == "W06" ? DesignSpec.W06.Clone()
                  : throw new ArgumentException(which);
         var p = new DesignInputs();
+        // ★ 决 104（业主 2026-09-25）：圆盘保温块最大厚度 = 参数表上限（缺省 10 mm）；设计记录默认 20 会被硬判据卡死 ⇒ 种子取上限（09-25 07:25 那跑是 20 mm，作废）
+        seed.FlangeInsulated = true; seed.FlangeInsulMm = Math.Min(seed.FlangeInsulMm, p.DiscInsulCapMm); seed.DiscInsulMm = Array.Empty<double>();
         string stamp = DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
         string dir = Path.Combine(HandoverDoc.Root(), "deliverable");
         Directory.CreateDirectory(dir);

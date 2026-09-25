@@ -30,6 +30,15 @@ public sealed class ShapeSearchOptions
     public string MaxDiscSource = "探针给的表，无出处";
 
     /// <summary>
+    /// ★ 决 106（业主 2026-09-25 原话「板料最大盘径可由程式判断，散热机制自动会收敛」）：向上外推的**收敛判定**。
+    /// 每外推一步，取卡住的硬判据里最大的缺口（LessIsBetter ? 实际 − 限值 : 限值 − 实际）；连续 <see cref="ExtrapolationConvergeSteps"/> 步缺口改善都不到上一步缺口的
+    /// <see cref="ExtrapolationConvergeFrac"/> 倍 ⇒ 判「散热机制已收敛，盘径再大也不改善」，停止外推、报无解。0.05 与 2 是选定值（依据：盘径每步 5 mm，
+    /// 缺口改善小于 5 % 连续两步即再走十几毫米也进不了门；跑过再校）。<see cref="MaxDiscMm"/> 给 NaN 时上端 = 本算例板料包络（MeshAdapt.PlateOuterRadiusMm）只作物理封顶。
+    /// </summary>
+    public double ExtrapolationConvergeFrac = 0.05;
+    public int ExtrapolationConvergeSteps = 2;
+
+    /// <summary>
     /// 起点表 mm（盘半径）。null ⇒ 从闭式下界起每 <see cref="ShapeSearchPlan.DiscStepMm"/> 一点铺到 <see cref="MaxDiscMm"/>，
     /// 再过 <see cref="ShapeSearchPlan.LiveDiscs"/>。界面原来写死 {25, 30, 35}；本驱动不写死（改动 (a)）。
     /// 调用方给了表 ⇒ 照用（仍过 LiveDiscs），外推从表最大值往 <see cref="MaxDiscMm"/> 走。
@@ -232,6 +241,8 @@ public sealed class ShapeSearchResult
     public double StartDiscMm = double.NaN;
     /// <summary>外推是否发生、到了哪里。</summary>
     public List<double> ExtrapolatedMm = new();
+    /// <summary>决 106：外推为什么停（散热收敛／到物理封顶／找到可行点）。</summary>
+    public string ExtrapolationStop = "";
     /// <summary>
     /// ⑥ 邻域爬山的停因（原样印进方案卡）。只有「步长已收到分辨率下界仍无改善」才可以说「在 ±MinDiscStepMm 分辨率上是局部最优」；
     /// 轮数用完（MaxExtend）停下的不是（2026-09-23 对照核实补：原稿方案卡无条件写「局部最优只在 ±0.625 mm 分辨率上成立」）。
@@ -286,19 +297,53 @@ public sealed class ShapeSearchResult
 /// </summary>
 public static class ShapeSearchDriver
 {
+    /// <summary>决 106：这一行卡住的硬判据里最大的缺口（正 = 离过门还差多少；没卡住或算不出 = NaN）。</summary>
+    internal static double Deficit(ShapeRow r)
+    {
+        var blocked = r.Result?.Best?.HardBlocked;
+        if (blocked is null || blocked.Length == 0) return double.NaN;
+        double best = double.NaN;
+        foreach (var c in blocked)
+        {
+            if (double.IsNaN(c.Actual) || double.IsNaN(c.Limit)) continue;
+            double d = c.LessIsBetter ? c.Actual - c.Limit : c.Limit - c.Actual;
+            if (double.IsNaN(best) || d > best) best = d;
+        }
+        return best;
+    }
+
+    /// <summary>决 106：缺口序列（按盘径升序）最近 <paramref name="steps"/> 步是否都没改善到上一步的 <paramref name="frac"/> 倍。缺口算不出的步视为「没改善」。</summary>
+    internal static bool DeficitsConverged(IReadOnlyList<double> seq, double frac, int steps)
+    {
+        if (seq.Count < steps + 1) return false;
+        for (int k = seq.Count - steps; k < seq.Count; k++)
+        {
+            double prev = seq[k - 1], cur = seq[k];
+            if (double.IsNaN(prev) || double.IsNaN(cur)) continue;   // 算不出 = 没改善
+            if (prev > 0 && (prev - cur) > frac * prev) return false;   // 这一步有实质改善
+        }
+        return true;
+    }
+
     public static ShapeSearchResult Run(DesignSpec seed, DesignInputs baseIn, ShapeSearchOptions opt,
                                         IProgress<string>? progress, CancellationToken ct)
     {
         if (seed is null) throw new ArgumentNullException(nameof(seed));
         if (baseIn is null) throw new ArgumentNullException(nameof(baseIn));
         if (opt is null) throw new ArgumentNullException(nameof(opt));
-        if (double.IsNaN(opt.MaxDiscMm) || opt.MaxDiscMm <= 0)
-            throw new ArgumentException("盘半径上端 MaxDiscMm 必须由调用方给（本驱动不写死上端），并写明出处 MaxDiscSource。", nameof(opt));
+        // ★ 决 106（2026-09-25）：上端不再要求调用方给数。NaN ⇒ 物理封顶 = 本算例板料包络（材料能到的最大半边长），实际停在散热收敛处（见 ExtrapolationConvergeFrac）。
+        double maxDisc = opt.MaxDiscMm; string maxDiscSrc = opt.MaxDiscSource;
+        if (double.IsNaN(maxDisc) || maxDisc <= 0)
+        {
+            var (envMm, envSrc) = MeshAdapt.PlateOuterRadiusMm(seed.BuildCase(baseIn));
+            maxDisc = envMm;
+            maxDiscSrc = "程序判定（决 106，业主 2026-09-25「板料最大盘径可由程式判断，散热机制自动会收敛」）：物理封顶 = 板料包络 " + envSrc + "；实际停在散热收敛处";
+        }
         if (opt.WFrac is null || opt.WFrac.Length == 0) throw new ArgumentException("舌宽比例表不能为空", nameof(opt));
         if (opt.Lanes < 1) throw new ArgumentException("Lanes 至少 1", nameof(opt));
 
         var solve = opt.SolveOverride ?? ((d, b, o, p, t) => Solver.Solve(d, b, o, p, t));
-        var res = new ShapeSearchResult { MaxDiscMm = opt.MaxDiscMm, MaxDiscSource = opt.MaxDiscSource };
+        var res = new ShapeSearchResult { MaxDiscMm = maxDisc, MaxDiscSource = maxDiscSrc };
         var ci = CultureInfo.InvariantCulture;
         void Say(string s) { lock (res.Log) res.Log.Add(s); progress?.Report(s); }
 
@@ -315,7 +360,7 @@ public static class ShapeSearchDriver
         {
             double lo = ShapeSearchPlan.LiveDiscs(new[] { double.NegativeInfinity }, minDiscAll)[0];
             var pts = new List<double>();
-            for (int k = 0; lo + k * step0 <= opt.MaxDiscMm + 1e-9; k++) pts.Add(lo + k * step0);
+            for (int k = 0; lo + k * step0 <= maxDisc + 1e-9; k++) pts.Add(lo + k * step0);
             if (pts.Count == 0) pts.Add(lo);
             grid = pts.ToArray();
         }
@@ -326,7 +371,7 @@ public static class ShapeSearchDriver
         string fam = opt.AllowTabCuts ? "挖舌孔" : "不挖舌孔";
 
         Say($"盒子：盘半径下界 {minDiscAll.ToString("0.000", ci)} mm（判据「圆盘盖得住管孔＋焊脚」闭式，管孔半径 {seed.HoleRadiusMm.ToString("0.000", ci)}、焊脚下界 max(烧穿 {baseIn.WeldMinThicknessMm.ToString("0.00", ci)}, 壁厚 {wall.ToString("0.00", ci)})）；"
-          + $"盘半径上端 {opt.MaxDiscMm.ToString("0.0", ci)} mm（出处：{opt.MaxDiscSource}）；起点表（盘半径）{{{string.Join(", ", discs.Select(x => x.ToString("0.0##", ci)))}}} mm"
+          + $"盘半径上端 {maxDisc.ToString("0.0", ci)} mm（出处：{maxDiscSrc}）；起点表（盘半径）{{{string.Join(", ", discs.Select(x => x.ToString("0.0##", ci)))}}} mm"
           + (opt.DiscGridMm is null ? "（缺省：下界起每 " + step0.ToString("0.###", ci) + " mm 一点到上端）" : "（调用方给的表）"));
         Say($"解法族：{fam}（本驱动一次只跑一族）；舌宽比例 {{{string.Join(", ", wFrac.Select(x => x.ToString("0.###", ci)))}}}；粗筛 {opt.ScreenRounds} 轮、精算 {opt.FinalRounds} 轮；"
           + $"邻域最多 {opt.MaxExtend} 轮、步长 {step0.ToString("0.###", ci)} 减半到 {ShapeSearchPlan.MinDiscStepMm.ToString("0.###", ci)} mm；改善门槛 0.5 g（ShapeSearchPlan.Improved）；并发 {opt.Lanes} 路；粗筛平坦区网格 {opt.ScreenCoarseMm.ToString("0.###", ci)} mm（0 = 关）");
@@ -537,14 +582,40 @@ public static class ShapeSearchDriver
             if (!pass.Any(r => !r.Skipped && r.Ok))
             {
                 var ext = new List<double>();
-                for (int k = 1; discs[^1] + k * step0 <= opt.MaxDiscMm + 1e-9; k++) ext.Add(discs[^1] + k * step0);
+                for (int k = 1; discs[^1] + k * step0 <= maxDisc + 1e-9; k++) ext.Add(discs[^1] + k * step0);
                 if (ext.Count > 0)
                 {
-                    Say($"①外推：起点表全部不可行 ⇒ 向上一批并行解到上端：盘Ø{{{string.Join(", ", ext.Select(x => (2 * x).ToString("0.0", ci)))}}}"
-                      + $"（每步 {step0.ToString("0.###", ci)} mm；盘半径上端 {opt.MaxDiscMm.ToString("0.0", ci)} mm，出处：{opt.MaxDiscSource}）");
-                    res.ExtrapolatedMm.AddRange(ext);
-                    pass.AddRange(EvalBatch(ext.OrderByDescending(x => x).Select(R => (R, R * fWide, taperPage)).ToList(), "①外推")
-                                  .Where(r => r is not null).Select(r => r!));
+                    // ★ 决 106：不再一批解到上端；按并发数一批一批向上，每批解完看缺口有没有收敛（散热机制收敛 ⇒ 停）。
+                    Say($"①外推：起点表全部不可行 ⇒ 向上外推（每步 {step0.ToString("0.###", ci)} mm，每批 {Math.Max(1, opt.Lanes)} 点并行；物理封顶 {maxDisc.ToString("0.0", ci)} mm，出处：{maxDiscSrc}；"
+                      + $"停止判定：卡住的硬判据缺口连续 {opt.ExtrapolationConvergeSteps} 步改善 < {opt.ExtrapolationConvergeFrac:0.##} 倍 ⇒ 散热机制收敛，决 106）");
+                    var seq = new List<double>();
+                    var topRow0 = pass.Where(r => !r.Skipped).OrderByDescending(r => r.R).FirstOrDefault();
+                    if (topRow0 is not null) seq.Add(Deficit(topRow0));
+                    int extIdx = 0;
+                    while (extIdx < ext.Count)
+                    {
+                        var chunk = ext.Skip(extIdx).Take(Math.Max(1, opt.Lanes)).ToList(); extIdx += chunk.Count;
+                        res.ExtrapolatedMm.AddRange(chunk);
+                        var rows = EvalBatch(chunk.OrderByDescending(x => x).Select(R => (R, R * fWide, taperPage)).ToList(), "①外推")
+                                   .Where(r => r is not null).Select(r => r!).ToList();
+                        pass.AddRange(rows);
+                        if (rows.Any(r => !r.Skipped && r.Ok)) { res.ExtrapolationStop = "外推找到可行点"; break; }
+                        bool stop = false;
+                        foreach (var r in rows.OrderBy(r => r.R))
+                        {
+                            seq.Add(Deficit(r));
+                            Say($"　　外推 盘Ø{(2 * r.R).ToString("0.0", ci)}：卡住 {(r.Blocked.Length == 0 ? "—" : string.Join("；", r.Blocked))}，最大缺口 {(double.IsNaN(seq[^1]) ? "算不出" : seq[^1].ToString("0.###", ci))}");
+                            if (DeficitsConverged(seq, opt.ExtrapolationConvergeFrac, opt.ExtrapolationConvergeSteps))
+                            {
+                                res.ExtrapolationStop = $"散热机制收敛（决 106）：盘径外推到 盘Ø{(2 * r.R).ToString("0.0", ci)}，卡住的硬判据缺口连续 {opt.ExtrapolationConvergeSteps} 步改善不到 {opt.ExtrapolationConvergeFrac:0.##} 倍"
+                                                     + $"（缺口序列 {string.Join(" → ", seq.Select(v => double.IsNaN(v) ? "算不出" : v.ToString("0.###", ci)))}）⇒ 再大盘径也进不了门，停止外推";
+                                stop = true; break;
+                            }
+                        }
+                        if (stop) break;
+                    }
+                    if (res.ExtrapolationStop.Length == 0) res.ExtrapolationStop = $"外推到物理封顶 {maxDisc.ToString("0.0", ci)} mm（{maxDiscSrc}）仍无可行点";
+                    Say("①外推停止：" + res.ExtrapolationStop);
                 }
             }
             var okPass = pass.Where(r => !r.Skipped && r.Ok).OrderBy(r => r.R).ToList();
@@ -579,8 +650,8 @@ public static class ShapeSearchDriver
                 last = topRow ?? SkipRow(discs[^1], discs[^1] * fWide, taperPage, "①");
                 Rbest = discs[^1]; Rsafe = discs[^1];
                 res.StartDiscMm = discs[^1];
-                res.FirstPassBranch = "全不可行（外推到上端也无可行）：不二分、不黄金分割；② 取表最大值那一行的板厚";
-                Say($"① 首遍（含外推）到盘半径上端 {opt.MaxDiscMm.ToString("0.0", ci)} mm 全不可行 ⇒ 没有可行上端：不二分、不做黄金分割；② 不动点仍照做，板厚取表最大值 盘Ø{(2 * discs[^1]).ToString("0.0", ci)} 那一行的（只用板厚，不依赖上端可行）");
+                res.FirstPassBranch = "全不可行（外推" + (res.ExtrapolationStop.Contains("收敛") ? "按散热收敛停" : "到上端") + "也无可行）：不二分、不黄金分割；② 取表最大值那一行的板厚";
+                Say($"① 首遍（含外推，{res.ExtrapolationStop}）全不可行 ⇒ 没有可行上端：不二分、不做黄金分割；② 不动点仍照做，板厚取表最大值 盘Ø{(2 * discs[^1]).ToString("0.0", ci)} 那一行的（只用板厚，不依赖上端可行）");
             }
         }
         else
@@ -594,16 +665,25 @@ public static class ShapeSearchDriver
             if (!topOk)
             {
                 double R = Rsafe;
-                while (R + step0 <= opt.MaxDiscMm + 1e-9)
+                var seqS = new List<double> { Deficit(last) };   // 决 106：缺口序列从表最大值那一行起
+                while (R + step0 <= maxDisc + 1e-9)
                 {
                     R += step0;
-                    Say($"①外推：盘Ø{(2 * (R - step0)).ToString("0.0", ci)} 不可行 ⇒ 向上一步 {step0.ToString("0.###", ci)} mm，试盘Ø{(2 * R).ToString("0.0", ci)}（盘半径上端 {opt.MaxDiscMm.ToString("0.0", ci)} mm，即盘Ø{(2 * opt.MaxDiscMm).ToString("0.0", ci)}；出处：{opt.MaxDiscSource}）");
+                    Say($"①外推：盘Ø{(2 * (R - step0)).ToString("0.0", ci)} 不可行 ⇒ 向上一步 {step0.ToString("0.###", ci)} mm，试盘Ø{(2 * R).ToString("0.0", ci)}（盘半径上端 {maxDisc.ToString("0.0", ci)} mm，即盘Ø{(2 * maxDisc).ToString("0.0", ci)}；出处：{maxDiscSrc}）");
                     res.ExtrapolatedMm.Add(R);
                     last = Eval(R, R * fWide, taperPage, "①外推");
-                    if (!last.Skipped && last.Ok) { topOk = true; Rsafe = R; break; }
+                    if (!last.Skipped && last.Ok) { topOk = true; Rsafe = R; res.ExtrapolationStop = "外推找到可行点"; break; }
+                    seqS.Add(Deficit(last));
+                    if (DeficitsConverged(seqS, opt.ExtrapolationConvergeFrac, opt.ExtrapolationConvergeSteps))
+                    {
+                        res.ExtrapolationStop = $"散热机制收敛（决 106）：盘径外推到 盘Ø{(2 * R).ToString("0.0", ci)}，卡住的硬判据缺口连续 {opt.ExtrapolationConvergeSteps} 步改善不到 {opt.ExtrapolationConvergeFrac:0.##} 倍（缺口序列 {string.Join(" → ", seqS.Select(v => double.IsNaN(v) ? "算不出" : v.ToString("0.###", ci)))}）⇒ 停止外推";
+                        Say("①外推停止：" + res.ExtrapolationStop);
+                        break;
+                    }
                 }
+                if (!topOk && res.ExtrapolationStop.Length == 0) res.ExtrapolationStop = $"外推到物理封顶 {maxDisc.ToString("0.0", ci)} mm（{maxDiscSrc}）仍无可行点";
                 if (!topOk)
-                    Say($"①外推到盘半径上端 {opt.MaxDiscMm.ToString("0.0", ci)} mm 仍无可行点 ⇒ 没有可行上端：不二分、不做黄金分割；② 不动点仍照做（只用板厚，不依赖上端可行）");
+                    Say($"①外推到盘半径上端 {maxDisc.ToString("0.0", ci)} mm 仍无可行点 ⇒ 没有可行上端：不二分、不做黄金分割；② 不动点仍照做（只用板厚，不依赖上端可行）");
             }
             res.StartDiscMm = Rsafe;
             Rbest = Rsafe;

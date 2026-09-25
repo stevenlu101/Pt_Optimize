@@ -1248,7 +1248,7 @@ public sealed class LineResult
     /// 带玻璃稳态：热侧「法兰最热处高出管接触处温度」、冷侧「管接触处流入法兰的净热流」为硬判据；局部与整片热稳定由参考升为硬判据；
     ///   最热铂高出热偶读数、管根低于热偶读数、管孔净流入须为正三条降为参考（照算照印）。
     /// 空管到温稳态（全局方案第 2 版 1.3 节、业主 09-15）：只卡电流密度与几何闭式 ⇒ 两条新温差类判据与两条热稳定只作参考（升温期的热稳定另由升温全程卡）。
-    /// 其余各条两态照旧（升温、舌片自由段、圆盘盖得住管孔、管 J、法兰截面 J；接合区缠绕参考）。
+    /// 其余各条两态照旧（升温、舌片自由段、圆盘盖得住管孔、管 J、法兰截面 J）；接合区缠绕 决 104（2026-09-25）起两态硬判据（限值 = 参数表圆盘保温上限，改回 = 正无穷）。
     /// </summary>
     public static readonly (string Prefix, CheckKind GlassKind, CheckKind EmptyTubeKind, bool NeedsRamp)[] RequiredByState =
     {
@@ -1261,7 +1261,7 @@ public sealed class LineResult
         (LineResult.Key.ColdUnderTc,      CheckKind.Reference,  CheckKind.Reference,  false),  // 决 103：降为参考
         (Key.FreeTab,                     CheckKind.HardSafety, CheckKind.HardSafety, false),
         (Key.DiscCover,                   CheckKind.HardSafety, CheckKind.HardSafety, false),
-        (Key.WrapTurns,                   CheckKind.Reference,  CheckKind.Reference,  false),
+        (Key.WrapTurns,                   CheckKind.HardSafety, CheckKind.HardSafety, false),  // ★ 决 104（业主 2026-09-25「圆盘保温块最大厚度(圆盘之前说过了10mm)」）：两态升回硬判据（纯输入、与工况无关；限值 = 参数表圆盘保温上限）；决103前 仍参考（2026-09-18 口径）
         (Key.TubeJ,                       CheckKind.HardSafety, CheckKind.HardSafety, false),  // 决 103：限值 11（与原许用 12 取小）
         (Key.SectionJ,                    CheckKind.HardSafety, CheckKind.HardSafety, false),
         (Key.FlangeStab,                  CheckKind.HardSafety, CheckKind.Reference,  false),  // 决 103：带玻璃稳态升为硬判据
@@ -4561,7 +4561,8 @@ public static class LineRunner
         // ── 「接合区保温缠得出来」：现场缠绕圈数上限（用户 2026-09-17）。
         //   与 ⑤⑥ 同型 —— 闭式、纯输入、不吃场；上限与口径只在 Core/WrapLimits.cs 一处，这里只是**调**它。
         //   ⚠ 越界不外推：缠过 20 圈会渐成球形，那个形状本程序没有模型，硬算出来的是「看起来正常的错数」。
-        checks.Add(WrapLimits.Judge(c));
+        //   ★ 决 104（业主 2026-09-25）：决103 口径下是硬安全线（上限 = 参数表圆盘保温上限，缺省 10 mm）；决103前 仍是 2026-09-18 的参考行。
+        checks.Add(WrapLimits.Judge(c, c.RuleSet));
 
         // ── 数值自洽：法兰热平衡残差。**始终露出来**（2026-08-17 加）。
         //

@@ -58,6 +58,79 @@ public class R48ShapeSearchDriverTests
         Assert.Contains("探针给的表，无出处", run);
     }
 
+    // ───────────────────────────── 决 106（2026-09-25）：外推按散热收敛停、上端 NaN 取板料包络
+    /// <summary>缺口随盘径变的假求解：hot = hotOf(R)，全部不可行（hot > 5）。</summary>
+    private static Func<DesignSpec, DesignInputs, SolverOptions, IProgress<string>?, CancellationToken, SolverResult> FakeDeficit(
+        Func<double, double> hotOf, List<(double R, double hw, bool taper, SolverOptions o)> calls)
+        => (d, b, o, p, t) =>
+        {
+            lock (calls) calls.Add((d.DiscRadiusMm, d.TabHalfWidthMm, d.TabTaper, o));
+            var dd = d.Clone();
+            for (int j = 0; j < dd.TabThickMm.Length; j++) dd.TabThickMm[j] = 1.0;
+            double hot = hotOf(d.DiscRadiusMm);
+            return new SolverResult
+            {
+                Design = dd, Feasible = false, MassG = 1000 + 20 * d.DiscRadiusMm, Solves = 1, HitBound = true,
+                StopWhy = $"假停因 R={d.DiscRadiusMm:0.000}", Message = "假：不可行", Best = FakeLine(hot, 1, 1),
+            };
+        };
+
+    [Fact]
+    public void f_决106_缺口不再改善_外推两步即停_不到上端()
+    {
+        var seed = R48NMeshGateTests.Design("W08");
+        var calls = new List<(double R, double hw, bool taper, SolverOptions o)>();
+        var opt = new ShapeSearchOptions
+        {
+            MaxDiscMm = 70, MaxDiscSource = "门用上端", DiscGridMm = new[] { 27.0, 32.0 },
+            EvalSeedFirst = false, Lanes = 1, SolveOverride = FakeDeficit(_ => 30.0, calls),   // 缺口恒 25 K
+        };
+        var res = ShapeSearchDriver.Run(seed, new DesignInputs(), opt, null, CancellationToken.None);
+        Assert.True(res.NoFeasible);
+        Assert.Equal(new[] { 37.0, 42.0 }, res.ExtrapolatedMm.ToArray());   // 32 → 37 → 42：连续两步不改善 ⇒ 停，没走到 70
+        Assert.Contains("散热机制收敛", res.ExtrapolationStop);
+        Assert.Contains("按散热收敛停", res.FirstPassBranch);
+        // 改回 ParallelFirstPass = false（界面原算法 + 收敛判定）同样两步即停
+        opt.ParallelFirstPass = false; calls.Clear();
+        var res2 = ShapeSearchDriver.Run(seed, new DesignInputs(), opt, null, CancellationToken.None);
+        Assert.Equal(new[] { 37.0, 42.0 }, res2.ExtrapolatedMm.ToArray());
+        Assert.Contains("散热机制收敛", res2.ExtrapolationStop);
+    }
+
+    [Fact]
+    public void f2_决106_缺口持续改善_外推走到上端()
+    {
+        var seed = R48NMeshGateTests.Design("W08");
+        var calls = new List<(double R, double hw, bool taper, SolverOptions o)>();
+        var opt = new ShapeSearchOptions
+        {
+            MaxDiscMm = 57, MaxDiscSource = "门用上端", DiscGridMm = new[] { 27.0, 32.0 },
+            EvalSeedFirst = false, Lanes = 1, SolveOverride = FakeDeficit(R => 5 + 2000.0 / R, calls),   // 缺口 2000/R：每步 5 mm 改善 > 5 %
+        };
+        var res = ShapeSearchDriver.Run(seed, new DesignInputs(), opt, null, CancellationToken.None);
+        Assert.True(res.NoFeasible);
+        Assert.Equal(new[] { 37.0, 42.0, 47.0, 52.0, 57.0 }, res.ExtrapolatedMm.ToArray());
+        Assert.Contains("物理封顶", res.ExtrapolationStop);
+        Assert.DoesNotContain("散热机制收敛", res.ExtrapolationStop);
+    }
+
+    [Fact]
+    public void g_决106_上端NaN_取本算例板料包络()
+    {
+        var seed = R48NMeshGateTests.Design("W08");
+        var calls = new List<(double R, double hw, bool taper, SolverOptions o)>();
+        var opt = new ShapeSearchOptions
+        {
+            MaxDiscMm = double.NaN, MaxDiscSource = "", DiscGridMm = new[] { 27.0, 32.0 },
+            EvalSeedFirst = false, Lanes = 1, SolveOverride = FakeDeficit(_ => 30.0, calls),
+        };
+        var res = ShapeSearchDriver.Run(seed, new DesignInputs(), opt, null, CancellationToken.None);
+        var (envMm, _) = MeshAdapt.PlateOuterRadiusMm(seed.BuildCase(new DesignInputs(), checkRamp: false));
+        Assert.Equal(envMm, res.MaxDiscMm, 9);
+        Assert.Contains("决 106", res.MaxDiscSource);
+        Assert.Contains("板料包络", res.MaxDiscSource);
+    }
+
     // ───────────────────────────── (c) 假求解：外推两步后可行
     private static LineResult FakeLine(double hot, double cold, double flux) => new LineResult
     {

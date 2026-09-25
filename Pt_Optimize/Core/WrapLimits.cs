@@ -70,6 +70,8 @@ public static class WrapLimits
     /// <summary>
     /// 接合区缠绕参考线 mm = <see cref="MaxTurnsAtJoint"/> × <see cref="InsulationSearch.LayerMm"/> = 10.0。
     /// ★ 2026-09-18 起这是**参考线**不是上限（用户当日「还是只给材质保温厚度方案就行」）。
+    /// ★ 决 104（业主 2026-09-25「圆盘保温块最大厚度(圆盘之前说过了10mm)」）：决103 口径下又是**上限**，限值取 <see cref="DesignInputs.DiscInsulCapMm"/>（缺省 = 本值）；
+    ///   决103前 口径仍是参考线。见 <see cref="Judge(LineCase, CriteriaRuleSet)"/>。
     /// ⚠ 不许在别处再写一个 10 —— 层厚改了这里要跟着改，手抄的那一份不会。
     /// </summary>
     public static double JointZoneMaxMm => MaxTurnsAtJoint * InsulationSearch.LayerMm;
@@ -84,6 +86,11 @@ public static class WrapLimits
         "用户 2026-09-18：「还是只给材质保温厚度方案就行」"
       + "—— APP 只给材质与各区厚度方案，怎么包（缠绕或预制保温块）由现场定 ⇒ 本条只作参考，不卡交付。";
 
+    /// <summary>决 104 的出处原话（判据说明、报告、界面引这一份）。</summary>
+    public const string Decision104Note =
+        "业主 2026-09-25：「圆盘保温块最大厚度(圆盘之前说过了10mm)」（决 104）"
+      + "⇒ 圆盘保温块的最大厚度就是上限，决103 口径下本条卡交付；改回口径（决103前）仍照 2026-09-18 只作参考。";
+
     /// <summary>超过一次缠绕圈数时印的那句提示（全仓唯一一份写法；圈数不手抄）。</summary>
     public static string PrefabNote => $"超过 {MaxTurnsAtJoint} 圈现场需预制保温块";
 
@@ -94,12 +101,15 @@ public static class WrapLimits
     /// ★ 2026-09-18，Opus 5：**圈数提示的唯一一份写法** —— 本条说明、保温方案表、安装报告、输出框都调它。
     /// 形如「圆盘区 12.5 mm ≈ 25 圈（每层 0.5 mm）；超过 20 圈现场需预制保温块」。
     /// </summary>
-    public static string TurnsLine(string where, double mm)
+    public static string TurnsLine(string where, double mm) => TurnsLine(where, mm, prefabHint: true);
+
+    /// <summary>决 104：硬判据口径下不提示预制块（超上限是不可行，不是换包法）⇒ <paramref name="prefabHint"/> = false。</summary>
+    public static string TurnsLine(string where, double mm, bool prefabHint)
     {
         if (double.IsNaN(mm)) return $"{where} —（算不出来）";
         double t = TurnsOf(mm);
         return $"{where} {mm:0.###} mm ≈ {t:0.#} 圈（每层 {InsulationSearch.LayerMm:0.#} mm）"
-             + (t > MaxTurnsAtJoint + 1e-9 ? $"；{PrefabNote}" : "");
+             + (prefabHint && t > MaxTurnsAtJoint + 1e-9 ? $"；{PrefabNote}" : "");
     }
 
     /// <summary>接合区口径一句话（界面与报告引用）。</summary>
@@ -135,19 +145,42 @@ public static class WrapLimits
     /// ★ 2026-09-18 起 <see cref="CheckKind.Reference"/> —— **照常算、照常印，不卡交付**（用户当日原话，见 <see cref="PlanOnlyNote"/>）。
     /// 闭式、纯输入（不吃场）⇒ 网格与工况都不影响它，两态逐位相同。
     /// **任何一项算不出来 ⇒ 整条判不了**（判不了不算过，也不算不过 —— 参考行同样不许拿初值顶）。
+    /// 这一个重载 = 改回口径（决103前），逐位同 2026-09-18；生产口径走 <see cref="Judge(LineCase, CriteriaRuleSet)"/>。
     /// </summary>
-    public static ConstraintOut Judge(LineCase c)
+    public static ConstraintOut Judge(LineCase c) => Build(c, JointZoneMaxMm, hard: false);
+
+    /// <summary>
+    /// ★ 决 104（业主 2026-09-25「圆盘保温块最大厚度(圆盘之前说过了10mm)」）：决103 口径下本条是**硬安全线**，
+    /// 限值 = <see cref="DesignInputs.DiscInsulCapMm"/>（缺省 = <see cref="JointZoneMaxMm"/>）；超上限 = 不可行，**不外推、不按上限硬算**（按上限硬算是静默替换输入），并写明可动的杠杆。
+    /// 读值口径 <see cref="LineCase.DiscInsulEffectiveAt"/> 不封顶：配套清单、热解、本条判的是同一个设定值。
+    /// 改回：<paramref name="rs"/> = 决103前，或上限 = 正无穷 ⇒ 走 <see cref="Judge(LineCase)"/>，逐位同 2026-09-18 起的参考行。
+    /// 算不出来 ⇒ 仍判不了（硬安全线上判不了 = 不过）。
+    /// </summary>
+    public static ConstraintOut Judge(LineCase c, CriteriaRuleSet rs)
+    {
+        if (c is null) throw new ArgumentNullException(nameof(c));
+        double cap = c.Base?.DiscInsulCapMm ?? double.PositiveInfinity;
+        if (rs == CriteriaRuleSet.决103前 || double.IsNaN(cap) || double.IsPositiveInfinity(cap)) return Judge(c);
+        return Build(c, cap, hard: true);
+    }
+
+    static ConstraintOut Build(LineCase c, double limit, bool hard)
     {
         if (c is null) throw new ArgumentNullException(nameof(c));
         var items = JointItems(c);
         var blind = items.Where(t => double.IsNaN(t.Mm)).Select(t => t.Where).ToArray();
-        string head = $"参考线 {JointZoneMaxMm:0.#} mm = {MaxTurnsAtJoint} 圈 × 每圈 {InsulationSearch.LayerMm:0.#} mm。{SourceNote}　{ZoneNote}　";
+        var kind = hard ? CheckKind.HardSafety : CheckKind.Reference;
+        string head = hard
+            ? $"上限 {limit:0.#} mm = {TurnsOf(limit):0.#} 圈 × 每圈 {InsulationSearch.LayerMm:0.#} mm（决 104）。{Decision104Note}　{SourceNote}　"
+              + "接合区 = 圆盘靠管孔的内环带（只看圆盘保温）；管保温、舌板保温不看（用户原话「其它地方(舌板与管)好缠绕」）。"
+              + "⚠ 现模型圆盘保温整盘只有一个厚度（不分内外环），所以整盘按接合区判。　"
+            : $"参考线 {JointZoneMaxMm:0.#} mm = {MaxTurnsAtJoint} 圈 × 每圈 {InsulationSearch.LayerMm:0.#} mm。{SourceNote}　{ZoneNote}　";
 
         if (items.Length == 0 || blind.Length > 0)
             return new ConstraintOut
             {
-                Name = LineResult.Key.WrapTurns, Unit = "mm", Kind = CheckKind.Reference,
-                Actual = double.NaN, Limit = JointZoneMaxMm, LessIsBetter = true,
+                Name = LineResult.Key.WrapTurns, Unit = "mm", Kind = kind,
+                Actual = double.NaN, Limit = limit, LessIsBetter = true,
                 Ok = false, Undetermined = true,
                 Where = blind.Length > 0 ? string.Join("、", blind) : "—",
                 Note = head + (items.Length == 0
@@ -155,23 +188,31 @@ public static class WrapLimits
                     : $"★ **无法判定**：{blind.Length} 处（{string.Join("、", blind)}）的保温厚度算不出来。"
                       + "**任何一处算不出来，整条就判不了** —— 这条报的是「现场要缠几圈」，凭初值报一个圈数等于没算。"
                       + "　【下一步】回 ① 页确认这片法兰的圆盘保温厚度有值（不包就填 0），或改用解析几何路径。")
+                    + (hard ? "　硬安全线上判不了 = 不过。" : "")
             };
 
         var worst = items.OrderByDescending(t => t.Mm).First();
-        bool within = worst.Mm <= JointZoneMaxMm + 1e-9;
+        bool within = worst.Mm <= limit + 1e-9;
+        string verdict = hard
+            ? (within
+                ? $"最厚的一处在上限 {limit:0.#} mm 以内。"
+                : $"★ 最厚的一处是 {worst.Where} {worst.Mm:0.###} mm = {TurnsOf(worst.Mm):0.#} 圈，超过上限 {limit:0.#} mm ⇒ **不可行**。"
+                  + "不外推（缠过上限会渐成球形，本程序没有那个模型）、不按上限硬算（那是静默替换输入）。"
+                  + "可动的杠杆：舌板保温厚度、舌半宽与锥形舌片、舌根挖孔、盘径、夹持温度（现场冷却旋钮）；哪一根有效由搜形状驱动逐个试，本条只报卡在这里。")
+            : (within
+                ? $"最厚的一处在一次缠绕能缠的 {MaxTurnsAtJoint} 圈以内。"
+                : $"★ 最厚的一处是 {worst.Where} {worst.Mm:0.###} mm = {TurnsOf(worst.Mm):0.#} 圈，{PrefabNote}。"
+                  + "继续硬缠会渐成球形 —— 那个形状**本程序没有模型**（散热面积与形状因子全变），"
+                  + "所以这里**不外推、不硬算**；按预制块做则本程序算的等厚层就是对的。"
+                  + "　【现场怎么做由现场定】保温方案表给的是材质与各区厚度，包法（缠绕或预制块）不在本程序的交付范围内。");
         return new ConstraintOut
         {
-            Name = LineResult.Key.WrapTurns, Unit = "mm", Kind = CheckKind.Reference,
-            Actual = worst.Mm, Limit = JointZoneMaxMm, LessIsBetter = true,
+            Name = LineResult.Key.WrapTurns, Unit = "mm", Kind = kind,
+            Actual = worst.Mm, Limit = limit, LessIsBetter = true,
             Ok = within, Where = worst.Where,
             Note = head
-                 + $"接合区各处：{string.Join("；", items.Select(t => TurnsLine(t.Where, t.Mm)))}。"
-                 + (within
-                    ? $"最厚的一处在一次缠绕能缠的 {MaxTurnsAtJoint} 圈以内。"
-                    : $"★ 最厚的一处是 {worst.Where} {worst.Mm:0.###} mm = {TurnsOf(worst.Mm):0.#} 圈，{PrefabNote}。"
-                      + "继续硬缠会渐成球形 —— 那个形状**本程序没有模型**（散热面积与形状因子全变），"
-                      + "所以这里**不外推、不硬算**；按预制块做则本程序算的等厚层就是对的。"
-                      + "　【现场怎么做由现场定】保温方案表给的是材质与各区厚度，包法（缠绕或预制块）不在本程序的交付范围内。")
+                 + $"接合区各处：{string.Join("；", items.Select(t => TurnsLine(t.Where, t.Mm, prefabHint: !hard)))}。"
+                 + verdict
         };
     }
 }

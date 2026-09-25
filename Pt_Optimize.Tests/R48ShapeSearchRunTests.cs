@@ -55,7 +55,7 @@ public class R48ShapeSearchRunTests
     internal static (double Mm, string Source) MaxDisc(double lowerBoundMm)
     {
         string? s = Environment.GetEnvironmentVariable("SHAPE_MAXDISC");
-        if (string.IsNullOrWhiteSpace(s)) return (50.0, "探针给的表，无出处（缺省 50 mm）");
+        if (string.IsNullOrWhiteSpace(s)) return (double.NaN, "程序判定（决 106，2026-09-25）：不给上端，物理封顶 = 板料包络，停在散热收敛处");   // 2026-09-25：缺省不再是 50
         s = s.Trim();
         if (s.StartsWith("lb+", StringComparison.OrdinalIgnoreCase))
         {
@@ -114,6 +114,11 @@ public class R48ShapeSearchRunTests
     {
         var seed = R48NMeshGateTests.Design(which);
         var baseIn = new DesignInputs();
+        // ★ 决 104（业主 2026-09-25）：圆盘保温块最大厚度 = 参数表上限（缺省 10 mm）⇒ 种子圆盘保温取上限（设计记录默认 20 会被硬判据卡死，决 46 未改默认）；
+        //   SHAPE_DISC=<mm> 可改，超上限照实报并退出（拒答不静默）。
+        double discMm = EnvD("SHAPE_DISC", Math.Min(seed.FlangeInsulMm, baseIn.DiscInsulCapMm));
+        Assert.True(discMm <= baseIn.DiscInsulCapMm + 1e-9, $"SHAPE_DISC {discMm} mm 超过圆盘保温上限 {baseIn.DiscInsulCapMm} mm（决 104），本跑不开");
+        seed.FlangeInsulated = true; seed.FlangeInsulMm = discMm; seed.DiscInsulMm = Array.Empty<double>();
         double lb = GridStart(seed, baseIn);
         var (maxDisc, src) = MaxDisc(lb);
         var dflt = new ShapeSearchOptions();
@@ -144,10 +149,11 @@ public class R48ShapeSearchRunTests
         sink.W($"争用　开跑时 loadavg {LoadAvg()}　同机并跑申报：{Environment.GetEnvironmentVariable("SHAPE_CONTENTION") ?? "未申报"}");
         sink.W($"种子　{seed.Name}（{seed.Provenance}）；盘半径 {seed.DiscRadiusMm:0.0}、舌半宽 {seed.TabHalfWidthMm:0.0}、管壁 {seed.WallMm:0.00}、内径 {seed.TubeIdMm:0.0}");
         sink.W($"工艺参数　new DesignInputs()（缺省）");
+        sink.W($"圆盘保温　整线 {seed.FlangeInsulMm:0.#} mm（上限 {baseIn.DiscInsulCapMm:0.#} mm，决 104；SHAPE_DISC 可改，不许超上限）");
         sink.W(opt.AllowTabCuts
             ? "族　挖舌孔（AllowTabCuts = true，SHAPE_CUTS=1；业主 2026-09-25 方向 1：侧 Y 形 = 锥形舌片 + 舌根三角孔 + 叉臂加厚，求解器既有旋钮 TabHoleR／拉长比／TabHoleSides／TabArmThick）"
             : "族　不挖舌孔（AllowTabCuts = false，现役设计的解法设定 = 界面下拉预设，与 R48LEndToEndTests.ProductionOptions 同一份）；挖舌孔族本跑不做（SHAPE_CUTS=1 可开）");
-        sink.W($"上端　盘半径 {maxDisc:0.000} mm；出处：{src}");
+        sink.W(double.IsNaN(maxDisc) ? $"上端　程序判定（决 106）：物理封顶 = 板料包络，停在散热收敛处；出处：{src}" : $"上端　盘半径 {maxDisc:0.000} mm；出处：{src}");
         sink.W($"参数　粗筛 {opt.ScreenRounds} 轮、精算 {opt.FinalRounds} 轮、并发 {opt.Lanes} 路、粗筛平坦区网格 {opt.ScreenCoarseMm:0.###} mm、先算基准 {(opt.EvalSeedFirst ? "是" : "否")}、邻域最多 {opt.MaxExtend} 轮；其余照抄界面 SearchOneFamilyAsync");
         sink.W($"粗筛轮数　{opt.ScreenRounds}（缺省 {dflt.ScreenRounds}，选定：依据夜跑 deliverable/R48_搜形状_Core驱动_W08_本次开跑于2026-09-24_001304.txt 与 …_021617.txt；界面 16 轮在 4 核 Linux 不可用；跑过再校）");
         sink.W($"算力选项（2026-09-24，判定与阈值不动；每项有改回）　① {(opt.ParallelFirstPass ? "并行首遍（起点表全部点并行解一遍）" : "界面原算法（SHAPE_PARALLEL=0）")}；"

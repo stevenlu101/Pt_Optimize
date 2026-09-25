@@ -23,6 +23,11 @@ namespace PtOptimize.Tests;
 //    缠不缠得出来是现场工艺，不是设计可行性 —— 拿它去判「这份设计不成立」，
 //    会把一批现场做得出来（预制块）的设计判死。
 //  ⇒ 本条**由硬安全线降为参考行**：照常算、照常印圈数提示，**不进 AllOk／HardOk、不卡交付**。
+//
+//  ★★ 决 104（业主 2026-09-25「圆盘保温块最大厚度(圆盘之前说过了10mm)」）：决103 口径下本条**升回硬安全线**
+//    （限值 = DesignInputs.DiscInsulCapMm，缺省 10；不封顶、不外推、不按上限硬算）；决103前 口径仍是本档 2026-09-18 的参考行，
+//    单参 WrapLimits.Judge(c) 就是那个口径，本档各门照旧钉它逐位不变。决103 口径的门在 R48DiscInsulCapTests。
+//    下面「门_降为参考行接到下游」「门_参考行不卡交付_注射改回硬安全线当场红」两条按此改写（分工况表两张各看各的）。
 //  ⇒ 与之配套，三个被 §0.-11 压下去的数**退回 §0.-11 之前的值**：
 //      DesignSpec.FlangeInsulMm              10 → 20 mm
 //      界面「法兰保温厚」控件上界            10 → 60 mm（DesignSpec.FlangeInsulMaxMm）
@@ -146,7 +151,7 @@ public class R48LWrapTurnsGateTests
         Assert.Contains("public static double TurnsOf(double mm) => mm / InsulationSearch.LayerMm;", wl);
 
         string lr = Code("Pt_Optimize/Core/LineRunner.cs");
-        Assert.Contains("checks.Add(WrapLimits.Judge(c));", lr);
+        Assert.Contains("checks.Add(WrapLimits.Judge(c, c.RuleSet));", lr);   // 决 104（2026-09-25）：调用带口径（决103 硬／决103前 参考），仍只调一次
         Assert.Equal(1, lr.Split("WrapLimits.Judge(").Length - 1);
     }
 
@@ -324,31 +329,42 @@ public class R48LWrapTurnsGateTests
     //  ③ 接到下游（新状态位默认没接上 —— 赋了值不等于用它的人读得到）
     // ────────────────────────────────────────────────────────────────────
 
-    /// <summary>分工况表、对照表、不吃管温场名单、界面全表，四处都要跟着降。</summary>
+    /// <summary>
+    /// 分工况表、对照表、不吃管温场名单、界面全表，四处要一致。
+    /// 决 104（2026-09-25）改写：改回口径（决103前）那张表两态仍是参考行（2026-09-18 口径逐位不变）；
+    /// 生产口径（决103）那张表两态是硬安全线，对照表也印硬安全线（两张表各看各的，读的人不被骗）。
+    /// </summary>
     [Fact]
     public void 门_降为参考行接到下游()
     {
         string key = LineResult.Key.WrapTurns;
 
-        // 分工况表：两态都是参考行（纯输入，与工况无关）
-        var row = LineResult.RequiredByState.Single(q => q.Prefix == key);
+        // 改回口径（决103前）：两态都是参考行（纯输入，与工况无关）—— 2026-09-18 口径逐位不变
+        var row = LineResult.RequiredByStatePre103.Single(q => q.Prefix == key);
         Assert.Equal(CheckKind.Reference, row.GlassKind);
         Assert.Equal(CheckKind.Reference, row.EmptyTubeKind);
         Assert.False(row.NeedsRamp);
-        // 「本工况判定用的必备名单」里不许再有它 —— 参考行不卡交付
-        Assert.DoesNotContain(key, LineResult.RequiredFor(false).Select(q => q.Prefix));
-        Assert.DoesNotContain(key, LineResult.RequiredFor(true).Select(q => q.Prefix));
-        Assert.Equal(CheckKind.Reference, LineResult.StateKindOf(key, emptyTube: false));
-        Assert.Equal(CheckKind.Reference, LineResult.StateKindOf(key, emptyTube: true));
+        Assert.DoesNotContain(key, LineResult.RequiredFor(false, CriteriaRuleSet.决103前).Select(q => q.Prefix));
+        Assert.DoesNotContain(key, LineResult.RequiredFor(true, CriteriaRuleSet.决103前).Select(q => q.Prefix));
+        Assert.Equal(CheckKind.Reference, LineResult.StateKindOf(key, false, CriteriaRuleSet.决103前));
+        Assert.Equal(CheckKind.Reference, LineResult.StateKindOf(key, true, CriteriaRuleSet.决103前));
 
-        // 对照表（工程师回查的那一张）：不再是硬安全线
+        // 生产口径（决103，决 104 起）：两态都是硬安全线，进必备名单
+        var prod = LineResult.RequiredByState.Single(q => q.Prefix == key);
+        Assert.Equal(CheckKind.HardSafety, prod.GlassKind);
+        Assert.Equal(CheckKind.HardSafety, prod.EmptyTubeKind);
+        Assert.Contains(key, LineResult.RequiredFor(false).Select(q => q.Prefix));
+        Assert.Contains(key, LineResult.RequiredFor(true).Select(q => q.Prefix));
+
+        // 对照表（工程师回查的那一张）：生产口径 = 硬安全线，改回口径的参考写法也在「意思」里
         var e = Criteria.All.Single(x => x.Key == key);
-        Assert.False(e.Hard, "对照表还把它印成硬安全线 —— 与分工况表两个答案，读的人必然被骗一次");
+        Assert.True(e.Hard, "对照表还把它印成参考 —— 与生产分工况表两个答案，读的人必然被骗一次");
         Assert.Equal("mm", e.Unit);
         Assert.Contains("0.5", e.Means);                      // 一圈多厚，说在「意思」里
         Assert.Contains("20", e.Means);                       // 多少圈
-        Assert.Contains("预制保温块", e.Means);               // 超了现场怎么办
-        Assert.Contains("不卡交付", e.Means);                 // 它是参考，说在明面上
+        Assert.Contains("决 104", e.Means);                   // 升回硬判据的出处
+        Assert.Contains("预制保温块", e.Means);               // 改回口径下超了现场怎么办
+        Assert.Contains("不卡交付", e.Means);                 // 改回口径是参考，说在明面上
 
         // 界面不许出现判据代号 ⇒ 这条判据干脆不带代号
         Assert.Equal("", e.Code);
@@ -363,17 +379,19 @@ public class R48LWrapTurnsGateTests
     /// <summary>
     /// ★★★ 行为门 ＋ **注射**：一条**不过**的「接合区保温缠得出来」
     /// <list type="bullet">
-    ///   <item>生产口径（参考行）⇒ 整线照样 <c>AllOk</c>、<c>HardOk</c>，<c>Failed</c> 里不点它的名；</item>
-    ///   <item>注射「改回硬安全线」⇒ 同一份结果当场变不可交付。</item>
+    ///   <item>改回口径（决103前，参考行）⇒ 整线照样 <c>AllOk</c>、<c>HardOk</c>，<c>Failed</c> 里不点它的名；</item>
+    ///   <item>注射「改回硬安全线」⇒ 同一份结果当场变不可交付；</item>
+    ///   <item>决 104（2026-09-25）：生产口径（决103）下它本来就是硬安全线 ⇒ 同一份不过的结果不可交付。</item>
     /// </list>
     /// 少了注射这一半，上面那一半可能只是因为**别的原因**恰好成立（比如判据压根没进表）。
+    /// 手造的 LineResult 默认口径 = 决103前（逐位不变），生产口径那一半显式设 RuleSet。
     /// </summary>
     [Fact]
     public void 门_参考行不卡交付_注射改回硬安全线当场红()
     {
-        LineResult Build(CheckKind wrapKind, bool wrapOk)
+        LineResult Build(CheckKind wrapKind, bool wrapOk, CriteriaRuleSet rs = CriteriaRuleSet.决103前)
         {
-            var checks = LineResult.RequiredByState.Select(q => new ConstraintOut
+            var checks = LineResult.RequiredByStateFor(rs).Select(q => new ConstraintOut
             {
                 Name = q.Prefix, Unit = "—", Kind = q.GlassKind, Ok = true, Actual = 0, Limit = 1,
             }).ToArray();
@@ -381,7 +399,7 @@ public class R48LWrapTurnsGateTests
             wrap.Unit = "mm"; wrap.Limit = WrapLimits.JointZoneMaxMm;
             wrap.Actual = wrapOk ? WrapLimits.JointZoneMaxMm : WrapLimits.JointZoneMaxMm + 10.0;
             wrap.Ok = wrapOk; wrap.Kind = wrapKind;
-            return new LineResult { Ok = true, Converged = true, RampChecked = true, Checks = checks };
+            return new LineResult { Ok = true, Converged = true, RampChecked = true, Checks = checks, RuleSet = rs };
         }
 
         // 自证：其余全过时是可交付，否则下面两条恒真
@@ -399,6 +417,12 @@ public class R48LWrapTurnsGateTests
         Assert.False(injected.AllOk,
             "把它改回硬安全线之后整线还报可交付 —— 那说明上面那半条什么也没证明");
         Assert.Contains(injected.Failed, s => s.StartsWith(LineResult.Key.WrapTurns, StringComparison.Ordinal));
+
+        // 决 104：生产口径（决103）下不用注射 —— 分工况表本身就是硬安全线，同一份不过的结果不可交付；过了就可交付
+        var prod = Build(CheckKind.HardSafety, false, CriteriaRuleSet.决103);
+        Assert.False(prod.HardOk, "决103 口径下圆盘保温超上限还报硬安全线全过 —— 决 104 没落地");
+        Assert.Contains(prod.Failed, s => s.StartsWith(LineResult.Key.WrapTurns, StringComparison.Ordinal));
+        Assert.True(Build(CheckKind.HardSafety, true, CriteriaRuleSet.决103).HardOk);
     }
 
     /// <summary>
