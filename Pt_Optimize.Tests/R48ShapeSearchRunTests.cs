@@ -16,7 +16,10 @@ namespace PtOptimize.Tests;
 /// 只印不判：本门不判答案对不对，只把每个形状一行实时追加进证据档（边跑边 flush，进程被杀也留下已算完的），
 /// 末尾印方案卡或「无可行形状」报告。断言只核「跑完了、末尾有卡或报告」。
 ///
-/// 种子 = <see cref="R48NMeshGateTests.Design"/>（W08 导航档复原／W06 细网格档复原），工艺参数 = new DesignInputs()。
+/// 输入 = <see cref="DesignSpec.W08"/>／<see cref="DesignSpec.W06"/> 界面预设（几何唯一来源，铁律②），工艺参数 = new DesignInputs()。
+/// ★ 禁种子（业主 2026-08-25「把种子这种方法彻底禁掉，设计记录是用来校正计算流程」、08-28「不能再用种子的形式」，HANDOVER ⑪⑬㉓；09-25 再点名）：
+///   优化变量（板厚／舌保温／环倍率）由求解器从约束盒下角自己算（<see cref="SolverIsSeedFreeTests"/>），形状（盘径／舌宽）从闭式下界起搜，
+///   不取任何设计记录的形状作起点或基准；2026-09-25 15:32 之前的跑用「导航档复原设计」当种子并先算其形状作基准 ⇒ 那些跑作废，本档改掉。
 /// 族：只跑「不挖舌孔」一族（AllowTabCuts = false）。出处：现役设计的解法设定 = 界面下拉预设第 0 项，
 ///   与 R48LEndToEndTests.ProductionOptions（MaxRounds 40、AllowTabCuts false）同一份；两族并跑是界面「两个都算」的行为，本跑器不做（写明）。
 ///
@@ -32,7 +35,7 @@ namespace PtOptimize.Tests;
 ///   SHAPE_WFRAC   舌宽比表，逗号分隔，缺省 = ShapeSearchOptions.WFrac（2026-09-24 起 1,0.875,0.75；改回 0.75,1）。
 ///   SHAPE_FINAL   精算轮数，缺省 40（照抄界面）。
 ///   SHAPE_COARSE  粗筛平坦区网格 mm，缺省 0（照抄界面，关）。
-///   SHAPE_SEEDFIRST 1／0：是否先算种子自己的形状作基准，缺省 1（照抄界面）。
+///   SHAPE_SEEDFIRST 1／0：是否先算输入自己的形状作基准，缺省 0（禁种子）；1 只供「载入设计记录 → 核算」的校正用。
 ///   SHAPE_MAXEXTEND 邻域爬山最多几轮，缺省 6（照抄界面 SearchMaxExtend）。
 ///   SHAPE_CONTENTION 同机并跑说明（原样印进证据头），缺省「未申报」。
 /// </summary>
@@ -66,9 +69,9 @@ public class R48ShapeSearchRunTests
     }
 
     /// <summary>起点表第一点：闭式下界按 <see cref="ShapeSearchPlan.LiveDiscs"/> 的 0.5 mm 向上取整（与驱动缺省表同一条规则、同一份实现）。</summary>
-    internal static double GridStart(DesignSpec seed, DesignInputs baseIn)
+    internal static double GridStart(DesignSpec input, DesignInputs baseIn)
         => ShapeSearchPlan.LiveDiscs(new[] { double.NegativeInfinity },
-               GeometryScreen.MinDiscRadiusMm(holeRadiusMm: seed.HoleRadiusMm, thickMm: baseIn.WeldMinThicknessMm, wallMm: seed.WallMm))[0];
+               GeometryScreen.MinDiscRadiusMm(holeRadiusMm: input.HoleRadiusMm, thickMm: baseIn.WeldMinThicknessMm, wallMm: input.WallMm))[0];
 
     internal static string Git(string args)
     {
@@ -112,14 +115,15 @@ public class R48ShapeSearchRunTests
     [InlineData("W06")]
     public void 搜形状_Core驱动_整夜实跑(string which)
     {
-        var seed = R48NMeshGateTests.Design(which);
+        // ★ 禁种子：输入只取界面预设 DesignSpec.W08／W06（不取导航档／细网格档复原的设计记录）
+        var input = which == "W08" ? DesignSpec.W08.Clone() : which == "W06" ? DesignSpec.W06.Clone() : throw new ArgumentException(which);
         var baseIn = new DesignInputs();
         // ★ 决 104（业主 2026-09-25）：圆盘保温块最大厚度 = 参数表上限（缺省 10 mm）⇒ 种子圆盘保温取上限（设计记录默认 20 会被硬判据卡死，决 46 未改默认）；
         //   SHAPE_DISC=<mm> 可改，超上限照实报并退出（拒答不静默）。
-        double discMm = EnvD("SHAPE_DISC", Math.Min(seed.FlangeInsulMm, baseIn.DiscInsulCapMm));
+        double discMm = EnvD("SHAPE_DISC", Math.Min(input.FlangeInsulMm, baseIn.DiscInsulCapMm));
         Assert.True(discMm <= baseIn.DiscInsulCapMm + 1e-9, $"SHAPE_DISC {discMm} mm 超过圆盘保温上限 {baseIn.DiscInsulCapMm} mm（决 104），本跑不开");
-        seed.FlangeInsulated = true; seed.FlangeInsulMm = discMm; seed.DiscInsulMm = Array.Empty<double>();
-        double lb = GridStart(seed, baseIn);
+        input.FlangeInsulated = true; input.FlangeInsulMm = discMm; input.DiscInsulMm = Array.Empty<double>();
+        double lb = GridStart(input, baseIn);
         var (maxDisc, src) = MaxDisc(lb);
         var dflt = new ShapeSearchOptions();
         string? wf = Environment.GetEnvironmentVariable("SHAPE_WFRAC");
@@ -130,7 +134,7 @@ public class R48ShapeSearchRunTests
             ScreenRounds = EnvI("SHAPE_SCREEN", dflt.ScreenRounds),
             FinalRounds = EnvI("SHAPE_FINAL", 40),
             ScreenCoarseMm = EnvD("SHAPE_COARSE", 0),
-            EvalSeedFirst = EnvI("SHAPE_SEEDFIRST", 1) != 0,
+            EvalSeedFirst = EnvI("SHAPE_SEEDFIRST", 0) != 0,   // 禁种子：缺省不先算输入形状作基准
             MaxExtend = EnvI("SHAPE_MAXEXTEND", 6),
             ParallelFirstPass = EnvI("SHAPE_PARALLEL", dflt.ParallelFirstPass ? 1 : 0) != 0,
             ScreenSkipRadiusGrowth = EnvI("SHAPE_SKIPGROW", dflt.ScreenSkipRadiusGrowth ? 1 : 0) != 0,
@@ -147,9 +151,11 @@ public class R48ShapeSearchRunTests
         sink.W($"开跑　{DateTime.Now:yyyy-MM-dd HH:mm:ss}　平台 {RuntimeInformation.OSDescription}／{RuntimeInformation.FrameworkDescription}／{Environment.ProcessorCount} 核");
         sink.W($"树　分支 {Git("rev-parse --abbrev-ref HEAD")}　提交 {Git("rev-parse --short HEAD")}　未提交改动 {(Git("status --porcelain -- Pt_Optimize Pt_Optimize.Tests") is var st && st != "未查到" ? "有（本跑用的是工作树里的源码）" : "无")}");
         sink.W($"争用　开跑时 loadavg {LoadAvg()}　同机并跑申报：{Environment.GetEnvironmentVariable("SHAPE_CONTENTION") ?? "未申报"}");
-        sink.W($"种子　{seed.Name}（{seed.Provenance}）；盘半径 {seed.DiscRadiusMm:0.0}、舌半宽 {seed.TabHalfWidthMm:0.0}、管壁 {seed.WallMm:0.00}、内径 {seed.TubeIdMm:0.0}");
+        sink.W($"输入　DesignSpec.{which} 界面预设「{input.Name}」（几何唯一来源，铁律②）：管壁 {input.WallMm:0.00}、内径 {input.TubeIdMm:0.0}、片数 {input.FlangeCount}、压接段 {input.ClampLengthMm:0.#} mm（构型工艺常数来自它，申报）");
+        sink.W($"禁种子　优化变量（板厚／舌保温／环倍率）由求解器从约束盒下角自己算（SolverIsSeedFreeTests）；形状（盘径／舌宽）从闭式下界 盘半径 {lb:0.000} mm 起搜；不取设计记录的形状作起点，"
+             + (opt.EvalSeedFirst ? "先算输入形状作基准 开（SHAPE_SEEDFIRST=1，只供校正）" : "不先算输入形状作基准（SHAPE_SEEDFIRST 缺省 0）") + "；业主 2026-08-25／08-28 原话，HANDOVER ⑪⑬㉓");
         sink.W($"工艺参数　new DesignInputs()（缺省）");
-        sink.W($"圆盘保温　整线 {seed.FlangeInsulMm:0.#} mm（上限 {baseIn.DiscInsulCapMm:0.#} mm，决 104；SHAPE_DISC 可改，不许超上限）");
+        sink.W($"圆盘保温　整线 {input.FlangeInsulMm:0.#} mm（上限 {baseIn.DiscInsulCapMm:0.#} mm，决 104；SHAPE_DISC 可改，不许超上限）");
         sink.W(opt.AllowTabCuts
             ? "族　挖舌孔（AllowTabCuts = true，SHAPE_CUTS=1；业主 2026-09-25 方向 1：侧 Y 形 = 锥形舌片 + 舌根三角孔 + 叉臂加厚，求解器既有旋钮 TabHoleR／拉长比／TabHoleSides／TabArmThick）"
             : "族　不挖舌孔（AllowTabCuts = false，现役设计的解法设定 = 界面下拉预设，与 R48LEndToEndTests.ProductionOptions 同一份）；挖舌孔族本跑不做（SHAPE_CUTS=1 可开）");
@@ -165,7 +171,7 @@ public class R48ShapeSearchRunTests
         ShapeSearchResult? res = null;
         try
         {
-            res = ShapeSearchDriver.Run(seed, baseIn, opt, sink, CancellationToken.None);
+            res = ShapeSearchDriver.Run(input, baseIn, opt, sink, CancellationToken.None);
         }
         catch (Exception ex)
         {

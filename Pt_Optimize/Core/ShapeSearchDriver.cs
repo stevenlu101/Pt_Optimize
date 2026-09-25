@@ -94,8 +94,12 @@ public sealed class ShapeSearchOptions
     /// <summary>批内（其余舌宽比、邻域）并发路数。界面写死 4；调用方按机器给。</summary>
     public int Lanes = 4;
 
-    /// <summary>先把种子自己的形状算一遍作基准（照抄界面「先算你现在这个形状，作基准」）。</summary>
-    public bool EvalSeedFirst = true;
+    /// <summary>
+    /// 先把输入自己的形状算一遍作基准（照抄界面「先算你现在这个形状，作基准」）。
+    /// ★ 缺省**关**（2026-09-25）：业主 2026-08-25「把种子这种方法彻底禁掉，设计记录是用来校正计算流程」、08-28「不能再用种子的形式」（HANDOVER ⑬㉓）——
+    ///   传进来的 DesignSpec 只当几何与构型工艺常数的来源，它的形状不先算、不作基准、不作起点；开了只供「载入设计记录 → 核算」校正。
+    /// </summary>
+    public bool EvalSeedFirst = false;
 
     /// <summary>
     /// ① 并行首遍（2026-09-24，算力工程 D）：起点表全部点（舌宽取最宽比例）用 <see cref="ShapeBatchEval"/> 并行解一遍（<see cref="Lanes"/> 路）；
@@ -261,7 +265,7 @@ public sealed class ShapeSearchResult
 /// ①～⑥ 逐段照搬进 Core，判定与阈值不动；界面、命令行、测试将来都可以调它（界面改调是 Windows 待办）。
 ///
 /// 照搬的步骤（与界面同序）：
-///   基准：先把种子自己的形状算一遍（不可行只是表上多一行，不作出发点）。
+///   基准：先把输入自己的形状算一遍（缺省关，禁种子；开了也只是表上多一行，不作出发点）。
 ///   ① 在起点表最大盘径（舌宽取最宽比例，即切线族 hw = R）上解一次，拿到板厚。
 ///      ★ 2026-09-24 改（<see cref="ShapeSearchOptions.ParallelFirstPass"/>，缺省开）：起点表**全部点**并行解一遍，见下「并行首遍」。
 ///   ② 不动点：由判据「圆盘盖得住管孔＋焊脚」的闭式反解 <see cref="GeometryScreen.MinDiscRadiusMm(IReadOnlyList{FlangePlate})"/> 定最紧下界，在下界上再解。
@@ -367,7 +371,7 @@ public static class ShapeSearchDriver
         double[] discs = ShapeSearchPlan.LiveDiscs(grid, minDiscAll);
         res.DiscGrid = discs;
         double[] wFrac = opt.WFrac;
-        bool taperPage = seed.TabTaper;   // 界面：①～⑤ 按页面当前勾选；这里 = 种子的锥形
+        bool taperPage = seed.TabTaper;   // 界面：①～⑤ 按页面当前勾选；这里 = 输入的锥形勾选
         string fam = opt.AllowTabCuts ? "挖舌孔" : "不挖舌孔";
 
         Say($"盒子：盘半径下界 {minDiscAll.ToString("0.000", ci)} mm（判据「圆盘盖得住管孔＋焊脚」闭式，管孔半径 {seed.HoleRadiusMm.ToString("0.000", ci)}、焊脚下界 max(烧穿 {baseIn.WeldMinThicknessMm.ToString("0.00", ci)}, 壁厚 {wall.ToString("0.00", ci)})）；"
@@ -525,13 +529,13 @@ public static class ShapeSearchDriver
             return outRows;
         }
 
-        // ── 基准：先算种子自己的形状
+        // ── 基准：先算输入自己的形状（缺省关，禁种子）
         if (opt.EvalSeedFirst)
         {
             double R0now = seed.DiscRadiusMm, hw0now = seed.TabHalfWidthMm;
             if (R0now > 5 && hw0now > 1)
             {
-                Say("（先算种子自己的形状，作基准）");
+                Say("（先算输入自己的形状，作基准；只供校正，禁种子）");
                 Eval(R0now, Math.Min(hw0now, R0now), taperPage, "基准");
             }
         }
