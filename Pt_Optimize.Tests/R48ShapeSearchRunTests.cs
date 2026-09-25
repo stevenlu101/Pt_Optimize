@@ -133,7 +133,7 @@ public class R48ShapeSearchRunTests
             ShoulderJPrescreen = EnvI("SHAPE_SHOULDER", dflt.ShoulderJPrescreen ? 1 : 0) != 0,
             WFrac = string.IsNullOrWhiteSpace(wf) ? dflt.WFrac
                   : wf.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(x => double.Parse(x, CultureInfo.InvariantCulture)).ToArray(),
-            AllowTabCuts = false,
+            AllowTabCuts = EnvI("SHAPE_CUTS", 0) != 0,   // 2026-09-25：SHAPE_CUTS=1 ⇒ 挖舌孔族（业主方向 1：侧 Y 形 = 锥形舌片 + 舌根三角孔 + 叉臂，R29／R31，求解器既有旋钮）；缺省 0 = 不挖舌孔（现役设计的预设）
         };
         string path = DeliverableOut.Stamped($"R48_搜形状_Core驱动_{which}.txt");
         using var sink = new Sink(path);
@@ -144,7 +144,9 @@ public class R48ShapeSearchRunTests
         sink.W($"争用　开跑时 loadavg {LoadAvg()}　同机并跑申报：{Environment.GetEnvironmentVariable("SHAPE_CONTENTION") ?? "未申报"}");
         sink.W($"种子　{seed.Name}（{seed.Provenance}）；盘半径 {seed.DiscRadiusMm:0.0}、舌半宽 {seed.TabHalfWidthMm:0.0}、管壁 {seed.WallMm:0.00}、内径 {seed.TubeIdMm:0.0}");
         sink.W($"工艺参数　new DesignInputs()（缺省）");
-        sink.W($"族　不挖舌孔（AllowTabCuts = false，现役设计的解法设定 = 界面下拉预设，与 R48LEndToEndTests.ProductionOptions 同一份）；挖舌孔族本跑不做");
+        sink.W(opt.AllowTabCuts
+            ? "族　挖舌孔（AllowTabCuts = true，SHAPE_CUTS=1；业主 2026-09-25 方向 1：侧 Y 形 = 锥形舌片 + 舌根三角孔 + 叉臂加厚，求解器既有旋钮 TabHoleR／拉长比／TabHoleSides／TabArmThick）"
+            : "族　不挖舌孔（AllowTabCuts = false，现役设计的解法设定 = 界面下拉预设，与 R48LEndToEndTests.ProductionOptions 同一份）；挖舌孔族本跑不做（SHAPE_CUTS=1 可开）");
         sink.W($"上端　盘半径 {maxDisc:0.000} mm；出处：{src}");
         sink.W($"参数　粗筛 {opt.ScreenRounds} 轮、精算 {opt.FinalRounds} 轮、并发 {opt.Lanes} 路、粗筛平坦区网格 {opt.ScreenCoarseMm:0.###} mm、先算基准 {(opt.EvalSeedFirst ? "是" : "否")}、邻域最多 {opt.MaxExtend} 轮；其余照抄界面 SearchOneFamilyAsync");
         sink.W($"粗筛轮数　{opt.ScreenRounds}（缺省 {dflt.ScreenRounds}，选定：依据夜跑 deliverable/R48_搜形状_Core驱动_W08_本次开跑于2026-09-24_001304.txt 与 …_021617.txt；界面 16 轮在 4 核 Linux 不可用；跑过再校）");
