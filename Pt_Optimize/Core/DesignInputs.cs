@@ -753,6 +753,19 @@ public class DesignInputs
     [TypeConverter(typeof(ChineseBoolConverter))]
     public bool FlangeStabGeomClampFallback { get; set; } = true;
 
+    /// <summary>
+    /// ★ 2026-09-25（业主 2026-09-25 12:5x 原话「两条腿并到同一根铜排，分叉点先给定舌长中点」；全局解决方案 §9.4 第一步、§9.6 第一条）：
+    /// **舌孔的铜排侧端点钉在舌长中点**。侧 Y 形里「分叉点」= 三角孔的铜排侧端点 = 两臂汇成一根杆的位置；舌长中点 = 切点到舌尖的中点
+    /// （<see cref="DesignSpec.TabMidXMm"/>）。开着时孔心 x 由「铜排侧端点 = 舌长中点」反算（<see cref="DesignSpec.TabHoleXForBusbarEndAt"/>），
+    /// 每次孔径或拉长比变动后重算（<c>Solver.SetKnob</c> 与每轮开头 <c>Solver.FieldPlacement</c> 都走 <c>Solver.PinTabHoleForkAtMid</c>）；
+    /// 场定孔心那一支（移除优先级最高处）在开着时只印不写。盘侧端点仍由孔径与拉长比决定，够不够到焊环照 R31 的 90° 朝向规则（没动）。
+    /// **改回参数**：生产不设（= true）；false = 改回场定孔心，逐位同改前（门 R48TabHoleForkAtMidTests）。只给门与「开 − 关」归因用。
+    /// 放在参数表对象上的理由与 <see cref="SegCurrentContinuousRoot"/> 相同（求解器只看得到它，Clone 走 JSON 带着它）。
+    /// </summary>
+    [Browsable(false)]
+    [TypeConverter(typeof(ChineseBoolConverter))]
+    public bool TabHoleBusbarEndAtTabMid { get; set; } = true;
+
     // ---------- 派生 ----------
     [Browsable(false)] public double TubeId => TubeIdMm * 1e-3;
     [Browsable(false)] public double TubeLength => TubeLengthMm * 1e-3;

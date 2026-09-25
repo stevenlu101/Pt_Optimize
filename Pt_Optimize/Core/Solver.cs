@@ -373,6 +373,9 @@ public static class Solver
         }
         // ★ R15：孔径 < 1 mm 的孔不考虑 —— 带进来的小孔按无孔，并说出来
         NormalizeHoleRadii(d, Log);
+        // ★ 2026-09-25（业主 12:5x「分叉点先给定舌长中点」）：带进来的孔在第一次 SizeTongue（ApplySectionFloor）之前就钉好孔心，
+        //   否则起点的舌片厚与叉臂带按默认孔心算、与钉后的几何对不上。改回（开关关）不写，逐位同改前。
+        for (int j = 0; j < np; j++) PinTabHoleForkAtMid(d, baseIn, j, Log);
 
         // ★ 限值**只从 LineCase 读**（判据的唯一来源）。求解器不许自带第二份。
         var lc = d.BuildCase(baseIn, checkRamp: false);
@@ -2315,6 +2318,9 @@ public static class Solver
     public static void SetKnob(DesignSpec d, Knob k, int j, double v, DesignInputs? baseIn, SolverResult? res)
     {
         Set(d, k, j, v);
+        // ★ 2026-09-25（分叉点钉舌长中点）：孔径／拉长比一动，孔心先按「铜排侧端点 = 舌长中点」重算，再定舌片厚（SizeTongue 读 Plate ⇒ HolesOf ⇒ 孔心）。
+        //   改回（baseIn 缺或开关关）不写孔心，与改前逐位相同。探针与二分不留痕（log = null），每轮开头 FieldPlacement 那一次印。
+        if (baseIn is not null && k is (Knob.TabHoleR or Knob.TabHoleAspect)) PinTabHoleForkAtMid(d, baseIn, j, null);
         if (baseIn is null || res?.DesignCurrent is not { } dc) return;
         if (k is not (Knob.TabHoleR or Knob.TabHoleAspect or Knob.SlotSpan)) return;
         double iA = j < dc.PlateA.Length ? dc.PlateA[j] : 0;
@@ -2597,6 +2603,38 @@ public static class Solver
     // ══ R12：场定孔位 ══════════════════════════════════════════════════════════════
 
     /// <summary>
+    /// ★ 2026-09-25（业主 2026-09-25 12:5x「两条腿并到同一根铜排，分叉点先给定舌长中点」；全局解决方案 §9.4 第一步、§9.6 第一条）：
+    /// 第 j 片有舌孔时把孔心写成「铜排侧端点 = 舌长中点」（<see cref="DesignSpec.TabHoleXForBusbarEndAt"/>，舌长中点 <see cref="DesignSpec.TabMidXMm"/>），
+    /// 落 0.5 mm 图纸格（与 FieldPlacement 场定孔心同一格）。谁调：SetKnob 每动孔径／拉长比、FieldPlacement 每轮开头 ⇒ 同一个函数、同一份公式。
+    /// 开关 <see cref="DesignInputs.TabHoleBusbarEndAtTabMid"/> 关（改回）或本片无孔 ⇒ 不写、返回 false。
+    /// 返回：孔心真的变了（含从 NaN 坐实）。写了就留痕 <see cref="BranchMarks.TabHoleForkAtMid"/>；钉点落进压接段或盘侧端越过切点时另印一句（不静默、不改钉点）。
+    /// </summary>
+    public static bool PinTabHoleForkAtMid(DesignSpec d, DesignInputs baseIn, int j, Action<string>? log)
+    {
+        if (!baseIn.TabHoleBusbarEndAtTabMid) return false;
+        if (j < 0 || j >= d.TabHoleXMm.Length || !(d.TabHoleREffective(j) > 0)) return false;
+        double xMid = d.TabMidXMm();
+        var (xc, rot, note) = d.TabHoleXForBusbarEndAt(j, xMid);
+        if (double.IsNaN(xc)) return false;
+        double xNew = Math.Round(xc * 2) / 2;
+        double xOld = d.TabHoleXMm[j];
+        bool changed = double.IsNaN(xOld) || Math.Abs(xNew - xOld) > 1e-12;
+        if (changed) d.TabHoleXMm[j] = xNew;
+        if (log is not null)
+        {
+            var (toBus, toDisc) = d.TabHoleHalfLenMm(j, rot);
+            double xBus = xNew - toBus, xDisc = xNew + toDisc;
+            double xClamp = -d.TabLengthMm + d.ClampLengthMm, xTan = d.TangentXMm();
+            string warn = (xBus < xClamp ? $"；⚠ 铜排侧端 {xBus:0.00} 落进压接段（压接段边界 x = {xClamp:0.00}）" : "")
+                        + (xDisc > xTan ? $"；盘侧端 {xDisc:0.00} 越过切点 {xTan:0.00}（宽端开到盘）" : "");
+            log.Invoke(BranchMarks.TabHoleForkAtMid + $"：片{j} 孔心 x = {xNew:0.0}（铜排侧端 {xBus:0.00}，舌长中点 {xMid:0.00}，盘侧端 {xDisc:0.00}，朝向 {rot:0}°，"
+                     + $"孔径 {d.TabHoleREffective(j):0.00}、拉长比 {(j < d.TabHoleAspect.Length ? d.TabHoleAspect[j] : 1.0):0.00}、形状族 {d.TabHoleSidesOf(j)}；{note}；"
+                     + (changed ? (double.IsNaN(xOld) ? "由默认规则坐实" : $"原 {xOld:0.0}") : "未变") + warn + "）");
+        }
+        return changed;
+    }
+
+    /// <summary>
     /// ★★★★★ **每轮开头从最新收敛的场定位置**（R12，用户 2026-09-08 设计因果链第 ③ 步）。
     /// 逐片：移除优先级 P = 导热贡献 ÷ 电流密度（<see cref="RemovalPriority"/>，与 2026-09-05 的量法同一份）；
     ///   · 圆盘槽槽心角 = 槽带内 P 的面积加权平均最高的角向（窗口 ±max(15°, 张角/2)），落 1° 格；
@@ -2608,9 +2646,14 @@ public static class Solver
     public static bool FieldPlacement(DesignSpec d, DesignInputs baseIn, LineResult? last, Action<string>? log)
     {
         int np = d.TabThickMm.Length;
+        bool pin = baseIn.TabHoleBusbarEndAtTabMid;
         if (last is null || !last.Ok)
         {
-            log?.Invoke(BranchMarks.FieldPlacement + "：还没有收敛的场 ⇒ 槽心 0°（背对舌片）／舌孔取自由段中点（默认规则）；第一次场解之后按场重定");
+            log?.Invoke(BranchMarks.FieldPlacement + "：还没有收敛的场 ⇒ 槽心 0°（背对舌片）／舌孔"
+                      + (pin ? "铜排侧端点钉舌长中点（有孔的片现在就钉；无孔的片开孔时钉）" : "取自由段中点（默认规则）")
+                      + "；第一次场解之后按场重定" + (pin ? "槽心，孔心不按场定" : ""));
+            // 有孔的片现在就钉（Solve 起点已钉过一遍，这里通常「未变」）；没有收敛的场就没有基准可重解，照旧返回 false。
+            if (pin) for (int j = 0; j < np; j++) PinTabHoleForkAtMid(d, baseIn, j, log);
             return false;
         }
         double floorD = d.DiscFloorMm(baseIn);
@@ -2659,7 +2702,11 @@ public static class Solver
             // ★ R23（2026-09-10）：场给的孔心**采用**（开孔前每轮按最新场定；开孔后冻结，与槽心同规则）。
             //   09-05 那次把舌根孔位实测成最坏，是舌片厚不变时测的 —— J 超正是用户说的那一步，
             //   现在开孔就重定舌片厚（SetKnob → SizeTongue），规则可以启用。
-            if (!hasHole && j < d.TabHoleXMm.Length && !double.IsNaN(xNew)) d.TabHoleXMm[j] = xNew;
+            // ★ 2026-09-25（业主 12:5x「分叉点先给定舌长中点」）：开关开时孔心不由场定 —— 场给的位置只印对照，
+            //   孔心由 PinTabHoleForkAtMid 按「铜排侧端点 = 舌长中点」写（有孔的片每轮开头重算一遍；改回 = 场定，逐位同改前）。
+            bool pinnedNow = false;
+            if (pin) { pinnedNow = hasHole && PinTabHoleForkAtMid(d, baseIn, j, log); if (pinnedNow) changed = true; }
+            else if (!hasHole && j < d.TabHoleXMm.Length && !double.IsNaN(xNew)) d.TabHoleXMm[j] = xNew;
             else if (hasHole) xNew = xOld;
 
             // 当地电流方向：每轮都算（形状族里「长椭圆·顺当地电流」要拿它当长轴），梯度退化 ⇒ NaN（那一员就不参赛）
@@ -2678,7 +2725,9 @@ public static class Solver
             if (hasSlot && d.DiscCutShapeOf(j) == 2 && !(double.IsNaN(rotOld) && double.IsNaN(rotNew)) && !(Math.Abs(rotOld - rotNew) < 0.5)) changed = true;
 
             parts.Add($"片{j} 槽心 {thNew:0}°" + (double.IsNaN(rotNew) ? "" : $"（当地电流 {rotNew:0}°）")
-                    + (hasHole ? $"／舌孔已开，孔心冻结在 x={xOld:0.0}" : $"／舌孔孔心按场定 x={xNew:0.0}（开孔前每轮更新）"));
+                    + (pin ? (hasHole ? $"／舌孔已开，孔心钉舌长中点 x={d.TabHoleCenterXMm(j):0.0}{(pinnedNow ? "（本轮重钉）" : "")}（场给 x={xNew:0.0}，只印不用）"
+                                      : $"／舌孔未开，开孔时孔心钉舌长中点（场给 x={xNew:0.0}，只印不用）")
+                           : (hasHole ? $"／舌孔已开，孔心冻结在 x={xOld:0.0}" : $"／舌孔孔心按场定 x={xNew:0.0}（开孔前每轮更新）")));
         }
         log?.Invoke(BranchMarks.FieldPlacement + "：" + string.Join("　", parts)
                   + "（移除优先级 = 导热贡献 ÷ 电流密度，取最新收敛的场；"

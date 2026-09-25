@@ -86,4 +86,10 @@ public static class BranchMarks
     /// 后面跟着「片j 槽心 θ°／舌孔 x=…」。第一轮之前还没有场时也发，但注明「用默认规则」。
     /// </summary>
     public const string FieldPlacement = "★ 场定孔位";
+
+    /// <summary>
+    /// 2026-09-25（业主 12:5x「分叉点先给定舌长中点」）：Solver.PinTabHoleForkAtMid 真把孔心按「铜排侧端点 = 舌长中点」写进了 TabHoleXMm。
+    /// 后面跟着「片j 孔心 x = …（铜排侧端 …，舌长中点 …，盘侧端 …，朝向 …°）」。改回（DesignInputs.TabHoleBusbarEndAtTabMid = false）不印。
+    /// </summary>
+    public const string TabHoleForkAtMid = "★ 分叉点钉舌长中点";
 }
