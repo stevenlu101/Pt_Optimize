@@ -132,7 +132,7 @@ public static class MeshVerify
     /// ★ U 路（2026-09-18，Opus 5）：签名从 <c>bool emptyTube</c> 换成**整线算例** —— 热侧／冷侧的复核容差是
     ///   「各自限值的 10 %」，而限值现在跟着工程师填的温差预算走（<see cref="LineCase.HotOverTcMaxK"/>／<see cref="LineCase.ColdUnderTcMaxK"/>）。
     ///   传 bool 就只能再抄一个 5 —— 那正是本项目最常见的失效。工况仍从算例的 <see cref="LineCase.EmptyTube"/> 读。
-    public static IReadOnlyList<MeshAdapt.Delta> TolTemplate(LineCase c) => MeshTolerances
+    public static IReadOnlyList<MeshAdapt.Delta> TolTemplate(LineCase c) => MeshTolerancesFor(c.RuleSet)   // 2026-09-25：比对列按口径取（决103 两条／决103前 三条）
         .Where(m => LineResult.StateKindOf(m.Key, c.EmptyTube, c.RuleSet) is not CheckKind.Reference)   // 决 103：按算例的判据口径取（改回口径 = 改前三条）
         .Select(m => new MeshAdapt.Delta { Name = Criteria.Plain(m.Key), Tol = m.Tol(c) })
         .ToArray();
@@ -153,6 +153,23 @@ public static class MeshVerify
     /// <summary>管孔净流入这一条的复核容差 W（与温差预算无关；出处与理由见 <see cref="TolTemplate"/>）。2026-09-14 Opus 5。</summary>
     public const double NetFluxMeshTolW = 0.5;
 
+    /// <summary>
+    /// ★ 2026-09-25（决 103 口径的比对列；HANDOVER §0.-27 里「加密复算拒答」那条待办的落地）：带玻璃稳态卡交付、且随网格变的两条 ——
+    /// 「管接触处流入法兰的净热流」与改前「管孔净流入」是同一个物理量（W，取向相反），容差沿用 <see cref="NetFluxMeshTolW"/> 0.5 W；
+    /// 「法兰最热处高出管接触处温度」容差沿用「限值的 <see cref="TcMeshTolFrac"/>」规则，限值 = <see cref="LineCase.HotOverContactMaxK"/>（缺省 10 K ⇒ 1 K）。
+    /// 两条热稳定**不进比对列**（网格容差没有出处；主循环进度行只印它们的裕度）；管 J 与法兰截面 J 是闭式，不随网格变。
+    /// 改回口径（决103前）仍用 <see cref="MeshTolerances"/> 三条，逐位同改前。
+    /// </summary>
+    public static readonly (string Key, Func<LineCase, double> Tol)[] MeshTolerances103 =
+    {
+        (LineResult.Key.TubeToFlangeHeat, _ => NetFluxMeshTolW),
+        (LineResult.Key.HotOverContact,   c => TcMeshTolFrac * c.HotOverContactMaxK),
+    };
+
+    /// <summary>按判据口径取比对列（<see cref="MeshTolerances103"/>／<see cref="MeshTolerances"/>）。</summary>
+    public static (string Key, Func<LineCase, double> Tol)[] MeshTolerancesFor(CriteriaRuleSet rs)
+        => rs == CriteriaRuleSet.决103前 ? MeshTolerances : MeshTolerances103;
+
     /// <summary>热侧／冷侧两条的复核容差 = **各自限值的这个比例**（出处与理由见 <see cref="TolTemplate"/>：旧的法兰增量温降就是 1.0／10）。2026-09-14 Opus 5；U 路 2026-09-18 由「热偶误差的 10 %」改写成「限值的 10 %」，默认 5 K 下逐位不变（0.5 K）。</summary>
     public const double TcMeshTolFrac = 0.1;
 
@@ -165,16 +182,9 @@ public static class MeshVerify
     {
         bool emptyTube = c.EmptyTube;
         var want = TolTemplate(c).Select(d => d.Name).ToArray();
-        var loop = MeshTolerances.Select(m => Criteria.Plain(m.Key)).ToArray();
+        var loop = MeshTolerancesFor(c.RuleSet).Select(m => Criteria.Plain(m.Key)).ToArray();
         if (want.SequenceEqual(loop)) return null;
-        // ★ 决 103（2026-09-24）：生产口径的带玻璃稳态卡交付的是「法兰最热处高出管接触处温度」「管接触处流入法兰的净热流」与两条热稳定，
-        //   而本循环逐档比的仍是改前那三条 ⇒ 拒答，不拿参考量的收敛冒充硬判据的收敛。比对列换成新判据要先定新判据各自的网格容差（热侧可沿用「限值的 10 %」、
-        //   冷侧沿用 0.5 W；两条热稳定没有出处）—— 列为待办，不在这里编。
-        if (!emptyTube && c.RuleSet != CriteriaRuleSet.决103前)
-            return "✗ 加密复算的逐档比对列还是 2026-09-24 之前卡交付的三条（" + string.Join("、", loop) + "），"
-                 + "现行带玻璃稳态卡交付的「" + string.Join("、", LineResult.RequiredFor(false, c.RuleSet).Select(q => Criteria.Plain(q.Prefix))
-                        .Where(nm => MeshTolerances.All(m => Criteria.Plain(m.Key) != nm))) + "」没有进比对列"
-                 + "　⇒ 不在这个口径上做加密复算，**不能据此说这个设计过了**（比对列换新判据待定网格容差）。";
+        // 2026-09-25：决 103 口径的比对列已换成 MeshTolerances103（此前这里对决 103 带玻璃稳态拒答「比对列还是改前三条」）。
         return $"✗ 加密复算不适用于{(emptyTube ? "空管到温稳态" : "带玻璃稳态")}："
              + (want.Length == 0 ? "本工况没有进加密复算比对列的卡交付判据（空管到温稳态只卡电流密度（管 J 与法兰截面 J）与场的有效性；两条电流密度判据两态都不在逐档比对列里）"
                                  : $"本工况要复核的是「{string.Join("、", want)}」，加密复算逐档比的是「{string.Join("、", loop)}」")
@@ -634,7 +644,9 @@ public static class MeshVerify
                 .FirstOrDefault(c => c.Name.StartsWith(k, StringComparison.Ordinal))?.Actual ?? double.NaN;
             // R48 B（2026-09-14 Opus 5）：复核的是**卡交付的**三条 —— 圆盘区最高温 − 管温／法兰增量温降换成热偶读数基准的热侧（⑦）／冷侧（⑧）
             //   （旧判法已是参考量，不复核）。Trace 的 N2pp／N3 两列从此装 ⑦／⑧（字段名是历史名，没改）；容差随之重定，见 TolTemplate。
-            double a2p = V(LineResult.Key.NetFlux), a2pp = V(LineResult.Key.HotOverTc), a3 = V(LineResult.Key.ColdUnderTc);
+            // 2026-09-25：三列装的是本口径比对列的值（决103：管接触处流入法兰的净热流／法兰最热处高出管接触处温度／第三列空 NaN；决103前：改前三条，字段名是历史名）
+            var cols = MeshTolerancesFor(lc.RuleSet);
+            double a2p = V(cols[0].Key), a2pp = V(cols[1].Key), a3 = cols.Length > 2 ? V(cols[2].Key) : double.NaN;
             double mass = r.Segments.Sum(s => s.MassG) + r.Flanges.Sum(f => f.MassG);
 
             // ★ 峰位落在粗区就会被静默算漏 —— 每档核对一次
@@ -660,7 +672,7 @@ public static class MeshVerify
                         res.RadiusTrace.Add((h, lc.MeshFineRadiusMm, peakR, "到上限拒答"));
                         res.PeakOutsideFine = g.Verdict;
                         res.Line = r; res.FineMm = h; res.Cells = r.MeshCells; res.Converged = false;
-                        res.Trace.Add((h, r.MeshCells, V0(r, LineResult.Key.NetFlux), V0(r, LineResult.Key.HotOverTc), V0(r, LineResult.Key.ColdUnderTc),
+                        res.Trace.Add((h, r.MeshCells, a2p, a2pp, a3,
                                        r.Segments.Sum(x => x.MassG) + r.Flanges.Sum(f => f.MassG), swOne.Elapsed.TotalSeconds));
                         res.SecondsTotal = sw.Elapsed.TotalSeconds;
                         res.Verdict = "✗ **本次复核不算数** —— " + g.Verdict!.TrimStart('★', ' ')
@@ -695,7 +707,9 @@ public static class MeshVerify
             //   而**日志里一个判据数字都没有**，被 kill 掉就等于四小时全丢。
             //   「看得出还活着」只解决了一半；另一半是**中间结果要落地**。
             progress?.Report($"加密复算：{h:0.000} mm 完成 —— {r.MeshCells} 单元，用时 {ThrottledProgress.Fmt(swOne.Elapsed)}（累计 {ThrottledProgress.Fmt(sw.Elapsed)}）"
-                + $"　管孔净流入 {a2p:0.000} W　最热铂高出热偶读数 {a2pp:0.000} K　管根低于热偶读数 {a3:0.000} K　合计 {mass:0} g"   // R48 B：进度行会上界面，写全名不写代号
+                + "　" + string.Join("　", cols.Select((m, ci) => $"{Criteria.Plain(m.Key)} {(ci == 0 ? a2p : ci == 1 ? a2pp : a3):0.000}"))   // R48 B：进度行会上界面，写全名不写代号；2026-09-25 按口径列名
+                + (lc.RuleSet == CriteriaRuleSet.决103前 ? "" : $"　局部热稳定 {V(LineResult.Key.LocalStab):0.000}　整片热稳定 {V(LineResult.Key.FlangeStab):0.000}（只印，不进比对列）")
+                + $"　合计 {mass:0} g"
                 // ★ R48 续（2026-09-14，Opus 5）：每档都印外层耦合停在离不动点多远 —— 判据在两档间的变化
                 //   若小于它，那次「在摆」分不清是网格还是耦合停机造成的（实测 ③ 变化 +0.820 K < 耦合容差 1.0 K）。
                 + (double.IsNaN(r.CoupleRemainK) ? "" : $"　外层耦合剩余误差估计 {r.CoupleRemainK:0.00} K"

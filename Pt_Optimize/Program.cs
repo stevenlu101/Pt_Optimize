@@ -4458,7 +4458,11 @@ internal static class Program
                         + "只用于对照。");
                 var mvv = MeshVerify.Run(dv, p, maxCells: mcV, weldAsGeometricFeature: weldFeat,
                               progress: new SyncProgress<string>(m3 => Console.WriteLine("     · " + m3)));
-                Console.WriteLine($"{"细网格mm",10}{"单元数",9}{"②′W",9}{"⑦K",9}{"⑧K",9}{"合计g",9}{"用时s",8}");
+                {   // 2026-09-25：三列按判据口径命名（决103：管接触处流入法兰的净热流 W／法兰最热处高出管接触处温度 K／空；决103前：管孔净流入／最热铂高出热偶读数／管根低于热偶读数）
+                    var colsV = MeshVerify.MeshTolerancesFor(p.CriteriaRuleSet);
+                    string c1 = Criteria.Plain(colsV[0].Key), c2 = Criteria.Plain(colsV[1].Key), c3 = colsV.Length > 2 ? Criteria.Plain(colsV[2].Key) : "（空）";
+                    Console.WriteLine($"{"细网格mm",10}{"单元数",9}　{c1}　{c2}　{c3}　合计g　用时s");
+                }
                 foreach (var tv in mvv.Trace)
                     Console.WriteLine($"{tv.Fine,10:0.000}{tv.Cells,9:0}{tv.N2p,9:0.000}{tv.N2pp,9:0.000}"
                                     + $"{tv.N3,9:0.000}{tv.MassG,9:0}{tv.Sec,8:0.0}");

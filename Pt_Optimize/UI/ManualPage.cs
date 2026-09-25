@@ -778,14 +778,16 @@ public sealed class ManualPage : TabPage
         {
             // 片名与页面同一个口径：首=入口、末=出口、中间共用k
             string nm = j == 0 ? "入口" : j == nPl - 1 ? "出口" : "共用" + j;
-            double t = j < fd.TabThickMm.Length ? fd.TabThickMm[j] : 0;
+            // 2026-09-25：图纸档的板厚是 NaN（由 .3dm 给，N5）⇒ Math.Max(3, NaN) = NaN，rect 的 x 印成 "NaN"（DocRefTests 说明书门在 Windows 跑机上抓到）；NaN 按 0 画最窄条、标签写明
+            bool tKnown = j < fd.TabThickMm.Length && !double.IsNaN(fd.TabThickMm[j]);
+            double t = tKnown ? fd.TabThickMm[j] : 0;
             double wPx = Math.Max(3, t * s * 6);          // 法兰厚度放大以便看清
             double xPx = (at[j] - y0) * s - wPx / 2;
             sb.Append($"<rect x=\"{xPx:0.0}\" y=\"{PY(R)}\" " +
                       $"width=\"{wPx:0.0}\" height=\"{2 * R * s:0.0}\" " +
                       "fill=\"var(--pt)\" stroke=\"var(--ink)\" stroke-width=\"1\"/>");
             sb.Append($"<text x=\"{PX(at[j])}\" y=\"{mid - R * s - 8:0.0}\" " +
-                      $"text-anchor=\"middle\" class=\"lbl\">{nm} t{t:0.00}</text>");
+                      $"text-anchor=\"middle\" class=\"lbl\">{nm} {(tKnown ? $"t{t:0.00}" : "t 由图纸给")}</text>");
         }
 
         for (int i = 0; i < nSeg; i++)

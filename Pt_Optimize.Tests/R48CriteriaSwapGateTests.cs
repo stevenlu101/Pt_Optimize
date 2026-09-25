@@ -363,10 +363,17 @@ public class R48CriteriaSwapGateTests
     {
         var d = R48NMeshGateTests.Design("W08");
         var lc = d.BuildCase(new DesignInputs());
-        string? why = MeshVerify.RefuseForState(lc);
-        Assert.NotNull(why);
-        Assert.Contains(LineResult.Key.HotOverContact, why!);
-        Assert.Contains("不能据此说这个设计过了", why);
+        // 2026-09-25：比对列换成决 103 两条（MeshVerify.MeshTolerances103）⇒ 带玻璃稳态不再拒答；空管到温稳态照旧拒答（两条在该态只作参考）
+        Assert.Null(MeshVerify.RefuseForState(lc));
+        var cols = MeshVerify.TolTemplate(lc);
+        Assert.Equal(new[] { Criteria.Plain(LineResult.Key.TubeToFlangeHeat), Criteria.Plain(LineResult.Key.HotOverContact) }, cols.Select(x => x.Name).ToArray());
+        Assert.Equal(MeshVerify.NetFluxMeshTolW, cols[0].Tol);
+        Assert.Equal(MeshVerify.TcMeshTolFrac * lc.HotOverContactMaxK, cols[1].Tol);
+        Assert.Equal(1.0, cols[1].Tol);   // 缺省限值 10 K 的 10 %
+        var lcEmpty = d.BuildCase(new DesignInputs()); lcEmpty.EmptyTube = true;
+        string? whyEmpty = MeshVerify.RefuseForState(lcEmpty);
+        Assert.NotNull(whyEmpty);
+        Assert.Contains("不能据此说这个设计过了", whyEmpty!);
         var lcOld = d.BuildCase(new DesignInputs { CriteriaRuleSet = CriteriaRuleSet.决103前 });
         Assert.Null(MeshVerify.RefuseForState(lcOld));                            // 改回：与改前同一个比对列
         Assert.Equal(3, MeshVerify.TolTemplate(lcOld).Count);
@@ -390,7 +397,7 @@ public class R48CriteriaSwapGateTests
         ("InsulWindow.cs",        "舌保温窗口逐点印三条的值；过不过一律读 LineResult.AllOk（按结果自己的口径）"),
         ("InsulationSearch.cs",   "逐格点三项钉在改前口径（RuleSetOfSearch = 决103前）；决 103 口径下 Run 拒答"),
         ("LineRunner.cs",         "判据构造照算照印；Kind 由按口径取的分工况表盖（决 103 = 参考）"),
-        ("MeshVerify.cs",         "加密复算比对列仍是改前三条；决 103 口径的带玻璃稳态拒答（RefuseForState）"),
+        ("MeshVerify.cs",         "改回口径（决103前）的比对列 MeshTolerances 仍是改前三条；决 103 口径走 MeshTolerances103（2026-09-25）"),
         ("SensitivityMatrix.cs",  "离线敏感度矩阵（--sensmatrix 诊断，只量不判）"),
         ("ShapeReview.cs",        "形状评审报告印值（不判）"),
         ("Sizer.cs",              "旧定尺寸器印旧判法与净流入的值"),
